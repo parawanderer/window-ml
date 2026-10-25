@@ -18,7 +18,7 @@ const DIST = path.join(__dirname, "../dist");
  *   worker's SITE_ACCESS answer for its origin, and its START_ASKS answer (`data`) for a payload (default: nothing waits)
  * @returns the window, the document, the sync store, what the popup sent, whether it closed, and a flush
  */
-async function loadPopup({ tabUrl = "https://site.example/page", site = { decision: "unknown" }, startAsks = () => ({ asks: [] }) } = {}) {
+async function loadPopup({ tabUrl = "https://site.example/page", site = { decision: "unknown" }, startAsks = () => ({ asks: [] }), accessRequests = () => ({ requests: [] }) } = {}) {
     const html = fs.readFileSync(path.join(DIST, "popup.html"), "utf8").replace(/<script[^>]*src=[^>]*><\/script>/g, "");
     const dom = new JSDOM(html, { runScripts: "outside-only", url: "chrome-extension://test/popup.html" });
     const win = dom.window;
@@ -33,6 +33,7 @@ async function loadPopup({ tabUrl = "https://site.example/page", site = { decisi
                 sent.push(msg);
                 const reply = msg?.type === "SITE_ACCESS" ? { data: { lists: { always: [], session: [], denied: [], agents: {}, selfApprove: [] }, origin: msg.payload?.origin, ...site } }
                     : msg?.type === "START_ASKS" ? { data: startAsks(msg.payload) }
+                    : msg?.type === "ACCESS_REQUESTS" ? { data: accessRequests(msg.payload) }
                     : { error: "not in this test" };
                 if (typeof cb === "function") { setTimeout(() => cb(reply), 0); return undefined; }
                 return Promise.resolve(reply);
@@ -169,4 +170,79 @@ test("popup: Show asks the worker to show that ask on this tab; the popup closes
     await gone.flush();
     assert.equal(gone.closed.value, false);
     assert.equal(gone.doc.getElementById("waiting").hidden, true);
+});
+
+// --- "Waiting for you": sites asking for access (ml.requestAccess) ---
+
+/** A waiting request as ACCESS_REQUESTS lists one. */
+const req = (o) => ({ domain: "site.example", agents: false, at: Date.now() - 60000, state: "pending", asks: 1, allowed: false, ...o });
+/** The decisions the popup sent, in order. */
+const decisions = (p) => p.sent.filter((m) => m.type === "ACCESS_REQUESTS" && m.payload?.decision).map((m) => m.payload);
+
+test("popup: a site asking for access is a row above the start asks; its reason is quoted as text, and asking for agents is an unticked box", async () => {
+    const r = req({ origin: "https://asker.example", kind: "access", agents: true, reason: "<b>trust me</b>" });
+    const p = await loadPopup({ accessRequests: () => ({ requests: [r] }), startAsks: () => ({ asks: [{ requestId: "q1", origin: "https://site.example", since: 1 }] }) });
+    assert.equal(p.doc.getElementById("waiting").hidden, false);
+    const rows = [...p.doc.querySelectorAll("#waitingList > div")].map((d) => d.className);
+    assert.deepEqual(rows, ["req-row", "wait-row"], "the request first, then the start ask");
+    const row = p.doc.querySelector(".req-row");
+    assert.equal(row.querySelector(".hint").textContent, "https://asker.example asks to use window.ml and to start agents.");
+    assert.equal(row.querySelector(".site-says").textContent, "The site says: “<b>trust me</b>”");
+    assert.equal(row.querySelector(".site-says b"), null, "the site's words never become markup");
+    const box = row.querySelector(".req-check input");
+    assert.equal(box.checked, false);
+    assert.deepEqual([...row.querySelectorAll(".req-buttons button")].map((b) => b.textContent), ["Allow this session", "Always allow", "Deny"]);
+});
+
+test("popup: Allow this session, Always allow (with the agents box) and Deny each send that decision for the request's origin", async () => {
+    const r = req({ origin: "https://asker.example", kind: "access", agents: true });
+    const click = async (text, tick = false) => {
+        const p = await loadPopup({ accessRequests: (pl) => ({ requests: pl.decision ? [] : [r] }) });
+        if (tick) p.doc.querySelector(".req-check input").checked = true;
+        [...p.doc.querySelectorAll(".req-buttons button")].find((b) => b.textContent === text).click();
+        await p.flush();
+        assert.equal(p.doc.getElementById("waiting").hidden, true, `${text}: answered, the block empties`);
+        return decisions(p);
+    };
+    assert.deepEqual(await click("Allow this session"), [{ origin: "https://asker.example", decision: { kind: "access", answer: "session", agents: false } }]);
+    assert.deepEqual(await click("Always allow", true), [{ origin: "https://asker.example", decision: { kind: "access", answer: "always", agents: true } }]);
+    assert.deepEqual(await click("Deny"), [{ origin: "https://asker.example", decision: { kind: "access", answer: "deny" } }]);
+});
+
+test("popup: a site already allowed that asks for agents gets Let it start agents and Deny, with no box", async () => {
+    const r = req({ origin: "https://asker.example", kind: "access", agents: true, allowed: true });
+    const p = await loadPopup({ accessRequests: (pl) => ({ requests: pl.decision ? [] : [r] }) });
+    assert.equal(p.doc.querySelector(".req-check"), null);
+    assert.deepEqual([...p.doc.querySelectorAll(".req-buttons button")].map((b) => b.textContent), ["Let it start agents", "Deny"]);
+    p.doc.querySelector(".req-buttons button").click();
+    await p.flush();
+    assert.deepEqual(decisions(p), [{ origin: "https://asker.example", decision: { kind: "access", answer: "agents" } }]);
+});
+
+test("popup: self-approval is never one click: Review… opens the confirmation, whose Allow is disabled for a second", async () => {
+    const r = req({ origin: "https://asker.example", kind: "selfApprove", reason: "my own tool" });
+    const p = await loadPopup({ accessRequests: (pl) => ({ requests: pl.decision ? [] : [r] }) });
+    const dlg = p.doc.getElementById("selfApproveDialog");
+    assert.equal(dlg.hidden, true);
+    assert.equal(p.doc.querySelector(".req-row .hint").textContent, "https://asker.example asks to approve its own actions.");
+    assert.deepEqual([...p.doc.querySelectorAll(".req-buttons button")].map((b) => b.textContent), ["Review…"]);
+    p.doc.querySelector(".req-buttons button").click();
+    assert.equal(dlg.hidden, false);
+    assert.equal(p.doc.getElementById("selfApproveOrigin").textContent, "https://asker.example wants to approve its own actions.");
+    assert.equal(p.doc.getElementById("selfApproveSays").textContent, "The site says: “my own tool”");
+    const allow = p.doc.getElementById("selfApproveAllow");
+    assert.equal(allow.disabled, true, "Allow is disabled as the dialog opens");
+    assert.deepEqual(decisions(p), [], "opening the confirmation decides nothing");
+    await new Promise((res) => setTimeout(res, 1100));
+    assert.equal(allow.disabled, false);
+    allow.click();
+    await p.flush();
+    assert.equal(dlg.hidden, true);
+    assert.deepEqual(decisions(p), [{ origin: "https://asker.example", decision: { kind: "selfApprove", answer: "allow" } }]);
+
+    const q = await loadPopup({ accessRequests: (pl) => ({ requests: pl.decision ? [] : [r] }) });
+    q.doc.querySelector(".req-buttons button").click();
+    q.doc.getElementById("selfApproveDeny").click();
+    await q.flush();
+    assert.deepEqual(decisions(q), [{ origin: "https://asker.example", decision: { kind: "selfApprove", answer: "deny" } }]);
 });

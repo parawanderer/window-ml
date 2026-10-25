@@ -120,6 +120,21 @@
     /* One waiting thing: its line, then its button on the right. */
     .wait-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
     .wait-row .hint { margin: 0; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    /* One site asking for access: its line, the site's own words, then its buttons and how long it has waited. */
+    .req-row { margin-top: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+    .req-row .hint { margin: 0; overflow-wrap: anywhere; }
+    /* The site's reason, quoted: its own words, set apart so they never read as ours. */
+    .site-says { margin: 4px 0 0; padding-left: 8px; border-left: 2px solid var(--border); color: var(--fg-dim);
+        font-style: italic; overflow-wrap: anywhere; }
+    .req-check { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-weight: normal; }
+    .req-buttons { flex-wrap: wrap; margin-top: 6px; }
+    .req-age { margin-top: 4px; font-size: 11px; }
+    /* The self-approval confirmation (1.6): over the whole popup, so nothing else is clicked while it is open. */
+    .modal { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45); display: flex; align-items: center;
+        justify-content: center; padding: 16px; z-index: 10; }
+    .modal[hidden] { display: none; }
+    .modal-box { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; max-width: 100%; }
+    .modal-box .row { justify-content: flex-end; margin-top: 12px; }
     .perm-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
     .perm-chip { display: inline-flex; align-items: center; gap: 4px; background: var(--panel-2);
         border: 1px solid var(--border); border-radius: 14px; padding: 3px 4px 3px 10px; }
@@ -156,6 +171,20 @@
     <div id="waiting" hidden>
         <label>Waiting for you</label>
         <div id="waitingList"></div>
+    </div>
+
+    <!-- The self-approval confirmation (docs/spec/SITE_ACCESS_SLICE3.md 1.6), opened from a request's Review…: never one
+         click from the entry, and Allow stays disabled for a second (popup.ts openSelfApproval). -->
+    <div id="selfApproveDialog" class="modal" role="dialog" aria-modal="true" aria-labelledby="selfApproveOrigin" hidden>
+        <div class="modal-box">
+            <strong id="selfApproveOrigin"></strong>
+            <p class="hint">If you allow this, the site can run code, click and type on your behalf, run Python with network access, and fetch pages using your logins, without asking you each time. Only allow this for a site you control or fully trust.</p>
+            <div id="selfApproveSays" class="site-says" hidden></div>
+            <div class="row">
+                <button id="selfApproveDeny">Deny</button>
+                <button id="selfApproveAllow" class="primary" disabled>Allow</button>
+            </div>
+        </div>
     </div>
 
     <!-- Connection: the bare minimum to make the extension work. Collapsed once a URL is
