@@ -877,7 +877,7 @@ function closeSidebarWorlds() {
 // document (sidebar.html): renders into #root, no shadow root. In the real
 // extension the content-script shell relays __mlDebug in from the parent window;
 // in jsdom window.parent === window, so dispatch posts with source: win.
-async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaModels = null, fetchLlm = () => ({ data: "OK" }), sessionTitle = () => ({ data: null }), vram = [], info = null, holdInfo = null, invocation = null, psError = null, caps = null, pythonExec = null, listModels = null, embed = null, serverTools = null, housekeeping = [], indexedDB = null, priceCalls = null, siteLists = null, siteAccess = null } = {}) {
+async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaModels = null, fetchLlm = () => ({ data: "OK" }), sessionTitle = () => ({ data: null }), vram = [], info = null, holdInfo = null, invocation = null, psError = null, caps = null, pythonExec = null, listModels = null, embed = null, serverTools = null, housekeeping = [], indexedDB = null, priceCalls = null, siteLists = null, siteAccess = null, accessRequests = null } = {}) {
     const unloadCalls = [];
     const pyCalls = [];   // PYTHON_EXEC payloads the app sent (the bench)
     const hkCalls = [];   // DUMP_HOUSEKEEPING payloads (the Settings → Housekeeping log)
@@ -962,6 +962,8 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
                 // `siteLists` only answers a read with fixed lists.
                 else if (type === "SITE_ACCESS" && siteAccess) Promise.resolve(siteAccess(msg.payload || {})).then((r) => cb(JSON.parse(JSON.stringify(r ?? null))));
                 else if (type === "SITE_ACCESS" && siteLists) cb({ data: { lists: siteLists } });
+                // The sites waiting for an answer. `accessRequests(payload)` plays the worker's ACCESS_REQUESTS and answers `{ requests }` (or a promise of it).
+                else if (type === "ACCESS_REQUESTS" && accessRequests) Promise.resolve(accessRequests(msg.payload || {})).then((r) => cb(JSON.parse(JSON.stringify(r ?? null))));
                 else cb({ data: null });
             },
         },
