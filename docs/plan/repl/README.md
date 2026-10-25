@@ -254,6 +254,13 @@ and only e3 edits e3's file; e3 rebases #1129, swaps the two choke-point pins fo
 the janitor. Open, the security lane's: the card's "why" line (a string, Shane's) and the start-origin gate/choke
 split (same default ruling).
 
+#1129 MERGED 9133ec92 (2026-10-25, e3, `@agent,@security`, test-only, `tests/nav-navigate-redteam.test.mjs`): rebased
+on #1131 in the ruled order; the between-turns todo is a plain passing test, the two choke-point pins are card pins,
+no todo left. The one `CHOKE_REFUSED` pin that stays is the start origin's uncredentialed read (the lane's open
+gate/choke split, same default). The janitor's first review was of the pre-rebase file and said so; its correction
+against the merged head (no finding) preceded the merge. The navigate red-team pass is CLOSED; nothing of e3's on
+navigate is open.
+
 #1110 MERGED 7891e866 (2026-10-24): the janitor reviewed it (no finding); one test-only fix after the review
 (the Settings page's test waits on conditions, not a sleep). Root K (c2) is BUILT; root-k's clone is removed. Open
 from it: the red team's stacked pass (e3, its own test file, merging after), #1102 (owned-through-reset, awaiting
