@@ -103,6 +103,7 @@ export const INVENTORY: readonly InventoryEntry[] = [
     session("ml_start_denials", "grant", "declined starts, this browser session"),
     session("ml_agent_opened", "grant", "tabs an agent opened, this browser session"),
     local("ml_site_upgrade_notice", "sites", "a one-time notice about a migration on this machine"),
+    local("ml_site_requests", "sites", "sites asking for access, each waiting at most 7 days: a restore would bring back requests the person never saw ask"),
 
     // --- never: logs, history and caches ---
     session("ml_run_log", "log", "the execution log ring"),

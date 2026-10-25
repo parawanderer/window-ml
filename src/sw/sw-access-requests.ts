@@ -105,7 +105,7 @@ export function waitingRequests(): Promise<WaitingRequest[]> {
 }
 
 // A change to the lists from anywhere (the popup's "This site", Settings, another window) may settle a request.
-chrome.storage?.onChanged?.addListener((changes, area) => {
+if (typeof chrome !== "undefined") chrome.storage?.onChanged?.addListener((changes, area) => {
     if (changesSiteAccess(changes, area)) void waitingRequests().then(() => { for (const f of listeners) f(); }, () => undefined);
 });
 

@@ -312,8 +312,8 @@ export interface MlApi {
     setModel(model: string): Promise<string>;
     /** Ask the person for more than this site has: `agents: true` to start agents, `level: "self-approve"` to approve its
      *  own actions. Needs a click or key press on the page just before. Never opens a window: the request waits in the
-     *  toolbar button, and each site asks once (a later call answers the current state). Resolves, never throws.
-     * @param opts `reason` is shown to the person as the site's own words (plain text, cut at 200 characters) */
+     *  toolbar button, and each site asks once (a later call answers the current state). Resolves, never throws. `reason`
+     *  is shown to the person as the site's own words (plain text, cut at 200 characters). */
     requestAccess(opts?: { agents?: boolean; level?: "self-approve"; reason?: string }): Promise<AccessAnswer>;
     ps(): Promise<LoadedModel[]>;
     /** DEBUG DUMP of everything the resource panel derives its timeline from — the `__mlDebug` stream, the
