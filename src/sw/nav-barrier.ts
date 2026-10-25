@@ -10,8 +10,8 @@
 // The release signal is deliberately RE-ADOPT-COMPLETE, not mere "content loaded": the new content script
 // loads with an empty toolset, so releasing on load alone would still race the tool into a page that can't
 // run it. `whenReady` resolves on `noteReadopted`, with a timeout fallback so a navigation that never
-// completes (or a page the run can't re-adopt) can't hang the loop forever — it falls through and the
-// caller gets the normal "no active run" error to handle.
+// completes (or a page the run can't re-adopt) can't hang the loop forever: it answers false, and a delegated
+// tool then ends saying the page did not take the run back (delegate-send.ts). Waited out once per navigation.
 //
 // Pure/deterministic (no chrome, no timers of its own beyond an injectable one) so it unit-tests
 // standalone against a scripted sequence of navigation events; see tests/nav-barrier.test.mjs.
@@ -27,6 +27,8 @@ interface TabNav {
     current?: string;
     /** The document the in-flight navigation is leaving: a re-adopt from it is the old page, not the new one. */
     leaving?: string;
+    /** A wait on this navigation already ran out: its re-adopt is not coming, so the next waits answer at once (#1034). */
+    expired?: boolean;
 }
 
 export interface NavBarrier {
@@ -47,8 +49,10 @@ export interface NavBarrier {
     noteReadopted(tabId: number, documentId?: string): boolean;
     /** True while a navigation is in flight on this tab (for callers that want to branch, not wait). */
     isNavigating(tabId: number): boolean;
-    /** Resolve immediately if the tab is idle, else when it re-adopts (or after `timeoutMs`, whichever first). */
-    whenReady(tabId: number, timeoutMs?: number): Promise<void>;
+    /** Resolve immediately if the tab is idle, else when it re-adopts (or after `timeoutMs`, whichever first): true when
+     *  the tab is ready, false when the wait ran out with the navigation still waiting on its re-adopt. Once one wait on a
+     *  navigation has run out, the next answer false at once, until a re-adopt or a new navigation. */
+    whenReady(tabId: number, timeoutMs?: number): Promise<boolean>;
     /** Drop all state for a tab — the run ended, or the tab closed. Pending waiters are released. */
     forget(tabId: number): void;
 }
@@ -72,6 +76,7 @@ export function createNavBarrier(
             const t = get(tabId);
             if (!t.navigating) t.leaving = leaving === null ? undefined : leaving ?? t.current;
             t.navigating = true;
+            t.expired = false;
         },
         noteDocument(tabId, documentId) { get(tabId).current = documentId; },
         currentDocument(tabId) { return tabs.get(tabId)?.current; },
@@ -87,18 +92,21 @@ export function createNavBarrier(
             if (!t || !this.accepts(tabId, documentId)) return false;
             t.navigating = false;
             t.leaving = undefined;
+            t.expired = false;
             release(t);   // let any tool that was waiting for the new page proceed
             return true;
         },
         isNavigating(tabId) { return !!tabs.get(tabId)?.navigating; },
         whenReady(tabId, timeoutMs = READOPT_TIMEOUT_MS) {
             const t = get(tabId);
-            if (!t.navigating) return Promise.resolve();
-            return new Promise<void>((resolve) => {
+            if (!t.navigating) return Promise.resolve(true);
+            if (t.expired) return Promise.resolve(false);
+            return new Promise<boolean>((resolve) => {
                 let done = false;
-                const finish = () => { if (done) return; done = true; clearTimer(timer); resolve(); };
-                const timer = setTimer(finish, timeoutMs);   // fallback: never wedge the loop on a dead nav
-                t.waiters.push(finish);
+                const finish = (ready: boolean) => { if (done) return; done = true; clearTimer(timer); resolve(ready); };
+                // fallback: never wedge the loop on a dead nav, and never wait it out twice
+                const timer = setTimer(() => { t.expired = true; finish(false); }, timeoutMs);
+                t.waiters.push(() => finish(true));
             });
         },
         forget(tabId) {

@@ -58,9 +58,9 @@ function defaultSleep(ms: number): Promise<void> {
 /** Raised instead of letting a delegated call hang. The loop turns it into the tool's result, so the model is
  *  told the page stopped answering rather than the run stopping dead. */
 export class PageUnreachable extends Error {
-    readonly state: TabState | "silent";
+    readonly state: TabState | "silent" | "unadopted";
     readonly waitedMs: number;
-    constructor(state: TabState | "silent", waitedMs: number) {
+    constructor(state: TabState | "silent" | "unadopted", waitedMs: number) {
         super(reachabilityNote(state, waitedMs));
         this.name = "PageUnreachable";
         this.state = state;
@@ -71,8 +71,9 @@ export class PageUnreachable extends Error {
 /** The one sentence that reaches both the model and the person reading the step. Terse, because the model pays
  *  for every word of it, and specific, because "could not reach the page" is what we said before and it sent
  *  people looking for a crash that had not happened. */
-export function reachabilityNote(state: TabState | "silent", waitedMs: number): string {
+export function reachabilityNote(state: TabState | "silent" | "unadopted", waitedMs: number): string {
     const s = Math.round(waitedMs / 1000);
+    if (state === "unadopted") return `the page this run is on loaded but did not take the run back within ${s}s, so its tools cannot run there; navigate to another page`;
     if (state === "gone") return "the tab this run is on was closed";
     if (state === "asleep") return "the browser discarded this run's tab while it was in the background, and its page is gone";
     return `the page did not answer for ${s}s — its tab is most likely asleep in the background`;

@@ -127,7 +127,7 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
 
 async function runDelegatedToolIn(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; verifyInWorker?: boolean; reads?: PreRead[]; answerShape?: AnswerShapeItem[]; answerSelect?: AnswerArgs; geometry?: GeometryRequest; pageRead?: PageReadRequest; onStream?: (text: string, ts?: number) => void } = {}): Promise<PageToolEnvelope> {
     const run = runs.get(runId);
-    if (!run) return { result: `Error: no active agent run "${runId}" on this page (it may have ended).` };
+    if (!run) return { result: `Error: no active agent run "${runId}" on this page (it may have ended).`, noRun: true };
     // A worker-built run's `answer` tool runs in the worker, and asks the page only for a selector's elements: this
     // page's DOM, its preview and its crops. The nodes stay here; the set they join is the worker's (worker-answer.ts).
     // `mediaInWorker`: the worker crops each element's media from its own capture (worker-media.ts), so the page captures

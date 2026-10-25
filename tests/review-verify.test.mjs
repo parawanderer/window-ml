@@ -132,6 +132,7 @@ const ENVELOPE = {
     result: "model",            // the tool result itself: page text by design
     answer: "plumbing",         // finish only; a worker-built run's answer is the worker's set (answerFor), never this
     elementCount: "plumbing",   // not read by the run host
+    noRun: "plumbing",          // after a navigation that was not re-adopted, delegateSend turns it into an error naming the page
     answerMedia: "person",      // HUD completion card: pushed from EVERY envelope; replaced by the worker's set at a worker-built run's end
     answerOps: "plumbing",      // replayed into the worker's answer set (worker-answer.ts checks them)
     geometry: "plumbing",       // geometry-check.ts rebuilds it

@@ -297,7 +297,11 @@ ahead of that async event and would fire the next tool into the dying document (
 only snapshots at run END, too late for a mid-run nav) → content posts `ADOPT_RUN` → injected `_adoptRun`
 rebuilds the **BUILTIN** toolset (`_rebuildToolset`; custom function tools can't serialize, so cross-page is
 the default/HUD kit only) + `registerRun` → `RUN_READOPTED` → `navBarrier.noteReadopted` releases the held
-tool. The agent option **`navigate`** (default true) gates the tool + persistence: `false` → no tool, no
+tool. A re-adopt that does not come within `READOPT_TIMEOUT_MS` (15 s; a page that blocks it, #1034) is waited out
+once per navigation: the barrier remembers it until a late re-adopt or the next navigation, so the step's other sends
+and later tools go straight to the page. The page then answers `noRun` (it holds no such run), which `delegateSend`
+turns into `PageUnreachable("unadopted")`, saying the page did not take the run back. A page whose CSP stops our
+page script never answers at all, and content.ts's grace names the CSP. The agent option **`navigate`** (default true) gates the tool + persistence: `false` → no tool, no
 `trackRun` (`StartRunPayload.crossPage`), a `NAV_OFF_CLAUSE` telling the model it can't navigate, and a
 `config.navigate` line in the "agent options" debug log. A page-hosted run (no debug surface + no approval
 tool) still dies at a nav — persistence needs the background spine (the HUD/off-with-approval/devtools cases).

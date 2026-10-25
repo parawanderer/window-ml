@@ -320,6 +320,9 @@ export interface RunToolInPagePayload {
  *  {@link AgentResult}.elements there. */
 export interface PageToolEnvelope {
     result: string;
+    /** the page holds no run by this id: it never re-adopted it, or the run ended there (delegate-send.ts reads it after a
+     *  navigation's re-adopt did not come) */
+    noRun?: true;
     /** the turn's curated answer (the `answer` tool's set, finalized), sent only for a `finish` (sw-run-host.ts) */
     answer?: string;
     /** real nodes stay page-side; the background only learns how many */

@@ -72,7 +72,7 @@ any new mechanism reports.
 | `page` | `discarded` | the tab was discarded with a call outstanding; `ms` is how long before we noticed |
 | `page` | `reloaded` | reloaded in place and about to retry; a `reason` of `gone` means the reload itself failed |
 | `page` | `recovered` | the retry answered, and how long it took |
-| `page` | `unreachable` (`asleep`/`gone`/`silent`) | gave up, with how long it waited |
+| `page` | `unreachable` (`asleep`/`gone`/`silent`/`unadopted`) | gave up, with how long it waited (`unadopted`: the page answered after a navigation it never re-adopted the run on) |
 | `cdp` | `attached` (`already`) | the debugger was attached — the banner the person saw |
 | `cdp` | `refused` (`permission`/`busy`) | "CDP not enabled", or DevTools already holds the tab |
 | `cdp` | `detached` | paired with the attach, so the two bracket how long the run held the debugger |
