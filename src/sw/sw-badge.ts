@@ -32,33 +32,28 @@ export function badgeFor(asks: readonly WaitingStart[], requests: readonly Pick<
     return { text, title: `window.ml: ${n} things are waiting for you` };
 }
 
-const drawn = new Set<number>();   // state: ui (the tabs whose badge this worker set, so a settled ask clears its own)
+const drawn = new Set<number>();   // state: ui (the tabs this worker drew a badge of their own on, redrawn on every change)
 
 /**
- * Draw one tab, or with no tab the default every tab without its own shows. A tab with nothing of its own is reset to
- * the default (`null`), so the requests drawn there show. A tab that closed in between rejects, which is fine: its
- * badge went with it.
+ * Draw one tab, or with no tab the default every tab without its own shows. Always explicit text: Chrome does not take
+ * `null` back to the default for a title, so a tab once drawn keeps its own badge, drawn from what waits now. A tab that
+ * closed in between rejects, which is fine: its badge went with it.
  */
 async function draw(tabId: number | undefined, asks: readonly WaitingStart[], requests: readonly AccessRequest[]): Promise<void> {
     const action = globalThis.chrome?.action;
     if (!action) return;
     const { text, title } = badgeFor(asks, requests);
-    const own = tabId != null && !asks.length;
-    await Promise.all([
-        action.setBadgeText({ ...(tabId != null ? { tabId } : {}), text: own ? null as unknown as string : text }),
-        action.setTitle({ ...(tabId != null ? { tabId } : {}), title: own ? null as unknown as string : title }),
-    ]).catch(() => { /* the tab is gone */ });
+    const at = tabId != null ? { tabId } : {};
+    await Promise.all([action.setBadgeText({ ...at, text }), action.setTitle({ ...at, title })]).catch(() => { /* the tab is gone */ });
 }
 
-/** Recompute the default and every tab's badge from what is waiting now. */
+/** Recompute the default and every drawn tab's badge from what is waiting now. */
 export async function refreshBadges(): Promise<void> {
     const requests = await waitingRequests().catch(() => [] as AccessRequest[]);
     const byTab = new Map<number, WaitingStart[]>();
     for (const a of waitingStarts()) byTab.set(a.tabId, [...(byTab.get(a.tabId) ?? []), a]);
-    const stale = [...drawn].filter((t) => !byTab.has(t));
-    for (const t of stale) drawn.delete(t);
     for (const t of byTab.keys()) drawn.add(t);
-    await Promise.all([draw(undefined, [], requests), ...stale.map((t) => draw(t, [], requests)), ...[...byTab].map(([t, asks]) => draw(t, asks, requests))]);
+    await Promise.all([draw(undefined, [], requests), ...[...drawn].map((t) => draw(t, byTab.get(t) ?? [], requests))]);
 }
 
 /**
@@ -70,11 +65,12 @@ async function startBadge(): Promise<void> {
     if (!action) return;
     onStartsChanged(() => { void refreshBadges(); });
     onRequestsChanged(() => { void refreshBadges(); });
+    chrome.tabs?.onRemoved?.addListener((tabId) => { drawn.delete(tabId); });
     try {
         await action.setBadgeBackgroundColor({ color: BADGE_BG });
         await action.setBadgeTextColor?.({ color: BADGE_FG });
         const tabs = await chrome.tabs.query({});
-        await Promise.all(tabs.filter((t) => t.id != null).map((t) => draw(t.id as number, [], [])));
+        for (const t of tabs) if (t.id != null) drawn.add(t.id);
     } catch { /* no tabs API in this context */ }
     await refreshBadges();
 }

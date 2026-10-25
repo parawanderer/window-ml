@@ -563,7 +563,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
             });
         },
         /** Simulates the user closing a tab (chrome.tabs.onRemoved). */
-        closeTab: (tabId) => { for (const fn of tabRemovedListeners) fn(tabId, {}); },
+        closeTab: (tabId) => { badges.delete(tabId); for (const fn of tabRemovedListeners) fn(tabId, {}); },   // a tab's badge goes with it
         /** Simulates the user switching to a tab: it becomes its window's `active` one in `openTabs`, and
          *  chrome.tabs.onActivated fires. */
         activateTab: (tabId) => {

@@ -65,7 +65,7 @@ test("at worker start every open tab is cleared (an evicted worker's asks are go
     const { bg, shown } = world();
     await flush();
     for (const tab of [7, 8, 9]) assert.deepEqual(shown(tab), idle, `tab ${tab}`);
-    assert.deepEqual(bg.badges.get(7), { text: null, title: null }, "tab 7 was reset to the default, not just left alone");
+    assert.deepEqual(bg.badges.get(7), idle, "tab 7 was drawn idle, not just left alone (Chrome takes no null title back to the default)");
     assert.deepEqual(bg.badges.get("default"), idle);
     assert.deepEqual(bg.badges.colours, { bg: "#eab308", fg: "#1a1400" });
 });
