@@ -306,8 +306,8 @@ function onPageMessage(data: PageMessage): void {
     sendRuntimeMessage(entry.type, requestId, data.payload, entry.responseType);
 }
 
-/** The `ml.requestAccess` calls waiting on the one in flight, by request id: answered with its answer (state: plumbing). */
-let accessWaiting: string[] | null = null;
+/** The `ml.requestAccess` calls waiting on the one in flight, by request id: answered with its answer. */
+let accessWaiting: string[] | null = null;   // state: plumbing
 
 /**
  * Relay one `ml.requestAccess` call, with the one fact only this world can vouch for: whether the person just acted on

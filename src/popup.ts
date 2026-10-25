@@ -6,9 +6,9 @@ import type { LoadedModel } from "./contract/contract-server";
 import { formatBytes } from "./resource/resource-model";
 import { DEFAULT_CONFIG, fmtCtx } from "./contract/contract-config";
 import { generatesText } from "./contract/contract-server";
-import { browserInfo, extensionDetailsUrl } from "./util";
+import { browserInfo, extensionDetailsUrl } from "./util";   // browser-correct internal scheme + details-page URL
 import { originOf, type SiteDecision, type SiteEdit, type SiteLevels } from "./site-access";
-import { REQUEST_TTL_MS, type WaitingRequest, type RequestDecision } from "./site-requests";   // browser-correct internal scheme + details-page URL
+import { requestAge, type WaitingRequest, type RequestDecision } from "./site-requests";
 
 // The popup is a QUICK LAUNCHER: connection (the bare minimum to work) + the two
 // always-handy toggles (theme, debug panel). Everything else — OCR/utility/grounding/
@@ -501,14 +501,6 @@ function accessRequests(payload: { origin?: string; decision?: RequestDecision }
 }
 let waitingAsks: WaitingAsk[] = [];   // state: ui (what the block drew last)
 let waitingRequests: WaitingRequest[] = [];   // state: ui
-/** "Asked 3 minutes ago · expires in 7 days", from an entry's time. */
-function requestAge(at: number, now = Date.now()): string {
-    const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
-    const mins = Math.round((at - now) / 60_000);
-    const ago = Math.abs(mins) < 60 ? rtf.format(mins, "minute") : Math.abs(mins) < 1440 ? rtf.format(Math.round(mins / 60), "hour") : rtf.format(Math.round(mins / 1440), "day");
-    const days = Math.max(1, Math.ceil((at + REQUEST_TTL_MS - now) / 86_400_000));
-    return `Asked ${ago} · expires in ${days} ${days === 1 ? "day" : "days"}`;
-}
 /** A button with its label and tooltip. */
 function button(label: string, title: string | null, onClick: () => void): HTMLButtonElement {
     const b = document.createElement("button");

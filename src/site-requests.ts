@@ -238,3 +238,12 @@ export function settleByLists(store: RequestStore, lists: Partial<SiteLists>): {
     });
     return { store: changed ? { v: REQUESTS_SCHEMA, entries } : store, changed };
 }
+
+/** "Asked 3 minutes ago · expires in 7 days", from an entry's time (the popup's `requestAge`). */
+export function requestAge(at: number, now = Date.now()): string {
+    const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+    const mins = Math.round((at - now) / 60_000);
+    const ago = Math.abs(mins) < 60 ? rtf.format(mins, "minute") : Math.abs(mins) < 1440 ? rtf.format(Math.round(mins / 60), "hour") : rtf.format(Math.round(mins / 1440), "day");
+    const days = Math.max(1, Math.ceil((at + REQUEST_TTL_MS - now) / 86_400_000));
+    return `Asked ${ago} · expires in ${days} ${days === 1 ? "day" : "days"}`;
+}
