@@ -351,8 +351,12 @@ the page the run, every call is answered with the hold's text (`withArrival`, `s
 consents the origin (as-you, as an approved navigate card does), clears the hold and re-adopts the run
 (`readoptHere`); Deny goes back. The model reads the answer on the call that waited for it, or on the next call
 when it came while the step that moved the tab still ran. A hold is the SESSION's: a turn that ends held is not
-re-adopted (`holdStands` in `userRunAction`) and the next turn judges the tab's page again. It is worker memory:
-a resurrected run is judged again where it wakes. Once approved, it just works mechanically: the content script re-injects on the new site
+re-adopted (`holdStands` in `userRunAction`) and the next turn judges the tab's page again. BETWEEN turns the tab
+is still watched (`watchBetweenTurns`, until the session is released): a commit then holds or clears the run with no
+card, and the next turn raises the card (`judgeTurnStart`, before any of its tools). A page no judge of the run spoke
+on is judged at the turn's start too (`holdStands`, `judgeTurnStart`): a commit no judge saw is never marked judged.
+An `allow` row's arrival consents the origin for navigation only (`navOnlyOrigins`); a read there goes to its card.
+It is worker memory: a resurrected run is judged again where it wakes. Once approved, it just works mechanically: the content script re-injects on the new site
 (`<all_urls>`), so re-adoption + delegation continue there; `crossOrigin` rides on `RebuildConfig` so the
 rebuilt tool keeps crossing after a nav, and it's logged in the "agent options" block with a data-carry
 caution in the tool description. (v2: an "allow / allow-for-this-run / deny" 3-way + "on-click"

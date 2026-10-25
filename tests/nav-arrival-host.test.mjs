@@ -171,6 +171,44 @@ test("a person who goes back by hand between turns finds the run free again on t
     assert.equal(r.results.at(-1), "ran scroll");
 });
 
+// --- a page the tab moved to BETWEEN turns, when no judge watched it, is judged before the next turn acts there ---
+
+test("RED TEAM (#1129): a hand-move between turns to a page a policy asks about is asked about before the next turn acts there", T, async () => {
+    const r = await hostRun([
+        { name: "scroll", args: {} },
+        null,
+        { name: "scroll", args: {} },
+    ], { policies: [ASK_B], ask: () => true, between: (go) => go(OTHER) });
+    assert.deepEqual(r.asks.map((a) => a.kind), ["arrival"], "the moved-to page was judged once, at the turn's start");
+    assert.deepEqual(r.toPage, [{ name: "scroll", url: START }, { name: "scroll", url: OTHER }], "the follow-up acted there only once approved");
+    assert.match(r.results.at(-1), /The person approved the run acting on it/);
+});
+
+test("RED TEAM (#1129): a page that sends the tab to a denied page between turns holds the next turn: nothing of it reaches the page", T, async () => {
+    const r = await hostRun([
+        { name: "scroll", args: {} },
+        null,
+        { name: "scroll", args: {} },
+    ], { policies: [DENY_ADMIN], ask: () => undefined, between: (go) => go(ADMIN) });
+    assert.equal(r.turns(), 4, "the follow-up turn ran");
+    assert.deepEqual(r.toPage, [{ name: "scroll", url: START }], "the follow-up's scroll never reached the denied page");
+    assert.match(r.results.at(-1), /"No admin pages" denies: no tool runs on this page/);
+    assert.deepEqual(onB(r.adopts), []);
+});
+
+test("a follow-up on the page the last turn was approved on is not asked about again; the run's first turn is on the person's own page", T, async () => {
+    // The start page is one an ask covers: the person started the run there, so its first turn asks nothing of it, and
+    // the follow-up on the same page asks nothing either. Only a page no judge of this run spoke on is judged.
+    const ASK_SITE = policy("p-ask-site", "ask", '(c) => c.host === "site.example"', "Check with me on site.example");
+    const r = await hostRun([
+        { name: "scroll", args: {} },
+        null,
+        { name: "scroll", args: {} },
+    ], { policies: [ASK_SITE], ask: () => true });
+    assert.deepEqual(r.asks, []);
+    assert.deepEqual(r.toPage.map((x) => x.url), [START, START]);
+});
+
 // --- an ask: the run waits for the person ---
 
 test("an arrival a policy asks about waits for the person: Approve re-adopts the run there and the waiting call runs with the answer ahead of its result", T, async () => {
@@ -284,6 +322,19 @@ test("RED TEAM (ruling (b)): an allow row lets the arrival through with no card,
     assert.deepEqual(r.toPage.map((x) => x.name), ["click", "scroll", "click"]);
     assert.deepEqual(r.cards, ["click", "click", "fetch_url"], "the as-you fetch went to the person");
     assert.deepEqual(r.fetched, [], "refused on its card, it read nothing");
+});
+
+test("RED TEAM (#1129, ruling (b) as built): an allow row's arrival consents the origin for navigation only: an uncredentialed read there goes to its card, where the choke point would refuse it silently", T, async () => {
+    const r = await hostRun([
+        { name: "click", args: { selector: "#docs" } },
+        { name: "click", args: { selector: "#home" } },
+        { name: "fetch_url", args: { url: "https://b.example/data" } },
+        { name: "navigate", args: { url: OTHER } },
+    ], { policies: [ALLOW_B_NAV], clickTo: { "#docs": OTHER, "#home": START }, card: (tool) => tool !== "fetch_url" });
+    assert.deepEqual(r.asks, [], "an allow row's arrival is not asked about");
+    assert.deepEqual(r.cards, ["click", "click", "fetch_url"], "the plain GET carded; the navigate back rode the navigation consent");
+    assert.deepEqual(r.fetched, []);
+    assert.equal(r.tab.url, OTHER);
 });
 
 test("against it: an arrival the person approved IS the as-you grant, after the tab leaves too", T, async () => {
