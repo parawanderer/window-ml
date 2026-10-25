@@ -43,6 +43,8 @@ export function watchGestures(): void {
  * @returns true for a gesture the page may spend
  */
 export function hasPageGesture(): boolean {
-    return (navigator as Navigator & { userActivation?: { isActive?: boolean } }).userActivation?.isActive === true
-        && performance.now() - lastInput < GESTURE_MS;
+    try {
+        return (navigator as Navigator & { userActivation?: { isActive?: boolean } }).userActivation?.isActive === true
+            && performance.now() - lastInput < GESTURE_MS;
+    } catch { return false; }   // no way to tell is no gesture
 }
