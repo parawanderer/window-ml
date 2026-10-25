@@ -327,6 +327,46 @@ test("ml.config relays a GET_CONFIG request and returns the non-secret config", 
     assert.deepEqual(cfg, { model: "qwen3:235b", ocrModel: "qwen2.5vl", apiFormat: "ollama" });
 });
 
+test("ml.requestAccess relays REQUEST_ACCESS with the payload rebuilt, the content script's own gesture fact, and returns the answer", async () => {
+    const sent = [];
+    const world = loadPageWorld({
+        onRuntimeMessage: (msg) => {
+            if (msg.type !== "REQUEST_ACCESS") return undefined;
+            sent.push(msg);
+            return { data: { state: "granted", agents: "pending" } };
+        }
+    });
+    const r = await world.ml.requestAccess({ agents: true, reason: "x".repeat(2000), gesture: true, level: "admin", extra: 1 });
+    assert.deepEqual(JSON.parse(JSON.stringify(r)), { state: "granted", agents: "pending" });
+    assert.equal(sent.length, 1);
+    const m = sent[0];
+    assert.deepEqual(Object.keys(m.payload).sort(), ["agents", "level", "reason"], "only the fields the worker reads");
+    assert.equal(m.payload.agents, true);
+    assert.equal(m.payload.level, undefined, "a level other than self-approve is dropped");
+    assert.equal(m.payload.reason.length, 1000, "the reason is capped on the way");
+    assert.equal(m.gesture, false, "the gesture is the content script's fact (no trusted event here), never the page's word");
+});
+
+test("ml.requestAccess: calls while one is in flight share its answer, and cost the worker one request", async () => {
+    let n = 0;
+    const world = loadPageWorld({
+        onRuntimeMessage: (msg) => {
+            if (msg.type !== "REQUEST_ACCESS") return undefined;
+            n++;
+            return new Promise((res) => setTimeout(() => res({ data: { state: "pending" } }), 20));
+        }
+    });
+    const all = await Promise.all(Array.from({ length: 5 }, () => world.ml.requestAccess({ agents: true })));
+    assert.equal(n, 1);
+    for (const r of all) assert.equal(r.state, "pending");
+});
+
+test("ml.requestAccess never throws: a worker that does not answer comes back as a refusal", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: (msg) => (msg.type === "REQUEST_ACCESS" ? { error: "boom" } : undefined) });
+    const r = await world.ml.requestAccess({ agents: true });
+    assert.equal(r.state, "refused");
+});
+
 test("ml.chat forwards a maxTokens cap in the request payload", async () => {
     const world = loadPageWorld({
         onRuntimeMessage: (msg) => {

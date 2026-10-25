@@ -32,6 +32,7 @@ import { toHost } from "../parent-channel";
 import { ShellSectionBody } from "./shell-section";
 import { ManifestsSectionBody } from "./manifests-section";
 import { LibrariesSectionBody } from "./libraries-section";
+import { RequestRows, answerRequest, useWaitingRequests } from "./requests-section";
 import { Lbl } from "./settings-label";
 
 /** The chart-window lengths the picker offers by name. The scrub strip can set others by drag, which is
@@ -775,12 +776,16 @@ function askSiteAccess(payload: { edit?: SiteEdit; dismissUpgradeNotice?: boolea
     });
 }
 
+/** Bumped when an answer to a waiting request has edited the site lists, so every view of them reads again. */
+const siteListsRev = signal(0);   // state: ui
+
 /**
  * The site lists, kept current: an approval made from the popup shows up here without reopening Settings.
  * @returns the lists (null until read) and their setter, for an edit's answer
  */
 function useSiteLists(): [SiteAccessView | null, (l: SiteAccessView) => void] {
     const [view, setView] = useState<SiteAccessView | null>(null);
+    const rev = siteListsRev.value;   // an answer in "Waiting for an answer" edited the lists: read them again
     useEffect(() => {
         void askSiteAccess({}).then(setView);
         const onChange = (changes: Record<string, unknown>) => {
@@ -788,12 +793,29 @@ function useSiteLists(): [SiteAccessView | null, (l: SiteAccessView) => void] {
         };
         try { chrome.storage.onChanged.addListener(onChange); } catch { /* not an extension page */ }
         return () => { try { chrome.storage.onChanged.removeListener(onChange); } catch { /* ignore */ } };
-    }, []);
+    }, [rev]);
     return [view, setView];
 }
 
 /** The agent levels a row offers, in the order the select lists them. */
 const AGENT_CHOICES: [AgentLevel | "off", string][] = [["off", "Off"], ["ask", "Ask each time"], ["always", "Always"], ["denied", "Denied"]];
+
+/**
+ * The sites asking for access (`ml.requestAccess`), every one: the toolbar popup's rows with the same buttons. Appears
+ * only while something waits. An answer edits the site lists, so their view reads again after it.
+ */
+function WaitingRequests() {
+    const [requests, setRequests] = useWaitingRequests();
+    if (!requests?.length) return null;
+    const decide = (origin: string, decision: Parameters<typeof answerRequest>[1]): void => {
+        void answerRequest(origin, decision).then((left) => { if (left) setRequests(left); siteListsRev.value++; });
+    };
+    return (
+        <Section id="waitingrequests" title="Waiting for an answer">
+            <RequestRows requests={requests} onDecide={decide} />
+        </Section>
+    );
+}
 
 /**
  * Which sites may use `window.ml` at all (docs/spec/SITE_ACCESS.md), and whether each may start agents: one row per
@@ -1223,6 +1245,7 @@ function Policies() {
 function PermissionsView() {
     return (
         <>
+            <WaitingRequests />
             <SiteApprovals />
             <Policies />
             <SelfApprovalList />

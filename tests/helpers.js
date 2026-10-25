@@ -187,7 +187,11 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     const tabRemovedListeners = [];   // chrome.tabs.onRemoved listeners; fired by bg.closeTab(id)
     const tabActivatedListeners = new Set();   // chrome.tabs.onActivated listeners; fired by bg.activateTab(id)
     const tabReplacedListeners = new Set();   // chrome.tabs.onReplaced listeners; fired by bg.replaceTab(oldId, newId)
-    const badges = new Map();   // tabId → { text, title }: what chrome.action shows on each tab (the toolbar badge)
+    const badges = new Map();   // tabId (or "default") → { text, title }: what chrome.action was told for each tab (the toolbar badge)
+    badges.shown = (tabId) => {
+        const own = badges.get(tabId) ?? {}, dflt = badges.get("default") ?? {};
+        return { text: own.text ?? dflt.text ?? "", title: own.title ?? dflt.title ?? "window.ml" };
+    };
     const stored = { ...config };
     const syncListeners = [];
     const localStore = { ...local };   // seed chrome.storage.local (e.g. ml_bgrun_* snapshots for durable-resume tests)
@@ -270,8 +274,10 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         chrome: {
             // The toolbar button: per-tab badge text and tooltip, recorded in `badges`; the colours in `badges.colours`.
             action: {
-                setBadgeText: async ({ tabId, text }) => { badges.set(tabId, { ...badges.get(tabId), text }); },
-                setTitle: async ({ tabId, title }) => { badges.set(tabId, { ...badges.get(tabId), title }); },
+                // No tabId sets the default; a tab's `null` resets it to the default, as in Chrome. `badges.shown(tab)`
+                // is what that tab shows.
+                setBadgeText: async ({ tabId, text }) => { badges.set(tabId ?? "default", { ...badges.get(tabId ?? "default"), text }); },
+                setTitle: async ({ tabId, title }) => { badges.set(tabId ?? "default", { ...badges.get(tabId ?? "default"), title }); },
                 setBadgeBackgroundColor: async ({ color }) => { badges.colours = { ...badges.colours, bg: color }; },
                 setBadgeTextColor: async ({ color }) => { badges.colours = { ...badges.colours, fg: color }; },
             },
@@ -557,7 +563,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
             });
         },
         /** Simulates the user closing a tab (chrome.tabs.onRemoved). */
-        closeTab: (tabId) => { for (const fn of tabRemovedListeners) fn(tabId, {}); },
+        closeTab: (tabId) => { badges.delete(tabId); for (const fn of tabRemovedListeners) fn(tabId, {}); },   // a tab's badge goes with it
         /** Simulates the user switching to a tab: it becomes its window's `active` one in `openTabs`, and
          *  chrome.tabs.onActivated fires. */
         activateTab: (tabId) => {
@@ -871,7 +877,7 @@ function closeSidebarWorlds() {
 // document (sidebar.html): renders into #root, no shadow root. In the real
 // extension the content-script shell relays __mlDebug in from the parent window;
 // in jsdom window.parent === window, so dispatch posts with source: win.
-async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaModels = null, fetchLlm = () => ({ data: "OK" }), sessionTitle = () => ({ data: null }), vram = [], info = null, holdInfo = null, invocation = null, psError = null, caps = null, pythonExec = null, listModels = null, embed = null, serverTools = null, housekeeping = [], indexedDB = null, priceCalls = null, siteLists = null, siteAccess = null } = {}) {
+async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaModels = null, fetchLlm = () => ({ data: "OK" }), sessionTitle = () => ({ data: null }), vram = [], info = null, holdInfo = null, invocation = null, psError = null, caps = null, pythonExec = null, listModels = null, embed = null, serverTools = null, housekeeping = [], indexedDB = null, priceCalls = null, siteLists = null, siteAccess = null, accessRequests = null } = {}) {
     const unloadCalls = [];
     const pyCalls = [];   // PYTHON_EXEC payloads the app sent (the bench)
     const hkCalls = [];   // DUMP_HOUSEKEEPING payloads (the Settings → Housekeeping log)
@@ -956,6 +962,8 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
                 // `siteLists` only answers a read with fixed lists.
                 else if (type === "SITE_ACCESS" && siteAccess) Promise.resolve(siteAccess(msg.payload || {})).then((r) => cb(JSON.parse(JSON.stringify(r ?? null))));
                 else if (type === "SITE_ACCESS" && siteLists) cb({ data: { lists: siteLists } });
+                // The sites waiting for an answer. `accessRequests(payload)` plays the worker's ACCESS_REQUESTS and answers `{ requests }` (or a promise of it).
+                else if (type === "ACCESS_REQUESTS" && accessRequests) Promise.resolve(accessRequests(msg.payload || {})).then((r) => cb(JSON.parse(JSON.stringify(r ?? null))));
                 else cb({ data: null });
             },
         },

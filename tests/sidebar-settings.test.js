@@ -978,3 +978,105 @@ test("policy page: Add sends op add with the effect, label and source typed", as
     await w.flush();
     assert.deepEqual(calls.at(-1), { type: "POLICIES", payload: { op: "add", effect: "deny", label: "no tracker", source: '(c) => c.kind === "fetch" && c.host === "example.com"' } });
 });
+
+// --- "Waiting for an answer": the sites asking for access, for every site, the popup's rows in Settings ---
+
+/** A waiting request as ACCESS_REQUESTS lists one. */
+const req = (o) => ({ domain: "site.example", agents: false, at: Date.now() - 60000, state: "pending", asks: 1, allowed: false, ...o });
+
+/** Settings → Permissions over a fake ACCESS_REQUESTS: `waiting` is the list (a decision empties it), `decisions` what was sent. */
+async function settingsWithRequests(waiting) {
+    const decisions = [];
+    let list = waiting;
+    const w = await loadSidebarWorld({
+        siteLists: { always: [], session: [], denied: [], agents: {}, selfApprove: [] },
+        accessRequests: (payload) => { if (payload.decision) { decisions.push(payload); list = []; } return { data: { requests: list } }; },
+    });
+    await openSettings(w, "Permissions");
+    await w.flush(); await w.flush();
+    return { w, decisions };
+}
+const waitingSection = (w) => section(w, "Waiting for an answer");
+const waitButtons = (w) => [...waitingSection(w).querySelectorAll(".req-buttons button")].map((b) => b.textContent);
+const clickWait = async (w, text) => {
+    [...waitingSection(w).querySelectorAll(".req-buttons button")].find((b) => b.textContent === text).click();
+    await w.flush(); await w.flush();
+};
+
+test("Settings: nothing waiting shows no 'Waiting for an answer' section", async () => {
+    const { w } = await settingsWithRequests([]);
+    assert.equal(waitingSection(w), undefined);
+    assert.ok(section(w, "Sites that may use window.ml"), "the site lists are still there");
+});
+
+test("Settings: a site asking for access is a row above the site lists; its reason stays text, and agents asked is an unticked box", async () => {
+    const r = req({ origin: "https://asker.example", kind: "access", agents: true, reason: "<b>trust me</b>" });
+    const { w } = await settingsWithRequests([r]);
+    const titles = [...w.shadow.querySelectorAll("details.set-section > summary")].map((s) => s.textContent.trim());
+    assert.ok(titles.indexOf("Waiting for an answer") >= 0 && titles.indexOf("Waiting for an answer") < titles.indexOf("Sites that may use window.ml"));
+    const row = waitingSection(w).querySelector(".req-row");
+    assert.equal(row.querySelector(".set-hint").textContent, "https://asker.example asks to use window.ml and to start agents.");
+    assert.equal(row.querySelector(".req-says").textContent, "The site says: “<b>trust me</b>”");
+    assert.equal(row.querySelector(".req-says b"), null, "the site's words never become markup");
+    assert.equal(row.querySelector(".req-check input").checked, false);
+    assert.match(row.querySelector(".req-age").textContent, /^Asked 1 minute ago · expires in 7 days$/);
+    assert.deepEqual(waitButtons(w), ["Allow this session", "Always allow", "Deny"]);
+    const plain = await settingsWithRequests([req({ origin: "https://b.example", kind: "access" })]);
+    assert.equal(waitingSection(plain.w).querySelector(".set-hint").textContent, "https://b.example asks to use window.ml.");
+    assert.equal(waitingSection(plain.w).querySelector(".req-check"), null);
+});
+
+test("Settings: Allow this session, Always allow (with the agents box) and Deny each send that decision for the request's origin, and the section goes", async () => {
+    const r = req({ origin: "https://asker.example", kind: "access", agents: true });
+    const click = async (text, tick = false) => {
+        const { w, decisions } = await settingsWithRequests([r]);
+        if (tick) { const box = waitingSection(w).querySelector(".req-check input"); box.checked = true; box.dispatchEvent(new w.window.Event("change", { bubbles: true })); await w.flush(); }
+        await clickWait(w, text);
+        assert.equal(waitingSection(w), undefined, `${text}: answered, the section empties`);
+        return decisions;
+    };
+    assert.deepEqual(await click("Allow this session"), [{ origin: "https://asker.example", decision: { kind: "access", answer: "session", agents: false } }]);
+    assert.deepEqual(await click("Always allow", true), [{ origin: "https://asker.example", decision: { kind: "access", answer: "always", agents: true } }]);
+    assert.deepEqual(await click("Deny"), [{ origin: "https://asker.example", decision: { kind: "access", answer: "deny" } }]);
+});
+
+test("Settings: a site already allowed that asks for agents gets Let it start agents and Deny, with no box", async () => {
+    const { w, decisions } = await settingsWithRequests([req({ origin: "https://asker.example", kind: "access", agents: true, allowed: true })]);
+    assert.equal(waitingSection(w).querySelector(".req-check"), null);
+    assert.deepEqual(waitButtons(w), ["Let it start agents", "Deny"]);
+    await clickWait(w, "Let it start agents");
+    assert.deepEqual(decisions, [{ origin: "https://asker.example", decision: { kind: "access", answer: "agents" } }]);
+});
+
+test("Settings: self-approval is never one click: Review… opens a confirmation whose Allow is disabled at first, and opening decides nothing", async () => {
+    const { w, decisions } = await settingsWithRequests([req({ origin: "https://asker.example", kind: "selfApprove", allowed: true, reason: "my own tool" })]);
+    assert.equal(waitingSection(w).querySelector(".set-hint").textContent, "https://asker.example asks to approve its own actions.");
+    assert.deepEqual(waitButtons(w), ["Review…"]);
+    assert.equal(waitingSection(w).querySelector(".req-confirm"), null);
+    await clickWait(w, "Review…");
+    const dlg = waitingSection(w).querySelector(".req-confirm");
+    assert.equal(dlg.querySelector("b").textContent, "https://asker.example wants to approve its own actions.");
+    assert.match(dlg.textContent, /Only allow this for a site you control or fully trust\./);
+    assert.equal(dlg.querySelector(".req-says").textContent, "The site says: “my own tool”");
+    const allow = dlg.querySelector(".req-allow");
+    assert.equal(allow.disabled, true, "Allow is held as the confirmation opens");
+    allow.click();
+    await w.flush();
+    assert.deepEqual(decisions, [], "opening it, and a click on the held Allow, decide nothing");
+    await new Promise((r) => setTimeout(r, 1100));
+    await w.flush();
+    assert.equal(waitingSection(w).querySelector(".req-allow").disabled, false, "enabled after a second");
+    waitingSection(w).querySelector(".req-allow").click();
+    await w.flush(); await w.flush();
+    assert.deepEqual(decisions, [{ origin: "https://asker.example", decision: { kind: "selfApprove", answer: "allow" } }]);
+});
+
+test("Settings: Deny in the self-approval confirmation sends the deny", async () => {
+    const r = req({ origin: "https://asker.example", kind: "selfApprove", allowed: true });
+    const { w, decisions } = await settingsWithRequests([r]);
+    await clickWait(w, "Review…");
+    waitingSection(w).querySelector(".req-deny").click();
+    await w.flush(); await w.flush();
+    assert.deepEqual(decisions, [{ origin: "https://asker.example", decision: { kind: "selfApprove", answer: "deny" } }]);
+    assert.equal(waitingSection(w), undefined);
+});

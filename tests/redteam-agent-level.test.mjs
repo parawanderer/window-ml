@@ -104,13 +104,9 @@ test("a site that may use window.ml but not start agents: START_RUN, RESUME_RUN 
     assert.equal(ok.models.length, 1);
 });
 
-test("the Q1 refusal names host: \"page\" for a START_RUN (what ml.agent sends), and the others name where the person sets the level", () => {
-    assert.match(START_REFUSED.noLevelStart(ORIGIN), /Pass `host: "page"`/);
-    assert.match(START_REFUSED.noLevel(ORIGIN), /DevTools Settings → Permissions/);
-    // The popup's agents buttons can grant the level (slice 3 PR 3), so the refusal a site's agent can act on names them.
-    assert.match(START_REFUSED.noLevel(ORIGIN), /toolbar button/);
-    // Neither names ml.requestAccess, which cannot ask for the level until slice 3 PR 4.
-    for (const t of [START_REFUSED.noLevelStart(ORIGIN), START_REFUSED.noLevel(ORIGIN)]) assert.doesNotMatch(t, /requestAccess/);
+test("the Q1 refusal names host: \"page\" for a START_RUN (what ml.agent sends); both name ml.requestAccess, and the others the toolbar button", () => {
+    assert.equal(START_REFUSED.noLevelStart(ORIGIN), `Refused: ${ORIGIN} may use window.ml but not start agents. Pass \`host: "page"\` to run the loop in the page, or ask with \`ml.requestAccess({ agents: true })\`.`);
+    assert.equal(START_REFUSED.noLevel(ORIGIN), `Refused: ${ORIGIN} may use window.ml but not start agents. Ask with \`ml.requestAccess({ agents: true })\`, or allow it from the extension's toolbar button.`);
 });
 
 // --- "ask": the start card ---

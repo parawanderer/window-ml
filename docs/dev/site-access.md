@@ -4,7 +4,8 @@ The design and its reasons are `docs/spec/SITE_ACCESS.md`; what a page may see o
 Slice 3 is being built from its implementation reference, [../spec/SITE_ACCESS_SLICE3.md](../spec/SITE_ACCESS_SLICE3.md):
 its PR 1 (the levels in storage, the self-approval list by origin, the upgrade) is in "The lists" below, and its PR 2
 (the agent level enforced, and the start card) in "Starting agents", and its PR 3 (the toolbar badge and the popup's agent
-controls) in "The badge and the popup"; `requestAccess` is not built yet.
+controls) in "The badge and the popup", and its PR 4 (`ml.requestAccess` from a site already allowed) in "Sites asking for
+access". A site not yet allowed cannot ask until PR 4b (the stub, from SITE_PRESENCE.md).
 What has been checked about the page-facing surface, what has not, and the plan: [security-audit.md](security-audit.md).
 What a page can observe of window.ml installed and acting in it, measured per tool: [detection-surface.md](detection-surface.md).
 
@@ -234,7 +235,7 @@ Every reader goes through it, so none can disagree with the gate:
 | `pageApprovalAllowed` (`publicConfig`, which takes the decision as an argument) | `GET_CONFIG`, `workerMl`, a worker run's `agent_api_docs` config: whether a page-hosted `ml.agent` honours the page's own `approve()` |
 
 One of the extension's own frames inside a tab (the overlay sidebar's bench) is judged by its tab's top-frame URL
-(`selfApprovalFacts`), as before. `nav-handover.ts` `changesSiteAccess` watches the keys above in the local and session
+(`selfApprovalFacts`), as before. `site-access.ts` `changesSiteAccess` watches the keys above in the local and session
 areas, and no longer the sync area. The table over sender shapes x readers is `tests/self-approval-origin.test.js`
 (seeded through the migration), with the pure rule in `tests/site-access.test.mjs`; the Settings rows, the list and its
 notice in `tests/sidebar-settings.test.js`, drawn from the real bundle's answers; the popup in
@@ -746,7 +747,8 @@ and it reads only a public host's raster image (`sw-image-fetch.ts`).
 waiting for the person on each tab (`src/sw/sw-badge.ts`). It holds nothing of its own: it is redrawn from the start asks
 (`waitingStarts`, `onStartsChanged` in sw-start-approval.ts) whenever one is raised or settled, by a decision, a timeout,
 a cancel or its tab closing. At worker start it clears every open tab, since an evicted worker's asks are gone with it.
-Only start asks count until PR 4's request store exists; a refused start (`notStarted`) is not counted.
+The sites asking for access (PR 4) are drawn on the DEFAULT badge (no `tabId`), since they wait on no tab: a tab with
+start asks draws the sum of both, every other tab is reset to the default. A refused start (`notStarted`) is not counted.
 
 The popup's "This site" block offers the agent level's buttons (`AGENT_BUTTONS`, popup.ts), each a `SITE_ACCESS` edit
 `{ op: "agents", origin, level }`; none while the site approves its own actions, which is set in DevTools Settings only.
@@ -755,8 +757,40 @@ Its "Waiting for you" block lists this tab's start asks from `START_ASKS`, an ex
 when the ask is on that tab. The shell unfolds the run's card (`__mlShowRun`) without focusing it: a start card never
 takes focus, so the page's own Enter cannot land on Allow.
 
+## Sites asking for access
+
+[../spec/SITE_ACCESS_SLICE3.md](../spec/SITE_ACCESS_SLICE3.md) PR 4. `ml.requestAccess({ agents?, level?, reason? })`
+(`ml-access.ts`) posts `REQUEST_ACCESS_REQUEST`; the content script rebuilds the payload from the three fields it knows,
+adds `gesture` (`page-gesture.ts`, Q11: the browser's transient activation AND a trusted pointerdown or keydown on the
+page's own document, outside the hosts the shell marked with `markOwnHost`, in the last 5 s), and keeps one request in
+flight per document: later calls get its answer. While a run drives the tab (`activeRuns` with a live controller), the
+worker reads no gesture at all: a run's own CDP clicks and keys are trusted input too. `REQUEST_ACCESS` is in `HANDLE_MAP`, so the origin gate refuses it from
+a site that may not use window.ml: only an allowed site asks, for the agent level or for self-approval.
+
+The worker (`background.ts`) takes the origin from the sender (`grantableOrigin`, a top frame on http or https), waits
+for the tab's navigation to settle, and asks `requestAccess` (`sw-access-requests.ts`), which applies the pure rules of
+`site-requests.ts` to the store in `chrome.storage.local` (`ml_site_requests`, `defineState` `site.requests`): one entry
+per (origin, kind); one pending entry per registrable domain (`tldts` with private domains, so each `*.github.io` site is
+its own) and 5 in all; a 7-day expiry with one re-ask; self-approval only from an allowed origin. The reason is stored
+with every invisible or bidi character made visible (`visibleControls`, as the start card shows the site's task). An
+allowed site's entry is marked `fromAllowed`: it asks for agents only, so a revoke of the site answers it, and it never
+waits as a request to use window.ml. A page a running agent
+opened (Q17) is refused and recorded on the driving run (`recordNotStarted`), never shown as a request. Every change runs
+one at a time (`serially`), and a change to the lists from anywhere settles the requests it answers (`settleByLists`).
+
+The person answers in the popup's "Waiting for you" block (`requestRow`; self-approval only through the confirmation,
+whose Allow is disabled for a second) or in DevTools Settings, both through `ACCESS_REQUESTS`, an extension-only message
+that lists the waiting requests (each with `allowed`) or applies `{ origin, decision }` (checked by `isRequestDecision`) as the list edits
+`answerRequest` returns. An allowed site asking for agents is offered "Let it start agents" (the level becomes Ask each time) and Deny
+(agents Denied). Nothing opens a window or takes focus (rule 5).
+
 ## Tests
 
+- `tests/site-requests.test.mjs`: the request rules, enumerated over every (state x event), the caps by registrable
+  domain, expiry and the re-ask, and the answers' edits. `tests/request-access-bg.test.mjs`: `REQUEST_ACCESS` and
+  `ACCESS_REQUESTS` against the bundle: who may ask, the badge, each answer's edit, and a page refused both.
+  `tests/relay.test.js`: the relay rebuilds the payload, the gesture is the content script's, one request in flight.
+  `tests/popup-whitelist.test.js`, section "sites asking for access": the rows, each button's decision, the confirmation.
 - `tests/site-access.test.mjs`: the pure rules, `levelsFor` and `applyEdit` over every (use x agents x selfApprove)
   state, and the migration enumerated.
 - `tests/site-access-upgrade.test.mjs`: the upgrade from the old lists and sync whitelist, against the bundle.

@@ -6,7 +6,10 @@ import { dropAllLocalTools } from "./sw/sw-local-tools";
 import { invocationInfo } from "./sw/sw-invocation";
 import { onIsolatedMessage, pageApproved } from "./sw/sw-isolated-exec";
 import { onMlCall } from "./sw/sw-ml-wire";
-import { changesSiteAccess, forgetHandOverTab, handOverOnCommit, handOverOnRevoke } from "./sw/nav-handover";
+import { forgetHandOverTab, handOverOnCommit, handOverOnRevoke } from "./sw/nav-handover";
+import { changesSiteAccess, grantableOrigin, originOf, type SiteEdit } from "./site-access";
+import { requestAccess, decideRequest, waitingRequests } from "./sw/sw-access-requests";
+import { ASK_REFUSED, isRequestDecision, type RequestDecision } from "./site-requests";
 import { arrivalHold, arrivalSettled, forgetArrivalTab, judgeArrival } from "./sw/nav-arrival";
 import { dropAllAnswerMemory } from "./sw/worker-answer";
 import { LOAD_RECORDS_KEY } from "./resource/load-records";
@@ -39,7 +42,7 @@ import { releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns
 import { costCalls } from "./sw/sw-prices";
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, tabGrants } from "./sw/sw-consent";
 import { syncPresence, isVisible, injectPageScripts } from "./sw/sw-presence";
-import { isExtensionSender, editSiteAccess, pageRefusal, agentRefusal, readSiteLists, selfApprovalFacts, senderSelfApproves, siteLevels, siteSchemaReady, upgradeNotice, dismissUpgradeNotice } from "./sw/sw-site-access";
+import { isExtensionSender, senderFacts, editSiteAccess, pageRefusal, agentRefusal, readSiteLists, selfApprovalFacts, senderSelfApproves, siteLevels, siteSchemaReady, upgradeNotice, dismissUpgradeNotice } from "./sw/sw-site-access";
 import { policiesReady, forgetRunPolicies, addGlobalPolicy, editPolicy, removePolicy, policyView } from "./sw/sw-policies";
 import { POLICY_LABEL_MAX, POLICY_SOURCE_MAX } from "./sw/policy-valid";
 import { addManifest, manifestView, removeManifest } from "./sw/sw-manifests";
@@ -60,7 +63,6 @@ import { startUserRun, userRunAction, steerRun } from "./sw/sw-run-start";
 import { adoptOnTab } from "./sw/adopt-run";
 import { pageRebuild } from "./agent/run-assembly";
 import { runControlPayloadError } from "./sw/run-payload-check";
-import { originOf, type SiteEdit } from "./site-access";
 import { forPage } from "./sw/sw-scrub";   // error text bound for a page, without the config's secrets
 import { pythonPrewarm, pythonExec, relayPyStdout, deletePythonRun, dropPythonLibraries } from "./sw/sw-python";
 import { focusLineFor } from "./sw/sw-focus";
@@ -743,6 +745,37 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         if (ask) void chrome.tabs.sendMessage(p.tabId, { type: "ML_SHOW_START_ASK", runId: ask.runId }, { frameId: 0 }).catch(() => { /* the page is gone */ });
         sendResponse({ data: { asks: asks.map((a) => ({ requestId: a.requestId, origin: a.origin, since: a.since })), ...(typeof p.show === "string" ? { shown: !!ask } : {}) } });
         return;
+    }
+    // ml.requestAccess (docs/spec/SITE_ACCESS_SLICE3.md PR 4): what a page asks for is judged on `sender` and on the gesture
+    // fact the content script adds beside the payload; nothing in the payload but the request's shape is read. A page a
+    // running agent opened is recorded in that run's step list and never shown as a prompt (Q17).
+    if (message.type === "REQUEST_ACCESS") {
+        const tabId = sender.tab?.id;
+        const g = grantableOrigin(senderFacts(sender));
+        if (tabId == null || "refused" in g) { sendResponse({ data: { state: "refused", reason: ASK_REFUSED.frame } }); return; }
+        const p = (message.payload || {}) as { agents?: unknown; level?: unknown; reason?: unknown };
+        (async () => {
+            await navigationSettled(tabId);
+            const opener = openedByRun(tabId, typeof sender.documentId === "string" ? sender.documentId : undefined);
+            // While a run is driving this tab, its own clicks and keys are trusted input too: none of it is the person's
+            // gesture (Q11), so nothing a run's click lets the page ask counts.
+            const runDriving = [...(activeRuns.get(tabId) ?? [])].some((id) => runControllers.has(id));
+            const answer = await requestAccess({ agents: p.agents, level: p.level, reason: p.reason },
+                { origin: g.origin, gesture: message.gesture === true && !runDriving, openedByAgent: opener != null, sitesMayAsk: false });
+            if (opener != null && answer.state === "refused" && answer.reason === ASK_REFUSED.openedByAgent) recordNotStarted(tabId, opener, g.origin);
+            sendResponse({ data: answer });
+        })().catch((e) => sendResponse({ error: (e as Error)?.message || String(e) }));
+        return true;
+    }
+    // The popup's and Settings' view of the sites asking for access, and the person's answer to one. Extension pages only.
+    if (message.type === "ACCESS_REQUESTS") {
+        if (!isExtensionSender(sender)) { sendResponse({ error: "refused" }); return; }
+        const p = (message.payload || {}) as { origin?: unknown; decision?: RequestDecision };
+        if (p.decision !== undefined && !isRequestDecision(p.decision)) { sendResponse({ error: "not a decision" }); return; }
+        const decide = typeof p.origin === "string" && p.decision !== undefined;
+        (decide ? decideRequest(p.origin as string, p.decision as RequestDecision) : waitingRequests())
+            .then((requests) => sendResponse({ data: { requests } }), (e) => sendResponse({ error: (e as Error)?.message || String(e) }));
+        return true;
     }
     if (message.type === "USER_START_RUN") {
         const tabId = sender.tab?.id;

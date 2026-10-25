@@ -55,3 +55,17 @@ export const suspiciousArgsWarning = (args: unknown): string => {
     return `⚠ WARNING: ${findings.length} hidden/suspicious character(s) — ${names} ` +
         `— possible prompt-injection. Inspect carefully before allowing.\n\n`;
 };
+
+/** Characters that draw nothing or change how the text around them reads: format controls (bidi, zero-width, tag
+ *  characters), every default-ignorable code point (soft hyphen, variation selectors, Hangul fillers), private use. */
+export const INVISIBLE = /[\p{Default_Ignorable_Code_Point}\p{Cf}\p{Co}]/gu;
+
+/**
+ * A site's text with every invisible or bidi character made visible as `⟨U+202E⟩`, so a quote reads as it is (3.2).
+ * Astral code points (the tag characters a model reads as text) are matched whole.
+ * @param text the site's text
+ * @returns the same text, with those characters shown
+ */
+export function visibleControls(text: string): string {
+    return text.replace(INVISIBLE, (c) => `⟨U+${(c.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0")}⟩`);
+}

@@ -9,7 +9,8 @@
 
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { StartAsk } from "../../contract/contract-agent";
-import { PAGE_TURN_BUDGET, hostOf, visibleControls } from "../../agent-start";
+import { PAGE_TURN_BUDGET, hostOf } from "../../agent-start";
+import { visibleControls } from "../../agent/security";
 import type { Session } from "../store";
 import { rev, surface } from "../store";
 import { services } from "../services";

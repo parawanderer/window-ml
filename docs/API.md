@@ -484,8 +484,12 @@ because the extension builds them, not the page; the page they are on is lent no
 "Sites that approve their own actions" (DevTools Settings → Permissions, not the popup) may answer its own approval
 prompts, which is the strongest grant there is: add only a site you control. That list is by origin like the rest: a
 bare host means `https://` on the default port, loopback included, and `http://` or another port is written out as its
-own origin; an install's older list of hosts became their `https://` origins. Not built yet: a site asking for access
-with `ml.requestAccess()`. The design is [spec/SITE_ACCESS.md](spec/SITE_ACCESS.md), with the implementation reference
+own origin; an install's older list of hosts became their `https://` origins. A site you allowed may ask for more right
+after you click on its page: `await ml.requestAccess({ agents: true, reason })` to start agents, or `{ level:
+"self-approve", reason }` to approve its own actions. The request waits in the toolbar button's badge and popup, and in
+DevTools Settings, until you answer; nothing opens by itself. It resolves with `{ state: "granted", agents }`,
+`{ state: "pending" }`, `{ state: "denied" }` or `{ state: "refused", reason }` and never throws. A site you have not
+allowed cannot ask yet. The design is [spec/SITE_ACCESS.md](spec/SITE_ACCESS.md), with the implementation reference
 for the remaining slice in [spec/SITE_ACCESS_SLICE3.md](spec/SITE_ACCESS_SLICE3.md).
 
 **Starting agents.** Starting an agent is a second permission per site (Off, Ask each time, Always, Denied), set in

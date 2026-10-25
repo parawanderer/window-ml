@@ -6,8 +6,9 @@ import type { LoadedModel } from "./contract/contract-server";
 import { formatBytes } from "./resource/resource-model";
 import { DEFAULT_CONFIG, fmtCtx } from "./contract/contract-config";
 import { generatesText } from "./contract/contract-server";
-import { browserInfo, extensionDetailsUrl } from "./util";
-import { originOf, type SiteDecision, type SiteEdit, type SiteLevels } from "./site-access";   // browser-correct internal scheme + details-page URL
+import { browserInfo, extensionDetailsUrl } from "./util";   // browser-correct internal scheme + details-page URL
+import { originOf, type SiteDecision, type SiteEdit, type SiteLevels } from "./site-access";
+import { requestAge, type WaitingRequest, type RequestDecision } from "./site-requests";
 
 // The popup is a QUICK LAUNCHER: connection (the bare minimum to work) + the two
 // always-handy toggles (theme, debug panel). Everything else — OCR/utility/grounding/
@@ -489,10 +490,100 @@ function startAsks(payload: { tabId: number; show?: string }): Promise<{ asks: W
         });
     });
 }
-/** Draw the block: one line per ask, with Show; hidden when nothing waits. */
-function renderWaiting(asks: WaitingAsk[]): void {
-    $("waiting").hidden = asks.length === 0;
-    $("waitingList").replaceChildren(...asks.map((a) => {
+/** Ask the worker for the sites asking for access, or (with `decision`) answer one. */
+function accessRequests(payload: { origin?: string; decision?: RequestDecision } = {}): Promise<WaitingRequest[]> {
+    return new Promise((resolve) => {
+        chrome.runtime.sendMessage({ type: "ACCESS_REQUESTS", payload }, (res: { data?: { requests?: WaitingRequest[] } } | undefined) => {
+            void chrome.runtime.lastError;
+            resolve(res?.data?.requests ?? []);
+        });
+    });
+}
+let waitingAsks: WaitingAsk[] = [];   // state: ui (what the block drew last)
+let waitingRequests: WaitingRequest[] = [];   // state: ui
+/** A button with its label and tooltip. */
+function button(label: string, title: string | null, onClick: () => void): HTMLButtonElement {
+    const b = document.createElement("button");
+    b.textContent = label;
+    if (title) b.title = title;
+    b.addEventListener("click", onClick);
+    return b;
+}
+/** Answer a request, then redraw the block and the site's state (an answer may have changed the site's levels). */
+async function decide(origin: string, decision: RequestDecision): Promise<void> {
+    waitingRequests = await accessRequests({ origin, decision });
+    renderWaiting();
+    if (siteOrigin) renderSite(await siteAccess({ origin: siteOrigin }));
+}
+/** One site asking for access (SITE_ACCESS_SLICE3.md 1.3): the origin as the browser reported it, never a title the
+ *  page set; its reason only as a quote of its own words. */
+function requestRow(r: WaitingRequest): HTMLElement {
+    const row = document.createElement("div");
+    row.className = "req-row";
+    const line = document.createElement("div");
+    line.className = "hint";
+    const origin = document.createElement("code");
+    origin.textContent = r.origin;
+    const allowed = r.kind === "access" && r.allowed === true;
+    if (r.kind === "selfApprove") line.append(origin, " asks to approve its own actions.");
+    else line.append(origin, r.agents ? " asks to use window.ml and to start agents." : " asks to use window.ml.");
+    row.append(line);
+    if (r.reason) {
+        const says = document.createElement("div");
+        says.className = "site-says";
+        says.textContent = `The site says: “${r.reason}”`;   // textContent: the site's words never become markup
+        row.append(says);
+    }
+    let agentsBox: HTMLInputElement | null = null;
+    if (r.kind === "access" && r.agents && !allowed) {
+        const label = document.createElement("label");
+        label.className = "req-check";
+        agentsBox = document.createElement("input");
+        agentsBox.type = "checkbox";   // unticked (Q12): the most a site can ask for is never one click away
+        label.append(agentsBox, " Let it start agents too. Each start asks you.");
+        row.append(label);
+    }
+    const buttons = document.createElement("div");
+    buttons.className = "row req-buttons";
+    const deny = (): void => { void decide(r.origin, { kind: r.kind as "access", answer: "deny" }); };
+    if (r.kind === "selfApprove") {
+        buttons.append(button("Review…", null, () => openSelfApproval(r)));
+    } else if (allowed) {
+        // A site that may already use window.ml, asking for agents: the "This site" block's button for the level.
+        buttons.append(button("Let it start agents", null, () => { void decide(r.origin, { kind: "access", answer: "agents" }); }),
+            button("Deny", "Refuse it, and stop it asking. Undo in DevTools Settings → Permissions.", deny));
+    } else {
+        const allow = (answer: "session" | "always") => () => { void decide(r.origin, { kind: "access", answer, agents: agentsBox?.checked === true }); };
+        buttons.append(button("Allow this session", "Allowed until the browser restarts", allow("session")),
+            button("Always allow", null, allow("always")),
+            button("Deny", "Refuse it, and stop it asking. Undo in DevTools Settings → Permissions.", deny));
+    }
+    const age = document.createElement("div");
+    age.className = "hint req-age";
+    age.textContent = requestAge(r.at);
+    row.append(buttons, age);
+    return row;
+}
+/** The self-approval confirmation (1.6): never one click from the entry, and Allow is held for a second. */
+function openSelfApproval(r: WaitingRequest): void {
+    const dlg = $("selfApproveDialog");
+    $("selfApproveOrigin").textContent = `${r.origin} wants to approve its own actions.`;
+    const says = $("selfApproveSays");
+    says.hidden = !r.reason;
+    says.textContent = r.reason ? `The site says: “${r.reason}”` : "";
+    const allow = $("selfApproveAllow");
+    allow.disabled = true;
+    setTimeout(() => { allow.disabled = false; }, 1000);
+    const close = (): void => { dlg.hidden = true; allow.onclick = null; $("selfApproveDeny").onclick = null; };
+    allow.onclick = () => { close(); void decide(r.origin, { kind: "selfApprove", answer: "allow" }); };
+    $("selfApproveDeny").onclick = () => { close(); void decide(r.origin, { kind: "selfApprove", answer: "deny" }); };
+    dlg.hidden = false;
+}
+/** Draw the block: the sites asking for access, then this tab's start asks with Show; hidden when nothing waits. */
+function renderWaiting(asks: WaitingAsk[] = waitingAsks, requests: WaitingRequest[] = waitingRequests): void {
+    waitingAsks = asks; waitingRequests = requests;
+    $("waiting").hidden = asks.length + requests.length === 0;
+    $("waitingList").replaceChildren(...requests.map(requestRow), ...asks.map((a) => {
         const row = document.createElement("div");
         row.className = "wait-row";
         const line = document.createElement("div");
@@ -514,7 +605,8 @@ function renderWaiting(asks: WaitingAsk[]): void {
     }));
 }
 async function loadWaiting(): Promise<void> {
-    renderWaiting(siteTabId == null ? [] : (await startAsks({ tabId: siteTabId })).asks);
+    const [asks, requests] = await Promise.all([siteTabId == null ? { asks: [] } : startAsks({ tabId: siteTabId }), accessRequests()]);
+    renderWaiting(asks.asks, requests);
 }
 async function editSite(edit: (origin: string) => SiteEdit) {
     if (!siteOrigin) return;

@@ -5,14 +5,15 @@
 // `sw/sw-start-approval.ts`; the card is `sidebar/card/card-start.tsx`. Everything here is pure and shared by both, so
 // the worker and the card cannot word or count a thing differently.
 
+import { INVISIBLE } from "./agent/security";
 import { GATED_BUILTINS, cardLine, isBuiltinTool } from "./tools/tool-registry";
 
 /** The refusals a page sees (and the model, when its `exec` calls `ml.agent`), SITE_ACCESS_SLICE3.md 1.7. */
 export const START_REFUSED = {
     /** `ml.agent` without `host: "page"` (a START_RUN) from a site without the agent level (Q1). */
-    noLevelStart: (origin: string): string => `Refused: ${origin} may use window.ml but not start agents. Pass \`host: "page"\` to run the loop in the page.`,
+    noLevelStart: (origin: string): string => `Refused: ${origin} may use window.ml but not start agents. Pass \`host: "page"\` to run the loop in the page, or ask with \`ml.requestAccess({ agents: true })\`.`,
     /** RESUME_RUN or INJECT_MESSAGE from a site without the agent level. */
-    noLevel: (origin: string): string => `Refused: ${origin} may use window.ml but not start agents. The person can allow it from the extension's toolbar button or in DevTools Settings → Permissions.`,
+    noLevel: (origin: string): string => `Refused: ${origin} may use window.ml but not start agents. Ask with \`ml.requestAccess({ agents: true })\`, or allow it from the extension's toolbar button.`,
     denied: (origin: string): string => `Refused: ${origin} is not allowed to start agents.`,
     declined: "Refused: the person declined to start this agent. Nothing ran.",
     unanswered: "Refused: nobody answered the request to start this agent. Nothing ran.",
@@ -174,20 +175,6 @@ export async function toolTexts(tools: readonly ToolLike[], digest: (s: string) 
         out[t.name] = await digest(text);
     }
     return out;
-}
-
-/** Characters that draw nothing or change how the text around them reads: format controls (bidi, zero-width, tag
- *  characters), every default-ignorable code point (soft hyphen, variation selectors, Hangul fillers), private use. */
-const INVISIBLE = /[\p{Default_Ignorable_Code_Point}\p{Cf}\p{Co}]/gu;
-
-/**
- * A site's text with every invisible or bidi character made visible as `⟨U+202E⟩`, so a quote reads as it is (3.2).
- * Astral code points (the tag characters a model reads as text) are matched whole.
- * @param text the site's text
- * @returns the same text, with those characters shown
- */
-export function visibleControls(text: string): string {
-    return text.replace(INVISIBLE, (c) => `⟨U+${(c.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0")}⟩`);
 }
 
 /**

@@ -314,9 +314,8 @@ Each one is the `{ error }` of the request, passed through `forPage` (and `forMo
 | `resumeMessages` on a run's first turn (Q4) | Refused: an agent's first turn cannot carry an earlier conversation. |
 | The agent level revoked mid-run (Q9) | The run ends cancelled. Its result's summary reads: Cancelled: this site may no longer start agents. |
 
-Until `ml.requestAccess` takes `{ agents: true }` (PR 4) and the toolbar button can set the agent level (PR 3), the
-first two rows ship without the hint that names them: "Pass `host: "page"` to run the loop in the page." and "The person
-can allow it in DevTools Settings → Permissions." A hint names only a call or a control that can grant the level.
+A hint names only a call or a control that can grant the level. Until PR 4 the first two rows shipped without the
+`ml.requestAccess` hint; since PR 4 they carry the text above.
 
 Existing refusals that change because the whitelist becomes origins. They are rewritten to say "the list of sites that
 approve their own actions":
@@ -1066,6 +1065,22 @@ The `siteRequests` config key is covered by the config's own registration.
 PR 2 comes before PR 4, because `requestAccess({ agents })` needs the level. PR 3 can land with either.
 
 **Coordination.** #626 touches `sw-run-host.ts` and `security-audit.md`. Branch PR 2 after it merges.
+
+**As built (2026-10-25), and what moved to PR 4b.** PR 4 builds `requestAccess` for a site that may already use
+window.ml, asking for the agent level or for self-approval. Where it differs from the plan above:
+
+- Q13 put the stub in slice 4, which SITE_PRESENCE.md replaced. So a site not yet allowed cannot ask in PR 4:
+  `REQUEST_ACCESS` is in `HANDLE_MAP` and the origin gate refuses it, not on an ungated list. PR 4b carries the stub, the
+  ungated entry and its red-team items (sub-frame, opaque, `data:`, `file:`, the ratchet), the "Let sites ask for access"
+  row, the per-origin visible mark, and e2e attacks 3 to 7.
+- "Let sites ask for access" is not built, and PR 4's worker passes `sitesMayAsk: false`. SITE_PRESENCE.md makes it OFF
+  by default, where this plan said `siteRequests: true`; PR 4b settles it, with the string that row needs.
+- An allowed site asking for agents has no row in 1.3. The popup and Settings reuse approved strings: "{origin} asks to
+  use window.ml and to start agents." with "Let it start agents" (the level becomes Ask each time) and "Deny" (agents
+  Denied).
+- `site.requests` reads every waiting request, not one tab's origin's: a request waits on no tab.
+- The badge draws requests on the default badge (no `tabId`); a tab with start asks draws the sum.
+- The agent-level refusals of 1.7 now carry their final text, naming `ml.requestAccess({ agents: true })`.
 
 ## 5. Where the current spec and build disagree
 

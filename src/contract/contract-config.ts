@@ -416,3 +416,10 @@ export function publicConfig(config: MlConfig, pageApprovalAllowed: boolean): Ml
  * answer when nobody gave one. The page is published from `dist-app/` by CI and is linked from nowhere.
  */
 export const AGENT_START_PAGE = "https://parawanderer.github.io/window-ml/agent-start.html";
+
+/** What `ml.requestAccess` resolves to. A refusal names why; nothing is ever thrown. */
+export type AccessAnswer =
+    | { state: "granted"; agents: "granted" | "pending" | "denied" | "off" }
+    | { state: "pending" }
+    | { state: "denied" }
+    | { state: "refused"; reason: string };

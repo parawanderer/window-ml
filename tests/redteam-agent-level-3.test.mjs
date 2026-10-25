@@ -12,7 +12,8 @@ const { START_REFUSED, pageTurnText } = await import("../src/agent-start.ts");
 const { WORKER_ONLY_KINDS } = await import("../src/event-admission.ts");
 const { AGENT_SYSTEM } = await import("../src/agent/prompts.ts");
 const { siteInstructions, textDigest } = await import("../src/agent/site-instructions.ts");
-const { visibleControls, cardToolLines, PAGE_TURN_BUDGET } = await import("../src/agent-start.ts");
+const { cardToolLines, PAGE_TURN_BUDGET } = await import("../src/agent-start.ts");
+const { visibleControls } = await import("../src/agent/security.ts");
 
 const T = { timeout: 60000 };
 const flush = async (n = 8) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };

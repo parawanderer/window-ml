@@ -369,7 +369,9 @@ wait is on a run finishing or a state change, never a timer.
    `injected.js` but every call is refused. Red-team enumeration tests.
 2. The run's events and the extension's own iframe out of the page's reach (built first: attacks 15 and 16).
    Delegation tokens, and the vision tools' model calls moved to the background. Tests 9 to 11.
-3. `requestAccess` (the full API's member), with the badge and popup entry. Tests 3 to 7. The agent level and start approval
+3. `requestAccess` (the full API's member), with the badge and popup entry. Tests 3 to 7. Status 2026-10-25: built for a
+   site already allowed (asking for agents or self-approval), slice 3 PR 4; a site not yet allowed asks through the stub,
+   PR 4b, with tests 3 to 7. The agent level and start approval
    ([above](#two-levels-using-windowml-and-starting-agents-slice-3-decided-2026-10-10-wording-for-the-owner-to-approve)). The self-approval whitelist moves to
    origins, and an approved site may ask for it ([above](#the-self-approval-whitelist-slice-3-draft-wording-for-the-owner-to-approve)).
 4. Replaced by [SITE_PRESENCE.md](SITE_PRESENCE.md) (decided 2026-10-14): a page sees nothing of window.ml until the

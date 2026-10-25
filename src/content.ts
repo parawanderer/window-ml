@@ -7,10 +7,13 @@ import type { PageRequestType, BackgroundMessageType } from "./contract/contract
 import { HANDLE_MAP } from "./page-relay";
 import { gateOpen, gateState, setGate, whenOpen, whenDecided, markAlive, pageAlive } from "./page-gate";
 import { listenForPage, toPage, onPage, offPage, rearmForPage, type ChannelMessage } from "./page-channel";
+import { watchGestures, hasPageGesture } from "./page-gesture";
 
 // Before injected.js runs (a registered page script runs right after this, at document_start): take the port it hands
 // over (page-channel.ts). Nothing between us and the page script crosses the page's window.
 listenForPage();
+// And before any page script can register a listener of its own: the page's trusted input, for `ml.requestAccess` (Q11).
+watchGestures();
 
 // 1. Whether injected.js is up in the main world. If it never comes up (a `sandbox` CSP blocks script EXECUTION in the
 // page), a delegated agent tool would post into the void and HANG, so the waits below are bounded: `pageAlive()` is set
@@ -296,10 +299,38 @@ function onPageMessage(data: PageMessage): void {
         chrome.runtime.sendMessage({ type: "PAGE_TOOL_STREAM", runId: (data as { runId?: string }).runId, chunk: (data as { chunk?: string }).chunk, ts: (data as { ts?: number }).ts, skipped: (data as { skipped?: number }).skipped });
         return;
     }
+    if (data.type === "REQUEST_ACCESS_REQUEST") { requestAccessFromPage(requestId, data.payload); return; }
     // 3. Forward to the background worker (to bypass CORS).
     const entry = HANDLE_MAP[data.type as PageRequestType];
     if (!entry) return;
     sendRuntimeMessage(entry.type, requestId, data.payload, entry.responseType);
+}
+
+/** The `ml.requestAccess` calls waiting on the one in flight, by request id: answered with its answer. */
+let accessWaiting: string[] | null = null;   // state: plumbing
+
+/**
+ * Relay one `ml.requestAccess` call, with the one fact only this world can vouch for: whether the person just acted on
+ * the page itself (`hasPageGesture`, Q11). It travels beside the payload, which is rebuilt from the fields the request
+ * has, so nothing the page posts can stand in for it. One request is in flight per document; calls made meanwhile get
+ * its answer and are never relayed, so a page that calls it a thousand times costs the worker one request.
+ * @param requestId the page's request id
+ * @param raw what the page passed
+ */
+function requestAccessFromPage(requestId: string, raw: unknown): void {
+    const answer = (r: { data?: unknown; error?: string } | undefined, id: string): void => {
+        toPage({ type: "REQUEST_ACCESS_RESPONSE", requestId: id, result: r?.data, error: r?.data === undefined ? (r?.error || "the extension background didn't respond; try again.") : undefined });
+    };
+    if (accessWaiting) { if (accessWaiting.length < 256) accessWaiting.push(requestId); return; }
+    accessWaiting = [requestId];
+    const p = (raw && typeof raw === "object" ? raw : {}) as { agents?: unknown; level?: unknown; reason?: unknown };
+    const payload = { agents: p.agents === true, level: p.level === "self-approve" ? "self-approve" : undefined, reason: typeof p.reason === "string" ? p.reason.slice(0, 1000) : undefined };
+    chrome.runtime.sendMessage({ type: "REQUEST_ACCESS", payload, requestId, gesture: hasPageGesture() }, (r: { data?: unknown; error?: string } | undefined) => {
+        void chrome.runtime.lastError;
+        const ids = accessWaiting ?? [];
+        accessWaiting = null;
+        for (const id of ids) answer(r, id);
+    });
 }
 
 // 4. Ask the worker what this document is, as it starts: whether its origin may see window.ml (which opens the gate; its

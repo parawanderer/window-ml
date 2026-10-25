@@ -1297,3 +1297,416 @@ test("content.ts re-posts the worker's CANCEL_TOOL_IN_PAGE as exactly { type, ru
     assert.deepEqual(posted, [{ type: "PAGE_TOOL_CANCEL", runId: "r1" }], "one post, the run id alone (positive control: the string one)");
     assert.equal(world.runtimeCalls.length, before, "nothing went back to the worker");
 });
+
+// --- ml.requestAccess (site access slice 3 PR 4): what a page gets from asking the person for more ---
+// The red-team pass on `ml.requestAccess` (docs/dev/site-access.md, "Sites asking for access"). The threat is a site that
+// may already use window.ml, or one that may not, asking for the agent level or self-approval. Each test is a property,
+// with its positive control; the oracle is the request store (`ml_site_requests`), the person's lists, and what reached
+// the backend, a tab or the screen. A site NOT allowed asking (the stub, "Let sites ask for access") is PR 4b's; here
+// such a site is only refused by the origin gate.
+const { ASK_REFUSED } = require("../src/site-requests.ts");
+
+const RA = "https://a.example";
+/** A page's top frame as the browser stamps its messages. */
+const raPage = (tab, origin, o = {}) => ({ tab: { id: tab, url: `${origin}/p` }, url: `${origin}/p`, origin, frameId: 0, documentId: `doc-${tab}`, ...o });
+const RA_EXT = { url: "chrome-extension://test/popup.html" };
+const raPlain = (x) => JSON.parse(JSON.stringify(x ?? null));
+const raDay = 24 * 60 * 60 * 1000;
+const ABSENT = Symbol("absent");
+
+/** A worker where `allowed` may use window.ml (agents off unless `agents` says), with every window, tab and focus call
+ *  the worker could make recorded as reaching the screen. */
+function askWorld({ allowed = [RA], agents = {}, local = {}, onTabMessage } = {}) {
+    const screen = [];
+    const bg = loadBackground({
+        config: baseConfig(), siteGate: true, siteAgents: null,
+        openTabs: [{ id: 7, url: `${RA}/p`, title: "A" }],
+        local: { ml_site_schema: 2, ml_site_always: allowed, ml_site_agents: agents, ...local },
+        onFetch: () => jsonResponse({ choices: [{ message: { content: "spent" } }] }),
+        onTabMessage,
+    });
+    const c = bg.context.chrome;
+    for (const [ns, fn] of [["windows", "create"], ["windows", "update"], ["tabs", "create"], ["tabs", "update"], ["tabs", "highlight"], ["action", "openPopup"]]) {
+        c[ns] ??= {};
+        const orig = c[ns][fn];
+        c[ns][fn] = async (...a) => { screen.push(`${ns}.${fn}`); return orig ? orig(...a) : undefined; };
+    }
+    const ask = (payload, sender = raPage(7, RA), gesture = true, extra = {}) => bg.send({ type: "REQUEST_ACCESS", payload, ...(gesture === ABSENT ? {} : { gesture }), requestId: "r", ...extra }, sender);
+    const entries = () => raPlain(bg.localStore.ml_site_requests?.entries ?? []);
+    const waiting = async () => raPlain((await bg.send({ type: "ACCESS_REQUESTS", payload: {} }, RA_EXT)).data.requests);
+    const levels = async (origin) => raPlain((await bg.send({ type: "SITE_ACCESS", payload: { origin } }, RA_EXT)).data.levels);
+    const decide = (origin, decision) => bg.send({ type: "ACCESS_REQUESTS", payload: { origin, decision } }, RA_EXT);
+    const outside = () => ({ fetched: bg.calls.length, toTabs: bg.tabMessages.length, captured: bg.captures.length, tabsCreated: bg.tabsCreated.length, screen: screen.length });
+    /** Let the worker's own start-up (presence, badges) finish, so what follows is the request's alone. */
+    const settled = async () => { for (let i = 0; i < 10; i++) await tick(); };
+    return { bg, ask, entries, waiting, levels, decide, outside, screen, settled };
+}
+
+/** A stored request, as the worker writes one. */
+const raEntry = (o) => ({ origin: RA, domain: "a.example", kind: "access", agents: true, at: Date.now(), state: "pending", asks: 1, ...o });
+
+test("requestAccess — a sender that can never ask is refused and creates nothing; nothing reaches the backend, a tab or the screen", async () => {
+    const C = "https://c.example";
+    const cases = [
+        ["a site that may not use window.ml", raPage(9, C), /not approved/],
+        ["a site that may not use window.ml, naming an allowed origin in its payload", raPage(9, C), /not approved/, { origin: RA, url: `${RA}/p` }],
+        ["a sub-frame of the allowed site", raPage(7, RA, { frameId: 3, url: `${RA}/frame` })],
+        ["an opaque origin (a sandboxed frame) in the allowed site's tab", raPage(7, RA, { origin: "null" })],
+        ["a data: document in the allowed site's tab", raPage(7, RA, { origin: "null", url: "data:text/html,x" })],
+        ["an about:blank sub-frame the allowed site made", raPage(7, RA, { url: "about:blank", frameId: 2 })],
+        ["a file: page", { tab: { id: 7, url: "file:///tmp/x.html" }, url: "file:///tmp/x.html", frameId: 0, documentId: "d-file" }],
+        ["the allowed host over http", raPage(7, "http://a.example")],
+        ["the allowed host on another port", raPage(7, "https://a.example:8443")],
+        ["a subdomain of the allowed host", raPage(7, "https://sub.a.example")],
+        ["a sender with no tab", { url: `${RA}/p`, origin: RA, frameId: 0 }],
+    ];
+    for (const [what, sender, why, extraPayload] of cases) {
+        const w = askWorld();
+        await w.settled();
+        const before = w.outside();
+        const r = await w.ask({ agents: true, reason: "x", ...extraPayload }, sender);
+        const answer = r?.data ?? r;
+        assert.ok(!["pending", "granted"].includes(answer?.state), `${what}: answered ${JSON.stringify(r)}`);
+        if (why) assert.match(r?.error || "", why, `${what}: the origin gate's refusal`);
+        assert.deepEqual(w.entries(), [], `${what}: an entry was stored`);
+        assert.deepEqual(await w.waiting(), [], `${what}: something waits for the person`);
+        await tick();
+        assert.deepEqual(w.outside(), before, `${what}: something reached the backend, a tab or the screen`);
+        assert.equal(w.bg.badges.shown(7).text ?? "", "", `${what}: the badge counts it`);
+    }
+    // Positive control: the allowed site's top frame, with a gesture, waits for the person, and still reaches nothing.
+    const w = askWorld();
+    await w.settled();
+    const before = w.outside();
+    assert.deepEqual(raPlain((await w.ask({ agents: true })).data), { state: "granted", agents: "pending" });
+    assert.equal(w.entries().length, 1);
+    assert.equal(w.entries()[0].origin, RA, "the origin is the sender's");
+    await tick();
+    assert.deepEqual(w.outside(), before, "a request opens no window, takes no focus, and spends nothing (rule 5)");
+});
+
+test("requestAccess — the stored origin is the sender's: a payload or a message field naming another origin is never read", async () => {
+    const w = askWorld({ allowed: [RA, "https://victim.example"] });
+    await w.ask({ agents: true, origin: "https://victim.example", url: "https://victim.example/" }, raPage(7, RA), true, { origin: "https://victim.example", sender: { origin: "https://victim.example" } });
+    assert.deepEqual(w.entries().map((e) => e.origin), [RA]);
+});
+
+test("requestAccess — the worker reads only the content script's own `gesture: true`: the payload's word, a truthy stand-in or its absence create nothing", async () => {
+    for (const [what, payload, gesture] of [
+        ["gesture in the payload", { agents: true, gesture: true }, false],
+        ["the string \"true\"", { agents: true }, "true"],
+        ["the number 1", { agents: true }, 1],
+        ["an object", { agents: true }, { isTrusted: true }],
+        ["absent", { agents: true }, ABSENT],
+    ]) {
+        const w = askWorld();
+        const r = await w.ask(payload, raPage(7, RA), gesture);
+        assert.deepEqual(raPlain(r.data), { state: "refused", reason: ASK_REFUSED.gesture }, what);
+        assert.deepEqual(w.entries(), [], `${what}: an entry was stored`);
+        const s = await w.ask({ level: "self-approve" }, raPage(7, RA), gesture);
+        assert.deepEqual(raPlain(s.data), { state: "refused", reason: ASK_REFUSED.gesture }, `${what} (self-approval)`);
+    }
+});
+
+test("requestAccess — the relay's gesture is the isolated world's: a page's synthetic input, a posted field, activation from our own hosts, or a stale input is no gesture", async () => {
+    // The page world shares this mock window with content.js, so a "synthetic" event is one the browser marks
+    // isTrusted:false (any script-dispatched event); a trusted one plays the browser's own input. Activation is the
+    // browser's (navigator.userActivation in the isolated world), set by the test.
+    let now = 100000;
+    const world = loadPageWorld({ onRuntimeMessage: (m) => (m.type === "REQUEST_ACCESS" ? { data: { state: "pending" } } : { data: null }) });
+    await tick();
+    const host = { id: "ml-shell-host" };
+    world.context.__mlOwnHosts = new WeakSet([host]);   // what the shell's markOwnHost leaves in the isolated world
+    world.context.performance = { now: () => now };
+    let active = true;
+    world.context.navigator = { get userActivation() { return { isActive: active }; } };
+    const input = (o) => world.context.window.dispatchEvent({ type: "pointerdown", isTrusted: true, composedPath: () => [world.context.window], ...o });
+    const gestureOf = async (fn) => {
+        const n = world.runtimeCalls.length;
+        await fn();
+        await tick();
+        const sent = world.runtimeCalls.slice(n).filter((m) => m.type === "REQUEST_ACCESS");
+        assert.equal(sent.length, 1, `one REQUEST_ACCESS was relayed (${sent.length})`);
+        return sent[0].gesture;
+    };
+    const call = () => world.ml.requestAccess({ agents: true });
+    now += 60000;   // every input below is the test's own
+
+    assert.equal(await gestureOf(call), false, "activation alone (a click in our card's iframe spreads it to the page) is no gesture");
+    input({ isTrusted: false });
+    assert.equal(await gestureOf(call), false, "a page-dispatched pointerdown is no gesture");
+    world.context.window.dispatchEvent({ type: "keydown", isTrusted: false, composedPath: () => [] });
+    assert.equal(await gestureOf(call), false, "a page-dispatched keydown is no gesture");
+    input({ composedPath: () => [host, world.context.window] });
+    assert.equal(await gestureOf(call), false, "trusted input on the extension's own host is no gesture");
+    assert.equal(await gestureOf(() => { world.asInjected({ type: "REQUEST_ACCESS_REQUEST", requestId: "p1", gesture: true, isTrusted: true, payload: { agents: true, gesture: true } }); }), false,
+        "a gesture field the page posts beside or inside its request is no gesture");
+
+    // Positive control: the person's own trusted input on the page, just now, with the browser's activation.
+    input({});
+    assert.equal(await gestureOf(call), true, "positive control: the person's own input is a gesture");
+    now += 5001;
+    assert.equal(await gestureOf(call), false, "an input older than 5 s is no gesture");
+    input({});
+    active = false;
+    assert.equal(await gestureOf(call), false, "an input without the browser's activation is no gesture");
+    active = true;
+    assert.equal(await gestureOf(call), true, "positive control again");
+
+    // No other type a page sends becomes a REQUEST_ACCESS, with or without a gesture field.
+    const n = world.runtimeCalls.length;
+    for (const type of ["REQUEST_ACCESS", "ACCESS_REQUESTS", "ACCESS_REQUESTS_REQUEST", "CONFIG_REQUEST", "SITE_ACCESS_REQUEST"]) world.asInjected({ type, requestId: `x-${type}`, gesture: true, payload: { agents: true, gesture: true } });
+    world.context.window.postMessage({ type: "REQUEST_ACCESS_REQUEST", requestId: "w", payload: { agents: true } });
+    await tick();
+    const types = world.runtimeCalls.slice(n).map((m) => m.type);
+    assert.ok(types.includes("GET_CONFIG"), "positive control: CONFIG_REQUEST relays");
+    assert.deepEqual(types.filter((t) => t !== "GET_CONFIG"), [], `relayed: ${types}`);
+});
+
+test("requestAccess — no page sender answers or reads a request: ACCESS_REQUESTS and SITE_ACCESS refuse every page shape", async () => {
+    const w = askWorld({ allowed: [RA] });
+    await w.ask({ agents: true });
+    await w.ask({ level: "self-approve" }, raPage(8, RA, { documentId: "doc-8" }));   // refused by the domain cap; the access entry waits
+    const senders = [raPage(7, RA), raPage(7, RA, { frameId: 4 }), raPage(9, "https://c.example"), raPage(7, RA, { origin: "null" }), { tab: { id: 7, url: `${RA}/p` }, url: `${RA}/p` }];
+    const decisions = [{ kind: "access", answer: "agents" }, { kind: "access", answer: "always", agents: true }, { kind: "selfApprove", answer: "allow" }];
+    const edits = [{ op: "agents", origin: RA, level: "always" }, { op: "selfApprove", origin: RA, on: true }, { op: "allow", origin: "https://c.example", scope: "always" }];
+    const levelsBefore = await w.levels(RA);
+    for (const sender of senders) {
+        const read = await w.bg.send({ type: "ACCESS_REQUESTS", payload: {} }, sender);
+        assert.equal(read?.data, undefined, `${JSON.stringify(sender)} read the waiting list`);
+        for (const decision of decisions) {
+            const r = await w.bg.send({ type: "ACCESS_REQUESTS", payload: { origin: RA, decision } }, sender);
+            assert.equal(r?.data, undefined, `${JSON.stringify(sender)} answered ${JSON.stringify(decision)}`);
+        }
+        for (const edit of edits) {
+            const r = await w.bg.send({ type: "SITE_ACCESS", payload: { edit } }, sender);
+            assert.equal(r?.data, undefined, `${JSON.stringify(sender)} edited ${JSON.stringify(edit)}`);
+        }
+    }
+    assert.deepEqual(await w.levels(RA), levelsBefore, "the site's levels are as they were");
+    assert.deepEqual((await w.waiting()).map((e) => [e.origin, e.kind, e.state]), [[RA, "access", "pending"]], "the request still waits");
+    // The relay never carries them either.
+    assert.deepEqual(await pageRelays({ type: "ACCESS_REQUESTS", requestId: "a", payload: {} }, { type: "ACCESS_REQUESTS_REQUEST", requestId: "b", payload: {} }), []);
+    // Positive control: the person's popup answers it.
+    await w.decide(RA, { kind: "access", answer: "agents" });
+    assert.equal((await w.levels(RA)).agents, "ask");
+});
+
+test("requestAccess — a request never becomes a different kind: one the person's revoke leaves behind does not wait as a request to use window.ml", async () => {
+    const w = askWorld({ allowed: [RA] });
+    assert.deepEqual(raPlain((await w.ask({ agents: true, reason: "to run checks" })).data), { state: "granted", agents: "pending" });
+    assert.equal((await w.waiting()).length, 1, "positive control: the agents request waits");
+    // The person revokes the site from the popup's "This site" block.
+    await w.bg.send({ type: "SITE_ACCESS", payload: { edit: { op: "revoke", origin: RA } } }, RA_EXT);
+    assert.equal((await w.levels(RA)).use, "unknown", "the site is revoked");
+    const left = (await w.waiting()).filter((e) => e.origin === RA && e.kind === "access");
+    assert.deepEqual(left.map((e) => ({ allowed: e.allowed })), [], `a revoked site's agents request now waits as a request to use window.ml: ${JSON.stringify(left)}`);
+});
+
+test("requestAccess — a self-approval request settles when the site is revoked; the person's answer applies only to the asker's origin", async () => {
+    const w = askWorld({ allowed: [RA, "https://b.example"] });
+    assert.deepEqual(raPlain((await w.ask({ level: "self-approve" })).data), { state: "pending" });
+    await w.bg.send({ type: "SITE_ACCESS", payload: { edit: { op: "revoke", origin: RA } } }, RA_EXT);
+    assert.deepEqual(await w.waiting(), [], "a revoked site's self-approval request no longer waits");
+    // Answers name an origin: B's entry is answered only for B; an answer for an origin nothing asked for edits nothing.
+    await w.ask({ level: "self-approve" }, raPage(8, "https://b.example"));
+    await w.decide("https://c.example", { kind: "selfApprove", answer: "allow" });
+    await w.decide(RA, { kind: "selfApprove", answer: "allow" });
+    assert.equal((await w.levels("https://c.example")).selfApprove, false);
+    assert.equal((await w.levels(RA)).selfApprove, false, "an answer to a settled request edits nothing");
+    assert.equal((await w.levels("https://b.example")).selfApprove, false, "B is untouched by answers to other origins");
+    await w.decide("https://b.example", { kind: "access", answer: "agents" });
+    assert.equal((await w.levels("https://b.example")).agents, "off", "an answer of the other kind does not answer B's self-approval request");
+    await w.decide("https://b.example", { kind: "selfApprove", answer: "allow" });
+    assert.equal((await w.levels("https://b.example")).selfApprove, true, "positive control");
+});
+
+test("requestAccess — the reason is stored as at most 200 characters of text, whatever the page passes", async () => {
+    for (const [what, reason, want] of [
+        ["10,000 characters", "r".repeat(10000), (s) => s.length <= 200],
+        ["an object with toString", { toString: () => "OBJ" }, (s) => s === undefined],
+        ["an array", ["a", "b"], (s) => s === undefined],
+        ["only whitespace", "   \n\t ", (s) => s === undefined],
+        ["astral characters past the cap", "😀".repeat(300), (s) => s.length <= 200],
+    ]) {
+        const w = askWorld();
+        await w.ask({ agents: true, reason });
+        const e = w.entries();
+        assert.equal(e.length, 1, what);
+        assert.ok(want(e[0].reason), `${what}: stored ${JSON.stringify(e[0].reason)?.slice(0, 80)}`);
+    }
+});
+
+test("requestAccess — the reason shows the person every character it holds: bidi overrides and invisible tag characters do not reach the popup or Settings raw", async () => {
+    const w = askWorld();
+    const tags = [..."hidden"].map((c) => String.fromCodePoint(0xE0000 + c.charCodeAt(0))).join("");
+    await w.ask({ agents: true, reason: `to help you‮elbat${tags}` });
+    const listed = (await w.waiting())[0].reason;
+    assert.ok(listed && listed.startsWith("to help you"), "positive control: the reason is listed");
+    assert.ok(!/[‪-‮⁦-⁩]|[\u{E0000}-\u{E007F}]/u.test(listed), `the listed reason carries raw controls: ${JSON.stringify(listed)}`);
+});
+
+test("requestAccess — a flood leaves one request: 1,000 calls from one origin, across tabs and documents, at once", async () => {
+    const w = askWorld();
+    const all = await Promise.all(Array.from({ length: 1000 }, (_, i) => w.ask({ agents: i % 2 === 0, reason: `r${i}` }, raPage(7 + (i % 5), RA, { documentId: `doc-${i}` }))));
+    assert.ok(all.every((r) => r.data && ["granted", "pending", "refused"].includes(r.data.state)), "every call was answered");
+    const e = w.entries();
+    assert.equal(e.length, 1, `${e.length} entries`);
+    assert.equal((await w.waiting()).length, 1);
+    await tick();
+    assert.equal(w.bg.badges.shown(7).text, "1");
+    assert.equal(w.outside().screen, 0);
+});
+
+test("requestAccess — the per-domain cap counts by registrable domain: subdomains, ports, schemes, case and a trailing dot are one requester", async () => {
+    const origins = ["https://x.example.co.uk", "https://a.x.example.co.uk", "https://b.a.x.example.co.uk", "https://x.example.co.uk:8443", "http://x.example.co.uk", "https://x.example.co.uk."];
+    const w = askWorld({ allowed: origins });
+    const r = await Promise.all(origins.map((o, i) => w.ask({ agents: true }, raPage(10 + i, o))));
+    const pending = w.entries().filter((e) => e.state === "pending");
+    assert.equal(pending.length, 1, `pending: ${pending.map((e) => e.origin)}`);
+    assert.equal(r.filter((x) => x.data?.state === "refused" && x.data.reason === ASK_REFUSED.full).length, origins.length - 1);
+    // An upper-case host the browser hands over is the same origin, and the same requester.
+    const up = await w.ask({ level: "self-approve" }, { tab: { id: 30, url: "https://X.EXAMPLE.co.uk/p" }, url: "https://X.EXAMPLE.co.uk/p", frameId: 0, documentId: "d-up" });
+    assert.notEqual(up.data?.state, "pending");
+    assert.equal(w.entries().filter((e) => e.state === "pending").length, 1);
+    // Positive control: the private part of the PSL makes each github.io site its own.
+    const g = askWorld({ allowed: ["https://a.github.io", "https://b.github.io"] });
+    await g.ask({ agents: true }, raPage(7, "https://a.github.io"));
+    await g.ask({ agents: true }, raPage(8, "https://b.github.io"));
+    assert.equal(g.entries().filter((e) => e.state === "pending").length, 2);
+});
+
+test("requestAccess — at most 5 requests wait in all, even when six sites ask at once", async () => {
+    const origins = ["a", "b", "c", "d", "e", "f"].map((s) => `https://${s}.example`);
+    const w = askWorld({ allowed: origins });
+    const r = await Promise.all(origins.map((o, i) => w.ask({ agents: true }, raPage(10 + i, o))));
+    assert.equal(w.entries().filter((e) => e.state === "pending").length, 5);
+    assert.equal(r.filter((x) => x.data?.reason === ASK_REFUSED.full).length, 1);
+    await tick();
+    assert.equal(w.bg.badges.shown(10).text, "5");
+});
+
+test("requestAccess — expiry and the single re-ask are the worker's: a page cannot reset them by reloading, another tab, or asking the other way", async () => {
+    // Twice expired: denied by default, no new entry, with a gesture, from a fresh tab and document.
+    const old = Date.now() - 8 * raDay;
+    const w = askWorld({ local: { ml_site_requests: { v: 1, entries: [raEntry({ at: old, asks: 2 })] } } });
+    const r = await w.ask({ agents: true }, raPage(12, RA, { documentId: "fresh" }));
+    assert.deepEqual(raPlain(r.data), { state: "granted", agents: "off" });
+    assert.equal(w.entries().filter((e) => e.state === "pending").length, 0, "nothing waits");
+    const r2 = await w.ask({ agents: false }, raPage(13, RA, { documentId: "fresh-2" }));
+    assert.equal(r2.data.state, "granted");
+    assert.equal(w.entries().filter((e) => e.state === "pending").length, 0, "asking without agents does not reset the count");
+    // Once expired: one re-ask, counted.
+    const w1 = askWorld({ local: { ml_site_requests: { v: 1, entries: [raEntry({ at: old, asks: 1 })] } } });
+    await w1.ask({ agents: true }, raPage(12, RA, { documentId: "fresh" }));
+    assert.deepEqual(w1.entries().map((e) => [e.state, e.asks]), [["pending", 2]]);
+    // A pending entry from another tab and document is the same entry: no second.
+    await w1.ask({ agents: true }, raPage(14, RA, { documentId: "again" }));
+    assert.deepEqual(w1.entries().map((e) => [e.state, e.asks]), [["pending", 2]]);
+    // A self-approval asked twice and expired twice is denied too.
+    const ws = askWorld({ local: { ml_site_requests: { v: 1, entries: [raEntry({ kind: "selfApprove", agents: false, at: old, asks: 2 })] } } });
+    assert.deepEqual(raPlain((await ws.ask({ level: "self-approve" })).data), { state: "denied" });
+    assert.equal(ws.entries().filter((e) => e.state === "pending").length, 0);
+});
+
+test("requestAccess — the answer is the documented AccessAnswer and nothing more, in every state", async () => {
+    const reasons = new Set(Object.values(ASK_REFUSED));
+    const check = (what, a) => {
+        const keys = Object.keys(a).sort().join();
+        if (a.state === "granted") { assert.equal(keys, "agents,state", what); assert.ok(["granted", "pending", "denied", "off"].includes(a.agents), what); }
+        else if (a.state === "refused") { assert.equal(keys, "reason,state", what); assert.ok(reasons.has(a.reason), `${what}: ${a.reason}`); }
+        else { assert.ok(["pending", "denied"].includes(a.state), what); assert.equal(keys, "state", what); }
+        assert.ok(!/b\.example|c\.example|sk-|host\//.test(JSON.stringify(a)), `${what} names another site or the config: ${JSON.stringify(a)}`);
+    };
+    const w = askWorld({ allowed: [RA, "https://b.example"] });
+    await w.ask({ agents: true }, raPage(8, "https://b.example"));   // another site waits
+    check("no gesture", raPlain((await w.ask({ agents: true }, raPage(7, RA), false)).data));
+    check("agents, first", raPlain((await w.ask({ agents: true })).data));
+    check("agents, pending", raPlain((await w.ask({ agents: true })).data));
+    check("self-approval while agents wait (one per domain)", raPlain((await w.ask({ level: "self-approve" })).data));
+    check("a level that is not one", raPlain((await w.ask({ level: "admin" })).data));
+    await w.decide(RA, { kind: "access", answer: "deny" });
+    check("agents denied", raPlain((await w.ask({ agents: true })).data));
+    check("self-approval asked", raPlain((await w.ask({ level: "self-approve" })).data));
+    await w.decide(RA, { kind: "selfApprove", answer: "deny" });
+    check("self-approval denied", raPlain((await w.ask({ level: "self-approve" })).data));
+});
+
+test("requestAccess — a page learns nothing of other sites or of the person having looked: its answer is the same either way", async () => {
+    const sequence = async (others, look) => {
+        const w = askWorld({ allowed: [RA, "https://b.example", "https://c.example"] });
+        if (others) { await w.ask({ agents: true }, raPage(8, "https://b.example")); await w.ask({ level: "self-approve" }, raPage(9, "https://c.example")); }
+        const out = [raPlain((await w.ask({ agents: true })).data)];
+        if (look) { await w.waiting(); await w.waiting(); }
+        out.push(raPlain((await w.ask({ agents: true })).data), raPlain((await w.ask({ agents: true }, raPage(7, RA), false)).data));
+        return out;
+    };
+    const base = await sequence(false, false);
+    assert.deepEqual(base[0], { state: "granted", agents: "pending" }, "positive control: the request was made");
+    assert.deepEqual(await sequence(true, false), base, "other sites' requests change the answer");
+    assert.deepEqual(await sequence(false, true), base, "the person opening the popup changes the answer");
+});
+
+test("requestAccess — an error on the way back carries neither the server URL nor the key", async () => {
+    const w = askWorld();
+    const local = w.bg.context.chrome.storage.local;
+    const set = local.set;
+    local.set = async (obj) => { if (obj && "ml_site_requests" in obj) throw new Error("write failed for http://host/api/chat/completions with sk-SECRET-KEY"); return set(obj); };
+    const r = await w.ask({ agents: true });
+    const text = JSON.stringify(r);
+    assert.ok(r?.error, `positive control: the write failed and the page was told (${text})`);
+    assert.ok(!/sk-SECRET-KEY|http:\/\/host/.test(text), `the page read ${text}`);
+});
+
+test("requestAccess — a page a running agent opened is refused and recorded on the run, never shown; another tab asks", async () => {
+    let release;
+    const hold = new Promise((r) => { release = r; });
+    const events = [];
+    const bg = loadBackground({
+        config: baseConfig(), siteGate: true, siteAgents: null,
+        openTabs: [{ id: 7, url: `${RA}/p` }, { id: 8, url: `${RA}/p` }, { id: 9, url: `${RA}/p` }],
+        local: { ml_site_schema: 2, ml_site_always: [RA], ml_site_agents: { [RA]: "always" } },
+        onFetch: (c) => jsonResponse(c.url.includes("/chat/completions") && bg.calls.filter((x) => x.url.includes("/chat/completions")).length === 1
+            ? { choices: [{ message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "findByText", arguments: "{}" } }] } }] }
+            : { choices: [{ message: { content: "done" } }] }),
+        onTabMessage: async (tabId, msg) => {
+            if (msg.type === "ML_DEBUG_TO_PAGE") events.push({ tabId, ...raPlain(msg.event) });
+            if (msg.type === "RUN_TOOL_IN_PAGE") { if (!msg.payload.finish) await hold; return { result: "ok" }; }
+            return undefined;
+        },
+    });
+    const tool = { name: "findByText", description: "find", parameters: { type: "object", properties: {} }, requiresApproval: false, capabilities: [] };
+    const run = bg.send({ type: "START_RUN", payload: { runId: "r1", task: "t", systemPrompt: "S", tools: [tool], model: "m", think: null, maxSteps: 3, autoApprovePython: false, autoApproveReadonly: false, surface: "off" } }, raPage(7, RA));
+    for (let i = 0; i < 400 && bg.calls.length < 1; i++) await tick();
+    bg.openedFrom(7, 8, `${RA}/p`);   // the run's page opened tab 8
+    bg.commit(7, { documentId: "doc-7b", url: `${RA}/next` });   // and the run navigated its own tab
+    const opened = await bg.send({ type: "REQUEST_ACCESS", payload: { level: "self-approve", reason: "let me" }, gesture: true }, raPage(8, RA));
+    assert.deepEqual(raPlain(opened.data), { state: "refused", reason: ASK_REFUSED.openedByAgent });
+    const navigated = await bg.send({ type: "REQUEST_ACCESS", payload: { level: "self-approve" }, gesture: true }, raPage(7, RA, { documentId: "doc-7b", url: `${RA}/next` }));
+    assert.deepEqual(raPlain(navigated.data), { state: "refused", reason: ASK_REFUSED.openedByAgent });
+    assert.deepEqual(raPlain(bg.localStore.ml_site_requests?.entries ?? []), [], "nothing waits for the person");
+    assert.ok(events.some((e) => e.kind === "agent-note" && e.id === "r1"), "recorded on the run that opened it");
+    release();
+    await run;
+    // Positive control: a tab nothing opened asks, and waits.
+    const other = await bg.send({ type: "REQUEST_ACCESS", payload: { level: "self-approve" }, gesture: true }, raPage(9, RA));
+    assert.deepEqual(raPlain(other.data), { state: "pending" });
+});
+
+test("PROBED AND NOT GOTTEN: the shapes this pass tried against ml.requestAccess and why each is not pinned further", () => {
+    const reasons = [
+        "markup in the reason (<b>, <img onerror>): already pinned, popup-whitelist.test.js 'site's words never become markup' and sidebar-settings.test.js the same, both textContent/JSX",
+        "REQUEST_ACCESS from an unapproved origin: also enumerated by the HANDLE_MAP sweep above ('EVERY page-started message type is refused')",
+        "ACCESS_REQUESTS from one of our own frames inside a hostile tab (the overlay sidebar): isExtensionSender is true by design; the page cannot drive that frame (closed shadow root, top layer, attack 17)",
+        "ACCESS_REQUESTS with a malformed decision (answer: 'forever', kind: 'x'): refused since (isRequestDecision), pinned in request-access-bg.test.mjs; only an extension sender reaches it either way",
+        "two kinds from one click (agents, then self-approve within 5 s): the second is refused by the one-per-domain cap, pinned in 'no page sender answers or reads a request' setup",
+        "the content script's one-in-flight coalescing answers a later call of the other kind with the first's answer: confusion of the page's own calls only, no entry, no grant",
+        "the global cap of 5 can be filled by five allowed sites on five domains, refusing a sixth: by design (rule 6), and in PR 4 each must already be allowed",
+        "the 'full' refusal tells a page that a same-site subdomain or five sites are waiting: rule 6's documented cost, the count and origins are never named",
+        "an agent's own trusted input (a CDP click on a page the person started a run on, not opened by it) is a gesture hasPageGesture cannot tell from the person's: NOT probed (needs e2e with CDP), reported to the owner as an open question",
+        "IP hosts and localhost: each IP is its own requester, localhost on any port is one (tldts gives null, the host counts): matches the rule, no page gain",
+        "the handler's own grantableOrigin check (background.ts REQUEST_ACCESS) sits behind the origin gate, which refuses every shape it does first; removing it fails no test, since a sender with no tab is refused on tabId alone",
+    ];
+    assert.equal(reasons.length, 11);
+    assert.ok(reasons.every((s) => s.length > 20));
+});

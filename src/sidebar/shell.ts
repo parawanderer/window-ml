@@ -24,6 +24,7 @@ import { answerShotRects, pageShotGate, sheetText, HOST_STYLE, setHostHidden, ty
 import { topLayerKeeper, browserTopLayerDoc, browserClock } from "./shell-top-layer";
 import { approvalPayload } from "../approval-key";
 import { gateOpen, whenOpen, whenEverOpen } from "../page-gate";
+import { markOwnHost } from "../page-gesture";
 import { toPage, onPage, offPage, type ChannelMessage } from "../page-channel";
 
 const WIDTH_KEY = "ml_debug_width";
@@ -697,6 +698,7 @@ function hlContainer(): ShadowRoot {
     if (shellRoot) return shellRoot;
     if (hlRoot) return hlRoot;
     hlHost = document.createElement("div");
+    markOwnHost(hlHost);
     hlHost.id = `${SB_ROOT}-hl`;
     hlHost.style.cssText = HOST_STYLE;
     hlRoot = hlHost.attachShadow({ mode: "closed" });
@@ -1349,6 +1351,7 @@ function mountOverlay(): void {
     // Secrets still live in the iframe (its own extension origin), not in this shell.
     shellHost = document.createElement("div");
     shellHost.id = SB_ROOT;
+    markOwnHost(shellHost);
     shellHost.style.cssText = HOST_STYLE;
     const root = shellHost.attachShadow({ mode: "closed" });
     shellRoot = root;
@@ -1398,6 +1401,7 @@ function mountCard(): void {
     if (cardHost) return;
     cardHost = document.createElement("div");
     cardHost.id = SB_CARD;
+    markOwnHost(cardHost);
     cardHost.style.cssText = HOST_STYLE;
     const root = cardHost.attachShadow({ mode: "closed" });
     cardRoot = root;
