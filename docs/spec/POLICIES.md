@@ -523,6 +523,26 @@ as-you tier), so it lands with a red-team pass by a separate session (rule 10) a
   resurrected after an eviction is judged again on the page it wakes on.
 - **Not built:** the policy page's rows do not show `interactive` yet (it needs a design and its strings: #1122).
 
+**Narrowed 2026-10-25 (the red team's pass, e3, #1129; the coordinator's ruling):**
+
+- **An `allow` row's arrival consents the origin for navigation ONLY; its uncredentialed read still cards.** The
+  consent the arrival writes reaches the agent host's prompt but not the `FETCH_URL` choke point, which re-judges by
+  the run's origin grants (`grantRunOrigin`), so an allow or pass arrival's uncredentialed `fetch_url` of its own
+  origin is refused end-to-end ("hasn't been approved for fetching on this page"). "Navigation and uncredentialed
+  reads" above was true at the gate only; the spec stands at what the choke point enforces (rule 1). Making the
+  consent reach the choke point is a widening and Shane's. What the security lane owes: the gate and the choke point
+  are two copies of one decision; the gate stops claiming the read is consented, or both read one source, and the
+  card on that read says why. The red team pins the refusal, so a reorder of the host's `fetchPolicy` or a widened
+  `caller.consented` turns its tests red.
+- **KNOWN OPEN: a commit between turns, with no hold standing, finds no judge.** The turn's settle tears the arrival
+  watcher down; a commit then marks the page judged with no judge registered; only an existing hold is re-judged when
+  the next turn starts. A hand-move or a page redirect between turns to a page a policy would deny or ask is never
+  judged for it. The bullet above ("a hold outlives the turn") holds only once a hold exists. Ruled, no new ruling
+  needed: "every committed navigation of a run's tab is judged" covers the run's lifetime, not the turn's, so the
+  next turn's first act on a page the judge did not see is refused until the judge has spoken on the URL the tab holds
+  then. Finder e3 (#1129, a failing-first todo); the fix is the security lane's, its own PR, after which e3's todo
+  turns plain in e3's file.
+
 ## Worked example and acceptance test: a task on another site, scoped by a proposed policy
 
 **Shane, 2026-10-24.** The simplest whole use of the mechanism, and the test of it: the person opens the model on any

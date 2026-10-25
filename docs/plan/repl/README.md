@@ -238,6 +238,13 @@ a builtin admitted only as an admitted name; removal restarts only the workers h
 page is a left item). Every difference narrows, so no new ruling. The janitor reviews its code; the red team's pass is
 a PR stacked on the branch, merging after it. Both assigned 2026-10-24.
 
+e3's pass is #1129 (2026-10-25, `@agent,@security`, test-only, off main; the janitor reviews). Twelve properties; two
+findings, both the security lane's (told the same day): (1) KNOWN OPEN, a commit between turns with no hold standing is
+never judged (a failing-first todo in #1129); (2) a layering split pinned as the defended refusal: the arrival's consent
+reaches the host's prompt but not the `FETCH_URL` choke point, so an allow-row arrival's uncredentialed read cards.
+RULED into `POLICIES.md` ("Narrowed 2026-10-25"): the spec stands at the choke point, navigation only; widening is
+Shane's. The lane's fix PR lands with its own tests; e3's todo turns plain after.
+
 #1110 MERGED 7891e866 (2026-10-24): the janitor reviewed it (no finding); one test-only fix after the review
 (the Settings page's test waits on conditions, not a sleep). Root K (c2) is BUILT; root-k's clone is removed. Open
 from it: the red team's stacked pass (e3, its own test file, merging after), #1102 (owned-through-reset, awaiting
