@@ -603,8 +603,9 @@ could fetch a URL remembered for a run.
 These are ORIGIN-wide instead, and auto-approved with no prompt:
 
 - `fetch_url`, uncredentialed, of any URL on an origin the run has consented to: its start origin, every origin a
-  `navigate` was approved to, and every origin an `allow` policy let a navigate or an arrival reach (`consentedOrigins`,
-  `sw-run-host.ts`; `autoApprove`, `agent-host.ts`). A `rendered` read is included, an incognito tab that runs the
+  `navigate` was approved to, and every origin an `allow` policy let a navigate reach (`consentedOrigins`,
+  `sw-run-host.ts`; `autoApprove`, `agent-host.ts`). An origin an `allow` policy let an ARRIVAL reach is consented for
+  navigation only (`navOnlyOrigins`): the `FETCH_URL` choke point does not count it, so a read there goes to its card. A `rendered` read is included, an incognito tab that runs the
   target's scripts.
 - `fetch_url` as the person (credentialed), of the page the tab is on now (`fetchOnPageOrigin`), and, for a run the
   worker built, of any URL on an origin the PERSON approved a navigate or an arrival to (`grantRunOrigin`). Never the

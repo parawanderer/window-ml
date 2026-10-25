@@ -8,9 +8,10 @@
 // reaches the page: the re-adopt (CONTENT_READY), every send to the tab, every tool. Only the run host clears it.
 //
 // A hold is the SESSION's, not the turn's: a run that ends its turn on a page it is held on is not re-adopted there,
-// and its next turn judges the tab's page again before anything of it runs. Held in worker memory, as the hand-over's
-// decision is: an evicted worker forgets it, and a run resurrected after an eviction is judged again on the page it
-// wakes on (sw-run-host.ts).
+// and its next turn judges the tab's page again before anything of it runs. Between turns the tab is still watched
+// (`watchBetweenTurns`): a commit then holds or clears the run with no card, and the next turn raises it. Held in
+// worker memory, as the hand-over's decision is: an evicted worker forgets it, and a run resurrected after an eviction
+// is judged again on the page it wakes on (sw-run-host.ts).
 
 import { judgeCall, navigateFacts, policiesReady, speakable, type PolicyJudgement } from "./sw-policies";
 
@@ -29,6 +30,8 @@ const judges = new Map<number, Map<string, Judge>>();   // state: plumbing — t
 const pending = new Map<number, Promise<void>>();   // state: plumbing — the arrival judgement in flight for each tab
 const lastJudged = new Map<number, string>();   // state: plumbing — the URL each tab's last arrival was judged for, so a re-adopt does not judge it twice
 const holds = new Map<string, ArrivalHold>();   // state: plumbing — the runs held on the page their tab holds, by run, until the session is released
+const quiet = new Map<string, () => void>();   // state: plumbing — each run's between-turns judge, by run, until the session is released
+const spoke = new Map<string, string>();   // state: plumbing — the URL each run's judge last spoke on (or the page the person started it on), until the session is released
 
 /**
  * Judge each arrival of the run's tab while the run is live.
@@ -58,12 +61,45 @@ export function judgeArrival(tabId: number, url: string | undefined, again = tru
     const prior = pending.get(tabId) ?? Promise.resolve();
     const next = prior.catch(() => {}).then(async () => {
         if (!again && lastJudged.get(tabId) === (url ?? "")) return;
-        lastJudged.set(tabId, url ?? "");
-        const runs = [...(judges.get(tabId)?.values() ?? [])];
+        const runs = [...(judges.get(tabId)?.entries() ?? [])];
+        // A commit no judge watched (between turns) is not marked judged: the next turn's start judges it (`judgeTurnStart`).
         if (!runs.length) return;
+        lastJudged.set(tabId, url ?? "");
         // A judgement before the person's policies are read would ask about every page: wait for the read.
         await policiesReady.catch(() => {});
-        for (const judge of runs) await Promise.resolve().then(() => judge(url ?? "")).catch(() => {});   // a throw, sync or not, stops only its own run's judge
+        for (const [runId, judge] of runs) await speak(runId, judge, url ?? "");
+    });
+    pending.set(tabId, next);
+    void next.finally(() => { if (pending.get(tabId) === next) pending.delete(tabId); });
+    return next;
+}
+
+/** Run one run's judge on `url`, and note that it spoke there. A throw, sync or not, stops only its own run's judge. */
+async function speak(runId: string, judge: Judge, url: string): Promise<void> {
+    spoke.set(runId, url);
+    await Promise.resolve().then(() => judge(url)).catch(() => {});
+}
+
+/**
+ * A turn starts: judge the page the tab holds now for this run, queued like an arrival so no tool of the turn reaches the
+ * page before it (`arrivalSettled`). A run's first turn takes the page the person started it on as judged. A later turn
+ * judges the page when the run's judge has not spoken on it (the tab moved while no turn watched it: by hand, a redirect,
+ * a timer), and always when `force` (a held run; a run resurrected after an eviction, whose worker forgot). Call it after
+ * the turn's `watchArrivals`.
+ * @param tabId the run's tab
+ * @param runId the run
+ * @param opts `first` for the run's first turn; `force` to judge whatever the page
+ */
+export function judgeTurnStart(tabId: number, runId: string, opts: { first: boolean; force: boolean }): Promise<void> {
+    const prior = pending.get(tabId) ?? Promise.resolve();
+    const next = prior.catch(() => {}).then(async () => {
+        const url = (await Promise.resolve(chrome.tabs.get(tabId)).catch(() => undefined))?.url ?? "";
+        if (opts.first && !opts.force && !spoke.has(runId)) { spoke.set(runId, url); return; }
+        if (!opts.force && spoke.get(runId) === url) return;
+        const judge = judges.get(tabId)?.get(runId);
+        if (!judge) return;
+        await policiesReady.catch(() => {});
+        await speak(runId, judge, url);
     });
     pending.set(tabId, next);
     void next.finally(() => { if (pending.get(tabId) === next) pending.delete(tabId); });
@@ -82,28 +118,51 @@ export function holdArrival(runId: string, hold: ArrivalHold): void { holds.set(
 /** Let a run act on the page its tab holds again; also called when its session is released (`releaseSessionTokens`). */
 export function clearArrival(runId: string): void { holds.delete(runId); }
 
-/**
- * Whether a run's hold still stands on the page its tab holds now, judged again: for a turn the person starts after one
- * that ended held, when no judge watched the tab in between (they may have gone back by hand).
- * @param tabId the run's tab
- * @param runId the run
- * @returns true when the page would hold the run again; false when it is not held, or the page no longer holds it
- */
-export async function holdStands(tabId: number, runId: string): Promise<boolean> {
-    if (!holds.has(runId)) return false;
-    await policiesReady.catch(() => {});
-    const url = (await Promise.resolve(chrome.tabs.get(tabId)).catch(() => undefined))?.url ?? "";
+/** Judge `url` for a run no turn of which is running: hold it or clear it, with no card; the next turn raises the card. */
+function judgeQuietly(runId: string, url: string): void {
     const v = arrivalVerdict(url, judgeCall(runId, "fetch", navigateFacts(url)));
-    return v.kind === "deny" || v.kind === "ask";
+    if (v.kind === "deny" || v.kind === "ask") holdArrival(runId, v); else clearArrival(runId);
 }
 
+/**
+ * Judge the run's tab's arrivals between its turns, until the next turn's `watchArrivals` takes over or the session is
+ * released: a commit while no turn runs (by hand, a redirect, a timer) holds the run on a page a policy denies or asks
+ * about, so no re-adopt reaches that page (CONTENT_READY, a follow-up's `adoptOnTab`) before the person answers.
+ * @param tabId the run's tab
+ * @param runId the run
+ */
+export function watchBetweenTurns(tabId: number, runId: string): void {
+    quiet.get(runId)?.();
+    quiet.set(runId, watchArrivals(tabId, runId, (url) => judgeQuietly(runId, url)));
+}
+
+/**
+ * Whether the run is held on the page its tab holds now, for a turn the person starts: judged again when the run is held
+ * (they may have gone back by hand) or when no judge of this run spoke on that page (a worker evicted between turns
+ * forgot it all). A page it would hold the run on holds it.
+ * @param tabId the run's tab
+ * @param runId the run
+ * @returns true when the page holds the run; false when it does not
+ */
+export async function holdStands(tabId: number, runId: string): Promise<boolean> {
+    const url = (await Promise.resolve(chrome.tabs.get(tabId)).catch(() => undefined))?.url ?? "";
+    if (!holds.has(runId) && spoke.get(runId) === url) return false;
+    await policiesReady.catch(() => {});
+    spoke.set(runId, url);
+    judgeQuietly(runId, url);
+    return holds.has(runId);
+}
+
+/** Forget a run whose session is released: its next life starts as a first turn. */
+export function forgetArrivalRun(runId: string): void { quiet.get(runId)?.(); quiet.delete(runId); holds.delete(runId); spoke.delete(runId); }
+
 /** Forget a closed tab. */
-export function forgetArrivalTab(tabId: number): void { lastJudged.delete(tabId); }
+export function forgetArrivalTab(tabId: number): void { lastJudged.delete(tabId); judges.delete(tabId); }
 
 /**
  * What an arrival comes to, from its judgement as the `fetch` consumer with `navigateFacts`. A `deny` holds the run. An
  * `ask` holds it until the person answers, a consented origin included: the policy asks about the page, not about the
- * origin. An `allow` row lets it through and consents the origin for navigation and uncredentialed reads (never as the
+ * origin. An `allow` row lets it through and consents the origin for navigation only (a read there asks; never as the
  * person: ruling (b)). Anything else, the builtin answer or none, lets it through as it is: no card before the act was
  * owed for it either, and it consents nothing.
  * @param url the committed URL

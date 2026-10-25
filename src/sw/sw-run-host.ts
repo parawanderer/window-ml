@@ -72,7 +72,7 @@ import { topDocument } from "./worker-vision";
 import { capPageAnswer, capPageContext } from "./page-answer-caps";
 import { hostAsks, raiseAsk, stepAsks } from "./sw-asks";
 import { ARRIVAL_ASK, ARRIVAL_DENIED } from "../contract";
-import { arrivalAnsweredText, arrivalDeniedText, clickDeniedText, arrivalWaitingText, arrivalHold, arrivalLine, arrivalSettled, arrivalVerdict, clearArrival, holdArrival, judgeArrival, watchArrivals } from "./nav-arrival";
+import { arrivalAnsweredText, arrivalDeniedText, clickDeniedText, arrivalWaitingText, arrivalHold, arrivalLine, arrivalSettled, arrivalVerdict, clearArrival, holdArrival, judgeTurnStart, watchArrivals, watchBetweenTurns } from "./nav-arrival";
 import { adoptOnTab } from "./adopt-run";
 import { approvalFor, cancelReasons, gatePageTurn, noteRunEnd, noteRunStart, personClaimed } from "./sw-start-approval";
 import { pageTurnText } from "../agent-start";
@@ -618,7 +618,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     // Undoes what this turn registered: run when the turn settles, and when its setup throws before the loop starts.
     let unhostAsks: (() => void) | undefined;   // set once the run's steps may raise nested asks (sw-asks.ts)
     let unwatchArrivals: (() => void) | undefined;   // set once the run judges its tab's arrivals (nav-arrival.ts)
-    const settle = (): void => { unhostAsks?.(); unwatchArrivals?.(); cancelReasons.delete(runId); noteRunEnd(runId); runControllers.delete(runId); runInboxes.delete(runId); untrackRun(tabId, runId); deleteRun(runId); deletePythonRun(runId); releaseDebugger(tabId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); ROOT C: drop its kept Python namespace
+    const settle = (): void => { unhostAsks?.(); unwatchArrivals?.(); if (unwatchArrivals) watchBetweenTurns(tabId, runId); cancelReasons.delete(runId); noteRunEnd(runId); runControllers.delete(runId); runInboxes.delete(runId); untrackRun(tabId, runId); deleteRun(runId); deletePythonRun(runId); releaseDebugger(tabId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); ROOT C: drop its kept Python namespace
     /** Ends the run's session on every surface when the setup throws after its start event went out; set once the fan exists. */
     let endSession: ((error: string) => void) | undefined;
     try {
@@ -655,6 +655,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // "One consent, scoped by the origin"): the worker's grant outlives the turn, so the turn starts from it.
         const consentedOrigins = new Set<string>(runOrigins(runId));
         if (p.pageOrigin) consentedOrigins.add(p.pageOrigin);
+        // Origins an `allow` row let an arrival reach: consented for NAVIGATION only (POLICIES.md, ruling (b) as built). The
+        // FETCH_URL choke point does not count them, so the gate does not either: a read there goes to its card.
+        const navOnlyOrigins = new Set<string>();
         // The turn's ask and its grants, readable by the state inspector (`run.input`, `grants.turn`) for as long as the turn runs.
         const turnStarted = Date.now();
         turnByRun.set(runId, () => ({ task: p.task, images: p.images?.length ?? 0, origin: p.origin ?? null, startedTs: turnStarted,
@@ -668,7 +671,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             try {
                 if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !url.startsWith("//")) return false;   // relative → same-origin
                 const dest = new URL(url.startsWith("//") ? "https:" + url : url);
-                return !consentedOrigins.has(dest.origin);   // a NEW cross-origin → gate; an already-consented one → no
+                return !consentedOrigins.has(dest.origin) && !navOnlyOrigins.has(dest.origin);   // a NEW cross-origin → gate; an already-consented one → no
             } catch { return false; }   // unparseable → the tool will error; no pointless gate
         };
         // Debug fan-out for this run → the active surface.
@@ -858,9 +861,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             for (const b of j.broken) recordRunLog(runId, { level: "warn", subsystem: "policy", kind: "broken", reason: b.reason, detail: { policy: b.policy.id, tool: "arrival" } });
             const v = arrivalVerdict(url, j);
             if (v.kind === "pass") { clearArrival(runId); return; }
-            // An `allow` row lets the run on, and consents the origin for navigation and uncredentialed reads: never as the
-            // person, which only a person on a card grants (ruling (b)).
-            if (v.kind === "allow") { consentedOrigins.add(v.origin); clearArrival(runId); return; }
+            // An `allow` row lets the run on, and consents the origin for navigation only: never for a read, which the
+            // FETCH_URL choke point would refuse, and never as the person, which only a person on a card grants (ruling (b)).
+            if (v.kind === "allow") { navOnlyOrigins.add(v.origin); clearArrival(runId); return; }
             const now = arrivalHold(runId);
             if (now?.kind === v.kind && now.url === v.url) return;   // the same page judged again: its card stands
             holdArrival(runId, v);
@@ -913,9 +916,10 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // makes this safe if a stray session somehow survived.
         const resurrected = resurrectedRuns.has(runId);
         resurrectedRuns.delete(runId);
-        // A worker evicted while the run was held forgot the hold, and a turn after one that ended held may meet another
-        // page (the person went back by hand): either way the page the tab holds now is judged again.
-        if (resurrected || arrivalHold(runId)) void Promise.resolve(chrome.tabs.get(tabId)).then((t) => judgeArrival(tabId, t?.url)).catch(() => {});
+        // The page the tab holds now is judged before any tool of this turn reaches it, when no judge of this run spoke on it:
+        // the tab moved between turns (by hand, a redirect, a timer). Always for a run held, or resurrected after an
+        // eviction (its worker forgot the hold, and the page may have moved). A run's first turn is on the person's page.
+        void judgeTurnStart(tabId, runId, { first: !resumeMessages, force: resurrected || !!arrivalHold(runId) });
         const startEvent = {
             kind: "agent", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 },
             task: resurrected ? (resumeOriginalTask ?? p.task) : p.task, model: p.model, maxSteps: p.maxSteps,
