@@ -543,6 +543,18 @@ as-you tier), so it lands with a red-team pass by a separate session (rule 10) a
   then. Finder e3 (#1129, a failing-first todo); the fix is the security lane's, its own PR, after which e3's todo
   turns plain in e3's file.
 
+**As built 2026-10-25 (the security lane, #1131, merged dc5a301b; the janitor reviewed, no finding).** Both bullets
+above are built. Between turns the run's tab is watched (`watchBetweenTurns`, `nav-arrival.ts`): a commit no turn
+watched holds the run, `holdStands` and `judgeTurnStart` judge any page the run's judge has not spoken on (fail closed
+after a worker eviction), `lastJudged` is written only when a judge ran, and no re-adopt path (`CONTENT_READY`, the
+follow-up's adopt) reaches a denied or asked page. An `allow` row's arrival goes into a turn-local `navOnlyOrigins`
+read by the navigate gate only, never into `consentedOrigins`, so the uncredentialed read of that origin cards at
+the gate instead of being refused at the choke point. Not built: the card's "why" line on that read is a new public
+string and waits on Shane. Open, the security lane's: the start origin shows the same gate/choke split (consented at
+the gate, refused at the choke point once the tab has left); the default ruling is the same, the spec stands at the
+choke point. e3's #1129 rebases after and turns its between-turns todo plain and its two choke-point pins into card
+pins, in e3's file.
+
 ## Worked example and acceptance test: a task on another site, scoped by a proposed policy
 
 **Shane, 2026-10-24.** The simplest whole use of the mechanism, and the test of it: the person opens the model on any

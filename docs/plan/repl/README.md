@@ -245,6 +245,15 @@ reaches the host's prompt but not the `FETCH_URL` choke point, so an allow-row a
 RULED into `POLICIES.md` ("Narrowed 2026-10-25"): the spec stands at the choke point, navigation only; widening is
 Shane's. The lane's fix PR lands with its own tests; e3's todo turns plain after.
 
+#1131 MERGED dc5a301b (2026-10-25, security lane, `@security,@agent`): both #1129 findings fixed in one PR, its own
+tests (`tests/nav-arrival-host.test.mjs`), e3's file untouched (rule 10). The tab is watched between turns; any page
+the run's judge has not spoken on is judged before the turn's first tool, fail closed after an eviction; an `allow`
+arrival consents navigation only (`navOnlyOrigins`), so the read cards. The janitor reviewed (no finding). As-built
+block in `POLICIES.md` under "Narrowed 2026-10-25". Order ruled: #1131 before #1129, since #1131 turns one e3 pin red
+and only e3 edits e3's file; e3 rebases #1129, swaps the two choke-point pins for card pins, flips the todo, re-pings
+the janitor. Open, the security lane's: the card's "why" line (a string, Shane's) and the start-origin gate/choke
+split (same default ruling).
+
 #1110 MERGED 7891e866 (2026-10-24): the janitor reviewed it (no finding); one test-only fix after the review
 (the Settings page's test waits on conditions, not a sleep). Root K (c2) is BUILT; root-k's clone is removed. Open
 from it: the red team's stacked pass (e3, its own test file, merging after), #1102 (owned-through-reset, awaiting
