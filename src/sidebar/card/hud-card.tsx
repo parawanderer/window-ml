@@ -509,9 +509,9 @@ export function CardApp() {
     }
     if (state === "toast") {
         // MULTI-RUN collapsed → a calm SUMMARY: 🤖 + a generic status + a count badge, no per-run title, no
-        // tab strip. Click expands to the tabbed detail; × dismisses ALL runs (close the summary). SINGLE run
-        // → the classic toast (headline + the task subtitle), which expands to its own answer.
-        if (tabs) {
+        // tab strip. Click expands to the tabbed detail; × dismisses ALL runs (close the summary). SINGLE run, or a
+        // minimised start card among several → the classic toast (headline + the task subtitle), which expands to its own card.
+        if (tabs && !asking) {
             return (
                 <div class="card-app" data-rev={r}>
                     <div class="card-toast summary" role="button" title="Click to review · drag or right-click to move"
@@ -555,7 +555,7 @@ export function CardApp() {
                     ? <button class="card-icon" aria-label={cardMaximizedHash.value === run.hash ? "Minimise" : "Maximise"} title={cardMaximizedHash.value === run.hash ? "Minimise" : "Maximise"}
                         onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); cardMaximizedHash.value = cardMaximizedHash.value === run.hash ? "" : run.hash; }}>{cardMaximizedHash.value === run.hash ? "⤡" : "⤢"}</button>
                     : null}
-                {pending && !asking ? null : <button class="card-icon" aria-label="Collapse" title="Collapse" onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); cardMaximizedHash.value = ""; tabs ? (cardDetail.value = false) : setCardCollapsed(run.hash, true); }}>▾</button>}
+                {pending && !asking ? null : <button class="card-icon" aria-label="Collapse" title="Collapse" onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); cardMaximizedHash.value = ""; tabs && !asking ? (cardDetail.value = false) : setCardCollapsed(run.hash, true); }}>▾</button>}
                 <button class="card-x" aria-label={pending ? "Deny" : "Dismiss"} onPointerDown={onCloseDown} onClick={e => { e.stopPropagation(); cardMaximizedHash.value = ""; }}>✕</button>
             </div>
             <div class="card-body">

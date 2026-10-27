@@ -207,3 +207,27 @@ test("start card: minimised, the pill says who asks", async () => {
     assert.ok(pill, JSON.stringify(posted.filter((m) => m.__mlSidebarCard)));
     assert.match(pill.textContent, /evil\.example wants to start an agent/);
 });
+
+test("start card: minimised while the card holds several runs, it is the pill that says who asks (not the summary), and the pill reopens the start card", async () => {
+    const { w, doc } = await card();
+    for (const [h, t, a] of [["m1", "task one", 1000], ["m2", "task two", 1200]]) {
+        await w.dispatch(agentStart(h, t, "m", 10, null));
+        await w.dispatch({ kind: "agent-result", id: h, ts: a + 100, save: false, session: { hash: h, turn: 1 }, summary: `Answer ${h}.`, steps: 1, hitCap: false });
+    }
+    await w.dispatch(ask("m3"));
+    await w.flush();
+    assert.ok(doc.querySelector(".card-tabs"), "the card holds several runs");
+    assert.ok(doc.querySelector(".start-ask"), "the waiting start card is the one showing");
+    const collapse = doc.querySelector('.card-head [aria-label="Collapse"]');
+    assert.ok(collapse, "a start card can be minimised among several runs");
+    collapse.click();
+    await w.flush();
+    assert.ok(!doc.querySelector(".card-toast.summary"), "the multi-run summary cannot reopen a start card");
+    const pill = doc.querySelector(".card-toast");
+    assert.ok(pill, "collapsed to a toast");
+    assert.match(pill.textContent, /evil\.example wants to start an agent/);
+    assert.ok(!doc.querySelector(".start-ask"), "the start card is hidden while minimised");
+    pill.click();
+    await w.flush();
+    assert.ok(doc.querySelector(".start-ask"), "clicking the pill brings the start card back");
+});
