@@ -18,3 +18,11 @@ beside it (`make-<name>.py`, the file to edit) and its pinned inputs under `data
   rebased per-run branch); the table is in `docs/plan/repl/LANE_3_RESULT.md`. Not a notebook yet: no generator.
 - [verify-cost/](verify-cost/): the memory cap's verify-on-return (fork #9), native and wasm32, full probe against the
   changed-top-only variant, with an A/A control (lane 12). See its README.
+- [regex-cost.ipynb](regex-cost.ipynb): how many bound units one step of the dialect buys, to set
+  `REGEX_UNITS_PER_STEP` (and check `_COUNTED_LOOP_WEIGHT`) for the Python port of the regex cost model: the interpreter's
+  measured steps per second, then the ns per unit of `regex_work`'s bound for `re.search` / `re.findall` across
+  worst-case, counted, ordinary and seeded random patterns, timed in Pyodide on the restricted-mode fork core, the
+  units per step that implies, the margin of a power-of-two candidate, and the rows the bound under-prices. The
+  timings come from `regex-cost/bench.py` (run by `regex-cost/one.mjs <coreDir> <fork Lib/restricted.py>`, since the
+  core's own `restricted` lacks `regex_work`); inputs pinned in `data/regex-cost/bench.json`. Generator:
+  `make-regex-cost.py`.

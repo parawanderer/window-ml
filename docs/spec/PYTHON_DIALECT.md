@@ -162,9 +162,10 @@ alternation; the backtracking bound of `regex-cost.ts` over the same shape), in 
 rows, which both implementations transcribe; and (2) the corpus, `tests/fixtures/dialect-vectors/halting.json`
 (each vector: pattern, flags, the dialect it is written in, expected verdict and reason), read by both
 `tests/regex-cost.test.mjs` and the fork's `Lib/test/test_restricted.py`. A verdict that differs between the sides on a
-pattern both engines accept is a corpus failure, not drift to tolerate; a `{ todo }` marks the one open gap, the
-cost model (`regexWork`) that Python does not price yet. The JS/Python parity test is this corpus read twice, not a
-third list of cases.
+pattern both engines accept is a corpus failure, not drift to tolerate. The cost model is ported (`regex_work`, fork
+branch `ml/regex-cost`): a `"priced"` entry is over the budget on its input on both sides, and the bound's growth on each
+input is the cost corpus `tests/fixtures/dialect-vectors/regex-cost.json`, read by both suites the same way. The
+JS/Python parity test is these two corpora read twice, not a third list of cases.
 RULED the same day (the canvas session's question): the SHIPPED core reads the corpus too. A test in the python genre
 runs `dist/pyodide`'s own `risky_regex`/`risky_parse` over the `py`/`both` vectors; a vector the shipped core judges
 wrongly is a `{ todo }` naming the fork commit the core lacks and the pin, and a todo that starts passing FAILS (built
