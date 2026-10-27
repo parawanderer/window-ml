@@ -15,6 +15,13 @@ with only `py` waits for the patched interpreter. Plan: `docs/plan/repl/LANE_3_R
 | `ownership.json` | what a program may reach and write: its own values and the listed reads yes (a column, a type), anything it was handed or did not create no |
 | `print.json` | what printing and the returned value show (abridging, substitution notes) |
 
+One more file is not a genre: `regex-cost.json`, the COST corpus of the regex bound. Each entry is a pattern, its
+`flags` (letters as in a regex entry), the `dialect` it is written in (`js`, `py`, `both`), an `input` recipe
+`{ repeat, n, tail? }`, and the `order` of the bound on that input: how it grows with `n` (1 linear, 2 quadratic, 3
+cubic; `null` unbounded, never priced). Both cost models are held to it: `regexWork` in `tests/regex-cost.test.mjs`,
+the fork's `regex_work` in `Lib/test/test_restricted.py` (`RegexCostTest`), each doubling `n` and checking the ratio.
+A verdict over the budget belongs in `halting.json`'s regex entries (`"priced"`), not here.
+
 ## A vector
 
 ```json

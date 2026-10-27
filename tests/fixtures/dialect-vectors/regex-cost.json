@@ -1,0 +1,350 @@
+[
+  {
+    "name": "one quantifier before a failing atom",
+    "pattern": "a+b",
+    "flags": "",
+    "dialect": "both",
+    "input": {
+      "repeat": "a",
+      "n": 5000
+    },
+    "order": 2,
+    "reason": "from every start, a+ backtracks through the rest of the run before b fails"
+  },
+  {
+    "name": "two quantifiers over one run",
+    "pattern": "a*a*b",
+    "flags": "",
+    "dialect": "both",
+    "input": {
+      "repeat": "a",
+      "n": 500
+    },
+    "order": 3,
+    "reason": "from every start, each way to split the run between the two stars is tried"
+  },
+  {
+    "name": "two dot-stars around a literal",
+    "pattern": ".*b.*c",
+    "flags": "",
+    "dialect": "both",
+    "input": {
+      "repeat": "b",
+      "n": 500
+    },
+    "order": 3,
+    "reason": "each start pairs every place the first .* can stop with every place the second can"
+  },
+  {
+    "name": "a leading caret starts once",
+    "pattern": "^a+b",
+    "flags": "",
+    "dialect": "both",
+    "input": {
+      "repeat": "a",
+      "n": 5000
+    },
+    "order": 1,
+    "reason": "one start, which walks the run once"
+  },
+  {
+    "name": "a leading caret under m starts once per line",
+    "pattern": "^a+b",
+    "flags": "m",
+    "dialect": "both",
+    "input": {
+      "repeat": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+      "n": 200
+    },
+    "order": 1,
+    "reason": "one start per line, each walking its line: the whole input once"
+  },
+  {
+    "name": "a first atom that never matches",
+    "pattern": "ba+c",
+    "flags": "",
+    "dialect": "both",
+    "input": {
+      "repeat": "a",
+      "n": 5000
+    },
+    "order": 1,
+    "reason": "no start passes the first atom, so only the scan for starts is paid"
+  },
+  {
+    "name": "an alternation of two quadratic branches",
+    "pattern": "(?:a+b|a+c)",
+    "flags": "",
+    "dialect": "both",
+    "input": {
+      "repeat": "a",
+      "n": 5000
+    },
+    "order": 2,
+    "reason": "the branches' work adds; neither multiplies the other"
+  },
+  {
+    "name": "a lookahead at every start",
+    "pattern": "(?=a+b)",
+    "flags": "",
+    "dialect": "both",
+    "input": {
+      "repeat": "a",
+      "n": 5000
+    },
+    "order": 2,
+    "reason": "a lookaround is one path out, but its body's work is paid at every start"
+  },
+  {
+    "name": "a word-long backreference on prose",
+    "pattern": "\\b(\\w+)\\s+\\1\\b",
+    "flags": "",
+    "dialect": "both",
+    "input": {
+      "repeat": "the the cat sat ",
+      "n": 500
+    },
+    "order": 1,
+    "reason": "a capture is at most a word, so each compare is short"
+  },
+  {
+    "name": "a backreference to a starred capture",
+    "pattern": "(a*)\\1b",
+    "flags": "",
+    "dialect": "both",
+    "input": {
+      "repeat": "a",
+      "n": 500
+    },
+    "order": 3,
+    "reason": "every split of the run into the capture and its repeat is tried from every start, each compare as long as the capture"
+  },
+  {
+    "name": "a small counted maximum",
+    "pattern": "a{1,10}b",
+    "flags": "",
+    "dialect": "both",
+    "input": {
+      "repeat": "a",
+      "n": 5000
+    },
+    "order": 1,
+    "reason": "a maximum of ten caps the backtracking at each start"
+  },
+  {
+    "name": "case-insensitive: A runs over a",
+    "pattern": "A+b",
+    "flags": "i",
+    "dialect": "both",
+    "input": {
+      "repeat": "a",
+      "n": 5000
+    },
+    "order": 2,
+    "reason": "under i the unit's run is the whole input"
+  },
+  {
+    "name": "case-sensitive: A has no run",
+    "pattern": "A+b",
+    "flags": "",
+    "dialect": "both",
+    "input": {
+      "repeat": "a",
+      "n": 5000
+    },
+    "order": 1,
+    "reason": "without i the unit matches nothing in the input"
+  },
+  {
+    "name": "dotall: dot runs over newlines",
+    "pattern": ".+b",
+    "flags": "s",
+    "dialect": "both",
+    "input": {
+      "repeat": "\n",
+      "n": 5000
+    },
+    "order": 2,
+    "reason": "under s the dot's run is the whole input"
+  },
+  {
+    "name": "no dotall: dot stops at each newline",
+    "pattern": ".+b",
+    "flags": "",
+    "dialect": "both",
+    "input": {
+      "repeat": "\n",
+      "n": 5000
+    },
+    "order": 1,
+    "reason": "without s the dot matches no newline"
+  },
+  {
+    "name": "a class then a digit over letters",
+    "pattern": "[a-z]+\\d",
+    "flags": "",
+    "dialect": "both",
+    "input": {
+      "repeat": "a",
+      "n": 5000
+    },
+    "order": 2,
+    "reason": "the class runs the whole input and the digit never comes"
+  },
+  {
+    "name": "a repeated two-character group",
+    "pattern": "(?:ab)+c",
+    "flags": "",
+    "dialect": "both",
+    "input": {
+      "repeat": "ab",
+      "n": 2500
+    },
+    "order": 2,
+    "reason": "the group repeats along the run of its characters, from every start"
+  },
+  {
+    "name": "a word before an at sign, on prose",
+    "pattern": "\\w+@",
+    "flags": "",
+    "dialect": "both",
+    "input": {
+      "repeat": "word ",
+      "n": 2000
+    },
+    "order": 1,
+    "reason": "runs are a word long, so each start backtracks a word"
+  },
+  {
+    "name": "commas with spaces, on prose",
+    "pattern": "\\s*,\\s*",
+    "flags": "",
+    "dialect": "both",
+    "input": {
+      "repeat": "word ",
+      "n": 2000
+    },
+    "order": 1,
+    "reason": "runs of spaces are one long"
+  },
+  {
+    "name": "a nested quantifier on a run it can split",
+    "pattern": "(a+)+b",
+    "flags": "",
+    "dialect": "both",
+    "input": {
+      "repeat": "a",
+      "n": 30
+    },
+    "order": null,
+    "reason": "a repeated unit with more than one path on this input is exponential: unbounded, never priced"
+  },
+  {
+    "name": "sticky starts once",
+    "pattern": "a+b",
+    "flags": "y",
+    "dialect": "js",
+    "input": {
+      "repeat": "a",
+      "n": 5000
+    },
+    "order": 1,
+    "reason": "one start under y"
+  },
+  {
+    "name": "a property class under u",
+    "pattern": "\\p{L}+1",
+    "flags": "u",
+    "dialect": "js",
+    "input": {
+      "repeat": "a",
+      "n": 5000
+    },
+    "order": 2,
+    "reason": "a letter class runs over the whole input"
+  },
+  {
+    "name": "an inline (?m) starts once per line",
+    "pattern": "(?m)^a+b",
+    "flags": "",
+    "dialect": "py",
+    "input": {
+      "repeat": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+      "n": 200
+    },
+    "order": 1,
+    "reason": "the inline flag counts as the flag argument does"
+  },
+  {
+    "name": "\\A starts once even under m",
+    "pattern": "\\Aa+b",
+    "flags": "m",
+    "dialect": "py",
+    "input": {
+      "repeat": "a",
+      "n": 5000
+    },
+    "order": 1,
+    "reason": "\\A is the start of the string whatever the flags"
+  },
+  {
+    "name": "a possessive repeat is one path, still tried from every start",
+    "pattern": "a++b",
+    "flags": "",
+    "dialect": "py",
+    "input": {
+      "repeat": "a",
+      "n": 5000
+    },
+    "order": 2,
+    "reason": "one path out, but each start still walks the rest of the run"
+  },
+  {
+    "name": "an atomic group is one path",
+    "pattern": "(?>a+)b",
+    "flags": "",
+    "dialect": "py",
+    "input": {
+      "repeat": "a",
+      "n": 5000
+    },
+    "order": 2,
+    "reason": "one path out, but each start still walks the rest of the run"
+  },
+  {
+    "name": "a conditional's branches add",
+    "pattern": "(x)?(?(1)b|a+)c",
+    "flags": "",
+    "dialect": "py",
+    "input": {
+      "repeat": "a",
+      "n": 5000
+    },
+    "order": 2,
+    "reason": "both branches are priced and added"
+  },
+  {
+    "name": "a {,n} count, which only Python spells",
+    "pattern": "a{,10}b",
+    "flags": "",
+    "dialect": "py",
+    "input": {
+      "repeat": "a",
+      "n": 5000
+    },
+    "order": 1,
+    "reason": "a maximum of ten caps the backtracking at each start"
+  },
+  {
+    "name": "a scoped flag group reads its run as the whole input",
+    "pattern": "(?i:A)+b",
+    "flags": "",
+    "dialect": "py",
+    "input": {
+      "repeat": "a",
+      "n": 5000
+    },
+    "order": 2,
+    "reason": "a group that changes flags is read conservatively: its run is the whole input"
+  }
+]
