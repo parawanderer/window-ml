@@ -95,6 +95,26 @@ starts from main.
    `python-lockdown.test.mjs`). The DEFECT and the step 4 GAP above are closed as measured; `run_js` and the parked
    widening questions stay as ruled. CI's first run failed one #1051 test (P2 gate, "a revoked callback that fires
    after the result is silent and counted"), green alone, in its file and on the rerun: a timing flake, watched.
+   RULED 2026-10-27 on the parked widening (ii), by Shane in the security lane's session (relayed by `[window-ml
+   security] Site access`, session 2dfb7129, mail `20261027-1434Z-site-access-to-repl-specs-lockdown-widening-ruled.md`;
+   recorded as relayed until Shane confirms it in the coordinator's session): refuse by default, an explicit approval
+   lifts it. `js`, `pyodide.ffi` and `pyodide.webloop` are refused in an approved cell by the WORKER (so
+   `__import__("j"+"s")` gains nothing), unless the approval card carried an explicit line that the cell reaches the
+   browser's JavaScript and the person approved with it showing; that card line is a new public string whose wording
+   goes to Shane before it lands. `asyncio` is NOT refused: its risk (work outliving the cell) is closed by #998's sweep
+   of tasks and Handles. Even under the explicit approval, nothing a cell schedules outside asyncio (`pyodide.ffi`
+   once-callables or proxies handed to `setTimeout`, `setInterval`, `queueMicrotask`, `MessageChannel`) may run after
+   the cell's result: that route is refused or swept at the epilogue, and approving one cell never covers code that runs
+   during a later one. Packages' own boot-time imports keep working (pyarrow's `unix_timezones` does `import js` at
+   import time), so the refusal is by the CALLER (the cell's own frames), never by the name alone. Lands with
+   SITE_PRESENCE step 3 beside the two `run_js` todos; the `asyncio` todo and the `from js import setTimeout` one are
+   rewritten against this property by the red team (rule 10), never the builder.
+   The coordinator's reading of the two routes it touches: no conflict with step 3 or with (i). The refusal closes
+   `run_js` (`from js import eval`) for the DEFAULT approved cell only; under the explicit approval `js` is back and
+   only step 3's strip closes `run_js`, so (i) stays a step 3 property and the strip is measured WITH the approval
+   granted, not only without. One row the caller-scoped refusal adds for the red team: reaching `js` through a package
+   that imported it at boot (`pyarrow.unix_timezones.js`, or any module attribute holding a JS proxy); the attribute
+   gate's manifest answer is the claim, pinned or refuted after the fix merges.
 3. **An ALLOW-LIST strip of the worker's `globalThis` after boot**, never a deny list: remove the real `Function`,
    `eval`, `importScripts`, `setTimeout`/`setInterval` with a string argument (`WebAssembly` compiles bytes, never a
    string, and `WebAssembly.instantiate`/`compile` on bytes STAY, since a `loadPackage` after the strip needs them; the
