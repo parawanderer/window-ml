@@ -200,3 +200,43 @@ test("after an adoption a backup made under the old key opens with no secret, an
     assert.throws(() => unlockChoice(C.file, ring), (e) => e.reason === "needs-key");
     assert.deepEqual(unlockChoice(C.file, ring, { passphrase: "pass of C" }), { passphrase: "pass of C" });
 });
+
+// --- adoption is bound to the file's chunks, not to its header alone (red-team F1, part 3c) ---
+
+/** `evil`'s whole header over `victim`'s chunks: `magic(8) + u32le header length + header JSON`, then the chunks. */
+function splice(evil, victim) {
+    const hlen = (b) => new DataView(b.buffer, b.byteOffset, b.byteLength).getUint32(8, true);
+    return new Uint8Array([...evil.subarray(0, 12 + hlen(evil)), ...victim.subarray(12 + hlen(victim))]);
+}
+
+test("a header spliced over another file's chunks adopts nothing, though the typed secret opens its wrap", async () => {
+    const A = await install("pass of A"), E = await install("pass of E");
+    const store = idbKeyringStore(new IDBFactory());
+    await assert.rejects(adoptKeyring(store, splice(E.file, A.file), { passphrase: "pass of E" }), (e) => e instanceof BackupError && e.reason === "corrupt");
+    assert.deepEqual(await keyringState(store), { set: false });
+    // An install that has a key keeps it, byte for byte.
+    const before = await recordOf(A.store);
+    await assert.rejects(adoptKeyring(A.store, splice(E.file, A.file), { passphrase: "pass of E" }), (e) => e.reason === "corrupt");
+    assert.equal(await recordOf(A.store), before);
+});
+
+test("the binding is to the file, not its author: whoever knows the typed secret can seal a whole file that is adopted", async () => {
+    // The limit the doc states: a folder writer who knows the secret makes E.file outright; nothing in the file can tell.
+    const E = await install("pass of E");
+    const store = idbKeyringStore(new IDBFactory());
+    assert.equal(await adoptKeyring(store, E.file, { passphrase: "pass of E" }), E.shown.keyId);
+});
+
+test("readHeadAndFirstChunk reads the header and the first chunk only, and adoption works from those bytes", async () => {
+    const { readHeadAndFirstChunk, opensFirstChunk } = await import("../src/backup/backup-format.ts");
+    const A = await install("pass of A");
+    const big = await encryptFile(crypto.getRandomValues(new Uint8Array(40_000)), A.ring, { kind: "archive-month", chunk: 1024 });
+    const part = await readHeadAndFirstChunk(new Blob([big]));
+    assert.ok(part.length < big.length, "the rest of the file is not read");
+    await opensFirstChunk(part, A.ring);
+    const store = idbKeyringStore(new IDBFactory());
+    assert.equal(await adoptKeyring(store, part, { passphrase: "pass of A" }), A.shown.keyId);
+    // The header alone is not enough any more.
+    const hlen = new DataView(big.buffer, big.byteOffset, big.byteLength).getUint32(8, true);
+    await assert.rejects(adoptKeyring(idbKeyringStore(new IDBFactory()), big.subarray(0, 12 + hlen), { passphrase: "pass of A" }), (e) => e.reason === "truncated");
+});

@@ -11,7 +11,7 @@
  * State: one persistent store, `ml-backup-keyring` (docs/dev/state.md, "Where a value can live"). Not a run's state, so
  * not declared to the state registry; the module keeps nothing in memory.
  */
-import { BackupError, createKeyring, readHeader, rewrap, unlock, type Keyring, type KeyringOptions, type Secret } from "./backup-format";
+import { BackupError, createKeyring, opensFirstChunk, readHeader, rewrap, unlock, type Keyring, type KeyringOptions, type Secret } from "./backup-format";
 
 /** The IndexedDB database, its one object store and the one record in it. */
 const DB_NAME = "ml-backup-keyring";
@@ -133,14 +133,18 @@ export async function changePassphrase(store: KeyringStore, oldSecret: Secret, n
  * the wraps in `file`'s header with `secret`, then stored as the current key with those wraps; this install's previous
  * current key, and any it had retired already, are kept as RETIRED keys: they open the files they sealed, and seal
  * nothing. A wrong secret throws `wrong-secret` and changes nothing; the key the install already has changes nothing.
- * @param file an encrypted file made under that key (at least its header)
+ * The key must open the file's first chunk (`opensFirstChunk`), so a header spliced over another file's chunks adopts
+ * nothing. That binds the key to the file, not to its author: whoever knows the secret typed can seal a whole file this
+ * accepts (docs/dev/backup.md, "What part 3c built").
+ * @param file an encrypted file made under that key: at least its header and first chunk (`readHeadAndFirstChunk`)
  * @param secret the other install's passphrase or recovery key, as it was when `file` was written
  * @returns the `keyId` now current
- * @throws `wrong-secret`, `bad-recovery-key`, or a header error when `file` is not an encrypted file
+ * @throws `wrong-secret`, `bad-recovery-key`, `corrupt` for a header not written with these chunks, or a header error when `file` is not an encrypted file
  */
 export async function adoptKeyring(store: KeyringStore, file: Uint8Array, secret: Secret): Promise<string> {
     const header = readHeader(file);
     const next = await unlock(header.wraps, secret);
+    await opensFirstChunk(file, next);
     const had = await store.read();
     if (had?.keyId === next.keyId) return next.keyId;
     const before = had ? [{ key: had.key, keyId: had.keyId }, ...(had.retired ?? [])] : [];

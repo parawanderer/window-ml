@@ -6,7 +6,7 @@
 import { useEffect, useState } from "preact/hooks";
 import type { RestoreOffer, BackupResult } from "../../backup/backup-run";
 import { BACKUP_EXTENSION, openBackupBytes, type BackupForm } from "../../backup/backup-file";
-import { BackupError, keyFor, MAX_HEAD_BYTES, readHeader, sniff, type Keyring, type Secret } from "../../backup/backup-format";
+import { BackupError, keyFor, readHeadAndFirstChunk, readHeader, sniff, type Keyring, type Secret } from "../../backup/backup-format";
 import { adoptKeyring, changePassphrase, idbKeyringStore, keyringState, loadKeyring, setupKeyring, type KeyringStore } from "../../backup/backup-keyring";
 import { backupSlotFile, copyIntoBackupSlot, removeBackupSlot } from "../../backup/backup-opfs";
 import type { Change, PolicyChange, SiteChange } from "../../backup/backup-settings";
@@ -669,7 +669,7 @@ export function LocalBackup() {
         try {
             const file = await backupSlotFile("in");
             if (!file) return;
-            const head = new Uint8Array(await file.slice(0, MAX_HEAD_BYTES).arrayBuffer());
+            const head = await readHeadAndFirstChunk(file);
             const ring = await loadKeyring(keyring);
             if (offersBackupKey(head, s, ring)) setAdopt({ head, secret: s, hasOwnKey: !!ring, busy: false, error: "" });
         } catch { /* no offer: the restore itself is unaffected */ }

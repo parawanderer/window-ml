@@ -529,6 +529,39 @@ export async function decryptFile(b: Uint8Array, keyOrSecret: Keyring | Secret, 
     return gunzip(concat(...out), maxOutput);
 }
 
+/**
+ * Prove that a file's header was written WITH its chunks: the first chunk must authenticate under `keyring` with the
+ * header as associated data, and the key must be the one the header names. A header spliced over another file's chunks
+ * is refused (`corrupt`), so a key is never adopted from a header alone (`adoptKeyring`, part 3c). `b` needs only the
+ * header and the first chunk (`readHeadAndFirstChunk`).
+ */
+export async function opensFirstChunk(b: Uint8Array, keyring: Keyring): Promise<void> {
+    const { header, prefixLen } = parseHeader(b);
+    if (keyring.keyId !== header.keyId) throw new BackupError("corrupt", "the header's key id is not the key its wraps hold");
+    if (b.length < prefixLen + 4) throw new BackupError("truncated", "the file has no chunks");
+    const len = new DataView(b.buffer, b.byteOffset, b.byteLength).getUint32(prefixLen, true);
+    if (len < TAG_BYTES || len > header.chunk + TAG_BYTES) throw new BackupError("corrupt", "a chunk has an impossible length");
+    if (b.length < prefixLen + 4 + len) throw new BackupError("truncated", "the file ends inside its first chunk");
+    const key = await fileKey(keyring, unb64(header.fileSalt, 32));
+    const prefix = b.subarray(0, prefixLen) as Bytes;
+    const frame = b.subarray(prefixLen + 4, prefixLen + 4 + len) as Bytes;
+    for (const final of [false, true]) {
+        const ok = await crypto.subtle.decrypt({ name: "AES-GCM", iv: nonce(0, final), additionalData: prefix }, key, frame).then(() => true, () => false);
+        if (ok) return;
+    }
+    throw new BackupError("corrupt", "the first chunk does not open under this header's key: the header was not written with this file");
+}
+
+/** The leading bytes of an encrypted file that `opensFirstChunk` needs (its header and its first chunk), read from `blob` without the rest. */
+export async function readHeadAndFirstChunk(blob: Blob): Promise<Uint8Array> {
+    const head = new Uint8Array(await blob.slice(0, MAX_HEAD_BYTES + 4).arrayBuffer());
+    const { header, prefixLen } = parseHeader(head);
+    if (head.length < prefixLen + 4) throw new BackupError("truncated", "the file has no chunks");
+    const len = new DataView(head.buffer, head.byteOffset, head.byteLength).getUint32(prefixLen, true);
+    if (len > header.chunk + TAG_BYTES) throw new BackupError("corrupt", "a chunk has an impossible length");
+    return new Uint8Array(await blob.slice(0, prefixLen + 4 + len).arrayBuffer());
+}
+
 /** Raw SQLite bytes from any of the three forms; an encrypted one asks `unlockIfNeeded` for a keyring or a secret. */
 export async function readAnyForm(b: Uint8Array, unlockIfNeeded?: () => Promise<Keyring | Secret>, maxOutput: number = LIMITS.outputBytes): Promise<Bytes> {
     switch (sniff(b)) {

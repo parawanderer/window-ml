@@ -379,15 +379,18 @@ without the entries, and the delete stops travelling from that month until the e
   secret) and `openFile` in `folder-sync.ts` (so a month under a retired key is merged, not skipped). A key neither
   current nor retired is still `other-key` there and `needs-key` on restore.
 - **`adoptKeyring(store, file, secret)`** (`backup-keyring.ts`): `readHeader(file)`, `unlock(header.wraps, secret)`,
-  then store `{ key, keyId, wraps: the header's wraps, retired: [previous current, ...previous retired] }` (each keyId
+  `opensFirstChunk(file, key)` (the key must be the one the header names and open the first chunk, whose associated
+  data is the header, so a header spliced over another file's chunks is refused as `corrupt`; red-team review
+  2026-10-27), then store `{ key, keyId, wraps: the header's wraps, retired: [previous current, ...previous retired] }` (each keyId
   once, never the new current) with `replace`, or with `create` on an install with no keyring. A wrong secret throws
   `wrong-secret` before anything is read from the store for writing, so the record is untouched; the key the install
   already has is a no-op. `changePassphrase` keeps `retired` (it spreads the record).
 - **`other-key` and `needs-key` skips carry the header's `keyId`** (`SyncOutcome.skipped`, `FolderReport.skipped`). The
   section adopts from the key most skipped months share (`keyToAdopt`), opened from the first of those months.
 - **The page reads the header itself.** The section already holds the folder handle (`writableFolder`, the one
-  `pickFolder` saved), so `readMonthHead` reads the first `MAX_HEAD_BYTES` of that month's encrypted file through it and
-  `adoptKeyring` runs in the page, as the key set-up does. No new worker op reads a file and no privilege is added.
+  `pickFolder` saved), so `readMonthHead` reads the header and first chunk of that month's encrypted file through it
+  (`readHeadAndFirstChunk`, also used by the restore offer) and `adoptKeyring` runs in the page, as the key set-up
+  does. No new worker op reads a file and no privilege is added.
 - **`ARCHIVE_FOLDER { action: "rekey" }`** (extension pages only, refused from a page sender like the other actions):
   the worker op `rekey` marks every month dirty (`markAllDirty`) and a sync follows, so every month is rewritten under
   the new key and the months the install could not open are merged. It answers a `FolderReport`, so it is in
@@ -411,6 +414,13 @@ without the entries, and the delete stops travelling from that month until the e
 - **A passphrase change on the other machine is not followed.** This install keeps the wraps it adopted, so the files it
   writes open with the passphrase as it was at adoption, and with the recovery key. Adopting again does not help: the
   same key is a no-op (`adoptKeyring`), so picking up the new wrap is not built.
+- **Adoption trusts the secret, not the file's author.** The chunk check binds the key to the file it came from, but
+  whoever knows the secret the person types (a folder writer who shares the passphrase, a compromised second device)
+  can seal a whole file under a key of their own wrapped under it, and that file is adopted; the folder's other months
+  then start skipping as `other-key` on the honest machine, which is the visible sign. The recovery key is the stronger
+  secret to adopt with: it is shown once and not shared.
+- **A retired key is never dropped.** A key adopted by mistake and later replaced stays in `retired` and keeps opening
+  files it sealed; removing one is not built.
 
 ## The folder: merge before write (part A)
 
