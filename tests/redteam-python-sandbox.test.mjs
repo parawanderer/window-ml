@@ -899,7 +899,9 @@ test("P2-bound mutation and the C-function path, in child processes", { skip, ti
     const cLoop = `import asyncio, collections, itertools\nasync def _left():\n    try:\n        await asyncio.sleep(10)\n    except BaseException:\n        collections.deque(itertools.count(), maxlen=0)\nasyncio.ensure_future(_left()).set_name("leftover")\nawait asyncio.sleep(0)\n"x"`;
     // A finally that spins after the bound stopped its task: with a hook CPython took down at the first raise, only the kill ended it.
     const finallySpin = AFTER_LATE("            while True: pass");
-    const [bounded, unbounded, inC, afterLate] = await Promise.all([childCell(spin, "host", 10000), childCell(spin, "wrapper", 10000), childCell(cLoop, "host", 10000), childCell(finallySpin, "host", 10000)]);
+    // The two that must finish run apart from the two that spin for their whole limit, so neither shares the CPU with a spinner.
+    const [bounded, afterLate] = await Promise.all([childCell(spin, "host", 10000), childCell(finallySpin, "host", 10000)]);
+    const [unbounded, inC] = await Promise.all([childCell(spin, "wrapper", 10000), childCell(cLoop, "host", 10000)]);
     assert.ok(bounded.done && STOPPED.test(bounded.out), `control: with the bound the cell finishes, refused: ${bounded.out.slice(-400)}`);
     assert.equal(unbounded.done, false, "the bound off (the wrapper's unbounded spend): the same cell never finishes");
     assert.equal(inC.done, false, "a loop inside a C function is beyond the bound: only the worker's 15 s kill ends it");
