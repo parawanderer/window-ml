@@ -424,7 +424,7 @@ listed as remaining is DONE unless named below.
      same day by the lane in its own #1051 cancel: an approved outside-dialect cell rebinds the wrapper's globals
      (`_ml_cell_revoke`, the round count) and keeps a callback alive past the result. RULED the same hour (pins 7 to 12
      there): the cancel and its bound become a closure built at boot over captured callables, called from JS in a
-     `finally`; the full worker keeps the wrapper path; the rebind row is the lane's, the rest e3's after the merge. FOUND
+     `finally`; the full worker keeps the wrapper path; the rebind row is the lane's, the rest e3's after the merge. CORRECTED by the lane the same day, ruled the same hour (pins 13 and 14): its probes first ran on stock Pyodide and reproduce on the fork core, so the cores test names both; and a cancel called from JS after the result leaves a gap the cell's queued handles run in (9 of 55 rows), so the script and the cancel are one coroutine, the `finally` inside it. FOUND
      2026-10-27 by the lane, outside its brief, raised with Shane, unowned: a worker-hosted run's own Pyodide worker
      (`run:<id>`) is never terminated (`PY_DELETE_RUN` empties the namespace; the offscreen document is never closed), so
      every run that used Python keeps a realm alive for the browser's lifetime. ASSIGNED the same day by Shane to the lane,

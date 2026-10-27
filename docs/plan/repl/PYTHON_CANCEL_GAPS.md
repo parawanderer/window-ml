@@ -117,7 +117,8 @@ here; if you need its reading of a shape, ask it a question, never for a review.
 ## RULED 2026-10-27: a task that never yields during the spend (the lane's design note)
 
 Found by the lane itself (`LANE_PYTHON_CANCEL_RESULT.md`, "what is left"); the design note is the lane's
-(`tmp/python-cancel/NOYIELD_NOTE.md`, untracked), measured on the pinned core after `lockdownReadonly`. Ruled by the
+(`tmp/python-cancel/NOYIELD_NOTE.md`, untracked), measured after `lockdownReadonly` on STOCK Pyodide first and on the
+pinned fork core second (pin 13 below; every result reproduced). Ruled by the
 coordinator (`repl-specs`, session `7a8ce8b6`) the same hour:
 
 1. **Refuse, not interrupt.** The spend is BOUNDED, in Python, by a `sys.settrace` hook installed only around the
@@ -146,7 +147,8 @@ coordinator (`repl-specs`, session `7a8ce8b6`) the same hour:
 
 ### Amended 2026-10-27, later the same day: WHERE the cancel and its bound live (the lane's rebind finding)
 
-Found by the lane in its own #1051 cancel, measured on the pinned core after `lockdownReadonly`, in an approved
+Found by the lane in its own #1051 cancel, measured after `lockdownReadonly` (on stock Pyodide, then reproduced on
+the pinned fork core, pin 13), in an approved
 outside-dialect cell: the cell's body is compiled in the wrapper's own globals, and the cancel calls its hooks through
 those same globals, so `global _ml_cell_revoke; _ml_cell_revoke = lambda: None` keeps a `setTimeout` callback alive past
 the result (it ran; the control without the rebind was revoked). The same rebind reaches the round count, the spend's
@@ -179,3 +181,30 @@ the result (it ran; the control without the rebind was revoked). The same rebind
     through `globals()[...]`; a write to a captured callable's class (`asyncio.Task.cancel`, `Future.cancel`); a cell that
     replaces the loop's `call_soon`; a cell that raises `BaseException` from `__del__` of an object the cancel touches; a
     rebind made from a task that runs DURING the spend rather than from the cell's body. The janitor reviews the lane's PR.
+
+### Amended 2026-10-27, later again: the two cores, and the cancel in the SAME coroutine as the cell
+
+Reported by the lane while building `python-cancel/spend-bound`. Two corrections to what the rulings above rested on,
+both measured (rule 8):
+
+- The never-yield, disarm and rebind probes first ran on STOCK Pyodide, not the pinned core: the lane's fresh clone had
+  not run `npm run fetch-pyodide`. Rerun on the fork core (`pyodide-restricted-314.0.3-ca282158`), against the
+  pre-change code, every result reproduces: the rebind's `woke` is `["ran"]` with its control `[]`, each Python-level
+  spinner stops at the 0.5 s deadline, and `settrace(None)`, the alias and `setprofile(None)` are refused in 2 to 5 ms.
+- Calling the cancel from JS after `runPythonAsync` resolved (pin 7 as written) leaves a GAP: microtasks and `call_soon`
+  handles the cell queued run in it, before the cancel reaches them. 9 of the 55 existing red-team rows failed on that
+  placement; with the cell's script and the cancel as one coroutine, all 55 pass.
+
+Ruled the same hour:
+
+13. **Two cores in practice, both enumerated.** Pin 4's enumeration names the stock core (a dev checkout without the
+    fetch) and the fork core (CI and the release), and asserts the path each takes. A measurement in this doc says which
+    core it ran on; "the pinned core" is not assumed from a checkout.
+14. **Script and cancel are ONE coroutine, built at boot.** The harness closure of pin 7 runs the cell's script (through
+    the captured `eval_code_async`) and then the cancel inside the same coroutine, so nothing the cell queued runs between
+    the two; the `finally` of pin 7 moves inside that coroutine, so a script that raises or is itself cancelled still gets
+    the cancel. JS calls the closure through the PyProxy the lockdown returns, once per cell. Everything else in pins 7 to
+    12 stands: captured callables not modules, the separate cancel buffer JS appends to stdout, the refusal appended to the
+    error with the value nulled, the full worker on the wrapper path. The lane's regression row for the gap is the
+    existing 9 rows passing on the new placement, with one named row asserting a `call_soon` handle queued by the cell is
+    revoked, not run.
