@@ -237,3 +237,44 @@ test("setting up encryption writes the recovery key to no storage, and stores no
     for (const g of groups) assert.ok(!all.includes(g), `group ${g} reached a storage write`);
     assert.ok(!all.includes("a long enough passphrase"), "nor did the passphrase");
 });
+
+// --- using a restored backup's key (part 3c) ---
+
+const DONE = { kind: "done", sessionsAdded: 3, written: { sync: [], local: [] } };
+
+test("the restore offer appears after a restore, says what it costs before it acts, and calls back only on a click", () => {
+    const got = [];
+    const host = show(M.RestoreBody, restoreProps({ state: DONE, adopt: { hasOwnKey: true, busy: false, error: "", onAdopt: () => got.push("adopt"), onDecline: () => got.push("decline") } }));
+    assert.match(host.textContent, /Use this backup's key on this install\?/);
+    assert.match(host.textContent, /This install will encrypt with this backup's key from now on\. Its own earlier backups and archive months still open here, but on another install they need this install's old passphrase or recovery key\./);
+    assert.deepEqual(got, []);
+    button(host, "Use this backup's key on this install").click();
+    button(host, "No, keep this install's key").click();
+    assert.deepEqual(got, ["adopt", "decline"]);
+    const none = show(M.RestoreBody, restoreProps({ state: DONE, adopt: { hasOwnKey: false, busy: false, error: "" } }));
+    assert.doesNotMatch(none.textContent, /Its own earlier backups/);
+    show(M.RestoreBody, restoreProps({ state: DONE, adopt: { hasOwnKey: true, busy: true, error: "That did not work: x" } }));
+    assert.ok([...root().querySelectorAll(".bk-adopt button")].every((b) => b.disabled));
+    assert.match(root().textContent, /That did not work: x/);
+});
+
+test("no offer without the prop, and none before the restore is done", () => {
+    assert.doesNotMatch(show(M.RestoreBody, restoreProps({ state: DONE })).textContent, /backup's key/);
+    assert.doesNotMatch(show(M.RestoreBody, restoreProps({ state: { kind: "needs-key" }, adopt: { hasOwnKey: true, busy: false, error: "" } })).textContent, /backup's key/);
+});
+
+test("offersBackupKey: only a restore that typed a secret for a key this install lacks (current or retired) offers it", async () => {
+    const { createKeyring, encryptFile } = await import("../src/backup/backup-format.ts");
+    const CHEAP = { argon: { m: 64, t: 1, p: 1 } };
+    const mine = (await createKeyring("mine", CHEAP)).keyring, theirs = (await createKeyring("theirs", CHEAP)).keyring;
+    const plain = new TextEncoder().encode("SQLite format 3\0 x");
+    const foreign = await encryptFile(plain, theirs, { kind: "backup" }), own = await encryptFile(plain, mine, { kind: "backup" });
+    const typed = { passphrase: "theirs" };
+    assert.equal(M.offersBackupKey(foreign, typed, mine), true, "a foreign key, a typed secret");
+    assert.equal(M.offersBackupKey(foreign, typed, null), true, "an install with no key yet");
+    assert.equal(M.offersBackupKey(foreign, null, mine), false, "no secret was typed");
+    assert.equal(M.offersBackupKey(own, typed, mine), false, "the install's own key");
+    assert.equal(M.offersBackupKey(foreign, typed, { ...mine, retired: [{ key: theirs.key, keyId: theirs.keyId }] }), false, "a retired key already opens it");
+    assert.equal(M.offersBackupKey(plain, typed, mine), false, "a plain file");
+    assert.equal(M.offersBackupKey(new Uint8Array(3), typed, mine), false, "not a file at all");
+});

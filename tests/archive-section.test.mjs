@@ -7,7 +7,7 @@ import { JSDOM } from "jsdom";
 import { createRequire } from "node:module";
 const require_ = createRequire(import.meta.url);
 
-let h, render, ArchiveFolderBody, BRAVE_FLAG, doc;
+let h, render, ArchiveFolderBody, BRAVE_FLAG, keyToAdopt, doc;
 before(async () => {
     // An origin, so `localStorage` exists: whether the folder was reconnected before is remembered there.
     const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", { pretendToBeVisual: true, url: "https://extension.test/" });
@@ -17,7 +17,7 @@ before(async () => {
     globalThis.Node = dom.window.Node;
     doc = dom.window.document;
     ({ h, render } = require_("preact"));
-    ({ ArchiveFolderBody, BRAVE_FLAG } = await import("../src/sidebar/settings/archive-section.tsx"));
+    ({ ArchiveFolderBody, BRAVE_FLAG, keyToAdopt } = await import("../src/sidebar/settings/archive-section.tsx"));
 });
 
 const clicks = [];
@@ -195,7 +195,7 @@ test("a connected folder whose form is unchosen (report.form null) shows the cho
 test("each skip reason renders its own text, and a damaged file keeps its month and the error", () => {
     const skip = (month, reason, error = "x") => ({ month, reason, error });
     const text = (skipped) => show({ report: conn({ skipped }) }).textContent;
-    assert.match(text([skip("2026-08", "needs-key"), skip("2026-09", "needs-key")]), /2 months are encrypted, and this install has no backup key: set one up under Backup and restore/);
+    assert.match(text([skip("2026-08", "needs-key"), skip("2026-09", "needs-key")]), /2 months are encrypted, and this install has no backup key\. They are left as they were/);
     assert.match(text([skip("2026-08", "needs-key")]), /1 month is encrypted, and this install has no backup key/);
     const other = text([skip("2026-09", "other-key"), skip("2026-10", "other-key"), skip("2026-11", "other-key")]);
     assert.match(other, /3 months are encrypted with another install's key/);
@@ -206,4 +206,72 @@ test("each skip reason renders its own text, and a damaged file keeps its month 
     assert.doesNotMatch(text([]), /could not be read|another install|no backup key/);
     // All three together: three separate lines.
     assert.equal(show({ report: conn({ skipped: [skip("a", "needs-key"), skip("b", "other-key"), skip("c", "unreadable")] }) }).querySelectorAll(".arch-skips .set-warn").length, 3);
+});
+
+// --- using the folder's key (part 3c) ---
+
+const NOTICE = /This install will encrypt with the folder's key from now on\. Its own earlier backups and archive months still open here, but on another install they need this install's old passphrase or recovery key\./;
+const skip = (month, reason, keyId, error = "x") => ({ month, reason, error, ...(keyId ? { keyId } : {}) });
+const typeInto = (input, v) => { input.value = v; input.dispatchEvent(new doc.defaultView.Event("input", { bubbles: true })); };
+
+test("the key to adopt is the one most skipped months are sealed under, read from the first of those months", () => {
+    assert.deepEqual(keyToAdopt([skip("2026-07", "other-key", "kb"), skip("2026-08", "other-key", "ka"), skip("2026-09", "other-key", "ka"), skip("2026-10", "unreadable")]), { keyId: "ka", month: "2026-08", months: 2 });
+    assert.deepEqual(keyToAdopt([skip("2026-07", "other-key")]), { keyId: null, month: "2026-07", months: 1 }, "a report from before 3c names no key: one month is enough");
+    assert.equal(keyToAdopt([skip("2026-07", "unreadable")]), null);
+    assert.equal(keyToAdopt([]), null);
+});
+
+test("other-key: beside the existing line, a field for the other install's secret, with what it costs said before it acts; the click sends the typed text and the month it is opened from", async () => {
+    const got = [];
+    const host = show({ report: conn({ skipped: [skip("2026-08", "other-key", "ka"), skip("2026-09", "other-key", "ka"), skip("2026-10", "other-key", "kb")] }), onAdoptKey: (t, m) => got.push([t, m]) });
+    assert.match(host.textContent, /3 months are encrypted with another install's key/);
+    assert.match(host.textContent, /Use this folder's key/);
+    assert.match(host.textContent, NOTICE, "said once, before anything is sent");
+    assert.equal(host.textContent.match(/This install will encrypt with/g).length, 1);
+    const field = host.querySelector('.arch-adopt input[type="password"]');
+    assert.ok(field, "the restore screen's field");
+    const go = [...host.querySelectorAll("button")].find((b) => b.textContent === "Use this folder's key");
+    assert.equal(go.disabled, true, "nothing typed, nothing to send");
+    typeInto(field, "correct horse battery"); await flush();
+    [...host.querySelectorAll("button")].find((b) => b.textContent === "Use this folder's key").click();
+    assert.deepEqual(got, [["correct horse battery", "2026-08"]]);
+});
+
+test("other-key: a wrong secret says so and keeps the typed text", async () => {
+    const host = show({ report: conn({ skipped: [skip("2026-08", "other-key", "ka")] }), adoptWrong: true, onAdoptKey() {} });
+    assert.match(host.textContent, /does not open this folder's files/);
+    const field = host.querySelector('.arch-adopt input[type="password"]');
+    assert.ok(field.classList.contains("err"));
+    typeInto(field, "typed"); await flush();
+    assert.equal(host.querySelector('.arch-adopt input[type="password"]').value, "typed");
+    assert.equal(show({ report: conn({ skipped: [skip("2026-08", "other-key", "ka")] }), busy: "adopt-key" }).querySelector(".arch-adopt input").disabled, true, "disabled while it works");
+});
+
+test("needs-key with no keyring at all (a new machine): the folder's key is the FIRST choice, then setting up a new key", async () => {
+    const got = [];
+    const host = show({ report: conn({ keyring: { set: false }, skipped: [skip("2026-08", "needs-key", "ka"), skip("2026-09", "needs-key", "ka")] }), onAdoptKey: (t, m) => got.push([t, m]) });
+    const choices = [...host.querySelectorAll(".arch-skips > *")].map((e) => e.className + ":" + (e.querySelector(".bk-h")?.textContent ?? e.textContent.slice(0, 20)));
+    assert.match(choices[1], /^arch-adopt first:Use this folder's key/, "adopting comes first");
+    assert.deepEqual(buttons(host).filter((b) => /folder's key|new key/.test(b)), ["Use this folder's key", "Set up a new key instead"]);
+    assert.doesNotMatch(host.textContent, /Its own earlier backups/, "no key of its own, so nothing earlier to lose");
+    assert.match(host.textContent, /This install will encrypt with the folder's key from now on\./);
+    typeInto(host.querySelector(".arch-adopt input"), "AAAA-BBBB-CCCC-DDDD-EEEE-FFFF-GGGG"); await flush();
+    [...host.querySelectorAll("button")].find((b) => b.textContent === "Use this folder's key").click();
+    assert.deepEqual(got, [["AAAA-BBBB-CCCC-DDDD-EEEE-FFFF-GGGG", "2026-08"]]);
+    [...host.querySelectorAll("button")].find((b) => b.textContent === "Set up a new key instead").click(); await flush();
+    assert.match(host.textContent, /Set up backup encryption/, "the same set-up as the form choice");
+    assert.equal(host.querySelector(".arch-adopt"), null);
+});
+
+test("a new folder whose form is unchosen and holds encrypted months offers the folder's key above the form choice, and leaves the new-key set-up to it", () => {
+    const host = show({ report: conn({ form: null, lastSync: null, keyring: { set: false }, skipped: [skip("2026-08", "needs-key", "ka")] }), onAdoptKey() {} });
+    assert.ok(host.querySelector(".arch-adopt.first"));
+    assert.doesNotMatch(buttons(host).join("|"), /Set up a new key instead/);
+    assert.match(host.textContent, /choose Encrypted below to set up a new key/);
+    assert.ok(host.querySelector('input[type="radio"]'), "the form choice is still there");
+});
+
+test("no skipped encrypted months, no field", () => {
+    assert.equal(show({ report: conn({ skipped: [skip("2026-07", "unreadable")] }) }).querySelector(".arch-adopt"), null);
+    assert.equal(show({ report: conn() }).querySelector(".arch-adopt"), null);
 });

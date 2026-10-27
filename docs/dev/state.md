@@ -27,7 +27,7 @@ declaration yet still gets a row here.
 | `chrome.storage.session` | worker eviction | browser restart |
 | `chrome.storage.local` | restarts | uninstall, explicit removal |
 | `chrome.storage.sync` | restarts; syncs across the person's browsers | uninstall |
-| IndexedDB (extension origin): `ml-values`, `ml-saved-sessions`, `ml-hub-keyring`, `ml-archive-folder`, `ml-backup-keyring` (the backup data key: a non-extractable `CryptoKey` and its two wrapped copies, `backup-keyring.ts`) | restarts | budget and retention eviction, uninstall |
+| IndexedDB (extension origin): `ml-values`, `ml-saved-sessions`, `ml-hub-keyring`, `ml-archive-folder`, `ml-backup-keyring` (the backup data key: a non-extractable `CryptoKey`, its two wrapped copies, and the non-extractable keys of any earlier data key this install retired when it adopted another's, `backup-keyring.ts`) | restarts | budget and retention eviction, uninstall |
 | OPFS: the session archive (`archive.sqlite`) | restarts | uninstall |
 | `localStorage` (extension pages, chat page) | restarts | clearing site data |
 

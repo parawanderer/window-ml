@@ -8,10 +8,10 @@
 // (months wait, marked pending), and one click with "Allow on every visit" chosen makes it stay connected.
 import { useEffect, useState } from "preact/hooks";
 import type { FolderReport } from "../../archive/archive-worker";
-import { canPickFolder, pickFolder, regrantCount, regrantFolder, saveFolder } from "../../archive/archive-folder";
+import { canPickFolder, pickFolder, readMonthHead, regrantCount, regrantFolder, saveFolder, writableFolder } from "../../archive/archive-folder";
 import type { BackupForm } from "../../backup/backup-file";
-import { idbKeyringStore, type KeyringStore } from "../../backup/backup-keyring";
-import { KeyringSetup } from "./backup-section";
+import { adoptKeyring, idbKeyringStore, type KeyringStore } from "../../backup/backup-keyring";
+import { adoptNotice, KeyringSetup, SecretField, secretFromText } from "./backup-section";
 
 /** The browser-specific way to turn folder access on, when there is one. */
 export const BRAVE_FLAG = "brave://flags/#file-system-access-api";
@@ -96,22 +96,97 @@ export function ArchiveFormChoice(p: {
 
 const monthsOf = (n: number): string => `${n} month${n === 1 ? "" : "s"}`;
 
+type Skipped = NonNullable<FolderReport["skipped"]>;
+
+/**
+ * The key to adopt from a set of skipped months: the one most of them are sealed under, and the first month sealed under
+ * it (its file's header is what the key is opened from). A skip without a `keyId` (a report from before 3c) counts as
+ * one key; null when nothing was skipped for a key.
+ */
+export function keyToAdopt(skipped: Skipped): { keyId: string | null; month: string; months: number } | null {
+    const keyed = skipped.filter((s) => s.reason === "other-key" || s.reason === "needs-key");
+    if (!keyed.length) return null;
+    const count = new Map<string | null, number>();
+    for (const s of keyed) count.set(s.keyId ?? null, (count.get(s.keyId ?? null) ?? 0) + 1);
+    const [keyId, months] = [...count].sort((a, b) => b[1] - a[1])[0];
+    return { keyId, months, month: keyed.find((s) => (s.keyId ?? null) === keyId)!.month };
+}
+
+/**
+ * "Use this folder's key": one field for the passphrase or recovery key of the install that wrote the folder's months,
+ * and what taking its key means, said before it is taken. The same field as the restore screen's.
+ * @group settings
+ * @gallery {"hasOwnKey": true, "months": 2, "busy": false, "wrong": false}
+ * @gallery no key of its own, the first choice {"hasOwnKey": false, "months": 3, "busy": false, "wrong": false, "first": true}
+ * @gallery wrong secret, kept for another try {"hasOwnKey": true, "months": 1, "busy": false, "wrong": true}
+ */
+export function AdoptFolderKey(p: { hasOwnKey: boolean; months: number; busy: boolean; wrong: boolean; first?: boolean; onAdopt?(text: string): void }) {
+    const [text, setText] = useState("");
+    return (
+        <div class={`arch-adopt${p.first ? " first" : ""}`}>
+            <div class="bk-h">Use this folder's key</div>
+            <div class="set-hint">Enter the passphrase or recovery key of the install that wrote {p.months === 1 ? "this month" : `these ${p.months} months`}. {adoptNotice("folder", p.hasOwnKey)}</div>
+            <SecretField value={text} disabled={p.busy} wrong={p.wrong} onInput={setText} onEnter={() => p.onAdopt?.(text)} />
+            {p.wrong ? <div class="set-err">That passphrase or recovery key does not open this folder's files. Check it and try again.</div> : null}
+            <div class="arch-actions"><button class="test-btn arch-primary" disabled={p.busy || !text} onClick={() => p.onAdopt?.(text)}>{p.busy ? "Unlocking…" : "Use this folder's key"}</button></div>
+        </div>
+    );
+}
+
 /**
  * The month files the last sync or import could not take in, by reason: encrypted ones this install has no key for or
- * has the wrong key for are told apart from damaged ones, which keep their month and the error.
+ * has the wrong key for are told apart from damaged ones, which keep their month and the error. Both encrypted cases
+ * offer "Use this folder's key"; on an install with no key at all (a new machine joining) it is the first choice, beside
+ * setting up a new key.
  * @group settings
- * @gallery needs a key {"skipped": [{"month": "2026-08", "reason": "needs-key", "error": "x"}, {"month": "2026-09", "reason": "needs-key", "error": "x"}]}
- * @gallery another install's key {"skipped": [{"month": "2026-09", "reason": "other-key", "error": "x"}]}
+ * @gallery needs a key, a new machine joining {"skipped": [{"month": "2026-08", "reason": "needs-key", "error": "x", "keyId": "k9"}, {"month": "2026-09", "reason": "needs-key", "error": "x", "keyId": "k9"}], "hasOwnKey": false}
+ * @gallery another install's key {"skipped": [{"month": "2026-09", "reason": "other-key", "error": "x", "keyId": "k9"}], "hasOwnKey": true}
  * @gallery damaged {"skipped": [{"month": "2026-07", "reason": "unreadable", "error": "not an archive"}]}
  */
-export function SkippedMonths(p: { skipped: NonNullable<FolderReport["skipped"]> }) {
+export function SkippedMonths(p: {
+    skipped: Skipped;
+    /** whether this install has a backup key of its own (decides what adopting costs); unknown reads as yes */
+    hasOwnKey?: boolean;
+    busy?: boolean;
+    /** the last "Use this folder's key" try did not open the file */
+    wrong?: boolean;
+    /** false where the form choice below already sets up a new key */
+    canSetup?: boolean;
+    keyringStore?: KeyringStore;
+    /** `month` is the skipped month whose file the key is opened from */
+    onAdopt?(text: string, month: string): void;
+    /** a new key was just set up (so the section can read the keyring again) */
+    onKeySet?(): void;
+}) {
+    const [setting, setSetting] = useState(false);
     const by = (reason: string) => p.skipped.filter((s) => s.reason === reason);
     const need = by("needs-key"), other = by("other-key"), bad = p.skipped.filter((s) => s.reason !== "needs-key" && s.reason !== "other-key");
     if (!p.skipped.length) return null;
+    if (setting) return (
+        <KeyringSetup keyring={p.keyringStore ?? idbKeyringStore()} onCancel={() => setSetting(false)} onDone={() => { setSetting(false); p.onKeySet?.(); }} />
+    );
+    const pick = keyToAdopt(need.length ? need : other);
+    const adopt = (first: boolean) => pick ? (
+        <AdoptFolderKey hasOwnKey={p.hasOwnKey ?? true} months={pick.months} busy={!!p.busy} wrong={!!p.wrong} first={first} onAdopt={(t) => p.onAdopt?.(t, pick.month)} />
+    ) : null;
     return (
         <div class="arch-skips">
-            {need.length ? <div class="set-warn">{monthsOf(need.length)} {need.length === 1 ? "is" : "are"} encrypted, and this install has no backup key: set one up under Backup and restore. {need.length === 1 ? "It is" : "They are"} left as {need.length === 1 ? "it was" : "they were"}.</div> : null}
-            {other.length ? <div class="set-warn">{monthsOf(other.length)} {other.length === 1 ? "is" : "are"} encrypted with another install's key. {other.length === 1 ? "It is" : "They are"} left as {other.length === 1 ? "it was" : "they were"}.</div> : null}
+            {need.length ? (
+                <>
+                    <div class="set-warn">{monthsOf(need.length)} {need.length === 1 ? "is" : "are"} encrypted, and this install has no backup key. {need.length === 1 ? "It is" : "They are"} left as {need.length === 1 ? "it was" : "they were"}.</div>
+                    {adopt(true)}
+                    {p.canSetup === false
+                        ? <div class="set-hint">Or choose Encrypted below to set up a new key; this folder's existing months stay unreadable here until its key is used.</div>
+                        : <div class="arch-or"><span class="set-hint">Or start with a key of your own; this folder's existing months stay unreadable here until its key is used.</span>
+                            <button class="test-btn" disabled={!!p.busy} onClick={() => setSetting(true)}>Set up a new key instead</button></div>}
+                </>
+            ) : null}
+            {other.length ? (
+                <>
+                    <div class="set-warn">{monthsOf(other.length)} {other.length === 1 ? "is" : "are"} encrypted with another install's key. {other.length === 1 ? "It is" : "They are"} left as {other.length === 1 ? "it was" : "they were"}.</div>
+                    {adopt(false)}
+                </>
+            ) : null}
             {bad.length ? <div class="set-warn">{bad.length === 1 ? "A file" : `${bad.length} files`} could not be read and {bad.length === 1 ? "was" : "were"} left as {bad.length === 1 ? "it was" : "they were"}: {bad.map((b) => `${b.month} (${b.error})`).join("; ")}</div> : null}
         </div>
     );
@@ -124,7 +199,8 @@ export function SkippedMonths(p: { skipped: NonNullable<FolderReport["skipped"]>
  * @gallery plain, with the warning {"report": {"state": "connected", "name": "window.ml archive", "pending": 0, "lastSync": 1790000000000, "form": "plain", "keyring": {"set": false}}, "archiveOn": true, "isBrave": false, "canAskHere": true, "busy": null, "message": ""}
  * @gallery encrypted {"report": {"state": "connected", "name": "window.ml archive", "pending": 0, "lastSync": 1790000000000, "form": "encrypted", "keyring": {"set": true, "keyId": "k1"}}, "archiveOn": true, "isBrave": false, "canAskHere": true, "busy": null, "message": ""}
  * @gallery months that need a key {"report": {"state": "connected", "name": "window.ml archive", "pending": 2, "lastSync": 1790000000000, "form": "encrypted", "keyring": {"set": false}, "skipped": [{"month": "2026-08", "reason": "needs-key", "error": "x"}, {"month": "2026-09", "reason": "needs-key", "error": "x"}]}, "archiveOn": true, "isBrave": false, "canAskHere": true, "busy": null, "message": ""}
- * @gallery a month under another install's key {"report": {"state": "connected", "name": "window.ml archive", "pending": 1, "lastSync": 1790000000000, "form": "encrypted", "keyring": {"set": true, "keyId": "k1"}, "skipped": [{"month": "2026-09", "reason": "other-key", "error": "x"}, {"month": "2026-07", "reason": "unreadable", "error": "not an archive"}]}, "archiveOn": true, "isBrave": false, "canAskHere": true, "busy": null, "message": ""}
+ * @gallery a new machine joining an encrypted folder {"report": {"state": "connected", "name": "window.ml archive", "pending": 3, "lastSync": null, "form": null, "keyring": {"set": false}, "skipped": [{"month": "2026-08", "reason": "needs-key", "error": "x", "keyId": "k9"}, {"month": "2026-09", "reason": "needs-key", "error": "x", "keyId": "k9"}]}, "archiveOn": true, "isBrave": false, "canAskHere": true, "busy": null, "message": ""}
+ * @gallery a month under another install's key {"report": {"state": "connected", "name": "window.ml archive", "pending": 1, "lastSync": 1790000000000, "form": "encrypted", "keyring": {"set": true, "keyId": "k1"}, "skipped": [{"month": "2026-09", "reason": "other-key", "error": "x", "keyId": "k9"}, {"month": "2026-07", "reason": "unreadable", "error": "not an archive"}]}, "archiveOn": true, "isBrave": false, "canAskHere": true, "busy": null, "message": ""}
  * @gallery a new folder, encrypted preselected {"report": {"state": "connected", "name": "window.ml archive", "pending": 0, "lastSync": null, "form": null, "keyring": {"set": false}}, "archiveOn": true, "isBrave": false, "canAskHere": true, "busy": null, "message": ""}
  */
 export function ArchiveFolderBody(p: {
@@ -144,6 +220,12 @@ export function ArchiveFolderBody(p: {
     onForm?(form: BackupForm): void;
     /** where the recovery-key set-up writes the keyring; this browser's by default (tests pass a memory store) */
     keyringStore?: KeyringStore;
+    /** open the folder's key from the skipped `month`'s file with the typed passphrase or recovery key, then rewrite the months under it */
+    onAdoptKey?(text: string, month: string): void;
+    /** the last try at the folder's key did not open the file */
+    adoptWrong?: boolean;
+    /** a new key was set up from the skipped months' choice */
+    onKeySet?(): void;
 }) {
     const r = p.report;
     if (!r) return <div class="set-hint">{p.message || "Reading…"}</div>;
@@ -164,6 +246,7 @@ export function ArchiveFolderBody(p: {
     if (r.state === "connected" && r.form === null) return (
         <div class="arch">
             <div class="set-hint">Using <b>{r.name}</b>. Nothing is written to it until you choose how the archive writes its month files there.</div>
+            {r.skipped?.length ? <SkippedMonths skipped={r.skipped} hasOwnKey={!!r.keyring?.set} canSetup={false} busy={p.busy === "adopt-key"} wrong={p.adoptWrong} onAdopt={p.onAdoptKey} /> : null}
             <ArchiveFormChoice first current="plain" keyringSet={r.keyring ? r.keyring.set : null} busy={!!p.busy} keyringStore={p.keyringStore} onApply={(f) => p.onForm?.(f)} />
             {p.message ? <div class="set-hint arch-msg">{p.message}</div> : null}
         </div>
@@ -233,7 +316,7 @@ export function ArchiveFolderBody(p: {
             {tried ? null : <div class="set-hint">After a browser restart it may ask for this folder again. Choose <b>Always allow</b> then, if it is offered, and it stays connected.</div>}
             {pending}
             <ArchiveFormChoice current={r.form ?? "plain"} keyringSet={r.keyring ? r.keyring.set : null} busy={!!p.busy} keyringStore={p.keyringStore} onApply={(f) => p.onForm?.(f)} />
-            {r.skipped?.length ? <SkippedMonths skipped={r.skipped} /> : null}
+            {r.skipped?.length ? <SkippedMonths skipped={r.skipped} hasOwnKey={!!r.keyring?.set} busy={p.busy === "adopt-key"} wrong={p.adoptWrong} keyringStore={p.keyringStore} onAdopt={p.onAdoptKey} onKeySet={p.onKeySet} /> : null}
             <div class="arch-actions">
                 {btn("Write now", "Writing…", "sync", p.onSync)}
                 {btn("Import from this folder", "Importing…", "import", p.onImport)}
@@ -252,7 +335,7 @@ function isTopLevel(): boolean {
 }
 
 /** Ask the worker about the folder, or tell it what a click just did. */
-function folderMessage(action: "state" | "picked" | "fresh" | "survey" | "sync" | "import" | "form", form?: BackupForm): Promise<FolderReport> {
+function folderMessage(action: "state" | "picked" | "fresh" | "survey" | "sync" | "import" | "form" | "rekey", form?: BackupForm): Promise<FolderReport> {
     return new Promise((resolve, reject) => chrome.runtime.sendMessage({ type: "ARCHIVE_FOLDER", payload: { action, ...(form ? { form } : {}) } }, (r?: { data?: FolderReport; error?: string }) => {
         if (r?.data) resolve(r.data);
         else reject(new Error(r?.error || "the archive did not answer"));
@@ -284,6 +367,7 @@ export function LocalArchiveFolder({ archiveOn }: { archiveOn: boolean }) {
     const [found, setFound] = useState<{ name: string; files: number; first?: string; last?: string } | null>(null);
     // The months the last sync or import skipped: a plain state read does not carry them, so they are kept here.
     const [skipped, setSkipped] = useState<NonNullable<FolderReport["skipped"]>>([]);
+    const [adoptWrong, setAdoptWrong] = useState(false);
     const call = async (action: Parameters<typeof folderMessage>[0], form?: BackupForm) => {
         const r = await folderMessage(action, form);
         if (r.written || r.imported || r.skipped) setSkipped(r.skipped ?? []);
@@ -308,6 +392,29 @@ export function LocalArchiveFolder({ archiveOn }: { archiveOn: boolean }) {
         <ArchiveFolderBody report={shown} archiveOn={archiveOn} isBrave={isBrave} busy={busy} message={message}
             canAskHere={isTopLevel()}
             found={found}
+            adoptWrong={adoptWrong}
+            onKeySet={() => void refresh()}
+            onAdoptKey={(text, month) => void act("adopt-key", async () => {
+                // The key is opened from the header of `month`'s file, read through the folder handle this page already holds
+                // (the same one `pickFolder` saved): no privilege the section did not have, and no new worker op to read a file.
+                setAdoptWrong(false);
+                const dir = await writableFolder();
+                const head = dir ? await readMonthHead(dir, month) : null;
+                if (!head) return "The folder is not connected, or that month's file is gone. Reconnect it and try again.";
+                try { await adoptKeyring(idbKeyringStore(), head, secretFromText(text)); }
+                catch (e) {
+                    const reason = (e as { reason?: string })?.reason;
+                    if (reason === "wrong-secret" || reason === "bad-recovery-key") { setAdoptWrong(true); return; }
+                    throw e;
+                }
+                // With a form chosen the months are all rewritten under the key; without one nothing is written yet, so only read them.
+                if (report?.form) {
+                    const r = await call("rekey");
+                    return `This install now uses the folder's key. Wrote ${r.written?.length ?? 0} month file${r.written?.length === 1 ? "" : "s"}${r.merged ? `, took in ${r.merged} session${r.merged === 1 ? "" : "s"} from the others` : ""}.`;
+                }
+                const r = await call("import");
+                return `This install now uses the folder's key. Took in ${r.imported?.sessions ?? 0} session${r.imported?.sessions === 1 ? "" : "s"}; choose below how month files are written.`;
+            })()}
             onForm={(form) => void act("form", async () => {
                 const r = await call("form", form);
                 return `Now written as ${formName(r.form!)}. Wrote ${r.written?.length ?? 0}, removed ${r.removed?.length ?? 0}.`;

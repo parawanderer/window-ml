@@ -9,7 +9,7 @@
 import type { Database, Sqlite3Static } from "@sqlite.org/sqlite-wasm";
 import { allMonths, dirtyMonths, expireRemoved, exportMonth, folderFilesGet, folderFilesMonths, folderFilesSet, markAllDirty, markClean, metaGet, markMonthDirty, mergeBytes, metaSet, wasmDb, type ArchiveDb, type FileStat } from "./db";
 import { sealBackup, type BackupForm } from "../backup/backup-file";
-import { BackupError, readAnyForm, readHeader, sniff, type Keyring } from "../backup/backup-format";
+import { BackupError, keyFor, readAnyForm, readHeader, sniff, type Keyring } from "../backup/backup-format";
 
 /** A folder of month files, as a sync reads and writes it: a month may have one file in each `BackupForm`. */
 export interface MonthFolder {
@@ -44,8 +44,8 @@ export interface SyncOutcome {
     merged: number;
     /** sessions REMOVED from the archive because a folder file carries a newer delete of them (part 3b) */
     deleted: number;
-    /** months with a file that could not be read, left as they were and still dirty, with why */
-    skipped: { month: string; reason: SkipReason; error: string }[];
+    /** months with a file that could not be read, left as they were and still dirty, with why; `keyId` names the key of an encrypted file (part 3c) */
+    skipped: { month: string; reason: SkipReason; error: string; keyId?: string }[];
 }
 
 /** The SQLite handles the import and export need. */
@@ -90,12 +90,12 @@ export function setFolderForm(db: ArchiveDb, form: BackupForm, keyring: Keyring 
 }
 
 /** A month file's plain SQLite bytes, or why it cannot be had. */
-async function openFile(bytes: Uint8Array, keyring: Keyring | null): Promise<{ plain: Uint8Array } | { reason: SkipReason; error: string }> {
+async function openFile(bytes: Uint8Array, keyring: Keyring | null): Promise<{ plain: Uint8Array } | { reason: SkipReason; error: string; keyId?: string }> {
     try {
         if (sniff(bytes) === "wmlbak") {
             const keyId = readHeader(bytes).keyId;
-            if (!keyring) return { reason: "needs-key", error: "this month is encrypted and this install has no backup key" };
-            if (keyId !== keyring.keyId) return { reason: "other-key", error: "this month is encrypted with another install's key" };
+            if (!keyring) return { reason: "needs-key", error: "this month is encrypted and this install has no backup key", keyId };
+            if (!keyFor(keyring, keyId)) return { reason: "other-key", error: "this month is encrypted with another install's key", keyId };
         }
         return { plain: await readAnyForm(bytes, async () => keyring!) };
     } catch (e) { return { reason: "unreadable", error: String((e as Error)?.message || e).slice(0, 200) }; }
@@ -106,7 +106,7 @@ async function openFile(bytes: Uint8Array, keyring: Keyring | null): Promise<{ p
  * imported; one that cannot be read means the month is skipped and none of its files is touched.
  * @returns `forms`: the forms whose files were read, which a write may replace
  */
-async function mergeMonth(h: ArchiveHandles, folder: MonthFolder, month: string, keyring: Keyring | null): Promise<{ merged: number; deleted: number; entries: number; forms: BackupForm[]; skip?: { reason: SkipReason; error: string } }> {
+async function mergeMonth(h: ArchiveHandles, folder: MonthFolder, month: string, keyring: Keyring | null): Promise<{ merged: number; deleted: number; entries: number; forms: BackupForm[]; skip?: { reason: SkipReason; error: string; keyId?: string } }> {
     const opened: { form: BackupForm; plain: Uint8Array }[] = [];
     for (const form of await folder.forms(month)) {
         const bytes = await folder.read(month, form);

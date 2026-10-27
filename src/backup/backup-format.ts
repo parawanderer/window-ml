@@ -82,6 +82,9 @@ export const LIMITS = Object.freeze({
     outputBytes: 1 << 30,
 });
 
+/** The most bytes of a file a reader needs to see its header (`readHeader`): a page that wants only the header of a large month file reads this many, not the file. */
+export const MAX_HEAD_BYTES = PREFIX_BYTES + LIMITS.headerBytes;
+
 /** One copy of the data key, sealed under one secret; the header carries one per way in. */
 export interface WrapRecord {
     by: "passphrase" | "recovery";
@@ -101,6 +104,8 @@ export interface Keyring {
     /** names this data key (hex of 8 bytes of HKDF output), so a reader can say "wrong key" before it tries to decrypt */
     keyId: string;
     wraps: WrapRecord[];
+    /** data keys this install used before it adopted another install's: they only OPEN files (`keyFor`), never seal one (part 3c). Absent in a record stored before 3c. */
+    retired?: { key: CryptoKey; keyId: string }[];
 }
 
 /** What opens a wrap. */
@@ -483,11 +488,19 @@ export function readHeader(b: Uint8Array): { kind: FileKind; created: string; ke
     return { kind: header.kind, created: header.created, keyId: header.keyId, wraps: header.wraps };
 }
 
+/** The key of `ring` that sealed a file whose header names `keyId`: the current one or a retired one, as a keyring that opens it; null when neither did. */
+export function keyFor(ring: Keyring, keyId: string): Keyring | null {
+    if (ring.keyId === keyId) return ring;
+    const old = ring.retired?.find((r) => r.keyId === keyId);
+    return old ? { key: old.key, keyId: old.keyId, wraps: ring.wraps } : null;
+}
+
 /** Open a `.wmlbak` to plain SQLite bytes, with a keyring or a secret; returns nothing at all unless every chunk authenticates and the last is present. */
 export async function decryptFile(b: Uint8Array, keyOrSecret: Keyring | Secret, maxOutput: number = LIMITS.outputBytes): Promise<Bytes> {
     const { header, prefixLen } = parseHeader(b);
-    const keyring = "key" in keyOrSecret ? keyOrSecret : await unlock(header.wraps, keyOrSecret);
-    if (keyring.keyId !== header.keyId) throw new BackupError("wrong-secret", "this file was sealed under a different data key than the one given");
+    const given = "key" in keyOrSecret ? keyOrSecret : await unlock(header.wraps, keyOrSecret);
+    const keyring = keyFor(given, header.keyId);
+    if (!keyring) throw new BackupError("wrong-secret", "this file was sealed under a different data key than the one given");
     const prefix = b.subarray(0, prefixLen) as Bytes;
     const key = await fileKey(keyring, unb64(header.fileSalt, 32));
     const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);

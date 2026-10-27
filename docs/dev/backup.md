@@ -12,7 +12,7 @@ in four PRs, and each section below says which parts exist yet.
 | 2b. The screens: Settings (DevTools panel and chat page Extension tab), the popup button, the recovery screen | built |
 | 3a. The archive folder's form: encrypted, compressed or plain month files, and the switch from plain | built (worker and screen) |
 | 3b. Deletes that travel: the `removed` entries written into the month files | built |
-| 3c. Two machines on one encrypted folder: adopting the folder's key | designed |
+| 3c. Two machines on one encrypted folder: adopting the folder's key, keeping one's own as a retired key | built |
 
 The archive itself (SQLite over OPFS, the worker, un-archiving) is `archive.md`; read it first.
 
@@ -244,13 +244,13 @@ key in no storage area, two encrypted backups, then a fresh profile restoring wi
 secret refused, sites first in the preview), a file swapped under the preview refused as `changed` with nothing
 written, the re-read restoring both sessions and the settings; and the download path with no save dialog.
 
-**Not built.** Adopting another install's data key on restore; rotating the recovery key; the archive folder's
-encryption switch (part 3).
+**Not built.** Rotating the recovery key. (Adopting another install's data key, on restore and from the archive folder,
+and the folder's encryption switch are parts 3c and 3a, below.)
 
 ## The archive folder's form (part 3)
 
-Designed 2026-10-27. 3a is built, worker and screen (`folderForm` op, `folder-sync.ts`, the archive section); so is 3b; 3c
-is not. Three PRs, in this order, because each needs the one before.
+Designed 2026-10-27. 3a is built, worker and screen (`folderForm` op, `folder-sync.ts`, the archive section); so are 3b
+and 3c. Three PRs, in this order, because each needs the one before.
 
 ### 3a. Encrypted, compressed or plain month files
 
@@ -302,7 +302,7 @@ values, calls the worker's `folderForm` op and then starts a `sync` (`ARCHIVE_FO
   pick, after a reload, or after a pick made from elsewhere. There is no page-side inference.
 - **Skipped months by reason**, from the last sync or import report (kept in the page; a plain state read does not
   carry them): `needs-key` and `other-key` each say how many months and what to do, `unreadable` keeps the month and
-  the error. Using another install's key is part 3c.
+  the error. Using another install's key is part 3c, below.
 - **The job status.** `archive.folder-sync` reports `blocked` while the last sync or import skipped months for
   `needs-key` or `other-key` (one line, shown in the housekeeping log's jobs). It does not reach the attention
   codes (`sw-attention.ts` has no `blocked`, and a new code is a contract change); a state read does not clear it.
@@ -365,9 +365,49 @@ without the entries, and the delete stops travelling from that month until the e
 - **Each install makes its own data key at set-up**, so machine B cannot open machine A's months, and skips them
   (`other-key`) rather than overwriting them: safe, but neither sees the other's sessions.
 - **"Use this folder's key"**: Settings asks for A's passphrase or recovery key, unwraps the data key from a month
-  file's header (`unlock`), and makes it this install's keyring, with A's wraps. B's own earlier backups still open with
-  B's old passphrase or recovery key, typed; Settings says so before it replaces anything.
+  file's header (`unlock`), and makes it this install's current key, with A's wraps. B's own earlier key is KEPT as a
+  retired key, so B's own earlier backups and months still open on B without a typed secret (on another install they
+  need B's old passphrase or recovery key, as the header carries B's old wraps). Settings says so before it acts.
 - **This is the same step as "adopting another install's data key on restore"**, so a restore offers it too.
+
+### What part 3c built
+
+- **`Keyring.retired?`** (`backup-format.ts`): a list of `{ key, keyId }`, non-extractable like the current key, in the
+  same IndexedDB record. A record stored before 3c has none and loads, seals and opens unchanged. Sealing always uses
+  the current key. Opening picks by the header's `keyId` among the current and the retired keys: `keyFor(ring, keyId)`,
+  the one place that decides, used by `decryptFile`, `unlockChoice` (so a backup under a retired key opens with no
+  secret) and `openFile` in `folder-sync.ts` (so a month under a retired key is merged, not skipped). A key neither
+  current nor retired is still `other-key` there and `needs-key` on restore.
+- **`adoptKeyring(store, file, secret)`** (`backup-keyring.ts`): `readHeader(file)`, `unlock(header.wraps, secret)`,
+  then store `{ key, keyId, wraps: the header's wraps, retired: [previous current, ...previous retired] }` (each keyId
+  once, never the new current) with `replace`, or with `create` on an install with no keyring. A wrong secret throws
+  `wrong-secret` before anything is read from the store for writing, so the record is untouched; the key the install
+  already has is a no-op. `changePassphrase` keeps `retired` (it spreads the record).
+- **`other-key` and `needs-key` skips carry the header's `keyId`** (`SyncOutcome.skipped`, `FolderReport.skipped`). The
+  section adopts from the key most skipped months share (`keyToAdopt`), opened from the first of those months.
+- **The page reads the header itself.** The section already holds the folder handle (`writableFolder`, the one
+  `pickFolder` saved), so `readMonthHead` reads the first `MAX_HEAD_BYTES` of that month's encrypted file through it and
+  `adoptKeyring` runs in the page, as the key set-up does. No new worker op reads a file and no privilege is added.
+- **`ARCHIVE_FOLDER { action: "rekey" }`** (extension pages only, refused from a page sender like the other actions):
+  the worker op `rekey` marks every month dirty (`markAllDirty`) and a sync follows, so every month is rewritten under
+  the new key and the months the install could not open are merged. It answers a `FolderReport`, so it is in
+  `FOLDER_OPS`. When the folder's form is still unchosen (a new machine joining) nothing may be written, so the section
+  sends `import` instead, which reads the months with the new key, and the form choice follows.
+- **The archive section** (`SkippedMonths`, `AdoptFolderKey`): under an `other-key` line, "Use this folder's key": the
+  restore screen's field (`SecretField`, one component for restore, decrypt and this) and `secretFromText`, with the
+  cost said first (`adoptNotice`). A wrong secret says so and keeps the typed text. Under a `needs-key` line on an
+  install with no keyring (a new machine) the same block is the FIRST choice, outlined, with "Set up a new key instead"
+  (`KeyringSetup`) below it; where the form choice is on screen (the form is unchosen) that choice is the set-up.
+- **Restore** (`AdoptBackupKey`, `offersBackupKey`): after a restore that needed a typed secret for a key this install
+  neither holds nor retired (or that has no keyring), the screen offers once "Use this backup's key on this install".
+  The page keeps the file's header bytes and the typed secret past the restore (the worker removes the slot) and drops
+  both when the offer is used, declined, or another file is picked. It calls `adoptKeyring` and does not rekey the
+  folder.
+- **Two machines that adopt each other's keys at the same moment swap keys.** Each keeps its old key as retired, so each
+  still reads the months the other wrote, and the folder settles after the rewrites (`tests/folder-sync.test.mjs`).
+  Nothing is built to prevent it.
+- **A passphrase change on the other machine is not followed.** This install keeps the wraps it adopted, so the files it
+  writes open with the passphrase as it was at adoption, and with the recovery key. Adopt again to pick up the new wrap.
 
 ## The folder: merge before write (part A)
 
@@ -405,6 +445,9 @@ same to each other.
   merge would let a backup's entries delete sessions.
 - **`writeMonthFile` replaces;** never call it for a month whose file was not merged in this sync.
 - **An encrypted file's name is a hint.** Read the first bytes; a renamed `.sqlite` may be gzip or encrypted.
+- **Open by `keyFor`, never by comparing `keyId` with the current key alone.** After an adoption the install's own
+  months and backups are under a retired key; a comparison with `keyring.keyId` calls them `other-key` and, since the
+  month is then skipped and never rewritten, leaves them unreadable to the install that wrote them.
 - **The data key is never extractable after setup;** code that needs its raw bytes is code that should be unwrapping
   with the passphrase or the recovery key.
 - **A restore imports the sessions it listed, from the file it digested.** Do not give `restoreSessions` back a re-read
