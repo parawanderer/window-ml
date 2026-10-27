@@ -418,13 +418,15 @@ listed as remaining is DONE unless named below.
      unowned until the week resets. RESUMED 2026-10-27: the lane picks up the two leftovers in order (the last cell's
      drops reported, a run-log fix with its test; then the never-yielding task, design note to the coordinator before a
      build), plus the regex-cost Python port named to it in fork #11 (the two `pyodide_js` todos were already plain
-     through #1046 itself). The janitor reviews each PR. RULED 2026-10-27 on the never-yielding task, in
+     through #1046 itself). The janitor reviews each PR. MERGED 2026-10-27: #1139 (cf8cc300, the drops after a turn's
+     last cell reported, janitor no findings); #1148 (c6a3808f, a clone symlinks `pyodide-core` too, since the stock core
+     skips 324 of the python genre's 530 tests). RULED 2026-10-27 on the never-yielding task, in
      [`PYTHON_CANCEL_GAPS.md`](PYTHON_CANCEL_GAPS.md): refuse, not interrupt; one budget for the whole spend; the C-level
      case keeps the kill, named; cores enumerated; e3 probes the hook's reach after the merge, in its own file. FOUND the
      same day by the lane in its own #1051 cancel: an approved outside-dialect cell rebinds the wrapper's globals
      (`_ml_cell_revoke`, the round count) and keeps a callback alive past the result. RULED the same hour (pins 7 to 12
      there): the cancel and its bound become a closure built at boot over captured callables, called from JS in a
-     `finally`; the full worker keeps the wrapper path; the rebind row is the lane's, the rest e3's after the merge. FOUND
+     `finally`; the full worker keeps the wrapper path; the rebind row is the lane's, the rest e3's after the merge. CORRECTED by the lane the same day, ruled the same hour (pins 13 and 14): its probes first ran on stock Pyodide and reproduce on the fork core, so the cores test names both; and a cancel called from JS after the result leaves a gap the cell's queued handles run in (9 of 55 rows), so the script and the cancel are one coroutine, the `finally` inside it. FOUND
      2026-10-27 by the lane, outside its brief, raised with Shane, unowned: a worker-hosted run's own Pyodide worker
      (`run:<id>`) is never terminated (`PY_DELETE_RUN` empties the namespace; the offscreen document is never closed), so
      every run that used Python keeps a realm alive for the browser's lifetime. ASSIGNED the same day by Shane to the lane,
