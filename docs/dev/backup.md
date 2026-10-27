@@ -13,6 +13,7 @@ in four PRs, and each section below says which parts exist yet.
 | 3a. The archive folder's form: encrypted, compressed or plain month files, and the switch from plain | built (worker and screen) |
 | 3b. Deletes that travel: the `removed` entries written into the month files | built |
 | 3c. Two machines on one encrypted folder: adopting the folder's key, keeping one's own as a retired key | built |
+| 3d. Forgetting a retired key, by hand, in Settings | designed |
 
 The archive itself (SQLite over OPFS, the worker, un-archiving) is `archive.md`; read it first.
 
@@ -420,7 +421,45 @@ without the entries, and the delete stops travelling from that month until the e
   then start skipping as `other-key` on the honest machine, which is the visible sign. The recovery key is the stronger
   secret to adopt with: it is shown once and not shared.
 - **A retired key is never dropped.** A key adopted by mistake and later replaced stays in `retired` and keeps opening
-  files it sealed; removing one is not built.
+  files it sealed; removing one is part 3d.
+
+### 3d. Forgetting a retired key
+
+Designed 2026-10-27, after the red-team review of 3c.
+
+**Why it matters.** A retired key leaks nothing new: nothing is sealed under it again. What it keeps open is the way IN.
+The sync opens and merges any month file under a retired key (`keyFor`), then rewrites it under the current key. If the
+retired key was adopted by mistake (or from someone who knew the secret, see "Adoption trusts the secret" above), its
+maker can keep planting month files that this install merges into the archive as the person's own sessions; a resumed
+one hands a planted transcript to the model. Replacing the key does not close that. Forgetting it does.
+
+**Why forgetting is cheap.** Every encrypted file carries its own wraps in its header, so a file under a forgotten key
+still opens with that key's passphrase or recovery key, typed (`unlockChoice` then asks, as for any foreign file). A
+retired key saves typing; nothing depends on it to be recoverable. The cost Settings states is exactly that.
+
+**Why not automatically.** Two machines that adopted each other's keys at once (the swap above) read each other's
+months ONLY through their retired keys; an automatic drop breaks that. And a person may no longer know their old
+passphrase, so a silent drop turns "saves typing" into "type a secret you lost". Forgetting is always a click.
+
+**What to build:**
+
+- **`retired` entries gain `since` (ms)**, set by `adoptKeyring` when it retires a key. A record from before 3d has
+  entries with no `since`: they load and are listed as "retired earlier" (THE UPGRADE test).
+- **`forgetRetiredKey(store, keyId)`** (`backup-keyring.ts`): removes that entry with `replace`; the current key and
+  wraps are untouched; an unknown keyId, or the CURRENT keyId, is refused (the current key is never forgotten this
+  way). Drops the `retired` field when the list empties.
+- **The archive section lists the retired keys** under the key line: key id (short), when retired, and how many of the
+  folder's month files are still under it (the page counts headers through the folder handle it holds, as
+  `readMonthHead` does; no worker op). Each has "Forget", which says once before it acts: files under this key will ask
+  for its passphrase or recovery key on this install; N months in the folder are still under it and will be skipped
+  (`other-key`) until another install rewrites them. A month count of zero is the safe case and reads so.
+- **No change to sync, rekey or sealing.** After a forget, a month under that key is simply `other-key`, which 3a and
+  3c already handle (skipped, never overwritten, offered for adoption).
+- **Tests:** forgetting removes only that entry, byte for byte otherwise; the current key and an unknown id are refused;
+  after a forget a backup under that key throws `needs-key` from `unlockChoice` and opens with its typed passphrase and
+  recovery key; a folder month under it is skipped as `other-key` and not rewritten; the upgrade record with no `since`
+  lists and forgets; the swap case still settles if neither forgets; pure-component tests for the list, the notice and
+  the zero-months wording; `@gallery` examples for the list.
 
 ## The folder: merge before write (part A)
 
