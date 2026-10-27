@@ -143,3 +143,39 @@ coordinator (`repl-specs`, session `7a8ce8b6`) the same hour:
    janitor reviews the PR. The adversarial half is the red team's AFTER the merge, in e3's own file, from a brief naming
    what to probe: a handler that re-installs a hook, a thread started before the cancel, a generator or `exec` that
    reaches a C loop, and the spend's budget as a clock the cell can read. Nothing of that is the lane's to write.
+
+### Amended 2026-10-27, later the same day: WHERE the cancel and its bound live (the lane's rebind finding)
+
+Found by the lane in its own #1051 cancel, measured on the pinned core after `lockdownReadonly`, in an approved
+outside-dialect cell: the cell's body is compiled in the wrapper's own globals, and the cancel calls its hooks through
+those same globals, so `global _ml_cell_revoke; _ml_cell_revoke = lambda: None` keeps a `setTimeout` callback alive past
+the result (it ran; the control without the rebind was revoked). The same rebind reaches the round count, the spend's
+`asyncio` lookup, and the bound's clock and hooks if they lived in the wrapper. Ruled the same hour:
+
+7. **The cancel is a closure built at boot, called from JS, in a `finally`.** Nothing the cancel reads is a name a cell
+   can rebind: the harness function captures what it needs at boot, and the worker calls it through the PyProxy the
+   lockdown already returns, after `runPythonAsync` and in a `finally`, so an exception from the result's serialisation
+   cannot skip it. This replaces the earlier "HERE, not at the end of the wrapper" placement. The bound (pins 1 to 5)
+   lives inside that closure. The cancel's own output goes to a buffer of its own that JS appends to the cell's stdout;
+   its refusal text JS appends to the error, with the value nulled.
+8. **Capture CALLABLES and values, never modules.** A captured module is a dict a cell can still write into
+   (`asyncio.sleep = …`), so the closure holds `asyncio.sleep`, `asyncio.all_tasks`, `gc.get_objects`, `sys.settrace`,
+   `sys.setprofile`, `time.monotonic`, the loop and the revoke function as bound references, and the round count and the
+   budget as plain values. A class a captured callable dispatches through (`Task.cancel`) is a surface the closure cannot
+   close by capture; that one is the red team's row (below), and if it reaches, the answer is the lockdown's (the security
+   lane's `fix/python-lockdown`), not a second cancel.
+9. **The disarm is refused, not left to the kill.** The lane measured a profile hook that refuses a `c_call` of
+   `sys.settrace`, `sys.setprofile` and `threading`'s equivalents during the spend, so a handler's `sys.settrace(None)`,
+   an aliased `st = sys.settrace; st(None)` and a `setprofile(None)` at the call are refused (3 to 9 ms). Pin 5's
+   "replaced and restored to `None`" stands; this is the enforce layer beneath it.
+10. **The full worker keeps today's in-wrapper cancel.** Without the lockdown there is no PyProxy to call through and no
+    hardened namespace to protect; that worker always asks. Narrow beats wide: the closure is built where the lockdown
+    runs, and the plain-CPython tests keep the wrapper path. A test asserts which path each worker takes, by name.
+11. **Inside-dialect cells are measured, not assumed out of reach** (rule 8). The lane's claim is that they run in a copy
+    of the namespace with no `_` names; one test row pins it (a dialect cell that tries the rebind and is refused by the
+    dialect, or has no such name to bind). Until that row exists the plan says "unprobed".
+12. **Tests (rule 10).** The rebind case is the lane's own regression and lands in the lane's file, with the control.
+    Everything else adversarial is e3's, after the merge, from the brief in pin 6 plus: the rebind through an alias and
+    through `globals()[...]`; a write to a captured callable's class (`asyncio.Task.cancel`, `Future.cancel`); a cell that
+    replaces the loop's `call_soon`; a cell that raises `BaseException` from `__del__` of an object the cancel touches; a
+    rebind made from a task that runs DURING the spend rather than from the cell's body. The janitor reviews the lane's PR.

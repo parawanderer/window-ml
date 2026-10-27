@@ -420,7 +420,11 @@ listed as remaining is DONE unless named below.
      build), plus the regex-cost Python port named to it in fork #11 (the two `pyodide_js` todos were already plain
      through #1046 itself). The janitor reviews each PR. RULED 2026-10-27 on the never-yielding task, in
      [`PYTHON_CANCEL_GAPS.md`](PYTHON_CANCEL_GAPS.md): refuse, not interrupt; one budget for the whole spend; the C-level
-     case keeps the kill, named; cores enumerated; e3 probes the hook's reach after the merge, in its own file. FOUND
+     case keeps the kill, named; cores enumerated; e3 probes the hook's reach after the merge, in its own file. FOUND the
+     same day by the lane in its own #1051 cancel: an approved outside-dialect cell rebinds the wrapper's globals
+     (`_ml_cell_revoke`, the round count) and keeps a callback alive past the result. RULED the same hour (pins 7 to 12
+     there): the cancel and its bound become a closure built at boot over captured callables, called from JS in a
+     `finally`; the full worker keeps the wrapper path; the rebind row is the lane's, the rest e3's after the merge. FOUND
      2026-10-27 by the lane, outside its brief, raised with Shane, unowned: a worker-hosted run's own Pyodide worker
      (`run:<id>`) is never terminated (`PY_DELETE_RUN` empties the namespace; the offscreen document is never closed), so
      every run that used Python keeps a realm alive for the browser's lifetime. ASSIGNED the same day by Shane to the lane,
