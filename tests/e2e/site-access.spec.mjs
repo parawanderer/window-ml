@@ -1388,7 +1388,6 @@ test.describe("@security attack 19: the start card", () => {
         env.fake.setScript([{ content: "AGENT RAN" }]);
         return { ...env, origin, page };
     }
-    /** The card's frame once it shows the start card. */
     /** The start card's frame once `.start-ask` is up; settled unless `settle` is false (a test that must click in the first second). */
     async function startCard(page, { settle = true } = {}) {
         await expect.poll(() => !!page.frames().find((f) => f.url().includes("sidebar.html")), { timeout: 15000 }).toBe(true);
