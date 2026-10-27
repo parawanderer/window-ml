@@ -359,7 +359,9 @@ re-adopted (`holdStands` in `userRunAction`) and the next turn judges the tab's 
 is still watched (`watchBetweenTurns`, until the session is released): a commit then holds or clears the run with no
 card, and the next turn raises the card (`judgeTurnStart`, before any of its tools). A page no judge of the run spoke
 on is judged at the turn's start too (`holdStands`, `judgeTurnStart`): a commit no judge saw is never marked judged.
-An `allow` row's arrival consents the origin for navigation only (`navOnlyOrigins`); a read there goes to its card.
+An `allow` row's arrival consents the origin for navigation only (`navOnlyOrigins`); a read there goes to its card,
+whose line says the read is a separate permission (`navOnlyWhy`). So does an uncredentialed read of the start origin
+once the tab has left it (`startLeftWhy`): the choke point judges the sender's frame, so the gate no longer calls it free.
 It is worker memory: a resurrected run is judged again where it wakes. Once approved, it just works mechanically: the content script re-injects on the new site
 (`<all_urls>`), so re-adoption + delegation continue there; `crossOrigin` rides on `RebuildConfig` so the
 rebuilt tool keeps crossing after a nav, and it's logged in the "agent options" block with a data-carry

@@ -44,7 +44,7 @@ const onB = (adopts) => adopts.filter((a) => a.includes("b.example"));
 async function hostRun(calls, { policies = [], clickTo = {}, precheck = () => undefined, card = () => true, ask = () => true, between, onCall, redirects = {} } = {}) {
     const tab = { id: 7, windowId: 3, active: true, url: START, title: "Site" };
     let turns = 0, docN = 1, bg, hash;
-    const seen = [], cards = [], asks = [], toPage = [], adopts = [], readies = [], fetched = [];
+    const seen = [], cards = [], whys = [], asks = [], toPage = [], adopts = [], readies = [], fetched = [];
     const answered = new Set();
     const sender = () => ({ tab: { id: 7, url: tab.url }, url: tab.url, origin: new URL(tab.url).origin, frameId: 0, documentId: `doc-${docN}` });
     // The browser commits the destination; `ready` is the new document's content script saying so, which must not be
@@ -63,7 +63,7 @@ async function hostRun(calls, { policies = [], clickTo = {}, precheck = () => un
     bg = loadBackground({
         config, openTabs: [tab], siteGate: true, local: { ml_policies_global: policies, ml_site_always: ["https://site.example", "https://b.example"] },
         onFetch: async (call) => {
-            if (call.url.startsWith("https://b.example/")) { fetched.push(call.url); return { ok: true, status: 200, url: call.url, headers: { get: (h) => (/content-type/i.test(h) ? "text/html; charset=utf-8" : null) }, text: async () => "<h1>B</h1>", arrayBuffer: async () => new TextEncoder().encode("<h1>B</h1>").buffer, body: null }; }
+            if (call.url.startsWith("https://b.example/") || call.url.startsWith("https://site.example/api")) { fetched.push(call.url); return { ok: true, status: 200, url: call.url, headers: { get: (h) => (/content-type/i.test(h) ? "text/html; charset=utf-8" : null) }, text: async () => "<h1>B</h1>", arrayBuffer: async () => new TextEncoder().encode("<h1>B</h1>").buffer, body: null }; }
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
             seen.push(call.body.messages);
             await onCall?.(turns, bg);
@@ -80,6 +80,7 @@ async function hostRun(calls, { policies = [], clickTo = {}, precheck = () => un
                 if (e?.awaitingApproval && !answered.has(`${e.id}:${e.seq}`)) {
                     answered.add(`${e.id}:${e.seq}`);
                     cards.push(e.tool);
+                    whys.push(e.askWhy ?? null);
                     void bg.send({ type: "SET_APPROVAL", payload: { runId: e.id, seq: e.seq, decision: !!card(e.tool) } });
                 }
                 for (const a of e?.asks ?? []) {
@@ -115,7 +116,7 @@ async function hostRun(calls, { policies = [], clickTo = {}, precheck = () => un
     await sleep(40);
     const results = (seen.at(-1) ?? []).filter((m) => m.role === "tool").map((m) => String(m.content));
     const log = async () => (await bg.context.__mlRunLog.all()).filter((r) => r.subsystem === "policy").map((r) => plain(r));
-    return { bg, tab, turns: () => turns, cards, asks, toPage, adopts, readies, fetched, results, log };
+    return { bg, tab, turns: () => turns, cards, whys, asks, toPage, adopts, readies, fetched, results, log };
 }
 
 /** Add a global policy the way the policy page does: POLICIES from an extension page. */
@@ -352,6 +353,54 @@ test("an arrival no policy covers passes as it is: no card, no hold", T, async (
     assert.deepEqual(r.asks, []);
     assert.deepEqual(r.toPage.map((x) => x.name), ["click", "scroll"]);
     assert.equal(r.results[1], "ran scroll");
+});
+
+// --- the card says why a read asks where the run may go but not read (POLICIES.md, "Ruled 2026-10-27") ---
+
+const NAV_ONLY_LINE = "Your policy lets the run go to b.example. Reading pages there is a separate permission: allow this read, or add a read rule to the policy.";
+const START_LEFT_LINE = "The run started on site.example. Reading pages there once the tab has left is a separate permission: allow this read, or add a read rule to the policy.";
+
+test("a read of an origin an allow row lets the run go to cards with the ruled line, and the model reads why", T, async () => {
+    const r = await hostRun([
+        { name: "click", args: { selector: "#docs" } },
+        { name: "click", args: { selector: "#home" } },
+        { name: "fetch_url", args: { url: "https://b.example/data" } },
+    ], { policies: [ALLOW_B_NAV], clickTo: { "#docs": OTHER, "#home": START }, card: (tool) => tool !== "fetch_url" });
+    assert.deepEqual(r.cards, ["click", "click", "fetch_url"]);
+    assert.deepEqual(r.whys.slice(0, 2), [null, null], "the clicks carry no why");
+    assert.equal(r.whys[2]?.line, NAV_ONLY_LINE);
+    assert.equal(r.whys[2]?.cause, "nav-only");
+    assert.ok(r.results.some((s) => s.includes("a policy lets the run navigate to b.example but not read it")), `the model read why: ${JSON.stringify(r.results)}`);
+});
+
+test("once the tab has left the start page, an uncredentialed read of the start origin cards with its own line; approved, it runs", T, async () => {
+    const declined = await hostRun([
+        { name: "click", args: { selector: "#docs" } },
+        { name: "fetch_url", args: { url: "https://site.example/api" } },
+    ], { clickTo: { "#docs": OTHER }, card: (tool) => tool !== "fetch_url" });
+    assert.deepEqual(declined.cards, ["click", "fetch_url"], "the read carded at the gate, not refused at the choke point");
+    assert.equal(declined.whys[1]?.line, START_LEFT_LINE);
+    assert.equal(declined.whys[1]?.cause, "start-left");
+    assert.deepEqual(declined.fetched, []);
+    assert.ok(!declined.results.some((s) => /hasn't been approved for fetching/.test(s)), "nothing reached the choke point's refusal");
+    const approved = await hostRun([
+        { name: "click", args: { selector: "#docs" } },
+        { name: "fetch_url", args: { url: "https://site.example/api" } },
+    ], { clickTo: { "#docs": OTHER } });
+    assert.deepEqual(approved.cards, ["click", "fetch_url"]);
+    assert.deepEqual(approved.fetched, ["https://site.example/api"], "the person's approval reaches the choke point");
+});
+
+test("against it: on the start page the uncredentialed read is free, and the as-you read after leaving carries no start-origin line", T, async () => {
+    const here = await hostRun([{ name: "fetch_url", args: { url: "https://site.example/api" } }], { card: () => false });
+    assert.deepEqual(here.cards, [], "the origin the tab is on is free");
+    assert.deepEqual(here.fetched, ["https://site.example/api"]);
+    const asYou = await hostRun([
+        { name: "click", args: { selector: "#docs" } },
+        { name: "fetch_url", args: { url: "https://site.example/api", credentials: true } },
+    ], { clickTo: { "#docs": OTHER }, card: (tool) => tool !== "fetch_url" });
+    assert.deepEqual(asYou.cards, ["click", "fetch_url"]);
+    assert.equal(asYou.whys[1], null, "the ruling covers the uncredentialed read only");
 });
 
 // --- the describe layer: a link a policy denies is refused before the click ---

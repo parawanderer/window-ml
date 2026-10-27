@@ -34,7 +34,7 @@ import { extractGrants, fetchUrlLiterals, tabGrantsForCall } from "./grant-extra
 import { parseInfo } from "../resource/resource-capacity";
 import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from "./sw-cdp";
 import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, grantOnceFetch, consentFetch, fetchConsent } from "./sw-consent";
-import { ASK_POLICY_CAUSE, judgeCall, fetchFacts, navigateFacts, rememberFetchUrls, withPolicies, addRunPolicy, askWhyOf, askedByPolicy, withoutAsked, takeArchiveNotice } from "./sw-policies";
+import { ASK_POLICY_CAUSE, navOnlyWhy, startLeftWhy, judgeCall, fetchFacts, navigateFacts, rememberFetchUrls, withPolicies, addRunPolicy, askWhyOf, askedByPolicy, withoutAsked, takeArchiveNotice } from "./sw-policies";
 import { checkProposal, recordedFetches, measureBreadth, breadthNote, type PolicyProposal } from "./policy-proposal";
 import { approveManifest, checkManifestProposal, draftCardNote, type CheckedManifest } from "./sw-manifest-proposal";
 import { approveLibrary, checkLibraryProposal, isLibraryDraft, precheckLibrary, type CheckedLibrary } from "./sw-library-proposal";
@@ -666,6 +666,13 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         const navDest = (url: string): URL | undefined => {
             try { return new URL(url.startsWith("//") ? "https:" + url : url, tabPageUrl.get(tabId) ?? p.pageUrl ?? undefined); } catch { return undefined; }
         };
+        /** Whether `url` is on the origin of the page the run's tab is on now. */
+        const fetchOnPageOrigin = (url: string): boolean => {
+            const here = tabPageUrl.get(tabId) ?? p.pageUrl;
+            try { return !!here && new URL(url, here).origin === new URL(here).origin; } catch { return false; }
+        };
+        /** Whether a read of the start origin still counts as consented: the tab is on that origin, or the person granted it. */
+        const startOriginRead = (url: string): boolean => fetchOnPageOrigin(url) || (byWorker() && runsInWorker(p, "fetch_url") && runOriginGranted(runId, url));
         const navNeedsConsent = (url: string): boolean => {
             if (!p.crossOrigin) return false;   // can't cross origins → tool refuses cross-origin; same-site fine → no gate
             try {
@@ -1817,7 +1824,13 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // An `ask` policy is named for any fetch_url the loop gates; a policy that is GONE only for an uncredentialed
                     // fetch the worker runs, the only kind an `allow` ever covered.
                     if (j.decision === "ask") return askWhyOf(j);
-                    return a.credentials || !byWorker() || !runsInWorker(p, "fetch_url") ? undefined : askWhyOf(j);
+                    const lapsed = a.credentials || !byWorker() || !runsInWorker(p, "fetch_url") ? undefined : askWhyOf(j);
+                    if (lapsed) return lapsed;
+                    // An origin an `allow` row let the run go to, and no further: the read is a separate permission.
+                    const o = originOf(String(a.url ?? ""));
+                    if (o && navOnlyOrigins.has(o) && !consentedOrigins.has(o)) return navOnlyWhy(o);
+                    // The origin the run started on, once the tab has left it: the gate no longer counts it (fetchSameOrigin).
+                    return o && !a.credentials && o === p.pageOrigin && !startOriginRead(String(a.url ?? "")) ? startLeftWhy(o) : undefined;
                 },
                 fetchPolicy: (url, o) => {
                     const j = judgeCall(runId, "fetch", fetchFacts(url, o));
@@ -1840,15 +1853,18 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     const here = tabPageUrl.get(tabId) ?? p.pageUrl;
                     return !!here && isCurrentPage(url, here);
                 },
-                fetchOnPageOrigin: (url: string): boolean => {
-                    const here = tabPageUrl.get(tabId) ?? p.pageUrl;
-                    try { return !!here && new URL(url, here).origin === new URL(here).origin; } catch { return false; }
-                },
+                fetchOnPageOrigin,
                 fetchOriginGranted: (url: string): boolean => byWorker() && runsInWorker(p, "fetch_url") && runOriginGranted(runId, url),
                 fetchSameOrigin: (url: string): boolean => {
                     try {
                         if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !url.startsWith("//")) return true;   // relative → the page's own origin
-                        return consentedOrigins.has(new URL(url.startsWith("//") ? "https:" + url : url).origin);
+                        const o = new URL(url.startsWith("//") ? "https:" + url : url).origin;
+                        // The start origin is consented for navigation, and read free while the tab is on it. Once the tab
+                        // has left, the FETCH_URL choke point no longer counts it (it judges the sender's frame), so the gate
+                        // does not either and the read cards (POLICIES.md, "Ruled 2026-10-27"). A later approved navigate or
+                        // arrival grants the origin as any other.
+                        if (o === p.pageOrigin && !startOriginRead(url)) return false;
+                        return consentedOrigins.has(o);
                     } catch { return false; }
                 },
                 checkpoint: (messages) => {

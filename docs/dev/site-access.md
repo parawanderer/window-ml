@@ -606,11 +606,13 @@ could fetch a URL remembered for a run.
 
 These are ORIGIN-wide instead, and auto-approved with no prompt:
 
-- `fetch_url`, uncredentialed, of any URL on an origin the run has consented to: its start origin, every origin a
-  `navigate` was approved to, and every origin an `allow` policy let a navigate reach (`consentedOrigins`,
-  `sw-run-host.ts`; `autoApprove`, `agent-host.ts`). An origin an `allow` policy let an ARRIVAL reach is consented for
-  navigation only (`navOnlyOrigins`): the `FETCH_URL` choke point does not count it, so a read there goes to its card. A `rendered` read is included, an incognito tab that runs the
-  target's scripts.
+- `fetch_url`, uncredentialed, of any URL on an origin the run has consented to: its start origin while the tab is on
+  it, every origin a `navigate` was approved to, and every origin an `allow` policy let a navigate reach
+  (`consentedOrigins`, `sw-run-host.ts`; `autoApprove`, `agent-host.ts`). Two reads the `FETCH_URL` choke point does
+  not count go to their card instead, each with a line saying why (`navOnlyWhy`, `startLeftWhy`, `sw-policies.ts`;
+  POLICIES.md, "Ruled 2026-10-27"): an origin an `allow` policy let an ARRIVAL reach, consented for navigation only
+  (`navOnlyOrigins`), and the start origin once the tab has left it (`startOriginRead`). A `rendered` read is
+  included, an incognito tab that runs the target's scripts.
 - `fetch_url` as the person (credentialed), of the page the tab is on now (`fetchOnPageOrigin`), and, for a run the
   worker built, of any URL on an origin the PERSON approved a navigate or an arrival to (`grantRunOrigin`). Never the
   start origin once the tab has left it, never an origin only a policy let the run reach.
