@@ -5,7 +5,7 @@
 // says nothing to the page and answers nothing it posts (page-gate.ts, docs/spec/SITE_PRESENCE.md step 2).
 import type { PageRequestType, BackgroundMessageType } from "./contract/contract-messages";
 import { HANDLE_MAP } from "./page-relay";
-import { gateOpen, gateState, setGate, whenOpen, whenDecided, markAlive, pageAlive } from "./page-gate";
+import { gateOpen, gateState, setGate, setAsk, gateAsks, whenOpen, whenDecided, markAlive, pageAlive } from "./page-gate";
 import { listenForPage, toPage, onPage, offPage, rearmForPage, type ChannelMessage } from "./page-channel";
 import { watchGestures, hasPageGesture } from "./page-gesture";
 
@@ -120,7 +120,9 @@ function onWorkerMessage(message: PageMessage & { event?: unknown }, _sender: ch
     }
     // The worker asking whether this page was told it is hidden (an origin allowed since it loaded), and then opening
     // the gate once it has put the page script in (sw-presence.ts `showInOpenTabs`). Only the worker reaches this listener.
-    if (message && message.type === "PRESENCE_CHECK") { sendResponse({ gate: gateState(), alive: pageAlive() }); return undefined; }
+    if (message && message.type === "PRESENCE_CHECK") { sendResponse({ gate: gateState(), alive: pageAlive(), ask: gateAsks() }); return undefined; }
+    // The worker has put the stub into this page (an origin just marked visible): its access request may now be relayed.
+    if (message && message.type === "PRESENCE_ASK") { setAsk(true); sendResponse(true); return undefined; }
     // The worker is about to put injected.js in (sw-presence.ts injectPageScripts): a port the page handed over before
     // is dropped, and the next one taken (page-channel.ts).
     if (message && message.type === "PAGE_PORT_ARM") { rearmForPage(); sendResponse(true); return undefined; }
@@ -242,8 +244,25 @@ onPage((event: ChannelMessage) => {
         return;
     }
     if (gateState() === "open") onPageMessage(data);
+    else if (data.type === "REQUEST_ACCESS_REQUEST") askThroughClosedGate(data);
     else whenOpen(() => onPageMessage(data));
 });
+
+/** How many access requests wait for the worker's first answer: the page cannot queue more than this. */
+let asksHeld = 0;   // state: plumbing
+
+/**
+ * An access request from a page whose gate is not open: relayed when the worker said the page has the stub
+ * (`gateAsks`), or opened it meanwhile; dropped unanswered otherwise, as a hidden page's every post is.
+ * @param data what the page posted
+ */
+function askThroughClosedGate(data: PageMessage): void {
+    const relay = (): void => { if (gateOpen() || gateAsks()) requestAccessFromPage(data.requestId ?? "", data.payload); };
+    if (gateState() !== "pending") { relay(); return; }
+    if (asksHeld >= 16) return;
+    asksHeld++;
+    whenDecided(() => { asksHeld--; relay(); });
+}
 
 /**
  * One message from the main world, once the gate is open.
@@ -345,9 +364,10 @@ function requestAccessFromPage(requestId: string, raw: unknown): void {
  * @param tries how many asks are left
  */
 function contentReady(tries = 4): void {
-    chrome.runtime.sendMessage({ type: "CONTENT_READY" }, (resp: { open?: boolean; adopt?: { runId: string; rebuild: unknown }[] } | undefined) => {
+    chrome.runtime.sendMessage({ type: "CONTENT_READY" }, (resp: { open?: boolean; ask?: boolean; adopt?: { runId: string; rebuild: unknown }[] } | undefined) => {
         void chrome.runtime.lastError;
         if (!resp) { if (tries > 1) setTimeout(() => contentReady(tries - 1), 500); return; }
+        setAsk(resp.ask === true);
         setGate(resp.open === true);
         const adopt = (resp.adopt || []).filter((a) => a && typeof a.runId === "string");
         if (!adopt.length || !gateOpen()) return;

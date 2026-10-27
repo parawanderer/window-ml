@@ -5,15 +5,38 @@
 // injects the same two files into that one document (`injectPageScripts`). The scripts are registered, never named in
 // the manifest, so the list follows the person's grants: re-synced when the worker starts and whenever the site lists
 // change. A session grant's scripts are registered for the session only, so a browser restart forgets them with it.
+//
+// Between the two is the STUB (`ASK_SCRIPT_FILES`): a page whose origin the person marked visible, or any page when
+// "Let sites ask for access" is on, gets a `window.ml` that can only call `requestAccess()`. Allowed and denied origins
+// are left out of its registration, so an allowed page gets the full API alone and a denied one nothing.
 
-import { visibleOrigins, originMatchPattern, originOf, levelsFor } from "../site-access";
+import { visibleOrigins, askOrigins, presenceOf, originMatchPattern, originOf, type Presence } from "../site-access";
 import { readSiteLists } from "./sw-site-access";
 
 /** The main-world files, in order: the closed-root capture first, so it records roots before window.ml claims its reader. */
 export const PAGE_SCRIPT_FILES = ["shadow-patch.js", "injected.js"];   // state: fixed
 
-/** The registration ids: one for grants that last, one for the session's. */
-const REGISTRATION = { lasting: "ml-main-lasting", session: "ml-main-session" } as const;   // state: fixed
+/** The stub's main-world file: `window.ml` with `requestAccess` and nothing else. */
+export const ASK_SCRIPT_FILES = ["ask.js"];   // state: fixed
+
+/** The registration ids: one for grants that last, one for the session's, one for the stub. */
+const REGISTRATION = { lasting: "ml-main-lasting", session: "ml-main-session", ask: "ml-main-ask" } as const;   // state: fixed
+
+/** Every http(s) page, for the stub when every site may ask. */
+const EVERY_SITE = ["http://*/*", "https://*/*"];   // state: fixed
+
+/** The sync config key of "Let sites ask for access" (`MlConfig.siteRequests`). */
+export const SITE_REQUESTS_KEY = "siteRequests";   // state: fixed
+
+/**
+ * The "Let sites ask for access" setting, read from storage on every call (no copy to go stale on eviction).
+ * @returns true when every site that may not use window.ml yet may ask
+ */
+export async function sitesMayAsk(): Promise<boolean> {
+    if (typeof chrome === "undefined" || !chrome.storage?.sync) return false;
+    const v = await chrome.storage.sync.get(SITE_REQUESTS_KEY).catch(() => ({} as Record<string, unknown>));
+    return v[SITE_REQUESTS_KEY] === true;
+}
 
 let syncing: Promise<void> = Promise.resolve();   // state: plumbing
 
@@ -38,7 +61,21 @@ export function syncPresence(): Promise<void> {
                 persistAcrossSessions: scope === "lasting",
             }]);
         }
-        await showInOpenTabs([...v.lasting, ...v.session]);
+        const lists = await readSiteLists();
+        const everySite = await sitesMayAsk();
+        const marked = askOrigins(lists);
+        if (have.has(REGISTRATION.ask)) await chrome.scripting.unregisterContentScripts({ ids: [REGISTRATION.ask] });
+        if (everySite || marked.length) {
+            // Every pattern of an origin that gets the full API or nothing is excluded, so the stub never lands beside
+            // injected.js and never on a denied site. Exclusions are by exact origin, as the full registration's matches are.
+            const excluded = [...v.lasting, ...v.session, ...lists.denied].map(originMatchPattern).filter((m): m is string => !!m);
+            await chrome.scripting.registerContentScripts([{
+                id: REGISTRATION.ask, matches: everySite ? EVERY_SITE : marked.map(originMatchPattern).filter((m): m is string => !!m),
+                ...(excluded.length ? { excludeMatches: [...new Set(excluded)] } : {}),
+                js: ASK_SCRIPT_FILES, world: "MAIN", runAt: "document_start", allFrames: false, persistAcrossSessions: true,
+            }]);
+        }
+        await showInOpenTabs([...v.lasting, ...v.session], marked);
     });
     return syncing;
 }
@@ -46,22 +83,32 @@ export function syncPresence(): Promise<void> {
 /**
  * A registration applies from the next navigation, so a page already open on an origin just allowed would wait for a
  * reload. Each such tab whose page script is not there gets it now, and then its gate opened: one told it was hidden,
- * and one that loaded while this sync ran (told it is visible, before the registration covered it, so no page script
- * said hello). Asked of the content script, which only the worker reaches: no state of ours to lose on eviction.
- * @param origins the visible origins
+ * one showing the stub (a site the person just allowed from its own request, whose next call should work with no
+ * reload), and one that loaded while this sync ran (told it is visible, before the registration covered it, so no page
+ * script said hello). A tab on an origin just marked visible gets the stub the same way. Asked of the content script,
+ * which only the worker reaches: no state of ours to lose on eviction.
+ * @param origins the origins that get the full API
+ * @param asking the origins marked visible that may not use window.ml yet
  * @returns once every such tab has been seen to
  */
-async function showInOpenTabs(origins: string[]): Promise<void> {
-    if (!origins.length || !chrome.tabs?.query) return;
-    const patterns = origins.map(originMatchPattern).filter((m): m is string => !!m);
+async function showInOpenTabs(origins: string[], asking: string[]): Promise<void> {
+    const all = [...origins, ...asking];
+    if (!all.length || !chrome.tabs?.query) return;
+    const patterns = all.map(originMatchPattern).filter((m): m is string => !!m);
     const tabs = await chrome.tabs.query({ url: patterns }).catch(() => [] as chrome.tabs.Tab[]);
     await Promise.all(tabs.map(async (tab) => {
-        if (tab.id == null || !origins.includes(originOf(tab.url) ?? "")) return;
+        const origin = originOf(tab.url) ?? "";
+        if (tab.id == null || !all.includes(origin)) return;
         try {
-            const r = await chrome.tabs.sendMessage(tab.id, { type: "PRESENCE_CHECK" }, { frameId: 0 }) as { gate?: string; alive?: boolean } | undefined;
-            if (!(r?.gate === "closed" || (r?.gate === "open" && r.alive === false))) return;
-            await injectPageScripts(tab.id);
-            await chrome.tabs.sendMessage(tab.id, { type: "PRESENCE_OPEN" }, { frameId: 0 });
+            const r = await chrome.tabs.sendMessage(tab.id, { type: "PRESENCE_CHECK" }, { frameId: 0 }) as { gate?: string; alive?: boolean; ask?: boolean } | undefined;
+            if (origins.includes(origin)) {
+                if (!(r?.gate === "closed" || (r?.gate === "open" && r.alive === false))) return;
+                await injectPageScripts(tab.id);
+                await chrome.tabs.sendMessage(tab.id, { type: "PRESENCE_OPEN" }, { frameId: 0 });
+            } else if (r?.gate === "closed" && r.ask !== true) {
+                await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "MAIN", files: ASK_SCRIPT_FILES });
+                await chrome.tabs.sendMessage(tab.id, { type: "PRESENCE_ASK" }, { frameId: 0 });
+            }
         } catch { /* no content script there (a reload will bring the registered scripts) */ }
     }));
 }
@@ -72,10 +119,18 @@ async function showInOpenTabs(origins: string[]): Promise<void> {
  * @returns true for a visible origin
  */
 export async function isVisible(url: string | undefined): Promise<boolean> {
+    return (await presence(url)) === "full";
+}
+
+/**
+ * What a page at this URL gets of window.ml, as the lists and the "Let sites ask" setting say now.
+ * @param url the page's URL
+ * @returns the presence; anything that is not an http(s) page is hidden
+ */
+export async function presence(url: string | undefined): Promise<Presence> {
     const origin = originOf(url);
-    if (!origin) return false;
-    const use = levelsFor(await readSiteLists(), origin).use;
-    return use === "always" || use === "session";
+    if (!origin) return "hidden";
+    return presenceOf(await readSiteLists(), origin, await sitesMayAsk());
 }
 
 /**

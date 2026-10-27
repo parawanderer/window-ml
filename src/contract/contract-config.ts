@@ -105,6 +105,10 @@ export interface MlConfig {
     /** With the debug panel off, still report every page's own sessions (console calls, page scripts) to the chat
      *  page's session index. Off by default: it wakes each page's debug bus, which is otherwise dormant and free. */
     listPageSessions: boolean;
+    /** "Let sites ask for access": every site that may not use window.ml yet sees its stub and may call
+     *  `ml.requestAccess()`. Off by default (docs/spec/SITE_PRESENCE.md): a site sees nothing until it is allowed or
+     *  marked visible. Never in the public config. */
+    siteRequests: boolean;
     /** Keep the sessions this browser's own UI starts (the Commander HUD), so they survive the worker being evicted
      *  and can be read tomorrow. A session started from CODE is unaffected: `ml.agent()` and `ml.chat()` stay
      *  ephemeral unless they ask to be saved, which is the rule `ml.createChat({ save: true })` already follows. */
@@ -298,6 +302,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     agentHud: "progress",
     agentHudInDevtools: false,
     listPageSessions: false,
+    siteRequests: false,
     persistUiRuns: true,
     sessionRetentionDays: 0,
     sessionStoreBudgetMB: 256,

@@ -23,7 +23,7 @@ const { test } = require("node:test");
 const assert = require("node:assert");
 const { jsonResponse, streamResponse, loadBackground, loadPageWorld } = require("./helpers");
 const { fakeNativeHost } = require("./fake-native-host.mjs");
-const { HANDLE_MAP, PAGE_STARTED_TYPES, RUN_CONTROL_TYPES } = require("../src/page-relay.ts");
+const { HANDLE_MAP, PAGE_STARTED_TYPES, PAGE_UNGATED_TYPES, RUN_CONTROL_TYPES } = require("../src/page-relay.ts");
 
 const baseConfig = (o = {}) => ({ chatUrl: "http://host/api/chat/completions", apiKey: "sk-SECRET-KEY", model: "default-model", apiFormat: "openai", ocrModel: "", ...o });
 const hostilePage = (id = 9, url = "https://evil.example/attack") => ({ tab: { id, url }, url });   // sender.tab set + web origin
@@ -517,9 +517,13 @@ test("the content script's ungated sends are exactly the reviewed list, each bou
     assert.deepEqual(ungated, [
         "CONTENT_READY",      // answers with the rebuild of runs on the SENDER's tab; triggers resume + history replay
         "PAGE_TOOL_STREAM",   // NO sender check: see the OPEN test below
+        "REQUEST_ACCESS",     // the stub's ask (PAGE_UNGATED_TYPES): judged on the sender's presence, answered through the scrub
         "RUN_READOPTED",      // keyed by the sender's tab, not its document: see the OPEN test below
         "VALUE_COLUMNS",      // a worker-hosted run's in-flight call, for a key sent with it (named-reads.ts)
     ]);
+    // The types that skip the origin gate on purpose are exactly the reviewed one, and none is also gated.
+    assert.deepEqual([...PAGE_UNGATED_TYPES], ["REQUEST_ACCESS"]);
+    for (const t of PAGE_UNGATED_TYPES) assert.ok(!PAGE_STARTED_TYPES.has(t), `${t} is both gated and ungated`);
 });
 
 test("the page a run navigates AWAY from cannot write what the model is told about the destination", async () => {
@@ -1348,8 +1352,10 @@ const raEntry = (o) => ({ origin: RA, domain: "a.example", kind: "access", agent
 test("requestAccess — a sender that can never ask is refused and creates nothing; nothing reaches the backend, a tab or the screen", async () => {
     const C = "https://c.example";
     const cases = [
-        ["a site that may not use window.ml", raPage(9, C), /not approved/],
-        ["a site that may not use window.ml, naming an allowed origin in its payload", raPage(9, C), /not approved/, { origin: RA, url: `${RA}/p` }],
+        // A hidden site never reaches the worker (its content script relays nothing); one that does is refused by the
+        // handler on its presence, since REQUEST_ACCESS is ungated (SITE_PRESENCE.md).
+        ["a site that may not use window.ml", raPage(9, C), "off"],
+        ["a site that may not use window.ml, naming an allowed origin in its payload", raPage(9, C), "off", { origin: RA, url: `${RA}/p` }],
         ["a sub-frame of the allowed site", raPage(7, RA, { frameId: 3, url: `${RA}/frame` })],
         ["an opaque origin (a sandboxed frame) in the allowed site's tab", raPage(7, RA, { origin: "null" })],
         ["a data: document in the allowed site's tab", raPage(7, RA, { origin: "null", url: "data:text/html,x" })],
@@ -1367,7 +1373,7 @@ test("requestAccess — a sender that can never ask is refused and creates nothi
         const r = await w.ask({ agents: true, reason: "x", ...extraPayload }, sender);
         const answer = r?.data ?? r;
         assert.ok(!["pending", "granted"].includes(answer?.state), `${what}: answered ${JSON.stringify(r)}`);
-        if (why) assert.match(r?.error || "", why, `${what}: the origin gate's refusal`);
+        if (why) assert.deepEqual(answer, { state: "refused", reason: ASK_REFUSED[why] }, `${what}: refused on its presence`);
         assert.deepEqual(w.entries(), [], `${what}: an entry was stored`);
         assert.deepEqual(await w.waiting(), [], `${what}: something waits for the person`);
         await tick();

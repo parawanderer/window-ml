@@ -6,18 +6,21 @@
 // run the person started. `alive` is separate and only says the page script has run (its hello), which a page can
 // forge; it decides how long to wait, never whether to speak. Both content scripts share one isolated world, so the
 // state lives on that world's global, where the page cannot see it.
+//
+// A closed gate can still ASK (`gateAsks`): the worker said the page has the stub (ask.js, SITE_PRESENCE.md), so the one
+// message the stub sends, its access request, is relayed and answered. Nothing else crosses: no run traffic, no shell.
 
 /** The gate's state. `pending` until the worker has answered, so an early message is held rather than refused. */
 export type GateState = "pending" | "open" | "closed";
 
-interface PageGate { state: GateState; alive: boolean; waiting: (() => void)[]; deciding: (() => void)[]; opening: (() => void)[] }
+interface PageGate { state: GateState; alive: boolean; ask: boolean; waiting: (() => void)[]; deciding: (() => void)[]; opening: (() => void)[] }
 
 const KEY = "__mlPageGate";   // a property of the isolated world's global, which no page script reaches
 
 /** The one gate of this document, made on first use. */
 function gate(): PageGate {
     const g = globalThis as unknown as Record<string, PageGate | undefined>;
-    return (g[KEY] ??= { state: "pending", alive: false, waiting: [], deciding: [], opening: [] });   // state: plumbing
+    return (g[KEY] ??= { state: "pending", alive: false, ask: false, waiting: [], deciding: [], opening: [] });   // state: plumbing
 }
 
 /** The gate's state now. */
@@ -71,6 +74,16 @@ export function whenEverOpen(f: () => void): void {
     if (g.state === "open") f();
     else if (g.opening.length < 16) g.opening.push(f);
 }
+
+/**
+ * Set whether this document has the stub, on the worker's word only (the CONTENT_READY reply, or PRESENCE_ASK once the
+ * worker has put ask.js in). Set before `setGate`, so what waited for the decision reads it.
+ * @param on whether the page may ask for access
+ */
+export function setAsk(on: boolean): void { gate().ask = on; }
+
+/** True when the worker said this document has the stub: its access request may cross a closed gate. */
+export function gateAsks(): boolean { return gate().ask; }
 
 /** Note that the page script said hello (forgeable: it only bounds a wait). */
 export function markAlive(): void { gate().alive = true; }

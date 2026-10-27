@@ -46,7 +46,7 @@ const API_KEY = "apiKey";
 
 /** What a key that is a whole list is when it was never written: collected as this so the backup says "none" rather than "unknown". */
 const EMPTY_LISTS: Readonly<Rec> = Object.freeze({
-    [GLOBAL_POLICIES_KEY]: [], [SITE_ACCESS_KEYS.always]: [], [SITE_ACCESS_KEYS.denied]: [], [SITE_ACCESS_KEYS.selfApprove]: [], [SITE_ACCESS_KEYS.agents]: {},
+    [GLOBAL_POLICIES_KEY]: [], [SITE_ACCESS_KEYS.always]: [], [SITE_ACCESS_KEYS.denied]: [], [SITE_ACCESS_KEYS.selfApprove]: [], [SITE_ACCESS_KEYS.visible]: [], [SITE_ACCESS_KEYS.agents]: {},
 });
 
 const own = (o: Rec, k: string): boolean => Object.prototype.hasOwnProperty.call(o, k);
@@ -184,7 +184,7 @@ export function upgradeSettings(payload: SettingsPayload): UpgradedSettings {
 
     // --- the site lists ---
     const K = SITE_ACCESS_KEYS;
-    const siteKeys = [K.always, K.denied, K.agents, K.selfApprove, SITE_SCHEMA_KEY];
+    const siteKeys = [K.always, K.denied, K.agents, K.selfApprove, K.visible, SITE_SCHEMA_KEY];
     // The old self-approval whitelist: read once, by the same migration the worker runs.
     const legacyHosts = sync.pageApprovalDomains;
     const hasSites = siteKeys.some((k) => own(local, k)) || (Array.isArray(legacyHosts) && legacyHosts.length > 0);
@@ -200,14 +200,14 @@ export function upgradeSettings(payload: SettingsPayload): UpgradedSettings {
         };
         const agents: Record<string, AgentLevel> = {};
         if (isRec(local[K.agents])) for (const [o, lv] of Object.entries(local[K.agents] as Rec)) if (originOf(o) === o && LEVELS.includes(lv as AgentLevel)) agents[o] = lv as AgentLevel;
-        let lists: SiteLists = { always: origins(K.always), denied: origins(K.denied), selfApprove: origins(K.selfApprove), agents, session: [] };
+        let lists: SiteLists = { always: origins(K.always), denied: origins(K.denied), selfApprove: origins(K.selfApprove), visible: origins(K.visible), agents, session: [] };
         if (layout < SITE_SCHEMA) {
             const m = migrateSiteLists(lists, legacyHosts);
             lists = m;
             notes.push(`site lists upgraded from layout ${layout} to ${SITE_SCHEMA}: sites already approved ask before starting agents, and the old self-approval whitelist became origins`);
             if (m.dropped.length) notes.push(`whitelist entries that trusted nothing and were left out: ${m.dropped.join(", ")}`);
         }
-        const cleaned: Rec = { [K.always]: lists.always, [K.denied]: lists.denied, [K.agents]: lists.agents, [K.selfApprove]: lists.selfApprove };
+        const cleaned: Rec = { [K.always]: lists.always, [K.denied]: lists.denied, [K.agents]: lists.agents, [K.selfApprove]: lists.selfApprove, [K.visible]: lists.visible };
         for (const [k, v] of Object.entries(cleaned)) if (own(local, k) || layout < SITE_SCHEMA) local[k] = clone(v);
         local[SITE_SCHEMA_KEY] = SITE_SCHEMA;
     }
@@ -327,7 +327,7 @@ function listsOf(local: Rec, session: Rec | undefined, override?: Rec): SiteList
     const arr = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
     const lv = (v: unknown): Record<string, AgentLevel> => (isRec(v) ? Object.fromEntries(Object.entries(v).filter(([, x]) => LEVELS.includes(x as AgentLevel))) as Record<string, AgentLevel> : {});
     return {
-        always: arr(pick(K.always)), denied: arr(pick(K.denied)), selfApprove: arr(pick(K.selfApprove)),
+        always: arr(pick(K.always)), denied: arr(pick(K.denied)), selfApprove: arr(pick(K.selfApprove)), visible: arr(pick(K.visible)),
         session: arr(session?.[K.session]),
         agents: { ...lv(pick(K.agents)), ...lv(session?.[K.agents]) },
     };

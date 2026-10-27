@@ -42,7 +42,7 @@ import { handleRunStateDump } from "./sw/sw-run-state";
 import { releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw/sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 import { costCalls } from "./sw/sw-prices";
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, tabGrants } from "./sw/sw-consent";
-import { syncPresence, isVisible, injectPageScripts } from "./sw/sw-presence";
+import { syncPresence, isVisible, presence, injectPageScripts, SITE_REQUESTS_KEY } from "./sw/sw-presence";
 import { isExtensionSender, senderFacts, editSiteAccess, pageRefusal, agentRefusal, readSiteLists, selfApprovalFacts, senderSelfApproves, siteLevels, siteSchemaReady, upgradeNotice, dismissUpgradeNotice } from "./sw/sw-site-access";
 import { policiesReady, forgetRunPolicies, addGlobalPolicy, editPolicy, removePolicy, policyView } from "./sw/sw-policies";
 import { POLICY_LABEL_MAX, POLICY_SOURCE_MAX } from "./sw/policy-valid";
@@ -57,7 +57,7 @@ import { startBackgroundRun, delegateStreams, hostRun, WORKER_RUN_REFUSED } from
 import { pageInject } from "./sw/sw-page-turn";
 import { navigationSettled, configureStartApproval, dropRevoked, openedByRun, claimPersonTurn, personClaimed, recordNotStarted, resolveStart, cancelStarts, cancelAllStarts, waitingStarts } from "./sw/sw-start-approval";
 import "./sw/sw-badge";   // the toolbar badge: what is waiting for the person, per tab
-import { AGENT_LEVEL_TYPES, PAGE_STARTED_TYPES, RUN_CONTROL_TYPES } from "./page-relay";
+import { AGENT_LEVEL_TYPES, PAGE_STARTED_TYPES, PAGE_UNGATED_TYPES, RUN_CONTROL_TYPES } from "./page-relay";
 import type { SiteRunEvent } from "./contract/contract-debug";
 import { START_REFUSED } from "./agent-start";
 import { startUserRun, userRunAction, steerRun } from "./sw/sw-run-start";
@@ -206,7 +206,10 @@ if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
 // local origins, and the agent level, in slice 3 (sw-site-access.ts `migrateSiteAccess`). Every reader waits for it too.
 void siteSchemaReady();
 if (typeof chrome !== "undefined" && chrome.storage?.onChanged) {
-    chrome.storage.onChanged.addListener((changes, area) => { if (changesSiteAccess(changes, area)) { void syncPresence(); void handOverOnRevoke(); void dropRevoked(); } });
+    chrome.storage.onChanged.addListener((changes, area) => {
+        if (changesSiteAccess(changes, area)) { void syncPresence(); void handOverOnRevoke(); void dropRevoked(); }
+        else if (area === "sync" && SITE_REQUESTS_KEY in changes) void syncPresence();   // "Let sites ask for access"
+    });
     // Which pages get the main-world scripts follows the lists (sw-presence.ts): once at startup too, for a change made
     // while this worker was evicted, and for a session grant the browser forgot on restart along with its registration.
     void syncPresence().catch(() => undefined);
@@ -253,8 +256,10 @@ function dropPrintDoc(key: string): void {
 
 chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     housekeeping.beat();   // a message is the worker being alive: the heartbeat an eviction is inferred from (throttled)
-    if (!PAGE_STARTED_TYPES.has(message?.type) || isExtensionSender(sender) || sender.tab == null) return route(message, sender, sendResponse);
-    void pageRefusal(message.type, sender).then(async (refusal) => refusal ?? (AGENT_LEVEL_TYPES.has(message.type) ? await navigationRefusal(message, sender) ?? await agentRefusal(message.type, sender) : null)).then((refusal) => {
+    // An ungated type (page-relay.ts PAGE_UNGATED_TYPES) skips the gate, never the scrub: its handler judges the sender.
+    const ungated = PAGE_UNGATED_TYPES.has(message?.type);
+    if ((!PAGE_STARTED_TYPES.has(message?.type) && !ungated) || isExtensionSender(sender) || sender.tab == null) return route(message, sender, sendResponse);
+    void (ungated ? Promise.resolve(null) : pageRefusal(message.type, sender)).then(async (refusal) => refusal ?? (AGENT_LEVEL_TYPES.has(message.type) ? await navigationRefusal(message, sender) ?? await agentRefusal(message.type, sender) : null)).then((refusal) => {
         if (refusal) { sendResponse({ error: refusal }); return; }
         // Every answer to a page goes through `forPage`: an error's text never carries the server's URL, the key or the
         // model filter (sw-scrub.ts). The person's own surfaces are extension pages and take the branch above.
@@ -483,14 +488,16 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             // A hidden one gets it only for a run still going on this tab, put in now, before the answer; a finished run
             // is not reason enough, so its page stays hidden.
             const doc = typeof sender.documentId === "string" ? sender.documentId : undefined;
-            let open = await isVisible(sender.url ?? sender.tab?.url).catch(() => false);
+            const shown = await presence(sender.url ?? sender.tab?.url).catch(() => "hidden" as const);
+            let open = shown === "full";
             if (!open) {
                 adopt.splice(0, adopt.length, ...adopt.filter((a) => live.has(a.runId)));
                 if (adopt.length && tabId != null && (sender.frameId ?? 0) === 0) {
                     try { await injectPageScripts(tabId, doc); open = true; } catch { adopt.length = 0; }
                 } else adopt.length = 0;
             }
-            sendResponse({ adopt, open });
+            // A page that has the stub may ask for access across its closed gate, and nothing more (page-gate.ts).
+            sendResponse({ adopt, open, ...(!open && shown === "ask" ? { ask: true } : {}) });
             // A held run re-adopts once the person lets it act here (sw-run-host.ts); until then its calls are answered by
             // the hold, not left waiting on a re-adopt that is not coming.
             if (held && !adopt.length && tabId != null) navBarrier.noteReadopted(tabId, doc);
@@ -731,7 +738,9 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             const decision = levels?.use;
             // An approval no list holds comes from the self-approval list: revoking it here would change nothing.
             const implied = !!origin && decision === "always" && !lists.always.includes(origin);
-            sendResponse({ data: { lists, ...(notice ? { upgradeNotice: true, upgradeDropped: notice.dropped } : {}), ...(origin ? { origin, decision, levels, ...(implied ? { implied: true } : {}) } : {}) } });
+            // What its pages get of window.ml: the popup offers "Let it ask" only to a hidden site that may be marked.
+            const shown = origin ? await presence(origin) : undefined;
+            sendResponse({ data: { lists, ...(notice ? { upgradeNotice: true, upgradeDropped: notice.dropped } : {}), ...(origin ? { origin, decision, levels, presence: shown, ...(implied ? { implied: true } : {}) } : {}) } });
         })().catch((e) => sendResponse({ error: (e as Error)?.message || String(e) }));
         return true;
     }
@@ -749,20 +758,23 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     }
     // ml.requestAccess (docs/spec/SITE_ACCESS_SLICE3.md PR 4): what a page asks for is judged on `sender` and on the gesture
     // fact the content script adds beside the payload; nothing in the payload but the request's shape is read. A page a
-    // running agent opened is recorded in that run's step list and never shown as a prompt (Q17).
+    // running agent opened is recorded in that run's step list and never shown as a prompt (Q17). Not behind the origin
+    // gate: a site that may not use window.ml asks here, and only when its presence lets it (SITE_PRESENCE.md), read
+    // from `sender` like everything else. An extension page is no site and asks nothing.
     if (message.type === "REQUEST_ACCESS") {
         const tabId = sender.tab?.id;
         const g = grantableOrigin(senderFacts(sender));
-        if (tabId == null || "refused" in g) { sendResponse({ data: { state: "refused", reason: ASK_REFUSED.frame } }); return; }
+        if (tabId == null || isExtensionSender(sender) || "refused" in g) { sendResponse({ data: { state: "refused", reason: ASK_REFUSED.frame } }); return; }
         const p = (message.payload || {}) as { agents?: unknown; level?: unknown; reason?: unknown };
         (async () => {
             await navigationSettled(tabId);
+            const shown = await presence(g.origin);
             const opener = openedByRun(tabId, typeof sender.documentId === "string" ? sender.documentId : undefined);
             // While a run is driving this tab, its own clicks and keys are trusted input too: none of it is the person's
             // gesture (Q11), so nothing a run's click lets the page ask counts.
             const runDriving = [...(activeRuns.get(tabId) ?? [])].some((id) => runControllers.has(id));
             const answer = await requestAccess({ agents: p.agents, level: p.level, reason: p.reason },
-                { origin: g.origin, gesture: message.gesture === true && !runDriving, openedByAgent: opener != null, sitesMayAsk: false });
+                { origin: g.origin, gesture: message.gesture === true && !runDriving, openedByAgent: opener != null, sitesMayAsk: shown !== "hidden" });
             if (opener != null && answer.state === "refused" && answer.reason === ASK_REFUSED.openedByAgent) recordNotStarted(tabId, opener, g.origin);
             sendResponse({ data: answer });
         })().catch((e) => sendResponse({ error: (e as Error)?.message || String(e) }));
