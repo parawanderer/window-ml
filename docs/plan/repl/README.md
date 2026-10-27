@@ -415,7 +415,10 @@ listed as remaining is DONE unless named below.
      Left, named in the result: two todos through `pyodide_js` that turn plain when #1046 lands; drops after a run's
      last cell unreported, and a task that never yields hangs to the run's timeout, both unowned. Lane STOPPED
      2026-10-23 under the freeze; clone removed. #1046 landed the same day, so the two `pyodide_js` todos can turn plain;
-     unowned until the week resets.
+     unowned until the week resets. RESUMED 2026-10-27: the lane picks up the two leftovers in order (the last cell's
+     drops reported, a run-log fix with its test; then the never-yielding task, design note to the coordinator before a
+     build), plus the two `pyodide_js` todos turning plain and the regex-cost Python port named to it in fork #11. The
+     janitor reviews each PR.
   3. `tests/readonly-soundness.test.mjs:189` (halting): `riskyRegex` refuses the exponential shapes only (#684), so `/a+b/`
      on 10^6 characters is quadratic and runs for minutes in one host call; a sound bound needs a linear-time matcher or
      an input cap tied to the pattern's quantifiers. FIXED 2026-10-23 (#988, merged bcafa80e, session `76cd36e2`,
