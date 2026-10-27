@@ -191,10 +191,115 @@ message from <slug> since <time>`, `idle since <time>`, `exited`; beside it, per
 is produced by the harness at the moment it happens (a permission gate opening, a turn ending, a message dequeued) and
 none is written by the model, so it carries no injection surface and needs no approval to read.
 
-The transcript is a different thing and stays out of this. The last message a session wrote is model text, an injection
+The transcript is a different thing and stays out of this, with ONE exception added 2026-10-27 (the person's own turns,
+next section). The last message a session wrote is model text, an injection
 surface for whoever reads it across sessions; the pending message is one the sender wrote and gains nothing by reading
 back. Metadata about it (who, when, read or not) is enough. If the content is ever shown across sessions it is behind
 the person's approval and rendered as data, and it is not built first.
+
+## From 2026-10-27: what the person said to one session is a fact every session of theirs can read
+
+Added 2026-10-27 by the same coordinator session, on Shane's request after a day in which the person was again the
+transport, this time for their OWN words. Shane's framing of the requirement: collaborating agents should be able to
+retrieve the user's messages from the other agent's history, so that one agent is never blocked on the person
+answering in ITS window what they already answered in another.
+
+The three incidents, each the same shape:
+
+- **A ruling made in one window had to be made twice.** Shane ruled the parked lockdown widening in the security lane's
+  session. It reached the coordinator as a model's sentence, "Shane ruled X", which the coordinator's own rule classes
+  as unverifiable (a relayed instruction is model text: the relaying model may have misread, compressed or invented
+  it). So the ruling went into the spec marked "relayed, to confirm", and Shane typed the confirmation a second time
+  in the coordinator's window. The first utterance was authentic and sufficient; nothing could prove it.
+- **A list of open questions, each blocked on one window.** The coordinator's checkpoint carried six decisions as
+  "Shane's, outstanding" (a card string, a gate split, a fork-or-not, a button budget, two more), every one asked in
+  the coordinator's window and answerable only there. Shane may have answered some to another session, or would have
+  answered them from the phone; neither path existed.
+- **"Shane asked for it" as a change's provenance.** A lane merged a doc change (#1148, the clone recipe) with the
+  reason "Shane asked for it after my slip". True, and recorded only as the lane's sentence; a reader who wants the
+  person's actual words has to find the right window's scrollback.
+
+### The primitive: a person-turn is harness-attributed, so it is the one transcript content that crosses sessions
+
+The 2026-10-21 section excludes the transcript because a model's text is an injection surface. The person's turns are
+different in exactly the way that matters: the harness KNOWS which turns the person typed (they came from the input
+box, not from a tool result, a cross-session message or a pasted block), and it attributes them at the moment they
+are submitted. A model cannot write one. So a person-turn is a computed fact in the same sense as the 2026-10-21
+state line: produced by the harness, never by the model, with no injection surface of its own and no approval needed
+for the person's other sessions to read it.
+
+The table, `ml.person` (a `TableLike` beside `ml.inbox`, read-only dialect, no prompt), one row per person-turn across
+every session of the account on this machine (over the hub, every session of the account, sealed like any other
+stream):
+
+| Column | Meaning |
+| --- | --- |
+| `id` | the turn's id, stable, citable as a `@tool:` pointer |
+| `session` | the slug and session hash it was typed into (step 1's identity) |
+| `at` | when it was submitted |
+| `text` | the TYPED text; a pasted block is carried as a pointer with a preview, never inlined (pasted content is where secrets and foreign instructions arrive; `SECRET_HANDLES.md`) |
+| `answers` | the id of the ask it answered, when it answered one (next), else empty |
+| `preceded_by` | a pointer to the model turn before it: metadata and a preview only, since that is model text, rendered as data |
+
+Two reads cover the incidents: the turns in a session since a cursor (what did the person say to the security lane
+today), and the turns that answer a named ask (did anyone answer MY question). A model's sentence "Shane said X" then
+carries the row's id, and the receiver verifies by reading the row, exactly as a claim is verified by git and never
+by trust. A relay without an id stays what it is today: unverified, recorded as relayed.
+
+### Meaning is bound to the thread; authenticity is not permission
+
+A person-turn from another session is an authentic record of what the person said. It is NOT, by itself, an
+instruction to the reading session: "yes, do it" typed to the security lane answers the security lane's question and
+nothing else. Three rules keep that straight:
+
+- **A turn means what its thread means.** The reader acts on a turn from another session only when the ask it answers
+  is one the reader itself registered, or when the turn names the decision in its own words (as a ruling in a spec
+  names it). The `answers` and `preceded_by` columns are what make that judgement possible without reading the other
+  session's transcript.
+- **A turn never satisfies a permission prompt elsewhere.** A permission decision is the harness's gate event in the
+  session that asked (2026-10-21, computed state `blocked: permission`); a person-turn in another session, however
+  clearly worded, is not that event. This is the cross-session laundering rule, kept.
+- **Rendered as the person's words, with provenance, never as the reading session's own user turn.** The row surfaces
+  as a value (session, time, text), so the model sees "Shane, to the security lane at 14:34: …" and not a fresh
+  instruction in its own input. The person's words are trusted; the framing still has to say which conversation they
+  belong to.
+
+### Asks: a question to the person is a row, answerable from any window
+
+The blocking half of the problem is that a question lives only in the window that asked it. So a question a session
+puts to the person is registered, not only printed: `ml.asks` is a table with one row per open question, `{ id,
+session, at, decision (a slug naming what is being decided), text, options?, answered_by (a person-turn id) }`.
+
+- **The person answers wherever they are.** The asks of every session are one list, surfaced through the attention
+  inbox that already exists (`src/chat/attention.ts`, "what needs someone's hand"), on the phone included. An answer
+  typed against an ask, in any window or on the phone, becomes a person-turn with `answers: <id>` and reaches the
+  asking session as a push at its next turn boundary (step 4's path, `runInboxes`), framed as the answer to that ask.
+- **An answer typed into another session's input box still counts**, when that session's model recognises it as
+  answering a listed ask and links it (the link is the model's claim; the turn's text is the fact; the asking session
+  reads the text itself). This is the 2026-10-27 case: the security lane's session would have linked Shane's ruling to
+  the coordinator's open ask on the widening, and the coordinator would have read the words, not a paraphrase.
+- **The listing shows open asks per session**, beside the computed state: "coordinator: 6 open asks, oldest 3 days",
+  so the person sees what is blocked without opening the window, and a session whose asks go unanswered is visible as
+  such rather than as "idle".
+- **An ask is closed by its answer or withdrawn by its session**, never by another session; a withdrawn ask records why.
+
+### What this does not do
+
+- No model-written summary of what the person said stands in for the row. A session relaying a ruling cites the
+  person-turn's id; the receiver reads the text.
+- No turn is readable by anyone but the person's own sessions. The person is the one principal here; cross-device is
+  the hub's sealed stream to the account's runtimes, and a shared or remote reader (`remoteDescription`) sees nothing
+  of this table by default.
+- No automatic action on an answer. The asking session receives the answer and decides; the push is a wake, not a
+  command, like every delivery above.
+
+### The interim, outside window.ml
+
+Until step 1b exists, the commercial harness holds each session's turns in its own transcript file, and a read-only
+script over those files (the person's turns of a named session since a time, by their `type` field, nothing of the
+model's) would give the two reads today without patching the tool. Whether that interim is worth its own script, or
+the day is better spent on step 1b, is Shane's call; the coordinator's rule meanwhile stays "relayed until confirmed",
+with the cost above.
 
 ## What to build first
 
@@ -204,6 +309,11 @@ the person's approval and rendered as data, and it is not built first.
    registered with the desktop host, so "which session owns this CPU process" is a read of this table through the
    host's owner table ([`SHELL.md`](SHELL.md), the paragraph after "The boundary"), never of `ps`; open, a widening of
    the host's boundary that is Shane's.
+1b. **Person-turns and asks** (2026-10-27): `ml.person` and `ml.asks` as read-only tables, written only by the harness
+   (a turn on submit, an ask when a session puts a question to the person, the link when it is answered), and the open
+   asks in the listing beside the state. Reads only, the same as step 1; it ends the person typing a decision twice and
+   a session blocked on its own window. The answer's push rides step 4 when step 4 exists; until then the asking session
+   reads the table at its next turn, which is already better than today.
 2. **Claims**, with leases and git verification. The piece that removes a human broadcast.
 3. **Send, with topics and the unrouted queue** wired to the attention inbox.
 4. **Push at turn boundaries**, through `runInboxes`. Deliberately last: pull-only is useful, and a push path built
