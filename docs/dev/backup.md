@@ -270,9 +270,10 @@ is not. Three PRs, in this order, because each needs the one before.
   files in the other forms. A removal happens only after the new file is completely written and only for a file
   that was merged in this sync; if any of the month's files cannot be read, nothing of that month is written or
   removed and it stays pending (part A's rule, per file).
-- **Two machines on different forms leave both files.** A stat-triggered merge never rewrites a month just because a
-  file is in another form; only a form switch (it marks every month dirty) replaces the other forms' files, so a mixed
-  folder does not churn.
+- **Two machines on different forms settle.** A month is rewritten only when it is dirty (a change, a merge that
+  changed the archive, a form switch), never because a file is in another form. A rewrite still removes the other
+  forms' files, so while new sessions arrive the month's file changes form with whichever machine wrote last; once a
+  merge adds nothing, neither writes (tested: A plain and B encrypted on one key).
 - **Switching forms marks every month dirty**, so the next sync rewrites the folder in the new form and the plaintext
   copies go. A synced folder's service may still keep old versions; Settings says so once, at the switch.
 - **An encrypted month this install cannot open** (no keyring, or another install's key: `keyId` differs) is skipped
