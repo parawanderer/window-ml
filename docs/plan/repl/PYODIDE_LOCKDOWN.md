@@ -130,6 +130,20 @@ starts from main.
    granted, not only without. One row the caller-scoped refusal adds for the red team: reaching `js` through a package
    that imported it at boot (`pyarrow.unix_timezones.js`, or any module attribute holding a JS proxy); the attribute
    gate's manifest answer is the claim, pinned or refuted after the fix merges.
+   BUILT 2026-10-27 on the lane's `fix/python-strip` (not yet a PR): a guard module per refused bridge (`js`,
+   `pyodide.ffi`, `pyodide.ffi.wrappers`, `pyodide.webloop`, and the modules that hold ffi's functions, measured:
+   `_pyodide_core`, `_pyodide._importhook`, `_pyodide._core_docs`, `pyodide._package_loader`), in `sys.modules`, on
+   its parent and behind a first meta_path finder, answered only when no frame on the stack is the cell's or for a
+   library module running its own import; `js` unregistered from Pyodide's finder; `lockdownReadonly` returns
+   `bridges(on)`, the per-cell lift for the card line, nothing sending it yet. MERGE ORDER, ruled the same hour, the
+   navigate pattern (#1154): (1) the red team's test-only PR on main first, lifting the bridges around each probe cell
+   in `tests/redteam-python-lockdown.test.mjs` defensively (`held.bridges ?? null`, a no-op until the gate lands) so
+   "after boot the PyProxy kinds still convert" stays green on both sides; (2) the lane's PR rebases and merges;
+   (3) the red team flips the import todos plain (`js`, `setTimeout`, `ffi`, `webloop`, `run_js` x2; `asyncio` stays
+   failing as ruled) and writes the lane's unclaimed rows in its file: the introspection routes above plus the
+   guard's `__getattr__.__closure__` holding the real modules and the lift flag, `compile()` under a library
+   filename, removing the bridge finder and re-importing `pyodide.ffi` from the zip, writing a file under
+   `/lib/python3.14` and importing it. The builder claims none of those.
 3. **An ALLOW-LIST strip of the worker's `globalThis` after boot**, never a deny list: remove the real `Function`,
    `eval`, `importScripts`, `setTimeout`/`setInterval` with a string argument (`WebAssembly` compiles bytes, never a
    string, and `WebAssembly.instantiate`/`compile` on bytes STAY, since a `loadPackage` after the strip needs them; the
