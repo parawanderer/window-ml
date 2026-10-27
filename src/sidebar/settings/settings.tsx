@@ -840,6 +840,10 @@ function WaitingRequests() {
     );
 }
 
+/** The hint under "Let sites ask for access" (docs/spec/SITE_PRESENCE.md), as plain text for the tooltip. */
+const SITE_REQUESTS_HINT = "On: every site you have not allowed sees that window.ml is here and can call `ml.requestAccess()` after you click on it; the request waits in the toolbar button. Off: a site sees nothing of window.ml until you allow it, or let it ask from the toolbar button.";
+const SITE_REQUESTS_HINT_NODE = SITE_REQUESTS_HINT.split("`").map((t, i) => (i % 2 ? <code>{t}</code> : t));
+
 /**
  * Which sites may use `window.ml` at all (docs/spec/SITE_ACCESS.md), and whether each may start agents: one row per
  * allowed origin with its scope, its agent level and a revoke, then the denied ones. The full list; the toolbar popup
@@ -859,9 +863,16 @@ function SiteApprovals() {
     const rows = [...new Set([...lists.always, ...lists.session, ...lists.selfApprove])]
         .filter((o) => !lists.denied.includes(o) && match(o)).sort();
     const denied = lists.denied.filter(match);
+    const marked = (lists.visible ?? []).filter((o) => levelsFor(lists, o).use === "unknown" && match(o)).sort();
     return (
         <Section id="siteapprovals" title="Sites that may use window.ml">
             <div class="set-note">A page can use <code>window.ml</code> (and so your models) only once its site is allowed here or from the toolbar button. Every other site is refused, whatever the browser's site-access setting. A run you start yourself still works on any page: it is built by the extension, not by the page. Each scheme and port is its own site: <code>http://</code> and <code>https://</code> are separate decisions. A site that approves its own actions (below) is allowed too. Starting an agent is a separate permission. A site can use window.ml without it. With "Ask each time", every agent the site starts shows a card with its task, tools, model and budget before anything runs.</div>
+            <label class="set-check">
+                <input type="checkbox" checked={config.value.siteRequests === true}
+                    onChange={(e: any) => setField("siteRequests", e.target.checked)} />
+                <Lbl>Let sites ask for access</Lbl>
+            </label>
+            <div class="set-hint">{SITE_REQUESTS_HINT_NODE}</div>
             <div class="perm-add">
                 <input class="perm-input" type="text" placeholder="Filter sites, or type one to allow (example.com)…" value={query}
                     onInput={(e: any) => setQuery(e.target.value)}
@@ -896,6 +907,19 @@ function SiteApprovals() {
                     })}
                   </div>
                 : <div class="set-hint">{q ? `No allowed site matches “${query}”.` : "No site is allowed: every page's calls to window.ml are refused."}</div>}
+            {marked.length
+                ? <>
+                    <div class="set-hint">Can see window.ml and ask for access, but cannot use it. Hiding one makes window.ml vanish from that site again.</div>
+                    <div class="perm-list">
+                        {marked.map((o) => (
+                            <span class="perm-chip" key={o} data-visible={o}>
+                                <span class="perm-host">{o}</span>
+                                <button class="perm-x" aria-label={`Hide window.ml from ${o}`} {...cursorTipOn(`Hide window.ml from ${o}`)} onClick={() => edit({ op: "visible", origin: o, on: false })}>✕</button>
+                            </span>
+                        ))}
+                    </div>
+                  </>
+                : null}
             {denied.length
                 ? <>
                     <div class="set-hint">Denied: refused even while on the list above. Allowing one lifts its denial.</div>
