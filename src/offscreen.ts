@@ -22,6 +22,7 @@ import { ValueStore } from "./pointers/value-store";
 import { htmlToMarkdown } from "./dom/html-to-md";
 import { PNG_DATA_URL } from "./session/image-compact";
 import { defineState } from "./state-registry";
+import { reapDelay } from "./python/py-reap";
 
 // The value store, reached here rather than in the worker: stored bytes are TRANSFERRED to the worker (no copy), and the
 // one copy is the worker's, into Pyodide's memory. A returned frame's IPC comes back the same way and is written here,
@@ -99,13 +100,17 @@ const runPrincipals = new Map<string, Set<string>>();   // state: plumbing — r
 // A run whose kept namespace a kill or cold start WIPED, waiting to tell the next cell. Keyed by the run.
 const nsLoss = new Map<string, { at: number; reason: string }>();   // state: plumbing — one loss note per wiped run
 defineState({
-    id: "python.run-namespace", scope: "run", realm: "offscreen", audience: "model", lostOn: ["offscreen-close", "browser-restart"],
+    id: "python.run-namespace", scope: "run", realm: "offscreen", audience: "model", lostOn: ["turn-end", "idle", "offscreen-close", "browser-restart"],
     describe: "The run's kept Python namespace: the live names and their types, shared across the run's cells until the run ends or its worker dies.",
     read: ({ runId }) => runId ? runNsVars.get(runId) : undefined,
 });
 // The principals whose worker was handed a tier 3 library (an inside run's `libraries`, or a library op): the ones a
 // removal restarts, since nothing unloads a module (READONLY_LIBRARY_MANIFEST.md, ruling D). Cleared with the worker.
 const libraryPrincipals = new Set<string>();   // state: plumbing — which live workers may hold a library module
+// THE IDLE REAP (py-reap.ts): a principal's worker is shut once it has sat idle long enough, unless its live turn asked
+// to keep it. One timer per idle worker, cleared when the principal posts again.
+const reapTimers = new Map<string, ReturnType<typeof setTimeout>>();   // state: plumbing — one idle clock per worker
+const keptPrincipals = new Set<string>();   // state: plumbing — `run:<id>` workers whose live turn asked to keep them
 let nextId = 1;
 type WireStamp = { client: string; run: string | null };
 const pending = new Map<number, { resolve: (r: PyResult) => void; timer: ReturnType<typeof setTimeout>; streamId?: string; armOnStart?: boolean; principal: string; wire?: WireStamp }>();   // state: plumbing
@@ -148,6 +153,8 @@ function killWorker(principal: string, reason: string): void {
         try { entry.w.terminate(); } catch { /* already gone */ }
         workers.delete(principal);
         libraryPrincipals.delete(principal);
+        clearReap(principal);
+        keptPrincipals.delete(principal);
         respawned.add(principal);   // the next spawn for this principal is a respawn: its kept namespace died
         for (const runId of killedRuns) {
             runPrincipals.get(runId)?.delete(principal);
@@ -170,7 +177,69 @@ function killAllWorkers(reason: string): void {
     for (const principal of [...workers.keys()]) killWorker(principal, reason);
 }
 
+/** Stop a principal's idle clock: something is about to be posted to its worker, or the worker is gone. */
+function clearReap(principal: string): void {
+    const t = reapTimers.get(principal);
+    if (t !== undefined) { clearTimeout(t); reapTimers.delete(principal); }
+}
+
+/** The run whose live namespace a `run:<id>` worker holds, or null (a settled turn, another principal). */
+function heldRun(principal: string): string | null {
+    if (!principal.startsWith("run:")) return null;
+    const run = principal.slice(4);
+    return runPrincipals.get(run)?.has(principal) ? run : null;
+}
+
+/** Start a principal's idle clock if its worker is idle and may be reaped (py-reap.ts). */
+function armReap(principal: string): void {
+    clearReap(principal);
+    if (!workers.has(principal) || [...pending.values()].some((p) => p.principal === principal)) return;
+    const ms = reapDelay(principal, heldRun(principal) !== null, keptPrincipals.has(principal));
+    if (ms === null) return;
+    reapTimers.set(principal, setTimeout(() => { reapTimers.delete(principal); void reapWorker(principal, ms); }, ms));
+}
+
+/** How long a reaped worker gets to hand over its late drops before it is terminated anyway. */
+const REAP_ANSWER_MS = 2000;
+
+/**
+ * Shut an idle worker (py-reap.ts). It is asked first for the callables its last cell handed to JavaScript that fired
+ * since (cell-gate.ts), which no cell will report now; a live turn's namespace is lost and told on its next cell.
+ * @param principal whose worker
+ * @param idleMs how long it sat idle
+ */
+async function reapWorker(principal: string, idleMs: number): Promise<void> {
+    const entry = workers.get(principal);
+    if (!entry || [...pending.values()].some((p) => p.principal === principal)) return;
+    const run = heldRun(principal);
+    const id = nextId++;
+    const dropped = await new Promise<PyResult["dropped"] | undefined>((resolve) => {
+        const timer = setTimeout(() => { pending.delete(id); resolve(undefined); }, REAP_ANSWER_MS);
+        pending.set(id, { resolve: (r) => { clearTimeout(timer); resolve(r?.dropped); }, timer, principal });
+        try { entry.w.postMessage({ id, takeDropped: true }); }
+        catch { clearTimeout(timer); pending.delete(id); resolve(undefined); }
+    });
+    // A cell posted while the worker answered: it is not idle any more, and its own answer restarts the clock.
+    if (workers.get(principal) !== entry || [...pending.values()].some((p) => p.principal === principal)) return;
+    try { entry.w.terminate(); } catch { /* already gone */ }
+    workers.delete(principal);
+    libraryPrincipals.delete(principal);
+    keptPrincipals.delete(principal);
+    clearReap(principal);   // the answer above re-armed it
+    if (run) {
+        runPrincipals.get(run)?.delete(principal);
+        nsLoss.set(run, { at: Date.now(), reason: "idle" });
+        runNsVars.delete(run);
+    }
+    reportHousekeeping({ subsystem: "pyodide", kind: "reap", key: principal, ms: idleMs, detail: { live: run !== null } });
+    const ofRun = principal.startsWith("run:") ? principal.slice(4) : null;
+    if (ofRun && (run || dropped)) {
+        try { chrome.runtime.sendMessage({ type: "PY_REAPED", run: ofRun, live: run !== null, ...(dropped ? { dropped } : {}) }).catch(() => { /* no worker listening */ }); } catch { /* context gone */ }
+    }
+}
+
 function ensureWorker(principal: string, readonly: boolean): Worker {
+    clearReap(principal);
     const existing = workers.get(principal);
     if (existing) return existing.w;
     // `name` is how the worker knows which sandbox it is: a readonly worker boots locked down (`lockdownReadonly`),
@@ -241,11 +310,11 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
             const loss = nsLoss.get(runId);
             if (loss) {
                 nsLoss.delete(runId);
-                const line = `namespace reset at ${new Date(loss.at).toISOString()}: ${loss.reason}`;
+                const line = `namespace reset at ${new Date(loss.at).toISOString()}: ${loss.reason === "idle" ? "idle (python_exec keep: true holds it through long waits)" : loss.reason}`;
                 Object.assign(result, { stdout: result.stdout ? `${line}\n${result.stdout}` : line, nsReset: line });
             }
         }
-        if (entry) { pending.delete(id); clearTimeout(entry.timer); entry.resolve(result); }
+        if (entry) { pending.delete(id); clearTimeout(entry.timer); entry.resolve(result); armReap(entry.principal); }
     };
     // A worker-level failure (load error, uncaught throw) would otherwise strand every pending run.
     w.onerror = (ev: ErrorEvent) => { if (workers.get(principal)?.w === w) killWorker(principal, ev.message || "crashed"); };
@@ -405,6 +474,8 @@ chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
     const wireStamp: WireStamp | undefined = msg.wire && typeof msg.wire.client === "string"
         ? { client: String(msg.wire.client), run: msg.wire.run ?? null }
         : undefined;
+    // A KEEP (py-reap.ts) is a live turn's, on its own worker: only a cell of a worker-hosted run carries one.
+    if (msg.keep === true && wireStamp?.run && msg.principal === `run:${wireStamp.run}`) keptPrincipals.add(msg.principal);
     withStoredTables(msg.tables ?? null)
         .then((t) => "error" in t
             ? { ok: false, stdout: "", error: t.error }
@@ -435,6 +506,7 @@ chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
     const run = String(msg.run);
     const principals = new Set(runPrincipals.get(run) ?? []);
     principals.add(String(msg.principal ?? `run:${run}`));
+    keptPrincipals.delete(`run:${run}`);   // the turn ended, and its keep with it (py-reap.ts)
     runPrincipals.delete(run);
     runNsVars.delete(run);
     nsLoss.delete(run);

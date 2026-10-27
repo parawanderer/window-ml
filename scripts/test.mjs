@@ -156,6 +156,9 @@ const GENRES = {
             "bench-specs.test.mjs", "bench-viewer.test.mjs", "bench-files.test.mjs", "bench-page.test.mjs",
             "bench-scores.test.mjs", "bench-sweeps.test.mjs", "bench-memory.test.mjs", "bench-box.test.mjs", "bench-lanes.test.mjs", "bench-sync.test.mjs", "bench-stream.test.mjs", "bench-regress.test.mjs", "bench-spend.test.mjs", "bench-cost.test.mjs", "bench-live-spend.test.mjs", "bench-memory-budget.test.mjs", "bench-memory-card.test.mjs", "bench-status.test.mjs", "bench-memory-limit.test.mjs", "bench-spend-predict.test.mjs", "bench-cli-help.test.mjs", "bench-electricity.test.mjs"],
     },
+    // The Python sandbox's host side with no Pyodide: the offscreen document's routing and the idle reap through fake
+    // Workers, the prelude's environment and the table sources. Fast; `python` below is the real interpreter.
+    "python-host": { about: "the Python sandbox's host side without Pyodide: offscreen routing, the idle reap, the env, table sources", files: ["python-env.test.mjs", "python-reap.test.mjs", "python-run-namespace.test.mjs", "python-table-sources.test.mjs"] },
     python: { about: "real CPython in Pyodide (self-skips without dist/pyodide)", files: ["python.test.mjs", "redteam-python-sandbox.test.mjs", "redteam-python-regex-backtrack.test.mjs", "python-lockdown.test.mjs", "python-run-namespace-py.test.mjs", "python-dialect-vectors-wasm.test.mjs", "regex-corpus-core.test.mjs", "python-matplotlib.test.mjs", "python-dialect-inside.test.mjs", "redteam-python-inside.test.mjs", "python-dialect-library.test.mjs", "python-dialect-library-redteam.test.mjs", "redteam-python-lockdown.test.mjs"] },
     live: { about: "opt-in, hits the backend in .env", files: ["live.test.js"] },
 };

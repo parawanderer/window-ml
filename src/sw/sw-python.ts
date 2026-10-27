@@ -24,6 +24,8 @@ import type { DialectLibrary } from "../python/python-dialect-run";
  *  `ml.pythonExec`, i.e. the agent's tool); NULL means the caller was one of our OWN surfaces — the sidebar's
  *  Python bench — which is not reachable that way and is broadcast to instead. Both callers ask for the same
  *  worker tee; only the last hop differs. */
+// Runs whose current turn asked to keep its Python worker (py-reap.ts): the run log says so once per turn.
+const keptRuns = new Set<string>();   // state: plumbing — cleared when the turn ends (deletePythonRun)
 const pyStreamTabs = new Map<string, number | null | ((chunk: string, ts?: number) => void)>();
 
 defineJob({
@@ -181,7 +183,11 @@ export async function runPython(payload: any, requestId: string | undefined, cal
         : caller.tabId != null ? `page:${caller.tabId}`
         : "own";
     const wire = complete ? null : openWireClient({ from: { kind: "offscreen" }, run: caller.wireRun ?? null, realm: outside ? "full" : "readonly", tabUrl: caller.tabUrl, ...(caller.wireStep ? { step: caller.wireStep } : {}) });
-    const run = { type: "PY_RUN", principal, ...(wire ? { wire: { client: wire.handle, run: caller.wireRun ?? null } } : {}), ...(valueBudget ? { valueBudget } : {}), code: payload?.code, image: payload?.image ?? null, hardened: true, tables: payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}), ...(inside ? { inside: true } : {}) };
+    // A KEEP holds a worker-hosted run's sandbox through long idle gaps until the turn ends (py-reap.ts); it is told in
+    // the run log once per turn, so the person sees the model asked for it.
+    const keep = payload?.keep === true && !!caller.wireRun;
+    if (keep && !keptRuns.has(caller.wireRun!)) { keptRuns.add(caller.wireRun!); recordRunLog(caller.wireRun!, { subsystem: "python", kind: "keep" }); }
+    const run = { type: "PY_RUN", principal, ...(wire ? { wire: { client: wire.handle, run: caller.wireRun ?? null } } : {}), ...(valueBudget ? { valueBudget } : {}), code: payload?.code, image: payload?.image ?? null, hardened: true, tables: payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}), ...(inside ? { inside: true } : {}), ...(keep ? { keep: true } : {}) };
     // A cell inside the dialect may import the person's approved tier 3 libraries: they ride every inside run, and the
     // sandbox loads each pin once.
     if (inside) { const libraries = await dialectLibraries(); if (libraries.length) Object.assign(run, { libraries }); }
@@ -233,6 +239,7 @@ function pyCodeGranted(tabId: number | undefined, outside: boolean, code: string
  */
 export function deletePythonRun(runId: string): void {
     if (!runId) return;
+    keptRuns.delete(runId);
     try {
         chrome.runtime.sendMessage({ type: "PY_DELETE_RUN", run: runId, principal: `run:${runId}` })
             .then((res: { dropped?: { count: number; afterCell: number } } | undefined) => {
@@ -253,6 +260,21 @@ export async function dropPythonLibraries(): Promise<number> {
         const r = await chrome.runtime.sendMessage({ type: "PY_DROP_LIBRARIES" }) as { restarted?: number } | undefined;
         return r?.restarted ?? 0;
     } catch { return 0; }   // no offscreen listening: no worker to restart
+}
+
+/**
+ * PY_REAPED: the offscreen document shut a run's idle Python worker (py-reap.ts). The run log says so when the shut cost
+ * a live turn its namespace, and carries the callables its last cell handed to JavaScript that fired since, which no
+ * cell will report now. Only from our own documents: a page could write another run's log.
+ * @param message `{ run, live, dropped? }`
+ * @param sender who sent it
+ */
+export function pythonReaped(message: any, sender: chrome.runtime.MessageSender): void {
+    if (!isExtensionSender(sender) || typeof message?.run !== "string" || !message.run) return;
+    const run = message.run as string;
+    if (message.live === true) recordRunLog(run, { subsystem: "python", kind: "reap", reason: "idle" });
+    const dropped = message.dropped as { count?: unknown; afterCell?: unknown } | undefined;
+    if (dropped && typeof dropped.count === "number" && dropped.count > 0) recordRunLog(run, { subsystem: "python", kind: "dropped", reason: "at-reap", detail: { count: dropped.count, afterCell: Number(dropped.afterCell) || 0 } });
 }
 
 /** PY_STDOUT: relay one live stdout chunk from the offscreen host to whoever is awaiting that stream — a page

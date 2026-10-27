@@ -207,8 +207,9 @@ export interface MlApi {
      *  user's session with `credentials`, or a JS render with `rendered`). requiresApproval. */
     fetchTool(): MlTool;
     /** Run a sandboxed Python snippet (Pyodide/WASM, numpy + Pillow) with an optional
-     *  screenshot injected as `img`/`img_np`. No network/filesystem/DOM. */
-    pythonExec(code: string, opts?: { image?: string | Element | null; margin?: number; tableRaw?: boolean; tables?: string | Element | TableValue | Record<string, string | Element | TableValue> | null; onStdout?: (chunk: string, ts?: number) => void }): Promise<{ ok: boolean; value?: unknown; stdout: string; stdoutDropped?: number; error?: string; render?: "latex" | "img" | "figure"; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] }; bootMs?: number; runMs?: number }>;
+     *  screenshot injected as `img`/`img_np`. No network/filesystem/DOM. `keep` holds a worker-hosted run's sandbox
+     *  through idle gaps until its turn ends; a page's call has no run to keep, so it is ignored there. */
+    pythonExec(code: string, opts?: { image?: string | Element | null; margin?: number; tableRaw?: boolean; tables?: string | Element | TableValue | Record<string, string | Element | TableValue> | null; keep?: boolean; onStdout?: (chunk: string, ts?: number) => void }): Promise<{ ok: boolean; value?: unknown; stdout: string; stdoutDropped?: number; error?: string; render?: "latex" | "img" | "figure"; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] }; bootMs?: number; runMs?: number }>;
     /** Built-in sandboxed-Python tool factory (numpy/Pillow pixel/array work). */
     pythonTool(): MlTool;
     /** Read-only self-introspection tool for ml.agent (pass via `extraTools`): reports the run's model,

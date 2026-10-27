@@ -6,7 +6,7 @@
 // (tests/ml-wire-harness.mjs). Which calls share a namespace: docs/dev/python-sandbox.md, "A run's namespace".
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { wireRun } from "./ml-wire-harness.mjs";
+import { wireRun, OFFSCREEN, SITE } from "./ml-wire-harness.mjs";
 
 // --- a fake chrome and Worker around the real offscreen document ---
 
@@ -22,6 +22,10 @@ class FakeWorker {
     reply(data) { this.onmessage({ data }); }
 }
 globalThis.Worker = FakeWorker;
+// The idle reap (py-reap.ts) arms a clock of minutes on every idle worker; this file's workers sit idle when it ends, and
+// a live timer would hold its process open. Its clocks are tested in python-reap.test.mjs with mocked timers.
+const realSetTimeout = globalThis.setTimeout;
+globalThis.setTimeout = (fn, ms, ...rest) => { const t = realSetTimeout(fn, ms, ...rest); if (ms >= 60_000) t.unref(); return t; };
 globalThis.chrome = {
     runtime: {
         id: "test",
@@ -287,4 +291,42 @@ test("a settled run whose last cell's revoked callables fired records them in it
     const { bg: bg2 } = await wireRun(async (w) => { quiet = w; });
     await new Promise((r) => setTimeout(r, 0));
     assert.deepEqual(await dumped(bg2, quiet.run), []);
+});
+
+// --- the idle reap and the keep, the service worker's half (the clocks: python-reap.test.mjs) ---
+
+const POPUP = { url: "chrome-extension://test/popup.html" };
+const pyLog = async (bg, run) => (await bg.send({ type: "DUMP_RUN_LOG", payload: { run } }, POPUP)).data.events.filter((e) => e.subsystem === "python");
+
+test("PY_REAPED from the offscreen document puts the lost namespace and the late drops in the run's log; from a page, nothing", { timeout: 30000 }, async () => {
+    let wire;
+    const { bg } = await wireRun(async (w) => { wire = w; });
+    const reaped = { type: "PY_REAPED", run: wire.run, live: true, dropped: { count: 2, afterCell: 4 } };
+    // Fire-and-forget, as the offscreen document sends it: nothing answers.
+    const delivered = () => new Promise((r) => setTimeout(r, 10));
+    void bg.send(reaped, { tab: { id: SITE.id, url: SITE.url }, url: SITE.url, origin: "https://site.example" });
+    await delivered();
+    assert.deepEqual(await pyLog(bg, wire.run), [], "a page writes no run's log");
+    void bg.send(reaped, OFFSCREEN);
+    await delivered();
+    assert.deepEqual((await pyLog(bg, wire.run)).map((e) => [e.kind, e.reason, e.detail ?? null]), [["reap", "idle", null], ["dropped", "at-reap", { count: 2, afterCell: 4 }]]);
+});
+
+test("a keep reaches PY_RUN from a worker-hosted run's python_exec, told once per turn in its run log", { timeout: 30000 }, async () => {
+    let wire;
+    const calls = [
+        { name: "python_exec", args: { code: "x = 1", keep: true } },
+        { name: "python_exec", args: { code: "x", keep: true } },
+    ];
+    const { bg, pyRuns } = await wireRun(async (w) => { wire = w; }, { calls });
+    assert.deepEqual(pyRuns.map((m) => m.keep), [true, true]);
+    assert.deepEqual((await pyLog(bg, wire.run)).filter((e) => e.kind === "keep").length, 1);
+});
+
+test("a keep from a call with no run (our own surface, a page) never reaches PY_RUN", { timeout: 30000 }, async () => {
+    const { loadBackground } = await import("./helpers.js");
+    const bg = loadBackground({});
+    await bg.send({ type: "PYTHON_EXEC", payload: { code: "1", keep: true } }, POPUP);
+    assert.equal(bg.pyRuns.at(-1)?.type, "PY_RUN", "positive control: the call ran");
+    assert.equal(bg.pyRuns.at(-1).keep, undefined);
 });
