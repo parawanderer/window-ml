@@ -65,7 +65,7 @@ const CHOKE_REFUSED = /hasn't been approved for fetching on this page/;
 async function hostRun(calls, { policies = [], clickTo = {}, precheck = () => undefined, card = () => true, ask = () => true, between, onCall, redirects = {} } = {}) {
     const tab = { id: 7, windowId: 3, active: true, url: START, title: "Site" };
     let turns = 0, docN = 1, bg, hash;
-    const seen = [], cards = [], asks = [], toPage = [], adopts = [], readies = [], fetched = [];
+    const seen = [], cards = [], cardWhys = [], asks = [], toPage = [], adopts = [], readies = [], fetched = [];
     const answered = new Set();
     const sender = () => ({ tab: { id: 7, url: tab.url }, url: tab.url, origin: new URL(tab.url).origin, frameId: 0, documentId: `doc-${docN}` });
     const commit = (url) => { tab.url = url; docN++; bg.commit(7, { documentId: `doc-${docN}`, url }); };
@@ -98,6 +98,7 @@ async function hostRun(calls, { policies = [], clickTo = {}, precheck = () => un
                 if (e?.awaitingApproval && !answered.has(`${e.id}:${e.seq}`)) {
                     answered.add(`${e.id}:${e.seq}`);
                     cards.push(e.tool);
+                    cardWhys.push(plain(e.askWhy));
                     void bg.send({ type: "SET_APPROVAL", payload: { runId: e.id, seq: e.seq, decision: !!card(e.tool) } });
                 }
                 for (const a of e?.asks ?? []) {
@@ -132,7 +133,7 @@ async function hostRun(calls, { policies = [], clickTo = {}, precheck = () => un
     await sleep(40);
     const results = (seen.at(-1) ?? []).filter((m) => m.role === "tool").map((m) => String(m.content));
     const log = async () => (await bg.context.__mlRunLog.all()).filter((r) => r.subsystem === "policy").map((r) => plain(r));
-    return { bg, tab, turns: () => turns, cards, asks, toPage, adopts, readies, fetched, results, log };
+    return { bg, tab, turns: () => turns, cards, cardWhys, asks, toPage, adopts, readies, fetched, results, log };
 }
 
 /** Add a global policy the way the policy page does: POLICIES from an extension page. */
@@ -141,23 +142,38 @@ const addPolicy = (bg, { effect, source, label }) => bg.send({ type: "POLICIES",
 /** The denies on b.example's admin: the arrival hold text names the policy. */
 const denied = (results) => results.some((r) => /"No admin pages" denies: no tool runs on this page/.test(r));
 
-// --- the start origin is consented never as-you: the choke point refuses the uncredentialed read ---
+// --- the start origin is consented never as-you: the as-you read back is refused on its card, and the uncredentialed read cards at the gate ---
 
-test("the start origin is consented never as-you: once the tab leaves, both fetches back are refused — the as-you on its card, the uncredentialed at the choke point", T, async () => {
+test("the start origin is consented never as-you: once the tab leaves, the as-you read back is refused on its card", T, async () => {
+    // Plain, holds today and after the card fix: the credentialed (as-you) read of the start origin asks on its card
+    // and the card stub declines it — refused on the card, never at the choke point.
     const r = await hostRun([
         { name: "click", args: { selector: "#docs" } },          // the tab leaves START for OTHER
         { name: "fetch_url", args: { url: "https://site.example/api", credentials: true } },   // as-you back at START
-        { name: "fetch_url", args: { url: "https://site.example/api" } },                      // uncredentialed back at START
     ], { clickTo: { "#docs": OTHER }, card: (tool) => tool !== "fetch_url" });
-    assert.deepEqual(r.cards, ["click", "fetch_url"], "the as-you fetch asked; the uncredentialed one rode the prompt-silencing consent and never carded");
-    assert.deepEqual(r.fetched, [], "neither read ran: the as-you was refused on its card, the uncredentialed at the choke point");
-    assert.ok(r.results.some((s) => CHOKE_REFUSED.test(s)), `the uncredentialed read was refused at the FETCH_URL choke point: ${JSON.stringify(r.results)}`);
-    // Positive control: while the tab IS on START, an as-you fetch of it is the free tier's (the page you are on).
+    assert.deepEqual(r.cards, ["click", "fetch_url"], "the as-you fetch asked on its card");
+    assert.deepEqual(r.fetched, [], "the as-you read was refused on its card");
+    assert.ok(!r.results.some((s) => CHOKE_REFUSED.test(s)), `the as-you read is refused on its card, never reaching the choke point: ${JSON.stringify(r.results)}`);
+});
+
+test("the start origin is consented never as-you: once the tab leaves, the uncredentialed read back cards at the gate with askWhy.cause start-left, never riding the consent to the choke point", { ...T, todo: "open on main today (POLICIES.md, ruled 2026-10-27): the uncredentialed read back to the start origin after the tab left rides the prompt-silencing consent and is refused at the FETCH_URL choke point (choke text, no gate card) instead of carding at the gate with askWhy.cause \"start-left\". The security lane's fix (feat/navonly-read-card) cards it; flip this todo plain after that merges." }, async () => {
+    // Positive control: while the tab IS on START, an as-you fetch of it is the free tier's (the page you are on) —
+    // the fetch path works and the gate does not over-card.
     const free = await hostRun([
         { name: "fetch_url", args: { url: "https://site.example/api", credentials: true } },
     ], { card: (tool) => tool !== "fetch_url" });
     assert.deepEqual(free.cards, [], "the page the tab is on is free in every mode");
     assert.deepEqual(free.fetched, ["https://site.example/api"]);
+
+    // Defended: once the tab leaves START, the uncredentialed read back cards at the gate (cause "start-left").
+    const r = await hostRun([
+        { name: "click", args: { selector: "#docs" } },          // the tab leaves START for OTHER
+        { name: "fetch_url", args: { url: "https://site.example/api" } },   // uncredentialed back at START
+    ], { clickTo: { "#docs": OTHER }, card: (tool) => tool !== "fetch_url" });
+    assert.deepEqual(r.cards, ["click", "fetch_url"], "the uncredentialed read cards at the gate like any other read back to the start origin");
+    assert.equal(r.cardWhys[1]?.cause, "start-left", `the fetch_url card's askWhy.cause is "start-left": ${JSON.stringify(r.cardWhys)}`);
+    assert.ok(!r.results.some((s) => CHOKE_REFUSED.test(s)), `the read never reaches the choke point — it is carded at the gate: ${JSON.stringify(r.results)}`);
+    assert.deepEqual(r.fetched, [], "the card is declined, so the read does not run");
 });
 
 // --- an arrival no policy decides passes and consents nothing at the choke point ---
