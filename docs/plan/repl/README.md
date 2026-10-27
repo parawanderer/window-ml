@@ -260,7 +260,8 @@ point unchanged; the widening stays unassigned. The security lane builds both wi
 the same day). ORDER ruled the same day, since e3's file is on main and the fix turns its start-origin pin red in the
 lane's PR (rule 10: no finder's commit in a builder's PR, no red base merges): (1) e3 turns the pin into a failing-first
 card pin marked todo, test-only on main, first; (2) the lane rebases and merges green; (3) e3 flips the todo plain in
-its file. The janitor reviews each.
+its file. The janitor reviews each. DONE 2026-10-27: (1) #1166 MERGED 58c3e7b3; (2) #1157 MERGED 941e4ce7, both
+verified; (3) e3's flip is next, in its file.
 
 #1129 MERGED 9133ec92 (2026-10-25, e3, `@agent,@security`, test-only, `tests/nav-navigate-redteam.test.mjs`): rebased
 on #1131 in the ruled order; the between-turns todo is a plain passing test, the two choke-point pins are card pins,
