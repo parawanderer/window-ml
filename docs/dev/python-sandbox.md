@@ -228,14 +228,19 @@ appended to the cell's error and the value dropped. In this order: restore the r
 and awaits again is cancelled again, at most 8 rounds, and one still pending refuses the cell's result with an error
 naming it); REVOKE what the cell handed to JavaScript (`cell-gate.ts`); then cancel every uncancelled `asyncio.Handle`
 that `gc.get_objects()` reaches (#998). **The spend is BOUNDED** (the host's only): one budget of 1 s for all its
-rounds, enforced by a `sys.settrace` hook on every line a task runs and a `sys.setprofile` hook that refuses a call to
-`sys.settrace`/`setprofile` (or `threading`'s) while the spend runs; both are installed only around the spend's
-`sleep(0)`, skip asyncio's, Pyodide's and the harness's own frames, and are left as `None` after it, whatever hook the
-cell had set. A task they stop ends with a private `BaseException` and refuses the cell's result, named ("kept running
-after it was cancelled"); the worker survives with its namespace. A loop inside a C function raises no line event, so
-it hangs to the 15 s kill; the worker marks the spend's start (`spending`, `cell-gate.ts` `onSpending`), and the
-offscreen names that kill (`SPEND_KILLED`) instead of "simplify the computation". Both cores reach `sys.settrace`
-(tests enumerate them).
+rounds, enforced by one `sys.monitoring` tool whose callbacks raise on every function start, line and backward jump a
+task runs past the deadline, and at once on a call (the `CALL` event) to `sys.settrace`/`setprofile`, `threading`'s, or
+any `sys.monitoring` function but the three getters (enumerated from the module at boot). A settrace hook that raises is
+taken down by CPython itself, so every handler after the first stop used to run untraced (a 4 s `finally` gave a 5 s
+spend); a monitoring callback that raises stays on, so a handler, a `finally` and a coroutine finalized as the task
+unwinds each stop at their first event. The tool's events are on only around the spend's `sleep(0)`; asyncio's,
+Pyodide's and the harness's own code is switched off where it stands (`DISABLE`). At the cancel's start a tool the cell
+left registered is cleared and freed (its callbacks would run during the spend on no clock) and refuses the result by
+name, and the cell's own trace and profile hooks are set to `None`. A task the tool stops ends with a private
+`BaseException` and refuses the cell's result, named ("kept running after it was cancelled"); the worker survives with
+its namespace. A loop inside a C function raises no event, so it hangs to the 15 s kill; the worker marks the spend's
+start (`spending`, `cell-gate.ts` `onSpending`), and the offscreen names that kill (`SPEND_KILLED`) instead of
+"simplify the computation". Both cores have the events the bound needs (tests enumerate them).
 The gate sits on Pyodide's three doors from a Python callable to JavaScript, never on the registries: every PyProxy
 (`Module.pyproxy_new`, revoked by pointing it at an inert callable), every once-callable (it registers with
 `Module.finalizationRegistry` and calls `Module.callPyObject`, revoked by blocking its pointer there) and every promise
