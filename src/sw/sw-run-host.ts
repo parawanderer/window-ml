@@ -5,8 +5,9 @@
 
 import { runBackgroundAgent } from "../agent/agent-host";
 import { pythonCellInDialect, pythonOutsideWhy } from "../agent/python-dialect";
+import { namesJsBridge } from "../python/bridge-names";
 import { evalReadonlyInWorker } from "./sw-readonly";
-import { deletePythonRun } from "./sw-python";
+import { deletePythonRun, markPythonBridged, pythonRunBridged } from "./sw-python";
 import { workerReadonlyMl, derefWhole } from "./worker-readonly-ml";
 import { pipeStages } from "../pointers/token-pipe";
 import { recordRunLog, runLog } from "./sw-run-log";
@@ -1179,7 +1180,12 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     const pyInWorker = name === "python_exec" && byWorker() && runsInWorker(p, name);
                     if (pyInWorker) {
                         await ensureLocalTools(runId, p, tabId, () => tabPageUrl.get(tabId) || p.pageUrl || "", pyMedia).catch(() => { /* nothing granted: fails closed */ });
-                        grantRunPython(runId, { sheets: externalSheetIds(args), code: pythonCellInDialect(String((args as { code?: unknown }).code ?? "")) ? null : String((args as { code?: unknown }).code ?? ""), ...(call ? { step: { seq: seqBase + call.seq, local: call } } : {}) });
+                        const pyCode = String((args as { code?: unknown }).code ?? "");
+                        const outsideCode = pythonCellInDialect(pyCode) ? null : pyCode;
+                        // The JavaScript bridges only for a cell a PERSON approved with the card's line showing (bridge-names.ts).
+                        const bridges = outsideCode !== null && call?.person === true && namesJsBridge(outsideCode);
+                        if (bridges) await markPythonBridged(runId);
+                        grantRunPython(runId, { sheets: externalSheetIds(args), code: outsideCode, ...(call ? { step: { seq: seqBase + call.seq, local: { seq: call.seq, step: call.step } } } : {}), ...(bridges ? { bridges: true } : {}) });
                     }
                     // What this call puts on the TAB for its own sub-ops (tabGrantsForCall, grant-extract.ts): an exec's literal
                     // fetch URLs, a server tool's exact call, and a page-built run's python_exec's outside-the-dialect code and sheets.
@@ -1694,7 +1700,10 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     const byAsk = askedByPolicy(gateWhy);
                     const offered = byAsk ? { grants: [] } : withoutAsked(runId, extractGrants(tool, args));
                     const grants = offered.grants;
-                    const askWhy = gateWhy ?? offered.why;
+                    let askWhy = gateWhy ?? offered.why;
+                    // A cell outside the dialect in a run whose earlier cell ran with the bridges lifted: its card says what that
+                    // cell may have kept. Read here, where a wait is allowed: the mark outlives an evicted worker (sw-python.ts).
+                    if (tool === "python_exec" && askWhy?.cause === "outside-dialect" && await pythonRunBridged(runId)) askWhy = { ...askWhy, bridged: true };
                     if (askWhy?.policy !== undefined && !askedByPolicy(askWhy)) recordRunLog(runId, { subsystem: "policy", kind: "lapsed", reason: askWhy.cause, detail: { tool, policy: askWhy.policy, ...(tool === "fetch_url" ? { url: String((args as { url?: unknown }).url ?? "") } : {}) } });
                     // A worker tool's approval is granted to the run's state in this worker (worker-tools.ts), rebuilt here
                     // if an eviction took it, so the decision below has somewhere to put it.

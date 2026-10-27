@@ -385,6 +385,34 @@ test("a python_exec cell the try refused asks, says where it left the dialect, a
     }
 });
 
+// --- `call.person`: only a card answer may carry what a card grants (a python_exec cell's JavaScript bridges) ---
+
+/** Runs one approval-requiring python_exec call and returns the `call` argument runTool was handed (undefined when it never ran). */
+async function callSeenByRunTool({ approve, autoApprove }) {
+    const { deps } = makeDeps({ turns: [toolCall("python_exec", { code: "import js" }), reply("done")], approve, autoApprove });
+    const seen = [];
+    deps.runTool = async (name, _args, _push, call) => { seen.push(call); return { result: "ran" }; };
+    await runAgentLoop("x", { tools: [{ name: "python_exec", requiresApproval: true }] }, deps);
+    assert.equal(seen.length, 1, "the call ran once");
+    return seen[0];
+}
+
+test("person: a card answer (true, or a decision with no source) reaches runTool as person: true", async () => {
+    assert.equal((await callSeenByRunTool({ approve: () => true })).person, true, "a plain true is the card");
+    assert.equal((await callSeenByRunTool({ approve: () => ({ approved: true }) })).person, true, "a decision with no source is the card");
+    assert.equal((await callSeenByRunTool({ approve: () => ({ approved: true, source: "user" }) })).person, true);
+});
+
+test("person: a policy answer, an external answer and an auto-approval never reach runTool as person", async () => {
+    for (const source of ["policy", "external"]) {
+        const call = await callSeenByRunTool({ approve: () => ({ approved: true, source }) });
+        assert.equal("person" in call, false, `${source}: no person flag`);
+        assert.equal(typeof call.seq, "number", "the rest of the call is still passed");
+    }
+    const auto = await callSeenByRunTool({ approve: () => { throw new Error("gate must not be reached"); }, autoApprove: () => "consented" });
+    assert.equal("person" in auto, false, "auto-approved: no card, no person");
+});
+
 test("pythonOutsideWhy: no recorded reason (an edited cell, or one never tried) is still outside", async () => {
     const { pythonOutsideWhy } = await import("../src/agent/python-dialect.ts");
     assert.deepEqual(pythonOutsideWhy(undefined), { line: "Outside the read-only Python dialect", detail: "This cell asked because it is outside the read-only Python dialect. A cell inside it runs without asking.", cause: "outside-dialect" });

@@ -2265,6 +2265,11 @@
         "policy": {
           "description": "The gone policy's label, or for `ask-policy` the policy that asks; absent when no policy is involved.",
           "type": "string"
+        },
+        "bridged": {
+          "description": "`outside-dialect` only: an earlier cell of the run ran with the JavaScript bridges lifted, so this cell's namespace can hold what it took (the card shows `JS_BRIDGE_KEPT_LINE`).",
+          "type": "boolean",
+          "const": true
         }
       },
       "required": [

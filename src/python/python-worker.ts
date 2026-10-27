@@ -30,13 +30,15 @@ const post = self.postMessage.bind(self);
 const READONLY = self.name !== "full";
 /** The harness module `lockdownReadonly` captured at boot; re-bound into every cell by `injectInputs`. */
 let harness: unknown;   // state: plumbing — the frozen _ml_harness PyProxy, re-bound into every cell's namespace
+/** The bridge lift `lockdownReadonly` returned (lockdown.ts BRIDGE_GATE): on for one cell a person approved with the card's line. */
+let bridgeLift: ((on: boolean) => void) | null = null;   // state: plumbing — set once at the readonly boot
 /** How many cells this worker has started: the `afterCell` a dropped callback is reported against (cell-gate.ts). */
 // The message whose cell is running, for the cancel's spending mark (cell-gate.ts `onSpending`): the offscreen names a
 // kill that lands during the spend after a task the cell left, not after the cell's computation.
 let spendingFor = 0;   // state: plumbing — 0 when no cell is running
 let cellSeq = 0;   // state: plumbing — counts cells of this worker's one principal; dies with the worker
 
-type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown; stream?: boolean; env?: boolean; complete?: { line: number; column: number; bench?: "readonly" | "full" }; persist?: boolean; benchReset?: boolean; wire?: boolean; inside?: boolean; run?: string | null; deleteRun?: string; takeDropped?: boolean; libraries?: DialectLibrary[]; library?: { op: "shape" | "load"; lib: DialectLibrary } };
+type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown; stream?: boolean; env?: boolean; complete?: { line: number; column: number; bench?: "readonly" | "full" }; persist?: boolean; benchReset?: boolean; wire?: boolean; inside?: boolean; bridges?: boolean; run?: string | null; deleteRun?: string; takeDropped?: boolean; libraries?: DialectLibrary[]; library?: { op: "shape" | "load"; lib: DialectLibrary } };
 // `bootMs` is present ONLY on the call that paid for the cold start; `runMs` is the script itself, so the
 // two never have to be inferred from one another.
 // `prewarm` is on the first run after a pre-warm started the runtime: whether that run found it `warm` or still
@@ -117,6 +119,7 @@ function getPyodide(by: "prewarm" | "run" = "run"): Promise<any> {
             // module is re-bound into every cell by `injectInputs`.
             const held = await lockdownReadonly(py, self);
             harness = held.harness;
+            bridgeLift = held.bridges;
         }
         pyodideLive = true;
         post({ booted: true, ms: Date.now() - t0, by });
@@ -230,7 +233,7 @@ async function library(op: "shape" | "load", lib: DialectLibrary): Promise<{ why
     return op === "shape" ? out : out[0];
 }
 
-async function run(code: string, image: string | null, hardened: boolean, tables: unknown, onStdout?: (chunk: string) => void, persist = false, onStarted?: () => void, wire = false, runId: string | null = null, msgId = 0, inside = false, libraries: DialectLibrary[] = []): Promise<RunResult> {
+async function run(code: string, image: string | null, hardened: boolean, tables: unknown, onStdout?: (chunk: string) => void, persist = false, onStarted?: () => void, wire = false, runId: string | null = null, msgId = 0, inside = false, libraries: DialectLibrary[] = [], bridges = false): Promise<RunResult> {
     const wasLive = pyodideLive;
     const w0 = Date.now();
     const py = await getPyodide();
@@ -311,13 +314,16 @@ async function run(code: string, image: string | null, hardened: boolean, tables
         // coroutine (`hostRunScript`), even when the script threw. Its spend posts the `spending` mark.
         const path = cancelPath(harness, hardened);
         const script = wrapUserScript(code, keep, inside ? { nodes: DIALECT_NODES } : null, path);
+        // The JavaScript-bridge lift is this cell's alone: on for its script, off before anything else runs.
+        const lift = bridges && READONLY && !inside ? bridgeLift : null;
         spendingFor = msgId;
+        lift?.(true);
         try {
             if (path === "host") {
                 cancelled = await hostRunScript(harness, script, ns);
                 if (cancelled.error) throw new Error(cancelled.error);
             } else await py.runPythonAsync(script, { globals: ns });
-        } finally { spendingFor = 0; }
+        } finally { lift?.(false); spendingFor = 0; }
         // A refused inside run: its output and value are discarded (only the full-path run's result is the cell's), and the
         // namespace is as it was. The host asks the person, saying where the cell left the dialect.
         const refused = inside ? ns.get("_ml_not_in_dialect") : undefined;
@@ -517,7 +523,7 @@ function onMessage(e: MessageEvent): void {
     const onStdout = msg.stream ? (chunk: string) => post({ id: msg.id, partial: true, chunk, ts: Date.now() }) : undefined;
     const onStarted = () => post({ id: msg.id, started: true });
     runChain = runChain
-        .then(() => run(msg.code, msg.image ?? null, msg.hardened !== false, msg.tables ?? null, onStdout, msg.persist === true, onStarted, msg.wire === true, msg.run ?? null, msg.id, msg.inside === true, Array.isArray(msg.libraries) ? msg.libraries : []))
+        .then(() => run(msg.code, msg.image ?? null, msg.hardened !== false, msg.tables ?? null, onStdout, msg.persist === true, onStarted, msg.wire === true, msg.run ?? null, msg.id, msg.inside === true, Array.isArray(msg.libraries) ? msg.libraries : [], msg.bridges === true))
         .then(
             (result: RunResult) => post({ id: msg.id, ...result }, { transfer: result.ipc ? [result.ipc] : [] }),
             (err: unknown) => post({ id: msg.id, ok: false, stdout: "", error: String(err) }),

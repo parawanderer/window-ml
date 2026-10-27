@@ -16,6 +16,8 @@ import { openWireClient } from "./ml-wire-serve";
 import { recordRunLog } from "./sw-run-log";
 import { dialectLibraries } from "./sw-libraries";
 import type { DialectLibrary } from "../python/python-dialect-run";
+import { sessionArea } from "./sw-housekeeping";
+import { defineState } from "../state-registry";
 
 // LIVE python_exec stdout streaming: maps a run's streamId (the page requestId) → its tabId, so a PY_STDOUT
 // chunk the offscreen doc forwards can be relayed to the RIGHT page. Set when a streaming PYTHON_EXEC starts,
@@ -26,6 +28,63 @@ import type { DialectLibrary } from "../python/python-dialect-run";
  *  worker tee; only the last hop differs. */
 // Runs whose current turn asked to keep its Python worker (py-reap.ts): the run log says so once per turn.
 const keptRuns = new Set<string>();   // state: plumbing — cleared when the turn ends (deletePythonRun)
+// Runs one of whose cells ran with the JavaScript bridges lifted (bridge-names.ts): the namespace, which outlives an
+// evicted worker, can hold what that cell took, so the mark is kept in storage.session beside this worker's copy.
+const BRIDGED_KEY = "ml_py_bridged";
+const bridgedRuns = new Set<string>();   // state: python.bridged — this worker's copy of BRIDGED_KEY
+defineState({
+    id: "python.bridged", scope: "run", realm: "worker", audience: "human", lostOn: ["turn-end", "browser-restart"],
+    describe: "Whether a cell of the run ran with the browser's JavaScript reachable, so later cells' approval cards say what it may have kept.",
+    read: async ({ runId }) => (runId && await pythonRunBridged(runId)) || undefined,
+});
+
+// Every read-modify-write of BRIDGED_KEY waits for the one before, so two runs marked or forgotten in the same tick
+// cannot lose each other's edit.
+let bridgedWrites: Promise<void> = Promise.resolve();   // state: plumbing — orders this worker's writes of BRIDGED_KEY
+
+/** Apply one edit to the stored list of marked runs, after every earlier edit. @param edit the new list, or null to
+ *  leave it as it is */
+function editBridged(edit: (ids: string[]) => string[] | null): Promise<void> {
+    bridgedWrites = bridgedWrites.then(async () => {
+        try {
+            const area = sessionArea();
+            const held = (await area.get([BRIDGED_KEY]))[BRIDGED_KEY];
+            const next = edit(Array.isArray(held) ? held.filter((x): x is string => typeof x === "string") : []);
+            if (next) await area.set({ [BRIDGED_KEY]: next });
+        } catch { /* storage unavailable: this worker's copy holds it */ }
+    });
+    return bridgedWrites;
+}
+
+/** Mark a run whose cell is about to run with the JavaScript bridges lifted. Awaited, so a worker evicted right after
+ *  still finds the mark. @param runId the run */
+export async function markPythonBridged(runId: string): Promise<void> {
+    if (!runId || bridgedRuns.has(runId)) return;
+    bridgedRuns.add(runId);
+    await editBridged((ids) => ids.includes(runId) ? null : [...ids, runId]);
+}
+
+/** Whether a cell of the run ran with the bridges lifted, read from storage when this worker has not seen it (it was
+ *  evicted since). @param runId the run @returns true once marked, until the run's namespace is dropped */
+export async function pythonRunBridged(runId: string): Promise<boolean> {
+    if (bridgedRuns.has(runId)) return true;
+    try {
+        const held = (await sessionArea().get([BRIDGED_KEY]))[BRIDGED_KEY];
+        if (Array.isArray(held) && held.includes(runId)) { bridgedRuns.add(runId); return true; }
+    } catch { /* storage unavailable */ }
+    return false;
+}
+
+/** Test seam: forget this worker's copy of every mark, as an eviction does; storage.session keeps them. */
+export function evictBridgedCopyForTest(): void {
+    bridgedRuns.clear();
+}
+
+/** Drop a run's mark with its namespace. @param runId the run */
+async function forgetPythonBridged(runId: string): Promise<void> {
+    bridgedRuns.delete(runId);
+    await editBridged((ids) => ids.includes(runId) ? ids.filter((x) => x !== runId) : null);
+}
 const pyStreamTabs = new Map<string, number | null | ((chunk: string, ts?: number) => void)>();
 
 defineJob({
@@ -67,6 +126,10 @@ export interface PythonCaller {
     untrusted: () => Promise<boolean>;
     /** Whether a cell outside the dialect is approved for exactly this code. Absent: the call grants on the tab (`tabGrants(tabId).pyCode`, sw-consent.ts). */
     pyCodeOk?: (code: string) => boolean;
+    /** A person approved this cell with its card's JavaScript-bridge line showing (bridge-names.ts): it runs with the
+     *  readonly worker's refusal of `js`/`pyodide.ffi` lifted, for this cell alone. Set only by a run's worker tools,
+     *  never from anything a page sends. */
+    bridges?: boolean;
     /** A run the worker drives, whose own gate decided an inside-the-dialect cell (autoApprovePython or the person): no tab grant
      *  is asked for it. Absent: a page-started cell, which runs only under a grant. */
     runGated?: boolean;
@@ -186,8 +249,10 @@ export async function runPython(payload: any, requestId: string | undefined, cal
     // A KEEP holds a worker-hosted run's sandbox through long idle gaps until the turn ends (py-reap.ts); it is told in
     // the run log once per turn, so the person sees the model asked for it.
     const keep = payload?.keep === true && !!caller.wireRun;
+    // The lift, only for the exact code the person approved, and only outside the dialect (an inside cell needs none).
+    const bridges = outside && caller.bridges === true && !!caller.pyCodeOk?.(String(payload?.code ?? ""));
     if (keep && !keptRuns.has(caller.wireRun!)) { keptRuns.add(caller.wireRun!); recordRunLog(caller.wireRun!, { subsystem: "python", kind: "keep" }); }
-    const run = { type: "PY_RUN", principal, ...(wire ? { wire: { client: wire.handle, run: caller.wireRun ?? null } } : {}), ...(valueBudget ? { valueBudget } : {}), code: payload?.code, image: payload?.image ?? null, hardened: true, tables: payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}), ...(inside ? { inside: true } : {}), ...(keep ? { keep: true } : {}) };
+    const run = { type: "PY_RUN", principal, ...(wire ? { wire: { client: wire.handle, run: caller.wireRun ?? null } } : {}), ...(valueBudget ? { valueBudget } : {}), code: payload?.code, image: payload?.image ?? null, hardened: true, tables: payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}), ...(inside ? { inside: true } : {}), ...(keep ? { keep: true } : {}), ...(bridges ? { bridges: true } : {}) };
     // A cell inside the dialect may import the person's approved tier 3 libraries: they ride every inside run, and the
     // sandbox loads each pin once.
     if (inside) { const libraries = await dialectLibraries(); if (libraries.length) Object.assign(run, { libraries }); }
@@ -240,6 +305,7 @@ function pyCodeGranted(tabId: number | undefined, outside: boolean, code: string
 export function deletePythonRun(runId: string): void {
     if (!runId) return;
     keptRuns.delete(runId);
+    void forgetPythonBridged(runId);
     try {
         chrome.runtime.sendMessage({ type: "PY_DELETE_RUN", run: runId, principal: `run:${runId}` })
             .then((res: { dropped?: { count: number; afterCell: number } } | undefined) => {

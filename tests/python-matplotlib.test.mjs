@@ -264,6 +264,10 @@ def deep_scan():
         if _isjs(o):
             bad.append(type(o).__name__); continue
         if id(o) in _stop: continue
+        # Another package's module, or its dict, met through a reference rather than sys.modules: a bridge module the gate
+        # took out of sys.modules (lockdown.ts REFUSED_BRIDGES) is still reachable from a function it exported.
+        if isinstance(o, types.ModuleType) and not _mine(o.__name__): continue
+        if type(o) is dict and '__builtins__' in o and isinstance(o.get('__name__'), str) and not _mine(o['__name__']): continue
         try: stack.extend(gc.get_referents(o))
         except Exception: pass
     return {'visited': n, 'bad': bad[:10]}
@@ -288,17 +292,18 @@ plt.switch_backend('agg')
 fig, ax = plt.subplots(); ax.plot([1, 2]); fig.savefig(io.BytesIO(), format='png')
 ${DEEP_SCAN}
 clean = deep_scan()
-# Positive control: a JsProxy kept on a CLASS, where the module scan would not look, is found.
-from pyodide.ffi import to_js
+# Positive control: a bridge kept on a CLASS, where the module scan would not look, is found. A cell cannot reach
+# \`pyodide.ffi\` to make a JsProxy (lockdown.ts REFUSED_BRIDGES), so the plant is the module \`import js\` hands it.
+import js as _js
 import matplotlib.colors as _mc
-_mc.Colormap._ml_probe = to_js([1])
+_mc.Colormap._ml_probe = _js
 planted = deep_scan()
 del _mc.Colormap._ml_probe
 {'tried': tried, 'clean': clean, 'planted': planted}`);
     assert.equal(r.error, null, r.error);
     assert.ok(r.value.tried.includes("module://matplotlib.backends.backend_pyodide") && r.value.tried.includes("webagg"), `the cell got the browser backends: ${r.value.tried}`);
     assert.ok(r.value.clean.visited > 50000, `the walk covered matplotlib's object graph, visited ${r.value.clean.visited}`);
-    assert.ok(r.value.planted.bad.length >= 1, `positive control: a planted JsProxy on a class is found, got ${JSON.stringify(r.value.planted)}`);
+    assert.ok(r.value.planted.bad.length >= 1, `positive control: a planted bridge on a class is found, got ${JSON.stringify(r.value.planted)}`);
     assert.deepEqual(r.value.clean.bad, [], "nothing matplotlib or its dependencies keep reaches the JS bridge");
 });
 

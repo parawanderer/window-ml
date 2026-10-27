@@ -57,7 +57,8 @@ export interface RunAgentHostDeps {
     // a requiresApproval tool ONLY after the gate — the untrusted execution point.
     // `onStream` (opt-in streaming) is forwarded to the PAGE tool as its ctx.stream, so live output
     // (console.log / print) streams back while the delegated tool runs. Omitted → no live output.
-    delegateTool(name: string, args: Record<string, unknown>, onStream?: (text: string, ts?: number) => void, call?: { seq: number; step: number }): Promise<ToolRunResult>;
+    /** `call.person`: a person approved the call on its card; trusted only where the loop is the worker's own (sw-run-host.ts). */
+    delegateTool(name: string, args: Record<string, unknown>, onStream?: (text: string, ts?: number) => void, call?: { seq: number; step: number; person?: boolean }): Promise<ToolRunResult>;
     /** A step's result as the model may read it (agent-loop.ts `forModel`; sw-scrub.ts takes the config's secrets out). */
     forModel?: AgentLoopDeps["forModel"];
     // Self-introspection (chat_metadata): the run's model + its context window + capability list, from the
