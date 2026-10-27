@@ -174,9 +174,9 @@ tool's model-facing text (hints, clipping, `cast`) and the bench's pretty-printe
 - **Every figure is closed after every cell**, a failed one included, so a run's next cell does not draw it again.
   Not against the cell itself: one that patches `plt.close` keeps its figures open for the next cell of its PRINCIPAL
   (a readonly worker is one principal's; the `full` one is everyone's, the shared-interpreter residual below).
-- **The epilogue catches `BaseException`**: it runs the cell's own objects outside the cell's try, and an escape would
-  skip the cancel of the cell's tasks and asyncio handles; since #998 the cancel runs BEFORE the epilogue, so the catch
-  is belt and braces.
+- **The epilogue catches `BaseException`**: it runs the cell's own objects outside the cell's try. In the readonly
+  worker the cancel is the host's and runs after the whole script whatever it raised; in the `full` worker the
+  wrapper's cancel runs BEFORE the epilogue (#998), so the catch is belt and braces there.
 - **No module it brings in holds the JavaScript bridge**: `tests/python-matplotlib.test.mjs` walks everything those
   modules reach under the lockdown, after a cell tried every backend, the check a new package with a `prepare` owes.
 
@@ -215,11 +215,27 @@ parses, encodes or injects — and the wrapper looks the harness up in the NAMES
 JsProxy lands in the Python namespace: injected inputs are `None`/`str` via `undefined`, and
 the stdout tee is Pyodide's JS-side `setStdout`, given the exact bytes (`stdoutWriter`; the `batched`
 handler strips each line's newline). (5) Nothing a cell scheduled runs AFTER its result is returned (`docs/plan/repl/PYTHON_CANCEL_GAPS.md`; its `finally`
-or `except` running during the cancel, inside the cell's own time, satisfies that). The wrapper's cancel, before the
-epilogue, in this order: restore the running loop; SPEND every task (`cancel()`, then let the loop turn, so its
-coroutine takes the `CancelledError` and finishes; a task that catches it and awaits again is cancelled again, at most
-8 rounds, and one still pending refuses the cell's result with an error naming it); REVOKE what the cell handed to
-JavaScript (`cell-gate.ts`); then cancel every uncancelled `asyncio.Handle` that `gc.get_objects()` reaches (#998).
+or `except` running during the cancel, inside the cell's own time, satisfies that). **Where the cancel runs:** in the
+readonly worker, in the HARNESS. The lockdown builds it at boot (`lockdown.ts` `_ml_make_cancel`, `run_script`) as a
+closure over captured callables and plain values, never modules, and the worker runs every cell's script and then the
+cancel as ONE coroutine through it (`hostRunScript`, `cancelPath`). Two reasons, both measured: a cell's code is
+compiled in the wrapper's globals, so `global _ml_cell_revoke; _ml_cell_revoke = lambda: None` undid a cancel that
+lived in the wrapper (its timer ran after the result); and a cancel called from JavaScript after `runPythonAsync`
+resolved let what the cell had queued (a microtask, a `call_soon`) run first. The `full` worker, never locked, keeps the
+wrapper's cancel. What the cancel's tasks print goes to its own buffer, appended to the cell's stdout; its refusal is
+appended to the cell's error and the value dropped. In this order: restore the running loop; SPEND every task
+(`cancel()`, then let the loop turn, so its coroutine takes the `CancelledError` and finishes; a task that catches it
+and awaits again is cancelled again, at most 8 rounds, and one still pending refuses the cell's result with an error
+naming it); REVOKE what the cell handed to JavaScript (`cell-gate.ts`); then cancel every uncancelled `asyncio.Handle`
+that `gc.get_objects()` reaches (#998). **The spend is BOUNDED** (the host's only): one budget of 1 s for all its
+rounds, enforced by a `sys.settrace` hook on every line a task runs and a `sys.setprofile` hook that refuses a call to
+`sys.settrace`/`setprofile` (or `threading`'s) while the spend runs; both are installed only around the spend's
+`sleep(0)`, skip asyncio's, Pyodide's and the harness's own frames, and are left as `None` after it, whatever hook the
+cell had set. A task they stop ends with a private `BaseException` and refuses the cell's result, named ("kept running
+after it was cancelled"); the worker survives with its namespace. A loop inside a C function raises no line event, so
+it hangs to the 15 s kill; the worker marks the spend's start (`spending`, `cell-gate.ts` `onSpending`), and the
+offscreen names that kill (`SPEND_KILLED`) instead of "simplify the computation". Both cores reach `sys.settrace`
+(tests enumerate them).
 The gate sits on Pyodide's three doors from a Python callable to JavaScript, never on the registries: every PyProxy
 (`Module.pyproxy_new`, revoked by pointing it at an inert callable), every once-callable (it registers with
 `Module.finalizationRegistry` and calls `Module.callPyObject`, revoked by blocking its pointer there) and every promise

@@ -74,7 +74,7 @@ const TIMER_NAMES = ["setTimeout", "setInterval"];
  * falls back to the normal module attributes.
  */
 const HARNESS_BOOT = /* python */ `
-import ast as _ml_a, json as _ml_j, base64 as _ml_b, textwrap as _ml_tw, traceback as _ml_tb, types as _ml_t, sys as _ml_s, io as _ml_io, contextlib as _ml_c, inspect as _ml_i, asyncio as _ml_aio
+import ast as _ml_a, json as _ml_j, base64 as _ml_b, textwrap as _ml_tw, traceback as _ml_tb, types as _ml_t, sys as _ml_s, io as _ml_io, contextlib as _ml_c, inspect as _ml_i, asyncio as _ml_aio, time as _ml_tm, threading as _ml_th
 
 class _MlHarnessMod(_ml_t.ModuleType):
     """The harness's captured module references. A cell cannot patch through this."""
@@ -97,8 +97,151 @@ def _ml_gate_calls(g):
         g.begin()
     def revoke():
         g.revoke()
-    return begin, revoke
-_ml_cell_begin, _ml_cell_revoke = _ml_gate_calls(globals().pop("_ml_gate_js"))
+    def spending():
+        g.spending()
+    return begin, revoke, spending
+_ml_cell_begin, _ml_cell_revoke, _ml_cell_spending = _ml_gate_calls(globals().pop("_ml_gate_js"))
+
+# THE CANCEL (python-runtime.ts, "the cancel"; PYTHON_CANCEL_GAPS.md pins 7 to 12): everything a cell scheduled is
+# spent, revoked or cancelled before its result is returned. Built HERE, at boot, as a closure over CALLABLES and plain
+# values captured now, and called by the worker from JavaScript after the cell, in a finally. A cell's code is compiled
+# in the wrapper's globals, so a cancel that looked anything up there (or in a module, or in builtins) could be undone
+# by a cell rebinding the name. Classes the captured callables dispatch through (Task.cancel) are not closed by this.
+class _MlSpendLate(BaseException):
+    """Raised in a task the cancel's spend stopped: it kept running past the spend's budget, or took its hook down."""
+
+def _ml_make_cancel(revoke, spending, loop, set_running_loop, all_tasks, current_task, sleep, get_objects, Handle,
+                    settrace, setprofile, monotonic, StringIO, redirect_stdout, redirect_stderr, guarded, skip_files,
+                    SpendLate, BaseException_, isinstance_, id_, len_, range_, sorted_, str_, getattr_, ROUNDS, BUDGET, CAP):
+    # The tasks' own output during the spend: kept up to CAP characters, then counted.
+    class Out:
+        def __init__(self):
+            self.buf = StringIO()
+            self.n = 0
+        def write(self, s):
+            s = str_(s)
+            if self.n < CAP:
+                self.buf.write(s[:CAP - self.n])
+            self.n += len_(s)
+            return len_(s)
+        def flush(self):
+            pass
+    async def cancel():
+        me = current_task()
+        out = Out()
+        unspent = []
+        seen = []
+        deadline = None
+        code = cancel.__code__
+        def skip(frame):
+            f = frame.f_code
+            return f is code or f.co_filename.startswith(skip_files)
+        def local(frame, event, arg):
+            if monotonic() > deadline:
+                raise SpendLate()
+            return local
+        def tracer(frame, event, arg):
+            if skip(frame):
+                return None
+            return local(frame, event, arg)
+        def profiler(frame, event, arg):
+            if event == "c_call" and id_(arg) in guarded and not skip(frame):
+                raise SpendLate()
+        with redirect_stdout(out), redirect_stderr(out):
+            # 1. The running loop: a cell's new_event_loop() replaced it, and a handle on the orphan crashes the next pump.
+            try:
+                set_running_loop(loop)
+            except BaseException_:
+                pass
+            # 2. SPEND every task: cancel it and let the loop turn, so it takes the CancelledError and finishes. A task
+            #    that catches the cancel and awaits again is cancelled again, ROUNDS times. The rounds share ONE budget,
+            #    enforced on every line a task runs (settrace) and on every call that would take the hooks down
+            #    (setprofile); a cell's own hooks are replaced for the spend and left as None after it.
+            try:
+                for rnd in range_(ROUNDS + 1):
+                    unspent = [t for t in all_tasks() if t is not me and not t.done()]
+                    if not unspent or rnd == ROUNDS:
+                        break
+                    for t in unspent:
+                        if t not in seen:
+                            seen.append(t)
+                        t.cancel()
+                    if deadline is None:
+                        deadline = monotonic() + BUDGET
+                        spending()
+                    elif monotonic() > deadline:
+                        break
+                    setprofile(profiler)
+                    settrace(tracer)
+                    try:
+                        await sleep(0)
+                    finally:
+                        settrace(None)
+                        setprofile(None)
+            except BaseException_:
+                pass
+            # 3. REVOKE what the cell handed to JavaScript (cell-gate.ts), then cancel every asyncio.Handle left.
+            try:
+                revoke()
+            except BaseException_:
+                pass
+            try:
+                for obj in get_objects():
+                    if isinstance_(obj, Handle) and not obj.cancelled():
+                        obj.cancel()
+            except BaseException_:
+                pass
+        # A task the bound stopped ended with SpendLate (reading it also keeps asyncio from logging it as unretrieved).
+        stopped = []
+        for t in seen:
+            try:
+                if t.done() and not t.cancelled() and isinstance_(t.exception(), SpendLate):
+                    stopped.append(t)
+            except BaseException_:
+                pass
+        def names(tasks):
+            try:
+                return ", ".join(sorted_({t.get_name() + " (" + str_(getattr_(t.get_coro(), "__qualname__", "?")) + ")" for t in tasks}))
+            except BaseException_:
+                return str_(len_(tasks)) + " task(s)"
+        refusal = ""
+        if stopped:
+            refusal += "RuntimeError: this cell left a task that kept running after it was cancelled: " + names(stopped) + ". It was stopped after " + str_(BUDGET) + " s (or when it tried to remove the cancel's hook), so the cell's result is refused rather than returned beside it.\\n"
+        if unspent:
+            refusal += "RuntimeError: this cell left a task running that would not stop: " + names(unspent) + ". It was cancelled " + str_(ROUNDS) + " times and caught the cancel each time, so the cell's result is refused rather than returned beside it.\\n"
+        text = out.buf.getvalue()
+        if out.n > CAP:
+            text += "\\n[the cancel cut " + str_(out.n - CAP) + " more characters the cell's tasks printed]"
+        return (text, refusal)
+    return cancel
+
+# The cell's script and its cancel as ONE coroutine: the host awaits this instead of runPythonAsync, so nothing the
+# cell queued on the JavaScript side (a microtask, a promise's then, a call_soon) runs between the two.
+def _ml_make_run(eval_code_async, cancel, format_exception, BaseException_):
+    async def run(source, ns):
+        err = ""
+        try:
+            await eval_code_async(source, ns, return_mode="none")
+        except BaseException_ as e:
+            err = "".join(format_exception(e))
+        out, refusal = await cancel()
+        return (out, refusal, err)
+    return run
+
+# The calls that would take the spend's hooks down, and the files whose frames the hooks never stop: asyncio's and
+# Pyodide's loop machinery (stopping them would break the loop, not the task) and the harness's own.
+import gc as _ml_gc, os as _ml_os, pyodide as _ml_pyo
+_ml_spend_guarded = frozenset(id(f) for f in (_ml_s.settrace, _ml_s.setprofile, _ml_th.settrace, _ml_th.setprofile,
+    getattr(_ml_th, "settrace_all_threads", None), getattr(_ml_th, "setprofile_all_threads", None)) if f is not None)
+_ml_spend_skip = (_ml_os.path.dirname(_ml_aio.__file__), _ml_os.path.dirname(_ml_pyo.__file__), _ml_c.__file__, _ml_s._getframe().f_code.co_filename)
+_ml_cancel = _ml_make_cancel(_ml_cell_revoke, _ml_cell_spending, _ml_aio.get_event_loop(), _ml_aio._set_running_loop,
+    _ml_aio.all_tasks, _ml_aio.current_task, _ml_aio.sleep, _ml_gc.get_objects, _ml_aio.Handle,
+    _ml_s.settrace, _ml_s.setprofile, _ml_tm.monotonic, _ml_io.StringIO, _ml_c.redirect_stdout, _ml_c.redirect_stderr,
+    _ml_spend_guarded, _ml_spend_skip, _MlSpendLate, BaseException, isinstance, id, len, range, sorted, str, getattr,
+    8, 1.0, 20000)
+from _pyodide._base import eval_code_async as _ml_eval_async
+_ml_run = _ml_make_run(_ml_eval_async, _ml_cancel, _ml_tb.format_exception, BaseException)
+
 
 _h = _MlHarnessMod("_ml_harness")
 object.__setattr__(_h, "_MlHarnessMod__ml_refs", {
@@ -138,8 +281,10 @@ object.__setattr__(_h, "_MlHarnessMod__ml_refs", {
     "asyncio": _ml_aio,
     "cell_begin": _ml_cell_begin,
     "cell_revoke": _ml_cell_revoke,
+    # The worker runs every cell's script through this (python-worker.ts \`hostRunScript\`): the script, then the cancel.
+    "run_script": _ml_run,
 })
-del _ml_gate_calls, _ml_cell_begin, _ml_cell_revoke
+del _ml_gate_calls, _ml_cell_begin, _ml_cell_revoke, _ml_cell_spending, _MlSpendLate, _ml_spend_guarded, _ml_spend_skip, _ml_make_cancel, _ml_cancel, _ml_make_run, _ml_run, _ml_eval_async
 _h
 `;
 
@@ -264,7 +409,7 @@ export async function lockdownReadonly(py: any, scope: any = globalThis): Promis
         // directly. It is NOT placed in `sys.modules` — `import _ml_harness` must fail, and the wrapper
         // deletes `_ml_harness` from the cell's namespace after extracting the refs.
         // The gate reaches the boot as a temporary global the boot pops: the cell's namespace never holds it.
-        py.globals.set("_ml_gate_js", { begin: () => gate!.begin(), revoke: () => gate!.revoke() });
+        py.globals.set("_ml_gate_js", { begin: () => gate!.begin(), revoke: () => gate!.revoke(), spending: () => gate!.spending() });
         harness = py.runPython(HARNESS_BOOT);
     } catch { /* the wrapper falls back */ }
 

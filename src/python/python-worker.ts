@@ -16,10 +16,10 @@
 
 import { PY_PACKAGE_LOADS, PY_LAZY_LOADS, PY_BENCH_BASE_NAMES, PY_STARTUP_PREPARE } from "./python-env";
 import { DIALECT_FILES, DIALECT_MODULES, DIALECT_NODES } from "./dialect-data";
-import { wrapUserSetup, wrapUserScript, COMPLETE_HELPER, completeIn, RESET, injectInputs, stdoutWriter, injectStoredTable, takeIpc, releaseNamespace, type PyCompletion } from "./python-runtime";
+import { wrapUserSetup, wrapUserScript, COMPLETE_HELPER, completeIn, RESET, injectInputs, stdoutWriter, injectStoredTable, takeIpc, releaseNamespace, hostRunScript, cancelPath, type PyCompletion } from "./python-runtime";
 import { dialectSetup, libraryLoad, libraryShape, type DialectLibrary } from "./python-dialect-run";
 import { lockdownReadonly } from "./lockdown";
-import { cellBoundary, cellDropped } from "./cell-gate";
+import { cellBoundary, cellDropped, onSpending } from "./cell-gate";
 
 // Captured BEFORE the lockdown's strip removes `postMessage` from `self` (`STRIPPED_NAMES`). Every reply
 // in this file goes through `post`, never `self.postMessage` — which is gone once `lockdownReadonly` runs
@@ -31,6 +31,9 @@ const READONLY = self.name !== "full";
 /** The harness module `lockdownReadonly` captured at boot; re-bound into every cell by `injectInputs`. */
 let harness: unknown;   // state: plumbing — the frozen _ml_harness PyProxy, re-bound into every cell's namespace
 /** How many cells this worker has started: the `afterCell` a dropped callback is reported against (cell-gate.ts). */
+// The message whose cell is running, for the cancel's spending mark (cell-gate.ts `onSpending`): the offscreen names a
+// kill that lands during the spend after a task the cell left, not after the cell's computation.
+let spendingFor = 0;   // state: plumbing — 0 when no cell is running
 let cellSeq = 0;   // state: plumbing — counts cells of this worker's one principal; dies with the worker
 
 type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown; stream?: boolean; env?: boolean; complete?: { line: number; column: number; bench?: "readonly" | "full" }; persist?: boolean; benchReset?: boolean; wire?: boolean; inside?: boolean; run?: string | null; deleteRun?: string; takeDropped?: boolean; libraries?: DialectLibrary[]; library?: { op: "shape" | "load"; lib: DialectLibrary } };
@@ -246,6 +249,7 @@ async function run(code: string, image: string | null, hardened: boolean, tables
     // the queue ahead of it, or the imports in front of it (see runInWorker in offscreen.ts and the
     // "queued behind another" e2e). A setup that hangs is still the START bound's to clear.
     let t0 = Date.now();
+    let cancelled: { out: string; refusal: string; error: string } | null = null;   // the host's script-and-cancel answer
     // Callables an earlier cell handed to JavaScript that fired after its result, revoked and so running nothing
     // (cell-gate.ts). They fire between cells, so this cell reports them, against the cell before it: every cell of
     // this worker is the same principal's. The bench path sets no inputs, so the boundary is closed here too.
@@ -303,16 +307,27 @@ async function run(code: string, image: string | null, hardened: boolean, tables
         t0 = Date.now();
         // The cell itself, wrapped to capture stdout / a `return`-or-bare-`result=` value / a traceback.
         // Reads back _stdout/_err/_json_result.
-        await py.runPythonAsync(wrapUserScript(code, keep, inside ? { nodes: DIALECT_NODES } : null), { globals: ns });
+        // THE CANCEL: in a locked-down worker the closure the lockdown built runs the script and then the cancel, as one
+        // coroutine (`hostRunScript`), even when the script threw. Its spend posts the `spending` mark.
+        const path = cancelPath(harness, hardened);
+        const script = wrapUserScript(code, keep, inside ? { nodes: DIALECT_NODES } : null, path);
+        spendingFor = msgId;
+        try {
+            if (path === "host") {
+                cancelled = await hostRunScript(harness, script, ns);
+                if (cancelled.error) throw new Error(cancelled.error);
+            } else await py.runPythonAsync(script, { globals: ns });
+        } finally { spendingFor = 0; }
         // A refused inside run: its output and value are discarded (only the full-path run's result is the cell's), and the
         // namespace is as it was. The host asks the person, saying where the cell left the dialect.
         const refused = inside ? ns.get("_ml_not_in_dialect") : undefined;
         if (refused) return timed({ ok: false, stdout: "", notInDialect: String(refused) });
-        const stdout = String(ns.get("_stdout") ?? "");
+        const stdout = String(ns.get("_stdout") ?? "") + (cancelled?.out ?? "");
         // Characters printed past the ceiling and not kept (python-runtime.ts _MlTee); rides every result below.
         const dropped = Number(ns.get("_ml_stdout_dropped") ?? 0) || 0;
         const over = dropped ? { stdoutDropped: dropped } : {};
-        const err = ns.get("_err");
+        // A refusal from the cancel (a task that would not stop) refuses the result, as the wrapper's own did.
+        const err = cancelled?.refusal ? `${String(ns.get("_err") ?? "")}${cancelled.refusal}` : ns.get("_err");
         // A kept-state run reports its namespace either way — what you defined before the line that failed
         // is still there, and the bench says so.
         const keptResult = bench ? { bench: { id: bench.id, vars: benchVars(py, ns) } } : keptRun ? { bench: { id: keptRun.id, vars: benchVars(py, ns) } } : {};
@@ -344,7 +359,7 @@ async function run(code: string, image: string | null, hardened: boolean, tables
         // and may hold the names earlier cells defined, so the scope manifest rides this result too.
         let keptCatch = {};
         if (kept) { try { keptCatch = { bench: { id: kept.id, vars: benchVars(py, ns) } }; } catch { /* the namespace is unreadable */ } }
-        return timed({ ok: false, stdout: "", error: String((e && e.message) || e), ...keptCatch });
+        return timed({ ok: false, stdout: cancelled?.out ?? "", error: String((e && e.message) || e) + (cancelled?.refusal ? `\n${cancelled.refusal}` : ""), ...keptCatch });
     } finally {
         if (!kept) injectInputs(ns, null, null, harness);
         if (wire) { try { ns.delete("_ml_send"); } catch { /* the wrapper dropped it */ } }
@@ -509,3 +524,4 @@ function onMessage(e: MessageEvent): void {
         );
 }
 self.addEventListener("message", onMessage as EventListener);
+onSpending(() => { if (spendingFor) post({ id: spendingFor, spending: true }); });
