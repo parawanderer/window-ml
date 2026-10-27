@@ -104,8 +104,10 @@ export function migrate(db: ArchiveDb, schema = "main"): void {
         CREATE TABLE IF NOT EXISTS ${S}.dirty_months (month TEXT PRIMARY KEY) WITHOUT ROWID;
     `);
     // What this archive removed ON PURPOSE (a delete, an un-archive), so a merge from the folder does not bring it
-    // back (docs/dev/backup.md, "merge before write"). This database's own memory, so never in a month file.
-    if (S === "main") db.exec("CREATE TABLE IF NOT EXISTS main.removed (hash TEXT PRIMARY KEY, month TEXT NOT NULL, ts INTEGER NOT NULL) WITHOUT ROWID");
+    // back (docs/dev/backup.md, "merge before write"). A month file carries its own month's entries (part 3b), so a
+    // delete reaches the other machine; `ARCHIVE_SCHEMA` is not bumped, because an older reader names the tables it
+    // copies and ignores this one.
+    db.exec(`CREATE TABLE IF NOT EXISTS ${S}.removed (hash TEXT PRIMARY KEY, month TEXT NOT NULL, ts INTEGER NOT NULL) WITHOUT ROWID`);
     const have = Number(db.selectValue(`SELECT value FROM ${S}.meta WHERE key = 'schema'`) ?? 0);
     if (have > ARCHIVE_SCHEMA) throw new Error(`this archive was written by a newer version (schema ${have}); update the extension to read it`);
     db.exec({ sql: `INSERT OR REPLACE INTO ${S}.meta(key, value) VALUES ('schema', ?)`, bind: [String(ARCHIVE_SCHEMA)] });
@@ -352,10 +354,39 @@ export function removeArchived(db: ArchiveDb, hash: string, now = Date.now()): b
             // Remembered, or the next sync's merge reads it back from the month file that still holds it.
             db.exec({ sql: "INSERT OR REPLACE INTO removed(hash, month, ts) VALUES (?, ?, ?)", bind: [hash, monthOf(Number(was)), now] });
         }
-        for (const t of ["sessions", "events", "event_text", "image_refs"]) db.exec({ sql: `DELETE FROM ${t} WHERE hash = ?`, bind: [hash] });
-        db.exec("DELETE FROM images WHERE sha NOT IN (SELECT sha FROM image_refs)");
+        dropSessionRows(db, hash);
     });
     return removed;
+}
+
+/** Delete a session's rows (events, text, image references) and any image no session references now. */
+function dropSessionRows(db: ArchiveDb, hash: string): void {
+    for (const t of ["sessions", "events", "event_text", "image_refs"]) db.exec({ sql: `DELETE FROM ${t} WHERE hash = ?`, bind: [hash] });
+    db.exec("DELETE FROM images WHERE sha NOT IN (SELECT sha FROM image_refs)");
+}
+
+/**
+ * How long a `removed` entry is kept and written into a month file: 180 days. An entry only has to outlive the time
+ * between two machines syncing the folder, and a file that carried every delete forever would grow without bound. The
+ * price is stated in docs/dev/backup.md: a machine offline for longer than this, still holding the session, brings it
+ * back at its next sync.
+ */
+export const REMOVED_TTL_MS = 180 * 24 * 60 * 60 * 1000;
+
+/**
+ * Forget the `removed` entries older than `REMOVED_TTL_MS`, and mark their months dirty so a month file still carrying
+ * one is rewritten without it (and removed when nothing else is left in it).
+ * @returns how many entries were dropped
+ */
+export function expireRemoved(db: ArchiveDb, now = Date.now()): number {
+    const cutoff = now - REMOVED_TTL_MS;
+    let n = 0;
+    db.transaction(() => {
+        for (const m of db.selectValues("SELECT DISTINCT month FROM removed WHERE ts < ?", [cutoff])) db.exec({ sql: "INSERT OR IGNORE INTO dirty_months(month) VALUES (?)", bind: [m] });
+        n = Number(db.selectValue("SELECT count(*) FROM removed WHERE ts < ?", [cutoff]));
+        db.exec({ sql: "DELETE FROM removed WHERE ts < ?", bind: [cutoff] });
+    });
+    return n;
 }
 
 /** How big the archive is, for the Storage page. */
@@ -439,17 +470,18 @@ export function markClean(db: ArchiveDb, month: string): void {
     db.exec({ sql: "DELETE FROM dirty_months WHERE month = ?", bind: [month] });
 }
 
-/** Every month that has sessions, for a first sync to a newly picked folder. */
+/** Every month that has sessions or `removed` entries (a month file may hold only those), for a first sync to a newly
+ *  picked folder and for a change of form. */
 export function allMonths(db: ArchiveDb): string[] {
-    return [...new Set(db.selectValues("SELECT last_ts FROM sessions").map((t) => monthOf(Number(t))))].sort();
+    return [...new Set([...db.selectValues("SELECT last_ts FROM sessions").map((t) => monthOf(Number(t))), ...db.selectValues("SELECT DISTINCT month FROM removed").map(String)])].sort();
 }
 
 /**
  * Fill the database attached as `into` (empty, already migrated) with one month's sessions: their rows, events, text
- * and the images they reference. What the folder's `YYYY-MM.sqlite` holds, so the file opens on its own in any
- * SQLite tool and can be imported back.
+ * and the images they reference, and the month's `removed` entries younger than `REMOVED_TTL_MS` at `now`. What the
+ * folder's `YYYY-MM.sqlite` holds, so the file opens on its own in any SQLite tool and can be imported back.
  */
-export function copyMonth(db: ArchiveDb, into: string, month: string): number {
+export function copyMonth(db: ArchiveDb, into: string, month: string, now = Date.now()): number {
     const [from, to] = monthRange(month);
     db.transaction(() => {
         db.exec({ sql: `INSERT INTO ${into}.sessions SELECT * FROM main.sessions WHERE last_ts >= ? AND last_ts < ?`, bind: [from, to] });
@@ -457,37 +489,97 @@ export function copyMonth(db: ArchiveDb, into: string, month: string): number {
         db.exec(`INSERT INTO ${into}.event_text(hash, pos, text) SELECT t.hash, t.pos, t.text FROM main.event_text t JOIN ${into}.sessions s ON s.hash = t.hash`);
         db.exec(`INSERT INTO ${into}.image_refs SELECT r.* FROM main.image_refs r JOIN ${into}.sessions s ON s.hash = r.hash`);
         db.exec(`INSERT OR IGNORE INTO ${into}.images SELECT i.* FROM main.images i WHERE i.sha IN (SELECT sha FROM ${into}.image_refs)`);
+        db.exec({ sql: `INSERT INTO ${into}.removed SELECT * FROM main.removed WHERE month = ? AND ts >= ?`, bind: [month, now - REMOVED_TTL_MS] });
     });
     return Number(db.selectValue(`SELECT count(*) FROM ${into}.sessions`));
 }
 
 /**
- * Copy what the database attached as `from` (a folder month file) holds into the live archive, skipping any session it
- * already has and any it removed on purpose (`removed`): a restore into a fresh profile, a sync's merge, and harmless
- * to run twice. Imported months are not marked dirty, since the folder already matches them. Refuses a file from a
- * newer schema.
+ * Copy what the database attached as `from` (a backup, or a folder month file) holds into the live archive, skipping
+ * any session it already has and any it removed on purpose (`removed`, whatever the entry's time): a restore into a
+ * fresh profile, and harmless to run twice. The file's own `removed` entries are not read. Imported months are not
+ * marked dirty, since the folder already matches them. Refuses a file from a newer schema.
+ *
+ * A restore needs this hard rule and not `mergeFrom`'s: the preview (`inspectBackup`) counts what it would add by the
+ * same rule, and a live session a backup carries has an `archived_ts` of "now", newer than the entry of the un-archive
+ * that put it live, which would bring it back into the archive as a duplicate.
  */
 export function importFrom(db: ArchiveDb, from: string, only?: readonly string[]): number {
+    let added = 0;
+    db.transaction(() => { added = importSessions(db, from, only, false); });
+    return added;
+}
+
+/** What a merge from a month file did. */
+export interface MergeResult {
+    /** sessions taken into the archive */
+    added: number;
+    /** sessions removed because the file carries a newer delete of them */
+    deleted: number;
+}
+
+/**
+ * Merge a folder month file (attached as `from`) into the archive, with its deletes (docs/dev/backup.md, 3b), in ONE
+ * transaction. First the file's `removed` entries: one is added (or replaces an older one), and a session the archive
+ * holds that was archived before the entry's time is removed as `removeArchived` does, the entry keeping the FILE's
+ * time. A session archived at or after the entry was archived again after the delete: it stays, and the entry is not
+ * added. Then the sessions the archive lacks: one with a local entry no older than its `archived_ts` stays deleted, one
+ * archived after the entry is imported and the entry dropped. A file from before 3b has no `removed` table and merges as
+ * it always did. Imported months are not marked dirty; a removal marks its month.
+ * @throws a file from a newer schema
+ */
+export function mergeFrom(db: ArchiveDb, from: string): MergeResult {
+    let r: MergeResult = { added: 0, deleted: 0 };
+    db.transaction(() => {
+        let deleted = 0;
+        const has = Number(db.selectValue(`SELECT count(*) FROM ${from}.sqlite_master WHERE type = 'table' AND name = 'removed'`)) > 0;
+        if (has) {
+            for (const e of db.selectObjects(`SELECT hash, month, ts FROM ${from}.removed`)) {
+                const ts = Number(e.ts);
+                // A hostile or damaged file: an entry that is not a hash, a month and a time is not read.
+                if (typeof e.hash !== "string" || typeof e.month !== "string" || !/^\d{4}-\d{2}$/.test(e.month) || !Number.isFinite(ts)) continue;
+                const held = db.selectObjects("SELECT last_ts, archived_ts FROM main.sessions WHERE hash = ?", [e.hash])[0];
+                if (held && Number(held.archived_ts) >= ts) continue;   // archived again after the delete: it stays
+                const mine = db.selectValue("SELECT ts FROM main.removed WHERE hash = ?", [e.hash]);
+                if (mine == null || Number(mine) < ts) db.exec({ sql: "INSERT OR REPLACE INTO main.removed(hash, month, ts) VALUES (?, ?, ?)", bind: [e.hash, e.month, ts] });
+                if (held) {
+                    markDirty(db, Number(held.last_ts));
+                    dropSessionRows(db, e.hash);
+                    deleted++;
+                }
+            }
+        }
+        r = { added: importSessions(db, from, undefined, true), deleted };
+    });
+    return r;
+}
+
+/** `importFrom`'s and `mergeFrom`'s copy, inside the caller's transaction. `travel` is the merge's rule for a local
+ *  `removed` entry (compare its time with the file's `archived_ts`, and drop it when the session is newer) against the
+ *  restore's (any entry blocks). */
+function importSessions(db: ArchiveDb, from: string, only: readonly string[] | undefined, travel: boolean): number {
     const theirs = Number(db.selectValue(`SELECT value FROM ${from}.meta WHERE key = 'schema'`) ?? 0);
     if (theirs > ARCHIVE_SCHEMA) throw new Error(`that archive file was written by a newer version (schema ${theirs})`);
-    let added = 0;
-    db.transaction(() => {
-        if (only) {
-            db.exec("CREATE TEMP TABLE import_only (hash TEXT PRIMARY KEY) WITHOUT ROWID");
-            for (const h of only) db.exec({ sql: "INSERT OR IGNORE INTO temp.import_only(hash) VALUES (?)", bind: [h] });
-        }
-        const fresh = `SELECT hash FROM ${from}.sessions WHERE hash NOT IN (SELECT hash FROM main.sessions) AND hash NOT IN (SELECT hash FROM main.removed)${only ? " AND hash IN (SELECT hash FROM temp.import_only)" : ""}`;
-        db.exec(`CREATE TEMP TABLE import_new AS ${fresh}`);
-        added = Number(db.selectValue("SELECT count(*) FROM temp.import_new"));
-        db.exec(`INSERT INTO main.sessions SELECT * FROM ${from}.sessions WHERE hash IN (SELECT hash FROM temp.import_new)`);
-        db.exec(`INSERT INTO main.events SELECT * FROM ${from}.events WHERE hash IN (SELECT hash FROM temp.import_new)`);
-        db.exec(`INSERT INTO main.event_text(hash, pos, text) SELECT hash, pos, text FROM ${from}.event_text WHERE hash IN (SELECT hash FROM temp.import_new)`);
-        db.exec(`INSERT OR IGNORE INTO main.image_refs SELECT * FROM ${from}.image_refs WHERE hash IN (SELECT hash FROM temp.import_new)`);
-        // Only the images the imported sessions reference: a file's unreferenced blobs are not this archive's to hold.
-        db.exec(`INSERT OR IGNORE INTO main.images SELECT * FROM ${from}.images WHERE sha IN (SELECT sha FROM ${from}.image_refs WHERE hash IN (SELECT hash FROM temp.import_new))`);
-        db.exec("DROP TABLE temp.import_new");
-        if (only) db.exec("DROP TABLE temp.import_only");
-    });
+    if (only) {
+        db.exec("CREATE TEMP TABLE import_only (hash TEXT PRIMARY KEY) WITHOUT ROWID");
+        for (const h of only) db.exec({ sql: "INSERT OR IGNORE INTO temp.import_only(hash) VALUES (?)", bind: [h] });
+    }
+    const blocked = travel
+        ? "NOT EXISTS (SELECT 1 FROM main.removed r WHERE r.hash = s.hash AND r.ts >= s.archived_ts)"
+        : "s.hash NOT IN (SELECT hash FROM main.removed)";
+    const fresh = `SELECT s.hash FROM ${from}.sessions s WHERE s.hash NOT IN (SELECT hash FROM main.sessions) AND ${blocked}${only ? " AND s.hash IN (SELECT hash FROM temp.import_only)" : ""}`;
+    db.exec(`CREATE TEMP TABLE import_new AS ${fresh}`);
+    const added = Number(db.selectValue("SELECT count(*) FROM temp.import_new"));
+    db.exec(`INSERT INTO main.sessions SELECT * FROM ${from}.sessions WHERE hash IN (SELECT hash FROM temp.import_new)`);
+    db.exec(`INSERT INTO main.events SELECT * FROM ${from}.events WHERE hash IN (SELECT hash FROM temp.import_new)`);
+    db.exec(`INSERT INTO main.event_text(hash, pos, text) SELECT hash, pos, text FROM ${from}.event_text WHERE hash IN (SELECT hash FROM temp.import_new)`);
+    db.exec(`INSERT OR IGNORE INTO main.image_refs SELECT * FROM ${from}.image_refs WHERE hash IN (SELECT hash FROM temp.import_new)`);
+    // Only the images the imported sessions reference: a file's unreferenced blobs are not this archive's to hold.
+    db.exec(`INSERT OR IGNORE INTO main.images SELECT * FROM ${from}.images WHERE sha IN (SELECT sha FROM ${from}.image_refs WHERE hash IN (SELECT hash FROM temp.import_new))`);
+    // What came in was archived after its entry (a blocking entry would have kept it out): the delete is superseded.
+    if (travel) db.exec("DELETE FROM main.removed WHERE hash IN (SELECT hash FROM temp.import_new)");
+    db.exec("DROP TABLE temp.import_new");
+    if (only) db.exec("DROP TABLE temp.import_only");
     return added;
 }
 
@@ -496,14 +588,14 @@ const SQLITE_MAGIC = [0x53, 0x51, 0x4c, 0x69, 0x74, 0x65, 0x20, 0x66, 0x6f, 0x72
 
 /** One month as a standalone SQLite file's bytes: built in an attached in-memory database and serialized, so no
  *  temporary file is involved. The memory it costs is one month's archive. */
-export function exportMonth(sqlite3: Sqlite3Static, raw: Database, month: string): { bytes: Uint8Array; sessions: number } {
+export function exportMonth(sqlite3: Sqlite3Static, raw: Database, month: string, now = Date.now()): { bytes: Uint8Array; sessions: number; removed: number } {
     const db = wasmDb(raw);
     db.exec("ATTACH DATABASE ':memory:' AS snap");
     try {
         migrate(db, "snap");
         db.exec("DELETE FROM snap.dirty_months");
-        const sessions = copyMonth(db, "snap", month);
-        return { bytes: sqlite3.capi.sqlite3_js_db_export(raw.pointer!, "snap"), sessions };
+        const sessions = copyMonth(db, "snap", month, now);
+        return { bytes: sqlite3.capi.sqlite3_js_db_export(raw.pointer!, "snap"), sessions, removed: Number(db.selectValue("SELECT count(*) FROM snap.removed")) };
     } finally { db.exec("DETACH DATABASE snap"); }
 }
 
@@ -530,7 +622,12 @@ export function importBytes(sqlite3: Sqlite3Static, raw: Database, bytes: Uint8A
     return withAttachedBytes(sqlite3, raw, bytes, (db, schema) => importFrom(db, schema, only));
 }
 
-/** Every month with sessions is dirty: a folder was just picked (or re-picked), and holds none of them yet. */
+/** Merge a month file's bytes (a folder snapshot) into the live archive with its deletes (`mergeFrom`). */
+export function mergeBytes(sqlite3: Sqlite3Static, raw: Database, bytes: Uint8Array): MergeResult {
+    return withAttachedBytes(sqlite3, raw, bytes, (db, schema) => mergeFrom(db, schema));
+}
+
+/** Every month with sessions or entries is dirty: a folder was just picked (or re-picked), and holds none of them yet. */
 export function markAllDirty(db: ArchiveDb): void {
     for (const m of allMonths(db)) db.exec({ sql: "INSERT OR IGNORE INTO dirty_months(month) VALUES (?)", bind: [m] });
 }

@@ -11,7 +11,7 @@ in four PRs, and each section below says which parts exist yet.
 | 2a. Backup and restore without screens: the key inventory, collect and preview and apply of settings, the file writer, the keyring at rest, the worker ops | built |
 | 2b. The screens: Settings (DevTools panel and chat page Extension tab), the popup button, the recovery screen | built |
 | 3a. The archive folder's form: encrypted, compressed or plain month files, and the switch from plain | built (worker and screen) |
-| 3b. Deletes that travel: the `removed` entries written into the month files | designed |
+| 3b. Deletes that travel: the `removed` entries written into the month files | built |
 | 3c. Two machines on one encrypted folder: adopting the folder's key | designed |
 
 The archive itself (SQLite over OPFS, the worker, un-archiving) is `archive.md`; read it first.
@@ -249,8 +249,8 @@ encryption switch (part 3).
 
 ## The archive folder's form (part 3)
 
-Designed 2026-10-27. 3a is built, worker and screen (`folderForm` op, `folder-sync.ts`, the archive section); 3b and 3c
-are not. Three PRs, in this order, because each needs the one before.
+Designed 2026-10-27. 3a is built, worker and screen (`folderForm` op, `folder-sync.ts`, the archive section); so is 3b; 3c
+is not. Three PRs, in this order, because each needs the one before.
 
 ### 3a. Encrypted, compressed or plain month files
 
@@ -314,7 +314,38 @@ values, calls the worker's `folderForm` op and then starts a `sync` (`ARCHIVE_FO
   the next merge; it returns when A archives it again. That is one archive shared by two machines, which is the point.
 - **The clocks are the two machines'.** A skew only matters for a session deleted on one and re-archived on the other
   within the skew; the later write wins by its own clock.
-- **Entries expire** after 180 days, or a month file would carry every delete forever.
+- **Entries expire** after 180 days (`REMOVED_TTL_MS`), or a month file would carry every delete forever.
+
+### What part 3b built
+
+`migrate` creates `removed` in a month file's schema too, and `copyMonth`/`exportMonth` copy the entries whose `month` is
+that month and whose `ts` is under 180 days old. `ARCHIVE_SCHEMA` is NOT bumped: an older reader names the tables it
+copies and ignores `removed`, so it still imports such a file; an older install that REWRITES the month writes it
+without the entries, and the delete stops travelling from that month until the entry is made again.
+
+- **`mergeFrom` (db.ts) is the merge**, one transaction with the import, entries first. An entry is added to
+  `main.removed`, or replaces an older one, and keeps the FILE's `ts`. A held session with `archived_ts` below the
+  entry's `ts` is removed (events, text, image references, orphan images; its month is marked dirty). One at or above
+  it was archived again after the delete: it stays and the entry is not added. Then the sessions the archive lacks:
+  one with a local entry whose `ts` is at least its `archived_ts` stays deleted; a newer one is imported and the local
+  entry dropped (archived again on the other machine after this one deleted it). A file with no `removed` table (from
+  before 3b) merges as it always did. An entry whose hash, month or time is malformed is not read.
+- **A restore keeps the hard rule.** `importFrom` (the restore and `beginBackup`) is unchanged: any local entry blocks
+  the hash, whatever the backup copy's `archived_ts`, and the backup's own entries are not read. The preview
+  (`inspectBackup`) counts by the same rule. A live session a backup holds has `archived_ts` "now", newer than the entry
+  of the un-archive that put it live, so the time rule would restore it as a duplicate of the live one; and a backup is
+  a snapshot of sessions, not a record of deletes. A restore therefore imports exactly what it previewed.
+- **`SyncOutcome.deleted`**, and `importMonths`' and `adoptFolder`'s `imported.deleted`, count sessions a merge removed;
+  `merged` still means sessions added.
+- **A month with entries and no sessions keeps a file holding only the entries**, in the chosen form. Its file is
+  removed once it has neither (`SyncOutcome.removed`). `allMonths` (hence `markAllDirty`, a pick and a change of form)
+  includes the months that have only entries, so a change of form rewrites those files too.
+- **Expiry.** `syncMonths` calls `expireRemoved(db, now)` before it lists the dirty months and again after each month's
+  merge: entries older than 180 days leave `main.removed` and their months become dirty, so a file that carried one is
+  rewritten without it. `FolderOptions.now` is the injectable clock. 180 days is far over any gap between two
+  machines' syncs; a machine offline longer, still holding the session, brings it back.
+- **A plain `sync` merges only the dirty months.** A delete made on A reaches B when B's month is dirty, on B's resync
+  (`adoptFolder`) or on an Import; nothing makes B look at a month it has not touched.
 
 ### 3c. Two machines on one encrypted folder
 
@@ -346,13 +377,17 @@ same to each other.
   folder's previous copy at the next sync. Archiving the session again clears its entry.
 - **Picking a folder that already holds month files asks first**: import them (the default), or start fresh, which
   moves them into a subfolder (`earlier-<date>/`) rather than deleting anything.
-- **Across machines a delete does not stick yet**: machine B's file still has what A deleted, and A's merge takes it
-  back unless A deleted it itself. Writing the `removed` entries INTO the month files, so they travel, is part 3,
-  which changes the folder's format anyway.
+- **Across machines a delete sticks (part 3b)**: the month file carries the `removed` entries of its month, and a merge
+  applies them (see "What part 3b built"). Before 3b, machine B's file still had what A deleted and A's merge took it
+  back unless A deleted it itself.
 
 ## Traps
 
 - **A merge without the `removed` list undoes deletes.** Anything that imports from the folder skips those hashes.
+- **A month file's `removed` entries are part of the month.** A month with entries and no sessions still has a file;
+  code that treats "no sessions" as "no file" deletes a delete before the other machine has read it.
+- **A restore does not use `mergeFrom`.** It takes sessions only, under the hard `removed` rule; routing it through the
+  merge would let a backup's entries delete sessions.
 - **`writeMonthFile` replaces;** never call it for a month whose file was not merged in this sync.
 - **An encrypted file's name is a hint.** Read the first bytes; a renamed `.sqlite` may be gzip or encrypted.
 - **The data key is never extractable after setup;** code that needs its raw bytes is code that should be unwrapping

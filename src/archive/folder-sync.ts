@@ -7,7 +7,7 @@
 // Without the merge, a new browser pointed at an old machine's folder replaced every month the two shared with its
 // own sessions alone, at the first sync after anything was archived into that month.
 import type { Database, Sqlite3Static } from "@sqlite.org/sqlite-wasm";
-import { dirtyMonths, exportMonth, importBytes, markAllDirty, markClean, metaGet, metaSet, wasmDb, type ArchiveDb } from "./db";
+import { dirtyMonths, expireRemoved, exportMonth, markAllDirty, markClean, metaGet, mergeBytes, metaSet, wasmDb, type ArchiveDb } from "./db";
 import { sealBackup, type BackupForm } from "../backup/backup-file";
 import { BackupError, readAnyForm, readHeader, sniff, type Keyring } from "../backup/backup-format";
 
@@ -40,6 +40,8 @@ export interface SyncOutcome {
     removed: string[];
     /** sessions taken INTO the archive from the folder's files: a merge, or an import */
     merged: number;
+    /** sessions REMOVED from the archive because a folder file carries a newer delete of them (part 3b) */
+    deleted: number;
     /** months with a file that could not be read, left as they were and still dirty, with why */
     skipped: { month: string; reason: SkipReason; error: string }[];
 }
@@ -52,6 +54,8 @@ export interface FolderOptions {
     /** null while unchosen: a sync then writes nothing (`folderFormOf`) */
     form: BackupForm | null;
     keyring: Keyring | null;
+    /** the clock, for the 180-day expiry of `removed` entries (`REMOVED_TTL_MS`); tests inject it */
+    now?: number;
 }
 
 const PLAIN: FolderOptions = { form: "plain", keyring: null };
@@ -96,46 +100,52 @@ async function openFile(bytes: Uint8Array, keyring: Keyring | null): Promise<{ p
 }
 
 /**
- * Take every file of one month into the archive, whatever its form, or say why not. Every file is opened before any is
+ * Take every file of one month into the archive with its deletes (`mergeBytes`), whatever its form, or say why not. Every file is opened before any is
  * imported; one that cannot be read means the month is skipped and none of its files is touched.
  * @returns `forms`: the forms whose files were read, which a write may replace
  */
-async function mergeMonth(h: ArchiveHandles, folder: MonthFolder, month: string, keyring: Keyring | null): Promise<{ merged: number; forms: BackupForm[]; skip?: { reason: SkipReason; error: string } }> {
+async function mergeMonth(h: ArchiveHandles, folder: MonthFolder, month: string, keyring: Keyring | null): Promise<{ merged: number; deleted: number; forms: BackupForm[]; skip?: { reason: SkipReason; error: string } }> {
     const opened: { form: BackupForm; plain: Uint8Array }[] = [];
     for (const form of await folder.forms(month)) {
         const bytes = await folder.read(month, form);
         if (!bytes) continue;
         const o = await openFile(bytes, keyring);
-        if ("reason" in o) return { merged: 0, forms: [], skip: o };
+        if ("reason" in o) return { merged: 0, deleted: 0, forms: [], skip: o };
         opened.push({ form, plain: o.plain });
     }
-    let merged = 0;
+    let merged = 0, deleted = 0;
     for (const o of opened) {
-        try { merged += importBytes(h.sqlite3, h.raw, o.plain); }
-        catch (e) { return { merged, forms: [], skip: { reason: "unreadable", error: String((e as Error)?.message || e).slice(0, 200) } }; }
+        try { const r = mergeBytes(h.sqlite3, h.raw, o.plain); merged += r.added; deleted += r.deleted; }
+        catch (e) { return { merged, deleted, forms: [], skip: { reason: "unreadable", error: String((e as Error)?.message || e).slice(0, 200) } }; }
     }
-    return { merged, forms: opened.map((o) => o.form) };
+    return { merged, deleted, forms: opened.map((o) => o.form) };
 }
 
 /**
  * Write every dirty month into the folder in `o.form`, each MERGED first: sessions its files hold (in any form) and the
  * archive does not (and did not remove on purpose) are imported, then the month is written from the archive, and only
- * then are the month's files in the other forms removed. A month left empty has every form's file removed. A month with
+ * then are the month's files in the other forms removed. A month left with neither sessions nor `removed` entries has
+ * every form's file removed; one with only entries keeps a file holding just those, so the delete reaches the other
+ * machine (part 3b). Entries older than `REMOVED_TTL_MS` are dropped first and are never written. A month with
  * a file that cannot be read is left alone and stays dirty, so a sync can never destroy what it could not read.
  * @throws `needs-key` for `encrypted` with no keyring, before anything is written
  */
 export async function syncMonths(h: ArchiveHandles, folder: MonthFolder, o: FolderOptions = PLAIN): Promise<SyncOutcome> {
     if (o.form === "encrypted" && !o.keyring) throw new BackupError("needs-key", "set a backup passphrase first: an encrypted folder needs this install's key");
     const db = wasmDb(h.raw);
-    const out: SyncOutcome = { written: [], removed: [], merged: 0, skipped: [] };
+    const out: SyncOutcome = { written: [], removed: [], merged: 0, deleted: 0, skipped: [] };
     // Unchosen: nothing is written or removed, and every dirty month stays pending until `setFolderForm`.
     if (!o.form) return out;
+    const now = o.now ?? Date.now();
+    expireRemoved(db, now);   // before the list is read: the months it dirties are rewritten in this sync
     for (const month of dirtyMonths(db)) {
         const m = await mergeMonth(h, folder, month, o.keyring);
         out.merged += m.merged;
+        out.deleted += m.deleted;
         if (m.skip) { out.skipped.push({ month, ...m.skip }); continue; }
-        const { bytes, sessions } = exportMonth(h.sqlite3, h.raw, month);
-        if (sessions) {
+        expireRemoved(db, now);   // a file may have carried an entry that is already old
+        const { bytes, sessions, removed } = exportMonth(h.sqlite3, h.raw, month, now);
+        if (sessions || removed) {
             await folder.write(month, o.form, await sealBackup(bytes, o.form, o.keyring, new Date(), "archive-month"));
             for (const f of m.forms) if (f !== o.form) await folder.remove(month, f);
             out.written.push(month);
@@ -149,16 +159,17 @@ export async function syncMonths(h: ArchiveHandles, folder: MonthFolder, o: Fold
 }
 
 /** Import every month file in the folder: an explicit Import, and the first step after a folder is picked. */
-export async function importMonths(h: ArchiveHandles, folder: MonthFolder, keyring: Keyring | null = null): Promise<{ files: number; sessions: number; skipped: SyncOutcome["skipped"] }> {
-    let files = 0, sessions = 0;
+export async function importMonths(h: ArchiveHandles, folder: MonthFolder, keyring: Keyring | null = null): Promise<{ files: number; sessions: number; deleted: number; skipped: SyncOutcome["skipped"] }> {
+    let files = 0, sessions = 0, deleted = 0;
     const skipped: SyncOutcome["skipped"] = [];
     for (const month of await folder.months()) {
         const m = await mergeMonth(h, folder, month, keyring);
         sessions += m.merged;
+        deleted += m.deleted;
         if (m.skip) { skipped.push({ month, ...m.skip }); continue; }
         files++;
     }
-    return { files, sessions, skipped };
+    return { files, sessions, deleted, skipped };
 }
 
 /**
@@ -166,11 +177,11 @@ export async function importMonths(h: ArchiveHandles, folder: MonthFolder, keyri
  * is what makes picking an old machine's folder safe even where nobody was asked (a fix started from an attention
  * card, a remote runtime's Settings).
  */
-export async function adoptFolder(h: ArchiveHandles, folder: MonthFolder, o: FolderOptions = PLAIN): Promise<SyncOutcome & { imported: { files: number; sessions: number } }> {
+export async function adoptFolder(h: ArchiveHandles, folder: MonthFolder, o: FolderOptions = PLAIN): Promise<SyncOutcome & { imported: { files: number; sessions: number; deleted: number } }> {
     const imp = await importMonths(h, folder, o.keyring);
     markAllDirty(wasmDb(h.raw));
     const out = await syncMonths(h, folder, o);
-    return { ...out, skipped: [...imp.skipped, ...out.skipped.filter((s) => !imp.skipped.some((i) => i.month === s.month))], imported: { files: imp.files, sessions: imp.sessions } };
+    return { ...out, deleted: out.deleted + imp.deleted, skipped: [...imp.skipped, ...out.skipped.filter((s) => !imp.skipped.some((i) => i.month === s.month))], imported: { files: imp.files, sessions: imp.sessions, deleted: imp.deleted } };
 }
 
 /** What a folder already holds, before anything is written to it: asked right after a pick. */
