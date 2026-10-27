@@ -255,8 +255,11 @@ the janitor. RULED 2026-10-27 (Shane, in the coordinator's session; [`POLICIES.m
 2026-10-27"): the card's "why" line is a fixed string ("Your policy lets the run go to <origin>. Reading pages there is a
 separate permission: …"); the start-origin split closes narrow, the gate carding the read with a start-origin variant of the line
 ("The run started on <origin>. Reading pages there once the tab has left is a separate permission: …"), the choke
-point unchanged; the widening stays unassigned. The security lane builds both with its tests, e3 turns its
-`CHOKE_REFUSED` pin into a card pin after, the janitor reviews.
+point unchanged; the widening stays unassigned. The security lane builds both with its tests (`feat/navonly-read-card`, built
+the same day). ORDER ruled the same day, since e3's file is on main and the fix turns its start-origin pin red in the
+lane's PR (rule 10: no finder's commit in a builder's PR, no red base merges): (1) e3 turns the pin into a failing-first
+card pin marked todo, test-only on main, first; (2) the lane rebases and merges green; (3) e3 flips the todo plain in
+its file. The janitor reviews each.
 
 #1129 MERGED 9133ec92 (2026-10-25, e3, `@agent,@security`, test-only, `tests/nav-navigate-redteam.test.mjs`): rebased
 on #1131 in the ruled order; the between-turns todo is a plain passing test, the two choke-point pins are card pins,
