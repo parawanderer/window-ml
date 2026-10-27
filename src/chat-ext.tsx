@@ -15,7 +15,7 @@ import type { ChatExtras } from "./chat/extras";
 import { ChatStore } from "./chat/chat-store";
 import { hostServices } from "./chat/host-services";
 import { mainView } from "./chat/nav";
-import { settingsTab } from "./chat/settings-page";
+import { settingsAnchor, settingsTab } from "./chat/settings-page";
 import { LocalHost } from "./chat/local-host";
 import { webPlatform, type ClientPlatform } from "./chat/platform";
 import { extensionPairing } from "./pairing/extension-pairing";
@@ -32,7 +32,7 @@ import { VramPanel } from "./sidebar/resource/vram";
 import { BACKEND_HEALTH_MS, connectResourceStream, fetchModels, loadedAt, pollBackendHealth, readPs } from "./sidebar/resource/resource-feed";
 import { PythonBench } from "./sidebar/vram-bench";
 import type { RuntimeId } from "./session/session-host";
-import { Settings, searchSettings } from "./sidebar/settings/settings";
+import { BACKUP_BLOCK_ID, BACKUP_TAB, Settings, searchSettings, showSettingsSection } from "./sidebar/settings/settings";
 import { config, psError } from "./sidebar/store";
 import { residentNow } from "./sidebar/resource/panel-facts";
 import { residentReader } from "./sidebar/resident-reader";
@@ -94,6 +94,13 @@ const residentHere = residentReader({
 function SettingsPane() {
     // The page has its own pill tabs above this view, so the inner groups take the page's style: pills on a wide screen,
     // and on a phone no inner tabs at all (settings.tsx, `SettingsLayout`). The DevTools panel keeps its tabs.
+    // `#/settings/extension/backup`: open the Storage section and scroll to Backup and restore, once.
+    const anchor = settingsAnchor.value;
+    useEffect(() => {
+        if (anchor !== "backup") return;
+        showSettingsSection(BACKUP_TAB, "storage", BACKUP_BLOCK_ID);
+        settingsAnchor.value = null;
+    }, [anchor]);
     return <Settings layout={useNarrow() ? "one-page" : "pills"} />;
 }
 

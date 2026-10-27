@@ -21,6 +21,11 @@ The spec is [`docs/spec/CHAT_PAGE.md`](../spec/CHAT_PAGE.md) and the contract it
 | `web.tsx`, `chat.html` | The web entry, built to `dist-web/` by `scripts/build-web.mjs`. |
 | `local-host.ts` | This browser as a `SessionHost`: the client of the background's `ml-sessions` port, reconnecting when the worker is evicted. |
 
+The address is the hash (`route.ts`): `#/s/<runtime:hash>`, `#/search`, `#/attention`, `#/settings[/<tab>[/<anchor>]]`. An
+anchor (`#/settings/extension/backup`) names a block inside a tab; `settingsAnchor` carries it to the settings view,
+which opens the section through its persisted collapsed state and scrolls to the block once. An unknown anchor is
+dropped.
+
 A new session starts on THIS client's own runtime when it has one (`startableOn`, new-session.tsx), and only then on the
 first in the host's list. Which runtime is "this client" is the host's answer (`SessionHost.isLocal`; `LocalHost` says
 yes for its worker, `CompositeHost` asks the host that owns the runtime), never a field a runtime reports about itself:

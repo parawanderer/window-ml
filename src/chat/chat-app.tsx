@@ -38,7 +38,7 @@ import { SessionModelPicker } from "./model-picker";
 import { DeleteConfirm, RenameDialog, SessionActions, usePeek } from "./row-menu";
 import { GearMenu, Rail, mainView, openSession } from "./nav";
 import { SearchPage } from "./search-page";
-import { SettingsPage, settingsTab } from "./settings-page";
+import { SettingsPage, settingsAnchor, settingsTab } from "./settings-page";
 import { formatRoute, parseRoute } from "./route";
 import { DockFrame, type DockPanel } from "./dock";
 import type { ChatExtras } from "./extras";
@@ -80,6 +80,7 @@ function useHashRoute(): void {
             // and no session (back from that session, or a link) closes the session to show search itself.
             else if (!r.main || r.main === "search") { if (!r.main) pushedEntry = false; if (v.name !== "list") view.value = { name: "list" }; }
             if (r.tab) settingsTab.value = r.tab;
+            settingsAnchor.value = r.anchor ?? null;
             if (mainView.value !== (r.main ?? null)) mainView.value = r.main ?? null;
         };
         read();

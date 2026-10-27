@@ -942,6 +942,26 @@ test("routes: the hash names a session or a view, round trip; old links and nons
     assert.equal(formatRoute({ session: "laptop:x", main: "search" }), "#/search", "a view drawn over a session is what is on screen");
 });
 
+// --- section: an anchor after the settings tab ---
+
+test("routes (section): #/settings/extension/backup round-trips; an unknown or misplaced anchor is dropped; old hashes are unchanged", async () => {
+    const { parseRoute, formatRoute } = await import("../src/chat/route.ts");
+    const r = { main: "settings", tab: "extension", anchor: "backup" };
+    assert.equal(formatRoute(r), "#/settings/extension/backup");
+    assert.deepEqual(parseRoute("#/settings/extension/backup"), r);
+    assert.deepEqual(parseRoute(formatRoute(r)), r);
+    assert.deepEqual(parseRoute("#/settings/extension"), { main: "settings", tab: "extension" }, "no anchor stays none");
+    assert.equal(formatRoute({ main: "settings", tab: "extension" }), "#/settings/extension");
+    assert.deepEqual(parseRoute("#/settings/extension/nope"), { main: "settings", tab: "extension" }, "an unknown anchor is ignored");
+    assert.deepEqual(parseRoute("#/settings/extension/backup/extra"), r, "trailing parts are ignored");
+    assert.deepEqual(parseRoute("#/settings/devices/backup"), { main: "settings", tab: "devices" }, "an anchor another tab does not have is dropped");
+    assert.deepEqual(parseRoute("#/settings/nope/backup"), { main: "settings" });
+    assert.equal(formatRoute({ main: "settings", tab: "devices", anchor: "backup" }), "#/settings/devices", "never written under a tab that lacks it");
+    assert.equal(formatRoute({ main: "settings", anchor: "backup" }), "#/settings");
+    assert.equal(formatRoute({ main: "search", tab: "extension", anchor: "backup" }), "#/search");
+    for (const h of ["#/settings", "#/settings/devices", "#/search", "#/attention", "#/s/laptop%3A3f9a0c21", ""]) assert.equal(formatRoute(parseRoute(h)), h, h);
+});
+
 test("deviceItems: an iPhone or iPad reading the hosted client in a tab is offered the home screen, once", async () => {
     const { deviceItems } = await import("../src/chat/attention.ts");
     const here = { installed: false, ios: true, installable: true };

@@ -9,7 +9,7 @@ in four PRs, and each section below says which parts exist yet.
 | A. The folder merges before it writes; a picked folder with old files is asked about | built |
 | 1. The file format: compression, encryption, keys; `docs/spec/BACKUP_FORMAT.md`; a standalone decryptor | built |
 | 2a. Backup and restore without screens: the key inventory, collect and preview and apply of settings, the file writer, the keyring at rest, the worker ops | built |
-| 2b. The screens: Settings → Extension, the DevTools panel, the popup button, the recovery screen | planned |
+| 2b. The screens: Settings (DevTools panel and chat page Extension tab), the popup button, the recovery screen | built |
 | 3. The encrypted archive folder, its upgrade from plaintext month files, tombstones across machines | planned |
 
 The archive itself (SQLite over OPFS, the worker, un-archiving) is `archive.md`; read it first.
@@ -72,8 +72,8 @@ Set once per install, the first time something is encrypted. Afterwards the fold
 ## Backup and restore (part 2)
 
 - **Where:** Settings → Extension on the chat page, and the DevTools Settings panel (the rule: that panel has every
-  setting). The popup's button opens the chat page at `#/settings/extension`: a popup closes the moment a file chooser
-  takes focus, and an export of a large archive outlives a popup's attention anyway.
+  setting). The popup's button opens the chat page at `#/settings/extension/backup`: a popup closes the moment a file
+  chooser takes focus, and an export of a large archive outlives a popup's attention anyway.
 - **What a settings backup holds is an inventory, not a guess.** Every storage key in `src/` is classified as backed
   up or not, and a test fails on a key nobody classified, so a new preference forces the decision instead of silently
   missing from every backup. Backed up: `chrome.storage.sync` (the config, filtered to `DEFAULT_CONFIG`'s keys),
@@ -103,6 +103,7 @@ Set once per install, the first time something is encrypted. Afterwards the fold
 | `src/backup/backup-file.ts` | `beginBackup`, `addSession`, `finishBackup`, `sealBackup`, `openBackupBytes`, `inspectBackup`, `inspectRestore`, `restoreNewSessions` |
 | `src/backup/backup-keyring.ts` | the data key at rest (IndexedDB `ml-backup-keyring`), `setupKeyring`, `changePassphrase` |
 | `src/backup/backup-opfs.ts` | the two origin-private files that carry a backup between a page and the archive worker |
+| `src/sw/sw-backup.ts` | the `BACKUP` message: the real `BackupDeps`, validation, the restore plan checked again |
 | `src/backup/backup-run.ts` | `createBackup`, `offerRestore`, `restoreBackup`: the sequence, every outside thing injected |
 | `src/archive/archive-worker.ts` | the ops `backupBegin`, `backupPut`, `backupFinish`, `backupAbort`, `restoreInspect`, `restoreSessions`, `backupFileRemove` |
 | `src/sw/policy-valid.ts` | the policy validator and the source and label bounds the worker and a restore share (moved out of `sw-policies.ts`) |
@@ -187,11 +188,62 @@ data key is usable but not readable. `changePassphrase` unwraps with the old pas
 replaces only the passphrase wrap; files already written keep their old wraps, so they open with the old passphrase and
 with the recovery key.
 
-**Not built in 2a.** The screens (including the recovery screen and its type-back check, the encryption switch, the
-export dialog, "Decrypt a file"); the service-worker binding that hands `createBackup` the real session store and
-storage and the message handlers behind the screens; adopting another install's data key on restore; rotating the
-recovery key; a browser (e2e) run of the new worker ops and of the origin-private file transfer, which only a real
-Chromium can exercise (Node tests drive the same functions through a fake worker).
+**The service-worker binding (2b).** One message, `BACKUP`, from extension pages only (a page-relayed one is refused
+before anything runs, and it is not in `HANDLE_MAP`): `{action:"create", form, includeApiKey?}`, `{action:"offer",
+secret?}` and `{action:"restore", plan, sessions, settings, secret?}`, handled by `backupAction` in `sw-backup.ts`
+over the real `BackupDeps` (`archiveCall`, the worker's `sessionStore`, the three storage areas, `chromeStorageWriter`).
+A failure answers `{ error, reason }`, so the page can tell `needs-key` from `wrong-secret`. A restore does not trust
+the page: the worker reads the file and the storage again, makes its own offer (its own digest, its own session hashes,
+its own plan) and restores THAT. From the page it takes only the area and key of each settings change the person left
+ticked (a key the file lacks, or a forged value, is never written) and, optionally, the digest the person previewed: a
+different one is refused with `reason: "changed"`. It waits for `siteSchemaReady()` before writing settings and calls
+`scheduleFolderSync()` only when sessions were added. Setting up and changing the passphrase are not messages: the page reaches the keyring in
+IndexedDB directly.
+
+### What part 2b built (the screens)
+
+`src/sidebar/settings/backup-section.tsx`, a "Backup and restore" sub-section under Storage in Settings, beside the
+archive folder one (`settings.tsx`). The chat page's Settings → Extension renders the same `Settings` component, so
+one section serves the DevTools panel and the chat page. Each screen is a pure body taking state and callbacks
+(`RecoveryKeyBody`, `BackupBody`, `RestoreBody`, `DecryptBody`, `ChangePassphraseBody`, each with `@gallery`
+examples); `LocalBackup` wires them to the `BACKUP` message, the keyring in IndexedDB and the `in`/`out` slots.
+
+- **Set-up and the recovery screen.** The first encrypted backup on an install with no keyring starts it: a passphrase
+  typed twice (at least 12 characters, with the reason), then the key once in its groups (copy, download as .txt, print
+  through a print stylesheet that shows only the key and one line), then one group picked at random to type back. The
+  keyring is made in a MEMORY store and written to IndexedDB only once the group matched, so leaving half way never
+  leaves a passphrase whose recovery key was not seen. The key lives in component state and nowhere else
+  (`tests/backup-section.test.mjs` spies every storage write).
+- **Backup.** Encrypted (default), compressed or plain, the "why encrypted" text, the decryptor's path, and an "Include
+  the API key" box for the two unencrypted forms. `BACKUP create`, then the `out` slot is streamed to a save dialog
+  (`showSaveFilePicker`) or an `<a download>`, named from `BACKUP_EXTENSION` and the date; the slot is removed after.
+  The download is of an in-memory copy whose URL lives a minute: a download reads its blob after the click returns,
+  and a blob of the slot's `File`, removed by then, made Chromium cancel it.
+  The result line says size, sessions, "the API key was left out", and lists `unclassified` keys as a developer warning.
+- **Restore.** "Restore from a file…" streams the picked file into `in` (`copyIntoBackupSlot`), then `BACKUP offer`.
+  `needs-key` asks for a passphrase or recovery key in one field (`secretFromText` tells them apart by shape);
+  `wrong-secret` keeps the field and says so; unlocking shows an indeterminate bar. The preview follows the plan's
+  order: sites that gain use first, policies with their predicate, the risky settings with their `why` (chatUrl's
+  API-key warning is the plan's own text), the rest collapsed. A cut value says "First 160 of N characters" and opens
+  whole. The new sessions are listed from `contents.adding` with "and N more". The restore sends the plan's changes,
+  the digest the person previewed and the secret; the worker recomputes its own offer and refuses `changed` when the
+  digest differs, which the screen words as "the file changed" with a button to read it again (after a `changed` from
+  the sessions step the slot is already emptied, so the re-read then asks for the file again).
+- **Decrypt a file…** reads the file into memory whole (`openBackupBytes`, in the page) and saves the plain
+  `.sqlite`; this install's keyring opens its own files, anything else asks for a secret. It inherits the format's
+  output budget (`LIMITS.outputBytes`) and the page's memory; larger files go through `tools/wmlbak-decrypt.mjs`.
+- **Change passphrase.** `changePassphrase` with the old passphrase or the recovery key; the screen says files already
+  written still open with the old passphrase and the recovery key.
+- **The popup's button** "Backup and restore…" opens `chat.html#/settings/extension/backup` (focusing an open chat tab
+  and moving its hash): the `backup` anchor opens the Storage section and scrolls to the block (`route.ts`).
+
+**In a real browser** (`tests/e2e/backup.spec.mjs`): set-up with a wrong group refused and the right one accepted, the
+key in no storage area, two encrypted backups, then a fresh profile restoring with only the recovery key (a wrong
+secret refused, sites first in the preview), a file swapped under the preview refused as `changed` with nothing
+written, the re-read restoring both sessions and the settings; and the download path with no save dialog.
+
+**Not built.** Adopting another install's data key on restore; rotating the recovery key; the archive folder's
+encryption switch (part 3).
 
 ## The folder: merge before write (part A)
 
