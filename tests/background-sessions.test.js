@@ -771,6 +771,26 @@ test("BACKUP from a page is refused for every action: no archive op, no storage 
     assert.ok(Object.keys(bg.localStore).every((k) => /^ml_site_/.test(k)), "only the test harness's own site approval is in local storage");
 });
 
+// --- ARCHIVE_FOLDER form: the archive folder's form, for extension pages only ---
+
+test("ARCHIVE_FOLDER form: the chosen form reaches the worker and a sync follows; an unknown form and a page sender are refused", T, async () => {
+    const worker = backupWorker({ settings: null });
+    const seen = [];
+    const bg = loadBackground({ config, onArchiveOp: (msg) => { seen.push([msg.op, msg.args]); return msg.op === "folderForm" || msg.op === "sync" ? { ok: true, result: { state: "connected", pending: 0, lastSync: 1, form: "gzip", keyring: { set: false } } } : worker.onArchiveOp(msg); } });
+    const res = await bg.send({ type: "ARCHIVE_FOLDER", payload: { action: "form", form: "gzip" } }, SETTINGS_PAGE);
+    assert.equal(res.error, undefined);
+    assert.deepEqual(seen.map(([op]) => op).slice(0, 2), ["folderForm", "sync"]);
+    assert.deepEqual(seen[0][1], { form: "gzip" });
+    seen.length = 0;
+    for (const form of ["rot13", undefined, { toString: "x" }, "__proto__"]) {
+        const bad = await bg.send({ type: "ARCHIVE_FOLDER", payload: { action: "form", form } }, SETTINGS_PAGE);
+        assert.match(bad.error, /not a form the archive folder can be written in/, typeof form);
+    }
+    const refused = await bg.send({ type: "ARCHIVE_FOLDER", payload: { action: "form", form: "plain" } }, tab(5));
+    assert.match(refused.error, /Refused: the archive folder is for extension pages/);
+    assert.deepEqual(seen, [], "the worker was not asked");
+});
+
 test("BACKUP create validates the form and calls the worker ops in order: begin, finish", T, async () => {
     const worker = backupWorker({ settings: null });
     const bg = loadBackground({ config, indexedDB: new (require("fake-indexeddb").IDBFactory)(), onArchiveOp: worker.onArchiveOp });

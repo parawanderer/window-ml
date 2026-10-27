@@ -10,7 +10,7 @@ in four PRs, and each section below says which parts exist yet.
 | 1. The file format: compression, encryption, keys; `docs/spec/BACKUP_FORMAT.md`; a standalone decryptor | built |
 | 2a. Backup and restore without screens: the key inventory, collect and preview and apply of settings, the file writer, the keyring at rest, the worker ops | built |
 | 2b. The screens: Settings (DevTools panel and chat page Extension tab), the popup button, the recovery screen | built |
-| 3a. The archive folder's form: encrypted, compressed or plain month files, and the switch from plain | built (worker and folder side; the Settings screen is not) |
+| 3a. The archive folder's form: encrypted, compressed or plain month files, and the switch from plain | built (worker and screen) |
 | 3b. Deletes that travel: the `removed` entries written into the month files | designed |
 | 3c. Two machines on one encrypted folder: adopting the folder's key | designed |
 
@@ -249,8 +249,8 @@ encryption switch (part 3).
 
 ## The archive folder's form (part 3)
 
-Designed 2026-10-27. 3a's worker and folder side is built (`folderForm` op, `folder-sync.ts`); its Settings screen, 3b
-and 3c are not. Three PRs, in this order, because each needs the one before.
+Designed 2026-10-27. 3a is built, worker and screen (`folderForm` op, `folder-sync.ts`, the archive section); 3b and 3c
+are not. Three PRs, in this order, because each needs the one before.
 
 ### 3a. Encrypted, compressed or plain month files
 
@@ -274,6 +274,29 @@ and 3c are not. Three PRs, in this order, because each needs the one before.
   with a reason the section can act on (`needs-key`, `other-key`), never as a bare error string.
 - **Memory.** A month is decrypted and gunzipped whole, as `exportMonth` builds it whole; `LIMITS.outputBytes` (1 GiB)
   is far above any month the archive holds, so the bound is the worker's memory, not the format.
+
+### What part 3a built (the screen)
+
+`ArchiveFormChoice` and `SkippedMonths` in `archive-section.tsx`, under the connected folder; both pure, with
+`@gallery` examples. `folderAction` takes `{ action: "form", form }`, refuses anything but the three `BackupForm`
+values, calls the worker's `folderForm` op and then starts a `sync` (`ARCHIVE_FOLDER` stays extension pages only).
+
+- **The choice.** Encrypted (recommended), compressed, plain SQLite, showing `report.form`. Plain and compressed carry
+  one warning line (whole transcripts, readable by a synced folder's service). Picking a form other than the current
+  one says, before anything is sent, that the next sync rewrites every month and removes the old files and that a
+  sync service may keep earlier versions; Cancel leaves the form as it was.
+- **Encrypted with no keyring** runs `KeyringSetup` first, the part 2b flow (`RecoveryKeyBody`, keyring written only
+  after the group is typed back; the backup screen uses the same component) and sends the form only once it is done.
+- **A first pick** (the survey found no files, the archive never completed a sync, and its form was never set)
+  shows the choice with Encrypted preselected and an explicit Continue, with no switch notice since nothing is
+  switched away from. An archive that already had a folder keeps what it was: nothing changes until the person chooses.
+  "Never had a folder" is read as "`lastSync` is null": there is no separate marker in the archive.
+- **Skipped months by reason**, from the last sync or import report (kept in the page; a plain state read does not
+  carry them): `needs-key` and `other-key` each say how many months and what to do, `unreadable` keeps the month and
+  the error. Using another install's key is part 3c.
+- **The job status.** `archive.folder-sync` reports `blocked` while the last sync or import skipped months for
+  `needs-key` or `other-key` (one line, shown in the housekeeping log's jobs). It does not reach the attention
+  codes (`sw-attention.ts` has no `blocked`, and a new code is a contract change); a state read does not clear it.
 
 ### 3b. Deletes that travel
 

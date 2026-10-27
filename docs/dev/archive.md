@@ -67,10 +67,10 @@ here instead. Decided with Shane on 2026-09-19; the design and the probe behind 
 - **A picked folder that already holds month files is asked about** before anything is written: import them (the
   default), or start fresh, which moves them into `earlier-<date>/`. A pick with no one to ask (an attention card's
   fix) imports them.
-- **Four states in Settings:** none (pick), connected (write now, import, change, stop), needs re-grant (reconnect,
-  choose "Allow on every visit", which survives a restart), unsupported (Brave: the flag to copy). Inside the in-page
-  overlay (a frame in someone's site) the browser refuses the picker and the prompt, so the section says to open
-  Settings in the chat page instead.
+- **Four states in Settings:** none (pick), connected (the form of the month files, write now, import, change,
+  stop), needs re-grant (reconnect, choose "Allow on every visit", which survives a restart), unsupported (Brave: the
+  flag to copy). Inside the in-page overlay (a frame in someone's site) the browser refuses the picker and the prompt,
+  so the section says to open Settings in the chat page instead.
 
 - **The state is on the contract**, as `capabilities.archive` (`ArchiveCapability`: `folder`, `pending`, `lastSync`),
   present only while `sessionArchive` is on. `sw-archive.ts` keeps the last `FolderReport` any operation returned and

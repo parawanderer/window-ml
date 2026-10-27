@@ -1177,7 +1177,8 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     } else if (message.type === "ARCHIVE_FOLDER") {
         // Settings' archive folder section: its state, or what to do after a click. Extension pages only.
         if (senderOrigin(sender) === "page") { sendResponse({ error: "Refused: the archive folder is for extension pages." }); return; }
-        folderAction((message.payload as { action?: unknown } | undefined)?.action).then((data) => sendResponse({ data }), (e) => sendResponse({ error: String((e as Error)?.message || e) }));
+        const folder = (message.payload ?? {}) as { action?: unknown; form?: unknown };
+        folderAction(folder.action, folder.form).then((data) => sendResponse({ data }), (e) => sendResponse({ error: String((e as Error)?.message || e) }));
         return true;
 
     } else if (message.type === "BACKUP") {

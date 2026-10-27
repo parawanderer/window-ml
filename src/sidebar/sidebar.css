@@ -4146,6 +4146,9 @@ pre.code.dlines > code.hljs { display: block; }
 .arch-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .arch-primary { font-weight: 600; }
 .arch-msg { color: var(--fg); }
+/* The archive folder's FORM choice and its SKIPPED months (archive-section.tsx): stacked blocks that fill the section's width, the radios and warnings being the settings' own. */
+.arch-form, .arch-skips { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; align-self: stretch; }
+.arch-form > .set-warn, .arch-form > .set-hint, .arch-skips > .set-warn { align-self: stretch; }
 
 /* The Settings BACKUP AND RESTORE section (backup-section.tsx): one block per job (backup, restore, decrypt, passphrase),
    the recovery screen replacing them while it is up. Fields, hints and buttons are the settings' own. */
