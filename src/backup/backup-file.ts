@@ -14,7 +14,7 @@
  */
 import type { Database, Sqlite3Static } from "@sqlite.org/sqlite-wasm";
 import { ARCHIVE_SCHEMA, importBytes, migrate, prepareSession, wasmDb, withAttachedBytes, writeSession, type ArchiveDb, type ArchiveInput } from "../archive/db";
-import { BackupError, encryptFile, gzip, readHeader, readAnyForm, sniff, type FileKind, type Keyring, type Secret } from "./backup-format";
+import { BackupError, encryptFile, gzip, keyFor, readHeader, readAnyForm, sniff, type FileKind, type Keyring, type Secret } from "./backup-format";
 import { PAYLOAD_LIMITS } from "./backup-settings";
 
 /** The three forms a backup can be written in (`docs/dev/backup.md`, "The three forms of a file"). */
@@ -96,14 +96,14 @@ export async function sealBackup(plain: Uint8Array, form: BackupForm, keyring: K
 // --- reading ---
 
 /**
- * What opening an encrypted file needs: this install's keyring when it sealed the file (same data key, same `keyId`), else
+ * What opening an encrypted file needs: this install's keyring when it sealed the file (its current or a retired data key, by `keyId`), else
  * the secret the caller was given. A plain or gzip file needs nothing.
  * @throws `needs-key` when the file is encrypted by another install and no secret was given
  */
 export function unlockChoice(file: Uint8Array, installKeyring: Keyring | null, secret?: Secret): Keyring | Secret {
     if (sniff(file) !== "wmlbak") throw new BackupError("unknown-form", "this is not an encrypted backup");
     if (secret) return secret;
-    if (installKeyring && readHeader(file).keyId === installKeyring.keyId) return installKeyring;
+    if (installKeyring && keyFor(installKeyring, readHeader(file).keyId)) return installKeyring;
     throw new BackupError("needs-key", "this backup was made on another install: give its passphrase or recovery key");
 }
 

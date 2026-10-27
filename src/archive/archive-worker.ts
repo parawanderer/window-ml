@@ -29,6 +29,8 @@ export type ArchiveOp =
     | { op: "folder"; args?: undefined }
     /** set the form month files are written in and mark every month dirty; `encrypted` is refused without a keyring */
     | { op: "folderForm"; args: { form: BackupForm } }
+    /** every month is dirty again, so the next sync rewrites the folder under the install's current key (after it adopted the folder's, part 3c) */
+    | { op: "rekey"; args?: undefined }
     /** write every dirty month into the folder, when it is writable */
     | { op: "sync"; args?: undefined }
     /** a folder was just picked: import what it holds, then every month is dirty, then sync */
@@ -162,6 +164,7 @@ async function run(req: ArchiveOp): Promise<unknown> {
         case "backupFileRemove": await removeBackupSlot(req.args.slot); return true;
         case "folder": return folderReport(db);
         case "folderForm": setFolderForm(db, req.args.form, await loadKeyring(idbKeyringStore())); return folderReport(db);
+        case "rekey": markAllDirty(db); return folderReport(db);
         case "resync": return sync(db, raw, sqlite3, "adopt");
         case "fresh": {
             const dir = await writableFolder();

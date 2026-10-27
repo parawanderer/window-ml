@@ -6,8 +6,8 @@
 import { useEffect, useState } from "preact/hooks";
 import type { RestoreOffer, BackupResult } from "../../backup/backup-run";
 import { BACKUP_EXTENSION, openBackupBytes, type BackupForm } from "../../backup/backup-file";
-import { BackupError, type Keyring, type Secret } from "../../backup/backup-format";
-import { changePassphrase, idbKeyringStore, keyringState, loadKeyring, setupKeyring, type KeyringStore } from "../../backup/backup-keyring";
+import { BackupError, keyFor, readHeadAndFirstChunk, readHeader, sniff, type Keyring, type Secret } from "../../backup/backup-format";
+import { adoptKeyring, changePassphrase, idbKeyringStore, keyringState, loadKeyring, setupKeyring, type KeyringStore } from "../../backup/backup-keyring";
 import { backupSlotFile, copyIntoBackupSlot, removeBackupSlot } from "../../backup/backup-opfs";
 import type { Change, PolicyChange, SiteChange } from "../../backup/backup-settings";
 import { formatBytes } from "../../resource/resource-model";
@@ -46,12 +46,53 @@ export function secretFromText(text: string): Secret {
     return /^[A-Za-z0-9]{4}([\s-][A-Za-z0-9]{4}){6}$/.test(t) ? { recoveryKey: t } : { passphrase: text };
 }
 
+/**
+ * What a person is told ONCE before this install takes another install's data key (from a folder's month files or from a
+ * restored backup). With a key of its own the cost is the second sentence; with none there is nothing to lose.
+ * @param source what the key comes from: `folder` or `backup`
+ * @param hasOwnKey whether this install already has a backup key
+ */
+export function adoptNotice(source: "folder" | "backup", hasOwnKey: boolean): string {
+    const first = `This install will encrypt with ${source === "folder" ? "the folder's" : "this backup's"} key from now on.`;
+    return hasOwnKey ? `${first} Its own earlier backups and archive months still open here, but on another install they need this install's old passphrase or recovery key.` : first;
+}
+
+/**
+ * Whether a restore that has just finished should offer "Use this backup's key on this install": it needed a typed secret
+ * (`secret`) and the file's key is neither this install's current key nor a retired one. A plain file, a file this
+ * install sealed, and a restore that asked for no secret never offer it.
+ * @param head the first bytes of the restored file (at least its header)
+ * @param secret what was typed to open it, or null
+ * @param ring this install's keyring, or null before set-up
+ */
+export function offersBackupKey(head: Uint8Array, secret: Secret | null, ring: Keyring | null): boolean {
+    if (!secret || sniff(head) !== "wmlbak") return false;
+    try { return !ring || !keyFor(ring, readHeader(head).keyId); } catch { return false; }
+}
+
 /** The name a backup is saved under: `window-ml-backup-2026-10-23.wmlbak`. */
 export const backupFileName = (form: BackupForm, now: Date = new Date()): string => `window-ml-backup-${now.toISOString().slice(0, 10)}.${BACKUP_EXTENSION[form]}`;
 
 /** The recovery key as a text file: the key and what it is for, nothing else. */
 export const recoveryKeyText = (key: string): string =>
     `window.ml backup recovery key\n\n${key}\n\nThis key opens every window.ml backup made on this install, if the passphrase is lost. Keep it somewhere safe and apart from the backups.\n`;
+
+// --- the field that takes a secret ---
+
+/**
+ * The one field that takes a passphrase OR a recovery key (`secretFromText` tells which by shape): the restore screen's,
+ * the decrypt screen's, and the archive folder's "Use this folder's key".
+ * @group settings
+ * @gallery {"value": "", "disabled": false}
+ * @gallery wrong, kept for another try {"value": "not it", "disabled": false, "wrong": true}
+ */
+export function SecretField(p: { value: string; disabled: boolean; wrong?: boolean; label?: string; onInput(v: string): void; onEnter?(): void }) {
+    return (
+        <label class="set-field"><span>{p.label ?? "Passphrase or recovery key"}</span>
+            <input type="password" autocomplete="off" value={p.value} disabled={p.disabled} class={p.wrong ? "err" : ""}
+                onInput={(e: any) => p.onInput(e.target.value)} onKeyDown={(e: any) => { if (e.key === "Enter" && p.value && !p.disabled) p.onEnter?.(); }} /></label>
+    );
+}
 
 // --- the recovery screen ---
 
@@ -333,6 +374,7 @@ function RestorePreview(p: { offer: RestoreOffer; busy: boolean; onRestore(o: { 
  * @gallery unlocking {"state": {"kind": "unlocking"}, "message": ""}
  * @gallery changed since the preview {"state": {"kind": "changed"}, "message": ""}
  * @gallery done {"state": {"kind": "done", "sessionsAdded": 12, "written": {"sync": ["model", "chatUrl"], "local": ["ml_site_always"]}}, "message": ""}
+ * @gallery done, offering the backup's key {"state": {"kind": "done", "sessionsAdded": 12, "written": {"sync": ["model"], "local": []}}, "message": "", "adopt": {"hasOwnKey": true, "busy": false, "error": ""}}
  * @gallery preview {"state": {"kind": "preview", "offer": {
  *   "contents": {"sessions": 214, "newSessions": 3, "digest": "ab12", "hashes": ["a", "b", "c"], "settings": null, "created": "2026-10-23T09:00:00Z", "more": 1,
  *     "adding": [{"hash": "a", "title": "Fix the checkout form", "createdTs": 1792000000000, "bytes": 482113}, {"hash": "b", "title": "Compare two price tables", "createdTs": 1791900000000, "bytes": 90211}]},
@@ -355,6 +397,8 @@ export function RestoreBody(p: {
     onReread(): void;
     /** remove the file from the slot and start over */
     onCancel(): void;
+    /** after a restore that needed a typed secret for a key this install does not have: offer to use that key from now on */
+    adopt?: { hasOwnKey: boolean; busy: boolean; error: string; onAdopt(): void; onDecline(): void };
 }) {
     const [text, setText] = useState("");
     const s = p.state;
@@ -373,9 +417,7 @@ export function RestoreBody(p: {
                 <>
                     <div class="set-hint">{s.kind === "needs-key" && s.wrong ? "" : "This backup was made by another install, or its passphrase is not set up here. "}Enter the passphrase it was made with, or its recovery key.</div>
                     {s.kind === "needs-key" && s.wrong ? <div class="set-err">That passphrase or recovery key does not open this file. Check it and try again.</div> : null}
-                    <label class="set-field"><span>Passphrase or recovery key</span>
-                        <input type="password" autocomplete="off" value={text} disabled={busy} class={s.kind === "needs-key" && s.wrong ? "err" : ""}
-                            onInput={(e: any) => setText(e.target.value)} onKeyDown={(e: any) => { if (e.key === "Enter" && text && !busy) p.onUnlock(text); }} /></label>
+                    <SecretField value={text} disabled={busy} wrong={s.kind === "needs-key" && s.wrong} onInput={setText} onEnter={() => p.onUnlock(text)} />
                     {s.kind === "unlocking" ? <div class="bk-progress" role="status"><div class="pbar"><span /></div><span>Unlocking…</span></div> : null}
                     <div class="bk-actions">
                         <button class="test-btn arch-primary" disabled={busy || !text} onClick={() => p.onUnlock(text)}>{s.kind === "unlocking" ? "Unlocking…" : "Unlock"}</button>
@@ -398,7 +440,29 @@ export function RestoreBody(p: {
             {s.kind === "done" ? (
                 <div class="bk-result">Restored {plural(s.sessionsAdded, "session")}; wrote {plural(s.written.sync.length + s.written.local.length, "setting")}.</div>
             ) : null}
+            {s.kind === "done" && p.adopt ? <AdoptBackupKey {...p.adopt} /> : null}
             {p.message ? <div class="set-hint arch-msg">{p.message}</div> : null}
+        </div>
+    );
+}
+
+/**
+ * After a restore that was opened with a typed passphrase or recovery key for a key this install does not have: the offer
+ * to use that key from now on, with what it costs said before it is taken. Asked once; the secret is dropped either way.
+ * @group settings
+ * @gallery {"hasOwnKey": true, "busy": false, "error": ""}
+ * @gallery no key of its own yet {"hasOwnKey": false, "busy": false, "error": ""}
+ */
+export function AdoptBackupKey(p: { hasOwnKey: boolean; busy: boolean; error: string; onAdopt?(): void; onDecline?(): void }) {
+    return (
+        <div class="bk-adopt">
+            <div class="bk-h">Use this backup's key on this install?</div>
+            <div class="set-hint">{adoptNotice("backup", p.hasOwnKey)}</div>
+            {p.error ? <div class="set-err">{p.error}</div> : null}
+            <div class="bk-actions">
+                <button class="test-btn arch-primary" disabled={p.busy} onClick={p.onAdopt}>{p.busy ? "Switching…" : "Use this backup's key on this install"}</button>
+                <button class="test-btn" disabled={p.busy} onClick={p.onDecline}>No, keep this install's key</button>
+            </div>
         </div>
     );
 }
@@ -430,8 +494,7 @@ export function DecryptBody(p: {
                 <>
                     <div class="set-hint">{p.fileName ? <><code>{p.fileName}</code> needs</> : "This file needs"} a passphrase or a recovery key.</div>
                     {p.needsKey === "wrong" ? <div class="set-err">That does not open this file.</div> : null}
-                    <label class="set-field"><span>Passphrase or recovery key</span>
-                        <input type="password" autocomplete="off" value={text} disabled={p.busy} class={p.needsKey === "wrong" ? "err" : ""} onInput={(e: any) => setText(e.target.value)} /></label>
+                    <SecretField value={text} disabled={p.busy} wrong={p.needsKey === "wrong"} onInput={setText} />
                     {p.busy ? <div class="bk-progress" role="status"><div class="pbar"><span /></div><span>Unlocking…</span></div> : null}
                     <div class="bk-actions">
                         <button class="test-btn arch-primary" disabled={p.busy || !text} onClick={() => p.onSecret(text)}>{p.busy ? "Unlocking…" : "Unlock and save"}</button>
@@ -573,6 +636,8 @@ export function LocalBackup() {
     const [made, setMade] = useState<BackupDone | null>(null);
     const [restore, setRestore] = useState<RestoreState>({ kind: "idle" });
     const [secret, setSecret] = useState<Secret | null>(null);
+    // The restored file's header and the secret typed for it, kept past the restore only to offer its key (dropped once used or declined).
+    const [adopt, setAdopt] = useState<{ head: Uint8Array; secret: Secret; hasOwnKey: boolean; busy: boolean; error: string } | null>(null);
     const [dec, setDec] = useState<{ file: File | null; needs: null | "needed" | "wrong" }>({ file: null, needs: null });
     useEffect(() => { void keyringState(keyring).then((s) => setKeySet(s.set), () => setKeySet(false)); }, []);
 
@@ -600,11 +665,21 @@ export function LocalBackup() {
     );
 
     // --- restore ---
+    const rememberAdoptable = async (s: Secret) => {
+        try {
+            const file = await backupSlotFile("in");
+            if (!file) return;
+            const head = await readHeadAndFirstChunk(file);
+            const ring = await loadKeyring(keyring);
+            if (offersBackupKey(head, s, ring)) setAdopt({ head, secret: s, hasOwnKey: !!ring, busy: false, error: "" });
+        } catch { /* no offer: the restore itself is unaffected */ }
+    };
     const offer = async (s?: Secret) => {
         setRestore({ kind: s ? "unlocking" : "reading" }); say("restore", "");
         try {
             const o = await backupMessage<RestoreOffer>({ action: "offer", ...(s ? { secret: s } : {}) });
             setRestore({ kind: "preview", offer: o });
+            if (s) void rememberAdoptable(s);
         } catch (e) {
             const reason = reasonOf(e);
             if (reason === "needs-key") setRestore({ kind: "needs-key" });
@@ -615,11 +690,11 @@ export function LocalBackup() {
     const pickRestore = async () => {
         const file = await pickFile(".wmlbak,.sqlite,.gz,application/gzip,application/vnd.sqlite3");
         if (!file) return;
-        setSecret(null); say("restore", "");
+        setSecret(null); setAdopt(null); say("restore", "");
         try { await copyIntoBackupSlot("in", file); } catch (e) { say("restore", `That did not work: ${messageOf(e)}`); return; }
         await offer();
     };
-    const cancelRestore = async () => { await removeBackupSlot("in").catch(() => {}); setSecret(null); setRestore({ kind: "idle" }); say("restore", ""); };
+    const cancelRestore = async () => { await removeBackupSlot("in").catch(() => {}); setSecret(null); setAdopt(null); setRestore({ kind: "idle" }); say("restore", ""); };
 
     // --- decrypt ---
     const decrypt = async (file: File, s?: Secret) => {
@@ -658,7 +733,18 @@ export function LocalBackup() {
                     }
                 }}
                 onReread={() => void offer(secret ?? undefined)}
-                onCancel={cancelRestore} />
+                onCancel={cancelRestore}
+                adopt={adopt ? {
+                    hasOwnKey: adopt.hasOwnKey, busy: adopt.busy, error: adopt.error,
+                    onDecline: () => setAdopt(null),
+                    onAdopt: async () => {
+                        setAdopt({ ...adopt, busy: true, error: "" });
+                        try {
+                            await adoptKeyring(keyring, adopt.head, adopt.secret);
+                            setKeySet(true); setAdopt(null); say("restore", "This install now encrypts with that backup's key.");
+                        } catch (e) { setAdopt({ ...adopt, busy: false, error: `That did not work: ${messageOf(e)}` }); }
+                    },
+                } : undefined} />
             <DecryptBody fileName={dec.file?.name ?? ""} needsKey={dec.needs} busy={busy === "decrypt"} message={msg.decrypt ?? ""}
                 onPick={async () => { const f = await pickFile(".wmlbak,.sqlite,.gz"); if (f) await decrypt(f); }}
                 onSecret={(text) => { if (dec.file) void decrypt(dec.file, secretFromText(text)); }}

@@ -4,8 +4,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import init from "@sqlite.org/sqlite-wasm";
-import { dirtyMonths, exportMonth, expireRemoved, folderFilesMonths, migrate, prepareSession, readArchived, removeArchived, wasmDb, writeSession, archiveStats, metaSet } from "../src/archive/db.ts";
+import { markAllDirty, dirtyMonths, exportMonth, expireRemoved, folderFilesMonths, migrate, prepareSession, readArchived, removeArchived, wasmDb, writeSession, archiveStats, metaSet } from "../src/archive/db.ts";
 import { adoptFolder, folderFormOf, importMonths, setFolderForm, surveyFolder, syncMonths } from "../src/archive/folder-sync.ts";
+import { adoptKeyring } from "../src/backup/backup-keyring.ts";
 import { createKeyring, sniff, readHeader } from "../src/backup/backup-format.ts";
 import { digestOf, inspectBackup, openBackupBytes, restoreNewSessions } from "../src/backup/backup-file.ts";
 
@@ -660,4 +661,91 @@ test("A plain and B encrypted sharing a keyring settle: neither rewrites the oth
         assert.deepEqual([a.written, b.written], [[], []]);
     }
     assert.equal(folder.writes.length, settled, "no file was rewritten once both had merged");
+});
+
+// --- a second machine adopts the folder's key (part 3c) ---
+
+/** A keyring store in memory, with the calls made on it. */
+function memStore(ring = null) {
+    const calls = [];
+    return { calls, read: async () => ring, create: async (r) => { calls.push("create"); if (ring) throw new Error("already set up"); ring = r; }, replace: async (r) => { calls.push("replace"); ring = r; } };
+}
+/** An install: its keyring in a store, its archive, and the recovery key of its keyring. */
+async function machine(pass, ...sessions) {
+    const made = await createKeyring(pass, CHEAP);
+    const m = { ...fresh(), store: memStore(made.keyring), recoveryKey: made.recoveryKey, pass, keyId: made.keyring.keyId };
+    for (const [hash, ts] of sessions) await put(m, hash, ts, ARCH);
+    return m;
+}
+/** One sync of `m` into `folder` as the encrypted form, with whatever key `m` holds now. */
+const syncEnc = async (m, folder) => syncMonths(m.h, folder, { form: "encrypted", keyring: await m.store.read(), now: T0 });
+/** Every machine syncs until a full round writes nothing; the folder's writes at the end. */
+async function settle(folder, ...ms) {
+    for (let i = 0; i < 4; i++) for (const m of ms) await syncEnc(m, folder);
+    const done = folder.writes.length;
+    for (const m of ms) assert.deepEqual((await syncEnc(m, folder)).written, [], "a settled folder is not written again");
+    assert.equal(folder.writes.length, done);
+}
+
+for (const [how, secretOf] of [["passphrase", (m) => ({ passphrase: m.pass })], ["recovery key", (m) => ({ recoveryKey: m.recoveryKey })]]) {
+    test(`B skips A's months as other-key, adopts A's key with its ${how}, and then both read every month and the folder settles`, async () => {
+        const A = await machine("pw-of-a", ["ad0pt001", OCT], ["ad0pt002", SEPT]);
+        const B = await machine("pw-of-b", ["ad0pt0b1", OCT + 1]);
+        const folder = mapFolder();
+        await syncEnc(A, folder);
+        const first = await syncEnc(B, folder);
+        assert.deepEqual(first.skipped.map((s) => [s.month, s.reason, s.keyId]), [["2026-09", "other-key", A.keyId], ["2026-10", "other-key", A.keyId]]);
+        assert.equal(hasIt(B, "ad0pt001"), false);
+        // The page reads the header of one skipped month and adopts from it.
+        const header = folder.files.get("2026-10.wmlbak");
+        assert.equal(await adoptKeyring(B.store, header, secretOf(A)), A.keyId);
+        assert.deepEqual(B.store.calls, ["replace"]);
+        // `rekey`: every month dirty, then a sync.
+        markAllDirty(B.db);
+        const r = await syncEnc(B, folder);
+        assert.deepEqual([r.skipped, r.merged], [[], 2], "A's two sessions came in");
+        assert.deepEqual(r.written.sort(), ["2026-09", "2026-10"], "B's own month and A's both rewritten under the new key");
+        for (const f of ["2026-09.wmlbak", "2026-10.wmlbak"]) assert.equal(readHeader(folder.files.get(f)).keyId, A.keyId, f);
+        // A's next sync reads every month and B's session arrives.
+        const a = await syncEnc(A, folder);
+        assert.deepEqual([a.skipped, a.merged], [[], 1]);
+        assert.equal(hasIt(A, "ad0pt0b1"), true);
+        await settle(folder, A, B);
+        for (const M of [A, B]) assert.deepEqual(["ad0pt001", "ad0pt002", "ad0pt0b1"].map((h) => hasIt(M, h)), [true, true, true]);
+    });
+}
+
+test("a new install with no keyring adopts by creating one, then reads the whole folder", async () => {
+    const A = await machine("pw-of-a", ["0e00a001", OCT]);
+    const folder = mapFolder();
+    await syncEnc(A, folder);
+    const N = { ...fresh(), store: memStore() };
+    const before = await syncMonths(N.h, folder, { form: "encrypted", keyring: null, now: T0 }).catch((e) => e);
+    assert.equal(before.reason, "needs-key", "an encrypted folder cannot be written without a key");
+    const imp = await importMonths(N.h, folder, null);
+    assert.deepEqual(imp.skipped.map((s) => [s.reason, s.keyId]), [["needs-key", A.keyId]], "the skip names the key even with none to compare");
+    await adoptKeyring(N.store, folder.files.get("2026-10.wmlbak"), { passphrase: "pw-of-a" });
+    assert.deepEqual(N.store.calls, ["create"]);
+    const r = await syncEnc(N, folder);
+    assert.deepEqual([r.skipped, r.merged], [[], 1]);
+    assert.equal(hasIt(N, "0e00a001"), true);
+});
+
+test("the swap: A adopts B's key while B adopts A's, before either syncs again; each still reads the other's months and the folder settles", async () => {
+    // A wrote October under KA, B wrote September under KB; each skipped the other's month.
+    const A = await machine("pw-of-a", ["5a0a0001", OCT]);
+    const B = await machine("pw-of-b", ["5a0b0001", SEPT]);
+    const folder = mapFolder();
+    await syncEnc(A, folder);
+    await syncEnc(B, folder);
+    const skippedA = (await syncEnc(A, folder)).skipped, skippedB = (await syncEnc(B, folder)).skipped;
+    assert.deepEqual([skippedA.map((s) => [s.month, s.keyId]), skippedB.map((s) => [s.month, s.keyId])], [[["2026-09", B.keyId]], [["2026-10", A.keyId]]]);
+    const [fromA, fromB] = [folder.files.get("2026-10.wmlbak"), folder.files.get("2026-09.wmlbak")];
+    await adoptKeyring(A.store, fromB, { passphrase: "pw-of-b" });
+    await adoptKeyring(B.store, fromA, { passphrase: "pw-of-a" });
+    assert.deepEqual([(await A.store.read()).keyId, (await B.store.read()).keyId], [B.keyId, A.keyId], "swapped");
+    for (const M of [A, B]) markAllDirty(M.db);
+    await settle(folder, A, B);
+    for (const M of [A, B]) assert.deepEqual([hasIt(M, "5a0a0001"), hasIt(M, "5a0b0001")], [true, true]);
+    for (const M of [A, B]) assert.deepEqual((await syncEnc(M, folder)).skipped, [], "every month opens with the current or the retired key");
 });

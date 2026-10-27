@@ -9,6 +9,7 @@
 // something syncing the folder never reads half a write.
 
 import { BACKUP_EXTENSION, type BackupForm } from "../backup/backup-file";
+import { readHeadAndFirstChunk } from "../backup/backup-format";
 
 /** Where the folder stands, as Settings draws it. */
 export type FolderState =
@@ -138,6 +139,16 @@ export async function writeMonthFile(dir: FileSystemDirectoryHandle, month: stri
     const w = await file.createWritable();
     try { await w.write(bytes as Uint8Array<ArrayBuffer>); await w.close(); }
     catch (err) { await w.abort().catch(() => {}); throw err; }
+}
+
+/**
+ * The first bytes of a month's encrypted file, its header and first chunk and no more: what a page adopts a key from
+ * (`adoptKeyring` checks the key opens that chunk) without reading a month file whole. Null when the month has no
+ * encrypted file.
+ */
+export async function readMonthHead(dir: FileSystemDirectoryHandle, month: string): Promise<Uint8Array | null> {
+    const file = await dir.getFileHandle(fileName(month, "encrypted")).catch(() => null);
+    return file ? readHeadAndFirstChunk(await file.getFile()) : null;
 }
 
 /** Every month file in the folder, oldest first (a month's forms together), with its bytes read when asked. */

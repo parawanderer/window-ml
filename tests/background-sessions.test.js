@@ -791,6 +791,20 @@ test("ARCHIVE_FOLDER form: the chosen form reaches the worker and a sync follows
     assert.deepEqual(seen, [], "the worker was not asked");
 });
 
+test("ARCHIVE_FOLDER rekey (part 3c): an extension page marks every month dirty and a sync follows; a page sender is refused and the worker is not asked", T, async () => {
+    const worker = backupWorker({ settings: null });
+    const seen = [];
+    const report = { state: "connected", pending: 3, lastSync: 1, form: "encrypted", keyring: { set: true, keyId: "k" } };
+    const bg = loadBackground({ config, onArchiveOp: (msg) => { seen.push(msg.op); return msg.op === "rekey" || msg.op === "sync" ? { ok: true, result: report } : worker.onArchiveOp(msg); } });
+    const res = await bg.send({ type: "ARCHIVE_FOLDER", payload: { action: "rekey" } }, SETTINGS_PAGE);
+    assert.equal(res.error, undefined);
+    assert.deepEqual(seen, ["rekey", "sync"]);
+    seen.length = 0;
+    const refused = await bg.send({ type: "ARCHIVE_FOLDER", payload: { action: "rekey" } }, tab(5));
+    assert.match(refused.error, /Refused: the archive folder is for extension pages/);
+    assert.deepEqual(seen, [], "the worker was not asked");
+});
+
 test("BACKUP create validates the form and calls the worker ops in order: begin, finish", T, async () => {
     const worker = backupWorker({ settings: null });
     const bg = loadBackground({ config, indexedDB: new (require("fake-indexeddb").IDBFactory)(), onArchiveOp: worker.onArchiveOp });

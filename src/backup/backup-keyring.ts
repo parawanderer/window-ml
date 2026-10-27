@@ -4,14 +4,14 @@
  * The format module (`backup-format.ts`) makes a data key and wraps it; this keeps the result between sessions. The
  * record is one IndexedDB entry in the extension's origin: the data key as the NON-EXTRACTABLE `CryptoKey` it was imported
  * as (IndexedDB stores a `CryptoKey` structurally, so no byte of the key is ever in the profile), and the two wrapped
- * copies a file header needs. Anything running in the extension's origin can USE the key (the service worker, the
+ * copies a file header needs, plus (after `adoptKeyring`, part 3c) the data keys it used before, as decrypt-only `retired` keys. Anything running in the extension's origin can USE the key (the service worker, the
  * offscreen archive worker, a page); nothing can read it back out, and a new passphrase needs the old passphrase or the
  * recovery key to unwrap it (`changePassphrase`).
  *
  * State: one persistent store, `ml-backup-keyring` (docs/dev/state.md, "Where a value can live"). Not a run's state, so
  * not declared to the state registry; the module keeps nothing in memory.
  */
-import { BackupError, createKeyring, rewrap, unlock, type Keyring, type KeyringOptions, type Secret } from "./backup-format";
+import { BackupError, createKeyring, opensFirstChunk, readHeader, rewrap, unlock, type Keyring, type KeyringOptions, type Secret } from "./backup-format";
 
 /** The IndexedDB database, its one object store and the one record in it. */
 const DB_NAME = "ml-backup-keyring";
@@ -125,5 +125,32 @@ export async function changePassphrase(store: KeyringStore, oldSecret: Secret, n
     const ring = await store.read();
     if (!ring) throw new BackupError("needs-key", "no backup passphrase is set up on this install");
     const wraps = await rewrap(ring.wraps, oldSecret, newPassphrase, o);
-    await store.replace({ key: ring.key, keyId: ring.keyId, wraps });
+    await store.replace({ ...ring, wraps });   // `retired` rides along: a new passphrase must not forget the keys that open earlier files
+}
+
+/**
+ * Use another install's data key, so this one reads and writes the same encrypted files (part 3c). The key is opened from
+ * the wraps in `file`'s header with `secret`, then stored as the current key with those wraps; this install's previous
+ * current key, and any it had retired already, are kept as RETIRED keys: they open the files they sealed, and seal
+ * nothing. A wrong secret throws `wrong-secret` and changes nothing; the key the install already has changes nothing.
+ * The key must open the file's first chunk (`opensFirstChunk`), so a header spliced over another file's chunks adopts
+ * nothing. That binds the key to the file, not to its author: whoever knows the secret typed can seal a whole file this
+ * accepts (docs/dev/backup.md, "What part 3c built").
+ * @param file an encrypted file made under that key: at least its header and first chunk (`readHeadAndFirstChunk`)
+ * @param secret the other install's passphrase or recovery key, as it was when `file` was written
+ * @returns the `keyId` now current
+ * @throws `wrong-secret`, `bad-recovery-key`, `corrupt` for a header not written with these chunks, or a header error when `file` is not an encrypted file
+ */
+export async function adoptKeyring(store: KeyringStore, file: Uint8Array, secret: Secret): Promise<string> {
+    const header = readHeader(file);
+    const next = await unlock(header.wraps, secret);
+    await opensFirstChunk(file, next);
+    const had = await store.read();
+    if (had?.keyId === next.keyId) return next.keyId;
+    const before = had ? [{ key: had.key, keyId: had.keyId }, ...(had.retired ?? [])] : [];
+    const retired = before.filter((r, i) => r.keyId !== next.keyId && before.findIndex((o) => o.keyId === r.keyId) === i);
+    const ring: Keyring = { key: next.key, keyId: next.keyId, wraps: header.wraps, ...(retired.length ? { retired } : {}) };
+    if (had) await store.replace(ring);
+    else await store.create(ring);
+    return next.keyId;
 }
