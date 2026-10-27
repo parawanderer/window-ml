@@ -467,7 +467,7 @@ listed as remaining is DONE unless named below.
      and the ten bridge imports from an APPROVED cell, each failing for its claimed reason, each the security lane's to
      turn plain with the lockdown fix (`fix/python-lockdown`, not yet a PR). Shane approved and merged it himself, the
      sessions being out of tokens that day. `run_js` stays OPEN as a step 3 property ([`PYODIDE_LOCKDOWN.md`](PYODIDE_LOCKDOWN.md), step 2,
-     RULED). Lane STOPPED under the freeze; clone removed. RULED 2026-10-27 by Shane in the security lane's session (relayed, to confirm here) on the parked
+     RULED). Lane STOPPED under the freeze; clone removed. RULED 2026-10-27 by Shane in the security lane's session (relayed, confirmed here the same day) on the parked
      widening: `js`, `pyodide.ffi`, `pyodide.webloop` refused by the worker in an approved cell unless the card carried
      an explicit browser-JavaScript line (a new public string, wording to Shane first); `asyncio` stays; nothing
      scheduled outside asyncio outlives the cell even when approved; packages' boot-time imports keep working; lands with
