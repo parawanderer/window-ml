@@ -418,7 +418,9 @@ listed as remaining is DONE unless named below.
      unowned until the week resets. RESUMED 2026-10-27: the lane picks up the two leftovers in order (the last cell's
      drops reported, a run-log fix with its test; then the never-yielding task, design note to the coordinator before a
      build), plus the regex-cost Python port named to it in fork #11 (the two `pyodide_js` todos were already plain
-     through #1046 itself). The janitor reviews each PR. RULED 2026-10-27 on the never-yielding task, in
+     through #1046 itself). The janitor reviews each PR. MERGED 2026-10-27: #1139 (cf8cc300, the drops after a turn's
+     last cell reported, janitor no findings); #1148 (c6a3808f, a clone symlinks `pyodide-core` too, since the stock core
+     skips 324 of the python genre's 530 tests). RULED 2026-10-27 on the never-yielding task, in
      [`PYTHON_CANCEL_GAPS.md`](PYTHON_CANCEL_GAPS.md): refuse, not interrupt; one budget for the whole spend; the C-level
      case keeps the kill, named; cores enumerated; e3 probes the hook's reach after the merge, in its own file. FOUND the
      same day by the lane in its own #1051 cancel: an approved outside-dialect cell rebinds the wrapper's globals
