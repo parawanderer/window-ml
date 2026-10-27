@@ -160,6 +160,12 @@ export function monthFolder(dir: FileSystemDirectoryHandle): import("./folder-sy
             const file = await dir.getFileHandle(fileName(month, form)).catch(() => null);
             return file ? new Uint8Array(await (await file.getFile()).arrayBuffer()) : null;
         },
+        stat: async (month, form) => {
+            const file = await dir.getFileHandle(fileName(month, form)).catch(() => null);
+            if (!file) return null;
+            const f = await file.getFile();
+            return { size: f.size, lastModified: f.lastModified };
+        },
         write: (month, form, bytes) => writeMonthFile(dir, month, form, bytes),
         remove: (month, form) => dir.removeEntry(fileName(month, form)).catch(() => { /* never written */ }),
     };

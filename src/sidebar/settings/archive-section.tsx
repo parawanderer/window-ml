@@ -342,11 +342,12 @@ export function LocalArchiveFolder({ archiveOn }: { archiveOn: boolean }) {
             })}
             onSync={act("sync", async () => {
                 const r = await call("sync");
-                return r.written?.length || r.removed?.length ? `Wrote ${r.written?.length ?? 0}, removed ${r.removed?.length ?? 0}.` : "Already up to date.";
+                const gone = r.deleted ? ` ${r.deleted} session${r.deleted === 1 ? "" : "s"} removed on another machine.` : "";
+                return r.written?.length || r.removed?.length ? `Wrote ${r.written?.length ?? 0}, removed ${r.removed?.length ?? 0}.${gone}` : gone ? gone.trim() : "Already up to date.";
             })}
             onImport={act("import", async () => {
                 const r = await call("import");
-                return r.imported ? `Imported ${r.imported.sessions} session${r.imported.sessions === 1 ? "" : "s"} from ${r.imported.files} file${r.imported.files === 1 ? "" : "s"}.` : "The folder is not connected.";
+                return r.imported ? `Imported ${r.imported.sessions} session${r.imported.sessions === 1 ? "" : "s"} from ${r.imported.files} file${r.imported.files === 1 ? "" : "s"}.${r.deleted ? ` ${r.deleted} session${r.deleted === 1 ? "" : "s"} removed on another machine.` : ""}` : "The folder is not connected.";
             })}
             onForget={act("forget", async () => { await saveFolder(null); return "Stopped. The folder's files are still there."; })} />
     );
