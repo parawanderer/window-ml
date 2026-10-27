@@ -1389,11 +1389,12 @@ test.describe("@security attack 19: the start card", () => {
         return { ...env, origin, page };
     }
     /** The card's frame once it shows the start card. */
-    async function startCard(page) {
+    /** The start card's frame once `.start-ask` is up; settled unless `settle` is false (a test that must click in the first second). */
+    async function startCard(page, { settle = true } = {}) {
         await expect.poll(() => !!page.frames().find((f) => f.url().includes("sidebar.html")), { timeout: 15000 }).toBe(true);
         const frame = page.frames().find((f) => f.url().includes("sidebar.html"));
         await frame.waitForSelector(".start-ask", { timeout: 15000 });
-        await cardSettled(frame);
+        if (settle) await cardSettled(frame);
         return frame;
     }
     /**
@@ -1469,11 +1470,11 @@ test.describe("@security attack 19: the start card", () => {
         const { fake, page, close } = await asking();
         try {
             await startAgent(page);
-            const card = await startCard(page);
+            const card = await startCard(page, { settle: false });   // settling can outlast the first second
             await card.locator(".start-row .appr-btn.yes").first().click({ force: true });
             await page.waitForTimeout(300);
             expect(fake.calls().length, "a click before the card armed allowed the agent").toBe(0);
-            await page.waitForTimeout(900);
+            await cardArmed(card);
             await card.locator(".start-row .appr-btn.yes").first().click();
             await expect.poll(() => fake.calls().length, { timeout: 15000 }).toBe(1);
             expect(await result(page)).toEqual({ ok: "AGENT RAN" });
