@@ -119,8 +119,14 @@ test("the folder: a sync writes the month's file, a delete rewrites it away and 
         await archive(ext, "put", { input: session("f01de001", sept), archivedTs: 1 });
         await archive(ext, "put", { input: session("f01de002", sept + 1000), archivedTs: 1 });
 
+        // A fresh archive's form is unchosen: a pick writes nothing until Settings chooses one (docs/dev/backup.md, 3a).
+        const unchosen = await archive(ext, "resync");
+        expect(unchosen.result).toMatchObject({ state: "connected", form: null, pending: 1 });
+        expect(await files()).toEqual([]);
+
+        await archive(ext, "folderForm", { form: "plain" });
         const picked = await archive(ext, "resync");
-        expect(picked.result).toMatchObject({ state: "connected", written: ["2026-09"], pending: 0 });
+        expect(picked.result).toMatchObject({ state: "connected", form: "plain", written: ["2026-09"], pending: 0 });
         expect(await files()).toEqual(["2026-09.sqlite"]);
 
         // Both sessions deleted: the month is empty, so its file goes. A delete reaches the folder.
