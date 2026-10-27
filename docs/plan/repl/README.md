@@ -417,8 +417,17 @@ listed as remaining is DONE unless named below.
      2026-10-23 under the freeze; clone removed. #1046 landed the same day, so the two `pyodide_js` todos can turn plain;
      unowned until the week resets. RESUMED 2026-10-27: the lane picks up the two leftovers in order (the last cell's
      drops reported, a run-log fix with its test; then the never-yielding task, design note to the coordinator before a
-     build), plus the two `pyodide_js` todos turning plain and the regex-cost Python port named to it in fork #11. The
-     janitor reviews each PR.
+     build), plus the regex-cost Python port named to it in fork #11 (the two `pyodide_js` todos were already plain
+     through #1046 itself). The janitor reviews each PR. RULED 2026-10-27 on the never-yielding task, in
+     [`PYTHON_CANCEL_GAPS.md`](PYTHON_CANCEL_GAPS.md): refuse, not interrupt; one budget for the whole spend; the C-level
+     case keeps the kill, named; cores enumerated; e3 probes the hook's reach after the merge, in its own file. FOUND
+     2026-10-27 by the lane, outside its brief, raised with Shane, unowned: a worker-hosted run's own Pyodide worker
+     (`run:<id>`) is never terminated (`PY_DELETE_RUN` empties the namespace; the offscreen document is never closed), so
+     every run that used Python keeps a realm alive for the browser's lifetime. ASSIGNED the same day by Shane to the lane,
+     confirmed to the coordinator 2026-10-27: idle reap by default, late drops reported at the shutdown, and the model
+     may ask for its worker to be kept (Shane: a Python process should be able to run overnight). Its own PR,
+     `@python`; the keep is a new thing the model can ask for, so it gets a red-team PASS by e3 after the merge, in e3's
+     file, not a note. The lane's order: last-cell drops, idle reap and keep, the never-yield bound, the regex-cost port.
   3. `tests/readonly-soundness.test.mjs:189` (halting): `riskyRegex` refuses the exponential shapes only (#684), so `/a+b/`
      on 10^6 characters is quadratic and runs for minutes in one host call; a sound bound needs a linear-time matcher or
      an input cap tied to the pattern's quantifiers. FIXED 2026-10-23 (#988, merged bcafa80e, session `76cd36e2`,
