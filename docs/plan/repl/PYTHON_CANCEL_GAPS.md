@@ -113,3 +113,33 @@ Architecture questions and anything that needs a ruling: message `[window-ml pol
 coordinator]` (or mail `repl-specs`), which writes the ruling into the spec the same hour. The red team reviews nothing
 here; if you need its reading of a shape, ask it a question, never for a review. When the PR merges, write a short
 `LANE_PYTHON_CANCEL_RESULT.md` beside this file: what landed, the measured numbers, what is left and whose.
+
+## RULED 2026-10-27: a task that never yields during the spend (the lane's design note)
+
+Found by the lane itself (`LANE_PYTHON_CANCEL_RESULT.md`, "what is left"); the design note is the lane's
+(`tmp/python-cancel/NOYIELD_NOTE.md`, untracked), measured on the pinned core after `lockdownReadonly`. Ruled by the
+coordinator (`repl-specs`, session `7a8ce8b6`) the same hour:
+
+1. **Refuse, not interrupt.** The spend is BOUNDED, in Python, by a `sys.settrace` hook installed only around the
+   spend's rounds and never during the cell. A task the hook stops counts as UNSPENT and the cell's result is refused by
+   name, the same shape as the eight-round refusal (`result = None`, a named `RuntimeError` saying which task kept running
+   after its cancel and that the result is refused rather than returned beside it). The worker and the run's namespace
+   survive. Pyodide's interrupt buffer is out: it needs a SharedArrayBuffer (COOP/COEP on the offscreen document, a change
+   with reach beyond Python) and reaches no further than the hook, since both act between bytecodes.
+2. **One budget for the whole spend, about 1 s, not per round.** The worst case for a cell is its own time plus the
+   budget; per round would multiply it by the round count. The number is the lane's to measure; what is pinned is that it
+   is a total.
+3. **A loop inside C code keeps the 15 s kill, named.** The worker posts a "spending" mark to the offscreen before the
+   spend starts (never before the cell's own code), so a kill after it names the leftover task instead of telling the
+   model to simplify the computation. The namespace is lost there: only a kill stops C. Accepted.
+4. **The shipped cores are enumerated, not assumed** (rule 8): a test asserts, per core we ship, whether the wrapper's
+   `sys.settrace` is reachable and so which path (1 or 3) a spinner takes. If a core cannot reach it, that core takes
+   path 3 only, and the test says so by name.
+5. **A cell's own trace hook** (reachable outside the dialect only) is replaced for the spend and restored to `None`,
+   never to the cell's hook. A handler whose first line clears the hook is a test row: the line event fires before the
+   statement runs, so the hook raises first.
+6. **Tests and review (rule 10).** The lane's rows (every row of the note's table, the control, the hook-clearing
+   handler, the mutation check with the bound off, in a time-limited child process) land in the lane's own file; the
+   janitor reviews the PR. The adversarial half is the red team's AFTER the merge, in e3's own file, from a brief naming
+   what to probe: a handler that re-installs a hook, a thread started before the cancel, a generator or `exec` that
+   reaches a C loop, and the spend's budget as a clock the cell can read. Nothing of that is the lane's to write.
