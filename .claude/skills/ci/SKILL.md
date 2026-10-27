@@ -304,6 +304,24 @@ Recently removed, recorded so nobody re-adds them from memory:
 A failure that is genuinely not yours goes in the PR body, named, with the evidence — never silently
 ignored, and never "fixed" by re-running until it passes.
 
+## Fixing a flake
+
+Agreed with Shane on 2026-10-15, after `detection-surface.spec.mjs:446` blocked several PRs that touched no extension
+code. The easy fixes (a sleep, a retry, a looser assertion) turn CI green and hide what the flake meant, and some
+"flakes" are product bugs.
+
+- **Measure first, from CI logs**: read the e2e shard logs of recent `tests` runs and count, per test, failed (both
+  tries) vs flaky (passed on retry), split main vs PR. Not by running the spec locally while other sessions share the
+  machine: under load, local e2e fails unrelated tests and loads everyone else's work.
+- **What a weaker model may fix**: only a fixed wait or timing assumption, replaced by waiting on the actual event. No
+  new `retries`, no `sleep`, no removed or loosened assertion, no `src/` change. A fix is proven by about ten CI reruns
+  of the shard, not by one green run.
+- **What goes to a stronger model or to Shane**: an assertion that would have to accept a new outcome, anything in a
+  security or detection spec (`detection-surface`, `site-access`, `redteam`), and any diagnosis that points at the
+  product. A stronger model reads such a fix's diff before it merges.
+- **Who to tell**: a flake that blocks a PR goes to the CI janitor session (`window-ml-flaky-ci`) with the measured
+  counts, and to the coordinator session, since every lane's PRs hit the same red shard. Do not just rerun and move on.
+
 ## Rules
 
 - **Fix forward on the branch.** Push the fix; the PR re-runs. Do not merge red, and do not merge with
