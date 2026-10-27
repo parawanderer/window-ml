@@ -171,6 +171,18 @@ wrongly is a `{ todo }` naming the fork commit the core lacks and the pin, and a
 explicitly; `node:test` does not fail a passing todo). A commit list compared with the pin is a proxy and is not the
 test. So the pin's lag behind a security fix is visible in CI as a red todo whose fix is a rebuild, never as a green
 suite over a core that still has the escapes.
+RULED 2026-10-27 (python-cancel's design note, `tmp/python-cancel/regex-cost-design.md`, for the port of the cost
+model): Python PRICES a search through ONE budget, not a cap per search. `regex_work` in `Lib/restricted.py` is the
+bound of `regex-cost.ts` walked over `re._parser`'s tree (an unknown op is Infinity, refused), and `regex_check`
+spends it through one C entry, `_restricted.charge(n)`, which trips exactly as `_PyRestricted_Tick` does, called after
+the shape checks and before the leaf, the linear scan billed first; `compile` charges nothing. A fixed cap per search
+was refused: it cannot see what the cell already spent, so fifteen just-under searches still run to the kill. The
+units per step are measured in Pyodide on the fork core (`notebooks/python-dialect/regex-cost.ipynb`), with the
+margin stated beside its number, never V8's figure copied. The cost vectors (pattern, flags, input recipe, expected
+bound) are one file in `tests/fixtures/dialect-vectors/` beside `halting.json`, read by both suites; `halting.json`'s
+`{ todo }` on `regexWork` flips plain when the port merges. The fork PR is reviewed by the fork's owner natively; the
+core is rebuilt and re-pinned by the pyodide-build session on Shane's go-ahead; the red team pins the cost table's rows
+after the pin lands.
 
 **RULE: the patch keeps the ABI.** It touches `ceval`, the abstract object layer and the thread state, never the object
 header or the stable ABI. Then Pyodide's own numpy and pandas builds work unchanged, and on the host a patched CPython
