@@ -7,6 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
+import { JSDOM } from "jsdom";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
@@ -162,14 +163,52 @@ test("ml.current is the frozen copy with its log text restored; over the cap it 
     assert.equal(ok.out.v, JSON.stringify(["the task", "x happened", true]));
     assert.match((await runWrapped("(ml.current)", { reads: [], currentError: "ml.current is 600000 characters here" })).out.threw, /600000 characters/);
     const none = await runWrapped("(ml.current)", { reads: [] });
-    assert.match(none.out.threw, /ml\.current is not available.*it has ml\.dereference\./, "the sentence does not offer what is absent");
+    assert.match(none.out.threw, /ml\.current is not available.*it has ml\.dereference, ml\.queryAll, ml\.a11y, ml\.pipe, ml\.schema, ml\.range\./, "the sentence does not offer what is absent");
 });
 
 test("any other ml member throws a sentence naming what the isolated world has; ml cannot be written to", async () => {
     const r = await runWrapped("(ml.fetch('https://x.example'))", { reads: [], current: CURRENT });
-    assert.match(r.out.threw, /ml\.fetch is not available in this exec, which runs in an isolated world: it has ml\.current, ml\.dereference\./);
+    assert.match(r.out.threw, /ml\.fetch is not available in this exec, which runs in an isolated world: it has ml\.current, ml\.dereference, ml\.queryAll, ml\.a11y, ml\.pipe, ml\.schema, ml\.range\. Read the URL with the fetch_url tool\./);
+    assert.match((await runWrapped("(ml.agent)", { reads: [] })).out.threw, /ml\.agent is not available .* Do the rest in another call\./);
     assert.equal((await runWrapped("{ ml.dereference = () => 'forged'; return ml.dereference('@tool:exec') }", { reads: READS })).out.v ?? "", "FIRST OUTPUT");
     assert.equal((await runWrapped("(typeof ml.then)", { reads: [] })).out.v, "undefined", "awaiting ml does not throw");
+});
+
+// --- the read-only helpers in the isolated world: the page's own functions, over the shared DOM ---
+
+/** A jsdom page as the world: the wrapper runs in its window, so the helpers read its DOM. */
+function domWorld(html) {
+    const dom = new JSDOM(`<!doctype html><body>${html}</body>`, { runScripts: "outside-only", url: "https://site.example/" });
+    return { dom, ctx: dom.getInternalVMContext() };
+}
+
+const HELPER_PAGE = `<ul id="list"><li><a href="/pull/1">One</a></li><li><a href="/pull/2">Two</a></li><li><a href="/issues/3">Three</a></li></ul>
+    <button aria-label="Merge pull request" id="merge">Merge</button><div id="host"></div>`;
+
+test("ml.queryAll and ml.a11y read the page's DOM in the isolated world as they do in the page's: piercing, :contains, the accessible name and a selector", async () => {
+    const { dom, ctx } = domWorld(HELPER_PAGE);
+    dom.window.document.getElementById("host").attachShadow({ mode: "open" }).innerHTML = "<span class='in'>inside</span>";
+    const run = async (js) => (await runWrapped(js, { reads: [] }, { ctx })).out;
+    assert.equal((await run("(ml.queryAll('a[href*=\"/pull/\"]').map((a) => a.textContent))")).v, JSON.stringify(["One", "Two"]), "the reported script's first call");
+    assert.equal((await run("(ml.queryAll('a', ml.queryAll('#list')[0]).length)")).v, "3", "a second argument is ignored, as on the page");
+    assert.equal((await run("(ml.queryAll('#host >>> .in')[0].textContent)")).v, "inside", "an open shadow root is crossed");
+    assert.equal((await run("(ml.queryAll('li:contains(\"Two\")').length)")).v, "1");
+    assert.equal((await run("(ml.a11y(ml.queryAll('#merge')[0]))")).v, JSON.stringify({ role: "button", name: "Merge pull request", state: "", selector: "#merge" }));
+    assert.match((await run("{ return ml.queryAll('a[') }")).threw ?? "", /./, "a bad selector throws, as on the page");
+});
+
+test("ml.pipe, ml.schema and ml.range are the page's own in the isolated world", async () => {
+    const run = async (js) => (await runWrapped(js, { reads: [] })).out;
+    assert.equal((await run("(ml.pipe('a\\nb\\nab', 'grep a | head 1'))")).v, "a");
+    assert.equal((await run("(ml.schema({ id: 1, items: [{ name: 'x' }] }))")).v, "{ id: number, items: { name: string }[] /* 1 item */ }");
+    assert.equal((await run("(ml.range(3))")).v, "[0,1,2]");
+});
+
+test("the helpers cannot be replaced by the script, and none is a global of the world", async () => {
+    const { ctx } = domWorld(HELPER_PAGE);
+    const r = await runWrapped("{ ml.queryAll = () => ['forged']; return ml.queryAll('#merge').length }", { reads: [] }, { ctx });
+    assert.equal(r.out.v, "1");
+    assert.equal(vm.runInContext("typeof __mlIsoKit + typeof queryAll + typeof mlPipe + typeof helpers", ctx), "undefinedundefinedundefinedundefined");
 });
 
 test("the console is captured and streamed line by line, and restored afterwards", async () => {

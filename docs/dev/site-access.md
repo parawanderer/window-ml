@@ -521,8 +521,11 @@ rule is pure, and its tests enumerate every input (`tests/isolated-exec.test.mjs
 - The red-team pass is `tests/redteam-exec-world.test.mjs`; the table is `tests/exec-world.test.mjs`.
 
 The isolated script runs inside one wrapper built as source (`isolatedWrapper`): it binds `ml` (`current` deep-frozen,
-`dereference` answering only the reads sent with the call, each the page's own `DerefText` from `src/isolated-kit.ts`),
-captures the console, and returns plain data. Live lines
+`dereference` answering only the reads sent with the call, each the page's own `DerefText` from `src/isolated-kit.ts`,
+and the page's read-only helpers from the same kit: `queryAll`, `a11y`, `pipe`, `schema`, `range`), captures the
+console, and returns plain data. The kit never claims the main world's closed-root reader, which would dispatch an event
+the page can hear, so `ml.queryAll` there crosses open shadow roots and same-origin frames only, and the result's note
+says so. Live lines
 come back through `chrome.runtime.onUserScriptMessage` (reachable only from a world this extension configured), checked
 against the run's tab, the top frame and the call's nonce, or through a CDP binding added with `executionContextName`,
 so only that world has it, checked against the world's context id. The route is decided for one document (read

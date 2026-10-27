@@ -539,9 +539,12 @@ Recorded as each slice lands, with the reason.
   an unapproved page and for `ml.current` (which the main world never had), but run a pointer-naming script on an
   approved page in the main world as before, with a note in the result and the routing in the execution log, so
   nothing that works today breaks. Differences from the spec and the page's world, each told to the model in one line:
-  - The isolated world's `ml` has only `current` (a deep-frozen copy, `currentForExec`) and `dereference` (the values
-    the script names, sent with the call). `ml.*` bound to the worker, as the spec has it, is not built: anything else
-    throws a sentence. A pointer value is the page's own `DerefText`; since part 4b its `.pipe()` and a stored table's
+  - The isolated world's `ml` has `current` (a deep-frozen copy, `currentForExec`), `dereference` (the values the
+    script names, sent with the call) and the page's read-only helpers `queryAll`, `a11y`, `pipe`, `schema` and `range`
+    (the same functions, bundled into the world's source; `queryAll` does not cross closed shadow roots there). `ml.*`
+    bound to the worker, as the spec has it, is not built: anything else throws a sentence (`ml.fetch`'s names the
+    `fetch_url` tool). Found in use (2026-10-23): with only the first two, a plain script calling `ml.queryAll` on an
+    unapproved page threw, and "do the rest in another call" could not help, as every exec there runs isolated. A pointer value is the page's own `DerefText`; since part 4b its `.pipe()` and a stored table's
     column reads ask the worker over the call's own channel (`iso-channel.ts`; docs/dev/site-access.md), and `.schema()`
     and a whole table read in the world. Found while building it: the read-only dialect has no `.pipe()` or `.schema()`
     on a value, so the sentence part 4 threw ("read it in a read-only exec") sent the model to a path that refused it

@@ -35,8 +35,11 @@ export interface IsolatedBindings { reads: readonly PreRead[]; current?: ExecCur
 /** What a run of the wrapper returns, the shape `cdpEval` reports. */
 export type IsolatedResult = { ok: true; value: string; logs: string[]; dropped: number } | { error: string };
 
+/** The read-only helpers an isolated exec is given, the page's own functions from the kit (isolated-kit.ts `helpers`). */
+export const ISOLATED_HELPERS = ["queryAll", "a11y", "pipe", "schema", "range"] as const;
+
 /** The `ml` members an isolated exec is given; anything else throws a sentence saying so. */
-export const ISOLATED_ML_MEMBERS = ["current", "dereference", "sh"] as const;
+export const ISOLATED_ML_MEMBERS = ["current", "dereference", ...ISOLATED_HELPERS, "sh"] as const;
 
 /**
  * The members one isolated exec is given: `current` only when it was read for it (or failed to be), `sh` only when the
@@ -102,7 +105,7 @@ export function isolatedWrapper(inner: string, b: IsolatedBindings, n: string, s
     const __split = (${splitStages.toString()});
     const __stages = (p) => Array.isArray(p) ? p.filter((s) => typeof s === "string" && s.trim()).map((s) => s.trim()) : (typeof p === "string" && p.trim() ? __split(p) : []);
     const __reads = new Map(__B.reads.map((r, i) => [JSON.stringify([r.ref, r.pipe]), { r, i }]));
-    const __no = (k) => { throw new Error("ml." + k + " is not available in this exec, which runs in an isolated world: it has ml." + __B.members.join(", ml.") + ". Do the rest in another call."); };
+    const __no = (k) => { throw new Error("ml." + k + " is not available in this exec, which runs in an isolated world: it has ml." + __B.members.join(", ml.") + "." + (k === "fetch" ? " Read the URL with the fetch_url tool." : " Do the rest in another call.")); };
     const __freeze = (o) => { if (o && typeof o === "object" && !Object.isFrozen(o)) { Object.freeze(o); for (const k of Object.keys(o)) __freeze(o[k]); } return o; };
     const __cur = __B.current ? __freeze({ ...__B.current.current, log: Object.assign([...__B.current.current.log], { text: __B.current.logText }) }) : undefined;
     // The page's pointer value (deref-read.ts DerefText), from the kit; a re-pipe or a stored table's columns ask the
@@ -134,6 +137,7 @@ export function isolatedWrapper(inner: string, b: IsolatedBindings, n: string, s
             if (r.warning) __C.warn(r.warning);
             return __mlIsoKit.isoValue(r, e.i, __chanAsk, (s) => __C.warn(s));
         },
+        ...__mlIsoKit.helpers,
     };
     const ml = new Proxy(Object.freeze(__t0), { get(t, k) {
         if (typeof k === "symbol" || k === "then" || k === "toJSON") return undefined;
@@ -380,7 +384,7 @@ export async function runIsolatedExec(o: {
     const code = expandPointers(o.js).code;
     const serve = o.reads.some((r) => r.error === undefined) || b.sh ? o.serve : undefined;
     const r = o.how === "userScripts" ? await runInUserScriptWorld(o.tabId, o.documentId, o.runId, code, b, o.onStream, serve) : await runInCdpWorld(o.tabId, o.documentId, o.runId, code, b, o.onStream, serve);
-    const note = `(Ran in an isolated world because ${WHY[o.reason]}: it shares the page's DOM (clicks and reads work), but the page's own scripts and globals are not visible there, and ml has only ${isolatedMembers(b).map((m) => `ml.${m}`).join(" and ")}. If the page behaved differently, read what you need in a read-only exec and act in the next.)`;
+    const note = `(Ran in an isolated world because ${WHY[o.reason]}: it shares the page's DOM (clicks and reads work), but the page's own scripts and globals are not visible there; ml has only ${isolatedMembers(b).map((m) => `ml.${m}`).join(", ")}, and ml.queryAll does not cross closed shadow roots. If the page behaved differently, read what you need in a read-only exec and act in the next.)`;
     // A page global's miss, where the call could have run in the page's world: the one line that says how.
     const hint = "error" in r ? pageGlobalHint({ where: "isolated", reason: o.reason }, r.error) : "";
     if ("error" in r) return { result: `Error: ${r.error}${hint ? `\n${hint}` : ""}\n\n${note}`, renderIn, renderOut: { type: "exec-out", error: r.error } };
