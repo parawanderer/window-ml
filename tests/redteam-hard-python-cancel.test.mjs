@@ -76,7 +76,7 @@ await asyncio.sleep(0)
     assert.equal(control.error, null, `control cell failed: ${control.error}`);
     assert.equal(control.value, "control");
     assert.ok(control.spendMs !== null, "control must reach the spend's mark");
-    assert.ok(control.spendMs < 1500, `control: an ordinary task should spend promptly, took ${control.spendMs} ms`);
+    assert.ok(control.spendMs < 1000, `control: an ordinary task should spend within the 1 s bound, took ${control.spendMs} ms`);
 
     // The queued callbacks are built-ins and the loop/Handle frames are in the tracer's skip paths.
     // The cell itself is finished; this time is entirely the cancel draining work it did not bound.
@@ -95,10 +95,13 @@ for _ in range(250000):
     _loop.call_soon(_sink.clear)
 "queued"
 `);
-    assert.equal(queued.error, null, `queued cell failed before the timing assertion: ${queued.error}`);
-    assert.equal(queued.value, "queued");
+    assert.ok((queued.error === null && queued.value === "queued")
+        || (queued.value === null && /RuntimeError:[\s\S]*dropped \d+ callbacks?/.test(String(queued.error))),
+    `queued cell must return its value or refuse by naming dropped callbacks, got ${JSON.stringify(queued)}`);
     assert.ok(queued.spendMs !== null, "queued cell must reach the spend's mark");
+    // The ordinary control measures this harness's overhead around the 1 s deadline on this run.
+    const allowedSpendMs = 1000 + control.spendMs;
     console.log(`  spend with 250000 already-queued built-in callbacks: ${queued.spendMs} ms (control ${control.spendMs} ms)`);
-    assert.ok(queued.spendMs < 1500,
-        `the cancel spent ${queued.spendMs} ms draining queued callbacks despite its 1 s bound`);
+    assert.ok(queued.spendMs < allowedSpendMs,
+        `the cancel spent ${queued.spendMs} ms draining queued callbacks; the 1 s bound plus this run's measured ${control.spendMs} ms control overhead is ${allowedSpendMs} ms`);
 });
