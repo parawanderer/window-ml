@@ -18,7 +18,7 @@ const SITE = { id: 3, windowId: 1, active: true, url: "https://site.example/repo
 const config = { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "default-model", apiFormat: "openai", ocrModel: "", debugMode: "off", autoApprovePython: true };
 
 /**
- * A worker-built run whose driver calls python_exec once with `code`, then answers. `pyInside(msg)` answers the inside
+ * A worker-built run whose driver calls python_exec with `code` (one cell, or an array of them, one per turn), then answers. `pyInside(msg)` answers the inside
  * runs (absent: the stock core); `local` presets chrome.storage.local. Every gate is approved. Returns the sandbox's runs, the step events and the model's view.
  */
 async function run(code, { pyInside, cfg = {}, local = {}, external = false } = {}) {
@@ -29,8 +29,9 @@ async function run(code, { pyInside, cfg = {}, local = {}, external = false } = 
         onFetch: (c) => {
             if (!c.url.includes("/chat/completions")) return jsonResponse({});
             last = c.body.messages;
-            return ++turns === 1
-                ? jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "python_exec", arguments: JSON.stringify({ code }) } }] } }] })
+            const codes = [].concat(code);
+            return ++turns <= codes.length
+                ? jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: `c${turns}`, type: "function", function: { name: "python_exec", arguments: JSON.stringify({ code: codes[turns - 1] }) } }] } }] })
                 : jsonResponse({ choices: [{ message: { content: "done" } }] });
         },
         onPyRun: async (msg) => {
@@ -46,7 +47,7 @@ async function run(code, { pyInside, cfg = {}, local = {}, external = false } = 
         },
     });
     await bg.context.__mlStartUserRunForTest(SITE.id, { task: "compute", surface: "hud" }, external ? { approvalRouting: "both" } : undefined);
-    for (let i = 0; i < 3000 && turns < 2; i++) {
+    for (let i = 0; i < 3000 && turns <= [].concat(code).length; i++) {
         // The external channel (an orchestrator's `__mlApprovals`) answers the gate with source "external", not a person.
         if (external) for (const g of bg.context.__mlApprovals.list()) bg.context.__mlApprovals.resolve(g.key, true);
         await tick();
@@ -135,6 +136,20 @@ test("a cell naming a bridge that the person approved on the card runs with PY_R
     assert.equal(r.full.length, 1);
     assert.equal(r.full[0].bridges, true);
     assert.equal(r.full[0].hardened, true);
+});
+
+test("a later cell that names no bridge, after a lifted one in the same run, says on its card what that cell kept", T, async () => {
+    const r = await run(["from js import setTimeout as T\nreturn 1", "_x = T\nreturn 2"], NO_DIALECT);
+    assert.equal(r.asked.length, 2, "both cells asked");
+    assert.equal(r.asked[0].askWhy?.bridged, undefined, "the first cell's own line is JS_BRIDGE_LINE, from its code");
+    assert.equal(r.asked[1].askWhy?.bridged, true);
+    assert.equal("bridges" in r.full[1], false, "the later cell itself is not lifted");
+});
+
+test("without a lifted cell before it, an outside cell's ask is not marked bridged", T, async () => {
+    const r = await run(["import os\nreturn 1", "_x = 1\nreturn 2"], NO_DIALECT);
+    assert.equal(r.asked.length, 2);
+    for (const a of r.asked) assert.equal("bridged" in (a.askWhy ?? {}), false);
 });
 
 test("a cell outside the dialect that names no bridge, approved on the card, carries no lift", T, async () => {

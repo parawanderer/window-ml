@@ -93,6 +93,7 @@ export const INVENTORY: readonly InventoryEntry[] = [
     local("ml_run_models", "run-state", "the model a run was switched to"),
     local("ml_handed_to_worker", "run-state", "runs handed from a page to the worker"),
     session("ml_pinned_tabs", "run-state", "tab ids, meaningless in another browser"),
+    session("ml_py_bridged", "run-state", "runs whose Python cell reached the browser's JavaScript, for their later cells' cards; dies with the namespace"),
     local("ml_policies_run", "policies", "run policies belong to one session and go with it when it is archived or restored"),
     local("ml_policies_archived", "policies", "what an archived session lost, told once"),
     local("ml_policies_lapsed", "policies", "why a call asks; text only, never an input to a decision"),

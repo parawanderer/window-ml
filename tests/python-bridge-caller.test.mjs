@@ -8,10 +8,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 const sent = [];
+const session = {};   // chrome.storage.session, which outlives an evicted worker
 globalThis.chrome = {
     runtime: { id: "test", sendMessage: async (m) => { sent.push(m); return { ok: true, stdout: "" }; }, onMessage: { addListener() {} }, getURL: (p) => p },
     offscreen: { hasDocument: async () => true },
-    storage: { local: { get: async () => ({}), set: async () => {} }, session: { get: async () => ({}), set: async () => {} }, sync: { get: async () => ({}) }, onChanged: { addListener() {} } },
+    storage: { local: { get: async () => ({}), set: async () => {} }, session: { get: async (keys) => Object.fromEntries([].concat(keys).filter((k) => k in session).map((k) => [k, session[k]])), set: async (items) => { Object.assign(session, items); } }, sync: { get: async () => ({}) }, onChanged: { addListener() {} } },
     tabs: {},
 };
 const { runPython } = await import("../src/sw/sw-python.ts");
@@ -61,19 +62,21 @@ test("a cell inside the dialect is not lifted, even from a caller marked bridges
     } finally { setPythonDialectForTest(null); }
 });
 
-// --- the run remembers a lifted cell, so later cells' cards say what it kept --------------------------------------------
+// --- the run remembers a lifted cell, past an evicted worker, so later cells' cards say what it kept --------------------
 
-test("runPythonBridged: set by a grant with bridges and outside code, never by one without, and kept after the call ends", async () => {
-    const { ensureRunState, grantRunPython, runPythonBridged } = await import("../src/sw/worker-tools.ts");
-    ensureRunState("bridged-1", 1, () => "");
-    assert.equal(runPythonBridged("bridged-1"), false, "a fresh run");
-    grantRunPython("bridged-1", { sheets: [], code: null, bridges: true });
-    assert.equal(runPythonBridged("bridged-1"), false, "a grant with no outside code lifts nothing");
-    grantRunPython("bridged-1", { sheets: [], code: "x = 1" });
-    assert.equal(runPythonBridged("bridged-1"), false, "an outside cell without the lift");
-    grantRunPython("bridged-1", { sheets: [], code: CODE, bridges: true });
-    grantRunPython("bridged-1", null);
-    assert.equal(runPythonBridged("bridged-1"), true, "the lifted cell ended; what it took may still be in the namespace");
-    assert.equal(runPythonBridged("no-such-run"), false);
+test("pythonRunBridged: marked by a lifted cell, read back from storage.session by a worker that never saw it, dropped with the namespace", async () => {
+    const { markPythonBridged, pythonRunBridged, deletePythonRun, evictBridgedCopyForTest } = await import("../src/sw/sw-python.ts");
+    assert.equal(await pythonRunBridged("bridged-1"), false, "the default: a fresh run is unmarked");
+    await markPythonBridged("bridged-1");
+    assert.equal(await pythonRunBridged("bridged-1"), true);
+    assert.deepEqual(session.ml_py_bridged, ["bridged-1"], "written to storage.session, which an eviction keeps");
+    // The worker is evicted: its memory of the mark is gone, storage.session is not.
+    evictBridgedCopyForTest();
+    assert.equal(await pythonRunBridged("bridged-1"), true, "a restarted worker still sees the mark");
+    assert.equal(await pythonRunBridged("bridged-2"), false, "another run is not marked");
+    deletePythonRun("bridged-1");
+    await new Promise((r) => setTimeout(r, 0));
+    assert.deepEqual(session.ml_py_bridged, [], "dropped with the run's namespace");
+    evictBridgedCopyForTest();
+    assert.equal(await pythonRunBridged("bridged-1"), false, "gone after the next eviction too");
 });
-

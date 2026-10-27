@@ -212,7 +212,9 @@ that kept a bridge as a global before the gate has it swapped for the guard. `as
 (`bridges`, returned by `lockdownReadonly`) lets one cell through, for an approval card that said the cell reaches the
 browser's JavaScript (`JS_BRIDGE_LINE`, `bridge-names.ts`). The lift ends with the cell, but a value it took does not: in
 a kept run namespace a later cell can use `T` from `from js import setTimeout as T` without naming a bridge, so every
-later outside cell of that run carries `AskWhy.bridged` and its card says so (`JS_BRIDGE_KEPT_LINE`). It closes the import routes only: a
+later outside cell of that run carries `AskWhy.bridged` and its card says so (`JS_BRIDGE_KEPT_LINE`). The mark
+(`python.bridged`, `sw-python.ts`) is kept in `storage.session`, since the namespace outlives an evicted worker, and
+dropped with the namespace. It closes the import routes only: a
 cell in full Python still reaches the same functions by introspection (`type(asyncio.get_event_loop()).call_later.__globals__`,
 `gc`, the guard's own closure), and those keep the strip and the cell gate below as their bounds.
 `tests/python-bridge-gate.test.mjs`; the other Python suites run their probe cells under the lift.
