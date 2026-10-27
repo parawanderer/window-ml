@@ -480,7 +480,7 @@ listed as remaining is DONE unless named below.
      widening: `js`, `pyodide.ffi`, `pyodide.webloop` refused by the worker in an approved cell unless the card carried
      an explicit browser-JavaScript line (a new public string, wording to Shane first); `asyncio` stays; nothing
      scheduled outside asyncio outlives the cell even when approved; packages' boot-time imports keep working; lands with
-     SITE_PRESENCE step 3; the two rewritten todos are the red team's. Written into [`PYODIDE_LOCKDOWN.md`](PYODIDE_LOCKDOWN.md) step 2.
+     SITE_PRESENCE step 3; the two rewritten todos are the red team's. Written into [`PYODIDE_LOCKDOWN.md`](PYODIDE_LOCKDOWN.md) step 2. #1162 MERGED 2026-10-27 at 37229b84 (the security lane's `fix/python-strip`: `js`, `pyodide.ffi` and `pyodide.webloop` refused in an approved readonly cell, the JS-bridge card lines, the kept line surviving worker eviction; janitor review over three rounds, nothing blocking, its nit fixed at 4550a26b before the merge), verified. NEXT: e3 turns the step-3 todos in `tests/redteam-python-lockdown.test.mjs` plain (the ten bridge imports, the two rewritten) and pins the lane's unclaimed introspection rows.
   5. FOUND 2026-10-23 by `[window-ml python-cancel]`, reproduced by the coordinator: `lockdown()` THROWS on main (the
      `Object.prototype.constructor` accessor from #735 is refused by `ses`'s permit check), the `try/catch` swallows it, so
      the readonly realm is never frozen and the latch never sets; P1 still holds, nothing tests the freeze
