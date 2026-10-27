@@ -561,8 +561,10 @@ pins, in e3's file.
   of an origin in `navOnlyOrigins` raises, with the origin substituted: "Your policy lets the run go to example.com.
   Reading pages there is a separate permission: allow this read, or add a read rule to the policy."
 - **The start origin's split is closed NARROW: the gate stops claiming the read is consented.** Once the run's tab has
-  left the start page, an uncredentialed read of the start origin cards at the gate with the same line, instead of
-  passing the gate and being refused at the choke point. Nothing widens: the choke point's decision is unchanged and
+  left the start page, an uncredentialed read of the start origin cards at the gate instead of passing the gate and
+  being refused at the choke point. Its line is a start-origin VARIANT (the security lane found the ruled line false
+  there: no policy is involved; Shane picked the variant the same day): "The run started on example.com. Reading pages
+  there once the tab has left is a separate permission: allow this read, or add a read rule to the policy." Nothing widens: the choke point's decision is unchanged and
   the gate now agrees with it, so both copies of the decision read the same. "For now" (Shane): making the start
   origin's consent reach the choke point stays a widening, unassigned, with a red-team row of its own if ever ruled.
 - **Tests (rule 10).** The security lane's PR carries both with its own tests; e3's `CHOKE_REFUSED` pin on the start

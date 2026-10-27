@@ -253,7 +253,8 @@ block in `POLICIES.md` under "Narrowed 2026-10-25". Order ruled: #1131 before #1
 and only e3 edits e3's file; e3 rebases #1129, swaps the two choke-point pins for card pins, flips the todo, re-pings
 the janitor. RULED 2026-10-27 (Shane, in the coordinator's session; [`POLICIES.md`](../../spec/POLICIES.md), "Ruled
 2026-10-27"): the card's "why" line is a fixed string ("Your policy lets the run go to <origin>. Reading pages there is a
-separate permission: …"); the start-origin split closes narrow, the gate carding the read with the same line, the choke
+separate permission: …"); the start-origin split closes narrow, the gate carding the read with a start-origin variant of the line
+("The run started on <origin>. Reading pages there once the tab has left is a separate permission: …"), the choke
 point unchanged; the widening stays unassigned. The security lane builds both with its tests, e3 turns its
 `CHOKE_REFUSED` pin into a card pin after, the janitor reviews.
 
