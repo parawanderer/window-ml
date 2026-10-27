@@ -15,6 +15,11 @@
 // lockdown, and asserted by P1's test — the only way to see "reached" in a realm that gets locked.
 // And a principal change gets a NEW REALM (a Worker — `tests/python-principal-worker.mjs`): a second
 // Pyodide cannot boot in a realm `lockdown()` froze.
+//
+// Every cell here runs with the bridge refusal LIFTED (`bridges: true`, lockdown.ts `REFUSED_BRIDGES`), the case of a cell
+// whose approval card said it reaches the browser's JavaScript: the vectors need `js` and `pyodide.ffi` to set up, and
+// what they assert must hold even then (PYODIDE_LOCKDOWN.md step 2, ruled 2026-10-27). The lift ends with the cell, so a
+// `later` pump runs refused. The refusal itself is `python-bridge-gate.test.mjs`.
 import { test, before, after } from "node:test";
 import assert from "node:assert";
 import path from "node:path";
@@ -102,6 +107,8 @@ let py = null;
 let lockedDown = false;
 /** The harness module `lockdownReadonly` captured at boot; re-bound into every cell by `injectInputs`. */
 let harness = null;
+/** The bridge lift `lockdownReadonly` returned for `py`; null before the boot. */
+let bridges = null;
 /** P1's positive control, captured BEFORE any `lockdown()` (see the header). */
 let p1Control = null;
 
@@ -113,6 +120,7 @@ before(async () => {
     if (typeof lockdownReadonly === "function") {
         const held = await lockdownReadonly(py, {});
         harness = held.harness ?? null;
+        bridges = held.bridges ?? null;
         lockedDown = true;
     }
 }, { timeout: 180000 });
@@ -127,9 +135,9 @@ after(async () => {
  * Inputs go through `injectInputs` — Python `None`/`str`, never a JS null (which lands as `JsNull`,
  * a JsProxy — P3). `stream` hooks Pyodide's JS-side `setStdout`, the tee's live half. `later` is the
  * harness's "a later await": a raw `runPythonAsync` that pumps the event loop AFTER the cell's result
- * has been returned (not the wrapper — it is not a cell).
+ * has been returned (not the wrapper — it is not a cell). `lift` runs the cell with the bridge refusal lifted (see the header).
  */
-async function cellOn(interp, code, { hardened = true, stream = false, tables = null, image = null, later = 0, cancel = null } = {}) {
+async function cellOn(interp, code, { hardened = true, stream = false, tables = null, image = null, later = 0, cancel = null, lift = true } = {}) {
     injectInputs(interp.globals, image, tables == null ? null : JSON.stringify(tables), interp === py ? harness : undefined);
     if (stream) {
         try { interp.setStdout({ batched: (s) => { (cellOn.chunks ??= []).push(s); } }); } catch { /* no setStdout here */ }
@@ -139,6 +147,8 @@ async function cellOn(interp, code, { hardened = true, stream = false, tables = 
     // The cancel the worker runs: the lockdown's closure, called after the script (python-worker.ts), when there is one.
     const host = cancel !== "wrapper" && hardened && interp === py && harness?.run_script !== undefined;
     let cancelled = null;
+    const lifted = lift && interp === py ? bridges : null;
+    lifted?.(true);
     try {
         const script = wrapUserCode(code, hardened, false, host ? "host" : "wrapper");
         if (host) {
@@ -146,6 +156,7 @@ async function cellOn(interp, code, { hardened = true, stream = false, tables = 
             if (cancelled.error) throw new Error(cancelled.error);
         } else await interp.runPythonAsync(script);
     } finally {
+        lifted?.(false);
         if (saved) unharden(interp, saved);
         if (stream) { try { interp.setStdout({}); } catch { /* */ } }
     }

@@ -4,7 +4,9 @@
 //
 // Real Pyodide in Node (`dist/pyodide/`, self-SKIPS without it), booted in the readonly worker's order: packages, their
 // `prepare`, `lockdownReadonly`, then cells through `wrapUserCode`. Its own file because `lockdown()` is once per realm and
-// this file's assertions are about that one lockdown; the escape vectors live in redteam-python-sandbox.test.mjs.
+// this file's assertions are about that one lockdown; the escape vectors live in redteam-python-sandbox.test.mjs. Its cells run
+// with the bridge refusal lifted (the probes read `js` and `pyodide.ffi`), so what they assert holds even for a cell approved
+// to reach the browser's JavaScript; the refusal itself is python-bridge-gate.test.mjs.
 import { test, before } from "node:test";
 import assert from "node:assert";
 import path from "node:path";
@@ -20,6 +22,8 @@ const skip = hasPyodide ? false : "no dist/pyodide — run `npm run fetch-pyodid
 let py = null;
 /** The harness module `lockdownReadonly` captured at boot; re-bound into every cell by `injectInputs`. */
 let harness = null;
+/** The bridge lift `lockdownReadonly` returned. */
+let bridges = null;
 
 before(async () => {
     if (!hasPyodide) return;
@@ -29,13 +33,20 @@ before(async () => {
     py.setStderr({ batched: () => {} });
     await py.loadPackage(PY_PACKAGE_LOADS);
     if (PY_STARTUP_PREPARE) py.runPython(PY_STARTUP_PREPARE);
-    harness = (await lockdownReadonly(py, {})).harness ?? null;
+    ({ harness = null, bridges } = await lockdownReadonly(py, {}));
 }, { timeout: 180000 });
 
-/** Run one cell the way a hardened `python_exec` does; `{ error, value }` as the wrapper reports them. */
+/** Run harness-side Python with the bridge refusal lifted (the probes below read `pyodide.ffi` and the import hook). */
+function lifted(fn) {
+    bridges(true);
+    try { return fn(); } finally { bridges(false); }
+}
+
+/** Run one cell the way a hardened `python_exec` does, with the bridge refusal lifted; `{ error, value }` as the wrapper reports them. */
 async function cell(code) {
     injectInputs(py.globals, null, null, harness);
-    await py.runPythonAsync(wrapUserCode(code, true));
+    bridges(true);
+    try { await py.runPythonAsync(wrapUserCode(code, true)); } finally { bridges(false); }
     const err = py.globals.get("_err");
     const jr = py.globals.get("_json_result");
     let value;
@@ -115,7 +126,7 @@ test("step2 (#735): JS takes a PyProxy of every kind after boot", { skip }, () =
  * each one's referents (a JsProxy is not tracked itself), and every module's dict. Returns the labels found.
  */
 function jsProxiesOf(targets) {
-    const walk = py.runPython(`
+    const walk = lifted(() => py.runPython(`
 import gc, sys
 from pyodide.ffi import JsProxy
 def _rt_walk():
@@ -130,7 +141,7 @@ def _rt_walk():
     for m in list(sys.modules.values()):
         for v in list(getattr(m, "__dict__", {}).values()): visit(v)
     return found
-_rt_walk`);
+_rt_walk`));
     const found = walk();
     const hits = [];
     for (let i = 0; i < found.length; i++) {
@@ -195,8 +206,9 @@ out`);
     // The stand-in's flag is the real one, and run_until_complete took the branch it names: a result when set, a
     // scheduled task when not. A wrong flag would still pass asyncio.run, through the native path.
     const flag = !!py._api.config.enableRunUntilComplete;
-    assert.deepEqual(r.value, { hook: ["js", "pyodide_js"], run: 7, run_after_pop: 7, flag, ruc: flag ? 7 : "scheduled" });
-    const registered = py.runPython("import _pyodide._importhook as h\nh.jsfinder.jsproxies['pyodide_js']");
+    // `js` is not registered: the bridge gate unregisters it, so a cell that pops the guard cannot import the real one back.
+    assert.deepEqual(r.value, { hook: ["pyodide_js"], run: 7, run_after_pop: 7, flag, ruc: flag ? 7 : "scheduled" });
+    const registered = lifted(() => py.runPython("import _pyodide._importhook as h\nh.jsfinder.jsproxies['pyodide_js']"));
     assert.ok(registered !== py && registered !== py._api && registered !== py._module, "the import hook must hand out the stand-in, never the API");
     assert.deepEqual(Object.keys(registered._api), ["config"]);
     assert.equal(registered._api.config.enableRunUntilComplete, flag, "the stand-in must carry the API's own flag");

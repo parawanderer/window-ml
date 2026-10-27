@@ -203,6 +203,17 @@ the latch). (1b) `pyodide_js` out of a cell's reach: unregistered once `pyodide.
 bound what they import at load, purged from `sys.modules`, its old `JsLoader`s cleared, and re-registered as a stand-in
 holding only `_api.config` (`webloop.run_until_complete` and the patched `asyncio.run` import it at call time).
 `tests/python-lockdown.test.mjs` holds both, with a gc walk for any JsProxy of the API, `_api` or `_module`.
+(1c) The bridges a cell may not IMPORT (ruled 2026-10-27, `PYODIDE_LOCKDOWN.md` step 2): `REFUSED_BRIDGES` (`js`,
+`pyodide.ffi` and every module holding its functions, `pyodide.webloop`) are replaced in `sys.modules`, on their parent
+package and behind a first `sys.meta_path` finder by guard modules. A lookup through a guard is answered only when no
+frame on the stack is the cell's (a frame is the library's when its file is under the stdlib directory or zip), or when
+the asking frame is a library module running its own import. `js` is unregistered from Pyodide's finder, and a module
+that kept a bridge as a global before the gate has it swapped for the guard. `asyncio` is not refused. The lift
+(`bridges`, returned by `lockdownReadonly`) lets one cell through, for an approval card that said the cell reaches the
+browser's JavaScript; nothing sends it yet (the card's line waits on its wording). It closes the import routes only: a
+cell in full Python still reaches the same functions by introspection (`type(asyncio.get_event_loop()).call_later.__globals__`,
+`gc`, the guard's own closure), and those keep the strip and the cell gate below as their bounds.
+`tests/python-bridge-gate.test.mjs`; the other Python suites run their probe cells under the lift.
 (2) an ALLOW-LIST strip of `globalThis` — only the intrinsics Pyodide
 needs and a few capability-free host APIs stay; `eval`, `Function`, `fetch`, `importScripts`,
 `postMessage`, `navigator`, `chrome`, every Node module go. There is no deny list to keep
