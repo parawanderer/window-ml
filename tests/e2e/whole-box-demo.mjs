@@ -39,7 +39,7 @@ const SCENES = [
     { key: "rig-crossed", title: "The same four 3090s, bridged 0–2 and 1–3 instead", box: BOXES.rig, topo: TOPOLOGIES.rigCrossed,
       sub: "The cards are REORDERED 0, 2, 1, 3 — a wall between neighbours is the only place a bridge can be drawn on one axis.",
       models: [model("llama4:70b", "Q4_K_M", { 0: 10.5 * GiB, 1: 10.5 * GiB, 2: 10.5 * GiB, 3: 10.5 * GiB })] },
-    { key: "nvswitch", title: "8× A100 80 GB on an NVSwitch", box: BOXES.lab, topo: TOPOLOGIES.nvswitch8,
+    { key: "nvswitch", title: "8× H100 80 GB on an NVSwitch", box: BOXES.lab, topo: TOPOLOGIES.nvswitch8,
       sub: "Every pair is directly linked, so every wall between cards is a bridge: one group of eight.",
       models: [model("deepseek:671b", "Q4_K_M", Object.fromEntries([0, 1, 2, 3, 4, 5, 6, 7].map((i) => [i, 48 * GiB]))), model("gemma4:31b", "Q4_K_M", { 0: 18 * GiB })] },
     { key: "dgx1", title: "8× GPUs in a DGX-1 hybrid cube-mesh", box: BOXES.lab, topo: TOPOLOGIES.dgx1,

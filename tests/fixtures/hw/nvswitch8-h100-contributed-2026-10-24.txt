@@ -1,0 +1,33 @@
+# CONTRIBUTED, not reproduced: 8x H100 80GB HBM3 SXM on NVSwitch, driver 595.112.07, captured 2026-10-24.
+# Source: https://github.com/parawanderer/window-ml/issues/40#issuecomment-6398481214 (@Jabsama).
+# The server reads NVML, not this text; it fixes what TOPOLOGIES.nvswitch8 should carry (NV18, 18 links per pair).
+# nvlink -s shown for GPU 0; the contributor reports the other 7 print the same 18 lines.
+
+	GPU0	GPU1	GPU2	GPU3	GPU4	GPU5	GPU6	GPU7	CPU Affinity	NUMA Affinity	GPU NUMA ID
+GPU0	 X 	NV18	NV18	NV18	NV18	NV18	NV18	NV18	0-23,96-119	0		N/A
+GPU1	NV18	 X 	NV18	NV18	NV18	NV18	NV18	NV18	0-23,96-119	0		N/A
+GPU2	NV18	NV18	 X 	NV18	NV18	NV18	NV18	NV18	0-23,96-119	0		N/A
+GPU3	NV18	NV18	NV18	 X 	NV18	NV18	NV18	NV18	24-47,120-143	1		N/A
+GPU4	NV18	NV18	NV18	NV18	 X 	NV18	NV18	NV18	48-71,144-167	2		N/A
+GPU5	NV18	NV18	NV18	NV18	NV18	 X 	NV18	NV18	48-71,144-167	2		N/A
+GPU6	NV18	NV18	NV18	NV18	NV18	NV18	 X 	NV18	48-71,144-167	2		N/A
+GPU7	NV18	NV18	NV18	NV18	NV18	NV18	NV18	 X 	72-95,168-191	3		N/A
+GPU 0: NVIDIA H100 80GB HBM3 (UUID removed)
+	 Link 0: 26.562 GB/s
+	 Link 1: 26.562 GB/s
+	 Link 2: 26.562 GB/s
+	 Link 3: 26.562 GB/s
+	 Link 4: 26.562 GB/s
+	 Link 5: 26.562 GB/s
+	 Link 6: 26.562 GB/s
+	 Link 7: 26.562 GB/s
+	 Link 8: 26.562 GB/s
+	 Link 9: 26.562 GB/s
+	 Link 10: 26.562 GB/s
+	 Link 11: 26.562 GB/s
+	 Link 12: 26.562 GB/s
+	 Link 13: 26.562 GB/s
+	 Link 14: 26.562 GB/s
+	 Link 15: 26.562 GB/s
+	 Link 16: 26.562 GB/s
+	 Link 17: 26.562 GB/s
