@@ -402,12 +402,15 @@ without the entries, and the delete stops travelling from that month until the e
   neither holds nor retired (or that has no keyring), the screen offers once "Use this backup's key on this install".
   The page keeps the file's header bytes and the typed secret past the restore (the worker removes the slot) and drops
   both when the offer is used, declined, or another file is picked. It calls `adoptKeyring` and does not rekey the
-  folder.
+  folder. The folder's months are still rewritten under the new key as they change, so a second machine sharing an
+  encrypted folder under the OLD key starts skipping them (`other-key`) until it adopts the new key too; the offer does
+  not say so yet.
 - **Two machines that adopt each other's keys at the same moment swap keys.** Each keeps its old key as retired, so each
   still reads the months the other wrote, and the folder settles after the rewrites (`tests/folder-sync.test.mjs`).
   Nothing is built to prevent it.
 - **A passphrase change on the other machine is not followed.** This install keeps the wraps it adopted, so the files it
-  writes open with the passphrase as it was at adoption, and with the recovery key. Adopt again to pick up the new wrap.
+  writes open with the passphrase as it was at adoption, and with the recovery key. Adopting again does not help: the
+  same key is a no-op (`adoptKeyring`), so picking up the new wrap is not built.
 
 ## The folder: merge before write (part A)
 
