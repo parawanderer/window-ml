@@ -186,9 +186,9 @@ after the pin lands.
 MEASURED with the port (cpython#13, window-ml #1170; 275 searches in Pyodide on the fork core), two facts recorded
 without changing a number: (1) the interpreter steps at a median of about 7.1M/s on that core (5.1M to 13.6M by
 cell), so the 15M-step DEFAULT_BUDGET is about 2.1 s of interpreter work there, not the ~1 s the fork's comment
-states; the budget stays 15M, and re-expressing it is Shane's. (2) The shared bound's per-start pessimism refuses
+states; the budget stays 15M (Shane, 2026-10-27: the comment is fixed to the measured figure in cpython#13; the number is not re-expressed in time). (2) The shared bound's per-start pessimism refuses
 `findall` over about 1M characters of ordinary text (priced 20 to 100x over its real 15 to 30 ms; at 100k characters
-it costs 2 to 30% of the budget): a stated limit, in the refusing direction, and loosening it is Shane's.
+it costs 2 to 30% of the budget): a stated limit, in the refusing direction. DECIDED 2026-10-27 (Shane): it stays; loosening is revisited only if the bench shows models hitting it.
 
 **RULE: the patch keeps the ABI.** It touches `ceval`, the abstract object layer and the thread state, never the object
 header or the stable ABI. Then Pyodide's own numpy and pandas builds work unchanged, and on the host a patched CPython
