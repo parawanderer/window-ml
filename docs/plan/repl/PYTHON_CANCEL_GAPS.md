@@ -226,3 +226,29 @@ lands AFTER #1171 on main in the lane's own file (rule 10), and the second red t
 fix merges, touching nothing else. A fix that sees the loop's dispatch (a bound on the loop side, or a hook the
 dispatch itself consults) is a narrowing and needs no ruling; anything that widens what a cell may leave running comes
 back here first.
+
+Ruled 2026-10-27, on the lane's fix shape (measured in plain Pyodide: webloop gives every `call_soon` its own JS
+callback, FIFO, so the cancel's own wakeup waits behind the whole flood and no Python-side bound can run first;
+250k queued = 598 ms to drain without hooks, 3.3 to 3.8 s under the real ones):
+
+15. **A loop-side bound, in JS.** At boot the lockdown replaces `pyodide.webloop.scheduleCallback` with a wrapper that
+    records each entry's queue time; once the spend's deadline passes (JS learns it from the `spending` mark), every
+    entry queued before the deadline is dropped in JS without entering Python, except the one `call_soon` made by the
+    harness one-shot the cancel now waits on instead of `sleep(0)`; entries queued after the deadline run, so the
+    run's own completion is never dropped. The raw scheduler is captured at boot, out of a cell's reach; a cell that
+    rebinds the module global installs only a Python callable, and what that schedules is already the cell gate's to
+    revoke. Prototype at a 100 ms deadline: 2.5M queued = 354 ms spend (2.42M dropped, ~100 ns each); the overrun past
+    the deadline is ~0.04x the time the cell spent queueing, so under the kill at most ~0.6 s. A narrowing.
+16. **Refusal, not a tag.** A leftover task whose cancel-step the flood pushed past the deadline never takes its cancel:
+    telling that step apart from the cell's callbacks would need a per-entry tag a cell can forge from the closure, a
+    proxy (rule 5). The cell's result is REFUSED by name with what was measured: the number of callbacks dropped at the
+    deadline and the task that never took its cancel; `result = None`, a named `RuntimeError`, worker and namespace
+    survive. The second red team amends its two value assertions in #1171 to this behaviour (within the bound; the value
+    or a refusal naming dropped callbacks) before #1171 merges; the lane touches nothing in that file.
+17. **Dropped proxies are destroyed, deferred; never a note.** A dropped once-callable `PyProxy` keeps the cell's Python
+    callable and its globals alive in the worker the next cell shares, the #757 class of cross-cell reach. Measured
+    first (rule 8): whether the next cell reaches a dropped callable or its globals through `gc.get_objects()` or any
+    walk. Whatever it shows, the dropped proxies are destroyed in a deferred sweep after the cancel has returned
+    (batched, off the spend's path, so the overrun stays as prototyped), the reap frees the rest, and a test asserts the
+    next cell reaches none of them; if the measurement shows reach before an idle sweep would run, the sweep runs
+    before the next cell starts. The stress case's memory is stated in bytes beside the proxy count.
