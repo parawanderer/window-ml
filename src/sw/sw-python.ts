@@ -38,17 +38,30 @@ defineState({
     read: async ({ runId }) => (runId && await pythonRunBridged(runId)) || undefined,
 });
 
+// Every read-modify-write of BRIDGED_KEY waits for the one before, so two runs marked or forgotten in the same tick
+// cannot lose each other's edit.
+let bridgedWrites: Promise<void> = Promise.resolve();   // state: plumbing — orders this worker's writes of BRIDGED_KEY
+
+/** Apply one edit to the stored list of marked runs, after every earlier edit. @param edit the new list, or null to
+ *  leave it as it is */
+function editBridged(edit: (ids: string[]) => string[] | null): Promise<void> {
+    bridgedWrites = bridgedWrites.then(async () => {
+        try {
+            const area = sessionArea();
+            const held = (await area.get([BRIDGED_KEY]))[BRIDGED_KEY];
+            const next = edit(Array.isArray(held) ? held.filter((x): x is string => typeof x === "string") : []);
+            if (next) await area.set({ [BRIDGED_KEY]: next });
+        } catch { /* storage unavailable: this worker's copy holds it */ }
+    });
+    return bridgedWrites;
+}
+
 /** Mark a run whose cell is about to run with the JavaScript bridges lifted. Awaited, so a worker evicted right after
  *  still finds the mark. @param runId the run */
 export async function markPythonBridged(runId: string): Promise<void> {
     if (!runId || bridgedRuns.has(runId)) return;
     bridgedRuns.add(runId);
-    try {
-        const area = sessionArea();
-        const held = (await area.get([BRIDGED_KEY]))[BRIDGED_KEY];
-        const ids = Array.isArray(held) ? held.filter((x): x is string => typeof x === "string") : [];
-        if (!ids.includes(runId)) await area.set({ [BRIDGED_KEY]: [...ids, runId] });
-    } catch { /* storage unavailable: this worker's copy holds it */ }
+    await editBridged((ids) => ids.includes(runId) ? null : [...ids, runId]);
 }
 
 /** Whether a cell of the run ran with the bridges lifted, read from storage when this worker has not seen it (it was
@@ -70,11 +83,7 @@ export function evictBridgedCopyForTest(): void {
 /** Drop a run's mark with its namespace. @param runId the run */
 async function forgetPythonBridged(runId: string): Promise<void> {
     bridgedRuns.delete(runId);
-    try {
-        const area = sessionArea();
-        const held = (await area.get([BRIDGED_KEY]))[BRIDGED_KEY];
-        if (Array.isArray(held) && held.includes(runId)) await area.set({ [BRIDGED_KEY]: held.filter((x) => x !== runId) });
-    } catch { /* storage unavailable */ }
+    await editBridged((ids) => ids.includes(runId) ? ids.filter((x) => x !== runId) : null);
 }
 const pyStreamTabs = new Map<string, number | null | ((chunk: string, ts?: number) => void)>();
 

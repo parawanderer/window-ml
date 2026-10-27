@@ -80,3 +80,15 @@ test("pythonRunBridged: marked by a lifted cell, read back from storage.session 
     evictBridgedCopyForTest();
     assert.equal(await pythonRunBridged("bridged-1"), false, "gone after the next eviction too");
 });
+
+test("pythonRunBridged: runs marked and forgotten in the same tick keep each other's edits in storage.session", async () => {
+    const { markPythonBridged, pythonRunBridged, deletePythonRun, evictBridgedCopyForTest } = await import("../src/sw/sw-python.ts");
+    await Promise.all([markPythonBridged("same-tick-1"), markPythonBridged("same-tick-2"), markPythonBridged("same-tick-3")]);
+    assert.deepEqual([...session.ml_py_bridged].sort(), ["same-tick-1", "same-tick-2", "same-tick-3"], "no mark lost to another's write");
+    deletePythonRun("same-tick-2");
+    await markPythonBridged("same-tick-4");
+    evictBridgedCopyForTest();
+    assert.deepEqual(await Promise.all(["same-tick-1", "same-tick-2", "same-tick-3", "same-tick-4"].map(pythonRunBridged)), [true, false, true, true],
+        "a forget racing a mark drops only its own run");
+    for (const id of ["same-tick-1", "same-tick-3", "same-tick-4"]) deletePythonRun(id);
+});
