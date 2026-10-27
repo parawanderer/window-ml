@@ -217,6 +217,8 @@ examples); `LocalBackup` wires them to the `BACKUP` message, the keyring in Inde
 - **Backup.** Encrypted (default), compressed or plain, the "why encrypted" text, the decryptor's path, and an "Include
   the API key" box for the two unencrypted forms. `BACKUP create`, then the `out` slot is streamed to a save dialog
   (`showSaveFilePicker`) or an `<a download>`, named from `BACKUP_EXTENSION` and the date; the slot is removed after.
+  The download is of an in-memory copy whose URL lives a minute: a download reads its blob after the click returns,
+  and a blob of the slot's `File`, removed by then, made Chromium cancel it.
   The result line says size, sessions, "the API key was left out", and lists `unclassified` keys as a developer warning.
 - **Restore.** "Restore from a file…" streams the picked file into `in` (`copyIntoBackupSlot`), then `BACKUP offer`.
   `needs-key` asks for a passphrase or recovery key in one field (`secretFromText` tells them apart by shape);
@@ -235,9 +237,13 @@ examples); `LocalBackup` wires them to the `BACKUP` message, the keyring in Inde
 - **The popup's button** "Backup and restore…" opens `chat.html#/settings/extension/backup` (focusing an open chat tab
   and moving its hash): the `backup` anchor opens the Storage section and scrolls to the block (`route.ts`).
 
-**Not built.** Adopting another install's data key on restore; rotating the recovery key; a browser (e2e) run of the
-new worker ops, the origin-private file transfer and the screens, which only a real Chromium can exercise; the archive
-folder's encryption switch (part 3).
+**In a real browser** (`tests/e2e/backup.spec.mjs`): set-up with a wrong group refused and the right one accepted, the
+key in no storage area, two encrypted backups, then a fresh profile restoring with only the recovery key (a wrong
+secret refused, sites first in the preview), a file swapped under the preview refused as `changed` with nothing
+written, the re-read restoring both sessions and the settings; and the download path with no save dialog.
+
+**Not built.** Adopting another install's data key on restore; rotating the recovery key; the archive folder's
+encryption switch (part 3).
 
 ## The folder: merge before write (part A)
 

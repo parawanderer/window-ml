@@ -505,7 +505,16 @@ async function saveOutSlot(name: string): Promise<boolean> {
         try { handle = await picker({ suggestedName: name }); }
         catch (e) { if ((e as DOMException)?.name === "AbortError") return false; throw e; }
         await file.stream().pipeTo(await handle.createWritable());
-    } else downloadBlob(name, file);
+        return true;
+    }
+    // A download reads its blob after this returns, and the caller removes the slot then: a blob of the slot's File
+    // would be gone (Chromium cancels the download), so it is copied into memory first, and its URL outlives the read.
+    const copy = new Blob([await file.arrayBuffer()], { type: "application/octet-stream" });
+    const url = URL.createObjectURL(copy);
+    const a = document.createElement("a");
+    a.href = url; a.download = name;
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
     return true;
 }
 
