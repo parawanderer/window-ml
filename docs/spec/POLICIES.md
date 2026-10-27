@@ -555,6 +555,20 @@ the gate, refused at the choke point once the tab has left); the default ruling 
 choke point. e3's #1129 rebases after and turns its between-turns todo plain and its two choke-point pins into card
 pins, in e3's file.
 
+**Ruled 2026-10-27 (Shane, in the coordinator's session; the two items left open above).**
+
+- **The card's "why" line on a navigation-only origin's read is this string**, public, shown on the card a `fetch_url`
+  of an origin in `navOnlyOrigins` raises, with the origin substituted: "Your policy lets the run go to example.com.
+  Reading pages there is a separate permission: allow this read, or add a read rule to the policy."
+- **The start origin's split is closed NARROW: the gate stops claiming the read is consented.** Once the run's tab has
+  left the start page, an uncredentialed read of the start origin cards at the gate with the same line, instead of
+  passing the gate and being refused at the choke point. Nothing widens: the choke point's decision is unchanged and
+  the gate now agrees with it, so both copies of the decision read the same. "For now" (Shane): making the start
+  origin's consent reach the choke point stays a widening, unassigned, with a red-team row of its own if ever ruled.
+- **Tests (rule 10).** The security lane's PR carries both with its own tests; e3's `CHOKE_REFUSED` pin on the start
+  origin's read (`tests/nav-navigate-redteam.test.mjs`) turns into a card pin, edited by e3 in e3's file after the
+  lane's PR merges, as the other two choke-point pins were. The janitor reviews the lane's PR.
+
 ## Worked example and acceptance test: a task on another site, scoped by a proposed policy
 
 **Shane, 2026-10-24.** The simplest whole use of the mechanism, and the test of it: the person opens the model on any
