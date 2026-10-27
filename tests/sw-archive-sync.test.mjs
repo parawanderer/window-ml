@@ -126,3 +126,14 @@ test("encrypted months this install cannot open block the job, in one line, unti
     answers = { sync: report({ written: [] }) };
     await syncFolder("sync", "settings");
 });
+
+test("a connected folder whose form is unchosen is blocked on a choice in Settings, and the choice clears it", async () => {
+    answers = { folder: report({ form: null, pending: 2, lastSync: null }) };
+    await folderAction("status");
+    let { job } = await since(0);
+    assert.match(job.blocked, /waits for a choice of form.*in Settings/);
+    answers = { folder: report({ form: "encrypted", pending: 2 }) };
+    await folderAction("status");
+    ({ job } = await since(0));
+    assert.equal(job.blocked, undefined);
+});

@@ -64,8 +64,8 @@ export interface FolderReport {
     name?: string;
     /** month files that do not yet match the archive: written at the next sync while the folder is connected */
     pending: number;
-    /** the form month files are written in (`plain` until chosen) */
-    form: BackupForm;
+    /** the form month files are written in; null while it is unchosen (a folder that never synced): nothing is written until it is */
+    form: BackupForm | null;
     /** whether this install has a backup keyring (an encrypted folder needs one) */
     keyring: Awaited<ReturnType<typeof keyringState>>;
     /** epoch ms of the last completed sync, or null */
@@ -166,7 +166,7 @@ async function run(req: ArchiveOp): Promise<unknown> {
             if (!dir) return folderReport(db);
             const movedAside = await moveMonthFilesAside(dir);
             markAllDirty(db);
-            return { ...(await sync(db, raw, sqlite3)), movedAside };
+            return { ...(await sync(db, raw, sqlite3)), movedAside };   // while the form is unchosen the sync writes nothing
         }
         case "sync": return sync(db, raw, sqlite3);
         case "survey": {
@@ -203,9 +203,11 @@ async function sync(db: ArchiveDb, raw: Database, sqlite3: Sqlite3Static, mode: 
     const dir = await writableFolder();
     if (!dir) return folderReport(db);
     const h = { sqlite3, raw }, folder = monthFolder(dir);
-    const o: FolderOptions = { form: folderFormOf(db), keyring: await loadKeyring(idbKeyringStore()) };
+    const form = folderFormOf(db), keyring = await loadKeyring(idbKeyringStore());
+    const o: FolderOptions = { form, keyring };
     const r = mode === "adopt" ? await adoptFolder(h, folder, o) : await syncMonths(h, folder, o);
-    metaSet(db, "last_sync", String(Date.now()));
+    // An unchosen form wrote nothing, so no sync completed: `last_sync` stays unset and the form stays unchosen.
+    if (form) metaSet(db, "last_sync", String(Date.now()));
     return {
         ...(await folderReport(db)), written: r.written, removed: r.removed, merged: r.merged,
         ...(r.skipped.length ? { skipped: r.skipped } : {}),

@@ -260,7 +260,9 @@ are not. Three PRs, in this order, because each needs the one before.
 - **The upgrade.** An archive from before part 3 has no `folder_form` and reads as `plain`, which is what it was
   writing: nothing changes on someone's machine until they choose. Settings then says the folder is not encrypted and
   offers to switch, which runs the recovery-key set-up (part 2b's screen) when the install has no keyring.
-- **A new folder is encrypted by default.** Picking one with no keyring asks for set-up, or for plain explicitly.
+- **A new folder is encrypted by default, and writes nothing until its form is chosen.** The form is unchosen (null)
+  while the archive has neither `folder_form` nor `last_sync`; Settings preselects Encrypted, which with no keyring asks
+  for set-up first, and plain is an explicit choice.
 - **The name follows the form** (`YYYY-MM.sqlite`, `.sqlite.gz`, `.wmlbak`, `BACKUP_EXTENSION`), and a reader sniffs
   the bytes (`readAnyForm`), never the name. A month may have files of several forms in the folder: mid-switch, or two
   machines writing different forms.
@@ -287,10 +289,13 @@ values, calls the worker's `folderForm` op and then starts a `sync` (`ARCHIVE_FO
   sync service may keep earlier versions; Cancel leaves the form as it was.
 - **Encrypted with no keyring** runs `KeyringSetup` first, the part 2b flow (`RecoveryKeyBody`, keyring written only
   after the group is typed back; the backup screen uses the same component) and sends the form only once it is done.
-- **A first pick** (the survey found no files, the archive never completed a sync, and its form was never set)
-  shows the choice with Encrypted preselected and an explicit Continue, with no switch notice since nothing is
-  switched away from. An archive that already had a folder keeps what it was: nothing changes until the person chooses.
-  "Never had a folder" is read as "`lastSync` is null": there is no separate marker in the archive.
+- **An unchosen form.** `folderFormOf` is null (`FolderReport.form` null) while `meta.folder_form` and `meta.last_sync`
+  are both absent: an archive that never synced never had a folder, and every pre-part-3 archive that had one synced
+  at its pick, so those read as `plain` and the upgrade rule holds. While it is unchosen `sync`, `resync` and `fresh`
+  write nothing (months stay pending, `last_sync` is not set; a pick still imports what the folder holds) and the job
+  is `blocked` on a choice in Settings. `setFolderForm` ends it. The section shows the choice, Encrypted preselected
+  with an explicit Continue and no switch notice, whenever a folder is connected and the form is null: right after the
+  pick, after a reload, or after a pick made from elsewhere. There is no page-side inference.
 - **Skipped months by reason**, from the last sync or import report (kept in the page; a plain state read does not
   carry them): `needs-key` and `other-key` each say how many months and what to do, `unreadable` keeps the month and
   the error. Using another install's key is part 3c.

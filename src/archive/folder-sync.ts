@@ -49,7 +49,8 @@ export interface ArchiveHandles { sqlite3: Sqlite3Static; raw: Database }
 
 /** What a sync writes and reads with: the form to write, and the install's keyring for encrypted files. */
 export interface FolderOptions {
-    form: BackupForm;
+    /** null while unchosen: a sync then writes nothing (`folderFormOf`) */
+    form: BackupForm | null;
     keyring: Keyring | null;
 }
 
@@ -59,10 +60,16 @@ const FORMS: readonly BackupForm[] = ["plain", "gzip", "encrypted"];
 /** `meta` key of the form the archive folder is written in. */
 const FORM_KEY = "folder_form";
 
-/** The form the archive folder is written in: `plain` when unset, which is what an archive from before the setting wrote. */
-export function folderFormOf(db: ArchiveDb): BackupForm {
+/**
+ * The form the archive folder is written in, or null while it is UNCHOSEN: no `folder_form` and no `last_sync`. An
+ * archive that never synced never had a folder, so nothing was written plain on its owner's say, and a new folder
+ * writes nothing until its form is chosen. An archive from before the setting that had a folder synced at its pick, so
+ * it reads as `plain`, which is what it was writing: nothing changes on someone's machine until they choose.
+ */
+export function folderFormOf(db: ArchiveDb): BackupForm | null {
     const v = metaGet(db, FORM_KEY);
-    return FORMS.includes(v as BackupForm) ? (v as BackupForm) : "plain";
+    if (FORMS.includes(v as BackupForm)) return v as BackupForm;
+    return metaGet(db, "last_sync") ? "plain" : null;
 }
 
 /**
@@ -121,6 +128,8 @@ export async function syncMonths(h: ArchiveHandles, folder: MonthFolder, o: Fold
     if (o.form === "encrypted" && !o.keyring) throw new BackupError("needs-key", "set a backup passphrase first: an encrypted folder needs this install's key");
     const db = wasmDb(h.raw);
     const out: SyncOutcome = { written: [], removed: [], merged: 0, skipped: [] };
+    // Unchosen: nothing is written or removed, and every dirty month stays pending until `setFolderForm`.
+    if (!o.form) return out;
     for (const month of dirtyMonths(db)) {
         const m = await mergeMonth(h, folder, month, o.keyring);
         out.merged += m.merged;

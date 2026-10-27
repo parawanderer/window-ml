@@ -169,9 +169,10 @@ test("choosing Encrypted with a keyring sends the form straight away: no set-up"
     assert.doesNotMatch(host.textContent, /Set up backup encryption/);
 });
 
-test("a first pick preselects Encrypted with an explicit Continue and no switch notice; plain can still be chosen", async () => {
+test("a connected folder whose form is unchosen (report.form null) shows the choice with Encrypted preselected and an explicit Continue, and no switch notice", async () => {
     sent.length = 0;
-    const host = show({ report: conn({ form: "plain", lastSync: null, keyring: { set: true, keyId: "k1" } }), firstPick: { name: "Archive" }, onForm: (f) => sent.push(f) });
+    const host = show({ report: conn({ form: null, lastSync: null, keyring: { set: true, keyId: "k1" } }), onForm: (f) => sent.push(f) });
+    assert.match(host.textContent, /Nothing is written to it until you choose/);
     assert.equal(host.querySelectorAll('input[type="radio"]')[0].checked, true);
     assert.doesNotMatch(host.textContent, SWITCH_NOTICE);
     assert.deepEqual(buttons(host), ["Continue"]);
@@ -181,10 +182,12 @@ test("a first pick preselects Encrypted with an explicit Continue and no switch 
     assert.deepEqual(sent, ["plain"]);
     // With no keyring, Continue on the preselected Encrypted starts the set-up and sends nothing yet.
     sent.length = 0;
-    const fresh = show({ report: conn({ form: "plain", lastSync: null, keyring: { set: false } }), firstPick: { name: "Archive" }, onForm: (f) => sent.push(f) });
+    const fresh = show({ report: conn({ form: null, lastSync: null, keyring: { set: false } }), onForm: (f) => sent.push(f) });
     fresh.querySelector("button").click(); await flush();
     assert.match(fresh.textContent, /Set up backup encryption/);
     assert.deepEqual(sent, []);
+    // Not connected: no form question yet.
+    assert.doesNotMatch(show({ report: { state: "none", pending: 0, lastSync: null, form: null, keyring: { set: false } } }).textContent, /Nothing is written to it/);
 });
 
 // --- skipped months, by reason ---

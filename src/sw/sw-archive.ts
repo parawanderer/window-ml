@@ -107,6 +107,7 @@ defineJob({
             ...(syncDue != null ? { nextDue: syncDue } : {}),
             ...(f.state === "needs-grant" && f.pending ? { blocked: "the archive folder needs its access granted again, in Settings" } : {}),
             ...(keyBlock() ? { blocked: keyBlock() } : {}),
+            ...(f.state === "connected" && f.form === null ? { blocked: "the archive folder waits for a choice of form (encrypted, compressed or plain), in Settings" } : {}),
         };
     },
 });

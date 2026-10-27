@@ -125,7 +125,7 @@ export function SkippedMonths(p: { skipped: NonNullable<FolderReport["skipped"]>
  * @gallery encrypted {"report": {"state": "connected", "name": "window.ml archive", "pending": 0, "lastSync": 1790000000000, "form": "encrypted", "keyring": {"set": true, "keyId": "k1"}}, "archiveOn": true, "isBrave": false, "canAskHere": true, "busy": null, "message": ""}
  * @gallery months that need a key {"report": {"state": "connected", "name": "window.ml archive", "pending": 2, "lastSync": 1790000000000, "form": "encrypted", "keyring": {"set": false}, "skipped": [{"month": "2026-08", "reason": "needs-key", "error": "x"}, {"month": "2026-09", "reason": "needs-key", "error": "x"}]}, "archiveOn": true, "isBrave": false, "canAskHere": true, "busy": null, "message": ""}
  * @gallery a month under another install's key {"report": {"state": "connected", "name": "window.ml archive", "pending": 1, "lastSync": 1790000000000, "form": "encrypted", "keyring": {"set": true, "keyId": "k1"}, "skipped": [{"month": "2026-09", "reason": "other-key", "error": "x"}, {"month": "2026-07", "reason": "unreadable", "error": "not an archive"}]}, "archiveOn": true, "isBrave": false, "canAskHere": true, "busy": null, "message": ""}
- * @gallery a new folder, encrypted preselected {"report": {"state": "connected", "name": "window.ml archive", "pending": 0, "lastSync": null, "form": "plain", "keyring": {"set": false}}, "archiveOn": true, "isBrave": false, "canAskHere": true, "busy": null, "message": "", "firstPick": {"name": "window.ml archive"}}
+ * @gallery a new folder, encrypted preselected {"report": {"state": "connected", "name": "window.ml archive", "pending": 0, "lastSync": null, "form": null, "keyring": {"set": false}}, "archiveOn": true, "isBrave": false, "canAskHere": true, "busy": null, "message": ""}
  */
 export function ArchiveFolderBody(p: {
     report: FolderReport | null;
@@ -140,8 +140,6 @@ export function ArchiveFolderBody(p: {
     onPick(): void; onRegrant(): void; onSync(): void; onImport(): void; onForget(): void;
     /** what to do with the files a just-picked folder holds: take them in (the default), or move them aside */
     onAdopt?(): void; onFresh?(): void;
-    /** a folder picked for the first time that holds nothing: its form is chosen before anything is written */
-    firstPick?: { name: string } | null;
     /** send the chosen form (the worker sets it and the next sync rewrites the folder) */
     onForm?(form: BackupForm): void;
     /** where the recovery-key set-up writes the keyring; this browser's by default (tests pass a memory store) */
@@ -149,13 +147,6 @@ export function ArchiveFolderBody(p: {
 }) {
     const r = p.report;
     if (!r) return <div class="set-hint">{p.message || "Reading…"}</div>;
-    if (p.firstPick) return (
-        <div class="arch">
-            <div class="set-hint">Using <b>{p.firstPick.name}</b>. Choose how the archive writes its month files there.</div>
-            <ArchiveFormChoice first current={r.form ?? "plain"} keyringSet={r.keyring ? r.keyring.set : null} busy={!!p.busy} keyringStore={p.keyringStore} onApply={(f) => p.onForm?.(f)} />
-            {p.message ? <div class="set-hint arch-msg">{p.message}</div> : null}
-        </div>
-    );
     if (p.found) return (
         <div class="arch">
             <div class="set-warn"><b>{p.found.name}</b> already holds {p.found.files} month file{p.found.files === 1 ? "" : "s"}
@@ -165,6 +156,15 @@ export function ArchiveFolderBody(p: {
                 <button class="test-btn" disabled={!!p.busy} onClick={p.onFresh}>{p.busy === "fresh" ? "Moving…" : "Start fresh"}</button>
             </div>
             <div class="set-hint">Importing adds their sessions to this browser's archive and keeps everything the folder holds, so both machines' history ends up in the same files. Starting fresh moves the old files into a subfolder named <code>earlier-</code> and the date; nothing is deleted.</div>
+            {p.message ? <div class="set-hint arch-msg">{p.message}</div> : null}
+        </div>
+    );
+    // A connected folder whose form was never chosen: nothing is written to it until it is, whether it was just picked,
+    // the page was reloaded, or the pick was made from elsewhere.
+    if (r.state === "connected" && r.form === null) return (
+        <div class="arch">
+            <div class="set-hint">Using <b>{r.name}</b>. Nothing is written to it until you choose how the archive writes its month files there.</div>
+            <ArchiveFormChoice first current="plain" keyringSet={r.keyring ? r.keyring.set : null} busy={!!p.busy} keyringStore={p.keyringStore} onApply={(f) => p.onForm?.(f)} />
             {p.message ? <div class="set-hint arch-msg">{p.message}</div> : null}
         </div>
     );
@@ -261,7 +261,7 @@ function folderMessage(action: "state" | "picked" | "fresh" | "survey" | "sync" 
 
 /** How many month files a sync wrote, in words. */
 const written = (r: FolderReport): string =>
-    r.written?.length ? `Wrote ${r.written.length} month file${r.written.length === 1 ? "" : "s"}.` : "Nothing archived yet to write.";
+    r.form === null ? "Nothing is written until you choose a form." : r.written?.length ? `Wrote ${r.written.length} month file${r.written.length === 1 ? "" : "s"}.` : "Nothing archived yet to write.";
 
 /** What taking a folder into use did: the sessions it brought in, what it wrote, and any file it could not read. */
 function adopted(name: string, r: FolderReport): string {
@@ -282,7 +282,6 @@ export function LocalArchiveFolder({ archiveOn }: { archiveOn: boolean }) {
     const [message, setMessage] = useState("");
     const [isBrave, setIsBrave] = useState(false);
     const [found, setFound] = useState<{ name: string; files: number; first?: string; last?: string } | null>(null);
-    const [firstPick, setFirstPick] = useState<{ name: string } | null>(null);
     // The months the last sync or import skipped: a plain state read does not carry them, so they are kept here.
     const [skipped, setSkipped] = useState<NonNullable<FolderReport["skipped"]>>([]);
     const call = async (action: Parameters<typeof folderMessage>[0], form?: BackupForm) => {
@@ -309,12 +308,9 @@ export function LocalArchiveFolder({ archiveOn }: { archiveOn: boolean }) {
         <ArchiveFolderBody report={shown} archiveOn={archiveOn} isBrave={isBrave} busy={busy} message={message}
             canAskHere={isTopLevel()}
             found={found}
-            firstPick={firstPick}
             onForm={(form) => void act("form", async () => {
-                const first = firstPick?.name;
                 const r = await call("form", form);
-                setFirstPick(null);
-                return `${first ? `Using ${first}. ` : ""}Now written as ${formName(r.form)}. Wrote ${r.written?.length ?? 0}, removed ${r.removed?.length ?? 0}.`;
+                return `Now written as ${formName(r.form!)}. Wrote ${r.written?.length ?? 0}, removed ${r.removed?.length ?? 0}.`;
             })()}
             onPick={act("pick", async () => {
                 const name = await pickFolder();
@@ -322,9 +318,8 @@ export function LocalArchiveFolder({ archiveOn }: { archiveOn: boolean }) {
                 // Asked before anything is written: a folder with an earlier archive's files is a choice to make.
                 const survey = await folderMessage("survey");
                 if (survey.found?.files) { setFound({ name, ...survey.found }); return; }
-                // The archive never completed a sync (so it never had a folder) and its form was never changed: a NEW
-                // folder, written encrypted unless someone picks otherwise. An archive that had one keeps what it was.
-                if (survey.lastSync === null && survey.form === "plain") { setFirstPick({ name }); return; }
+                // A new folder (form unchosen) is not synced until chosen: `picked` imports and writes nothing, and the
+                // section then asks for the form.
                 return adopted(name, await call("picked"));
             })}
             onAdopt={act("adopt", async () => {

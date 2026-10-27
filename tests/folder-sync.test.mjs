@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import init from "@sqlite.org/sqlite-wasm";
-import { dirtyMonths, exportMonth, migrate, prepareSession, readArchived, removeArchived, wasmDb, writeSession, archiveStats } from "../src/archive/db.ts";
+import { dirtyMonths, exportMonth, migrate, prepareSession, readArchived, removeArchived, wasmDb, writeSession, archiveStats, metaSet } from "../src/archive/db.ts";
 import { adoptFolder, folderFormOf, importMonths, setFolderForm, surveyFolder, syncMonths } from "../src/archive/folder-sync.ts";
 import { createKeyring, sniff, readHeader } from "../src/backup/backup-format.ts";
 import { openBackupBytes } from "../src/backup/backup-file.ts";
@@ -206,12 +206,35 @@ test("THE UPGRADE: an archive with no folder_form and a folder of plain files st
     const folder = mapFolder();
     await syncMonths(a.h, folder);
     assert.equal(a.db.selectValue("SELECT count(*) FROM meta WHERE key = 'folder_form'"), 0, "fixture: the setting was never written");
-    assert.equal(folderFormOf(a.db), "plain", "absent reads as plain");
+    assert.equal(folderFormOf(a.db), null, "no folder_form and no last_sync: a folder never synced, so the form is unchosen");
+    // What the old worker's sync also left: the time it last wrote. An archive that had a folder reads as plain.
+    metaSet(a.db, "last_sync", String(Date.now()));
+    assert.equal(folderFormOf(a.db), "plain", "absent reads as plain once it has synced");
     await put(a, "0b1d0003", OCT + 5);
     const r = await syncMonths(a.h, folder, { form: folderFormOf(a.db), keyring: null });
     assert.deepEqual(r.written, ["2026-10"]);
     assert.deepEqual([...folder.files.keys()].sort(), ["2026-09.sqlite", "2026-10.sqlite"]);
     assert.deepEqual(hashesIn(folder.files.get("2026-10.sqlite")), ["0b1d0001", "0b1d0003"]);
+});
+
+test("a NEW folder (no folder_form, never synced) writes nothing until its form is chosen: months stay pending, then setFolderForm lets the sync write", async () => {
+    const a = fresh();
+    await put(a, "0e000001", OCT);
+    await put(a, "0e000002", SEPT);
+    const folder = mapFolder();
+    assert.equal(folderFormOf(a.db), null);
+    const r = await syncMonths(a.h, folder, { form: folderFormOf(a.db), keyring: keyringA });
+    assert.deepEqual([r.written, r.removed, r.skipped], [[], [], []]);
+    assert.equal(folder.files.size, 0, "no plain file lands in the new folder");
+    assert.deepEqual(dirtyMonths(a.db), ["2026-09", "2026-10"], "still pending");
+    // A pick takes in what the folder holds, and still writes nothing.
+    const adopted = await adoptFolder(a.h, folder, { form: null, keyring: keyringA });
+    assert.equal(adopted.written.length, 0);
+    assert.equal(folder.files.size, 0);
+    setFolderForm(a.db, "encrypted", keyringA);
+    const w = await syncMonths(a.h, folder, { form: folderFormOf(a.db), keyring: keyringA });
+    assert.deepEqual(w.written, ["2026-09", "2026-10"]);
+    assert.deepEqual([...folder.files.keys()].sort(), ["2026-09.wmlbak", "2026-10.wmlbak"]);
 });
 
 test("switching to encrypted rewrites every month as an encrypted file, removes the .sqlite, and a fresh archive with the key imports it back", async () => {
@@ -337,10 +360,10 @@ test("a month left with no sessions removes every form's file", async () => {
     assert.equal(f2.files.size, 0);
 });
 
-test("folderForm encrypted with no keyring is refused and the form is unchanged; absent stays plain", () => {
+test("folderForm encrypted with no keyring is refused and the form is unchanged; absent stays unchosen", () => {
     const a = fresh();
     assert.throws(() => setFolderForm(a.db, "encrypted", null), (e) => e.reason === "needs-key");
-    assert.equal(folderFormOf(a.db), "plain");
+    assert.equal(folderFormOf(a.db), null);
     assert.equal(a.db.selectValue("SELECT count(*) FROM meta WHERE key = 'folder_form'"), 0, "nothing was written");
     assert.throws(() => setFolderForm(a.db, "zip", keyringA), /not a form/);
     setFolderForm(a.db, "gzip", null);
