@@ -7,7 +7,7 @@
 // Without the merge, a new browser pointed at an old machine's folder replaced every month the two shared with its
 // own sessions alone, at the first sync after anything was archived into that month.
 import type { Database, Sqlite3Static } from "@sqlite.org/sqlite-wasm";
-import { dirtyMonths, expireRemoved, exportMonth, markAllDirty, markClean, metaGet, mergeBytes, metaSet, wasmDb, type ArchiveDb } from "./db";
+import { allMonths, dirtyMonths, expireRemoved, exportMonth, folderFilesGet, folderFilesMonths, folderFilesSet, markAllDirty, markClean, metaGet, markMonthDirty, mergeBytes, metaSet, wasmDb, type ArchiveDb, type FileStat } from "./db";
 import { sealBackup, type BackupForm } from "../backup/backup-file";
 import { BackupError, readAnyForm, readHeader, sniff, type Keyring } from "../backup/backup-format";
 
@@ -21,6 +21,8 @@ export interface MonthFolder {
     read(month: string, form: BackupForm): Promise<Uint8Array | null>;
     /** replace a month's file in one form, only once the whole of it is written */
     write(month: string, form: BackupForm, bytes: Uint8Array): Promise<void>;
+    /** a month's file in one form: its size and modification time, read without its bytes; null when there is none */
+    stat(month: string, form: BackupForm): Promise<FileStat | null>;
     /** remove a month's file in one form; nothing when there is none */
     remove(month: string, form: BackupForm): Promise<void>;
 }
@@ -104,21 +106,62 @@ async function openFile(bytes: Uint8Array, keyring: Keyring | null): Promise<{ p
  * imported; one that cannot be read means the month is skipped and none of its files is touched.
  * @returns `forms`: the forms whose files were read, which a write may replace
  */
-async function mergeMonth(h: ArchiveHandles, folder: MonthFolder, month: string, keyring: Keyring | null): Promise<{ merged: number; deleted: number; forms: BackupForm[]; skip?: { reason: SkipReason; error: string } }> {
+async function mergeMonth(h: ArchiveHandles, folder: MonthFolder, month: string, keyring: Keyring | null): Promise<{ merged: number; deleted: number; entries: number; forms: BackupForm[]; skip?: { reason: SkipReason; error: string } }> {
     const opened: { form: BackupForm; plain: Uint8Array }[] = [];
     for (const form of await folder.forms(month)) {
         const bytes = await folder.read(month, form);
         if (!bytes) continue;
         const o = await openFile(bytes, keyring);
-        if ("reason" in o) return { merged: 0, deleted: 0, forms: [], skip: o };
+        if ("reason" in o) return { merged: 0, deleted: 0, entries: 0, forms: [], skip: o };
         opened.push({ form, plain: o.plain });
     }
-    let merged = 0, deleted = 0;
+    let merged = 0, deleted = 0, entries = 0;
     for (const o of opened) {
-        try { const r = mergeBytes(h.sqlite3, h.raw, o.plain); merged += r.added; deleted += r.deleted; }
-        catch (e) { return { merged, deleted, forms: [], skip: { reason: "unreadable", error: String((e as Error)?.message || e).slice(0, 200) } }; }
+        try { const r = mergeBytes(h.sqlite3, h.raw, o.plain); merged += r.added; deleted += r.deleted; entries += r.entries; }
+        catch (e) { return { merged, deleted, entries, forms: [], skip: { reason: "unreadable", error: String((e as Error)?.message || e).slice(0, 200) } }; }
     }
-    return { merged, deleted, forms: opened.map((o) => o.form) };
+    return { merged, deleted, entries, forms: opened.map((o) => o.form) };
+}
+
+/** The forms a month has files in, with what the folder reports of each. */
+async function statsOf(folder: MonthFolder, month: string): Promise<{ forms: BackupForm[]; stats: Record<string, FileStat> }> {
+    const forms: BackupForm[] = [], stats: Record<string, FileStat> = {};
+    for (const f of await folder.forms(month)) {
+        const st = await folder.stat(month, f);
+        if (st) { forms.push(f); stats[f] = st; }
+    }
+    return { forms, stats };
+}
+
+const sameStats = (a: Record<string, FileStat>, b: Record<string, FileStat>): boolean => {
+    const ka = Object.keys(a), kb = Object.keys(b);
+    return ka.length === kb.length && ka.every((k) => b[k] && b[k].size === a[k].size && b[k].lastModified === a[k].lastModified);
+};
+
+/**
+ * Merge every month whose files differ from what the archive last saw of them (a new file, a changed one, a removed
+ * one; none remembered counts as changed), and mark it dirty only when the merge changed the archive (sessions added
+ * or removed, an entry added or dropped), a file is in a form other than the chosen one, or the folder lost the month's
+ * file while the archive still has something for it. A merge that changed nothing only records the stats: a month is
+ * never rewritten just because it was touched, or two machines would rewrite each other's files for ever. A month
+ * that cannot be read is skipped, as a dirty one is, and its stats are not recorded.
+ */
+async function mergeChanged(h: ArchiveHandles, folder: MonthFolder, o: FolderOptions, out: SyncOutcome): Promise<void> {
+    const db = wasmDb(h.raw);
+    const dirty = new Set(dirtyMonths(db));
+    const held = new Set(allMonths(db));
+    for (const month of [...new Set([...await folder.months(), ...folderFilesMonths(db)])].sort()) {
+        if (dirty.has(month)) continue;   // its own pass merges it
+        const cur = await statsOf(folder, month);
+        if (sameStats(cur.stats, folderFilesGet(db, month))) continue;
+        const m = await mergeMonth(h, folder, month, o.keyring);
+        if (m.skip) { out.skipped.push({ month, ...m.skip }); continue; }
+        out.merged += m.merged;
+        out.deleted += m.deleted;
+        const rewrite = m.merged || m.deleted || m.entries || cur.forms.some((f) => f !== o.form) || (!cur.forms.length && held.has(month));
+        if (rewrite) markMonthDirty(db, month);
+        else folderFilesSet(db, month, cur.stats);
+    }
 }
 
 /**
@@ -138,6 +181,7 @@ export async function syncMonths(h: ArchiveHandles, folder: MonthFolder, o: Fold
     if (!o.form) return out;
     const now = o.now ?? Date.now();
     expireRemoved(db, now);   // before the list is read: the months it dirties are rewritten in this sync
+    await mergeChanged(h, folder, o, out);
     for (const month of dirtyMonths(db)) {
         const m = await mergeMonth(h, folder, month, o.keyring);
         out.merged += m.merged;
@@ -148,9 +192,12 @@ export async function syncMonths(h: ArchiveHandles, folder: MonthFolder, o: Fold
         if (sessions || removed) {
             await folder.write(month, o.form, await sealBackup(bytes, o.form, o.keyring, new Date(), "archive-month"));
             for (const f of m.forms) if (f !== o.form) await folder.remove(month, f);
+            const st = await folder.stat(month, o.form);
+            folderFilesSet(db, month, st ? { [o.form]: st } : {});
             out.written.push(month);
         } else {
             for (const f of m.forms) await folder.remove(month, f);
+            folderFilesSet(db, month, {});
             out.removed.push(month);
         }
         markClean(db, month);
@@ -167,6 +214,7 @@ export async function importMonths(h: ArchiveHandles, folder: MonthFolder, keyri
         sessions += m.merged;
         deleted += m.deleted;
         if (m.skip) { skipped.push({ month, ...m.skip }); continue; }
+        folderFilesSet(wasmDb(h.raw), month, (await statsOf(folder, month)).stats);
         files++;
     }
     return { files, sessions, deleted, skipped };

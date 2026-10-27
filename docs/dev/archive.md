@@ -60,6 +60,9 @@ here instead. Decided with Shane on 2026-09-19; the design and the probe behind 
 - **A month file carries its month's `removed` entries** (hash, month, time; 180 days, then they expire), so a month
   whose sessions were all deleted keeps a file of entries only until they expire. `ARCHIVE_SCHEMA` is unchanged; an
   older reader ignores the table.
+- **A sync also merges a month file that changed on disk** (another machine wrote it): the archive remembers each
+  month file's size and modification time as of its last write or merge (`folder_files`), and a file that differs is
+  merged before the dirty months are written. A merge that changes nothing rewrites nothing. `backup.md`, 3b.
 - **Built in memory, never as a temporary file.** `exportMonth` attaches `:memory:`, copies the month in and
   serializes it (`sqlite3_js_db_export(db, "snap")`); `importBytes` deserializes a file into an attached `:memory:` and
   copies in what is new (`INSERT OR IGNORE`, sessions by hash, images by content hash). The file header is checked

@@ -107,6 +107,10 @@ export function migrate(db: ArchiveDb, schema = "main"): void {
     // back (docs/dev/backup.md, "merge before write"). A month file carries its own month's entries (part 3b), so a
     // delete reaches the other machine; `ARCHIVE_SCHEMA` is not bumped, because an older reader names the tables it
     // copies and ignores this one.
+    // What each month file looked like when this archive last wrote or merged it (part 3b): a sync merges a file whose
+    // size or time differs. The archive's own bookkeeping, so main only; an archive from before has none, which reads as
+    // "changed" and merges every file once.
+    if (S === "main") db.exec("CREATE TABLE IF NOT EXISTS main.folder_files (month TEXT NOT NULL, form TEXT NOT NULL, size INTEGER NOT NULL, mtime INTEGER NOT NULL, PRIMARY KEY (month, form)) WITHOUT ROWID");
     db.exec(`CREATE TABLE IF NOT EXISTS ${S}.removed (hash TEXT PRIMARY KEY, month TEXT NOT NULL, ts INTEGER NOT NULL) WITHOUT ROWID`);
     const have = Number(db.selectValue(`SELECT value FROM ${S}.meta WHERE key = 'schema'`) ?? 0);
     if (have > ARCHIVE_SCHEMA) throw new Error(`this archive was written by a newer version (schema ${have}); update the extension to read it`);
@@ -506,7 +510,7 @@ export function copyMonth(db: ArchiveDb, into: string, month: string, now = Date
  */
 export function importFrom(db: ArchiveDb, from: string, only?: readonly string[]): number {
     let added = 0;
-    db.transaction(() => { added = importSessions(db, from, only, false); });
+    db.transaction(() => { added = importSessions(db, from, only, false).added; });
     return added;
 }
 
@@ -516,6 +520,8 @@ export interface MergeResult {
     added: number;
     /** sessions removed because the file carries a newer delete of them */
     deleted: number;
+    /** `removed` entries added or replaced, plus local entries dropped for a newer session: the merge changed those */
+    entries: number;
 }
 
 /**
@@ -529,9 +535,9 @@ export interface MergeResult {
  * @throws a file from a newer schema
  */
 export function mergeFrom(db: ArchiveDb, from: string): MergeResult {
-    let r: MergeResult = { added: 0, deleted: 0 };
+    let r: MergeResult = { added: 0, deleted: 0, entries: 0 };
     db.transaction(() => {
-        let deleted = 0;
+        let deleted = 0, entries = 0;
         const has = Number(db.selectValue(`SELECT count(*) FROM ${from}.sqlite_master WHERE type = 'table' AND name = 'removed'`)) > 0;
         if (has) {
             for (const e of db.selectObjects(`SELECT hash, month, ts FROM ${from}.removed`)) {
@@ -541,7 +547,7 @@ export function mergeFrom(db: ArchiveDb, from: string): MergeResult {
                 const held = db.selectObjects("SELECT last_ts, archived_ts FROM main.sessions WHERE hash = ?", [e.hash])[0];
                 if (held && Number(held.archived_ts) >= ts) continue;   // archived again after the delete: it stays
                 const mine = db.selectValue("SELECT ts FROM main.removed WHERE hash = ?", [e.hash]);
-                if (mine == null || Number(mine) < ts) db.exec({ sql: "INSERT OR REPLACE INTO main.removed(hash, month, ts) VALUES (?, ?, ?)", bind: [e.hash, e.month, ts] });
+                if (mine == null || Number(mine) < ts) db.exec({ sql: "INSERT OR REPLACE INTO main.removed(hash, month, ts) VALUES (?, ?, ?)", bind: [e.hash, e.month, ts] }), entries++;
                 if (held) {
                     markDirty(db, Number(held.last_ts));
                     dropSessionRows(db, e.hash);
@@ -549,7 +555,8 @@ export function mergeFrom(db: ArchiveDb, from: string): MergeResult {
                 }
             }
         }
-        r = { added: importSessions(db, from, undefined, true), deleted };
+        const imp = importSessions(db, from, undefined, true);
+        r = { added: imp.added, deleted, entries: entries + imp.dropped };
     });
     return r;
 }
@@ -557,7 +564,7 @@ export function mergeFrom(db: ArchiveDb, from: string): MergeResult {
 /** `importFrom`'s and `mergeFrom`'s copy, inside the caller's transaction. `travel` is the merge's rule for a local
  *  `removed` entry (compare its time with the file's `archived_ts`, and drop it when the session is newer) against the
  *  restore's (any entry blocks). */
-function importSessions(db: ArchiveDb, from: string, only: readonly string[] | undefined, travel: boolean): number {
+function importSessions(db: ArchiveDb, from: string, only: readonly string[] | undefined, travel: boolean): { added: number; dropped: number } {
     const theirs = Number(db.selectValue(`SELECT value FROM ${from}.meta WHERE key = 'schema'`) ?? 0);
     if (theirs > ARCHIVE_SCHEMA) throw new Error(`that archive file was written by a newer version (schema ${theirs})`);
     if (only) {
@@ -577,10 +584,14 @@ function importSessions(db: ArchiveDb, from: string, only: readonly string[] | u
     // Only the images the imported sessions reference: a file's unreferenced blobs are not this archive's to hold.
     db.exec(`INSERT OR IGNORE INTO main.images SELECT * FROM ${from}.images WHERE sha IN (SELECT sha FROM ${from}.image_refs WHERE hash IN (SELECT hash FROM temp.import_new))`);
     // What came in was archived after its entry (a blocking entry would have kept it out): the delete is superseded.
-    if (travel) db.exec("DELETE FROM main.removed WHERE hash IN (SELECT hash FROM temp.import_new)");
+    let dropped = 0;
+    if (travel) {
+        dropped = Number(db.selectValue("SELECT count(*) FROM main.removed WHERE hash IN (SELECT hash FROM temp.import_new)"));
+        db.exec("DELETE FROM main.removed WHERE hash IN (SELECT hash FROM temp.import_new)");
+    }
     db.exec("DROP TABLE temp.import_new");
     if (only) db.exec("DROP TABLE temp.import_only");
-    return added;
+    return { added, dropped };
 }
 
 /** "SQLite format 3\0", the first 16 bytes of every SQLite database file. */
@@ -625,6 +636,34 @@ export function importBytes(sqlite3: Sqlite3Static, raw: Database, bytes: Uint8A
 /** Merge a month file's bytes (a folder snapshot) into the live archive with its deletes (`mergeFrom`). */
 export function mergeBytes(sqlite3: Sqlite3Static, raw: Database, bytes: Uint8Array): MergeResult {
     return withAttachedBytes(sqlite3, raw, bytes, (db, schema) => mergeFrom(db, schema));
+}
+
+/** What a month file looked like: the size and modification time the folder reported. */
+export interface FileStat { size: number; lastModified: number }
+
+/** What the archive last saw of a month's files, by form. */
+export function folderFilesGet(db: ArchiveDb, month: string): Record<string, FileStat> {
+    const out: Record<string, FileStat> = {};
+    for (const r of db.selectObjects("SELECT form, size, mtime FROM folder_files WHERE month = ?", [month])) out[String(r.form)] = { size: Number(r.size), lastModified: Number(r.mtime) };
+    return out;
+}
+
+/** Every month the archive remembers files of. */
+export function folderFilesMonths(db: ArchiveDb): string[] {
+    return db.selectValues("SELECT DISTINCT month FROM folder_files").map(String);
+}
+
+/** Remember what a month's files look like now, replacing what was remembered (an empty record forgets the month). */
+export function folderFilesSet(db: ArchiveDb, month: string, files: Record<string, FileStat>): void {
+    db.transaction(() => {
+        db.exec({ sql: "DELETE FROM folder_files WHERE month = ?", bind: [month] });
+        for (const [form, f] of Object.entries(files)) db.exec({ sql: "INSERT INTO folder_files(month, form, size, mtime) VALUES (?, ?, ?, ?)", bind: [month, form, f.size, f.lastModified] });
+    });
+}
+
+/** Mark a month's folder file as no longer matching the archive. */
+export function markMonthDirty(db: ArchiveDb, month: string): void {
+    db.exec({ sql: "INSERT OR IGNORE INTO dirty_months(month) VALUES (?)", bind: [month] });
 }
 
 /** Every month with sessions or entries is dirty: a folder was just picked (or re-picked), and holds none of them yet. */

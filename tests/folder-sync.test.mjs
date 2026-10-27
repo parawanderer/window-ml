@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import init from "@sqlite.org/sqlite-wasm";
-import { dirtyMonths, exportMonth, expireRemoved, migrate, prepareSession, readArchived, removeArchived, wasmDb, writeSession, archiveStats, metaSet } from "../src/archive/db.ts";
+import { dirtyMonths, exportMonth, expireRemoved, folderFilesMonths, migrate, prepareSession, readArchived, removeArchived, wasmDb, writeSession, archiveStats, metaSet } from "../src/archive/db.ts";
 import { adoptFolder, folderFormOf, importMonths, setFolderForm, surveyFolder, syncMonths } from "../src/archive/folder-sync.ts";
 import { createKeyring, sniff, readHeader } from "../src/backup/backup-format.ts";
 import { digestOf, inspectBackup, openBackupBytes, restoreNewSessions } from "../src/backup/backup-file.ts";
@@ -23,6 +23,8 @@ const EXT = { plain: "sqlite", gzip: "sqlite.gz", encrypted: "wmlbak" };
 const FORMS = Object.keys(EXT);
 /** A folder of month files in memory, as a sync sees one: file name (`2026-10.sqlite`) to bytes. */
 function mapFolder(files = new Map()) {
+    const mtimes = new Map();
+    let clock = 0;
     const names = (month) => FORMS.filter((f) => files.has(`${month}.${EXT[f]}`));
     return {
         files,
@@ -30,7 +32,11 @@ function mapFolder(files = new Map()) {
         months: async () => [...new Set([...files.keys()].map((n) => n.slice(0, 7)))].sort(),
         forms: async (m) => names(m),
         read: async (m, form) => files.get(`${m}.${EXT[form]}`) ?? null,
-        write: async function (m, form, bytes) { if (this.failWrites) throw new Error("disk full"); files.set(`${m}.${EXT[form]}`, bytes); },
+        mtimes,
+        /** what a sync of the real folder would see without reading the file: its size and when it was last written */
+        stat: async (m, form) => { const b = files.get(`${m}.${EXT[form]}`); return b ? { size: b.length, lastModified: mtimes.get(`${m}.${EXT[form]}`) ?? 0 } : null; },
+        write: async function (m, form, bytes) { if (this.failWrites) throw new Error("disk full"); files.set(`${m}.${EXT[form]}`, bytes); mtimes.set(`${m}.${EXT[form]}`, ++clock); this.writes.push(`${m}.${EXT[form]}`); },
+        writes: [],
         remove: async (m, form) => { files.delete(`${m}.${EXT[form]}`); },
     };
 }
@@ -401,7 +407,7 @@ async function twoMachines(...hashes) {
     for (const [i, h] of hashes.entries()) await put(A, h, OCT + i, ARCH);
     const folder = mapFolder();
     await syncMonths(A.h, folder, P);
-    await adoptFolder(B.h, folder, P);
+    await syncMonths(B.h, folder, P);
     assert.ok(hashes.every((h) => hasIt(B, h)), "fixture: B holds what A archived");
     return { A, B, folder };
 }
@@ -413,7 +419,7 @@ test("A deletes a session both hold: B's next sync removes it, keeping A's time,
     assert.deepEqual(hashesIn(folder.files.get("2026-10.sqlite")), ["de1e0a02"]);
     assert.deepEqual(entriesIn(folder.files.get("2026-10.sqlite")), [`de1e0a01@${DEL}`]);
 
-    const r = await adoptFolder(B.h, folder, P);
+    const r = await syncMonths(B.h, folder, P);
     assert.equal(r.deleted, 1);
     assert.equal(r.merged, 0, "merged still means sessions added");
     assert.equal(hasIt(B, "de1e0a01"), false);
@@ -421,7 +427,7 @@ test("A deletes a session both hold: B's next sync removes it, keeping A's time,
     assert.deepEqual(removedOf(B), [`de1e0a01@${DEL}`], "the entry keeps the file's time, not now");
     assert.deepEqual(entriesIn(folder.files.get("2026-10.sqlite")), [`de1e0a01@${DEL}`], "and B writes it on");
 
-    const back = await adoptFolder(A.h, folder, P);
+    const back = await syncMonths(A.h, folder, P);
     assert.deepEqual([back.merged, back.deleted], [0, 0]);
     assert.equal(hasIt(A, "de1e0a01"), false, "B's file does not bring it back");
     assert.equal(hasIt(B, "de1e0a01"), false);
@@ -438,8 +444,8 @@ test("A deletes, B archives the same session again later: B's copy survives A's 
     assert.deepEqual(removedOf(B), [], "and was not added");
     assert.deepEqual(entriesIn(folder.files.get("2026-10.sqlite")), []);
 
-    const a = await adoptFolder(A.h, folder, P);
-    assert.equal(a.imported.sessions, 1);
+    const a = await syncMonths(A.h, folder, P);
+    assert.equal(a.merged, 1);
     assert.equal(hasIt(A, "a6a10b01"), true);
     assert.deepEqual(removedOf(A), [], "A's entry is gone");
 });
@@ -451,12 +457,12 @@ test("B archived it after A's delete but syncs first: A's entry arriving later d
     await syncMonths(B.h, folder, P);
     assert.deepEqual(hashesIn(folder.files.get("2026-10.sqlite")), ["5e1f0c01"]);
 
-    const a = await adoptFolder(A.h, folder, P);
-    assert.deepEqual([a.imported.sessions, a.deleted], [1, 0]);
+    const a = await syncMonths(A.h, folder, P);
+    assert.deepEqual([a.merged, a.deleted], [1, 0]);
     assert.equal(hasIt(A, "5e1f0c01"), true, "A's own older delete lost to B's newer archive");
     assert.deepEqual(removedOf(A), []);
     assert.deepEqual(hashesIn(folder.files.get("2026-10.sqlite")), ["5e1f0c01"], "the file never lost it");
-    assert.equal((await adoptFolder(B.h, folder, P)).deleted, 0);
+    assert.equal((await syncMonths(B.h, folder, P)).deleted, 0);
     assert.equal(hasIt(B, "5e1f0c01"), true);
 });
 
@@ -469,7 +475,7 @@ test("all of a month's sessions deleted on A: the file keeps only the entries, B
     assert.deepEqual(hashesIn(folder.files.get("2026-10.sqlite")), []);
     assert.deepEqual(entriesIn(folder.files.get("2026-10.sqlite")), [`a11d0d01@${DEL}`, `a11d0d02@${DEL}`]);
 
-    assert.equal((await adoptFolder(B.h, folder, P)).deleted, 2);
+    assert.equal((await syncMonths(B.h, folder, P)).deleted, 2);
     assert.equal(archiveStats(B.db).sessions, 0);
 
     // 100 days on: the entries are live, the file stays.
@@ -505,14 +511,14 @@ test("encrypted: the entries survive sealing, and the other machine reading the 
     const folder = mapFolder();
     const E = { form: "encrypted", keyring: keyringA, now: T0 };
     await syncMonths(A.h, folder, E);
-    await adoptFolder(B.h, folder, E);
+    await syncMonths(B.h, folder, E);
     assert.equal(hasIt(B, "e2c70e01"), true);
     removeArchived(A.db, "e2c70e01", DEL);
     await syncMonths(A.h, folder, E);
     assert.deepEqual([...folder.files.keys()], ["2026-10.wmlbak"], "an entries-only month is written in the chosen form");
     const plain = await openBackupBytes(folder.files.get("2026-10.wmlbak"), keyringA);
     assert.deepEqual([hashesIn(plain), entriesIn(plain)], [[], [`e2c70e01@${DEL}`]]);
-    assert.equal((await adoptFolder(B.h, folder, E)).deleted, 1);
+    assert.equal((await syncMonths(B.h, folder, E)).deleted, 1);
     assert.equal(hasIt(B, "e2c70e01"), false);
 });
 
@@ -533,8 +539,8 @@ test("THE UPGRADE: a month file from before 3b (no removed table) merges as befo
     await put(B, "01d3b002", OCT + 1, ARCH);
     removeArchived(B.db, "01d3b002", DEL);   // B deleted one of the two itself
     const folder = mapFolder(new Map([["2026-10.sqlite", oldBytes]]));
-    const r = await adoptFolder(B.h, folder, P);
-    assert.deepEqual([r.imported.sessions, r.imported.deleted], [1, 0]);
+    const r = await syncMonths(B.h, folder, P);
+    assert.deepEqual([r.merged, r.deleted], [1, 0]);
     assert.deepEqual([hasIt(B, "01d3b001"), hasIt(B, "01d3b002")], [true, false]);
     assert.deepEqual(hashesIn(folder.files.get("2026-10.sqlite")), ["01d3b001"], "rewritten in the new shape");
     assert.deepEqual(entriesIn(folder.files.get("2026-10.sqlite")), [`01d3b002@${DEL}`]);
@@ -560,4 +566,79 @@ test("a restore from a backup file imports what it previewed: a local removed en
     assert.equal(added, 1);
     assert.deepEqual([hasIt(here, "7e570f01"), hasIt(here, "7e570f02"), hasIt(here, "7e570f03")], [true, false, true], "Z stays: a restore deletes nothing");
     assert.deepEqual(removedOf(here), [`7e570f02@${DEL}`], "and this archive's entries are as they were");
+});
+
+// --- a sync merges month files another machine changed (part 3b) ---
+
+test("A archives a new session and syncs: B's plain sync, with nothing dirty on B, takes it in", async () => {
+    const { A, B, folder } = await twoMachines("5ee00e01");
+    await put(A, "5ee00e02", OCT + 5, ARCH);
+    await syncMonths(A.h, folder, P);
+    assert.deepEqual(dirtyMonths(B.db), [], "fixture: nothing is pending on B");
+    const r = await syncMonths(B.h, folder, P);
+    assert.equal(r.merged, 1);
+    assert.equal(hasIt(B, "5ee00e02"), true);
+});
+
+test("two archives syncing back and forth with no changes reach a state where neither writes", async () => {
+    const { A, B, folder } = await twoMachines("9019e001");
+    await put(A, "9019e002", OCT + 3, ARCH);
+    await put(B, "9019e003", OCT + 4, ARCH);
+    removeArchived(A.db, "9019e001", DEL);
+    for (let i = 0; i < 3; i++) { await syncMonths(A.h, folder, P); await syncMonths(B.h, folder, P); }
+    for (const M of [A, B]) assert.deepEqual([hasIt(M, "9019e002"), hasIt(M, "9019e003"), hasIt(M, "9019e001")], [true, true, false]);
+    const settled = folder.writes.length;
+    for (let i = 0; i < 3; i++) {
+        const a = await syncMonths(A.h, folder, P), b = await syncMonths(B.h, folder, P);
+        assert.deepEqual([a.written, b.written, a.merged, b.merged, a.deleted, b.deleted], [[], [], 0, 0, 0, 0]);
+    }
+    assert.equal(folder.writes.length, settled, "no file was rewritten once both had merged");
+});
+
+test("THE UPGRADE: an archive with no remembered file stats merges every file once at its first sync, then leaves them alone", async () => {
+    const X = fresh();
+    await put(X, "0b5e7001", OCT, ARCH);
+    const folder = mapFolder();
+    await syncMonths(X.h, folder, P);
+    const A = fresh();   // an archive from before 3b: the table does not exist yet, and migrate makes it empty
+    A.db.exec("DROP TABLE main.folder_files");
+    migrate(A.db);
+    assert.deepEqual(folderFilesMonths(A.db), []);
+    const first = await syncMonths(A.h, folder, P);
+    assert.equal(first.merged, 1, "the first sync after the upgrade merged the file");
+    assert.deepEqual(folderFilesMonths(A.db), ["2026-10"]);
+    const settled = folder.writes.length;
+    const second = await syncMonths(A.h, folder, P);
+    assert.deepEqual([second.merged, second.written], [0, []]);
+    assert.equal(folder.writes.length, settled, "and the second wrote nothing");
+});
+
+test("another machine emptied the month and removed its file: a sync rewrites it while this archive still holds sessions, and forgets it when nothing is left", async () => {
+    const { A, folder } = await twoMachines("e3b7e001");
+    folder.files.delete("2026-10.sqlite");   // the other machine removed the month's file
+    const r = await syncMonths(A.h, folder, P);
+    assert.deepEqual(r.written, ["2026-10"]);
+    assert.deepEqual(hashesIn(folder.files.get("2026-10.sqlite")), ["e3b7e001"]);
+    // Nothing held for the month: the file goes and the memory of it goes with it.
+    removeArchived(A.db, "e3b7e001", DEL);
+    await syncMonths(A.h, folder, P);
+    await syncMonths(A.h, folder, { ...P, now: DEL + 181 * DAY });
+    assert.equal(folder.files.size, 0);
+    assert.deepEqual(folderFilesMonths(A.db), []);
+    const idle = await syncMonths(A.h, folder, { ...P, now: DEL + 181 * DAY });
+    assert.deepEqual([idle.written, idle.removed, idle.skipped], [[], [], []]);
+});
+
+test("a changed file this install cannot read is skipped as a dirty one is: bytes unchanged, stats not recorded", async () => {
+    const X = fresh();
+    await put(X, "5c19e001", OCT, ARCH);
+    const folder = mapFolder();
+    await syncMonths(X.h, folder, { form: "encrypted", keyring: keyringB, now: T0 });
+    const theirs = folder.files.get("2026-10.wmlbak");
+    const A = fresh();
+    const r = await syncMonths(A.h, folder, { form: "encrypted", keyring: keyringA, now: T0 });
+    assert.deepEqual(r.skipped.map((x) => [x.month, x.reason]), [["2026-10", "other-key"]]);
+    assert.equal(folder.files.get("2026-10.wmlbak"), theirs);
+    assert.deepEqual(folderFilesMonths(A.db), [], "not recorded, so it is tried again next time");
+    assert.equal((await syncMonths(A.h, folder, { form: "encrypted", keyring: keyringA, now: T0 })).skipped.length, 1);
 });

@@ -344,8 +344,18 @@ without the entries, and the delete stops travelling from that month until the e
   merge: entries older than 180 days leave `main.removed` and their months become dirty, so a file that carried one is
   rewritten without it. `FolderOptions.now` is the injectable clock. 180 days is far over any gap between two
   machines' syncs; a machine offline longer, still holding the session, brings it back.
-- **A plain `sync` merges only the dirty months.** A delete made on A reaches B when B's month is dirty, on B's resync
-  (`adoptFolder`) or on an Import; nothing makes B look at a month it has not touched.
+- **A sync merges a month file another machine changed.** The archive remembers, per month and form, the `size` and
+  `lastModified` of each file it last wrote or merged (`folder_files`, main only, written by `folderFilesSet`);
+  `MonthFolder.stat` reads them without the bytes. Before the dirty list is read, `mergeChanged` merges every month whose
+  files differ from that record (a new file, a changed one, a removed one) with `mergeFrom`. It marks the month dirty
+  only when the merge changed the archive (sessions added or removed, an entry added or dropped), a file is in a form
+  other than the chosen one, or the folder lost the file while the archive still holds something for the month;
+  otherwise it only records the stats. A merge that changed nothing never causes a rewrite, so two machines syncing
+  back and forth settle and stop writing (`tests/folder-sync.test.mjs`). A write records the written file's stats, an
+  Import records what it merged, and a month left with no file forgets its record. A month the merge could not read
+  (`needs-key`, `other-key`, `unreadable`) is skipped as a dirty one is and its stats are not recorded, so it is tried
+  again. An archive from before 3b has no record, which counts as changed: its first sync after the upgrade merges every
+  file once. This is what makes a new session or a delete written on A reach B with nothing dirty on B.
 
 ### 3c. Two machines on one encrypted folder
 
@@ -384,6 +394,8 @@ same to each other.
 ## Traps
 
 - **A merge without the `removed` list undoes deletes.** Anything that imports from the folder skips those hashes.
+- **Record stats only after a merge or a write that succeeded.** A recorded stat says "this file is merged"; one
+  recorded on a skip hides the file for ever.
 - **A month file's `removed` entries are part of the month.** A month with entries and no sessions still has a file;
   code that treats "no sessions" as "no file" deletes a delete before the other machine has read it.
 - **A restore does not use `mergeFrom`.** It takes sessions only, under the hard `removed` rule; routing it through the
