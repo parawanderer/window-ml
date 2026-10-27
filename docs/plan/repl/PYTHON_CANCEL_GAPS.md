@@ -278,12 +278,17 @@ Ruled the same hour:
     that PR. The janitor reviews it in its queue; nothing waits on the second red team for this one. After it merges,
     the first red team (`window-ml-redteam-e3`) pins the case in its own file as a named row, with the mutation check
     (bound off, the case hangs), and that row is the property's pin from then on.
-19. **`sys.monitoring` is guarded, universally** (rule 2). The attribute gate covers every function of `sys.monitoring`
-    that installs, changes or removes a tool, its events or its callbacks, enumerated from the module's own namespace
-    in a test (`dir(sys.monitoring)` filtered to callables, each asserted refused in a cell), never a hand-typed list
-    of five. With that guard a cell cannot leave a tool running into the spend; the spend still asserts no foreign
-    tool holds any id before it installs its own and refuses the cell's result by name if one does (pin 5's shape:
-    measured, never assumed). The lane's own tool id is captured at boot with the other callables (pin 8).
+19. **`sys.monitoring` is guarded during the spend, universally** (rule 2; wording corrected 2026-10-27 on the lane's
+    question, the first text said "refused in a cell"). Pin 9's spend-time guard widens to every function of
+    `sys.monitoring` that installs, changes or removes a tool, its events or its callbacks, enumerated from the
+    module's own namespace in a test (`dir(sys.monitoring)` filtered to callables, each asserted to raise the deadline
+    exception when a task calls it during the spend), never a hand-typed list of five. Outside the spend a cell may
+    use `sys.monitoring` on its own time: the lockdown has no universal refusal for a Python callable, and nothing a
+    cell's tool does before the spend outlives the spend's start, where every id but the harness's own is checked
+    (`get_tool`), any tool found is cleared and freed before the spend's hook goes on, and the cell's result is refused
+    naming the tool (pin 5's shape: measured, never assumed; the row leaves a tool whose `LINE` callback spins and
+    asserts the spend finishes within the bound). The harness's tool id is captured at boot with the other callables
+    (pin 8).
 20. **One mechanism where the measurement allows it** (rule 8). The `c_call` guard of pin 9 moves to monitoring's
     `CALL` event if the lane measures the same refusal there; if `setprofile` stays, the spec says why and both hooks
     are guarded and restored to `None` (pin 5). The skip-files rule moves into the callback. Pin 4's per-core
