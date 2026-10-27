@@ -229,12 +229,13 @@ reply:** `notebooks/<topic>/`, run with `node scripts/nb.mjs`. `docs/dev/noteboo
 - **Iterating? Run a GENRE: `npm run test:core`** (the `test-genres` skill); run the full `npm test` before you commit.
 - **Tests: `npm test`** (`node:test`, real files in `node:vm` with mocked `chrome`). A new primitive gets a test in
   `tests/background.test.js` and `tests/relay.test.js`.
-- **Several sessions at once? Each gets its own CLONE** as a sibling directory (`.env` and `pyodide-wheels`
-  symlinked, `git config core.hooksPath .githooks`, `npm ci`). Never `git add -A` in a shared tree.
+- **Several sessions at once? Each gets its own CLONE** as a sibling directory (`.env`, `pyodide-wheels` and
+  `pyodide-core` symlinked, `git config core.hooksPath .githooks`, `npm ci`). Never `git add -A` in a shared tree.
 - **RULE — a clone or worktree you CREATED for a topic, you REMOVE once its PR has merged**, after checking it holds
   nothing unpushed. One you did not create is never removed without asking; `~/git/window-ml` and
   `~/git/window-ml-hub` never.
-- **Four absences are silent:** `node_modules`, `pyodide-wheels/`, `.env`, and the `wmlhub` binary (`npm run fetch-hub`).
+- **Five absences are silent:** `node_modules`, `pyodide-wheels/`, `pyodide-core/` (stock Pyodide; ~320 real-CPython
+  tests skip), `.env`, and the `wmlhub` binary (`npm run fetch-hub`).
 - **Coverage: `npm run coverage`** (the `coverage` skill). **End-to-end** only for what jsdom/`node:vm` cannot
   represent; factor pure logic out into a fast `*.test.mjs` instead.
 

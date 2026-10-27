@@ -65,13 +65,15 @@ Use `npm ci` rather than `npm install`: it installs exactly what the lockfile sa
 ## 4. Optional: the Python sandbox's packages
 
 ```bash
-npm run fetch-pyodide     # ~28MB into pyodide-wheels/
+npm run fetch-pyodide     # ~28MB into pyodide-wheels/, and the restricted-mode core into pyodide-core/
 ```
 
 Skip this and everything still builds and every test still passes. What breaks is only visible later and
 does not look like a missing download: the `python_exec` tool fails at RUNTIME with
 `ModuleNotFoundError: No module named 'numpy'`, which reads like a sandbox bug. The build prints a single
-`⚠ pyodide-wheels/ missing` line and carries on; the real-CPython tests skip themselves.
+`⚠ pyodide-wheels/ missing` line and carries on; the real-CPython tests skip themselves. Without `pyodide-core/`
+the build ships stock Pyodide instead of the restricted-mode fork (`⚠ pyodide-core/ missing`), and the fork's own
+tests skip themselves the same way.
 
 Fetch it if you will touch `python_exec` or want the tests that exercise real pandas.
 

@@ -348,6 +348,7 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
   cd window-ml-<what-you-are-doing>
   ln -s ../window-ml/.env .env                       # the backend + key, for USE_ENV=1
   ln -s ../window-ml/pyodide-wheels pyodide-wheels   # 28MB of static wheels, don't re-download
+  ln -s ../window-ml/pyodide-core pyodide-core       # the restricted-mode fork core; without it, STOCK Pyodide
   git config core.hooksPath .githooks                # LOCAL config: it does not clone
   npm ci && npm run build
   ```
@@ -390,6 +391,14 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
   remove it on your own. Another session may still be working in it, or the user may be keeping it. Run the same
   checks, add who might be using it (`lsof +D <dir>`, the session mail, the date of its last commit), and put that
   to the user as a question. `~/git/window-ml` and `~/git/window-ml-hub` are the core clones and are never removed.
+- **`pyodide-core/` is the fourth, and the easiest to miss.** It holds the Pyodide core built from the restricted-mode
+  fork (`npm run fetch-pyodide` writes it beside the wheels; `docs/dev/pyodide-build.md`). Without it the build falls
+  back to the npm package's STOCK Pyodide with one `⚠ pyodide-core/ missing` line, and everything stays green: the
+  fork's tests self-skip as "dist/pyodide is the stock core" (324 skipped of the `python` genre's 530 tests, against
+  2 with the fork core, measured 2026-10-27). A clone made without it ran a day's probes on the stock core while
+  reporting them as measured on the pinned one. Symlink it as above, or run `npm run fetch-pyodide`; the build refuses
+  a core whose `.pin` disagrees with `tools/pyodide-dist.json`, so a symlinked core that a branch's pin has moved past
+  fails loudly.
 - **Three gitignored things do NOT come with a fresh checkout, and no absence is loud.** `node_modules` is
   obvious (nothing runs); `pyodide-wheels/` is not — the build prints one `⚠ pyodide-wheels/ missing`
   line and carries on, `npm test` stays green because the CPython tests self-skip, and the failure only
@@ -528,7 +537,8 @@ you are replacing.
 The incidents behind the rules above, one line each; the full story is in the section named.
 
 - **`core.hooksPath` does not clone, and its absence is silent.** (Builds, bundles and tests)
-- **Four absences are silent:** `node_modules`, `pyodide-wheels/` (`No module named 'numpy'` at run time), `.env`
+- **Five absences are silent:** `node_modules`, `pyodide-wheels/` (`No module named 'numpy'` at run time),
+  `pyodide-core/` (stock Pyodide; the fork's tests skip), `.env`
   (`USE_ENV=1` dies on ENOENT) and the `wmlhub` binary (thirty hub tests SKIP; `npm run fetch-hub`). (Builds,
   bundles and tests)
 - **A FAILED build leaves `dist/` alone**, so a silenced failed build looks like a working one. (Builds, bundles and
