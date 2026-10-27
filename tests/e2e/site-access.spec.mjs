@@ -1388,12 +1388,34 @@ test.describe("@security attack 19: the start card", () => {
         env.fake.setScript([{ content: "AGENT RAN" }]);
         return { ...env, origin, page };
     }
-    /** The card's frame once it shows the start card. */
-    async function startCard(page) {
+    /** The start card's frame once `.start-ask` is up; settled unless `settle` is false (a test that must click in the first second). */
+    async function startCard(page, { settle = true } = {}) {
         await expect.poll(() => !!page.frames().find((f) => f.url().includes("sidebar.html")), { timeout: 15000 }).toBe(true);
         const frame = page.frames().find((f) => f.url().includes("sidebar.html"));
         await frame.waitForSelector(".start-ask", { timeout: 15000 });
+        if (settle) await cardSettled(frame);
         return frame;
+    }
+    /**
+     * Wait until the card's frame stops moving on the page. The shell springs the container's position and size in when
+     * a card appears, arms or unfolds, and Playwright's stability check runs inside the frame, so a click sent mid-spring
+     * lands where the button was (about one run in three before this). Three equal readings 100 ms apart: two can match
+     * at the overshoot's turnaround (the wrap's transform eases past its end and back).
+     */
+    async function cardSettled(frame) {
+        const el = await frame.frameElement();
+        const seen = [];
+        await expect.poll(async () => {
+            const b = await el.boundingBox();
+            seen.push(b ? JSON.stringify(b) : "");
+            const last = seen.slice(-3);
+            return last.length === 3 && last[0] !== "" && last.every((x) => x === last[0]);
+        }, { timeout: 5000, intervals: [100] }).toBe(true);
+    }
+    /** Wait until the start card has armed (its buttons enabled, their labels swapped in, the height re-posted), then settled. */
+    async function cardArmed(frame) {
+        await frame.waitForSelector(".start-row .appr-btn.yes:not([disabled])", { timeout: 5000 });
+        await cardSettled(frame);
     }
     const startAgent = (page, task = "Summarise this thread.") => page.evaluate((t) => { window.__result = window.ml.agent(t, { vision: false }).then((r) => ({ ok: r.summary }), (e) => ({ err: String(e?.message || e) })); }, task);
     const result = (page) => page.evaluate(() => window.__result);
@@ -1447,11 +1469,11 @@ test.describe("@security attack 19: the start card", () => {
         const { fake, page, close } = await asking();
         try {
             await startAgent(page);
-            const card = await startCard(page);
+            const card = await startCard(page, { settle: false });   // settling can outlast the first second
             await card.locator(".start-row .appr-btn.yes").first().click({ force: true });
             await page.waitForTimeout(300);
             expect(fake.calls().length, "a click before the card armed allowed the agent").toBe(0);
-            await page.waitForTimeout(900);
+            await cardArmed(card);
             await card.locator(".start-row .appr-btn.yes").first().click();
             await expect.poll(() => fake.calls().length, { timeout: 15000 }).toBe(1);
             expect(await result(page)).toEqual({ ok: "AGENT RAN" });
@@ -1520,6 +1542,7 @@ test.describe("@security attack 19: the start card", () => {
             await expect.poll(badge, { timeout: 5000 }).toBe("1");
             expect(await popup.evaluate((id) => chrome.action.getTitle({ tabId: id }), tabId)).toBe("window.ml: an agent start is waiting for you on this tab");
 
+            await cardArmed(card);
             await card.getByRole("button", { name: "Collapse" }).first().click();
             await expect(card.locator(".start-ask")).toHaveCount(0, { timeout: 5000 });
             await page.evaluate(() => document.getElementById("field").focus());   // the Collapse click focused the card's frame
@@ -1529,11 +1552,12 @@ test.describe("@security attack 19: the start card", () => {
             const r = await popup.evaluate(([id, q]) => chrome.runtime.sendMessage({ type: "START_ASKS", payload: { tabId: id, show: q } }), [tabId, asks[0].requestId]);
             expect(r.data.shown).toBe(true);
             await card.waitForSelector(".start-ask", { timeout: 5000 });
+            await cardSettled(card);
             expect(await page.evaluate(() => document.activeElement?.id), "Show moved focus off the page's own input").toBe("field");
             expect(fake.calls().length).toBe(0);
 
             // Answered: the badge clears.
-            await page.waitForTimeout(1200);   // the card arms
+            await cardArmed(card);   // Show remounts the card, which arms again
             await card.locator(".start-row .appr-btn.yes").first().click();
             await expect.poll(badge, { timeout: 5000 }).toBe("");
             await expect.poll(() => fake.calls().length, { timeout: 15000 }).toBe(1);
