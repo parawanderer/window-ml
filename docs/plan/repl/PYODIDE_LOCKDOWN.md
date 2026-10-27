@@ -107,8 +107,11 @@ starts from main.
    once-callables or proxies handed to `setTimeout`, `setInterval`, `queueMicrotask`, `MessageChannel`) may run after
    the cell's result: that route is refused or swept at the epilogue, and approving one cell never covers code that runs
    during a later one. Packages' own boot-time imports keep working (pyarrow's `unix_timezones` does `import js` at
-   import time), so the refusal is by the CALLER (the cell's own frames), never by the name alone. Lands with
-   SITE_PRESENCE step 3 beside the two `run_js` todos; the `asyncio` todo and the `from js import setTimeout` one are
+   import time), so the refusal is by the CALLER (the cell's own frames), never by the name alone. Lands as its
+   own PR (the security lane's `fix/python-strip`), ahead of this document's step 3 (the strip), which is measured
+   with the approval granted and so waits for the lift; "SITE_PRESENCE step 3" in an earlier wording of this line was
+   a slip, corrected 2026-10-27 on the lane's question. The two `run_js` todos it makes pass are flipped plain by the
+   red team after the merge, in its file; the `asyncio` todo and the `from js import setTimeout` one are
    rewritten against this property by the red team (rule 10), never the builder.
    The coordinator's reading of the two routes it touches: no conflict with step 3 or with (i). The refusal closes
    `run_js` (`from js import eval`) for the DEFAULT approved cell only; under the explicit approval `js` is back and
