@@ -617,7 +617,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
 // Loads content.js + injected.js into one fake "page world" so ml.* calls
 // travel the real postMessage relay. `onRuntimeMessage` plays the background:
 // it gets the runtime message and returns { data } or { error }.
-function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside, visible = true, beforeInjected } = {}) {
+function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside, visible = true, ask = false, beforeInjected } = {}) {
     // #8: ml.agent probes config + model capabilities on every call to decide
     // whether to auto-wire a `look` tool. Answer those probes from `config`/`caps`
     // (defaults: no OCR model, no capabilities → no vision tool) so loop tests
@@ -711,7 +711,7 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside
                     // shifts every relay/agent test's message indices. `open` is the page's presence (SITE_PRESENCE.md
                     // step 2): visible unless the test says hidden. (The handler itself is tested in
                     // tests/background.test.js against the real background.)
-                    if (message && message.type === "CONTENT_READY") { queueMicrotask(() => cb && cb({ adopt: [], open: visible })); return; }
+                    if (message && message.type === "CONTENT_READY") { queueMicrotask(() => cb && cb({ adopt: [], open: visible, ...(ask ? { ask: true } : {}) })); return; }
                     // The Pyodide pre-warm a run with python_exec sends at start: a side call, answered here and kept
                     // out of runtimeCalls, or it eats a scripted model turn. Recorded in `prewarms` for the tests of it.
                     if (message && message.type === "PYTHON_PREWARM") { prewarms.push(message.payload); queueMicrotask(() => cb && cb({ data: "started" })); return; }
