@@ -122,7 +122,10 @@ async function measure(variant, expected) {
         await host.waitForTimeout(3000);
         const said = await host.evaluate(() => window.__said).catch(() => []);
         const site = await ext.context.newPage();
-        await site.goto(counters.siteUrl(`chrome-extension://${ext.extensionId}`));
+        // The frame's per-session origin (`use_dynamic_url`), as a site that learned it would frame it: the extension's id
+        // alone no longer loads a web-accessible file into a web page.
+        const framed = (await ext.sw.evaluate(() => chrome.runtime.getURL("artifact-probe.html"))).replace(/\/artifact-probe\.html$/, "");
+        await site.goto(counters.siteUrl(framed));
         await site.waitForTimeout(1500);
         const topPost = await site.evaluate(() => window.__got);
         return { reached: Object.fromEntries(PROBES.map((p) => [p, counters.hits.get(p) || 0])), said, topPost };

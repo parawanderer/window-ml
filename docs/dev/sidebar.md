@@ -259,6 +259,11 @@ The Markdown export keeps the source. Code: `src/mermaid/`.
 
 ## Traps
 
+- **A web-accessible file has two URLs (`use_dynamic_url`).** `getURL("sidebar.html")` (or `mermaid.html`) names a
+  per-session URL, which is the only one a web page may load it by; the document it loads still reports the
+  extension's own id (`location`, `sender.url`, `getURL("")`). So a frame inside a page is LOADED by `getURL(file)`
+  and RECOGNISED by `` `${getURL("")}file` ``: the shell ignored the sidebar's hello while it compared the two
+  (`openHostPort`). In Node, `new URL("chrome-extension://…").origin` is `"null"`.
 - **The app talks to its host only through `parent-channel.ts`** (`toHost`, `onHostMessage`), never
   `window.parent.postMessage` or a `message` listener of its own. On a web page the overlay's and the card's parent
   window IS the page, which hears what the app posts to its parent (and gets the frame's window as the source) and can

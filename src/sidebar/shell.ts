@@ -309,7 +309,9 @@ const MAX_OFFERED = 8;
  * @param sender who sent the hello: the extension's own sidebar page, or it is ignored
  */
 function openHostPort(nonce: string, sender: chrome.runtime.MessageSender): void {
-    if (!frame?.contentWindow || sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL("sidebar.html"))) return;
+    // The frame is loaded from `getURL("sidebar.html")`, a per-session URL (`use_dynamic_url`), but its document, and
+    // so the hello's `sender.url`, is at the extension's own id.
+    if (!frame?.contentWindow || sender.id !== chrome.runtime.id || !sender.url?.startsWith(`${chrome.runtime.getURL("")}sidebar.html`)) return;
     const ch = new MessageChannel();
     const offered = ch.port1;
     offeredPorts.add(offered);
@@ -829,7 +831,7 @@ const shotRoots = (): ShotRoots => ({
     hosts: ([[shellHost, shellRoot, "sidebar"], [cardHost, cardRoot, "card"], [hlHost, hlRoot, "highlight"]] as const).map(([host, root, kind]) =>
         ({ host, kind, root, style: root ? ownSheets.get(root)?.style ?? null : null, sheet: root ? ownSheets.get(root)?.sheet ?? "" : "", topLayer: topLayer.manages(host) })),
     owned: [panel, frame, cardWrap, lightbox, highlightEl],
-    lightboxId: SB_LIGHTBOX, highlightId: SB_HIGHLIGHT, extensionOrigin: chrome.runtime.getURL(""),
+    lightboxId: SB_LIGHTBOX, highlightId: SB_HIGHLIGHT, extensionOrigin: `${new URL(chrome.runtime.getURL("sidebar.html")).origin}/`,
     topLayerStrays: topLayer.strays(),
 });
 

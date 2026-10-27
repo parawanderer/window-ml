@@ -33,6 +33,7 @@ const inFlight = new Map<string, Promise<MermaidResult>>();
 let frame: HTMLIFrameElement | null = null;   // state: plumbing (the one sandboxed frame; made again if it fails)
 let ready: Promise<HTMLIFrameElement> | null = null;   // state: plumbing
 let seq = 0;   // state: plumbing (request ids to the frame)
+let frameUrl: string | null = null;   // state: plumbing (where the frame loads from, when not beside the document)
 // ONE DRAWING AT A TIME: N fences in a reply are N Mermaid parses either way, and in sequence they cost one parse's
 // memory and leave the page responsive between them. Each asks the frame only once the one before has settled.
 let sending: Promise<unknown> = Promise.resolve();   // state: plumbing (the drawing before this one)
@@ -49,7 +50,7 @@ function frameReady(doc: Document): Promise<HTMLIFrameElement> {
         f.tabIndex = -1;
         f.className = "mmd-frame";
         f.style.cssText = "position:fixed;left:-10000px;top:0;width:1000px;height:800px;border:0;visibility:hidden";
-        f.src = new URL("mermaid.html", doc.baseURI).href;
+        f.src = frameUrl ?? new URL("mermaid.html", doc.baseURI).href;
         const fail = setTimeout(() => reject(new Error("the diagram renderer did not start")), RENDER_TIMEOUT_MS);
         doc.defaultView!.addEventListener("message", (e: MessageEvent) => {
             // Only OUR frame's window: a page that can reach this window (the sidebar sits in someone's page) could
@@ -155,12 +156,17 @@ function act(btn: HTMLElement): void {
 /**
  * Turn every ```mermaid fence rendered into `doc`, now and from now on, into its diagram, and redraw them when the
  * theme changes. Once per document; a second call does nothing.
+ * @param doc the document
+ * @param url where the frame loads from, when not `mermaid.html` beside the document: the overlay's sidebar, an
+ *   extension frame inside a web page, must load it by its per-session URL (`use_dynamic_url`), since the extension's
+ *   own id no longer loads a web-accessible file there
  */
-export function installMermaid(doc: Document): void {
+export function installMermaid(doc: Document, url?: string): void {
     const w = doc.defaultView as (Window & { __mlMermaid?: true }) | null;
     if (!w || w.__mlMermaid) return;
-    if (!doc.body) { doc.addEventListener("DOMContentLoaded", () => installMermaid(doc), { once: true }); return; }
+    if (!doc.body) { doc.addEventListener("DOMContentLoaded", () => installMermaid(doc, url), { once: true }); return; }
     w.__mlMermaid = true;
+    frameUrl = url ?? null;
     scan(doc);
     new MutationObserver((records) => {
         for (const r of records) for (const n of r.addedNodes) if (n.nodeType === 1) {

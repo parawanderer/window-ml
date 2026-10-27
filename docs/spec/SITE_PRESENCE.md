@@ -65,7 +65,9 @@ runs it was not given, not that it sees nothing:
   origins, and re-registered when the list changes. No `<script src="chrome-extension://...">` tag, so `injected.js`
   leaves the web-accessible list. Match patterns cannot name a port, so the script checks `location.origin` against the
   exact origin and stops, and the relay checks the sender's origin again.
-- **The sidebar files** stay web-accessible (the overlay iframe needs them) with `use_dynamic_url: true`.
+- **The sidebar files** stay web-accessible (the overlay iframe needs them) with `use_dynamic_url: true`. As built: a
+  page that knows the extension's id loads none of them by it (attack 16e); the overlay loads `sidebar.html`, and the
+  sidebar `mermaid.html`, by the URL `getURL` names.
 - **A MessagePort replaces window messages** between the main-world script and the content script. The main-world
   script runs at `document_start` before any page script, creates the channel and hands one port to the content script;
   `PAGE_TOOL_RUN` and its siblings then never cross the page's window. The page still shares the world the main-world
