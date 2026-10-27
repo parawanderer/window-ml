@@ -122,7 +122,7 @@ export interface ShotRoots {
     lightboxId: string;
     /** The id of the hover highlight box, an outline over a page element. */
     highlightId: string;
-    /** The extension's own URL prefix (`chrome-extension://<id>/`): a page may embed one of its frames itself. */
+    /** The URL prefix our frames load under (`use_dynamic_url`'s per-session id): a page may embed one of them itself. */
     extensionOrigin: string;
     /** The top-layer keeper's count of hosts found out of the top layer past a task (shell-top-layer.ts `strays`): a
      *  watch over which it moved refuses the shot, since a host out for one frame between two reads is in neither. */

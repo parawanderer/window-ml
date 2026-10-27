@@ -13,7 +13,7 @@
 // attack does put extension pixels somewhere, so a pass is not a page that hid the UI altogether.
 import { test, expect } from "@playwright/test";
 import http from "node:http";
-import { launchExtension, configureExtension, inShell, waitInShell, waitForMl, onChannel } from "./harness.mjs";
+import { launchExtension, configureExtension, inShell, waitInShell, waitForMl, onChannel, warUrl } from "./harness.mjs";
 import { TAMPERED, RESTYLED_COVERS, MOVED_COVERS } from "../../src/sw/shot-mask.ts";
 
 /** A page that is one flat green with a transparent target box at (300,300) 200×100, on a local http server. */
@@ -833,15 +833,15 @@ for (const when of ["raf", "resize-observer"]) {
 test("the extension's sidebar.html embedded by the page inside its own shadow root shows nothing: not in a bare capture, not in the worker's shot", async () => {
     await withShell(async (s, ext) => {
         const plain = await offGreen(s.page, (await s.bare()).dataUrl);
-        await s.page.evaluate((id) => {
+        await s.page.evaluate((url) => {
             const h = document.createElement("div");
             h.style.cssText = "position:fixed;left:40px;top:40px;width:400px;height:400px";
             document.body.append(h);
             const f = document.createElement("iframe");
-            f.src = `chrome-extension://${id}/sidebar.html`;
+            f.src = url;
             f.style.cssText = "width:400px;height:400px;border:0";
             h.attachShadow({ mode: "closed" }).append(f);
-        }, ext.extensionId);
+        }, await warUrl(ext.sw, "sidebar.html"));
         await s.page.waitForTimeout(1500);
         const sb = s.page.frames().filter((f) => f.url().includes("sidebar.html"));
         expect(sb.length, "ours and the page's").toBe(2);

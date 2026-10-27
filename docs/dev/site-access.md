@@ -273,8 +273,8 @@ reader of it fails there.
 - **Residuals:** a run on a hidden page exposes what it did before step 2 (rows 4 and 6 of detection-surface.md): there
   injected.js arrives after the page's scripts, which can take the port from the hand-off (or race the injection with
   ports of their own) and speak as injected.js. On a visible origin the main side keeps the port's builtins from load, so
-  a page that wraps them later is not handed the port. The sidebar's files stay web-accessible
-  until `use_dynamic_url` (row 5).
+  a page that wraps them later is not handed the port. The sidebar's files are still web-accessible,
+  but only by their per-session URL (`use_dynamic_url`, row 5).
 
 ## Starting agents
 

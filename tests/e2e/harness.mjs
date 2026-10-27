@@ -170,6 +170,19 @@ export async function configureExtension(/** @type {any} */ sw, /** @type {Recor
 }
 
 /**
+ * The URL a web page must use to load one of the extension's web-accessible files (`sidebar.html`, `mermaid.html`):
+ * its per-session id (`use_dynamic_url`, manifest.json), which the worker's `getURL` names. The extension's own id no
+ * longer loads them into a page, so an attack that frames one stands for a page that LEARNED this URL. The document
+ * loaded from it still reports the extension's own id as its URL.
+ * @param {any} sw the extension's service worker
+ * @param {string} file the web-accessible file
+ * @returns {Promise<string>}
+ */
+export async function warUrl(sw, file) {
+    return sw.evaluate((/** @type {string} */ f) => chrome.runtime.getURL(f), file);
+}
+
+/**
  * Put an origin on the extension's approved list ("always"), as a person allowing the site from the toolbar would.
  * Every page-started message is refused for an origin that is not on it (docs/spec/SITE_ACCESS.md). It may also start
  * agents without a card (`agents: "always"`), since a spec that calls `ml.agent` is about the run, not the agent level;

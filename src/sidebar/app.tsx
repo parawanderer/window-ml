@@ -22,7 +22,7 @@ import { trackPointer, pointerGone } from "./pointer-gone";
 import { ContextMenu, CursorTipLayer, highlightPos } from "./ui-kit";
 import { Hash } from "./copy-hash";
 import { expireStartAsk, forgetSessionReduced, onDebug, maybeGenerateTitles, titleTried } from "./debug-reducer";
-import { installServices } from "./services";
+import { installServices, services } from "./services";
 import { extensionServices } from "./services-ext";
 import { ProfileBadge, SessionRow, AgentBadge } from "./transcript/reply";
 import { Composer } from "./transcript/composer";
@@ -532,7 +532,8 @@ function mount(): void {
     // extension frame that is the same messaging they used to call inline (services-ext.ts).
     installServices(extensionServices);
     initThemeStyle();
-    installMermaid(document);   // ```mermaid fences in model text become diagrams (mermaid-client.ts)
+    // ```mermaid fences in model text become diagrams (mermaid-client.ts), drawn by a frame loaded from its per-session URL
+    installMermaid(document, services().assetUrl("mermaid.html"));
     const root = document.getElementById("root") || document.body;
     chrome.storage.sync.get(DEFAULT_CONFIG, (cfg: any) => { config.value = cfg as MlConfig; applyTheme(); });
     // ONE floating tooltip layer for the whole surface (see tooltip-layer.ts): nothing clips it, it opens

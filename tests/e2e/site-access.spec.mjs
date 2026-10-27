@@ -18,7 +18,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { test, expect } from "@playwright/test";
-import { launchExtension, configureExtension, waitForMl, approveOrigin, inShell, waitInShell, watchRunEvents } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, approveOrigin, inShell, waitInShell, watchRunEvents, warUrl } from "./harness.mjs";
 import { HANDLE_MAP } from "../../src/page-relay.ts";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startHostileSite, HOSTILE_RESOLVER_ARGS } from "./fixtures/hostile/server.mjs";
@@ -802,6 +802,25 @@ test.describe("@security attack 16: the page and the extension's own surfaces", 
         } finally { await close(); }
     });
 
+    test("16e: a page that knows the extension's id loads none of its web-accessible files by it, approved or not (use_dynamic_url)", async () => {
+        // A web store build's id is fixed, so knowing it was one fetch away from detecting the install (detection-surface.md
+        // row 5). The files load only by the per-session URL the extension itself names.
+        const { site, ext, close } = await setup();
+        try {
+            const files = ["sidebar.html", "sidebar-app.js", "sidebar.css", "mermaid.html", "mermaid-frame.js"];
+            for (const [host, approve] of [["evil.test", false], ["approved.test", true]]) {
+                const page = await open(ext, site.url(host), { approve });
+                const byId = await page.evaluate(async ([id, fs]) => Promise.all(fs.map((f) => fetch(`chrome-extension://${id}/${f}`).then((r) => r.status, () => "refused"))), [ext.extensionId, files]);
+                expect(byId, `${host}: by the extension's id`).toEqual(files.map(() => "refused"));
+                // Positive control: the same files by the per-session URL.
+                const dyn = await Promise.all(files.map((f) => warUrl(ext.sw, f)));
+                expect(dyn.every((u) => !u.includes(ext.extensionId)), "the per-session URL does not carry the id").toBe(true);
+                expect(await page.evaluate(async (us) => Promise.all(us.map((u) => fetch(u).then((r) => r.status, () => "refused"))), dyn), `${host}: by the per-session URL`).toEqual(files.map(() => 200));
+                await page.close();
+            }
+        } finally { await close(); }
+    });
+
     test("16d: a page that frames the extension's sidebar.html itself cannot cut the card's channel to the shell", async () => {
         // The page's own frame of sidebar.html sends the shell a hello like the real one. The shell must hand its port
         // only to the frame it mounted: the card keeps both directions (the person's reply out, the run's answer back).
@@ -810,14 +829,14 @@ test.describe("@security attack 16: the page and the extension's own surfaces", 
             const page = await open(ext, site.url("evil.test"));
             await finishedRun(ext, page, fake, [{ content: "second answer" }]);
             const card = cardFrame(page);
-            await page.evaluate((id) => {
+            await page.evaluate((url) => {
                 for (let i = 0; i < 2; i++) {
                     const f = document.createElement("iframe");
-                    f.src = `chrome-extension://${id}/sidebar.html`;
+                    f.src = url;
                     f.style.cssText = "position:fixed;left:0;top:0;width:200px;height:200px;border:0";
                     document.body.append(f);
                 }
-            }, ext.extensionId);
+            }, await warUrl(ext.sw, "sidebar.html"));
             await expect.poll(() => page.frames().filter((f) => f.url().includes("sidebar.html")).length).toBe(3);
             await page.waitForTimeout(1000);   // the page's frames have said hello
             await card.locator(".card-reply-open").click();
@@ -1548,9 +1567,9 @@ test.describe("@security attack 20: the diagram sandbox is not a render oracle",
         const { site, ext, close } = await setup();
         try {
             const page = await open(ext, site.url("evil.test", "/attack-20"));
-            const out = await page.evaluate(async (id) => {
+            const out = await page.evaluate(async (url) => {
                 const f = document.createElement("iframe");
-                f.src = `chrome-extension://${id}/mermaid.html`;
+                f.src = url;
                 f.style.cssText = "position:fixed;left:-10000px;width:800px;height:600px";
                 document.body.append(f);
                 const heard = [];
@@ -1573,7 +1592,7 @@ test.describe("@security attack 20: the diagram sandbox is not a render oracle",
                 f.contentWindow.postMessage({ mmd: "render", id: 1, src: "graph TD\n  A[Ask] --> B[Draw]", dark: false }, "*");
                 const rendered = await done;
                 return { ready, heard, rendered };
-            }, ext.extensionId);
+            }, await warUrl(ext.sw, "mermaid.html"));
 
             // Positive control: the frame loaded in the hostile page, sandboxed, knows who framed it, and its script is
             // alive (`frameIsAlive`), so the silence below is the frame refusing, not a broken fixture.
@@ -1601,9 +1620,9 @@ test.describe("@security attack 20: the diagram sandbox is not a render oracle",
         const { site, ext, close } = await setup();
         try {
             const page = await open(ext, site.url("evil.test", "/attack-20-cost"));
-            const out = await page.evaluate(async (id) => {
+            const out = await page.evaluate(async (url) => {
                 const f = document.createElement("iframe");
-                f.src = `chrome-extension://${id}/mermaid.html`;
+                f.src = url;
                 f.style.cssText = "position:fixed;left:-10000px;width:800px;height:600px";
                 document.body.append(f);
                 await new Promise((resolve) => {
@@ -1622,7 +1641,7 @@ test.describe("@security attack 20: the diagram sandbox is not a render oracle",
                 }
                 await new Promise((r) => setTimeout(r, 6000));
                 return { asked: N, got: answers.length };
-            }, ext.extensionId);
+            }, await warUrl(ext.sw, "mermaid.html"));
 
             // Positive control: the asks are real, sent to the extension's frame loaded in this page.
             expect(out.asked).toBe(40);
