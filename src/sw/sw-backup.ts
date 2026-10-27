@@ -8,7 +8,7 @@
 import { BackupError, type Secret } from "../backup/backup-format";
 import type { BackupForm } from "../backup/backup-file";
 import { chromeStorageWriter, type StorageSnapshot } from "../backup/backup-settings";
-import { createBackup, offerRestore, restoreBackup, type BackupDeps } from "../backup/backup-run";
+import { createBackup, offerRestore, restoreBackup, type BackupDeps, type RestoreOffer } from "../backup/backup-run";
 import { archiveCall, scheduleFolderSync } from "./sw-archive";
 import { sessionStore } from "./sw-sessions";
 import { siteSchemaReady } from "./sw-site-access";
@@ -36,6 +36,17 @@ function secretOf(v: unknown): Secret | undefined {
 }
 
 /**
+ * The offer as the page gets it: what the preview draws and nothing more. The raw settings payload, the uncapped list
+ * of session hashes and the API key's raw values stay in the worker, which recomputes its own offer for a restore
+ * anyway; only the gate keeps a page from this reply, and this keeps the reply from mattering if that ever widens.
+ */
+export function offerForPage(offer: RestoreOffer): RestoreOffer {
+    const { settings: _settings, hashes: _hashes, ...contents } = offer.contents;
+    const plan = offer.plan && { ...offer.plan, changes: offer.plan.changes.map((c) => (c.key === "apiKey" ? { ...c, before: undefined, after: undefined } : c)) };
+    return { ...offer, contents: { ...contents, settings: null, hashes: [] }, plan };
+}
+
+/**
  * The BACKUP message from an extension page: `create`, `offer` or `restore` (the payload shapes are in `backup-run.ts`).
  * A BackupError keeps its `reason` on the thrown error, for `backupFailure` to hand the page.
  * @throws on an unknown action or a malformed payload
@@ -47,7 +58,7 @@ export async function backupAction(payload: unknown, deps: BackupDeps = realDeps
             if (!FORMS.includes(p.form as BackupForm)) throw new Error("the backup form must be plain, gzip or encrypted");
             return createBackup(deps, { form: p.form as BackupForm, includeApiKey: p.includeApiKey === true });
         }
-        case "offer": return offerRestore(deps, secretOf(p.secret));
+        case "offer": return offerForPage(await offerRestore(deps, secretOf(p.secret)));
         case "restore": {
             const secret = secretOf(p.secret);
             const sessions = p.sessions === true, settings = p.settings === true;
