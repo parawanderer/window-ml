@@ -246,3 +246,46 @@ test("popup: self-approval is never one click: Review… opens the confirmation,
     await q.flush();
     assert.deepEqual(decisions(q), [{ origin: "https://asker.example", decision: { kind: "selfApprove", answer: "deny" } }]);
 });
+
+// --- "This site": presence (docs/spec/SITE_PRESENCE.md): Let it ask / Hide window.ml ---
+
+const LV = { use: "unknown", agents: "off", selfApprove: false };
+const ASK_LINE = "can see window.ml and ask for access, but cannot use it.";
+const visibleButton = (p, id) => { const b = p.doc.getElementById(id); return b.hidden ? null : b.textContent; };
+const visibleEdits = (p) => p.sent.filter((m) => m.type === "SITE_ACCESS" && m.payload?.edit).map((m) => m.payload.edit);
+
+test("popup: Let it ask is offered for an unknown origin that sees nothing, and only then", async () => {
+    const hidden = await loadPopup({ site: { decision: "unknown", levels: LV, presence: "hidden" } });
+    assert.equal(visibleButton(hidden, "siteLetAsk"), "Let it ask");
+    assert.equal(hidden.doc.getElementById("siteLetAsk").title, "The site sees that window.ml is here, and may ask you for access after you click on it.");
+    assert.equal(visibleButton(hidden, "siteHide"), null);
+    for (const [decision, levels, presence] of [["always", { ...LV, use: "always" }, "full"], ["session", { ...LV, use: "session" }, "full"], ["denied", { ...LV, use: "denied" }, "hidden"]]) {
+        const p = await loadPopup({ site: { decision, levels, presence } });
+        assert.equal(visibleButton(p, "siteLetAsk"), null, decision);
+        assert.equal(visibleButton(p, "siteHide"), null, decision);
+    }
+    hidden.doc.getElementById("siteLetAsk").click();
+    await hidden.flush();
+    assert.deepEqual(visibleEdits(hidden), [{ op: "visible", origin: "https://site.example", on: true }]);
+});
+
+test("popup: a marked origin shows the ask line and Hide window.ml, which sends on:false", async () => {
+    const lists = { always: [], session: [], denied: [], agents: {}, selfApprove: [], visible: ["https://site.example"] };
+    const p = await loadPopup({ site: { decision: "unknown", levels: LV, presence: "ask", lists } });
+    assert.equal(p.doc.getElementById("siteOrigin").textContent, "https://site.example");
+    assert.equal(p.doc.getElementById("siteState").textContent, ASK_LINE);
+    assert.equal(visibleButton(p, "siteLetAsk"), null);
+    assert.equal(visibleButton(p, "siteHide"), "Hide window.ml");
+    assert.equal(p.doc.getElementById("siteHide").title, "The site sees nothing of window.ml again.");
+    p.doc.getElementById("siteHide").click();
+    await p.flush();
+    assert.deepEqual(visibleEdits(p), [{ op: "visible", origin: "https://site.example", on: false }]);
+    assert.doesNotMatch(p.doc.getElementById("siteAccess").textContent, /—/);
+});
+
+test("popup: an ask that comes from Let sites ask for access (not marked) shows the line and no Hide window.ml", async () => {
+    const p = await loadPopup({ site: { decision: "unknown", levels: LV, presence: "ask" } });
+    assert.equal(p.doc.getElementById("siteState").textContent, ASK_LINE);
+    assert.equal(visibleButton(p, "siteHide"), null);
+    assert.equal(visibleButton(p, "siteLetAsk"), null, "it already asks");
+});

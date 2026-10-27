@@ -5,7 +5,7 @@
 // browser API, so the rules can be tested exhaustively: what an origin is, which senders can ever be granted, how the
 // lists answer for an origin, and how an edit changes them.
 
-/** Where each list is kept. `always`, `denied` and `selfApprove` persist in `chrome.storage.local`; `session` lives in
+/** Where each list is kept. `always`, `denied`, `selfApprove` and `visible` persist in `chrome.storage.local`; `session` lives in
  *  `chrome.storage.session` and is gone when the browser restarts. `agents` is kept in both: the level of an origin
  *  allowed only for this session is in the session area, so it goes with that approval; every other origin's is local.
  *  Never `sync`: a decision about this browser's backend has no business following someone to a machine with a
@@ -13,6 +13,9 @@
 export const SITE_ACCESS_KEYS = {
     always: "ml_site_always", session: "ml_site_session", denied: "ml_site_denied",
     agents: "ml_site_agents", selfApprove: "ml_site_selfapprove",
+    /** Local: the origins the person marked visible without allowing them (SITE_PRESENCE.md): they see window.ml's
+     *  stub and may ask for access. */
+    visible: "ml_site_visible",
     /** Local: set by a migration that moved a whitelist, with the entries it could not carry over, until Settings'
      *  notice is dismissed. Here so every editor refreshes when it changes. */
     upgradeNotice: "ml_site_upgrade_notice",
@@ -28,8 +31,13 @@ export const SITE_SCHEMA = 2;
 export type AgentLevel = "ask" | "always" | "denied";
 
 /** The lists. `always`, `session` and `denied` are sets of origins (`scheme://host[:port]`); `agents` maps an origin to
- *  its agent level; `selfApprove` is the origins trusted to answer their own approval prompts. */
-export interface SiteLists { always: string[]; session: string[]; denied: string[]; agents: Record<string, AgentLevel>; selfApprove: string[] }
+ *  its agent level; `selfApprove` is the origins trusted to answer their own approval prompts; `visible` is the origins
+ *  marked to see window.ml before they may use it. */
+export interface SiteLists { always: string[]; session: string[]; denied: string[]; agents: Record<string, AgentLevel>; selfApprove: string[]; visible: string[] }
+
+/** What a page of an origin gets of window.ml (docs/spec/SITE_PRESENCE.md): the full API, the stub that can only ask
+ *  for access, or nothing at all. */
+export type Presence = "full" | "ask" | "hidden";
 
 /** What the lists say about one origin. A denial wins over an approval, so an origin on both is refused. */
 export type SiteDecision = "always" | "session" | "denied" | "unknown";
@@ -44,7 +52,7 @@ const AGENT_LEVELS: readonly AgentLevel[] = ["ask", "always", "denied"];
 function full(lists: Partial<SiteLists>): SiteLists {
     return {
         always: lists.always ?? [], session: lists.session ?? [], denied: lists.denied ?? [],
-        agents: lists.agents ?? {}, selfApprove: lists.selfApprove ?? [],
+        agents: lists.agents ?? {}, selfApprove: lists.selfApprove ?? [], visible: lists.visible ?? [],
     };
 }
 
@@ -142,8 +150,8 @@ export function selfApproves(lists: Partial<SiteLists>, sender: SenderFacts): bo
 }
 
 /**
- * The origins whose pages see window.ml (docs/spec/SITE_PRESENCE.md, step 2): until a page can be marked visible on its
- * own, exactly the origins `levelsFor` lets use it. Split by how long the grant lasts, so the main-world scripts for a
+ * The origins whose pages get the full window.ml (docs/spec/SITE_PRESENCE.md, step 2): exactly the origins `levelsFor`
+ * lets use it. Split by how long the grant lasts, so the main-world scripts for a
  * session grant are registered for the session only. Every other origin is hidden: nothing of ours enters its pages
  * until the person starts a run there.
  * @param lists the lists
@@ -155,6 +163,34 @@ export function visibleOrigins(lists: Partial<SiteLists>): { lasting: string[]; 
     const lasting = all.filter((o) => levelsFor(l, o).use === "always").sort();
     const session = all.filter((o) => levelsFor(l, o).use === "session").sort();
     return { lasting, session };
+}
+
+/**
+ * What a page of an origin gets of window.ml. An origin that may use it gets the full API; a denied one nothing; any
+ * other gets the stub when the person marked it visible or lets every site ask ("Let sites ask for access"), and
+ * nothing otherwise. A denied origin and an unknown hidden one look the same to the page.
+ * @param lists the lists
+ * @param origin the origin, as `originOf` writes it
+ * @param sitesMayAsk the "Let sites ask for access" setting
+ * @returns the presence
+ */
+export function presenceOf(lists: Partial<SiteLists>, origin: string, sitesMayAsk: boolean): Presence {
+    const l = full(lists);
+    const use = levelsFor(l, origin).use;
+    if (use === "always" || use === "session") return "full";
+    if (use === "denied") return "hidden";
+    return sitesMayAsk || l.visible.includes(origin) ? "ask" : "hidden";
+}
+
+/**
+ * The origins marked visible that may not use window.ml yet: the pages that get the stub on their own mark, whatever
+ * the "Let sites ask" setting says.
+ * @param lists the lists
+ * @returns the origins, sorted
+ */
+export function askOrigins(lists: Partial<SiteLists>): string[] {
+    const l = full(lists);
+    return l.visible.filter((o) => levelsFor(l, o).use === "unknown").sort();
 }
 
 /**
@@ -221,15 +257,17 @@ export type SiteEdit =
     | { op: "revoke"; origin: string }
     | { op: "undeny"; origin: string }
     | { op: "agents"; origin: string; level: AgentLevel | "off" }
-    | { op: "selfApprove"; origin: string; on: boolean };
+    | { op: "selfApprove"; origin: string; on: boolean }
+    | { op: "visible"; origin: string; on: boolean };
 
 /**
  * Apply one edit. Allowing lifts a denial and moves the origin to the chosen scope only, keeping its agent level when
  * it was already allowed (a site allowed fresh starts at "off"); denying removes every grant (the approvals, the agent
  * level and self-approval); revoking removes the same and leaves the origin unknown (it may ask again), so neither a
  * revoke nor a later "Stop denying" leaves self-approval behind; un-denying lifts a denial. `agents` sets the level of an origin that may use window.ml ("off" removes it; for any other origin it does
- * nothing); `selfApprove` adds or removes the origin from the self-approval list, which a denial still overrides. An
- * edit the rules do not know changes nothing.
+ * nothing); `selfApprove` adds or removes the origin from the self-approval list, which a denial still overrides;
+ * `visible` marks an origin that is neither allowed nor denied as one that sees window.ml's stub, or unmarks it.
+ * Denying and revoking also unmark it: both make a site hidden. An edit the rules do not know changes nothing.
  * @param lists the lists before
  * @param edit the change
  * @returns the lists after (new arrays; the input is not changed)
@@ -240,7 +278,7 @@ export function applyEdit(lists: Partial<SiteLists>, edit: SiteEdit): SiteLists 
     const without = (xs: string[]): string[] => xs.filter((x) => x !== o);
     const add = (xs: string[]): string[] => [...without(xs), o].sort();
     const agentsWithout = (): Record<string, AgentLevel> => Object.fromEntries(Object.entries(l.agents).filter(([k]) => k !== o));
-    const copy = (): SiteLists => ({ always: [...l.always], session: [...l.session], denied: [...l.denied], agents: { ...l.agents }, selfApprove: [...l.selfApprove] });
+    const copy = (): SiteLists => ({ always: [...l.always], session: [...l.session], denied: [...l.denied], agents: { ...l.agents }, selfApprove: [...l.selfApprove], visible: [...l.visible] });
     switch (edit.op) {
         case "allow": {
             if (edit.scope !== "always" && edit.scope !== "session") return copy();
@@ -251,10 +289,11 @@ export function applyEdit(lists: Partial<SiteLists>, edit: SiteEdit): SiteLists 
                 denied: without(l.denied),
                 agents: wasAllowed ? { ...l.agents } : agentsWithout(),
                 selfApprove: [...l.selfApprove],
+                visible: [...l.visible],
             };
         }
-        case "deny": return { always: without(l.always), session: without(l.session), denied: add(l.denied), agents: agentsWithout(), selfApprove: without(l.selfApprove) };
-        case "revoke": return { ...copy(), always: without(l.always), session: without(l.session), agents: agentsWithout(), selfApprove: without(l.selfApprove) };
+        case "deny": return { always: without(l.always), session: without(l.session), denied: add(l.denied), agents: agentsWithout(), selfApprove: without(l.selfApprove), visible: without(l.visible) };
+        case "revoke": return { ...copy(), always: without(l.always), session: without(l.session), agents: agentsWithout(), selfApprove: without(l.selfApprove), visible: without(l.visible) };
         case "undeny": return { ...copy(), denied: without(l.denied) };
         case "agents": {
             const lv = levelsFor(l, o).use;
@@ -264,6 +303,10 @@ export function applyEdit(lists: Partial<SiteLists>, edit: SiteEdit): SiteLists 
             return { ...copy(), agents: { ...agentsWithout(), [o]: edit.level } };
         }
         case "selfApprove": return { ...copy(), selfApprove: edit.on === true ? add(l.selfApprove) : without(l.selfApprove) };
+        case "visible": {
+            if (edit.on !== true) return { ...copy(), visible: without(l.visible) };
+            return levelsFor(l, o).use === "unknown" ? { ...copy(), visible: add(l.visible) } : copy();
+        }
         default: return copy();
     }
 }
@@ -285,8 +328,8 @@ export function originFromInput(input: string): string | null {
     return host.includes(".") || host === "localhost" || /^\[.*\]$/.test(host) ? o : null;
 }
 
-/** Whether a `chrome.storage.onChanged` event changes what a site may do: the lists, its agent level or the
- *  self-approval list, all kept in the local and session areas (slice 3). The old sync whitelist is no longer read. */
+/** Whether a `chrome.storage.onChanged` event changes what a site may do or see: the lists, its agent level, the
+ *  self-approval list or the visible mark, all kept in the local and session areas (slice 3). The old sync whitelist is no longer read. */
 export function changesSiteAccess(changes: Record<string, unknown>, area: string): boolean {
     if (area !== "local" && area !== "session") return false;
     return Object.values(SITE_ACCESS_KEYS).some((k) => k in changes);

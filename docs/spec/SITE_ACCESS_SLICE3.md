@@ -1061,6 +1061,16 @@ The `siteRequests` config key is covered by the config's own registration.
 
 **Labels.** `@api`, `@ui`.
 
+### PR 4b: the ask stub (as built)
+
+The visible mark of [SITE_PRESENCE.md](SITE_PRESENCE.md), which replaces this slice's "a site you have not allowed asks".
+`siteRequests` defaults to off, not on as PR 4 above planned: off, an unknown site sees nothing. Presence is `full`,
+`ask` or `hidden` (`presenceOf`); an `ask` page gets `ask.js` (`window.ml = { requestAccess }`) as the registered script
+`ml-main-ask`, its content script's closed gate relays only `REQUEST_ACCESS_REQUEST`, and `REQUEST_ACCESS` moved from
+`HANDLE_MAP` to `PAGE_UNGATED_TYPES`, past the origin gate and through the scrub. A new list `ml_site_visible` (backed
+up) and edit `{op:"visible"}`. The popup offers "Let it ask" and "Hide window.ml" for an unknown origin; Settings has
+the "Let sites ask for access" toggle and the marked origins. Details: `docs/dev/site-access.md`, "The ask presence".
+
 **Order.** PR 1 and PR 1b come before PR 2, because the level's storage and the upgrade must exist before anything reads them, and the card reads the tool registry.
 PR 2 comes before PR 4, because `requestAccess({ agents })` needs the level. PR 3 can land with either.
 

@@ -1,6 +1,6 @@
 # Spec: a site sees window.ml only when the person said it may (decided 2026-10-14)
 
-**Status: decided; step 1 of the Order built** (without the two CDP field fixes, out of scope with input simulation); **step 2a built** (hidden by default: the page scripts are registered for allowed origins only and injected on demand for a run the person starts); **step 2b built** (the MessagePort); the visible mark still to come. Replaces slice 4 of [SITE_ACCESS.md](SITE_ACCESS.md) and comes after slice 3's PR 2
+**Status: decided; step 1 of the Order built** (without the two CDP field fixes, out of scope with input simulation); **step 2a built** (hidden by default: the page scripts are registered for allowed origins only and injected on demand for a run the person starts); **step 2b built** (the MessagePort); **the visible mark built** (the ask stub, slice 3 PR 4b). Replaces slice 4 of [SITE_ACCESS.md](SITE_ACCESS.md) and comes after slice 3's PR 2
 (the agent level). It answers the measurement in [detection-surface.md](../dev/detection-surface.md): any page, approved or
 not, can tell today that the person has window.ml and learn its extension id, with no run and no approval.
 

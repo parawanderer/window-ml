@@ -489,7 +489,9 @@ after you click on its page: `await ml.requestAccess({ agents: true, reason })` 
 "self-approve", reason }` to approve its own actions. The request waits in the toolbar button's badge and popup, and in
 DevTools Settings, until you answer; nothing opens by itself. It resolves with `{ state: "granted", agents }`,
 `{ state: "pending" }`, `{ state: "denied" }` or `{ state: "refused", reason }` and never throws. A site you have not
-allowed cannot ask yet. The design is [spec/SITE_ACCESS.md](spec/SITE_ACCESS.md), with the implementation reference
+allowed sees nothing of window.ml, unless you let it ask: "Let it ask" in the toolbar button's popup for that site, or
+"Let sites ask for access" in DevTools Settings for every site. Such a site has a `window.ml` with `requestAccess` only,
+and asks to use window.ml with `await ml.requestAccess({ reason })`. The design is [spec/SITE_ACCESS.md](spec/SITE_ACCESS.md), with the implementation reference
 for the remaining slice in [spec/SITE_ACCESS_SLICE3.md](spec/SITE_ACCESS_SLICE3.md).
 
 **Starting agents.** Starting an agent is a second permission per site (Off, Ask each time, Always, Denied), set in

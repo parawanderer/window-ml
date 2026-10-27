@@ -745,9 +745,9 @@ test("settings search: Escape in the box clears it", async () => {
 // --- the site lists: one row per allowed origin, its agent level, and the sites that approve their own actions ---
 
 /** A worker over `storage` (the old layout or the new), and a Settings world whose SITE_ACCESS it answers. */
-async function settingsOverWorker({ config = {}, local = {} } = {}) {
+async function settingsOverWorker({ config = {}, local = {}, sync = {} } = {}) {
     const bg = loadBackground({ config: { chatUrl: "http://host/api/chat/completions", apiKey: "k", model: "m", apiFormat: "openai", ...config }, local, siteGate: true, siteAgents: null });
-    const w = await loadSidebarWorld({ siteAccess: (payload) => bg.send({ type: "SITE_ACCESS", payload }, { url: "chrome-extension://test/sidebar.html" }) });
+    const w = await loadSidebarWorld({ sync, siteAccess: (payload) => bg.send({ type: "SITE_ACCESS", payload }, { url: "chrome-extension://test/sidebar.html" }) });
     // One browser's storage: what the worker writes reaches every open extension page's storage.onChanged, as Chrome does.
     bg.context.chrome.storage.onChanged.addListener((changes, area) => { for (const fn of [...w.changeListeners]) fn(JSON.parse(JSON.stringify(changes)), area); });
     await openSettings(w, "Permissions");
@@ -1079,4 +1079,35 @@ test("Settings: Deny in the self-approval confirmation sends the deny", async ()
     await w.flush(); await w.flush();
     assert.deepEqual(decisions, [{ origin: "https://asker.example", decision: { kind: "selfApprove", answer: "deny" } }]);
     assert.equal(waitingSection(w), undefined);
+});
+
+// --- Settings: Let sites ask for access, and the origins marked visible (docs/spec/SITE_PRESENCE.md) ---
+
+const askToggle = (w) => [...section(w, "Sites that may use window.ml").querySelectorAll("label.set-check")].find((l) => /Let sites ask for access/.test(l.textContent))?.querySelector("input");
+
+test("Settings: Let sites ask for access is OFF by default, and its box reads and writes siteRequests", async () => {
+    const { w } = await settingsOverWorker();
+    const box = askToggle(w);
+    assert.ok(box, "the toggle is in the site access section");
+    assert.equal(box.checked, false, "default off");
+    assert.match(section(w, "Sites that may use window.ml").textContent, /Off: a site sees nothing of window\.ml until you allow it, or let it ask from the toolbar button\./);
+    box.checked = true;
+    box.dispatchEvent(new w.window.Event("change", { bubbles: true }));
+    await w.flush();
+    assert.equal(w.syncStore.siteRequests, true, "written to sync");
+});
+
+test("Settings: a stored siteRequests:true shows the box on", async () => {
+    const { w } = await settingsOverWorker({ sync: { siteRequests: true } });
+    assert.equal(askToggle(w).checked, true);
+});
+
+test("Settings: origins marked visible are listed with an unmark, and unmarking sends visible on:false", async () => {
+    const { bg, w } = await settingsOverWorker({ local: { ml_site_schema: 2, ml_site_always: ["https://a.test"], ml_site_visible: ["https://m.test"] } });
+    const chips = [...section(w, "Sites that may use window.ml").querySelectorAll(".perm-chip[data-visible]")];
+    assert.deepEqual(chips.map((c) => c.querySelector(".perm-host").textContent), ["https://m.test"]);
+    chips[0].querySelector('button.perm-x[aria-label="Hide window.ml from https://m.test"]').click();
+    await w.flush(); await w.flush();
+    assert.deepEqual(bg.localStore.ml_site_visible, []);
+    assert.equal(section(w, "Sites that may use window.ml").querySelector(".perm-chip[data-visible]"), null);
 });

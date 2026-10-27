@@ -22,7 +22,7 @@ const none = (): Record<string, unknown> => ({});
 async function readStored(): Promise<SiteLists> {
     const K = SITE_ACCESS_KEYS;
     const [local, session] = await Promise.all([
-        chrome.storage.local.get([K.always, K.denied, K.agents, K.selfApprove]).catch(none),
+        chrome.storage.local.get([K.always, K.denied, K.agents, K.selfApprove, K.visible]).catch(none),
         (chrome.storage.session?.get([K.session, K.agents]) ?? Promise.resolve({})).catch(none),
     ]);
     const s = session as Record<string, unknown>;
@@ -33,6 +33,7 @@ async function readStored(): Promise<SiteLists> {
         // The session half is for origins allowed only this session; read over the local half.
         agents: { ...asLevels(local[K.agents]), ...asLevels(s[K.agents]) },
         selfApprove: asList(local[K.selfApprove]),
+        visible: asList(local[K.visible]),
     };
 }
 
@@ -131,6 +132,7 @@ export async function editSiteAccess(edit: SiteEdit): Promise<SiteLists> {
         await chrome.storage.local.set({
             [SITE_ACCESS_KEYS.always]: next.always, [SITE_ACCESS_KEYS.denied]: next.denied,
             [SITE_ACCESS_KEYS.agents]: halves.local, [SITE_ACCESS_KEYS.selfApprove]: next.selfApprove,
+            [SITE_ACCESS_KEYS.visible]: next.visible,
         });
         await chrome.storage.session?.set({ [SITE_ACCESS_KEYS.session]: next.session, [SITE_ACCESS_KEYS.agents]: halves.session });
         return next;

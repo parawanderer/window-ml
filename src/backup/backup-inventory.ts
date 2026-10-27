@@ -53,6 +53,7 @@ export const INVENTORY: readonly InventoryEntry[] = [
     local("ml_site_denied", "sites", "the sites refused window.ml", "yes", { mode: "replace" }),
     { key: "ml_site_agents", areas: ["local", "session"], backup: "yes", group: "sites", mode: "replace", why: "each site's agent level; the local half (the session half goes with the browser session)" },
     local("ml_site_selfapprove", "sites", "the sites trusted to answer their own approval prompts", "yes", { mode: "replace" }),
+    local("ml_site_visible", "sites", "the sites marked to see window.ml and ask for access before they may use it", "yes", { mode: "replace" }),
     local("ml_site_schema", "sites", "which layout the site lists are stored in: tells a restore which upgrade an old backup needs", "yes", { mode: "replace" }),
     ui("ml_debug_fontscale", "the panel's font scale"),
     ui("ml_debug_codewrap", "code blocks wrap or scroll"),

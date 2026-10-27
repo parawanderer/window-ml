@@ -173,7 +173,7 @@ test("the hub pairing, run state, logs and a chat's own record are never backed 
 
 test("the policies and site lists a backup carries are the ones a person set", () => {
     const yes = INVENTORY.filter((e) => e.backup === "yes" && (e.group === "policies" || e.group === "sites")).map((e) => e.key).sort();
-    assert.deepEqual(yes, ["ml_policies_global", "ml_site_agents", "ml_site_always", "ml_site_denied", "ml_site_schema", "ml_site_selfapprove"]);
+    assert.deepEqual(yes, ["ml_policies_global", "ml_site_agents", "ml_site_always", "ml_site_denied", "ml_site_schema", "ml_site_selfapprove", "ml_site_visible"]);
 });
 
 test("the other stores (IndexedDB, OPFS) each name a store a source opens", () => {
