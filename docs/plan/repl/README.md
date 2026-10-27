@@ -44,6 +44,7 @@ specs (all in `docs/spec/`, merged in #666, #668, #669):
 9. **Placement is unobservable up to the recorded environment**: pin versions, stamp the environment, name BLAS order
    as a tolerance; no Pyodide-under-Node at the host.
 10. **Step 0 of the Python dialect is a corpus count**, a notebook, before any whitelist is written.
+11. **New user-facing strings ship without Shane's approval** (Shane, 2026-10-27). An agent writes a string that meets the documented rules and ships it; Shane reports any that offend later, as a separate fix. Memory `feedback-ui-strings-no-approval`.
 
 ## The dependency graph, and what is a root
 
@@ -156,7 +157,7 @@ surfaces it.
 **Freeze, 2026-10-23 (Shane, day 5 of the usage week at 81%): land, then stop, "for now".** Every builder finishes the
 one item in hand and goes idle: root-k finishes (d), the Settings registration page, and does not start root 3;
 python-cancel writes `LANE_PYTHON_CANCEL_RESULT.md` and stops; site-access rebases #1046 on #1051, marks it ready and
-stops (done: merged de645ea3), PR 4 parked for Shane's strings. The Chat Page lane is paused. The red team and the janitor run on free models
+stops (done: merged de645ea3), PR 4 was parked for Shane's strings; RULED 2026-10-27 (Shane, confirmed in the coordinator's session): new user-facing strings need no approval, an agent writes one that meets the documented rules and ships it, and Shane reports any that offend later as a separate fix; PR 4b's strings approved, 4b started. The Chat Page lane is paused. The red team and the janitor run on free models
 and continue. The janitor reviews every open code PR in dependency order (#1052, #1042, #1046, #1048, #1055, #1041, #1068, #1051, #1045, #1063 are merged): #1070; the coordinator reviews result files and specs only. The lanes resume when the week resets.
 On 2026-10-24 the janitor's fix for #1051's P2-gate flake (#1081, test only) went to the python-cancel lane, the
 test's owner, to review and merge (the janitor built it, root-k found it); it found the fix clean, Shane posted the
