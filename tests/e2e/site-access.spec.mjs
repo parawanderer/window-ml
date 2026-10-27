@@ -1780,3 +1780,193 @@ test.describe("@security the ask stub", () => {
         } finally { await close(); }
     });
 });
+
+// --- attacks 3-7 (docs/spec/SITE_ACCESS.md "The hostile site"): a site that MAY ask, abusing requestAccess (site access PR 4b) ---
+
+/** Mark `origin` so its pages get the ask stub (the per-origin "visible" mark), and wait for the registration. */
+async function markVisible(ext, origin) {
+    await ext.sw.evaluate((o) => chrome.storage.local.get("ml_site_visible").then((r) => chrome.storage.local.set({ ml_site_visible: [...(r.ml_site_visible || []), o] })), origin);
+    await stubRegistered(ext);
+    const u = new URL(origin), pattern = `${u.protocol}//${u.hostname}:${u.port}/*`;
+    await expect.poll(() => ext.sw.evaluate(async (m) => (await chrome.scripting.getRegisteredContentScripts()).some((r) => r.id === "ml-main-ask" && r.matches?.includes(m)), pattern), { timeout: 10000 }).toBe(true);
+}
+
+/** The request store's entries, as the worker keeps them. */
+const storedRequests = (ext) => ext.sw.evaluate(async () => (await chrome.storage.local.get("ml_site_requests")).ml_site_requests?.entries ?? []);
+
+/** The toolbar badge text on the tab showing `url`. */
+const badgeOn = (ext, url) => ext.sw.evaluate(async (u) => {
+    const tab = (await chrome.tabs.query({})).find((t) => t.url === u);
+    return tab ? chrome.action.getBadgeText({ tabId: tab.id }) : "(no tab)";
+}, url);
+
+/** Backend requests that carry work (the extension's own GET polls of /api/models and /api/ps are not the page's). */
+const postHits = (fake) => backendHits(fake).filter((h) => !h.startsWith("GET "));
+
+/** A real click on the page: the gesture the content script spends. */
+const gesture = (page) => page.click("#secret");
+
+test.describe("@security attacks 3-7: requestAccess from a site that may ask", () => {
+    test("attack 3: 1,000 requestAccess calls after one gesture leave one pending entry and a badge of 1", async () => {
+        const { fake, site, ext, close } = await setup();
+        try {
+            await markVisible(ext, site.origin("evil.test"));
+            const page = await openClosed(ext, site.url("evil.test"));
+            await gesture(page);
+            // The content script answers at most 256 calls waiting on the one request in flight and drops the rest unanswered
+            // (content.ts `accessWaiting`), so the page cannot await all 1,000: it collects what comes back.
+            await page.evaluate(() => {
+                window.__answers = [];
+                for (let i = 0; i < 1000; i++) window.ml.requestAccess({ reason: "please" }).then((a) => window.__answers.push(a));
+            });
+            await expect.poll(() => page.evaluate(() => window.__answers.length), { timeout: 10000 }).toBeGreaterThan(0);
+            const answers = await page.evaluate(() => window.__answers);
+            expect([...new Set(answers.map((a) => a.state))], "every answered call resolves with the one pending state").toEqual(["pending"]);
+            const entries = await storedRequests(ext);
+            expect(entries.map((e) => [e.origin, e.state, e.asks])).toEqual([[site.origin("evil.test"), "pending", 1]]);
+            await expect.poll(() => badgeOn(ext, page.url()), { timeout: 5000 }).toBe("1");
+            expect(fake.calls()).toEqual([]);
+            expect(postHits(fake), "a model request the attack made").toEqual([]);
+        } finally { await close(); }
+    });
+
+    test("attack 4: requestAccess on load with no gesture is refused for the gesture and stores nothing", async () => {
+        const { fake, site, ext, close } = await setup();
+        try {
+            await markVisible(ext, site.origin("evil.test"));
+            const page = await openClosed(ext, site.url("evil.test"));   // goto and evaluate grant no activation
+            await expect.poll(() => mlKeys(page), { timeout: 10000 }).toEqual(["requestAccess"]);
+            const answers = await page.evaluate(async () => [await window.ml.requestAccess(), await window.ml.requestAccess({ agents: true, reason: "on load" })]);
+            expect(answers).toEqual([{ state: "refused", reason: "needs a user gesture" }, { state: "refused", reason: "needs a user gesture" }]);
+            expect(await storedRequests(ext)).toEqual([]);
+            expect(await badgeOn(ext, page.url())).toBe("");
+            expect(fake.calls()).toEqual([]);
+            expect(postHits(fake), "a model request the attack made").toEqual([]);
+        } finally { await close(); }
+    });
+
+    test("attack 5: subdomains of one registrable domain, each asking once after a gesture, make one entry", async () => {
+        // Let sites ask is on so every subdomain gets the stub. All 50 sNN.evil.test hostnames resolve (`MAP *.test`).
+        const { fake, site, ext, close } = await setup({ siteRequests: true });
+        try {
+            await stubRegistered(ext);
+            const N = 50, answers = [];
+            for (let i = 1; i <= N; i++) {
+                const host = `s${String(i).padStart(2, "0")}.evil.test`;
+                const page = await openClosed(ext, site.url(host));
+                await gesture(page);
+                answers.push(await page.evaluate(() => window.ml.requestAccess({ reason: "one of many" })));
+                await page.close();
+            }
+            expect(answers.length).toBe(N);
+            expect(answers.filter((a) => a.state === "pending").length, "exactly one subdomain waits").toBe(1);
+            expect(answers[0]).toEqual({ state: "pending" });
+            expect(answers.slice(1).every((a) => a.state === "refused" && typeof a.reason === "string"), JSON.stringify(answers.slice(1, 3))).toBe(true);
+            const entries = await storedRequests(ext);
+            expect(entries.map((e) => [e.origin, e.domain, e.state])).toEqual([[site.origin("s01.evil.test"), "evil.test", "pending"]]);
+            expect(fake.calls()).toEqual([]);
+            expect(postHits(fake), "a model request the attack made").toEqual([]);
+        } finally { await close(); }
+    });
+
+    test("attack 6: a cross-origin iframe, a sandboxed iframe and an about:blank popup get no stub and store nothing", async () => {
+        const { fake, site, ext, close } = await setup();
+        try {
+            await markVisible(ext, site.origin("evil.test"));
+            const probe = (frame) => frame.evaluate(async () => {
+                const own = typeof window.ml;
+                let viaTop = "n/a";
+                try { viaTop = typeof window.top.ml.requestAccess; } catch (e) { viaTop = `threw ${e.name}`; }
+                let asked = "no stub";
+                if (own !== "undefined") asked = await window.ml.requestAccess();
+                return { own, viaTop, asked };
+            });
+            // A cross-origin frame (frame.test is not marked) under a marked top page.
+            const cross = await openClosed(ext, site.url("evil.test", `/frame?src=${encodeURIComponent(site.url("frame.test"))}`));
+            await expect.poll(() => cross.frames().length).toBe(2);
+            await cross.frames()[1].waitForLoadState();
+            await cross.frames()[1].click("#secret");
+            const c = await probe(cross.frames()[1]);
+            expect(c.own).toBe("undefined");
+            expect(c.viaTop).toMatch(/^threw SecurityError/);
+            // A sandboxed frame of the MARKED origin itself: an opaque origin, and a frame.
+            const sand = await openClosed(ext, site.url("evil.test", `/frame?sandbox=1&src=${encodeURIComponent(site.url("evil.test"))}`));
+            await expect.poll(() => sand.frames().length).toBe(2);
+            await sand.frames()[1].waitForLoadState();
+            await sand.frames()[1].click("#secret");
+            const s = await probe(sand.frames()[1]);
+            expect(s.own).toBe("undefined");
+            expect(s.viaTop).toMatch(/^threw SecurityError/);
+            // An about:blank popup of the marked page, after a gesture on the opener.
+            const opener = await openClosed(ext, site.url("evil.test"));
+            await gesture(opener);
+            const [popup] = await Promise.all([ext.context.waitForEvent("page"), opener.evaluate(() => { window.open("about:blank"); })]);
+            await popup.waitForLoadState().catch(() => undefined);
+            expect(await popup.evaluate(() => typeof window.ml), "the popup's own window.ml").toBe("undefined");
+            await popup.evaluate(() => document.body && document.body.click());
+            expect(await popup.evaluate(() => typeof window.ml)).toBe("undefined");
+            expect(await storedRequests(ext), "nothing any of them did stored an entry").toEqual([]);
+            expect(await badgeOn(ext, opener.url())).toBe("");
+            expect(fake.calls()).toEqual([]);
+            expect(postHits(fake), "a model request the attack made").toEqual([]);
+        } finally { await close(); }
+    });
+
+    test("attack 7: a denied origin retried after a reload, in a new tab and in a new window gets no window.ml, stores nothing and shows nothing", async () => {
+        const { fake, site, ext, close } = await setup();
+        try {
+            const origin = site.origin("evil.test");
+            await markVisible(ext, origin);
+            // Positive control: before the denial the stub is there and asks.
+            const first = await openClosed(ext, site.url("evil.test"));
+            expect(await mlKeys(first)).toEqual(["requestAccess"]);
+            // Deny it from an extension page, as the popup does.
+            const popup = await ext.context.newPage();
+            await popup.goto(`chrome-extension://${ext.extensionId}/popup.html`);
+            await popup.evaluate((o) => chrome.runtime.sendMessage({ type: "SITE_ACCESS", payload: { edit: { op: "deny", origin: o } } }), origin);
+            await expect.poll(() => visibleIn(ext, first), { timeout: 10000 }).toBe(false);
+            const before = JSON.stringify(await storedRequests(ext));
+            const retry = async (page, label) => {
+                await gesture(page);
+                expect(await mlSeen(page), `${label}: no window.ml at all`).toBe("undefined");
+                expect(await inShell(page, () => globalThis.__mlPageGate?.ask), label).toBe(false);
+                expect(await page.evaluate(() => "ml" in window), label).toBe(false);
+                expect(await badgeOn(ext, page.url()), `${label}: no badge`).toBe("");
+            };
+            await first.reload();
+            await waitInShell(first, () => globalThis.__mlPageGate?.state === "closed");
+            await retry(first, "reload");
+            const tab = await openClosed(ext, site.url("evil.test"));
+            await retry(tab, "new tab");
+            const cdp = await ext.context.newCDPSession(tab);
+            const [win] = await Promise.all([ext.context.waitForEvent("page"), cdp.send("Target.createTarget", { url: site.url("evil.test"), newWindow: true })]);
+            await win.waitForLoadState();
+            await waitInShell(win, () => globalThis.__mlPageGate?.state === "closed");
+            await retry(win, "new window");
+            expect(JSON.stringify(await storedRequests(ext)), "nothing new stored").toBe(before);
+            expect(fake.calls()).toEqual([]);
+            expect(postHits(fake), "a model request the attack made").toEqual([]);
+        } finally { await close(); }
+    });
+
+    test("a granted request gives the same page the full API with no reload: its next ml.chat answers from the model", async () => {
+        const { fake, site, ext, close } = await setup();
+        try {
+            const origin = site.origin("evil.test");
+            await markVisible(ext, origin);
+            const page = await openClosed(ext, site.url("evil.test"));
+            await gesture(page);
+            expect(await page.evaluate(() => window.ml.requestAccess({ reason: "to answer" }))).toEqual({ state: "pending" });
+            expect(await page.evaluate(() => typeof window.ml.chat), "still the stub").toBe("undefined");
+            expect(fake.calls()).toEqual([]);
+            const popup = await ext.context.newPage();
+            await popup.goto(`chrome-extension://${ext.extensionId}/popup.html`);
+            const res = await popup.evaluate((o) => chrome.runtime.sendMessage({ type: "ACCESS_REQUESTS", payload: { origin: o, decision: { kind: "access", answer: "session" } } }), origin);
+            expect(res.error, JSON.stringify(res)).toBeUndefined();
+            await expect.poll(() => page.evaluate(() => typeof window.ml?.chat), { timeout: 15000 }).toBe("function");
+            fake.setScript([{ content: "granted and answering" }]);
+            expect(await page.evaluate(() => window.ml.chat("hello"))).toBe("granted and answering");
+            expect(fake.calls().length, "exactly the one call the page made").toBe(1);
+        } finally { await close(); }
+    });
+});
