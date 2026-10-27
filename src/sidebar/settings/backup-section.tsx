@@ -6,6 +6,7 @@
 import { useEffect, useState } from "preact/hooks";
 import type { RestoreOffer, BackupResult } from "../../backup/backup-run";
 import { BACKUP_EXTENSION, openBackupBytes, type BackupForm } from "../../backup/backup-file";
+import { loadFolder, saveFolderPin } from "../../archive/archive-folder";
 import { BackupError, keyFor, readHeadAndFirstChunk, readHeader, sniff, type Keyring, type Secret } from "../../backup/backup-format";
 import { adoptKeyring, changePassphrase, idbKeyringStore, keyringState, loadKeyring, setupKeyring, type KeyringStore } from "../../backup/backup-keyring";
 import { backupSlotFile, copyIntoBackupSlot, removeBackupSlot } from "../../backup/backup-opfs";
@@ -55,6 +56,16 @@ export function secretFromText(text: string): Secret {
 export function adoptNotice(source: "folder" | "backup", hasOwnKey: boolean): string {
     const first = `This install will encrypt with ${source === "folder" ? "the folder's" : "this backup's"} key from now on.`;
     return hasOwnKey ? `${first} Its own earlier backups and archive months still open here, but on another install they need this install's old passphrase or recovery key.` : first;
+}
+
+/**
+ * Pin the key a restore just adopted as the one the archive folder's months are expected under (part 3e). The restore
+ * does not rekey the folder, so this is the place: from now on that folder's months are written under this key. Nothing
+ * to pin when no folder is picked; a pin that cannot be stored leaves none, which reads as the neutral offer.
+ * @param keyId the key now current on this install
+ */
+export async function pinAdoptedBackupKey(keyId: string): Promise<void> {
+    if (await loadFolder().catch(() => null)) await saveFolderPin(keyId).catch(() => {});
 }
 
 /**
@@ -740,7 +751,8 @@ export function LocalBackup() {
                     onAdopt: async () => {
                         setAdopt({ ...adopt, busy: true, error: "" });
                         try {
-                            await adoptKeyring(keyring, adopt.head, adopt.secret);
+                            const id = await adoptKeyring(keyring, adopt.head, adopt.secret);
+                            await pinAdoptedBackupKey(id);
                             setKeySet(true); setAdopt(null); say("restore", "This install now encrypts with that backup's key.");
                         } catch (e) { setAdopt({ ...adopt, busy: false, error: `That did not work: ${messageOf(e)}` }); }
                     },

@@ -14,7 +14,7 @@ in four PRs, and each section below says which parts exist yet.
 | 3b. Deletes that travel: the `removed` entries written into the month files | built |
 | 3c. Two machines on one encrypted folder: adopting the folder's key, keeping one's own as a retired key | built |
 | 3d. Forgetting a retired key, by hand, in Settings | built |
-| 3e. Telling a planted key from the real one: verified counts, key ids to match, the folder's pinned key | designed |
+| 3e. Telling a planted key from the real one: verified counts, key ids to match, the folder's pinned key | built |
 
 The archive itself (SQLite over OPFS, the worker, un-archiving) is `archive.md`; read it first.
 
@@ -471,10 +471,11 @@ passphrase, so a silent drop turns "saves typing" into "type a secret you lost".
   plain `Error`s for refused requests, as `create` does; `BackupError` is for file and secret failures).
 - `keyringState` gained `retired?: { keyId, since? }[]` (absent when empty), so the list reaches the page, and the
   worker's `FolderReport.keyring`, without a `CryptoKey` leaving the module.
-- The counts come from the PAGE: `LocalArchiveFolder.refresh` calls `monthKeyCounts(dir)` (`archive-folder.ts`) on the
-  folder handle it already holds (`writableFolder`), which reads each encrypted month's header and first chunk
-  (`readMonthHead`) and tallies `readHeader(...).keyId`. Only when a retired key is listed; unreadable files count for
-  no key; a folder not connected here gives `null` and the list shows no counts. No worker op, no new privilege.
+- The counts come from the PAGE: `LocalArchiveFolder.refresh` calls `monthKeyCounts` (`archive-folder.ts`) on the
+  folder handle it already holds (`writableFolder`). Part 3d tallied the `keyId` in each header; part 3e counts a month
+  only when its first chunk opens under that key, and adds `unopened` (see "What part 3e built"). Only when a retired
+  key is listed; a folder not connected here gives `null` and the list shows no counts. No worker op, no new
+  privilege.
 - `RetiredKeys` (`archive-section.tsx`) sits under the form choice: short id, date, months under it, "Forget", which
   opens `forgetNotice(n)` once (n = 0 reads as safe) and acts on "Forget this key". With the folder unreadable the
   notice says the months were not counted. The Settings page has no separate "key line" today, so the list goes
@@ -531,6 +532,40 @@ deflates it (the person forgets, the writer restores the headers, and those mont
   is set by each of its four actions and dropped by `saveFolder`; the clean-sync pin is NOT set when any month is
   skipped; the changed-key wording appears only with a pin and a different id; THE UPGRADE: an install with no pin
   shows the neutral offer; `@gallery` examples for the changed-key block and the notice with `unopened`.
+
+**What part 3e built.**
+
+- `monthKeyCounts(dir, ring)` returns `{ byKey, unopened }` (`KeyCounts`). A month counts under K when
+  `keyFor(ring, header.keyId)` is K and `opensFirstChunk` (the check `adoptKeyring` uses, already exported) holds on
+  the head `readMonthHead` returns. Unreadable, unopenable, other-key and never-held-key files all count in `unopened`;
+  with no keyring every encrypted file does. The page loads the keyring itself (`loadKeyring(idbKeyringStore())`) in
+  `LocalArchiveFolder.refresh`; no `CryptoKey` reaches a prop or a state. `forgetNotice(months, unopened)` adds the
+  sentence from the design (singular for one file); with `months` 0 and `unopened` above 0 it drops "so nothing there
+  is affected", which would no longer be true.
+- `formatKeyId` and `KeyId` (`archive-section.tsx`) are the one display of a key id: 16 hex in groups of four. The
+  retired list, the new "This install's key" line on the form choice (also on the first-choice form, whenever a keyring
+  is set) and the adopt block's "Key in these files: ..." line all use it. A skip with no `keyId` (a report from before
+  3c) shows no id line.
+- The pin: `loadFolderPin` / `saveFolderPin` in `archive-folder.ts`, key `pin` in the folder's IndexedDB store;
+  `saveFolder` deletes it in the same transaction on every call. Where it is set, all page actions:
+  1. adopting from the folder: `onAdoptKey` in `LocalArchiveFolder`, after `adoptKeyring` returns, before the rekey;
+  2. switching the form to encrypted: `onForm`, after the worker answers with form `encrypted`, from `keyringState`;
+  3. adopting a backup's key on restore: **there is no rekey after it** (3c: "does not rekey the folder"), so the pin
+     is set at the adopt itself, `pinAdoptedBackupKey` in `backup-section.tsx`, and only when a folder is picked;
+  4. a refresh: `folderPinToSet` (connected, form encrypted, `lastSync` set, nothing skipped, no pin yet).
+- **Difference from the design, on the refresh.** A plain state read does not carry the skipped months (the page keeps
+  those from the last sync or import it made), so "no skipped months" cannot rest on the report after a page reload: a
+  folder holding a planted month would pin the current key unchallenged. The refresh therefore also requires
+  `unopened` to be 0 from the same `monthKeyCounts` pass, and counts when it may pin, not only when a retired key is
+  listed. A folder that cannot be read from here pins nothing.
+- `SkippedMonths` takes `pin`. With a pin and an `other-key` skip naming an id other than it, the block leads with
+  "This folder's key changed" and both ids; the adopt block stays under it, and adopting pins the new id (place 1).
+  Skips under the pinned id itself (a forgotten key) and skips with no id are not a change. No pin gives the neutral
+  offer (THE UPGRADE test).
+- Tests: `tests/folder-sync.test.mjs` (counts: the probe from the red-team review as a plain test, relabelled and
+  never-held cases), `tests/archive-section.test.mjs` (id format, notice, wording), `tests/archive-pin.test.mjs` (the
+  pin against a fake IndexedDB, a Map folder and a scripted worker; each place, the negatives, and the changed-key to
+  adopt round trip).
 
 ## The folder: merge before write (part A)
 
