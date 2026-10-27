@@ -136,9 +136,11 @@ starts from main.
    its parent and behind a first meta_path finder, answered only when no frame on the stack is the cell's or for a
    library module running its own import; `js` unregistered from Pyodide's finder; `lockdownReadonly` returns
    `bridges(on)`, the per-cell lift for the card line, nothing sending it yet. MERGE ORDER, ruled the same hour, the
-   navigate pattern (#1154): (1) the red team's test-only PR on main first, lifting the bridges around each probe cell
-   in `tests/redteam-python-lockdown.test.mjs` defensively (`held.bridges ?? null`, a no-op until the gate lands) so
-   "after boot the PyProxy kinds still convert" stays green on both sides; (2) the lane's PR rebases and merges;
+   navigate pattern (#1154): (1) the red team's test-only PR on main first, lifting the bridges around the PyProxy-kinds
+   cell ONLY, opt-in (`cell(KINDS, { lifted: true })`; every probe cell stays the default approved cell, unlifted,
+   or the step-3 flips could never go plain), defensively (`held.bridges ?? null`, a no-op until the gate lands) so
+   "after boot the PyProxy kinds still convert" stays green on both sides (corrected 2026-10-27 on the red team's
+   question; the first wording said "each probe cell"); (2) the lane's PR rebases and merges;
    (3) the red team flips the import todos plain (`js`, `setTimeout`, `ffi`, `webloop`, `run_js` x2; `asyncio` stays
    failing as ruled) and writes the lane's unclaimed rows in its file: the introspection routes above plus the
    guard's `__getattr__.__closure__` holding the real modules and the lift flag, `compile()` under a library
