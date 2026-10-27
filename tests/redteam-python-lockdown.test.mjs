@@ -7,8 +7,8 @@
 // `{ todo: "<what is open>" }`; the fixer removes the `todo` when the property holds.
 //
 // Two surfaces are probed and the file never mixes them in one assertion:
-//   - the LOCKDOWN path (an APPROVED cell, `wrapUserCode`): `import pyodide_js` and `run_js` reach
-//     today because `lockdownReadonly` never calls `harden()` (which unregisters the JS bridges).
+//   - the LOCKDOWN path (an APPROVED cell, `wrapUserCode`): `run_js` and the `js` family reach
+//     because `lockdownReadonly` never calls `harden()` (which unregisters the JS bridges).
 //     These escape an approved cell, not the auto-approved path — the dialect refuses these imports.
 //     On this path the RULED property (PYODIDE_LOCKDOWN.md step 2, 2026-10-23) is that `pyodide_js`
 //     imports as a config-only stand-in with no `_module` and no `_api` beyond config; the wider
@@ -182,7 +182,7 @@ test("after boot the PyProxy kinds still convert: tuple, set, generator, ndarray
 
 // --- the freeze is real and the latch sets -------------------------------------------------------
 
-test("after boot the JS realm is frozen: Object.prototype, Promise.prototype, Function.prototype", { skip, todo: "lockdown() throws `Accessor not expected at intrinsics.%ObjectPrototype%.constructor` (the accessor is installed BEFORE it), so the realm is left unfrozen and `locked` never sets. The ruled fix (PYODIDE_LOCKDOWN.md 2026-10-23) is `overrideTaming: \"severe\"` in place of our accessor, under which lockdown() installs it and succeeds — do not widen the SES permit to allow a hand-installed accessor." }, async () => {
+test("after boot the JS realm is frozen: Object.prototype, Promise.prototype, Function.prototype", { skip }, async () => {
     // Positive control: the probe can tell frozen from unfrozen — the realm was unfrozen before the boot.
     assert.deepEqual(freezeBefore, { Object: false, Promise: false, Function: false }, "control: the realm starts unfrozen");
 
@@ -191,7 +191,7 @@ test("after boot the JS realm is frozen: Object.prototype, Promise.prototype, Fu
     assert.equal(Object.isFrozen(Function.prototype), true, "Function.prototype must be frozen after lockdownReadonly");
 });
 
-test("after boot a write to Object.prototype.constructor is refused", { skip, todo: "the ruled fix's `overrideTaming: \"severe\"` accessor refuses `this === Object.prototype` and otherwise defines an own property. Today the hand-installed accessor accepts the write on the prototype itself — a write path to Function for anything that reaches the prototype." }, () => {
+test("after boot a write to Object.prototype.constructor is refused", { skip }, () => {
     // Positive control: a write to a PLAIN object's constructor is an own property (that is what
     // #735's `n.constructor = …` needs), and it works today with the hand-installed setter.
     const plain = {};
@@ -210,7 +210,7 @@ test("after boot a write to Object.prototype.constructor is refused", { skip, to
     }
 });
 
-test("a second lockdownReadonly does not re-boot: lockdown() runs at most once", { skip, todo: "`locked` is set only on a successful lockdown(); the accessor makes lockdown() throw and the catch leaves it false, so a second boot re-runs lockdown() (measured: 2 calls). The latch must hold at 1." }, async () => {
+test("a second lockdownReadonly does not re-boot: lockdown() runs at most once", { skip }, async () => {
     const before = lockdownCalls;
     await lockdownReadonly(py, {});
     assert.ok(lockdownCalls <= 1, `lockdown() must have run at most once across both boots, got ${before} then ${lockdownCalls}`);
@@ -298,7 +298,7 @@ out = {"live": live}`],
 ];
 
 for (const [label, body] of STANDIN_ROUTES) {
-    test(`a cell reaches only the config stand-in by ${label} after the boot`, { skip, todo: `ruled property (PYODIDE_LOCKDOWN.md step 2): ${label} must hand a config-only stand-in with no \`_module\` and no \`_api\` beyond config. Today the stand-in imports as a live module carrying both, so the route hands the cell the Pyodide bridge. Pyodide's own boot-time \`from pyodide_js._api import scheduleCallback\` keeps working; a user cell must not reach it. The wider ask (refuse the import form outright) is parked with js/ffi/webloop/asyncio below.` }, async () => {
+    test(`a cell reaches only the config stand-in by ${label} after the boot`, { skip }, async () => {
         // Positive control: a legitimate import still works — the probe runs on a live interpreter.
         const ok = await cell(`import math
 out = {"pi": round(math.pi, 5)}
@@ -347,9 +347,8 @@ out`);
     });
 }
 
-// `pyodide_js._module` is the one stand-in attribute the fix removes outright (todo 16 in the
-// site-access per-todo list), so this turns plain when #1046 merges rather than being rewritten.
-test("a cell cannot reach pyodide_js._module after the boot", { skip, todo: "the ruled fix removes `_module` from the stand-in entirely, so this route is refused and the test turns plain when #1046 merges. Today the stand-in carries it: the Emscripten module, the JS side of the bridge." }, async () => {
+// `pyodide_js._module` is the one stand-in attribute the fix removes outright (#1046, de645ea3).
+test("a cell cannot reach pyodide_js._module after the boot", { skip }, async () => {
     const ok = await cell(`import math
 out = {"pi": round(math.pi, 5)}
 out`);
