@@ -617,7 +617,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
 // Loads content.js + injected.js into one fake "page world" so ml.* calls
 // travel the real postMessage relay. `onRuntimeMessage` plays the background:
 // it gets the runtime message and returns { data } or { error }.
-function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside, visible = true, ask = false, beforeInjected } = {}) {
+function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside, visible = true, ask = false, beforeInjected, main = "injected.js", onContentReady } = {}) {
     // #8: ml.agent probes config + model capabilities on every call to decide
     // whether to auto-wire a `look` tool. Answer those probes from `config`/`caps`
     // (defaults: no OCR model, no capabilities → no vision tool) so loop tests
@@ -711,6 +711,8 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside
                     // shifts every relay/agent test's message indices. `open` is the page's presence (SITE_PRESENCE.md
                     // step 2): visible unless the test says hidden. (The handler itself is tested in
                     // tests/background.test.js against the real background.)
+                    // `onContentReady(message)` plays the worker's answer instead (the real background, or one held to keep the gate pending).
+                    if (message && message.type === "CONTENT_READY" && onContentReady) { Promise.resolve(onContentReady(message)).then((r) => cb && cb(r)); return; }
                     if (message && message.type === "CONTENT_READY") { queueMicrotask(() => cb && cb({ adopt: [], open: visible, ...(ask ? { ask: true } : {}) })); return; }
                     // The Pyodide pre-warm a run with python_exec sends at start: a side call, answered here and kept
                     // out of runtimeCalls, or it eats a scripted model turn. Recorded in `prewarms` for the tests of it.
@@ -767,7 +769,9 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside
         vm.runInContext(beforeInjected, context);
         for (const fn of runtimeMsgListeners) fn({ type: "PAGE_PORT_ARM" }, {}, () => {});
     }
-    let injectedSrc = fs.readFileSync(path.join(DIST, "injected.js"), "utf8");
+    // `main`: the main-world script the page has at document_start: injected.js (the full API), ask.js (the stub,
+    // SITE_PRESENCE.md), or null for none (a hidden page, whose own scripts may hand the content script a port).
+    let injectedSrc = main ? fs.readFileSync(path.join(DIST, main), "utf8") : "";
     if (dialectInside) {   // as in loadBackground: the bundle has no real membership predicate yet, so patch the default verdict's text
         const patched = injectedSrc.replace("membership = () => false", `membership = (code) => code.includes(${JSON.stringify(dialectInside)})`);
         if (patched === injectedSrc) throw new Error("loadPageWorld: dialectInside found no membership default in dist/injected.js");

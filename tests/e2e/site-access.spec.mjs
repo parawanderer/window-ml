@@ -1689,3 +1689,94 @@ test.describe("@security attack 20: the diagram sandbox is not a render oracle",
         } finally { await close(); }
     });
 });
+
+// --- the ask stub (docs/spec/SITE_PRESENCE.md "The rule", site access PR 4b): what only a real browser can say ---
+//
+// The unit half is tests/redteam-presence-ask.test.mjs. Here: that Chromium puts ask.js where the registration says and
+// nowhere else (another host, the same host on another port, a frame either way), that the stub's port is the one the
+// content script holds, and that "Let sites ask" leaves denied and allowed origins alone.
+
+/** Wait until the worker has registered the stub, or unregistered it (`want: false`). */
+async function stubRegistered(ext, want = true) {
+    await expect.poll(() => ext.sw.evaluate(async () => (await chrome.scripting.getRegisteredContentScripts()).some((r) => r.id === "ml-main-ask")), { timeout: 10000 }).toBe(want);
+}
+
+/** Open `url` and wait for the content script to have heard the worker (an asking page's gate is closed too). */
+async function openClosed(ext, url) {
+    const page = await ext.context.newPage();
+    await page.goto(url);
+    await waitInShell(page, () => globalThis.__mlPageGate?.state === "closed");
+    return page;
+}
+
+/** What a frame's main world holds as window.ml: its own keys, or "undefined". */
+const mlKeys = (frame) => frame.evaluate(() => (typeof window.ml === "undefined" ? "undefined" : Object.keys(window.ml)));
+
+test.describe("@security the ask stub", () => {
+    test("a marked origin's top frame alone gets window.ml with requestAccess; another host, another port and every frame get nothing; the stub's port is the content script's", async () => {
+        const { fake, site, ext, close } = await setup();
+        const other = await startHostileSite();   // the same hostnames on another port: other origins
+        try {
+            const marked = site.origin("evil.test");
+            await ext.sw.evaluate((o) => chrome.storage.local.set({ ml_site_visible: [o] }), marked);
+            await stubRegistered(ext);
+            const before = backendHits(fake).length;
+            const page = await openClosed(ext, site.url("evil.test"));
+            expect(await mlKeys(page)).toEqual(["requestAccess"]);
+            expect(await inShell(page, () => globalThis.__mlPageGate?.ask)).toBe(true);
+            for (const url of [site.url("s07.evil.test"), other.url("evil.test")]) {
+                const p = await openClosed(ext, url);
+                expect(await mlKeys(p), url).toBe("undefined");
+                expect(await inShell(p, () => globalThis.__mlPageGate?.ask), url).toBe(false);
+            }
+            // A hidden frame in the marked page, and the marked origin framed by a hidden page.
+            const framing = await openClosed(ext, site.url("evil.test", `/frame?src=${encodeURIComponent(site.url("s07.evil.test"))}`));
+            expect(await mlKeys(framing), "positive control: the marked top frame").toEqual(["requestAccess"]);
+            await expect.poll(() => framing.frames().length).toBe(2);
+            expect(await mlKeys(framing.frames()[1])).toBe("undefined");
+            const framed = await openClosed(ext, site.url("s07.evil.test", `/frame?src=${encodeURIComponent(site.url("evil.test"))}`));
+            await expect.poll(() => framed.frames().length).toBe(2);
+            expect(await mlKeys(framed)).toBe("undefined");
+            expect(await mlKeys(framed.frames()[1]), "the stub is for top frames only").toBe("undefined");
+            // The page's own port, handed over after the stub's, is not taken: nothing it posts is answered.
+            await page.evaluate(() => window.__handOwnPort());
+            const viaPort = await page.evaluate(async () => ({
+                info: await window.__portRaw("INFO_REQUEST", {}, 2000),
+                ask: await window.__portRaw("REQUEST_ACCESS_REQUEST", {}, 2000),
+            }));
+            expect(viaPort).toEqual({ info: { timeout: true }, ask: { timeout: true } });
+            // The stub asks: refused with no gesture, waiting after a click (the positive control for the route).
+            expect(await page.evaluate(() => window.ml.requestAccess({ agents: true }))).toEqual({ state: "refused", reason: "needs a user gesture" });
+            await page.click("#secret");
+            expect(await page.evaluate(() => window.ml.requestAccess({ agents: true }))).toEqual({ state: "pending" });
+            expect(fake.calls()).toEqual([]);
+            expect(backendHits(fake).slice(before), "the stub's page reached the backend").toEqual([]);
+        } finally { await other.stop(); await close(); }
+    });
+
+    test("with Let sites ask on, an unknown origin gets the stub, a denied one nothing, and an allowed one the full API alone", async () => {
+        const { site, ext, close } = await setup({ siteRequests: true });
+        try {
+            const denied = site.origin("s07.evil.test"), allowed = site.origin("approved.test");
+            await ext.sw.evaluate((o) => chrome.storage.local.set({ ml_site_denied: [o] }), denied);
+            await approveOrigin(ext.sw, allowed);
+            await stubRegistered(ext);
+            const unknown = await openClosed(ext, site.url("evil.test"));
+            expect(await mlKeys(unknown)).toEqual(["requestAccess"]);
+            const d = await openClosed(ext, site.url("s07.evil.test"));
+            expect(await mlKeys(d)).toBe("undefined");
+            expect(await inShell(d, () => globalThis.__mlPageGate?.ask)).toBe(false);
+            const a = await ext.context.newPage();
+            await a.goto(site.url("approved.test"));
+            await waitForMl(a, { approve: false });
+            const keys = await mlKeys(a);
+            expect(keys).toContain("info");
+            expect(keys.length).toBeGreaterThan(1);
+            // Off again: the registration goes, and a page opened next is hidden.
+            await ext.sw.evaluate(() => chrome.storage.sync.set({ siteRequests: false }));
+            await stubRegistered(ext, false);
+            const after = await openClosed(ext, site.url("evil.test"));
+            expect(await mlKeys(after)).toBe("undefined");
+        } finally { await close(); }
+    });
+});

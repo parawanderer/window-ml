@@ -769,12 +769,16 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         (async () => {
             await navigationSettled(tabId);
             const shown = await presence(g.origin);
+            // A hidden origin (denied, or unknown and not asking) gets one answer, whichever it is, and nothing stored: a
+            // denied site must not learn it is denied from a request that should never have crossed (a page loaded with the
+            // stub before its origin was hidden still sends one).
+            if (shown === "hidden") { sendResponse({ data: { state: "refused", reason: ASK_REFUSED.off } }); return; }
             const opener = openedByRun(tabId, typeof sender.documentId === "string" ? sender.documentId : undefined);
             // While a run is driving this tab, its own clicks and keys are trusted input too: none of it is the person's
             // gesture (Q11), so nothing a run's click lets the page ask counts.
             const runDriving = [...(activeRuns.get(tabId) ?? [])].some((id) => runControllers.has(id));
             const answer = await requestAccess({ agents: p.agents, level: p.level, reason: p.reason },
-                { origin: g.origin, gesture: message.gesture === true && !runDriving, openedByAgent: opener != null, sitesMayAsk: shown !== "hidden" });
+                { origin: g.origin, gesture: message.gesture === true && !runDriving, openedByAgent: opener != null, sitesMayAsk: true });   // hidden returned above
             if (opener != null && answer.state === "refused" && answer.reason === ASK_REFUSED.openedByAgent) recordNotStarted(tabId, opener, g.origin);
             sendResponse({ data: answer });
         })().catch((e) => sendResponse({ error: (e as Error)?.message || String(e) }));
