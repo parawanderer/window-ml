@@ -97,7 +97,8 @@ starts from main.
    after the result is silent and counted"), green alone, in its file and on the rerun: a timing flake, watched.
    RULED 2026-10-27 on the parked widening (ii), by Shane in the security lane's session (relayed by `[window-ml
    security] Site access`, session 2dfb7129, mail `20261027-1434Z-site-access-to-repl-specs-lockdown-widening-ruled.md`;
-   recorded as relayed until Shane confirms it in the coordinator's session): refuse by default, an explicit approval
+   CONFIRMED by Shane in the coordinator's session the same day, with the caller-scoped refinement below): refuse by
+   default, an explicit approval
    lifts it. `js`, `pyodide.ffi` and `pyodide.webloop` are refused in an approved cell by the WORKER (so
    `__import__("j"+"s")` gains nothing), unless the approval card carried an explicit line that the cell reaches the
    browser's JavaScript and the person approved with it showing; that card line is a new public string whose wording
