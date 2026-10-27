@@ -658,12 +658,34 @@ export function searchSettings(query: string): void {
  * that only switched tabs could land you on a heading you had shut weeks ago and look like it did nothing.
  */
 export function openSettingsAt(tab: SettingsTab, section: string): void {
+    showSettingsSection(tab, section);
+    view.value = { name: "settings" };
+}
+
+/**
+ * Select `tab`, open `section` through the persisted collapsed state (so it stays open, as if clicked), and, given
+ * `targetId`, scroll that element into view once it is drawn. The chat page's `#/settings/extension/backup` uses it.
+ */
+export function showSettingsSection(tab: SettingsTab, section: string, targetId?: string): void {
     settingsQuery.value = "";   // a shortcut lands on its tab, not on a filtered view of every tab
     settingsTab.value = tab;
     collapsedSections.value = { ...collapsedSections.value, [section]: false };
     try { localStorage.setItem(SECT_KEY, JSON.stringify(collapsedSections.value)); } catch { /* private mode */ }
-    view.value = { name: "settings" };
+    if (!targetId) return;
+    // The section renders on the next frame, and the block inside it after its own mount: look a few times, then give up.
+    let tries = 0;
+    const look = () => {
+        const el = document.getElementById(targetId);
+        if (el) el.scrollIntoView({ block: "start" });
+        else if (++tries < 20) setTimeout(look, 50);
+    };
+    setTimeout(look, 0);
 }
+
+/** Settings → Storage → Backup and restore: the id the chat page's `backup` anchor scrolls to. */
+export const BACKUP_BLOCK_ID = "set-backup";
+/** The tab holding the Storage section, which holds that block. */
+export const BACKUP_TAB: SettingsTab = "appearance";
 
 // ── Permissions tab ──────────────────────────────────────────────────────────
 // Grants the USER manages here (the page never touches any): which sites may use window.ml and start agents, the
@@ -1680,7 +1702,7 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                     </div>
                 ) : null}
                 {/* A backup is not the archive's folder: it holds the settings and every session, live ones too, so it does not wait for the switch. */}
-                <div class="set-sub" role="group" aria-label="Backup and restore">
+                <div class="set-sub" id={BACKUP_BLOCK_ID} role="group" aria-label="Backup and restore">
                     <div class="set-sub-title">Backup and restore</div>
                     <LocalBackup />
                 </div>

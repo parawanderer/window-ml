@@ -72,8 +72,8 @@ Set once per install, the first time something is encrypted. Afterwards the fold
 ## Backup and restore (part 2)
 
 - **Where:** Settings → Extension on the chat page, and the DevTools Settings panel (the rule: that panel has every
-  setting). The popup's button opens the chat page at `#/settings/extension`: a popup closes the moment a file chooser
-  takes focus, and an export of a large archive outlives a popup's attention anyway.
+  setting). The popup's button opens the chat page at `#/settings/extension/backup`: a popup closes the moment a file
+  chooser takes focus, and an export of a large archive outlives a popup's attention anyway.
 - **What a settings backup holds is an inventory, not a guess.** Every storage key in `src/` is classified as backed
   up or not, and a test fails on a key nobody classified, so a new preference forces the decision instead of silently
   missing from every backup. Backed up: `chrome.storage.sync` (the config, filtered to `DEFAULT_CONFIG`'s keys),
@@ -232,8 +232,8 @@ examples); `LocalBackup` wires them to the `BACKUP` message, the keyring in Inde
   output budget (`LIMITS.outputBytes`) and the page's memory; larger files go through `tools/wmlbak-decrypt.mjs`.
 - **Change passphrase.** `changePassphrase` with the old passphrase or the recovery key; the screen says files already
   written still open with the old passphrase and the recovery key.
-- **The popup's button** "Backup and restore…" opens `chat.html#/settings/extension` (focusing an open chat tab and
-  moving its hash). The route already existed (`route.ts`, the `extension` tab).
+- **The popup's button** "Backup and restore…" opens `chat.html#/settings/extension/backup` (focusing an open chat tab
+  and moving its hash): the `backup` anchor opens the Storage section and scrolls to the block (`route.ts`).
 
 **Not built.** Adopting another install's data key on restore; rotating the recovery key; a browser (e2e) run of the
 new worker ops, the origin-private file transfer and the screens, which only a real Chromium can exercise; the archive

@@ -25,8 +25,15 @@ import { deviceEnv } from "./app-badge";
  *  always there. */
 export type SettingsTab = "page" | "runtimes" | "devices" | "extension" | "housekeeping";
 
+/** A block inside a settings tab that a URL can land on (`#/settings/extension/backup`). */
+export type SettingsAnchor = "backup";
+
 /** The tab Settings shows; set before opening it to land on one (the attention list opens it on Extension). */
 export const settingsTab = signal<SettingsTab>("page");
+
+/** A block of the Extension tab the address asked for (`#/settings/extension/backup`), until the settings view has
+ *  opened and scrolled to it; null once it has. */
+export const settingsAnchor = signal<SettingsAnchor | null>(null);
 
 /**
  * The settings sheet: this page's display settings, and the extension's where there are any.

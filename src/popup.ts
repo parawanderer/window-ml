@@ -376,7 +376,7 @@ $("stopAllRuns").addEventListener("click", stopAllRuns);
 $("openConfig").addEventListener("click", () => showConfig($("openConfig").getAttribute("aria-expanded") !== "true"));
 // The chat page, in a tab of its own. Focused if it is already open, rather than opened twice: it is one view of
 // this browser's sessions, and two of them would each hold their own port and their own scroll position.
-/** Open the chat page, or focus it where it is already open; `hash` (`#/settings/extension`) names a view to show there. */
+/** Open the chat page, or focus it where it is already open; `hash` (`#/settings/extension/backup`) names a view to show there. */
 async function openChat(hash = ""): Promise<void> {
     const url = chrome.runtime.getURL("chat.html");
     try {
@@ -396,7 +396,7 @@ async function openChat(hash = ""): Promise<void> {
 }
 $("openChat").addEventListener("click", () => openChat());
 // Backup and restore live in the chat page's Settings → Extension: a popup closes the moment a file chooser takes focus.
-$("openBackup").addEventListener("click", () => openChat("#/settings/extension"));
+$("openBackup").addEventListener("click", () => openChat("#/settings/extension/backup"));
 $("test").addEventListener("click", saveAndTest);
 $("refreshVram").addEventListener("click", refreshVram);
 $("sheetsAccess").addEventListener("click", enableSheetsAccess);

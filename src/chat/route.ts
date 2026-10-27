@@ -6,19 +6,23 @@
 // its own bundle, and a static server has no fallback, so none of them can answer `/settings/devices`. A development
 // server redirects such a path to its hash (tests/e2e/chat-shots.mjs). The old `#s=<key>` form still opens a session.
 
-import type { SettingsTab } from "./settings-page";
+import type { SettingsAnchor, SettingsTab } from "./settings-page";
 
 /** The views a URL can name. */
 export type MainRoute = "search" | "settings" | "attention";
 
-/** What a URL names: a session, or a main view (and, for settings, which tab), or neither (the list). */
+/** What a URL names: a session, or a main view (and, for settings, which tab and block), or neither (the list). */
 export interface Route {
     session?: string;
     main?: MainRoute;
     tab?: SettingsTab;
+    anchor?: SettingsAnchor;
 }
 
 const TABS: readonly SettingsTab[] = ["page", "runtimes", "devices", "extension", "housekeeping"];
+
+/** The anchors each tab knows; one a tab does not list is dropped. */
+const ANCHORS: Partial<Record<SettingsTab, readonly SettingsAnchor[]>> = { extension: ["backup"] };
 
 /** The route a hash names. Anything it does not know is the list, never an error: an old or mistyped link still opens the page. */
 export function parseRoute(hash: string): Route {
@@ -29,14 +33,19 @@ export function parseRoute(hash: string): Route {
     if (parts[0] === "search" || parts[0] === "attention") return { main: parts[0] };
     if (parts[0] === "settings") {
         const tab = TABS.find((t) => t === parts[1]);
-        return tab ? { main: "settings", tab } : { main: "settings" };
+        if (!tab) return { main: "settings" };
+        const anchor = ANCHORS[tab]?.find((a) => a === parts[2]);
+        return anchor ? { main: "settings", tab, anchor } : { main: "settings", tab };
     }
     return {};
 }
 
 /** The hash for what is on screen. A main view wins over an open session, since it is drawn over it. */
 export function formatRoute(r: Route): string {
-    if (r.main === "settings") return r.tab ? `#/settings/${r.tab}` : "#/settings";
+    if (r.main === "settings") {
+        if (!r.tab) return "#/settings";
+        return r.anchor && ANCHORS[r.tab]?.includes(r.anchor) ? `#/settings/${r.tab}/${r.anchor}` : `#/settings/${r.tab}`;
+    }
     if (r.main) return `#/${r.main}`;
     if (r.session) return `#/s/${encodeURIComponent(r.session)}`;
     return "";

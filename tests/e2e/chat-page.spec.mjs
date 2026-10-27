@@ -1207,3 +1207,28 @@ test("the extension's settings on the chat page: pills on a wide screen, one pag
         }
     } finally { await ext.close(); }
 });
+
+// `#/settings/extension/backup` is the popup's "Backup and restore…" link: it lands on that block, with the Storage
+// section open through the same persisted state a click on its heading uses, so it is still open on the next visit.
+test("#/settings/extension/backup opens the Storage section and scrolls to Backup and restore, and the section stays open", async () => {
+    const ext = await launchExtension();
+    try {
+        const page = await ext.context.newPage();
+        await page.setViewportSize({ width: 1300, height: 600 });
+        const url = `chrome-extension://${ext.extensionId}/chat.html`;
+        await page.goto(`${url}#/settings/extension`);
+        await page.locator(".settings .set-search").waitFor();
+        await page.evaluate(() => localStorage.setItem("ml_set_collapsed", JSON.stringify({ storage: true })));
+        await page.goto(`${url}#/settings/extension/backup`);
+        await page.reload();
+        const block = page.locator("#set-backup");
+        await expect(block).toBeVisible();
+        await expect(block).toBeInViewport();
+        expect(await page.evaluate(() => JSON.parse(localStorage.getItem("ml_set_collapsed") || "{}").storage), "persisted open").toBe(false);
+        await page.goto(`${url}#/settings/extension`);
+        await page.reload();
+        await page.locator(".set-pills [role=tab]", { hasText: "Appearance" }).click();
+        await expect(page.locator("#set-backup")).toBeVisible();
+        await page.close();
+    } finally { await ext.close(); }
+});
