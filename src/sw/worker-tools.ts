@@ -303,7 +303,7 @@ function runMl(ctx: RunCtx): MlApi {
         _queryAll: () => [],
         // fetch_url's whole body past its preview, kept in the value store for the pointer the step mints.
         _keepText: storeText satisfies KeepText,
-        pythonExec: (code: string, opts: { image?: unknown; margin?: number; tableRaw?: boolean; tables?: unknown; onStdout?: (chunk: string, ts?: number) => void } = {}) => workerPython(ctx, code, opts),
+        pythonExec: (code: string, opts: { image?: unknown; margin?: number; tableRaw?: boolean; tables?: unknown; keep?: boolean; onStdout?: (chunk: string, ts?: number) => void } = {}) => workerPython(ctx, code, opts),
         // A cast's token goes into the page's registry, where a click resolves it (python-tool.ts `MintToken`).
         _mintToken: ((q, documentId) => {
             if (!ctx.media) return Promise.reject(new Error("no page to mint the token in."));
@@ -359,7 +359,7 @@ async function workerTable(ctx: RunCtx, name: string, src: unknown, raw: boolean
 
 /** `ml.pythonExec` for a run's python_exec in the worker: its tables loaded here, then `runPython` with the run as the
  *  caller (a cell outside the dialect only for the code this call was approved for), live stdout straight to the call's output. */
-async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; margin?: number; tableRaw?: boolean; tables?: unknown; onStdout?: (chunk: string, ts?: number) => void }) {
+async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; margin?: number; tableRaw?: boolean; tables?: unknown; keep?: boolean; onStdout?: (chunk: string, ts?: number) => void }) {
     // The image first, as the page's pythonExec shoots it before loading its tables: from the worker's own capture.
     let shot: { image: string; imageBox: ShotBox | null; documentId: string } | null = null;
     if (opts.image != null && opts.image !== "") {
@@ -374,7 +374,7 @@ async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; 
     // Not derived from anything the page knows (the run id reaches it): a stream id it cannot name.
     const requestId = `wpy-${crypto.randomUUID()}`;
     const r = await runPython({
-        code, image: shot?.image ?? null, stream: !!opts.onStdout,
+        code, image: shot?.image ?? null, stream: !!opts.onStdout, ...(opts.keep === true ? { keep: true } : {}),
         tables: loaded.map((l, i) => ({ name: l.name, data: l.data, alias: specs[i][2] ?? (typeof specs[i][1] === "string" ? specs[i][1] : null) })),
     }, requestId, {
         ownSurface: false, tabId: ctx.tabId, disclose: false,

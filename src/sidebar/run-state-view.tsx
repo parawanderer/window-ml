@@ -27,6 +27,7 @@ const LOSS: Record<StateLoss, string> = {
     "offscreen-close": "the Python sandbox closes",
     "browser-restart": "the browser restarts",
     "turn-end": "the turn ends",
+    idle: "it sits unused for 30 min, unless the run asked to keep it",
 };
 
 /** How long a member lives, by its scope, for the tooltip's "lives for" row. */

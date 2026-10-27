@@ -18,7 +18,7 @@ export type StateRealm = "worker" | "page" | "offscreen";
 export type StateAudience = "model" | "human" | "never";
 
 /** What empties it without anyone asking. Absent from the list means it survives that event. */
-export type StateLoss = "worker-eviction" | "navigation" | "offscreen-close" | "browser-restart" | "turn-end";
+export type StateLoss = "worker-eviction" | "navigation" | "offscreen-close" | "browser-restart" | "turn-end" | "idle";
 
 /** Which run (or tab) a read is for. A store keyed by something else ignores what it does not use. */
 export interface StateKey {
@@ -139,7 +139,7 @@ const MEMBER_ID = /^[a-z][\w.-]{0,63}$/;
 
 const SCOPES: readonly StateScope[] = ["run", "session", "tab", "page", "browser"];
 
-const LOSSES: readonly StateLoss[] = ["worker-eviction", "navigation", "offscreen-close", "browser-restart", "turn-end"];
+const LOSSES: readonly StateLoss[] = ["worker-eviction", "navigation", "offscreen-close", "browser-restart", "turn-end", "idle"];
 
 /**
  * A page's answer to RUN_STATE_IN_PAGE, made safe to show. THE PAGE IS NOT TRUSTED: a hostile page answers this itself,

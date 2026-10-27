@@ -401,7 +401,7 @@ ROOT C ([`docs/spec/PYTHON_DIALECT.md`](../spec/PYTHON_DIALECT.md), "The namespa
   as before. **Not** the bench (`persist`): its own `benchNs`.
 - **Injected names** (`df`, `tables`, `img`) are assigned into the dict by each cell that passes them and are not
   wiped when a later cell passes none. `RESET` never runs on a kept dict, so `_`-prefixed names persist too.
-- **Ends** with the run: `settle()` (`sw-run-host.ts`) and `forgetRun` (`background.ts`) call `deletePythonRun`, which
+- **Ends** with the turn: `settle()` (`sw-run-host.ts`, once per turn) and `forgetRun` (`background.ts`) call `deletePythonRun`, which
   sends `PY_DELETE_RUN { run, principal: "run:<id>" }`; the offscreen document forwards it to that principal's worker as
   `deleteRun`, which destroys the dict, and clears its own `runPrincipals`, `runNsVars` and `nsLoss` entries.
 - **Loss is told.** `killWorker` (timeout, start timeout, crash) records `nsLoss` for every run `runPrincipals` lists on
@@ -417,6 +417,30 @@ ROOT C ([`docs/spec/PYTHON_DIALECT.md`](../spec/PYTHON_DIALECT.md), "The namespa
 
 Tests: `tests/python-run-namespace.test.mjs` (routing, through a fake Worker) and `tests/python-run-namespace-py.test.mjs`
 (the dicts in real Pyodide).
+
+**The idle reap (`py-reap.ts`).** The offscreen document is never closed, so a worker used to live as long as the
+browser: every worker-hosted run that ran Python kept a whole Pyodide realm. Now an idle worker is shut.
+
+- **Idle** means no message of that principal's (a cell, a prewarm, a delete) is running or queued in its worker. The
+  clock starts when the last one answers and stops when the principal posts again.
+- **How long it waits** depends on what the shut costs. A worker that holds no namespace of a live turn waits
+  `REAP_SETTLED_MS` (5 min) and loses only its warmth: the turn settled and `PY_DELETE_RUN` emptied it, or it is a
+  page's stateless principal. A worker that holds a live turn's namespace waits `REAP_LIVE_MS` (30 min); the names are
+  lost, and the run's next cell opens with `namespace reset at <time>: idle (…keep: true…)`, as after a kill. The bench
+  (`own`) and the `full` worker are never reaped.
+- **A keep** is a worker-hosted turn asking, through `python_exec` `keep: true`, to hold its worker through idle gaps
+  of any length (a run that works overnight). It applies only to that run's own `run:<id>` worker, holds for the
+  turn's later cells too, and ENDS WITH THE TURN: `PY_DELETE_RUN` clears it, and the worker is then on the 5 min clock.
+  A keep never outlives its turn, so it never holds a realm for a run nobody is running. The run log records
+  `python`/`keep` once per turn, so the person sees the model asked.
+- **Before the shut** the worker is asked (`takeDropped`) for the callables its last cell handed to JavaScript that
+  fired since (`cell-gate.ts`); no cell will report them now. A worker that does not answer in 2 s is terminated
+  anyway. The offscreen sends `PY_REAPED { run, live, dropped? }`, and the run log gets `python`/`reap` (a live turn's
+  namespace went) and `python`/`dropped` (`at-reap`). The housekeeping log gets `pyodide`/`reap`.
+
+Tests: `tests/python-reap.test.mjs` (the clocks and the keep, mocked timers), `tests/python-run-namespace.test.mjs`
+(`PY_REAPED` and the keep in the service worker), `tests/worker-media.test.mjs` (the tool offers `keep` only where
+names persist).
 
 **The bench KEEPS ITS VARIABLES between runs, like a notebook** (`wrapUserCode(..., persist)`, the worker's
 `benchNs`). A `python_exec` outside a run stays stateless; the bench and a run's cells do not (a run's:

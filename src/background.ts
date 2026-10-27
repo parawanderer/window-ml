@@ -65,7 +65,7 @@ import { adoptOnTab } from "./sw/adopt-run";
 import { pageRebuild } from "./agent/run-assembly";
 import { runControlPayloadError } from "./sw/run-payload-check";
 import { forPage } from "./sw/sw-scrub";   // error text bound for a page, without the config's secrets
-import { pythonPrewarm, pythonExec, relayPyStdout, deletePythonRun, dropPythonLibraries } from "./sw/sw-python";
+import { pythonPrewarm, pythonExec, relayPyStdout, deletePythonRun, dropPythonLibraries, pythonReaped } from "./sw/sw-python";
 import { focusLineFor } from "./sw/sw-focus";
 import { eventSession, pageMayWrite, withoutPageWhy, WORKER_ONLY_KINDS, type WorkerClaim } from "./event-admission";   // what a page may add to a session the worker speaks for
 import { fetchUrlFor, pageFetchCaller } from "./sw/sw-fetch-url";
@@ -856,6 +856,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         return false;
     }
     if (message.type === "PY_STDOUT") { relayPyStdout(message); return false; }
+    if (message.type === "PY_REAPED") { pythonReaped(message, sender); return false; }
     if (message.type === "SERVER_TOOL_EXEC") {
         // Run ONE OpenWebUI-configured tool. CHOKE POINT, and a real one: the fetch spends the user's API
         // key, and the tool it runs is caller-chosen — a hostile page reaching this handler directly could

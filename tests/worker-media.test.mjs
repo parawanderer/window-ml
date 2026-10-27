@@ -490,3 +490,18 @@ test("python_exec tells a worker-hosted run its names persist, and a page-hosted
     assert.doesNotMatch(page, /persist across/);
     assert.doesNotMatch(worker + page, / {2}/, "no padding in model-facing text");
 });
+
+test("python_exec offers keep only where names persist, and passes it on", T, async () => {
+    const { buildPythonTool } = await import("../src/python/python-tool.ts");
+    const { defineTool } = await import("../src/ml/ml-tool-factories.ts");
+    const calls = [];
+    const build = (ml) => buildPythonTool({ defineTool, _queryAll: () => [], pythonExec: async (code, opts) => { calls.push(opts); return { ok: true, stdout: "" }; }, ...ml });
+    const worker = build({ _mintToken: async () => "@pt:abcdef12" });
+    const page = build({});
+    assert.equal(worker.parameters.properties.keep?.type, "boolean");
+    assert.match(worker.parameters.properties.keep.description, /until this run ends/);
+    assert.equal(page.parameters.properties.keep, undefined, "a page-hosted run has no names to keep");
+    await worker.run({ code: "x", keep: true });
+    await worker.run({ code: "x" });
+    assert.deepEqual(calls.map((o) => o.keep), [true, undefined]);
+});

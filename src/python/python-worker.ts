@@ -33,7 +33,7 @@ let harness: unknown;   // state: plumbing — the frozen _ml_harness PyProxy, r
 /** How many cells this worker has started: the `afterCell` a dropped callback is reported against (cell-gate.ts). */
 let cellSeq = 0;   // state: plumbing — counts cells of this worker's one principal; dies with the worker
 
-type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown; stream?: boolean; env?: boolean; complete?: { line: number; column: number; bench?: "readonly" | "full" }; persist?: boolean; benchReset?: boolean; wire?: boolean; inside?: boolean; run?: string | null; deleteRun?: string; libraries?: DialectLibrary[]; library?: { op: "shape" | "load"; lib: DialectLibrary } };
+type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown; stream?: boolean; env?: boolean; complete?: { line: number; column: number; bench?: "readonly" | "full" }; persist?: boolean; benchReset?: boolean; wire?: boolean; inside?: boolean; run?: string | null; deleteRun?: string; takeDropped?: boolean; libraries?: DialectLibrary[]; library?: { op: "shape" | "load"; lib: DialectLibrary } };
 // `bootMs` is present ONLY on the call that paid for the cold start; `runMs` is the script itself, so the
 // two never have to be inferred from one another.
 // `prewarm` is on the first run after a pre-warm started the runtime: whether that run found it `warm` or still
@@ -426,6 +426,14 @@ function onMessage(e: MessageEvent): void {
     // ROOT C: drop a run's kept namespace when the run closes or is archived. Through the chain so it
     // cannot land mid-run. Callables the run's last cell handed to JavaScript that fired since its result have no next
     // cell to report them (cell-gate.ts), so the answer carries them.
+    // The idle reap is about to shut this worker (py-reap.ts): hand over what fired since the last report.
+    if (msg.takeDropped === true) {
+        runChain = runChain.then(() => {
+            const late = cellDropped();
+            post({ id: msg.id, ok: true, stdout: "", ...(late ? { dropped: { count: late, afterCell: cellSeq } } : {}) });
+        });
+        return;
+    }
     if (typeof msg.deleteRun === "string" && msg.deleteRun) {
         runChain = runChain.then(() => {
             deleteRunNamespace(msg.deleteRun!);

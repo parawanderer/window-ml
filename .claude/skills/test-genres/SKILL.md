@@ -30,6 +30,7 @@ Match it to what you touched, not to what you hope passes:
 | `src/sidebar/*` | `panel` — and `core`, since `model-stats`/`resource-model`/`timestamps` live there |
 | `background.ts`, `sw-*.ts`, `content.ts`, `injected.ts` | `ext` |
 | `python-runtime.ts` / `python-worker.ts` | `python` |
+| `offscreen.ts`, `py-reap.ts`, `sw-python.ts` (the sandbox's host side) | `python-host` (`node scripts/test.mjs python-host`) |
 | anything you are about to commit | `npm test` |
 
 ## Why `core` is derived, not listed
