@@ -279,6 +279,12 @@ Ruled the same hour:
     that PR. The janitor reviews it in its queue; nothing waits on the second red team for this one. After it merges,
     the first red team (`window-ml-redteam-e3`) pins the case in its own file as a named row, with the mutation check
     (bound off, the case hangs), and that row is the property's pin from then on.
+    Built as #1182 (2026-10-27), which taught two things the rows must carry: the hole shows only with a MULTI-LINE
+    busy loop (a one-line `while True: pass` happened to stop on main; a two-line loop or a `for` escaped, 5013 ms), so
+    every row uses the two-line form and five rows fail first on main with the control passing; and a stopped task's
+    exception keeps its traceback, so the suspended coroutine in those frames' locals was finalized in the NEXT cell
+    with both handlers run. #1182 adds a step 2b: the traceback frames of tasks that ended in an exception are cleared
+    under the tool with the deadline forced past, so finalization happens inside the spend and stops at its first event.
 19. **`sys.monitoring` is guarded during the spend, universally** (rule 2; wording corrected 2026-10-27 on the lane's
     question, the first text said "refused in a cell"). Pin 9's spend-time guard widens to every function of
     `sys.monitoring` that installs, changes or removes a tool, its events or its callbacks, enumerated from the
@@ -293,4 +299,7 @@ Ruled the same hour:
 20. **One mechanism where the measurement allows it** (rule 8). The `c_call` guard of pin 9 moves to monitoring's
     `CALL` event if the lane measures the same refusal there; if `setprofile` stays, the spec says why and both hooks
     are guarded and restored to `None` (pin 5). The skip-files rule moves into the callback. Pin 4's per-core
-    enumeration gains the row "monitoring events the bound needs exist on this core".
+    enumeration gains the row "monitoring events the bound needs exist on this core". MEASURED in #1182: the `CALL`
+    event refuses in 49 to 55 ms against `setprofile`'s 45 to 53, so `setprofile` is gone; the cell's `settrace` and
+    `setprofile` hooks are set to `None` at the cancel's start (pin 5); ordinary spend 30 ms either way, the spinner
+    1.05 s against the 1 s budget.
