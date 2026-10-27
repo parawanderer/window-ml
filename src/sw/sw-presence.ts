@@ -14,7 +14,9 @@ import { visibleOrigins, askOrigins, presenceOf, originMatchPattern, originOf, t
 import { readSiteLists } from "./sw-site-access";
 
 /** The main-world files, in order: the closed-root capture first, so it records roots before window.ml claims its reader. */
-export const PAGE_SCRIPT_FILES = ["shadow-patch.js", "injected.js"];   // state: fixed
+export /** The page-side tools of a run on a hidden page, for the content scripts' world (injected-isolated.ts). */
+const RUN_TOOL_FILES = ["injected-isolated.js"];
+const PAGE_SCRIPT_FILES = ["shadow-patch.js", "injected.js"];   // state: fixed
 
 /** The stub's main-world file: `window.ml` with `requestAccess` and nothing else. */
 export const ASK_SCRIPT_FILES = ["ask.js"];   // state: fixed
@@ -154,6 +156,20 @@ export async function presence(url: string | undefined): Promise<Presence> {
     const origin = originOf(url);
     if (!origin) return "hidden";
     return presenceOf(await readSiteLists(), origin, await sitesMayAsk());
+}
+
+/**
+ * Put a run's page-side tools into the document a tab shows now, for a run the person started on a hidden page: in the
+ * content scripts' world, so the page's world gets nothing of ours (SITE_PRESENCE.md, step 3). Closed shadow roots are
+ * read with `chrome.dom` there, those the page attached before this included.
+ * @param tabId the tab
+ * @param documentId the document to put them in, when known, so a tab that navigated meanwhile is not given them
+ * @returns once the tools have run in the top frame
+ * @throws when the extension may not script the tab or the document is gone
+ */
+export async function injectRunTools(tabId: number, documentId?: string): Promise<void> {
+    const target = documentId ? { tabId, documentIds: [documentId] } : { tabId };
+    await chrome.scripting.executeScript({ target, world: "ISOLATED", files: RUN_TOOL_FILES });
 }
 
 /**

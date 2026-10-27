@@ -110,7 +110,7 @@ test("the manifest names no main-world script and does not expose injected.js to
 
 // --- a run the person starts on a hidden page ---
 
-test("a run the person starts on a hidden page injects the page scripts only after the content script asked, then adopts", T, async () => {
+test("a run the person starts on a hidden page puts its tools into the content scripts' world only after the content script asked, then adopts: nothing into the page's", T, async () => {
     const adopts = [];
     const bg = worker({ extra: {
         openTabs: [{ id: 7, url: "https://hidden.example/page" }],
@@ -127,8 +127,8 @@ test("a run the person starts on a hidden page injects the page scripts only aft
     assert.equal(adopts[1].injected, true);
     const ex = executes(bg);
     assert.equal(ex.length, 1, JSON.stringify(ex));
-    assert.equal(ex[0].world, "MAIN");
-    assert.deepEqual(ex[0].files, PAGE_FILES);
+    assert.equal(ex[0].world, "ISOLATED", "the run's tools go into our world (SITE_PRESENCE.md step 3), never the page's");
+    assert.deepEqual(ex[0].files, ["injected-isolated.js"]);
     assert.equal(ex[0].target.tabId, 7);
     assert.ok(!ex[0].target.allFrames, "the top frame only");
 });

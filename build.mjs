@@ -18,6 +18,9 @@ import { buildWeb } from "./scripts/build-web.mjs";
 // output name (dist/<name>.js)  ->  source entry
 const ENTRIES = {
     injected: "src/injected.ts",
+    // The same page-side tools for a run the person starts on a page that may not see window.ml, put into the content
+    // scripts' world instead of the page's (src/injected-isolated.ts, docs/spec/SITE_PRESENCE.md step 3).
+    "injected-isolated": "src/injected-isolated.ts",
     content: "src/content.ts",
     background: "src/background.ts",
     popup: "src/popup.ts",

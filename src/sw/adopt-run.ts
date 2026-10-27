@@ -4,7 +4,7 @@ import { pageRebuild } from "../agent/run-assembly";
 import type { RebuildConfig } from "../contract";
 import { delegateSend } from "./delegate-send";
 import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
-import { injectPageScripts } from "./sw-presence";
+import { injectRunTools } from "./sw-presence";
 
 /**
  * Push a run's builtin toolset into a tab and hear its page context: `ADOPT_RUN_NOW`, through `delegateSend` (which
@@ -26,7 +26,7 @@ export async function adoptOnTab(tabId: number, runId: string, rebuild: RebuildC
     const send = async (): Promise<{ pageInfo?: string; error?: string; unanswered?: true } | undefined> => {
         const r = await delegateSend(tabId, msg) as { pageInfo?: string; error?: string; needInject?: boolean } | undefined;
         if (!r?.needInject) return r;
-        await injectPageScripts(tabId);
+        await injectRunTools(tabId);
         return await delegateSend(tabId, { ...msg, payload: { ...msg.payload, injected: true } }) as { pageInfo?: string; error?: string } | undefined;
     };
     try {
