@@ -312,10 +312,11 @@ test.describe("exec", () => {
         // observed today: the isolated world's btn.click() arrives untrusted but WITH user activation (userGesture: true).
         expect(row.during.pointer).toEqual([expect.objectContaining({ type: "click", isTrusted: false, activation: [true, true], clientXY: [0, 0], screenXY: [0, 0] })]);
         expect(row.during.pointer[0].stack, "no injected.js frame: the click came from another world").toBeUndefined();
-        // The run's protocol stays off the window here too; but this page ran before injected.js was put in for the run,
-        // so its listener sees the port hand-off and ml:ready (observed today: row 6's residual, a hidden page with a run).
+        // The run's protocol stays off the window here too, and since SITE_PRESENCE step 3 so does the page channel's hand-off:
+        // no injected.js is put into this page's main world for the run (its tools are in the content scripts' world), so the
+        // page's listener sees no ml-page-port and no ml:ready (row 6's former residual, a hidden page with a run, is gone).
         expectWindowSilent(row.during, "during a run on a hidden page");
-        expect(row.during.pageEvents).toEqual(["ml-page-port", "ml:ready"]);
+        expect(row.during.pageEvents).toEqual([]);
     });
 
     test("isolated world with streaming: the binding is named for the world, so the page never sees it", async () => {

@@ -140,14 +140,34 @@ const windowNamed = (page, hash) => page.evaluate(async (h) => {
 }, hash);
 
 /**
- * The page holds injected.js's own end of the page channel (evil.js ?grab=1, on a page given injected.js after it
- * loaded): the strongest place a page can stand. Control: a request on it reaches the worker and is answered, with the
- * origin gate's refusal, so a refusal or a silence later is about the attack and not a dead port.
+ * There is no port of injected.js's for the page to hold (SITE_PRESENCE step 3). A run the person starts on a hidden page
+ * puts its tools in the content scripts' world, so no injected.js is put into the page's MAIN world, and the page channel's
+ * two ends are joined in-process there: no `ml-page-port` event fires on the window for evil.js ?grab=1 to take injected.js's
+ * end from, and the content script's side is no longer armed. Before step 3 this was the strongest place a page could stand
+ * (it held injected.js's port and the worker answered it with the gate's refusal); now it has nothing to hold. Three parts:
+ *  (a) the grab hook is live (the page wrapped MessagePort.prototype.postMessage first) and caught nothing, over a bounded
+ *      wait after the run is on the page, so a missing grab is about the run and not a dead hook;
+ *  (b) the next-strongest route: the page hands the content script a port of its own, with the event injected.js uses. The
+ *      content script's port is the run's and stays the run's (the same object before and after), because its side is not
+ *      armed, so the page's port is never taken;
+ *  (c) requests on the page's own port get silence, never an answer: nothing reads it.
+ * Leaves `window.__held` pointing at the page's own port, so a caller's attempts go through the strongest route there is.
  */
-async function expectHeldPort(page) {
-    await expect.poll(() => page.evaluate(() => window.__held.how), { timeout: 15000 }).toBe("grab");
-    const r = await page.evaluate(() => window.__portRaw("CONFIG_REQUEST", {}, 5000));
-    expect(r.error ?? "", `the held port reaches the worker: ${JSON.stringify(r)}`).toMatch(/Refused: .* is not approved/);
+async function expectNoPortToHold(page) {
+    // (a)
+    const live = await page.evaluate(() => !/\[native code\]/.test(Function.prototype.toString.call(MessagePort.prototype.postMessage)));
+    expect(live, "positive control: the page's grab hook is installed").toBe(true);
+    await page.waitForTimeout(1500);
+    expect(await page.evaluate(() => window.__held.how), "the page grabbed a port of the run's page channel").toBeNull();
+    // (b)
+    const oursBefore = await inShell(page, () => { const p = globalThis.__mlPageChannel?.port ?? null; globalThis.__mlOurPort = p; return !!p; });
+    expect(oursBefore, "positive control: the run's port is attached in the content scripts' world").toBe(true);
+    await page.evaluate(() => window.__handOwnPort());
+    expect(await page.evaluate(() => window.__held.how), "the page holds a port of its own now").toBe("own");
+    expect(await inShell(page, () => globalThis.__mlPageChannel?.port === globalThis.__mlOurPort), "the page's own port displaced the run's").toBe(true);
+    // (c)
+    const r = await page.evaluate(() => window.__portRaw("CONFIG_REQUEST", {}, 3000));
+    expect(r, `a request on the page's own port was answered: ${JSON.stringify(r)}`).toEqual({ timeout: true });
 }
 
 test.describe("@security an unapproved page", () => {
@@ -245,13 +265,14 @@ test.describe("@security a run the user started on an unapproved page", () => {
             // nothing to cancel.
             expect(await windowNamed(page, hash)).toEqual({ live: true, named: false });
             expect(await page.evaluate(() => window.__cancelled), "the page learned the run's id off its window").toEqual([]);
-            // As if the id had leaked some other way: the page cancels it down its window and, as injected.js, on the page
-            // channel. The config request after it on the same port is answered only once the cancel has been routed.
-            await expectHeldPort(page);
+            // As if the id had leaked some other way: the page cancels it down its window and on a port of its own (step 3:
+            // it holds none of injected.js's, which is not in its world). The request after it on the same port waits out
+            // its timeout, so a cancel that was routed anywhere would have landed by then.
+            await expectNoPortToHold(page);
             await page.evaluate(async (h) => {
                 window.postMessage({ type: "CANCEL_RUN_REQUEST", payload: { runId: h } }, "*");
                 window.__portPost({ type: "CANCEL_RUN_REQUEST", payload: { runId: h } });
-                await window.__portRaw("CONFIG_REQUEST", {}, 5000);
+                await window.__portRaw("CONFIG_REQUEST", {}, 3000);
             }, hash);
             if (holeOpen("slice1", "CANCEL_RUN is relayed from the page, and the run id reaches it in debug events")) {
                 expect(await idx.settled(hash)).toBe("cancelled");
@@ -272,9 +293,8 @@ test.describe("@security a run the user started on an unapproved page", () => {
             // Step 2b: no run traffic crossed the page's window, so ?spend=1 never saw the run arrive and never fired.
             expect(await windowNamed(page, hash)).toEqual({ live: true, named: false });
             expect(await page.evaluate(() => window.__spent), "the page saw the run arrive on its window").toBeNull();
-            // The run is on the page now, held at its gate: the page spends down its window and, as injected.js, on the
-            // page channel.
-            await expectHeldPort(page);
+            // The run is on the page now, held at its gate: the page spends down its window and on a port of its own.
+            await expectNoPortToHold(page);
             const [viaWindow, viaPort] = await page.evaluate(() => {
                 const ask = { messages: [{ role: "user", content: "EVIL SPEND: a request the run never made" }] };
                 return Promise.all([window.__raw("LLM_REQUEST", ask, 3000), window.__portRaw("LLM_REQUEST", ask)]);
@@ -285,7 +305,7 @@ test.describe("@security a run the user started on an unapproved page", () => {
                 return;
             }
             expect(viaWindow, "the page's window reaches nothing").toEqual({ timeout: true });
-            expect(viaPort.error ?? "", JSON.stringify(viaPort)).toMatch(/refused|not approved/i);
+            expect(viaPort, "the page's own port reaches nothing: silence, not even a refusal").toEqual({ timeout: true });
             expect(JSON.stringify(fake.calls())).not.toContain("EVIL SPEND");
             await approveInCard(page);
             expect(await idx.settled(hash)).toBe("done");
@@ -319,19 +339,14 @@ function approveAll(ext, hold = () => false) {
     return async () => { stop = true; await loop; };
 }
 
-/** Each drained answer, held to "refused": an error naming the gate, never data and never no answer at all. */
-function expectAllRefused(drained) {
+/** Each drained answer, held to silence: step 3 left the page no port the worker answers, so not even a refusal. */
+function expectAllSilent(drained) {
     expect(drained, "positive control: the page sent its requests").not.toBeNull();
-    for (const t of DRAIN.split(",")) {
-        const r = drained[t];
-        expect(r?.timeout, `${t}: answered`).toBeFalsy();
-        expect(r?.error ?? "", `${t}: ${JSON.stringify(r).slice(0, 160)}`).toMatch(/Refused: .* is not approved/);
-        expect(r?.result, `${t}: no data`).toBeUndefined();
-    }
+    for (const t of DRAIN.split(",")) expect(drained[t], `${t} on the page's own port`).toEqual({ timeout: true });
 }
 
 test.describe("@security part 5: a page a run is on is lent nothing", () => {
-    test("a run the user started on an unapproved page: the page's own send of every former run-tab type, naming the run, is refused", async () => {
+    test("a run the user started on an unapproved page: the page's own send of every former run-tab type, naming the run, gets silence on every route", async () => {
         const { fake, site, ext, close } = await setup();
         try {
             const page = await open(ext, site.url("evil.test", `/?drain=${DRAIN}&grab=1`));
@@ -341,9 +356,10 @@ test.describe("@security part 5: a page a run is on is lent nothing", () => {
             expect(await windowNamed(page, hash)).toEqual({ live: true, named: false });
             expect(await page.evaluate(() => window.__drained), "the run's tool call reached the page's window").toBeNull();
             // As if the id had leaked some other way, while the run is live on the page: every former run-tab type, naming
-            // the run, as injected.js on the page channel (refused), and down the window (unanswered).
-            await expectHeldPort(page);
-            expectAllRefused(await page.evaluate(([h, t]) => window.__drain(h, t.split(","), "port"), [hash, DRAIN]));
+            // the run, on a port of the page's own and down the window: both unanswered (step 3: the page holds no port the
+            // worker answers).
+            await expectNoPortToHold(page);
+            expectAllSilent(await page.evaluate(([h, t]) => window.__drain(h, t.split(","), "port"), [hash, DRAIN]));
             const viaWindow = await page.evaluate(([h, t]) => window.__drain(h, t.split(","), "window"), [hash, DRAIN]);
             for (const [t, r] of Object.entries(viaWindow)) expect(r, `${t} down the window`).toEqual({ timeout: true });
             expect(JSON.stringify(fake.calls()), "nothing the page sent reached the backend").not.toContain("EVIL DRAIN");
@@ -374,21 +390,23 @@ test.describe("@security part 5: a page a run is on is lent nothing", () => {
             // drain with, and saw no hello to block.
             expect(await windowNamed(page, hash)).toEqual({ live: true, named: false });
             expect(await page.evaluate(() => [window.__cancelled, window.__drained])).toEqual([[], null]);
-            // The page holds injected.js's port, and swallowed the re-adopt hello on it: the strongest form of the block.
-            await expectHeldPort(page);
-            expect(await page.evaluate(() => window.__blocked), "the page did block its re-adopt").toBeGreaterThan(0);
-            // As if the id had leaked some other way: cancel down the window and on the port, then drain every former
+            // The page ran first and would swallow the re-adopt hello on injected.js's port; step 3 gives it no such port (the
+            // run's tools are in the content scripts' world), so there is no hello to swallow.
+            await expectNoPortToHold(page);
+            expect(await page.evaluate(() => window.__blocked), "the page had a hello to block").toBe(0);
+            // As if the id had leaked some other way: cancel down the window and on a port of its own, then drain every former
             // run-tab type on the port (its answers come after the cancel's routing). A model call that went through would
             // also have eaten the run's scripted last turn.
             await page.evaluate((h) => {
                 window.postMessage({ type: "CANCEL_RUN_REQUEST", payload: { runId: h } }, "*");
                 window.__portPost({ type: "CANCEL_RUN_REQUEST", payload: { runId: h } });
             }, hash);
-            expectAllRefused(await page.evaluate(([h, t]) => window.__drain(h, t.split(","), "port"), [hash, DRAIN]));
+            expectAllSilent(await page.evaluate(([h, t]) => window.__drain(h, t.split(","), "port"), [hash, DRAIN]));
             expect(JSON.stringify(fake.calls()), "nothing the page sent reached the backend").not.toContain("EVIL DRAIN");
-            // The held click is APPROVED: a page holding injected.js's port that swallows the re-adopt hello leaves the
-            // click no toolset to run against, so it ends after one barrier wait with the page named as not taking the run
-            // back (#1034), and the run goes on to its last turn.
+            // The held click is APPROVED. Before step 3 a page holding injected.js's port that swallowed the re-adopt hello
+            // left the click no toolset to run against, so it ended after one barrier wait with the page named as not taking
+            // the run back (#1034). The page has no such port now: the run's tools are in the content scripts' world, the
+            // re-adopt cannot be blocked, and the click runs and goes on to the run's last turn.
             const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list().filter((g) => g.tool === "click"));
             const approvedAt = Date.now();
             expect(await ext.sw.evaluate((k) => globalThis.__mlApprovals.resolve(k, true), gate.key)).toBe(true);
@@ -398,9 +416,10 @@ test.describe("@security part 5: a page a run is on is lent nothing", () => {
             expect(Date.now() - approvedAt, "the click's sends did not wait out the barrier again").toBeLessThan(10000);
             await watch.close();
             const clicked = events.filter((e) => e.kind === "agent-step" && e.tool === "click" && typeof e.result === "string").map((e) => e.result);
-            expect(clicked.at(-1), "the click ends naming the page, not as a run that ended").toMatch(/did not take the run back within \d+s/);
+            expect(clicked.at(-1), "the click ran: the page could not keep the run from becoming the worker's").toMatch(/^Clicked a#next/);
+            expect(clicked.at(-1)).not.toMatch(/did not take the run back/);
             const unadopted = await ext.sw.evaluate(async () => (await globalThis.__mlRunLog.all()).some((x) => x.kind === "unreachable" && x.reason === "unadopted"));
-            expect(unadopted, "the run's log says why").toBe(true);
+            expect(unadopted, "the run's log says the page did not take the run back").toBe(false);
             const result = events.find((e) => e.kind === "agent-result");
             expect(result.cancelled, "the page could not cancel the run").toBeFalsy();
             expect(result.summary).toBe("finished");
@@ -619,8 +638,9 @@ test.describe("@security attack 15: the run's event stream and the page", () => 
             // rewrite. Checked once the card is showing that step, so the page has had every chance to see it.
             await expect.poll(cardText, { timeout: 15000 }).toContain("click the link");
             expect(await page.evaluate(() => window.__redressed), "the page saw the step waiting for approval").toBe(0);
-            // Nor does it cross the page channel, read from injected.js's own end (the page took it: it ran first).
-            await expectHeldPort(page);
+            // Nor does it cross the page channel: the page holds no injected.js end to read it from (step 3), only a port of its own,
+            // which hears nothing.
+            await expectNoPortToHold(page);
             expect(await page.evaluate(() => window.__held.heard.filter((d) => d && d.__mlDebug && d.__mlDebug.awaitingApproval).length), "the page read the pending step on the page channel").toBe(0);
             // Secure, second half: the card still asks about the call the gate holds — the real element, named by the page's own
             // descriptor ("the link “Next”"; the consent card renders the resolved label, never the raw selector) — and
@@ -638,8 +658,8 @@ test.describe("@security attack 15: the run's event stream and the page", () => 
         // 15c proves the page cannot rewrite a step it SEES, because it no longer sees one. That leaves the rewrite
         // refused rather than merely unattempted. The page used to learn the run's real id from ADOPT_RUN / PAGE_TOOL_RUN
         // on its window; since step 2b those ride the page channel, so the test hands it the id instead, and the page
-        // posts a guessed step of that run — onto its own window (the route 15b/15c used), as injected.js on the page
-        // channel (it took injected.js's port, having run first), and straight into the card's iframe (the route 16b
+        // posts a guessed step of that run — onto its own window (the route 15b/15c used), on a port of its
+        // own (step 3: injected.js is not in its world to take a port from), and straight into the card's iframe (the route 16b
         // used) — while the real gate is open, with no knowledge beyond the id and the first step's seq. The secure
         // outcome is 15c's: the card keeps describing the call the gate actually holds.
         const { fake, site, ext, close } = await setup(config);
@@ -652,7 +672,7 @@ test.describe("@security attack 15: the run's event stream and the page", () => 
             expect(await page.evaluate(() => window.__blind.learned ?? null), "the page learned the run's id off its window").toBeNull();
             // As if the id had leaked some other way: the page forges with the real id down every route it has, the
             // strongest being injected.js's own end of the page channel, which it took (it ran first).
-            await expectHeldPort(page);
+            await expectNoPortToHold(page);
             await page.evaluate((h) => window.__blindStart(h), hash);
             await expect.poll(() => page.evaluate(() => window.__blind.posts.length), { timeout: 15000 }).toBeGreaterThan(0);   // and posted at least one round
             const cardText = async () => {
@@ -695,7 +715,7 @@ test.describe("@security attack 15: the run's event stream and the page", () => 
             expect(await page.evaluate(() => window.__poststart.learned ?? null), "the page learned the run's id off its window").toBeNull();
             // As if the id had leaked some other way: handed to the page, which forges down every route it has, the
             // strongest being injected.js's own end of the page channel, which it took (it ran first).
-            await expectHeldPort(page);
+            await expectNoPortToHold(page);
             await page.evaluate((h) => window.__poststartRun(h), hash);
             // Only now does the attack start, and it keeps going for the rest of the gate.
             await page.evaluate(() => { window.__poststart.go = true; });
