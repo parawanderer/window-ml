@@ -653,6 +653,65 @@ test("output-cap raise: an UNRAISED exec approval shows no raise note", async ()
     assert.equal(w.shadow.querySelector(".action-raise"), null, "no note when the cap isn't raised");
 });
 
+// The python_exec card line for the browser's JavaScript bridges (bridge-names.ts `JS_BRIDGE_LINE`): a person approving a cell
+// that names `js` or `pyodide.ffi` is told so, because that approval is what lifts the sandbox's refusal for the cell.
+const JS_LINE = "This code reaches the browser's JavaScript from Python (`js`, `pyodide.ffi`). Approve only if you expected that.";
+
+test("JS bridge line: a python_exec cell naming js shows the approved line, with the backtick parts as code, in the transcript step", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("jb1", "reach js"));
+    await w.dispatch(agentStep("jb1", 1, {
+        seq: 1, pending: true, awaitingApproval: true, tool: "python_exec",
+        arguments: { code: "import js\njs.console.log(1)" },
+        renderIn: { type: "python-in", mode: "script", code: "import js\njs.console.log(1)" },
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const note = w.shadow.querySelector(".action-raise.js-bridge");
+    assert.ok(note, "the line rendered on the approval step");
+    assert.equal(note.textContent.trim(), JS_LINE.replaceAll("`", ""), "the approved wording, without its backticks");
+    assert.deepEqual([...note.querySelectorAll("code")].map((c) => c.textContent), ["js", "pyodide.ffi"], "the two names are code");
+});
+
+test("JS bridge line (HUD card): the corner card shows it too", async () => {
+    const w = await loadSidebarWorld();
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.dispatch(agentStart("jb2", "reach js"));
+    await w.dispatch(agentStep("jb2", 1, {
+        seq: 1, pending: true, awaitingApproval: true, tool: "python_exec",
+        arguments: { code: "from pyodide.ffi import to_js" },
+        renderIn: { type: "python-in", mode: "script", code: "from pyodide.ffi import to_js" },
+    }));
+    await w.tick();
+    const note = w.shadow.querySelector(".action-raise.js-bridge");
+    assert.ok(note, "the line rendered on the HUD card");
+    assert.equal(note.textContent.trim(), JS_LINE.replaceAll("`", ""));
+});
+
+test("JS bridge line: no line for a python_exec cell that names no bridge, nor for another tool whose code does", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("jb3", "plain"));
+    await w.dispatch(agentStep("jb3", 1, {
+        seq: 1, pending: true, awaitingApproval: true, tool: "python_exec",
+        arguments: { code: "import json\nmyjs = 1" },
+        renderIn: { type: "python-in", mode: "script", code: "import json\nmyjs = 1" },
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    assert.equal(w.shadow.querySelector(".js-bridge"), null, "a cell with no bridge");
+
+    const v = await loadSidebarWorld();
+    await v.dispatch(agentStart("jb4", "other tool"));
+    await v.dispatch(agentStep("jb4", 1, {
+        seq: 1, pending: true, awaitingApproval: true, tool: "exec",
+        arguments: { js: "import js", code: "import js" },
+        renderIn: { type: "code", text: "import js", lang: "javascript", format: true },
+    }));
+    v.shadow.querySelector(".row").click();
+    await v.tick();
+    assert.equal(v.shadow.querySelector(".js-bridge"), null, "an exec call, though its text says `import js`");
+});
+
 test("approval card: a fetch_url gate styles the URL like navigate/submit (action-link: warm + dotted), not 'the element'", async () => {
     const w = await loadSidebarWorld({ sync: { chatUrl: "http://x" }, listModels: () => ({ data: ["m"] }) });
     await w.raw({ __mlSidebarSurface: "card" });

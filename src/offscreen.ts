@@ -339,7 +339,7 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
  *   ends there wedges the single Pyodide instance for every later call with nobody watching. In the bench a
  *   person is sitting in front of it, chose this, and can close the panel.
  */
-function runInWorker(code: string, image: string | null, hardened: boolean, tables: unknown, stream?: boolean, streamId?: string, env?: boolean, noTimeout?: boolean, complete?: { line: number; column: number; bench?: string }, bench?: { persist?: boolean; reset?: boolean }, transfer: ArrayBuffer[] = [], principal = hardened ? "own" : "full", wire?: WireStamp, inside = false, libraries?: { libraries?: unknown; library?: unknown }): Promise<PyResult> {
+function runInWorker(code: string, image: string | null, hardened: boolean, tables: unknown, stream?: boolean, streamId?: string, env?: boolean, noTimeout?: boolean, complete?: { line: number; column: number; bench?: string }, bench?: { persist?: boolean; reset?: boolean }, transfer: ArrayBuffer[] = [], principal = hardened ? "own" : "full", wire?: WireStamp, inside = false, libraries?: { libraries?: unknown; library?: unknown }, bridges = false): Promise<PyResult> {
     // `hardened` is the mode (true = readonly, the locked-down sandbox); `principal` is WHOSE sandbox.
     // A readonly run gets one worker per principal so a patch one principal left cannot reach the next;
     // `full` is its own worker and is never locked.
@@ -371,6 +371,8 @@ function runInWorker(code: string, image: string | null, hardened: boolean, tabl
             // The person's approved tier 3 libraries ride an inside run; a library op (its card's shape, its load after
             // approval) is its own message. Only the service worker sends either (PY_RUN is not in HANDLE_MAP).
             ...(inside && Array.isArray(libraries?.libraries) ? { libraries: libraries.libraries } : {}),
+            // The JavaScript-bridge lift for this one cell (bridge-names.ts); readonly only, a full worker has no refusal.
+            ...(bridges && hardened && !inside ? { bridges: true } : {}),
             ...(libraries?.library ? { library: libraries.library } : {}) }, transfer);
     });
 }
@@ -454,7 +456,7 @@ chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
     return undefined;
 });
 
-chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
     // Start the runtime ahead of a run that is likely to need it (see the background's PYTHON_PREWARM). No
     // watchdog: nothing waits on it, and a run that later waits on a start that hangs arms its own. Prewarm
     // carries the same principal + mode as the run it is warming for, so it warms THAT principal's worker.
@@ -490,7 +492,9 @@ chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
     withStoredTables(msg.tables ?? null)
         .then((t) => "error" in t
             ? { ok: false, stdout: "", error: t.error }
-            : runInWorker(msg.code, msg.image ?? null, msg.hardened !== false, t.tables, msg.stream, msg.streamId, msg.env, msg.noTimeout, msg.complete, { persist: msg.persist, reset: msg.benchReset }, t.transfer, String(msg.principal ?? (msg.hardened !== false ? "own" : "full")), wireStamp, msg.inside === true, { libraries: msg.libraries, library: msg.library })
+            : runInWorker(msg.code, msg.image ?? null, msg.hardened !== false, t.tables, msg.stream, msg.streamId, msg.env, msg.noTimeout, msg.complete, { persist: msg.persist, reset: msg.benchReset }, t.transfer, String(msg.principal ?? (msg.hardened !== false ? "own" : "full")), wireStamp, msg.inside === true, { libraries: msg.libraries, library: msg.library },
+                // Only the service worker may lift a cell's bridge refusal: a content script is an extension context too.
+                msg.bridges === true && !sender.tab)
                 .then((r) => storeReturnedTable(r, msg.valueBudget)))
         .then(sendResponse, e => sendResponse({ ok: false, stdout: "", error: String(e) }));
     return true;   // keep the channel open for the async result

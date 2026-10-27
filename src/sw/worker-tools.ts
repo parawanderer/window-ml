@@ -71,7 +71,7 @@ interface RunCtx {
     /** What the python_exec call now running was approved for: external sheet ids, and the code of a cell outside the dialect. Set around the
      *  one call (`grantRunPython`), never on the tab. `inside`: the call is the host's try of the cell INSIDE the dialect,
      *  before its gate, and `refused` is where the fork refused it (`takePyRefusal`). */
-    pyCall?: { sheets: Set<string>; code: string | null; step?: { seq: number; local: { step: number; seq: number } }; inside?: boolean; refused?: string };
+    pyCall?: { sheets: Set<string>; code: string | null; step?: { seq: number; local: { step: number; seq: number } }; inside?: boolean; refused?: string; bridges?: boolean };
     /** Its python_exec's image and cast (none: a call with an `image` is refused). */
     media?: WorkerPyMedia;
 }
@@ -168,10 +168,11 @@ function originCovers(ctx: RunCtx, url: string, mode: { credentials: boolean; re
 }
 
 /** Grant the python_exec call about to run in the worker what its approval covers, and the step it runs in (its `ml`
- *  calls' asks are shown there); `null` ends the call's grant. */
-export function grantRunPython(runId: string, grant: { sheets: string[]; code: string | null; step?: { seq: number; local: { step: number; seq: number } }; inside?: boolean } | null): void {
+ *  calls' asks are shown there); `null` ends the call's grant. `bridges`: a person approved the cell with the card's
+ *  JavaScript-bridge line showing (bridge-names.ts), so it runs with that refusal lifted. */
+export function grantRunPython(runId: string, grant: { sheets: string[]; code: string | null; step?: { seq: number; local: { step: number; seq: number } }; inside?: boolean; bridges?: boolean } | null): void {
     const ctx = runs.get(runId);
-    if (ctx) ctx.pyCall = grant ? { sheets: new Set(grant.sheets), code: grant.code, ...(grant.step ? { step: grant.step } : {}), ...(grant.inside ? { inside: true } : {}) } : undefined;
+    if (ctx) ctx.pyCall = grant ? { sheets: new Set(grant.sheets), code: grant.code, ...(grant.step ? { step: grant.step } : {}), ...(grant.inside ? { inside: true } : {}), ...(grant.bridges && grant.code !== null ? { bridges: true } : {}) } : undefined;
 }
 
 // state: cache — "" once this worker's Python sandbox runs cells inside the dialect, else why it cannot; asked once
@@ -384,6 +385,7 @@ async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; 
         wireRun: ctx.runId, tabUrl: ctx.tabUrl, ...(ctx.pyCall?.step ? { wireStep: ctx.pyCall.step } : {}),
         ...(opts.onStdout ? { stream: opts.onStdout } : {}),
         ...(ctx.pyCall?.inside ? { inside: true } : {}),
+        ...(ctx.pyCall?.bridges ? { bridges: true } : {}),
     });
     if (r.error !== undefined) throw new Error(r.error);
     // Outside the dialect: nothing of the try reaches the model (its output is discarded); the host reads the refusal.

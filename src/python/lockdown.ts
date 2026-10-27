@@ -12,6 +12,7 @@
 // `docs/plan/repl/PYODIDE_LOCKDOWN.md` is the spec; `docs/dev/python-sandbox.md` is the implementation note.
 import "ses";
 import { installCellGate, type CellGate } from "./cell-gate";
+import { REFUSED_BRIDGES } from "./bridge-names";
 
 /** Once per realm: `lockdown()` freezes the intrinsics and throws if called twice. */
 let locked = false;   // state: plumbing — the realm's lockdown latch, one-way
@@ -310,17 +311,6 @@ def _ml_seal():
 _ml_seal()
 del _ml_seal
 `;
-
-/**
- * The modules a cell may not import in the readonly worker: the one that reaches the browser's JavaScript (`js`), and
- * every module that holds `pyodide.ffi`'s functions (`create_proxy`, `create_once_callable`, `run_sync`, `to_js`,
- * `register_js_module`), measured on the pinned core, so `import _pyodide_core` is not a way around `pyodide.ffi`.
- * Ruled 2026-10-27 (PYODIDE_LOCKDOWN.md step 2): refused by the CALLER, so packages that use them keep working.
- */
-export const REFUSED_BRIDGES: readonly string[] = Object.freeze([
-    "js", "pyodide.ffi", "pyodide.ffi.wrappers", "pyodide.webloop",
-    "_pyodide_core", "_pyodide._importhook", "_pyodide._core_docs", "pyodide._package_loader",
-]);
 
 /**
  * The Python half of refusing `REFUSED_BRIDGES` to a cell. Each module is replaced, in `sys.modules`, on its parent

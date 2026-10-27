@@ -21,7 +21,7 @@ const config = { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test",
  * A worker-built run whose driver calls python_exec once with `code`, then answers. `pyInside(msg)` answers the inside
  * runs (absent: the stock core); `local` presets chrome.storage.local. Every gate is approved. Returns the sandbox's runs, the step events and the model's view.
  */
-async function run(code, { pyInside, cfg = {}, local = {} } = {}) {
+async function run(code, { pyInside, cfg = {}, local = {}, external = false } = {}) {
     let turns = 0, last = null;
     const full = [];
     const bg = loadBackground({
@@ -40,12 +40,17 @@ async function run(code, { pyInside, cfg = {}, local = {} } = {}) {
         },
         onTabMessage: async (_t, msg) => {
             if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
+            if (external) return msg.type === "RUN_TOOL_IN_PAGE" ? { result: "" } : undefined;
             if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
             return msg.type === "RUN_TOOL_IN_PAGE" ? { result: "" } : undefined;
         },
     });
-    await bg.context.__mlStartUserRunForTest(SITE.id, { task: "compute", surface: "hud" });
-    for (let i = 0; i < 3000 && turns < 2; i++) await tick();
+    await bg.context.__mlStartUserRunForTest(SITE.id, { task: "compute", surface: "hud" }, external ? { approvalRouting: "both" } : undefined);
+    for (let i = 0; i < 3000 && turns < 2; i++) {
+        // The external channel (an orchestrator's `__mlApprovals`) answers the gate with source "external", not a person.
+        if (external) for (const g of bg.context.__mlApprovals.list()) bg.context.__mlApprovals.resolve(g.key, true);
+        await tick();
+    }
     await new Promise((r) => setTimeout(r, 20));
     const events = bg.tabMessages.filter(([, m]) => m.type === "ML_DEBUG_TO_PAGE" && m.event?.tool === "python_exec").map(([, m]) => plain(m.event));
     return {
@@ -115,4 +120,53 @@ test("an inside run carries every stored library as the sandbox loads it; an ent
 test("with no library stored, an inside run carries an empty list", T, async () => {
     const r = await run("return 1 + 1", { pyInside: () => ({ ok: true, value: "2", stdout: "" }) });
     for (const m of r.inside.filter((x) => x.code !== "pass")) assert.deepEqual(m.libraries ?? [], []);
+});
+
+// --- the JavaScript-bridge lift: PY_RUN carries `bridges` only for a cell a person approved on its card ---
+// bridge-names.ts. The chain from the loop's approval (`person`) through sw-run-host, the run's python grant, runPython
+// and the PY_RUN the offscreen document gets; each link is also pinned where it lives (agent-loop.test.mjs,
+// python-run-namespace.test.mjs). The sandbox's refusal itself is python-bridge-gate.test.mjs.
+
+const NO_DIALECT = { pyInside: (msg) => (msg.code === "pass" ? { ok: true, value: null, stdout: "" } : { ok: false, stdout: "", notInDialect: "not in dialect: import 'js' (line 1)" }) };
+
+test("a cell naming a bridge that the person approved on the card runs with PY_RUN bridges: true", T, async () => {
+    const r = await run("import js\nreturn js.Date.now()", NO_DIALECT);
+    assert.equal(r.asked.length, 1, "the card asked");
+    assert.equal(r.full.length, 1);
+    assert.equal(r.full[0].bridges, true);
+    assert.equal(r.full[0].hardened, true);
+});
+
+test("a cell outside the dialect that names no bridge, approved on the card, carries no lift", T, async () => {
+    const r = await run("import os\nreturn os.getcwd()", { pyInside: NO_DIALECT.pyInside });
+    assert.equal(r.full.length, 1);
+    assert.equal("bridges" in r.full[0], false);
+});
+
+test("a cell naming a bridge approved through the external channel (not a person) carries no lift", T, async () => {
+    const r = await run("import js\nreturn js.Date.now()", { ...NO_DIALECT, external: true });
+    assert.equal(r.full.length, 1, "the external approval did run the cell");
+    assert.equal("bridges" in r.full[0], false, "an orchestrator is not the person the card's line is for");
+});
+
+test("a cell the sandbox runs inside the dialect is never sent the lift", T, async () => {
+    const r = await run("return 1 + 1", { pyInside: (msg) => ({ ok: true, value: "INSIDE 2", stdout: msg.code }) });
+    for (const m of [...r.inside, ...r.full]) assert.equal("bridges" in m, false);
+});
+
+test("PYTHON_EXEC cannot ask for the lift: `bridges` in a payload is ignored, from a page and from our own surface", T, async () => {
+    const runs = [];
+    const bg = loadBackground({
+        config, siteGate: false, openTabs: [SITE],
+        onPyRun: async (msg) => { runs.push(plain(msg)); return { ok: true, value: "x", stdout: "" }; },
+    });
+    const payload = { code: "import js", bridges: true, hardened: true };
+    const page = { tab: { id: SITE.id, url: SITE.url }, url: SITE.url, frameId: 0 };
+    const refused = await bg.send({ type: "PYTHON_EXEC", requestId: "r1", payload }, page);
+    assert.match(refused.error ?? "", /needs approval/, "a page's cell outside the dialect is refused before the sandbox");
+    assert.equal(runs.filter((x) => x.type === "PY_RUN").length, 0);
+    await bg.send({ type: "PYTHON_EXEC", requestId: "r2", payload }, {});
+    const ran = runs.filter((x) => x.type === "PY_RUN");
+    assert.equal(ran.length, 1, "positive control: our own surface's cell did reach the sandbox");
+    assert.equal("bridges" in ran[0], false, "whatever the payload said, nothing is lifted");
 });

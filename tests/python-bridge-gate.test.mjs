@@ -12,7 +12,8 @@ import assert from "node:assert";
 import path from "node:path";
 import fs from "node:fs";
 import { wrapUserCode, injectInputs } from "../src/python/python-runtime.ts";
-import { lockdownReadonly, REFUSED_BRIDGES } from "../src/python/lockdown.ts";
+import { lockdownReadonly } from "../src/python/lockdown.ts";
+import { REFUSED_BRIDGES, JS_BRIDGE_LINE, namesJsBridge } from "../src/python/bridge-names.js";
 import { PY_PACKAGE_LOADS, PY_STARTUP_PREPARE } from "../src/python/python-env.ts";
 
 const PYODIDE_DIR = path.resolve(import.meta.dirname, "../dist/pyodide");
@@ -194,4 +195,31 @@ test("the lift lets one cell through and the next cell is refused again, even on
     assert.equal(first.value, 2);
     const next = await cell("import js\njs.Math.max(1, 2)");
     assert.match(String(next.error), REFUSED, `the next cell must be refused, got ${next.error}`);
+});
+
+// --- the card line: which cells name a bridge, and the wording a person approves --------------------------------------
+// Pure (no Pyodide). A cell that names a bridge gets the card's line, and only a person's approval of it lifts the refusal,
+// so a false positive costs a needless warning and a false negative costs a cell that stays refused (the safe side).
+
+test("JS_BRIDGE_LINE is the wording the product owner approved, letter for letter", () => {
+    assert.equal(JS_BRIDGE_LINE, "This code reaches the browser's JavaScript from Python (`js`, `pyodide.ffi`). Approve only if you expected that.");
+});
+
+test("namesJsBridge: every way a cell writes a bridge's name is seen", () => {
+    for (const code of [
+        "import js", "import js\njs.setTimeout", "x = 1\nimport js as j", "import js.foo",
+        "from js import x", "from js import (a,\n b)", "import os, js", "import numpy as np, js", "import os,js as j", "from js.foo import x",
+        "import pyodide.ffi", "from pyodide.ffi import to_js", "from pyodide import ffi", "from pyodide import to_js, ffi",
+        "from pyodide import webloop", "from pyodide import code",
+        "import pyodide.webloop", "import pyodide.code", "pyodide.code.run_js('1')", "run_js('1')",
+        "import _pyodide_core", "import _pyodide._importhook", "from _pyodide._core_docs import x", "import pyodide._package_loader",
+    ]) assert.equal(namesJsBridge(code), true, code);
+});
+
+test("namesJsBridge: a word that merely contains a bridge's letters, or a harmless pyodide import, is not one", () => {
+    for (const code of [
+        "", "import json", "import jsonify", "from jsonschema import validate", "myjs = 1", "js = 1", "x.js", "'js'",
+        "import pyodide", "from pyodide import something_else", "from pyodide import http", "import pyodide_http",
+        "import numpy as np\nprint(np.arange(3).sum())", "import os, json", "import numpy as np, jsonschema", "from jsonschema.x import y", "df.to_json()", "import _pyodidefoo", "run_json()",
+    ]) assert.equal(namesJsBridge(code), false, code);
 });

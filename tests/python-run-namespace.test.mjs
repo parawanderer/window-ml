@@ -245,6 +245,41 @@ test("a cell's ml call is sent on with the document's own client and run; an ask
     } finally { sendReply = () => undefined; }
 });
 
+// --- the JavaScript-bridge lift reaches the worker only from the service worker, for a hardened cell outside the dialect ---
+// bridge-names.ts: only a person's approval lifts the readonly worker's refusal of `js`/`pyodide.ffi`, for one cell. The
+// service worker decides (sw-python.ts); this document must not let anything else ask, nor ask where there is no refusal.
+
+/** Send one PY_RUN from `sender`, answer it from the fake worker, and return the message the worker was posted. */
+async function postedFor(msg, sender) {
+    const posted = new Map(workers.map((w) => [w, w.posts.length]));
+    const answer = send({ type: "PY_RUN", code: "import js", tables: null, ...msg }, sender);
+    await tick();
+    const w = workers.find((x) => x.posts.length > (posted.get(x) ?? 0));
+    const post = lastPost(w);
+    w.reply({ id: post.id, ok: true, stdout: "" });
+    await answer;
+    return post;
+}
+
+test("bridges: the service worker's PY_RUN for a hardened cell reaches the worker as bridges: true", async () => {
+    const post = await postedFor({ hardened: true, bridges: true, principal: "own" }, { id: "test" });
+    assert.equal(post.bridges, true);
+});
+
+test("bridges: a PY_RUN from a tab's context (sender.tab set) never forwards the lift", async () => {
+    const post = await postedFor({ hardened: true, bridges: true, principal: "own" }, { id: "test", tab: { id: 7 } });
+    assert.equal("bridges" in post, false, "a content script is an extension context too, and may not lift the refusal");
+});
+
+test("bridges: only a literal true counts, and a full worker or an inside run is never sent it", async () => {
+    for (const bridges of [1, "true", {}]) {
+        assert.equal("bridges" in await postedFor({ hardened: true, bridges, principal: "own" }, { id: "test" }), false, JSON.stringify(bridges));
+    }
+    assert.equal("bridges" in await postedFor({ hardened: false, bridges: true, principal: "full" }, { id: "test" }), false, "full mode has no refusal to lift");
+    assert.equal("bridges" in await postedFor({ hardened: true, bridges: true, inside: true, principal: "own" }, { id: "test" }), false, "an inside cell needs none");
+    assert.equal("bridges" in await postedFor({ hardened: true, principal: "own" }, { id: "test" }), false, "positive control: no ask, none sent");
+});
+
 // --- UPGRADE: a PY_RUN shaped the way the old service worker sent it ---
 
 test("UPGRADE: a PY_RUN with no wire and no run (the old shape) runs as before: no wire flag, no kept namespace, no notice", async () => {

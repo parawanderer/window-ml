@@ -5,6 +5,7 @@
 
 import { runBackgroundAgent } from "../agent/agent-host";
 import { pythonCellInDialect, pythonOutsideWhy } from "../agent/python-dialect";
+import { namesJsBridge } from "../python/bridge-names";
 import { evalReadonlyInWorker } from "./sw-readonly";
 import { deletePythonRun } from "./sw-python";
 import { workerReadonlyMl, derefWhole } from "./worker-readonly-ml";
@@ -1172,7 +1173,11 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     const pyInWorker = name === "python_exec" && byWorker() && runsInWorker(p, name);
                     if (pyInWorker) {
                         await ensureLocalTools(runId, p, tabId, () => tabPageUrl.get(tabId) || p.pageUrl || "", pyMedia).catch(() => { /* nothing granted: fails closed */ });
-                        grantRunPython(runId, { sheets: externalSheetIds(args), code: pythonCellInDialect(String((args as { code?: unknown }).code ?? "")) ? null : String((args as { code?: unknown }).code ?? ""), ...(call ? { step: { seq: seqBase + call.seq, local: call } } : {}) });
+                        const pyCode = String((args as { code?: unknown }).code ?? "");
+                        const outsideCode = pythonCellInDialect(pyCode) ? null : pyCode;
+                        // The JavaScript bridges only for a cell a PERSON approved with the card's line showing (bridge-names.ts).
+                        const bridges = outsideCode !== null && call?.person === true && namesJsBridge(outsideCode);
+                        grantRunPython(runId, { sheets: externalSheetIds(args), code: outsideCode, ...(call ? { step: { seq: seqBase + call.seq, local: { seq: call.seq, step: call.step } } } : {}), ...(bridges ? { bridges: true } : {}) });
                     }
                     // What this call puts on the TAB for its own sub-ops (tabGrantsForCall, grant-extract.ts): an exec's literal
                     // fetch URLs, a server tool's exact call, and a page-built run's python_exec's outside-the-dialect code and sheets.

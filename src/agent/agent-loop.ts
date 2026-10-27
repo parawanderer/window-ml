@@ -60,7 +60,8 @@ export interface AgentLoopDeps {
     // output as it runs (the loop throttles + fans it). Ignored by tools that don't support streaming.
     // `call.seq` is the loop's own seq of the step the call runs in: what a call made from inside it (an ml.sh) is
     // asked about on (sw-asks.ts).
-    runTool(name: string, args: Record<string, unknown>, onStream?: (text: string, ts?: number) => void, call?: { seq: number; step: number }): Promise<ToolRunResult>;
+    /** `call.person`: a person approved this call on its card (not a policy, not the external channel). */
+    runTool(name: string, args: Record<string, unknown>, onStream?: (text: string, ts?: number) => void, call?: { seq: number; step: number; person?: boolean }): Promise<ToolRunResult>;
     // The approval gate (UI). Reached ONLY for a requiresApproval tool that isn't auto-approved. `seq`
     // and `step` identify the pending step so a background gate can correlate its async decision to it.
     approve(req: { tool: string; arguments: Record<string, unknown>; seq?: number; step?: number; askWhy?: import("../contract").AskWhy }): Promise<ApprovalDecision>;
@@ -810,7 +811,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     };
     /** Every tool dispatch goes through here so `dereference` is answered from run state instead of delegated. A throw
      *  from the tool or its host becomes an error result the model reads, never the run's end (`threw`). */
-    const runTool = async (name: string, a: Record<string, unknown>, push: ((t: string, ts?: number) => void) | undefined, step: number, seq: number): Promise<ToolRunResult> => {
+    const runTool = async (name: string, a: Record<string, unknown>, push: ((t: string, ts?: number) => void) | undefined, step: number, seq: number, person = false): Promise<ToolRunResult> => {
         const t0 = Date.now();
         // The gap since the model call returned, minus any time a human held the gate open — that wait is
         // already its own phase, and counting it here would draw the same seconds twice.
@@ -819,7 +820,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             if (name === DEREF_TOOL) return await derefLocally(a, step, seq);
             const l = lookArgs(name, a, step);
             if ("error" in l) return withText({ result: `Error: ${l.error}` });
-            const r = await orStopped(deps.runTool(name, l.args, push, { seq, step }));
+            const r = await orStopped(deps.runTool(name, l.args, push, { seq, step, ...(person ? { person: true } : {}) }));
             if (r === STOPPED) { stoppedMidCall = true; return { result: STOPPED_RUNNING }; }
             return withText(r);
         } catch (e) {
@@ -1027,7 +1028,10 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                             } else {
                                 approval = d.source === "policy" ? "consented" : "user";
                                 args = d.arguments;                                   // possibly gate-edited
-                                tr = await runTool(call.name, args, fan?.push, step, s); result = tr.result;   // EXECUTE ONLY AFTER APPROVE
+                                // A person saw the card (a policy or the external channel did not): what only a card can
+                                // grant, a python_exec cell's JavaScript bridges (bridge-names.ts), rides on this.
+                                const person = d.source !== "policy" && d.source !== "external";
+                                tr = await runTool(call.name, args, fan?.push, step, s, person); result = tr.result;   // EXECUTE ONLY AFTER APPROVE
                             }
                         }
                     }

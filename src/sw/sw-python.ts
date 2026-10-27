@@ -67,6 +67,10 @@ export interface PythonCaller {
     untrusted: () => Promise<boolean>;
     /** Whether a cell outside the dialect is approved for exactly this code. Absent: the call grants on the tab (`tabGrants(tabId).pyCode`, sw-consent.ts). */
     pyCodeOk?: (code: string) => boolean;
+    /** A person approved this cell with its card's JavaScript-bridge line showing (bridge-names.ts): it runs with the
+     *  readonly worker's refusal of `js`/`pyodide.ffi` lifted, for this cell alone. Set only by a run's worker tools,
+     *  never from anything a page sends. */
+    bridges?: boolean;
     /** A run the worker drives, whose own gate decided an inside-the-dialect cell (autoApprovePython or the person): no tab grant
      *  is asked for it. Absent: a page-started cell, which runs only under a grant. */
     runGated?: boolean;
@@ -186,8 +190,10 @@ export async function runPython(payload: any, requestId: string | undefined, cal
     // A KEEP holds a worker-hosted run's sandbox through long idle gaps until the turn ends (py-reap.ts); it is told in
     // the run log once per turn, so the person sees the model asked for it.
     const keep = payload?.keep === true && !!caller.wireRun;
+    // The lift, only for the exact code the person approved, and only outside the dialect (an inside cell needs none).
+    const bridges = outside && caller.bridges === true && !!caller.pyCodeOk?.(String(payload?.code ?? ""));
     if (keep && !keptRuns.has(caller.wireRun!)) { keptRuns.add(caller.wireRun!); recordRunLog(caller.wireRun!, { subsystem: "python", kind: "keep" }); }
-    const run = { type: "PY_RUN", principal, ...(wire ? { wire: { client: wire.handle, run: caller.wireRun ?? null } } : {}), ...(valueBudget ? { valueBudget } : {}), code: payload?.code, image: payload?.image ?? null, hardened: true, tables: payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}), ...(inside ? { inside: true } : {}), ...(keep ? { keep: true } : {}) };
+    const run = { type: "PY_RUN", principal, ...(wire ? { wire: { client: wire.handle, run: caller.wireRun ?? null } } : {}), ...(valueBudget ? { valueBudget } : {}), code: payload?.code, image: payload?.image ?? null, hardened: true, tables: payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}), ...(inside ? { inside: true } : {}), ...(keep ? { keep: true } : {}), ...(bridges ? { bridges: true } : {}) };
     // A cell inside the dialect may import the person's approved tier 3 libraries: they ride every inside run, and the
     // sandbox loads each pin once.
     if (inside) { const libraries = await dialectLibraries(); if (libraries.length) Object.assign(run, { libraries }); }
