@@ -438,19 +438,24 @@ chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
     runPrincipals.delete(run);
     runNsVars.delete(run);
     nsLoss.delete(run);
-    const asks: Promise<void>[] = [];
+    // A worker's answer can carry callables the run's last cell handed to JavaScript that fired after its result
+    // (cell-gate.ts): only the run's own locked-down worker has the gate, so at most one answer does.
+    const asks: Promise<PyResult["dropped"] | undefined>[] = [];
     for (const principal of principals) {
         const entry = workers.get(principal);
         if (!entry) continue;
         const id = nextId++;
-        asks.push(new Promise<void>((resolve) => {
-            pending.set(id, { resolve: () => resolve(), timer: 0 as unknown as ReturnType<typeof setTimeout>, principal });
+        asks.push(new Promise((resolve) => {
+            pending.set(id, { resolve: (r) => resolve(r?.dropped), timer: 0 as unknown as ReturnType<typeof setTimeout>, principal });
             try { entry.w.postMessage({ id, deleteRun: run }); }
-            catch { pending.delete(id); resolve(); }
+            catch { pending.delete(id); resolve(undefined); }
         }));
     }
     if (!asks.length) { sendResponse({ ok: true }); return undefined; }
-    void Promise.all(asks).then(() => sendResponse({ ok: true }));
+    void Promise.all(asks).then((answers) => {
+        const dropped = answers.find((d) => d && d.count > 0);
+        sendResponse({ ok: true, ...(dropped ? { dropped } : {}) });
+    });
     return true;
 });
 
