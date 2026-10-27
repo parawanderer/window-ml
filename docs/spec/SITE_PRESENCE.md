@@ -36,12 +36,21 @@ Presence is per exact origin, like every other level (Q19 of the slice 3 referen
 A run the person starts on a hidden page works, as it does on an unapproved page today: the run is built by the worker.
 The page must learn as little as possible from it:
 
-- **Tools run in an isolated world.** Surveys, the DOM tools, the click and type paths and `exec` default to the
-  isolated world (userScripts or CDP), which already exists for unapproved pages (`exec-routing.ts`). An `exec` that
-  needs the page's own globals asks for the main world on its card, and the card says the page can see that exec.
-- **Closed shadow roots** are read with `chrome.dom.openOrClosedShadowRoot` from the isolated world, so a hidden page
-  needs no main-world `attachShadow` patch. Where that API is missing, closed roots are unreadable on hidden pages and
-  the tool says so (the slice 2 open item "`chrome.dom` has no fallback").
+- **Tools run in the content script's isolated world.** On a hidden page nothing of ours enters the main world: not
+  `shadow-patch.js`, not `injected.js`. The page-side tool stack (every `realm:"page"` tool and the geometry reads that
+  `look`, `locate` and `verify` make) is built a second time as a bundle the worker puts into the content script's world
+  with `executeScript` (`world: "ISOLATED"`), and `content.ts` hands it `RUN_TOOL_IN_PAGE` in-process; nothing is posted
+  to the window. RULED 2026-10-27: that world, not a userScripts world and not a CDP isolated world (`exec-routing.ts`,
+  which stay for an approved exec that names a pointer): both lack `chrome.dom`, and the second needs a debugger attached
+  per call. A hidden page loses the page's own globals in the read-only survey (isolated exec already lacks them) and
+  `exec` `world:"page"` (already refused there). An `exec` that needs the page's own globals asks for the main world on
+  its card, and the card says the page can see that exec. A page that wraps its builtins never sees a hidden-page tool
+  call: the isolated world has its own (the residual in "What stays visible" below, and detection-surface row 6, are
+  for visible origins only).
+- **Closed shadow roots** are read with `chrome.dom.openOrClosedShadowRoot` from that world, roots attached before the
+  run started included (the late main-world patch misses them today), so a hidden page needs no `attachShadow` patch.
+  Where that API is missing, closed roots are unreadable on hidden pages and the tool says so (the slice 2 open item
+  "`chrome.dom` has no fallback").
 - **The approval card and the transcript live in Chrome's side panel** (`chrome.sidePanel`), never in the page's DOM.
   This also closes the open item "clickjacking over the approval card via a page top-layer element": a page cannot draw
   over the side panel.
@@ -127,7 +136,9 @@ not, record that and choose between `declarativeNetRequest` rules and following 
 1. The `console` parameter, `__mlCdpStream`, the closures and the one-field CDP fixes (no UI, no new string).
 2. Presence in storage, the main-world content script, `use_dynamic_url`, the MessagePort, the silent relay, the popup
    and Settings rows (new strings: owner approval).
-3. Tools in the isolated world on hidden pages, and `chrome.dom` for closed roots. Exec's default world is now a switch
+3. Tools in the content script's isolated world on hidden pages (the second bundle, behind no switch; the tools' tests
+   run against both bundles; detection-surface's hidden-with-run `pageEvents` row goes to `[]`; rule 10: a separate
+   agent's test-only red-team PR on main first, the lane's PR after), and `chrome.dom` for closed roots. Exec's default world is now a switch
    (`execDefaultWorld`, else the build's `__EXEC_DEFAULT_WORLD__`), and a call can ask for `world: "page" | "isolated"`.
 4. The side panel for the card and the transcript, and the anonymised highlight.
 5. The redirect measurement, then the rule.
