@@ -121,8 +121,8 @@ async function showInOpenTabs(presenceNow: (origin: string) => Presence, askedBe
                 if (askedBefore(origin)) await chrome.tabs.sendMessage(tabId, { type: "PRESENCE_HIDE" }, to).catch(() => undefined);
                 return;
             }
-            // The stub goes only into the document whose origin was read: without its id, nothing is put in.
-            if (shown === "ask" && !documentId) return;
+            // The stub and the full API go only into the document whose origin was read: without its id, nothing is put in.
+            if (!documentId) return;
             const r = await chrome.tabs.sendMessage(tabId, { type: "PRESENCE_CHECK" }, to) as { gate?: string; alive?: boolean; ask?: boolean } | undefined;
             if (shown === "full") {
                 if (!(r?.gate === "closed" || (r?.gate === "open" && r.alive === false))) return;

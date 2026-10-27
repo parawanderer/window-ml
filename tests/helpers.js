@@ -178,7 +178,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     const committedDocs = new Map();   // tabId → the main-frame documentId last committed, for webNavigation.getFrame
     /** The tab's top-frame document now: the last committed, else an open tab's first (`doc-<tabId>`). */
     let topFrame = "F-top";   // the frame id the last Page.getFrameTree reported (a debugger fake below)
-    const docOf = (tabId) => committedDocs.get(tabId) ?? (openTabs.some((t) => t.id === tabId) ? `doc-${tabId}` : undefined);
+    const docOf = (tabId) => committedDocs.get(tabId) ?? (openTabs.some((t) => t.id === tabId && !t.noDocument) ? `doc-${tabId}` : undefined);   // `noDocument`: getFrame names none
     const committedUrls = new Map();   // tabId → the main-frame URL last committed (or activated), for webNavigation.getFrame
     /** The tab's top-frame URL now, as getFrame reports it: the last committed, else the open tab's. */
     const urlOf = (tabId) => committedUrls.get(tabId) ?? openTabs.find((t) => t.id === tabId)?.url;

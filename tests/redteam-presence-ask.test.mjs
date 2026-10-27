@@ -446,3 +446,17 @@ test("marking an origin puts the stub only into the document whose origin was ch
     assert.ok(stub, `positive control: the open tab was given the stub: ${JSON.stringify(executes(bg))}`);
     assert.ok(Array.isArray(stub.target.documentIds) && stub.target.documentIds.length === 1, `the injection is not pinned to a document: ${JSON.stringify(stub.target)}`);
 });
+
+test("allowing an origin puts the full API only into the document whose origin was checked: with no document named, nothing is put in by frame", T, async () => {
+    for (const noDocument of [false, true]) {
+        const bg = worker({ extra: { openTabs: [{ id: 7, url: `${ALLOWED}/page`, active: true, windowId: 1, noDocument }], onTabMessage: async (_t, msg) => (msg.type === "PRESENCE_CHECK" ? { gate: "closed", alive: false } : true) } });
+        await flush(20);
+        bg.setLocal({ ml_site_always: [ALLOWED] });
+        await flush(40);
+        const full = executes(bg).filter((e) => (e.files ?? []).includes("injected.js"));
+        if (!noDocument) {
+            assert.equal(full.length, 1, `positive control: the open tab was given the full API: ${JSON.stringify(executes(bg))}`);
+            assert.deepEqual(full[0].target.documentIds, ["doc-7"], `the injection is not pinned to the checked document: ${JSON.stringify(full[0].target)}`);
+        } else assert.deepEqual(full, [], `a tab whose document getFrame did not name got the full API by frame: ${JSON.stringify(full)}`);
+    }
+});
