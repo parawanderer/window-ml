@@ -208,3 +208,21 @@ Ruled the same hour:
     error with the value nulled, the full worker on the wrapper path. The lane's regression row for the gap is the
     existing 9 rows passing on the new placement, with one named row asserting a `call_soon` handle queued by the cell is
     revoked, not run.
+
+### Found 2026-10-27 by the second red team (`window-ml-redteam-hard`, hunt 2): the bound does not see a callback with no Python frame
+
+The first hunt on the merged spend bound (#1150, afcbe2b9), a bounded question with Shane's allocation: can a cell get
+past the 15 s kill, mis-name its cause, or outlive the 1 s bound without C code. The first confirmed case closed it:
+built-in callbacks a cell has already queued on the loop (`call_soon` of a builtin) kept the spend busy for 3802 ms and
+3327 ms on two runs, measured on the fork core through `lockdownReadonly` and `hostRunScript` from the real
+`onSpending` mark to the cancel's return; the ordinary-task control took 15 ms and 13 ms. Under the kill, so not an
+escape, but the bound of pin 1 is defeated: a `sys.settrace` deadline fires on line events, and a callback with no
+Python frame raises none. The kill's cause and the namespace loss were not measured; no claim about them. Pinned as a
+failing-first todo in test-only #1171 (`redteam-hard-python-cancel.test.mjs` under `tests/`, a positive control in the same
+test, stock core skips), reviewed by the first red team, never by the lane.
+
+Ruled the same hour: the defect is the lane's (rule 9, reported through the coordinator in defect language), the fix
+lands AFTER #1171 on main in the lane's own file (rule 10), and the second red team flips the todo plain after the
+fix merges, touching nothing else. A fix that sees the loop's dispatch (a bound on the loop side, or a hook the
+dispatch itself consults) is a narrowing and needs no ruling; anything that widens what a cell may leave running comes
+back here first.
