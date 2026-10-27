@@ -5,7 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { BackupError, createKeyring, decryptFile, encryptFile, keyFor, readHeader } from "../src/backup/backup-format.ts";
-import { adoptKeyring, changePassphrase, checkSecret, idbKeyringStore, keyringState, loadKeyring, setupKeyring } from "../src/backup/backup-keyring.ts";
+import { adoptKeyring, changePassphrase, checkSecret, forgetRetiredKey, idbKeyringStore, keyringState, loadKeyring, setupKeyring } from "../src/backup/backup-keyring.ts";
 import { unlockChoice } from "../src/backup/backup-file.ts";
 
 const { IDBFactory } = createRequire(import.meta.url)("fake-indexeddb");
@@ -239,4 +239,98 @@ test("readHeadAndFirstChunk reads the header and the first chunk only, and adopt
     // The header alone is not enough any more.
     const hlen = new DataView(big.buffer, big.byteOffset, big.byteLength).getUint32(8, true);
     await assert.rejects(adoptKeyring(idbKeyringStore(new IDBFactory()), big.subarray(0, 12 + hlen), { passphrase: "pass of A" }), (e) => e.reason === "truncated");
+});
+
+// --- forgetting a retired key (part 3d) ---
+
+/** B has adopted A's key, then C's: A and B are retired, C is current. */
+async function twiceAdopted() {
+    const A = await install("pass of A"), B = await install("pass of B"), C = await install("pass of C");
+    await adoptKeyring(B.store, A.file, { passphrase: "pass of A" });
+    await adoptKeyring(B.store, C.file, { passphrase: "pass of C" });
+    return { A, B, C };
+}
+
+test("adoptKeyring dates the key it retires now, and keeps the dates of those retired earlier", async () => {
+    const A = await install("pass of A"), B = await install("pass of B"), C = await install("pass of C");
+    const t0 = Date.now();
+    await adoptKeyring(B.store, A.file, { passphrase: "pass of A" });
+    const first = (await loadKeyring(B.store)).retired[0];
+    assert.ok(first.since >= t0 && first.since <= Date.now(), "B's own key: retired just now");
+    await new Promise((r) => setTimeout(r, 5));
+    await adoptKeyring(B.store, C.file, { passphrase: "pass of C" });
+    const [a, b] = (await loadKeyring(B.store)).retired;
+    assert.equal(a.keyId, A.shown.keyId);
+    assert.ok(a.since > first.since, "A's key: retired by the second adoption");
+    assert.deepEqual([b.keyId, b.since], [B.shown.keyId, first.since], "B's date is the first adoption's, not rewritten");
+});
+
+test("keyringState lists the retired keys by id and date and carries no key", async () => {
+    const { A, B } = await twiceAdopted();
+    const st = await keyringState(B.store);
+    assert.deepEqual(st.retired.map((r) => r.keyId), [A.shown.keyId, B.shown.keyId]);
+    assert.ok(st.retired.every((r) => typeof r.since === "number" && Object.keys(r).sort().join() === "keyId,since"));
+    assert.equal("retired" in (await keyringState((await install("x")).store)), false, "nothing retired: no field");
+});
+
+test("forgetting removes only that entry; the key, wraps and the other entries are untouched, and the field goes with the last", async () => {
+    const { A, B, C } = await twiceAdopted();
+    const before = await loadKeyring(B.store);
+    await forgetRetiredKey(B.store, A.shown.keyId);
+    const after = await loadKeyring(B.store);
+    assert.equal(after.keyId, C.shown.keyId);
+    assert.deepEqual(after.wraps, before.wraps);
+    assert.equal(after.key.extractable, false);
+    assert.deepEqual(after.retired.map((r) => [r.keyId, r.since]), [[B.shown.keyId, before.retired[1].since]]);
+    await forgetRetiredKey(B.store, B.shown.keyId);
+    const bare = await loadKeyring(B.store);
+    assert.equal("retired" in bare, false);
+    assert.deepEqual([bare.keyId, bare.wraps], [C.shown.keyId, before.wraps]);
+    assert.deepEqual(await keyringState(B.store), { set: true, keyId: C.shown.keyId });
+    // The key still seals and opens as before.
+    assert.deepEqual(Buffer.from(await decryptFile(await encryptFile(plain, bare, { kind: "backup" }), bare)), Buffer.from(plain));
+});
+
+test("the current key and an unknown id are refused, and nothing is stored", async () => {
+    const { B, C } = await twiceAdopted();
+    const before = await recordOf(B.store);
+    await assert.rejects(forgetRetiredKey(B.store, C.shown.keyId), /current backup key/);
+    await assert.rejects(forgetRetiredKey(B.store, "0000000000000000"), /not retired/);
+    assert.equal(await recordOf(B.store), before);
+    await assert.rejects(forgetRetiredKey(idbKeyringStore(new IDBFactory()), "0000000000000000"), /no backup passphrase/);
+});
+
+for (const [how, secretOf] of [["passphrase", (m) => ({ passphrase: m.pass })], ["recovery key", (m) => ({ recoveryKey: m.shown.recoveryKey })]]) {
+    test(`after a forget a backup under that key asks (needs-key), and opens with its ${how} typed`, async () => {
+        const { A, B } = await twiceAdopted();
+        A.pass = "pass of A"; B.pass = "pass of B";
+        const mine = await encryptFile(plain, B.ring, { kind: "backup" });
+        assert.equal(unlockChoice(mine, await loadKeyring(B.store)).keyId, (await loadKeyring(B.store)).keyId, "before: no secret needed");
+        await forgetRetiredKey(B.store, B.shown.keyId);
+        const ring = await loadKeyring(B.store);
+        assert.throws(() => unlockChoice(mine, ring), (e) => e instanceof BackupError && e.reason === "needs-key");
+        const secret = secretOf(B);
+        assert.deepEqual(unlockChoice(mine, ring, secret), secret);
+        assert.deepEqual(Buffer.from(await decryptFile(mine, secret)), Buffer.from(plain));
+        // The other entry is still silent.
+        const old = await encryptFile(plain, A.ring, { kind: "backup" });
+        assert.equal(unlockChoice(old, ring), ring);
+    });
+}
+
+test("THE UPGRADE: retired entries stored without a date (as 3c wrote them) load, open their files, list as undated and forget", async () => {
+    const { A, B, C } = await twiceAdopted();
+    const ring = await loadKeyring(B.store);
+    await B.store.replace({ ...ring, retired: ring.retired.map(({ key, keyId }) => ({ key, keyId })) });   // the 3c shape
+    const loaded = await loadKeyring(B.store);
+    assert.ok(loaded.retired.every((r) => !("since" in r)));
+    assert.deepEqual(Buffer.from(await decryptFile(B.file, loaded)), Buffer.from(plain), "B's old backup still opens with no secret");
+    assert.deepEqual((await keyringState(B.store)).retired, [{ keyId: A.shown.keyId }, { keyId: B.shown.keyId }]);
+    await forgetRetiredKey(B.store, A.shown.keyId);
+    assert.deepEqual((await keyringState(B.store)).retired, [{ keyId: B.shown.keyId }]);
+    // And a further adoption dates only the key it retires.
+    const D = await install("pass of D");
+    await adoptKeyring(B.store, D.file, { passphrase: "pass of D" });
+    const [c, b] = (await loadKeyring(B.store)).retired;
+    assert.deepEqual([c.keyId, typeof c.since, b.keyId, "since" in b], [C.shown.keyId, "number", B.shown.keyId, false]);
 });

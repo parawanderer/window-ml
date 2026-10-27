@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import init from "@sqlite.org/sqlite-wasm";
 import { markAllDirty, dirtyMonths, exportMonth, expireRemoved, folderFilesMonths, migrate, prepareSession, readArchived, removeArchived, wasmDb, writeSession, archiveStats, metaSet } from "../src/archive/db.ts";
 import { adoptFolder, folderFormOf, importMonths, setFolderForm, surveyFolder, syncMonths } from "../src/archive/folder-sync.ts";
-import { adoptKeyring } from "../src/backup/backup-keyring.ts";
+import { adoptKeyring, forgetRetiredKey } from "../src/backup/backup-keyring.ts";
 import { createKeyring, sniff, readHeader } from "../src/backup/backup-format.ts";
 import { digestOf, inspectBackup, openBackupBytes, restoreNewSessions } from "../src/backup/backup-file.ts";
 
@@ -748,4 +748,42 @@ test("the swap: A adopts B's key while B adopts A's, before either syncs again; 
     await settle(folder, A, B);
     for (const M of [A, B]) assert.deepEqual([hasIt(M, "5a0a0001"), hasIt(M, "5a0b0001")], [true, true]);
     for (const M of [A, B]) assert.deepEqual((await syncEnc(M, folder)).skipped, [], "every month opens with the current or the retired key");
+});
+
+// --- forgetting a retired key (part 3d) ---
+
+test("after a forget, a month under that key is skipped as other-key with its keyId and is not rewritten; without the forget it merges", async () => {
+    const A = await machine("pw-of-a", ["f0e60001", OCT]);
+    const B = await machine("pw-of-b", ["f0e60002", SEPT]);
+    const folder = mapFolder();
+    await syncEnc(A, folder);
+    await syncEnc(B, folder);
+    // A adopts B's key, so A's own October (sealed under A's key) is now a month under a RETIRED key.
+    await adoptKeyring(A.store, folder.files.get("2026-09.wmlbak"), { passphrase: "pw-of-b" });
+    const octUnderA = folder.files.get("2026-10.wmlbak");
+    assert.equal(readHeader(octUnderA).keyId, A.keyId);
+    const kept = await syncMonths(A.h, mapFolder(new Map([["2026-10.wmlbak", octUnderA]])), { form: "encrypted", keyring: await A.store.read(), now: T0 });
+    assert.deepEqual(kept.skipped, [], "retired but kept: the month opens");
+    await forgetRetiredKey(A.store, A.keyId);
+    const only = mapFolder(new Map([["2026-10.wmlbak", octUnderA]]));
+    markAllDirty(A.db);
+    const r = await syncMonths(A.h, only, { form: "encrypted", keyring: await A.store.read(), now: T0 });
+    assert.deepEqual(r.skipped.map((s) => [s.month, s.reason, s.keyId]), [["2026-10", "other-key", A.keyId]]);
+    assert.equal(only.files.get("2026-10.wmlbak"), octUnderA, "bytes unchanged");
+    assert.deepEqual(only.writes, []);
+});
+
+test("monthKeyCounts counts the folder's encrypted months by the key in each header, reading headers only, and skips what is not one", async () => {
+    const { monthKeyCounts } = await import("../src/archive/archive-folder.ts");
+    const A = await machine("pw-of-a", ["c0e70001", OCT, ], ["c0e70002", SEPT]);
+    const B = await machine("pw-of-b", ["c0e70003", Date.UTC(2026, 7, 10)]);
+    const folder = mapFolder();
+    await syncEnc(A, folder);
+    await syncEnc(B, folder);
+    const files = new Map([...folder.files, ["2026-06.sqlite", new Uint8Array([1, 2, 3])], ["2026-05.wmlbak", new Uint8Array([9, 9, 9])], ["notes.txt", new Uint8Array(1)]]);
+    const dir = {
+        entries: async function* () { for (const n of files.keys()) yield [n, { kind: "file" }]; },
+        getFileHandle: async (n) => { if (!files.has(n)) throw new Error("NotFound"); return { getFile: async () => new Blob([files.get(n)]) }; },
+    };
+    assert.deepEqual(await monthKeyCounts(dir), { [A.keyId]: 2, [B.keyId]: 1 }, "plain, damaged and foreign files count for no key");
 });
