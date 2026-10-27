@@ -1393,7 +1393,23 @@ test.describe("@security attack 19: the start card", () => {
         await expect.poll(() => !!page.frames().find((f) => f.url().includes("sidebar.html")), { timeout: 15000 }).toBe(true);
         const frame = page.frames().find((f) => f.url().includes("sidebar.html"));
         await frame.waitForSelector(".start-ask", { timeout: 15000 });
+        await cardSettled(frame);
         return frame;
+    }
+    /**
+     * Wait until the card's frame stops moving on the page. The shell springs the container's position and size in when
+     * a card appears or unfolds, and Playwright's stability check runs inside the frame, so a click sent mid-spring lands
+     * where the button was (about one run in three before this).
+     */
+    async function cardSettled(frame) {
+        const el = await frame.frameElement();
+        let last = "";
+        await expect.poll(async () => {
+            const b = JSON.stringify(await el.boundingBox());
+            const same = b === last;
+            last = b;
+            return same;
+        }, { timeout: 5000, intervals: [100] }).toBe(true);
     }
     const startAgent = (page, task = "Summarise this thread.") => page.evaluate((t) => { window.__result = window.ml.agent(t, { vision: false }).then((r) => ({ ok: r.summary }), (e) => ({ err: String(e?.message || e) })); }, task);
     const result = (page) => page.evaluate(() => window.__result);
@@ -1529,6 +1545,7 @@ test.describe("@security attack 19: the start card", () => {
             const r = await popup.evaluate(([id, q]) => chrome.runtime.sendMessage({ type: "START_ASKS", payload: { tabId: id, show: q } }), [tabId, asks[0].requestId]);
             expect(r.data.shown).toBe(true);
             await card.waitForSelector(".start-ask", { timeout: 5000 });
+            await cardSettled(card);
             expect(await page.evaluate(() => document.activeElement?.id), "Show moved focus off the page's own input").toBe("field");
             expect(fake.calls().length).toBe(0);
 
