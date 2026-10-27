@@ -442,8 +442,13 @@ listed as remaining is DONE unless named below.
      item 2's fix is sound only once this is closed. Severity MEASURED the same day: the dialect refuses every import form
      involved, so this and item 2's six routes escape an APPROVED readonly cell, not the auto-approved path; the
      attribute-gate route is the red team's to probe with the fix. FIXED 2026-10-23: #1046 merged de645ea3 (the
-     config-only stand-in; the gc walk finds 0 live proxies of the API); the red team's attribute-gate probe is #1060,
-     37 pinned routes hold. `run_js` stays OPEN as a step 3 property ([`PYODIDE_LOCKDOWN.md`](PYODIDE_LOCKDOWN.md), step 2,
+     config-only stand-in; the gc walk finds 0 live proxies of the API); the red team's attribute-gate probe is #1060;
+     **#1060 MERGED 214b4bd7 (2026-10-25, e3, `@python,@security`, test-only, `tests/redteam-python-lockdown.test.mjs`)**:
+     43 pass / 15 todo / 0 fail; 41 attribute-gate routes pinned as passing (the janitor's one finding, three routes the body
+     named and the file did not pin, fixed by e3 before the merge); the 15 todos are the freeze and latch (3), `run_js` (2)
+     and the ten bridge imports from an APPROVED cell, each failing for its claimed reason, each the security lane's to
+     turn plain with the lockdown fix (`fix/python-lockdown`, not yet a PR). Shane approved and merged it himself, the
+     sessions being out of tokens that day. `run_js` stays OPEN as a step 3 property ([`PYODIDE_LOCKDOWN.md`](PYODIDE_LOCKDOWN.md), step 2,
      RULED). Lane STOPPED under the freeze; clone removed.
   5. FOUND 2026-10-23 by `[window-ml python-cancel]`, reproduced by the coordinator: `lockdown()` THROWS on main (the
      `Object.prototype.constructor` accessor from #735 is refused by `ses`'s permit check), the `try/catch` swallows it, so
@@ -548,8 +553,9 @@ listed as remaining is DONE unless named below.
   is, where it describes calls, its evidence or the run's failure, its pin; add and remove); beyond the page, an add is
   pinned by the host through the same precheck as a draft (`checkDraft`, origin `person`, in `background.ts`), so the
   page's payload never chooses a pin; not measured against the real host, the same resolve path the two runs
-  exercised. Written into `ROOT_K_RESULT_2.md` with it. Left: #1070 (the red team's `propose_manifest` pass, on
-  `main`) merges after the janitor; (c2) library manifests only if time allows; the Linux measurement.
+  exercised. Written into `ROOT_K_RESULT_2.md` with it. **#1070 MERGED a8ff7230 (2026-10-25)**, the red team's `propose_manifest` pass on `main`: the janitor ran its
+  twelve pins green on the head (12/12), root-k had checked them against `manifests/propose` the day before, no gap
+  found, nothing open from it. Left: (c2) library manifests only if time allows; the Linux measurement.
   **Root 1 DONE 2026-10-23**: [`ROOT_K_RESULT_1.md`](ROOT_K_RESULT_1.md) merged 9fe4e6a2 (#1075, the coordinator
   reviewed, every claim checked against the merged code). Left by it, each named there: the host's CPU timebase is a
   per-arch constant (an x86_64 host under Rosetta undercounts about 42x), a follow-up root-k's session was refused
