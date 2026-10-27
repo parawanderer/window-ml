@@ -60,7 +60,53 @@ test("timeout fallback: a navigation that never re-adopts still releases the loo
     assert.equal(timers.count(), 1, "a timeout timer is armed");
     timers.fireAll();   // the load never completed → the fallback fires
     await p;
-    assert.equal(released, true, "the held tool proceeds (and will get the normal 'no active run' error)");
+    assert.equal(released, true, "the held tool is released, told the page is not ready");
+});
+
+// --- a re-adopt that is not coming: said once, answered at once after (#1034) ---
+
+test("whenReady answers whether the tab is ready: true when idle or re-adopted, false when the wait ran out", async () => {
+    const timers = manualTimers();
+    const b = createNavBarrier(timers.set, timers.clear);
+    assert.equal(await b.whenReady(1), true, "idle");
+    b.noteNavigating(1);
+    const adopted = b.whenReady(1, 15000);
+    b.noteReadopted(1);
+    assert.equal(await adopted, true, "re-adopted");
+    b.noteNavigating(1);
+    const ranOut = b.whenReady(1, 15000);
+    timers.fireAll();
+    assert.equal(await ranOut, false, "the wait ran out");
+});
+
+test("once a wait on a navigation has run out, the next answers false at once, without arming a timer", async () => {
+    const timers = manualTimers();
+    const b = createNavBarrier(timers.set, timers.clear);
+    b.noteNavigating(4);
+    const first = b.whenReady(4, 15000);
+    timers.fireAll();
+    assert.equal(await first, false);
+    assert.equal(await b.whenReady(4, 15000), false);
+    assert.equal(timers.count(), 0, "no second wait");
+    assert.equal(b.isNavigating(4), true, "a late re-adopt may still release it");
+});
+
+test("a late re-adopt, or a new navigation, ends the run-out: the next wait is a real one again", async () => {
+    const timers = manualTimers();
+    const b = createNavBarrier(timers.set, timers.clear);
+    b.noteNavigating(6);
+    const first = b.whenReady(6, 15000); timers.fireAll(); await first;
+    assert.equal(b.noteReadopted(6), true, "the late re-adopt is accepted");
+    assert.equal(await b.whenReady(6), true, "ready after it");
+    b.noteNavigating(6);
+    const second = b.whenReady(6, 15000); timers.fireAll(); await second;
+    b.noteNavigating(6);   // the page navigated again while the re-adopt was missing
+    let settled = false;
+    const third = b.whenReady(6, 15000).then((r) => { settled = true; return r; });
+    await Promise.resolve();
+    assert.equal(settled, false, "a new navigation is waited for again");
+    b.noteReadopted(6);
+    assert.equal(await third, true);
 });
 
 test("a re-adopt cancels the timeout timer (no late double-fire)", async () => {

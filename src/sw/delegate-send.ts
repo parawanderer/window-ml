@@ -3,6 +3,7 @@
 import type { HousekeepingReport } from "../log/housekeeping";
 import { type TabState, watchWhileWaiting, PageUnreachable } from "./page-reachable";
 import { noteRunMechanic, navBarrier } from "./sw-runs";
+import { READOPT_TIMEOUT_MS } from "./nav-barrier";
 
 // EVERY RUN_TOOL_IN_PAGE send goes through this: it waits out any in-flight navigation on the tab before
 // delegating. On a tab with no navigation pending, whenReady resolves immediately (zero cost) — so a
@@ -39,19 +40,31 @@ export const delegateSend = async (tabId: number, msg: unknown, documentId?: str
     const detail = sendDetail(tabId, msg);
     const note = (kind: string, extra: Partial<HousekeepingReport> = {}): void =>
         noteRunMechanic(tabId, { ...extra, subsystem: "page", kind, detail: { ...detail, ...extra.detail } });
+    // A tool call that waited out the barrier with no re-adopt goes to a page that never registered the run, which
+    // answers "no active agent run … (it may have ended)": wrong about the run, and paid for with a 15 s wait per send
+    // of the step (#1034, a page blocking the re-adopt: four for one click). The barrier now waits a navigation out
+    // once, and that answer (`noRun`) after it ends the tool saying the page did not take the run back, with the
+    // barrier's bound as the time it had. Still sent, not refused here: a page whose CSP keeps our page script from
+    // running (raw.githubusercontent.com) never re-adopts either, and the content script's own answer names the CSP.
     const held = Date.now();
-    await navBarrier.whenReady(tabId);
+    const ready = await navBarrier.whenReady(tabId);
     const waited = Date.now() - held;
     if (waited >= BARRIER_NOTE_MS) note("held", { reason: "navigating", ms: waited });
+    const unadopted = (answer: unknown, wasReady: boolean, extra: Partial<HousekeepingReport> = {}): unknown => {
+        if (wasReady || (answer as { noRun?: unknown } | undefined)?.noRun !== true) return answer;
+        note("unreachable", { ...extra, level: "error", reason: "unadopted" });
+        throw new PageUnreachable("unadopted", READOPT_TIMEOUT_MS);
+    };
     // Pinned to a document, a send the tab can no longer deliver there is refused by the browser rather than delivered
     // to whatever document the tab holds now (an approved exec routed for one page, sw-isolated-exec.ts).
     // `beforeSend` may refuse the send by throwing, checked at each send after the waits (a run handed to the worker
     // meanwhile, sw-run-host.ts).
     // Awaited, then sent in the same turn: nothing else of this worker runs between the check and the send.
     const send = async () => { await beforeSend?.(); return documentId ? chrome.tabs.sendMessage(tabId, msg, { documentId }) : chrome.tabs.sendMessage(tabId, msg); };
-    try { return await watchWhileWaiting(send(), () => tabState(tabId)); }
+    try { return unadopted(await watchWhileWaiting(send(), () => tabState(tabId)), ready); }
     catch (e) {
         if (!(e instanceof PageUnreachable) || e.state !== "asleep") {
+            if (e instanceof PageUnreachable && e.state === "unadopted") throw e;
             if (e instanceof PageUnreachable) note("unreachable", { level: "error", reason: e.state, ms: e.waitedMs });
             throw e;
         }
@@ -63,19 +76,19 @@ export const delegateSend = async (tabId: number, msg: unknown, documentId?: str
         note("discarded", { level: "warn", ms: e.waitedMs });
         navBarrier.noteNavigating(tabId);
         const ok = await chrome.tabs.reload(tabId).then(() => true, () => false);
-        await navBarrier.whenReady(tabId);
+        const rebuilt = await navBarrier.whenReady(tabId);
         // No reason when the reload worked, the browser's own word for it when it did not: an absent reason
         // reads as "and then it was fine", which is what the next line is about to confirm or deny.
         note("reloaded", ok ? {} : { level: "error", reason: "gone" });
         const from = Date.now();
         try {
-            const answer = await watchWhileWaiting(send(), () => tabState(tabId));
+            const answer = unadopted(await watchWhileWaiting(send(), () => tabState(tabId)), rebuilt, { detail: { retried: true } });
             // The story needs its ending. Without this the log reads "discarded, reloaded" and then stops, and
             // whether the run went on is left to be inferred from what did NOT appear underneath it.
             note("recovered", { ms: Date.now() - from });
             return answer;
         } catch (again) {
-            if (again instanceof PageUnreachable) note("unreachable", { level: "error", reason: again.state, ms: again.waitedMs, detail: { retried: true } });
+            if (again instanceof PageUnreachable && again.state !== "unadopted") note("unreachable", { level: "error", reason: again.state, ms: again.waitedMs, detail: { retried: true } });
             throw again;
         }
     }

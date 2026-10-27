@@ -386,13 +386,21 @@ test.describe("@security part 5: a page a run is on is lent nothing", () => {
             }, hash);
             expectAllRefused(await page.evaluate(([h, t]) => window.__drain(h, t.split(","), "port"), [hash, DRAIN]));
             expect(JSON.stringify(fake.calls()), "nothing the page sent reached the backend").not.toContain("EVIL DRAIN");
-            // The held click is DECLINED, so the run finishes without it: a page holding injected.js's port that swallows
-            // the re-adopt hello leaves a page-hosted click with no page to run on, and the run then waits on it with no
-            // bound (the delegated tool's third outcome), which a page that runs first can cause on its own page anyway.
+            // The held click is APPROVED: a page holding injected.js's port that swallows the re-adopt hello leaves the
+            // click no toolset to run against, so it ends after one barrier wait with the page named as not taking the run
+            // back (#1034), and the run goes on to its last turn.
             const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list().filter((g) => g.tool === "click"));
-            expect(await ext.sw.evaluate((k) => globalThis.__mlApprovals.resolve(k, false), gate.key)).toBe(true);
-            await expect.poll(() => events.find((e) => e.kind === "agent-result") ?? null, { timeout: 60000 }).not.toBeNull();
+            const approvedAt = Date.now();
+            expect(await ext.sw.evaluate((k) => globalThis.__mlApprovals.resolve(k, true), gate.key)).toBe(true);
+            await expect.poll(() => events.find((e) => e.kind === "agent-result") ?? null, { timeout: 40000 }).not.toBeNull();
+            // The navigation's re-adopt was already waited out while the click sat at its gate: no send of the step waits
+            // for it again (each did, 15 s apiece, before #1034).
+            expect(Date.now() - approvedAt, "the click's sends did not wait out the barrier again").toBeLessThan(10000);
             await watch.close();
+            const clicked = events.filter((e) => e.kind === "agent-step" && e.tool === "click" && typeof e.result === "string").map((e) => e.result);
+            expect(clicked.at(-1), "the click ends naming the page, not as a run that ended").toMatch(/did not take the run back within \d+s/);
+            const unadopted = await ext.sw.evaluate(async () => (await globalThis.__mlRunLog.all()).some((x) => x.kind === "unreachable" && x.reason === "unadopted"));
+            expect(unadopted, "the run's log says why").toBe(true);
             const result = events.find((e) => e.kind === "agent-result");
             expect(result.cancelled, "the page could not cancel the run").toBeFalsy();
             expect(result.summary).toBe("finished");

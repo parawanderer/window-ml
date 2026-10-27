@@ -29,7 +29,7 @@ export interface RunLogEvent extends HousekeepingEvent {
 // this". Here the tab is the subject — the one that was discarded, pinned, attached to — so it is detail.
 //
 // The subsystems and kinds in use today. Both are open by intent, so this is a map rather than a contract:
-//   page  held (reason: navigating) · discarded · reloaded (reason: gone) · recovered · unreachable (reason: asleep|gone|silent)
+//   page  held (reason: navigating) · discarded · reloaded (reason: gone) · recovered · unreachable (reason: asleep|gone|silent|unadopted)
 //         answer-capped (reason: rows|columns|cell|cell-type|text|image|result): a page's answer cut to pageRead's caps
 //   cdp   attached (reason: already) · refused (reason: permission|busy) · detached
 //   tab   pinned (reason: hosting) · released · replaced
