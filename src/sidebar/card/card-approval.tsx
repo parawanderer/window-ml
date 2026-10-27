@@ -40,7 +40,7 @@ export function ApprovalBody({ st, hash, goal }: { st: AgentStep; hash: string; 
                     <div class="action-verb">{st.tool === "python_exec" ? "Run Python" : "Run JavaScript"}</div>
                     {summary ? <div class="action-summary ml-reveal">{summary}</div> : null}
                     <div class="action-codeblk"><Code text={code.text} lang={code.lang} format={code.lang === "javascript"} /></div>
-                    <JsBridgeNote tool={st.tool} args={st.arguments} />
+                    <JsBridgeNote tool={st.tool} args={st.arguments} why={st.askWhy} />
                     <OutputRaiseNote tool={st.tool} args={st.arguments} />
                   </div>
                 : intent

@@ -189,6 +189,9 @@ export interface AskWhy {
     cause: string;
     /** The gone policy's label, or for `ask-policy` the policy that asks; absent when no policy is involved. */
     policy?: string;
+    /** `outside-dialect` only: an earlier cell of the run ran with the JavaScript bridges lifted, so this cell's namespace
+     *  can hold what it took (the card shows `JS_BRIDGE_KEPT_LINE`). */
+    bridged?: true;
 }
 
 /** The ask a run raises when its tab arrives on a page an `ask` policy asks about (src/sw/nav-arrival.ts): Approve lets

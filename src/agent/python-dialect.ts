@@ -31,13 +31,15 @@ export function setPythonDialectForTest(fn: ((code: string) => boolean) | null):
  * refusal, naming the module, call, attribute or node, and the line when it knows it), or why it was not tried. A
  * cell with no recorded reason (an edited cell, or one the try never saw) is outside all the same.
  * @param where the fork's refusal or the reason the cell was not tried, if any
+ * @param bridged an earlier cell of the run ran with the JavaScript bridges lifted (`AskWhy.bridged`)
  * @returns the why-asks line and the sentence the model reads with the result
  */
-export function pythonOutsideWhy(where: string | undefined): import("../contract").AskWhy {
+export function pythonOutsideWhy(where: string | undefined, bridged = false): import("../contract").AskWhy {
     const at = (where ?? "").replace(/^not in dialect:\s*/, "").trim();
     return {
         line: at ? `Outside the read-only Python dialect: ${at}` : "Outside the read-only Python dialect",
         detail: `This cell asked because it is outside the read-only Python dialect${at ? ` (${at})` : ""}. A cell inside it runs without asking.`,
         cause: "outside-dialect",
+        ...(bridged ? { bridged: true as const } : {}),
     };
 }

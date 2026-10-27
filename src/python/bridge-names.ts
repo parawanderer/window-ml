@@ -4,6 +4,10 @@
 /** The line an approval card shows for a cell that names a bridge (approved by Shane, 2026-10-27). */
 export const JS_BRIDGE_LINE = "This code reaches the browser's JavaScript from Python (`js`, `pyodide.ffi`). Approve only if you expected that.";
 
+/** The line an approval card shows for a later cell of a run where a cell already ran with the bridges lifted: the run's
+ *  namespace can still hold what that cell took (`from js import setTimeout as T`), so a cell that names no bridge reaches one. */
+export const JS_BRIDGE_KEPT_LINE = "An earlier cell of this run reached the browser's JavaScript, and this code can use what that cell kept. Approve only if you expected that.";
+
 /** A cell's code naming a bridge: an import of `js`, a refused module, or `run_js` (which imports `js` when called). */
 const NAMES_BRIDGE = /\bimport\s+(?:[\w.]+(?:\s+as\s+\w+)?\s*,\s*)*js\b|\bfrom\s+js\b[\w.]*\s+import\b|\bpyodide\.(?:ffi|webloop|code|_package_loader)\b|\bfrom\s+pyodide\s+import\s+[^\n]*\b(?:ffi|webloop|code)\b|\b_pyodide(?:_core|\._importhook|\._core_docs)?\b|\brun_js\b/;
 
@@ -17,6 +21,17 @@ const NAMES_BRIDGE = /\bimport\s+(?:[\w.]+(?:\s+as\s+\w+)?\s*,\s*)*js\b|\bfrom\s
  */
 export function namesJsBridge(code: string): boolean {
     return NAMES_BRIDGE.test(code);
+}
+
+/**
+ * The bridge line a python_exec cell's approval card shows: `JS_BRIDGE_LINE` when its code names a bridge, else
+ * `JS_BRIDGE_KEPT_LINE` when an earlier cell of the run ran with the bridges lifted, else none.
+ * @param code the cell's source
+ * @param bridged an earlier cell of the run ran with the bridges lifted (`AskWhy.bridged`)
+ * @returns the line, or null
+ */
+export function jsBridgeLine(code: string, bridged: boolean): string | null {
+    return namesJsBridge(code) ? JS_BRIDGE_LINE : bridged ? JS_BRIDGE_KEPT_LINE : null;
 }
 
 /**

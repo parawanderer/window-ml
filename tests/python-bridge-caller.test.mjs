@@ -60,3 +60,20 @@ test("a cell inside the dialect is not lifted, even from a caller marked bridges
         assert.equal("bridges" in inside, false, "an inside run needs none");
     } finally { setPythonDialectForTest(null); }
 });
+
+// --- the run remembers a lifted cell, so later cells' cards say what it kept --------------------------------------------
+
+test("runPythonBridged: set by a grant with bridges and outside code, never by one without, and kept after the call ends", async () => {
+    const { ensureRunState, grantRunPython, runPythonBridged } = await import("../src/sw/worker-tools.ts");
+    ensureRunState("bridged-1", 1, () => "");
+    assert.equal(runPythonBridged("bridged-1"), false, "a fresh run");
+    grantRunPython("bridged-1", { sheets: [], code: null, bridges: true });
+    assert.equal(runPythonBridged("bridged-1"), false, "a grant with no outside code lifts nothing");
+    grantRunPython("bridged-1", { sheets: [], code: "x = 1" });
+    assert.equal(runPythonBridged("bridged-1"), false, "an outside cell without the lift");
+    grantRunPython("bridged-1", { sheets: [], code: CODE, bridges: true });
+    grantRunPython("bridged-1", null);
+    assert.equal(runPythonBridged("bridged-1"), true, "the lifted cell ended; what it took may still be in the namespace");
+    assert.equal(runPythonBridged("no-such-run"), false);
+});
+

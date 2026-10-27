@@ -13,7 +13,8 @@ import path from "node:path";
 import fs from "node:fs";
 import { wrapUserCode, injectInputs } from "../src/python/python-runtime.ts";
 import { lockdownReadonly } from "../src/python/lockdown.ts";
-import { REFUSED_BRIDGES, JS_BRIDGE_LINE, namesJsBridge } from "../src/python/bridge-names.js";
+import { REFUSED_BRIDGES, JS_BRIDGE_LINE, JS_BRIDGE_KEPT_LINE, jsBridgeLine, namesJsBridge } from "../src/python/bridge-names.js";
+import { pythonOutsideWhy } from "../src/agent/python-dialect.ts";
 import { PY_PACKAGE_LOADS, PY_STARTUP_PREPARE } from "../src/python/python-env.ts";
 
 const PYODIDE_DIR = path.resolve(import.meta.dirname, "../dist/pyodide");
@@ -222,4 +223,19 @@ test("namesJsBridge: a word that merely contains a bridge's letters, or a harmle
         "import pyodide", "from pyodide import something_else", "from pyodide import http", "import pyodide_http",
         "import numpy as np\nprint(np.arange(3).sum())", "import os, json", "import numpy as np, jsonschema", "from jsonschema.x import y", "df.to_json()", "import _pyodidefoo", "run_json()",
     ]) assert.equal(namesJsBridge(code), false, code);
+});
+
+// --- a later cell of a run whose earlier cell was lifted: what that cell kept is still reachable ----------------------
+
+test("jsBridgeLine: a cell naming a bridge gets the bridge line; one naming none gets the kept line only after a lifted cell", () => {
+    for (const bridged of [false, true]) assert.equal(jsBridgeLine("import js", bridged), JS_BRIDGE_LINE);
+    assert.equal(jsBridgeLine("_x = T", true), JS_BRIDGE_KEPT_LINE);
+    assert.equal(jsBridgeLine("_x = T", false), null, "the default: no lifted cell, no line");
+    assert.match(JS_BRIDGE_KEPT_LINE, /^[^\u2014]*$/, "no em-dash");
+});
+
+test("pythonOutsideWhy carries bridged only when the run had a lifted cell", () => {
+    assert.equal(pythonOutsideWhy("x", true).bridged, true);
+    assert.equal("bridged" in pythonOutsideWhy("x"), false);
+    assert.equal("bridged" in pythonOutsideWhy("x", false), false);
 });

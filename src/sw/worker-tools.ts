@@ -72,6 +72,8 @@ interface RunCtx {
      *  one call (`grantRunPython`), never on the tab. `inside`: the call is the host's try of the cell INSIDE the dialect,
      *  before its gate, and `refused` is where the fork refused it (`takePyRefusal`). */
     pyCall?: { sheets: Set<string>; code: string | null; step?: { seq: number; local: { step: number; seq: number } }; inside?: boolean; refused?: string; bridges?: boolean };
+    /** A python_exec of this run was granted the lifted bridges: the run's kept namespace can hold what it took. */
+    bridged?: true;
     /** Its python_exec's image and cast (none: a call with an `image` is refused). */
     media?: WorkerPyMedia;
 }
@@ -173,6 +175,12 @@ function originCovers(ctx: RunCtx, url: string, mode: { credentials: boolean; re
 export function grantRunPython(runId: string, grant: { sheets: string[]; code: string | null; step?: { seq: number; local: { step: number; seq: number } }; inside?: boolean; bridges?: boolean } | null): void {
     const ctx = runs.get(runId);
     if (ctx) ctx.pyCall = grant ? { sheets: new Set(grant.sheets), code: grant.code, ...(grant.step ? { step: grant.step } : {}), ...(grant.inside ? { inside: true } : {}), ...(grant.bridges && grant.code !== null ? { bridges: true } : {}) } : undefined;
+    if (ctx && grant?.bridges && grant.code !== null) ctx.bridged = true;
+}
+
+/** Whether a python_exec of this run was granted the lifted bridges, so a later cell's card says what it may still reach. */
+export function runPythonBridged(runId: string): boolean {
+    return runs.get(runId)?.bridged === true;
 }
 
 // state: cache — "" once this worker's Python sandbox runs cells inside the dialect, else why it cannot; asked once
