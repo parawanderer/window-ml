@@ -7,11 +7,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
+import { JSDOM } from "jsdom";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const { jsonResponse, streamResponse, loadBackground } = require("./helpers");
 const { isolatedWrapper } = await import("../src/sw/sw-isolated-exec.ts");
+const { CLOSED_ROOTS_EVENT } = await import("../src/ids.ts");
 
 const T = { timeout: 15000 };
 const config = { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "default-model", apiFormat: "openai", ocrModel: "", debugMode: "off" };
@@ -509,4 +511,181 @@ test("a CDP isolated world that reports no context id: nothing is evaluated anyw
     assert.equal(r.toPage.length, 0);
     assert.match(r.results[0], /could not create its world/);
     assert.ok(!r.results[0].includes("RAN IN THE PAGE'S CONTEXT"));
+});
+
+// --- 7. the read-only helpers (ml.queryAll, ml.a11y, ...) the isolated world now has ---
+//
+// The page is hostile and shares the DOM with the world. Played here by a jsdom window, which is ONE realm: the page's
+// listeners and the wrapper run side by side, so what is shown is "nothing of ours is dispatched, posted or written, and
+// no closed root is crossed". NOT shown (needs a real browser): that a page's prototype patches (Element.prototype
+// getters, EventTarget.prototype.dispatchEvent, Function.prototype) do not apply in the isolated world. That is the
+// browser's world isolation, the same property the rest of this file relies on; there is no cheap e2e for it, since an
+// isolated exec on an unapproved page is not driven by the harness's fixtures.
+
+const HOSTILE_HTML = `<ul id="list"><li><a href="/pull/1">One</a></li><li><a href="/pull/2">Two</a></li></ul>
+    <button aria-label="Merge" id="merge">Merge</button>
+    <div id="open-host"></div><div id="closed-host"></div>
+    <div id="ml-sb-host"></div><div id="ml-lightbox-1"><i id="in-lightbox">x</i></div><div id="ml-highlight-1"></div>`;
+
+/** A jsdom page, with one open and one closed shadow root, and the extension's own UI hosts. Returns the page, its world
+ *  context, the closed root (the page holds it, as it would from its own attachShadow) and the open one. */
+function helperPage() {
+    const dom = new JSDOM(`<!doctype html><body>${HOSTILE_HTML}</body>`, { runScripts: "outside-only", url: "https://evil.example/" });
+    const d = dom.window.document;
+    const open = d.getElementById("open-host").attachShadow({ mode: "open" });
+    open.innerHTML = "<span class='in'>open-inside</span>";
+    const closed = d.getElementById("closed-host").attachShadow({ mode: "closed" });
+    closed.innerHTML = "<span class='secret'>closed-inside</span><button aria-label='hidden btn'>b</button>";
+    // Closed, as the extension's own roots are (since attack 17); the page cannot reach inside, nor can the world.
+    const sb = d.getElementById("ml-sb-host").attachShadow({ mode: "closed" });
+    sb.innerHTML = "<div class='card'>our ui</div>";
+    return { dom, d, ctx: dom.getInternalVMContext(), closed, open };
+}
+
+/** Run `inner` through the wrapper in the page's context, watching everything the world could send the page. Returns the
+ *  wrapped result plus: every event dispatched on any EventTarget, every postMessage, the document's markup before and
+ *  after, the mutation records and the globals the run added. */
+async function runHelper(page, inner, bindings = { reads: [] }) {
+    const w = page.dom.window;
+    const events = [], posts = [];
+    const origDispatch = w.EventTarget.prototype.dispatchEvent;
+    w.EventTarget.prototype.dispatchEvent = function (e) { events.push(e.type); return origDispatch.call(this, e); };
+    const origPost = w.postMessage; w.postMessage = (...a) => { posts.push(a); };
+    const mo = new w.MutationObserver(() => {}); mo.observe(page.d, { subtree: true, childList: true, attributes: true, characterData: true });
+    const before = page.d.documentElement.outerHTML, globalsBefore = new Set(Object.getOwnPropertyNames(w));
+    const out = JSON.parse(JSON.stringify(await vm.runInContext(isolatedWrapper(inner, bindings, "N1", ""), page.ctx)));
+    const records = mo.takeRecords().length; mo.disconnect();
+    w.EventTarget.prototype.dispatchEvent = origDispatch; w.postMessage = origPost;
+    return { out, events, posts, records, markupChanged: page.d.documentElement.outerHTML !== before, // __mlIsoStarted and __mlState are the wrapper's own (the start marker and the console/state slot), not the helpers'.
+        newGlobals: Object.getOwnPropertyNames(w).filter((k) => !globalsBefore.has(k) && k !== "__mlIsoStarted" && k !== "__mlState") };
+}
+
+const EVERY_HELPER = `{
+    const out = [];
+    out.push(ml.queryAll('a').length, ml.queryAll('*').length, ml.queryAll('#open-host >>> .in').length, ml.queryAll('#closed-host >>> .secret').length);
+    out.push(ml.queryAll('li:contains("Two")').length, ml.queryAll('role=button').length, ml.queryAll('label=Merge').length, ml.queryAll('text=One').length);
+    for (const el of ml.queryAll('button, a, ul, li')) out.push(ml.a11y(el).role);
+    out.push(ml.pipe('a', 'head 1'), JSON.stringify(ml.range(2)), ml.schema({ a: 1 }));
+    return out;
+}`;
+
+test("running every helper (queryAll with >>>, role=, label=, text=, :contains, a11y, pipe, schema, range) dispatches no event, posts no message and writes no node, attribute or global", T, async () => {
+    const page = helperPage();
+    const r = await runHelper(page, EVERY_HELPER);
+    assert.equal(r.out.threw, undefined, `positive control: it ran: ${r.out.threw}`);
+    assert.ok(r.out.v.includes("2"), "positive control: the queries found the page's links");
+    assert.deepEqual(r.events, [], "an event was dispatched (a closed-root reader claim is a CustomEvent on window)");
+    assert.deepEqual(r.posts, []);
+    assert.equal(r.records, 0, "a DOM mutation was made");
+    assert.equal(r.markupChanged, false);
+    assert.deepEqual(r.newGlobals, [], "a global was left in the world");
+});
+
+test("a closed shadow root is not crossed by queryAll >>> or a plain query, and a page listener for the closed-roots event is never asked for a reader", T, async () => {
+    const page = helperPage();
+    const w = page.dom.window;
+    let asked = 0;
+    // The page's listener, registered first: hands over a reader for every closed root it made.
+    w.addEventListener(CLOSED_ROOTS_EVENT, (e) => { asked++; e.detail.read = (el) => (el.id === "closed-host" ? page.closed : null); });
+    // Control: the listener works, so a path that DID ask would be given the root.
+    const probe = Object.create(null); w.dispatchEvent(new w.CustomEvent(CLOSED_ROOTS_EVENT, { detail: probe }));
+    assert.equal(asked, 1); assert.equal(probe.read(page.d.getElementById("closed-host")), page.closed);
+    asked = 0;
+    const r = await runHelper(page, `{
+        return [ml.queryAll('#closed-host >>> .secret').length, ml.queryAll('.secret').length, ml.queryAll('#closed-host >>> *').length,
+                ml.queryAll('*').filter((e) => e.className === 'secret').length, ml.queryAll('#open-host >>> .in').length,
+                ml.queryAll('button').map((b) => ml.a11y(b).name)];
+    }`);
+    assert.equal(r.out.threw, undefined, r.out.threw);
+    assert.deepEqual(JSON.parse(r.out.v), [0, 0, 0, 0, 1, ["Merge"]], "closed content was reached, or the open root (control) was not");
+    assert.equal(asked, 0, "the world asked the page for a closed-root reader");
+    assert.equal(r.out.v.includes("closed-inside"), false);
+});
+
+test("queryAll never returns the extension's own UI hosts, their contents or descendants, for * or >> or an id selector; a second argument cannot ask for them", T, async () => {
+    const page = helperPage();
+    const r = await runHelper(page, `{
+        const ids = (l) => l.map((e) => e.id || e.className || e.tagName);
+        return {
+            star: ids(ml.queryAll('*')), deep: ids(ml.queryAll('div >>> *')), sb: ml.queryAll('#ml-sb-host').length, sbDeep: ml.queryAll('#ml-sb-host >>> .card').length,
+            lb: ml.queryAll('#ml-lightbox-1 i').length, hl: ml.queryAll('[id^="ml-"]').length, forced: ml.queryAll('#ml-sb-host', true).length, forced2: ml.queryAll('[id^="ml-"]', { includeExtensionUi: true }).length,
+            ctl: ml.queryAll('#open-host').length };
+    }`);
+    assert.equal(r.out.threw, undefined, r.out.threw);
+    const v = JSON.parse(r.out.v);
+    assert.equal(v.ctl, 1, "positive control: a page element is found");
+    assert.deepEqual([v.sb, v.sbDeep, v.lb, v.hl, v.forced, v.forced2], [0, 0, 0, 0, 0, 0]);
+    for (const l of [v.star, v.deep]) assert.ok(!l.some((x) => /ml-|card|in-lightbox/.test(x)), `ext UI in ${JSON.stringify(l)}`);
+});
+
+test("the script cannot replace, delete or redefine ml's helpers, and a later exec in the same world gets the originals; the kit leaves no global", T, async () => {
+    const page = helperPage();
+    const attack = await runHelper(page, `{
+        const log = [];
+        for (const k of ['queryAll', 'a11y', 'pipe', 'schema', 'range']) {
+            try { ml[k] = () => 'forged'; } catch (e) { log.push('set'); }
+            try { delete ml[k]; } catch (e) { log.push('del'); }
+            try { Object.defineProperty(ml, k, { value: () => 'forged' }); } catch (e) { log.push('def'); }
+        }
+        try { Object.setPrototypeOf(ml, { queryAll: () => 'forged' }); } catch (e) { log.push('proto'); }
+        // The function objects themselves are not frozen, but they are this call's copies.
+        ml.queryAll.poisoned = true; ml.range.call = () => 'forged';
+        return [ml.queryAll('#merge').length, ml.range(2).length, typeof globalThis.__mlIsoKit, typeof globalThis.helpers, typeof globalThis.queryAll, typeof globalThis.Papa, typeof globalThis.mlPipe];
+    }`);
+    assert.equal(attack.out.threw, undefined, attack.out.threw);
+    assert.deepEqual(JSON.parse(attack.out.v), [1, 2, "undefined", "undefined", "undefined", "undefined", "undefined"]);
+    assert.deepEqual(attack.newGlobals, []);
+    const later = await runHelper(page, `[ml.queryAll('#merge').length, typeof ml.queryAll.poisoned, ml.range(3).length, ml.a11y(ml.queryAll('#merge')[0]).name]`);
+    assert.deepEqual(JSON.parse(later.out.v), [1, "undefined", 3, "Merge"], "a poisoned helper survived into the next exec");
+    assert.deepEqual(later.newGlobals, []);
+});
+
+test("page-shaped markup cannot make a11y's selector or name throw, loop or carry markup: hostile ids, classes, labelledby cycles, huge labels", T, async () => {
+    const page = helperPage();
+    const d = page.d;
+    const evil = d.createElement("button");
+    evil.id = `x"] , body , [id="`; evil.className = "a b\"c' ]]]"; evil.setAttribute("aria-label", "</button><script>1</script>\u0000\n".repeat(50) + "z".repeat(100000));
+    evil.setAttribute("aria-labelledby", "self cyc1");
+    evil.id = "self";
+    const c1 = d.createElement("span"); c1.id = "cyc1"; c1.setAttribute("aria-labelledby", "cyc2"); const c2 = d.createElement("span"); c2.id = "cyc2"; c2.setAttribute("aria-labelledby", "cyc1"); c2.textContent = "c";
+    const weird = d.createElement("button"); weird.id = `q"] , body , [id="`; weird.className = "a\"b c'd"; weird.textContent = "weird";
+    d.body.append(evil, c1, c2, weird);
+    const r = await runHelper(page, `{
+        const res = [];
+        for (const el of ml.queryAll('button')) {
+            const a = ml.a11y(el);
+            let back = null;
+            try { back = ml.queryAll(a.selector).length; } catch (e) { back = 'threw'; }
+            res.push({ keys: Object.keys(a).join(), types: [typeof a.role, typeof a.name, typeof a.state, typeof a.selector].join(), len: a.name.length, sel: a.selector, back });
+        }
+        return res;
+    }`);
+    assert.equal(r.out.threw, undefined, r.out.threw);
+    const rows = JSON.parse(r.out.v);
+    assert.ok(rows.length >= 3, "positive control: the hostile buttons were reached");
+    for (const x of rows) {
+        assert.equal(x.keys, "role,name,state,selector");
+        assert.equal(x.types, "string,string,string,string");
+        // No cap on the name's length here: parity with the page's ml.a11y (an observation, not pinned).
+        assert.notEqual(x.back, "threw", `the selector ${x.sel} does not parse`);
+        assert.equal(x.back, 1, `the selector ${x.sel} does not name one element (it names ${x.back}), so a click on it lands elsewhere`);
+    }
+    assert.deepEqual([r.events, r.records, r.markupChanged], [[], 0, false]);
+});
+
+test("a page that makes an element's getters throw (a hostile class instance in its own realm) cannot make queryAll or a11y write or dispatch anything", T, async () => {
+    const page = helperPage();
+    const w = page.dom.window;
+    // In this one-realm stand-in the page's own throwing getters do run; what must hold is that a throw is contained and nothing leaks while it happens.
+    const el = page.d.getElementById("merge");
+    Object.defineProperty(el, "id", { get() { throw new Error("page getter"); }, configurable: true });
+    Object.defineProperty(el, "className", { get() { throw new Error("page getter"); }, configurable: true });
+    const r = await runHelper(page, `{
+        let a; try { a = ml.a11y(ml.queryAll('button')[0]); } catch (e) { a = 'threw:' + e.message; }
+        return [typeof a === 'string' ? a : 'ok', ml.queryAll('a').length];
+    }`);
+    assert.equal(r.out.threw, undefined, r.out.threw);
+    assert.equal(JSON.parse(r.out.v)[1], 2, "positive control: the world still reads");
+    assert.deepEqual([r.events, r.posts, r.records, r.newGlobals], [[], [], 0, []]);
+    void w;
 });

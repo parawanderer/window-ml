@@ -7,6 +7,11 @@
 // spliced into the wrapper, where its `var` is a local of the wrapper's function: nothing of it is a global of the world.
 
 import { DerefText } from "./tools/deref-read";
+import { queryAll, clickSelector } from "./dom/dom";
+import { accessibleName, roleOf, ariaState } from "./dom/a11y";
+import { mlPipe } from "./pointers/text-pipe";
+import { mlSchema } from "./ml/ml-schema";
+import { mlRange } from "./util";
 import type { DerefMeta, DerefValue } from "./contract/contract-pointers";
 
 /** One request an isolated exec sends the worker: re-read named read `i` through `stages`, or read named columns of the
@@ -45,3 +50,16 @@ export function isoValue(read: { value?: string; meta?: DerefMeta }, i: number, 
         : key ? () => Promise.reject(new Error(NO_CHANNEL.table)) : undefined;
     return new DerefText(read.value ?? "", read.meta, again, readColumns);
 }
+
+/** The page's read-only `ml` helpers, the same functions injected.ts gives the main world, so a script reads the DOM the
+ *  same way in either world. Closed shadow roots are not pierced here: this bundle never claims the main world's reader
+ *  (`pierceClosed` stays off), so `>>>` crosses open roots and same-origin frames only, and nothing is dispatched on the
+ *  page's window. */
+export const helpers = {
+    queryAll: (selector: string): Element[] => queryAll(selector),
+    a11y: (el: Element): { role: string; name: string; state: string; selector: string } =>
+        ({ role: roleOf(el), name: accessibleName(el), state: ariaState(el), selector: clickSelector(el) }),
+    pipe: mlPipe,
+    schema: mlSchema,
+    range: mlRange,
+};
