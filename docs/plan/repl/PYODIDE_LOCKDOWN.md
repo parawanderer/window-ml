@@ -113,6 +113,17 @@ starts from main.
    a slip, corrected 2026-10-27 on the lane's question. The two `run_js` todos it makes pass are flipped plain by the
    red team after the merge, in its file; the `asyncio` todo and the `from js import setTimeout` one are
    rewritten against this property by the red team (rule 10), never the builder.
+   MEASURED 2026-10-27 by the lane before building, ruled the same hour (within the ruling above, no new decision):
+   on the booted readonly worker an approved cell is unrestricted Python, so the caller-scoped refusal closes the
+   IMPORT routes only (`import`, `__import__`, `importlib.import_module`, `sys.modules`, from-imports, obfuscated
+   names; popping the modules from `sys.modules` does not hold, `JsFinder` brings them back) and cannot close the
+   INTROSPECTION routes: `type(asyncio.get_event_loop()).call_later.__globals__` holds `scheduleCallback`,
+   `create_once_callable` and `run_sync` with no import at all; `pyarrow.unix_timezones` keeps `js` as a module
+   global; any Python object holding the real module, a guard's `__closure__` included, is reachable through `gc`.
+   What bounds those is unchanged and already the design: step 3's strip (no network, no `postMessage` in the
+   realm) and the cell gate's revoke. The PR and the docs say this limit; the refusal claims the import routes,
+   which is Shane's stated reason (an import slipping past someone reading the card), and the introspection routes
+   are rows for the red team, never claimed by the builder.
    The coordinator's reading of the two routes it touches: no conflict with step 3 or with (i). The refusal closes
    `run_js` (`from js import eval`) for the DEFAULT approved cell only; under the explicit approval `js` is back and
    only step 3's strip closes `run_js`, so (i) stays a step 3 property and the strip is measured WITH the approval
