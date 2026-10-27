@@ -240,6 +240,15 @@ callback, FIFO, so the cancel's own wakeup waits behind the whole flood and no P
     rebinds the module global installs only a Python callable, and what that schedules is already the cell gate's to
     revoke. Prototype at a 100 ms deadline: 2.5M queued = 354 ms spend (2.42M dropped, ~100 ns each); the overrun past
     the deadline is ~0.04x the time the cell spent queueing, so under the kill at most ~0.6 s. A narrowing.
+    MEASURED 2026-10-27 on the real harness (fork core, node, 1 s budget), which replaces the prototype's figure: the
+    largest flood that fits inside the 15 s kill is 8 s of queueing, 1,786,003 entries cut; cell plus spend 13.8 s,
+    the spend 4155 ms (about 3.2 s past the deadline, 0.52x the queueing time; the 2.5M point gave 0.44x), the sweep
+    753 ms; wasm heap +790,167,552 bytes at peak and unchanged after (wasm memory never shrinks), JS heap
+    +2,524,709,616 at peak and +796,551,064 after the sweep, about 60% of the worker's ~4 GB limit. 10 s of queueing
+    (2,156,003 entries) runs 16.1 s in all, so the kill lands first. Closed under the kill either way; whether the
+    overrun is worth narrowing is the lane's call after the per-phase breakdown its PR states (any tightening is a
+    narrowing). A heavier callback per entry could reach the heap limit before the kill: hunt-2 carries a row for it,
+    and a worker that dies of memory names memory as the cause (pin 3's shape).
 16. **Refusal, not a tag.** A leftover task whose cancel-step the flood pushed past the deadline never takes its cancel:
     telling that step apart from the cell's callbacks would need a per-entry tag a cell can forge from the closure, a
     proxy (rule 5). The cell's result is REFUSED by name with what was measured: the number of callbacks dropped at the
