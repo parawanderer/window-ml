@@ -10,7 +10,7 @@ in four PRs, and each section below says which parts exist yet.
 | 1. The file format: compression, encryption, keys; `docs/spec/BACKUP_FORMAT.md`; a standalone decryptor | built |
 | 2a. Backup and restore without screens: the key inventory, collect and preview and apply of settings, the file writer, the keyring at rest, the worker ops | built |
 | 2b. The screens: Settings (DevTools panel and chat page Extension tab), the popup button, the recovery screen | built |
-| 3a. The archive folder's form: encrypted, compressed or plain month files, and the switch from plain | designed |
+| 3a. The archive folder's form: encrypted, compressed or plain month files, and the switch from plain | built (worker and folder side; the Settings screen is not) |
 | 3b. Deletes that travel: the `removed` entries written into the month files | designed |
 | 3c. Two machines on one encrypted folder: adopting the folder's key | designed |
 
@@ -249,12 +249,14 @@ encryption switch (part 3).
 
 ## The archive folder's form (part 3)
 
-Designed 2026-10-27; nothing below is built yet. Three PRs, in this order, because each needs the one before.
+Designed 2026-10-27. 3a's worker and folder side is built (`folderForm` op, `folder-sync.ts`); its Settings screen, 3b
+and 3c are not. Three PRs, in this order, because each needs the one before.
 
 ### 3a. Encrypted, compressed or plain month files
 
-- **The form is the archive's own setting**, `meta.folder_form` (`encrypted`, `compressed`, `plain`), because the
-  worker that writes the files is chrome-free and owns that database. Settings sets it with a worker op.
+- **The form is the archive's own setting**, `meta.folder_form` (`encrypted`, `gzip`, `plain`: a `BackupForm`;
+  "compressed" below is `gzip`), because the worker that writes the
+  files is chrome-free and owns that database. Settings sets it with a worker op.
 - **The upgrade.** An archive from before part 3 has no `folder_form` and reads as `plain`, which is what it was
   writing: nothing changes on someone's machine until they choose. Settings then says the folder is not encrypted and
   offers to switch, which runs the recovery-key set-up (part 2b's screen) when the install has no keyring.

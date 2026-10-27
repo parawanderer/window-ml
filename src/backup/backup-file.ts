@@ -14,7 +14,7 @@
  */
 import type { Database, Sqlite3Static } from "@sqlite.org/sqlite-wasm";
 import { ARCHIVE_SCHEMA, importBytes, migrate, prepareSession, wasmDb, withAttachedBytes, writeSession, type ArchiveDb, type ArchiveInput } from "../archive/db";
-import { BackupError, encryptFile, gzip, readHeader, readAnyForm, sniff, type Keyring, type Secret } from "./backup-format";
+import { BackupError, encryptFile, gzip, readHeader, readAnyForm, sniff, type FileKind, type Keyring, type Secret } from "./backup-format";
 import { PAYLOAD_LIMITS } from "./backup-settings";
 
 /** The three forms a backup can be written in (`docs/dev/backup.md`, "The three forms of a file"). */
@@ -84,12 +84,13 @@ export function abandonBackup(build: BackupBuild): void {
 /**
  * The bytes of the file to write, in the chosen form. Compression comes before encryption (`encryptFile`).
  * @param keyring required for `encrypted`; the install's keyring from `backup-keyring.ts`
+ * @param kind what an encrypted header records: a one-off `backup`, or an `archive-month` file of the folder
  */
-export async function sealBackup(plain: Uint8Array, form: BackupForm, keyring: Keyring | null, now = new Date()): Promise<Uint8Array> {
+export async function sealBackup(plain: Uint8Array, form: BackupForm, keyring: Keyring | null, now = new Date(), kind: FileKind = "backup"): Promise<Uint8Array> {
     if (form === "plain") return plain;
     if (form === "gzip") return gzip(plain);
     if (!keyring) throw new BackupError("needs-key", "set a backup passphrase first: an encrypted backup needs this install's key");
-    return encryptFile(plain, keyring, { kind: "backup", created: now });
+    return encryptFile(plain, keyring, { kind, created: now });
 }
 
 // --- reading ---
