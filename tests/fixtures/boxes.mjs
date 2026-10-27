@@ -109,7 +109,10 @@ const pairs = (n, linkOf) => {
 const PHB = { type: "pcie", path: "PHB", pcie_path: "PHB" };
 // RTX 3090 NVLink 3.0 bridge: 4 links. The rate is a MOCK figure — the server reads it or omits it.
 const NV4 = { type: "nvlink", path: "NV4", nvlink_count: 4, pcie_path: "PHB", bandwidth_bytes_per_sec: 112_500_000_000 };
-const NV12 = { type: "nvlink", path: "NV12", nvlink_count: 12, pcie_path: "SYS", bandwidth_bytes_per_sec: 600_000_000_000 };
+// H100 SXM on NVSwitch: `NV18` and 18 links per pair, from a CONTRIBUTED capture (hw/nvswitch8-h100-contributed-2026-10-24.txt,
+// `nvidia-smi` text, not the server's JSON). The rate is the sum of the 18 per-link 26.562 GB/s figures; whether the fork
+// reports that sum is unverified, as is `pcie_path`, which `topo -m` does not print for an NVLinked pair.
+const NV18 = { type: "nvlink", path: "NV18", nvlink_count: 18, pcie_path: "SYS", bandwidth_bytes_per_sec: 478_116_000_000 };
 // AMD Infinity Fabric (xGMI): the rate is the AMD driver's own figure where it reads one (`kfd_io_link`). MOCK, but in the
 // shape the fork reports (discover/topology_linux.go, the KFD path): type, path and bandwidth, and NO link count, which KFD
 // does not describe. An earlier mock carried an invented `link_count: 1`.
@@ -128,8 +131,9 @@ const TOPOLOGIES = {
     // 0,2,1,3, or the bridges fall on walls between unlinked cards.
     rigCrossed: { status: "measured", detail: "", gpus: [0, 1, 2, 3].map(pci),
         links: pairs(4, (i, j) => ((i === 0 && j === 2) || (i === 1 && j === 3) ? NV4 : PHB)) },
-    // 8x A100 SXM on an NVSwitch: EVERY pair directly linked, so every wall between cards is a bridge.
-    nvswitch8: { status: "measured", detail: "", gpus: [0, 1, 2, 3, 4, 5, 6, 7].map(pci), links: pairs(8, () => NV12) },
+    // 8x H100 SXM on an NVSwitch: EVERY pair directly linked, so every wall between cards is a bridge. The link
+    // values are a contributed capture's; the shape around them is still hand-built.
+    nvswitch8: { status: "measured", detail: "", gpus: [0, 1, 2, 3, 4, 5, 6, 7].map(pci), links: pairs(8, () => NV18) },
     // DGX-1V hybrid cube-mesh: each card linked to 4 of its 7 peers (its own quad, plus the card four over).
     // A partial mesh cannot be drawn faithfully on a line — it must never read as ONE group of eight.
     dgx1: { status: "measured", detail: "", gpus: [0, 1, 2, 3, 4, 5, 6, 7].map(pci),

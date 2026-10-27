@@ -533,7 +533,9 @@ per device, in bytes.
   one enumeration and can change. Read from `compute.topology` — WHERE it sits is a GUESS until a capture.
   **The NVLink-populated fixtures in `tests/fixtures/boxes.mjs` (`TOPOLOGIES`) are UNVERIFIED against real
   hardware, by agreement**: the box that builds it has no NVLink PHY, so the client was written against the
-  design doc, and the first real capture replaces the matching mock — whichever side disagrees is wrong. In
+  design doc, and the first real capture replaces the matching mock — whichever side disagrees is wrong. The
+  one capture so far (`nvswitch8`, 8x H100, issue #40) is contributed `nvidia-smi` text, not the server's JSON:
+  it fixes the link values (`NV18`, 18 links), and the fork's NVML path stays untested. In
   the Whole-box view: cards are REORDERED so directly-linked pairs sit side by side (a wall between adjacent
   bands is the only place a bridge can be drawn on one axis — bridges 0–2 and 1–3 lay out 0, 2, 1, 3), a wall
   is a hatched BRIDGE only where that exact pair is linked, and fills are never merged (which card is full is
