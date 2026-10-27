@@ -252,3 +252,39 @@ callback, FIFO, so the cancel's own wakeup waits behind the whole flood and no P
     (batched, off the spend's path, so the overrun stays as prototyped), the reap frees the rest, and a test asserts the
     next cell reaches none of them; if the measurement shows reach before an idle sweep would run, the sweep runs
     before the next cell starts. The stress case's memory is stated in bytes beside the proxy count.
+
+### Found 2026-10-27 by the lane, building the hunt-2 fix: a raising trace function unsets tracing
+
+Measured on main and on the lane's branch alike, real lockdown harness, real 1 s budget: a task that catches the cancel,
+busy-loops in its handler until the deadline fires, and then has 4 s of work in a nested `finally` held the spend for
+5013 ms (control, empty `finally`: 1011 ms). Cause: when a `sys.settrace` function raises, CPython unsets tracing, so
+every handler after the first deadline exception runs untraced; with `while True: pass` in that `finally` the bound of
+pin 1 degrades to the 15 s kill. Under the kill, so a defect, not an escape. The same mechanism blocks pin 17's sweep:
+closing a dropped task's coroutine under `settrace` runs its `except`/`finally` untraced. Found by the builder of the
+defence, so it is the lane's own regression, and the second red team's standard pass pins it as a named property.
+
+Probed fix, measured in Pyodide (3.14): the spend's hook moves from `sys.settrace` to `sys.monitoring` (`PY_START`,
+`LINE`, `JUMP`); a raising monitoring callback leaves monitoring on. A busy loop's `except` and `finally` both stopped
+at their first event (0.2 s run against a 0.2 s deadline, neither handler ran); `coro.close()` on a suspended coroutine
+raised the deadline exception without running its handlers and its `cr_frame` came back `None`. `JUMP` is required: a
+one-line `while True: pass` raises no `LINE` event under monitoring.
+
+Ruled the same hour:
+
+18. **Its own PR, first.** The monitoring switch is one mechanism change with its own review; it lands on main BEFORE
+    the pins-15–17 fix, which rebases on it (step 5 of that fix depends on it). The lane's failing-first regression
+    (the 4 s `finally` case, the control, the `while True` `finally` case under a child-process time limit as pin 6's
+    rows run, and the `coro.close()` case asserting no handler ran and `cr_frame is None`) lands in the lane's file in
+    that PR. The janitor reviews it in its queue; nothing waits on the second red team for this one. After it merges,
+    the first red team (`window-ml-redteam-e3`) pins the case in its own file as a named row, with the mutation check
+    (bound off, the case hangs), and that row is the property's pin from then on.
+19. **`sys.monitoring` is guarded, universally** (rule 2). The attribute gate covers every function of `sys.monitoring`
+    that installs, changes or removes a tool, its events or its callbacks, enumerated from the module's own namespace
+    in a test (`dir(sys.monitoring)` filtered to callables, each asserted refused in a cell), never a hand-typed list
+    of five. With that guard a cell cannot leave a tool running into the spend; the spend still asserts no foreign
+    tool holds any id before it installs its own and refuses the cell's result by name if one does (pin 5's shape:
+    measured, never assumed). The lane's own tool id is captured at boot with the other callables (pin 8).
+20. **One mechanism where the measurement allows it** (rule 8). The `c_call` guard of pin 9 moves to monitoring's
+    `CALL` event if the lane measures the same refusal there; if `setprofile` stays, the spec says why and both hooks
+    are guarded and restored to `None` (pin 5). The skip-files rule moves into the callback. Pin 4's per-core
+    enumeration gains the row "monitoring events the bound needs exist on this core".
