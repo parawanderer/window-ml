@@ -123,6 +123,9 @@ function onWorkerMessage(message: PageMessage & { event?: unknown }, _sender: ch
     if (message && message.type === "PRESENCE_CHECK") { sendResponse({ gate: gateState(), alive: pageAlive(), ask: gateAsks() }); return undefined; }
     // The worker has put the stub into this page (an origin just marked visible): its access request may now be relayed.
     if (message && message.type === "PRESENCE_ASK") { setAsk(true); sendResponse(true); return undefined; }
+    // The worker says this page's origin is hidden now (unmarked, the setting turned off, or denied): a stub it loaded with
+    // keeps its `window.ml`, but nothing it posts is relayed any more.
+    if (message && message.type === "PRESENCE_HIDE") { setAsk(false); sendResponse(true); return undefined; }
     // The worker is about to put injected.js in (sw-presence.ts injectPageScripts): a port the page handed over before
     // is dropped, and the next one taken (page-channel.ts).
     if (message && message.type === "PAGE_PORT_ARM") { rearmForPage(); sendResponse(true); return undefined; }

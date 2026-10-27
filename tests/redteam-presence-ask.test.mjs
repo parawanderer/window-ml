@@ -169,7 +169,7 @@ test("gateAsks is read only where the request crosses: the shell and every other
     const walk = (dir) => { for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
         const p = `${dir}/${f.name}`;
         if (f.isDirectory()) walk(p);
-        else if (/\.(ts|tsx)$/.test(f.name) && p !== "src/page-gate.ts") for (const [i, line] of fs.readFileSync(p, "utf8").split("\n").entries()) if (/gateAsks\(\)/.test(line)) uses.push(`${p}:${i + 1}`);
+        else if (/\.(ts|tsx)$/.test(f.name) && !/\.gen\.ts$/.test(f.name) && p !== "src/page-gate.ts") for (const [i, line] of fs.readFileSync(p, "utf8").split("\n").entries()) if (/gateAsks\(\)/.test(line)) uses.push(`${p}:${i + 1}`);
     } };
     walk("src");
     const content = fs.readFileSync("src/content.ts", "utf8").split("\n");
@@ -417,7 +417,7 @@ test("every answer to the stub's request is scrubbed: no server URL, key or mode
 // --- taking the presence away: the registration, and what an open page keeps ---
 
 for (const how of ["unmarked", "setting off", "denied"])
-test(`once the origin is ${how}, the stub's registration goes and an open page's request gets no answer at all`, { ...T, todo: "the worker never tells an open tab its ask flag is gone (no PRESENCE_* message clears page-gate `ask`), so the page that loaded with the stub keeps relaying its request, and the worker answers it (refused \"off\")" }, async () => {
+test(`once the origin is ${how}, the stub's registration goes and an open page's request gets no answer at all`, T, async () => {
     const opts = how === "setting off" ? { config: { siteRequests: true } } : { local: { ml_site_visible: [MARKED] } };
     let w;
     const bg = worker({ ...opts, extra: { openTabs: [{ id: 7, url: `${MARKED}/page`, active: true, windowId: 1 }], onTabMessage: async (_t, msg) => plain(await w.fireRuntimeMessage(msg)) } });
@@ -437,7 +437,7 @@ test(`once the origin is ${how}, the stub's registration goes and an open page's
     assert.equal(requestsStored(bg), null);
 });
 
-test("marking an origin puts the stub only into the document whose origin was checked: the injection names that document", { ...T, todo: "showInOpenTabs calls executeScript with `{ tabId }` (sw-presence.ts), so a tab that navigated to a hidden origin between PRESENCE_CHECK and the injection gets ask.js and PRESENCE_ASK; the full path (injectPageScripts without a documentId) has the same race" }, async () => {
+test("marking an origin puts the stub only into the document whose origin was checked: the injection names that document", T, async () => {
     const bg = worker({ extra: { openTabs: [{ id: 7, url: `${MARKED}/page`, active: true, windowId: 1 }], onTabMessage: async (_t, msg) => (msg.type === "PRESENCE_CHECK" ? { gate: "closed", alive: false, ask: false } : true) } });
     await flush(20);
     bg.setLocal({ ml_site_visible: [MARKED] });

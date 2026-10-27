@@ -75,41 +75,48 @@ export function syncPresence(): Promise<void> {
                 js: ASK_SCRIPT_FILES, world: "MAIN", runAt: "document_start", allFrames: false, persistAcrossSessions: true,
             }]);
         }
-        await showInOpenTabs([...v.lasting, ...v.session], marked);
+        await showInOpenTabs((origin) => presenceOf(lists, origin, everySite));
     });
     return syncing;
 }
 
 /**
- * A registration applies from the next navigation, so a page already open on an origin just allowed would wait for a
- * reload. Each such tab whose page script is not there gets it now, and then its gate opened: one told it was hidden,
- * one showing the stub (a site the person just allowed from its own request, whose next call should work with no
- * reload), and one that loaded while this sync ran (told it is visible, before the registration covered it, so no page
- * script said hello). A tab on an origin just marked visible gets the stub the same way. Asked of the content script,
- * which only the worker reaches: no state of ours to lose on eviction.
- * @param origins the origins that get the full API
- * @param asking the origins marked visible that may not use window.ml yet
- * @returns once every such tab has been seen to
+ * A registration applies from the next navigation, so a page already open would wait for a reload. Each open tab is
+ * brought to what its origin's presence is now. One that should have the full API and has no page script gets it, and
+ * its gate opened: one told it was hidden, one showing the stub (a site the person just allowed from its own request,
+ * whose next call should work with no reload), and one that loaded while this sync ran. One that should ask gets the
+ * stub and `PRESENCE_ASK`. One that is hidden now is told `PRESENCE_HIDE`, so a stub it loaded with is heard no more.
+ * Each step names the document whose origin was read, so a tab that navigated meanwhile is given nothing. Asked of the
+ * content script, which only the worker reaches: no state of ours to lose on eviction.
+ * @param presenceNow an origin's presence, as the lists and the setting say now
+ * @returns once every tab has been seen to
  */
-async function showInOpenTabs(origins: string[], asking: string[]): Promise<void> {
-    const all = [...origins, ...asking];
-    if (!all.length || !chrome.tabs?.query) return;
-    const patterns = all.map(originMatchPattern).filter((m): m is string => !!m);
-    const tabs = await chrome.tabs.query({ url: patterns }).catch(() => [] as chrome.tabs.Tab[]);
+async function showInOpenTabs(presenceNow: (origin: string) => Presence): Promise<void> {
+    if (!chrome.tabs?.query) return;
+    const tabs = await chrome.tabs.query({ url: EVERY_SITE }).catch(() => [] as chrome.tabs.Tab[]);
     await Promise.all(tabs.map(async (tab) => {
-        const origin = originOf(tab.url) ?? "";
-        if (tab.id == null || !all.includes(origin)) return;
+        if (tab.id == null) return;
+        const tabId = tab.id;
         try {
-            const r = await chrome.tabs.sendMessage(tab.id, { type: "PRESENCE_CHECK" }, { frameId: 0 }) as { gate?: string; alive?: boolean; ask?: boolean } | undefined;
-            if (origins.includes(origin)) {
+            const frame = await Promise.resolve(chrome.webNavigation?.getFrame?.({ tabId, frameId: 0 })).catch(() => null) as { documentId?: string; url?: string } | null;
+            const documentId = frame?.documentId;
+            const origin = originOf(frame?.url ?? tab.url);
+            if (!origin) return;
+            const shown = presenceNow(origin);
+            const to = documentId ? { documentId } : { frameId: 0 };
+            if (shown === "hidden") { await chrome.tabs.sendMessage(tabId, { type: "PRESENCE_HIDE" }, to).catch(() => undefined); return; }
+            // The stub goes only into the document whose origin was read: without its id, nothing is put in.
+            if (shown === "ask" && !documentId) return;
+            const r = await chrome.tabs.sendMessage(tabId, { type: "PRESENCE_CHECK" }, to) as { gate?: string; alive?: boolean; ask?: boolean } | undefined;
+            if (shown === "full") {
                 if (!(r?.gate === "closed" || (r?.gate === "open" && r.alive === false))) return;
-                await injectPageScripts(tab.id);
-                await chrome.tabs.sendMessage(tab.id, { type: "PRESENCE_OPEN" }, { frameId: 0 });
+                await injectPageScripts(tabId, documentId);
+                await chrome.tabs.sendMessage(tabId, { type: "PRESENCE_OPEN" }, to);
             } else if (r?.gate === "closed" && r.ask !== true) {
-                await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "MAIN", files: ASK_SCRIPT_FILES });
-                await chrome.tabs.sendMessage(tab.id, { type: "PRESENCE_ASK" }, { frameId: 0 });
+                await chrome.scripting.executeScript({ target: { tabId, documentIds: [documentId!] }, world: "MAIN", files: ASK_SCRIPT_FILES });
+                await chrome.tabs.sendMessage(tabId, { type: "PRESENCE_ASK" }, to);
             }
-        } catch { /* no content script there (a reload will bring the registered scripts) */ }
+        } catch { /* no content script there, or the document is gone (a reload will bring the registered scripts) */ }
     }));
 }
 
