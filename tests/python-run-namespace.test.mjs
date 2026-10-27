@@ -69,6 +69,16 @@ test("PY_DELETE_RUN reaches the worker of that run's principal as deleteRun, and
     assert.deepEqual(await done, { ok: true });
 });
 
+test("PY_DELETE_RUN answers with the callables the run's last cell handed to JavaScript that fired after its result", async () => {
+    // They have no next cell to report them (cell-gate.ts); the worker's deleteRun answer carries them instead.
+    const a = await runCell({ principal: "run:del-d", wire: { client: "mlw-d", run: "del-d" } }, bench(["x"]));
+    const done = send({ type: "PY_DELETE_RUN", run: "del-d", principal: "run:del-d" });
+    await tick();
+    a.w.reply({ id: lastPost(a.w).id, ok: true, stdout: "", dropped: { count: 2, afterCell: 3 } });
+    assert.deepEqual(await done, { ok: true, dropped: { count: 2, afterCell: 3 } });
+    // Positive control: a worker that reports none adds nothing to the answer (the first test above).
+});
+
 test("PY_DELETE_RUN for a run with no live worker answers ok and spawns nothing", async () => {
     const before = workers.length;
     assert.deepEqual(await send({ type: "PY_DELETE_RUN", run: "never-ran" }), { ok: true });
@@ -262,4 +272,19 @@ test("a worker-hosted run that settles sends PY_DELETE_RUN for its own run and p
     const { bg } = await wireRun(async (w) => { wire = w; });
     assert.ok(wire?.run, "positive control: the cell ran with a run id");
     assert.deepEqual(bg.pyDeletes.map((m) => [m.type, m.run, m.principal]), [["PY_DELETE_RUN", wire.run, `run:${wire.run}`]]);
+});
+
+test("a settled run whose last cell's revoked callables fired records them in its run log, after its last cell", { timeout: 30000 }, async () => {
+    const POPUP = { url: "chrome-extension://test/popup.html" };
+    const dumped = async (bg, run) => (await bg.send({ type: "DUMP_RUN_LOG", payload: { run } }, POPUP)).data.events.filter((e) => e.subsystem === "python" && e.kind === "dropped");
+    let wire;
+    const { bg } = await wireRun(async (w) => { wire = w; }, { onPyDelete: () => ({ ok: true, dropped: { count: 3, afterCell: 1 } }) });
+    await new Promise((r) => setTimeout(r, 0));
+    const events = await dumped(bg, wire.run);
+    assert.deepEqual(events.map((e) => [e.reason, e.detail]), [["after-last-cell", { count: 3, afterCell: 1 }]]);
+    // Positive control: a turn whose worker reports none records nothing.
+    let quiet;
+    const { bg: bg2 } = await wireRun(async (w) => { quiet = w; });
+    await new Promise((r) => setTimeout(r, 0));
+    assert.deepEqual(await dumped(bg2, quiet.run), []);
 });

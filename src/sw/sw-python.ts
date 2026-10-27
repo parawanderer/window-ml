@@ -227,12 +227,18 @@ function pyCodeGranted(tabId: number | undefined, outside: boolean, code: string
  * (docs/spec/PYTHON_DIALECT.md, "The namespace"). Fire-and-forget: a namespace left behind costs memory, not
  * correctness, and a run ending must never wait on the sandbox. The offscreen forwards it as `deleteRun` to every
  * worker that holds a dict for the run, the shared `full` worker included (it keeps which, `runPrincipals`).
+ * Callables the run's last cell handed to JavaScript that fired after its result come back in the answer, since no
+ * next cell will carry them (cell-gate.ts), and go to the run log like a cell's.
  * @param runId the run whose namespace to drop
  */
 export function deletePythonRun(runId: string): void {
     if (!runId) return;
     try {
         chrome.runtime.sendMessage({ type: "PY_DELETE_RUN", run: runId, principal: `run:${runId}` })
+            .then((res: { dropped?: { count: number; afterCell: number } } | undefined) => {
+                const dropped = res?.dropped;
+                if (dropped) recordRunLog(runId, { subsystem: "python", kind: "dropped", reason: "after-last-cell", detail: { count: dropped.count, afterCell: dropped.afterCell } });
+            })
             .catch(() => { /* no offscreen listening: the worker is gone with its Map */ });
     } catch { /* context gone */ }
 }

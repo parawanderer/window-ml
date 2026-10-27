@@ -424,9 +424,14 @@ function onMessage(e: MessageEvent): void {
     }
     if (!msg || typeof msg.id !== "number") return;
     // ROOT C: drop a run's kept namespace when the run closes or is archived. Through the chain so it
-    // cannot land mid-run.
+    // cannot land mid-run. Callables the run's last cell handed to JavaScript that fired since its result have no next
+    // cell to report them (cell-gate.ts), so the answer carries them.
     if (typeof msg.deleteRun === "string" && msg.deleteRun) {
-        runChain = runChain.then(() => { deleteRunNamespace(msg.deleteRun!); post({ id: msg.id, ok: true, stdout: "" }); });
+        runChain = runChain.then(() => {
+            deleteRunNamespace(msg.deleteRun!);
+            const late = cellDropped();
+            post({ id: msg.id, ok: true, stdout: "", ...(late ? { dropped: { count: late, afterCell: cellSeq } } : {}) });
+        });
         return;
     }
     // A worker is readonly OR full, never both: the readonly one is locked down at boot and must not be

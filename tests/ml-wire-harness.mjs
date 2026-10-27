@@ -30,7 +30,7 @@ export const DATA_URL = "https://data.example/report.csv";
  *   `onStep(bg, event)` sees each step event on the run's tab (a nested ask arrives this way)
  * @returns the worker, the PY_RUN messages, and the tool results the model was last handed
  */
-export async function wireRun(cell, { body = "region,total\nnorth,12\nsouth,30\n", bodies = {}, mode = "readonly", url = DATA_URL, siteGate = true, calls: script, local, store = false, budgetMB, idb, pageAnswer, configExtra = {}, onNative, onStep, dialectInside } = {}) {
+export async function wireRun(cell, { body = "region,total\nnorth,12\nsouth,30\n", bodies = {}, mode = "readonly", url = DATA_URL, siteGate = true, calls: script, local, store = false, budgetMB, idb, pageAnswer, configExtra = {}, onNative, onStep, dialectInside, onPyDelete } = {}) {
     let turns = 0;
     const pyRuns = [];
     const calls = script ?? [
@@ -42,6 +42,7 @@ export async function wireRun(cell, { body = "region,total\nnorth,12\nsouth,30\n
         config: { ...config, ...(budgetMB == null ? {} : { valueStoreBudgetMB: budgetMB }), ...configExtra }, siteGate, openTabs: [SITE], local,
         ...(onNative ? { onNative } : {}),
         ...(dialectInside ? { dialectInside } : {}),
+        ...(onPyDelete ? { onPyDelete } : {}),
         ...(store || idb ? { indexedDB: idb ?? new IDBFactory() } : {}),
         onFetch: (c) => {
             if (c.url in bodies) return new Response(bodies[c.url], { status: 200, headers: { "content-type": "text/plain" } });

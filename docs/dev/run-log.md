@@ -80,7 +80,8 @@ any new mechanism reports.
 | `tab` | `released` | and let go again, which is the half that is easy to forget |
 | `tab` | `replaced` | `chrome.tabs.onReplaced` re-filed the run under a new tab id |
 | `tool` | `threw` (`run`/`readonly`/`auto-approve`/`precheck`/`approve`) | a tool call's dispatch threw (a page's malformed answer, an argument that cannot be read); the loop turned it into an error result, or for a step that only decides, into asking. Level `error`, the message in `key`, the tool in `detail.tool` |
-| `python` | `dropped` (`after-result`) | callables a cell handed to JavaScript (a timer, a microtask, a promise) fired after its result; the cancel had revoked them, so they ran nothing. `detail.count` of them, after cell `detail.afterCell` of the run's worker (0-based), reported when the run's next cell starts (`cell-gate.ts`) |
+| `python` | `dropped` (`after-result`) | callables a cell handed to JavaScript (a timer, a microtask, a promise) fired after its result; the cancel had revoked them, so they ran nothing. `detail.count` of them, after cell `detail.afterCell` of the run's worker (counting from 1), reported when the run's next cell starts (`cell-gate.ts`) |
+| `python` | `dropped` (`after-last-cell`) | the same, for the turn's last cell: they fired between its result and the turn's end, and are reported when the turn ends and its namespace is deleted (`deletePythonRun`). One still armed then fires later, unreported until the run's next turn runs a cell |
 | `tool` | `scrubbed` (`config-secret`) | a tool result named the server URL, the API key or the model filter and was scrubbed before the model read it; `key` holds the text as the tool wrote it |
 
 ### Levels
