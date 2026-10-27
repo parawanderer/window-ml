@@ -136,6 +136,9 @@ not, record that and choose between `declarativeNetRequest` rules and following 
 1. The `console` parameter, `__mlCdpStream`, the closures and the one-field CDP fixes (no UI, no new string).
 2. Presence in storage, the main-world content script, `use_dynamic_url`, the MessagePort, the silent relay, the popup
    and Settings rows (new strings: owner approval).
+   FOUND 2026-10-27 by the janitor on the built step 2a: a document loading between a site turning visible and its
+   registration covering it answers `open: true` with no injected.js in it. The security lane's own `@security` PR,
+   after #1189.
 3. Tools in the content script's isolated world on hidden pages (the second bundle, behind no switch; the tools' tests
    run against both bundles; detection-surface's hidden-with-run `pageEvents` row goes to `[]`; rule 10: a separate
    agent's test-only red-team PR on main first, the lane's PR after), and `chrome.dom` for closed roots. Exec's default world is now a switch
