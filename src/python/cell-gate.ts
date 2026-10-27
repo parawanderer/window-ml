@@ -34,6 +34,8 @@ export type CellGate = {
     boundary(): void;
     /** How many revoked callables fired (and did nothing) since the last call; zeroes the count. */
     takeDropped(): number;
+    /** The cell's cancel started spending its tasks: tell the host (`onSpending`), so a kill that lands now is named. */
+    spending(): void;
 };
 
 /** The Pyodide internals the gate hooks; the gate refuses to install without every one (a Pyodide upgrade must say so). */
@@ -43,6 +45,16 @@ export const GATE_INTERNALS = ["pyproxy_new", "finalizationRegistry", "callPyObj
 export const REFUSED_RESCHEDULE = "refused: an earlier cell scheduled this same callable for JavaScript to call after its result; that call was revoked and is still pending, so this cell cannot hand the object to JavaScript again";
 
 let current: CellGate | null = null;   // state: plumbing — the realm's gate; one interpreter per realm (per-principal workers)
+let spendingHook: (() => void) | null = null;   // state: plumbing — the worker's post for the spend's mark, set once at boot
+
+/**
+ * Who hears that a cell's cancel started spending its tasks (`CellGate.spending`): the worker, which tells the offscreen
+ * document, so a kill during the spend says a leftover task would not stop rather than blaming the cell's computation.
+ * @param fn the hook, or null to clear it
+ */
+export function onSpending(fn: (() => void) | null): void {
+    spendingHook = fn;
+}
 
 /**
  * Close the realm's cell window, between cells. Called by `injectInputs` and the worker before every run: a window
@@ -199,6 +211,9 @@ export function installCellGate(py: any): CellGate {
             const n = dropped;
             dropped = 0;
             return n;
+        },
+        spending() {
+            try { spendingHook?.(); } catch { /* a log, never worth failing the cancel over */ }
         },
     };
     current = gate;

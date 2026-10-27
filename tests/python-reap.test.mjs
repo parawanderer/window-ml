@@ -1,4 +1,5 @@
-// python-reap.test.mjs — the idle reap and the keep (py-reap.ts): when the offscreen document shuts a Python worker.
+// python-reap.test.mjs — the offscreen document's clocks on a Python worker: the idle reap and the keep (py-reap.ts),
+// and the cell's kill when it lands during the cancel's spend.
 
 // The offscreen document (src/offscreen.ts) imported for real under a mocked `chrome`, a fake `Worker` and mocked
 // timers, so the clocks are the shipped ones and minutes pass in a tick. The service worker's half (PY_REAPED into the
@@ -28,7 +29,7 @@ globalThis.chrome = {
         sendMessage: (m) => { sent.push(m); return Promise.resolve(undefined); },
     },
 };
-await import("../src/offscreen.ts");
+const { SPEND_KILLED } = await import("../src/offscreen.ts");
 
 const send = (msg) => new Promise((resolve) => {
     for (const fn of listeners) { if (fn(msg, { id: "test" }, resolve) === true) return; }
@@ -190,5 +191,41 @@ test("a kept turn whose next turn keeps nothing is reaped on the live clock", as
     mock.timers.tick(REAP_LIVE_MS);
     await settle();
     await answerReap(w);
+    assert.equal(w.terminated, true);
+});
+
+// --- the kill during the cancel's spend (the never-yield bound's last path) ---
+// A task the cell left that will not stop inside a C function is beyond the spend's bound; the 15 s kill ends it. The
+// worker marks the spend's start (`spending`), so the kill names the leftover task instead of the cell's computation.
+
+/** Post a cell, let it start, and optionally mark its spend; resolves with the worker and the pending answer. */
+async function startedCell(principal, { spending }) {
+    const posted = new Map(workers.map((w) => [w, w.posts.length]));
+    const answer = send({ type: "PY_RUN", code: "pass", hardened: true, tables: null, principal });
+    await settle();
+    const w = workers.find((x) => x.posts.length > (posted.get(x) ?? 0));
+    const id = w.posts.at(-1).id;
+    w.reply({ id, started: true });
+    if (spending) w.reply({ id, spending: true });
+    await settle();
+    return { w, answer };
+}
+
+test("a kill during the spend names the task the cell left, not the cell's computation", async () => {
+    const { w, answer } = await startedCell("page:21", { spending: true });
+    mock.timers.tick(15000);
+    await settle();
+    const r = await answer;
+    assert.equal(r.ok, false);
+    assert.equal(r.error, SPEND_KILLED);
+    assert.equal(w.terminated, true);
+});
+
+test("control: a kill with no spending mark still blames the computation", async () => {
+    const { w, answer } = await startedCell("page:22", { spending: false });
+    mock.timers.tick(15000);
+    await settle();
+    const r = await answer;
+    assert.match(r.error, /exceeded 15s and was terminated — simplify the computation/);
     assert.equal(w.terminated, true);
 });

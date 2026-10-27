@@ -113,12 +113,15 @@ const reapTimers = new Map<string, ReturnType<typeof setTimeout>>();   // state:
 const keptPrincipals = new Set<string>();   // state: plumbing — `run:<id>` workers whose live turn asked to keep them
 let nextId = 1;
 type WireStamp = { client: string; run: string | null };
-const pending = new Map<number, { resolve: (r: PyResult) => void; timer: ReturnType<typeof setTimeout>; streamId?: string; armOnStart?: boolean; principal: string; wire?: WireStamp }>();   // state: plumbing
+const pending = new Map<number, { resolve: (r: PyResult) => void; timer: ReturnType<typeof setTimeout>; streamId?: string; armOnStart?: boolean; principal: string; wire?: WireStamp; spending?: boolean }>();   // state: plumbing
 // THE `ml` WIRE (ML_WIRE.md): which worker a client handle's answers go back to. The handle is this
 // document's to stamp — the worker never sees it (LANE_1_PR2_DESIGN.md "Who stamps the handle"). An
 // `ask` first answer is NOT relayed down: the cell's `send` stays pending until the later `ML_ANSWER`
 // push, matched by `client`, arrives here.
 const wireByClient = new Map<string, { post: (m: unknown) => void; runMsgId: number }>();   // state: plumbing — one in-flight cell each
+
+/** The kill's error when it lands during the cancel's spend (the worker's `spending` mark). */
+export const SPEND_KILLED = `A task this cell left kept running after it was cancelled and would not stop (most likely inside a C function), so the Python sandbox was terminated after ${PY_TIMEOUT_MS / 1000}s and the cell's result is refused.`;
 
 /** Arm a kill for run `id`: when it fires, that run fails with `error` and its worker is terminated,
  *  failing anything queued behind it on that principal. */
@@ -127,7 +130,9 @@ function killAfter(id: number, ms: number, error: string, reason: "timeout" | "s
         const entry = pending.get(id);
         if (!entry) return;   // already resolved
         pending.delete(id);
-        entry.resolve({ ok: false, stdout: "", error });
+        // Past the cell's own code: the cancel was spending a task the cell left, which would not stop (a loop inside a
+        // C function is beyond the spend's bound, python-runtime.ts). Not the cell's computation, so not "simplify".
+        entry.resolve({ ok: false, stdout: "", error: entry.spending && reason === "timeout" ? SPEND_KILLED : error });
         killWorker(entry.principal, reason);   // nuke the (still-busy) instance + fail any others queued behind it
     }, ms);
 }
@@ -262,6 +267,12 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
         if (e.data?.partial) {
             const entry = pending.get(e.data.id);
             if (entry?.streamId) chrome.runtime.sendMessage({ type: "PY_STDOUT", streamId: entry.streamId, chunk: String(e.data.chunk ?? ""), ts: e.data.ts }).catch(() => { /* no receiver → drop */ });
+            return;
+        }
+        // The cell's own code is done and its cancel is spending the tasks it left: a kill from here on is named for it.
+        if (e.data?.spending) {
+            const entry = pending.get(e.data.id);
+            if (entry) entry.spending = true;
             return;
         }
         // The USER'S CELL is starting (runtime up, prelude done, this run's turn): its own 15s begins now.

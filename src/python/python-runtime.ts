@@ -490,8 +490,11 @@ const FULL_CELL = /* python */ `
  * @param code the user's source
  * @param persist a KEEP-STATE mode (see `wrapUserSetup`)
  * @param inside run the cell INSIDE the dialect (`INSIDE_CELL`) with the whitelist's node list, else as full Python
+ * @param cancel who cancels what the cell scheduled: `"host"` when the lockdown built the cancel (lockdown.ts), which
+ *   runs this script and then the cancel (`hostRunScript`), so the wrapper holds no cancel a cell could rebind;
+ *   `"wrapper"` (the full worker, and a test with no lockdown) keeps the cancel in this script
  */
-export const wrapUserScript = (code: string, persist: boolean | "run" = false, inside: { nodes: string[] } | null = null): string => /* python */ `
+export const wrapUserScript = (code: string, persist: boolean | "run" = false, inside: { nodes: string[] } | null = null, cancel: "wrapper" | "host" = "wrapper"): string => /* python */ `
 # Open the cell gate's window before anything of the cell's runs: what crosses to JavaScript from here on is the cell's.
 _ml_cell_begin()
 result = None
@@ -534,6 +537,8 @@ ${inside ? INSIDE_CELL : FULL_CELL}        if _ret is not None:
     except BaseException:
         _err = _ml_fmt_exc()
         result = None
+${cancel === "wrapper" ? `# THE FULL WORKER'S CANCEL. The readonly worker's is the harness's (lockdown.ts \`_ml_make_cancel\`), run after this script
+# by \`hostRunScript\`, bounded, and out of a cell's reach; this one a cell can rebind, and its spend has no bound.
 # Cancel everything the cell SCHEDULED before its result is returned (PYODIDE_LOCKDOWN.md step 5,
 # PYTHON_CANCEL_GAPS.md). The wrapper's OWN task is left alone: cancelling it would raise CancelledError in the
 # run machinery. In three steps, in this order:
@@ -592,7 +597,7 @@ if _ml_unspent:
         _ml_names = str(len(_ml_unspent)) + " task(s)"
     _err = (_err or "") + "RuntimeError: this cell left a task running that would not stop: " + _ml_names + ". It was cancelled " + str(_ml_SPEND_ROUNDS) + " times and caught the cancel each time, so the cell's result is refused rather than returned beside it.\\n"
     result = None
-_stdout = _out.getvalue()${inside ? `
+` : ""}_stdout = _out.getvalue()${inside ? `
 if _ml_not_in_dialect is not None:
     _stdout = ""` : ""}
 _ml_stdout_dropped = _out._ml_dropped
@@ -725,20 +730,55 @@ try:
                 _ipc_result = None
 except BaseException:
     _json_table = None
-# The epilogue ran the cell's own objects (a __str__, a figure's methods, a frame's to_json): revoke what they handed
-# to JavaScript too. Every block above catches BaseException, so this line is reached.
+${cancel === "wrapper" ? `# The epilogue ran the cell's own objects (a __str__, a figure's methods, a frame's to_json): revoke what they handed
+# to JavaScript too. Every block above catches BaseException, so this line is reached. (The host's cancel runs after
+# the whole script, so it covers the epilogue already.)
 try:
     _ml_cell_revoke()
 except BaseException:
     pass
-`;
+` : ""}`;
 
 /**
  * The full script for one run: `wrapUserSetup` then `wrapUserScript`, joined. The worker runs the two
  * separately so `started` can fire between them; the real-CPython tests run this one string.
  */
-export const wrapUserCode = (code: string, hardened = true, persist: boolean | "run" = false): string =>
-    wrapUserSetup(hardened, persist) + wrapUserScript(code, persist);
+export const wrapUserCode = (code: string, hardened = true, persist: boolean | "run" = false, cancel: "wrapper" | "host" = "wrapper"): string =>
+    wrapUserSetup(hardened, persist) + wrapUserScript(code, persist, null, cancel);
+
+/**
+ * Which cancel a worker runs (PYTHON_CANCEL_GAPS.md pin 10): the locked-down readonly worker's harness has the closure
+ * (`hostRunScript`); the full worker, never locked, keeps the cancel in the wrapper.
+ * @param harness the harness `lockdownReadonly` returned, or undefined (no lockdown)
+ * @param hardened whether the worker is the readonly (locked-down) one
+ * @returns `"host"` or `"wrapper"`
+ */
+export const cancelPath = (harness: unknown, hardened: boolean): "host" | "wrapper" => harness !== undefined && harness !== null && hardened ? "host" : "wrapper";
+
+/**
+ * Run a cell's script and THE CANCEL as one coroutine, through the closure the lockdown built at boot (lockdown.ts
+ * `run_script`; PYTHON_CANCEL_GAPS.md pin 7). Nothing the cancel reads is a name the cell could rebind, and nothing the
+ * cell queued on the JavaScript side runs between the script and the cancel. Fails closed: a cancel that fails refuses
+ * the cell's result.
+ * @param harness the PyProxy `lockdownReadonly` returned
+ * @param source the wrapper script (`wrapUserScript(..., "host")`)
+ * @param ns the namespace it runs in
+ * @returns what the cell's tasks printed while being spent, the refusal to append to the cell's error ("" if none), and
+ *   the script's own failure ("" if it ran), which the caller raises once it has the rest
+ */
+export async function hostRunScript(harness: any, source: string, ns: any): Promise<{ out: string; refusal: string; error: string }> {
+    let fn: any;
+    try {
+        fn = harness.run_script;
+        const r = await fn(source, ns);
+        try {
+            const [out, refusal, error] = r.toJs();
+            return { out: String(out ?? ""), refusal: String(refusal ?? ""), error: String(error ?? "") };
+        } finally { r.destroy?.(); }
+    } catch (e) {
+        return { out: "", refusal: `RuntimeError: the cancel of what this cell scheduled failed (${String((e as Error)?.message || e).split("\n").filter(Boolean).pop()}), so the cell's result is refused.\n`, error: "" };
+    } finally { fn?.destroy?.(); }
+}
 
 // --- Sandbox hardening (the `readonly` mode) --------------------------------------
 // python_exec is auto-approvable ONLY because a hardened run genuinely cannot reach the

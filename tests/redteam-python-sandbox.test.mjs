@@ -19,9 +19,9 @@ import { test, before, after } from "node:test";
 import assert from "node:assert";
 import path from "node:path";
 import fs from "node:fs";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { Worker } from "node:worker_threads";
-import { wrapUserCode, harden, unharden, injectInputs } from "../src/python/python-runtime.ts";
+import { wrapUserCode, harden, unharden, injectInputs, hostRunScript, cancelPath } from "../src/python/python-runtime.ts";
 
 /** The defence's boot hook and its allow list. Absent on main: the calls below are no-ops and the properties stay open. */
 let lockdownReadonly = null;
@@ -129,28 +129,37 @@ after(async () => {
  * harness's "a later await": a raw `runPythonAsync` that pumps the event loop AFTER the cell's result
  * has been returned (not the wrapper — it is not a cell).
  */
-async function cellOn(interp, code, { hardened = true, stream = false, tables = null, image = null, later = 0 } = {}) {
+async function cellOn(interp, code, { hardened = true, stream = false, tables = null, image = null, later = 0, cancel = null } = {}) {
     injectInputs(interp.globals, image, tables == null ? null : JSON.stringify(tables), interp === py ? harness : undefined);
     if (stream) {
         try { interp.setStdout({ batched: (s) => { (cellOn.chunks ??= []).push(s); } }); } catch { /* no setStdout here */ }
     }
     // Under the lockdown the strip is the hardening; `unharden()` would RESTORE what it removed.
     const saved = hardened && !lockedDown ? harden(interp) : null;
+    // The cancel the worker runs: the lockdown's closure, called after the script (python-worker.ts), when there is one.
+    const host = cancel !== "wrapper" && hardened && interp === py && harness?.run_script !== undefined;
+    let cancelled = null;
     try {
-        await interp.runPythonAsync(wrapUserCode(code, hardened));
+        const script = wrapUserCode(code, hardened, false, host ? "host" : "wrapper");
+        if (host) {
+            cancelled = await hostRunScript(harness, script, interp.globals);
+            if (cancelled.error) throw new Error(cancelled.error);
+        } else await interp.runPythonAsync(script);
     } finally {
         if (saved) unharden(interp, saved);
         if (stream) { try { interp.setStdout({}); } catch { /* */ } }
     }
+    const errText = (interp.globals.get("_err") ? String(interp.globals.get("_err")) : "") + (cancelled?.refusal ?? "");
     const out = {
-        stdout: String(interp.globals.get("_stdout") ?? ""),
-        error: interp.globals.get("_err") ? String(interp.globals.get("_err")) : null,
+        stdout: String(interp.globals.get("_stdout") ?? "") + (cancelled?.out ?? ""),
+        error: errText || null,
         chunks: cellOn.chunks ?? [],
         jsProxies: null,
     };
     cellOn.chunks = null;
     const jr = interp.globals.get("_json_result");
     try { out.value = JSON.parse(jr); } catch { out.value = jr === undefined ? null : String(jr); }
+    if (cancelled?.refusal) out.value = null;   // a refused result, as the worker returns it (an error, no value)
     if (later) await interp.runPythonAsync(`import asyncio\nawait asyncio.sleep(${later})`);
     return out;
 }
@@ -534,8 +543,7 @@ _O()`);
 });
 
 // --- P2-spend. a task that will not take its cancel fails the cell closed --------------------------------------
-// A task that never yields is not here: the spend's `await sleep(0)` hands it the CPU and the cell hangs to the run's
-// timeout instead of refusing (the same class as a busy-loop task hanging the next pump).
+// A task that never yields is P2-bound's, below.
 
 test("P2-spend: a task that catches every cancel through all the rounds refuses the cell's result, naming it", { skip }, async () => {
     const r = await cell(`
@@ -560,6 +568,211 @@ await asyncio.sleep(0)
     assert.equal(freed.value, 8, `positive control: the task caught each of the 8 rounds' cancels, got ${JSON.stringify(freed)}`);
     const after = await cell(`1`);
     assert.deepEqual([after.error, after.value], [null, 1], "the freed task was spent; the next cell is not refused");
+});
+
+// --- P2-bound. a task that will not stop when cancelled, and the cancel a cell cannot rebind --------------------
+// PYTHON_CANCEL_GAPS.md pins 1 to 14. In the locked-down worker the cell's script and the cancel run as ONE coroutine
+// built at boot from captured callables (lockdown.ts `run_script`, `hostRunScript`): the cell's code is compiled in the
+// wrapper's globals, so a cancel read from there could be rebound by the cell. The spend has one budget (1 s) for all
+// its rounds, enforced on every line a task runs (settrace) and on every call that would take the hooks down
+// (setprofile). A loop inside a C function is beyond it; only the worker's 15 s kill ends that, named
+// (python-reap.test.mjs). The adversarial half (aliases, Task.cancel, call_soon, __del__, a rebind from a task during
+// the spend) is the red team's, after the merge.
+
+/** A cell that leaves a task named "leftover" whose cancel handler is `handler`; timed. */
+async function leftover(handler, opts) {
+    const t0 = Date.now();
+    const r = await cell(`
+import asyncio, sys
+async def _left():
+    try:
+        await asyncio.sleep(10)
+    except BaseException:
+${handler}
+asyncio.ensure_future(_left()).set_name("leftover")
+await asyncio.sleep(0)
+"x"`, opts);
+    return { ...r, ms: Date.now() - t0 };
+}
+const STOPPED = /left a task that kept running after it was cancelled: leftover \(.*_left\)/;
+
+for (const [name, handler] of [
+    ["spins after catching the cancel", "        while True: pass"],
+    ["spins in a handler that catches everything, over and over", "        while True:\n            try:\n                while True: pass\n            except BaseException:\n                pass"],
+    ["takes the trace hook down on its handler's first line, then spins", "        sys.settrace(None)\n        while True: pass"],
+    ["takes the trace hook down through an alias, then spins", "        st = sys.settrace\n        st(None)\n        while True: pass"],
+    ["takes the profile hook down first, then the trace hook, then spins", "        sys.setprofile(None)\n        sys.settrace(None)\n        while True: pass"],
+]) {
+    test(`P2-bound: a task that ${name} is stopped, and the cell's result refused`, { skip }, async () => {
+        const r = await leftover(handler);
+        assert.match(String(r.error), STOPPED, `got ${JSON.stringify(r)}`);
+        assert.equal(r.value, null, "a refused cell returns no value");
+        assert.ok(r.ms < 6000, `stopped by the spend's bound, not left to the 15 s kill: ${r.ms} ms`);
+        const after = await cell("import sys\nsys.gettrace() is None and sys.getprofile() is None");
+        assert.deepEqual([after.error, after.value], [null, true], "the sandbox lives on, with no hook left behind");
+    });
+}
+
+test("P2-bound: a task that awaits in its finally and spins in a nested finally is stopped", { skip }, async () => {
+    const r = await cell(`
+import asyncio
+async def _left():
+    try:
+        await asyncio.sleep(10)
+    finally:
+        try:
+            await asyncio.sleep(10)
+        finally:
+            while True: pass
+asyncio.ensure_future(_left()).set_name("leftover")
+await asyncio.sleep(0)
+"x"`);
+    assert.match(String(r.error), STOPPED, `got ${JSON.stringify(r)}`);
+});
+
+test("P2-bound control: an ordinary task is spent at once; what its handler prints reaches the cell's stdout", { skip }, async () => {
+    const r = await leftover(`        print("cleaned up")\n        raise`);
+    assert.deepEqual([r.error, r.value], [null, "x"], `got ${JSON.stringify(r)}`);
+    assert.match(r.stdout, /cleaned up/, "the cancel's own buffer is appended to the cell's stdout");
+    assert.ok(r.ms < 1000, `no budget spent: ${r.ms} ms`);
+});
+
+test("P2-bound: a cell's own trace hook is replaced for the spend and left as None after it", { skip }, async () => {
+    const own = await cell(`
+import asyncio, sys
+sys.settrace(lambda f, e, a: None)
+async def _left():
+    try:
+        await asyncio.sleep(10)
+    except BaseException:
+        while True: pass
+asyncio.ensure_future(_left()).set_name("leftover")
+await asyncio.sleep(0)
+"x"`);
+    assert.match(String(own.error), STOPPED, "the cell's hook did not shield its task");
+    const after = await cell("import sys\nsys.gettrace() is None");
+    assert.equal(after.value, true, "restored to None, never to the cell's hook");
+});
+
+test("P2-bound: the spend's mark goes to the host once the spend starts, and never for a cell that left no task", { skip }, async (t) => {
+    if (typeof cellGate?.onSpending !== "function") return t.skip("no spending hook on this branch");
+    let marks = 0;
+    cellGate.onSpending(() => { marks++; });
+    try {
+        await cell(`"no task"`);
+        assert.equal(marks, 0, "a cell with nothing to spend posts nothing: a kill during its own code says 'simplify'");
+        await leftover("        while True: pass");
+        assert.equal(marks, 1, "one mark, at the spend's start");
+    } finally { cellGate.onSpending(null); }
+});
+
+test("P2-bound regression: a cell that rebinds the wrapper's _ml_cell_revoke still has its timer revoked", { skip }, async () => {
+    const body = `global _ml_cell_revoke
+_ml_cell_revoke = lambda: None
+from js import setTimeout
+from pyodide.ffi import create_proxy
+def _f():
+    _m.woke.append("ran")
+setTimeout(create_proxy(_f), 20)
+"x"`;
+    assert.deepEqual(await scheduledThenAsk("_rt_rb", body), { woke: [] }, "the host's cancel reads nothing the cell can rebind");
+    // Control: the same cell on the wrapper's cancel (the full worker's path) is not revoked. This was main before.
+    await cell(`import asyncio, types, sys
+_m = types.ModuleType("_rt_rb2")
+_m.woke = []
+sys.modules["_rt_rb2"] = _m
+${body}`, { cancel: "wrapper", later: 0.15 });
+    const control = (await cell(`import sys\nlist(sys.modules["_rt_rb2"].woke)`)).value;
+    assert.deepEqual(control, ["ran"], "positive control: the rebind does undo the wrapper's cancel");
+});
+
+test("P2-bound placement: a call_soon handle the cell queued is cancelled before it runs", { skip }, async () => {
+    // The cancel used to run after runPythonAsync resolved, and what the cell queued ran in between; nine rows of this
+    // file failed then. Script and cancel are one coroutine now.
+    const r = await scheduledThenAsk("_rt_cs", `asyncio.get_running_loop().call_soon(lambda: _m.woke.append("ran"))\n"x"`);
+    assert.deepEqual(r, { woke: [] });
+});
+
+test("P2-bound: which cancel each worker runs, by name", () => {
+    assert.equal(cancelPath({}, true), "host", "the readonly worker, locked down, cancels through its harness");
+    assert.equal(cancelPath(undefined, false), "wrapper", "the full worker, never locked, keeps the wrapper's cancel");
+    assert.equal(cancelPath(undefined, true), "wrapper", "a readonly worker whose harness failed to boot falls back to the wrapper's");
+    assert.doesNotMatch(wrapUserCode("1", true, false, "host"), /_ml_SPEND_ROUNDS|_ml_cell_revoke\(\)/, "the host's script holds no cancel to rebind");
+    assert.match(wrapUserCode("1", true, false, "wrapper"), /_ml_SPEND_ROUNDS/);
+});
+
+// Both cores, enumerated (pin 4): what each takes for a Python-level spinner, measured 2026-10-27.
+const CORES = {
+    fork: { what: "the restricted-mode fork core (CI and the release)", reachesSettrace: true },
+    stock: { what: "stock Pyodide (a dev checkout without npm run fetch-pyodide)", reachesSettrace: true },
+};
+for (const [core, { what, reachesSettrace }] of Object.entries(CORES)) {
+    test(`P2-bound on the ${core} core: ${reachesSettrace ? "the harness reaches sys.settrace, so a spinner is stopped by the bound" : "no sys.settrace, so a spinner takes the 15 s kill only"}`, { skip }, async (t) => {
+        const loaded = py.runPython(`import importlib.util; importlib.util.find_spec("_restricted") is None`) ? "stock" : "fork";
+        if (loaded !== core) return t.skip(`this run loaded ${CORES[loaded].what}, not ${what}`);
+        assert.equal(typeof harness?.run_script, "function", "the lockdown built the host's cancel");
+        const r = await leftover("        while True: pass");
+        if (reachesSettrace) assert.match(String(r.error), STOPPED);
+    });
+}
+
+test("P2-bound inside the dialect: a cell's rebind of the wrapper's revoke hook is refused or binds nothing (measured, pin 11)", { skip, timeout: 120000 }, async (t) => {
+    if (py.runPython(`import importlib.util; importlib.util.find_spec("_restricted") is None`)) return t.skip("the dialect runs only on the restricted-mode fork core");
+    const { wrapUserSetup, wrapUserScript } = await import("../src/python/python-runtime.ts");
+    const { dialectSetup } = await import("../src/python/python-dialect-run.ts");
+    const DATA = path.resolve(import.meta.dirname, "../notebooks/python-dialect/data");
+    const FILES = Object.fromEntries(["whitelist.json", "manifest-stdlib.json", "manifest-numpy.json", "manifest-pandas.json", "manifest-pil.json"].map((f) => [f, fs.readFileSync(path.join(DATA, f), "utf8")]));
+    assert.equal(await py.runPythonAsync(dialectSetup(FILES)), "", "positive control: the dialect is ready on this core");
+    const NODES = JSON.parse(FILES["whitelist.json"]).nodes;
+    const seen = {};
+    for (const code of ["global _ml_cell_revoke\n_ml_cell_revoke = None\n1", "_ml_cell_revoke = None\n1", "globals()['_ml_cell_revoke'] = None\n1"]) {
+        const ns = py.globals.get("dict")();
+        injectInputs(ns, null, null, harness);
+        await py.runPythonAsync(wrapUserSetup(true, "run"), { globals: ns });
+        const bound = String(ns.get("_ml_cell_revoke"));   // the function's repr carries its address: a proxy is new per get
+        await hostRunScript(harness, wrapUserScript(code, "run", { nodes: NODES }, "host"), ns);
+        seen[code.split("\n")[0]] = { refused: ns.get("_ml_not_in_dialect") ?? null, unchanged: String(ns.get("_ml_cell_revoke")) === bound };
+    }
+    assert.match(String(seen["global _ml_cell_revoke"].refused), /not in dialect: Global/);
+    assert.match(String(seen["globals()['_ml_cell_revoke'] = None"].refused), /not in dialect/);
+    assert.deepEqual(seen["_ml_cell_revoke = None"], { refused: null, unchanged: true }, "a bare assignment runs, in the dialect's copy of the namespace, and binds nothing the wrapper reads");
+});
+
+/** One cell in a CHILD process (lockdown included), given `limitMs` once the cell starts; whether it finished. */
+function childCell(code, cancel, limitMs) {
+    const script = `
+import { loadPyodide } from ${JSON.stringify(path.join(PYODIDE_DIR, "pyodide.mjs"))};
+const { lockdownReadonly } = await import(${JSON.stringify(path.join(import.meta.dirname, "../src/python/lockdown.ts"))});
+const rt = await import(${JSON.stringify(path.join(import.meta.dirname, "../src/python/python-runtime.ts"))});
+const py = await loadPyodide({ indexURL: ${JSON.stringify(PYODIDE_DIR)} });
+await py.loadPackage(["numpy", "pillow", "pandas"]);
+const held = await lockdownReadonly(py, {});
+rt.injectInputs(py.globals, null, null, held.harness);
+const script = rt.wrapUserCode(${JSON.stringify(code)}, true, false, ${JSON.stringify(cancel)});
+console.log("START");
+const r = ${JSON.stringify(cancel)} === "host" ? await rt.hostRunScript(held.harness, script, py.globals) : await py.runPythonAsync(script);
+console.log("DONE " + JSON.stringify(r ?? null));
+process.exit(0);
+`;
+    return new Promise((resolve) => {
+        const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], { stdio: ["ignore", "pipe", "pipe"] });
+        let out = "";
+        let timer = setTimeout(() => child.kill("SIGKILL"), 120000);   // the boot's own bound
+        child.stdout.on("data", (d) => {
+            out += d;
+            if (out.includes("START") && timer) { clearTimeout(timer); timer = null; setTimeout(() => child.kill("SIGKILL"), limitMs); }
+        });
+        child.on("exit", () => resolve({ done: out.includes("DONE "), out }));
+    });
+}
+
+test("P2-bound mutation and the C-function path, in child processes", { skip, timeout: 300000 }, async () => {
+    const spin = `import asyncio\nasync def _left():\n    try:\n        await asyncio.sleep(10)\n    except BaseException:\n        while True: pass\nasyncio.ensure_future(_left()).set_name("leftover")\nawait asyncio.sleep(0)\n"x"`;
+    const cLoop = `import asyncio, collections, itertools\nasync def _left():\n    try:\n        await asyncio.sleep(10)\n    except BaseException:\n        collections.deque(itertools.count(), maxlen=0)\nasyncio.ensure_future(_left()).set_name("leftover")\nawait asyncio.sleep(0)\n"x"`;
+    const [bounded, unbounded, inC] = await Promise.all([childCell(spin, "host", 10000), childCell(spin, "wrapper", 10000), childCell(cLoop, "host", 10000)]);
+    assert.ok(bounded.done && STOPPED.test(bounded.out), `control: with the bound the cell finishes, refused: ${bounded.out.slice(-400)}`);
+    assert.equal(unbounded.done, false, "the bound off (the wrapper's unbounded spend): the same cell never finishes");
+    assert.equal(inC.done, false, "a loop inside a C function is beyond the bound: only the worker's 15 s kill ends it");
 });
 
 // --- P2-gate. the cell gate's doors (cell-gate.ts): every way a Python callable reaches a JS registry -----------
