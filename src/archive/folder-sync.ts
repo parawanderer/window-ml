@@ -141,7 +141,7 @@ const sameStats = (a: Record<string, FileStat>, b: Record<string, FileStat>): bo
 /**
  * Merge every month whose files differ from what the archive last saw of them (a new file, a changed one, a removed
  * one; none remembered counts as changed), and mark it dirty only when the merge changed the archive (sessions added
- * or removed, an entry added or dropped), a file is in a form other than the chosen one, or the folder lost the month's
+ * or removed, an entry added or dropped) or the folder lost the month's
  * file while the archive still has something for it. A merge that changed nothing only records the stats: a month is
  * never rewritten just because it was touched, or two machines would rewrite each other's files for ever. A month
  * that cannot be read is skipped, as a dirty one is, and its stats are not recorded.
@@ -158,7 +158,7 @@ async function mergeChanged(h: ArchiveHandles, folder: MonthFolder, o: FolderOpt
         if (m.skip) { out.skipped.push({ month, ...m.skip }); continue; }
         out.merged += m.merged;
         out.deleted += m.deleted;
-        const rewrite = m.merged || m.deleted || m.entries || cur.forms.some((f) => f !== o.form) || (!cur.forms.length && held.has(month));
+        const rewrite = m.merged || m.deleted || m.entries || (!cur.forms.length && held.has(month));
         if (rewrite) markMonthDirty(db, month);
         else folderFilesSet(db, month, cur.stats);
     }

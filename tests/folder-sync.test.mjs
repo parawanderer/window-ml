@@ -642,3 +642,22 @@ test("a changed file this install cannot read is skipped as a dirty one is: byte
     assert.deepEqual(folderFilesMonths(A.db), [], "not recorded, so it is tried again next time");
     assert.equal((await syncMonths(A.h, folder, { form: "encrypted", keyring: keyringA, now: T0 })).skipped.length, 1);
 });
+
+// --- two machines on different forms (part 3b) ---
+
+test("A plain and B encrypted sharing a keyring settle: neither rewrites the other's month for ever, and both see each other's sessions", async () => {
+    const A = fresh(), B = fresh();
+    const pa = { form: "plain", keyring: keyringA, now: T0 }, eb = { form: "encrypted", keyring: keyringA, now: T0 };
+    const folder = mapFolder();
+    await put(A, "d1ff0001", OCT, ARCH);
+    await put(B, "d1ff0002", OCT + 1, ARCH);
+    await syncMonths(A.h, folder, pa);
+    for (let i = 0; i < 3; i++) { await syncMonths(B.h, folder, eb); await syncMonths(A.h, folder, pa); }
+    for (const M of [A, B]) assert.deepEqual([hasIt(M, "d1ff0001"), hasIt(M, "d1ff0002")], [true, true]);
+    const settled = folder.writes.length;
+    for (let i = 0; i < 3; i++) {
+        const b = await syncMonths(B.h, folder, eb), a = await syncMonths(A.h, folder, pa);
+        assert.deepEqual([a.written, b.written], [[], []]);
+    }
+    assert.equal(folder.writes.length, settled, "no file was rewritten once both had merged");
+});

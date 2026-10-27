@@ -270,6 +270,9 @@ is not. Three PRs, in this order, because each needs the one before.
   files in the other forms. A removal happens only after the new file is completely written and only for a file
   that was merged in this sync; if any of the month's files cannot be read, nothing of that month is written or
   removed and it stays pending (part A's rule, per file).
+- **Two machines on different forms leave both files.** A stat-triggered merge never rewrites a month just because a
+  file is in another form; only a form switch (it marks every month dirty) replaces the other forms' files, so a mixed
+  folder does not churn.
 - **Switching forms marks every month dirty**, so the next sync rewrites the folder in the new form and the plaintext
   copies go. A synced folder's service may still keep old versions; Settings says so once, at the switch.
 - **An encrypted month this install cannot open** (no keyring, or another install's key: `keyId` differs) is skipped
@@ -348,9 +351,8 @@ without the entries, and the delete stops travelling from that month until the e
   `lastModified` of each file it last wrote or merged (`folder_files`, main only, written by `folderFilesSet`);
   `MonthFolder.stat` reads them without the bytes. Before the dirty list is read, `mergeChanged` merges every month whose
   files differ from that record (a new file, a changed one, a removed one) with `mergeFrom`. It marks the month dirty
-  only when the merge changed the archive (sessions added or removed, an entry added or dropped), a file is in a form
-  other than the chosen one, or the folder lost the file while the archive still holds something for the month;
-  otherwise it only records the stats. A merge that changed nothing never causes a rewrite, so two machines syncing
+  only when the merge changed the archive (sessions added or removed, an entry added or dropped) or the folder lost the
+  file while the archive still holds something for the month; otherwise it only records the stats. A merge that changed nothing never causes a rewrite, so two machines syncing
   back and forth settle and stop writing (`tests/folder-sync.test.mjs`). A write records the written file's stats, an
   Import records what it merged, and a month left with no file forgets its record. A month the merge could not read
   (`needs-key`, `other-key`, `unreadable`) is skipped as a dirty one is and its stats are not recorded, so it is tried
