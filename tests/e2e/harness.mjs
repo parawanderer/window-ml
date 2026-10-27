@@ -162,11 +162,42 @@ export async function configureExtension(/** @type {any} */ sw, /** @type {Recor
         // `ml_site_selfapprove`, and a direct write here that races it can be overwritten with the migration's
         // earlier (empty) read.
         await sw.evaluate(() => /** @type {any} */ (globalThis)._siteSchemaReady?.() ?? Promise.resolve());
-        await sw.evaluate(async (/** @type {string[]} */ entries) => {
+        const origins = await sw.evaluate(async (/** @type {string[]} */ entries) => {
             const origins = entries.map((e) => { try { return new URL(/:\/\//.test(e) ? e : `https://${e}`).origin; } catch { return null; } }).filter(Boolean);
             await chrome.storage.local.set({ ml_site_selfapprove: [...new Set(origins)].sort() });
+            return /** @type {string[]} */ (origins);
         }, config.pageApprovalDomains);
+        // A self-approved origin may use window.ml, so the worker registers its page scripts on this change, after the
+        // write returns (sw-presence.ts). A spec that reloads next must not race it: a document that loads before the
+        // registration gets no page script at document_start, and the worker's one-shot catch-up (`showInOpenTabs`)
+        // can run before that document's content script answers, which left `waitForMl` waiting its 15 s
+        // (session-index.spec.mjs:59, value-store.spec.mjs:176 on CI, 2026-10-27).
+        await awaitPageScriptRegistration(sw, origins);
     }
+}
+
+/**
+ * Wait until the worker's main-world registration covers each origin (sw-presence.ts `syncPresence`): the state a
+ * navigation to the origin depends on, not a delay. Fails at its deadline instead of going on, so a registration that
+ * never comes is named here and not as a `window.ml` that never appears downstream.
+ * @param {any} sw the extension's service worker
+ * @param {string[]} origins the origins, as `new URL(x).origin` writes them
+ * @param {number} timeout ms to wait
+ */
+export async function awaitPageScriptRegistration(sw, origins, timeout = 15000) {
+    const missing = await sw.evaluate(async (/** @type {[string[], number]} */ [list, ms]) => {
+        // The worker's own pattern rule (site-access.ts `originMatchPattern`): the port is always written.
+        const pattern = (/** @type {string} */ o) => { const u = new URL(o); return `${u.protocol}//${u.hostname}:${u.port || (u.protocol === "https:" ? "443" : "80")}/*`; };
+        const want = list.map(pattern);
+        const deadline = Date.now() + ms;
+        for (;;) {
+            const have = (await chrome.scripting.getRegisteredContentScripts()).flatMap((r) => r.matches ?? []);
+            const left = want.filter((p) => !have.includes(p));
+            if (!left.length || Date.now() > deadline) return left;
+            await new Promise((r) => setTimeout(r, 20));
+        }
+    }, [origins, timeout]);
+    if (missing.length) throw new Error(`the worker never registered the page scripts for ${missing.join(", ")} within ${timeout} ms`);
 }
 
 /**
@@ -199,14 +230,10 @@ export async function approveOrigin(sw, origin, { agents = "always" } = {}) {
         const levels = /** @type {Record<string, string>} */ (got.ml_site_agents && typeof got.ml_site_agents === "object" ? got.ml_site_agents : {});
         if (level && levels[o] !== level) await chrome.storage.local.set({ ml_site_agents: { ...levels, [o]: level } });
         if (!level && o in levels) { const { [o]: _drop, ...rest } = levels; await chrome.storage.local.set({ ml_site_agents: rest }); }
-        // The worker registers the page scripts for the origin on the change (sw-presence.ts); wait for it, so a page
-        // opened next is covered from its first navigation.
-        const u = new URL(o), pattern = `${u.protocol}//${u.hostname}:${u.port || (u.protocol === "https:" ? "443" : "80")}/*`;
-        for (let i = 0; i < 150; i++) {
-            if ((await chrome.scripting.getRegisteredContentScripts()).some((r) => r.matches?.includes(pattern))) break;
-            await new Promise((r) => setTimeout(r, 20));
-        }
     }, [origin, agents]);
+    // The worker registers the page scripts for the origin on the change (sw-presence.ts); wait for it, so a page
+    // opened next is covered from its first navigation. A deadline that passes is an error, never a pass.
+    await awaitPageScriptRegistration(sw, [origin]);
 }
 
 /**
