@@ -287,8 +287,9 @@ on. Marking works only on an unknown origin; a deny or a revoke clears the mark,
   registers it as `ml-main-ask` for the marked origins, or for every http(s) page while `siteRequests` is on, with
   `excludeMatches` naming the allowed and denied origins. A change to the lists or the setting re-syncs it and
   `showInOpenTabs` brings every open http(s) tab to its origin's presence now: one that should have the full API gets
-  the full scripts, one that should ask gets `ask.js` and `PRESENCE_ASK`, and a hidden one gets `PRESENCE_HIDE`, which
-  clears the gate's `ask`. Each step names the top frame's `documentId` (`webNavigation.getFrame`), so a tab that
+  the full scripts, one that should ask gets `ask.js` and `PRESENCE_ASK`, and a hidden one whose origin the stub's
+  registration covered until now gets `PRESENCE_HIDE`, which clears the gate's `ask` (any other hidden page hears nothing;
+  Chrome keeps the registration across evictions and restarts, so it is the record of who may hold the stub). Each step names the top frame's `documentId` (`webNavigation.getFrame`), so a tab that
   navigated meanwhile is given nothing; with no document id the stub is not put in. A hidden page that loaded with the
   stub keeps its `window.ml`, but its requests are relayed no more.
 - **The content script's closed gate gains an `ask` flag** (`page-gate.ts`), set from `CONTENT_READY`'s `ask` or by

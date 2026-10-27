@@ -50,7 +50,15 @@ export function syncPresence(): Promise<void> {
     syncing = syncing.catch(() => undefined).then(async () => {
         if (typeof chrome === "undefined" || !chrome.scripting?.registerContentScripts) return;
         const v = visibleOrigins(await readSiteLists());
-        const have = new Set((await chrome.scripting.getRegisteredContentScripts()).map((s) => s.id));
+        const registered = await chrome.scripting.getRegisteredContentScripts();
+        const have = new Set(registered.map((s) => s.id));
+        // What the stub covered until now: Chrome keeps the registration across worker evictions and browser restarts, so
+        // it is the record of which open pages may hold the stub, and only those are told when their origin is hidden.
+        const before = registered.find((s) => s.id === REGISTRATION.ask);
+        const askedBefore = (origin: string): boolean => {
+            const m = originMatchPattern(origin);
+            return !!before && !!m && (before.matches ?? []).some((x) => x === m || EVERY_SITE.includes(x)) && !(before.excludeMatches ?? []).includes(m);
+        };
         for (const scope of ["lasting", "session"] as const) {
             const id = REGISTRATION[scope];
             const matches = [...new Set(v[scope].map(originMatchPattern).filter((m): m is string => !!m))];
@@ -75,7 +83,7 @@ export function syncPresence(): Promise<void> {
                 js: ASK_SCRIPT_FILES, world: "MAIN", runAt: "document_start", allFrames: false, persistAcrossSessions: true,
             }]);
         }
-        await showInOpenTabs((origin) => presenceOf(lists, origin, everySite));
+        await showInOpenTabs((origin) => presenceOf(lists, origin, everySite), askedBefore);
     });
     return syncing;
 }
@@ -85,17 +93,22 @@ export function syncPresence(): Promise<void> {
  * brought to what its origin's presence is now. One that should have the full API and has no page script gets it, and
  * its gate opened: one told it was hidden, one showing the stub (a site the person just allowed from its own request,
  * whose next call should work with no reload), and one that loaded while this sync ran. One that should ask gets the
- * stub and `PRESENCE_ASK`. One that is hidden now is told `PRESENCE_HIDE`, so a stub it loaded with is heard no more.
+ * stub and `PRESENCE_ASK`. One that is hidden now, on an origin the stub covered until now, is told `PRESENCE_HIDE`, so a
+ * stub it loaded with is heard no more; every other hidden page hears nothing.
  * Each step names the document whose origin was read, so a tab that navigated meanwhile is given nothing. Asked of the
  * content script, which only the worker reaches: no state of ours to lose on eviction.
  * @param presenceNow an origin's presence, as the lists and the setting say now
+ * @param askedBefore whether the stub's registration covered an origin before this sync
  * @returns once every tab has been seen to
  */
-async function showInOpenTabs(presenceNow: (origin: string) => Presence): Promise<void> {
+async function showInOpenTabs(presenceNow: (origin: string) => Presence, askedBefore: (origin: string) => boolean): Promise<void> {
     if (!chrome.tabs?.query) return;
     const tabs = await chrome.tabs.query({ url: EVERY_SITE }).catch(() => [] as chrome.tabs.Tab[]);
     await Promise.all(tabs.map(async (tab) => {
-        if (tab.id == null) return;
+        const listed = originOf(tab.url);
+        if (tab.id == null || !listed) return;
+        // A hidden tab is told only when the stub covered its origin until now: every other hidden page hears nothing.
+        if (presenceNow(listed) === "hidden" && !askedBefore(listed)) return;
         const tabId = tab.id;
         try {
             const frame = await Promise.resolve(chrome.webNavigation?.getFrame?.({ tabId, frameId: 0 })).catch(() => null) as { documentId?: string; url?: string } | null;
@@ -104,7 +117,10 @@ async function showInOpenTabs(presenceNow: (origin: string) => Presence): Promis
             if (!origin) return;
             const shown = presenceNow(origin);
             const to = documentId ? { documentId } : { frameId: 0 };
-            if (shown === "hidden") { await chrome.tabs.sendMessage(tabId, { type: "PRESENCE_HIDE" }, to).catch(() => undefined); return; }
+            if (shown === "hidden") {
+                if (askedBefore(origin)) await chrome.tabs.sendMessage(tabId, { type: "PRESENCE_HIDE" }, to).catch(() => undefined);
+                return;
+            }
             // The stub goes only into the document whose origin was read: without its id, nothing is put in.
             if (shown === "ask" && !documentId) return;
             const r = await chrome.tabs.sendMessage(tabId, { type: "PRESENCE_CHECK" }, to) as { gate?: string; alive?: boolean; ask?: boolean } | undefined;
