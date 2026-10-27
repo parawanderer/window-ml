@@ -11,9 +11,9 @@
 import sqlite3InitModule, { type Database, type Sqlite3Static } from "@sqlite.org/sqlite-wasm";
 import { archiveStats, dirtyMonths, listArchived, markAllDirty, metaGet, metaSet, migrate, pngBatch, pngPending, prepareSession, readArchived, removeArchived, replacePngs, wasmDb, writeSession, type ArchiveDb, type ArchiveInput } from "./db";
 import { folderState, monthFolder, moveMonthFilesAside, writableFolder, type FolderState } from "./archive-folder";
-import { adoptFolder, importMonths, surveyFolder, syncMonths, type SyncOutcome } from "./folder-sync";
+import { adoptFolder, folderFormOf, importMonths, setFolderForm, surveyFolder, syncMonths, type FolderOptions, type SyncOutcome } from "./folder-sync";
 import { abandonBackup, addSession, beginBackup, finishBackup, inspectRestore, openBackupBytes, restoreNewSessions, sealBackup, type BackupBuild, type BackupForm, type RestoreInspection } from "../backup/backup-file";
-import { idbKeyringStore, loadKeyring } from "../backup/backup-keyring";
+import { idbKeyringStore, keyringState, loadKeyring } from "../backup/backup-keyring";
 import { readBackupSlot, removeBackupSlot, writeBackupSlot, type BackupSlot } from "../backup/backup-opfs";
 import type { BackupError, Secret } from "../backup/backup-format";
 
@@ -27,6 +27,8 @@ export type ArchiveOp =
     | { op: "export"; args?: undefined }
     /** the folder's state, how many month files wait to be written, and when it was last written */
     | { op: "folder"; args?: undefined }
+    /** set the form month files are written in and mark every month dirty; `encrypted` is refused without a keyring */
+    | { op: "folderForm"; args: { form: BackupForm } }
     /** write every dirty month into the folder, when it is writable */
     | { op: "sync"; args?: undefined }
     /** a folder was just picked: import what it holds, then every month is dirty, then sync */
@@ -62,6 +64,10 @@ export interface FolderReport {
     name?: string;
     /** month files that do not yet match the archive: written at the next sync while the folder is connected */
     pending: number;
+    /** the form month files are written in; null while it is unchosen (a folder that never synced): nothing is written until it is */
+    form: BackupForm | null;
+    /** whether this install has a backup keyring (an encrypted folder needs one) */
+    keyring: Awaited<ReturnType<typeof keyringState>>;
     /** epoch ms of the last completed sync, or null */
     lastSync: number | null;
     /** what a sync or an import just did */
@@ -153,13 +159,14 @@ async function run(req: ArchiveOp): Promise<unknown> {
         }
         case "backupFileRemove": await removeBackupSlot(req.args.slot); return true;
         case "folder": return folderReport(db);
+        case "folderForm": setFolderForm(db, req.args.form, await loadKeyring(idbKeyringStore())); return folderReport(db);
         case "resync": return sync(db, raw, sqlite3, "adopt");
         case "fresh": {
             const dir = await writableFolder();
             if (!dir) return folderReport(db);
             const movedAside = await moveMonthFilesAside(dir);
             markAllDirty(db);
-            return { ...(await sync(db, raw, sqlite3)), movedAside };
+            return { ...(await sync(db, raw, sqlite3)), movedAside };   // while the form is unchosen the sync writes nothing
         }
         case "sync": return sync(db, raw, sqlite3);
         case "survey": {
@@ -169,7 +176,7 @@ async function run(req: ArchiveOp): Promise<unknown> {
         case "import": {
             const dir = await writableFolder();
             if (!dir) return folderReport(db);
-            const { files, sessions, skipped } = await importMonths({ sqlite3, raw }, monthFolder(dir));
+            const { files, sessions, skipped } = await importMonths({ sqlite3, raw }, monthFolder(dir), await loadKeyring(idbKeyringStore()));
             return { ...(await folderReport(db)), imported: { files, sessions }, ...(skipped.length ? { skipped } : {}) };
         }
     }
@@ -184,11 +191,11 @@ async function backupPlain(secret?: Secret): Promise<{ file: Uint8Array; plain: 
 
 async function folderReport(db: ArchiveDb): Promise<FolderReport> {
     const last = metaGet(db, "last_sync");
-    return { ...(await folderState()), pending: dirtyMonths(db).length, lastSync: last ? Number(last) : null };
+    return { ...(await folderState()), pending: dirtyMonths(db).length, lastSync: last ? Number(last) : null, form: folderFormOf(db), keyring: await keyringState(idbKeyringStore()) };
 }
 
 /**
- * Write every dirty month into the folder, each merged with the file it replaces (folder-sync.ts), when the folder is
+ * Write every dirty month into the folder, each merged with the files of that month (folder-sync.ts) and written in the archive's folder form, when the folder is
  * writable; otherwise nothing, and the months stay dirty until it is. `adopt` (a folder just picked) imports every file
  * the folder holds first and then writes every month.
  */
@@ -196,8 +203,11 @@ async function sync(db: ArchiveDb, raw: Database, sqlite3: Sqlite3Static, mode: 
     const dir = await writableFolder();
     if (!dir) return folderReport(db);
     const h = { sqlite3, raw }, folder = monthFolder(dir);
-    const r = mode === "adopt" ? await adoptFolder(h, folder) : await syncMonths(h, folder);
-    metaSet(db, "last_sync", String(Date.now()));
+    const form = folderFormOf(db), keyring = await loadKeyring(idbKeyringStore());
+    const o: FolderOptions = { form, keyring };
+    const r = mode === "adopt" ? await adoptFolder(h, folder, o) : await syncMonths(h, folder, o);
+    // An unchosen form wrote nothing, so no sync completed: `last_sync` stays unset and the form stays unchosen.
+    if (form) metaSet(db, "last_sync", String(Date.now()));
     return {
         ...(await folderReport(db)), written: r.written, removed: r.removed, merged: r.merged,
         ...(r.skipped.length ? { skipped: r.skipped } : {}),

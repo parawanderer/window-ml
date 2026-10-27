@@ -103,3 +103,107 @@ test("a picked folder with earlier month files asks first: import them (the defa
     const one = show({ report: { state: "connected", name: "Archive", pending: 0, lastSync: null }, found: { name: "Archive", files: 1, first: "2026-10", last: "2026-10" } });
     assert.match(one.textContent, /holds 1 month file \(2026-10\),/);
 });
+
+// --- the folder's form (part 3a) ---
+
+const conn = (over = {}) => ({ state: "connected", name: "Archive", pending: 0, lastSync: 1790000000000, form: "encrypted", keyring: { set: true, keyId: "k1" }, ...over });
+const WARNING = /These files hold whole transcripts, and a synced folder's service can read them/;
+const SWITCH_NOTICE = /next sync rewrites every month in the new form and removes the old files\. A sync service may keep earlier versions/;
+const choose = (host, i) => { const r = host.querySelectorAll('input[type="radio"]')[i]; r.checked = true; r.dispatchEvent(new doc.defaultView.Event("change", { bubbles: true })); };
+const flush = () => new Promise((r) => setTimeout(r, 0));
+const sent = [];
+
+test("the form is a choice of three, showing the report's form, and the warning shows for plain and compressed only", async () => {
+    for (const [form, i, warned] of [["encrypted", 0, false], ["gzip", 1, true], ["plain", 2, true]]) {
+        const host = show({ report: conn({ form }), onForm: (f) => sent.push(f) });
+        const radios = [...host.querySelectorAll('input[type="radio"]')];
+        assert.deepEqual(radios.map((r) => r.parentElement.textContent), ["Encrypted (.wmlbak), recommended", "Compressed (.sqlite.gz)", "Plain SQLite (.sqlite)"]);
+        assert.deepEqual(radios.map((r) => r.checked), [0, 1, 2].map((k) => k === i), form);
+        assert.equal(WARNING.test(host.textContent), warned, form);
+        assert.doesNotMatch(host.textContent, SWITCH_NOTICE, "nothing is being switched yet");
+    }
+    // Looking at a form that is not encrypted: the warning is about the choice on screen, so it follows the pick.
+    const host = show({ report: conn({ form: "encrypted" }) });
+    choose(host, 2); await flush();
+    assert.match(host.textContent, WARNING);
+});
+
+test("a switch says what it does BEFORE it is sent, and Cancel leaves the form as it was", async () => {
+    sent.length = 0;
+    const host = show({ report: conn({ form: "plain" }), onForm: (f) => sent.push(f) });
+    choose(host, 1); await flush();
+    assert.match(host.textContent, SWITCH_NOTICE);
+    assert.deepEqual(sent, [], "picking is not sending");
+    assert.deepEqual(buttons(host).filter((b) => /Switch|Cancel/.test(b)), ["Switch to compressed", "Cancel"]);
+    [...host.querySelectorAll("button")].find((b) => b.textContent === "Cancel").click(); await flush();
+    assert.doesNotMatch(host.textContent, SWITCH_NOTICE);
+    assert.equal(host.querySelectorAll('input[type="radio"]')[2].checked, true, "back on what is there");
+    choose(host, 1); await flush();
+    [...host.querySelectorAll("button")].find((b) => /^Switch to/.test(b.textContent)).click(); await flush();
+    assert.deepEqual(sent, ["gzip"]);
+});
+
+test("choosing Encrypted with no keyring shows the recovery-key set-up, not a form message, and sends nothing until it completes", async () => {
+    sent.length = 0;
+    const host = show({ report: conn({ form: "plain", keyring: { set: false } }), onForm: (f) => sent.push(f) });
+    choose(host, 0); await flush();
+    assert.match(host.textContent, SWITCH_NOTICE, "the notice comes first");
+    [...host.querySelectorAll("button")].find((b) => /^Switch to/.test(b.textContent)).click(); await flush();
+    assert.match(host.textContent, /Set up backup encryption/);
+    assert.doesNotMatch(host.textContent, SWITCH_NOTICE);
+    assert.equal(host.querySelector('input[type="radio"]'), null, "the set-up replaces the choice while it is up");
+    assert.deepEqual(sent, []);
+    // Cancelling leaves the form as it was.
+    [...host.querySelectorAll("button")].find((b) => b.textContent === "Cancel").click(); await flush();
+    assert.deepEqual(sent, []);
+    assert.equal(host.querySelectorAll('input[type="radio"]')[2].checked, true);
+    assert.doesNotMatch(host.textContent, /Set up backup encryption/);
+});
+
+test("choosing Encrypted with a keyring sends the form straight away: no set-up", async () => {
+    sent.length = 0;
+    const host = show({ report: conn({ form: "gzip" }), onForm: (f) => sent.push(f) });
+    choose(host, 0); await flush();
+    [...host.querySelectorAll("button")].find((b) => /^Switch to/.test(b.textContent)).click(); await flush();
+    assert.deepEqual(sent, ["encrypted"]);
+    assert.doesNotMatch(host.textContent, /Set up backup encryption/);
+});
+
+test("a connected folder whose form is unchosen (report.form null) shows the choice with Encrypted preselected and an explicit Continue, and no switch notice", async () => {
+    sent.length = 0;
+    const host = show({ report: conn({ form: null, lastSync: null, keyring: { set: true, keyId: "k1" } }), onForm: (f) => sent.push(f) });
+    assert.match(host.textContent, /Nothing is written to it until you choose/);
+    assert.equal(host.querySelectorAll('input[type="radio"]')[0].checked, true);
+    assert.doesNotMatch(host.textContent, SWITCH_NOTICE);
+    assert.deepEqual(buttons(host), ["Continue"]);
+    choose(host, 2); await flush();
+    assert.match(host.textContent, WARNING);
+    host.querySelector("button").click(); await flush();
+    assert.deepEqual(sent, ["plain"]);
+    // With no keyring, Continue on the preselected Encrypted starts the set-up and sends nothing yet.
+    sent.length = 0;
+    const fresh = show({ report: conn({ form: null, lastSync: null, keyring: { set: false } }), onForm: (f) => sent.push(f) });
+    fresh.querySelector("button").click(); await flush();
+    assert.match(fresh.textContent, /Set up backup encryption/);
+    assert.deepEqual(sent, []);
+    // Not connected: no form question yet.
+    assert.doesNotMatch(show({ report: { state: "none", pending: 0, lastSync: null, form: null, keyring: { set: false } } }).textContent, /Nothing is written to it/);
+});
+
+// --- skipped months, by reason ---
+
+test("each skip reason renders its own text, and a damaged file keeps its month and the error", () => {
+    const skip = (month, reason, error = "x") => ({ month, reason, error });
+    const text = (skipped) => show({ report: conn({ skipped }) }).textContent;
+    assert.match(text([skip("2026-08", "needs-key"), skip("2026-09", "needs-key")]), /2 months are encrypted, and this install has no backup key: set one up under Backup and restore/);
+    assert.match(text([skip("2026-08", "needs-key")]), /1 month is encrypted, and this install has no backup key/);
+    const other = text([skip("2026-09", "other-key"), skip("2026-10", "other-key"), skip("2026-11", "other-key")]);
+    assert.match(other, /3 months are encrypted with another install's key/);
+    assert.doesNotMatch(other, /no backup key/);
+    const bad = text([skip("2026-07", "unreadable", "not an archive")]);
+    assert.match(bad, /2026-07 \(not an archive\)/);
+    assert.doesNotMatch(bad, /encrypted/);
+    assert.doesNotMatch(text([]), /could not be read|another install|no backup key/);
+    // All three together: three separate lines.
+    assert.equal(show({ report: conn({ skipped: [skip("a", "needs-key"), skip("b", "other-key"), skip("c", "unreadable")] }) }).querySelectorAll(".arch-skips .set-warn").length, 3);
+});

@@ -524,7 +524,40 @@ function memoryKeyringStore(): KeyringStore & { ring(): Keyring | null } {
     return { ring: () => ring, read: async () => ring, create: async (r) => { ring = r; }, replace: async (r) => { ring = r; } };
 }
 
-type Setup = { groups: string[]; askIndex: number; stage: RecoveryStage; mem: ReturnType<typeof memoryKeyringStore>; then: { form: BackupForm; includeApiKey: boolean } | null };
+/**
+ * The recovery-key set-up as a whole, wired: passphrase, the key shown once, one group typed back, and only then the
+ * keyring written to `keyring`. Shared by the backup screen and the archive folder's form choice, so there is one
+ * set-up. `onDone` runs after the keyring is stored; `onCancel` leaves nothing behind.
+ * @gallery none it runs Argon2 and writes the keyring; `RecoveryKeyBody` is the same view with props
+ */
+export function KeyringSetup(p: { keyring: KeyringStore; onDone(): void; onCancel(): void }) {
+    const [mem] = useState(memoryKeyringStore);
+    const [st, setSt] = useState<{ groups: string[]; askIndex: number; stage: RecoveryStage }>({ groups: [], askIndex: 0, stage: "choose" });
+    const [busy, setBusy] = useState(false);
+    const [message, setMessage] = useState("");
+    return (
+        <RecoveryKeyBody stage={st.stage} groups={st.groups} askIndex={st.askIndex} busy={busy} message={message}
+            onChoose={async (pass) => {
+                setBusy(true); setMessage("");
+                try {
+                    const r = await setupKeyring(mem, pass);
+                    setSt({ groups: r.groups, askIndex: pickGroupIndex(r.groups.length), stage: "show" });
+                } catch (e) { setMessage(messageOf(e)); }
+                finally { setBusy(false); }
+            }}
+            onSaved={() => setSt({ ...st, stage: "verify" })}
+            onBack={() => setSt({ ...st, stage: "show" })}
+            onVerified={async () => {
+                setBusy(true); setMessage("");
+                try {
+                    await p.keyring.create(mem.ring()!);   // only now does anything about this install's key reach storage
+                    setBusy(false);
+                    p.onDone();
+                } catch (e) { setMessage(messageOf(e)); setBusy(false); }
+            }}
+            onCancel={() => { setMessage(""); p.onCancel(); }} />
+    );
+}
 
 /**
  * This browser's backup and restore: the bodies, wired to the worker, the keyring and the origin-private file slots.
@@ -533,7 +566,7 @@ type Setup = { groups: string[]; askIndex: number; stage: RecoveryStage; mem: Re
 export function LocalBackup() {
     const keyring = idbKeyringStore();
     const [keySet, setKeySet] = useState<boolean | null>(null);
-    const [setup, setSetup] = useState<Setup | null>(null);
+    const [setup, setSetup] = useState<{ form: BackupForm; includeApiKey: boolean } | null>(null);
     const [busy, setBusy] = useState<string | null>(null);
     const [msg, setMsg] = useState<Record<string, string>>({});
     const say = (k: string, m: string) => setMsg((o) => ({ ...o, [k]: m }));
@@ -556,35 +589,14 @@ export function LocalBackup() {
         finally { await removeBackupSlot("out").catch(() => {}); setBusy(null); }
     };
     const onMake = async (form: BackupForm, includeApiKey: boolean) => {
-        if (form === "encrypted" && !keySet) { setSetup({ groups: [], askIndex: 0, stage: "choose", mem: memoryKeyringStore(), then: { form, includeApiKey } }); return; }
+        if (form === "encrypted" && !keySet) { setSetup({ form, includeApiKey }); return; }
         await make(form, includeApiKey);
     };
 
     // --- set-up ---
     if (setup) return (
-        <RecoveryKeyBody stage={setup.stage} groups={setup.groups} askIndex={setup.askIndex} busy={busy === "setup"} message={msg.setup ?? ""}
-            onChoose={async (pass) => {
-                setBusy("setup"); say("setup", "");
-                try {
-                    const r = await setupKeyring(setup.mem, pass);
-                    setSetup({ ...setup, groups: r.groups, askIndex: pickGroupIndex(r.groups.length), stage: "show" });
-                } catch (e) { say("setup", messageOf(e)); }
-                finally { setBusy(null); }
-            }}
-            onSaved={() => setSetup({ ...setup, stage: "verify" })}
-            onBack={() => setSetup({ ...setup, stage: "show" })}
-            onVerified={async () => {
-                setBusy("setup"); say("setup", "");
-                try {
-                    await keyring.create(setup.mem.ring()!);   // only now does anything about this install's key reach storage
-                    setKeySet(true);
-                    const then = setup.then;
-                    setSetup(null);
-                    if (then) await make(then.form, then.includeApiKey);
-                } catch (e) { say("setup", messageOf(e)); }
-                finally { setBusy(null); }
-            }}
-            onCancel={() => { setSetup(null); say("setup", ""); }} />
+        <KeyringSetup keyring={keyring} onCancel={() => setSetup(null)}
+            onDone={() => { setKeySet(true); const then = setup; setSetup(null); void make(then.form, then.includeApiKey); }} />
     );
 
     // --- restore ---

@@ -10,7 +10,9 @@ in four PRs, and each section below says which parts exist yet.
 | 1. The file format: compression, encryption, keys; `docs/spec/BACKUP_FORMAT.md`; a standalone decryptor | built |
 | 2a. Backup and restore without screens: the key inventory, collect and preview and apply of settings, the file writer, the keyring at rest, the worker ops | built |
 | 2b. The screens: Settings (DevTools panel and chat page Extension tab), the popup button, the recovery screen | built |
-| 3. The encrypted archive folder, its upgrade from plaintext month files, tombstones across machines | planned |
+| 3a. The archive folder's form: encrypted, compressed or plain month files, and the switch from plain | built (worker and screen) |
+| 3b. Deletes that travel: the `removed` entries written into the month files | designed |
+| 3c. Two machines on one encrypted folder: adopting the folder's key | designed |
 
 The archive itself (SQLite over OPFS, the worker, un-archiving) is `archive.md`; read it first.
 
@@ -244,6 +246,84 @@ written, the re-read restoring both sessions and the settings; and the download 
 
 **Not built.** Adopting another install's data key on restore; rotating the recovery key; the archive folder's
 encryption switch (part 3).
+
+## The archive folder's form (part 3)
+
+Designed 2026-10-27. 3a is built, worker and screen (`folderForm` op, `folder-sync.ts`, the archive section); 3b and 3c
+are not. Three PRs, in this order, because each needs the one before.
+
+### 3a. Encrypted, compressed or plain month files
+
+- **The form is the archive's own setting**, `meta.folder_form` (`encrypted`, `gzip`, `plain`: a `BackupForm`;
+  "compressed" below is `gzip`), because the worker that writes the
+  files is chrome-free and owns that database. Settings sets it with a worker op.
+- **The upgrade.** An archive from before part 3 has no `folder_form` and reads as `plain`, which is what it was
+  writing: nothing changes on someone's machine until they choose. Settings then says the folder is not encrypted and
+  offers to switch, which runs the recovery-key set-up (part 2b's screen) when the install has no keyring.
+- **A new folder is encrypted by default, and writes nothing until its form is chosen.** The form is unchosen (null)
+  while the archive has neither `folder_form` nor `last_sync`; Settings preselects Encrypted, which with no keyring asks
+  for set-up first, and plain is an explicit choice.
+- **The name follows the form** (`YYYY-MM.sqlite`, `.sqlite.gz`, `.wmlbak`, `BACKUP_EXTENSION`), and a reader sniffs
+  the bytes (`readAnyForm`), never the name. A month may have files of several forms in the folder: mid-switch, or two
+  machines writing different forms.
+- **A sync merges every file of the month**, whatever its form, then writes the chosen form, then removes the month's
+  files in the other forms. A removal happens only after the new file is completely written and only for a file
+  that was merged in this sync; if any of the month's files cannot be read, nothing of that month is written or
+  removed and it stays pending (part A's rule, per file).
+- **Switching forms marks every month dirty**, so the next sync rewrites the folder in the new form and the plaintext
+  copies go. A synced folder's service may still keep old versions; Settings says so once, at the switch.
+- **An encrypted month this install cannot open** (no keyring, or another install's key: `keyId` differs) is skipped
+  with a reason the section can act on (`needs-key`, `other-key`), never as a bare error string.
+- **Memory.** A month is decrypted and gunzipped whole, as `exportMonth` builds it whole; `LIMITS.outputBytes` (1 GiB)
+  is far above any month the archive holds, so the bound is the worker's memory, not the format.
+
+### What part 3a built (the screen)
+
+`ArchiveFormChoice` and `SkippedMonths` in `archive-section.tsx`, under the connected folder; both pure, with
+`@gallery` examples. `folderAction` takes `{ action: "form", form }`, refuses anything but the three `BackupForm`
+values, calls the worker's `folderForm` op and then starts a `sync` (`ARCHIVE_FOLDER` stays extension pages only).
+
+- **The choice.** Encrypted (recommended), compressed, plain SQLite, showing `report.form`. Plain and compressed carry
+  one warning line (whole transcripts, readable by a synced folder's service). Picking a form other than the current
+  one says, before anything is sent, that the next sync rewrites every month and removes the old files and that a
+  sync service may keep earlier versions; Cancel leaves the form as it was.
+- **Encrypted with no keyring** runs `KeyringSetup` first, the part 2b flow (`RecoveryKeyBody`, keyring written only
+  after the group is typed back; the backup screen uses the same component) and sends the form only once it is done.
+- **An unchosen form.** `folderFormOf` is null (`FolderReport.form` null) while `meta.folder_form` and `meta.last_sync`
+  are both absent: an archive that never synced never had a folder, and every pre-part-3 archive that had one synced
+  at its pick, so those read as `plain` and the upgrade rule holds. While it is unchosen `sync`, `resync` and `fresh`
+  write nothing (months stay pending, `last_sync` is not set; a pick still imports what the folder holds) and the job
+  is `blocked` on a choice in Settings. `setFolderForm` ends it. The section shows the choice, Encrypted preselected
+  with an explicit Continue and no switch notice, whenever a folder is connected and the form is null: right after the
+  pick, after a reload, or after a pick made from elsewhere. There is no page-side inference.
+- **Skipped months by reason**, from the last sync or import report (kept in the page; a plain state read does not
+  carry them): `needs-key` and `other-key` each say how many months and what to do, `unreadable` keeps the month and
+  the error. Using another install's key is part 3c.
+- **The job status.** `archive.folder-sync` reports `blocked` while the last sync or import skipped months for
+  `needs-key` or `other-key` (one line, shown in the housekeeping log's jobs). It does not reach the attention
+  codes (`sw-attention.ts` has no `blocked`, and a new code is a contract change); a state read does not clear it.
+
+### 3b. Deletes that travel
+
+- **A month file carries its month's `removed` entries** (a `removed` table in the file; `migrate` creates it for a
+  month file too). An older reader ignores the table: `importFrom` names the tables it copies.
+- **A merge takes the file's entries in**: each is added to `removed`, or replaces an entry with an older `ts`; a
+  session the archive holds whose `archived_ts` is older than the entry's `ts` is removed (`removeArchived`, which
+  marks its month). One whose `archived_ts` is newer was archived again after the delete, and the entry is dropped.
+- **An un-archive is a removal too**, so a session moved back to the live store on machine A leaves B's archive at
+  the next merge; it returns when A archives it again. That is one archive shared by two machines, which is the point.
+- **The clocks are the two machines'.** A skew only matters for a session deleted on one and re-archived on the other
+  within the skew; the later write wins by its own clock.
+- **Entries expire** after 180 days, or a month file would carry every delete forever.
+
+### 3c. Two machines on one encrypted folder
+
+- **Each install makes its own data key at set-up**, so machine B cannot open machine A's months, and skips them
+  (`other-key`) rather than overwriting them: safe, but neither sees the other's sessions.
+- **"Use this folder's key"**: Settings asks for A's passphrase or recovery key, unwraps the data key from a month
+  file's header (`unlock`), and makes it this install's keyring, with A's wraps. B's own earlier backups still open with
+  B's old passphrase or recovery key, typed; Settings says so before it replaces anything.
+- **This is the same step as "adopting another install's data key on restore"**, so a restore offers it too.
 
 ## The folder: merge before write (part A)
 

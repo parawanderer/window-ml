@@ -3,6 +3,7 @@
 // archive does happens there; this is the messenger.
 import { ensureOffscreen, forgetOffscreen } from "./sw-offscreen";
 import type { ArchiveOp, FolderReport } from "../archive/archive-worker";
+import type { BackupForm } from "../backup/backup-file";
 import { recordHousekeeping } from "./sw-housekeeping";
 import { defineJob } from "../job-registry";
 
@@ -24,14 +25,18 @@ export async function archiveCall<T>(op: ArchiveOp["op"], args?: ArchiveOp["args
 }
 
 /** The operations that answer with a `FolderReport`, so every one of them keeps `lastFolder` current. */
-const FOLDER_OPS = new Set<string>(["folder", "sync", "resync", "import"]);
+const FOLDER_OPS = new Set<string>(["folder", "folderForm", "sync", "resync", "import"]);
 
 /** The folder's state as last reported, for the runtime's capabilities; null until the archive first answered. */
 let lastFolder: FolderReport | null = null;
 let folderListener: (() => void) | null = null;
 
+/** The months the last sync or import skipped (a state read carries none, and must not forget them). */
+let lastSkipped: NonNullable<FolderReport["skipped"]> = []; // state: plumbing (the job status's blocked line, lost with the worker; the next sync re-reports)
+
 function noteFolder(r: FolderReport | undefined): void {
     if (!r?.state) return;
+    if (r.written || r.imported || r.skipped) lastSkipped = r.skipped ?? [];
     const was = lastFolder;
     lastFolder = r;
     if (!was || was.state !== r.state || was.pending !== r.pending || was.lastSync !== r.lastSync) folderListener?.();
@@ -101,14 +106,34 @@ defineJob({
             pendingLabel: f.pending === 1 ? "month file to write" : "month files to write",
             ...(syncDue != null ? { nextDue: syncDue } : {}),
             ...(f.state === "needs-grant" && f.pending ? { blocked: "the archive folder needs its access granted again, in Settings" } : {}),
+            ...(keyBlock() ? { blocked: keyBlock() } : {}),
+            ...(f.state === "connected" && f.form === null ? { blocked: "the archive folder waits for a choice of form (encrypted, compressed or plain), in Settings" } : {}),
         };
     },
 });
 
+/** Why the last sync's skipped months need a person: encrypted files this install cannot open, in one line, or "". */
+function keyBlock(): string {
+    const n = (r: string) => lastSkipped.filter((s) => s.reason === r).length;
+    const need = n("needs-key"), other = n("other-key");
+    const months = (c: number) => `${c} archive folder month${c === 1 ? "" : "s"}`;
+    if (need) return `${months(need)} ${need === 1 ? "is" : "are"} encrypted and this install has no backup key: set one up under Backup and restore`;
+    if (other) return `${months(other)} ${other === 1 ? "is" : "are"} encrypted with another install's key, so ${other === 1 ? "it is" : "they are"} not merged`;
+    return "";
+}
+
+/** The forms Settings may choose for the folder's month files (`BackupForm`). */
+const FORMS: readonly BackupForm[] = ["encrypted", "gzip", "plain"];
+
 /** What Settings asks about the folder: its state, or an action taken after a click (a pick, a re-grant, an import),
  *  or what a just-picked folder already holds (`survey`) and starting fresh in it (`fresh`). */
-export async function folderAction(action: unknown): Promise<FolderReport> {
+export async function folderAction(action: unknown, form?: unknown): Promise<FolderReport> {
     switch (action) {
+        // Set the form month files are written in (the worker refuses `encrypted` with no keyring), then write them.
+        case "form":
+            if (typeof form !== "string" || !FORMS.includes(form as BackupForm)) throw new Error("That is not a form the archive folder can be written in (encrypted, gzip or plain).");
+            await archiveCall<FolderReport>("folderForm", { form: form as BackupForm });
+            return syncFolder("sync", "settings");
         case "picked": return syncFolder("resync", "picked");
         case "sync": return syncFolder("sync", "settings");
         case "import": return archiveCall<FolderReport>("import");

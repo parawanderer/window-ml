@@ -3,9 +3,12 @@
 // RE-GRANTS (both need a click), and the archive worker, which writes and reads (no page has to be open for that, the
 // probe showed, once the grant is live). chrome-free, so it runs in either.
 //
-// The folder holds one `YYYY-MM.sqlite` per month of activity: a standalone SQLite file anything can open, and the copy
-// that survives a wiped browser profile. A file is rewritten only when its month changed (archive-db.ts dirty months),
-// and `createWritable` replaces a file only on `close()`, so something syncing the folder never reads half a write.
+// The folder holds one file per month of activity, in the form the archive is set to (`YYYY-MM.wmlbak` encrypted,
+// `.sqlite.gz` compressed, `.sqlite` plain; a month may briefly hold several): the copy that survives a wiped
+// browser profile. A file is rewritten only when its month changed (archive-db.ts dirty months), and `createWritable` replaces a file only on `close()`, so
+// something syncing the folder never reads half a write.
+
+import { BACKUP_EXTENSION, type BackupForm } from "../backup/backup-file";
 
 /** Where the folder stands, as Settings draws it. */
 export type FolderState =
@@ -124,44 +127,48 @@ export async function writableFolder(): Promise<FileSystemDirectoryHandle | null
     return state === "connected" ? loadFolder() : null;
 }
 
-const MONTH_FILE = /^(\d{4}-\d{2})\.sqlite$/;
+/** A month file's name: `YYYY-MM.sqlite`, `.sqlite.gz` or `.wmlbak` by form (`BACKUP_EXTENSION`). */
+const MONTH_FILE = /^(\d{4}-\d{2})\.(sqlite\.gz|sqlite|wmlbak)$/;
+const FORM_OF_EXTENSION = Object.fromEntries(Object.entries(BACKUP_EXTENSION).map(([form, ext]) => [ext, form])) as Record<string, BackupForm>;
+const fileName = (month: string, form: BackupForm) => `${month}.${BACKUP_EXTENSION[form]}`;
 
-/** Write one month's file. It replaces the old one only when the write completes. */
-export async function writeMonthFile(dir: FileSystemDirectoryHandle, month: string, bytes: Uint8Array): Promise<void> {
-    const file = await dir.getFileHandle(`${month}.sqlite`, { create: true });
+/** Write one month's file in one form. It replaces the old one only when the write completes. */
+export async function writeMonthFile(dir: FileSystemDirectoryHandle, month: string, form: BackupForm, bytes: Uint8Array): Promise<void> {
+    const file = await dir.getFileHandle(fileName(month, form), { create: true });
     const w = await file.createWritable();
     try { await w.write(bytes as Uint8Array<ArrayBuffer>); await w.close(); }
     catch (err) { await w.abort().catch(() => {}); throw err; }
 }
 
-/** Every month file in the folder, oldest first, with its bytes read when asked. */
-export async function monthFiles(dir: FileSystemDirectoryHandle): Promise<{ month: string; read: () => Promise<Uint8Array> }[]> {
-    const out: { month: string; read: () => Promise<Uint8Array> }[] = [];
+/** Every month file in the folder, oldest first (a month's forms together), with its bytes read when asked. */
+export async function monthFiles(dir: FileSystemDirectoryHandle): Promise<{ month: string; form: BackupForm; read: () => Promise<Uint8Array> }[]> {
+    const out: { month: string; form: BackupForm; read: () => Promise<Uint8Array> }[] = [];
     for await (const [name, h] of (dir as unknown as { entries(): AsyncIterable<[string, FileSystemHandle]> }).entries()) {
         const m = MONTH_FILE.exec(name);
         if (!m || h.kind !== "file") continue;
-        out.push({ month: m[1], read: async () => new Uint8Array(await (await (h as FileSystemFileHandle).getFile()).arrayBuffer()) });
+        out.push({ month: m[1], form: FORM_OF_EXTENSION[m[2]], read: async () => new Uint8Array(await (await (h as FileSystemFileHandle).getFile()).arrayBuffer()) });
     }
-    return out.sort((a, b) => a.month.localeCompare(b.month));
+    return out.sort((a, b) => a.month.localeCompare(b.month) || a.form.localeCompare(b.form));
 }
 
-/** The picked directory as a sync sees it (folder-sync.ts): its month files by `YYYY-MM`. */
+/** The picked directory as a sync sees it (folder-sync.ts): its month files by `YYYY-MM` and form. */
 export function monthFolder(dir: FileSystemDirectoryHandle): import("./folder-sync").MonthFolder {
     return {
-        months: async () => (await monthFiles(dir)).map((f) => f.month),
-        read: async (month) => {
-            const file = await dir.getFileHandle(`${month}.sqlite`).catch(() => null);
+        months: async () => [...new Set((await monthFiles(dir)).map((f) => f.month))],
+        forms: async (month) => (await monthFiles(dir)).filter((f) => f.month === month).map((f) => f.form),
+        read: async (month, form) => {
+            const file = await dir.getFileHandle(fileName(month, form)).catch(() => null);
             return file ? new Uint8Array(await (await file.getFile()).arrayBuffer()) : null;
         },
-        write: (month, bytes) => writeMonthFile(dir, month, bytes),
-        remove: (month) => dir.removeEntry(`${month}.sqlite`).catch(() => { /* never written */ }),
+        write: (month, form, bytes) => writeMonthFile(dir, month, form, bytes),
+        remove: (month, form) => dir.removeEntry(fileName(month, form)).catch(() => { /* never written */ }),
     };
 }
 
 /**
  * "Start fresh" in a folder that already holds month files: move them into a subfolder (`earlier-YYYY-MM-DD`, with a
  * number added when that exists) rather than delete or overwrite anything. A copy, then the original removed only
- * once its copy is completely written. Returns the subfolder's name and how many files went into it.
+ * once its copy is completely written; a file of every form moves. Returns the subfolder's name and how many files went into it.
  */
 export async function moveMonthFilesAside(dir: FileSystemDirectoryHandle, now = new Date()): Promise<{ folder: string; files: number }> {
     const files = await monthFiles(dir);
@@ -171,8 +178,8 @@ export async function moveMonthFilesAside(dir: FileSystemDirectoryHandle, now = 
     if (!files.length) return { folder: name, files: 0 };
     const aside = await dir.getDirectoryHandle(name, { create: true });
     for (const f of files) {
-        await writeMonthFile(aside, f.month, await f.read());
-        await dir.removeEntry(`${f.month}.sqlite`);
+        await writeMonthFile(aside, f.month, f.form, await f.read());
+        await dir.removeEntry(fileName(f.month, f.form));
     }
     return { folder: name, files: files.length };
 }

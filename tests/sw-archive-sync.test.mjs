@@ -5,10 +5,13 @@ import assert from "node:assert/strict";
 
 /** The archive's answers, by op: a report, or an Error to reject with. */
 let answers = {};
+/** Every op the archive was asked, with its args. */
+const asked = [];
 globalThis.chrome = {
     offscreen: { hasDocument: async () => true, Reason: {} },
     runtime: {
-        sendMessage: async ({ op }) => {
+        sendMessage: async ({ op, args }) => {
+            asked.push([op, args]);
             const a = answers[op];
             return a instanceof Error ? { ok: false, error: a.message } : { ok: true, result: a };
         },
@@ -87,4 +90,50 @@ test("no folder, or a browser that cannot have one: nothing waits for the job", 
         const { job } = await since(0);
         assert.deepEqual([job.pending, job.blocked], [undefined, undefined], state);
     }
+});
+
+// --- the form: set in the worker, then written ---
+
+test("the form is validated, set in the worker, and a sync follows", async () => {
+    answers = { folderForm: report({ form: "gzip" }), sync: report({ form: "gzip", written: ["2026-10"] }) };
+    asked.length = 0;
+    const r = await folderAction("form", "gzip");
+    assert.deepEqual(asked, [["folderForm", { form: "gzip" }], ["sync", undefined]]);
+    assert.equal(r.form, "gzip");
+    asked.length = 0;
+    for (const bad of ["rot13", undefined, 3, null]) await assert.rejects(folderAction("form", bad), /not a form/, String(bad));
+    assert.deepEqual(asked, []);
+});
+
+test("encrypted months this install cannot open block the job, in one line, until a sync skips none", async () => {
+    answers = { sync: report({ written: [], skipped: [{ month: "2026-08", reason: "needs-key", error: "x" }, { month: "2026-09", reason: "needs-key", error: "x" }] }) };
+    await syncFolder("sync", "settings");
+    let { job } = await since(0);
+    assert.match(job.blocked, /^2 archive folder months are encrypted and this install has no backup key: set one up under Backup and restore$/);
+    // A plain state read does not forget them.
+    answers = { folder: report() };
+    await folderAction("status");
+    ({ job } = await since(0));
+    assert.match(job.blocked, /no backup key/);
+    answers = { sync: report({ written: [], skipped: [{ month: "2026-08", reason: "other-key", error: "x" }] }) };
+    await syncFolder("sync", "settings");
+    ({ job } = await since(0));
+    assert.match(job.blocked, /^1 archive folder month is encrypted with another install's key/);
+    answers = { sync: report({ written: [], skipped: [{ month: "2026-08", reason: "unreadable", error: "x" }] }) };
+    await syncFolder("sync", "settings");
+    ({ job } = await since(0));
+    assert.equal(job.blocked, undefined, "a damaged file is not something a key fixes");
+    answers = { sync: report({ written: [] }) };
+    await syncFolder("sync", "settings");
+});
+
+test("a connected folder whose form is unchosen is blocked on a choice in Settings, and the choice clears it", async () => {
+    answers = { folder: report({ form: null, pending: 2, lastSync: null }) };
+    await folderAction("status");
+    let { job } = await since(0);
+    assert.match(job.blocked, /waits for a choice of form.*in Settings/);
+    answers = { folder: report({ form: "encrypted", pending: 2 }) };
+    await folderAction("status");
+    ({ job } = await since(0));
+    assert.equal(job.blocked, undefined);
 });
