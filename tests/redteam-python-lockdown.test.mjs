@@ -55,6 +55,8 @@ let py = null;
 let lockedDown = false;
 /** The harness module `lockdownReadonly` captured at boot, re-bound into every cell by `injectInputs`. */
 let harness = null;
+/** The bridge lift `lockdownReadonly` may return (`bridges(on)`); a lifted cell raises it around `runPythonAsync`, and absent it the wraps are no-ops. */
+let bridges = null;
 /** True when `dist/pyodide` is the restricted-mode fork (the dialect's gate is present). */
 let fork = false;
 /** `run_js("1+1")` before any lockdown: the positive control that the probe detects evaluation. */
@@ -79,6 +81,7 @@ run_js("1+1")`);
     if (typeof lockdownReadonly === "function") {
         const held = await lockdownReadonly(py, {});
         harness = held.harness ?? null;
+        bridges = held.bridges ?? null;
         lockedDown = true;
     }
     if (fork) await py.runPythonAsync(dialectSetup(FILES));
@@ -93,12 +96,14 @@ after(async () => {
  * read the wrapper's results back. Under the lockdown the strip is the hardening; `harden()` would
  * RESTORE what it removed.
  */
-async function cell(code, { hardened = true } = {}) {
+async function cell(code, { hardened = true, lifted = false } = {}) {
     injectInputs(py.globals, null, null, harness ?? undefined);
     const saved = hardened && !lockedDown ? harden(py) : null;
     try {
+        if (lifted) bridges?.(true);
         await py.runPythonAsync(wrapUserCode(code, hardened));
     } finally {
+        if (lifted) bridges?.(false);
         if (saved) unharden(py, saved);
     }
     const out = {
@@ -166,7 +171,8 @@ test("after boot the PyProxy kinds still convert: tuple, set, generator, ndarray
     // Positive control: the boot ran (the realm was probed and the wrapper answers).
     assert.deepEqual(freezeBefore, { Object: false, Promise: false, Function: false }, "control: the realm starts unfrozen");
 
-    const kinds = await cell(KINDS_CELL);
+    // The one lifted call site: the kinds cell's `from pyodide.ffi import to_js` runs under the explicit approval.
+    const kinds = await cell(KINDS_CELL, { lifted: true });
     assert.equal(kinds.error, null, `kinds cell should run, got: ${kinds.error}`);
     for (const name of ["tuple", "set", "generator", "iterator", "memoryview", "ndarray"]) {
         assert.match(String(kinds.value?.[name]), /^ok:/, `PyProxy kind ${name} must still convert after boot, got ${kinds.value?.[name]}`);
