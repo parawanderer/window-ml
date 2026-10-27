@@ -104,8 +104,8 @@ export interface Keyring {
     /** names this data key (hex of 8 bytes of HKDF output), so a reader can say "wrong key" before it tries to decrypt */
     keyId: string;
     wraps: WrapRecord[];
-    /** data keys this install used before it adopted another install's: they only OPEN files (`keyFor`), never seal one (part 3c). Absent in a record stored before 3c. */
-    retired?: { key: CryptoKey; keyId: string }[];
+    /** data keys this install used before it adopted another install's: they only OPEN files (`keyFor`), never seal one (part 3c). Absent in a record stored before 3c. `since` is when it was retired (epoch ms); absent in an entry stored before 3d. */
+    retired?: { key: CryptoKey; keyId: string; since?: number }[];
 }
 
 /** What opens a wrap. */

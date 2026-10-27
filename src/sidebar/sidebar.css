@@ -4153,6 +4153,12 @@ pre.code.dlines > code.hljs { display: block; }
 .arch-adopt { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; align-self: stretch; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); }
 .arch-adopt.first { border-color: var(--accent); }
 .arch-adopt > .set-field, .arch-adopt > .set-hint, .arch-adopt > .set-err { align-self: stretch; }
+/* The RETIRED KEYS list under the folder's form (archive-section.tsx RetiredKeys): a heading, then one row per key (short id, when, how many months), its Forget notice opening under the row. */
+.arch-retired { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; align-self: stretch; }
+.arch-rk { display: flex; flex-direction: column; gap: 6px; align-self: stretch; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); }
+.arch-rk-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.arch-rk-row > .test-btn { margin-left: auto; }
+.arch-rk-ask { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
 .arch-or { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; align-self: stretch; }
 
 /* The Settings BACKUP AND RESTORE section (backup-section.tsx): one block per job (backup, restore, decrypt, passphrase),

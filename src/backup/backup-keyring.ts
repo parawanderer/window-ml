@@ -75,9 +75,18 @@ export interface RecoveryDisplay {
  * Whether this install has a backup data key, and which (`keyId` is the public name of the data key, not secret).
  * @param store the keyring store
  */
-export async function keyringState(store: KeyringStore): Promise<{ set: false } | { set: true; keyId: string }> {
+export async function keyringState(store: KeyringStore): Promise<{ set: false } | { set: true; keyId: string; retired?: RetiredInfo[] }> {
     const ring = await store.read();
-    return ring ? { set: true, keyId: ring.keyId } : { set: false };
+    if (!ring) return { set: false };
+    // Names and dates only: a `CryptoKey` never leaves this module for the UI. Absent when nothing is retired.
+    return { set: true, keyId: ring.keyId, ...(ring.retired?.length ? { retired: ring.retired.map((r) => ({ keyId: r.keyId, ...(r.since !== undefined ? { since: r.since } : {}) })) } : {}) };
+}
+
+/** What Settings may know of a retired key: its public name and when it was retired (absent for one retired before part 3d). */
+export interface RetiredInfo {
+    keyId: string;
+    /** epoch ms the key stopped being current */
+    since?: number;
 }
 
 /**
@@ -147,10 +156,29 @@ export async function adoptKeyring(store: KeyringStore, file: Uint8Array, secret
     await opensFirstChunk(file, next);
     const had = await store.read();
     if (had?.keyId === next.keyId) return next.keyId;
-    const before = had ? [{ key: had.key, keyId: had.keyId }, ...(had.retired ?? [])] : [];
+    const before = had ? [{ key: had.key, keyId: had.keyId, since: Date.now() }, ...(had.retired ?? [])] : [];   // `since` is the moment of retirement; earlier entries keep theirs
     const retired = before.filter((r, i) => r.keyId !== next.keyId && before.findIndex((o) => o.keyId === r.keyId) === i);
     const ring: Keyring = { key: next.key, keyId: next.keyId, wraps: header.wraps, ...(retired.length ? { retired } : {}) };
     if (had) await store.replace(ring);
     else await store.create(ring);
     return next.keyId;
+}
+
+/**
+ * Forget a retired key (part 3d): the entry leaves `retired`, and the files it sealed ask for its passphrase or recovery
+ * key on this install from then on, like any file from elsewhere (`unlockChoice`); a month in the archive folder under
+ * it is skipped as `other-key`, never rewritten. The current key, its wraps and the other retired entries are
+ * untouched, and `retired` is dropped when the list empties. Plain `Error`s, as this module's `create` does for a
+ * refused set-up: these are refusals of a request, not a failure to read a file.
+ * @param keyId a key in the retired list
+ * @throws when `keyId` is the current key (never forgotten this way), is not retired here, or nothing is set up
+ */
+export async function forgetRetiredKey(store: KeyringStore, keyId: string): Promise<void> {
+    const ring = await store.read();
+    if (!ring) throw new Error("no backup passphrase is set up on this install");
+    if (ring.keyId === keyId) throw new Error("the current backup key cannot be forgotten");
+    const left = (ring.retired ?? []).filter((r) => r.keyId !== keyId);
+    if (left.length === (ring.retired ?? []).length) throw new Error("that key is not retired on this install");
+    const { retired: _gone, ...rest } = ring;
+    await store.replace({ ...rest, ...(left.length ? { retired: left } : {}) });
 }

@@ -7,7 +7,7 @@ import { JSDOM } from "jsdom";
 import { createRequire } from "node:module";
 const require_ = createRequire(import.meta.url);
 
-let h, render, ArchiveFolderBody, BRAVE_FLAG, keyToAdopt, doc;
+let h, render, ArchiveFolderBody, BRAVE_FLAG, keyToAdopt, forgetNotice, RetiredKeys, doc;
 before(async () => {
     // An origin, so `localStorage` exists: whether the folder was reconnected before is remembered there.
     const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", { pretendToBeVisual: true, url: "https://extension.test/" });
@@ -17,7 +17,7 @@ before(async () => {
     globalThis.Node = dom.window.Node;
     doc = dom.window.document;
     ({ h, render } = require_("preact"));
-    ({ ArchiveFolderBody, BRAVE_FLAG, keyToAdopt } = await import("../src/sidebar/settings/archive-section.tsx"));
+    ({ ArchiveFolderBody, BRAVE_FLAG, keyToAdopt, forgetNotice, RetiredKeys } = await import("../src/sidebar/settings/archive-section.tsx"));
 });
 
 const clicks = [];
@@ -274,4 +274,50 @@ test("a new folder whose form is unchosen and holds encrypted months offers the 
 test("no skipped encrypted months, no field", () => {
     assert.equal(show({ report: conn({ skipped: [skip("2026-07", "unreadable")] }) }).querySelector(".arch-adopt"), null);
     assert.equal(show({ report: conn() }).querySelector(".arch-adopt"), null);
+});
+
+// --- forgetting a retired key (part 3d) ---
+
+const RK = [{ keyId: "9f3a1c7e2b40d815", since: Date.UTC(2026, 9, 20, 12) }, { keyId: "c04b77aa19e2f6d3" }];
+const rows = (host) => [...host.querySelectorAll(".arch-rk")].map((r) => r.querySelector(".arch-rk-row").textContent);
+
+test("retired keys: short id, the date or 'retired earlier', and how many months are under each; the section lists them under the form", () => {
+    const host = show({ report: conn({ keyring: { set: true, keyId: "k1", retired: RK } }), keyCounts: { "9f3a1c7e2b40d815": 2 } });
+    const [dated, undated] = rows(host);
+    assert.match(dated, /^9f3a1c7eretired \d+\/\d+\/\d+, 2 months in the folderForget$/);
+    assert.match(undated, /^c04b77aaretired earlier, 0 months in the folderForget$/);
+    assert.doesNotMatch(host.textContent, /9f3a1c7e2b40d815/, "the short id only");
+    const order = [...host.querySelectorAll(".arch-form, .arch-retired")].map((e) => e.className);
+    assert.deepEqual(order, ["arch-form", "arch-retired"]);
+    assert.equal(show({ report: conn() }).querySelector(".arch-retired"), null, "nothing retired: no list");
+});
+
+test("retired keys with the folder unreadable here: the list without counts", () => {
+    const host = show({ report: conn({ keyring: { set: true, keyId: "k1", retired: RK } }), keyCounts: null });
+    assert.deepEqual(rows(host).map((r) => /month/.test(r)), [false, false]);
+    assert.match(rows(host)[1], /retired earlier/);
+});
+
+test("forget says what it costs once, then acts only on the second click; cancel leaves it", async () => {
+    const got = [];
+    const host = show({ report: conn({ keyring: { set: true, keyId: "k1", retired: RK } }), keyCounts: { "9f3a1c7e2b40d815": 3 }, onForgetKey: (k) => got.push(k) });
+    [...host.querySelectorAll(".arch-rk button")][0].click(); await flush();
+    assert.deepEqual(got, [], "the first click only asks");
+    const ask = host.querySelector(".arch-rk-ask");
+    assert.match(ask.textContent, /Files under this key will ask for its passphrase or recovery key on this install\. 3 months in the folder are still under it and will be skipped until another install rewrites them\./);
+    [...ask.querySelectorAll("button")].find((b) => b.textContent === "Cancel").click(); await flush();
+    assert.equal(host.querySelector(".arch-rk-ask"), null);
+    assert.deepEqual(got, []);
+    [...host.querySelectorAll(".arch-rk button")][0].click(); await flush();
+    [...host.querySelectorAll(".arch-rk-ask button")].find((b) => b.textContent === "Forget this key").click();
+    assert.deepEqual(got, ["9f3a1c7e2b40d815"]);
+});
+
+test("the notice: months still under the key are skipped; none under it is said to be safe; one month is singular", () => {
+    assert.match(forgetNotice(0), /^Files under this key will ask for its passphrase or recovery key on this install\. No month in the folder is under it, so nothing there is affected\.$/);
+    assert.match(forgetNotice(1), /1 month in the folder is still under it and will be skipped until another install rewrites it\./);
+    assert.match(forgetNotice(4), /4 months in the folder are still under it/);
+    const host = show({ report: conn({ keyring: { set: true, keyId: "k1", retired: [RK[1]] } }), keyCounts: {} });
+    host.querySelector(".arch-rk button").click();
+    return flush().then(() => assert.match(host.querySelector(".arch-rk-ask").textContent, /No month in the folder is under it/));
 });

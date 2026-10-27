@@ -8,9 +8,9 @@
 // (months wait, marked pending), and one click with "Allow on every visit" chosen makes it stay connected.
 import { useEffect, useState } from "preact/hooks";
 import type { FolderReport } from "../../archive/archive-worker";
-import { canPickFolder, pickFolder, readMonthHead, regrantCount, regrantFolder, saveFolder, writableFolder } from "../../archive/archive-folder";
+import { canPickFolder, monthKeyCounts, pickFolder, readMonthHead, regrantCount, regrantFolder, saveFolder, writableFolder } from "../../archive/archive-folder";
 import type { BackupForm } from "../../backup/backup-file";
-import { adoptKeyring, idbKeyringStore, type KeyringStore } from "../../backup/backup-keyring";
+import { adoptKeyring, forgetRetiredKey, idbKeyringStore, type KeyringStore, type RetiredInfo } from "../../backup/backup-keyring";
 import { adoptNotice, KeyringSetup, SecretField, secretFromText } from "./backup-section";
 
 /** The browser-specific way to turn folder access on, when there is one. */
@@ -134,6 +134,68 @@ export function AdoptFolderKey(p: { hasOwnKey: boolean; months: number; busy: bo
 }
 
 /**
+ * What forgetting a retired key costs, said before it is done: the files under it ask for its passphrase or recovery
+ * key on this install, and the folder's months still under it are skipped until another install rewrites them.
+ * @param months how many of the folder's month files are under the key
+ */
+export function forgetNotice(months: number): string {
+    const asks = "Files under this key will ask for its passphrase or recovery key on this install.";
+    return months > 0
+        ? `${asks} ${monthsOf(months)} in the folder ${months === 1 ? "is" : "are"} still under it and will be skipped until another install rewrites ${months === 1 ? "it" : "them"}.`
+        : `${asks} No month in the folder is under it, so nothing there is affected.`;
+}
+
+/**
+ * The keys this install used before it took another install's, each with when it was retired, how many of the folder's
+ * month files are still under it (nothing when the folder is not connected), and "Forget", which states the cost once
+ * and acts on the second click. A retired key only opens files; forgetting it closes the way in for anyone who still
+ * holds its secret.
+ * @group settings
+ * @gallery with dates, one still in use {"retired": [{"keyId": "9f3a1c7e2b40d815", "since": 1790000000000}, {"keyId": "c04b77aa19e2f6d3", "since": 1785000000000}], "counts": {"9f3a1c7e2b40d815": 2}}
+ * @gallery from before dates were kept, folder not connected {"retired": [{"keyId": "9f3a1c7e2b40d815"}], "counts": null}
+ * @gallery asking to forget, months still under it {"retired": [{"keyId": "9f3a1c7e2b40d815", "since": 1790000000000}], "counts": {"9f3a1c7e2b40d815": 3}, "confirm": "9f3a1c7e2b40d815"}
+ * @gallery asking to forget, none under it {"retired": [{"keyId": "c04b77aa19e2f6d3"}], "counts": {}, "confirm": "c04b77aa19e2f6d3"}
+ */
+export function RetiredKeys(p: {
+    retired: RetiredInfo[];
+    /** month files per key id; null when the folder cannot be read from here */
+    counts: Record<string, number> | null;
+    busy?: boolean;
+    /** the key whose notice is open at the start (the gallery shows the notice this way) */
+    confirm?: string;
+    onForget?(keyId: string): void;
+}) {
+    const [asking, setAsking] = useState<string | null>(p.confirm ?? null);
+    if (!p.retired.length) return null;
+    return (
+        <div class="arch-retired">
+            <div class="bk-title">Earlier backup keys</div>
+            {p.retired.map((r) => {
+                const n = p.counts ? p.counts[r.keyId] ?? 0 : null;
+                return (
+                    <div class="arch-rk" key={r.keyId}>
+                        <div class="arch-rk-row">
+                            <code>{r.keyId.slice(0, 8)}</code>
+                            <span class="set-hint">{r.since ? `retired ${new Date(r.since).toLocaleDateString()}` : "retired earlier"}{n === null ? "" : `, ${monthsOf(n)} in the folder`}</span>
+                            {asking === r.keyId ? null : <button class="test-btn" disabled={p.busy} onClick={() => setAsking(r.keyId)}>Forget</button>}
+                        </div>
+                        {asking === r.keyId ? (
+                            <div class="arch-rk-ask">
+                                <div class="set-warn">{forgetNotice(n ?? 0)}{n === null ? " The folder is not connected here, so the months under it are not counted." : ""}</div>
+                                <div class="arch-actions">
+                                    <button class="test-btn arch-primary" disabled={p.busy} onClick={() => { setAsking(null); p.onForget?.(r.keyId); }}>Forget this key</button>
+                                    <button class="test-btn" disabled={p.busy} onClick={() => setAsking(null)}>Cancel</button>
+                                </div>
+                            </div>
+                        ) : null}
+                    </div>
+                );
+            })}
+        </div>
+    );
+}
+
+/**
  * The month files the last sync or import could not take in, by reason: encrypted ones this install has no key for or
  * has the wrong key for are told apart from damaged ones, which keep their month and the error. Both encrypted cases
  * offer "Use this folder's key"; on an install with no key at all (a new machine joining) it is the first choice, beside
@@ -226,6 +288,10 @@ export function ArchiveFolderBody(p: {
     adoptWrong?: boolean;
     /** a new key was set up from the skipped months' choice */
     onKeySet?(): void;
+    /** month files per key id in the connected folder, for the retired keys' list; absent or null when not read */
+    keyCounts?: Record<string, number> | null;
+    /** forget the retired key with this id (`forgetRetiredKey`) */
+    onForgetKey?(keyId: string): void;
 }) {
     const r = p.report;
     if (!r) return <div class="set-hint">{p.message || "Reading…"}</div>;
@@ -316,6 +382,7 @@ export function ArchiveFolderBody(p: {
             {tried ? null : <div class="set-hint">After a browser restart it may ask for this folder again. Choose <b>Always allow</b> then, if it is offered, and it stays connected.</div>}
             {pending}
             <ArchiveFormChoice current={r.form ?? "plain"} keyringSet={r.keyring ? r.keyring.set : null} busy={!!p.busy} keyringStore={p.keyringStore} onApply={(f) => p.onForm?.(f)} />
+            {r.keyring?.set && r.keyring.retired?.length ? <RetiredKeys retired={r.keyring.retired} counts={p.keyCounts ?? null} busy={!!p.busy} onForget={p.onForgetKey} /> : null}
             {r.skipped?.length ? <SkippedMonths skipped={r.skipped} hasOwnKey={!!r.keyring?.set} busy={p.busy === "adopt-key"} wrong={p.adoptWrong} keyringStore={p.keyringStore} onAdopt={p.onAdoptKey} onKeySet={p.onKeySet} /> : null}
             <div class="arch-actions">
                 {btn("Write now", "Writing…", "sync", p.onSync)}
@@ -368,14 +435,19 @@ export function LocalArchiveFolder({ archiveOn }: { archiveOn: boolean }) {
     // The months the last sync or import skipped: a plain state read does not carry them, so they are kept here.
     const [skipped, setSkipped] = useState<NonNullable<FolderReport["skipped"]>>([]);
     const [adoptWrong, setAdoptWrong] = useState(false);
+    // Month files per key, read from the folder's headers by this page (the handle it holds); null while unread or unreachable.
+    const [keyCounts, setKeyCounts] = useState<Record<string, number> | null>(null);
     const call = async (action: Parameters<typeof folderMessage>[0], form?: BackupForm) => {
         const r = await folderMessage(action, form);
         if (r.written || r.imported || r.skipped) setSkipped(r.skipped ?? []);
         return r;
     };
-    const refresh = () => folderMessage("state").then((r) => {
+    const refresh = () => folderMessage("state").then(async (r) => {
         // Only a page can tell that picking is impossible here; the worker reports "none" for a folder never picked.
         setReport(r.state === "none" && !canPickFolder() ? { ...r, state: "unsupported" } : r);
+        // Counted only when a retired key is listed, so a folder without one is not read for it.
+        const dir = r.keyring.set && r.keyring.retired?.length ? await writableFolder().catch(() => null) : null;
+        setKeyCounts(dir ? await monthKeyCounts(dir).catch(() => null) : null);
     }, (e) => setMessage(String(e?.message || e)));
     useEffect(() => {
         void refresh();
@@ -393,6 +465,11 @@ export function LocalArchiveFolder({ archiveOn }: { archiveOn: boolean }) {
             canAskHere={isTopLevel()}
             found={found}
             adoptWrong={adoptWrong}
+            keyCounts={keyCounts}
+            onForgetKey={(keyId) => void act("forget-key", async () => {
+                await forgetRetiredKey(idbKeyringStore(), keyId);
+                return "Forgot that key. Files under it ask for its passphrase or recovery key here.";
+            })()}
             onKeySet={() => void refresh()}
             onAdoptKey={(text, month) => void act("adopt-key", async () => {
                 // The key is opened from the header of `month`'s file, read through the folder handle this page already holds
