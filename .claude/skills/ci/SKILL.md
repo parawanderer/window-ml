@@ -238,17 +238,13 @@ Flaky only (passed on retry, never blocked a run), worth knowing because two may
   refused`** — flaked once on #998 (both starts hosted, `actual: 2, expected: 1`), passed on rerun. The test races two
   START_RUNs through a held restore and a 20ms wait; timing-sensitive. Rerun the job before blaming a diff that does
   not touch background start.
-- **`site-access.spec.mjs:1507` › `@security attack 19 › the toolbar badge counts the waiting start on its tab, and the
-  popup's Show unfolds its collapsed card without taking focus`** — the Collapse click lands nowhere while the shell is
-  still springing the card container in (Playwright's stability check runs inside the frame and misses the frame's own
-  motion). Measured from CI logs (the last 12 `tests` runs whose e2e shard 3 ran, 2026-10-27): hard-failed 6/12 (first
-  try and retry), flaky 3/12, clean 3/12; main alone hard-fail 3/6 (40533964400, 40531917078, 40522082006). Always the
-  `.start-ask` `toHaveCount(0)` at 1524. **Fix is the security lane's #1163** (`cardSettled` polls the frame element's
-  box until it holds still; flaky-ci review posted there, three residual windows noted). Do not build a second fix;
-  re-verify only after #1163 merges, then remove this entry.
 - **`session-index.spec.mjs:59`** and **`value-store.spec.mjs:176`** — recurring CI-shard flakes (python-cancel's ledger
-  and Chat Page's re-runs, 2026-10-27); `value-store:176` also seen on #1056. No artifact read yet. On next failure:
-  download the shard's `e2e-results-*` and read `error-context.md` before theorising.
+  and Chat Page's re-runs, 2026-10-27); `value-store:176` also seen on #1056. `session-index:59` ("off mode: a page's own
+  sessions are not listed") fails at the SECOND `waitForMl` (spec :78, after `configureExtension` sets
+  `pageApprovalDomains` and `page.reload()`; harness.mjs:236), both tries, and on four unrelated branches the same
+  afternoon (40549239517, 40547626002, 40546447318, 40552504878) while passing 11/11 other shard-3 runs and locally; the
+  lead is the self-approve write racing the page gate's re-registration across the reload. Owner: flaky-ci. On next
+  failure: download the shard's `e2e-results-*` and read `error-context.md` before theorising.
 - Seen once each: `site-access` 16a (@security), `site-access` 18 closed-shadow-root (`:1164`, 16.5 s), `site-access` 19
   DevTools-panel ask (`:1492`, 16.3 s), `cross-page` composer seq collision, `output-scroll` tail-follow, `chat-web`
   phone tooltip, `focus-restore`, `bench-editor` traceback, `resource-panel` narrow window (`:3619`).
@@ -256,6 +252,15 @@ Flaky only (passed on retry, never blocked a run), worth knowing because two may
 node:test had no real failures in that window: every `not ok` was a documented `# TODO`.
 
 Recently removed, recorded so nobody re-adds them from memory:
+
+- ~~`site-access.spec.mjs:1507` › `@security attack 19 › the toolbar badge counts the waiting start on its tab, and the
+  popup's Show unfolds its collapsed card`~~ — **fixed** in #1163 (`8f0ea29e`, 2026-10-27), a test-harness gap and not a
+  product bug: the Collapse click landed while the shell was still springing the card container in (a 400 ms transform
+  with overshoot, plus the arming flip's height repost), and Playwright's stability check runs inside the frame so it
+  cannot see the frame's own motion. `cardSettled` now polls the frame element's box for three equal non-null readings
+  and `cardArmed` waits for the enabled Allow before every click. Measured before the fix: hard-fail 6/12 shard-3 runs,
+  main 3/6. Two real bugs it surfaced went to the security lane: a multi-run start card's Collapse was a no-op
+  (hud-card.tsx, fixed in #1175) and `badgeFor` summing every site's requests onto every tab's badge. Do not add as flake.
 
 - ~~`resource-stream.spec.mjs` › `a self-contradicting ps frame does not make a resident model vanish`~~ —
   **fixed** in `f0245376` (2026-09-12), a product bug and not a flake: `pollPs`/`fetchCapacity` checked
