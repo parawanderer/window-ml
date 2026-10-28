@@ -253,3 +253,116 @@ test("a profile with text drafts in localStorage and no image store loads the te
     assert.deepEqual(A.loadDraftImages("old:1"), []);
     assert.deepEqual(heard, []);
 });
+
+// --- attached text files, kept like the images (docs/spec/FILE_ATTACHMENTS.md, slice 1) ---
+
+const LOG = { name: "server.log", type: "text/plain", text: "boot ok\nlistening\n" };
+const CSV = { name: "rows.csv", type: "text/csv", text: "a,b\n1,2\n" };
+
+test("files saved are back after a reload, a box on screen is told, and an empty list deletes them", async () => {
+    globalThis.indexedDB = new fake.IDBFactory();
+    const A = await reload();
+    await A.draftsSettled();
+    A.saveDraftFiles("fi:a", [LOG, CSV]);
+    await A.draftsSettled();
+    const B = await reload();
+    const heard = [];
+    B.onDraftRestored((k) => heard.push(k));
+    assert.deepEqual(B.loadDraftFiles("fi:a"), [], "synchronous until the read lands");
+    await B.draftsSettled();
+    assert.deepEqual(B.loadDraftFiles("fi:a"), [LOG, CSV]);
+    assert.deepEqual(heard, ["fi:a"]);
+    B.saveDraftFiles("fi:a", []);
+    await B.draftsSettled();
+    const C = await reload();
+    await C.draftsSettled();
+    assert.deepEqual(C.loadDraftFiles("fi:a"), []);
+});
+
+test("images and files in one box are restored independently, each under its own key", async () => {
+    globalThis.indexedDB = new fake.IDBFactory();
+    const A = await reload();
+    A.saveDraftImages("fi:m", [IMG("AAAA")]);
+    A.saveDraftFiles("fi:m", [LOG]);
+    A.saveDraftFiles("fi:n", [CSV]);
+    await A.draftsSettled();
+    const B = await reload();
+    await B.draftsSettled();
+    assert.deepEqual(B.loadDraftImages("fi:m"), [IMG("AAAA")]);
+    assert.deepEqual(B.loadDraftFiles("fi:m"), [LOG]);
+    assert.deepEqual(B.loadDraftFiles("fi:n"), [CSV]);
+});
+
+test("a send that fails puts its files back in front of the ones attached meanwhile", async () => {
+    globalThis.indexedDB = new fake.IDBFactory();
+    const A = await reload();
+    const r = await A.sendHeld("fi:f", "the question", [], async () => {
+        assert.deepEqual(A.loadDraftFiles("fi:f"), [], "the box was emptied for the send");
+        A.saveDraftFiles("fi:f", [CSV]);
+        return { ok: false, error: "network down" };
+    }, [LOG]);
+    assert.equal(r.ok, false);
+    assert.deepEqual(A.loadDraftFiles("fi:f"), [LOG, CSV]);
+});
+
+test("a send that is taken leaves no files behind in memory or in the store", async () => {
+    globalThis.indexedDB = new fake.IDBFactory();
+    const A = await reload();
+    const ok = await A.sendHeld("fi:g", "fine", [], async () => ({ ok: true }), [LOG]);
+    assert.equal(ok.ok, true);
+    assert.deepEqual(A.loadDraftFiles("fi:g"), []);
+    await A.draftsSettled();
+    const B = await reload();
+    await B.draftsSettled();
+    assert.deepEqual(B.loadDraftFiles("fi:g"), []);
+    assert.equal(B.loadDraft("fi:g"), "");
+    assert.deepEqual(B.loadDraftFiles("fi:g"), [], "and nothing is claimed back by a later load");
+});
+
+test("a send held when the page died brings its files back with its text, when the box is drawn", async () => {
+    globalThis.indexedDB = new fake.IDBFactory();
+    const A = await reload();
+    void A.sendHeld("fi:h", "never confirmed", [], () => new Promise(() => {}), [LOG]);
+    await A.draftsSettled();
+    const B = await reload();
+    const heard = [];
+    B.onDraftRestored((k) => heard.push(k));
+    await B.draftsSettled();
+    assert.deepEqual(heard, [], "nothing is claimed at load");
+    assert.deepEqual(B.loadDraftFiles("fi:h"), []);
+    assert.equal(B.loadDraft("fi:h"), "never confirmed");
+    assert.deepEqual(B.loadDraftFiles("fi:h"), [LOG]);
+    await B.draftsSettled();
+    assert.deepEqual(heard, ["fi:h"]);
+    const C = await reload();
+    await C.draftsSettled();
+    assert.deepEqual(C.loadDraftFiles("fi:h"), [LOG], "claimed once, now an ordinary draft");
+});
+
+test("UPGRADE: a store written before files existed (images only) loads, with no files and no error", async () => {
+    globalThis.indexedDB = new fake.IDBFactory();
+    const A = await reload();
+    A.saveDraftImages("fi:old", [IMG("OLD0")]);
+    await A.draftsSettled();
+    // Strip the file support's records entirely: nothing about files was ever written, as by the old code.
+    const B = await reload();
+    await B.draftsSettled();
+    assert.deepEqual(B.loadDraftImages("fi:old"), [IMG("OLD0")]);
+    assert.deepEqual(B.loadDraftFiles("fi:old"), []);
+});
+
+test("a record that is not a file is dropped on restore rather than becoming a broken chip", async () => {
+    globalThis.indexedDB = new fake.IDBFactory();
+    const A = await reload();
+    await A.draftsSettled();
+    const db = await new Promise((res, rej) => { const r = indexedDB.open("ml-drafts", 1); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+    await new Promise((res) => {
+        const tx = db.transaction("images", "readwrite");
+        tx.objectStore("images").put({ id: "file:fi:bad", key: "fi:bad", imgs: ["not json", JSON.stringify({ name: 3 })], bytes: 20, at: Date.now() });
+        tx.oncomplete = () => res();
+    });
+    db.close();
+    const B = await reload();
+    await B.draftsSettled();
+    assert.deepEqual(B.loadDraftFiles("fi:bad"), []);
+});

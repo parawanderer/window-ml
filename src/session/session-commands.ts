@@ -9,7 +9,8 @@ import type { NeutralMessage } from "../contract/contract-chat";
 import { MAX_CONTINUE_STEPS } from "../agent/step-budget";
 import { AGENT_START_PAGE } from "../contract/contract-config";
 import type { MlDebugEvent } from "../contract/contract-debug";
-import type { PromptOrigin } from "../contract/contract-run";
+import type { AttachedFile, PromptOrigin } from "../contract/contract-run";
+import { checkFilesField, type FileTarget } from "../attached-files";
 import { clientUiOf } from "../agent/current-client";
 import type { SessionHistory } from "./session-store";
 import type { Command, CommandError, CommandFrom, CommandResult, CommandType, ListedSession, ModelChoice, SessionId, SessionSummary, StorageReport, TabGroupInfo, TabInfo } from "./session-host";
@@ -64,7 +65,7 @@ export interface CommandDeps {
     /** one tab, or null when it is gone */
     getTab(tabId: number): Promise<TabInfo | null>;
     /** relay a session action to the page in a tab and wait for what it did; rejects when nothing listens there */
-    toPage(tabId: number, action: "send" | "cancel" | "continue", body: { hash: string; text?: string; images?: string[]; elementContext?: unknown; maxSteps?: number }, origin?: PromptOrigin): Promise<PageOutcome>;
+    toPage(tabId: number, action: "send" | "cancel" | "continue", body: { hash: string; text?: string; images?: string[]; files?: AttachedFile[]; elementContext?: unknown; maxSteps?: number }, origin?: PromptOrigin): Promise<PageOutcome>;
     /** bring a tab and its window to the front; false when the tab is gone */
     focusTab(tabId: number, windowId?: number): Promise<boolean>;
     /** outline an element or point on a tab's page (fire and forget) */
@@ -78,9 +79,9 @@ export interface CommandDeps {
     /** forget what the worker keeps for a finished session: its stored chat history, its resumable snapshot */
     forgetStored(hash: string): Promise<void>;
     /** start a chat this worker hosts (no tab), resolving with its hash once the first turn is under way */
-    startChat(opts: { text: string; images?: string[]; model?: string; system?: string; think?: boolean | null; ephemeral?: boolean }): Promise<string>;
+    startChat(opts: { text: string; images?: string[]; files?: AttachedFile[]; model?: string; system?: string; think?: boolean | null; ephemeral?: boolean }): Promise<string>;
     /** the next turn of a worker-hosted chat; `not-found` when this worker does not host it and storage has nothing */
-    sendChat(hash: string, text: string, images?: string[]): Promise<"turn" | "busy" | "not-found">;
+    sendChat(hash: string, text: string, images?: string[], files?: AttachedFile[]): Promise<"turn" | "busy" | "not-found">;
     /** switch a worker-hosted chat's model from its next turn; false when this worker does not host it */
     setChatModel(hash: string, model: string): Promise<boolean>;
     /** switch a run whose loop this worker hosts: `running` takes it at the next model call, `stored` at its next turn;
@@ -121,7 +122,7 @@ export interface CommandDeps {
     noteResumed(hash: string, tabId: number, note: { id: string; url: string; fromUrl?: string; afterMs: number; dropped: string[]; kept?: string[] }): void;
     /** start a run on a tab, through that page's own start path; resolves with what the page reported */
     /** `error`: why nothing started, in words the person can act on */
-    startAgent(tabId: number, opts: { task: string; images?: string[]; model?: string; maxSteps?: number; vision?: true; stream?: true }, origin?: PromptOrigin): Promise<{ outcome: PageOutcome | "started"; hash?: string; error?: string }>;
+    startAgent(tabId: number, opts: { task: string; images?: string[]; files?: AttachedFile[]; model?: string; maxSteps?: number; vision?: true; stream?: true }, origin?: PromptOrigin): Promise<{ outcome: PageOutcome | "started"; hash?: string; error?: string }>;
     /** open a new tab at a URL and wait until the extension can talk to it; rejects when it never answers */
     openTab(url: string): Promise<number>;
     /** the page a blank agent target opens when the command names no URL ("" when unset) */
@@ -148,6 +149,12 @@ export const SIDE_CALL_MAX_TOKENS = 1024;
 export const SCREENSHOT_MAX_BYTES = 4 * 1024 * 1024;
 /** Mid-run steers carry text only (the loop's inbox has no image slot); images go with a new turn. */
 const STEER_TEXT_MAX = 20_000;
+/** The files of a command, checked by the one rule (attached-files.ts), as the result a handler returns on a refusal. */
+export function checkedFiles(raw: unknown, target: FileTarget): { files?: AttachedFile[]; error?: CommandResult<any> } {
+    const r = checkFilesField(raw, target);
+    return r.reason ? { error: fail("invalid", r.reason) } : r.files ? { files: r.files } : {};
+}
+
 /** One message's text, on a chat this worker hosts. Long enough for a pasted document, short of a denial of service. */
 const CHAT_TEXT_MAX = 100_000;
 /**
@@ -248,7 +255,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
     };
 
     /** Relay to the session's page; a page with nothing listening, or no answer, is unavailable. */
-    const viaPage = async (hash: string, action: "send" | "cancel" | "continue", body: { text?: string; images?: string[]; elementContext?: unknown; maxSteps?: number } = {}, origin?: PromptOrigin): Promise<PageOutcome | CommandResult<any>> => {
+    const viaPage = async (hash: string, action: "send" | "cancel" | "continue", body: { text?: string; images?: string[]; files?: AttachedFile[]; elementContext?: unknown; maxSteps?: number } = {}, origin?: PromptOrigin): Promise<PageOutcome | CommandResult<any>> => {
         const t = tabOf(hash);
         if (t.error) return t.error;
         try {
@@ -369,7 +376,9 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             if (c.lineage) return fail("unsupported", "this browser does not start subagents yet");
             const task = typeof c.task === "string" ? c.task : "";
             const images = Array.isArray(c.images) ? c.images.filter((i): i is string => typeof i === "string" && i.startsWith("data:image/")) : [];
-            if (!task.trim() && !images.length) return fail("invalid", "a run needs a task or an image");
+            const att = checkedFiles(c.files, "agent");
+            if (att.error) return att.error;
+            if (!task.trim() && !images.length && !att.files) return fail("invalid", "a run needs a task, an image or a file");
             if (task.length > CHAT_TEXT_MAX) return fail("invalid", "that task is too long");
             if (c.maxSteps != null && (!Number.isInteger(c.maxSteps) || c.maxSteps <= 0)) return fail("invalid", "maxSteps must be a positive whole number");
             const t = await resolveTarget(c.target as { kind?: unknown; tabId?: unknown; url?: unknown } | undefined);
@@ -377,7 +386,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             const tabId = t.tabId;
 
             const r = await deps.startAgent(tabId, {
-                task, ...(images.length ? { images } : {}),
+                task, ...(images.length ? { images } : {}), ...(att.files ? { files: att.files } : {}),
                 ...(c.model ? { model: c.model } : {}),
                 ...(c.maxSteps != null ? { maxSteps: c.maxSteps } : {}),
                 ...(c.vision === true ? { vision: true as const } : {}),
@@ -474,7 +483,9 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             if (bad) return bad;
             const text = typeof c.text === "string" ? c.text : "";
             const images = Array.isArray(c.images) ? c.images.filter((i): i is string => typeof i === "string" && i.startsWith("data:image/")) : [];
-            if (!text.trim() && !images.length) return fail("invalid", "a chat needs a message or an image");
+            const att = checkedFiles(c.files, "chat");
+            if (att.error) return att.error;
+            if (!text.trim() && !images.length && !att.files) return fail("invalid", "a chat needs a message, an image or a file");
             if (text.length > CHAT_TEXT_MAX) return fail("invalid", "that message is too long");
             if (c.system != null && typeof c.system !== "string") return fail("invalid", "a system prompt must be text");
             if (typeof c.system === "string" && c.system.length > CHAT_SYSTEM_MAX) return fail("invalid", "that system prompt is too long");
@@ -482,7 +493,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             if (c.think != null && typeof c.think !== "boolean") return fail("invalid", "think must be true, false or absent");
             try {
                 const hash = await deps.startChat({
-                    text, ...(images.length ? { images } : {}),
+                    text, ...(images.length ? { images } : {}), ...(att.files ? { files: att.files } : {}),
                     ...(c.model ? { model: c.model } : {}),
                     ...(typeof c.system === "string" && c.system ? { system: c.system } : {}),
                     ...(c.think != null ? { think: c.think } : {}),
@@ -501,12 +512,14 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             if (s.error) return s.error;
             const text = typeof c.text === "string" ? c.text : "";
             const images = Array.isArray(c.images) ? c.images.filter((i): i is string => typeof i === "string" && i.startsWith("data:image/")) : [];
-            if (!text.trim() && !images.length && !c.elementContext) return fail("invalid", "a message needs text, an image or an element");
+            const att = checkedFiles(c.files, pagelessChat(s.id.hash) ? "chat" : "agent");
+            if (att.error) return att.error;
+            if (!text.trim() && !images.length && !att.files && !c.elementContext) return fail("invalid", "a message needs text, an image, a file or an element");
             // A chat this worker hosts has no tab to relay to, and no loop to steer: the message is simply its next
             // turn. Checked BEFORE the run paths, which both end at a tab this session does not have.
             if (pagelessChat(s.id.hash)) {
                 if (text.length > CHAT_TEXT_MAX) return fail("invalid", "that message is too long");
-                const outcome = await deps.sendChat(s.id.hash, text, images);
+                const outcome = await deps.sendChat(s.id.hash, text, images, att.files);
                 if (outcome === "turn") return ok({ mode: "turn" });
                 if (outcome === "busy") return fail("conflict", "the chat is still answering the last message");
                 return fail("not-found", "this browser no longer holds that chat");
@@ -515,11 +528,11 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             const running = status === "running" || status === "waiting";
             // A background loop that is running takes the steer directly: the page's handle may be gone (the run
             // navigated), and the inbox is the same one the handle's `say` reaches.
-            if (running && !images.length && !c.elementContext) {
+            if (running && !images.length && !att.files && !c.elementContext) {
                 if (text.length > STEER_TEXT_MAX) return fail("invalid", "that message is too long to steer with");
                 if (deps.steer(s.id.hash, text, commandOrigin(from, c.ui))) return ok({ mode: "steer" });
             }
-            const r = await viaPage(s.id.hash, "send", { text, ...(images.length ? { images } : {}), ...(c.elementContext ? { elementContext: c.elementContext } : {}) }, commandOrigin(from, c.ui));
+            const r = await viaPage(s.id.hash, "send", { text, ...(images.length ? { images } : {}), ...(att.files ? { files: att.files } : {}), ...(c.elementContext ? { elementContext: c.elementContext } : {}) }, commandOrigin(from, c.ui));
             if (typeof r !== "string") return r;
             if (r === "steer" || r === "turn") return ok({ mode: r });
             return fail("not-found", "the page no longer holds this session (it was reloaded, or the session was never resumable)");

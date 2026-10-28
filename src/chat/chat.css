@@ -471,7 +471,16 @@ html, body, #root { height: 100%; }
     border-radius: 16px 16px 0 0;
 }
 .chat.calm .cthumbs:empty { display: none; }
-.chat.calm .cthumbs + .composer-row { border-top-left-radius: 6px; border-top-right-radius: 6px; }
+.chat.calm .cthumbs + .composer-row, .chat.calm .cfiles + .composer-row { border-top-left-radius: 6px; border-top-right-radius: 6px; }
+/* The attached TEXT FILES' pills are the same strip on the same surface (`.cfiles`, composer.tsx). Under pictures they
+   continue it: one surface, the pictures on top of the files on top of the words. */
+.chat.calm .cfiles {
+    max-width: var(--read); width: 100%; margin: 0 auto -6px; padding: 7px 8px 12px; gap: 5px;
+    background: var(--panel); border: 1px solid var(--border); border-bottom: none; border-radius: 16px 16px 0 0;
+}
+.chat.calm .cthumbs:not(:empty):has(+ .cfiles) { margin-bottom: 0; padding-bottom: 6px; }
+.chat.calm .cthumbs:not(:empty) + .cfiles { border-top: none; border-radius: 0; }
+.chat.calm .cfiles .el-pill { background: var(--bg); max-width: 100%; }
 .chat.calm .cthumb { width: 52px; height: 52px; border-radius: 9px; }
 .chat.calm .cinput { background: transparent; border: none; padding: 7px 6px; }
 .chat.calm .cinput:focus { outline: none; }
@@ -1566,7 +1575,7 @@ button.chat-page-go:hover { color: var(--fg); }
 }
 .chat-start-box:focus-within { border-color: var(--panel-2-hover); }
 /* The attached images sit above the text, inside the pill, as the session composer's strip does. */
-.chat .chat-start-box .cthumbs { margin: 0; padding: 0; width: auto; max-width: none; background: none; border: none; border-radius: 0; }
+.chat .chat-start-box .cthumbs, .chat .chat-start-box .cfiles { margin: 0; padding: 0; width: auto; max-width: none; background: none; border: none; border-radius: 0; }
 /* The "+" is the row's first control and keeps its size when the pills shrink around it. */
 .chat-start-attach { flex: 0 0 auto; border-radius: 50%; }
 .chat .chat-start-box .cthumb { width: 52px; height: 52px; border-radius: 9px; }

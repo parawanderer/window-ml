@@ -155,6 +155,7 @@ function turnToMessages(t: Turn): ExportMessage[] {
         text: t.user,
         at: iso(t.ts) || new Date(0).toISOString(),
         images: t.images?.length ? t.images : undefined,
+        display: t.display,
     })];
 
     // A turn with no reply yet (in flight, or it errored before answering) contributes

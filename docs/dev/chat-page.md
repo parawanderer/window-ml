@@ -513,8 +513,41 @@ because a tab had closed.
 **The start page takes images as the session composer does**: its `＋`, a paste into the box and the thumbnail strip
 are the composer's own `useImageAttach` and `ThumbStrip`, and the images ride on `agent.start` and `chat.start`
 (`images`, data URLs). An image alone is enough to start, as the backend accepts. They are kept under the `start`
-draft key in memory only (`drafts.ts`), so they survive leaving the page and a refused start, not a reload. On a
-phone the `＋` sits at the foot beside send: the choices row has no room for a 40px target.
+draft key (`drafts.ts`, written through to IndexedDB), so they survive leaving the page, a refused start and a
+reload. On a phone the `＋` sits at the foot beside send: the choices row has no room for a 40px target.
+
+### Attaching files
+
+The `＋`, a drop on the box and a paste take TEXT FILES as well as images (`useImageAttach` with its `files` option,
+`FileStrip`; slice 1 of `docs/spec/FILE_ATTACHMENTS.md`). The rules, which have one copy in `src/attached-files.ts`:
+
+- **A file is text if it decodes as UTF-8 with `fatal: true` and holds no NUL byte**, whatever its name or type; the
+  picker's `accept` only offers the common ones. A PDF is refused with its own sentence ("PDFs come in a later change").
+- **Sent whole, up to `FILE_INLINE_MAX` (32,000 characters per message, across its files).** Over it, the file is
+  refused with its size, never cut ("server.log is too large to send whole: 210 kB; a message takes up to 32 kB of
+  files"; an agent run's refusal adds that large files are read on demand later). The composer refuses before
+  sending, derived on every render (`pendingRefusals`), so switching the start page from a chat to a run changes the
+  wording and removing a file frees the room it took. A refused file stays in the box as a pill with its reason, and
+  is not sent. The RUNTIME checks again (`checkFilesField` in `session-commands.ts`): the client's check is a
+  convenience, the runtime's is the rule.
+- **The command carries `files: [{ name, type, text }]`** on `chat.start`, `agent.start` and `session.send`, decoded
+  text, not base64: PDFs will need the bytes, text does not. A runtime that does not list `capabilities.attachFiles`
+  would ignore the field and send the message without the files, so the composer never sends one there:
+  `services().acceptsFiles(key)` is the runtime's capability, and a file attached to such a runtime is refused beside
+  its pill ("does not take files yet"). The in-page composers (overlay, DevTools panel) answer false in this slice.
+- **The model reads one `<file name type bytes>` block per file after the typed words** (`fileBlock`, built in
+  `framePrompt` for runs and in `sw-chat.ts` for chats, so the history a resume loads holds them). A literal `</file`
+  inside the text is written `<\/file` and counted in the tag's `escaped` attribute: deterministic, unlike a random
+  closing tag, so the same message is the same bytes in an export or a diff.
+- **The transcript keeps the words and the files apart** through the `display` an element context already uses
+  (`PromptDisplay`, now with a `file` context: name, type, bytes, lines, never the text). Calm view: the words, then a
+  `FilePill` under the message with the panel's tooltip ("Sent to the model in full."). Raw (the dev view's
+  rendered/raw switch): exactly what the model got, the blocks included. Both exports carry that text; the Markdown one
+  in a code block, since a bare `<file>` tag would vanish from a rendered page.
+- **Drafts**: pending files persist like draft images, as records of the same `ml-drafts` store (`file:<key>`,
+  `heldfile:<send id>`), and come back with a failed send.
+- **The phone app** draws the chip (its transcript is this page's, in the WebView). Its composer is native and does not
+  attach files yet.
 
 The fake host starts sessions too, so the form is exercised at phone width in the web build before it is
 exercised against a browser: `chat.start` mints a session and answers the first turn, `agent.start` mints a

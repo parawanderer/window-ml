@@ -100,7 +100,7 @@ that subscribed it, and never after its `Unsubscribe` returns.
 A `RuntimeInfo` carries three things a client renders from:
 
 - **`capabilities`**: what the runtime can do (`chat`, `agent`, `tabs`, `screenshots`, `highlight`, `persistence`,
-  `sideCalls`, `pythonBench`, `resourcePanel`, `localSettings`, `switchModel`, `devices`, and the reserved `headless` and `lineage`), which
+  `sideCalls`, `pythonBench`, `resourcePanel`, `localSettings`, `switchModel`, `attachFiles` (`files` on the three commands that send a message), `devices`, and the reserved `headless` and `lineage`), which
   `boxes` it uses, the session `archive` with its folder's state (present only while the archive is on), and
   `attention`: what needs someone's hand on the runtime (`no-model`, `backend-unreachable`, `site-access`, …), as
   codes a client words itself, since a runtime's text is untrusted. **Absent means no.** A client renders by capability and never assumes a browser.
@@ -176,7 +176,7 @@ runtime answers a type or option it does not offer with `unsupported`.
 
 | Command | Scope | Capability | Today |
 | --- | --- | --- | --- |
-| `session.send`: text, images, or both; steers a running agent or starts the next turn | drive | | `sessionSend` → `ML_SESSION_REMOTE` / the page's handle registry |
+| `session.send`: text, images, files, or any of them; steers a running agent or starts the next turn. `files` (`AttachedFile[]`: `{ name, type, text }`, decoded text) is checked by the runtime (at most 10, a name of at most 255 characters, at most 32,000 characters of text across them, else `invalid` with the reason, never trimmed) and goes into the message as `<file>` blocks. A message with only files is valid; the same `files` field is on `chat.start` and `agent.start`. With files, a running agent is not steered directly (a steer carries text only) but through its page or the worker's resume, which frame it | drive | `attachFiles` for `files` | `sessionSend` → `ML_SESSION_REMOTE` / the page's handle registry |
 | `session.cancel` | drive | | `sessionCancel` → `CANCEL_RUN` |
 | `session.continue`: past the step cap, optionally with a `maxSteps` the person chose (a whole number, 1 to `MAX_CONTINUE_STEPS`; anything else is `invalid`, never rounded). Omitted keeps the cap the run was started with. A budget given here STICKS for the run's later turns, and the runtime announces it with an `agent-cap` so every surface counts against the same number. Answers `{ maxSteps }` when one was applied | drive | | `continueRun` |
 | `session.delete` | drive | `persistence` for saved sessions | nothing |
@@ -368,6 +368,12 @@ arbitrary generations on someone's main model. `purpose` and `session` go on the
   skipped, never guessed at.
 - **Images a client sends** are `data:image/*` URLs; runtimes cap their count and size (`cleanImages`) and drop
   anything else.
+- **Files a client sends** (`files`, text only so far: docs/spec/FILE_ATTACHMENTS.md) are untrusted text like a web
+  page's: the runtime checks their shape, count, name length and total size (`checkFilesField`), refuses rather than
+  trims, and writes them into the model's message as `<file>` blocks whose name is attribute-escaped and whose text
+  cannot close its own block. A transcript carries only their descriptor (`PromptContext` kind `file`: name, type,
+  bytes, lines), beside the message text that holds them. A runtime that does not list `capabilities.attachFiles`
+  ignores the field, so a client sends it only to one that does. No hub change: the field rides in the sealed command.
 - **Who sent something is the transport's fact, not the payload's.** Wherever a runtime records a sender (who
   answered an approval, who sent a message into a session, who started it), it takes the principal from the
   authenticated command (the key that signed it on the hub, the extension surface locally), never from a field the

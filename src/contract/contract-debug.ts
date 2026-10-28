@@ -60,6 +60,9 @@ interface DebugBase {
  *  and a run that never returns still shows what it was doing. */
 export interface DebugChatStart extends DebugBase {
     kind: "chat"; streaming: boolean; request: DebugChatRequest; config: DebugSessionConfig;
+    /** how the user message is shown when attached files were folded into it (contract-run.ts); the message itself,
+     *  in `request.messages`, stays exactly what the model got */
+    display?: import("./contract-run").PromptDisplay;
     /** What KIND of call this session holds, when it is not an ordinary chat. `ml.embed()` reports through
      *  this same event — it is a model call that occupies VRAM and takes time, and reusing the machinery
      *  costs no new event kind — but it is not a chat, and labelling it one is a claim about something that

@@ -13,6 +13,7 @@ import { truncate, elPath, describeSkeleton, queryAll, selectorError, shadowHost
 import { makeAnswerFacade } from "./pointers/answer-set";
 import { accessibleName, roleOf, ariaState } from "./dom/a11y";
 import { framePrompt } from "./agent/prompts";
+import { cleanFiles } from "./attached-files";
 import { promptSurfaceOf } from "./agent/prompt-surface";
 import { pageContext, resolvePoint, resolveBox, agentState, mlRange } from "./util";
 import { suspiciousChars } from "./agent/security";
@@ -583,7 +584,7 @@ import { type ChannelMessage, onIsolated, toIsolated } from "./page-channel";
 
     onIsolated((e: ChannelMessage) => {
         if (!e.data) return;
-        const d = e.data as { __mlSessionSend?: { hash: string; text: string; images?: string[]; elementContext?: import("./contract").ElementContext; reqId?: string; surface?: string }; __mlCancelSession?: { hash: string; reqId?: string }; __mlContinueRun?: { hash: string; maxSteps?: number; reqId?: string } };
+        const d = e.data as { __mlSessionSend?: { hash: string; text: string; images?: string[]; files?: import("./contract/contract-run").AttachedFile[]; elementContext?: import("./contract").ElementContext; reqId?: string; surface?: string }; __mlCancelSession?: { hash: string; reqId?: string }; __mlContinueRun?: { hash: string; maxSteps?: number; reqId?: string } };
         // A request the shell relayed from an extension page (the chat page) carries a `reqId` and wants to hear what
         // happened, so the page can say "steered", "started a turn" or "not on this page" instead of guessing.
         const reqId = d.__mlSessionSend?.reqId ?? d.__mlCancelSession?.reqId ?? d.__mlContinueRun?.reqId;
@@ -618,7 +619,7 @@ import { type ChannelMessage, onIsolated, toIsolated } from "./page-channel";
                 // same way a fresh "ask about this" run does (framePrompt), so an appended turn/steer gets the
                 // element's clean content + selector. An element-only send (no typed text) is then non-empty.
                 // `display` keeps what was typed and the element, so the bubble shows those, not the framed block.
-                const { text, display } = framePrompt(rawText, d.__mlSessionSend.elementContext);
+                const { text, display } = framePrompt(rawText, d.__mlSessionSend.elementContext, cleanFiles(d.__mlSessionSend.files));
                 if (!text && !(images && images.length)) { done("none"); return; }   // allow an image-only follow-up
                 const h = handleRegistry.get(hash);
                 // An AGENT handle holds live state: steer a RUNNING loop (say — text only, no image mid-steer),

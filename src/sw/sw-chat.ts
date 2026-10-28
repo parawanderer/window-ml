@@ -19,7 +19,8 @@
  * feed of a session something else already reports (AGENTS.md's trap, which is about recording a run twice); it is
  * the only feed of a session nothing else can see.
  */
-import { hintSession, shortHash, type RequestHint } from "../contract/contract-run";
+import { hintSession, shortHash, type AttachedFile, type RequestHint } from "../contract/contract-run";
+import { frameFiles } from "../attached-files";
 import { type LlmResult, type NeutralMessage } from "../contract/contract-chat";
 import { type StoredSession } from "../contract/contract-messages";
 import { type MlDebugEvent } from "../contract/contract-debug";
@@ -107,6 +108,7 @@ export function cancelBackgroundChat(hash: string): boolean {
 export async function startBackgroundChat(opts: {
     text: string;
     images?: string[];
+    files?: AttachedFile[];
     model?: string;
     system?: string;
     think?: boolean | null;
@@ -127,7 +129,7 @@ export async function startBackgroundChat(opts: {
         lastTs: d.now(),
     };
     chats.set(hash, chat);
-    void turn(chat, opts.text, opts.images);
+    void turn(chat, opts.text, opts.images, opts.files);
     return hash;
 }
 
@@ -143,11 +145,11 @@ export async function setBackgroundChatModel(hash: string, model: string): Promi
 
 /** The next turn of a background chat. `not-found` when this worker does not host it and storage cannot bring it
  *  back; `busy` while a turn is still running, since a chat has no inbox to steer into. */
-export async function sendBackgroundChat(hash: string, text: string, images?: string[]): Promise<"turn" | "busy" | "not-found"> {
+export async function sendBackgroundChat(hash: string, text: string, images?: string[], files?: AttachedFile[]): Promise<"turn" | "busy" | "not-found"> {
     const chat = chats.get(hash) ?? (await rehydrate(hash));
     if (!chat) return "not-found";
     if (chat.running) return "busy";
-    void turn(chat, text, images);
+    void turn(chat, text, images, files);
     return "turn";
 }
 
@@ -158,11 +160,15 @@ export async function sendBackgroundChat(hash: string, text: string, images?: st
  * derived from the hash and the turn number rather than drawn at random, so a turn that is somehow reported twice
  * is recognised as one turn rather than recorded as two.
  */
-async function turn(chat: BgChat, text: string, images?: string[]): Promise<void> {
+async function turn(chat: BgChat, text: string, images?: string[], files?: AttachedFile[]): Promise<void> {
     const d = need();
     const id = `${chat.hash}-${++chat.turns}`;
     const session = { hash: chat.hash, turn: chat.turns };
-    const user: NeutralMessage = { role: "user", content: text };
+    // Attached text files are part of the message the model reads, as `<file>` blocks after the typed words; `display`
+    // keeps the words and the files apart for the transcript (attached-files.ts).
+    const framed = frameFiles(text, files);
+    const user: NeutralMessage = { role: "user", content: framed.text };
+    const display = framed.display;
     const pictures = (images ?? []).slice(0, MAX_TURN_IMAGES);
     if (pictures.length) user.images = pictures;
     const messages = [...chat.messages, user];
@@ -172,7 +178,7 @@ async function turn(chat: BgChat, text: string, images?: string[]): Promise<void
 
     const streaming = !!d.stream;
     d.emit({
-        kind: "chat", id, ts: d.now(), save: chat.save, session, streaming,
+        kind: "chat", id, ts: d.now(), save: chat.save, session, streaming, ...(display ? { display } : {}),
         config: { system: chat.system, model: chat.model, think: chat.think, schema: false, toolIds: null, maxTokens: null, save: chat.save },
         request: {
             model: chat.model, extend: null, messages, images: pictures.length ? pictures : null,

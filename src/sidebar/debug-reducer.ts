@@ -438,7 +438,7 @@ export function onDebug(input: MlDebugEvent | SiteRunEvent, runtime?: string): v
         // re-rendering a child whose props are referentially unchanged, so a
         // turn we later update MUST become a new object or its (stateful)
         // AssistantBody won't re-render — the "stale …thinking" bug.
-        const turn: Turn = { id: ev.id, ts: ev.ts, user: lastUser(ev.request.messages), images: ev.request.images, status: "pending", reqModel: ev.request.model, extend: ev.request.extend };
+        const turn: Turn = { id: ev.id, ts: ev.ts, user: lastUser(ev.request.messages), images: ev.request.images, ...(ev.display ? { display: ev.display } : {}), status: "pending", reqModel: ev.request.model, extend: ev.request.extend };
         s.turns = [...s.turns, turn];
         s.lastTs = ev.ts; s.status = "pending";
     } else {

@@ -3,7 +3,7 @@
 // approval / grant / host-access chrome, the JSON-tree tool-def viewer, the agent-options block, nav
 // dividers, and the run container (AgentRunView / LiveStream / PendingNote). Extracted from app.tsx; it
 // sits above ./reply (uses ReplyBubble) and the ui-kit / answer-render / render-panel / debug-reducer layers.
-import { ArrivingMsg, SentContext, SentImages, UserActions, UserText } from "./user-text";
+import { ArrivingMsg, PROMPT_RAW_TIPS, RawToggle, SentContext, SentImages, UserActions, UserText } from "./user-text";
 import type { ComponentChildren } from "preact";
 import { services } from "../services";
 import { useState, useEffect, useRef, useContext } from "preact/hooks";
@@ -60,20 +60,6 @@ import { ApprovalRow } from "./approval-row";
 /** Which citation slot this block IS, for the anchors below. Only In and Out are cited. */
 const slotOf = (label: string): "in" | "out" | undefined =>
     label === "In" ? "in" : label === "Out" ? "out" : undefined;
-
-/** The RENDERED ⇄ RAW switch: a view drawn for a person, or exactly what the model sent or got. One control for a tool
- *  step's In/Out and a user message whose text had context folded in, so "raw" means the same thing everywhere. */
-export function RawToggle({ raw, onRaw, tips, disabled }: { raw: boolean; onRaw: (raw: boolean) => void; tips: { rendered: string; raw: string }; disabled?: boolean }) {
-    return (
-        <div class={`rr-toggle${disabled ? " reserved" : ""}`}>
-            <span class="tt"><button class={raw ? "" : "on"} disabled={disabled} onClick={() => onRaw(false)}>rendered</button><span class="tt-pop left" role="tooltip">{tips.rendered}</span></span>
-            <span class="tt"><button class={raw ? "on" : ""} disabled={disabled} onClick={() => onRaw(true)}>raw</button><span class="tt-pop left" role="tooltip">{tips.raw}</span></span>
-        </div>
-    );
-}
-
-/** What the two halves of a user message's switch say. */
-export const PROMPT_RAW_TIPS = { rendered: "What you wrote, and what you attached.", raw: "Exactly what the model got, with everything folded into your message." };
 
 /** ONE HALF OF A STEP — the In (what the model sent) or the Out (what it got back), each with a
  *  rendered⇄raw toggle. The raw view is the model-facing text VERBATIM and is never optional: that is

@@ -2,7 +2,7 @@
 // agent run's final answer), the user/assistant turn pair, and the session-list row. Extracted from
 // app.tsx; a leaf view layer over ui-kit + answer-render (no agent-detail / HUD deps, so agent-detail
 // can import ReplyBubble without a cycle).
-import { ArrivingMsg, SentImages, UserActions, UserText } from "./user-text";
+import { ArrivingMsg, PROMPT_RAW_TIPS, RawToggle, SentContext, SentImages, UserActions, UserText } from "./user-text";
 import { cssDurationMs } from "../use-close";
 import { services, bareHash } from "../services";
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
@@ -278,14 +278,19 @@ export function EmbedRunView({ s }: { s: Session }) {
  *  @gallery-flow user-stamp tests/gallery-flows/MessageTurn.mjs
  */
 export function MessageTurn({ t, hash }: { t: Turn; hash?: string }) {
+    // With files attached, `t.user` is exactly what the model got (the `<file>` blocks included, the raw view) and
+    // `t.display` the words and the files apart (the rendered view, files as chips under the message).
+    const [raw, setRaw] = useState(false);
+    const shown = t.display && !raw ? t.display.typed : t.user;
     return (
         <>
             <ArrivingMsg ts={t.ts}>
-                <div class={`msg user${t.user ? "" : " no-text"}`} data-prompt={`t${t.id}`}>
-                    <div class="mrow"><span class="who">user</span><span class="sp" />{t.user ? <UserActions text={t.user} /> : null}<Stamp ts={t.ts} /></div>
-                    {t.user ? <UserText text={t.user} /> : null}
+                <div class={`msg user${shown ? "" : " no-text"}`} data-prompt={`t${t.id}`}>
+                    <div class="mrow"><span class="who">user</span>{t.display ? <RawToggle raw={raw} onRaw={setRaw} tips={PROMPT_RAW_TIPS} /> : null}<span class="sp" />{shown ? <UserActions text={shown} /> : null}<Stamp ts={t.ts} /></div>
+                    {shown ? <UserText text={shown} /> : null}
                 </div>
                 <SentImages images={t.images} />
+                {t.display && !raw ? <SentContext context={t.display.context} /> : null}
             </ArrivingMsg>
             {/* `anchorHash` is what the event lane scrolls to. A chat session gets a container bar and
                 generation spans like any other, and clicking one used to navigate here and then find nothing

@@ -1,7 +1,8 @@
 # Spec (WIP): attaching files to a message
 
-**Status: designed, not started (2026-10-28, Shane and the calm-chat-motion session).** The order is three slices,
-each landing on its own: text files, then PDFs, then documents as `@file:` pointers in agent runs. Slice 3's contact
+**Status: slice 1 built (2026-10-28, `feat/attach-text-files`); slices 2 and 3 designed, not started (Shane and the
+calm-chat-motion session).** The order is three slices, each landing on its own: text files, then PDFs, then documents
+as `@file:` pointers in agent runs. Slice 3's contact
 points with the python, shell and policies lanes were ruled on by their coordinator (2026-10-28, "Rulings" below).
 
 ## What it is for
@@ -24,8 +25,9 @@ from the rest of window.ml:
 refused as "not a text file" by name. The extension list is not the test (a `.log` or an extensionless file is text if
 it decodes), but the picker's `accept` offers the common ones.
 
-**Sent whole, up to a cap.** Below `FILE_INLINE_MAX` (open: measured against [`PROMPT_BUDGET.md`](PROMPT_BUDGET.md); a
-first guess is about 8k tokens, scaled down for a small context window) the text goes into the message as one block
+**Sent whole, up to a cap.** Below `FILE_INLINE_MAX` (32,000 characters of decoded text per message across all its
+files, one exported constant in `src/attached-files.ts`; a FIRST FIGURE, about 8k tokens, still to be measured against
+[`PROMPT_BUDGET.md`](PROMPT_BUDGET.md) and scaled to a small context window) the text goes into the message as one block
 the model can tell apart from what the person typed:
 
 ```
@@ -34,26 +36,48 @@ the model can tell apart from what the person typed:
 </file>
 ```
 
-The name is escaped; the text is not interpreted. Several files are several blocks, in the order attached.
+The name (and the type) are attribute-escaped (`"`, `<`, `>`, `&`, line breaks). The text is not interpreted, with one
+exception: a literal `</file` (any case) inside it is written `<\/file` and the tag says `escaped="N"`, so a file cannot
+close its own block and speak as the person. A per-message random closing tag was the alternative; it was not taken
+because the same message must always produce the same prompt (an export, a diff of two runs, a test compare the
+bytes). `bytes` is the UTF-8 length of the decoded text. Several files are several blocks, in the order attached, after
+the typed words (or alone, when there are none).
 
-**Above the cap.** A chat refuses it with the reason and the size ("too large to send whole: 210 kB; this chat sends
-up to 40 kB"), never cutting it off silently. An agent run takes it as a pointer (slice 3); until slice 3 lands, the
-agent run refuses it the same way.
+**Above the cap.** A chat refuses it with the reason and the size ("server.log is too large to send whole: 210 kB; a
+message takes up to 32 kB of files"), never cutting it off silently. An agent run takes it as a pointer (slice 3); until
+slice 3 lands, the agent run refuses it the same way, and says so ("An agent run will read large files on demand in a
+later change"). The composer refuses before sending (a refused file stays in the box as a pill with its reason and is
+not sent); the runtime checks again, since a client's check is a convenience and the runtime's is the rule. A PDF is
+refused as "report.pdf is not a text file; PDFs come in a later change".
 
 **The command shape.** `chat.start`, `agent.start` and `session.send` gain `files?: AttachedFile[]`:
 
 ```ts
-interface AttachedFile { name: string; type: string; bytes: number; data: string /* base64 */ }
+interface AttachedFile { name: string; type: string; text: string /* decoded UTF-8 */ }
 ```
 
-Checked like `images` (session-commands.ts): a bounded name, a bounded count, a total size cap per command, and the
-same refusal shape. The hub forwards commands from the phone, so this is `@hub-compat`: the hub's frame limit decides
-the per-command cap (open: read it from window-ml-hub before choosing). A file never travels back to a client in a
-snapshot or event; a transcript carries its descriptor (name, type, size, how it was sent), and the bytes are fetched
-on demand like any heavy value (SESSION_CONTRACT.md, "Heavy data travels by reference").
+**Deviation from the first design: `text`, not base64 `data` with a `bytes` field.** Slice 1 carries only decoded text,
+so base64 would be a third of the cap spent on encoding; the base64 `data` comes with PDFs in slice 2, where the bytes
+are the point. Checked like `images` (`session-commands.ts`): a bounded name (255 characters), a bounded count (10), a
+total text cap per command (`FILE_INLINE_MAX`), and the same refusal shape (`invalid`, with the reason). A message with
+only files and no words is valid. **Not `@hub-compat`**: the hub forwards sealed bytes and never reads the field (a big
+command over the hub is now refused or its images shrunk, #1238, which this slice does not depend on). A runtime that
+does not list the new `capabilities.attachFiles` would ignore the field and send the message without the files, so a
+client sends `files` only to a runtime that lists it, and offers files only there.
 
-**Stored.** The bytes live in the value store (`ml-values`, `value-store.ts`), claimed by the session, so they outlive
-the worker and are released when the session is. Storage stats list attached files as their own row beside images.
+**What a transcript carries.** Not the file twice: the message's `text` is exactly what the model got, `<file>` blocks
+included, and the `display` that already separates a person's words from an element they attached (`PromptDisplay`)
+gains a `file` context, the descriptor (name, type, bytes, lines) and no text. That also fixes the earlier line that a
+file "never travels back in an event": in slice 1 the text does travel in the message's own text, as the rule that the
+log carries what the model saw requires. The bytes-by-reference design below applies to slice 2.
+
+**Stored (slice 2).** The bytes live in the value store (`ml-values`, `value-store.ts`), claimed by the session, so they
+outlive the worker and are released when the session is. Storage stats list attached files as their own row beside
+images. Slice 1 stores nothing of its own: the text is in the session's events and chat history.
+
+**Known gap.** A chat session a PAGE hosts (`ml.createChat` in a console, continued from the chat page) frames the files
+into the message but its event has no `display`, so the calm view shows the blocks as text. The worker's chats and
+every run have the chip.
 
 ## Slice 2: PDFs
 
@@ -206,8 +230,10 @@ or a message"). What a hostile page must not get, as tests that fail first:
 
 ## Open
 
-- `FILE_INLINE_MAX`, and whether it scales with the model's context window.
-- The per-command size cap, from the hub's frame limit.
+- `FILE_INLINE_MAX` is 32,000 characters as a first figure (slice 1); still open: measuring it against the prompt
+  budget, and whether it scales with the model's context window.
+- The per-command size cap: for text it is `FILE_INLINE_MAX` itself, well under the hub's frame limit; open again for
+  the bytes a PDF sends.
 - The PDF thresholds (the notebook).
 - Lines per page for a text file, and the per-call page cap of `look`.
 - Whether the page-image fallback for a scanned page without a vision model uses the reader model or OCR.

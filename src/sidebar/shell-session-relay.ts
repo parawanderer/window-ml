@@ -13,6 +13,7 @@
 // The page's answer is the page's CLAIM about its own session, so it decides nothing. A transcript still
 // changes only through the session's events.
 import { cleanImages } from "../contract";
+import { cleanFiles } from "../attached-files";
 import { toPage } from "../page-channel";
 import { gateOpen } from "../page-gate";
 
@@ -61,6 +62,7 @@ export function relaySessionToPage(msg: Record<string, unknown>, sendResponse: (
     const reqId = typeof msg.reqId === "string" ? msg.reqId : undefined;
     const elementContext = msg.elementContext as { selector?: unknown } | undefined;
     const ec = elementContext && typeof elementContext.selector === "string" ? elementContext : undefined;
+    const files = cleanFiles(msg.files);
     // WHERE IT WAS TYPED, from the route rather than from a field a sender chose. The panel says so outright
     // (it is the one composer not in this document); anything arriving with a `reqId` came in as a session
     // COMMAND, which is the chat app. Neither can be forged by the page: both crossed the background first.
@@ -70,7 +72,7 @@ export function relaySessionToPage(msg: Record<string, unknown>, sendResponse: (
         if (reqId) { try { sendResponse({ outcome: "none" }); } catch { /* the background stopped waiting */ } }
         return false;
     }
-    if (msg.action === "send") toPage({ __mlSessionSend: { hash: msg.hash, text: msg.text, images: cleanImages(msg.images as string[] | undefined), ...(ec ? { elementContext: ec } : {}), ...(surface ? { surface } : {}), reqId } });
+    if (msg.action === "send") toPage({ __mlSessionSend: { hash: msg.hash, text: msg.text, images: cleanImages(msg.images as string[] | undefined), ...(files ? { files } : {}), ...(ec ? { elementContext: ec } : {}), ...(surface ? { surface } : {}), reqId } });
     else if (msg.action === "cancel") toPage({ __mlCancelSession: { hash: msg.hash, reqId } });
     else if (msg.action === "continue") {
         // STRICT, not coerced: the runtime refuses a `"50"` outright (session-commands.ts), so accepting one here

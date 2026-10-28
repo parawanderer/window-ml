@@ -5,11 +5,14 @@
 import { useState, useRef, useEffect } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import { services } from "../services";
-import { loadDraft, loadDraftImages, onDraftRestored, saveDraft, saveDraftImages, sendHeld } from "../drafts";
+import { loadDraft, loadDraftFiles, loadDraftImages, onDraftRestored, saveDraft, saveDraftFiles, saveDraftImages, sendHeld } from "../drafts";
 import { config, rev } from "../store";
 import type { Session } from "../store";
 import { IconSend, IconStop } from "../icons";
 import { ClickableImg } from "../ui-kit";
+import { FilePill } from "./user-text";
+import { FILE_READ_MAX_BYTES, TEXT_FILE_ACCEPT, decodeTextFile, fileInfo, fileSummary, pendingRefusals, tooLarge, type FileTarget } from "../../attached-files";
+import type { AttachedFile } from "../../contract/contract-run";
 import { UsageBar } from "./usage";
 import { SpendChip } from "./spend";
 import { RunStatsBar } from "./agent-detail";
@@ -22,32 +25,93 @@ const COMPOSER_MAX_H = 180;
 // (via the parent shell/panel) → the handle by hash: STEER a running loop (say) or start a new turn (run),
 // the page deciding from the handle's live state. Claude-Code touch: while a run is IN FLIGHT and the box
 // is EMPTY, the submit button becomes a STOP that cancels; type anything and it's a send again.
-// Shared image-attach state for BOTH composers (session + Spotlight): a file upload or a clipboard paste
-// becomes data URLs, with a `loading` count so the thumb strip can show spinners while FileReader decodes.
-export function useImageAttach(initial?: () => string[]) {
+/** A file waiting in a box. `text` is its decoded text; a refused file has none, or has `why`/`tooBig` instead. */
+export interface PendingFile { name: string; type: string; text?: string; /** refused: not a text file, or this runtime takes no files */ why?: string; /** refused unread: its size in bytes */ tooBig?: number }
+/** What a box needs to take text files: where the message goes, whether the runtime takes them, what the draft held. */
+export interface FileAttachOpts { target: () => FileTarget; accepts: () => boolean; initial?: () => AttachedFile[] }
+
+/**
+ * THE ATTACH STATE of a box, shared by BOTH composers (session and Spotlight) and the start page: a file upload, a
+ * clipboard paste or a drop becomes data URLs for images, with a `loading` count so the thumb strip can show spinners
+ * while FileReader decodes.
+ *
+ * With `opts.files` it also takes TEXT FILES (docs/spec/FILE_ATTACHMENTS.md, slice 1): read as UTF-8 one after another,
+ * and kept as `docs` beside the images, each with the reason it will not be sent when it is refused. The composer sends
+ * `sendable`; a refused file stays in the box with its reason until it is removed.
+ * @param initial the images the box starts with (a draft)
+ * @param opts `files`: where the message goes, whether the runtime takes files, and the files the draft held
+ */
+export function useImageAttach(initial?: () => string[], opts?: { files: FileAttachOpts }) {
     const [imgs, setImgs] = useState<string[]>(initial ?? []);
+    const [docs, setDocs] = useState<PendingFile[]>(() => opts?.files.initial?.() ?? []);
     const [loading, setLoading] = useState(0);
     const fileRef = useRef<HTMLInputElement>(null);
+    const fileOpts = opts?.files;
+    const addDoc = async (f: File): Promise<void> => {
+        if (!fileOpts?.accepts()) { setDocs(a => [...a, { name: f.name, type: f.type, why: `${f.name} cannot be sent: this runtime does not take files yet` }]); return; }
+        if (f.size >= FILE_READ_MAX_BYTES) { setDocs(a => [...a, { name: f.name, type: f.type, tooBig: f.size }]); return; }
+        try {
+            const r = decodeTextFile(f.name, f.type, new Uint8Array(await f.arrayBuffer()));
+            setDocs(a => [...a, r.ok ? { name: r.file.name, type: r.file.type, text: r.file.text } : { name: f.name, type: f.type, why: r.reason }]);
+        } catch { setDocs(a => [...a, { name: f.name, type: f.type, why: `${f.name} could not be read` }]); }
+    };
     const addFiles = (files: FileList | File[] | null | undefined) => {
-        const list = [...(files || [])].filter(f => f && f.type.startsWith("image/"));
-        if (!list.length) return;
-        setLoading(n => n + list.length);
+        const all = [...(files || [])].filter(f => !!f);
+        const list = all.filter(f => f.type.startsWith("image/"));
+        const other = fileOpts ? all.filter(f => !f.type.startsWith("image/")) : [];
+        if (!list.length && !other.length) return;
+        setLoading(n => n + list.length + other.length);
         for (const f of list) {
             const rd = new FileReader();
             rd.onload = () => { const url = String(rd.result || ""); if (url.startsWith("data:image/")) setImgs(a => [...a, url]); setLoading(n => Math.max(0, n - 1)); };
             rd.onerror = () => setLoading(n => Math.max(0, n - 1));
             rd.readAsDataURL(f);
         }
+        // One after another, so the pills come in the order the files were attached.
+        void (async () => { for (const f of other) { await addDoc(f); setLoading(n => Math.max(0, n - 1)); } })();
     };
     // Paste a screenshot straight into the box (the common flow). Returns true when it consumed an image
     // (so the caller can preventDefault); false lets a normal text paste through.
     const onPaste = (e: ClipboardEvent): void => {
-        const files = [...(e.clipboardData?.items || [])].filter(it => it.kind === "file" && it.type.startsWith("image/")).map(it => it.getAsFile()).filter(Boolean) as File[];
+        const files = [...(e.clipboardData?.items || [])].filter(it => it.kind === "file" && (fileOpts || it.type.startsWith("image/"))).map(it => it.getAsFile()).filter(Boolean) as File[];
         if (!files.length) return;
         e.preventDefault();
         addFiles(files);
     };
-    return { imgs, setImgs, loading, addFiles, onPaste, fileRef, remove: (i: number) => setImgs(a => a.filter((_, j) => j !== i)), clear: () => setImgs([]) };
+    // Files dragged onto the box. Anything else dragged (text, a link) keeps the browser's own behaviour.
+    const onDragOver = (e: DragEvent): void => { if (e.dataTransfer?.types?.includes("Files")) e.preventDefault(); };
+    const onDrop = (e: DragEvent): void => {
+        if (!e.dataTransfer?.files?.length) return;
+        e.preventDefault();
+        addFiles(e.dataTransfer.files);
+    };
+    // Why each pending file is refused (null: it will be sent). Derived on every render, so switching a start page from
+    // a chat to an agent run changes the wording, and removing a file frees the room it took.
+    const target = fileOpts?.target() ?? "chat";
+    const fits = pendingRefusals(docs.filter(d => d.text !== undefined) as AttachedFile[], target);
+    let k = 0;
+    const reasons = docs.map((d): string | null => d.why ?? (d.tooBig != null ? tooLarge(d.name, d.tooBig, false, target) : fits[k++] ?? null));
+    const sendable: AttachedFile[] = docs.filter((d, i) => d.text !== undefined && !reasons[i]).map(d => ({ name: d.name, type: d.type, text: d.text! }));
+    return {
+        imgs, setImgs, loading, addFiles, onPaste, onDragOver, onDrop, fileRef,
+        docs, setDocs, reasons, sendable, canFiles: !!fileOpts, acceptsFiles: !!fileOpts?.accepts(), fileAccept: fileOpts?.accepts() ? `image/*,${TEXT_FILE_ACCEPT}` : "image/*",
+        remove: (i: number) => setImgs(a => a.filter((_, j) => j !== i)),
+        removeDoc: (i: number) => setDocs(a => a.filter((_, j) => j !== i)),
+        clear: () => { setImgs([]); setDocs([]); },
+    };
+}
+
+/** The text files waiting in a box, as pills with their reasons: a refused one says why and is not sent. */
+export function FileStrip({ docs, reasons, onRemove }: { docs: PendingFile[]; reasons: (string | null)[]; onRemove: (i: number) => void }) {
+    if (!docs.length) return null;
+    return (
+        <div class="cfiles">
+            {docs.map((d, i) => (
+                <FilePill key={`${i}${d.name}`} summary={d.text !== undefined ? fileSummary(fileInfo({ name: d.name, type: d.type, text: d.text })) : d.name}
+                    refusal={reasons[i]} onRemove={() => onRemove(i)} />
+            ))}
+        </div>
+    );
 }
 
 // The attached-image thumbnail strip: previews with an × to remove, plus spinner placeholders for
@@ -139,7 +203,9 @@ export function Composer({ s, multiline, tools, keys }: { s: Session; multiline?
     // send that fails puts its text back. Keyed by the session, so each session keeps its own.
     const key = s.hash;
     const [text, setText] = useState(() => loadDraft(key));
-    const att = useImageAttach(() => loadDraftImages(key));
+    const att = useImageAttach(() => loadDraftImages(key), {
+        files: { target: () => (s.kind === "agent" ? "agent" : "chat"), accepts: () => services().acceptsFiles(key), initial: () => loadDraftFiles(key) },
+    });
     const type = (t: string) => { setText(t); saveDraft(key, t); };
     // Another session in the same box: its own draft. Not on mount, which `useState` already read: an effect runs after
     // paint, and a keystroke landing before it would be overwritten by what was saved before that keystroke.
@@ -147,10 +213,12 @@ export function Composer({ s, multiline, tools, keys }: { s: Session; multiline?
     useEffect(() => {
         if (shown.current === key) return;
         shown.current = key;
-        setText(loadDraft(key)); att.setImgs(loadDraftImages(key));
+        setText(loadDraft(key)); att.setImgs(loadDraftImages(key)); att.setDocs(loadDraftFiles(key));
     }, [key]);
     useEffect(() => { saveDraftImages(key, att.imgs); }, [key, att.imgs]);
-    useEffect(() => onDraftRestored((k) => { if (k === key) { setText(loadDraft(key)); att.setImgs(loadDraftImages(key)); } }), [key]);
+    // Only files that were READ are a draft: a refused one (not text, too big unread) has no text to keep.
+    useEffect(() => { saveDraftFiles(key, att.docs.filter(d => d.text !== undefined).map(d => ({ name: d.name, type: d.type, text: d.text! }))); }, [key, att.docs]);
+    useEffect(() => onDraftRestored((k) => { if (k === key) { setText(loadDraft(key)); att.setImgs(loadDraftImages(key)); att.setDocs(loadDraftFiles(key)); } }), [key]);
     // Every session is continuable: an AGENT session has a steerable handle in the page's registry
     // (say/run/cancel); a plain CHAT session continues via its history in the session registry (a fresh turn,
     // or the in-flight fetch aborted). The page routes `sessionSend`/`sessionCancel` to whichever it is.
@@ -159,15 +227,15 @@ export function Composer({ s, multiline, tools, keys }: { s: Session; multiline?
     // two disagree whenever a run dies without emitting a terminal event — the client shows pending for ever while
     // the index has moved on, so the stop button stayed and answered "the session is not running" when pressed.
     const running = s.status === "pending" && services().stillLive(s.hash);
-    const empty = !text.trim() && !att.imgs.length;   // an IMAGE-only send is allowed
+    const empty = !text.trim() && !att.imgs.length && !att.sendable.length;   // an IMAGE-only or FILE-only send is allowed
     const stop = running && empty;   // in-flight + empty box → the button cancels the run/turn (Claude-Code style)
     const cancel = () => services().cancelSession(s.hash);
     const send = () => {
         const t = text.trim();
-        if (!t && !att.imgs.length) return;
-        const imgs = att.imgs;
+        if (!t && !att.imgs.length && !att.sendable.length) return;
+        const imgs = att.imgs, files = att.sendable;
         setText(""); att.clear();
-        void sendHeld(key, t, imgs, () => services().sendToSession(key, t, imgs));
+        void sendHeld(key, t, imgs, () => services().sendToSession(key, t, imgs, files), files);
     };
     const act = () => (stop ? cancel() : send());
     // Grow to fit, to a cap — measured from `scrollHeight`, which needs the height reset first or it only ever
@@ -199,14 +267,15 @@ export function Composer({ s, multiline, tools, keys }: { s: Session; multiline?
     const narrow = useNarrowScreen();
     const placeholder = running
         ? (agent ? (narrow ? "Steer, or queue a follow-up…" : "Steer this run, or send to queue a follow-up…") : (narrow ? "Sending…" : "Sending… or stop this turn"))
-        : narrow ? "Send a message…" : "Send a message (or paste an image) to continue…";
+        : narrow ? "Send a message…" : `Send a message (or paste ${att.canFiles && att.acceptsFiles ? "an image or a file" : "an image"}) to continue…`;
     return (
-        <div class="composer" data-rev={r}>
+        <div class="composer" data-rev={r} onDragOver={att.onDragOver} onDrop={att.onDrop}>
             <ThumbStrip imgs={att.imgs} loading={att.loading} onRemove={att.remove} />
+            <FileStrip docs={att.docs} reasons={att.reasons} onRemove={att.removeDoc} />
             <div class={`composer-row${stacked ? " stacked" : ""}`}>
-                <input ref={att.fileRef} type="file" accept="image/*" multiple style="display:none"
+                <input ref={att.fileRef} type="file" accept={att.fileAccept} multiple style="display:none"
                     onChange={e => { att.addFiles((e.target as HTMLInputElement).files); (e.target as HTMLInputElement).value = ""; }} />
-                <button class="tt cbtn" onClick={() => att.fileRef.current?.click()} aria-label="Attach an image">＋<span class="tt-pop left above" role="tooltip">Attach an image (or paste one into the box)</span></button>
+                <button class="tt cbtn" onClick={() => att.fileRef.current?.click()} aria-label={att.canFiles ? "Attach a file" : "Attach an image"}>＋<span class="tt-pop left above" role="tooltip">{att.canFiles ? "Attach an image or a text file (or paste or drop one)" : "Attach an image (or paste one into the box)"}</span></button>
                 {/* A PAGE's composer is a box you can write a paragraph in; a panel's is one line, because a
                     drawer beside a page has no room for more. Enter still sends and Shift+Enter still makes a
                     line — that was already true of the key handler, and the single-line `input` was simply

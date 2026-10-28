@@ -367,6 +367,32 @@ test("composite: an event subscription opened before the runtime list arrives at
 
 /* ------------------------------ services over a host ------------------------------ */
 
+test("services: files are offered only for a runtime that lists attachFiles, and ride on session.send as files", async () => {
+    sessionMap.clear();
+    view.value = { name: "list" };
+    const fake = new FakeHost({
+        runtimes: [runtime("new", { capabilities: { chat: true, agent: true, attachFiles: true } }), runtime("old", { capabilities: { chat: true, agent: true } })],
+        sessions: [
+            { summary: summary("new", "aaaa0001"), events: [agentStart("aaaa0001", "t")] },
+            { summary: summary("old", "aaaa0001"), events: [agentStart("aaaa0001", "t")] },
+        ],
+    });
+    const store = new ChatStore(fake);
+    store.start();
+    const svc = hostServices(store, { kind: "web", prefs: { get: () => undefined, set() {} }, openImage() {}, saveFile() {}, copyText: async () => true });
+    await flush();
+    assert.equal(svc.acceptsFiles("new:aaaa0001"), true);
+    assert.equal(svc.acceptsFiles("old:aaaa0001"), false, "an older runtime would ignore the field, so the composer must not offer it");
+    assert.equal(svc.acceptsFiles("nowhere:aaaa0001"), false);
+    assert.equal(svc.acceptsFiles("garbage"), false);
+    const f = [{ name: "a.txt", type: "text/plain", text: "x" }];
+    await svc.sendToSession("new:aaaa0001", "", undefined, f);
+    assert.deepEqual(fake.commands.at(-1), { type: "session.send", session: { runtime: "new", hash: "aaaa0001" }, text: "", files: f });
+    await svc.sendToSession("new:aaaa0001", "plain");
+    assert.equal("files" in fake.commands.at(-1), false);
+    store.dispose();
+});
+
 test("services: approvals, messages and side calls become contract commands on the session's runtime", async () => {
     const { fake, store } = world();
     fake.addSession(summary("laptop", "gate0001", { status: "waiting", pendingApprovals: 1 }), [

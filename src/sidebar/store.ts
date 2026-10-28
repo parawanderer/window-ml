@@ -53,6 +53,8 @@ export const resWindowPref = signal(RESWIN_DEFAULT);   // the window the chart O
 export type Status = "pending" | "ok" | "err";
 export interface Turn {
     id: string; ts: number; user: string; images: string[] | null;
+    /** how `user` is shown when attached files were folded into it: the words, and the files as chips (contract-run.ts) */
+    display?: import("../contract/contract-run").PromptDisplay;
     assistant?: string; sources?: unknown[] | null; structured?: boolean; error?: string; status: Status;
     reqModel?: string | null;   // the model the caller explicitly requested (null = fell back to default/utility)
     model?: string | null;      // the model that actually produced this reply (resolved server-side)

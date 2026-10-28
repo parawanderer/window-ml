@@ -12,6 +12,7 @@ import {
     type SessionId, type SessionIndexUpdate, type SessionKey, type SessionStreamMessage, type SessionSummary, type StreamPosition, type TabGroupInfo, type TabInfo, type Unsubscribe, type ListedSession,
 } from "../session/session-host";
 import { capTitle } from "../session/session-title";
+import { checkFilesField, frameFiles } from "../attached-files";
 import { holds } from "./grants";
 
 interface Logged { cursor: number; event: MlDebugEvent }
@@ -439,13 +440,16 @@ export class FakeHost implements SessionHost {
             // exercised here at phone width before it is exercised against a browser.
             case "chat.start": {
                 if (!caps.chat) return fail("unsupported", "this runtime holds no chats");
+                const att = checkFilesField(c.files, "chat");
+                if (att.reason) return fail("invalid", att.reason);
+                const framed = frameFiles(c.text, att.files);
                 const hash = newHash();
                 const key = sessionKey({ runtime: rt.id, hash });
                 this.addSession({ id: { runtime: rt.id, hash }, kind: "chat", status: "done", createdTs: Date.now(), lastTs: Date.now(), pendingApprovals: 0, saved: !c.ephemeral, task: c.text });
                 const t = { id: `${hash}-0`, ts: Date.now(), save: !c.ephemeral, session: { hash, turn: 0 } };
                 this.emit(key, {
-                    ...t, kind: "chat", streaming: false,
-                    request: { model: "fake", extend: null, messages: [{ role: "user", content: c.text }], images: c.images ?? null, toolIds: null, schema: false, think: null, maxTokens: null },
+                    ...t, kind: "chat", streaming: false, ...(framed.display ? { display: framed.display } : {}),
+                    request: { model: "fake", extend: null, messages: [{ role: "user", content: framed.text }], images: c.images ?? null, toolIds: null, schema: false, think: null, maxTokens: null },
                     config: { system: c.system ?? null, model: c.model ?? "fake", think: c.think ?? null, schema: false, toolIds: null, maxTokens: null, save: !c.ephemeral },
                 } as MlDebugEvent);
                 this.emit(key, { ...t, ts: Date.now() + 1, kind: "chat-result", content: `You said: ${c.text}`, sources: null, structured: false, model: "fake", extend: null, reasoning: null, usage: null });
@@ -457,10 +461,13 @@ export class FakeHost implements SessionHost {
                 if (c.target.kind === "tab" && !caps.tabs) return fail("unsupported", "this runtime has no tabs");
                 // As the real runtime does: a tab that has closed is refused, never swapped for another.
                 if (c.target.kind === "tab" && !this.tabs.some((t) => c.target.kind === "tab" && t.tabId === c.target.tabId)) return fail("not-found", "no such tab");
+                const att = checkFilesField(c.files, "agent");
+                if (att.reason) return fail("invalid", att.reason);
+                const framed = frameFiles(c.task, att.files);
                 const hash = newHash();
                 const key = sessionKey({ runtime: rt.id, hash });
                 this.addSession({ id: { runtime: rt.id, hash }, kind: "agent", status: "running", createdTs: Date.now(), lastTs: Date.now(), pendingApprovals: 0, saved: !c.ephemeral, task: c.task });
-                this.emit(key, { id: hash, ts: Date.now(), save: !c.ephemeral, session: { hash, turn: 0 }, kind: "agent", task: c.task, ...(c.images?.length ? { images: c.images } : {}), model: c.model ?? "fake", maxSteps: c.maxSteps ?? 10, config: undefined as never } as MlDebugEvent);
+                this.emit(key, { id: hash, ts: Date.now(), save: !c.ephemeral, session: { hash, turn: 0 }, kind: "agent", task: framed.text, ...(framed.display ? { display: framed.display } : {}), ...(c.images?.length ? { images: c.images } : {}), model: c.model ?? "fake", maxSteps: c.maxSteps ?? 10, config: undefined as never } as MlDebugEvent);
                 return ok({ session: { runtime: rt.id, hash } });
             }
         }
@@ -498,15 +505,18 @@ export class FakeHost implements SessionHost {
                 return ok({ resolved: true });
             }
             case "session.send": {
+                const att = checkFilesField(c.files, h.summary.kind === "agent" ? "agent" : "chat");
+                if (att.reason) return fail("invalid", att.reason);
+                const framed = frameFiles(c.text, att.files);
                 if (h.summary.kind === "agent") {
-                    this.emit(key, { ...base, kind: "agent-say", text: c.text, ...(c.images ? { images: c.images } : {}), sayId: `say-${now}` });
+                    this.emit(key, { ...base, kind: "agent-say", text: framed.text, ...(framed.display ? { display: framed.display } : {}), ...(c.images ? { images: c.images } : {}), sayId: `say-${now}` });
                     return ok({ mode: h.summary.status === "running" || h.summary.status === "waiting" ? "steer" : "turn" });
                 }
                 const turn = h.log.filter((e) => e.event.kind === "chat").length;
                 const t = { ...base, id: `${c.session.hash}-${turn}`, session: { hash: c.session.hash, turn } };
                 this.emit(key, {
-                    ...t, kind: "chat", streaming: false,
-                    request: { model: "fake", extend: null, messages: [{ role: "user", content: c.text }], images: c.images ?? null, toolIds: null, schema: false, think: null, maxTokens: null },
+                    ...t, kind: "chat", streaming: false, ...(framed.display ? { display: framed.display } : {}),
+                    request: { model: "fake", extend: null, messages: [{ role: "user", content: framed.text }], images: c.images ?? null, toolIds: null, schema: false, think: null, maxTokens: null },
                     config: { system: null, model: "fake", think: null, schema: false, toolIds: null, maxTokens: null, save: h.summary.saved },
                 } as MlDebugEvent);
                 // A message carrying a ```mermaid fence is streamed back as written, so a spec can watch a diagram's fence

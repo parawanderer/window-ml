@@ -43,6 +43,14 @@ export const IconInfo = () => (
     </svg>
 );
 
+/** A sheet of paper with a folded corner and two lines: an attached TEXT FILE, on the chip that names it. */
+export const IconFile = () => (
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M4 1.8h5.2L12.5 5v9.2H4z" />
+        <path d="M9.2 1.8V5h3.3M6 8.2h4.5M6 10.8h4.5" />
+    </svg>
+);
+
 /** A warning triangle (an SVG — the native ⚠ emoji renders inconsistently and off-baseline). Its dot is a real
  *  circle for the same reason {@link IconInfo}'s is, and at the same size: the two sit on one card and the docstring
  *  above is only true while they are drawn alike. */

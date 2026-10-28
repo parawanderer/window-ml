@@ -11,6 +11,10 @@
 //   - A send still held when the page died (the app killed, the tab closed) was never confirmed: the next page load
 //     puts it back in the box. The transcript says whether it arrived; losing it is the worse mistake.
 //
+// Attached TEXT FILES ride the same mechanism: kept in memory, written through to the same IndexedDB store (a record's
+// items are JSON strings of `{ name, type, text }` instead of data URLs), held with a send and put back with it when
+// the send fails or its page died. Only files that are text are kept; a refused file is not a draft.
+//
 // Images are kept in memory (the synchronous source: `loadDraftImages` never waits) AND written through to IndexedDB
 // (`ml-drafts`), since a few pasted screenshots are megabytes, past what localStorage will hold. On load the store is
 // read back in the background; each key it restores fills the memory and tells the listeners, so a box already drawn
@@ -19,6 +23,9 @@
 // another tab's send may still be live). The store is capped (see `CAP_BYTES`), least recently saved key first. Every
 // storage call is guarded, since a private window or blocked site data throws, and the box must still work: it then
 // lasts the page, as before.
+
+import type { AttachedFile } from "../contract/contract-run";
+import { cleanFiles } from "../attached-files";
 
 const DRAFT = "wml-draft:";
 const SENDING = "wml-sending:";
@@ -37,6 +44,10 @@ export type SendOutcome = { ok: true } | { ok: false; error?: string };
 const images = new Map<string, string[]>();
 // state: ui (the images of each send in flight, by send id; also in IndexedDB until the send's result arrives)
 const heldImages = new Map<string, string[]>();
+// state: ui (the box's attached text files by session key; written through to IndexedDB `ml-drafts`, like the images)
+const files = new Map<string, AttachedFile[]>();
+// state: ui (the files of each send in flight, by send id; also in IndexedDB until the send's result arrives)
+const heldFiles = new Map<string, AttachedFile[]>();
 // state: plumbing (who hears of a restore)
 const listeners = new Set<(key: string) => void>();
 
@@ -53,6 +64,8 @@ const DB_NAME = "ml-drafts";
 const STORE = "images";
 const IMG = "img:";
 const HELD = "held:";
+const FIL = "file:";
+const HELDF = "heldfile:";
 
 /** One record: a key's box (`img:<key>`) or a send in flight (`held:<id>`). */
 interface Rec { id: string; key: string; imgs: string[]; bytes: number; at: number }
@@ -67,6 +80,8 @@ const index = new Map<string, { bytes: number; at: number }>();
 const touched = new Set<string>();
 // state: cache (the held sends' images the restore found, by send id, until their text is reclaimed or they age out)
 const storedHeld = new Map<string, Rec>();
+// state: cache (the same, for the held sends' files)
+const storedHeldFiles = new Map<string, Rec>();
 // state: plumbing (send ids `loadDraft` declared dead before the restore finished, by key; claimed when it does)
 const pendingDead = new Map<string, string[]>();
 /** A held record no page has claimed for this long is an orphan (its owner is long gone and its text never asked for). */
@@ -129,11 +144,17 @@ function dropHeld(id: string): void {
 
 const same = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && a.every((u, i) => u === b[i]);
 
+/** Files as the records keep them: one JSON string each, so a record's items stay opaque strings for the size cap. */
+const packFiles = (fs: readonly AttachedFile[]): string[] => fs.map((f) => JSON.stringify(f));
+const unpackFiles = (items: readonly string[]): AttachedFile[] => items.flatMap((s) => { try { return cleanFiles([JSON.parse(s)]) ?? []; } catch { return []; } });
+const sameFiles = (a: readonly AttachedFile[], b: readonly AttachedFile[]): boolean => same(packFiles(a), packFiles(b));
+
 /** Read the store back into the memory; what was saved on this page load meanwhile wins. */
 function restore(): void {
     void enqueue(async (db) => {
         const recs = (await req(db.transaction(STORE).objectStore(STORE).getAll())) as Rec[];
         const changed = new Set<string>();
+        const changedFiles = new Set<string>();
         for (const r of recs) {
             if (!r || typeof r.id !== "string" || !Array.isArray(r.imgs) || !r.imgs.length) continue;
             if (r.id.startsWith(IMG) && !touched.has(r.key)) {
@@ -142,18 +163,29 @@ function restore(): void {
                 images.set(r.key, r.imgs);
                 changed.add(r.key);
             }
+            if (r.id.startsWith(FIL) && !touched.has(FIL + r.key)) {
+                const fs = unpackFiles(r.imgs);
+                if (!fs.length) continue;
+                index.set(r.id, { bytes: r.bytes, at: r.at });
+                lastAt = Math.max(lastAt, r.at);
+                files.set(r.key, fs);
+                changed.add(r.key);
+                changedFiles.add(r.key);
+            }
         }
         const now = Date.now();
         for (const r of recs) {
-            if (!r || typeof r.id !== "string" || !Array.isArray(r.imgs) || !r.imgs.length || !r.id.startsWith(HELD)) continue;
+            if (!r || typeof r.id !== "string" || !Array.isArray(r.imgs) || !r.imgs.length || !(r.id.startsWith(HELD) || r.id.startsWith(HELDF))) continue;
             index.set(r.id, { bytes: r.bytes, at: r.at });
             // A held record is only claimed when its text is (`loadDraft`); one nobody claims for a day is an orphan.
             if (now - r.at > ORPHAN_MS) persist(r.id, "", []);
+            else if (r.id.startsWith(HELDF)) storedHeldFiles.set(r.id.slice(HELDF.length), r);
             else storedHeld.set(r.id.slice(HELD.length), r);
         }
         restoring = false;
         touched.clear();
-        for (const k of changed) persist(IMG + k, k, images.get(k) ?? []);
+        for (const k of changed) if (images.has(k)) persist(IMG + k, k, images.get(k) ?? []);
+        for (const k of changedFiles) persist(FIL + k, k, packFiles(files.get(k) ?? []));
         for (const [key, ids] of pendingDead) claimHeld(key, ids);
         pendingDead.clear();
         for (const k of changed) for (const cb of listeners) { try { cb(k); } catch { /* a listener's fault is its own */ } }
@@ -169,11 +201,18 @@ function restore(): void {
 function claimHeld(key: string, ids: string[]): void {
     if (restoring) { pendingDead.set(key, [...(pendingDead.get(key) ?? []), ...ids]); return; }
     const recs = ids.map((id) => storedHeld.get(id)).filter((r): r is Rec => !!r);
-    for (const id of ids) storedHeld.delete(id);
-    if (!recs.length) return;
-    images.set(key, [...recs.flatMap((r) => r.imgs), ...(images.get(key) ?? [])]);
-    persist(IMG + key, key, images.get(key)!);
-    for (const r of recs) persist(r.id, "", []);
+    const frecs = ids.map((id) => storedHeldFiles.get(id)).filter((r): r is Rec => !!r);
+    for (const id of ids) { storedHeld.delete(id); storedHeldFiles.delete(id); }
+    if (!recs.length && !frecs.length) return;
+    if (recs.length) {
+        images.set(key, [...recs.flatMap((r) => r.imgs), ...(images.get(key) ?? [])]);
+        persist(IMG + key, key, images.get(key)!);
+    }
+    if (frecs.length) {
+        files.set(key, [...frecs.flatMap((r) => unpackFiles(r.imgs)), ...(files.get(key) ?? [])]);
+        persist(FIL + key, key, packFiles(files.get(key)!));
+    }
+    for (const r of [...recs, ...frecs]) persist(r.id, "", []);
     // Not inside the caller: it may be a render.
     queueMicrotask(() => { for (const cb of listeners) { try { cb(key); } catch { /* a listener's fault is its own */ } } });
 }
@@ -235,6 +274,20 @@ export function saveDraftImages(key: string, imgs: string[]): void {
     persist(IMG + key, key, imgs);
 }
 
+/** The box's attached text files for `key`: the memory's, which the IndexedDB copy fills in shortly after load. */
+export function loadDraftFiles(key: string): AttachedFile[] {
+    return files.get(key) ?? [];
+}
+
+/** Keep the box's attached text files for `key`. */
+export function saveDraftFiles(key: string, fs: readonly AttachedFile[]): void {
+    if (sameFiles(files.get(key) ?? [], fs)) return;
+    if (restoring) touched.add(FIL + key);
+    if (fs.length) files.set(key, [...fs]);
+    else files.delete(key);
+    persist(FIL + key, key, packFiles(fs));
+}
+
 /** Call `cb(key)` when a failed send has put text back for `key`. Returns the unsubscribe. */
 export function onDraftRestored(cb: (key: string) => void): () => void {
     listeners.add(cb);
@@ -246,13 +299,15 @@ export function onDraftRestored(cb: (key: string) => void): () => void {
  * text and images come back into the saved draft for `key` (in front of anything typed meanwhile) and every listener
  * hears of it. Never throws: a `send` that throws counts as a failure.
  */
-export async function sendHeld(key: string, text: string, imgs: string[], send: () => Promise<SendOutcome>): Promise<SendOutcome> {
+export async function sendHeld(key: string, text: string, imgs: string[], send: () => Promise<SendOutcome>, attached: readonly AttachedFile[] = []): Promise<SendOutcome> {
     const id = `${PAGE}:${++seq}`;
     write(SENDING + key, [...(read<Held[]>(SENDING + key) ?? []), { id, text }]);
     if (imgs.length) { heldImages.set(id, imgs); persist(HELD + id, key, imgs); }
+    if (attached.length) { heldFiles.set(id, [...attached]); persist(HELDF + id, key, packFiles(attached)); }
     // The box was emptied for this send: what is saved as typed is what comes after it.
     saveDraft(key, "");
     saveDraftImages(key, []);
+    saveDraftFiles(key, []);
     let r: SendOutcome;
     try { r = await send(); } catch (e) { r = { ok: false, error: e instanceof Error ? e.message : String(e) }; }
     write(SENDING + key, (read<Held[]>(SENDING + key) ?? []).filter((h) => h.id !== id));
@@ -260,10 +315,12 @@ export async function sendHeld(key: string, text: string, imgs: string[], send: 
     if (!r.ok) {
         saveDraft(key, joinDraft(text, read<string>(DRAFT + key) ?? ""));
         saveDraftImages(key, [...held, ...loadDraftImages(key)]);
+        saveDraftFiles(key, [...(heldFiles.get(id) ?? []), ...loadDraftFiles(key)]);
         for (const cb of listeners) cb(key);
     }
     // After the failure path has saved them again, so a death in between loses nothing.
     if (imgs.length) dropHeld(id);
+    if (attached.length) { heldFiles.delete(id); persist(HELDF + id, "", []); }
     return r;
 }
 
