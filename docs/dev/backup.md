@@ -15,7 +15,7 @@ in four PRs, and each section below says which parts exist yet.
 | 3c. Two machines on one encrypted folder: adopting the folder's key, keeping one's own as a retired key | built |
 | 3d. Forgetting a retired key, by hand, in Settings | built |
 | 3e. Telling a planted key from the real one: verified counts, key ids to match, the folder's pinned key | built |
-| 3f. Keeping the pin armed: junk does not hold it off, a re-pick of the same folder keeps it, ids worded as claims | designed |
+| 3f. Keeping the pin armed: junk does not hold it off, a re-pick of the same folder keeps it, ids worded as claims | built |
 
 The archive itself (SQLite over OPFS, the worker, un-archiving) is `archive.md`; read it first.
 
@@ -604,6 +604,27 @@ may not be what they say." No change to `adoptKeyring`, which already refuses a 
   re-pick keeps "This folder's key changed"; the changed-key and adopt wording for a relabelled month says "says");
   a re-pick of a DIFFERENT folder still drops the pin; a folder with a well-formed unheld-key month still pins nothing
   on refresh; `foreign` counted apart from damage; THE UPGRADE: a pin saved by 3e survives a same-folder re-pick.
+
+**What part 3f built.**
+
+- **The gate** is `folderPinToSet(r, pin, skipped, counts)` in `archive-section.tsx`: with the old conditions (connected,
+  encrypted, `lastSync`, keyring set, no pin) it pins this install's id unless `counts` is null (the folder could not be
+  read here), `counts.foreign > 0`, or `skipped` holds an `other-key` skip. Every other skip reason no longer blocks.
+  `LocalArchiveFolder.refresh` passes the real `KeyCounts`; its pre-check for whether to count at all passes an
+  all-zero one.
+- `monthKeyCounts` returns `{ byKey, unopened, foreign }`. `foreign` is counted where the header reads and
+  `keyFor(ring, keyId)` is null (with no ring, every readable encrypted header); those files stay in `unopened`. A
+  header that does not read throws into the damage branch, so it is `unopened` only.
+- **The same-entry check** is in `saveFolder` (`archive-folder.ts`). `isSameEntry` is async, so the stored handle is
+  read first in its own transaction, then the write is one transaction that deletes the pin unless the entries matched.
+  A null handle, no stored handle, a handle without `isSameEntry`, or a throw drops it. A pin saved by 3e is a plain
+  string under `pin`, which is what is kept, so nothing is migrated (THE UPGRADE test writes one by hand).
+- Wording is as designed: "N month(s) says/say it is/they are under X", "These files say they are under X. ...",
+  and the wrong-secret addition only when the adopt block showed an id. The first two keep their `@gallery` examples.
+- Tests: the probe's three rows as plain tests in `tests/archive-pin.test.mjs` with the worker scripted to report the
+  junk file as an `unreadable` skip, a re-pick of another folder, the unheld-key month on refresh, the 3e pin kept, and
+  `foreign` in `tests/folder-sync.test.mjs`. The probe's first row asserted the pin was dropped on a same-folder re-pick
+  and re-armed after; with the re-pick keeping it, the re-arm is exercised by dropping the folder and picking it again.
 
 ## The folder: merge before write (part A)
 
