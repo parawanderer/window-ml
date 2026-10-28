@@ -138,7 +138,9 @@ not, record that and choose between `declarativeNetRequest` rules and following 
    and Settings rows (new strings: owner approval).
    FOUND 2026-10-27 by the janitor on the built step 2a: a document loading between a site turning visible and its
    registration covering it answers `open: true` with no injected.js in it. The security lane's own `@security` PR,
-   after #1189.
+   after #1189: OPEN 2026-10-28 as #1206, the janitor reviewing. Step 3's build sits on the lane's
+   `feat/hidden-isolated-tools-v2` (the tools' unit suites run against the isolated bundle too, a CI step; the
+   hidden-with-run trace asserts no `ml` global); its PR opens after the red team's five-property PR, which follows #1203.
 3. Tools in the content script's isolated world on hidden pages (the second bundle, behind no switch; the tools' tests
    run against both bundles; detection-surface's hidden-with-run `pageEvents` row goes to `[]`; rule 10: a separate
    agent's test-only red-team PR on main first, the lane's PR after), and `chrome.dom` for closed roots. Exec's default world is now a switch
