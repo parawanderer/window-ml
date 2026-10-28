@@ -144,10 +144,10 @@ not, record that and choose between `declarativeNetRequest` rules and following 
    `feat/hidden-isolated-tools-v2` (the tools' unit suites run against the isolated bundle too, a CI step; the
    hidden-with-run trace asserts no `ml` global); its PR opens after the red team's five-property PR, which follows #1203: #1228 MERGED 2026-10-28 at 46065d09
    (the hidden-page step-3 properties failing-first and the :272/:309 ruling split), verified. The lane's step-3 PR is
-   #1236 OPEN (from `feat/hidden-isolated-tools-v2` with main and #1228 merged in, `@agent,@security`, janitor
+   #1236 MERGED 2026-10-28 at 3967b0df (CI green on run 40715649572; the janitor's dedupe finding fixed at 33d20d03 before the merge; the lane's clone removed), verified. It opened as #1236 OPEN (from `feat/hidden-isolated-tools-v2` with main and #1228 merged in, `@agent,@security`, janitor
    reviewer; the lane reports the red team's nine rows passing under step 3, five with a setup change to the step-3
    shape through the harness's `pageRealm`/`isolated` options and their assertions unchanged, which the red team is
-   checking; the eight site-access e2e rows that held a port now find none; the red team's setup review passed with two findings fixed, head fbd2f8b2), verified 2026-10-28; the red team flips
+   checking; the eight site-access e2e rows that held a port now find none; the red team's setup review passed with two findings fixed, head fbd2f8b2), verified 2026-10-28; the red team flips (told the hour it merged)
    the nine todos once it has merged.
    As built: the content script says `PAGE_SCRIPT_MISSING` once when its gate opened and no hello came within 1.5 s; the
    worker reads the presence of the sender's own origin (top frame, its named document only) and, when it is `full`, puts
