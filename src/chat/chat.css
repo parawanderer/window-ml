@@ -1566,6 +1566,11 @@ button.chat-page-go:hover { color: var(--fg); }
     background: var(--panel); border: 1px solid transparent;
 }
 .chat-start-box:focus-within { border-color: var(--panel-2-hover); }
+/* The attached images sit above the text, inside the pill, as the session composer's strip does. */
+.chat .chat-start-box .cthumbs { margin: 0; padding: 0; width: auto; max-width: none; background: none; border: none; border-radius: 0; }
+/* The "+" is the row's first control and keeps its size when the pills shrink around it. */
+.chat-start-attach { flex: 0 0 auto; border-radius: 50%; }
+.chat .chat-start-box .cthumb { width: 52px; height: 52px; border-radius: 9px; }
 .chat-start-box textarea {
     border: none; background: none; outline: none; resize: none; color: var(--fg); font: inherit; font-size: 1.05em;
     line-height: 1.5; padding: 4px 0; min-height: 1.5em; max-height: 280px;
@@ -1581,7 +1586,7 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-start-send { flex: 0 0 auto; }
 /* NARROW: the choices sit above the box — outside it, across the full width — and send below the text, on a line of
    its own at the end. The shape the phone app's own start screen has. */
-.chat-start-foot { display: flex; justify-content: flex-end; }
+.chat-start-foot { display: flex; justify-content: space-between; align-items: center; }
 .chat-start-above { display: flex; flex-direction: column; gap: 8px; width: 100%; margin-bottom: 10px; }
 /* THE PILLS FIT, OR THEY WRAP — they never scroll out of reach. Three came to 409px in a 398px row, and a sideways
    scroller was the obvious fix until the touch probe (chat-web.spec.mjs) refused it: every control must be ON the

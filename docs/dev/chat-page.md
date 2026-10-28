@@ -506,9 +506,15 @@ session."
 **The start page is deliberately not in the URL**, unlike the open session. It holds what someone is part way through
 typing, and a link to a half-written message is not a thing to share or to reload into.
 
-**A refusal leaves the start page standing, with the text still in it.** The store already raises the failure as a
+**A refusal leaves the start page standing, with the text and the images still in it.** The store already raises the failure as a
 notice, so the person changes the target or the wording and presses start again, rather than retyping a task
 because a tab had closed.
+
+**The start page takes images as the session composer does**: its `＋`, a paste into the box and the thumbnail strip
+are the composer's own `useImageAttach` and `ThumbStrip`, and the images ride on `agent.start` and `chat.start`
+(`images`, data URLs). An image alone is enough to start, as the backend accepts. They are kept under the `start`
+draft key in memory only (`drafts.ts`), so they survive leaving the page and a refused start, not a reload. On a
+phone the `＋` sits at the foot beside send: the choices row has no room for a 40px target.
 
 The fake host starts sessions too, so the form is exercised at phone width in the web build before it is
 exercised against a browser: `chat.start` mints a session and answers the first turn, `agent.start` mints a
