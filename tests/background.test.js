@@ -4734,10 +4734,12 @@ test("FETCH_URL: the value store's budget is the setting, and each eviction or r
     const { IDBFactory } = await import("fake-indexeddb");
     const { MAX_TABLE_ROWS } = await import("../src/table/table-data.ts");
     // ~1.3 MB per body: two fit a 3 MB budget only by evicting the first; nothing fits 1 MB.
-    const body = ["id", ...Array.from({ length: MAX_TABLE_ROWS + 1 }, (_, i) => String(1_000_000 + i))].join("\n");
+    // Each URL gets DIFFERENT bytes of one size (the same bytes would be one shared blob, charged once).
+    const bodyOf = (n) => ["id", ...Array.from({ length: MAX_TABLE_ROWS + 1 }, (_, i) => String(1_000_000 * (n + 1) + i))].join("\n");
+    const body = bodyOf(0);
     const from = { tab: { id: 1, url: "https://api.example/" }, url: "https://api.example/" };
     const run = async (mb, urls) => {
-        const bg = loadBackground({ config: { ...baseConfig(), valueStoreBudgetMB: mb }, indexedDB: new IDBFactory(), onFetch: (call) => fetchResponse(body, { contentType: "text/csv", url: call.url }) });
+        const bg = loadBackground({ config: { ...baseConfig(), valueStoreBudgetMB: mb }, indexedDB: new IDBFactory(), onFetch: (call) => fetchResponse(bodyOf(call.url.charCodeAt(call.url.length - 5) - 97), { contentType: "text/csv", url: call.url }) });
         const keys = [];
         for (const u of urls) keys.push((await bg.send({ type: "FETCH_URL", payload: { url: u } }, from)).data.valueKey);
         await new Promise((r) => setTimeout(r, 1100));   // the log flushes on a short timer

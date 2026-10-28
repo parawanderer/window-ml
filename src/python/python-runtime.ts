@@ -110,6 +110,8 @@ if _tsj:
             if _fmt in ("csv", "tsv"):
                 _sep = _t.get("delimiter") or ("\t" if _fmt == "tsv" else ",")
                 return pd.read_csv(io.BytesIO(_buf), sep=_sep, header=None if _t.get("headerless") else 0, names=_t.get("columns") or None)
+            if _fmt in ("paged", "bytes"):
+                raise RuntimeError("this stored value is " + str(_fmt) + ", which is not a table, so it cannot be loaded as a dataframe.")
             raise RuntimeError("a stored table in a format the sandbox does not read: " + str(_fmt))
         if _t.get("kind") == "rows":
             _cols = _t.get("columns") or []

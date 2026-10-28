@@ -55,8 +55,10 @@ Three layers, each with one job.
 
 ### 1. The value store — where a value lives, once
 
-A value is stored ONCE, as bytes, in an **extension-origin store**: IndexedDB, holding `Blob`s keyed by pointer
-id. Not in the page (the user's tab, and a hostile heap), not in service-worker memory (evicted), not in the
+A value is stored ONCE, as bytes, in an **extension-origin store**: IndexedDB, holding ROWS over BLOBS. Each
+store is a row with its own key (what a pointer names); the `Blob` is kept once under the SHA-256 of its bytes, so
+the same bytes stored twice are two rows over one blob, charged to the budget once (FILE_ATTACHMENTS.md, "One copy of
+the same bytes"). Not in the page (the user's tab, and a hostile heap), not in service-worker memory (evicted), not in the
 Pyodide heap (the worker is killed on a timeout). A `Blob` in IndexedDB is not a JavaScript heap object until
 someone reads it, so holding a 100 MB table costs disk, not memory, until it is used.
 
@@ -261,8 +263,10 @@ Each slice ships and is useful without the next:
    pandas fixes its view of pyarrow when pandas is imported, so a late load left it half-switched. ~1.5 s of cold
    start, mostly absorbed by the pre-warm. Why, and the `import js` its timezone dependency needed:
    `docs/dev/python-sandbox.md`.
-4. **The value store**: IndexedDB blobs keyed by pointer id with a metadata row each, the layered eviction above
-   (global budget on write, session release, idle sweep), and loud failure on a miss.
+4. **The value store**: IndexedDB rows (one per pointer id) over blobs keyed by the SHA-256 of their bytes, the layered
+   eviction above (global budget on write, charged per blob, evicted per blob; session release and idle sweep per row;
+   a blob goes with its last row) and loud failure on a miss. A database written before blobs were shared (version 1)
+   is not rehashed: its rows own a blob under their own key until they go.
    Fetched tables store their bytes; nothing reads them yet except a new, explicit test path. **Built**: the store
    (`value-store.ts`, #115), and the capture, claim, release, sweep and budget setting (`sw-values.ts`). Bytes are kept
    in the format they arrived in; conversion to Arrow IPC comes with slice 5, where pyarrow does it.
