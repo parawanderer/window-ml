@@ -516,6 +516,7 @@ test("the content script's ungated sends are exactly the reviewed list, each bou
     // page cannot use it for a run it does not host, or move it under the gate (page-relay.ts PAGE_RELAYED_EXTRA).
     assert.deepEqual(ungated, [
         "CONTENT_READY",      // answers with the rebuild of runs on the SENDER's tab; triggers resume + history replay
+        "PAGE_SCRIPT_MISSING", // reads the SENDER's origin only, top frame only; a hidden origin gets nothing (redteam-presence.test.mjs)
         "PAGE_TOOL_STREAM",   // NO sender check: see the OPEN test below
         "REQUEST_ACCESS",     // the stub's ask (PAGE_UNGATED_TYPES): judged on the sender's presence, answered through the scrub
         "RUN_READOPTED",      // keyed by the sender's tab, not its document: see the OPEN test below

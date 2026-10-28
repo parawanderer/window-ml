@@ -141,6 +141,9 @@ not, record that and choose between `declarativeNetRequest` rules and following 
    after #1189: OPEN 2026-10-28 as #1206, the janitor reviewing. Step 3's build sits on the lane's
    `feat/hidden-isolated-tools-v2` (the tools' unit suites run against the isolated bundle too, a CI step; the
    hidden-with-run trace asserts no `ml` global); its PR opens after the red team's five-property PR, which follows #1203.
+   As built: the content script says `PAGE_SCRIPT_MISSING` once when its gate opened and no hello came within 1.5 s; the
+   worker reads the presence of the sender's own origin (top frame, its named document only) and, when it is `full`, puts
+   the page scripts into that document. `injectPageScripts` gives a document them once.
 3. Tools in the content script's isolated world on hidden pages (the second bundle, behind no switch; the tools' tests
    run against both bundles; detection-surface's hidden-with-run `pageEvents` row goes to `[]`; rule 10: a separate
    agent's test-only red-team PR on main first, the lane's PR after), and `chrome.dom` for closed roots. Exec's default world is now a switch

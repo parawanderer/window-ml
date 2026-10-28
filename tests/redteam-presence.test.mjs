@@ -380,3 +380,44 @@ test("content.js and the shell share one port and handle each message once: one 
     assert.equal(after.filter((d) => d?.__mlSidebar === "present").length, 1, `the handshake came other than once: ${JSON.stringify(after)}`);
     world.close();
 });
+
+// --- a document that loaded before its origin's registration covered it (the race the janitor found) ---
+
+test("a visible origin's document that says it heard no page script gets the page scripts put into it, that document only", T, async () => {
+    const bg = worker({ local: { ml_site_always: ["https://ok.example"] } });
+    const r = plain(await bg.send({ type: "PAGE_SCRIPT_MISSING" }, sender("https://ok.example", "doc-late")));
+    assert.deepEqual(r, { data: true });
+    const ex = executes(bg);
+    assert.equal(ex.length, 1, JSON.stringify(ex));
+    assert.equal(ex[0].world, "MAIN");
+    assert.deepEqual(ex[0].files, PAGE_FILES);
+    assert.deepEqual(ex[0].target, { tabId: 7, documentIds: ["doc-late"] });
+});
+
+test("a hidden origin's PAGE_SCRIPT_MISSING gets nothing, whatever its payload names, and a denied one the same answer", T, async () => {
+    const bg = worker({ local: { ml_site_always: ["https://ok.example"], ml_site_denied: ["https://denied.example"] } });
+    const answers = [];
+    for (const origin of ["https://unknown.example", "https://denied.example"])
+        answers.push(plain(await bg.send({ type: "PAGE_SCRIPT_MISSING", payload: { origin: "https://ok.example", url: "https://ok.example/" } }, sender(origin))));
+    assert.deepEqual(answers, [{ data: false }, { data: false }]);
+    assert.deepEqual(executes(bg), [], "a hidden page was given the page scripts");
+});
+
+test("PAGE_SCRIPT_MISSING from a subframe, or from no tab, gets nothing", T, async () => {
+    const bg = worker({ local: { ml_site_always: ["https://ok.example"] } });
+    const frame = { ...sender("https://ok.example"), frameId: 3 };
+    assert.deepEqual(plain(await bg.send({ type: "PAGE_SCRIPT_MISSING" }, frame)), { data: false });
+    assert.deepEqual(plain(await bg.send({ type: "PAGE_SCRIPT_MISSING" }, { url: "https://ok.example/", origin: "https://ok.example" })), { data: false });
+    assert.deepEqual(executes(bg), []);
+});
+
+test("the content script says PAGE_SCRIPT_MISSING once on an open page with no page script, and never on a page that has one or is hidden", T, async () => {
+    const missing = (w) => w.runtimeCalls.filter((c) => c.type === "PAGE_SCRIPT_MISSING").length;
+    const late = loadPageWorld({ visible: true, main: null });
+    const fine = loadPageWorld({ visible: true });
+    const hidden = loadPageWorld({ visible: false, main: null });
+    await new Promise((r) => setTimeout(r, 2000));
+    assert.equal(missing(late), 1, "an open page with no page script did not say so");
+    assert.equal(missing(fine), 0, "a page whose page script said hello was reported missing");
+    assert.equal(missing(hidden), 0, "a hidden page reported a page script it is not meant to have");
+});

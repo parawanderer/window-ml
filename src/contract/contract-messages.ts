@@ -76,6 +76,7 @@ export type BackgroundMessageType =
     | "INJECT_MESSAGE"   // a.say() mid-run: push a user message into a RUNNING background run's inbox (steer it live)
     | "REQUEST_ACCESS"   // ml.requestAccess(): the content script adds whether it saw a gesture (site-requests.ts)
     | "CONTENT_READY"   // cross-page: a fresh document loaded — the SW replies with any rebuild-config for runs this tab hosts
+    | "PAGE_SCRIPT_MISSING"   // presence: a document answered open heard no page script; the SW injects it if the sender's origin is visible
     | "RUN_READOPTED"   // cross-page: the fresh document re-registered a run's toolset → release the navigation barrier
     | "SET_APPROVAL" // design A: the sidebar's approve/deny decision for a pending background-run gate (origin-authed)
     | "ML_CALL";   // one `ml` call over the wire (MlWireRequest) from a client the worker vouches for; never page-started
