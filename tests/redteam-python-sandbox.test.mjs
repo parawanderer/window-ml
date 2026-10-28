@@ -919,6 +919,78 @@ test("P2-bound mutation and the C-function path, in child processes", { skip, ti
     assert.ok(afterLate.done && STOPPED.test(afterLate.out), `a finally that spins after the first stop is stopped too: ${afterLate.out.slice(-400)}`);
 });
 
+// --- P2-forge. a cell that rebinds the loop's call_soon and leaves a task (the adversarial half's call_soon pin) ---
+// #1221: spend-queue credits anything scheduled while `turning` as the cancel's own chain, and `turn`'s one-shot runs
+// `Future.set_result`, whose wake goes through `loop.call_soon` looked up ON THE INSTANCE. A cell that rebinds
+// call_soon forges callbacks the cancel credits as its own link: they go to `raw`, never `pending`, and never count
+// toward `done()`'s cut, so the chain re-seeds across cells (the pre-fix head e6e8df54 grows 31→37 and OOMs node
+// unbounded — the spy below is capped at 60 firings). The defended outcome (coordinator, fix 97c23b12; assert the
+// property, not the mechanism): after a cell rebinds call_soon and leaves a task, the cell returns its value; the next
+// cell finds call_soon back on the class with nothing shadowed on the loop; the forged chain stops growing across
+// later cells. The spy reschedules ITSELF through the rebound call_soon — python-cancel 2026-10-28: a once-fired spy
+// lets a regression that re-credits single shots pass. A fresh WebLoop has "call_soon" NOT in vars(loop) (measured on
+// the pinned 2e41d920 core), so the instance dict is a real shadow and the class's is the original.
+
+/** The plant: rebind `call_soon` by `rebind`, leave `forge-leftover`, return "x". The spy caps at 60 firings. */
+const forgePlant = (tag, rebind) => `
+import asyncio, sys, types
+_m = types.ModuleType("${tag}"); _m.spies = []; _m.evil = 0; sys.modules["${tag}"] = _m
+_loop = asyncio.get_event_loop()
+_m.orig = type(_loop).call_soon
+_m.orig_ga = type(_loop).__getattribute__
+_real = type(_loop).call_soon
+def _evil(cb, *args, context=None):
+    _m.evil += 1
+    return _real(_loop, cb, *args, context=context)
+def _evil_m(self, cb, *args, context=None):
+    _m.evil += 1
+    return _real(self, cb, *args, context=context)
+def _ga(self, name):
+    if name == "call_soon":
+        return _evil
+    return _m.orig_ga(self, name)
+def _spy():
+    if len(_m.spies) < 60:
+        _m.spies.append(1)
+        _loop.call_soon(_spy)
+${rebind}
+_loop.call_soon(_spy)
+async def _left():
+    try:
+        await asyncio.sleep(10)
+    except BaseException:
+        await asyncio.sleep(10)
+asyncio.ensure_future(_left()).set_name("forge-leftover")
+await asyncio.sleep(0)
+"x"`;
+
+for (const [binding, rebind] of [
+    ["an instance attribute on the loop", `_loop.call_soon = _evil`],
+    ["the loop's class", `_loop.__dict__.pop("call_soon", None)\ntype(_loop).call_soon = _evil_m`],
+    ["the class's __getattribute__", `type(_loop).__getattribute__ = _ga`],
+]) {
+    test(`P2-forge: a cell that rebinds call_soon on ${binding} and leaves a task returns its value, the next cell finds call_soon restored, and the forged chain stops growing`, { skip, timeout: 120000, todo: "Failing-first on main at the restore, each binding its own way: the cell returns its value (\"x\", no refusal) and the chain freezes (the host cancel kills the handles — measured on the pinned 2e41d920 core), but the rebind is not undone — the instance shape leaves call_soon in vars(_loop), the class shape leaves type(_loop).call_soon rebound, the __getattribute__ shape leaves the type's __getattribute__ rebound. The defended outcome (coordinator, assert the property not the mechanism; fix #1221 at 97c23b12, which merges after this PR — then this flips) is the next cell finding call_soon back on the class with nothing shadowed on the loop, AND the forged chain frozen across later cells and a 300 ms idle. The freeze clause holds here via the host cancel and holds under the fix via the restore; it is the row's teeth against a regression that re-credits the chain — python-cancel 2026-10-28: the pre-fix head e6e8df54 grows 31→37 and OOMs node unbounded, so the spy is capped at 60 and reschedules itself through the rebound call_soon (a once-fired spy would let a single-shot re-credit regression pass)." }, async () => {
+        const tag = `_sq_${binding.replace(/\W+/g, "_")}`;
+        const r1 = await cell(forgePlant(tag, rebind));
+        assert.deepEqual([r1.error, r1.value], [null, "x"], `the cell must return its value beside its leftover task, got ${JSON.stringify(r1)}`);
+        const r2 = await cell(`
+import asyncio, sys
+_m = sys.modules["${tag}"]
+_loop = asyncio.get_event_loop()
+await asyncio.sleep(0.05)
+{"evil": _m.evil, "spies": len(_m.spies), "in_dict": "call_soon" in vars(_loop), "class_is_orig": type(_loop).call_soon is _m.orig, "ga_is_orig": type(_loop).__getattribute__ is _m.orig_ga}`);
+        assert.ok(r2.value?.evil > 0 && r2.value?.spies > 0, `positive control: the rebound call_soon forged a self-rescheduling chain, got ${JSON.stringify(r2)}`);
+        assert.equal(r2.value.class_is_orig, true, "the class's call_soon is no longer the original");
+        assert.equal(r2.value.in_dict, false, "the loop still carries a shadowed call_soon");
+        assert.equal(r2.value.ga_is_orig, true, "the class's __getattribute__ is no longer the original");
+        await new Promise((r) => setTimeout(r, 300));   // the 300 ms idle the freeze must survive
+        const r3 = await cell(`import sys\nlen(sys.modules["${tag}"].spies)`);
+        const r4 = await cell(`import sys\nlen(sys.modules["${tag}"].spies)`);
+        assert.equal(r3.value, r2.value.spies, `the forged chain grew across the next cell: ${r2.value.spies} → ${r3.value}`);
+        assert.equal(r4.value, r2.value.spies, `the forged chain grew across a later cell: ${r2.value.spies} → ${r4.value}`);
+    });
+}
+
 // --- P2-gate. the cell gate's doors (cell-gate.ts): every way a Python callable reaches a JS registry -----------
 // The three doors are a PyProxy (`pyproxy_new`), a once-callable (`finalizationRegistry` + `callPyObject`) and a promise
 // handle (`Promise.prototype.then`/`finally`). Each route below must schedule successfully ("sched-ok", so a refused
