@@ -166,6 +166,11 @@ starts from main.
    `postMessage`, `addEventListener`). The relay keeps CLOSURE-HELD references captured before the strip; `onmessage` is
    defined once, non-writable, non-configurable. A JsProxy of `globalThis` must then find nothing. Commit the kept list
    as the set Pyodide needs, with a test that enumerates `globalThis` and fails on anything outside it.
+   BUILT 2026-10-16 in #735 (d2cb57cd): `ALLOWED_GLOBALS`/`STRIPPED_NAMES` and the strip in `lockdownReadonly`
+   (`src/python/lockdown.ts`), the worker calling it with its real scope; the enumeration pin is e3's
+   (`tests/redteam-python-sandbox.test.mjs`, "step 3"). Recorded here 2026-10-28, after the coordinator had
+   wrongly called this step unbuilt that day; the second red team's hunt 1 (realm and network reach after the strip,
+   with the bridge lift granted) is briefed against it the same day.
 4. **No JsProxy in the Python namespace at all.** The stdout tee becomes Pyodide's JS-side `setStdout` (batched or
    raw). The later `ml` callback ([`ML_WIRE.md`](../../spec/ML_WIRE.md), lane 1's PR 2) is a message through the
    closure-held post, never a function the cell holds. None means none: the injected inputs (`INJECTED_IMAGE_B64`,
