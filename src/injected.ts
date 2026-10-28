@@ -9,7 +9,7 @@ import type { RebuildConfig } from "./contract/contract-messages";
 import { htmlToMarkdown } from "./dom/html-to-md";
 import { mlPipe } from "./pointers/text-pipe";
 import { mlJsonPath } from "./json-path";
-import { truncate, elPath, describeSkeleton, queryAll, selectorError, shadowHostReport, clickSelector, elLine, isCurrentPage, typeFromExtension, claimClosedRootReader } from "./dom/dom";
+import { truncate, elPath, describeSkeleton, queryAll, selectorError, shadowHostReport, clickSelector, elLine, isCurrentPage, typeFromExtension, claimClosedRootReader, setClosedRootReader, isolatedClosedRootReader } from "./dom/dom";
 import { makeAnswerFacade } from "./pointers/answer-set";
 import { accessibleName, roleOf, ariaState } from "./dom/a11y";
 import { framePrompt } from "./agent/prompts";
@@ -41,6 +41,7 @@ import { mlSchema } from "./ml/ml-schema";
 import { requestAccess } from "./ml/ml-access";
 import { derivedFetchFields, cacheCopy, fetchIsCacheable } from "./ml/fetch-result";
 import { type ChannelMessage, onIsolated, toIsolated } from "./page-channel";
+import { pageWorld } from "./page-world";
 
 // Every family that used to live in the window.ml literal now has a module above; what is left here is the
 // object that binds them together, the small `_`-prefixed introspection helpers, and the page's own window
@@ -71,8 +72,10 @@ import { type ChannelMessage, onIsolated, toIsolated } from "./page-channel";
     // iterate with cheap probes instead of dumping HTML into the model's
     // context. Every helper truncates hard and never returns outerHTML.
 
-    // The closed-root reader of shadow-patch.js, asked for now, while the page has had the least time to be first.
-    claimClosedRootReader();
+    // The closed-root reader of shadow-patch.js, asked for now, while the page has had the least time to be first. In the
+    // isolated world there is no patch: chrome.dom opens any closed root, and the content scripts' own hosts are skipped.
+    if (pageWorld.isolated) setClosedRootReader(isolatedClosedRootReader());
+    else claimClosedRootReader();
 
     window.ml = {
         /** The agent's persistent JS scratchpad (also injected into every `exec` body as `state`). A live
@@ -669,6 +672,7 @@ import { type ChannelMessage, onIsolated, toIsolated } from "./page-channel";
     //   const ml = await (window.ml?.ready
     //       ?? new Promise(r => addEventListener("ml:ready", () => r(window.ml), { once: true })));
     window.ml.ready = Promise.resolve(window.ml);
+    if (pageWorld.isolated) return;   // the page's world hears nothing of a run's tools
     window.dispatchEvent(new Event("ml:ready"));
 
     console.log("🟢 window.ml is ready.");

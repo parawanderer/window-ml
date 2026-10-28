@@ -14,7 +14,9 @@ import { visibleOrigins, askOrigins, presenceOf, originMatchPattern, originOf, t
 import { readSiteLists } from "./sw-site-access";
 
 /** The main-world files, in order: the closed-root capture first, so it records roots before window.ml claims its reader. */
-export const PAGE_SCRIPT_FILES = ["shadow-patch.js", "injected.js"];   // state: fixed
+export /** The page-side tools of a run on a hidden page, for the content scripts' world (injected-isolated.ts). */
+const RUN_TOOL_FILES = ["injected-isolated.js"];
+const PAGE_SCRIPT_FILES = ["shadow-patch.js", "injected.js"];   // state: fixed
 
 /** The stub's main-world file: `window.ml` with `requestAccess` and nothing else. */
 export const ASK_SCRIPT_FILES = ["ask.js"];   // state: fixed
@@ -160,6 +162,51 @@ export async function presence(url: string | undefined): Promise<Presence> {
  *  the worker; a document that outlives it is asked about again only by a list change (showInOpenTabs). */
 const injectedDocs = new Set<string>();   // state: plumbing
 const INJECTED_DOCS_MAX = 512;   // state: fixed
+/** The documents `injectRunTools` has put the run's tools into or is putting them into now, oldest first, each with that
+ *  call; a `tab:<id>` key while a call that names no document runs. Lost with the worker. */
+const toolDocs = new Map<string, Promise<void>>();   // state: plumbing
+
+/**
+ * Put a run's page-side tools into the document a tab shows now, for a run the person started on a hidden page: in the
+ * content scripts' world, so the page's world gets nothing of ours (SITE_PRESENCE.md, step 3). Closed shadow roots are
+ * read with `chrome.dom` there, those the page attached before this included.
+ * @param tabId the tab
+ * @param documentId the document to put them in, when known, so a tab that navigated meanwhile is not given them
+ * @returns once the tools have run in the top frame, or with the call already putting them into this document
+ * @throws when the extension may not script the tab or the document is gone
+ */
+export function injectRunTools(tabId: number, documentId?: string): Promise<void> {
+    // A document is given them once, and two adopts at once share one call: a second copy would attach the content
+    // script's port to itself, orphaning a run the first was adopting. With no document id, only calls running together
+    // share one, since there is nothing to remember the document by.
+    const key = documentId ?? `tab:${tabId}`;
+    const known = toolDocs.get(key);
+    if (known) return known;
+    const target = documentId ? { tabId, documentIds: [documentId] } : { tabId };
+    const done = chrome.scripting.executeScript({ target, world: "ISOLATED", files: RUN_TOOL_FILES }).then(
+        () => { if (!documentId) toolDocs.delete(key); },
+        (e: unknown) => { toolDocs.delete(key); throw e; },
+    );
+    toolDocs.set(key, done);
+    if (toolDocs.size > INJECTED_DOCS_MAX) toolDocs.delete(toolDocs.keys().next().value as string);
+    return done;
+}
+
+/**
+ * Answer a content script that asked for a page script to adopt a run on (`needInject`): the document its tab shows now
+ * gets the main-world scripts when its origin may use window.ml (a document that loaded before its origin's registration
+ * covered it), and the run's tools in the content scripts' world otherwise. Read from the browser's frame, never the page.
+ * @param tabId the tab
+ * @returns once the scripts have run in the top frame
+ * @throws when the extension may not script the tab or the document is gone
+ */
+export async function injectForRun(tabId: number): Promise<void> {
+    const frame = await Promise.resolve(chrome.webNavigation?.getFrame?.({ tabId, frameId: 0 })).catch(() => null) as { documentId?: string; url?: string } | null;
+    const documentId = frame?.documentId;
+    // Only a document named by id gets the main-world scripts: a tab that navigated meanwhile is given nothing of the page's.
+    if (documentId && await presence(frame?.url) === "full") return injectPageScripts(tabId, documentId);
+    return injectRunTools(tabId, documentId);
+}
 
 /**
  * Put the main-world scripts into the document a tab shows now, for a run the person started on a hidden page. The page

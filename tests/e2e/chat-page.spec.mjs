@@ -1167,8 +1167,14 @@ test("a run starts on a tab whose content script is gone, by putting it back", a
         await expect.poll(() => fake.calls().length, { timeout: 30000 }).toBe(1);
         await expect(chat.locator(".chat-main")).toContainText("the page is a demo", { timeout: 30000 });
         await expect(chat.getByText(/Receiving end does not exist/)).toHaveCount(0);
-        // And the tab really got its content script back, rather than the run going somewhere else.
-        expect(await target.evaluate(() => !!window.ml)).toBe(true);
+        // And the tab really got its content script back, rather than the run going somewhere else: it answers now.
+        const after = await chat.evaluate(async (id) => {
+            try { await chrome.tabs.sendMessage(id, { type: "ML_PING" }); return true; } catch { return false; }
+        }, before.id);
+        expect(after, "the tab's content script is back and listening").toBe(true);
+        // The site is in no list, so the run's tools went into the content scripts' world: the page has no window.ml
+        // (SITE_PRESENCE.md step 3).
+        expect(await target.evaluate(() => !!window.ml), "a hidden page with a run has no window.ml").toBe(false);
         expect(errors).toEqual([]);
     } finally {
         await ext.context.close();

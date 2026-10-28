@@ -5,6 +5,8 @@ const vm = require("node:vm");
 const fs = require("node:fs");
 const path = require("node:path");
 const { JSDOM } = require("jsdom");
+// jsdom's wrapper/implementation map: how loadDomWorld's `chrome.dom` reads a closed root, as the browser can.
+const jsdomIdl = require(path.join(path.dirname(require.resolve("jsdom")), "generated/idl/utils.js"));
 
 const ROOT = path.join(__dirname, "..");
 // Tests exercise the BUILT extension (esbuild output). `npm test` runs `pretest`
@@ -614,10 +616,16 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     };
 }
 
+// The page-side bundle loadPageWorld loads by default: injected.js, or injected-isolated.js when WML_PAGE_BUNDLE names it
+// (SITE_PRESENCE.md step 3: the tools' tests run against both bundles; `npm run test:isolated-bundle`).
+const PAGE_BUNDLE = process.env.WML_PAGE_BUNDLE || "injected.js";
+
 // Loads content.js + injected.js into one fake "page world" so ml.* calls
 // travel the real postMessage relay. `onRuntimeMessage` plays the background:
 // it gets the runtime message and returns { data } or { error }.
-function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside, visible = true, ask = false, beforeInjected, main = "injected.js", onContentReady } = {}) {
+// `pageRealm`: the page's own code (`beforeInjected`, `pageRun`) runs in a realm of its own, as the main world does beside
+// the isolated one in a browser: its own builtins and window wrapper, the same window events and posts.
+function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside, visible = true, ask = false, beforeInjected, main = PAGE_BUNDLE, onContentReady, pageRealm = false } = {}) {
     // #8: ml.agent probes config + model capabilities on every call to decide
     // whether to auto-wire a `look` tool. Answer those probes from `config`/`caps`
     // (defaults: no OCR model, no capabilities → no vision tool) so loop tests
@@ -762,15 +770,24 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside
     };
     vm.createContext(context);
     vm.runInContext(fs.readFileSync(path.join(DIST, "content.js"), "utf8"), context);
+    // The page's realm: a window of its own whose events and posts are the shared window's, and its own MessagePort class,
+    // so a wrap of a builtin there reaches only what the page itself calls.
+    const pageContext = pageRealm ? vm.createContext({
+        console: mkConsole(), Math, Date, setTimeout, clearTimeout, URL,
+        Event: context.Event, MessageChannel: FakeMessageChannel, MessagePort: class MessagePort extends FakeMessagePort {}, MessageEvent: FakeMessageEvent,
+        window: { addEventListener: win.addEventListener, removeEventListener: win.removeEventListener, dispatchEvent: (e) => win.dispatchEvent(e), postMessage: (d) => win.postMessage(d) },
+        location: context.location, document: context.document,
+    }) : context;
     // The page's own scripts, run before injected.js: what a page given injected.js LATE (a run on a hidden page, an
     // origin allowed while it is open) can do first. Never possible on a visible page, where injected.js is first. A late
     // injected.js always comes through the worker's injectPageScripts, which re-arms the content script first.
     if (beforeInjected) {
-        vm.runInContext(beforeInjected, context);
+        vm.runInContext(beforeInjected, pageContext);
         for (const fn of runtimeMsgListeners) fn({ type: "PAGE_PORT_ARM" }, {}, () => {});
     }
     // `main`: the main-world script the page has at document_start: injected.js (the full API), ask.js (the stub,
-    // SITE_PRESENCE.md), or null for none (a hidden page, whose own scripts may hand the content script a port).
+    // SITE_PRESENCE.md), or null for none (a hidden page, whose own scripts may hand the content script a port). The
+    // default is PAGE_BUNDLE, so the tools' suites also run against injected-isolated.js, the same tools in our world.
     let injectedSrc = main ? fs.readFileSync(path.join(DIST, main), "utf8") : "";
     if (dialectInside) {   // as in loadBackground: the bundle has no real membership predicate yet, so patch the default verdict's text
         const patched = injectedSrc.replace("membership = () => false", `membership = (code) => code.includes(${JSON.stringify(dialectInside)})`);
@@ -793,18 +810,24 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside
     // THE PAGE CHANNEL, from either end. `asContent(data)` sends to injected.js as content.js or the shell would;
     // `asInjected(data)` sends to them as injected.js would. A test that posts on `window` speaks as the PAGE, which no
     // longer reaches either.
-    const asContent = (data) => { if (!channel.iso) throw new Error("loadPageWorld: injected.js never handed over its port"); channel.iso.postMessage(data); };
-    const asInjected = (data) => { if (!channel.iso) throw new Error("loadPageWorld: injected.js never handed over its port"); channel.iso.other.postMessage(data); };
+    // injected-isolated.js hands no port over the window: its channel is attached in-process, so read the port content.js holds.
+    const isoPort = () => {
+        const port = channel.iso ?? context.__mlPageChannel?.port;
+        if (!port) throw new Error("loadPageWorld: injected.js never handed over its port");
+        return port;
+    };
+    const asContent = (data) => { isoPort().postMessage(data); };
+    const asInjected = (data) => { isoPort().other.postMessage(data); };
 
     // What injected.js sends to content.js and the shell: `fn` hears `{ data }` beside content.js's own listeners.
     const fromInjected = (fn) => { context.__mlPageChannel.listeners.push(fn); };
     // What content.js and the shell send to injected.js: `fn` hears `{ data }` just before injected.js does.
     const fromContent = (fn) => {
-        const port = channel.iso.other, prev = port._on;
+        const port = isoPort().other, prev = port._on;
         port._on = (e) => { fn(e); if (prev) prev(e); };
     };
 
-    return { ml: win.ml, runtimeCalls, prewarms, context, dispatchedEvents, windowPosts, fireRuntimeMessage, asContent, asInjected, fromInjected, fromContent, pageRun: (src) => vm.runInContext(src, context) };
+    return { ml: win.ml, runtimeCalls, prewarms, context, dispatchedEvents, windowPosts, fireRuntimeMessage, asContent, asInjected, fromInjected, fromContent, pageRun: (src) => vm.runInContext(src, pageContext) };
 }
 
 // Boots ONLY injected.js over a real jsdom document, so the agent's DOM
@@ -814,7 +837,9 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside
 // inner HTML. Returns { ml, window, document } for querying in assertions.
 // `url` sets the document's address (jsdom's default is about:blank), for code that branches on where the page
 // IS — a local file:// page, for one.
-function loadDomWorld(html = "", { url, beforeInjected } = {}) {
+// `isolated`: the step 3 shape of a hidden page with a run (SITE_PRESENCE.md): no shadow-patch.js, injected-isolated.js in a
+// realm of its own with `chrome.dom.openOrClosedShadowRoot`, and the page's code (`beforeInjected`, `pageRun`) in another.
+function loadDomWorld(html = "", { url, beforeInjected, isolated = false } = {}) {
     const dom = new JSDOM(`<!doctype html><html><body>${html}</body></html>`, url ? { url } : undefined);
     const win = dom.window;
     const context = {
@@ -855,15 +880,18 @@ function loadDomWorld(html = "", { url, beforeInjected } = {}) {
         }
         return true;
     };
+    // The browser reads any root, closed or open, whenever it was attached: jsdom keeps it on the host's implementation.
+    if (isolated) context.chrome = { dom: { openOrClosedShadowRoot: (el) => { const root = jsdomIdl.implForWrapper(el)?._shadowRoot; return root ? jsdomIdl.wrapperForImpl(root) : null; } } };
     vm.createContext(context);
+    const pageContext = isolated ? vm.createContext({ console: mkConsole(), window: win, document: win.document, location: win.location, URL, Event: win.Event, CustomEvent: win.CustomEvent, setTimeout: win.setTimeout.bind(win), clearTimeout: win.clearTimeout.bind(win) }) : context;
     // The document_start patch first, as the browser runs it: it captures closed roots and answers the DOM tools' ask.
-    vm.runInContext(fs.readFileSync(path.join(DIST, "shadow-patch.js"), "utf8"), context);
+    if (!isolated) vm.runInContext(fs.readFileSync(path.join(DIST, "shadow-patch.js"), "utf8"), context);
     // The page's own scripts, which run before injected.js (it loads at document_idle).
-    if (beforeInjected) vm.runInContext(beforeInjected, context);
-    vm.runInContext(fs.readFileSync(path.join(DIST, "injected.js"), "utf8"), context);
+    if (beforeInjected) vm.runInContext(beforeInjected, pageContext);
+    vm.runInContext(fs.readFileSync(path.join(DIST, isolated ? "injected-isolated.js" : "injected.js"), "utf8"), context);
     const asContent = (data) => { if (!channel.iso) throw new Error("loadDomWorld: injected.js never handed over its port"); channel.iso.postMessage(data); };
     const fromInjected = (fn) => { channel.listeners.push(fn); };
-    return { ml: win.ml, window: win, document: win.document, context, asContent, fromInjected };
+    return { ml: win.ml, window: win, document: win.document, context, asContent, fromInjected, pageRun: (src) => vm.runInContext(src, pageContext) };
 }
 
 // Boots the BUILT sidebar app (dist/sidebar-app.js, a Preact bundle) over a jsdom

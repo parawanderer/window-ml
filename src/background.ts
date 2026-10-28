@@ -42,7 +42,7 @@ import { handleRunStateDump } from "./sw/sw-run-state";
 import { releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw/sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 import { costCalls } from "./sw/sw-prices";
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, tabGrants } from "./sw/sw-consent";
-import { syncPresence, isVisible, presence, injectPageScripts, SITE_REQUESTS_KEY } from "./sw/sw-presence";
+import { syncPresence, isVisible, presence, injectRunTools, injectPageScripts, SITE_REQUESTS_KEY } from "./sw/sw-presence";
 import { isExtensionSender, senderFacts, editSiteAccess, pageRefusal, agentRefusal, readSiteLists, selfApprovalFacts, senderSelfApproves, siteLevels, siteSchemaReady, upgradeNotice, dismissUpgradeNotice } from "./sw/sw-site-access";
 import { policiesReady, forgetRunPolicies, addGlobalPolicy, editPolicy, removePolicy, policyView } from "./sw/sw-policies";
 import { POLICY_LABEL_MAX, POLICY_SOURCE_MAX } from "./sw/policy-valid";
@@ -507,7 +507,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             if (!open) {
                 adopt.splice(0, adopt.length, ...adopt.filter((a) => live.has(a.runId)));
                 if (adopt.length && tabId != null && (sender.frameId ?? 0) === 0) {
-                    try { await injectPageScripts(tabId, doc); open = true; } catch { adopt.length = 0; }
+                    try { await injectRunTools(tabId, doc); open = true; } catch { adopt.length = 0; }
                 } else adopt.length = 0;
             }
             // A page that has the stub may ask for access across its closed gate, and nothing more (page-gate.ts).

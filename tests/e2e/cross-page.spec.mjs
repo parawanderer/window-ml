@@ -6,7 +6,7 @@
 
 import { test, expect } from "@playwright/test";
 import { createServer } from "node:http";
-import { launchExtension, configureExtension, waitForMl, watchRunEvents, onChannel, inShell, clickInShell } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, watchRunEvents, onChannel, inShell, clickInShell, approveOrigin } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 
@@ -1052,6 +1052,9 @@ test("cross-domain durable resume: an SW restart during the cross-origin nav (si
 
     // The site grant restarts the worker mid-nav → drop in-memory state (durable snapshot survives on disk).
     await ext.sw.evaluate(() => globalThis.__mlEvictForTest());
+    // The site grant: the destination may use window.ml from here (granted before the reload, as a grant precedes the
+    // document it covers; a hidden destination's document gets the run's tools in our world and no window.ml, SITE_PRESENCE.md step 3).
+    await approveOrigin(ext.context.serviceWorkers().at(-1), site.crossOrigin);
     // The grant re-injects the content script = a fresh CONTENT_READY on the destination origin.
     await page.reload();
     await waitForMl(page);

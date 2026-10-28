@@ -112,7 +112,7 @@ test("a repeated PAGE_SCRIPT_MISSING from one document injects once", T, async (
 });
 
 test("cost of a double injection (pins why the todo above matters): a second injected.js replaces window.ml", T, async () => {
-    const w = loadPageWorld({ visible: true });
+    const w = loadPageWorld({ visible: true, main: "injected.js" });
     const first = w.ml;
     w.pageRun(fs.readFileSync(new URL("../dist/injected.js", import.meta.url), "utf8"));
     assert.notEqual(w.context.window.ml, first, "if this ever becomes the same object, injected.js is idempotent and the todo can go");

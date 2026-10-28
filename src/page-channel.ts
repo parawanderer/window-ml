@@ -17,12 +17,17 @@
 // the page runs first. Nothing is sent to a hidden page's port while its gate is closed. Its state lives on the isolated world's
 // global (content.js and the shell are separate bundles in one world), where no page script reaches it.
 //
+// In the isolated world's copy of the page-side bundle (injected-isolated.js, page-world.ts) both sides are in one world: the
+// port goes to the content scripts' side directly, and nothing is dispatched on the page's window.
+//
 // The main side calls the builtins that touch its port through copies kept at module load. On a visible origin injected.js
 // runs before any page script, so a page that wraps MessagePort.prototype.postMessage or the `onmessage` setter later is
 // not handed the port as `this`; and its queue and listener lists use no Array method a page could wrap.
 
 /** The event type of the hand-off. A page that knows it learns nothing: the event fires before it runs, or not at all. */
 export const PORT_EVENT = "ml-page-port";
+
+import { pageWorld } from "./page-world";
 
 /** A message as either side's listeners receive it: `{ data }`, the shape a window message's handlers already read. */
 export interface ChannelMessage { data: any }   // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -112,6 +117,7 @@ function mainSide(): Side {
     attach(main, ch.port1);
     // A window that refuses the event leaves this side unconnected, its messages held: a test's DOM without the real
     // MessageEvent (loadDomWorld), never a browser.
+    if (pageWorld.isolated) { const iso = isoSide(); dropPort(iso); iso.armed = false; attach(iso, ch.port2); return main; }
     try { window.dispatchEvent(new MessageEvent(PORT_EVENT, { ports: [ch.port2] })); } catch { /* unconnected */ }
     return main;
 }

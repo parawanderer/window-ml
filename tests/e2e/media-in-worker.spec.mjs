@@ -12,7 +12,7 @@
 import { test, expect } from "@playwright/test";
 import http from "node:http";
 import zlib from "node:zlib";
-import { launchExtension, configureExtension, waitForMl, watchRunEvents } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, watchRunEvents, inShell } from "./harness.mjs";
 import { PAGE_STARTED_TYPES } from "../../src/page-relay.ts";
 import { startFakeLlm } from "./fake-llm.mjs";
 
@@ -121,11 +121,12 @@ const script = (probe) => [
 ];
 const SCRIPT_LENGTH = script(() => {}).length;
 
-/** The in-run positive control: a message the test has the page send mid-run (`ml.models()`, a read of the model list,
- *  harmless and refused on an unapproved page), which the counter must see exactly once. A counter that stopped (a worker
- *  restart drops its listener and its record) or never counted fails here instead of passing on an empty list. */
+/** The in-run positive control: a message the test has the tab send mid-run (a read of the model list, harmless and
+ *  refused on an unapproved page), which the counter must see exactly once. A counter that stopped (a worker restart drops
+ *  its listener and its record) or never counted fails here instead of passing on an empty list. It is sent from the
+ *  content scripts' world: a page that may not use window.ml has no `ml.models()` to call (SITE_PRESENCE.md step 3). */
 const PROBE = "LIST_MODELS";
-const sendProbe = (page) => () => { void page.evaluate(() => window.ml.models().catch(() => null)).catch(() => {}); };
+const sendProbe = (page) => () => { void inShell(page, () => { chrome.runtime.sendMessage({ type: "LIST_MODELS" }, () => void chrome.runtime.lastError); }).catch(() => {}); };
 
 /** What a run's page may send on its own account during a run, by name, each with why: none for a run the worker built
  *  on a page already open. A handed-over run's page is reloaded (that is the hand-over), so it announces its new document

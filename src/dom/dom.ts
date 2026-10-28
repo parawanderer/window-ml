@@ -343,6 +343,26 @@ let closedRootReader: ((el: Element) => ShadowRoot | null) | null = null;   // s
 /** Read closed roots with `fn` from now on, instead of the main world's capture; the reader applies the pierce setting. */
 export const setClosedRootReader = (fn: (el: Element) => ShadowRoot | null): void => { closedRootReader = fn; };
 
+/** The hosts of our own UI in the page (the sidebar shell's, the card's, the highlight's), kept on the isolated world's
+ *  global so every bundle in that world reads one set and no page script reaches it. The shell adds each host it makes;
+ *  the isolated tools' closed-root reader never opens one. */
+export const ownHosts = (): WeakSet<Element> => {
+    const g = globalThis as unknown as { __mlOwnHosts?: WeakSet<Element> };
+    return g.__mlOwnHosts ??= new WeakSet();   // state: plumbing — one per document, shared by the isolated world's bundles
+};
+
+/** The closed-root reader of the page-side tools in the isolated world (injected-isolated.ts): `chrome.dom` opens any
+ *  closed root, declarative and native ones and those attached before the tools arrived, while the run's
+ *  `pierceClosedShadow` is on; never one of our own hosts, and none where `chrome.dom` is missing (closed roots then stay
+ *  unreadable). */
+export const isolatedClosedRootReader = (): ((el: Element) => ShadowRoot | null) => {
+    const open = (globalThis as unknown as { chrome?: { dom?: { openOrClosedShadowRoot?: (e: Element) => ShadowRoot | null } } }).chrome?.dom?.openOrClosedShadowRoot;
+    return (el) => {
+        if (!pierceClosed || !open || ownHosts().has(el)) return null;
+        try { return open(el) ?? null; } catch { return null; }
+    };
+};
+
 /** The CLOSED shadow root the document_start patch captured for `el`, IF piercing is enabled and it grabbed
  *  it. null when the flag is off, the patch is absent (shadow-patch.js didn't run), or the root is one it
  *  can't see (a declarative `shadowrootmode="closed"` or native root). */
@@ -476,11 +496,12 @@ export const describeSkeleton = (el: Element, depth: number, indent = "", canLoc
     // are the element's real content, not the empty light children — reachable via `<sel> >>> <inner>`). A
     // custom element (hyphenated tag) with NO open root and NO light children almost certainly has a CLOSED
     // root — steer to visual navigation, since selectors can't reach in.
-    // OPEN root, or — when piercing is on — a CLOSED root the document_start patch captured. Both are
-    // traversable and referenced with `>>>`, so they render the same tree; only the label differs.
+    // OPEN root, or — when piercing is on — a CLOSED root this world can read (the document_start patch's capture in the
+    // page's world, chrome.dom in ours). Both are traversable and referenced with `>>>`, so they render the same tree;
+    // only the label differs.
     const sr = el.shadowRoot ?? capturedClosedRoot(el);
     if (sr) {
-        const label = el.shadowRoot ? "(OPEN)" : "(CLOSED, pierced) — captured at page load, so it's reachable;";
+        const label = el.shadowRoot ? "(OPEN)" : "(CLOSED, pierced) — reachable;";
         out += "\n" + indent + `  #shadow-root ${label} its contents are shown below; reference them with \`>>> <inner selector>\`.`;
         const shadowKids = [...sr.children];
         if (depth > 0) {
