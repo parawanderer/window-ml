@@ -9,7 +9,7 @@
 // something syncing the folder never reads half a write.
 
 import { BACKUP_EXTENSION, type BackupForm } from "../backup/backup-file";
-import { readHeadAndFirstChunk, readHeader } from "../backup/backup-format";
+import { keyFor, opensFirstChunk, readHeadAndFirstChunk, readHeader, type Keyring } from "../backup/backup-format";
 
 /** Where the folder stands, as Settings draws it. */
 export type FolderState =
@@ -23,6 +23,8 @@ export type FolderState =
     | "unsupported";
 
 const DB = "ml-archive-folder", STORE = "h", KEY = "dir";
+/** The record beside the handle that names the key id this install expects the folder's months under (`loadFolderPin`). */
+const PIN_KEY = "pin";
 
 function idb(): Promise<IDBDatabase> {
     return new Promise((resolve, reject) => {
@@ -33,12 +35,16 @@ function idb(): Promise<IDBDatabase> {
     });
 }
 
-/** Keep (or with null, forget) the picked folder's handle, where the page and the worker both find it. */
+/**
+ * Keep (or with null, forget) the picked folder's handle, where the page and the worker both find it. Any call drops the
+ * folder's pinned key (`saveFolderPin`) in the same transaction: a pin belongs to the folder it was set for.
+ */
 export async function saveFolder(handle: FileSystemDirectoryHandle | null): Promise<void> {
     const db = await idb();
     await new Promise<void>((resolve, reject) => {
         const t = db.transaction(STORE, "readwrite");
         if (handle) t.objectStore(STORE).put(handle, KEY); else t.objectStore(STORE).delete(KEY);
+        t.objectStore(STORE).delete(PIN_KEY);
         t.oncomplete = () => resolve();
         t.onerror = () => reject(t.error);
     });
@@ -55,6 +61,34 @@ export async function loadFolder(): Promise<FileSystemDirectoryHandle | null> {
     });
     db.close();
     return handle;
+}
+
+/**
+ * The key id this install expects the picked folder's months under, or null when none is pinned. Set by a page action
+ * only (`saveFolderPin`), never by the worker or by anything the folder's files say, so a file planted in the folder
+ * cannot move it (docs/dev/backup.md, part 3e).
+ */
+export async function loadFolderPin(): Promise<string | null> {
+    const db = await idb();
+    const pin = await new Promise<string | null>((resolve, reject) => {
+        const q = db.transaction(STORE).objectStore(STORE).get(PIN_KEY);
+        q.onsuccess = () => resolve(typeof q.result === "string" ? q.result : null);
+        q.onerror = () => reject(q.error);
+    });
+    db.close();
+    return pin;
+}
+
+/** Pin (or with null, drop) the key id this install expects the folder's months under. A page calls it at the four places part 3e lists. */
+export async function saveFolderPin(keyId: string | null): Promise<void> {
+    const db = await idb();
+    await new Promise<void>((resolve, reject) => {
+        const t = db.transaction(STORE, "readwrite");
+        if (keyId) t.objectStore(STORE).put(keyId, PIN_KEY); else t.objectStore(STORE).delete(PIN_KEY);
+        t.oncomplete = () => resolve();
+        t.onerror = () => reject(t.error);
+    });
+    db.close();
 }
 
 /** A handle's permission, in the methods Chrome adds to it (the DOM typings do not have them yet). */
@@ -151,19 +185,35 @@ export async function readMonthHead(dir: FileSystemDirectoryHandle, month: strin
     return file ? readHeadAndFirstChunk(await file.getFile()) : null;
 }
 
+/** What `monthKeyCounts` found: month files per key this install holds, and the files that open under none of them. */
+export interface KeyCounts {
+    /** encrypted month files that open under the key with this id (current or retired) */
+    byKey: Record<string, number>;
+    /** encrypted month files that open under no key this install holds, whatever their header says */
+    unopened: number;
+}
+
 /**
- * How many of the folder's encrypted month files each key sealed, by the `keyId` in each header (a header-only read
- * through the handle the page holds; no worker op). What Settings tells a person before they forget a retired key.
- * A file whose header cannot be read counts for no key.
+ * How many of the folder's encrypted month files each key of `ring` opens (part 3e): a month counts under K only when
+ * `keyFor(ring, header.keyId)` is K AND K opens its first chunk (`opensFirstChunk`, one AES-GCM per month), so a header
+ * that merely names a key, over a payload nothing opens, counts for nobody. The header is the chunks' associated data,
+ * so a relabelled real month opens under no key either and shows in `unopened` instead of vanishing. Files that cannot
+ * be read, files under a key this install never held, and files that do not open all count as `unopened`. A header and
+ * first chunk read through the handle the page holds; no worker op. What Settings tells a person before they forget a
+ * retired key.
+ * @param ring this install's keyring (never handed to a component); null before set-up, when every file is unopened
  */
-export async function monthKeyCounts(dir: FileSystemDirectoryHandle): Promise<Record<string, number>> {
-    const out: Record<string, number> = {};
+export async function monthKeyCounts(dir: FileSystemDirectoryHandle, ring: Keyring | null): Promise<KeyCounts> {
+    const out: KeyCounts = { byKey: {}, unopened: 0 };
     for (const f of await monthFiles(dir)) {
         if (f.form !== "encrypted") continue;
         try {
             const head = await readMonthHead(dir, f.month);
-            if (head) { const id = readHeader(head).keyId; out[id] = (out[id] ?? 0) + 1; }
-        } catch { /* unreadable: counted for no key */ }
+            const key = head && ring ? keyFor(ring, readHeader(head).keyId) : null;
+            if (!head || !key) { out.unopened++; continue; }
+            await opensFirstChunk(head, key);
+            out.byKey[key.keyId] = (out.byKey[key.keyId] ?? 0) + 1;
+        } catch { out.unopened++; }
     }
     return out;
 }

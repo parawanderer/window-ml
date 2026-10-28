@@ -111,11 +111,15 @@ _ml_cell_begin, _ml_cell_revoke, _ml_cell_spending = _ml_gate_calls(globals().po
 # in the wrapper's globals, so a cancel that looked anything up there (or in a module, or in builtins) could be undone
 # by a cell rebinding the name. Classes the captured callables dispatch through (Task.cancel) are not closed by this.
 class _MlSpendLate(BaseException):
-    """Raised in a task the cancel's spend stopped: it kept running past the spend's budget, or took its hook down."""
+    """Raised in a task the cancel's spend stopped: it kept running past the spend's budget, or reached for its hook."""
 
 def _ml_make_cancel(revoke, spending, loop, set_running_loop, all_tasks, current_task, sleep, get_objects, Handle,
-                    settrace, setprofile, monotonic, StringIO, redirect_stdout, redirect_stderr, guarded, skip_files,
+                    settrace, setprofile, monitoring, monotonic, StringIO, redirect_stdout, redirect_stderr, guarded, skip_files,
                     SpendLate, BaseException_, isinstance_, id_, len_, range_, sorted_, str_, getattr_, ROUNDS, BUDGET, CAP):
+    # The spend's hook is a sys.monitoring tool (pins 18 to 20): a settrace hook that raises is taken down by CPython
+    # itself, so every handler after the first SpendLate ran untraced; a monitoring callback that raises stays on.
+    use_tool_id, free_tool_id, clear_tool_id, register_callback, set_events, get_tool, DISABLE, TOOL, EVENTS = monitoring
+    PY_START, LINE, JUMP, CALL = EVENTS
     # The tasks' own output during the spend: kept up to CAP characters, then counted.
     class Out:
         def __init__(self):
@@ -136,20 +140,34 @@ def _ml_make_cancel(revoke, spending, loop, set_running_loop, all_tasks, current
         seen = []
         deadline = None
         code = cancel.__code__
-        def skip(frame):
-            f = frame.f_code
-            return f is code or f.co_filename.startswith(skip_files)
-        def local(frame, event, arg):
+        def skip(c):
+            return c is code or c.co_filename.startswith(skip_files)
+        # Every line, backward jump and function start a task runs past the deadline raises, its handlers' included; a
+        # call that would take a hook down raises at once. The machinery's own code is switched off where it stands.
+        def late(c, *_):
+            if skip(c):
+                return DISABLE
             if monotonic() > deadline:
                 raise SpendLate()
-            return local
-        def tracer(frame, event, arg):
-            if skip(frame):
-                return None
-            return local(frame, event, arg)
-        def profiler(frame, event, arg):
-            if event == "c_call" and id_(arg) in guarded and not skip(frame):
+        def call(c, offset, fn, arg0):
+            if skip(c):
+                return DISABLE
+            if id_(fn) in guarded:
                 raise SpendLate()
+        # A tool the cell left would run its callbacks during the spend, on no clock: cleared and freed first, and named.
+        foreign = []
+        for i in range_(6):
+            try:
+                name = get_tool(i)
+                if name is not None:
+                    foreign.append(str_(name) + " (id " + str_(i) + ")")
+                    clear_tool_id(i)
+                    free_tool_id(i)
+            except BaseException_:
+                pass
+        settrace(None)
+        setprofile(None)
+        hooked = False
         with redirect_stdout(out), redirect_stderr(out):
             # 1. The running loop: a cell's new_event_loop() replaced it, and a handle on the orphan crashes the next pump.
             try:
@@ -158,8 +176,8 @@ def _ml_make_cancel(revoke, spending, loop, set_running_loop, all_tasks, current
                 pass
             # 2. SPEND every task: cancel it and let the loop turn, so it takes the CancelledError and finishes. A task
             #    that catches the cancel and awaits again is cancelled again, ROUNDS times. The rounds share ONE budget,
-            #    enforced on every line a task runs (settrace) and on every call that would take the hooks down
-            #    (setprofile); a cell's own hooks are replaced for the spend and left as None after it.
+            #    enforced on every line, jump and start a task runs and on every call that would take the hook down (one
+            #    sys.monitoring tool); a cell's own trace and profile hooks are cleared for the spend and left as None.
             try:
                 for rnd in range_(ROUNDS + 1):
                     unspent = [t for t in all_tasks() if t is not me and not t.done()]
@@ -172,17 +190,50 @@ def _ml_make_cancel(revoke, spending, loop, set_running_loop, all_tasks, current
                     if deadline is None:
                         deadline = monotonic() + BUDGET
                         spending()
+                        use_tool_id(TOOL, "window.ml spend")
+                        hooked = True
+                        for ev, fn in ((PY_START, late), (LINE, late), (JUMP, late), (CALL, call)):
+                            register_callback(TOOL, ev, fn)
                     elif monotonic() > deadline:
                         break
-                    setprofile(profiler)
-                    settrace(tracer)
+                    set_events(TOOL, PY_START | LINE | JUMP | CALL)
                     try:
                         await sleep(0)
                     finally:
-                        settrace(None)
-                        setprofile(None)
+                        set_events(TOOL, 0)
             except BaseException_:
                 pass
+            # 2b. A task that ended in an exception keeps its frames in the traceback, and whatever they held (a
+            #     suspended coroutine, an object with __del__) is finalized when they are collected: in a later cell, on
+            #     no clock. Cleared here, under the tool with the deadline forced past, so a finalizer stops at its first event.
+            if hooked:
+                deadline = 0.0
+                set_events(TOOL, PY_START | LINE | JUMP | CALL)
+                try:
+                    for t in seen:
+                        try:
+                            e = t.exception() if t.done() and not t.cancelled() else None
+                            for _ in range_(64):
+                                if e is None:
+                                    break
+                                tb = e.__traceback__
+                                while tb is not None:
+                                    try:
+                                        tb.tb_frame.clear()
+                                    except BaseException_:
+                                        pass
+                                    tb = tb.tb_next
+                                e = e.__context__
+                        except BaseException_:
+                            pass
+                finally:
+                    set_events(TOOL, 0)
+            if hooked:
+                try:
+                    clear_tool_id(TOOL)
+                    free_tool_id(TOOL)
+                except BaseException_:
+                    pass
             # 3. REVOKE what the cell handed to JavaScript (cell-gate.ts), then cancel every asyncio.Handle left.
             try:
                 revoke()
@@ -208,6 +259,8 @@ def _ml_make_cancel(revoke, spending, loop, set_running_loop, all_tasks, current
             except BaseException_:
                 return str_(len_(tasks)) + " task(s)"
         refusal = ""
+        if foreign:
+            refusal += "RuntimeError: this cell left a sys.monitoring tool registered: " + ", ".join(foreign) + ". It was cleared before the cancel's spend, so the cell's result is refused rather than returned beside it.\\n"
         if stopped:
             refusal += "RuntimeError: this cell left a task that kept running after it was cancelled: " + names(stopped) + ". It was stopped after " + str_(BUDGET) + " s (or when it tried to remove the cancel's hook), so the cell's result is refused rather than returned beside it.\\n"
         if unspent:
@@ -231,15 +284,21 @@ def _ml_make_run(eval_code_async, cancel, format_exception, BaseException_):
         return (out, refusal, err)
     return run
 
-# The calls that would take the spend's hooks down, and the files whose frames the hooks never stop: asyncio's and
-# Pyodide's loop machinery (stopping them would break the loop, not the task) and the harness's own.
+# The calls that would take the spend's hook down, and the files whose frames the hook never stops: asyncio's and
+# Pyodide's loop machinery (stopping them would break the loop, not the task) and the harness's own. Every sys.monitoring
+# call but the three that only read is guarded, enumerated from the module so a later core's new one is too.
 import gc as _ml_gc, os as _ml_os, pyodide as _ml_pyo
+_ml_mon = _ml_s.monitoring
 _ml_spend_guarded = frozenset(id(f) for f in (_ml_s.settrace, _ml_s.setprofile, _ml_th.settrace, _ml_th.setprofile,
-    getattr(_ml_th, "settrace_all_threads", None), getattr(_ml_th, "setprofile_all_threads", None)) if f is not None)
+    getattr(_ml_th, "settrace_all_threads", None), getattr(_ml_th, "setprofile_all_threads", None),
+    *(getattr(_ml_mon, n) for n in dir(_ml_mon) if not n.startswith("_") and n not in ("get_tool", "get_events", "get_local_events")
+      and callable(getattr(_ml_mon, n)))) if f is not None)
 _ml_spend_skip = (_ml_os.path.dirname(_ml_aio.__file__), _ml_os.path.dirname(_ml_pyo.__file__), _ml_c.__file__, _ml_s._getframe().f_code.co_filename)
 _ml_cancel = _ml_make_cancel(_ml_cell_revoke, _ml_cell_spending, _ml_aio.get_event_loop(), _ml_aio._set_running_loop,
     _ml_aio.all_tasks, _ml_aio.current_task, _ml_aio.sleep, _ml_gc.get_objects, _ml_aio.Handle,
-    _ml_s.settrace, _ml_s.setprofile, _ml_tm.monotonic, _ml_io.StringIO, _ml_c.redirect_stdout, _ml_c.redirect_stderr,
+    _ml_s.settrace, _ml_s.setprofile, (_ml_mon.use_tool_id, _ml_mon.free_tool_id, _ml_mon.clear_tool_id, _ml_mon.register_callback,
+    _ml_mon.set_events, _ml_mon.get_tool, _ml_mon.DISABLE, 4, (_ml_mon.events.PY_START, _ml_mon.events.LINE, _ml_mon.events.JUMP, _ml_mon.events.CALL)),
+    _ml_tm.monotonic, _ml_io.StringIO, _ml_c.redirect_stdout, _ml_c.redirect_stderr,
     _ml_spend_guarded, _ml_spend_skip, _MlSpendLate, BaseException, isinstance, id, len, range, sorted, str, getattr,
     8, 1.0, 20000)
 from _pyodide._base import eval_code_async as _ml_eval_async
