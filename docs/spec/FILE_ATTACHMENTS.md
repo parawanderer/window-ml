@@ -195,6 +195,28 @@ no `/attached/` directory and no `open()` of one. The call names it, `files: { n
 `tables` map accepts an `@file:` pointer as a source like a URL; the sandbox's existing `read_csv`/`open` redirect
 resolves a name it was given. Specified on the python side in PYTHON_DIALECT.md.
 
+A paged document is injected as the pages, not only as its bytes (Shane, 2026-10-28): raw PDF bytes are close to
+useless in the sandbox, which has no PDF library and would spend its step budget parsing one.
+
+```python
+doc = files["report"]
+doc.pages[3].text, doc.pages[3].kind, doc.pages[3].measure   # what the reader already computed
+doc.pages[3].png(scale=1)   # rendered on demand by the offscreen pdf.js
+doc.bytes                   # the file as attached
+```
+
+- `text`, `kind` and `measure` are the stored value's own fields, read with the value: no call leaves the sandbox.
+- `png()` is the one crossing. It asks the offscreen document to render that page from the stored bytes, the same
+  render `look` uses, and returns PNG bytes for code to crop, measure or tile. It is bounded per cell (pages rendered
+  and total pixels; open: the `look` bound of eight screens), the scale is clamped, and a render that fails or runs
+  over its time answers with a sentence, never a hung cell. It reads only the document the cell was given.
+- Pixels in a cell are numbers, not sight: a model that wants to SEE a page uses `look`, which stays the one vision
+  path and the one place page images are counted against the context.
+
+`png()` is a new call out of the sandbox, so it gets the red-team pass with the rest of slice 3: a cell cannot render a
+document it was not given, cannot pass the bound by looping or by asking for a huge scale, and a crafted page cannot
+hang the cell past its budget.
+
 ## What the person sees
 
 - **Calm view**: a chip per file, under the message like sent images: the name and a summary ("report.pdf · PDF, 48
@@ -248,6 +270,9 @@ or a message"). What a hostile page must not get, as tests that fail first:
   budget, and whether it scales with the model's context window.
 - The per-command size cap: for text it is `FILE_INLINE_MAX` itself, well under the hub's frame limit; open again for
   the bytes a PDF sends.
-- The PDF thresholds (the notebook).
+- The PDF thresholds: read against labelled real pages in `notebooks/pdf/pdf-thresholds.ipynb` (2026-10-28);
+  `MIXED_COVER` moves to 0.1 and a vector-path cover is still to be measured.
+- `png()`'s bound per cell (pages and pixels), and whether a `scanned` page's short clean OCR layer travels with its
+  image.
 - Lines per page for a text file, and the per-call page cap of `look`.
 - Whether the page-image fallback for a scanned page without a vision model uses the reader model or OCR.
