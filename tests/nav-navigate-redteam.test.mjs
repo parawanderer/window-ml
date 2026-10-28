@@ -156,6 +156,18 @@ test("the start origin is consented never as-you: once the tab leaves, the as-yo
     assert.ok(!r.results.some((s) => CHOKE_REFUSED.test(s)), `the as-you read is refused on its card, never reaching the choke point: ${JSON.stringify(r.results)}`);
 });
 
+test("the uncredentialed read back to the start origin never runs once the tab leaves: nothing runs, whichever mechanism refuses it", T, async () => {
+    // The both-worlds invariant, asserted alone (janitor's #1166 row): the read must not RUN whether the
+    // refusal comes from the FETCH_URL choke point or from the gate's card. The rows on either side pin
+    // each mechanism's shape; this one pins only that the read does not run. The scenario is theirs —
+    // click to OTHER, uncredentialed fetch_url back to START — and the card stub declines fetch_url.
+    const r = await hostRun([
+        { name: "click", args: { selector: "#docs" } },          // the tab leaves START for OTHER
+        { name: "fetch_url", args: { url: "https://site.example/api" } },   // uncredentialed back at START
+    ], { clickTo: { "#docs": OTHER }, card: (tool) => tool !== "fetch_url" });
+    assert.deepEqual(r.fetched, [], "the uncredentialed read back to the start origin does not run");
+});
+
 test("the start origin is consented never as-you: once the tab leaves, the uncredentialed read back cards at the gate with askWhy.cause start-left, never riding the consent to the choke point", { ...T }, async () => {
     // Positive control: while the tab IS on START, an as-you fetch of it is the free tier's (the page you are on) —
     // the fetch path works and the gate does not over-card.
