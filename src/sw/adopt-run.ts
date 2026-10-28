@@ -4,7 +4,7 @@ import { pageRebuild } from "../agent/run-assembly";
 import type { RebuildConfig } from "../contract";
 import { delegateSend } from "./delegate-send";
 import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
-import { injectRunTools } from "./sw-presence";
+import { injectForRun } from "./sw-presence";
 
 /**
  * Push a run's builtin toolset into a tab and hear its page context: `ADOPT_RUN_NOW`, through `delegateSend` (which
@@ -21,12 +21,13 @@ export async function adoptOnTab(tabId: number, runId: string, rebuild: RebuildC
     const msg = { type: "ADOPT_RUN_NOW", payload: { runId, rebuild: pageRebuild(rebuild) } };
     const why = (e: unknown): string => String((e as Error)?.message || e);
     const silent = { error: "the page did not answer; it may still be loading, or the extension cannot run there", unanswered: true as const };
-    // A hidden page (SITE_PRESENCE.md step 2) has no page script: the content script asks for one, the worker puts it in
-    // this document, and sends the adopt again saying so, which is what lets the content script speak to the page.
+    // A hidden page (SITE_PRESENCE.md step 2) has no page script: the content script asks for one, the worker puts the run's
+    // tools in this document (a visible origin's document that loaded before its registration gets the page scripts), and
+    // sends the adopt again saying so, which is what lets the content script speak to them.
     const send = async (): Promise<{ pageInfo?: string; error?: string; unanswered?: true } | undefined> => {
         const r = await delegateSend(tabId, msg) as { pageInfo?: string; error?: string; needInject?: boolean } | undefined;
         if (!r?.needInject) return r;
-        await injectRunTools(tabId);
+        await injectForRun(tabId);
         return await delegateSend(tabId, { ...msg, payload: { ...msg.payload, injected: true } }) as { pageInfo?: string; error?: string } | undefined;
     };
     try {

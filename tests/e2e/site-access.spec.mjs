@@ -345,6 +345,8 @@ function expectAllSilent(drained) {
     for (const t of DRAIN.split(",")) expect(drained[t], `${t} on the page's own port`).toEqual({ timeout: true });
 }
 
+// --- a run the person started on a page that may not use window.ml: what that page is lent ---
+
 test.describe("@security part 5: a page a run is on is lent nothing", () => {
     test("a run the user started on an unapproved page: the page's own send of every former run-tab type, naming the run, gets silence on every route", async () => {
         const { fake, site, ext, close } = await setup();

@@ -144,6 +144,27 @@ test("a page that says it has no page script on a VISIBLE origin is still given 
     assert.deepEqual(executes(bg), [], "a page whose content script did not ask is not injected into");
 });
 
+test("a run on a VISIBLE origin's document that loaded before its registration, whose content script asks, gets the page scripts in that document, not the run's tools in ours", T, async () => {
+    const adopts = [];
+    const bg = worker({ local: { ml_site_always: ["https://ok.example"] }, extra: {
+        openTabs: [{ id: 7, url: "https://ok.example/page" }],
+        onTabMessage: async (_tab, msg) => {
+            if (msg.type !== "ADOPT_RUN_NOW") return undefined;
+            adopts.push(plain(msg.payload));
+            return msg.payload.injected === true ? { pageInfo: "here" } : { needInject: true };
+        },
+    } });
+    const r = plain(await bg.send({ type: "USER_START_RUN", keep: false, payload: { task: "read it", surface: "hud" } }, sender("https://ok.example")));
+    assert.ok(r?.data?.hash, `the run started: ${JSON.stringify(r)}`);
+    assert.equal(adopts.length, 2, JSON.stringify(adopts));
+    const ex = executes(bg);
+    assert.equal(ex.length, 1, JSON.stringify(ex));
+    // The isolated tools would count as its page script, so the race fix's PAGE_SCRIPT_MISSING would never put window.ml in.
+    assert.equal(ex[0].world, "MAIN", "a page that may use window.ml gets it, as its registration would have given it");
+    assert.deepEqual(ex[0].files, PAGE_FILES);
+    assert.deepEqual(ex[0].target, { tabId: 7, documentIds: ["doc-7"] }, "only the document whose origin was read");
+});
+
 // --- the content script on a hidden page ---
 
 test("on a hidden page the content script relays nothing the page posts and answers nothing", T, async () => {

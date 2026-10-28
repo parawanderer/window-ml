@@ -178,6 +178,22 @@ export async function injectRunTools(tabId: number, documentId?: string): Promis
 }
 
 /**
+ * Answer a content script that asked for a page script to adopt a run on (`needInject`): the document its tab shows now
+ * gets the main-world scripts when its origin may use window.ml (a document that loaded before its origin's registration
+ * covered it), and the run's tools in the content scripts' world otherwise. Read from the browser's frame, never the page.
+ * @param tabId the tab
+ * @returns once the scripts have run in the top frame
+ * @throws when the extension may not script the tab or the document is gone
+ */
+export async function injectForRun(tabId: number): Promise<void> {
+    const frame = await Promise.resolve(chrome.webNavigation?.getFrame?.({ tabId, frameId: 0 })).catch(() => null) as { documentId?: string; url?: string } | null;
+    const documentId = frame?.documentId;
+    // Only a document named by id gets the main-world scripts: a tab that navigated meanwhile is given nothing of the page's.
+    if (documentId && await presence(frame?.url) === "full") return injectPageScripts(tabId, documentId);
+    return injectRunTools(tabId, documentId);
+}
+
+/**
  * Put the main-world scripts into the document a tab shows now, for a run the person started on a hidden page. The page
  * has been running its own code, so it can watch this happen: from here on it sees what a page with window.ml sees.
  * A closed shadow root the page attached before this is not captured.
