@@ -15,7 +15,8 @@
 // forging the message on its window or on the port; a hidden / pending / ask-only gate; a hello that arrives late.
 // Found OPEN by this pass and closed in the same PR: a sender with no documentId (it fell back to the tab's CURRENT
 // document; now refused), and a repeated message (it injected twice, the second injected.js replacing window.ml and
-// re-arming the port; now injectPageScripts gives a document the scripts once).
+// re-arming the port; now injectPageScripts gives a document the scripts once), and, found by the janitor's review, a
+// failed inject leaving that once-only mark set (a later message answered true with nothing injected; now cleared on a throw).
 // Not worth a test: the content script is the only producer and `contentReady` retries only when the worker gave NO answer,
 // so the real sender cannot repeat; the page cannot forge the hello on a hidden page because the gate drops it unread.
 import { test } from "node:test";
@@ -116,6 +117,17 @@ test("cost of a double injection (pins why the todo above matters): a second inj
     w.pageRun(fs.readFileSync(new URL("../dist/injected.js", import.meta.url), "utf8"));
     assert.notEqual(w.context.window.ml, first, "if this ever becomes the same object, injected.js is idempotent and the todo can go");
     assert.equal(w.dispatchedEvents.filter((e) => e === "ml-page-port").length, 2, "a second hand-off of a port to the content script");
+});
+
+test("a failed inject leaves the document unmarked: the next PAGE_SCRIPT_MISSING injects instead of answering true for nothing", T, async () => {
+    const bg = worker();
+    const scripting = bg.context.chrome.scripting;
+    const real = scripting.executeScript;
+    scripting.executeScript = async () => { throw new Error("Cannot access contents of the page."); };
+    assert.deepEqual(plain(await bg.send(MISSING, sender(OK, "doc-x"))), NO);
+    scripting.executeScript = real;
+    assert.deepEqual(plain(await bg.send(MISSING, sender(OK, "doc-x"))), { data: true });
+    assert.equal(executes(bg).length, 1, "the document stayed marked after the throw, so nothing was injected");
 });
 
 test("two different documents of one tab are each injected once, in their own right (no cross-document dedupe)", T, async () => {
