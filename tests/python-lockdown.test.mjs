@@ -235,7 +235,10 @@ test("step3: the strip removes prototype-chain accessors and methods outside ALL
     scope.URL = URL;
     await lockdownReadonly(py, scope);
     const host = ["location", "navigator", "postMessage", "addEventListener", "dispatchEvent", "fonts"];
-    assert.deepEqual(host.filter((n) => scope[n] !== undefined), [], "the strip must leave no host accessor or method readable through the chain");
+    // Reads through the scope only. A non-configurable chain accessor (`fonts` here) stays readable on its prototype, through
+    // `Object.getPrototypeOf(scope)`, `__proto__` or `constructor.prototype`; every WebIDL prototype property is configurable,
+    // so a real worker has none, and the delete wins there (janitor's review on #1274).
+    assert.deepEqual(host.filter((n) => scope[n] !== undefined), [], "the strip must leave no host accessor or method readable as a property of the scope");
     assert.deepEqual(Object.getOwnPropertyDescriptor(scope, "fonts"), { value: undefined, writable: false, enumerable: false, configurable: false },
         "a prototype accessor the strip cannot delete must be shadowed on the scope");
     // Positive control: what ALLOWED_GLOBALS names stays, on the chain as well as on the scope.
