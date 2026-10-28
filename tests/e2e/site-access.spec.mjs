@@ -951,11 +951,12 @@ test.describe("@security attack 17: the shell's shadow roots", () => {
     }, await hostsOf(page));
 
     /** In the page's main world: every way it found to a node inside our roots (empty is the secure answer), and which
-     *  of our hosts are in its document. */
+     *  of our hosts are in its document. Every match of a selector is probed and labelled, so a look-alike the page
+     *  made of the highlight's tag shows as a second label instead of standing in for our host. */
     const pageReach = async (page) => page.evaluate((sels) => {
         const ours = window.__ours;
         const found = [...window.__oursSeen];
-        const hosts = sels.map(([label, sel]) => [label, document.querySelector(sel)]).filter(([, h]) => h);
+        const hosts = sels.flatMap(([label, sel]) => [...document.querySelectorAll(sel)].map((h) => [label, h]));
         for (const [label, h] of hosts) {
             if (h.shadowRoot !== null) found.push(`${label}.shadowRoot`);
             try { h.attachShadow({ mode: "open" }); found.push(`${label}.attachShadow succeeded`); } catch { /* it has its root */ }
