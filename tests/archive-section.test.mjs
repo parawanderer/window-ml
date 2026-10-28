@@ -376,6 +376,8 @@ test("This folder's key changed: only with a pin and an other-key skip naming a 
     assert.match(text, /2 months say they are under c04b 77aa 19e2 f6d3\./, "the files' claim, not a fact");
     assert.match(changedText(show({ report: conn({ skipped: [skip("2026-09", "other-key", OTHER)] }), pin: PIN })), /1 month says it is under c04b 77aa 19e2 f6d3\./);
     assert.ok(text.includes("9f3a 1c7e 2b40 d815") && text.includes("c04b 77aa 19e2 f6d3"), "both ids, in the helper's format");
+    const mixed = changedText(show({ report: conn({ skipped: [skip("2026-09", "other-key", OTHER), skip("2026-08", "other-key", "54526a29cd3f30e6")] }), pin: PIN }));
+    assert.match(mixed, /1 month says it is under c04b 77aa 19e2 f6d3, and 1 more says it is under another key\./, "a month naming another id is not counted under the one named (red-team R6 on 3f)");
     assert.match(text, /If you did not change the key on your other machine, do not enter a secret here: someone who can write to this folder may have added these files\./);
     const order = [...host.querySelectorAll(".arch-skips > *")].map((e) => e.className);
     assert.match(order[0], /arch-changed/, "it leads");

@@ -266,6 +266,8 @@ export function SkippedMonths(p: {
     // A key other than the one pinned: the folder's key changed, or someone who can write to it put these files there.
     const otherIds = [...new Set(other.map((s) => s.keyId).filter((k): k is string => !!k))].filter((k) => k !== p.pin);
     const changed = p.pin && otherIds.length ? (pick?.keyId && otherIds.includes(pick.keyId) ? pick.keyId : otherIds[0]) : null;
+    // Only the months naming `changed` are counted under it; the rest of the other-key skips are said apart.
+    const under = changed ? other.filter((s) => s.keyId === changed).length : 0, rest = other.length - under;
     const adopt = (first: boolean) => pick ? (
         <AdoptFolderKey hasOwnKey={p.hasOwnKey ?? true} months={pick.months} keyId={pick.keyId} busy={!!p.busy} wrong={!!p.wrong} first={first} onAdopt={(t) => p.onAdopt?.(t, pick.month)} />
     ) : null;
@@ -284,7 +286,7 @@ export function SkippedMonths(p: {
             {other.length ? (
                 <>
                     {changed ? (
-                        <div class="set-warn arch-changed"><b>This folder's key changed.</b> This install expects its months under <KeyId id={p.pin!} />; {monthsOf(other.length)} {other.length === 1 ? "says it is" : "say they are"} under <KeyId id={changed} />. If you did not change the key on your other machine, do not enter a secret here: someone who can write to this folder may have added these files.</div>
+                        <div class="set-warn arch-changed"><b>This folder's key changed.</b> This install expects its months under <KeyId id={p.pin!} />; {monthsOf(under)} {under === 1 ? "says it is" : "say they are"} under <KeyId id={changed} />{rest ? `, and ${rest} more ${rest === 1 ? "says it is" : "say they are"} under another key` : ""}. If you did not change the key on your other machine, do not enter a secret here: someone who can write to this folder may have added these files.</div>
                     ) : null}
                     <div class="set-warn">{monthsOf(other.length)} {other.length === 1 ? "is" : "are"} encrypted with another install's key. {other.length === 1 ? "It is" : "They are"} left as {other.length === 1 ? "it was" : "they were"}.</div>
                     {adopt(false)}
