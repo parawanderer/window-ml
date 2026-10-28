@@ -233,7 +233,8 @@ test("ml.chat converts <img> elements to data URLs in the payload", async () => 
 });
 
 test("window.ml signals readiness via the ml:ready event and ml.ready promise", async () => {
-    const world = loadPageWorld({ onRuntimeMessage: () => ({ data: "ok" }) });
+    // The page's world only: injected-isolated.js (WML_PAGE_BUNDLE) dispatches nothing on the page's window.
+    const world = loadPageWorld({ main: "injected.js", onRuntimeMessage: () => ({ data: "ok" }) });
     assert.ok(world.dispatchedEvents.includes("ml:ready"));
     assert.strictEqual(await world.ml.ready, world.ml);
 });

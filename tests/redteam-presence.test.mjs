@@ -271,6 +271,8 @@ test("nothing of ours is posted on the page's window, and the only events dispat
     await w.ml.info();
     await flush(20);
     assert.deepEqual(plain(w.windowPosts), [], "something of ours was posted on the page's window");
+    // injected-isolated.js (WML_PAGE_BUNDLE, SITE_PRESENCE.md step 3) attaches its port in-process and dispatches nothing at all.
+    if (process.env.WML_PAGE_BUNDLE === "injected-isolated.js") return void assert.deepEqual(w.dispatchedEvents, [], "the isolated bundle dispatched an event on the page's window");
     assert.deepEqual([...new Set(w.dispatchedEvents)].filter((t) => !["ml-page-port", "ml:ready", "wml-closed-roots"].includes(t)), [], "an event of ours was dispatched on the page's window");
     assert.equal(w.dispatchedEvents.filter((t) => t === "ml-page-port").length, 1, "the port was handed over more than once");
 });

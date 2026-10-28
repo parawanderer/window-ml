@@ -84,7 +84,8 @@ runs it was not given, not that it sees nothing:
   As built (`src/page-channel.ts`): the hand-off is a synchronous `ml-page-port` event on `window`. The isolated side keeps
   the first port it is handed while armed: from document_start, and again after the worker's `PAGE_PORT_ARM`, which
   `injectPageScripts` sends before every late injection and which drops any port held. On a page whose script is injected
-  after it loaded (a run on a hidden page, a restored tab) the page ran first: one that listens for the hand-off, or keeps
+  after it loaded (a restored tab on a visible origin; since step 3 never a run on a hidden page, whose tools are in
+  the isolated world) the page ran first: one that listens for the hand-off, or keeps
   handing ports over, can still take the run's channel, which is no worse than the window was. The main side calls the
   port's builtins through copies kept at load, so on a visible origin a page that wraps them later gets no port; it still
   reads what injected.js sends through a wrapped builtin it calls (`tests/redteam-exec-shared-world.test.mjs`).

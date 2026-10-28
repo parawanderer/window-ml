@@ -244,6 +244,10 @@ jobs:
         run: npm run fetch-pyodide
       - if: env.CODE == 'true'
         run: npm test
+      # The tools' suites again against injected-isolated.js, the page-side bundle a run on a hidden page gets
+      # (SITE_PRESENCE.md step 3), so the two bundles cannot drift apart.
+      - if: env.CODE == 'true'
+        run: node scripts/test-isolated-bundle.mjs
       # The legend word-clipping "visual test" notebook — regenerate and upload it even when the run
       # FAILED (if: always()), so a red clip-case can be reviewed by eye: download the artifact, open the
       # HTML, and the failing cell shows the words, the crop box, and expected-vs-actual. Named per matrix

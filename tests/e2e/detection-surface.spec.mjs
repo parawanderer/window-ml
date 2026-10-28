@@ -317,6 +317,10 @@ test.describe("exec", () => {
         // page's listener sees no ml-page-port and no ml:ready (row 6's former residual, a hidden page with a run, is gone).
         expectWindowSilent(row.during, "during a run on a hidden page");
         expect(row.during.pageEvents).toEqual([]);
+        // Nor does the page's world get window.ml, or see a builtin of its own called from our code: the tools' DOM reads
+        // use the content scripts' world's builtins (rows 1 and 6).
+        expect(row.during.globalsAdded).not.toContain("ml");
+        expect(row.during.extensionCallers).toEqual([]);
     });
 
     test("isolated world with streaming: the binding is named for the world, so the page never sees it", async () => {

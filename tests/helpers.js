@@ -614,10 +614,14 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     };
 }
 
+// The page-side bundle loadPageWorld loads by default: injected.js, or injected-isolated.js when WML_PAGE_BUNDLE names it
+// (SITE_PRESENCE.md step 3: the tools' tests run against both bundles; `npm run test:isolated-bundle`).
+const PAGE_BUNDLE = process.env.WML_PAGE_BUNDLE || "injected.js";
+
 // Loads content.js + injected.js into one fake "page world" so ml.* calls
 // travel the real postMessage relay. `onRuntimeMessage` plays the background:
 // it gets the runtime message and returns { data } or { error }.
-function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside, visible = true, ask = false, beforeInjected, main = "injected.js", onContentReady } = {}) {
+function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside, visible = true, ask = false, beforeInjected, main = PAGE_BUNDLE, onContentReady } = {}) {
     // #8: ml.agent probes config + model capabilities on every call to decide
     // whether to auto-wire a `look` tool. Answer those probes from `config`/`caps`
     // (defaults: no OCR model, no capabilities → no vision tool) so loop tests
@@ -770,7 +774,8 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside
         for (const fn of runtimeMsgListeners) fn({ type: "PAGE_PORT_ARM" }, {}, () => {});
     }
     // `main`: the main-world script the page has at document_start: injected.js (the full API), ask.js (the stub,
-    // SITE_PRESENCE.md), or null for none (a hidden page, whose own scripts may hand the content script a port).
+    // SITE_PRESENCE.md), or null for none (a hidden page, whose own scripts may hand the content script a port). The
+    // default is PAGE_BUNDLE, so the tools' suites also run against injected-isolated.js, the same tools in our world.
     let injectedSrc = main ? fs.readFileSync(path.join(DIST, main), "utf8") : "";
     if (dialectInside) {   // as in loadBackground: the bundle has no real membership predicate yet, so patch the default verdict's text
         const patched = injectedSrc.replace("membership = () => false", `membership = (code) => code.includes(${JSON.stringify(dialectInside)})`);
@@ -793,14 +798,20 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps, dialectInside
     // THE PAGE CHANNEL, from either end. `asContent(data)` sends to injected.js as content.js or the shell would;
     // `asInjected(data)` sends to them as injected.js would. A test that posts on `window` speaks as the PAGE, which no
     // longer reaches either.
-    const asContent = (data) => { if (!channel.iso) throw new Error("loadPageWorld: injected.js never handed over its port"); channel.iso.postMessage(data); };
-    const asInjected = (data) => { if (!channel.iso) throw new Error("loadPageWorld: injected.js never handed over its port"); channel.iso.other.postMessage(data); };
+    // injected-isolated.js hands no port over the window: its channel is attached in-process, so read the port content.js holds.
+    const isoPort = () => {
+        const port = channel.iso ?? context.__mlPageChannel?.port;
+        if (!port) throw new Error("loadPageWorld: injected.js never handed over its port");
+        return port;
+    };
+    const asContent = (data) => { isoPort().postMessage(data); };
+    const asInjected = (data) => { isoPort().other.postMessage(data); };
 
     // What injected.js sends to content.js and the shell: `fn` hears `{ data }` beside content.js's own listeners.
     const fromInjected = (fn) => { context.__mlPageChannel.listeners.push(fn); };
     // What content.js and the shell send to injected.js: `fn` hears `{ data }` just before injected.js does.
     const fromContent = (fn) => {
-        const port = channel.iso.other, prev = port._on;
+        const port = isoPort().other, prev = port._on;
         port._on = (e) => { fn(e); if (prev) prev(e); };
     };
 

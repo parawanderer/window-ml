@@ -244,7 +244,7 @@ reader of it fails there.
 
 ## Presence: which pages see window.ml
 
-[SITE_PRESENCE.md](../spec/SITE_PRESENCE.md), step 2. A page sees `window.ml` only when its origin may use it
+[SITE_PRESENCE.md](../spec/SITE_PRESENCE.md), steps 2 and 3. A page sees `window.ml` only when its origin may use it
 (`visibleOrigins`, the same rule as `levelsFor`); every other page is HIDDEN, a denied origin and an unknown one alike.
 
 - **The page scripts are registered, not in the manifest.** `sw-presence.ts` registers `shadow-patch.js` then
@@ -254,10 +254,14 @@ reader of it fails there.
 - **Each match pattern names the origin's port, the default one included** (`originMatchPattern`): a pattern with no
   port matches every port of the host, and `:443` matches only the default one (measured in Chromium 151).
 - **`injected.js` is not web-accessible**: registered and `executeScript` files need no listing.
-- **A hidden page gets the page scripts only for a run still going on its tab**, put into that one document by the
-  worker: at the run's start (`adoptOnTab`: the content script answers `needInject`, the worker injects and asks again
-  with `injected`), and on a navigation mid-run (`CONTENT_READY` injects before it answers). A finished run is not
-  reason enough. From then on that page sees what a visible page sees; a closed root it attached before is not captured.
+- **A hidden page gets the run's tools only for a run still going on its tab, and never in its own world** (step 3).
+  `injectRunTools` puts `injected-isolated.js` into that one document with world `ISOLATED`, the content scripts' world:
+  at the run's start (`adoptOnTab`: the content script answers `needInject`, the worker injects and asks again with
+  `injected`), and on a navigation mid-run (`CONTENT_READY` injects before it answers). A finished run is not reason
+  enough. It is the same bundle as injected.js with `pageWorld.isolated` set (`page-world.ts`): its channel to content.js
+  is attached in-process, with no `ml-page-port` and no `ml:ready` on the page's window, and it reads closed roots with
+  `chrome.dom.openOrClosedShadowRoot` (`isolatedClosedRootReader`, under `pierceClosedShadow`), skipping our own hosts
+  (`ownHosts`, which `shell.ts` fills). The page's world gets no `window.ml`, no `attachShadow` patch and no event.
 - **The content script runs at `document_start` and speaks only on the worker's word.** `page-gate.ts` holds one gate per
   document, in the isolated world: `pending` until the worker answers `CONTENT_READY` (the page's early posts and the
   worker's requests wait), then `open` or `closed`. A closed gate relays nothing the page posts, answers nothing, and
@@ -270,9 +274,9 @@ reader of it fails there.
   any port the page handed over first. content.js and the shell hear nothing the page posts on
   `window`, and nothing on the channel either while the gate is not open (the shell's handler and the session relay
   check `gateOpen()` like every other send).
-- **Residuals:** a run on a hidden page exposes what it did before step 2 (rows 4 and 6 of detection-surface.md): there
-  injected.js arrives after the page's scripts, which can take the port from the hand-off (or race the injection with
-  ports of their own) and speak as injected.js. On a visible origin the main side keeps the port's builtins from load, so
+- **Residuals:** on a visible origin injected.js can still arrive after the page's scripts (a restored tab, an origin
+  allowed while it is open), which can take the port from the hand-off (or race the injection with ports of their own)
+  and speak as injected.js (row 6 of detection-surface.md). A hidden page's run has no such port since step 3. On a visible origin the main side keeps the port's builtins from load, so
   a page that wraps them later is not handed the port. The sidebar's files are still web-accessible,
   but only by their per-session URL (`use_dynamic_url`, row 5).
 
