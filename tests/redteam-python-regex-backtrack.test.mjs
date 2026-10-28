@@ -183,3 +183,74 @@ test("RED TEAM: the shapes the port already refuses stay refused", (t) => {
         assert.match(out.msg, why, `${name}: refused by the wrong layer — ${JSON.stringify(out)}`);
     }
 });
+
+// --- PR-3: the cost gate's budget is per CELL, compile is free, and sub/subn price their input -----------------------
+//
+// Coordinator's PR-3 ruling, the three end-to-end shapes (the corpus's own read is tests/regex-cost-core.test.mjs).
+// Measured on the shipped core (pin 2e41d920): `re.search('a+b', 'a'*2000)` is 1,501,000 steps, so nine in one cell are
+// 13,509,000 (under `DEFAULT_BUDGET` 15,000,000) and ten are 15,010,000 — refused at the tenth, before it runs. Each
+// search alone is under the budget and runs in its own cell: one budget per CELL, never a cap per search. The charge
+// that refuses the crossing search is the same one the JS model pins as charge-before-scan ("each run scan is charged
+// before it scans", tests/regex-cost.test.mjs), so a cell that crosses is refused before the crossing search runs.
+
+const SEARCH_2000 = `re.search('a+b', 'a' * 2000)`;
+const searches = (n) => `import re\n` + Array.from({ length: n }, () => SEARCH_2000).join("\n") + `\nreturn 'ok'`;
+
+test("RED TEAM: one step budget for the cell — nine searches that fit run, ten that cross are refused, and the same ten in ten cells each run", (t) => {
+    if (skip) return t.skip(skip);
+    const under = cell(searches(9));
+    assert.equal(under.ran, true, `nine searches (13,509,000 steps) fit the one budget and run: ${JSON.stringify(under)}`);
+    const crossing = cell(searches(10));
+    assert.ok(refused(crossing), `ten (15,010,000) cross the one budget and the cell is refused before the tenth runs: ${JSON.stringify(crossing)}`);
+    for (let k = 0; k < 10; k++) {
+        const one = cell(searches(1));
+        assert.equal(one.ran, true, `search ${k + 1} alone is under the per-search figure and runs in its own cell: ${JSON.stringify(one)}`);
+    }
+});
+
+// `re.compile` charges nothing: the bound is on the SEARCH's run scan, so a cell that compiles a priced pattern and
+// never searches returns. Positive control: the same pattern's search on the priced input is refused — so "priced"
+// here is the pattern's search, not the pattern's shape (a+b is admitted by risky_regex).
+test("RED TEAM: re.compile charges nothing — compiling a priced pattern without searching returns", (t) => {
+    if (skip) return t.skip(skip);
+    const compiled = cell("import re\nre.compile('a+b')\nreturn 'compiled'");
+    assert.equal(compiled.ran, true, `compile alone is free: ${JSON.stringify(compiled)}`);
+    const searched = cell("import re\nre.search('a+b', 'a' * 300000)\nreturn 'searched'");
+    assert.ok(refused(searched), `the same pattern's search on the priced input is refused: ${JSON.stringify(searched)}`);
+});
+
+// `re.sub` and `re.subn` price their INPUT (arg 2 / `string=`), never their replacement (parawanderer/cpython commit
+// db7b192065: `regex_check` read `args[1]` as the input for every re function, which for sub/subn is the replacement,
+// so `re.sub('a+b', 'x', 'a' * 300000)` was charged for 'x' and ran 20 s). window-ml's manifests admit only
+// re: [compile, findall, search], so this row lifts sub/subn behind the same `regex_check` the manifests use, as the
+// fork's RegexCostTest.test_sub_prices_its_input_not_its_replacement does — the pricing the shipped core implements
+// either way. Timing is the mutation half: priced on the replacement, the 300000-character input runs unpriced (20 s
+// measured); priced on the input, the refusal is the charge, in milliseconds.
+test("RED TEAM: re.sub and re.subn price their input, not their replacement", (t) => {
+    if (skip) return t.skip(skip);
+    py.runPython(`
+import re as _re, restricted as _r, _restricted as _r2
+_r2.allow_module("re", ["compile", "search", "match", "fullmatch", "findall", "finditer", "sub", "subn", "split"])
+for _n in ("compile", "search", "match", "fullmatch", "findall", "finditer", "sub", "subn", "split"):
+    _r2.allow_call(getattr(_re, _n), True, _r.regex_check(_n))
+`);
+    for (const [name, src] of [
+        ["sub, positional input", "import re\nreturn re.sub('a+b', 'x', 'a' * 300000)"],
+        ["subn, positional input", "import re\nreturn re.subn('a+b', 'x', 'a' * 300000)"],
+        ["sub, string= input", "import re\nreturn re.sub('a+b', 'x', string='a' * 300000)"],
+    ]) {
+        const t0 = Date.now();
+        const out = cell(src);
+        const ms = Date.now() - t0;
+        assert.ok(refused(out), `${name}: the priced input must be refused, got ${JSON.stringify(out)}`);
+        assert.ok(ms < 1000, `${name}: refused on the input's charge in ${ms} ms — priced on the replacement, the 300000-char input runs ~20 s`);
+    }
+    for (const [name, src] of [
+        ["sub, huge replacement", "import re\nreturn re.sub('a+b', 'x' * 100000, 'aaa')"],
+        ["subn, huge replacement", "import re\nreturn re.subn('a+b', 'x' * 100000, 'aaa')"],
+        ["sub, both small", "import re\nreturn re.sub('a+b', 'x', 'aaa')"],
+    ]) {
+        const out = cell(src);
+        assert.equal(out.ran, true, `${name}: the replacement is not charged and the small input is under the budget: ${JSON.stringify(out)}`);
+    }
+});
