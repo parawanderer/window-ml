@@ -1005,4 +1005,4 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
     return { window: win, shadow: win.document, dispatch, raw, tick, flush, changeListeners, syncStore, localStore, unloadCalls, pyCalls, printCalls, hkCalls, setHousekeeping, setVram };
 }
 
-module.exports = { FakeMessageChannel, FakeMessageEvent, jsonResponse, htmlResponse, streamResponse, binaryStreamResponse, loadBackground, loadPageWorld, loadDomWorld, loadSidebarWorld, closeSidebarWorlds, loadDotEnv };
+module.exports = { FakeMessageChannel, FakeMessagePort, FakeMessageEvent, jsonResponse, htmlResponse, streamResponse, binaryStreamResponse, loadBackground, loadPageWorld, loadDomWorld, loadSidebarWorld, closeSidebarWorlds, loadDotEnv };
