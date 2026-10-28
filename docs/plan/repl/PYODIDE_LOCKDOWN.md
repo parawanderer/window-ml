@@ -170,7 +170,7 @@ starts from main.
    (`src/python/lockdown.ts`), the worker calling it with its real scope; the enumeration pin is e3's
    (`tests/redteam-python-sandbox.test.mjs`, "step 3"). Recorded here 2026-10-28, after the coordinator had
    wrongly called this step unbuilt that day; the second red team's hunt 1 (realm and network reach after the strip,
-   with the bridge lift granted) is briefed against it the same day.
+   with the bridge lift granted) is briefed against it the same day. OPEN 2026-10-28, from that hunt: `location` survives the strip in the real worker (an accessor on `WorkerGlobalScope.prototype`, outside `ALLOWED_GLOBALS` and unnamed in `src/python/lockdown.ts`; the own-property and `STRIPPED_NAMES` deletes do not reach it, and the Node stand-in carries no such accessor), read through the lifted bridge as a `WorkerLocation` with the worker's own extension URL; `postMessage`, `close`, `fetch` held in the same cell. The fix is the security lane's: the real scope's whole prototype chain is the surface, every accessor and method outside the allow-list deleted or shadowed, and the enumeration pin's stand-in grows a prototype accessor so Node catches the next one; it lands after the second red team's test-only PR and the finder flips its rows.
 4. **No JsProxy in the Python namespace at all.** The stdout tee becomes Pyodide's JS-side `setStdout` (batched or
    raw). The later `ml` callback ([`ML_WIRE.md`](../../spec/ML_WIRE.md), lane 1's PR 2) is a message through the
    closure-held post, never a function the cell holds. None means none: the injected inputs (`INJECTED_IMAGE_B64`,
