@@ -77,6 +77,7 @@ import { arrivalAnsweredText, arrivalDeniedText, clickDeniedText, arrivalWaiting
 import { adoptOnTab } from "./adopt-run";
 import { approvalFor, cancelReasons, gatePageTurn, noteRunEnd, noteRunStart, personClaimed } from "./sw-start-approval";
 import { pageTurnText } from "../agent-start";
+import { toPageUi } from "./sw-side-panel";
 
 // The model-facing cap cdpEval clips its console to (exec's default per-slot cap) — the UI keeps far more, so
 // `seen` marks where the model's copy stopped, exactly like the main-world exec path.
@@ -726,7 +727,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             // Always fan to the PAGE (overlay / off card). For devtools ALSO fan to the panel — and the
             // page fan lets the optional corner card coexist with the panel (agentHudInDevtools); the
             // shell drops the page copy when no card is mounted, and never loops it back to the panel.
-            chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => { /* tab gone / no receiver */ });
+            toPageUi(tabId, { type: "ML_DEBUG_TO_PAGE", event });
             // ALWAYS feed a connected DevTools panel (no-op if none). A background-hosted run is the SOLE source
             // of its events — the shell receives them over chrome.runtime and never re-forwards them as ML_DEBUG_EVENT, so
             // this can't double-relay. Gating on `surface === "devtools"` left an off/card run's panel (if the
@@ -739,7 +740,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         /** A site-run notice (contract-debug.ts `SiteRunEvent`) to every surface showing the run, and into the replay a
          *  re-adopting page's shell rebuilds the card from. */
         const siteNotice = (event: Record<string, unknown>): void => {
-            chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => {});
+            toPageUi(tabId, { type: "ML_DEBUG_TO_PAGE", event });
             relayDebugEvent(tabId, event);
             if (p.crossPage !== false) bufferReplay(tabId, event);
             // The site's mark and its turns reach the session index too (it takes them from the worker only), so the chat
@@ -750,7 +751,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // "seen" indicator (agent-say-seen), which keys off its own id, not a step position.
         const fanEvent = (event: Record<string, unknown>): void => {
             if (abortCtl.signal.aborted) return;
-            chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => {});
+            toPageUi(tabId, { type: "ML_DEBUG_TO_PAGE", event });
             relayDebugEvent(tabId, event);   // always feed a connected panel (see emitStep — no double, no-op if none)
             ingestSessionEvent(event, { tabId, trusted: true, hosts: byWorker() });
             if (p.crossPage !== false) bufferReplay(tabId, event);
@@ -906,7 +907,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             // A run the WORKER built (or was handed: a durable resume, `makeWorkerRun`) has no page-side caller at all, on
             // any surface, so it fans its own from the start.
             if (p.surface !== "off" && !hasNavigated && !byWorker()) return;
-            chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => {});
+            toPageUi(tabId, { type: "ML_DEBUG_TO_PAGE", event });
             // We're the SOLE fanner in this branch (off, or overlay/devtools post-nav), so feed a connected panel
             // too — regardless of surface. Gating on `devtools` left an off/card run's answer never reaching a
             // connected panel (stuck on "running"). No double (page-side isn't fanning here); no-op without a panel.

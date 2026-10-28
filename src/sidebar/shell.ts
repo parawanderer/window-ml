@@ -1465,6 +1465,11 @@ function unmountCard(): void {
 // background's ML_ASK_ABOUT_THIS cue, below, then the Commander opens pre-loaded with it.
 let lastAskEl: Element | null = null;
 addEventListener("contextmenu", e => { const t = e.target; if (t instanceof Element) lastAskEl = t; }, true);
+/** The last right-clicked element's semantic container and clean context, or null (none, or it is gone). */
+function rightClickedContext(): ElementContext | null {
+    if (!lastAskEl || !lastAskEl.isConnected) return null;
+    try { return domToContext(resolveContextContainer(lastAskEl), lastAskEl); } catch { return null; }   // a plain composer
+}
 
 // The Spotlight command bar: mount the HUD card on demand (even with no run) and tell its app to open
 // the composer, so the user can START a run from the keyboard OR a right-click. Buffered until the iframe
@@ -1654,21 +1659,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     else if (msg?.type === "ML_SHOW_START_ASK" && typeof msg.runId === "string") showStartAsk(msg.runId);
     // Right-click "Ask window.ml about this": resolve the last right-clicked element's semantic container
     // + clean context RIGHT HERE (the content script sees the page DOM) and open the Commander with it.
-    else if (msg?.type === "ML_ASK_ABOUT_THIS") {
-        let ctx: ElementContext | null = null;
-        if (lastAskEl && lastAskEl.isConnected) {
-            try { ctx = domToContext(resolveContextContainer(lastAskEl), lastAskEl); } catch { /* fall back to a plain composer */ }
-        }
-        openComposer(ctx);
-    }
+    else if (msg?.type === "ML_ASK_ABOUT_THIS") openComposer(rightClickedContext());
+    // The same element for a hidden page's side panel (sw-side-panel.ts): read here, answered to the worker alone, and
+    // nothing is mounted in the page.
+    else if (msg?.type === "ML_ELEMENT_CONTEXT") { sendResponse({ ctx: rightClickedContext() }); return; }
     // Right-click "Add this to the current run": resolve the element the SAME way, but hand it to the app to
     // APPEND to whichever run is open (the app knows its selected/current session; the shell doesn't). The
     // app opens the composer in "append" mode, or falls back to a fresh one if nothing's open.
     else if (msg?.type === "ML_ADD_TO_CURRENT_RUN") {
-        let ctx: ElementContext | null = null;
-        if (lastAskEl && lastAskEl.isConnected) {
-            try { ctx = domToContext(resolveContextContainer(lastAskEl), lastAskEl); } catch { /* fall back to a plain composer */ }
-        }
+        const ctx = rightClickedContext();
         if (!hudActive()) return;
         if (!cardHost) mountCard();
         if (cardReady && frame) { toApp({ __mlAddToCurrentRun: { ctx } }); try { frame.focus(); } catch { /* ignore */ } }

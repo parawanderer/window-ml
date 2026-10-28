@@ -54,8 +54,25 @@ export const externallyResolvable = (d: PendingApprovalDescriptor): boolean => d
 
 interface PendingApproval { resolve: (d: ApprovalDecision) => void; descriptor: PendingApprovalDescriptor; }
 
+/** A Map that says when it changed: every path that opens or closes a gate writes the map, so its listeners hear all. */
+class WatchedMap<K, V> extends Map<K, V> {
+    readonly listeners: (() => void)[] = [];
+    private changed(): void { for (const f of this.listeners ?? []) { try { f(); } catch { /* one listener's failure is not the rest's */ } } }
+    override set(k: K, v: V): this { super.set(k, v); this.changed(); return this; }
+    override delete(k: K): boolean { const had = super.delete(k); if (had) this.changed(); return had; }
+    override clear(): void { super.clear(); this.changed(); }
+}
+
 /** Every background-run gate waiting on a human, keyed `${runId}:${seq}`. The one place a run's approvals live. */
-export const pendingApprovals = new Map<string, PendingApproval>();
+export const pendingApprovals = new WatchedMap<string, PendingApproval>();
+
+/**
+ * Hear every gate open and close (the badge counts those waiting on a closed side panel).
+ * @param f the listener
+ */
+export function onApprovalsChanged(f: () => void): void {
+    pendingApprovals.listeners.push(f);
+}
 defineState({
     id: "run.approvals", scope: "run", realm: "worker", audience: "model", lostOn: ["worker-eviction"],
     describe: "The calls the run is waiting on you to approve: the tool, its arguments, the step, and since when.",

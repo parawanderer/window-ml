@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>window.ml</title>
+  <style>
+    :root { --bg: #f4f4f5; --fg: #52525b; --strong: #18181b; --code-bg: #e4e4e7; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #1b1b1f; --fg: #a1a1aa; --strong: #e4e4e7; --code-bg: #27272a; } }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+                 font: 13px/1.6 system-ui, -apple-system, sans-serif; }
+    #app { border: 0; width: 100%; height: 100vh; display: block; }
+    /* Shown over the app while it has no run to show on this tab (the card's "hidden" state). */
+    #ml-empty { display: none; box-sizing: border-box; height: 100vh; padding: 40px 24px; position: fixed; inset: 0;
+                background: var(--bg); }
+    #ml-empty h2 { color: var(--strong); font-size: 15px; margin: 0 0 8px; }
+    #ml-empty kbd { background: var(--code-bg); border-radius: 4px; padding: 1px 5px; color: var(--strong); font: inherit; }
+    body[data-empty] #ml-empty { display: block; }
+    #ml-lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: grid;
+                   place-items: center; z-index: 9; cursor: zoom-out; outline: none; }
+    #ml-lightbox img { max-width: 96vw; max-height: 96vh; }
+  </style>
+</head>
+<body data-empty>
+  <iframe id="app" src="sidebar.html" allow="clipboard-write"></iframe>
+  <div id="ml-empty"><h2>Nothing running on this tab</h2><div>This site can't use window.ml, so its runs show here instead of on the page. Press <kbd>Alt+Space</kbd> or right-click the page and choose "Ask window.ml about this" to start one.</div></div>
+  <script src="sidepanel.js"></script>
+</body>
+</html>

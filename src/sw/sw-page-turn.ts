@@ -9,6 +9,7 @@ import { runInboxes, bgRuns, turnByRun } from "./sw-runs";
 import { ingestSessionEvent } from "./sw-sessions";
 import { ourToolTexts } from "./builtin-texts";
 import { approvalFor, stopForPerson, gatePageTurn, type PersonTurn } from "./sw-start-approval";
+import { toPageUi } from "./sw-side-panel";
 
 /** The shortest gap between two of a run's waits for the person (`waitForPerson`). */
 export const WAIT_GAP_MS = 10_000;
@@ -43,7 +44,7 @@ export async function pageInject(p: InjectMessagePayload, sender: chrome.runtime
         lastWait.set(p.runId, Date.now());
         if (live) stopForPerson(p.runId);
         const event = { kind: "agent-wait", id: p.runId, ts: Date.now(), save: false, session: { hash: p.runId, turn: 0 }, prompt: p.waitForPerson.slice(0, 4000), site: origin };
-        chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => {});
+        toPageUi(tabId, { type: "ML_DEBUG_TO_PAGE", event });
         relayDebugEvent(tabId, event);
         return { data: true };
     }
@@ -64,7 +65,7 @@ export async function pageInject(p: InjectMessagePayload, sender: chrome.runtime
         : verdict.pagePrefix ? [{ kind: "agent-site-say", ...base, text: verdict.pagePrefix, site: origin }, { kind: "agent-say", ...base, text: own, ...say }]
             : [{ kind: "agent-say", ...base, text: p.text, ...say }];
     for (const event of events) {
-        chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => {});
+        toPageUi(tabId, { type: "ML_DEBUG_TO_PAGE", event });
         relayDebugEvent(tabId, event);
         ingestSessionEvent(event, { tabId, trusted: true });
     }

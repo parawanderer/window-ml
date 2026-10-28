@@ -56,7 +56,7 @@ import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./s
 import { startBackgroundRun, delegateStreams, hostRun, WORKER_RUN_REFUSED } from "./sw/sw-run-host";
 import { pageInject } from "./sw/sw-page-turn";
 import { navigationSettled, configureStartApproval, dropRevoked, openedByRun, claimPersonTurn, personClaimed, recordNotStarted, resolveStart, cancelStarts, cancelAllStarts, waitingStarts } from "./sw/sw-start-approval";
-import "./sw/sw-badge";   // the toolbar badge: what is waiting for the person, per tab
+import { panelWaits } from "./sw/sw-badge";   // the toolbar badge: what is waiting for the person, per tab
 import { AGENT_LEVEL_TYPES, PAGE_STARTED_TYPES, PAGE_UNGATED_TYPES, RUN_CONTROL_TYPES } from "./page-relay";
 import type { SiteRunEvent } from "./contract/contract-debug";
 import { START_REFUSED } from "./agent-start";
@@ -73,6 +73,7 @@ import { fetchImageDataUrl } from "./sw/sw-image-fetch";
 import { approvalKey } from "./approval-key";
 import { raiseAsk } from "./sw/sw-asks";
 import { refreshShell, shellStatus } from "./sw/sw-shell";
+import { toPageUi, notePage, forgetTab, syncAllPanels, servePanelPort, startGesture, tabHidden, cuePanel } from "./sw/sw-side-panel";
 
 
 // In-flight FETCH_LLM AbortControllers, keyed by the page's requestId, so an ABORT_TASK message
@@ -184,6 +185,8 @@ startValueSweeps();
 if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
     chrome.webNavigation.onCommitted.addListener((d) => {
         if (d.frameId === 0) tabPageUrl.set(d.tabId, d.url);
+        // Its side panel follows the new document's presence (sw-side-panel.ts), and so does where a run's UI goes.
+        if (d.frameId === 0) void notePage(d.tabId, d.url);
         // The old document is gone and any page-hosted run in it with it: drop what that tab was entitled to read.
         // A BACKGROUND run survives the navigation and keeps its own per-run claim, so this never cuts one short.
         if (d.frameId === 0) releaseSessionValues(pageValueSession(d.tabId));
@@ -207,17 +210,20 @@ if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
 void siteSchemaReady();
 if (typeof chrome !== "undefined" && chrome.storage?.onChanged) {
     chrome.storage.onChanged.addListener((changes, area) => {
-        if (changesSiteAccess(changes, area)) { void syncPresence(); void handOverOnRevoke(); void dropRevoked(); }
-        else if (area === "sync" && SITE_REQUESTS_KEY in changes) void syncPresence();   // "Let sites ask for access"
+        // Each tab's side panel follows its document's presence too (sw-side-panel.ts): read again after the lists change.
+        if (changesSiteAccess(changes, area)) { void syncPresence().finally(syncAllPanels); void handOverOnRevoke(); void dropRevoked(); }
+        else if (area === "sync" && SITE_REQUESTS_KEY in changes) void syncPresence().finally(syncAllPanels);   // "Let sites ask for access"
     });
     // Which pages get the main-world scripts follows the lists (sw-presence.ts): once at startup too, for a change made
     // while this worker was evicted, and for a session grant the browser forgot on restart along with its registration.
     void syncPresence().catch(() => undefined);
+    // The side panel of every hidden tab, rebuilt from the open tabs: a start gesture finds it enabled in the browser.
+    void syncAllPanels().catch(() => undefined);
     // And once at startup, for a change this worker never heard: made while it was evicted, its runs then restored.
     void handOverOnRevoke().catch(() => []);
 }
 if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
-    chrome.tabs.onRemoved.addListener((tabId) => { tabPageUrl.delete(tabId); forgetHandOverTab(tabId); forgetArrivalTab(tabId); activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); replayedTo.delete(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); releaseSessionValues(pageValueSession(tabId)); releaseDebugger(tabId); sessionServer.pageGone(tabId, { closed: true }); });
+    chrome.tabs.onRemoved.addListener((tabId) => { tabPageUrl.delete(tabId); forgetHandOverTab(tabId); forgetArrivalTab(tabId); activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); replayedTo.delete(tabId); forgetTab(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); releaseSessionValues(pageValueSession(tabId)); releaseDebugger(tabId); sessionServer.pageGone(tabId, { closed: true }); });
 }
 // THE THIRD THING A TAB CAN DO, besides navigate and close: come back under a new id. A discard the browser
 // restores, or a prerender swapped in, fires only this — so without it a run's tab state is left filed under an
@@ -544,7 +550,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             const history = runReplayBuffer.get(tabId) || [];
             if (doc !== undefined) replayedTo.set(tabId, doc);   // once per document: a page can ask again at will
             if (!history.length) return;
-            for (const event of history) chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }, { frameId: 0 }).catch(() => {});
+            for (const event of history) toPageUi(tabId, { type: "ML_DEBUG_TO_PAGE", event }, { frameId: 0 });
             // A COMPLETED-only replay (no live run) has served its purpose: drop the buffer so a later reload doesn't
             // re-show a finished card. A live run keeps its buffer for the next nav.
             if (!hasActive) runReplayBuffer.delete(tabId);
@@ -766,7 +772,10 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         if (typeof p.tabId !== "number") { sendResponse({ error: "START_ASKS needs a tabId." }); return; }
         const asks = waitingStarts(p.tabId);
         const ask = typeof p.show === "string" ? asks.find((a) => a.requestId === p.show) : undefined;
-        if (ask) void chrome.tabs.sendMessage(p.tabId, { type: "ML_SHOW_START_ASK", runId: ask.runId }, { frameId: 0 }).catch(() => { /* the page is gone */ });
+        // On a hidden page the card is the side panel's: the popup opened it within its click, and the panel selects the run.
+        const tabId = p.tabId;
+        if (ask) void tabHidden(tabId).then((hidden) => hidden ? cuePanel(tabId, { __mlShowRun: { hash: ask.runId } })
+            : void chrome.tabs.sendMessage(tabId, { type: "ML_SHOW_START_ASK", runId: ask.runId }, { frameId: 0 }).catch(() => { /* the page is gone */ }));
         sendResponse({ data: { asks: asks.map((a) => ({ requestId: a.requestId, origin: a.origin, since: a.since })), ...(typeof p.show === "string" ? { shown: !!ask } : {}) } });
         return;
     }
@@ -806,6 +815,22 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         const decide = typeof p.origin === "string" && p.decision !== undefined;
         (decide ? decideRequest(p.origin as string, p.decision as RequestDecision) : waitingRequests())
             .then((requests) => sendResponse({ data: { requests } }), (e) => sendResponse({ error: (e as Error)?.message || String(e) }));
+        return true;
+    }
+    // The panel's own composer: a hidden page's side panel is an extension page with no tab, so it names the one it shows.
+    if (message.type === "PANEL_START_RUN") {
+        const tabId = (message.payload as { tabId?: unknown } | undefined)?.tabId;
+        if (!isExtensionSender(sender) || sender.tab || typeof tabId !== "number") { sendResponse({ error: "refused" }); return; }
+        const { tabId: _named, ...req } = message.payload as import("./agent/run-assembly").UserRunRequest & { tabId: number };
+        startUserRun(tabId, req, { keep: !!message.keep })
+            .then(({ hash }) => sendResponse({ data: { hash } }), (e) => sendResponse({ error: (e as Error)?.message || String(e) }));
+        return true;
+    }
+    // The popup's "Open panel" rows: the tabs whose closed side panel has something waiting (a gate of a run there, or
+    // what a gesture asked of it). Extension pages only; each tab is named by the origin the browser reports.
+    if (message.type === "PANEL_WAITS") {
+        if (!isExtensionSender(sender)) { sendResponse({ error: "refused" }); return; }
+        void panelWaits().then((tabs) => sendResponse({ data: { tabs } }), () => sendResponse({ data: { tabs: [] } }));
         return true;
     }
     if (message.type === "USER_START_RUN") {
@@ -1432,14 +1457,29 @@ configureSessionCommands({
 });
 
 chrome.runtime.onConnect.addListener(serveDevtoolsPort);
+chrome.runtime.onConnect.addListener(servePanelPort);
 
 // The Spotlight command bar keyboard shortcut (manifest `commands`, default Alt+Space, user-rebindable
 // at chrome://extensions/shortcuts). Tell the active tab's shell to open the HUD composer; the shell
 // no-ops unless the HUD is the active surface. `chrome.commands` may be absent in a test harness.
+// On a hidden page the composer is the side panel's (SITE_PRESENCE.md step 4): `startGesture` opens it inside this
+// gesture, and the browser's answer says which page this is.
 chrome.commands?.onCommand.addListener((command, tab) => {
-    if (command === "open-composer" && tab?.id != null)
-        chrome.tabs.sendMessage(tab.id, { type: "ML_OPEN_COMPOSER" }).catch(() => { /* no content script on this tab */ });
+    if (command !== "open-composer" || tab?.id == null) return;
+    const tabId = tab.id;
+    startGesture(tabId, async () => ({ __mlSidebarComposer: "open" }),
+        () => { chrome.tabs.sendMessage(tabId, { type: "ML_OPEN_COMPOSER" }).catch(() => { /* no content script on this tab */ }); });
 });
+
+/**
+ * The element the person right-clicked, read by the tab's shell, which answers the worker only and mounts nothing.
+ * @param tabId the tab
+ * @returns the element's context, or null when there is none
+ */
+function rightClickedContext(tabId: number): Promise<unknown> {
+    return Promise.resolve(chrome.tabs.sendMessage(tabId, { type: "ML_ELEMENT_CONTEXT" }, { frameId: 0 }))
+        .then((r: { ctx?: unknown } | undefined) => r?.ctx ?? null, () => null);
+}
 
 // Right-click "Ask window.ml about this" — the content-script shell resolves the clicked element's
 // semantic container + clean context and opens the Commander pre-loaded with it (see shell.ts). Created on
@@ -1462,8 +1502,12 @@ chrome.runtime.onInstalled?.addListener((details) => {
 });
 chrome.contextMenus?.onClicked.addListener((info, tab) => {
     if (tab?.id == null) return;
+    const tabId = tab.id;
+    // As the shortcut: the panel's composer on a hidden page, opened inside this gesture, with the element the shell read.
     if (info.menuItemId === "ml-ask-about-this")
-        chrome.tabs.sendMessage(tab.id, { type: "ML_ASK_ABOUT_THIS" }).catch(() => { /* no content script on this tab */ });
+        startGesture(tabId, async () => ({ __mlSidebarComposer: "open", __mlComposerElement: await rightClickedContext(tabId) }),
+            () => { chrome.tabs.sendMessage(tabId, { type: "ML_ASK_ABOUT_THIS" }).catch(() => { /* no content script on this tab */ }); });
     else if (info.menuItemId === "ml-add-to-run")
-        chrome.tabs.sendMessage(tab.id, { type: "ML_ADD_TO_CURRENT_RUN" }).catch(() => { /* no content script on this tab */ });
+        startGesture(tabId, async () => ({ __mlAddToCurrentRun: { ctx: await rightClickedContext(tabId) } }),
+            () => { chrome.tabs.sendMessage(tabId, { type: "ML_ADD_TO_CURRENT_RUN" }).catch(() => { /* no content script on this tab */ }); });
 });
