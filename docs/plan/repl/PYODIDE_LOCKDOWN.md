@@ -146,6 +146,16 @@ starts from main.
    guard's `__getattr__.__closure__` holding the real modules and the lift flag, `compile()` under a library
    filename, removing the bridge finder and re-importing `pyodide.ffi` from the zip, writing a file under
    `/lib/python3.14` and importing it. The builder claims none of those.
+   MEASURED 2026-10-28 by the red team (#1203, failing-first rows with positive controls, the worker, approved unlifted
+   cells): every unclaimed route above is LIVE: the `call_later.__globals__` route; `gc.get_objects()` reaching six real
+   bridge modules; the guard's `__getattr__.__closure__` reaching the real modules AND the lift list, and a cell
+   flipping the lift flag itself (the cell gate's revoke does not cover the gate's own flag); `exec(compile(src,
+   os.__file__, "exec"))` answered as a library frame; a file written under `/lib/python3.14` and imported, answered
+   as a library; the finder removed from `sys.meta_path` and `pyodide.ffi` re-imported from the zip (`js` stays
+   unregistered). The pyarrow item is pinned closed: the post-gate global is the GUARD and attribute access raises.
+   What the refusal claims is unchanged (the import routes, while the finder stands); what bounds the rest is still
+   step 3's strip, which these rows are measured against once it lands. The widening question (whether the builder
+   should claim the two caller-frame forgeries, a library filename or a planted file) is Shane's, not taken here.
 3. **An ALLOW-LIST strip of the worker's `globalThis` after boot**, never a deny list: remove the real `Function`,
    `eval`, `importScripts`, `setTimeout`/`setInterval` with a string argument (`WebAssembly` compiles bytes, never a
    string, and `WebAssembly.instantiate`/`compile` on bytes STAY, since a `loadPackage` after the strip needs them; the
