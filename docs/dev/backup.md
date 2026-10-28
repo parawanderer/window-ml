@@ -15,6 +15,7 @@ in four PRs, and each section below says which parts exist yet.
 | 3c. Two machines on one encrypted folder: adopting the folder's key, keeping one's own as a retired key | built |
 | 3d. Forgetting a retired key, by hand, in Settings | built |
 | 3e. Telling a planted key from the real one: verified counts, key ids to match, the folder's pinned key | built |
+| 3f. Keeping the pin armed: junk does not hold it off, a re-pick of the same folder keeps it, ids worded as claims | designed |
 
 The archive itself (SQLite over OPFS, the worker, un-archiving) is `archive.md`; read it first.
 
@@ -566,6 +567,43 @@ deflates it (the person forgets, the writer restores the headers, and those mont
   never-held cases), `tests/archive-section.test.mjs` (id format, notice, wording), `tests/archive-pin.test.mjs` (the
   pin against a fake IndexedDB, a Map folder and a scripted worker; each place, the negatives, and the changed-key to
   adopt round trip).
+
+### 3f. Keeping the pin armed
+
+Designed 2026-10-28, from the red-team probe of 3e (`tmp/probe-3e-pin-redteam.test.mjs` in the red-team clone). Two
+findings; neither lets a writer pin a wrong id or count a month under a key, which the probe refuted.
+
+**A file the writer adds keeps the alarm dark.** The refresh pins only when nothing is skipped and `unopened` is 0, so
+one month-shaped file of junk bytes (`2026-08.wmlbak`, four bytes) holds the pin off for good, and with no pin "This
+folder's key changed" never shows. `saveFolder` drops the pin on every pick, including a re-pick of the same folder
+(the reconnect after a lost permission), so the writer only has to wait for one re-pick, or plant the file before the
+first sync. The gate was too wide: pinning this install's own id can never pin a wrong key, and a planted month after
+the pin is exactly what the alarm is for. What the gate should keep out is only the case where the folder already
+holds another key's months, so the pin would raise a false alarm on a genuine second machine (the 3c swap case).
+
+- **Gate on another key, not on damage.** The refresh pins unless a month names a key this install does not hold: an
+  `other-key` skip in the page's last sync or import, or a header `monthKeyCounts` read whose `keyId` is in no key of
+  the ring. `monthKeyCounts` adds `foreign` (those files; they are also in `unopened`, unchanged). Unreadable files,
+  files with no header and files that name a held key but do not open are damage, not another key, and pin nothing
+  off. A well-formed header naming an unheld key still holds the pin off: from here it is indistinguishable from a
+  second machine's month, and a writer present before the first clean state is the limit 3e already states.
+- **A re-pick of the same folder keeps the pin.** `saveFolder(handle)` drops the pin only when `handle` is not the same
+  entry as the stored one (`FileSystemHandle.isSameEntry`); a null handle, no stored handle, or a comparison that
+  throws drops it, as now.
+
+**The ids are what the files say.** For a key this install never held, the header's `keyId` is a claim nothing here
+can check until a secret is typed: a writer who reads the other machine's id in its Settings can write that id on a
+file that opens under nothing. The changed-key block and the adopt block state it as fact ("1 month is under X", "Key
+in these files: X"). Word them as the claim: "1 month says it is under X" and "These files say they are under X.
+Check it matches the key shown in Settings on the other machine before you enter its secret; entering it is what
+checks the files." The wrong-secret line adds, when the adopt block showed an id: "If the key matched, these files
+may not be what they say." No change to `adoptKeyring`, which already refuses a key whose chunk does not open.
+
+- **Tests:** the probe's three rows as plain tests in `tests/archive-pin.test.mjs`, keeping their controls (a junk
+  month-shaped file does not hold the refresh pin off, first arm or after a re-pick; with the pin armed, junk plus a
+  re-pick keeps "This folder's key changed"; the changed-key and adopt wording for a relabelled month says "says");
+  a re-pick of a DIFFERENT folder still drops the pin; a folder with a well-formed unheld-key month still pins nothing
+  on refresh; `foreign` counted apart from damage; THE UPGRADE: a pin saved by 3e survives a same-folder re-pick.
 
 ## The folder: merge before write (part A)
 
