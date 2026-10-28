@@ -146,7 +146,7 @@ not, record that and choose between `declarativeNetRequest` rules and following 
    #1236 OPEN (from `feat/hidden-isolated-tools-v2` with main and #1228 merged in, `@agent,@security`, janitor
    reviewer; the lane reports the red team's nine rows passing under step 3, five with a setup change to the step-3
    shape through the harness's `pageRealm`/`isolated` options and their assertions unchanged, which the red team is
-   checking; the eight site-access e2e rows that held a port now find none), verified 2026-10-28; the red team flips
+   checking; the eight site-access e2e rows that held a port now find none; the red team's setup review passed with two findings fixed, head fbd2f8b2), verified 2026-10-28; the red team flips
    the nine todos once it has merged.
    As built: the content script says `PAGE_SCRIPT_MISSING` once when its gate opened and no hello came within 1.5 s; the
    worker reads the presence of the sender's own origin (top frame, its named document only) and, when it is `full`, puts
