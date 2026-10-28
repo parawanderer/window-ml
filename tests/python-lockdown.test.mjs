@@ -213,3 +213,31 @@ out`);
     assert.deepEqual(Object.keys(registered._api), ["config"]);
     assert.equal(registered._api.config.enableRunUntilComplete, flag, "the stand-in must carry the API's own flag");
 });
+
+// --- step 3. the strip walks the scope's prototype chain ---------------------------------------------------------------
+// A worker's host surface is not own properties of `self`: `location`, `navigator`, `crypto`, `postMessage` and the `on*`
+// handlers are accessors and methods on `WorkerGlobalScope.prototype` and up. The own-name strip left `js.globalThis.location`
+// readable in the built extension (a WorkerLocation naming the worker's chrome-extension URL). The stand-in has that shape: a
+// scope over two prototypes of accessors and methods, one of them not configurable. Last in the file: a second boot.
+
+test("step3: the strip removes prototype-chain accessors and methods outside ALLOWED_GLOBALS, and shadows one it cannot delete", { skip }, async () => {
+    const accessor = (v) => ({ get: () => v, configurable: true });
+    const eventTarget = { addEventListener() {}, dispatchEvent() {} };
+    const workerScope = Object.create(eventTarget, {
+        location: accessor({ href: "chrome-extension://stand-in/python-worker.js" }),
+        navigator: accessor({ userAgent: "stand-in" }),
+        crypto: accessor({ getRandomValues: (a) => a }),
+        performance: accessor({ now: () => 0 }),
+        postMessage: { value() {}, configurable: true, writable: true },
+        fonts: { get: () => ({ check: () => true }), configurable: false },
+    });
+    const scope = Object.create(workerScope);
+    scope.URL = URL;
+    await lockdownReadonly(py, scope);
+    const host = ["location", "navigator", "postMessage", "addEventListener", "dispatchEvent", "fonts"];
+    assert.deepEqual(host.filter((n) => scope[n] !== undefined), [], "the strip must leave no host accessor or method readable through the chain");
+    assert.deepEqual(Object.getOwnPropertyDescriptor(scope, "fonts"), { value: undefined, writable: false, enumerable: false, configurable: false },
+        "a prototype accessor the strip cannot delete must be shadowed on the scope");
+    // Positive control: what ALLOWED_GLOBALS names stays, on the chain as well as on the scope.
+    assert.deepEqual(["crypto", "performance", "URL"].filter((n) => scope[n] === undefined), [], "the strip must keep the allowed names");
+});

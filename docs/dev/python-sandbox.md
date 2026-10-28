@@ -221,7 +221,11 @@ cell in full Python still reaches the same functions by introspection (`type(asy
 (2) an ALLOW-LIST strip of `globalThis` — only the intrinsics Pyodide
 needs and a few capability-free host APIs stay; `eval`, `Function`, `fetch`, `importScripts`,
 `postMessage`, `navigator`, `chrome`, every Node module go. There is no deny list to keep
-current. (3) The harness's module references (`ast.parse`, `json.loads`, `textwrap.indent`,
+current. The strip walks the scope's prototype chain as well as its own names: a worker's
+`location`, `navigator` and `on*` handlers are accessors on `WorkerGlobalScope.prototype`, so an
+own-name strip left `js.globalThis.location` readable; a chain name it cannot delete is shadowed on
+the scope. `crypto` stays: Pyodide's browser random source calls `crypto.getRandomValues` on every
+`os.urandom`. (3) The harness's module references (`ast.parse`, `json.loads`, `textwrap.indent`,
 `base64`, `io`, `contextlib`, …) are captured into a frozen `_ml_harness` module before any cell
 runs, so a cell that monkeypatches `ast.parse` or `json.loads` cannot change what the harness
 parses, encodes or injects — and the wrapper looks the harness up in the NAMESPACE
