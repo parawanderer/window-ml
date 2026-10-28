@@ -9,7 +9,7 @@
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useSyncExternalStore } from "react";
-import { hasBaseline, markSeen, readStateFrom, type ReadState } from "../../src/chat/read-marks";
+import { hasBaseline, markSeen, readStateFrom, throttledWriter, type ReadState } from "../../src/chat/read-marks";
 
 const KEY = "wml-read-marks";
 
@@ -35,7 +35,15 @@ export function markRead(key: string, lastTs: number): void {
     if (next === marks) return;
     marks = next;
     for (const cb of listeners) cb();
-    void AsyncStorage.setItem(KEY, JSON.stringify(marks));
+    writer.put(marks);
+}
+
+// At most one write every couple of seconds while an open session streams; `flushReadMarks` on leaving it.
+const writer = throttledWriter<ReadState>((v) => { void AsyncStorage.setItem(KEY, JSON.stringify(v)); });
+
+/** Write the pending mark now: the session was left, or the app is going to the background. */
+export function flushReadMarks(): void {
+    writer.flush();
 }
 
 /** The stored marks, re-rendering the caller when they change. */

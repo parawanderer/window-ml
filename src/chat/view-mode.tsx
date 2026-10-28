@@ -19,7 +19,7 @@ import { focusMode, groupAllTools } from "../sidebar/store";
 import type { PlatformPrefs } from "./platform";
 import { CODE_DEFAULT, CODE_SIZES } from "../native/text-size";
 import { placePins } from "./pin-order";
-import { hasBaseline, markSeen, readStateFrom, type ReadState } from "./read-marks";
+import { hasBaseline, markSeen, readStateFrom, throttledWriter, type ReadState } from "./read-marks";
 
 /** Preference keys, under the platform's own namespace. */
 export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", READ_KEY = "view.read", PINNED_MODELS_KEY = "view.pinnedModels", CODE_KEY = "view.codeSize", GROUP_ALL_KEY = "view.groupAll", LOG_OPEN_KEY = "view.log", STATE_OPEN_KEY = "view.state", DOCK_KEY = "view.dock", PANEL_FS_KEY = "view.panelSize", DISMISSED_KEY = "view.dismissed", TAB_GROUPS_KEY = "view.tabGroups", THEME_KEY = "view.theme", TARGET_KEY = "view.target", KEYS_KEY = "view.keys";
@@ -355,7 +355,15 @@ export function markRead(key: string, lastTs: number): void {
     const next = markSeen(readState.value, key, lastTs);
     if (next === readState.value) return;
     readState.value = next;
-    store?.set(READ_KEY, next);
+    readWriter.put(next);
+}
+
+/** Storage hears of the marks at most every `MARK_WRITE_MS` while a session streams; the screen has them at once. */
+const readWriter = throttledWriter<ReadState>((v) => store?.set(READ_KEY, v));
+
+/** Write the pending read mark now: on leaving a session, hiding the page, or a status change, so the last `lastTs` is kept. */
+export function flushReadMarks(): void {
+    readWriter.flush();
 }
 
 /** Keep a model at the top of the lists on this device, or stop. */

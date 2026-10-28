@@ -226,7 +226,7 @@ export function SessionList({ store, activeKey, narrow, onStart, gear, gearWide 
     const olderOn = (id: string) => sessions.filter((s) => s.id.runtime === id && !isPinned(s) && !isRecent(s));
     const row = (s: SessionSummary, showRuntime = false, showPin = false, reveal?: number) => {
         const key = keyOf(s);
-        return <IndexRow key={key} store={store} s={s} rt={rtOf.get(s.id.runtime)!} active={activeKey === key} unread={isUnread(marks, key, s.lastTs, localTs(s, rtOf.get(s.id.runtime)), activeKey === key)} showRuntime={showRuntime} showPin={showPin} reveal={reveal} />;
+        return <IndexRow key={key} store={store} s={s} rt={rtOf.get(s.id.runtime)!} active={activeKey === key} unread={isUnread(marks, key, s.status, s.lastTs, localTs(s, rtOf.get(s.id.runtime)), activeKey === key)} showRuntime={showRuntime} showPin={showPin} reveal={reveal} />;
     };
     const revealed = shownOlder.value;
     return (

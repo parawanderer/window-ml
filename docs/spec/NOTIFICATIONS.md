@@ -45,7 +45,7 @@ a replan and nothing has to be reconciled.
 An approval is a fact that originates on a laptop, so this device can only be told. It is posted the moment the
 already-connected client learns of one, and only while this surface is not being looked at.
 
-Two failures that shapes around, both of which are the `movedSince` lesson in another costume:
+Two failures that shapes around, both of which are the list's unread rule in another costume (a baseline, so the first look marks nothing; `docs/dev/chat-page.md`, "A session with news you have not seen is UNREAD"):
 
 - The **first** report is the baseline, never news. An app opened with three approvals already waiting would
   otherwise announce all three, and the screen that just opened is where they are all listed.

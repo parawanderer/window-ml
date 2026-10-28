@@ -11,8 +11,8 @@ import { hostServices } from "../src/chat/host-services.ts";
 import { holds, mayCommand } from "../src/chat/grants.ts";
 import { resumableHere } from "../src/chat/grants.js";
 import { KEYS_KEY, KEYS_SENDS, KEYS_SENDS_ALONE, TARGET_KEY, keyUse, knowsKeys, lastTargets, noteKeyUse, rememberTarget } from "../src/chat/view-mode.tsx";
-import { CALM_KEY, GROUP_ALL_KEY, LIST_KEY, PINNED_KEY, PINNED_MODELS_KEY, READ_KEY, calm, dropPin, installViewPrefs, listOpen, markRead, orderPins, pinned, pinnedModels, readState, setCalm, setGroupAll, setListOpen, togglePin, togglePinnedModel } from "../src/chat/view-mode.tsx";
-import { READ_MARKS_MAX, UNTIL_READ, hasBaseline, isUnread, markSeen, readMarksFrom, readStateFrom } from "../src/chat/read-marks.ts";
+import { flushReadMarks, CALM_KEY, GROUP_ALL_KEY, LIST_KEY, PINNED_KEY, PINNED_MODELS_KEY, READ_KEY, calm, dropPin, installViewPrefs, listOpen, markRead, orderPins, pinned, pinnedModels, readState, setCalm, setGroupAll, setListOpen, togglePin, togglePinnedModel } from "../src/chat/view-mode.tsx";
+import { READ_MARKS_MAX, UNTIL_READ, hasBaseline, isUnread, throttledWriter, markSeen, readMarksFrom, readStateFrom } from "../src/chat/read-marks.ts";
 import { pinnedInOrder } from "../src/chat/pin-order.js";
 import { groupAllTools, sessionMap, view } from "../src/sidebar/store.ts";
 import { SESSION_CONTRACT_VERSION } from "../src/session/session-host.ts";
@@ -1157,7 +1157,7 @@ test("a nested ask inside a running step: the page (and the phone, which embeds 
 const ALL_STATUSES = ["running", "waiting", "done", "error", "cancelled", "capped", "interrupted"];
 const K = "laptop:aaaa0001";
 /** Unread as the list asks it: the runtime's clock and this device's agree here, and nothing is open unless said. */
-const unread = (st, key, ts, open = false) => isUnread(st, key, ts, ts, open);
+const unread = (st, key, ts, open = false, status = "done") => isUnread(st, key, status, ts, ts, open);
 
 test("read marks: only a run that ended badly keeps its words once read; the set is the rule", () => {
     // Enumerated, not sampled: a status added to the index must be decided here on purpose.
@@ -1191,10 +1191,53 @@ test("unread: a session that moves after the baseline is unread until it is open
     assert.equal(markSeen(st, K, NaN), st);
 });
 
+test("unread: a RUNNING session is never unread; once done, or waiting, its newer event is", () => {
+    let st = readStateFrom(undefined, 1000);
+    st = markSeen(st, K, 1100);
+    assert.equal(unread(st, K, 1500, false, "running"), false, "moved after the mark, but working: its dot says so");
+    assert.equal(unread(st, K, 1500, false, "done"), true, "the same session once it ended");
+    assert.equal(unread(st, K, 1500, false, "waiting"), true, "stopped to wait on you");
+    assert.equal(unread(readStateFrom(undefined, 1000), K, 1500, false, "running"), false, "and never, with no mark either");
+});
+
+// --- the seen-mark's storage writes are throttled while a session streams ---
+
+test("read marks: a burst of events writes storage once or twice, and the last stamp is stored when the session is left", () => {
+    let t = 0, tick = null;
+    const writes = [];
+    const w = throttledWriter((v) => writes.push(v), 2000, () => t, { set: (f) => { tick = f; return 1; }, clear: () => { tick = null; } });
+    for (let i = 0; i < 100; i++) { t = i * 10; w.put(i); }   // one second of events
+    assert.deepEqual(writes, [0], "the first goes at once, the rest wait");
+    w.flush();   // left the session
+    assert.deepEqual(writes, [0, 99], "the newest stamp, once");
+    w.flush();
+    assert.equal(writes.length, 2, "nothing pending, nothing written");
+    // The trailing write also fires by itself when the window ends.
+    t = 5000; w.put(200); t = 5100; w.put(201);
+    assert.equal(writes.length, 3);
+    t = 7100; tick();
+    assert.deepEqual(writes.slice(2), [200, 201]);
+});
+
+test("view prefs: markRead through a burst writes the baseline and one or two marks, flushReadMarks stores the last", () => {
+    const prefs = fakePrefs();
+    let sets = 0;
+    const set = prefs.set.bind(prefs);
+    prefs.set = (k, v) => { if (k === READ_KEY) sets++; return set(k, v); };
+    installViewPrefs(prefs);
+    flushReadMarks();
+    const base = sets;
+    for (let i = 1; i <= 50; i++) markRead(K, 1000 + i);
+    assert.ok(sets - base <= 2, `${sets - base} writes for 50 events`);
+    assert.equal(readState.value.seen[K], 1050, "the screen has the newest at once");
+    flushReadMarks();
+    assert.equal(prefs.all.get(READ_KEY).seen[K], 1050, "left the session: the last stamp is stored");
+});
+
 test("unread: the clocks are told apart: the baseline is this device's, the marks are the runtime's", () => {
     const st = { since: 1000, seen: { [K]: 5_000_000 } };
-    assert.equal(isUnread(st, K, 5_000_100, 900, false), false, "runtime stamp is later than the mark, but the device clock says before the baseline");
-    assert.equal(isUnread(st, K, 5_000_100, 1100, false), true);
+    assert.equal(isUnread(st, K, "done", 5_000_100, 900, false), false, "runtime stamp is later than the mark, but the device clock says before the baseline");
+    assert.equal(isUnread(st, K, "done", 5_000_100, 1100, false), true);
 });
 
 test("unread: a bad ending is unread like any other news, and read once seen", () => {
@@ -1239,6 +1282,7 @@ test("view prefs: the baseline is written the first time, a read mark is this de
     assert.ok(first.since >= t0 && first.since <= Date.now(), "the baseline is stored on first load");
     assert.deepEqual(first.seen, {});
     markRead(K, 100);
+    flushReadMarks();   // the writer is throttled (below); this test is about what is written, not when
     assert.deepEqual(prefs.all.get(READ_KEY).seen, { [K]: 100 });
     assert.equal(prefs.all.get(READ_KEY).since, first.since);
     const before = prefs.all.get(READ_KEY);
@@ -1248,7 +1292,7 @@ test("view prefs: the baseline is written the first time, a read mark is this de
     installViewPrefs(fakePrefs({ [READ_KEY]: prefs.all.get(READ_KEY) }));
     assert.equal(readState.value.since, first.since);
     assert.equal(unread(readState.value, K, 100), false);
-    assert.equal(isUnread(readState.value, "laptop:cccc0003", first.since + 5, first.since + 5, false), true);
+    assert.equal(isUnread(readState.value, "laptop:cccc0003", "done", first.since + 5, first.since + 5, false), true);
     // The upgrade through the real loader: the old flat map is kept, a baseline is added and stored.
     const up = fakePrefs({ [READ_KEY]: { [K]: 100 } });
     installViewPrefs(up);

@@ -18,7 +18,7 @@ import { useUpdateRow } from "../app-update";
 import { ago, approvalsPending, keyOf, needsYou, pinnedOf, sections, STATUS_LABEL, STATUS_TONE } from "../format";
 import { PinnedRows } from "../pinned-rows";
 import { setPinnedOrder, usePinnedOrder } from "../pinned-order";
-import { markRead, useReadMarks } from "../read-marks";
+import { flushReadMarks, markRead, useReadMarks } from "../read-marks";
 import { isUnread, UNTIL_READ } from "../../../src/chat/read-marks";
 import { useSessionLayer } from "../layer";
 import { SIZE, usePalette } from "../theme";
@@ -54,6 +54,8 @@ export function ListScreen() {
     useEffect(() => {
         if (open) markRead(keyOf(open), open.lastTs);
     }, [open?.id.runtime, open?.id.hash, open?.status, open?.lastTs]);
+    // The mark reaches storage at most every couple of seconds; leaving the session (or a status change) writes it now.
+    useEffect(() => { flushReadMarks(); return flushReadMarks; }, [layer.key, open?.status]);
     // What waits on you is pinned above the runtimes, and LEAVES its own section while it is up there: the same row
     // twice within a screen reads as a bug, and the pinned row names the machine it is on. Then what the runtimes
     // hold a pin on, in this phone's order (the page's Pinned group), each out of its runtime's section.
@@ -169,14 +171,14 @@ export function ListScreen() {
                         onOrder={(keys) => setPinnedOrder(keys, unpinned())}
                         onActions={(key) => void actOn(key, false)}
                         row={(x, moveBy) => (
-                            <Row s={x} unread={isUnread(marks, keyOf(x), x.lastTs, x.lastTs, keyOf(x) === layer.key)} runtimeName={e.runtimes.length > 1 ? names.get(x.id.runtime) : undefined} moveBy={moveBy}
+                            <Row s={x} unread={isUnread(marks, keyOf(x), x.status, x.lastTs, x.lastTs, keyOf(x) === layer.key)} runtimeName={e.runtimes.length > 1 ? names.get(x.id.runtime) : undefined} moveBy={moveBy}
                                 onPress={() => layer.open(keyOf(x), false)}
                                 onLongPress={() => void actOn(keyOf(x), false)} />
                         )} />
                 ) : (
                     // A pinned row opens ON its approval: that is what it is pinned for. It also names its runtime,
                     // since up here it is out of its machine's section.
-                    <Row s={item} unread={isUnread(marks, keyOf(item), item.lastTs, item.lastTs, keyOf(item) === layer.key)} runtimeName={section.runtime === null ? names.get(item.id.runtime) : undefined}
+                    <Row s={item} unread={isUnread(marks, keyOf(item), item.status, item.lastTs, item.lastTs, keyOf(item) === layer.key)} runtimeName={section.runtime === null ? names.get(item.id.runtime) : undefined}
                         onPress={() => layer.open(`${item.id.runtime}:${item.id.hash}`, section.runtime === null)}
                         onLongPress={() => void actOn(`${item.id.runtime}:${item.id.hash}`, section.runtime === null)} />
                 )}

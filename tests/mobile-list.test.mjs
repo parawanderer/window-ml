@@ -113,7 +113,8 @@ test("unread dots: every bad ending the phone words is one it dots in colour, an
     for (const st of UNTIL_READ) assert.ok(STATUS_TONE[st] === "err" || STATUS_TONE[st] === "stopped", `${st} has a dot to drop`);
     for (const st of Object.keys(STATUS_TONE)) if (STATUS_TONE[st] === "busy") assert.equal(UNTIL_READ.has(st), false, `${st} is work, not news`);
     const x = ses("a", "1", { status: "capped", lastTs: 100 });
-    assert.equal(isUnread({ since: 50, seen: {} }, "a:1", x.lastTs, x.lastTs, false), true);
-    assert.equal(isUnread({ since: 50, seen: { "a:1": 100 } }, "a:1", x.lastTs, x.lastTs, false), false);
-    assert.equal(isUnread({ since: 150, seen: {} }, "a:1", x.lastTs, x.lastTs, false), false, "older than the baseline");
+    assert.equal(isUnread({ since: 50, seen: {} }, "a:1", x.status, x.lastTs, x.lastTs, false), true);
+    assert.equal(isUnread({ since: 50, seen: { "a:1": 100 } }, "a:1", x.status, x.lastTs, x.lastTs, false), false);
+    assert.equal(isUnread({ since: 50, seen: {} }, "a:1", "running", 100, 100, false), false, "working is not news");
+    assert.equal(isUnread({ since: 150, seen: {} }, "a:1", x.status, x.lastTs, x.lastTs, false), false, "older than the baseline");
 });

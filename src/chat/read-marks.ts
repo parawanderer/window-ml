@@ -29,12 +29,15 @@ export type ReadState = Readonly<{ since: number; seen: ReadMarks }>;
 export const READ_MARKS_MAX = 500;
 
 /**
- * Whether session `key` has news this device has not seen: it is not the one open, it moved after the baseline
+ * Whether session `key` has news this device has not seen: it is not the one open, it is not running, it moved after the baseline
  * (`localTs` is its `lastTs` on THIS device's clock, which is what the baseline is on), and its newest event
  * (`lastTs`, the runtime's clock, which is what the marks are on) is later than the one seen.
  */
-export function isUnread(state: ReadState, key: string, lastTs: number, localTs: number, open: boolean): boolean {
-    if (open || localTs <= state.since) return false;
+export function isUnread(state: ReadState, key: string, status: ReadStatus, lastTs: number, localTs: number, open: boolean): boolean {
+    // A RUNNING session is never unread: its dot already says it is working, and a title that went bold on every step
+    // while you are elsewhere would be the mark that is always there. When it ends, or stops to wait on you, its newer
+    // `lastTs` against the mark makes it unread then.
+    if (open || status === "running" || localTs <= state.since) return false;
     const at = state.seen[key];
     return !(typeof at === "number" && at >= lastTs);
 }
@@ -77,4 +80,27 @@ export function readMarksFrom(raw: unknown): ReadMarks {
     const out: Record<string, number> = {};
     for (const [k, v] of Object.entries(raw as Record<string, unknown>)) if (typeof v === "number" && Number.isFinite(v)) out[k] = v;
     return out;
+}
+
+/** How long a stored mark may lag the screen: a streaming session moves its mark on every event, storage is told at most this often. */
+export const MARK_WRITE_MS = 2000;
+
+/**
+ * A writer for a value that changes in bursts: `put` writes at once when nothing was written in the last `ms`, and
+ * otherwise keeps only the newest value and writes it when the window ends. `flush` writes what is pending now (on
+ * leaving a session, hiding the page, a status change), so the last value is never lost. The in-memory copy is the
+ * caller's; only the storage write is throttled. `now` and the timer are parameters so a test can drive them.
+ */
+export function throttledWriter<T>(write: (v: T) => void, ms: number = MARK_WRITE_MS, now: () => number = Date.now,
+    timer: { set: (f: () => void, ms: number) => unknown; clear: (h: unknown) => void } = { set: (f, d) => { const h = setTimeout(f, d) as unknown as { unref?: () => void }; h.unref?.(); return h; }, clear: (h) => clearTimeout(h as ReturnType<typeof setTimeout>) }): { put: (v: T) => void; flush: () => void } {
+    let last = -Infinity, pending: { v: T } | null = null, handle: unknown = null;
+    const out = () => { if (handle !== null) { timer.clear(handle); handle = null; } if (!pending) return; const { v } = pending; pending = null; last = now(); write(v); };
+    return {
+        put(v) {
+            pending = { v };
+            if (now() - last >= ms) out();
+            else if (handle === null) handle = timer.set(out, Math.max(0, ms - (now() - last)));
+        },
+        flush: out,
+    };
 }
