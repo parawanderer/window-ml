@@ -279,8 +279,20 @@ test.describe("@security a run the user started on an unapproved page", () => {
                 return;
             }
             expect(await idx.status(hash), "the page's cancel ended the run").toBe("waiting");
+            await page.evaluate(() => { window.__nextClicks = 0; document.querySelector("#next").addEventListener("click", () => window.__nextClicks++); });
             await approveInCard(page);
-            expect(await idx.settled(hash)).toBe("done");
+            // Wait on the run itself (fake.calls() reaching the script's length: the click's turn, then the content), not on
+            // the index's status alone, so a failure names its stage: the approved click never reached the page, the model's
+            // turn after it never came, or the run finished and its index row is late.
+            const finished = await expect.poll(() => fake.calls().length, { timeout: 20000 }).toBe(2).then(() => true, () => false);
+            if (!finished) {
+                const calls = fake.calls().length;
+                const clicks = await page.evaluate(() => window.__nextClicks);
+                expect(calls, clicks === 0 ? "the approved click was not delivered: #next was never clicked" : "#next was clicked, but the model's turn after it never came").toBe(2);
+            }
+            const ended = await idx.settled(hash).then((s) => s, () => null);
+            expect(ended, `the run made both calls but the index still says ${await idx.status(hash)}: the index is late`).not.toBeNull();
+            expect(ended).toBe("done");
         } finally { await close(); }
     });
 
