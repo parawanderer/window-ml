@@ -31,7 +31,7 @@ let values: ValueStore | null = null;
 let writeBudget = 0;
 const store = (): ValueStore => values ??= new ValueStore({
     budgetBytes: () => writeBudget,
-    onEvict: (e) => reportHousekeeping({ subsystem: "value-store", kind: "evict", reason: e.reason, key: e.key, bytes: e.bytes, ...(e.source ? { detail: { source: e.source } } : {}) }),
+    onEvict: (e) => reportHousekeeping({ subsystem: "value-store", kind: "evict", reason: e.reason, key: e.key, bytes: e.shared ? 0 : e.bytes, ...(e.source || e.shared ? { detail: { ...(e.source ? { source: e.source } : {}), ...(e.shared ? { shared: true } : {}) } } : {}) }),
 });
 
 /**
