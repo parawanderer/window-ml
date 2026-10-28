@@ -555,6 +555,26 @@ thing. The parts:
   `host.shadowRoot` (null) or a Playwright locator (it does not enter a closed root). They evaluate in the content
   script's isolated world over CDP, where the shell's `__wmlShellRoots` hook lives. How and why: docs/dev/sidebar.md,
   "Reaching the roots in a test".
+- **A run on a HIDDEN page has its card in the side panel: reach it with `openSidePanel(ext, page)`** (harness.mjs;
+  launch with `launchExtension({ sidePanel: true })`). A page whose origin the person has not allowed gets no
+  `#ml-sb-card` and no `sidebar.html` frame; the card app runs in `sidepanel.html?tabId=N` and takes the run over the
+  worker's `ml-sidepanel` port (site-access.md, "A hidden page's surface: the side panel"). A page the person allowed
+  (`waitForMl`'s default, `approveOrigin`) keeps its corner card, so only a spec that starts a run on an unapproved
+  page, or one that navigates onto one, uses it. The panel is not among `ctx.pages()`: Chrome's own side panel is a
+  browser UI surface with no target in headless Chromium (`sidePanel.open` resolves and none appears, measured), and
+  opening `sidepanel.html?tabId=N` as a tab, or as an iframe in a tab's extension page, does not connect: the worker
+  serves the port only to an extension page with no `sender.tab` (`servePanelPort`), and every frame of a tab has one.
+  That check is the product's and is not relaxed for tests. The route that has no tab is the toolbar popup: the helper
+  calls `chrome.action.openPopup()`, reaches the popup view through a second Playwright connection
+  (`chromium.connectOverCDP`, which lists it where the first does not; `launchExtension({ sidePanel: true })` opens the
+  DevTools port for it), and loads the panel page in an iframe there, which has no `sender.tab`. It returns
+  `{ app(), frame(), text(), approve(), steps(), empty(), close() }`: `frame()` is the same `sidebar.html` frame an
+  in-page card is, so a helper that takes a card frame takes it. Four things to know. A popup is at most 800x600, so a
+  taller panel scrolls inside it (Playwright scrolls to what it clicks; a screenshot of the popup shows its viewport
+  only). A popup closes when the browser's focus moves, which opening a tab does, so every method loads the panel again
+  when it finds it gone and the worker's replay fills it. `cardInPage(page)` is the other half of a hidden-page test:
+  it reads that the page holds no card host and no frame of `sidebar.html`. And the in-page highlight and its position
+  note are not the panel's: see the two measured gaps in the "18" tests of site-access.spec.mjs.
 - **Real model:** point the extension at a real backend with `E2E_BACKEND=<chatUrl>
   E2E_MODEL=<id> E2E_KEY=<bearer>` (the observer also accepts `USE_ENV=1` to read
   `OPENWEBUI_URL/KEY/MODEL` + `OPENWEBUI_UTILITY_MODEL`/`OPENWEBUI_VISION_MODEL` from `.env`).
