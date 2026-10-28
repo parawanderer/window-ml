@@ -182,13 +182,15 @@ def _ml_make_cancel(revoke, spending, queue, proxy, loop_globals, schedule, loop
         d = getattribute(loop, "__dict__")
         for k in [k for k in d if k in shadowable]:
             del d[k]
+    # The Future's own methods, taken from its C type here: an instance can shadow done and set_result.
+    fut_done, fut_set = Future.done, Future.set_result
     def settle(fut):
-        if fut.done():
+        if fut_done(fut):
             return
         was = type_(loop)
         set_class(loop, type_("WebLoop", (object_,), {"__getattribute__": getattribute, "call_soon": property_(lambda self: wake)}))
         try:
-            fut.set_result(None)
+            fut_set(fut, None)
         finally:
             set_class(loop, was)
     # Tasks whose cancel the queue's cut dropped (step 5), by id, each with a weak reference to tell a reused id apart.
