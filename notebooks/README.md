@@ -6,6 +6,7 @@ README naming every notebook. How they are made, run and checked: [docs/dev/note
 - [bench/](bench/README.md): bench sweeps (prompt variants, models, regressions).
 - [ui/](ui/README.md): the panel's drawing decisions (what typing out a live call costs, and its pacing).
 - [readonly/](readonly/README.md): the read-only dialect's halting constants (what a regex search costs against its bound).
+- [pdf/](pdf/README.md): the PDF page classifier's cut-offs, read against vision models' labels of real pages.
 - [python-dialect/](python-dialect/README.md): what the read-only Python dialect must admit, counted on real `python_exec` cells.
 - `pyproject.toml`, `uv.lock`: the one environment (`node scripts/nb.mjs setup`).
 - `src/wmlnb/`: what every notebook shares (`extract`, `open_ro`, `provenance`, `find_sweep`, `store`).

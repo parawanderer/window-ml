@@ -1,0 +1,687 @@
+[
+  {
+    "id": "arxiv-adam",
+    "source": "arxiv",
+    "url": "https://arxiv.org/pdf/1412.6980v9",
+    "sha256": "eab9c73ae2ceda884b94830bda99312254bac4806f6c9f045cbab90721ecda31",
+    "bytes": 584641,
+    "why": "ML paper, math, plots"
+  },
+  {
+    "id": "arxiv-attention",
+    "source": "arxiv",
+    "url": "https://arxiv.org/pdf/1706.03762v7",
+    "sha256": "bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697",
+    "bytes": 2215244,
+    "why": "text paper, few figures, control"
+  },
+  {
+    "id": "arxiv-clip",
+    "source": "arxiv",
+    "url": "https://arxiv.org/pdf/2103.00020v1",
+    "sha256": "6478b6e571a7d6fcd846d8ef77bfd60c285f1986abb8f475eedc43de403074f5",
+    "bytes": 6813639,
+    "why": "long vision-language paper, many figures"
+  },
+  {
+    "id": "arxiv-ddpm",
+    "source": "arxiv",
+    "url": "https://arxiv.org/pdf/2006.11239v2",
+    "sha256": "aee5e07a802e8dfd2a386374c94fd61d1d056cb7e1e0fec4f28e8120ff5d8505",
+    "bytes": 10267274,
+    "why": "diffusion paper, large sample grids, math-heavy"
+  },
+  {
+    "id": "arxiv-gpt3",
+    "source": "arxiv",
+    "url": "https://arxiv.org/pdf/2005.14165v4",
+    "sha256": "97fd272f1fdfc18677462d0292f5fbf26ca86b4d1b485c2dba03269b643a0e83",
+    "bytes": 6768044,
+    "why": "75-page paper, tables and plots"
+  },
+  {
+    "id": "arxiv-maldacena",
+    "source": "arxiv",
+    "url": "https://arxiv.org/pdf/hep-th/9711200v3",
+    "sha256": "b711c300aac9a8c93d84451675554da8829d4b7d3c1ae23cdd16e94523975f06",
+    "bytes": 246327,
+    "why": "physics paper, equation-dense"
+  },
+  {
+    "id": "arxiv-perelman",
+    "source": "arxiv",
+    "url": "https://arxiv.org/pdf/math/0211159v1",
+    "sha256": "945e278613c45ea1ab617b28c3095783d0e68958dc0546dfcfa9b42b9674fbe1",
+    "bytes": 325949,
+    "why": "pure math, equation-dense TeX"
+  },
+  {
+    "id": "arxiv-resnet",
+    "source": "arxiv",
+    "url": "https://arxiv.org/pdf/1512.03385v1",
+    "sha256": "1e0651b6810ecba34a3dbc5b5b0209226f889004607c1f203540a48d64e5a93a",
+    "bytes": 819383,
+    "why": "vision paper, figures"
+  },
+  {
+    "id": "arxiv-sam",
+    "source": "arxiv",
+    "url": "https://arxiv.org/pdf/2304.02643v1",
+    "sha256": "c6ca524e47200c3e542587ca76ac1dbc89cc67340f948c819250d16fdbd90cfb",
+    "bytes": 15644599,
+    "why": "vision paper with big full-width figures"
+  },
+  {
+    "id": "arxiv-vae",
+    "source": "arxiv",
+    "url": "https://arxiv.org/pdf/1312.6114v11",
+    "sha256": "bdcb63b79ed88f64f8ee2d43a721930d01dde5441a4dba20ecaa2342b34e017c",
+    "bytes": 3926758,
+    "why": "math-heavy short paper"
+  },
+  {
+    "id": "arxiv-vit",
+    "source": "arxiv",
+    "url": "https://arxiv.org/pdf/2010.11929v2",
+    "sha256": "8ce7b83971a14508ca711a27c875c9b6914c4f6767cf3150fb1ca6c07aa056d6",
+    "bytes": 3743814,
+    "why": "vision paper, figures and tables"
+  },
+  {
+    "id": "cc2021-0000-0000006",
+    "source": "govdocs",
+    "url": "https://digitalcorpora.s3.amazonaws.com/corpora/files/CC-MAIN-2021-31-PDF-UNTRUNCATED/zipfiles/0000-0999/0000.zip",
+    "zipMember": "0000006.pdf",
+    "sha256": "000014ed4ed93936679f0e1a83ea1eb4856fd6f60391c39262c1a9c5b7ce2cd4",
+    "bytes": 2104691,
+    "why": "random CC-MAIN-2021-31 web PDF (2104691 bytes)"
+  },
+  {
+    "id": "cc2021-0000-0000145",
+    "source": "govdocs",
+    "url": "https://digitalcorpora.s3.amazonaws.com/corpora/files/CC-MAIN-2021-31-PDF-UNTRUNCATED/zipfiles/0000-0999/0000.zip",
+    "zipMember": "0000145.pdf",
+    "sha256": "000138dcac3357f4a2eb6a25d586ac0f775fabb80e8a5876a3dc83914a4f45af",
+    "bytes": 511166,
+    "why": "random CC-MAIN-2021-31 web PDF (511166 bytes)"
+  },
+  {
+    "id": "cc2021-0000-0000284",
+    "source": "govdocs",
+    "url": "https://digitalcorpora.s3.amazonaws.com/corpora/files/CC-MAIN-2021-31-PDF-UNTRUNCATED/zipfiles/0000-0999/0000.zip",
+    "zipMember": "0000284.pdf",
+    "sha256": "00022b758a8ba2fe4b04f064bdf06d936336622893fa8d0f3ef56b34a9a6928d",
+    "bytes": 346649,
+    "why": "random CC-MAIN-2021-31 web PDF (346649 bytes)"
+  },
+  {
+    "id": "cc2021-0000-0000428",
+    "source": "govdocs",
+    "url": "https://digitalcorpora.s3.amazonaws.com/corpora/files/CC-MAIN-2021-31-PDF-UNTRUNCATED/zipfiles/0000-0999/0000.zip",
+    "zipMember": "0000428.pdf",
+    "sha256": "000363db87ef6a100ec7cfc49e8e2fc4d6c5c28b06954f0213fcf4aedebf13ef",
+    "bytes": 1580974,
+    "why": "random CC-MAIN-2021-31 web PDF (1580974 bytes)"
+  },
+  {
+    "id": "cc2021-0000-0000569",
+    "source": "govdocs",
+    "url": "https://digitalcorpora.s3.amazonaws.com/corpora/files/CC-MAIN-2021-31-PDF-UNTRUNCATED/zipfiles/0000-0999/0000.zip",
+    "zipMember": "0000569.pdf",
+    "sha256": "000479dca0863c9180cfd7e61bcec8fb8e487cd37eea39f0a9e3e7b374085ee6",
+    "bytes": 723788,
+    "why": "random CC-MAIN-2021-31 web PDF (723788 bytes)"
+  },
+  {
+    "id": "cc2021-0000-0000714",
+    "source": "govdocs",
+    "url": "https://digitalcorpora.s3.amazonaws.com/corpora/files/CC-MAIN-2021-31-PDF-UNTRUNCATED/zipfiles/0000-0999/0000.zip",
+    "zipMember": "0000714.pdf",
+    "sha256": "00059ab9f16d0dc64f13e86526ed9db0c5d531a803448f486188325a177b5f57",
+    "bytes": 119033,
+    "why": "random CC-MAIN-2021-31 web PDF (119033 bytes)"
+  },
+  {
+    "id": "cc2021-0000-0000863",
+    "source": "govdocs",
+    "url": "https://digitalcorpora.s3.amazonaws.com/corpora/files/CC-MAIN-2021-31-PDF-UNTRUNCATED/zipfiles/0000-0999/0000.zip",
+    "zipMember": "0000863.pdf",
+    "sha256": "0006ed658bb37763ca77dc1ae7f99d9c607aa8557ac5017cd41557c60189aa98",
+    "bytes": 82941,
+    "why": "random CC-MAIN-2021-31 web PDF (82941 bytes)"
+  },
+  {
+    "id": "cc2021-0317-0317003",
+    "source": "govdocs",
+    "url": "https://digitalcorpora.s3.amazonaws.com/corpora/files/CC-MAIN-2021-31-PDF-UNTRUNCATED/zipfiles/0000-0999/0317.zip",
+    "zipMember": "0317003.pdf",
+    "sha256": "0a409a0d74f0efe2abd9127585e1033b5223cb6d92b13585d895bf0aead42e0c",
+    "bytes": 524288,
+    "why": "random CC-MAIN-2021-31 web PDF (524288 bytes)"
+  },
+  {
+    "id": "cc2021-0317-0317140",
+    "source": "govdocs",
+    "url": "https://digitalcorpora.s3.amazonaws.com/corpora/files/CC-MAIN-2021-31-PDF-UNTRUNCATED/zipfiles/0000-0999/0317.zip",
+    "zipMember": "0317140.pdf",
+    "sha256": "0a41d3a1019e063f93a7f119c0eceec32b4a9a9dd9331ab96ab602ab51719a62",
+    "bytes": 76092,
+    "why": "random CC-MAIN-2021-31 web PDF (76092 bytes)"
+  },
+  {
+    "id": "cc2021-0317-0317280",
+    "source": "govdocs",
+    "url": "https://digitalcorpora.s3.amazonaws.com/corpora/files/CC-MAIN-2021-31-PDF-UNTRUNCATED/zipfiles/0000-0999/0317.zip",
+    "zipMember": "0317280.pdf",
+    "sha256": "0a42d88ff2a9377a7b8a93c659f8e77823993cdc18eb8269d7869e37375f64af",
+    "bytes": 451834,
+    "why": "random CC-MAIN-2021-31 web PDF (451834 bytes)"
+  },
+  {
+    "id": "cc2021-0317-0317427",
+    "source": "govdocs",
+    "url": "https://digitalcorpora.s3.amazonaws.com/corpora/files/CC-MAIN-2021-31-PDF-UNTRUNCATED/zipfiles/0000-0999/0317.zip",
+    "zipMember": "0317427.pdf",
+    "sha256": "0a442b47e6b9bb578d7599c34c6658c0a6e8837aad53e5eeba3bbe3d49a58ddc",
+    "bytes": 609827,
+    "why": "random CC-MAIN-2021-31 web PDF (609827 bytes)"
+  },
+  {
+    "id": "cc2021-0317-0317568",
+    "source": "govdocs",
+    "url": "https://digitalcorpora.s3.amazonaws.com/corpora/files/CC-MAIN-2021-31-PDF-UNTRUNCATED/zipfiles/0000-0999/0317.zip",
+    "zipMember": "0317568.pdf",
+    "sha256": "0a4567f24c5a42b4f3791922818cadaba2bb79c904c601afcdbdd060951d229a",
+    "bytes": 800308,
+    "why": "random CC-MAIN-2021-31 web PDF (800308 bytes)"
+  },
+  {
+    "id": "cc2021-0317-0317714",
+    "source": "govdocs",
+    "url": "https://digitalcorpora.s3.amazonaws.com/corpora/files/CC-MAIN-2021-31-PDF-UNTRUNCATED/zipfiles/0000-0999/0317.zip",
+    "zipMember": "0317714.pdf",
+    "sha256": "0a469a9eaeb78cac4bd6b4c96ce228aa4caf576d4497b2cee40881e79c207d73",
+    "bytes": 565771,
+    "why": "random CC-MAIN-2021-31 web PDF (565771 bytes)"
+  },
+  {
+    "id": "cc2021-0317-0317860",
+    "source": "govdocs",
+    "url": "https://digitalcorpora.s3.amazonaws.com/corpora/files/CC-MAIN-2021-31-PDF-UNTRUNCATED/zipfiles/0000-0999/0317.zip",
+    "zipMember": "0317860.pdf",
+    "sha256": "0a47e091e8ff6dfcfce5178decfdd9acd475fb06833b5015c6663f73f1720fc0",
+    "bytes": 356105,
+    "why": "random CC-MAIN-2021-31 web PDF (356105 bytes)"
+  },
+  {
+    "id": "cc2021-0777-0777004",
+    "source": "govdocs",
+    "url": "https://digitalcorpora.s3.amazonaws.com/corpora/files/CC-MAIN-2021-31-PDF-UNTRUNCATED/zipfiles/0000-0999/0777.zip",
+    "zipMember": "0777004.pdf",
+    "sha256": "1912f4ea98cb9a00a9edb662964e5fb527bb62bacd539fe6c572becffcb9f036",
+    "bytes": 66112,
+    "why": "random CC-MAIN-2021-31 web PDF (66112 bytes)"
+  },
+  {
+    "id": "cc2021-0777-0777148",
+    "source": "govdocs",
+    "url": "https://digitalcorpora.s3.amazonaws.com/corpora/files/CC-MAIN-2021-31-PDF-UNTRUNCATED/zipfiles/0000-0999/0777.zip",
+    "zipMember": "0777148.pdf",
+    "sha256": "191410f9969dc14bdb6cfc017dc40b890323c675425c0a19e139892cec7fa46d",
+    "bytes": 331954,
+    "why": "random CC-MAIN-2021-31 web PDF (331954 bytes)"
+  },
+  {
+    "id": "cc2021-0777-0777284",
+    "source": "govdocs",
+    "url": "https://digitalcorpora.s3.amazonaws.com/corpora/files/CC-MAIN-2021-31-PDF-UNTRUNCATED/zipfiles/0000-0999/0777.zip",
+    "zipMember": "0777284.pdf",
+    "sha256": "19151646cdf57afacb4d0de7e416389115a406201b46675cc61c6e6e1e312514",
+    "bytes": 102050,
+    "why": "random CC-MAIN-2021-31 web PDF (102050 bytes)"
+  },
+  {
+    "id": "cc2021-0777-0777427",
+    "source": "govdocs",
+    "url": "https://digitalcorpora.s3.amazonaws.com/corpora/files/CC-MAIN-2021-31-PDF-UNTRUNCATED/zipfiles/0000-0999/0777.zip",
+    "zipMember": "0777427.pdf",
+    "sha256": "19166f051ae6d886ab885c2b2705b1573fd2f7e837975927e84662abeb664297",
+    "bytes": 1775523,
+    "why": "random CC-MAIN-2021-31 web PDF (1775523 bytes)"
+  },
+  {
+    "id": "cc2021-0777-0777571",
+    "source": "govdocs",
+    "url": "https://digitalcorpora.s3.amazonaws.com/corpora/files/CC-MAIN-2021-31-PDF-UNTRUNCATED/zipfiles/0000-0999/0777.zip",
+    "zipMember": "0777571.pdf",
+    "sha256": "1917ca9a0c3c2eacaa2fb1a87247ae38175343bae6c01485f9d8b3653be1ae2d",
+    "bytes": 203042,
+    "why": "random CC-MAIN-2021-31 web PDF (203042 bytes)"
+  },
+  {
+    "id": "cc2021-0777-0777718",
+    "source": "govdocs",
+    "url": "https://digitalcorpora.s3.amazonaws.com/corpora/files/CC-MAIN-2021-31-PDF-UNTRUNCATED/zipfiles/0000-0999/0777.zip",
+    "zipMember": "0777718.pdf",
+    "sha256": "1918fc709f0e368b8f1c5b3d9b2e3db20041b1d28a5eaed26e9031abbdf2782a",
+    "bytes": 575775,
+    "why": "random CC-MAIN-2021-31 web PDF (575775 bytes)"
+  },
+  {
+    "id": "cc2021-0777-0777857",
+    "source": "govdocs",
+    "url": "https://digitalcorpora.s3.amazonaws.com/corpora/files/CC-MAIN-2021-31-PDF-UNTRUNCATED/zipfiles/0000-0999/0777.zip",
+    "zipMember": "0777857.pdf",
+    "sha256": "191a2397266b978208bf16b4fbf01c6ad04dac2bade4224d64e7d334271ccf1b",
+    "bytes": 126447,
+    "why": "random CC-MAIN-2021-31 web PDF (126447 bytes)"
+  },
+  {
+    "id": "ia-aps8647-0001-001-umich-edu",
+    "source": "archive",
+    "url": "https://archive.org/download/aps8647.0001.001.umich.edu/aps8647.0001.001.umich.edu.pdf",
+    "sha256": "59024049baef305489e3a98c69af832da23d9316b1cfcae9f7e8f4c20ff5158c",
+    "bytes": 3387707,
+    "why": "OCR layer, university digitisation"
+  },
+  {
+    "id": "ia-cat31287673",
+    "source": "archive",
+    "url": "https://archive.org/download/CAT31287673/CAT31287673.pdf",
+    "sha256": "0f6a02c35ce946ddc0136801a77ff010cc1462b34944e81b92c307e5ec860db6",
+    "bytes": 352440,
+    "why": "OCR layer, small scan"
+  },
+  {
+    "id": "ia-chinesecookbook00gals",
+    "source": "archive",
+    "url": "https://archive.org/download/chinesecookbook00gals/chinesecookbook00gals.pdf",
+    "sha256": "8b39a9844970270360e8e13e2f09894fcc56555b87d381dcb5dc591e8746105a",
+    "bytes": 751597,
+    "why": "OCR layer over book scan"
+  },
+  {
+    "id": "ia-cornwallparishr01rowegoog",
+    "source": "archive",
+    "url": "https://archive.org/download/cornwallparishr01rowegoog/cornwallparishr01rowegoog.pdf",
+    "sha256": "2d600ef11995f1174fd439cd33a40116043be435b0cd2d2161a932caaf0d3e8e",
+    "bytes": 6655644,
+    "why": "Image Container PDF, 6.6 MB, probably no OCR"
+  },
+  {
+    "id": "ia-cu31924000900849",
+    "source": "archive",
+    "url": "https://archive.org/download/cu31924000900849/cu31924000900849.pdf",
+    "sha256": "282155e420b44ac12fdd6d4cd99369e45ccd0e9a908aedc60c335e536f8c4b90",
+    "bytes": 1084206,
+    "why": "OCR layer over library scan"
+  },
+  {
+    "id": "ia-englishkikuyuvo00mcgrgoog",
+    "source": "archive",
+    "url": "https://archive.org/download/englishkikuyuvo00mcgrgoog/englishkikuyuvo00mcgrgoog_text.pdf",
+    "sha256": "16d5f081d0cec4e82d474fc7590843e7fd7963590ea1354d24c25f797936d5b1",
+    "bytes": 5842147,
+    "why": "Additional Text PDF: OCR text layer, Kikuyu vocabulary"
+  },
+  {
+    "id": "ia-extractfromadia00cockgoog",
+    "source": "archive",
+    "url": "https://archive.org/download/extractfromadia00cockgoog/extractfromadia00cockgoog.pdf",
+    "sha256": "7daf5531a194806f01aa5fa3f6a64cf88f183c42067c43ed47293fa16ca53f65",
+    "bytes": 1042079,
+    "why": "Image Container PDF, probably no OCR"
+  },
+  {
+    "id": "ia-gettysburgaddres00linc",
+    "source": "archive",
+    "url": "https://archive.org/download/gettysburgaddres00linc/gettysburgaddres00linc.pdf",
+    "sha256": "868ab78cad4df7d84f4b46744e4c0fd86542953107a90074854ce052957677c7",
+    "bytes": 219281,
+    "why": "tiny archive.org Text PDF with OCR layer"
+  },
+  {
+    "id": "ia-hawaiianphraseb00ltdgoog",
+    "source": "archive",
+    "url": "https://archive.org/download/hawaiianphraseb00ltdgoog/hawaiianphraseb00ltdgoog_text.pdf",
+    "sha256": "090177d2962034be8d8f6e067ad721bd534db9bc66d65bbc64df06c5fc4693a8",
+    "bytes": 5270024,
+    "why": "Additional Text PDF: OCR text layer, Hawaiian"
+  },
+  {
+    "id": "ia-kybalionastudyh00unkngoog",
+    "source": "archive",
+    "url": "https://archive.org/download/kybalionastudyh00unkngoog/kybalionastudyh00unkngoog.pdf",
+    "sha256": "937914073e991fe334fcc413d4e3ca0fc0aa64f1d739032551a96980b519c67f",
+    "bytes": 2543823,
+    "why": "Image Container PDF: page images, probably no OCR text layer"
+  },
+  {
+    "id": "ia-ldpd-5655298-000",
+    "source": "archive",
+    "url": "https://archive.org/download/ldpd_5655298_000/ldpd_5655298_000.pdf",
+    "sha256": "30d65f2eed5a5d9f1ac9cd7ab4ad5ec7562bece2275e4b04a7f1dabed5d6b6dc",
+    "bytes": 3748388,
+    "why": "OCR layer, library digitisation"
+  },
+  {
+    "id": "ia-medeaeuripides00murrgoog",
+    "source": "archive",
+    "url": "https://archive.org/download/medeaeuripides00murrgoog/medeaeuripides00murrgoog.pdf",
+    "sha256": "8a80f888d4f0f284ff5d077db84ac99dbce8e0bc3ec4a44523cc88150c73002f",
+    "bytes": 1158582,
+    "why": "Image Container PDF, Greek text scan, probably no OCR"
+  },
+  {
+    "id": "ia-oldchina00lamb",
+    "source": "archive",
+    "url": "https://archive.org/download/oldchina00lamb/oldchina00lamb.pdf",
+    "sha256": "fc621e6faee3e005018c21b8b9cf7a77e1a5ff4ba79901e37c13209de01bf969",
+    "bytes": 907945,
+    "why": "OCR layer over book scan"
+  },
+  {
+    "id": "ia-rimasgustavoabe00renagoog",
+    "source": "archive",
+    "url": "https://archive.org/download/rimasgustavoabe00renagoog/rimasgustavoabe00renagoog.pdf",
+    "sha256": "51ecce9f6c77e754987849c9e9fb3645fc4584a9c17aa8d9dc33e10b4fb37450",
+    "bytes": 716674,
+    "why": "Image Container PDF, Spanish scan, probably no OCR"
+  },
+  {
+    "id": "ia-songskappakappa00gammgoog",
+    "source": "archive",
+    "url": "https://archive.org/download/songskappakappa00gammgoog/songskappakappa00gammgoog.pdf",
+    "sha256": "6659a528df4fd35a755a12695d2fa268abe6f17feef86d1afdfdad6d230ff74d",
+    "bytes": 1426952,
+    "why": "Image Container PDF, probably no OCR"
+  },
+  {
+    "id": "ia-tallofficebuildi00sull",
+    "source": "archive",
+    "url": "https://archive.org/download/tallofficebuildi00sull/tallofficebuildi00sull.pdf",
+    "sha256": "efd041e294e921a0f3973b4a490040032f357b97a27520652f4a177ce519ebc1",
+    "bytes": 883887,
+    "why": "OCR layer, architecture essay with plates"
+  },
+  {
+    "id": "ia-yellowwallpaper00gilmgoog",
+    "source": "archive",
+    "url": "https://archive.org/download/yellowwallpaper00gilmgoog/yellowwallpaper00gilmgoog.pdf",
+    "sha256": "93b6d69e00f51ade5a40ddc84db48d036b36706e498e3693ccbf91a53ef94cfa",
+    "bytes": 350874,
+    "why": "Image Container PDF: page images, probably no OCR text layer"
+  },
+  {
+    "id": "pdfjs-160f-2019",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/160F-2019.pdf",
+    "sha256": "f41f0818365ffd14ca4e55c0556355193bd76632b970d60cc2dec554cac6f379",
+    "bytes": 328400,
+    "why": "form"
+  },
+  {
+    "id": "pdfjs-22060-a1-01-plans",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/22060_A1_01_Plans.pdf",
+    "sha256": "bd0203ede39cfe101c7d1ea6555e1c9fc408247627a47de549ebf2590f1b887b",
+    "bytes": 6264322,
+    "why": "architectural plans, vector drawings"
+  },
+  {
+    "id": "pdfjs-arabiccidtruetype",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/ArabicCIDTrueType.pdf",
+    "sha256": "1cad1de912ba29f89a6d8b08bc5b0f84382874ffedab2c8f9e05ef608c265bb1",
+    "bytes": 39370,
+    "why": "Arabic CID TrueType font"
+  },
+  {
+    "id": "pdfjs-bug1978317",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/bug1978317.pdf",
+    "sha256": "2da2307afefe14c163f0f57a794c5199e9302eec3fdc154896a05976e08c2727",
+    "bytes": 1535205,
+    "why": "real document, 1.5 MB (unsure of content)"
+  },
+  {
+    "id": "pdfjs-cidfont-cmap-overflow",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/cidfont_cmap_overflow.pdf",
+    "sha256": "ecb07ca4b3c6a9fd408db07c29c7e4426fb1bd6ee9e2bbdfa4997b65be602c13",
+    "bytes": 94168,
+    "why": "CID font with CMap overflow"
+  },
+  {
+    "id": "pdfjs-complex-ttf-font",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/complex_ttf_font.pdf",
+    "sha256": "4b205d3fd11e7ad2b9b86cc446561909d48dd9e0b38327cfd69d0fdeb6c28e14",
+    "bytes": 57178,
+    "why": "complex TrueType font"
+  },
+  {
+    "id": "pdfjs-copy-paste-ligatures",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/copy_paste_ligatures.pdf",
+    "sha256": "3a6948ca33558a0f1c9dabf70902e14e263e814b6a12da44ba8ec9439c0bafdd",
+    "bytes": 32408,
+    "why": "ligature glyphs, text extraction edge"
+  },
+  {
+    "id": "pdfjs-freeculture",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/freeculture.pdf",
+    "sha256": "753441c619c529c8d0fc3e7e470f07c9547838fc7229bea8c1dcf854acee03b4",
+    "bytes": 2598727,
+    "why": "book-length text document, control"
+  },
+  {
+    "id": "pdfjs-images",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/images.pdf",
+    "sha256": "f7a44ca650d951cfea007440cda297dabbf2cf0c8f77a948a580cc0e99496725",
+    "bytes": 1494439,
+    "why": "image-heavy page"
+  },
+  {
+    "id": "pdfjs-issue10529",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/issue10529.pdf",
+    "sha256": "01e1abc883c25e4b7d952d260717da5f533b23ccd8d5b10d95f4d8581b294f42",
+    "bytes": 120681,
+    "why": "font bug repro (unsure)"
+  },
+  {
+    "id": "pdfjs-issue1249",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/issue1249.pdf",
+    "sha256": "20cd02a40fb5c869f0d4428c9e066c95dcbb7d8f2601da7c8cdf426f98b30af7",
+    "bytes": 68783,
+    "why": "font encoding bug repro (unsure)"
+  },
+  {
+    "id": "pdfjs-issue12841-reduced",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/issue12841_reduced.pdf",
+    "sha256": "0edad3c5bafa7f778580d838385830610423845ae26d4a93c1ef15dd60b6edcb",
+    "bytes": 5852805,
+    "why": "5.8 MB reduced real document (unsure of content)"
+  },
+  {
+    "id": "pdfjs-issue1905",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/issue1905.pdf",
+    "sha256": "a75f3220b351d509e954ba30ea131e55a2c7530d96586eb0968a1d7d1d8b3c56",
+    "bytes": 918339,
+    "why": "real document, 0.9 MB (unsure of content)"
+  },
+  {
+    "id": "pdfjs-issue19517",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/issue19517.pdf",
+    "sha256": "908c133880c7148864102eab517224d524cdd32769d2ae0f1e6d69e75a0471d6",
+    "bytes": 6262577,
+    "why": "6 MB real document (unsure of content)"
+  },
+  {
+    "id": "pdfjs-issue3188",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/issue3188.pdf",
+    "sha256": "6245a949d6d7418620b0683e2ff44852628d51d484598baaa677839f0172d27b",
+    "bytes": 8125374,
+    "why": "8 MB real document (unsure of content)"
+  },
+  {
+    "id": "pdfjs-issue5567",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/issue5567.pdf",
+    "sha256": "35431e73744702c34b0a4295867550dba020afca0c85c5d7d3100533d27abfdc",
+    "bytes": 2169844,
+    "why": "real document, 2 MB (unsure of content)"
+  },
+  {
+    "id": "pdfjs-issue5994",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/issue5994.pdf",
+    "sha256": "aa366a359bfca79f8b842d8e393ad299ff534ed5c057cd9c50899bc230eefe8b",
+    "bytes": 1248986,
+    "why": "real document (unsure of content)"
+  },
+  {
+    "id": "pdfjs-issue6127",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/issue6127.pdf",
+    "sha256": "75e1a2b98eb8fe6d65b6ac0e34ccfe3ad0a1d7bc0a08165301a14f5fb4caa73a",
+    "bytes": 1446634,
+    "why": "real document, 1.4 MB (unsure of content)"
+  },
+  {
+    "id": "pdfjs-issue6286",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/issue6286.pdf",
+    "sha256": "3499439d8b1b51fcc62c908f8cbd4b08beaf18248b81bf2d73d552ae42fef9aa",
+    "bytes": 1909445,
+    "why": "real document, 1.9 MB (unsure of content)"
+  },
+  {
+    "id": "pdfjs-issue6961",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/issue6961.pdf",
+    "sha256": "7d3431ea9aa0256ca3cc65a850d7f1389b204f1629cb98bc17e1dd5d30d60110",
+    "bytes": 2156587,
+    "why": "real document; font oddities (unsure)"
+  },
+  {
+    "id": "pdfjs-issue7229",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/issue7229.pdf",
+    "sha256": "af26f8639f6a9f5be9b82fd9f071539b1dd61b4f7bd9a261d77b9d3394efca95",
+    "bytes": 1153154,
+    "why": "real document (unsure of content)"
+  },
+  {
+    "id": "pdfjs-issue8795-reduced",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/issue8795_reduced.pdf",
+    "sha256": "6d8595632bf38ba15fe333dd9a11d5dffc3454bfa8374e6f1622826112735447",
+    "bytes": 4244537,
+    "why": "4 MB reduced real document (unsure of content)"
+  },
+  {
+    "id": "pdfjs-issue9262-reduced",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/issue9262_reduced.pdf",
+    "sha256": "d05dc91e7ab4dc33bfc7a383afbfa1512b69231c75f1f12247dd26d71d6b697f",
+    "bytes": 5536057,
+    "why": "5.5 MB reduced real document (unsure of content)"
+  },
+  {
+    "id": "pdfjs-issue9949",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/issue9949.pdf",
+    "sha256": "0bed9dd73c79c4b5ff1f74725f7ebfaae85981bb8e0c3c971c721a5371740cec",
+    "bytes": 844757,
+    "why": "real document (unsure of content)"
+  },
+  {
+    "id": "pdfjs-mixedfonts",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/mixedfonts.pdf",
+    "sha256": "04f17b84112d8130d75601f8f9c2027481a19df595aacb753ca3f9f3b08b2350",
+    "bytes": 405432,
+    "why": "mixed font types in one document"
+  },
+  {
+    "id": "pdfjs-pdfjs-wikipedia",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/pdfjs_wikipedia.pdf",
+    "sha256": "4a10e1aee6565b5f329f073470cf95410272412510985948dc86399b57d7b4db",
+    "bytes": 207960,
+    "why": "browser-printed Wikipedia page, text control"
+  },
+  {
+    "id": "pdfjs-pdkids",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/pdkids.pdf",
+    "sha256": "c4ea5ccc138bb58109aba4ec33c7841bf9bda637b20cec932904cbee700845b5",
+    "bytes": 546144,
+    "why": "illustrated children document"
+  },
+  {
+    "id": "pdfjs-personwithdog",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/personwithdog.pdf",
+    "sha256": "f23b044b9a983f07690400375ae41aa346a93759a701009b633bd45d3d3fa2c8",
+    "bytes": 521565,
+    "why": "image-heavy page"
+  },
+  {
+    "id": "pdfjs-prefilled-f1040",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/prefilled_f1040.pdf",
+    "sha256": "899edb271684d2451337e225268003324a583a7d3429e23efd69f1654adf9bf9",
+    "bytes": 306416,
+    "why": "IRS 1040 form with filled fields"
+  },
+  {
+    "id": "pdfjs-s2",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/S2.pdf",
+    "sha256": "57d874f2760ded2b70eb58b7b5e31df407d5641b7225576b77458b5dc5009543",
+    "bytes": 478490,
+    "why": "real document (unsure of content)"
+  },
+  {
+    "id": "pdfjs-tamreview",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/TAMReview.pdf",
+    "sha256": "a6db6d2f5e4f97e1e28a5919a875a40b89e38d0229b33cc023ca4d353f3ab3ec",
+    "bytes": 674629,
+    "why": "review text document"
+  },
+  {
+    "id": "pdfjs-thuluthfeatures",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/ThuluthFeatures.pdf",
+    "sha256": "752304c24a50834d111793fc038cafc892c071d04f214072729c41a178c161e7",
+    "bytes": 117677,
+    "why": "Arabic Thuluth script, complex shaping"
+  },
+  {
+    "id": "pdfjs-tracemonkey",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/tracemonkey.pdf",
+    "sha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113",
+    "bytes": 1016315,
+    "why": "two-column paper with figures"
+  },
+  {
+    "id": "pdfjs-xfa-filled-imm1344e",
+    "source": "pdfjs",
+    "url": "https://raw.githubusercontent.com/mozilla/pdf.js/24a63a4d488d4fe26c2a5ca32216ac9698d0de59/test/pdfs/xfa_filled_imm1344e.pdf",
+    "sha256": "8313c52ea97b49908137fd744e85fc37584b502210fcc0a73d6c272cca9d7889",
+    "bytes": 3023968,
+    "why": "XFA form, filled"
+  }
+]

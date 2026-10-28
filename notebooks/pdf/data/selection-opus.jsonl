@@ -1,0 +1,40 @@
+{"id":"pdfjs-issue9262-reduced","n":1,"why":"text vs qwen kind:blank"}
+{"id":"pdfjs-freeculture","n":30,"why":"text vs qwen kind:blank"}
+{"id":"pdfjs-freeculture","n":186,"why":"text vs qwen kind:blank"}
+{"id":"pdfjs-issue8795-reduced","n":1,"why":"text vs qwen kind:blank"}
+{"id":"arxiv-clip","n":41,"why":"text vs qwen kind:figure"}
+{"id":"arxiv-attention","n":15,"why":"text vs qwen kind:figure"}
+{"id":"arxiv-attention","n":14,"why":"text vs qwen kind:figure"}
+{"id":"arxiv-sam","n":9,"why":"text vs qwen kind:mixed"}
+{"id":"arxiv-sam","n":12,"why":"text vs qwen kind:mixed"}
+{"id":"arxiv-sam","n":11,"why":"text vs qwen kind:mixed"}
+{"id":"cc2021-0000-0000006","n":1,"why":"text vs qwen kind:mixed"}
+{"id":"arxiv-vit","n":21,"why":"mixed vs qwen kind:figure"}
+{"id":"arxiv-gpt3","n":65,"why":"mixed vs qwen kind:figure"}
+{"id":"arxiv-ddpm","n":17,"why":"mixed vs qwen kind:figure"}
+{"id":"ia-kybalionastudyh00unkngoog","n":143,"why":"scanned vs qwen kind:blank"}
+{"id":"ia-rimasgustavoabe00renagoog","n":22,"why":"scanned vs qwen kind:blank"}
+{"id":"ia-songskappakappa00gammgoog","n":13,"why":"scanned vs qwen kind:blank"}
+{"id":"ia-gettysburgaddres00linc","n":7,"why":"scanned vs qwen kind:blank"}
+{"id":"ia-medeaeuripides00murrgoog","n":29,"why":"scanned vs qwen kind:text"}
+{"id":"ia-medeaeuripides00murrgoog","n":43,"why":"scanned vs qwen kind:text"}
+{"id":"ia-kybalionastudyh00unkngoog","n":196,"why":"scanned vs qwen kind:text"}
+{"id":"ia-songskappakappa00gammgoog","n":112,"why":"scanned vs qwen kind:text"}
+{"id":"ia-hawaiianphraseb00ltdgoog","n":109,"why":"ocr-scan vs qwen kind:text"}
+{"id":"ia-englishkikuyuvo00mcgrgoog","n":91,"why":"ocr-scan vs qwen kind:text"}
+{"id":"ia-chinesecookbook00gals","n":10,"why":"ocr-scan vs qwen kind:text"}
+{"id":"pdfjs-22060-a1-01-plans","n":1,"why":"blank vs qwen kind:figure"}
+{"id":"pdfjs-personwithdog","n":1,"why":"blank vs qwen kind:figure"}
+{"id":"pdfjs-tamreview","n":20,"why":"* vs qwen layer:garbled"}
+{"id":"pdfjs-tamreview","n":16,"why":"* vs qwen layer:garbled"}
+{"id":"pdfjs-tamreview","n":3,"why":"* vs qwen layer:garbled"}
+{"id":"ia-cu31924000900849","n":8,"why":"* vs qwen layer:garbled"}
+{"id":"pdfjs-complex-ttf-font","n":1,"why":"* vs qwen layer:garbled"}
+{"id":"ia-aps8647-0001-001-umich-edu","n":15,"why":"* vs qwen layer:hidden"}
+{"id":"ia-aps8647-0001-001-umich-edu","n":41,"why":"* vs qwen layer:hidden"}
+{"id":"ia-aps8647-0001-001-umich-edu","n":55,"why":"* vs qwen layer:hidden"}
+{"id":"cc2021-0777-0777427","n":9,"why":"control: agreement"}
+{"id":"arxiv-gpt3","n":54,"why":"control: agreement"}
+{"id":"pdfjs-freeculture","n":101,"why":"control: agreement"}
+{"id":"ia-extractfromadia00cockgoog","n":25,"why":"control: agreement"}
+{"id":"ia-kybalionastudyh00unkngoog","n":148,"why":"control: agreement"}
