@@ -437,7 +437,7 @@ const policy = (id, effect, source, label) => ({ id, scope: "global", consumer: 
 
 // P1: no MAIN injection on a hidden page, through each of the four flows that put scripts there today.
 
-test("step 3 P1a: a run the person starts on a hidden page puts no page script in the page's MAIN world", { ...T, todo: "Step 3 (docs/spec/SITE_PRESENCE.md) gives a hidden page with a run no MAIN-world script at all: the tools run in the content script's isolated world, from the isolated bundle. Today sw-run-start.ts's adoptOnTab answers the content script's needInject ask with injectPageScripts([shadow-patch.js, injected.js], world MAIN) — the row above pins that protocol as it is and the fix's PR reconciles the two. Rule 10: written against main, no part of feat/hidden-isolated-tools read." }, async () => {
+test("step 3 P1a: a run the person starts on a hidden page puts no page script in the page's MAIN world", { ...T }, async () => {
     const adopts = [];
     let calls = 0;
     const bg = worker({ extra: {
@@ -465,7 +465,7 @@ test("step 3 P1a: a run the person starts on a hidden page puts no page script i
     assert.deepEqual(mainFiles(bg), [], "a run the person starts on a hidden page must not put our page scripts in the page's MAIN world");
 });
 
-test("step 3 P1b: a follow-up to a run on a hidden page puts no page script in the page's MAIN world", { ...T, todo: "sw-run-start.ts userRunAction re-adopts on every follow-up (the document may not be the one the last turn ran on) and the adopt's needInject ask is answered with the same MAIN-world injectPageScripts. Step 3 keeps that adopt (the run must re-register) but nothing may enter MAIN on the hidden page. The delta is what the follow-up phase adds, so the row holds after the fix whether or not the start's own injection is gone." }, async () => {
+test("step 3 P1b: a follow-up to a run on a hidden page puts no page script in the page's MAIN world", { ...T }, async () => {
     const adopts = [];
     let calls = 0;
     const bg = worker({ extra: {
@@ -502,7 +502,7 @@ test("step 3 P1b: a follow-up to a run on a hidden page puts no page script in t
     assert.equal(mainFiles(bg).length, beforeMain, `a follow-up on a hidden page must not put our page scripts in the page's MAIN world (had ${beforeMain} before the follow-up, ${mainFiles(bg).length} now)`);
 });
 
-test("step 3 P1c: an arrival the person approves re-adopts the run on a hidden page without a page script in its MAIN world", { ...T, todo: "sw-run-host.ts readoptHere → adoptOnTab answers the destination content script's needInject ask with the same MAIN-world injectPageScripts. The held arrival's CONTENT_READY adopts nothing (background.ts addAdopt skips arrivalHold runs), so this row's only injection site is the readopt itself — the flow step 3 must route into the isolated world. The destination is in no list (hidden): the visible start page never injects (its adopt is answered pageInfo), so mainFiles is empty until the readopt." }, async () => {
+test("step 3 P1c: an arrival the person approves re-adopts the run on a hidden page without a page script in its MAIN world", { ...T }, async () => {
     const tab = { id: 7, windowId: 3, active: true, url: "https://site.example/page", title: "Site" };
     let turns = 0, docN = 1, bg;
     const asks = [], adopts = [];
@@ -565,7 +565,7 @@ test("step 3 P1c: an arrival the person approves re-adopts the run on a hidden p
     assert.deepEqual(mainFiles(bg), [], "an approved arrival on a hidden page must not get our page scripts in its MAIN world");
 });
 
-test("step 3 P1d: a new document on a hidden page's tab re-adopts the tab's run without a page script in its MAIN world", { ...T, todo: "background.ts's CONTENT_READY branch injects directly when the destination is hidden and the adopt list is non-empty (injectPageScripts, world MAIN) — no ask of the content script at all. Step 3 must route that re-adopt's tool stack into the isolated world (or carry the already-built one) with nothing in MAIN." }, async () => {
+test("step 3 P1d: a new document on a hidden page's tab re-adopts the tab's run without a page script in its MAIN world", { ...T }, async () => {
     const HIDDEN = "https://hidden.example/page";
     let driver = 0, bg, readyAnswer = null;
     bg = worker({
@@ -604,7 +604,7 @@ test("step 3 P1d: a new document on a hidden page's tab re-adopts the tab's run 
 // P2/P3/P5: what the page can see of a run the person started there. P2 and P5 fail today (injected.js is in MAIN);
 // P3 holds and is the plain row.
 
-test("step 3 P2: a hidden page with a run sees no event of ours, no window.ml global and nothing posted on its window", { ...T, todo: "The residual detection-surface.spec.mjs pins today (hidden-with-run pageEvents ['ml-page-port','ml:ready']): with injected.js put into MAIN late the page gets the ml-page-port hand-off, ml:ready and the window.ml global. Step 3 (no MAIN script on a hidden page) removes all three while the traffic below — adopt, tool, shell handshake — runs in the content script's isolated world and still answers. (This world has no CustomEvent, so the closed-root claim's dispatch is not expressible here: that detection is P2b's row.)" }, async () => {
+test("step 3 P2: a hidden page with a run sees no event of ours, no window.ml global and nothing posted on its window", { ...T }, async () => {
     const w = loadPageWorld({ visible: false, main: "injected-isolated.js", pageRealm: true, onRuntimeMessage: (m) => (m.type === "OLLAMA_INFO" ? { data: { ok: 1 } } : undefined) });
     await flush(10);
     const adopt = plain(await w.fireRuntimeMessage({ type: "ADOPT_RUN_NOW", payload: { runId: "r-hidden", rebuild: { toolNames: ["exec"], builtBy: "worker" }, injected: true } }));
@@ -621,7 +621,7 @@ test("step 3 P2: a hidden page with a run sees no event of ours, no window.ml gl
     assert.deepEqual(plain(w.windowPosts), [], "a hidden page with a run must have nothing of ours posted on its window");
 });
 
-test("step 3 P2b (the :309 twin): a hidden page with a run cannot tell window.ml is installed by the closed-root claim, nor take its reader", { ...T, todo: "redteam-exec-shared-world.test.mjs's :309 row is the ask-AFTER-start shape (it holds); this is its hidden-with-run twin: today [shadow-patch.js, injected.js] are put into the page's MAIN world at run start, after the page's scripts ran, so the claim at injected.ts's start dispatches wml-closed-roots through the page's window.dispatchEvent (dom.ts) and the page's wrap — or an ask of its own — takes the one-shot reader. Fixed when a hidden page with a run carries no MAIN-world script (closed roots read with chrome.dom from the isolated world)." }, async () => {
+test("step 3 P2b (the :309 twin): a hidden page with a run cannot tell window.ml is installed by the closed-root claim, nor take its reader", { ...T }, async () => {
     const w = loadDomWorld("<sealed-widget></sealed-widget>", {
         url: "https://hidden.example/page", isolated: true,
         beforeInjected: `
@@ -658,7 +658,7 @@ test("step 3 P3: nothing of ours is posted on a hidden page's window across run 
 // P4: closed roots. A root attached BEFORE our scripts were put in is invisible to the late patch (P4a); our own
 // sidebar hosts' roots must never be read into a tool result whatever captured them (P4b).
 
-test("step 3 P4a: a closed root attached before our scripts were put into a hidden page is readable with pierceClosedShadow", { ...T, todo: "shadow-patch.js cannot capture a root attached before it ran — and on a hidden page with a run it runs LATE (the page's document built its roots first). Step 3 reads closed roots with chrome.dom.openOrClosedShadowRoot (sidebar/shell.ts's setClosedRootReader), which sees every root regardless of when it was attached; until then a pre-run root is invisible to a piercing run. Positive control in the same world: a root attached after the patch (the captured shape) shows." }, async () => {
+test("step 3 P4a: a closed root attached before our scripts were put into a hidden page is readable with pierceClosedShadow", { ...T }, async () => {
     const w = loadDomWorld("<sealed-widget></sealed-widget><post-widget></post-widget>", { url: "https://hidden.example/page", isolated: true, beforeInjected: `
         const root = document.querySelector("sealed-widget").attachShadow({ mode: "closed" });
         root.innerHTML = '<button class="secret">real</button>';
@@ -671,7 +671,7 @@ test("step 3 P4a: a closed root attached before our scripts were put into a hidd
     assert.match(desc("sealed-widget >>> button.secret"), /real/, "a root attached before our scripts were put into the page must be readable with pierceClosedShadow");
 });
 
-test("step 3 P4b: our own hosts' closed roots are never read into a tool result", { ...T, todo: "Nothing consults the mark today: page-gesture.ts's markOwnHost records our sidebar hosts (KEY __mlOwnHosts on the world's global; the callers are sidebar/shell.ts's card, shell and hl hosts), and dom.ts's traversableRoot reads any captured root into a describeElement result — our own card's internals included. Step 3's chrome.dom read is where the mark must be honoured (a host the extension created is ours whatever the page does). Positive control: a page host's root is shown." }, async () => {
+test("step 3 P4b: our own hosts' closed roots are never read into a tool result", { ...T }, async () => {
     const w = loadDomWorld('<div id="ml-sb-card"></div><sealed-widget></sealed-widget>', { url: "https://hidden.example/page", isolated: true });
     w.document.querySelector("sealed-widget").attachShadow({ mode: "closed" }).innerHTML = '<button class="secret">real</button>';
     vm.runInContext(`
@@ -689,7 +689,7 @@ test("step 3 P4b: our own hosts' closed roots are never read into a tool result"
 // P5: builtin wrapping. Every wrap below is installed BEFORE injected.js is put in late — the hidden-page-with-run
 // shape — so a kept builtin kept at module load IS the page's wrapper.
 
-test("step 3 P5: wrapping MessagePort.prototype.postMessage, window.dispatchEvent, Element.prototype.attachShadow and JSON.stringify sees nothing of a hidden-page run", { ...T, todo: "The vectors each wrap meets today: page-channel.ts keeps nativePost at module load, which IS the page's wrapper when the page wrapped first (the wrap-after-load case is the kept builtin's defence and holds — see the :272 ruling in redteam-exec-shared-world.test.mjs), so the port's posts cross it; the ml-page-port hand-off and ml:ready go through the page's window.dispatchEvent; shadow-patch.js displaces the page's Element.prototype.attachShadow with its own; and the exec's value serialisation (tools.ts, the main-world :240 row's vector) calls the page's JSON.stringify — exec-routing refuses an exec on a hidden page today, so that half pins the tool stack step 3 moves into the isolated world. Fixed when nothing of ours runs in MAIN there at all." }, async () => {
+test("step 3 P5: wrapping MessagePort.prototype.postMessage, window.dispatchEvent, Element.prototype.attachShadow and JSON.stringify sees nothing of a hidden-page run", { ...T }, async () => {
     const WRAPS = `
             class Element {}
             Element.prototype.attachShadow = function (init) { return { __shimRoot: true, mode: init && init.mode }; };
