@@ -687,8 +687,10 @@ test("step 3 P5: wrapping MessagePort.prototype.postMessage, window.dispatchEven
         await flush(20);
         return w;
     };
-    // Control: the same wraps, with the bundle in the page's realm (today's late MAIN injection), read the run.
-    const today = await runUnderWraps({ main: "injected.js" });
+    // Control: the same wraps, with shadow-patch.js and the bundle in the page's realm (today's late MAIN injection), read the run.
+    const patchSrc = fs.readFileSync(new URL("../dist/shadow-patch.js", import.meta.url), "utf8");
+    const today = await runUnderWraps({ main: "injected.js", beforeInjected: WRAPS + "\n" + patchSrc });
+    assert.equal(today.pageRun("Element.prototype.attachShadow === __attachWrap"), false, "control: shadow-patch.js in the page's realm displaces its attachShadow");
     assert.ok(plain(today.pageRun("__postSeen")).length > 0, "control: the postMessage wrap reads a run whose bundle shares the page's realm");
     assert.ok(plain(today.pageRun("__dispSeen")).length > 0, "control: the dispatchEvent wrap sees a run whose bundle shares the page's realm");
     assert.ok(plain(today.pageRun("__jsonSeen")).length > 0, "control: the JSON.stringify wrap reads a run whose bundle shares the page's realm");
