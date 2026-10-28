@@ -52,10 +52,18 @@ function keyOf(url: string): string {
     try { const u = new URL(url); u.hash = ""; return u.href; } catch { return url; }
 }
 
-/** The target each in-flight manual fetch's 3xx named, by URL; `undefined` until the headers event arrives. */
-const awaiting = new Map<string, { location?: string | null }>();   // state: plumbing
+/** What a manual fetch's 3xx named, by URL: `location` once its headers event arrived (`null`: unreadable), and `seen`,
+ *  which settles then. */
+interface Slot { location?: string | null; seen: Promise<void>; arrived: () => void }
+const awaiting = new Map<string, Slot>();   // state: plumbing
 /** The fetch of each URL that is in flight, so a second fetch of it waits rather than sharing its headers event. */
 const busy = new Map<string, Promise<unknown>>();   // state: plumbing
+/** How long a fetch that answered a redirect waits for its headers event, which can arrive after `fetch` resolves when
+ *  several requests are in flight (measured on Chromium 151: 6 of 180 under six concurrent fetches, 0 of 60 one at a
+ *  time). Past it the hop is refused. */
+export const HOP_EVENT_WAIT_MS = 2000;
+/** How long a URL stays held for a headers event that never came, so a late one cannot be read as the next fetch's. */
+export const HOP_EVENT_HOLD_MS = 10_000;
 let watching = false;   // state: plumbing
 
 /** Read a 3xx's target for a fetch this module is waiting on: only the worker's own requests (no tab, our initiator). */
@@ -67,6 +75,7 @@ function onHeaders(d: chrome.webRequest.OnHeadersReceivedDetails): undefined {
     const locs = (d.responseHeaders ?? []).filter((h) => h.name.toLowerCase() === "location");
     // Two Location headers, or a second 3xx for the same URL while one is waiting, is ambiguous: refuse rather than guess.
     slot.location = slot.location === undefined && locs.length === 1 && locs[0].value ? new URL(locs[0].value, d.url).href : null;
+    slot.arrived();
     return undefined;
 }
 
@@ -77,20 +86,29 @@ export function watchRedirects(): void {
     chrome.webRequest.onHeadersReceived.addListener(onHeaders, { urls: ["<all_urls>"], tabId: -1 }, ["responseHeaders", "extraHeaders"]);
 }
 
-/** One `manual` fetch of `url`, after any other fetch of the same URL has finished; a 3xx answers its target too. */
+/** Resolve after `ms`, or with the promise when it settles first. */
+const within = (p: Promise<void>, ms: number): Promise<void> => new Promise((r) => { const t = setTimeout(r, ms); void p.then(() => { clearTimeout(t); r(); }); });
+
+/** One `manual` fetch of `url`, after any other fetch of the same URL has finished; a 3xx answers its target too. The URL
+ *  stays held until this fetch's own headers event arrived, so no event is ever read as another fetch's. */
 async function hopOnce(url: string, init: RequestInit): Promise<{ res: Response; next?: string | null }> {
     const key = keyOf(url);
     while (busy.has(key)) await busy.get(key)!.catch(() => undefined);
-    const slot: { location?: string | null } = {};
+    let arrived!: () => void;
+    const slot: Slot = { seen: new Promise<void>((r) => { arrived = r; }), arrived: () => arrived() };
+    awaiting.set(key, slot);
+    let release: Promise<unknown> = Promise.resolve();
     const run = (async () => {
-        awaiting.set(key, slot);
-        try {
-            const res = await fetch(url, { ...init, redirect: "manual" });
-            return res.type === "opaqueredirect" ? { res, next: slot.location ?? null } : { res };
-        } finally { awaiting.delete(key); }
+        const res = await fetch(url, { ...init, redirect: "manual" });
+        if (res.type !== "opaqueredirect") return { res };
+        await within(slot.seen, HOP_EVENT_WAIT_MS);
+        release = slot.location === undefined ? within(slot.seen, HOP_EVENT_HOLD_MS) : Promise.resolve();
+        return { res, next: slot.location ?? null };
     })();
-    busy.set(key, run);
-    try { return await run; } finally { if (busy.get(key) === run) busy.delete(key); }
+    const held = run.then(() => release, () => undefined).then(() => { if (awaiting.get(key) === slot) awaiting.delete(key); });
+    busy.set(key, held);
+    void held.then(() => { if (busy.get(key) === held) busy.delete(key); });
+    return await run;
 }
 
 /**
