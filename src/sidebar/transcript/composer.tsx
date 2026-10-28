@@ -9,6 +9,7 @@ import { loadDraft, loadDraftImages, onDraftRestored, saveDraft, saveDraftImages
 import { config, rev } from "../store";
 import type { Session } from "../store";
 import { IconSend, IconStop } from "../icons";
+import { ClickableImg } from "../ui-kit";
 import { UsageBar } from "./usage";
 import { SpendChip } from "./spend";
 import { RunStatsBar } from "./agent-detail";
@@ -50,14 +51,15 @@ export function useImageAttach(initial?: () => string[]) {
 }
 
 // The attached-image thumbnail strip: previews with an × to remove, plus spinner placeholders for
-// in-flight decodes. Renders nothing when there are no images and nothing decoding.
+// in-flight decodes. Renders nothing when there are no images and nothing decoding. A thumbnail opens full size
+// on click, as a sent image does (`ClickableImg`), so what is about to be sent can be checked before sending.
 export function ThumbStrip({ imgs, loading, onRemove }: { imgs: string[]; loading: number; onRemove: (i: number) => void }) {
     if (!imgs.length && !loading) return null;
     return (
         <div class="cthumbs">
             {imgs.map((src, i) => (
                 <div class="cthumb" key={i}>
-                    <img src={src} alt="attachment" />
+                    <ClickableImg src={src} alt="attachment" />
                     <button class="cthumb-x" onClick={() => onRemove(i)} aria-label="Remove image" title="Remove">×</button>
                 </div>
             ))}

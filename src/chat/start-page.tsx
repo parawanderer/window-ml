@@ -12,8 +12,9 @@
 // only on a runtime with tabs, and nothing at all (the old sentence) when nothing can be started.
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { ModelChoice, RuntimeInfo } from "../session/session-host";
-import { loadDraft, saveDraft } from "../sidebar/drafts";
+import { loadDraft, loadDraftImages, saveDraft, saveDraftImages } from "../sidebar/drafts";
 import { IconEye, IconEyeOff, IconSend, IconWarn } from "../sidebar/icons";
+import { ThumbStrip, useImageAttach } from "../sidebar/transcript/composer";
 import { cursorTipOn } from "../sidebar/ui-kit";
 import type { ChatStore } from "./chat-store";
 import type { ChatExtras } from "./extras";
@@ -87,6 +88,10 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
     if (live) last.current = live.id;
     // Saved as typed (drafts.ts) and kept until a start succeeds: leaving the page or losing the app loses nothing.
     const [text, setText] = useState(() => loadDraft("start"));
+    // Images attached the way the session composer takes them (its own hook and strip), kept under the same draft key:
+    // in memory only (drafts.ts), so they survive leaving the page and a refused start, not a reload.
+    const att = useImageAttach(() => loadDraftImages("start"));
+    useEffect(() => { saveDraftImages("start", att.imgs); }, [att.imgs]);
     const [busy, setBusy] = useState(false);
     const [askingPage, setAskingPage] = useState(false);
     const pick = useTargetPick(store, rt, kind === "agent", extras, true);
@@ -147,16 +152,18 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
     // for the same turn and does not grow with it, so there is nothing left to choose between. Only an agent asks:
     // a chat the worker hosts always streams (`chat-stream`, sw-chat.ts), so `chat.start` has no option to send.
     const streaming = kind === "agent";
-    const ready = !!text.trim() && !busy && rt.online && (kind === "chat" || (pick.ready && blocked.kind === "ok"));
+    // Text, or an image alone: the start commands accept either (session-commands.ts).
+    const ready = (!!text.trim() || att.imgs.length > 0) && !busy && rt.online && (kind === "chat" || (pick.ready && blocked.kind === "ok"));
     const start = async (): Promise<void> => {
         if (!ready) return;
         setBusy(true);
+        const images = att.imgs;
         try {
             const r = kind === "chat"
-                ? await store.send({ type: "chat.start", runtime: rt.id, text: text.trim(), ...(model ? { model } : {}) })
-                : await store.send({ type: "agent.start", runtime: rt.id, task: text.trim(), target: pick.target(), ...(model ? { model } : {}), ...(vision && cloud ? { vision: true as const } : {}), ...(streaming ? { stream: true as const } : {}) });
+                ? await store.send({ type: "chat.start", runtime: rt.id, text: text.trim(), ...(images.length ? { images } : {}), ...(model ? { model } : {}) })
+                : await store.send({ type: "agent.start", runtime: rt.id, task: text.trim(), ...(images.length ? { images } : {}), target: pick.target(), ...(model ? { model } : {}), ...(vision && cloud ? { vision: true as const } : {}), ...(streaming ? { stream: true as const } : {}) });
             // A refusal is already a notice; what was typed stays, to be changed and tried again.
-            if (r.ok) { saveDraft("start", ""); onStarted(`${r.data.session.runtime}:${r.data.session.hash}`); }
+            if (r.ok) { saveDraft("start", ""); saveDraftImages("start", []); att.clear(); onStarted(`${r.data.session.runtime}:${r.data.session.hash}`); }
         } finally { setBusy(false); }
     };
     // THE MODEL: in the box's row where the page is wide enough to hold it, at the TOP of the page on a phone. There the
@@ -181,6 +188,10 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
     ) : null;
     const modelTop = modelAs(false);
     const modelHead = modelAs(true);
+    // The session composer's own button and tooltip. On a wide page the row's first control; on a phone, at the foot beside send, where the row has no room for a 40px target.
+    const attachButton = (
+        <button class="tt cbtn chat-start-attach" type="button" onClick={() => att.fileRef.current?.click()} aria-label="Attach an image">＋<span class="tt-pop left above" role="tooltip">Attach an image (or paste one into the box)</span></button>
+    );
     const sendButton = (
         <button class="tt cbtn csend chat-start-send" disabled={!ready} onClick={() => void start()} aria-label={kind === "agent" ? "Start the run" : "Start the chat"}>
             <IconSend /><span class="tt-pop above" role="tooltip">{busy ? "Starting…" : kind === "agent" ? "Start the run" : "Start the chat"}</span>
@@ -192,6 +203,7 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
     // has always used.
     const row = (
         <div class="chat-start-row">
+            {narrow ? null : attachButton}
             {kinds.length > 1 ? <KindPicker kinds={kinds} value={kind} onChange={setKind} /> : null}
             {/* The device comes BEFORE the model, because it is what decides which models there are: picking
                 a machine after its model list would be choosing from a list the next choice replaces. */}
@@ -234,8 +246,12 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
                     keyboard walks them in the order they are drawn. */}
                 {narrow ? <div class="chat-start-above">{row}{pick.urlField}</div> : null}
                 <div class="chat-start-box">
+                    <ThumbStrip imgs={att.imgs} loading={att.loading} onRemove={att.remove} />
+                    <input ref={att.fileRef} type="file" accept="image/*" multiple style="display:none" aria-hidden="true" tabIndex={-1}
+                        onChange={(e) => { att.addFiles((e.target as HTMLInputElement).files); (e.target as HTMLInputElement).value = ""; }} />
                     <textarea ref={box} rows={1} value={text} aria-label={kind === "agent" ? "Task" : "Message"}
                         placeholder={kind === "agent" ? "What should the agent do?" : "Start a chat"}
+                        onPaste={att.onPaste}
                         onInput={(e: any) => { setText(e.target.value); saveDraft("start", e.target.value); }}
                         onKeyDown={(e: KeyboardEvent) => {
                             if (e.key !== "Enter") return;
@@ -244,7 +260,7 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
                             if (ready) noteKeyUse("send");
                             void start();
                         }} />
-                    {narrow ? <div class="chat-start-foot">{sendButton}</div> : <>{row}{pick.urlField}</>}
+                    {narrow ? <div class="chat-start-foot">{attachButton}{sendButton}</div> : <>{row}{pick.urlField}</>}
                 </div>
                 {askingPage && blocked.kind !== "ok" ? (
                     <BlankStartDialog state={blocked} onClose={() => setAskingPage(false)}
