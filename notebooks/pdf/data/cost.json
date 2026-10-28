@@ -1,0 +1,45 @@
+{
+  "litellm.anthropic/claude-opus-5-5": {
+    "calls": 40,
+    "promptTokens": 120911,
+    "completionTokens": 2692,
+    "genMs": 118947,
+    "wallMs": 119389,
+    "local": false,
+    "usd": {
+      "computed": 0.6582349999999999,
+      "reported": 0,
+      "priced": 40,
+      "why": []
+    }
+  },
+  "qwen3.8-flash-next:vision": {
+    "calls": 373,
+    "promptTokens": 863554,
+    "completionTokens": 14841,
+    "genMs": 758198,
+    "wallMs": 766977,
+    "local": true,
+    "usd": {
+      "computed": 0,
+      "reported": 0,
+      "priced": 0,
+      "why": [
+        "a local model: its cost is electricity"
+      ]
+    },
+    "energy": {
+      "Wh": 137.6617420026579,
+      "aboveWh": 100.16279416791485,
+      "cost": 0.036089402283419114,
+      "costAbove": 0.026470898884714968,
+      "currency": "EUR",
+      "basis": [
+        "gpu+cpu / wall"
+      ],
+      "restW": [
+        227.45699999999997
+      ]
+    }
+  }
+}
