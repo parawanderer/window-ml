@@ -155,6 +155,17 @@ not, record that and choose between `declarativeNetRequest` rules and following 
    run against both bundles; detection-surface's hidden-with-run `pageEvents` row goes to `[]`; rule 10: a separate
    agent's test-only red-team PR on main first, the lane's PR after), and `chrome.dom` for closed roots. Exec's default world is now a switch
    (`execDefaultWorld`, else the build's `__EXEC_DEFAULT_WORLD__`), and a call can ask for `world: "page" | "isolated"`.
+   RULED 2026-10-28 (found by #1236's CI): an origin approved while a run the person started there is live gets
+   `window.ml` on that page's NEXT document, not the current one. The document already holds the run's tools in the
+   isolated world, its gate is open for the run, and those tools are its one set of page scripts: `PRESENCE_CHECK` sees
+   the gate open and the script alive and skips it, which is the rule above (`injectPageScripts` gives a document its
+   scripts once, in one world) and not an exception to it. Putting `injected.js` into MAIN beside the isolated tools
+   would give one document two page scripts over one content-script channel slot, a second port or a re-arm that
+   orphans the run; that is a channel design of its own, taken up only if someone is measured needing `window.ml` on
+   the very page a run is on before it reloads. The run is unaffected; no new UI string; a cross-page e2e that
+   approves a site models the approval before the reload. Separately fixed in #1236: a visible origin's document that
+   loaded before its registration and asks `needInject` at adopt gets the page scripts in MAIN, not the isolated tools,
+   which would have suppressed `PAGE_SCRIPT_MISSING` for good (unit row, mutation-checked).
 4. The side panel for the card and the transcript, and the anonymised highlight.
 5. The redirect measurement, then the rule.
 
