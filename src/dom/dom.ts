@@ -496,11 +496,12 @@ export const describeSkeleton = (el: Element, depth: number, indent = "", canLoc
     // are the element's real content, not the empty light children — reachable via `<sel> >>> <inner>`). A
     // custom element (hyphenated tag) with NO open root and NO light children almost certainly has a CLOSED
     // root — steer to visual navigation, since selectors can't reach in.
-    // OPEN root, or — when piercing is on — a CLOSED root the document_start patch captured. Both are
-    // traversable and referenced with `>>>`, so they render the same tree; only the label differs.
+    // OPEN root, or — when piercing is on — a CLOSED root this world can read (the document_start patch's capture in the
+    // page's world, chrome.dom in ours). Both are traversable and referenced with `>>>`, so they render the same tree;
+    // only the label differs.
     const sr = el.shadowRoot ?? capturedClosedRoot(el);
     if (sr) {
-        const label = el.shadowRoot ? "(OPEN)" : "(CLOSED, pierced) — captured at page load, so it's reachable;";
+        const label = el.shadowRoot ? "(OPEN)" : "(CLOSED, pierced) — reachable;";
         out += "\n" + indent + `  #shadow-root ${label} its contents are shown below; reference them with \`>>> <inner selector>\`.`;
         const shadowKids = [...sr.children];
         if (depth > 0) {
