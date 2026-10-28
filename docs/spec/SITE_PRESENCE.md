@@ -183,7 +183,13 @@ not, record that and choose between `declarativeNetRequest` rules and following 
    the red team's failing-first rows land on main first, in its own file (for a hidden page with a user-started run:
    `domAdded` is only the anonymised host while an approval waits, no `ml-` token in the DOM before, during or after,
    no `sidebar.html` frame, no popover attribute of ours, the visible page's card as the control); 4a merges after
-   them, 4b after 4a, the red team flipping after each.
+   them, 4b after 4a, the red team flipping after each. RULED the same day, on the lane's conflict: the anonymised
+   host keeps `popover="manual"` and the top-layer keeper (`shell-top-layer.ts`), so a page's own modal, fullscreen
+   element or popover cannot cover the box marking what the person is approving; `popover` is not a name of ours,
+   and the host is already the one thing `domAdded` shows. The host carries exactly its random tag name, `popover`
+   and an inline `style`; everything else of ours, the stylesheet with id `ml-sb-style` that the CDP shadow resolver
+   looks for included, lives inside the closed root, which a page cannot read. The red team's row reads "no popover
+   attribute of ours except on the anonymised host".
 5. The redirect measurement, then the rule.
 
 After step 2, and deferred: consuming a page's WebMCP tools (`document.modelContext`) as a window.ml adapter, with the rules
