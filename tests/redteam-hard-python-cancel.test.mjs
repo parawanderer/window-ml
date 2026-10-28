@@ -58,7 +58,6 @@ async function cell(code) {
 test("the 1 s spend bound also covers callbacks already queued on the event loop", {
     skip,
     timeout: 60000,
-    todo: "measured on the pinned fork after afcbe2b9: 250000 built-in callbacks queued after the leftover task started kept the cancel in skipped event-loop/Handle frames for 3802 ms; the 1 s trace deadline did not fire",
 }, async (t) => {
     if (!fork) return t.skip("needs the restricted-mode fork core (npm run fetch-pyodide)");
     // Positive control: an ordinary leftover task takes the spend path and is spent promptly.
@@ -79,7 +78,7 @@ await asyncio.sleep(0)
     assert.ok(control.spendMs < 1000, `control: an ordinary task should spend within the 1 s bound, took ${control.spendMs} ms`);
 
     // The queued callbacks are built-ins and the loop/Handle frames are in the tracer's skip paths.
-    // The cell itself is finished; this time is entirely the cancel draining work it did not bound.
+    // Pin 15 at 933e5e48 cuts the queue in JS at the deadline, with a residual for the queueing and drop costs.
     const queued = await cell(`
 import asyncio
 _sink = {}
@@ -96,12 +95,14 @@ for _ in range(250000):
 "queued"
 `);
     assert.ok((queued.error === null && queued.value === "queued")
-        || (queued.value === null && /RuntimeError:[\s\S]*dropped \d+ callbacks?/.test(String(queued.error))),
+        || (queued.value === null && /RuntimeError:[\s\S]*(?:dropped \d+ callbacks?|\d+ callbacks?[\s\S]*dropped)/.test(String(queued.error))),
     `queued cell must return its value or refuse by naming dropped callbacks, got ${JSON.stringify(queued)}`);
     assert.ok(queued.spendMs !== null, "queued cell must reach the spend's mark");
-    // The ordinary control measures this harness's overhead around the 1 s deadline on this run.
-    const allowedSpendMs = 1000 + control.spendMs;
+    // Pin 15's residual scales with queueing time: the lane measured 1M callbacks at 1.6 s, giving this 250k row 250 ms.
+    // The ordinary control separately measures this run's harness overhead around the 1 s deadline.
+    const allowedSpendMs = 1000 + control.spendMs + 250;
     console.log(`  spend with 250000 already-queued built-in callbacks: ${queued.spendMs} ms (control ${control.spendMs} ms)`);
     assert.ok(queued.spendMs < allowedSpendMs,
-        `the cancel spent ${queued.spendMs} ms draining queued callbacks; the 1 s bound plus this run's measured ${control.spendMs} ms control overhead is ${allowedSpendMs} ms`);
+        `the cancel spent ${queued.spendMs} ms cutting queued callbacks; the 1 s deadline, this run's ${control.spendMs} ms control slack, and pin 15's 250 ms residual allow ${allowedSpendMs} ms`);
+    assert.ok(queued.spendMs < 5000, `the queue cut took ${queued.spendMs} ms, approaching the 15 s kill instead of cutting promptly`);
 });
