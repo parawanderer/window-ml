@@ -760,6 +760,62 @@ await asyncio.sleep(0)
     }
 });
 
+// A guarded call made from C raises no CALL event, so the guard above never sees it: the spend checks its tool after
+// every turn and refuses the result when it changed. Each form here reached the tool unrefused on 42237e59.
+const FROM_C = {
+    "functools.partial": "functools.partial(M.set_events, i, 0)()",
+    "map": "list(map(M.clear_tool_id, [i]))",
+    "map, freeing it": "list(map(M.free_tool_id, [i]))",
+    "a key= function": "sorted([i], key=M.clear_tool_id)",
+};
+const FROM_C_CELL = (form, then) => `
+import asyncio, sys, types, functools
+_m = types.ModuleType("_rt_mon")
+_m.log = []
+sys.modules["_rt_mon"] = _m
+async def _left():
+    try:
+        await asyncio.sleep(10)
+    except BaseException:
+        M = sys.monitoring
+        i = [k for k in range(6) if M.get_tool(k) is not None][0]
+        ${form}
+        _m.log.append("went through")
+${then}
+asyncio.ensure_future(_left()).set_name("leftover")
+await asyncio.sleep(0)
+"x"`;
+
+for (const [how, form] of Object.entries(FROM_C)) {
+    test(`P2-bound: a sys.monitoring call made from C (${how}) is not seen at the call, and the spend refuses the result`, { skip }, async () => {
+        const r = await cell(FROM_C_CELL(form, "        raise"));
+        assert.match(String(r.error), /changed the cancel's sys\.monitoring tool/, `got ${JSON.stringify(r)}`);
+        assert.deepEqual((await cell(`import sys\n[list(sys.modules["_rt_mon"].log), [sys.monitoring.get_tool(k) for k in range(6)]]`)).value,
+            [["went through"], [null, null, null, null, null, null]], "the call went through, and no tool is left registered");
+    });
+}
+
+for (const [how, form] of Object.entries({
+    "sys.settrace": "functools.partial(sys.settrace, lambda *a: None)()",
+    "sys.setprofile": "functools.partial(sys.setprofile, lambda *a: None)()",
+    "threading.settrace": "import threading; functools.partial(threading.settrace, lambda *a: None)()",
+    "threading.setprofile": "import threading; functools.partial(threading.setprofile, lambda *a: None)()",
+})) {
+    test(`P2-bound: ${how} called from C during the spend is refused and cleared before the next cell`, { skip }, async () => {
+        const r = await cell(FROM_C_CELL(form, "        raise"));
+        assert.match(String(r.error), /set a trace or profile function/, `got ${JSON.stringify(r)}`);
+        assert.deepEqual((await cell(`import sys, threading\n[list(sys.modules["_rt_mon"].log), sys.gettrace() is None, sys.getprofile() is None, threading.gettrace() is None, threading.getprofile() is None]`)).value,
+            [["went through"], true, true, true, true]);
+    });
+}
+
+test("P2-bound: a handler that turns the tool off from C and then spins is left to the worker's kill (child process)", { skip, timeout: 300000 }, async () => {
+    // The known limit, named: once the tool is off nothing stops the spin, and the spend never turns to check it. Under
+    // the never-yields ruling the worker's kill bounds it. This row fails when something stops it in-process.
+    const r = await childCell(FROM_C_CELL(FROM_C["functools.partial"], "        while True:\n            pass"), "host", 10000);
+    assert.ok(!r.done, `left to the kill: ${r.out.slice(-400)}`);
+});
+
 test("P2-bound control: the same task with an empty finally is stopped at the budget", { skip }, async () => {
     const t0 = Date.now();
     const r = await cell(AFTER_LATE("            pass"));
