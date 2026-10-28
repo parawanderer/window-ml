@@ -1700,15 +1700,25 @@ test("the tab pill waits as the same placeholder as the model pill, rather than 
     await page.addInitScript(() => { globalThis.__chatFakeLatencyMs = 700; });
     await page.goto(server.url);
 
-    const wait = page.getByRole("status", { name: "Loading tabs" });
-    await expect(wait).toBeVisible();
-    // The shimmer, not the word: nothing to read and nothing to press while there is no list behind it.
-    await expect(wait).toHaveClass(/tp-pill-wait/);
-    await expect(page.getByRole("button", { name: /^Where it runs/ })).toHaveCount(0);
-    await expect(page.getByText("Loading tabs…")).toHaveCount(0);
-    // It waits as the same animation the model pill is waiting with, right beside it.
-    await expect(page.getByRole("status", { name: "Loading models" })).toHaveClass(/tp-pill-wait/);
+    // Everything that must hold WHILE the pills wait is read in ONE snapshot, polled until it is the waiting state.
+    // The fake answers 700 ms after mount, and one retrying assertion after another (five round trips on a loaded
+    // runner) outlasts that: the last of them found the model pill already arrived and failed on "element not
+    // found" (run 40643231355, both tries).
+    const waiting = () => page.evaluate(() => {
+        const status = (label) => document.querySelector(`.chat-start-row [role="status"][aria-label="${label}"]`);
+        const shimmers = (el) => !!el && el.getClientRects().length > 0 && el.classList.contains("tp-pill-wait");
+        return {
+            // The shimmer, not the word: nothing to read and nothing to press while there is no list behind it.
+            tabs: shimmers(status("Loading tabs")),
+            pressable: document.querySelectorAll('button[aria-label^="Where it runs"]').length,
+            word: document.body.textContent.includes("Loading tabs…"),
+            // It waits as the same animation the model pill is waiting with, right beside it.
+            models: shimmers(status("Loading models")),
+        };
+    });
+    await expect.poll(waiting).toEqual({ tabs: true, pressable: 0, word: false, models: true });
 
+    const wait = page.getByRole("status", { name: "Loading tabs" });
     const pill = page.getByRole("button", { name: /^Where it runs/ });
     await expect(pill).toBeVisible();
     await expect(wait).toHaveCount(0);
