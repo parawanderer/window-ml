@@ -23,6 +23,8 @@ import { htmlToMarkdown } from "./dom/html-to-md";
 import { PNG_DATA_URL } from "./session/image-compact";
 import { defineState } from "./state-registry";
 import { reapDelay } from "./python/py-reap";
+import { createPdfHost } from "./pdf/pdf-host";
+import { b64ToBytes, bytesToB64, type PdfMessage, type PdfReadReply, type PdfRenderReply } from "./pdf/pdf-wire";
 
 // The value store, reached here rather than in the worker: stored bytes are TRANSFERRED to the worker (no copy), and the
 // one copy is the worker's, into Pyodide's memory. A returned frame's IPC comes back the same way and is written here,
@@ -578,4 +580,27 @@ chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
     try { markdown = htmlToMarkdown(String(msg.html ?? "")); } catch { /* answered as undefined: the caller keeps the text */ }
     sendResponse({ markdown });
     return undefined;
+});
+
+// ---- The PDF worker (pdf/pdf-worker.ts): a PDF read page by page, or one page drawn ----
+// Started on the first request, one request at a time, terminated on a wall-clock cap and when idle (pdf/pdf-host.ts).
+const pdfHost = createPdfHost({ spawn: () => new Worker(chrome.runtime.getURL("pdf-worker.js")) as never });   // state: plumbing
+
+// PDF_READ and PDF_RENDER: only the service worker asks; a message from a tab (a content script) is not answered. The
+// bytes cross as base64 (this channel is JSON) and go on to the worker transferred.
+chrome.runtime.onMessage.addListener((msg: PdfMessage, sender, sendResponse) => {
+    if (msg?.type !== "PDF_READ" && msg?.type !== "PDF_RENDER") return undefined;
+    if (sender.id !== chrome.runtime.id || sender.tab) return undefined;
+    const bytes = typeof msg.b64 === "string" ? b64ToBytes(msg.b64) : null;
+    if (!bytes) { sendResponse({ ok: false, code: "unreadable", refusal: "The PDF's bytes did not arrive intact." }); return undefined; }
+    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+    if (msg.type === "PDF_READ") {
+        void pdfHost.call({ op: "read", bytes: buffer, pageCap: msg.pageCap, pageTextCap: msg.pageTextCap, budgetMs: msg.budgetMs })
+            .then((r) => sendResponse(r as PdfReadReply));
+    } else {
+        void pdfHost.call({ op: "render", bytes: buffer, n: Number(msg.n), scale: Number(msg.scale) })
+            .then((r): PdfRenderReply => { if (!r.ok || !("png" in r)) return r as PdfRenderReply; const { png, ...rest } = r; return { ...rest, pngB64: bytesToB64(png) }; })
+            .then(sendResponse);
+    }
+    return true;
 });

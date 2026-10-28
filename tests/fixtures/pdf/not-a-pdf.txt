@@ -1,0 +1,2 @@
+This is a plain text file, not a PDF document.
+It has a .txt name here, and a reader must refuse it by its bytes.
