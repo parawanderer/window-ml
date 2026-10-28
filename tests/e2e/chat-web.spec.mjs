@@ -3509,7 +3509,8 @@ test("a paragraph gets the box's full width, the controls drop under it, and a s
     const { page, errors } = await open(DESKTOP, `#/s/${encodeURIComponent(CHAT)}`);
     const row = page.locator(".composer .composer-row");
     const box = row.locator(".cinput");
-    const attach = row.getByRole("button", { name: "Attach an image" });
+    // "Attach a file" where the runtime takes text files too (`capabilities.attachFiles`), else "Attach an image".
+    const attach = row.getByRole("button", { name: /^Attach (an image|a file)$/ });
     const rect = (loc) => loc.evaluate((el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
     await box.fill("a short line");
     await expect(row).not.toHaveClass(/stacked/);
