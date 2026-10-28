@@ -291,6 +291,32 @@ for _ in range(250000):
     assert.deepEqual(later.value, []);
 });
 
+test("the dropped task's coroutine is closed in the spend, before anything collects it, with none of its handlers run", { skip, timeout: 60000 }, async () => {
+    const r = await cell(`
+import asyncio, sys, types
+_m = types.ModuleType("_sq_closed")
+_m.ran = []
+sys.modules["_sq_closed"] = _m
+async def _left():
+    try:
+        await asyncio.sleep(10)
+    except BaseException:
+        _m.ran.append("handler")
+    finally:
+        _m.ran.append("finally")
+_m.coro = _left()
+asyncio.ensure_future(_m.coro).set_name("closed-leftover")
+await asyncio.sleep(0)
+_loop = asyncio.get_event_loop()
+for _ in range(1000000):
+    _loop.call_soon(dict.clear, {})
+"queued"`);
+    assert.match(String(r.error), /closed-leftover .* never took its cancel/, "the cut dropped the task's cancel (else this proves nothing)");
+    // No gc.collect(): the cell still holds the coroutine, so only the spend's close() can have ended it.
+    const later = await cell(`import sys, inspect\n_m = sys.modules["_sq_closed"]\n[inspect.getcoroutinestate(_m.coro), _m.coro.cr_frame is None, _m.ran]`);
+    assert.deepEqual(later.value, ["CORO_CLOSED", true, []]);
+});
+
 test("a cell that rebinds webloop's scheduler does not hold the cancel: the cancel puts the queue back first", { skip, timeout: 60000 }, async () => {
     const r = await cell(`
 import asyncio, pyodide.webloop as _w
