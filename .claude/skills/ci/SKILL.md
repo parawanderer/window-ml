@@ -238,13 +238,6 @@ Flaky only (passed on retry, never blocked a run), worth knowing because two may
   refused`** — flaked once on #998 (both starts hosted, `actual: 2, expected: 1`), passed on rerun. The test races two
   START_RUNs through a held restore and a 20ms wait; timing-sensitive. Rerun the job before blaming a diff that does
   not touch background start.
-- **`session-index.spec.mjs:59`** and **`value-store.spec.mjs:176`** — recurring CI-shard flakes (python-cancel's ledger
-  and Chat Page's re-runs, 2026-10-27); `value-store:176` also seen on #1056. `session-index:59` ("off mode: a page's own
-  sessions are not listed") fails at the SECOND `waitForMl` (spec :78, after `configureExtension` sets
-  `pageApprovalDomains` and `page.reload()`; harness.mjs:236), both tries, and on four unrelated branches the same
-  afternoon (40549239517, 40547626002, 40546447318, 40552504878) while passing 11/11 other shard-3 runs and locally; the
-  lead is the self-approve write racing the page gate's re-registration across the reload. Owner: flaky-ci. On next
-  failure: download the shard's `e2e-results-*` and read `error-context.md` before theorising.
 - Seen once each: `site-access` 16a (@security), `site-access` 18 closed-shadow-root (`:1164`, 16.5 s), `site-access` 19
   DevTools-panel ask (`:1492`, 16.3 s), `cross-page` composer seq collision, `output-scroll` tail-follow, `chat-web`
   phone tooltip, `focus-restore`, `bench-editor` traceback, `resource-panel` narrow window (`:3619`).
@@ -252,6 +245,17 @@ Flaky only (passed on retry, never blocked a run), worth knowing because two may
 node:test had no real failures in that window: every `not ok` was a documented `# TODO`.
 
 Recently removed, recorded so nobody re-adds them from memory:
+
+- ~~`session-index.spec.mjs:59`~~ and ~~`value-store.spec.mjs:176`~~ — **fixed** in #1194 (`16174bb2`, 2026-10-28), one
+  race in the e2e harness, not two flakes: both specs wrote the self-approval list through `configureExtension` and
+  reloaded at once, and the worker registers the origin's main-world scripts on the storage change AFTER the write
+  returns, so under CI load the reloaded document started with no page script; the worker's one-shot catch-up
+  (`showInOpenTabs`) ran before that document's content script listened, and `waitForMl` waited its 15 s. Four unrelated
+  branches failed the same afternoon (40549239517, 40547626002, 40546447318, 40552504878). `configureExtension` now
+  waits for the registration the reload depends on (`awaitPageScriptRegistration`, which fails at its deadline instead
+  of passing to its cap as `approveOrigin`'s old loop did). The product half (a document that loads in the registration
+  window and misses the catch-up gets `open: true` and no page script until its next reload) is the site-access lane's,
+  in a PR after #1189. Do not add as flake.
 
 - ~~`site-access.spec.mjs:1507` › `@security attack 19 › the toolbar badge counts the waiting start on its tab, and the
   popup's Show unfolds its collapsed card`~~ — **fixed** in #1163 (`8f0ea29e`, 2026-10-27), a test-harness gap and not a
