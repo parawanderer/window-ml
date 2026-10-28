@@ -22,8 +22,8 @@ import { openSession, mainView, openSearch } from "./nav";
 import { startableOn, type StartKind, StartMenu } from "./new-session";
 import { PageChip } from "./page-chip";
 import { isPinned, RowMenu } from "./row-menu";
-import { toggleRuntime, foldedRuntimes, pinned, ListToggle, orderPins, readMarks } from "./view-mode";
-import { seenEnding } from "./read-marks";
+import { toggleRuntime, foldedRuntimes, pinned, ListToggle, orderPins, readState } from "./view-mode";
+import { endingSeen, isUnread } from "./read-marks";
 import { pinnedInOrder } from "./pin-order";
 import { useReorder } from "./pin-reorder";
 
@@ -39,39 +39,6 @@ const STATUS_LABEL: Partial<Record<SessionStatus, string>> = { waiting: "waiting
  *  and without the word "approval", which the badge's colour and its place in a list of runs already say, and which
  *  a phone's row has no width for. The phone's list (mobile/src/screens/ListScreen.tsx) words it the same. */
 export const approvalsPending = (n: number): string => `${n} pending`;
-
-/**
- * Sessions whose newest event landed while you were reading something else.
- *
- * Deliberately not stored: it answers "what moved while I was here", which is the brainstorming case — you are
- * talking in one session and the run in the next tab gets somewhere — and not "what is unread", which would mark
- * every session on this device the first time the page is opened and teach everyone to ignore the mark.
- */
-const movedSince = signal<ReadonlySet<SessionKey>>(new Set());
-
-/** Follow the index, marking a session whose `lastTs` advances while it is not the one open. */
-export function useMovedSince(store: ChatStore, openKey: SessionKey | null): void {
-    const seen = useRef(new Map<SessionKey, number>());
-    const index = store.index.value;
-    useEffect(() => {
-        let next: Set<SessionKey> | null = null;
-        for (const [key, s] of index) {
-            const before = seen.current.get(key);
-            seen.current.set(key, s.lastTs);
-            // A session seen for the FIRST time is not "moved": on a first render that would be all of them.
-            if (before === undefined || key === openKey || s.lastTs <= before) continue;
-            (next ??= new Set(movedSince.value)).add(key);
-        }
-        if (next) movedSince.value = next;
-    }, [index, openKey]);
-    // Reading it IS catching up with it.
-    useEffect(() => {
-        if (!openKey || !movedSince.value.has(openKey)) return;
-        const next = new Set(movedSince.value);
-        next.delete(openKey);
-        movedSince.value = next;
-    }, [openKey, index]);
-}
 
 /** A runtime's heading in the list: its name, whether it is reachable, and what this device may do there. */
 function RuntimeHead({ store, rt, folded, onStart }: { store: ChatStore; rt: RuntimeInfo; folded: boolean; onStart: (kind: StartKind, runtime: string) => void }) {
@@ -105,7 +72,7 @@ function RuntimeHead({ store, rt, folded, onStart }: { store: ChatStore; rt: Run
 
 /** One session in the list, from its index row (the transcript is fetched only when it is opened). The row and its
  *  `⋮` are siblings in a wrapper rather than one inside the other, because a button cannot hold a button. */
-function IndexRow({ store, s, rt, active, moved, showRuntime, showPin, reveal }: { store: ChatStore; s: SessionSummary; rt: RuntimeInfo; active: boolean; moved: boolean; showRuntime?: boolean;
+function IndexRow({ store, s, rt, active, unread, read, showRuntime, showPin, reveal }: { store: ChatStore; s: SessionSummary; rt: RuntimeInfo; active: boolean; unread: boolean; read: boolean; showRuntime?: boolean;
     /** mark it pinned, for a row OUTSIDE the Pinned group — where being in that group is the mark */
     showPin?: boolean;
     /** this row was just REVEALED by "older on this runtime": its place in that page, which staggers the animation.
@@ -115,10 +82,9 @@ function IndexRow({ store, s, rt, active, moved, showRuntime, showPin, reveal }:
     const title = s.title || s.task || "(untitled)";
     const offset = rt.clockOffsetMs ?? 0;
     // A bad ending already shown on this device keeps its words ("failed", "stopped at its step cap") and loses its
-    // dot in calm view: the dot is for what you have not seen yet (read-marks.ts).
-    const read = seenEnding(s.status, s.lastTs, readMarks.value, key);
+    // dot in calm view: the dot is for what you have not seen yet (`endingSeen`, read-marks.ts).
     return (
-        <div class={`chat-row-wrap${active ? " active" : ""}${reveal != null ? " revealed" : ""}${read ? " read" : ""}`} style={reveal != null ? { "--i": String(reveal) } : undefined}>
+        <div class={`chat-row-wrap${active ? " active" : ""}${reveal != null ? " revealed" : ""}${read ? " read" : ""}${unread ? " unread" : ""}`} style={reveal != null ? { "--i": String(reveal) } : undefined}>
             <button class={`row chat-row${active ? " active" : ""}`} data-session={key} onClick={() => openSession(key)}>
                 <Dot status={DOT[s.status] ?? "pending"} warn={s.status === "capped" ? "Stopped at its step cap. Open it to give it more steps." : undefined} />
                 <span class="chat-row-body">
@@ -146,7 +112,6 @@ function IndexRow({ store, s, rt, active, moved, showRuntime, showPin, reveal }:
                             : s.page ? <PageChip page={s.page} /> : null}
                     </span>
                 </span>
-                {moved ? <span class="chat-moved" {...cursorTipOn("Something happened here while you were reading something else")} aria-label="new activity" /> : null}
                 <Stamp ts={s.lastTs - offset} snap="right" />
             </button>
             <RowMenu store={store} s={s} rt={rt} title={title} />
@@ -238,7 +203,7 @@ export function SessionList({ store, activeKey, narrow, onStart, gear, gearWide 
     const runtimes = store.runtimes.value;
     const sessions = store.listed();
     const status = store.status.value;
-    const moved = movedSince.value;
+    const marks = readState.value;
     const folded = foldedRuntimes.value;
     const pins = pinned.value;
     const rtOf = new Map(runtimes.map((rt) => [rt.id, rt]));
@@ -260,7 +225,7 @@ export function SessionList({ store, activeKey, narrow, onStart, gear, gearWide 
     const olderOn = (id: string) => sessions.filter((s) => s.id.runtime === id && !isPinned(s) && !isRecent(s));
     const row = (s: SessionSummary, showRuntime = false, showPin = false, reveal?: number) => {
         const key = keyOf(s);
-        return <IndexRow key={key} store={store} s={s} rt={rtOf.get(s.id.runtime)!} active={activeKey === key} moved={moved.has(key)} showRuntime={showRuntime} showPin={showPin} reveal={reveal} />;
+        return <IndexRow key={key} store={store} s={s} rt={rtOf.get(s.id.runtime)!} active={activeKey === key} unread={isUnread(marks, key, s.status, s.lastTs, localTs(s, rtOf.get(s.id.runtime)), activeKey === key)} read={endingSeen(marks, key, s.status, s.lastTs)} showRuntime={showRuntime} showPin={showPin} reveal={reveal} />;
     };
     const revealed = shownOlder.value;
     return (

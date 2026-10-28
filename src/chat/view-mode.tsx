@@ -19,7 +19,7 @@ import { focusMode, groupAllTools } from "../sidebar/store";
 import type { PlatformPrefs } from "./platform";
 import { CODE_DEFAULT, CODE_SIZES } from "../native/text-size";
 import { placePins } from "./pin-order";
-import { markSeen, readMarksFrom, type ReadMarks } from "./read-marks";
+import { hasBaseline, markSeen, readStateFrom, throttledWriter, type ReadState } from "./read-marks";
 
 /** Preference keys, under the platform's own namespace. */
 export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", READ_KEY = "view.read", PINNED_MODELS_KEY = "view.pinnedModels", CODE_KEY = "view.codeSize", GROUP_ALL_KEY = "view.groupAll", LOG_OPEN_KEY = "view.log", STATE_OPEN_KEY = "view.state", DOCK_KEY = "view.dock", PANEL_FS_KEY = "view.panelSize", DISMISSED_KEY = "view.dismissed", TAB_GROUPS_KEY = "view.tabGroups", THEME_KEY = "view.theme", TARGET_KEY = "view.target", KEYS_KEY = "view.keys";
@@ -75,12 +75,13 @@ export const foldedRuntimes = signal<ReadonlySet<string>>(new Set());
 export const pinned = signal<ReadonlySet<string>>(new Set());
 
 /**
- * Which sessions' bad endings this device has already shown you (read-marks.ts): a capped or failed session's list
- * dot goes once its newest event has been on screen here, and comes back if the session moves on and ends badly again.
+ * What this device has seen of each session (read-marks.ts): the baseline, taken the first time this device loaded
+ * it, and the newest event of each session that has been on screen here. A session is unread when it moved after
+ * both, and is not the one open. Stored (`view.read`), so it survives a reload and closing the app.
  *
  * THIS DEVICE'S, like the pins: the phone that was in a pocket has not seen what the laptop showed.
  */
-export const readMarks = signal<ReadMarks>({});
+export const readState = signal<ReadState>({ since: Date.now(), seen: {} });
 
 /**
  * Models kept at the top of every model list, by id.
@@ -163,7 +164,10 @@ export function installViewPrefs(prefs: PlatformPrefs): void {
     foldedRuntimes.value = new Set(Array.isArray(f) ? f.filter((x) => typeof x === "string") : []);
     const p = prefs.get<string[]>(PINNED_KEY);
     pinned.value = new Set(Array.isArray(p) ? p.filter((x) => typeof x === "string") : []);
-    readMarks.value = readMarksFrom(prefs.get<unknown>(READ_KEY));
+    const rawRead = prefs.get<unknown>(READ_KEY);
+    readState.value = readStateFrom(rawRead, Date.now());
+    // The baseline is taken ONCE: stored now, so the next load (and a stored mark from before it existed) finds it.
+    if (!hasBaseline(rawRead)) prefs.set(READ_KEY, readState.value);
     const pm = prefs.get<string[]>(PINNED_MODELS_KEY);
     pinnedModels.value = new Set(Array.isArray(pm) ? pm.filter((x) => typeof x === "string") : []);
     dockLayout.value = readDock(prefs.get<DockLayout>(DOCK_KEY));
@@ -348,10 +352,18 @@ export function orderPins(keys: readonly string[]): void {
 
 /** Record that this device has shown session `key` up to its event at `lastTs`; a no-op (and no write) if it had. */
 export function markRead(key: string, lastTs: number): void {
-    const next = markSeen(readMarks.value, key, lastTs);
-    if (next === readMarks.value) return;
-    readMarks.value = next;
-    store?.set(READ_KEY, next);
+    const next = markSeen(readState.value, key, lastTs);
+    if (next === readState.value) return;
+    readState.value = next;
+    readWriter.put(next);
+}
+
+/** Storage hears of the marks at most every `MARK_WRITE_MS` while a session streams; the screen has them at once. */
+const readWriter = throttledWriter<ReadState>((v) => store?.set(READ_KEY, v));
+
+/** Write the pending read mark now: on leaving a session, hiding the page, or a status change, so the last `lastTs` is kept. */
+export function flushReadMarks(): void {
+    readWriter.flush();
 }
 
 /** Keep a model at the top of the lists on this device, or stop. */

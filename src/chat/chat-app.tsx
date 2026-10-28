@@ -31,8 +31,7 @@ import { setAppBadge } from "./app-badge";
 import { useNotifications } from "./notify";
 import { useFadeEdges } from "./fade-edges";
 import { ExportChat, exportingChat, type PartialWhy } from "./export-dialog";
-import { ViewToggle, calm, codeSize, panelSize, keyUse, knowsKeys, listOpen, logOpen, markRead, noteKeyUse, pane, setCalm, setLogOpen, setPane, setStateOpen, stateOpen } from "./view-mode";
-import { UNTIL_READ } from "./read-marks";
+import { ViewToggle, calm, codeSize, panelSize, keyUse, knowsKeys, listOpen, logOpen, flushReadMarks, markRead, noteKeyUse, pane, setCalm, setLogOpen, setPane, setStateOpen, stateOpen } from "./view-mode";
 import { MenuItem } from "./menu";
 import { SessionModelPicker } from "./model-picker";
 import { DeleteConfirm, RenameDialog, SessionActions, usePeek } from "./row-menu";
@@ -44,7 +43,7 @@ import { DockFrame, type DockPanel } from "./dock";
 import type { ChatExtras } from "./extras";
 import { clientUi, lightboxSrc, type ClientPlatform } from "./platform";
 import { PageChip } from "./page-chip";
-import { useMovedSince, SessionList } from "./session-list";
+import { SessionList } from "./session-list";
 import { useNarrow } from "./narrow";
 import { pinGlide } from "./pin-glide";
 
@@ -342,7 +341,7 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
     const lastTs = summary?.lastTs ?? 0, status = summary?.status;
     const noteRead = () => {
         const el = scroller.current;
-        if (!ready || !el || !status || !UNTIL_READ.has(status) || document.visibilityState !== "visible") return;
+        if (!ready || !el || !status || document.visibilityState !== "visible") return;
         if (el.scrollHeight - el.scrollTop - el.clientHeight < 40) markRead(sessionKey, lastTs);
     };
     useEffect(() => {
@@ -350,6 +349,15 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
         document.addEventListener("visibilitychange", noteRead);
         return () => document.removeEventListener("visibilitychange", noteRead);
     }, [ready, sessionKey, lastTs, status]);
+    // The mark is written to storage at most every couple of seconds while the session streams (view-mode.tsx); these
+    // are the moments it must be written NOW: leaving the session, the page going away, the status changing.
+    useEffect(() => {
+        const hide = () => { if (document.visibilityState !== "visible") flushReadMarks(); };
+        document.addEventListener("visibilitychange", hide);
+        window.addEventListener("pagehide", flushReadMarks);
+        return () => { document.removeEventListener("visibilitychange", hide); window.removeEventListener("pagehide", flushReadMarks); flushReadMarks(); };
+    }, [sessionKey]);
+    useEffect(() => { flushReadMarks(); }, [status]);
     // A gesture that GROWS the page leaves the bottom too: a tap opening an earlier step is someone about to read it,
     // and following the bottom would carry the step they tapped off the screen. Except the RUNNING step: its output is
     // the bottom, so opening it keeps the follow, and only a scroll UP leaves. Without that exception the glide down to
@@ -697,7 +705,6 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
     // stops an idle worker every half minute, which took the Extension tab away with it.
     const settingsRt = store.runtimes.value.find((r) => r.capabilities.localSettings && extras?.settings?.(r.id) != null);
     const main = mainView.value;
-    useMovedSince(store, key);
     useEffect(() => { if (key) store.open(key); else store.close(); }, [key]);
     useEffect(() => { if (key) { setStarting(null); mainView.value = null; } }, [key]);   // opening a session puts the form and the search page away
     // The compose button opens the start page: it closes whatever is open, because the start page IS the empty page.

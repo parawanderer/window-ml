@@ -1,28 +1,31 @@
-// read-marks.ts — WHICH BAD ENDINGS THIS PHONE HAS SHOWN YOU: the app's copy of the page's `readMarks`
-// (src/chat/view-mode.tsx), with the rule itself shared (src/chat/read-marks.ts). A capped or failed session's list dot
-// goes once it has been open here, and comes back if the session moves on and ends badly again.
+// read-marks.ts — WHAT THIS PHONE HAS SHOWN YOU: the app's copy of the page's `readState`
+// (src/chat/view-mode.tsx), with the rule itself shared (src/chat/read-marks.ts). A session with news since this phone
+// first loaded its marks is unread until it has been open here, and is unread again if it moves on.
 //
 // THE PHONE'S OWN, as on the page: what the laptop showed you, the phone in your pocket did not.
 //
 // Storage is AsyncStorage, read once at startup into memory (`loadReadMarks`, beside `loadPinnedOrder`), so the list
-// does not draw every old dot on its first frame and then drop them.
+// does not draw every row unread on its first frame and then drop them.
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useSyncExternalStore } from "react";
-import { markSeen, readMarksFrom, type ReadMarks } from "../../src/chat/read-marks";
+import { hasBaseline, markSeen, readStateFrom, throttledWriter, type ReadState } from "../../src/chat/read-marks";
 
 const KEY = "wml-read-marks";
 
-let marks: ReadMarks = {};
+let marks: ReadState = { since: Date.now(), seen: {} };
 const listeners = new Set<() => void>();
-const snapshot = (): ReadMarks => marks;
+const snapshot = (): ReadState => marks;
 
 /** Read this phone's marks into memory. Call once, before the first list. */
 export async function loadReadMarks(): Promise<void> {
     try {
         const raw = await AsyncStorage.getItem(KEY);
-        marks = readMarksFrom(raw ? JSON.parse(raw) : {});
-    } catch { marks = {}; }   // unreadable or absent: every bad ending shows its dot, which is what it did before
+        const stored: unknown = raw ? JSON.parse(raw) : undefined;
+        marks = readStateFrom(stored, Date.now());
+        // The baseline is taken ONCE: stored now, so the next launch finds it.
+        if (!hasBaseline(stored)) void AsyncStorage.setItem(KEY, JSON.stringify(marks));
+    } catch { marks = readStateFrom(undefined, Date.now()); }   // unreadable or absent: nothing is unread yet
     for (const cb of listeners) cb();
 }
 
@@ -32,10 +35,18 @@ export function markRead(key: string, lastTs: number): void {
     if (next === marks) return;
     marks = next;
     for (const cb of listeners) cb();
-    void AsyncStorage.setItem(KEY, JSON.stringify(marks));
+    writer.put(marks);
+}
+
+// At most one write every couple of seconds while an open session streams; `flushReadMarks` on leaving it.
+const writer = throttledWriter<ReadState>((v) => { void AsyncStorage.setItem(KEY, JSON.stringify(v)); });
+
+/** Write the pending mark now: the session was left, or the app is going to the background. */
+export function flushReadMarks(): void {
+    writer.flush();
 }
 
 /** The stored marks, re-rendering the caller when they change. */
-export function useReadMarks(): ReadMarks {
+export function useReadMarks(): ReadState {
     return useSyncExternalStore((cb) => { listeners.add(cb); return () => { listeners.delete(cb); }; }, snapshot, snapshot);
 }
