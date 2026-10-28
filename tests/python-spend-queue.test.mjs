@@ -35,9 +35,11 @@ after(async () => {
 
 /** Run a cell through the real boot harness; the spend is timed from its own mark to the cancel's return. */
 async function cell(code) {
+    py.runPython("globals().pop('_queue_ms', None)");
     injectInputs(py.globals, null, null, harness);
     spendStarted = 0;
     const cancelled = await hostRunScript(harness, wrapUserCode(code, true, false, "host"), py.globals);
+    const queueMs = py.globals.get("_queue_ms");
     const finished = Date.now();
     const jr = py.globals.get("_json_result");
     let value = null;
@@ -45,6 +47,7 @@ async function cell(code) {
     return {
         error: (py.globals.get("_err") ? String(py.globals.get("_err")) : "") + (cancelled.refusal ?? "") + (cancelled.error ?? "") || null,
         value: cancelled.refusal ? null : value,
+        queueMs: typeof queueMs === "number" ? queueMs : null,
         spendMs: spendStarted ? finished - spendStarted : null,
     };
 }
@@ -167,7 +170,8 @@ test("the sweep destroys cut callbacks and releases the reference each cut secon
 // they kept the spend busy 3.3 to 3.8 s past its 1 s deadline.
 
 const FLOOD = (name, n = 250000) => `
-import asyncio
+global _queue_ms
+import asyncio, time
 _loop = asyncio.get_event_loop()
 _sink = {}
 async def _left():
@@ -177,16 +181,25 @@ async def _left():
         pass
 asyncio.ensure_future(_left()).set_name("${name}")
 await asyncio.sleep(0)
+_queue_started = time.monotonic()
 for _ in range(${n}):
     _loop.call_soon(_sink.clear)
+_queue_ms = (time.monotonic() - _queue_started) * 1000
 "queued"`;
 
 test("a flood of queued callbacks is cut at the deadline: the spend returns within its bound and the cell is refused, naming both", { skip, timeout: 60000 }, async () => {
     const control = await cell(FLOOD("ordinary-leftover", 0));
     assert.deepEqual([control.error, control.value], [null, "queued"], "control: an ordinary leftover is spent and the value returned");
     const r = await cell(FLOOD("flooded-leftover"));
-    console.log(`  spend with 250000 queued callbacks: ${r.spendMs} ms (control ${control.spendMs} ms)`);
-    assert.ok(r.spendMs < 1500, `the spend took ${r.spendMs} ms`);
+    // Pin 15's bound: the deadline, plus this run's control slack, plus half the cell's queueing time (250 ms floor).
+    // The cell times its own queueing loop; a quiet 250k row queues in a few hundred ms and the floor covers it.
+    assert.ok(Number.isFinite(r.queueMs) && r.queueMs >= 0, `the cell must report its queueing time, got ${r.queueMs}`);
+    const residualMs = Math.max(250, r.queueMs / 2);
+    const allowedSpendMs = 1000 + control.spendMs + residualMs;
+    console.log(`  spend with 250000 queued callbacks: ${r.spendMs} ms (control ${control.spendMs} ms, queueing ${r.queueMs} ms)`);
+    assert.ok(r.spendMs < allowedSpendMs,
+        `the spend took ${r.spendMs} ms; the 1 s deadline, this run's ${control.spendMs} ms control slack, and pin 15's ${residualMs} ms residual allow ${allowedSpendMs} ms`);
+    assert.ok(r.spendMs < 5000, `the queue cut took ${r.spendMs} ms, approaching the 15 s kill instead of cutting promptly`);
     assert.match(r.error, /^RuntimeError: \d+ callbacks this cell queued were dropped at the spend's deadline, so flooded-leftover \(.*_left\) never took its cancel; the result is refused rather than returned beside it\.\n$/);
     assert.equal(r.value, null);
     const next = await cell(`1`);
