@@ -138,7 +138,8 @@ not, record that and choose between `declarativeNetRequest` rules and following 
    and Settings rows (new strings: owner approval).
    FOUND 2026-10-27 by the janitor on the built step 2a: a document loading between a site turning visible and its
    registration covering it answers `open: true` with no injected.js in it. The security lane's own `@security` PR,
-   after #1189: OPEN 2026-10-28 as #1206, the janitor reviewing. Step 3's build sits on the lane's
+   after #1189: #1206 MERGED 2026-10-28 at 295affd2, verified (with the janitor's one finding fixed in it: a failed
+   inject no longer leaves its document marked as injected, with a red-team row). Step 3's build sits on the lane's
    `feat/hidden-isolated-tools-v2` (the tools' unit suites run against the isolated bundle too, a CI step; the
    hidden-with-run trace asserts no `ml` global); its PR opens after the red team's five-property PR, which follows #1203.
    As built: the content script says `PAGE_SCRIPT_MISSING` once when its gate opened and no hello came within 1.5 s; the
