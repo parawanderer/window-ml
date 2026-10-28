@@ -156,6 +156,22 @@ test("images held for the start draft are back when the page is mounted again", 
     assert.equal(send(host).disabled, false);
 });
 
+// --- seeing an attached image full size ---
+
+test("clicking a thumbnail opens that image full size and keeps it attached", async () => {
+    const { installServices, services } = await import("../src/sidebar/services.ts");
+    const before = services(), opened = [];
+    installServices({ ...before, openLightbox: (src) => opened.push(src) });
+    try {
+        saveDraftImages("start", [IMG, IMG2]);
+        const host = await mount("agent");
+        host.querySelectorAll(".cthumb img")[1].click();
+        await flush();
+        assert.deepEqual(opened, [IMG2]);
+        assert.deepEqual(loadDraftImages("start"), [IMG, IMG2]);
+    } finally { installServices(before); }
+});
+
 // --- paste ---
 
 test("pasting something that is not an image is left to paste its text", async () => {
