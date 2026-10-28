@@ -65,7 +65,7 @@ list. See [CLOUD-MODELS.md](CLOUD-MODELS.md).
 | `ml.ps()` | Models loaded in VRAM: `[{ model, vramGB, expiresAt }]`. |
 | `ml.unload(model?)` | Evict a model from VRAM (`keep_alive: 0`); no argument = evict all. |
 | `ml.read(image, { model?, prompt? })` | OCR — transcribe baked-in text from an `<img>` or URL to a plain string, using the configured OCR (vision) model. See [OCR](#ocr). |
-| `ml.step(messages, { tools?, model?, think? })` | One model turn with client-side tools; returns the raw assistant message and hands the loop to you. See [Tools](#tools-agents). |
+| `ml.step(messages, { tools?, model?, think?, numCtx?, maxTokens?, signal?, hint? })` | One model turn with client-side tools; returns the raw assistant message (with `usage`) and hands the loop to you. `numCtx` and `maxTokens` work as in `ml.chat`. See [Tools](#tools-agents). |
 | `ml.agent(task, options?)` | Plain-English page agent: runs the whole loop over built-in DOM recon tools (and auto-wired vision) until it acts or answers. Returns `{ summary, steps, transcript, elements, hash }`. See [Agent](#tools-agents). |
 | `ml.createAgent(options?)` | A stateful agent handle — `run`/`say`/`cancel`/`fork` + `hash`/`messages`/`maxSteps` (live). The agent analogue of `createChat`. See [Agent](#tools-agents). |
 | `ml.chat(prompt, { toolIds })` | Server-side tools: OpenWebUI runs the tools and returns the finished answer. See [Tools](#tools-agents). |
