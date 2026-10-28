@@ -247,8 +247,9 @@ rounds, enforced by one `sys.monitoring` tool whose callbacks raise on every fun
 task runs past the deadline, and at once on a call (the `CALL` event) to `sys.settrace`/`setprofile`, `threading`'s, or
 any `sys.monitoring` function but the three getters (enumerated from the module at boot). A guarded call made from C
 (`functools.partial(set_events, …)()`, `map(clear_tool_id, …)`, a `key=` function) raises no `CALL` event, so after
-every turn the spend checks its tool's name, events and callbacks: one that changed is taken back and refuses the
-cell's result ("changed the cancel's sys.monitoring tool"); a handler that spins once the tool is off hangs to the 15 s
+every turn the spend checks its tool's name, events and callbacks, and reads and clears the trace and profile
+functions (`sys`'s and `threading`'s, which change no tool), again after the spend: either one changed refuses the
+cell's result ("changed the cancel's sys.monitoring tool or set a trace or profile function"); a handler that spins once the tool is off hangs to the 15 s
 kill, like a loop inside a C function. A settrace hook that raises is
 taken down by CPython itself, so every handler after the first stop used to run untraced (a 4 s `finally` gave a 5 s
 spend); a monitoring callback that raises stays on, so a handler, a `finally` and a coroutine finalized as the task
