@@ -7,12 +7,15 @@
 // `{ todo: "<what is open>" }`; the fixer removes the `todo` when the property holds.
 //
 // Two surfaces are probed and the file never mixes them in one assertion:
-//   - the LOCKDOWN path (an APPROVED cell, `wrapUserCode`): `run_js` and the `js` family reach
-//     because `lockdownReadonly` never calls `harden()` (which unregisters the JS bridges).
-//     These escape an approved cell, not the auto-approved path — the dialect refuses these imports.
-//     On this path the RULED property (PYODIDE_LOCKDOWN.md step 2, 2026-10-23) is that `pyodide_js`
-//     imports as a config-only stand-in with no `_module` and no `_api` beyond config; the wider
-//     ask (refuse `js`/`pyodide.ffi`/`pyodide.webloop`/`asyncio` outright) is parked by the freeze.
+//   - the LOCKDOWN path (an APPROVED cell, `wrapUserCode`): the bridge gate (PYODIDE_LOCKDOWN.md
+//     step 2, ruled 2026-10-27, built in #1162) refuses `js`, `pyodide.ffi` and `pyodide.webloop`
+//     to the cell's own frames — an obfuscated name gains nothing, a library module's own import
+//     keeps working, and an approval card's explicit line lifts it (`bridges`). `run_js` closes
+//     with them. `asyncio` is importable as ruled (its risk is #998's sweep), and `pyodide_js`
+//     imports as a config-only stand-in with no `_module` and no `_api` beyond config. What the
+//     gate does NOT claim — introspection (`__globals__`, a package's module global, `gc`, the
+//     guard's own closure), `compile()` under a library filename, removing the finder — is pinned
+//     below as failing-first rows.
 //   - the DIALECT path (the auto-approved inside cell, `wrapUserScript(…, inside)`): the attribute
 //     gate refuses every route out of an ADMITTED object. Those routes HOLD and are pinned here so
 //     a change cannot flip one quietly.
@@ -224,14 +227,14 @@ test("a second lockdownReadonly does not re-boot: lockdown() runs at most once",
 
 // --- run_js: a cell must not evaluate a JS string after the boot ---------------------------------
 // `pyodide.code.run_js(src)` evaluates `src` in this realm's global scope — python-runtime.ts names
-// it bridge (2) of the three Python→outside bridges `harden()` closes. `lockdownReadonly` replaces
-// `harden()` and does not close it. Measured after the boot: `run_js("1+1")` returns 2 and
-// `run_js("globalThis")` hands back the global object. Even a SUCCESSFUL `lockdown()` may not stop
-// this on its own: `Function("return 1")()` still evaluates after a clean freeze (the prototype-chain
-// constructors throw, the kept `Function` binding does not), so the fix must close the bridge
-// directly — unregister/block `pyodide.code.run_js`, or refuse a string in it — not rely on the freeze.
+// it bridge (2) of the three Python→outside bridges `harden()` closes. `run_js` does `from js import
+// eval` when called, so the bridge gate's caller-scoped refusal closes it for the default approved
+// cell (the cell's frame is on the stack when the import runs): both rows flip plain after #1162
+// merged (37229b84). Under a lifted approval `js` is back and only the strip (PYODIDE_LOCKDOWN.md
+// step 3) closes `run_js` then — a clean freeze never did: `Function("return 1")()` still evaluates
+// after one, which is why the freeze rows above are their own property.
 
-test("a cell cannot evaluate a JS string through pyodide.code.run_js after the boot", { skip, todo: "run_js evaluates a string after lockdownReadonly (run_js('1+1') returns 2). Close bridge (2): the lockdown path must not leave a string-eval route into the JS realm. A clean freeze alone may not be enough — Function('return 1') still evaluates after one." }, async () => {
+test("a cell cannot evaluate a JS string through pyodide.code.run_js after the boot", { skip }, async () => {
     // Positive control: the probe detects evaluation — `run_js("1+1")` returned 2 before the boot.
     assert.equal(Number(runJsControl), 2, "control: run_js evaluates a string before the boot");
 
@@ -243,7 +246,7 @@ run_js("1+1")`);
     assert.ok(Number(r.value) !== 2, `run_js must not evaluate a string after the boot, got ${r.value}`);
 });
 
-test("a cell cannot reach the JS global object through run_js after the boot", { skip, todo: "run_js('globalThis') returns the global object after lockdownReadonly — the cell reads the realm's names. (The test strips a STAND-IN scope, not globalThis, so this asserts the eval happened, not which names the worker kept.)" }, async () => {
+test("a cell cannot reach the JS global object through run_js after the boot", { skip }, async () => {
     const r = await cell(`from pyodide.code import run_js
 run_js("typeof globalThis")`);
     if (r.error) return; // refused: the bridge is closed
@@ -252,17 +255,20 @@ run_js("typeof globalThis")`);
 });
 
 // --- the LOCKDOWN path: a cell must not import the Python→outside bridges ------------------------
-// `harden()` unregisters `js` and `pyodide_js` and purges `sys.modules`; `lockdownReadonly` never
-// calls it. Measured after the boot: `import pyodide_js`, `import js`, `import pyodide.ffi`,
-// `import asyncio`, `sys.modules["pyodide_js"]` and the `__subclasses__` walk all reach. These are
-// APPROVED-cell escapes.
+// The bridge gate (#1162) replaces each REFUSED_BRIDGE with a guard module in `sys.modules`, on its
+// parent and behind a first `meta_path` finder, answered only when no frame on the stack is the
+// cell's (a library module's own import is answered; an approval card's explicit line lifts it).
+// `run_js` closes with them. The rows below pin each import route's spelling; the obfuscated
+// spellings are their own row, and what the gate does NOT claim is pinned as failing-first rows
+// further down.
 //
-// Two properties, kept apart (PYODIDE_LOCKDOWN.md step 2, ruled 2026-10-23):
-//   - the RULED property: `pyodide_js` imports as a config-only stand-in with no `_module` and no
-//     `_api` beyond config. The four STANDIN_ROUTES assert it. Pyodide's own boot-time
-//     `from pyodide_js._api import scheduleCallback` keeps working; a user cell must not.
-//   - the WIDER property: `js`, `pyodide.ffi`, `pyodide.webloop` and `asyncio` are refused in an
-//     approved cell. Parked by the freeze (a new defence with a corpus cost, Shane's call).
+// Two properties, kept apart (PYODIDE_LOCKDOWN.md step 2):
+//   - the RULED property (2026-10-23): `pyodide_js` imports as a config-only stand-in with no
+//     `_module` and no `_api` beyond config. The four STANDIN_ROUTES assert it. Pyodide's own
+//     boot-time `from pyodide_js._api import scheduleCallback` keeps working; a user cell must not.
+//   - `asyncio` is importable as ruled 2026-10-27 (its risk is work outliving the cell, closed by
+//     #998's sweep, not by an import refusal); its row keeps the wider ask as a record and fails
+//     while the import works.
 
 /** Every live bridge key `pyodide_js._api` must not hand a user cell. */
 const LIVE_API_KEYS = ["scheduleCallback", "saveState", "restoreState", "destroyProxies"];
@@ -321,7 +327,9 @@ out`);
     });
 }
 
-/** Each route to a full Python→outside bridge. Wider property, parked by the freeze. */
+/** Each route to a full Python→outside bridge. Ruled 2026-10-27: `js`, `pyodide.ffi` and
+ * `pyodide.webloop` are refused in an approved cell by the gate — a refusal counts as closed.
+ * `asyncio` is NOT refused (its risk is #998's sweep) and its entry keeps the wider ask as a record. */
 const BRIDGE_ROUTES = [
     ["import js", `import js
 out = {"v": type(js).__name__}`],
@@ -336,7 +344,8 @@ out = {"v": type(asyncio).__name__}`],
 ];
 
 for (const [label, body] of BRIDGE_ROUTES) {
-    test(`a cell cannot reach the outside by ${label} after the boot`, { skip, todo: `wider property, parked by the freeze (PYODIDE_LOCKDOWN.md step 2, 2026-10-23): ${label} is refused in an APPROVED cell. Today lockdownReadonly never calls harden() (which unregisters js/pyodide_js and purges sys.modules), so it reaches. A new defence with a corpus cost; Shane's call after the freeze.` }, async () => {
+    const record = label === "import asyncio" ? "asyncio is importable in an APPROVED cell as ruled (2026-10-27): its risk is work outliving the cell, and that is closed by #998's sweep of tasks and Handles, not by an import refusal. This row keeps the wider ask (refusal) as a record of what the approved cell does not get; it fails while the import works." : null;
+    test(`a cell cannot reach the outside by ${label} after the boot`, { skip, ...(record ? { todo: record } : {}) }, async () => {
         // Positive control: a legitimate import still works — the probe runs on a live interpreter.
         const ok = await cell(`import math
 out = {"pi": round(math.pi, 5)}
@@ -367,6 +376,278 @@ out`);
     if (r.error) return; // refused at import or attribute: the route is closed
     const s = String(r.value?.v ?? r.value);
     assert.ok(!/module|JsProxy|function|builtin|type/.test(s), `pyodide_js._module must not reach the outside after the boot, got ${s}`);
+});
+
+// The gate's claim is by the CALLER, never by the name (PYODIDE_LOCKDOWN.md step 2): a name the
+// cell builds at run time gains nothing. Enumerated, not sampled — the direct and obfuscated
+// spellings of the js family and of pyodide.ffi, each probed for CAPABILITY (the guard hands a
+// cell nothing to use; a refusal counts as closed).
+test("a cell reaches no bridge by an obfuscated name: __import__ and importlib of a name it builds gain nothing", { skip }, async () => {
+    // Positive control: a legitimate import still works — the probe runs on a live interpreter.
+    const ok = await cell(`import math
+out = {"pi": round(math.pi, 5)}
+out`);
+    assert.equal(ok.error, null, `control: import math must work, got: ${ok.error}`);
+    assert.equal(ok.value?.pi, 3.14159, `control: import math must work, got: ${JSON.stringify(ok.value)}`);
+
+    const r = await cell(`import importlib
+out = {}
+probes = [("js", __import__("j" + "s"), "eval"), ("js", __import__("".join(("j", "s"))), "eval"),
+          ("js", importlib.import_module("j" + "s"), "eval"),
+          ("pyodide.ffi", importlib.import_module("pyodide" + ".ffi"), "to_js"),
+          ("pyodide.ffi", importlib.import_module("pyodide".__add__(".ffi")), "to_js")]
+for name, m, attr in probes:
+    try:
+        getattr(m, attr)
+        out[name + "." + attr] = "reached"
+    except Exception as e:
+        out.setdefault(name + "." + attr, type(e).__name__)
+out`);
+    assert.equal(r.error, null, `the probe must run, got: ${r.error}`);
+    for (const [k, v] of Object.entries(r.value ?? {})) {
+        assert.ok(v !== "reached", `an obfuscated name must gain nothing: ${k} reached the bridge`);
+    }
+});
+
+// --- what the bridge gate does NOT claim: introspection and caller-spoof routes -------------------
+// Measured 2026-10-27 and written into PYODIDE_LOCKDOWN.md step 2 and the gate's own docstring: the
+// caller-scoped refusal closes the IMPORT routes only. A cell in full Python reaches the same
+// functions without an import — a library function's `__globals__`, a package's module global, `gc`
+// over any holder, the guard's own closure — or by compiling its code under a library filename, or
+// by removing the finder and re-importing from the zip. The builder claims none of these rows
+// (MERGE ORDER (3), PYODIDE_LOCKDOWN.md step 2); each is failing-first and its todo names the open
+// route and what bounds it (the strip, the cell gate's revoke) — never what the gate claims.
+
+/** The standard control: a legitimate import runs on a live interpreter, so no row passes vacuously. */
+async function controlImport() {
+    const ok = await cell(`import math
+out = {"pi": round(math.pi, 5)}
+out`);
+    assert.equal(ok.error, null, `control: import math must work, got: ${ok.error}`);
+    assert.equal(ok.value?.pi, 3.14159, `control: import math must work, got: ${JSON.stringify(ok.value)}`);
+}
+
+test("an approved cell reaches no live bridge through a library function's __globals__ (asyncio's call_later)", { skip, todo: "OPEN, claimed by no one (PYODIDE_LOCKDOWN.md step 2, measured 2026-10-27): type(asyncio.get_event_loop()).call_later.__globals__ holds scheduleCallback, create_once_callable and run_sync with no import at all. The gate claims the import routes only; the strip (no network, no postMessage in the realm) and the cell gate's revoke bound what these do, they do not close the route." }, async () => {
+    await controlImport();
+    const r = await cell(`import asyncio
+g = type(asyncio.get_event_loop()).call_later.__globals__
+live = {}
+for n in ("scheduleCallback", "create_once_callable", "run_sync"):
+    if n in g:
+        live[n] = type(g[n]).__name__
+out = {"live": live, "mapped": len(g)}
+out`);
+    assert.equal(r.error, null, `the probe must run, got: ${r.error}`);
+    assert.ok((r.value?.mapped ?? 0) > 0, `control: the probed mapping must be a live globals dict, got ${JSON.stringify(r.value)}`);
+    assert.deepEqual(r.value?.live ?? {}, {}, `a library function's __globals__ must not hand a cell live bridge functions, got ${JSON.stringify(r.value?.live)}`);
+});
+
+test("an approved cell reaches no live bridge by walking gc.get_objects() over every holder", { skip, todo: "OPEN (PYODIDE_LOCKDOWN.md step 2, measured 2026-10-27): gc.get_objects() finds any Python object holding a real bridge module — the guard's own __closure__ dict included — and the gate replaces no holder it does not own. The strip and the cell gate's revoke are the bounds." }, async () => {
+    await controlImport();
+    const r = await cell(`import gc
+CAP = {"js": "eval", "pyodide.ffi": "to_js", "pyodide.ffi.wrappers": "create_proxy", "pyodide.webloop": "run_sync",
+       "_pyodide_core": "create_proxy", "_pyodide._importhook": "JsFinder", "_pyodide._core_docs": "to_js",
+       "pyodide._package_loader": "load_package"}
+found = {}
+for o in gc.get_objects():
+    try:
+        n = o.__name__
+    except Exception:
+        continue
+    attr = CAP.get(n)
+    if attr:
+        try:
+            getattr(o, attr)
+            found[n] = "capable"
+        except Exception:
+            pass
+out = {"found": found}
+out`);
+    assert.equal(r.error, null, `the probe must run, got: ${r.error}`);
+    assert.deepEqual(r.value?.found ?? {}, {}, `gc must not hand a cell a live bridge module, got ${JSON.stringify(r.value?.found)}`);
+});
+
+test("an approved cell reaches no js through a package that imported it at boot (unix_timezones.js, pyarrow's timezone shim)", { skip, timeout: 240000 }, async () => {
+    // PINNED (measured 2026-10-28): the package's boot-time `import js` binds the GUARD (t = _MlBridgeGuard)
+    // and the cell's attribute lookup raises ImportError — the refusal lives at attribute access, so a
+    // library module's OWN lookup is answered while a cell reading that module's global is not. (The gc and
+    // planted-module rows show where that caller check is fooled or bypassed.)
+    await controlImport();
+    await py.loadPackage("pyarrow");
+    const r = await cell(`import unix_timezones as u
+js = getattr(u, "js", None)
+info = {"has": js is not None, "t": type(js).__name__ if js is not None else "absent"}
+if js is not None:
+    try:
+        js.eval
+        info["cap"] = "reached"
+    except Exception as e:
+        info["cap"] = type(e).__name__
+out = info
+out`);
+    assert.equal(r.error, null, `the probe must run, got: ${r.error}`);
+    assert.equal(r.value?.has, true, `control: the package's boot import leaves its js module global (the measured fact this row probes), got ${JSON.stringify(r.value)}`);
+    assert.ok(r.value?.cap !== "reached", `a package's boot-imported js must hand a cell no capability, got ${JSON.stringify(r.value)}`);
+});
+
+test("an approved cell reaches neither the real modules nor the lift flag through the guard's __getattr__.__closure__", { skip, todo: "OPEN (PYODIDE_LOCKDOWN.md step 2, measured 2026-10-27): sys.modules['js'] is the guard, and type(guard).__getattr__.__closure__ holds the real-modules dict and the function whose closure holds the lift list — a cell reads the real js out of the dict, or flips the list's flag and the guard answers every lookup. The builder claims none of these; the cell gate's revoke does not cover a cell lifting itself." }, async () => {
+    await controlImport();
+    // Control: reading a closure's cell_contents works in a cell, so the probe is not vacuous.
+    const ctl = await cell(`def f():
+    x = 1
+    return lambda: x
+out = {"x": f().__closure__[0].cell_contents}
+out`);
+    assert.equal(ctl.value?.x, 1, "control: a closure's cell_contents is readable in a cell");
+
+    const r = await cell(`import sys
+CAP = {"js": "eval", "pyodide.ffi": "to_js", "pyodide.ffi.wrappers": "create_proxy", "pyodide.webloop": "run_sync"}
+g = sys.modules.get("js")
+info = {"guard": g is not None}
+leaked = {}
+fn = type(g).__getattr__ if g is not None else None
+for c in (getattr(fn, "__closure__", None) or ()):
+    v = c.cell_contents
+    if type(v).__name__ == "dict":
+        for k, mv in list(v.items()):
+            attr = CAP.get(k)
+            if attr:
+                try:
+                    getattr(mv, attr)
+                    leaked["real." + k] = "capable"
+                except Exception:
+                    pass
+    if type(v).__name__ == "function":
+        for c2 in (getattr(v, "__closure__", None) or ()):
+            v2 = c2.cell_contents
+            if isinstance(v2, list) and len(v2) == 1 and isinstance(v2[0], bool):
+                info["flip_found"] = True
+                try:
+                    v2[0] = True
+                    try:
+                        g.eval
+                        leaked["lift"] = "capable"
+                    except Exception:
+                        pass
+                finally:
+                    v2[0] = False
+out = {"info": info, "leaked": leaked}
+out`);
+    assert.equal(r.error, null, `the probe must run, got: ${r.error}`);
+    assert.equal(r.value?.info?.guard, true, `control: the guard is in sys.modules under "js" (the shape this row probes), got ${JSON.stringify(r.value)}`);
+    assert.deepEqual(r.value?.leaked ?? {}, {}, `the guard's __getattr__.__closure__ must hand a cell neither the real modules nor a working lift flag, got ${JSON.stringify(r.value)}`);
+});
+
+test("an approved cell gains no library privilege by compiling its code under a library filename", { skip, todo: "OPEN (PYODIDE_LOCKDOWN.md step 2, measured 2026-10-27): answered() treats a frame as the library's when its co_filename is under the stdlib root and its co_name is `<module>`, so a cell's compile(src, os.__file__, \"exec\") gets every attribute answered — the filename is caller-controlled. The strip and the cell gate's revoke are the bounds." }, async () => {
+    await controlImport();
+    const r = await cell(`import os
+src = "\\n".join(["import js", "try:", "    js.eval", "    LEAK = 'capable'", "except Exception as e:", "    LEAK = type(e).__name__"])
+ns = {}
+exec(compile(src, os.__file__, "exec"), ns)
+out = {"leak": ns.get("LEAK")}
+out`);
+    assert.equal(r.error, null, `the probe must run, got: ${r.error}`);
+    assert.ok(r.value?.leak !== "capable", `a frame whose co_filename is a library file must not answer the guard, got ${JSON.stringify(r.value)}`);
+});
+
+test("removing the bridge finder and re-importing pyodide.ffi from the zip hands a cell no live module", { skip, todo: "OPEN (PYODIDE_LOCKDOWN.md step 2, measured 2026-10-27): removing _MlBridgeFinder from sys.meta_path and popping the guards re-imports pyodide.ffi from its file in the zip — the real module, since only `js` is unregistered from Pyodide's finder. The claimed half (popping the js guard brings nothing back) is asserted plain here; the ffi half is open. The strip and the cell gate's revoke are the bounds." }, async () => {
+    await controlImport();
+    const r = await cell(`import sys, importlib
+info = {}
+orig = list(sys.meta_path)
+try:
+    sys.meta_path[:] = [f for f in orig if getattr(f, "__name__", "") != "_MlBridgeFinder"]
+    for k in ("js", "pyodide.ffi", "pyodide.ffi.wrappers", "pyodide.webloop"):
+        sys.modules.pop(k, None)
+    p = sys.modules.get("pyodide")
+    if p is not None:
+        for child in ("ffi", "webloop"):
+            try:
+                delattr(p, child)
+            except Exception:
+                pass
+    try:
+        import js
+        js.eval
+        info["js"] = "capable"
+    except Exception as e:
+        info["js"] = type(e).__name__
+    try:
+        ffi = importlib.import_module("pyodide.ffi")
+        ffi.to_js
+        info["ffi"] = "capable"
+    except Exception as e:
+        info["ffi"] = type(e).__name__
+finally:
+    sys.meta_path[:] = orig
+    for k in ("js", "pyodide.ffi", "pyodide.ffi.wrappers", "pyodide.webloop"):
+        sys.modules.pop(k, None)
+        try:
+            importlib.import_module(k)
+        except Exception as e:
+            info["restore." + k] = type(e).__name__
+out = info
+out`);
+    assert.equal(r.error, null, `the probe must run, got: ${r.error}`);
+    // Control: the row restores the gate (the finder and the guards) so later rows see a clean world.
+    const ctl = await cell(`import sys
+g = sys.modules.get("js")
+out = {"t": type(g).__name__ if g is not None else "absent"}
+out`);
+    assert.equal(ctl.value?.t, "_MlBridgeGuard", `control: the row must restore the js guard for later rows, got ${JSON.stringify(ctl.value)}`);
+    // Control: after the restore, the refused names reach NO capability — a failed re-import is safe
+    // (pyodide.ffi.wrappers cannot be re-imported once pyodide.ffi is a guard); a real module is not.
+    const ctl2 = await cell(`import sys
+CAP = {"js": "eval", "pyodide.ffi": "to_js", "pyodide.ffi.wrappers": "create_proxy", "pyodide.webloop": "run_sync"}
+out = {}
+for k, attr in CAP.items():
+    m = sys.modules.get(k)
+    if m is None:
+        out[k] = "absent"
+    else:
+        try:
+            getattr(m, attr)
+            out[k] = "capable:" + type(m).__name__
+        except Exception:
+            out[k] = "refused:" + type(m).__name__
+out`);
+    assert.deepEqual(Object.entries(ctl2.value ?? {}).filter(([, v]) => String(v).startsWith("capable")), [], `control: the row must leave no real module reachable under the refused names, got ${JSON.stringify(ctl2.value)}`);
+    // The gate's own claim: `js` is unregistered from Pyodide's finder, so popping the guard does not bring the real one back.
+    assert.match(String(r.value?.js ?? ""), /ImportError|ModuleNotFoundError/, `popping the js guard must not bring the real one back (it is unregistered from Pyodide's finder), got ${JSON.stringify(r.value)}`);
+    // Defended: the same must hold for pyodide.ffi, re-importable from its file in the zip.
+    assert.ok(r.value?.ffi !== "capable", `removing the finder must hand a cell no live pyodide.ffi from the zip, got ${JSON.stringify(r.value)}`);
+});
+
+test("a cell that writes a module under the stdlib root gains no library privilege for it", { skip, todo: "OPEN (PYODIDE_LOCKDOWN.md step 2, measured 2026-10-27): answered() trusts the filename and `<module>` co_name, so a module a cell plants under the stdlib root runs its imports answered — the write into the worker's filesystem is open. The strip and the cell gate's revoke are the bounds." }, async () => {
+    await controlImport();
+    const r = await cell(`import os, sys, importlib
+root = os.path.dirname(os.__file__) + "/"
+p = root + "_ml_redteam_planted.py"
+info = {}
+body = 'LEAK = "no-js"\\ntry:\\n    import js\\n    try:\\n        js.eval\\n        LEAK = "capable"\\n    except Exception as e:\\n        LEAK = type(e).__name__\\nexcept Exception as e:\\n    LEAK = "import:" + type(e).__name__\\n'
+try:
+    with open(p, "w") as f:
+        f.write(body)
+    info["wrote"] = True
+except Exception as e:
+    info["wrote"] = type(e).__name__
+if info.get("wrote") is True:
+    try:
+        m = importlib.import_module("_ml_redteam_planted")
+        info["leak"] = getattr(m, "LEAK", "none")
+    except Exception as e:
+        info["import"] = type(e).__name__
+    sys.modules.pop("_ml_redteam_planted", None)
+    try:
+        os.remove(p)
+    except Exception:
+        pass
+out = info
+out`);
+    assert.equal(r.error, null, `the probe must run, got: ${r.error}`);
+    assert.equal(r.value?.wrote, true, `control: a cell can write under the stdlib root (the fact this row probes), got ${JSON.stringify(r.value)}`);
+    assert.equal(r.value?.import, undefined, `control: the planted module imports (the fact this row probes), got ${JSON.stringify(r.value)}`);
+    assert.ok(r.value?.leak !== "capable", `a module planted under the stdlib root must gain no library privilege, got ${JSON.stringify(r.value)}`);
 });
 
 // --- the DIALECT's attribute gate: an ADMITTED object must not lead to the bridges ----------------

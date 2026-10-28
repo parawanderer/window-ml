@@ -4159,6 +4159,10 @@ pre.code.dlines > code.hljs { display: block; }
 .arch-rk-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 .arch-rk-row > .test-btn { margin-left: auto; }
 .arch-rk-ask { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+/* A KEY ID a person matches by eye with the one on another machine (archive-section.tsx KeyId): groups of four, never split inside a group, with the lines that name it (this install's key, the key in the folder's files, the changed-key warning). */
+.arch-keyid { color: var(--fg); white-space: pre-wrap; word-break: keep-all; letter-spacing: 0.02em; }
+.arch-thiskey, .arch-keyline { align-self: stretch; }
+.arch-changed { border-left: 3px solid var(--warn); padding-left: 8px; }
 .arch-or { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; align-self: stretch; }
 
 /* The Settings BACKUP AND RESTORE section (backup-section.tsx): one block per job (backup, restore, decrypt, passphrase),

@@ -32,6 +32,10 @@ const CSP_BLOCK_MSG = (name: string): string => `Error: this page blocks the ext
 const CSP_START_MSG = "this page blocks the extension's page script (its Content-Security-Policy disables injected scripts), so an agent cannot run on it. Open an ordinary page and start the run there.";
 /** Why a delegated tool cannot run: the worker never let this document hear from us (a hidden page with no run). */
 const SHUT_MSG = "Error: the extension's page script is not in this page.";
+/** How long a document the worker answered open waits for the page script's hello before saying it has none
+ *  (PAGE_SCRIPT_MISSING): injected.js says hello as it runs, at document_start, so this only ever waits out a document
+ *  that loaded before its origin's registration covered it. */
+const PAGE_SCRIPT_MISSING_MS = 1500;
 /** What waits for injected's hello in this document. */
 const onAlive: (() => void)[] = [];
 
@@ -372,6 +376,9 @@ function contentReady(tries = 4): void {
         if (!resp) { if (tries > 1) setTimeout(() => contentReady(tries - 1), 500); return; }
         setAsk(resp.ask === true);
         setGate(resp.open === true);
+        // Open with no page script (SITE_PRESENCE.md step 2, the race the janitor found): the origin turned visible while this
+        // document loaded, before the registration covered it. Said once; the worker decides from the sender's own origin.
+        if (gateOpen() && !pageAlive()) setTimeout(() => { if (!pageAlive()) chrome.runtime.sendMessage({ type: "PAGE_SCRIPT_MISSING" }, () => void chrome.runtime.lastError); }, PAGE_SCRIPT_MISSING_MS);
         const adopt = (resp.adopt || []).filter((a) => a && typeof a.runId === "string");
         if (!adopt.length || !gateOpen()) return;
         const post = () => { for (const a of adopt) toPage({ type: "ADOPT_RUN", runId: a.runId, rebuild: a.rebuild }); };

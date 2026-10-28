@@ -10,8 +10,9 @@ Notes, traps and the numbers: `docs/dev/pyodide-build.md`.
 ```bash
 # 1. change the pin in tools/pyodide-dist.json, then build. Hours on a clean tree. A new fork commit moves cpython.commit,
 #    cpython.restrictedPySha256 and patches.count; a Pyodide upgrade moves pyodide, emscripten, abi, python, pythonArchiveSha256.
-node tools/build-pyodide-restricted.mjs [--work tmp/pyodide-build] [--cpython ~/git/cpython-restricted] [--jobs 10]
-#    run it in the background (the background-work skill); it prints the tarball's sha256 and writes BUILD_REPORT.md
+node tools/build-pyodide-restricted.mjs [--work ~/git/window-ml/tmp/pyodide-build] [--cpython ~/git/cpython-restricted] [--jobs 10]
+#    run it in the background (the background-work skill); it prints the tarball's sha256 and writes BUILD_REPORT.md.
+#    The work dir defaults to MAIN's tmp/ from any clone, so the emsdk + Pyodide tree outlives the clone; a rerun rebuilds only CPython
 
 # 2. try it locally without publishing: unpack the tarball into pyodide-core/, then build the extension.
 #    --core checks the tarball against the pin's artefact.sha256, so set artefact (sha256, tag, name, url) first.

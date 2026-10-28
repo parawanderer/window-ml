@@ -251,6 +251,11 @@ reader of it fails there.
   `injected.js` (MAIN world, `document_start`, top frame) for the visible origins: `ml-main-lasting` (persists) and
   `ml-main-session` (does not, so a browser restart forgets a session grant's scripts with it). Re-synced at worker start
   and on every change to the lists, always awaited: an awaited update applies to the next navigation (measured).
+- **A document that loaded before its origin's registration covered it** (the origin turned visible meanwhile) is answered
+  open with no page script in it. Its content script says `PAGE_SCRIPT_MISSING` once, 1.5 s after the gate opened with no
+  hello; the worker re-reads the sender's origin (never the payload), top frame and named document only, and injects.
+  `injectPageScripts` remembers the documents it injected, so none gets a second injected.js (it would replace
+  `window.ml` and take the port from the first). Red-team: `tests/redteam-presence-race.test.mjs`.
 - **Each match pattern names the origin's port, the default one included** (`originMatchPattern`): a pattern with no
   port matches every port of the host, and `:443` matches only the default one (measured in Chromium 151).
 - **`injected.js` is not web-accessible**: registered and `executeScript` files need no listing.
