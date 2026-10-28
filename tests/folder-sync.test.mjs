@@ -7,7 +7,7 @@ import init from "@sqlite.org/sqlite-wasm";
 import { markAllDirty, dirtyMonths, exportMonth, expireRemoved, folderFilesMonths, migrate, prepareSession, readArchived, removeArchived, wasmDb, writeSession, archiveStats, metaSet } from "../src/archive/db.ts";
 import { adoptFolder, folderFormOf, importMonths, setFolderForm, surveyFolder, syncMonths } from "../src/archive/folder-sync.ts";
 import { adoptKeyring, forgetRetiredKey } from "../src/backup/backup-keyring.ts";
-import { createKeyring, sniff, readHeader } from "../src/backup/backup-format.ts";
+import { createKeyring, sniff, readHeader, encryptFile, decryptFile } from "../src/backup/backup-format.ts";
 import { digestOf, inspectBackup, openBackupBytes, restoreNewSessions } from "../src/backup/backup-file.ts";
 
 const sqlite3 = await init();
@@ -773,7 +773,15 @@ test("after a forget, a month under that key is skipped as other-key with its ke
     assert.deepEqual(only.writes, []);
 });
 
-test("monthKeyCounts counts the folder's encrypted months by the key in each header, reading headers only, and skips what is not one", async () => {
+/** A directory handle over a Map of files, the shape `monthFiles` and `readMonthHead` walk. */
+function dirOf(files) {
+    return {
+        entries: async function* () { for (const n of files.keys()) yield [n, { kind: "file" }]; },
+        getFileHandle: async (n) => { if (!files.has(n)) throw new Error("NotFound"); return { getFile: async () => new Blob([files.get(n)]) }; },
+    };
+}
+
+test("monthKeyCounts counts the folder's encrypted months by the key that opens them, reading the head and first chunk only, and counts what is not one as unopened", async () => {
     const { monthKeyCounts } = await import("../src/archive/archive-folder.ts");
     const A = await machine("pw-of-a", ["c0e70001", OCT, ], ["c0e70002", SEPT]);
     const B = await machine("pw-of-b", ["c0e70003", Date.UTC(2026, 7, 10)]);
@@ -781,9 +789,72 @@ test("monthKeyCounts counts the folder's encrypted months by the key in each hea
     await syncEnc(A, folder);
     await syncEnc(B, folder);
     const files = new Map([...folder.files, ["2026-06.sqlite", new Uint8Array([1, 2, 3])], ["2026-05.wmlbak", new Uint8Array([9, 9, 9])], ["notes.txt", new Uint8Array(1)]]);
-    const dir = {
-        entries: async function* () { for (const n of files.keys()) yield [n, { kind: "file" }]; },
-        getFileHandle: async (n) => { if (!files.has(n)) throw new Error("NotFound"); return { getFile: async () => new Blob([files.get(n)]) }; },
-    };
-    assert.deepEqual(await monthKeyCounts(dir), { [A.keyId]: 2, [B.keyId]: 1 }, "plain, damaged and foreign files count for no key");
+    const dir = dirOf(files);
+    assert.deepEqual(await monthKeyCounts(dir, await A.store.read()), { byKey: { [A.keyId]: 2 }, unopened: 2 }, "B's month (a key A never held) and the damaged file are unopened; the plain file is not an encrypted month");
+    // A takes B's key: A's own key is retired and still opens its months, and B's now opens B's.
+    await adoptKeyring(A.store, folder.files.get("2026-08.wmlbak"), { passphrase: "pw-of-b" });
+    assert.deepEqual(await monthKeyCounts(dir, await A.store.read()), { byKey: { [B.keyId]: 1, [A.keyId]: 2 }, unopened: 1 });
+    assert.deepEqual(await monthKeyCounts(dir, null), { byKey: {}, unopened: 4 }, "with no keyring nothing opens");
+});
+
+// --- telling a planted key from the real one (part 3e) ---
+
+const utf8 = new TextEncoder();
+/** A planted month: the real file's header (and so its `keyId`) over a payload nothing opens (one flipped tag byte). */
+function planted(real) {
+    const bad = new Uint8Array(real);
+    bad[bad.length - 1] ^= 0xff;
+    return bad;
+}
+/** An install with its own key and a month file it sealed (the red-team probe's shape). */
+async function sealed(pass, body) {
+    const made = await createKeyring(pass, CHEAP);
+    return { ring: made.keyring, keyId: made.keyring.keyId, file: await encryptFile(utf8.encode(body), made.keyring, { kind: "archive-month" }) };
+}
+
+test("a planted file whose header names the key but whose payload does not open is not a month under it (red-team probe of 3d, from todo to plain)", async () => {
+    const { monthKeyCounts } = await import("../src/archive/archive-folder.ts");
+    const R = await sealed("pass of R", "SQLite format 3\0 month one of R");
+    const S = await sealed("pass of S", "SQLite format 3\0 month one of S");
+    const r2 = await encryptFile(utf8.encode("SQLite format 3\0 month two of R"), R.ring, { kind: "archive-month" });
+    // The install holds R, and S as a retired key: two real months under R and one under S count as they open.
+    const mine = { ...R.ring, retired: [{ key: S.ring.key, keyId: S.keyId }] };
+    const honest = dirOf(new Map([["2026-10.wmlbak", R.file], ["2026-11.wmlbak", r2], ["2026-09.wmlbak", S.file]]));
+    assert.deepEqual(await monthKeyCounts(honest, mine), { byKey: { [R.keyId]: 2, [S.keyId]: 1 }, unopened: 0 }, "control: real months count under the key that sealed them");
+    // The plant: three months whose headers name R and whose payloads no key opens. A folder writer needs no secret
+    // for this, only bytes in the synced folder.
+    const fakes = ["2026-01.wmlbak", "2026-02.wmlbak", "2026-03.wmlbak"].map(() => planted(R.file));
+    for (const f of fakes) {
+        assert.equal(readHeader(f).keyId, R.keyId, "the plant's header names R");
+        await assert.rejects(decryptFile(f, { passphrase: "pass of R" }), (e) => e.reason === "corrupt", "and no key opens its payload");
+    }
+    const files = new Map([["2026-10.wmlbak", R.file], ["2026-11.wmlbak", r2], ["2026-09.wmlbak", S.file],
+        ["2026-01.wmlbak", fakes[0]], ["2026-02.wmlbak", fakes[1]], ["2026-03.wmlbak", fakes[2]]]);
+    assert.deepEqual(await monthKeyCounts(dirOf(files), mine), { byKey: { [R.keyId]: 2, [S.keyId]: 1 }, unopened: 3 },
+        "three planted files are not months under R: they show as unopened");
+});
+
+test("a real month relabelled with another key's id opens under no key, and shows as unopened rather than vanishing from the count", async () => {
+    const { monthKeyCounts } = await import("../src/archive/archive-folder.ts");
+    const R = await sealed("pass of R", "SQLite format 3\0 real month");
+    const S = await sealed("pass of S", "SQLite format 3\0 another install's month");
+    const both = { ...R.ring, retired: [{ key: S.ring.key, keyId: S.keyId }] };
+    // Rewrite the header's keyId bytes (the JSON in the header) to S's id, leaving everything else as it was.
+    const at = Buffer.from(R.file).indexOf(R.keyId);
+    assert.ok(at > 0, "the header carries the id as text");
+    const relabelled = new Uint8Array(R.file);
+    relabelled.set(utf8.encode(S.keyId), at);
+    assert.equal(readHeader(relabelled).keyId, S.keyId, "the label now names S");
+    const counts = await monthKeyCounts(dirOf(new Map([["2026-10.wmlbak", relabelled]])), both);
+    assert.deepEqual(counts, { byKey: {}, unopened: 1 }, "under no key: S's key does not open R's chunks, and R's is not the one named");
+    assert.deepEqual(await monthKeyCounts(dirOf(new Map([["2026-10.wmlbak", R.file]])), both), { byKey: { [R.keyId]: 1 }, unopened: 0 }, "control: unrelabelled, it counts under R");
+});
+
+test("a month under a key this install never held is unopened, and a retired key still counts what it opens", async () => {
+    const { monthKeyCounts } = await import("../src/archive/archive-folder.ts");
+    const R = await sealed("pass of R", "SQLite format 3\0 r");
+    const S = await sealed("pass of S", "SQLite format 3\0 s");
+    const dir = dirOf(new Map([["2026-10.wmlbak", R.file], ["2026-09.wmlbak", S.file]]));
+    assert.deepEqual(await monthKeyCounts(dir, R.ring), { byKey: { [R.keyId]: 1 }, unopened: 1 });
+    assert.deepEqual(await monthKeyCounts(dir, { ...S.ring, retired: [{ key: R.ring.key, keyId: R.keyId }] }), { byKey: { [S.keyId]: 1, [R.keyId]: 1 }, unopened: 0 });
 });

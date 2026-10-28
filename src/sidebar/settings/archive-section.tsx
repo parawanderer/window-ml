@@ -6,11 +6,11 @@
 // The permission has four states and each one says what to do next, because the one that surprises people is the
 // third: a folder picked with "Allow this time" is not writable after a restart. Nothing is lost while it is not
 // (months wait, marked pending), and one click with "Allow on every visit" chosen makes it stay connected.
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { FolderReport } from "../../archive/archive-worker";
-import { canPickFolder, monthKeyCounts, pickFolder, readMonthHead, regrantCount, regrantFolder, saveFolder, writableFolder } from "../../archive/archive-folder";
+import { canPickFolder, loadFolder, loadFolderPin, monthKeyCounts, pickFolder, readMonthHead, regrantCount, regrantFolder, saveFolder, saveFolderPin, writableFolder, type KeyCounts } from "../../archive/archive-folder";
 import type { BackupForm } from "../../backup/backup-file";
-import { adoptKeyring, forgetRetiredKey, idbKeyringStore, type KeyringStore, type RetiredInfo } from "../../backup/backup-keyring";
+import { adoptKeyring, forgetRetiredKey, idbKeyringStore, keyringState, loadKeyring, type KeyringStore, type RetiredInfo } from "../../backup/backup-keyring";
 import { adoptNotice, KeyringSetup, SecretField, secretFromText } from "./backup-section";
 
 /** The browser-specific way to turn folder access on, when there is one. */
@@ -21,6 +21,20 @@ const ago = (t: number | null): string => {
     const s = Math.round((Date.now() - t) / 1000);
     return s < 90 ? "just now" : s < 5400 ? `${Math.round(s / 60)} minutes ago` : new Date(t).toLocaleString();
 };
+
+// --- key ids a person can match ---
+
+/** A key id as it is shown everywhere in Settings: the full 16 hex in groups of four (`9f3a 1c7e 2b40 d815`). */
+export const formatKeyId = (id: string): string => id.replace(/(.{4})(?=.)/g, "$1 ");
+
+/**
+ * A key id in the one format a person compares by eye with the same id on another machine.
+ * @group settings
+ * @gallery {"id": "9f3a1c7e2b40d815"}
+ */
+export function KeyId(p: { id: string }) {
+    return <code class="arch-keyid">{formatKeyId(p.id)}</code>;
+}
 
 // --- the folder's form ---
 
@@ -46,11 +60,14 @@ const formName = (f: BackupForm): string => ({ encrypted: "encrypted", gzip: "co
  * @gallery plain, with the warning {"current": "plain", "keyringSet": true, "busy": false}
  * @gallery compressed, with the warning {"current": "gzip", "keyringSet": false, "busy": false}
  * @gallery a new folder, encrypted preselected {"current": "plain", "keyringSet": false, "busy": false, "first": true}
+ * @gallery with this install's key to match {"current": "encrypted", "keyringSet": true, "keyId": "9f3a1c7e2b40d815", "busy": false}
  */
 export function ArchiveFormChoice(p: {
     current: BackupForm;
     /** whether this install has a backup keyring (null while unknown); Encrypted without one starts the set-up */
     keyringSet: boolean | null;
+    /** this install's data key id, shown to match against the other machine's (absent before set-up) */
+    keyId?: string | null;
     busy: boolean;
     /** a folder just picked for the first time: Encrypted is preselected and Continue sends the choice */
     first?: boolean;
@@ -81,6 +98,7 @@ export function ArchiveFormChoice(p: {
                     <label class="set-check" key={f}><input type="radio" name={group} checked={sel === f} disabled={p.busy} onChange={() => setPick(f)} /><span>{label}</span></label>
                 ))}
             </div>
+            {p.keyringSet && p.keyId ? <div class="set-hint arch-thiskey">This install's key: <KeyId id={p.keyId} /></div> : null}
             {sel !== "encrypted" ? <div class="set-warn">These files hold whole transcripts, and a synced folder's service can read them.</div> : null}
             {sel === "encrypted" && p.keyringSet === false ? <div class="set-hint">Encrypting asks you to choose a passphrase first, and shows a recovery key.</div> : null}
             {switching ? <div class="set-hint">The next sync rewrites every month in the new form and removes the old files. A sync service may keep earlier versions of them in its own history.</div> : null}
@@ -119,12 +137,19 @@ export function keyToAdopt(skipped: Skipped): { keyId: string | null; month: str
  * @gallery {"hasOwnKey": true, "months": 2, "busy": false, "wrong": false}
  * @gallery no key of its own, the first choice {"hasOwnKey": false, "months": 3, "busy": false, "wrong": false, "first": true}
  * @gallery wrong secret, kept for another try {"hasOwnKey": true, "months": 1, "busy": false, "wrong": true}
+ * @gallery with the key id to match {"hasOwnKey": true, "months": 2, "busy": false, "wrong": false, "keyId": "c04b77aa19e2f6d3"}
  */
-export function AdoptFolderKey(p: { hasOwnKey: boolean; months: number; busy: boolean; wrong: boolean; first?: boolean; onAdopt?(text: string): void }) {
+export function AdoptFolderKey(p: {
+    hasOwnKey: boolean; months: number; busy: boolean; wrong: boolean; first?: boolean;
+    /** the id of the key the files are under (their headers say); absent from a report from before 3c */
+    keyId?: string | null;
+    onAdopt?(text: string): void;
+}) {
     const [text, setText] = useState("");
     return (
         <div class={`arch-adopt${p.first ? " first" : ""}`}>
             <div class="bk-h">Use this folder's key</div>
+            {p.keyId ? <div class="set-hint arch-keyline">Key in these files: <KeyId id={p.keyId} />. Check it matches the key shown in Settings on the other machine before you enter its secret.</div> : null}
             <div class="set-hint">Enter the passphrase or recovery key of the install that wrote {p.months === 1 ? "this month" : `these ${p.months} months`}. {adoptNotice("folder", p.hasOwnKey)}</div>
             <SecretField value={text} disabled={p.busy} wrong={p.wrong} onInput={setText} onEnter={() => p.onAdopt?.(text)} />
             {p.wrong ? <div class="set-err">That passphrase or recovery key does not open this folder's files. Check it and try again.</div> : null}
@@ -135,14 +160,19 @@ export function AdoptFolderKey(p: { hasOwnKey: boolean; months: number; busy: bo
 
 /**
  * What forgetting a retired key costs, said before it is done: the files under it ask for its passphrase or recovery
- * key on this install, and the folder's months still under it are skipped until another install rewrites them.
- * @param months how many of the folder's month files are under the key
+ * key on this install, and the folder's months still under it are skipped until another install rewrites them. Files
+ * that open under no key here are said too (part 3e): some may have been under this key.
+ * @param months how many of the folder's month files open under the key
+ * @param unopened how many encrypted month files open under no key this install holds
  */
-export function forgetNotice(months: number): string {
+export function forgetNotice(months: number, unopened = 0): string {
     const asks = "Files under this key will ask for its passphrase or recovery key on this install.";
-    return months > 0
+    const more = unopened > 0
+        ? ` ${unopened} more file${unopened === 1 ? "" : "s"} in the folder ${unopened === 1 ? "opens" : "open"} under no key on this install; ${unopened === 1 ? "it" : "some"} may have been under this one.`
+        : "";
+    return (months > 0
         ? `${asks} ${monthsOf(months)} in the folder ${months === 1 ? "is" : "are"} still under it and will be skipped until another install rewrites ${months === 1 ? "it" : "them"}.`
-        : `${asks} No month in the folder is under it, so nothing there is affected.`;
+        : unopened > 0 ? `${asks} No month in the folder opens under it.` : `${asks} No month in the folder is under it, so nothing there is affected.`) + more;
 }
 
 /**
@@ -151,15 +181,16 @@ export function forgetNotice(months: number): string {
  * and acts on the second click. A retired key only opens files; forgetting it closes the way in for anyone who still
  * holds its secret.
  * @group settings
- * @gallery with dates, one still in use {"retired": [{"keyId": "9f3a1c7e2b40d815", "since": 1790000000000}, {"keyId": "c04b77aa19e2f6d3", "since": 1785000000000}], "counts": {"9f3a1c7e2b40d815": 2}}
+ * @gallery with dates, one still in use {"retired": [{"keyId": "9f3a1c7e2b40d815", "since": 1790000000000}, {"keyId": "c04b77aa19e2f6d3", "since": 1785000000000}], "counts": {"byKey": {"9f3a1c7e2b40d815": 2}, "unopened": 0}}
  * @gallery from before dates were kept, folder not connected {"retired": [{"keyId": "9f3a1c7e2b40d815"}], "counts": null}
- * @gallery asking to forget, months still under it {"retired": [{"keyId": "9f3a1c7e2b40d815", "since": 1790000000000}], "counts": {"9f3a1c7e2b40d815": 3}, "confirm": "9f3a1c7e2b40d815"}
- * @gallery asking to forget, none under it {"retired": [{"keyId": "c04b77aa19e2f6d3"}], "counts": {}, "confirm": "c04b77aa19e2f6d3"}
+ * @gallery asking to forget, months still under it {"retired": [{"keyId": "9f3a1c7e2b40d815", "since": 1790000000000}], "counts": {"byKey": {"9f3a1c7e2b40d815": 3}, "unopened": 0}, "confirm": "9f3a1c7e2b40d815"}
+ * @gallery asking to forget, none under it {"retired": [{"keyId": "c04b77aa19e2f6d3"}], "counts": {"byKey": {}, "unopened": 0}, "confirm": "c04b77aa19e2f6d3"}
+ * @gallery asking to forget, files that open under no key {"retired": [{"keyId": "9f3a1c7e2b40d815", "since": 1790000000000}], "counts": {"byKey": {"9f3a1c7e2b40d815": 1}, "unopened": 3}, "confirm": "9f3a1c7e2b40d815"}
  */
 export function RetiredKeys(p: {
     retired: RetiredInfo[];
-    /** month files per key id; null when the folder cannot be read from here */
-    counts: Record<string, number> | null;
+    /** the months that open under each key, and the files that open under none; null when the folder cannot be read from here */
+    counts: KeyCounts | null;
     busy?: boolean;
     /** the key whose notice is open at the start (the gallery shows the notice this way) */
     confirm?: string;
@@ -171,17 +202,17 @@ export function RetiredKeys(p: {
         <div class="arch-retired">
             <div class="bk-title">Earlier backup keys</div>
             {p.retired.map((r) => {
-                const n = p.counts ? p.counts[r.keyId] ?? 0 : null;
+                const n = p.counts ? p.counts.byKey[r.keyId] ?? 0 : null;
                 return (
                     <div class="arch-rk" key={r.keyId}>
                         <div class="arch-rk-row">
-                            <code>{r.keyId.slice(0, 8)}</code>
+                            <KeyId id={r.keyId} />
                             <span class="set-hint">{r.since ? `retired ${new Date(r.since).toLocaleDateString()}` : "retired earlier"}{n === null ? "" : `, ${monthsOf(n)} in the folder`}</span>
                             {asking === r.keyId ? null : <button class="test-btn" disabled={p.busy} onClick={() => setAsking(r.keyId)}>Forget</button>}
                         </div>
                         {asking === r.keyId ? (
                             <div class="arch-rk-ask">
-                                <div class="set-warn">{forgetNotice(n ?? 0)}{n === null ? " The folder is not connected here, so the months under it are not counted." : ""}</div>
+                                <div class="set-warn">{forgetNotice(n ?? 0, p.counts?.unopened ?? 0)}{n === null ? " The folder is not connected here, so the months under it are not counted." : ""}</div>
                                 <div class="arch-actions">
                                     <button class="test-btn arch-primary" disabled={p.busy} onClick={() => { setAsking(null); p.onForget?.(r.keyId); }}>Forget this key</button>
                                     <button class="test-btn" disabled={p.busy} onClick={() => setAsking(null)}>Cancel</button>
@@ -204,6 +235,8 @@ export function RetiredKeys(p: {
  * @gallery needs a key, a new machine joining {"skipped": [{"month": "2026-08", "reason": "needs-key", "error": "x", "keyId": "k9"}, {"month": "2026-09", "reason": "needs-key", "error": "x", "keyId": "k9"}], "hasOwnKey": false}
  * @gallery another install's key {"skipped": [{"month": "2026-09", "reason": "other-key", "error": "x", "keyId": "k9"}], "hasOwnKey": true}
  * @gallery damaged {"skipped": [{"month": "2026-07", "reason": "unreadable", "error": "not an archive"}]}
+ * @gallery the folder's key changed {"skipped": [{"month": "2026-09", "reason": "other-key", "error": "x", "keyId": "c04b77aa19e2f6d3"}], "hasOwnKey": true, "pin": "9f3a1c7e2b40d815"}
+ * @gallery another install's key, with its id to match {"skipped": [{"month": "2026-09", "reason": "other-key", "error": "x", "keyId": "c04b77aa19e2f6d3"}], "hasOwnKey": true}
  */
 export function SkippedMonths(p: {
     skipped: Skipped;
@@ -212,6 +245,8 @@ export function SkippedMonths(p: {
     busy?: boolean;
     /** the last "Use this folder's key" try did not open the file */
     wrong?: boolean;
+    /** the key id this install expects the folder's months under (`loadFolderPin`); absent before one is pinned */
+    pin?: string | null;
     /** false where the form choice below already sets up a new key */
     canSetup?: boolean;
     keyringStore?: KeyringStore;
@@ -228,8 +263,11 @@ export function SkippedMonths(p: {
         <KeyringSetup keyring={p.keyringStore ?? idbKeyringStore()} onCancel={() => setSetting(false)} onDone={() => { setSetting(false); p.onKeySet?.(); }} />
     );
     const pick = keyToAdopt(need.length ? need : other);
+    // A key other than the one pinned: the folder's key changed, or someone who can write to it put these files there.
+    const otherIds = [...new Set(other.map((s) => s.keyId).filter((k): k is string => !!k))].filter((k) => k !== p.pin);
+    const changed = p.pin && otherIds.length ? (pick?.keyId && otherIds.includes(pick.keyId) ? pick.keyId : otherIds[0]) : null;
     const adopt = (first: boolean) => pick ? (
-        <AdoptFolderKey hasOwnKey={p.hasOwnKey ?? true} months={pick.months} busy={!!p.busy} wrong={!!p.wrong} first={first} onAdopt={(t) => p.onAdopt?.(t, pick.month)} />
+        <AdoptFolderKey hasOwnKey={p.hasOwnKey ?? true} months={pick.months} keyId={pick.keyId} busy={!!p.busy} wrong={!!p.wrong} first={first} onAdopt={(t) => p.onAdopt?.(t, pick.month)} />
     ) : null;
     return (
         <div class="arch-skips">
@@ -245,6 +283,9 @@ export function SkippedMonths(p: {
             ) : null}
             {other.length ? (
                 <>
+                    {changed ? (
+                        <div class="set-warn arch-changed"><b>This folder's key changed.</b> This install expects its months under <KeyId id={p.pin!} />; {monthsOf(other.length)} {other.length === 1 ? "is" : "are"} under <KeyId id={changed} />. If you did not change the key on your other machine, do not enter a secret here: someone who can write to this folder may have added these files.</div>
+                    ) : null}
                     <div class="set-warn">{monthsOf(other.length)} {other.length === 1 ? "is" : "are"} encrypted with another install's key. {other.length === 1 ? "It is" : "They are"} left as {other.length === 1 ? "it was" : "they were"}.</div>
                     {adopt(false)}
                 </>
@@ -289,7 +330,9 @@ export function ArchiveFolderBody(p: {
     /** a new key was set up from the skipped months' choice */
     onKeySet?(): void;
     /** month files per key id in the connected folder, for the retired keys' list; absent or null when not read */
-    keyCounts?: Record<string, number> | null;
+    keyCounts?: KeyCounts | null;
+    /** the key id this install expects the folder's months under; absent before one is pinned */
+    pin?: string | null;
     /** forget the retired key with this id (`forgetRetiredKey`) */
     onForgetKey?(keyId: string): void;
 }) {
@@ -312,8 +355,8 @@ export function ArchiveFolderBody(p: {
     if (r.state === "connected" && r.form === null) return (
         <div class="arch">
             <div class="set-hint">Using <b>{r.name}</b>. Nothing is written to it until you choose how the archive writes its month files there.</div>
-            {r.skipped?.length ? <SkippedMonths skipped={r.skipped} hasOwnKey={!!r.keyring?.set} canSetup={false} busy={p.busy === "adopt-key"} wrong={p.adoptWrong} onAdopt={p.onAdoptKey} /> : null}
-            <ArchiveFormChoice first current="plain" keyringSet={r.keyring ? r.keyring.set : null} busy={!!p.busy} keyringStore={p.keyringStore} onApply={(f) => p.onForm?.(f)} />
+            {r.skipped?.length ? <SkippedMonths skipped={r.skipped} hasOwnKey={!!r.keyring?.set} pin={p.pin} canSetup={false} busy={p.busy === "adopt-key"} wrong={p.adoptWrong} onAdopt={p.onAdoptKey} /> : null}
+            <ArchiveFormChoice first current="plain" keyringSet={r.keyring ? r.keyring.set : null} keyId={r.keyring?.set ? r.keyring.keyId : null} busy={!!p.busy} keyringStore={p.keyringStore} onApply={(f) => p.onForm?.(f)} />
             {p.message ? <div class="set-hint arch-msg">{p.message}</div> : null}
         </div>
     );
@@ -381,9 +424,9 @@ export function ArchiveFolderBody(p: {
                 the lasting choice is offered on the NEXT ask. Said once, here, so that ask is not a surprise. */}
             {tried ? null : <div class="set-hint">After a browser restart it may ask for this folder again. Choose <b>Always allow</b> then, if it is offered, and it stays connected.</div>}
             {pending}
-            <ArchiveFormChoice current={r.form ?? "plain"} keyringSet={r.keyring ? r.keyring.set : null} busy={!!p.busy} keyringStore={p.keyringStore} onApply={(f) => p.onForm?.(f)} />
+            <ArchiveFormChoice current={r.form ?? "plain"} keyringSet={r.keyring ? r.keyring.set : null} keyId={r.keyring?.set ? r.keyring.keyId : null} busy={!!p.busy} keyringStore={p.keyringStore} onApply={(f) => p.onForm?.(f)} />
             {r.keyring?.set && r.keyring.retired?.length ? <RetiredKeys retired={r.keyring.retired} counts={p.keyCounts ?? null} busy={!!p.busy} onForget={p.onForgetKey} /> : null}
-            {r.skipped?.length ? <SkippedMonths skipped={r.skipped} hasOwnKey={!!r.keyring?.set} busy={p.busy === "adopt-key"} wrong={p.adoptWrong} keyringStore={p.keyringStore} onAdopt={p.onAdoptKey} onKeySet={p.onKeySet} /> : null}
+            {r.skipped?.length ? <SkippedMonths skipped={r.skipped} hasOwnKey={!!r.keyring?.set} pin={p.pin} busy={p.busy === "adopt-key"} wrong={p.adoptWrong} keyringStore={p.keyringStore} onAdopt={p.onAdoptKey} onKeySet={p.onKeySet} /> : null}
             <div class="arch-actions">
                 {btn("Write now", "Writing…", "sync", p.onSync)}
                 {btn("Import from this folder", "Importing…", "import", p.onImport)}
@@ -394,6 +437,18 @@ export function ArchiveFolderBody(p: {
             {off}{note}
         </div>
     );
+}
+
+/**
+ * The key id a refresh should pin as the folder's (part 3e, the fourth place a pin is set), or null: the folder is
+ * connected, written as encrypted, has synced, nothing in it is skipped (the page's last sync or import skipped none,
+ * and every encrypted month in the folder opened here, `unopened` 0), and no pin is set yet. Then every month is under
+ * a key this install holds, which is the state a later change should be measured against.
+ * @param unopened the files that opened under no key (`monthKeyCounts`); null when the folder could not be read here
+ */
+export function folderPinToSet(r: FolderReport, pin: string | null, skipped: Skipped, unopened: number | null): string | null {
+    if (pin || r.state !== "connected" || r.form !== "encrypted" || !r.lastSync || !r.keyring.set) return null;
+    return skipped.length === 0 && unopened === 0 ? r.keyring.keyId : null;
 }
 
 /** A top-level page (the chat page, the DevTools panel's own page) rather than a frame inside someone's site. */
@@ -434,20 +489,29 @@ export function LocalArchiveFolder({ archiveOn }: { archiveOn: boolean }) {
     const [found, setFound] = useState<{ name: string; files: number; first?: string; last?: string } | null>(null);
     // The months the last sync or import skipped: a plain state read does not carry them, so they are kept here.
     const [skipped, setSkipped] = useState<NonNullable<FolderReport["skipped"]>>([]);
+    const skippedNow = useRef<Skipped>([]);   // state: plumbing — what the last action skipped, readable from a refresh that closed over an older render
     const [adoptWrong, setAdoptWrong] = useState(false);
-    // Month files per key, read from the folder's headers by this page (the handle it holds); null while unread or unreachable.
-    const [keyCounts, setKeyCounts] = useState<Record<string, number> | null>(null);
+    // Month files per key and those that open under none, read by opening each (the handle this page holds); null while unread or unreachable.
+    const [keyCounts, setKeyCounts] = useState<KeyCounts | null>(null);
+    // The key id this install expects the folder's months under (archive-folder.ts `loadFolderPin`); null until one is pinned.
+    const [pin, setPin] = useState<string | null>(null);
     const call = async (action: Parameters<typeof folderMessage>[0], form?: BackupForm) => {
         const r = await folderMessage(action, form);
-        if (r.written || r.imported || r.skipped) setSkipped(r.skipped ?? []);
+        if (r.written || r.imported || r.skipped) { skippedNow.current = r.skipped ?? []; setSkipped(skippedNow.current); }
         return r;
     };
     const refresh = () => folderMessage("state").then(async (r) => {
         // Only a page can tell that picking is impossible here; the worker reports "none" for a folder never picked.
         setReport(r.state === "none" && !canPickFolder() ? { ...r, state: "unsupported" } : r);
-        // Counted only when a retired key is listed, so a folder without one is not read for it.
-        const dir = r.keyring.set && r.keyring.retired?.length ? await writableFolder().catch(() => null) : null;
-        setKeyCounts(dir ? await monthKeyCounts(dir).catch(() => null) : null);
+        let held = await loadFolderPin().catch(() => null);
+        // Months are counted (by opening them) when a retired key is listed, or when the pin may be set from them.
+        const want = r.keyring.set && (r.keyring.retired?.length || folderPinToSet(r, held, skippedNow.current, 0));
+        const dir = want ? await writableFolder().catch(() => null) : null;
+        const counts = dir ? await monthKeyCounts(dir, await loadKeyring(idbKeyringStore())).catch(() => null) : null;
+        setKeyCounts(counts);
+        const toPin = folderPinToSet(r, held, skippedNow.current, counts ? counts.unopened : null);
+        if (toPin) { await saveFolderPin(toPin).then(() => { held = toPin; }, () => {}); }
+        setPin(held);
     }, (e) => setMessage(String(e?.message || e)));
     useEffect(() => {
         void refresh();
@@ -466,6 +530,7 @@ export function LocalArchiveFolder({ archiveOn }: { archiveOn: boolean }) {
             found={found}
             adoptWrong={adoptWrong}
             keyCounts={keyCounts}
+            pin={pin}
             onForgetKey={(keyId) => void act("forget-key", async () => {
                 await forgetRetiredKey(idbKeyringStore(), keyId);
                 return "Forgot that key. Files under it ask for its passphrase or recovery key here.";
@@ -478,12 +543,15 @@ export function LocalArchiveFolder({ archiveOn }: { archiveOn: boolean }) {
                 const dir = await writableFolder();
                 const head = dir ? await readMonthHead(dir, month) : null;
                 if (!head) return "The folder is not connected, or that month's file is gone. Reconnect it and try again.";
-                try { await adoptKeyring(idbKeyringStore(), head, secretFromText(text)); }
+                let adoptedId: string;
+                try { adoptedId = await adoptKeyring(idbKeyringStore(), head, secretFromText(text)); }
                 catch (e) {
                     const reason = (e as { reason?: string })?.reason;
                     if (reason === "wrong-secret" || reason === "bad-recovery-key") { setAdoptWrong(true); return; }
                     throw e;
                 }
+                // Pinned by this click and nothing the folder says: the key adopted is the one expected from now on.
+                await saveFolderPin(adoptedId).catch(() => {});
                 // With a form chosen the months are all rewritten under the key; without one nothing is written yet, so only read them.
                 if (report?.form) {
                     const r = await call("rekey");
@@ -494,6 +562,8 @@ export function LocalArchiveFolder({ archiveOn }: { archiveOn: boolean }) {
             })()}
             onForm={(form) => void act("form", async () => {
                 const r = await call("form", form);
+                // Encrypted is now the folder's form: the key it is written under is the one expected there.
+                if (r.form === "encrypted") { const k = await keyringState(idbKeyringStore()); if (k.set) await saveFolderPin(k.keyId).catch(() => {}); }
                 return `Now written as ${formName(r.form!)}. Wrote ${r.written?.length ?? 0}, removed ${r.removed?.length ?? 0}.`;
             })()}
             onPick={act("pick", async () => {
