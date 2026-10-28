@@ -1298,11 +1298,11 @@ test.describe("@security attack 18: the approval highlight", () => {
     });
 
     // The light and open variants are hidden pages: the card is in the side panel and the highlight stays on the page. The panel
-    // asks the shell to draw it with ML_HL_REMOTE, which a shell in debug mode "off" ignores (shell.ts), so these run in
-    // "devtools" mode, where it draws; the next test records that the default mode draws nothing there.
+    // asks the shell to draw it with ML_HL_REMOTE, which the worker marks `anyMode` for the side panel, so it draws in the
+    // default debug mode; the shell tells the panel where it drew through the worker (ML_HL_POS).
     for (const where of ["light", "open", "closed"])
     test(`18 (${where === "light" ? "light DOM" : `the page's own ${where} shadow root`}): the page neither hears the selector being approved nor moves its highlight`, async () => {
-        const { fake, site, ext, close } = await setup(where === "closed" ? {} : { debugMode: "devtools" });
+        const { fake, site, ext, close } = await setup();
         try {
             // A closed root needs the shadow patch there before the page makes it, which only an allowed origin has
             // (SITE_PRESENCE step 2; a hidden page's earlier closed roots are unreadable to a run). Allowed to USE
@@ -1318,11 +1318,8 @@ test.describe("@security attack 18: the approval highlight", () => {
             // the side panel (the highlight stays on the page either way).
             const surface = await cardOn(ext, page, where === "closed" ? "visible" : "hidden");
             const cardText = async () => (await surface.text()).replace(/\s+/g, " ");
-            // Positive control: the approve highlight lands on the button and the card names where it is. In the side panel the
-            // card says the target is highlighted but not where: the position (`__mlHighlightPos`) is posted by the page's
-            // shell to the app, and the panel has no shell. Measured gap, not a regression of this test.
-            const located = where === "closed" ? "Highlighted on the page · top-right" : "Highlighted on the page";
-            if (where !== "closed") test.info().annotations.push({ type: "product gap", description: "the side panel's card gets no __mlHighlightPos, so it never says where on the page the approve highlight is" });
+            // Positive control: the approve highlight lands on the button and the card names where it is, in the page or the panel.
+            const located = "Highlighted on the page · top-right";
             await expect.poll(cardText, { timeout: 15000 }).toContain(located);
             const real = await page.evaluate((w) => {
                 const host = document.getElementById("target-host");
@@ -1352,12 +1349,8 @@ test.describe("@security attack 18: the approval highlight", () => {
     });
 
     test("18 (hidden, debug mode off): the approve highlight is drawn on the page the run's card is not on", async () => {
-        // KNOWN PRODUCT GAP, measured: the side panel's card asks for the highlight over ML_HL_REMOTE, and the shell draws it
-        // only in "devtools" mode or when the message says `anyMode` (shell.ts), which the panel's relay (background.ts) does not
-        // send. So a person approving a click on a hidden page in the default mode is shown no outline of its target. Fails
-        // today (`test.fail`); when the relay says `anyMode`, this starts passing and Playwright reports it, which is the cue to
-        // drop the marker.
-        test.fail(true, "the side panel's highlight request is dropped by a shell in debug mode off");
+        // The shell draws a remote highlight only in "devtools" mode or when the message says `anyMode`; the worker adds it for
+        // the side panel's requests, since a hidden page's approval is in the panel whatever the debug surface.
         const { fake, site, ext, close } = await setup();
         try {
             const page = await open(ext, site.url("evil.test"));
@@ -1367,8 +1360,9 @@ test.describe("@security attack 18: the approval highlight", () => {
             fake.setScript([{ tool: "click", args: { selector: "#approve-me" } }, { content: "done" }]);
             const hash = await userStartsRun(ext, idx, page, "click the shadow button");
             await expect.poll(() => idx.status(hash), { timeout: 15000 }).toBe("waiting");
-            await expect.poll(surface.text, { timeout: 15000 }).toContain("Highlighted on the page");
-            await expect.poll(() => drawn(page), { timeout: 5000 }).not.toBeNull();
+            // The card first: the panel (in the harness's popup, which closes when focus moves) is open while it asks.
+            await expect.poll(async () => (await surface.text()).replace(/\s+/g, " "), { timeout: 15000 }).toContain("Highlighted on the page · top-right");
+            await expect.poll(() => drawn(page), { timeout: 15000 }).not.toBeNull();
         } finally { await close(); }
     });
 

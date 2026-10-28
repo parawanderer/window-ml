@@ -334,6 +334,10 @@ highlight on a waiting click's target, so the card, the transcript and the start
   The panel starts a run with `PANEL_START_RUN` (extension sender, no tab, a numeric `payload.tabId`), since
   `USER_START_RUN` reads the tab from `sender`; everything else is the card app's usual relay (`relayAppToWorker`,
   `app-host.ts`, shared with `panel.ts`).
+- **The approval highlight stays on the page.** The panel's card asks for it over `ML_HL_REMOTE`, which the worker marks
+  `anyMode` for the side panel's own sender only, so the shell draws it in every debug mode. The shell tells the panel where
+  it drew with `ML_HL_POS`: the worker takes one of the nine labels (`HL_POSITIONS`) from a top frame and hands it to that
+  tab's OPEN panel, never queued.
 - **A run's end leaves the panel enabled**, showing the run as finished; it is empty after the next navigation.
 - **Not yet closed:** the DevTools panel's `ml-devtools` port takes any extension sender's `tabId`, and `debugMode:
   "overlay"` mounts `#ml-sb-root` on a hidden page. Both are pre-existing and ruled for the security lane's follow-ups

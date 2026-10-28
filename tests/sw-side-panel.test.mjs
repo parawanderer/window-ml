@@ -404,6 +404,33 @@ test("ml-sidepanel port (sw-debug): an extension page with no tab gets the repla
     assert.deepEqual(port.messages.filter((m) => "replay" in m).length, 1);
 });
 
+// --- the highlight for the panel's card: drawn in every mode, its position back to the open panel only ---
+
+test("ML_HL_REMOTE: anyMode only for the side panel's own sender; the DevTools panel and a tab's sender get none", async () => {
+    const bg = worker();
+    const senders = [EXT_SENDER, { url: `${EXT}panel.html` }, { url: `${EXT}sidepanel.html?tabId=7`, tab: { id: 7 } }, pageSender()];
+    for (const sender of senders) void bg.send({ type: "ML_HL_REMOTE", tabId: 7, ref: { selector: "#x" } }, sender);
+    await flush();
+    const sent = bg.tabMessages.filter(([, m]) => m?.type === "ML_HL_REMOTE").map(([, m]) => m.anyMode === true);
+    assert.deepEqual(sent, [true, false, false, false]);
+});
+
+test("ML_HL_POS: reaches the tab's open panel as __mlHighlightPos; not a closed one, not a sub-frame, not an unknown label", async () => {
+    const bg = worker();
+    const shell = (frameId = 0) => ({ ...pageSender(), frameId });
+    // These answer nothing (fire and forget), so they are sent, not awaited.
+    void bg.send({ type: "ML_HL_POS", pos: "top-right" }, shell());   // no panel open: dropped, not queued
+    const port = bg.connect("ml-sidepanel", EXT_SENDER);
+    port.send({ type: "ml-sidepanel-init", tabId: 7 });
+    await flush();
+    void bg.send({ type: "ML_HL_POS", pos: "bottom-left" }, shell(3));
+    void bg.send({ type: "ML_HL_POS", pos: "<img src=x>" }, shell());
+    void bg.send({ type: "ML_HL_POS", pos: { toString: () => "top" } }, shell());
+    void bg.send({ type: "ML_HL_POS", pos: "top-right" }, shell());
+    await flush();
+    assert.deepEqual(JSON.parse(JSON.stringify(port.messages.filter((m) => m && "cue" in m).map((m) => m.cue))), [{ __mlHighlightPos: "top-right" }]);
+});
+
 // --- the badge ---
 
 test("badgeFor: everything waiting is in the panel -> the panel-only title, counted", () => {

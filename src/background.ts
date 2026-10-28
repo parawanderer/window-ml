@@ -73,7 +73,7 @@ import { fetchImageDataUrl } from "./sw/sw-image-fetch";
 import { approvalKey } from "./approval-key";
 import { raiseAsk } from "./sw/sw-asks";
 import { refreshShell, shellStatus } from "./sw/sw-shell";
-import { toPageUi, notePage, forgetTab, syncAllPanels, servePanelPort, startGesture, tabHidden, cuePanel } from "./sw/sw-side-panel";
+import { toPageUi, notePage, forgetTab, syncAllPanels, servePanelPort, startGesture, tabHidden, cuePanel, panelOpen, HL_POSITIONS } from "./sw/sw-side-panel";
 
 
 // In-flight FETCH_LLM AbortControllers, keyed by the page's requestId, so an ABORT_TASK message
@@ -367,8 +367,18 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     // inspected page, so it asks us to relay its highlight request to that tab's content-script shell,
     // which draws the box. Only the extension can call a typed background message like this — a web page
     // has no chrome.runtime path to it — and drawing is a read-only pointer-events:none overlay anyway.
+    // The side panel's too: a hidden page's approval is in the panel whatever the tab's debug surface, so its highlight
+    // is drawn in every mode (`anyMode`), as the chat page's is.
     if (message.type === "ML_HL_REMOTE" && typeof message.tabId === "number") {
-        try { void chrome.tabs.sendMessage(message.tabId, { type: "ML_HL_REMOTE", ref: message.ref }).catch(() => {}); } catch { /* tab gone */ }
+        const fromSidePanel = isExtensionSender(sender) && !sender.tab && typeof sender.url === "string" && sender.url.startsWith(chrome.runtime.getURL("sidepanel.html"));
+        try { void chrome.tabs.sendMessage(message.tabId, { type: "ML_HL_REMOTE", ref: message.ref, ...(fromSidePanel ? { anyMode: true } : {}) }).catch(() => {}); } catch { /* tab gone */ }
+        return;
+    }
+    // Where on the page an approval's target sits, from the tab's shell, for the card in its open side panel (the
+    // in-page card hears it from the shell directly). One of the nine labels or nothing; never queued for a closed panel.
+    if (message.type === "ML_HL_POS") {
+        const tid = sender.tab?.id;
+        if (tid != null && sender.frameId === 0 && HL_POSITIONS.has(message.pos) && panelOpen(tid)) cuePanel(tid, { __mlHighlightPos: message.pos });
         return;
     }
     // DevTools session composer → the inspected tab's shell → the page's handle registry (say/run/cancel).

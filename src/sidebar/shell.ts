@@ -732,8 +732,13 @@ function drawHighlight(left: number, top: number, width: number, height: number,
     lab.className = "ml-hl-label";
     lab.textContent = label;
     highlightEl.replaceChildren(lab);
-    // Tell the card where on the page the approval target sits (the card is the frame in off mode).
-    if (hlKind === "approve" && frame) toApp({ __mlHighlightPos: posLabel(left + width / 2, top + height / 2) });
+    // Tell the card where on the page the approval target sits: the frame in off mode, else the tab's side panel (a
+    // hidden page's card), through the worker, which drops it when no panel is open.
+    if (hlKind === "approve") {
+        const pos = posLabel(left + width / 2, top + height / 2);
+        if (frame) toApp({ __mlHighlightPos: pos });
+        else { try { void chrome.runtime.sendMessage({ type: "ML_HL_POS", pos }).catch(() => {}); } catch { /* context gone */ } }
+    }
 }
 function hideHighlight(): void { hlSeq++; hlKind = ""; lastHlRef = null; if (highlightEl) { highlightEl.remove(); highlightEl = null; } }
 // Reposition on scroll/resize: the box/@pt marker is computed from getBoundingClientRect (viewport coords)

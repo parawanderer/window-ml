@@ -486,6 +486,8 @@ function onMessage(d: any): void {
     else if (d.__mlSidebarKeyRelay === true) keyRelay.value = true;
     // The pointer is on the page (shell.ts relayPointerOut): let go of the axis, and replay the leaves it never sent.
     else if (d.__mlSidebarPointerOut === true) { releaseAxisHold(); pointerGone(); }
+    // The card in Chrome's side panel (sidepanel.ts): full height already, so the corner card's maximise and collapse go.
+    else if (d.__mlSidebarHost === "sidepanel") document.documentElement.dataset.host = "sidepanel";
     else if (typeof d.__mlSidebarSurface === "string") {
         // The shell tells us which surface we are. The off-mode card renders a transparent, curated
         // view — flag <html> so the CSS drops the opaque canvas and the acrylic shows through.

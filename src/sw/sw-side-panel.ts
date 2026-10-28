@@ -110,6 +110,10 @@ export function toPageUi(tabId: number, message: Record<string, unknown>, option
     });
 }
 
+/** The nine places on the page an approval's target can sit, as the shell names them (`posLabel`, shell.ts): all a
+ *  content script's `ML_HL_POS` may carry to the panel. */
+export const HL_POSITIONS: ReadonlySet<unknown> = new Set(["top-left", "top", "top-right", "left", "centre", "right", "bottom-left", "bottom", "bottom-right"]);   // state: fixed
+
 /** Whether a side panel shows this tab now. */
 export function panelOpen(tabId: number): boolean {
     return (panelPorts.get(tabId)?.size ?? 0) > 0;

@@ -53,6 +53,7 @@ window.addEventListener("message", (e: MessageEvent) => {
         ready = true;
         // The card's surface: the same app the page's corner card runs, its approvals and its composer.
         frame.contentWindow?.postMessage({ __mlSidebarSurface: "card" }, "*");
+        frame.contentWindow?.postMessage({ __mlSidebarHost: "sidepanel" }, "*");
         for (const m of queue.splice(0)) frame.contentWindow?.postMessage(m, "*");
         return;
     }
