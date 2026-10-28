@@ -110,6 +110,20 @@ test("each run scan is charged before it scans, so a pattern of many units over 
     assert.equal(REGEX_UNITS_PER_STEP, 512);
 });
 
+// --- the COST corpus: the bound's order on each input, the same entries the fork's regex_work is held to ---
+
+test("the cost corpus: every entry's bound grows with its input in the stated order, or is unbounded", async () => {
+    const { regexCostVectors, regexInput } = await import("./dialect-vectors.mjs");
+    const corpus = regexCostVectors("js");
+    assert.ok(corpus.length >= 20, `${corpus.length} entries`);
+    for (const v of corpus) {
+        const at = (k) => regexWork(v.pattern, v.flags, regexInput({ input: { ...v.input, n: v.input.n * k } }));
+        if (v.order === null) { assert.equal(at(1), Infinity, `${v.name}: ${v.reason}`); continue; }
+        const ratio = at(2) / at(1);
+        assert.ok(Math.abs(Math.log2(ratio) - v.order) < 0.1, `${v.name}: /${v.pattern}/${v.flags} doubles to ${ratio.toFixed(2)}x, order ${v.order} (${v.reason})`);
+    }
+});
+
 // --- the regex CORPUS: the JS dialect's half of the one definition both dialects transcribe ---
 
 // docs/spec/PYTHON_DIALECT.md, "one DEFINITION and one CORPUS": the regex entries of halting.json state each pattern's

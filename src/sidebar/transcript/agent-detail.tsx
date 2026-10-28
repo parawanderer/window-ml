@@ -12,6 +12,7 @@ import type { RenderDescriptor } from "../../contract/contract-render";
 import type { DebugAgentConfig } from "../../contract/contract-debug";
 import type { PromptDisplay } from "../../contract/contract-run";
 import { resolveOutputCap } from "../../contract/contract-pointers";
+import { jsBridgeLine } from "../../python/bridge-names";
 import { runStats, fmtTokPerSec, runStatsProvenance } from "../../contract/contract-chat";
 import { externalSheetIds } from "../../dom/dom";
 import { surface, view, rev, sessionMap, turnsRun, atBottom, showStatsTokens, showStatsTps, laneLitSeqs, focusMode, groupAllTools } from "../store";
@@ -245,6 +246,29 @@ export function HostAccessNote({ st }: { st: AgentStep }) {
         <div class="action-host">
             <IconWarn />
             <span>First-time access to <b class="action-target">{host}</b> — approving asks Chrome to grant this site {why}.</span>
+        </div>
+    );
+}
+
+/**
+ * A python_exec cell that names one of the browser's JavaScript bridges (`js`, `pyodide.ffi`) says so on its approval
+ * card, in the approved line (bridge-names.ts): approved with it showing, the cell runs with those imports allowed;
+ * without it they are refused. A cell that names none, in a run where an earlier cell ran with them lifted (`why.bridged`),
+ * says the run's namespace may still hold what that cell took. Renders nothing for any other call.
+ *
+ * @gallery {"tool":"python_exec","args":{"code":"import js\njs.console.log(1)"}}
+ * @gallery pyodide.ffi {"tool":"python_exec","args":{"code":"from pyodide.ffi import to_js"}}
+ * @gallery kept {"tool":"python_exec","args":{"code":"_x = T"},"why":{"line":"Outside the read-only Python dialect","detail":"","cause":"outside-dialect","bridged":true}}
+ * @group card
+ */
+export function JsBridgeNote({ tool, args, why }: { tool?: string; args?: Record<string, unknown>; why?: import("../../contract").AskWhy }) {
+    if (tool !== "python_exec" || typeof args?.code !== "string") return null;
+    const line = jsBridgeLine(args.code, why?.bridged === true);
+    if (!line) return null;
+    return (
+        <div class="action-raise js-bridge">
+            <IconWarn />
+            <span>{line.split("`").map((part, i) => (i % 2 ? <code key={i}>{part}</code> : part))}</span>
         </div>
     );
 }
@@ -599,6 +623,7 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
                         : null}
                     {st.askWhy ? <AskWhyLine why={st.askWhy} /> : null}
                     <HostAccessNote st={st} />
+                    <JsBridgeNote tool={st.tool} args={st.arguments} why={st.askWhy} />
                     <OutputRaiseNote tool={st.tool} args={st.arguments} />
                     {showGrants ? <GrantCard grants={st.grants!} /> : null}
                     {/* WHAT is being approved, in the same sentence the off-mode card uses. "Approve running

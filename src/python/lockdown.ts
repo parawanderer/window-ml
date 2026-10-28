@@ -12,11 +12,14 @@
 // `docs/plan/repl/PYODIDE_LOCKDOWN.md` is the spec; `docs/dev/python-sandbox.md` is the implementation note.
 import "ses";
 import { installCellGate, type CellGate } from "./cell-gate";
+import { REFUSED_BRIDGES } from "./bridge-names";
 
 /** Once per realm: `lockdown()` freezes the intrinsics and throws if called twice. */
 let locked = false;   // state: plumbing — the realm's lockdown latch, one-way
 /** The realm's cell gate, installed with the lockdown (cell-gate.ts). */
 let gate: CellGate | null = null;   // state: plumbing — installed once per realm, before `lockdown()`
+/** Each interpreter's bridge lift (BRIDGE_GATE), so a second boot of the same interpreter hands back the same one. */
+const bridgeLifts = new WeakMap<object, (on: boolean) => void>();   // state: plumbing — one per interpreter, set at its boot
 
 /** Whether this realm's `lockdown()` has run and left it frozen: the latch `lockdownReadonly` sets, for tests and the worker's own checks. */
 export function realmLocked(): boolean { return locked; }
@@ -369,17 +372,117 @@ del _ml_seal
 `;
 
 /**
+ * The Python half of refusing `REFUSED_BRIDGES` to a cell. Each module is replaced, in `sys.modules`, on its parent
+ * package and behind a first `sys.meta_path` finder, by a guard module that holds none of its names: a lookup through
+ * it is answered from the real module only when no frame on the stack is the cell's. A frame is the LIBRARY's when its
+ * code was compiled from a file under the stdlib's directory or zip (site-packages included); anything else (the cell, the
+ * harness's `<exec>`, a string the cell compiled) counts as the cell's. One exception: a library module running its own
+ * import (`<module>`) is answered, so pyarrow's `unix_timezones` (`import js` at import time) loads from a cell. The
+ * caller unregisters `js` from Pyodide's finder first, so popping the guard does not bring the real one back.
+ * `_ml_bridge_gate` returns the LIFT: a setter only the worker's JavaScript holds, for the one cell whose approval card
+ * said it reaches the browser's JavaScript, cleared when that cell ends (lockdownReadonly's `bridges`).
+ *
+ * What this does NOT claim (measured 2026-10-27, written into PYODIDE_LOCKDOWN.md step 2): a cell in full Python reaches
+ * the same functions by introspection without an import (a library function's `__globals__`, a package's module
+ * global, `gc` over any holder, this guard's own closure), by compiling code under a library filename, or by removing
+ * the finder and re-importing a Python module from its file. Those keep the bounds they had: the strip and the cell gate.
+ */
+const BRIDGE_GATE = /* python */ `
+def _ml_bridge_gate(names):
+    import sys, os, types, importlib, importlib.util
+    if any(getattr(f, "__name__", None) == "_MlBridgeFinder" for f in sys.meta_path):
+        return None
+    root = tuple([os.path.dirname(os.__file__) + "/"] + [p + "/" for p in sys.path if p.endswith(".zip")])
+    real = {}
+    for n in names:
+        m = sys.modules.get(n)
+        if m is None and n != "js":
+            try:
+                m = importlib.import_module(n)
+            except ImportError:
+                m = None
+        if m is not None:
+            real[n] = m
+    getframe = sys._getframe
+    lift = [False]
+
+    def answered(f):
+        if lift[0]:
+            return True
+        while f is not None and f.f_code.co_filename.startswith("<frozen "):
+            f = f.f_back
+        if f is None:
+            return True
+        if f.f_code.co_filename.startswith(root) and f.f_code.co_name == "<module>":
+            return True
+        while f is not None:
+            fn = f.f_code.co_filename
+            if not fn.startswith(root) and not fn.startswith("<frozen "):
+                return False
+            f = f.f_back
+        return True
+
+    class _MlBridgeGuard(types.ModuleType):
+        def __getattr__(self, attr):
+            name = types.ModuleType.__getattribute__(self, "__name__")
+            if attr.startswith("__") and attr.endswith("__"):
+                raise AttributeError(attr)
+            if not answered(getframe(1)):
+                raise ImportError(f"{name} is refused in python_exec: a cell may not reach the browser's JavaScript ({name}.{attr})")
+            return getattr(real[name], attr)
+
+    guards = {n: _MlBridgeGuard(n) for n in real}
+
+    class _MlBridgeLoader:
+        @staticmethod
+        def create_module(spec):
+            return guards[spec.name]
+        @staticmethod
+        def exec_module(module):
+            pass
+
+    class _MlBridgeFinder:
+        @staticmethod
+        def find_spec(name, path=None, target=None):
+            if name in guards:
+                return importlib.util.spec_from_loader(name, _MlBridgeLoader)
+            return None
+
+    for n, g in guards.items():
+        g.__spec__ = importlib.util.spec_from_loader(n, _MlBridgeLoader)
+        g.__loader__ = _MlBridgeLoader
+        sys.modules[n] = g
+        parent, _, child = n.rpartition(".")
+        if parent and parent in sys.modules and not isinstance(sys.modules[parent], _MlBridgeGuard):
+            setattr(sys.modules[parent], child, g)
+    sys.meta_path.insert(0, _MlBridgeFinder)
+    # A module that imported a bridge before the gate holds the real module as a global (unix_timezones' \`js\`).
+    by_id = {id(m): guards[n] for n, m in real.items()}
+    for m in list(sys.modules.values()):
+        d = getattr(m, "__dict__", None)
+        if isinstance(d, dict) and not isinstance(m, _MlBridgeGuard):
+            for k, v in list(d.items()):
+                if id(v) in by_id:
+                    d[k] = by_id[id(v)]
+
+    def set_lift(on):
+        lift[0] = bool(on)
+    return set_lift
+`;
+
+/**
  * Boot a readonly-only Python worker: tame the JS intrinsics, strip the scope to the allow list, and
  * capture the harness's module references before any cell runs. Never undone — the readonly worker is
  * locked down at boot and stays that way (`full` mode runs in a separate worker that is never locked).
  *
  * @param py the Pyodide interpreter (already booted and its packages loaded)
  * @param scope the JS object to strip — `globalThis` in the worker, a stand-in in tests
- * @returns the relay's `postMessage`/`close`, captured before the strip, and the harness module the
- *   caller re-binds into every cell's namespace. The CALLER keeps them in its closure — never on the
+ * @returns the relay's `postMessage`/`close`, captured before the strip, the harness module the
+ *   caller re-binds into every cell's namespace, and `bridges`, which lifts the refusal of `REFUSED_BRIDGES` for the
+ *   cell about to run (true) and restores it (false). The CALLER keeps them in its closure — never on the
  *   scope, where a JsProxy of it would find them.
  */
-export async function lockdownReadonly(py: any, scope: any = globalThis): Promise<{ postMessage?: unknown; close?: unknown; harness?: unknown }> {
+export async function lockdownReadonly(py: any, scope: any = globalThis): Promise<{ postMessage?: unknown; close?: unknown; harness?: unknown; bridges: (on: boolean) => void }> {
     // 1. Intrinsic taming: the Function/AsyncFunction/GeneratorFunction constructors reached through a
     //    prototype chain throw. `lockdown()` is once per realm; a second call is a no-op here.
     if (!locked) {
@@ -417,7 +520,10 @@ export async function lockdownReadonly(py: any, scope: any = globalThis): Promis
     // Only `config` is frozen: the import system sets `_api` on its parent whenever a cell re-imports it.
     const standIn = { _api: { config: Object.freeze({ enableRunUntilComplete: !!py._api?.config?.enableRunUntilComplete }) } };
     try { py.unregisterJsModule("pyodide_js"); } catch { /* a second boot of this interpreter, or a seal that threw before */ }
-    py.runPython(PYODIDE_JS_SEAL);
+    // A second boot of this interpreter seals behind the bridge gate the first one installed (step 5).
+    const lifted = bridgeLifts.get(py);
+    lifted?.(true);
+    try { py.runPython(PYODIDE_JS_SEAL); } finally { lifted?.(false); }
     py.registerJsModule("pyodide_js", standIn);
 
     // 2. Capture what the relay needs BEFORE the strip: the worker's `onmessage` is defined once and
@@ -472,7 +578,19 @@ export async function lockdownReadonly(py: any, scope: any = globalThis): Promis
         harness = py.runPython(HARNESS_BOOT);
     } catch { /* the wrapper falls back */ }
 
+    // 5. The bridges a cell may not import (BRIDGE_GATE), installed last so the boot's own imports above are done. A
+    //    gate that throws fails the boot: the worker must not run a cell with `js` importable.
+    try { py.unregisterJsModule("js"); } catch { /* a second boot of this interpreter */ }
+    py.runPython(BRIDGE_GATE);
+    const install = py.globals.get("_ml_bridge_gate");
+    py.globals.delete("_ml_bridge_gate");
+    const setLift = install(py.toPy([...REFUSED_BRIDGES]));
+    install.destroy?.();
+    if (setLift) bridgeLifts.set(py, (on: boolean) => { setLift(on); });
+    const bridges = bridgeLifts.get(py);
+    if (!bridges) throw new Error("lockdownReadonly: the bridge gate did not install");
+
     // The relay keeps these in its own closure. Nothing is written to the scope: a JsProxy of it
     // must find neither the relay's functions nor a name that leads to them.
-    return { postMessage: heldPost, close: heldClose, harness };
+    return { postMessage: heldPost, close: heldClose, harness, bridges };
 }

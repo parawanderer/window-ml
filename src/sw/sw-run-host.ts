@@ -5,8 +5,9 @@
 
 import { runBackgroundAgent } from "../agent/agent-host";
 import { pythonCellInDialect, pythonOutsideWhy } from "../agent/python-dialect";
+import { namesJsBridge } from "../python/bridge-names";
 import { evalReadonlyInWorker } from "./sw-readonly";
-import { deletePythonRun } from "./sw-python";
+import { deletePythonRun, markPythonBridged, pythonRunBridged } from "./sw-python";
 import { workerReadonlyMl, derefWhole } from "./worker-readonly-ml";
 import { pipeStages } from "../pointers/token-pipe";
 import { recordRunLog, runLog } from "./sw-run-log";
@@ -34,7 +35,7 @@ import { extractGrants, fetchUrlLiterals, tabGrantsForCall } from "./grant-extra
 import { parseInfo } from "../resource/resource-capacity";
 import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from "./sw-cdp";
 import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, grantOnceFetch, consentFetch, fetchConsent } from "./sw-consent";
-import { ASK_POLICY_CAUSE, judgeCall, fetchFacts, navigateFacts, rememberFetchUrls, withPolicies, addRunPolicy, askWhyOf, askedByPolicy, withoutAsked, takeArchiveNotice } from "./sw-policies";
+import { ASK_POLICY_CAUSE, navOnlyWhy, startLeftWhy, judgeCall, fetchFacts, navigateFacts, rememberFetchUrls, withPolicies, addRunPolicy, askWhyOf, askedByPolicy, withoutAsked, takeArchiveNotice } from "./sw-policies";
 import { checkProposal, recordedFetches, measureBreadth, breadthNote, type PolicyProposal } from "./policy-proposal";
 import { approveManifest, checkManifestProposal, draftCardNote, type CheckedManifest } from "./sw-manifest-proposal";
 import { approveLibrary, checkLibraryProposal, isLibraryDraft, precheckLibrary, type CheckedLibrary } from "./sw-library-proposal";
@@ -666,6 +667,13 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         const navDest = (url: string): URL | undefined => {
             try { return new URL(url.startsWith("//") ? "https:" + url : url, tabPageUrl.get(tabId) ?? p.pageUrl ?? undefined); } catch { return undefined; }
         };
+        /** Whether `url` is on the origin of the page the run's tab is on now. */
+        const fetchOnPageOrigin = (url: string): boolean => {
+            const here = tabPageUrl.get(tabId) ?? p.pageUrl;
+            try { return !!here && new URL(url, here).origin === new URL(here).origin; } catch { return false; }
+        };
+        /** Whether a read of the start origin still counts as consented: the tab is on that origin, or the person granted it. */
+        const startOriginRead = (url: string): boolean => fetchOnPageOrigin(url) || (byWorker() && runsInWorker(p, "fetch_url") && runOriginGranted(runId, url));
         const navNeedsConsent = (url: string): boolean => {
             if (!p.crossOrigin) return false;   // can't cross origins → tool refuses cross-origin; same-site fine → no gate
             try {
@@ -1172,7 +1180,12 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     const pyInWorker = name === "python_exec" && byWorker() && runsInWorker(p, name);
                     if (pyInWorker) {
                         await ensureLocalTools(runId, p, tabId, () => tabPageUrl.get(tabId) || p.pageUrl || "", pyMedia).catch(() => { /* nothing granted: fails closed */ });
-                        grantRunPython(runId, { sheets: externalSheetIds(args), code: pythonCellInDialect(String((args as { code?: unknown }).code ?? "")) ? null : String((args as { code?: unknown }).code ?? ""), ...(call ? { step: { seq: seqBase + call.seq, local: call } } : {}) });
+                        const pyCode = String((args as { code?: unknown }).code ?? "");
+                        const outsideCode = pythonCellInDialect(pyCode) ? null : pyCode;
+                        // The JavaScript bridges only for a cell a PERSON approved with the card's line showing (bridge-names.ts).
+                        const bridges = outsideCode !== null && call?.person === true && namesJsBridge(outsideCode);
+                        if (bridges) await markPythonBridged(runId);
+                        grantRunPython(runId, { sheets: externalSheetIds(args), code: outsideCode, ...(call ? { step: { seq: seqBase + call.seq, local: { seq: call.seq, step: call.step } } } : {}), ...(bridges ? { bridges: true } : {}) });
                     }
                     // What this call puts on the TAB for its own sub-ops (tabGrantsForCall, grant-extract.ts): an exec's literal
                     // fetch URLs, a server tool's exact call, and a page-built run's python_exec's outside-the-dialect code and sheets.
@@ -1687,7 +1700,10 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     const byAsk = askedByPolicy(gateWhy);
                     const offered = byAsk ? { grants: [] } : withoutAsked(runId, extractGrants(tool, args));
                     const grants = offered.grants;
-                    const askWhy = gateWhy ?? offered.why;
+                    let askWhy = gateWhy ?? offered.why;
+                    // A cell outside the dialect in a run whose earlier cell ran with the bridges lifted: its card says what that
+                    // cell may have kept. Read here, where a wait is allowed: the mark outlives an evicted worker (sw-python.ts).
+                    if (tool === "python_exec" && askWhy?.cause === "outside-dialect" && await pythonRunBridged(runId)) askWhy = { ...askWhy, bridged: true };
                     if (askWhy?.policy !== undefined && !askedByPolicy(askWhy)) recordRunLog(runId, { subsystem: "policy", kind: "lapsed", reason: askWhy.cause, detail: { tool, policy: askWhy.policy, ...(tool === "fetch_url" ? { url: String((args as { url?: unknown }).url ?? "") } : {}) } });
                     // A worker tool's approval is granted to the run's state in this worker (worker-tools.ts), rebuilt here
                     // if an eviction took it, so the decision below has somewhere to put it.
@@ -1817,7 +1833,13 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // An `ask` policy is named for any fetch_url the loop gates; a policy that is GONE only for an uncredentialed
                     // fetch the worker runs, the only kind an `allow` ever covered.
                     if (j.decision === "ask") return askWhyOf(j);
-                    return a.credentials || !byWorker() || !runsInWorker(p, "fetch_url") ? undefined : askWhyOf(j);
+                    const lapsed = a.credentials || !byWorker() || !runsInWorker(p, "fetch_url") ? undefined : askWhyOf(j);
+                    if (lapsed) return lapsed;
+                    // An origin an `allow` row let the run go to, and no further: the read is a separate permission.
+                    const o = originOf(String(a.url ?? ""));
+                    if (o && navOnlyOrigins.has(o) && !consentedOrigins.has(o)) return navOnlyWhy(o);
+                    // The origin the run started on, once the tab has left it: the gate no longer counts it (fetchSameOrigin).
+                    return o && !a.credentials && o === p.pageOrigin && !startOriginRead(String(a.url ?? "")) ? startLeftWhy(o) : undefined;
                 },
                 fetchPolicy: (url, o) => {
                     const j = judgeCall(runId, "fetch", fetchFacts(url, o));
@@ -1840,15 +1862,18 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     const here = tabPageUrl.get(tabId) ?? p.pageUrl;
                     return !!here && isCurrentPage(url, here);
                 },
-                fetchOnPageOrigin: (url: string): boolean => {
-                    const here = tabPageUrl.get(tabId) ?? p.pageUrl;
-                    try { return !!here && new URL(url, here).origin === new URL(here).origin; } catch { return false; }
-                },
+                fetchOnPageOrigin,
                 fetchOriginGranted: (url: string): boolean => byWorker() && runsInWorker(p, "fetch_url") && runOriginGranted(runId, url),
                 fetchSameOrigin: (url: string): boolean => {
                     try {
                         if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !url.startsWith("//")) return true;   // relative → the page's own origin
-                        return consentedOrigins.has(new URL(url.startsWith("//") ? "https:" + url : url).origin);
+                        const o = new URL(url.startsWith("//") ? "https:" + url : url).origin;
+                        // The start origin is consented for navigation, and read free while the tab is on it. Once the tab
+                        // has left, the FETCH_URL choke point no longer counts it (it judges the sender's frame), so the gate
+                        // does not either and the read cards (POLICIES.md, "Ruled 2026-10-27"). A later approved navigate or
+                        // arrival grants the origin as any other.
+                        if (o === p.pageOrigin && !startOriginRead(url)) return false;
+                        return consentedOrigins.has(o);
                     } catch { return false; }
                 },
                 checkpoint: (messages) => {

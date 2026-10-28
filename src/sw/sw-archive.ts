@@ -25,7 +25,7 @@ export async function archiveCall<T>(op: ArchiveOp["op"], args?: ArchiveOp["args
 }
 
 /** The operations that answer with a `FolderReport`, so every one of them keeps `lastFolder` current. */
-const FOLDER_OPS = new Set<string>(["folder", "folderForm", "sync", "resync", "import"]);
+const FOLDER_OPS = new Set<string>(["folder", "folderForm", "rekey", "sync", "resync", "import"]);
 
 /** The folder's state as last reported, for the runtime's capabilities; null until the archive first answered. */
 let lastFolder: FolderReport | null = null;
@@ -133,6 +133,10 @@ export async function folderAction(action: unknown, form?: unknown): Promise<Fol
         case "form":
             if (typeof form !== "string" || !FORMS.includes(form as BackupForm)) throw new Error("That is not a form the archive folder can be written in (encrypted, gzip or plain).");
             await archiveCall<FolderReport>("folderForm", { form: form as BackupForm });
+            return syncFolder("sync", "settings");
+        // After this install adopted the folder's key (part 3c): every month is rewritten under it, which also reads the months it could not open before.
+        case "rekey":
+            await archiveCall<FolderReport>("rekey");
             return syncFolder("sync", "settings");
         case "picked": return syncFolder("resync", "picked");
         case "sync": return syncFolder("sync", "settings");

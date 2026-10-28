@@ -218,8 +218,9 @@ built-in callbacks a cell has already queued on the loop (`call_soon` of a built
 `onSpending` mark to the cancel's return; the ordinary-task control took 15 ms and 13 ms. Under the kill, so not an
 escape, but the bound of pin 1 is defeated: a `sys.settrace` deadline fires on line events, and a callback with no
 Python frame raises none. The kill's cause and the namespace loss were not measured; no claim about them. Pinned as a
-failing-first todo in test-only #1171 (`redteam-hard-python-cancel.test.mjs` under `tests/`, a positive control in the same
-test, stock core skips), reviewed by the first red team, never by the lane.
+failing-first todo in test-only #1171 (`tests/redteam-hard-python-cancel.test.mjs`, a positive control in the same
+test, stock core skips), reviewed by the first red team, never by the lane; MERGED 2026-10-27 at 9fbb3b22 with the pin-16
+value assertions amended.
 
 Ruled the same hour: the defect is the lane's (rule 9, reported through the coordinator in defect language), the fix
 lands AFTER #1171 on main in the lane's own file (rule 10), and the second red team flips the todo plain after the
@@ -239,6 +240,15 @@ callback, FIFO, so the cancel's own wakeup waits behind the whole flood and no P
     rebinds the module global installs only a Python callable, and what that schedules is already the cell gate's to
     revoke. Prototype at a 100 ms deadline: 2.5M queued = 354 ms spend (2.42M dropped, ~100 ns each); the overrun past
     the deadline is ~0.04x the time the cell spent queueing, so under the kill at most ~0.6 s. A narrowing.
+    MEASURED 2026-10-27 on the real harness (fork core, node, 1 s budget), which replaces the prototype's figure: the
+    largest flood that fits inside the 15 s kill is 8 s of queueing, 1,786,003 entries cut; cell plus spend 13.8 s,
+    the spend 4155 ms (about 3.2 s past the deadline, 0.52x the queueing time; the 2.5M point gave 0.44x), the sweep
+    753 ms; wasm heap +790,167,552 bytes at peak and unchanged after (wasm memory never shrinks), JS heap
+    +2,524,709,616 at peak and +796,551,064 after the sweep, about 60% of the worker's ~4 GB limit. 10 s of queueing
+    (2,156,003 entries) runs 16.1 s in all, so the kill lands first. Closed under the kill either way; whether the
+    overrun is worth narrowing is the lane's call after the per-phase breakdown its PR states (any tightening is a
+    narrowing). A heavier callback per entry could reach the heap limit before the kill: hunt-2 carries a row for it,
+    and a worker that dies of memory names memory as the cause (pin 3's shape).
 16. **Refusal, not a tag.** A leftover task whose cancel-step the flood pushed past the deadline never takes its cancel:
     telling that step apart from the cell's callbacks would need a per-entry tag a cell can forge from the closure, a
     proxy (rule 5). The cell's result is REFUSED by name with what was measured: the number of callbacks dropped at the
@@ -252,3 +262,53 @@ callback, FIFO, so the cancel's own wakeup waits behind the whole flood and no P
     (batched, off the spend's path, so the overrun stays as prototyped), the reap frees the rest, and a test asserts the
     next cell reaches none of them; if the measurement shows reach before an idle sweep would run, the sweep runs
     before the next cell starts. The stress case's memory is stated in bytes beside the proxy count.
+
+### Found 2026-10-27 by the lane, building the hunt-2 fix: a raising trace function unsets tracing
+
+Measured on main and on the lane's branch alike, real lockdown harness, real 1 s budget: a task that catches the cancel,
+busy-loops in its handler until the deadline fires, and then has 4 s of work in a nested `finally` held the spend for
+5013 ms (control, empty `finally`: 1011 ms). Cause: when a `sys.settrace` function raises, CPython unsets tracing, so
+every handler after the first deadline exception runs untraced; with `while True: pass` in that `finally` the bound of
+pin 1 degrades to the 15 s kill. Under the kill, so a defect, not an escape. The same mechanism blocks pin 17's sweep:
+closing a dropped task's coroutine under `settrace` runs its `except`/`finally` untraced. Found by the builder of the
+defence, so it is the lane's own regression, and the second red team's standard pass pins it as a named property.
+
+Probed fix, measured in Pyodide (3.14): the spend's hook moves from `sys.settrace` to `sys.monitoring` (`PY_START`,
+`LINE`, `JUMP`); a raising monitoring callback leaves monitoring on. A busy loop's `except` and `finally` both stopped
+at their first event (0.2 s run against a 0.2 s deadline, neither handler ran); `coro.close()` on a suspended coroutine
+raised the deadline exception without running its handlers and its `cr_frame` came back `None`. `JUMP` is required: a
+one-line `while True: pass` raises no `LINE` event under monitoring.
+
+Ruled the same hour:
+
+18. **Its own PR, first.** The monitoring switch is one mechanism change with its own review; it lands on main BEFORE
+    the pins-15–17 fix, which rebases on it (step 5 of that fix depends on it). The lane's failing-first regression
+    (the 4 s `finally` case, the control, the `while True` `finally` case under a child-process time limit as pin 6's
+    rows run, and the `coro.close()` case asserting no handler ran and `cr_frame is None`) lands in the lane's file in
+    that PR. The janitor reviews it in its queue; nothing waits on the second red team for this one. After it merges,
+    the first red team (`window-ml-redteam-e3`) pins the case in its own file as a named row, with the mutation check
+    (bound off, the case hangs), and that row is the property's pin from then on.
+    Built as #1182 (2026-10-27), which taught two things the rows must carry: the hole shows only with a MULTI-LINE
+    busy loop (a one-line `while True: pass` happened to stop on main; a two-line loop or a `for` escaped, 5013 ms), so
+    every row uses the two-line form and five rows fail first on main with the control passing; and a stopped task's
+    exception keeps its traceback, so the suspended coroutine in those frames' locals was finalized in the NEXT cell
+    with both handlers run. #1182 adds a step 2b: the traceback frames of tasks that ended in an exception are cleared
+    under the tool with the deadline forced past, so finalization happens inside the spend and stops at its first event.
+19. **`sys.monitoring` is guarded during the spend, universally** (rule 2; wording corrected 2026-10-27 on the lane's
+    question, the first text said "refused in a cell"). Pin 9's spend-time guard widens to every function of
+    `sys.monitoring` that installs, changes or removes a tool, its events or its callbacks, enumerated from the
+    module's own namespace in a test (`dir(sys.monitoring)` filtered to callables, each asserted to raise the deadline
+    exception when a task calls it during the spend), never a hand-typed list of five. Outside the spend a cell may
+    use `sys.monitoring` on its own time: the lockdown has no universal refusal for a Python callable, and nothing a
+    cell's tool does before the spend outlives the spend's start, where every id but the harness's own is checked
+    (`get_tool`), any tool found is cleared and freed before the spend's hook goes on, and the cell's result is refused
+    naming the tool (pin 5's shape: measured, never assumed; the row leaves a tool whose `LINE` callback spins and
+    asserts the spend finishes within the bound). The harness's tool id is captured at boot with the other callables
+    (pin 8).
+20. **One mechanism where the measurement allows it** (rule 8). The `c_call` guard of pin 9 moves to monitoring's
+    `CALL` event if the lane measures the same refusal there; if `setprofile` stays, the spec says why and both hooks
+    are guarded and restored to `None` (pin 5). The skip-files rule moves into the callback. Pin 4's per-core
+    enumeration gains the row "monitoring events the bound needs exist on this core". MEASURED in #1182: the `CALL`
+    event refuses in 49 to 55 ms against `setprofile`'s 45 to 53, so `setprofile` is gone; the cell's `settrace` and
+    `setprofile` hooks are set to `None` at the cancel's start (pin 5); ordinary spend 30 ms either way, the spinner
+    1.05 s against the 1 s budget.

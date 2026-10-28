@@ -276,6 +276,29 @@ reader of it fails there.
   a page that wraps them later is not handed the port. The sidebar's files are still web-accessible,
   but only by their per-session URL (`use_dynamic_url`, row 5).
 
+### The ask presence (the visible mark)
+
+`presenceOf` (`site-access.ts`) gives each origin one of three: `full` (allowed: the page scripts above), `ask`, or
+`hidden` (denied, or unknown and unmarked). An unknown origin is `ask` when the person marked it (`ml_site_visible`, the
+popup's "Let it ask", edit `{op:"visible"}`) or when "Let sites ask for access" (`siteRequests`, sync, default off) is
+on. Marking works only on an unknown origin; a deny or a revoke clears the mark, an allow keeps it.
+
+- **An ask page gets `ask.js` only**: `window.ml = { requestAccess }`, nothing else of the API. `sw-presence.ts`
+  registers it as `ml-main-ask` for the marked origins, or for every http(s) page while `siteRequests` is on, with
+  `excludeMatches` naming the allowed and denied origins. A change to the lists or the setting re-syncs it and
+  `showInOpenTabs` brings every open http(s) tab to its origin's presence now: one that should have the full API gets
+  the full scripts, one that should ask gets `ask.js` and `PRESENCE_ASK`, and a hidden one whose origin the stub's
+  registration covered until now gets `PRESENCE_HIDE`, which clears the gate's `ask` (any other hidden page hears nothing;
+  Chrome keeps the registration across evictions and restarts, so it is the record of who may hold the stub). Each step names the top frame's `documentId` (`webNavigation.getFrame`), so a tab that
+  navigated meanwhile is given nothing; with no document id the stub is not put in. A hidden page that loaded with the
+  stub keeps its `window.ml`, but its requests are relayed no more.
+- **The content script's closed gate gains an `ask` flag** (`page-gate.ts`), set from `CONTENT_READY`'s `ask` or by
+  `PRESENCE_ASK`. A closed gate with it relays `REQUEST_ACCESS_REQUEST` and nothing else; while the gate is pending at
+  most 16 are held.
+- **`REQUEST_ACCESS` is ungated** (`PAGE_UNGATED_TYPES`, `page-relay.ts`): the router skips the origin gate for it but
+  still passes its answer through the `forPage` scrub. The handler refuses an extension sender and lets a page ask only
+  when its presence is not `hidden`.
+
 ## Starting agents
 
 A site that may use window.ml starts, continues and steers the extension's agent only at its agent level
@@ -606,11 +629,13 @@ could fetch a URL remembered for a run.
 
 These are ORIGIN-wide instead, and auto-approved with no prompt:
 
-- `fetch_url`, uncredentialed, of any URL on an origin the run has consented to: its start origin, every origin a
-  `navigate` was approved to, and every origin an `allow` policy let a navigate reach (`consentedOrigins`,
-  `sw-run-host.ts`; `autoApprove`, `agent-host.ts`). An origin an `allow` policy let an ARRIVAL reach is consented for
-  navigation only (`navOnlyOrigins`): the `FETCH_URL` choke point does not count it, so a read there goes to its card. A `rendered` read is included, an incognito tab that runs the
-  target's scripts.
+- `fetch_url`, uncredentialed, of any URL on an origin the run has consented to: its start origin while the tab is on
+  it, every origin a `navigate` was approved to, and every origin an `allow` policy let a navigate reach
+  (`consentedOrigins`, `sw-run-host.ts`; `autoApprove`, `agent-host.ts`). Two reads the `FETCH_URL` choke point does
+  not count go to their card instead, each with a line saying why (`navOnlyWhy`, `startLeftWhy`, `sw-policies.ts`;
+  POLICIES.md, "Ruled 2026-10-27"): an origin an `allow` policy let an ARRIVAL reach, consented for navigation only
+  (`navOnlyOrigins`), and the start origin once the tab has left it (`startOriginRead`). A `rendered` read is
+  included, an incognito tab that runs the target's scripts.
 - `fetch_url` as the person (credentialed), of the page the tab is on now (`fetchOnPageOrigin`), and, for a run the
   worker built, of any URL on an origin the PERSON approved a navigate or an arrival to (`grantRunOrigin`). Never the
   start origin once the tab has left it, never an origin only a policy let the run reach.
@@ -767,8 +792,9 @@ takes focus, so the page's own Enter cannot land on Allow.
 adds `gesture` (`page-gesture.ts`, Q11: the browser's transient activation AND a trusted pointerdown or keydown on the
 page's own document, outside the hosts the shell marked with `markOwnHost`, in the last 5 s), and keeps one request in
 flight per document: later calls get its answer. While a run drives the tab (`activeRuns` with a live controller), the
-worker reads no gesture at all: a run's own CDP clicks and keys are trusted input too. `REQUEST_ACCESS` is in `HANDLE_MAP`, so the origin gate refuses it from
-a site that may not use window.ml: only an allowed site asks, for the agent level or for self-approval.
+worker reads no gesture at all: a run's own CDP clicks and keys are trusted input too. `REQUEST_ACCESS` is ungated (`PAGE_UNGATED_TYPES`): an allowed site asks for the agent level or for
+self-approval, and an ask page ("The ask presence" above) asks to use window.ml; a hidden page reaches nothing, since its
+content script relays nothing.
 
 The worker (`background.ts`) takes the origin from the sender (`grantableOrigin`, a top frame on http or https), waits
 for the tab's navigation to settle, and asks `requestAccess` (`sw-access-requests.ts`), which applies the pure rules of

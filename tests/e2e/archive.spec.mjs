@@ -129,12 +129,14 @@ test("the folder: a sync writes the month's file, a delete rewrites it away and 
         expect(picked.result).toMatchObject({ state: "connected", form: "plain", written: ["2026-09"], pending: 0 });
         expect(await files()).toEqual(["2026-09.sqlite"]);
 
-        // Both sessions deleted: the month is empty, so its file goes. A delete reaches the folder.
+        // Both sessions deleted: the month has no sessions, but its file stays with the two entries, so the delete
+        // reaches another machine (docs/dev/backup.md, 3b). The file goes only once the entries expire.
         await archive(ext, "remove", { hash: "f01de001" });
         await archive(ext, "remove", { hash: "f01de002" });
         const emptied = await archive(ext, "sync");
-        expect(emptied.result).toMatchObject({ removed: ["2026-09"] });
-        expect(await files()).toEqual([]);
+        expect(emptied.result).toMatchObject({ written: ["2026-09"], removed: [] });
+        expect(await files()).toEqual(["2026-09.sqlite"]);
+        expect(await folderHashes(page, "2026-09.sqlite")).toEqual([]);
 
         // A delete is remembered: the folder's old copy does not bring it back, by a sync's merge or by Import.
         await archive(ext, "put", { input: session("f01de003", sept), archivedTs: 1 });

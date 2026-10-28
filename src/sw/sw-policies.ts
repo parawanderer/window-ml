@@ -427,6 +427,41 @@ export const ASK_POLICY_CAUSE = "ask-policy";
 /** Whether a call asks because an `ask` policy matched it, so its card offers no "remember" (an `allow` the `ask` overrides). */
 export const askedByPolicy = (why: AskWhy | undefined): boolean => why?.cause === ASK_POLICY_CAUSE;
 
+/** The `AskWhy.cause` of a read of an origin an `allow` row let the run navigate to, and no more (POLICIES.md, ruling (b)). */
+export const NAV_ONLY_CAUSE = "nav-only";
+
+/**
+ * Why a read of an origin consented for navigation only asks (POLICIES.md, "Ruled 2026-10-27"): the card's line is the
+ * ruled public string, with the origin's host substituted.
+ * @param origin the origin the run may go to but not read
+ */
+export function navOnlyWhy(origin: string): AskWhy {
+    const host = hostOf(origin);
+    return { line: `Your policy lets the run go to ${host}. Reading pages there is a separate permission: allow this read, or add a read rule to the policy.`,
+        detail: `This call needed approval because a policy lets the run navigate to ${host} but not read it; reading there is a separate permission.`,
+        cause: NAV_ONLY_CAUSE };
+}
+
+/** The `AskWhy.cause` of an uncredentialed read of the run's start origin once its tab has left (POLICIES.md, "Ruled 2026-10-27"). */
+export const START_LEFT_CAUSE = "start-left";
+
+/**
+ * Why an uncredentialed read of the origin the run started on asks once the tab has left it: the ruled public string,
+ * with the origin's host substituted.
+ * @param origin the run's start origin
+ */
+export function startLeftWhy(origin: string): AskWhy {
+    const host = hostOf(origin);
+    return { line: `The run started on ${host}. Reading pages there once the tab has left is a separate permission: allow this read, or add a read rule to the policy.`,
+        detail: `This call needed approval because the run started on ${host} but its tab has left; reading there is a separate permission.`,
+        cause: START_LEFT_CAUSE };
+}
+
+/** An origin's host for a card line, or the origin as given when it does not parse. */
+function hostOf(origin: string): string {
+    try { return new URL(origin).host; } catch { return origin; }
+}
+
 /**
  * Why a judged call asks, as text for the card and the model: the `ask` policy that matched it, or the gone policy that
  * used to allow it. Undefined when neither applies (an unloaded store, or no policy involved). Text only: it never

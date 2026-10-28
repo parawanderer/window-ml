@@ -4,9 +4,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { SITE_ACCESS_KEYS, originOf, grantableOrigin, levelsFor, applyEdit, originFromInput, selfApprovalOrigin, selfApproves, uncoveredApprovals, migrateSiteLists, visibleOrigins, originMatchPattern } = await import("../src/site-access.ts");
+const { SITE_ACCESS_KEYS, originOf, grantableOrigin, levelsFor, applyEdit, originFromInput, selfApprovalOrigin, selfApproves, uncoveredApprovals, migrateSiteLists, visibleOrigins, originMatchPattern, presenceOf, askOrigins } = await import("../src/site-access.ts");
 
-const empty = { always: [], session: [], denied: [], agents: {}, selfApprove: [] };
+const empty = { always: [], session: [], denied: [], agents: {}, selfApprove: [], visible: [] };
 /** Lists with some fields set, the rest empty. */
 const L = (o = {}) => ({ ...structuredClone(empty), ...o });
 /** What the lists let an origin do for window.ml (`levelsFor(...).use`). */
@@ -311,6 +311,56 @@ test("a match pattern names the origin's port, the default one included, and onl
     assert.equal(originMatchPattern("http://[::1]:3000"), "http://[::1]:3000/*");
     for (const bad of ["https://example.com/", "https://Example.com", "file:///x", "chrome://newtab", "", "*://example.com"])
         assert.equal(originMatchPattern(bad), null, bad);
+});
+
+// --- presence with the stub: full, ask or hidden (docs/spec/SITE_PRESENCE.md "The rule") ---
+
+test("presenceOf: over every combination of the five lists and the setting, allowed is full, denied is hidden, and the stub needs a mark or the setting", () => {
+    const o = "https://example.com";
+    let asked = 0;
+    for (let bits = 0; bits < 32; bits++) for (const mayAsk of [false, true]) {
+        const lists = L({
+            always: bits & 1 ? [o] : [], session: bits & 2 ? [o] : [], denied: bits & 4 ? [o] : [], selfApprove: bits & 8 ? [o] : [], visible: bits & 16 ? [o] : [],
+        });
+        // Written out from the spec, not from levelsFor: a denial wins; any approval (self-approval included) is full.
+        const denied = !!(bits & 4), allowed = !!(bits & (1 | 2 | 8));
+        const want = denied ? "hidden" : allowed ? "full" : (mayAsk || bits & 16) ? "ask" : "hidden";
+        if (want === "ask") asked++;
+        assert.equal(presenceOf(lists, o, mayAsk), want, `bits ${bits}, mayAsk ${mayAsk}`);
+        // Another origin is never shown by this one's entries; only the setting shows it.
+        assert.equal(presenceOf(lists, "https://other.example", mayAsk), mayAsk ? "ask" : "hidden", `other, bits ${bits}`);
+    }
+    assert.equal(asked, 3, "unknown and marked (2 settings), unknown and unmarked with the setting on");
+});
+
+test("presenceOf: the default is hidden, a store from an older build included, and the mark is per exact origin", () => {
+    assert.equal(presenceOf({}, "https://example.com", false), "hidden");
+    assert.equal(presenceOf(L(), "https://example.com", false), "hidden");
+    const lists = L({ visible: ["https://example.com"] });
+    for (const other of ["http://example.com", "https://example.com:8443", "https://www.example.com"]) assert.equal(presenceOf(lists, other, false), "hidden", other);
+});
+
+test("askOrigins: the marked origins that may not use window.ml yet, sorted; an allowed or denied one is left out", () => {
+    const lists = L({ visible: ["https://c.example", "https://a.example", "https://b.example", "https://d.example"], always: ["https://b.example"], denied: ["https://d.example"] });
+    assert.deepEqual(askOrigins(lists), ["https://a.example", "https://c.example"]);
+    assert.deepEqual(askOrigins({}), []);
+});
+
+test("the visible mark: set only on an unknown origin, cleared by unmarking, denying or revoking, kept by allowing and un-denying", () => {
+    const o = "https://a.example";
+    const vis = (l) => l.visible.includes(o);
+    assert.equal(vis(applyEdit(L(), { op: "visible", origin: o, on: true })), true);
+    assert.equal(vis(applyEdit(L({ visible: [o] }), { op: "visible", origin: o, on: false })), false);
+    assert.equal(vis(applyEdit(L({ denied: [o] }), { op: "visible", origin: o, on: true })), false, "a denied site stays hidden");
+    assert.equal(vis(applyEdit(L({ always: [o] }), { op: "visible", origin: o, on: true })), false, "an allowed site has the full API already");
+    assert.equal(vis(applyEdit(L({ selfApprove: [o] }), { op: "visible", origin: o, on: true })), false);
+    assert.equal(vis(applyEdit(L({ visible: [o] }), { op: "deny", origin: o })), false, "denying hides");
+    assert.equal(vis(applyEdit(L({ visible: [o], always: [o] }), { op: "revoke", origin: o })), false, "revoking hides");
+    assert.equal(vis(applyEdit(L({ visible: [o] }), { op: "allow", origin: o, scope: "session" })), true, "kept, so a session grant that ends leaves the stub");
+    assert.equal(vis(applyEdit(L({ visible: [o] }), { op: "agents", origin: o, level: "ask" })), true);
+    const twice = applyEdit(applyEdit(L(), { op: "visible", origin: o, on: true }), { op: "visible", origin: o, on: true });
+    assert.deepEqual(twice.visible, [o], "marked once");
+    assert.deepEqual(applyEdit(L({ visible: ["https://b.example"] }), { op: "visible", origin: o, on: true }).visible, [o, "https://b.example"], "sorted, others kept");
 });
 
 // --- how an edit changes them ---

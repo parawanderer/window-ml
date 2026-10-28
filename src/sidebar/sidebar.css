@@ -4149,6 +4149,17 @@ pre.code.dlines > code.hljs { display: block; }
 /* The archive folder's FORM choice and its SKIPPED months (archive-section.tsx): stacked blocks that fill the section's width, the radios and warnings being the settings' own. */
 .arch-form, .arch-skips { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; align-self: stretch; }
 .arch-form > .set-warn, .arch-form > .set-hint, .arch-skips > .set-warn { align-self: stretch; }
+/* "Use this folder's key" under the skipped months (archive-section.tsx AdoptFolderKey): a block of its own, ringed in the accent when it is the FIRST choice (a new machine joining), with the "or set up a new key" line under it. */
+.arch-adopt { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; align-self: stretch; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); }
+.arch-adopt.first { border-color: var(--accent); }
+.arch-adopt > .set-field, .arch-adopt > .set-hint, .arch-adopt > .set-err { align-self: stretch; }
+/* The RETIRED KEYS list under the folder's form (archive-section.tsx RetiredKeys): a heading, then one row per key (short id, when, how many months), its Forget notice opening under the row. */
+.arch-retired { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; align-self: stretch; }
+.arch-rk { display: flex; flex-direction: column; gap: 6px; align-self: stretch; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); }
+.arch-rk-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.arch-rk-row > .test-btn { margin-left: auto; }
+.arch-rk-ask { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.arch-or { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; align-self: stretch; }
 
 /* The Settings BACKUP AND RESTORE section (backup-section.tsx): one block per job (backup, restore, decrypt, passphrase),
    the recovery screen replacing them while it is up. Fields, hints and buttons are the settings' own. */
@@ -4158,6 +4169,9 @@ pre.code.dlines > code.hljs { display: block; }
 .bk > .set-field, .bk > .set-hint, .bk > .set-warn { align-self: stretch; }
 /* A screen's heading inside the section (backup, restore, decrypt, passphrase, recovery key). */
 .bk-title { color: var(--fg-dim); font-size: .9em; font-weight: 600; margin: 0 4px; }
+/* The offer after a restore opened with a typed secret, to use that backup's key from now on (backup-section.tsx AdoptBackupKey). */
+.bk-adopt { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; align-self: stretch; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); }
+.bk-adopt > .set-hint, .bk-adopt > .set-err { align-self: stretch; }
 /* A screen's row of buttons, wrapping on a narrow panel. */
 .bk-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 /* The backup form radios (encrypted, compressed, plain), one per line. */

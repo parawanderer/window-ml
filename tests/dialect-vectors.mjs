@@ -79,6 +79,32 @@ export function regexCorpus(genre, dialect) {
     return loadVectors(genre).filter((v) => v.regex && (v.regex.dialect === dialect || v.regex.dialect === "both"));
 }
 
+/**
+ * The regex COST corpus (`regex-cost.json`): each entry a pattern, an input recipe and the ORDER of the bound on that
+ * input, the polynomial degree in the recipe's `n` (1 linear, 2 quadratic, 3 cubic; null unbounded). Both dialects'
+ * cost models are held to it: tests/regex-cost.test.mjs here, the fork's Lib/test/test_restricted.py there. Validated;
+ * returns the entries written in `dialect` ("js" or "py") or in both.
+ */
+export function regexCostVectors(dialect) {
+    const all = JSON.parse(readFileSync(new URL("regex-cost.json", DIR), "utf8"));
+    const seen = new Set();
+    all.forEach((v, i) => {
+        const bad = (why) => { throw new Error(`regex-cost.json[${i}]${v?.name ? ` "${v.name}"` : ""}: ${why}`); };
+        for (const k of ["name", "pattern", "reason"]) if (typeof v[k] !== "string" || !v[k]) bad(`"${k}" must be a non-empty string`);
+        if (typeof v.flags !== "string" || !/^[imsuyx]*$/.test(v.flags)) bad(`"flags" must be letters from imsuyx`);
+        if (!REGEX_DIALECTS.includes(v.dialect)) bad(`"dialect" must be one of ${REGEX_DIALECTS.join(", ")}`);
+        if (/[uy]/.test(v.flags) && v.dialect !== "js") bad(`u and y are JS flags`);
+        if (/x/.test(v.flags) && v.dialect !== "py") bad(`x is Python's flag`);
+        const inp = v.input;
+        if (!(inp && typeof inp.repeat === "string" && inp.repeat && Number.isInteger(inp.n) && inp.n > 0 && (inp.tail === undefined || typeof inp.tail === "string"))) bad(`"input" is { repeat, n, tail? }`);
+        if (!(v.order === null || [1, 2, 3].includes(v.order))) bad(`"order" is 1, 2, 3 or null`);
+        for (const k of Object.keys(v)) if (!["name", "pattern", "flags", "dialect", "input", "order", "reason"].includes(k)) bad(`unknown field "${k}"`);
+        if (seen.has(v.name)) bad("duplicate name");
+        seen.add(v.name);
+    });
+    return all.filter((v) => v.dialect === dialect || v.dialect === "both");
+}
+
 /** Every vector of one genre, validated, with names unique within the file. Throws on a malformed one. */
 export function loadVectors(genre) {
     if (!GENRES.includes(genre)) throw new Error(`unknown dialect-vector genre "${genre}"`);

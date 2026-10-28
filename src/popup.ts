@@ -430,11 +430,15 @@ const AGENT_BUTTONS: Record<SiteLevels["agents"], { label: string; level: SiteLe
 let siteOrigin: string | null = null;
 let siteTabId: number | null = null;   // state: ui (the tab the popup opened over, for its waiting start asks)
 let siteNow: SiteDecision | null = null;   // what the lists said last, which decides what "Revoke" undoes
+let sitePresenceNow: string | null = null;   // state: ui (full | ask | hidden, as the worker said last)
+let siteMarkedNow = false;   // state: ui (whether the person marked this origin visible, as opposed to "Let sites ask for access" doing it)
 let siteLevelsNow: SiteLevels | null = null;   // state: ui (what the worker said last about this tab's site)
 function siteAccess(payload: { origin?: string; edit?: SiteEdit }): Promise<SiteDecision | null> {
     return new Promise((resolve) => {
-        chrome.runtime.sendMessage({ type: "SITE_ACCESS", payload }, (res: { data?: { decision?: SiteDecision; implied?: boolean; levels?: SiteLevels } } | undefined) => {
+        chrome.runtime.sendMessage({ type: "SITE_ACCESS", payload }, (res: { data?: { decision?: SiteDecision; implied?: boolean; levels?: SiteLevels; presence?: string; lists?: { visible?: string[] } } } | undefined) => {
             void chrome.runtime.lastError;
+            sitePresenceNow = res?.data?.presence ?? null;
+            siteMarkedNow = !!payload.origin && (res?.data?.lists?.visible ?? []).includes(payload.origin);
             siteLevelsNow = res?.data?.levels ?? null;
             resolve(res?.data?.decision ?? null);
         });
@@ -446,9 +450,14 @@ function renderSite(decision: SiteDecision | null) {
     $("siteAccess").hidden = false;
     $("siteOrigin").textContent = siteOrigin;   // the origin as the browser reports it, never a title the page set
     const self = siteLevelsNow?.selfApprove === true;
+    const asking = decision === "unknown" && sitePresenceNow === "ask";
     $("siteState").textContent = self
         ? "is allowed, and approves its own actions (DevTools Settings → Permissions)."
-        : SITE_STATE[decision];
+        : asking ? "can see window.ml and ask for access, but cannot use it." : SITE_STATE[decision];
+    // Presence (docs/spec/SITE_PRESENCE.md), for an origin that is neither allowed nor denied only. A site that asks
+    // because "Let sites ask for access" is on is not marked, so there is nothing for Hide to undo.
+    $("siteLetAsk").hidden = decision !== "unknown" || asking;
+    $("siteHide").hidden = !asking || !siteMarkedNow;
     const allowed = decision === "always" || decision === "session";
     // The agent level, only while the site may use window.ml at all.
     const agents = $("siteAgents");
@@ -619,6 +628,8 @@ async function editSite(edit: (origin: string) => SiteEdit) {
 }
 $("siteAllowSession").addEventListener("click", () => editSite((origin) => ({ op: "allow", origin, scope: "session" })));
 $("siteAllowAlways").addEventListener("click", () => editSite((origin) => ({ op: "allow", origin, scope: "always" })));
+$("siteLetAsk").addEventListener("click", () => editSite((origin) => ({ op: "visible", origin, on: true })));
+$("siteHide").addEventListener("click", () => editSite((origin) => ({ op: "visible", origin, on: false })));
 $("siteDeny").addEventListener("click", () => editSite((origin) => ({ op: "deny", origin })));
 $("siteRevoke").addEventListener("click", () => editSite((origin) => siteNow === "denied" ? { op: "undeny", origin } : { op: "revoke", origin }));
 

@@ -47,9 +47,6 @@ export const HANDLE_MAP: Partial<Record<PageRequestType, RelayEntry>> = {
     START_RUN_REQUEST: { type: "START_RUN", responseType: "START_RUN_RESPONSE" },
     RESUME_RUN_REQUEST: { type: "RESUME_RUN", responseType: "RESUME_RUN_RESPONSE" },
     INJECT_MESSAGE_REQUEST: { type: "INJECT_MESSAGE", responseType: "INJECT_MESSAGE_RESPONSE" },
-    // ml.requestAccess(): gated like the rest until the stub lets a site that may not use window.ml ask (SITE_PRESENCE.md).
-    // The content script sends it itself, with the gesture fact beside the payload (content.ts `requestAccessFromPage`).
-    REQUEST_ACCESS_REQUEST: { type: "REQUEST_ACCESS", responseType: "REQUEST_ACCESS_RESPONSE" },
 };
 
 /** Background message types the content script sends on a page's behalf OUTSIDE `HANDLE_MAP`: a page's own cancel
@@ -61,6 +58,12 @@ export const PAGE_STARTED_TYPES: ReadonlySet<string> = new Set<string>([
     ...Object.values(HANDLE_MAP).map((e) => e!.type),
     ...PAGE_RELAYED_EXTRA,
 ]);
+
+/** Page-started types the origin gate does NOT apply to: a site that may not use window.ml sends them too. Their handler
+ *  judges the sender itself (`REQUEST_ACCESS`: the stub's ask, allowed by the origin's presence, SITE_PRESENCE.md), and
+ *  their answers still go through the router's scrub like every answer to a page. The content script sends it itself,
+ *  with the gesture fact beside the payload (content.ts `requestAccessFromPage`). */
+export const PAGE_UNGATED_TYPES: ReadonlySet<string> = new Set<string>(["REQUEST_ACCESS"]);
 
 /** The page-started types that START, CONTINUE, STEER or STOP a run. Refused from an unapproved page like every other
  *  page-started type; named so the red-team tests can say which refusals keep a run the person's. (A tab hosting a run

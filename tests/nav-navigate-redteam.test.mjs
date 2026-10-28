@@ -156,7 +156,7 @@ test("the start origin is consented never as-you: once the tab leaves, the as-yo
     assert.ok(!r.results.some((s) => CHOKE_REFUSED.test(s)), `the as-you read is refused on its card, never reaching the choke point: ${JSON.stringify(r.results)}`);
 });
 
-test("the start origin is consented never as-you: once the tab leaves, the uncredentialed read back cards at the gate with askWhy.cause start-left, never riding the consent to the choke point", { ...T, todo: "open on main today (POLICIES.md, ruled 2026-10-27): the uncredentialed read back to the start origin after the tab left rides the prompt-silencing consent and is refused at the FETCH_URL choke point (choke text, no gate card) instead of carding at the gate with askWhy.cause \"start-left\". The security lane's fix (feat/navonly-read-card) cards it; flip this todo plain after that merges." }, async () => {
+test("the start origin is consented never as-you: once the tab leaves, the uncredentialed read back cards at the gate with askWhy.cause start-left, never riding the consent to the choke point", { ...T }, async () => {
     // Positive control: while the tab IS on START, an as-you fetch of it is the free tier's (the page you are on) —
     // the fetch path works and the gate does not over-card.
     const free = await hostRun([

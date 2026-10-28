@@ -82,6 +82,9 @@ export const LIMITS = Object.freeze({
     outputBytes: 1 << 30,
 });
 
+/** The most bytes of a file a reader needs to see its header (`readHeader`): a page that wants only the header of a large month file reads this many, not the file. */
+export const MAX_HEAD_BYTES = PREFIX_BYTES + LIMITS.headerBytes;
+
 /** One copy of the data key, sealed under one secret; the header carries one per way in. */
 export interface WrapRecord {
     by: "passphrase" | "recovery";
@@ -101,6 +104,8 @@ export interface Keyring {
     /** names this data key (hex of 8 bytes of HKDF output), so a reader can say "wrong key" before it tries to decrypt */
     keyId: string;
     wraps: WrapRecord[];
+    /** data keys this install used before it adopted another install's: they only OPEN files (`keyFor`), never seal one (part 3c). Absent in a record stored before 3c. `since` is when it was retired (epoch ms); absent in an entry stored before 3d. */
+    retired?: { key: CryptoKey; keyId: string; since?: number }[];
 }
 
 /** What opens a wrap. */
@@ -483,11 +488,19 @@ export function readHeader(b: Uint8Array): { kind: FileKind; created: string; ke
     return { kind: header.kind, created: header.created, keyId: header.keyId, wraps: header.wraps };
 }
 
+/** The key of `ring` that sealed a file whose header names `keyId`: the current one or a retired one, as a keyring that opens it; null when neither did. */
+export function keyFor(ring: Keyring, keyId: string): Keyring | null {
+    if (ring.keyId === keyId) return ring;
+    const old = ring.retired?.find((r) => r.keyId === keyId);
+    return old ? { key: old.key, keyId: old.keyId, wraps: ring.wraps } : null;
+}
+
 /** Open a `.wmlbak` to plain SQLite bytes, with a keyring or a secret; returns nothing at all unless every chunk authenticates and the last is present. */
 export async function decryptFile(b: Uint8Array, keyOrSecret: Keyring | Secret, maxOutput: number = LIMITS.outputBytes): Promise<Bytes> {
     const { header, prefixLen } = parseHeader(b);
-    const keyring = "key" in keyOrSecret ? keyOrSecret : await unlock(header.wraps, keyOrSecret);
-    if (keyring.keyId !== header.keyId) throw new BackupError("wrong-secret", "this file was sealed under a different data key than the one given");
+    const given = "key" in keyOrSecret ? keyOrSecret : await unlock(header.wraps, keyOrSecret);
+    const keyring = keyFor(given, header.keyId);
+    if (!keyring) throw new BackupError("wrong-secret", "this file was sealed under a different data key than the one given");
     const prefix = b.subarray(0, prefixLen) as Bytes;
     const key = await fileKey(keyring, unb64(header.fileSalt, 32));
     const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
@@ -514,6 +527,39 @@ export async function decryptFile(b: Uint8Array, keyOrSecret: Keyring | Secret, 
         if (final) break;
     }
     return gunzip(concat(...out), maxOutput);
+}
+
+/**
+ * Prove that a file's header was written WITH its chunks: the first chunk must authenticate under `keyring` with the
+ * header as associated data, and the key must be the one the header names. A header spliced over another file's chunks
+ * is refused (`corrupt`), so a key is never adopted from a header alone (`adoptKeyring`, part 3c). `b` needs only the
+ * header and the first chunk (`readHeadAndFirstChunk`).
+ */
+export async function opensFirstChunk(b: Uint8Array, keyring: Keyring): Promise<void> {
+    const { header, prefixLen } = parseHeader(b);
+    if (keyring.keyId !== header.keyId) throw new BackupError("corrupt", "the header's key id is not the key its wraps hold");
+    if (b.length < prefixLen + 4) throw new BackupError("truncated", "the file has no chunks");
+    const len = new DataView(b.buffer, b.byteOffset, b.byteLength).getUint32(prefixLen, true);
+    if (len < TAG_BYTES || len > header.chunk + TAG_BYTES) throw new BackupError("corrupt", "a chunk has an impossible length");
+    if (b.length < prefixLen + 4 + len) throw new BackupError("truncated", "the file ends inside its first chunk");
+    const key = await fileKey(keyring, unb64(header.fileSalt, 32));
+    const prefix = b.subarray(0, prefixLen) as Bytes;
+    const frame = b.subarray(prefixLen + 4, prefixLen + 4 + len) as Bytes;
+    for (const final of [false, true]) {
+        const ok = await crypto.subtle.decrypt({ name: "AES-GCM", iv: nonce(0, final), additionalData: prefix }, key, frame).then(() => true, () => false);
+        if (ok) return;
+    }
+    throw new BackupError("corrupt", "the first chunk does not open under this header's key: the header was not written with this file");
+}
+
+/** The leading bytes of an encrypted file that `opensFirstChunk` needs (its header and its first chunk), read from `blob` without the rest. */
+export async function readHeadAndFirstChunk(blob: Blob): Promise<Uint8Array> {
+    const head = new Uint8Array(await blob.slice(0, MAX_HEAD_BYTES + 4).arrayBuffer());
+    const { header, prefixLen } = parseHeader(head);
+    if (head.length < prefixLen + 4) throw new BackupError("truncated", "the file has no chunks");
+    const len = new DataView(head.buffer, head.byteOffset, head.byteLength).getUint32(prefixLen, true);
+    if (len > header.chunk + TAG_BYTES) throw new BackupError("corrupt", "a chunk has an impossible length");
+    return new Uint8Array(await blob.slice(0, prefixLen + 4 + len).arrayBuffer());
 }
 
 /** Raw SQLite bytes from any of the three forms; an encrypted one asks `unlockIfNeeded` for a keyring or a secret. */

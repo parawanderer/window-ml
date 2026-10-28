@@ -46,16 +46,23 @@ here instead. Decided with Shane on 2026-09-19; the design and the probe behind 
 - **One file per month**, by the UTC month of a session's LAST activity: `YYYY-MM.wmlbak` (encrypted), `.sqlite.gz`
   (compressed) or `.sqlite` (plain), by `meta.folder_form` (absent reads as `plain`; `backup.md`, "The archive folder's
   form"). Decrypted and gunzipped, a standalone SQLite file: the same schema, only that month's sessions and the images
-  they use. A month may hold files of several forms mid-switch; a sync merges them all and leaves the chosen one.
+  they use, and that month's `removed` entries (below). A month may hold files of several forms mid-switch; a sync merges them all and leaves the chosen one.
 - **Dirty months, not "the current month".** A write marks its month dirty, and the month it moved from; a remove
-  marks its month. A sync rewrites exactly the dirty months, and removes the file of a month left empty. That is
-  how a delete reaches a month that closed long ago.
+  marks its month. A sync rewrites exactly the dirty months, and removes the file of a month left with neither sessions
+  nor `removed` entries. That is how a delete reaches a month that closed long ago.
 - **A sync MERGES before it writes** (`folder-sync.ts`): every file of a month is imported first, so sessions they
   hold that the archive lacks are kept, and a picked folder is imported whole before the first write. What the archive
-  removed on purpose (`removed`) is skipped, or a delete would come back from the old copy. A month with a file that
+  removed on purpose (`removed`) is not brought back, or a delete would come back from the old copy; the file's own
+  entries are applied too (`mergeFrom`), so a delete made on another machine removes the session here. A month with a file that
   is not readable (or is encrypted and this install lacks its key: skip reason `needs-key`, `other-key`, else
-  `unreadable`) is never touched, none of its files; it stays pending. Why, and the cross-machine limit: `backup.md`,
-  "merge before write".
+  `unreadable`) is never touched, none of its files; it stays pending. Why, and the rules: `backup.md`, "merge before
+  write" and 3b.
+- **A month file carries its month's `removed` entries** (hash, month, time; 180 days, then they expire), so a month
+  whose sessions were all deleted keeps a file of entries only until they expire. `ARCHIVE_SCHEMA` is unchanged; an
+  older reader ignores the table.
+- **A sync also merges a month file that changed on disk** (another machine wrote it): the archive remembers each
+  month file's size and modification time as of its last write or merge (`folder_files`), and a file that differs is
+  merged before the dirty months are written. A merge that changes nothing rewrites nothing. `backup.md`, 3b.
 - **Built in memory, never as a temporary file.** `exportMonth` attaches `:memory:`, copies the month in and
   serializes it (`sqlite3_js_db_export(db, "snap")`); `importBytes` deserializes a file into an attached `:memory:` and
   copies in what is new (`INSERT OR IGNORE`, sessions by hash, images by content hash). The file header is checked

@@ -9,6 +9,7 @@
 // something syncing the folder never reads half a write.
 
 import { BACKUP_EXTENSION, type BackupForm } from "../backup/backup-file";
+import { readHeadAndFirstChunk, readHeader } from "../backup/backup-format";
 
 /** Where the folder stands, as Settings draws it. */
 export type FolderState =
@@ -140,6 +141,33 @@ export async function writeMonthFile(dir: FileSystemDirectoryHandle, month: stri
     catch (err) { await w.abort().catch(() => {}); throw err; }
 }
 
+/**
+ * The first bytes of a month's encrypted file, its header and first chunk and no more: what a page adopts a key from
+ * (`adoptKeyring` checks the key opens that chunk) without reading a month file whole. Null when the month has no
+ * encrypted file.
+ */
+export async function readMonthHead(dir: FileSystemDirectoryHandle, month: string): Promise<Uint8Array | null> {
+    const file = await dir.getFileHandle(fileName(month, "encrypted")).catch(() => null);
+    return file ? readHeadAndFirstChunk(await file.getFile()) : null;
+}
+
+/**
+ * How many of the folder's encrypted month files each key sealed, by the `keyId` in each header (a header-only read
+ * through the handle the page holds; no worker op). What Settings tells a person before they forget a retired key.
+ * A file whose header cannot be read counts for no key.
+ */
+export async function monthKeyCounts(dir: FileSystemDirectoryHandle): Promise<Record<string, number>> {
+    const out: Record<string, number> = {};
+    for (const f of await monthFiles(dir)) {
+        if (f.form !== "encrypted") continue;
+        try {
+            const head = await readMonthHead(dir, f.month);
+            if (head) { const id = readHeader(head).keyId; out[id] = (out[id] ?? 0) + 1; }
+        } catch { /* unreadable: counted for no key */ }
+    }
+    return out;
+}
+
 /** Every month file in the folder, oldest first (a month's forms together), with its bytes read when asked. */
 export async function monthFiles(dir: FileSystemDirectoryHandle): Promise<{ month: string; form: BackupForm; read: () => Promise<Uint8Array> }[]> {
     const out: { month: string; form: BackupForm; read: () => Promise<Uint8Array> }[] = [];
@@ -159,6 +187,12 @@ export function monthFolder(dir: FileSystemDirectoryHandle): import("./folder-sy
         read: async (month, form) => {
             const file = await dir.getFileHandle(fileName(month, form)).catch(() => null);
             return file ? new Uint8Array(await (await file.getFile()).arrayBuffer()) : null;
+        },
+        stat: async (month, form) => {
+            const file = await dir.getFileHandle(fileName(month, form)).catch(() => null);
+            if (!file) return null;
+            const f = await file.getFile();
+            return { size: f.size, lastModified: f.lastModified };
         },
         write: (month, form, bytes) => writeMonthFile(dir, month, form, bytes),
         remove: (month, form) => dir.removeEntry(fileName(month, form)).catch(() => { /* never written */ }),

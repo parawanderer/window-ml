@@ -29,6 +29,8 @@ export type ArchiveOp =
     | { op: "folder"; args?: undefined }
     /** set the form month files are written in and mark every month dirty; `encrypted` is refused without a keyring */
     | { op: "folderForm"; args: { form: BackupForm } }
+    /** every month is dirty again, so the next sync rewrites the folder under the install's current key (after it adopted the folder's, part 3c) */
+    | { op: "rekey"; args?: undefined }
     /** write every dirty month into the folder, when it is writable */
     | { op: "sync"; args?: undefined }
     /** a folder was just picked: import what it holds, then every month is dirty, then sync */
@@ -76,6 +78,8 @@ export interface FolderReport {
     imported?: { files: number; sessions: number };
     /** sessions a sync took into the archive from the folder's files before rewriting them */
     merged?: number;
+    /** sessions a sync or an import removed because another machine deleted them */
+    deleted?: number;
     /** month files that could not be read as an archive: left as they were, and still waiting */
     skipped?: SyncOutcome["skipped"];
     /** what the folder held when it was surveyed: how many month files, and their range */
@@ -160,6 +164,7 @@ async function run(req: ArchiveOp): Promise<unknown> {
         case "backupFileRemove": await removeBackupSlot(req.args.slot); return true;
         case "folder": return folderReport(db);
         case "folderForm": setFolderForm(db, req.args.form, await loadKeyring(idbKeyringStore())); return folderReport(db);
+        case "rekey": markAllDirty(db); return folderReport(db);
         case "resync": return sync(db, raw, sqlite3, "adopt");
         case "fresh": {
             const dir = await writableFolder();
@@ -176,8 +181,8 @@ async function run(req: ArchiveOp): Promise<unknown> {
         case "import": {
             const dir = await writableFolder();
             if (!dir) return folderReport(db);
-            const { files, sessions, skipped } = await importMonths({ sqlite3, raw }, monthFolder(dir), await loadKeyring(idbKeyringStore()));
-            return { ...(await folderReport(db)), imported: { files, sessions }, ...(skipped.length ? { skipped } : {}) };
+            const { files, sessions, deleted, skipped } = await importMonths({ sqlite3, raw }, monthFolder(dir), await loadKeyring(idbKeyringStore()));
+            return { ...(await folderReport(db)), imported: { files, sessions }, deleted, ...(skipped.length ? { skipped } : {}) };
         }
     }
 }
@@ -209,7 +214,7 @@ async function sync(db: ArchiveDb, raw: Database, sqlite3: Sqlite3Static, mode: 
     // An unchosen form wrote nothing, so no sync completed: `last_sync` stays unset and the form stays unchosen.
     if (form) metaSet(db, "last_sync", String(Date.now()));
     return {
-        ...(await folderReport(db)), written: r.written, removed: r.removed, merged: r.merged,
+        ...(await folderReport(db)), written: r.written, removed: r.removed, merged: r.merged, deleted: r.deleted,
         ...(r.skipped.length ? { skipped: r.skipped } : {}),
         ...(mode === "adopt" && "imported" in r ? { imported: (r as { imported: { files: number; sessions: number } }).imported } : {}),
     };
