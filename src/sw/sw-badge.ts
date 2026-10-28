@@ -34,8 +34,8 @@ export function badgeFor(asks: readonly WaitingStart[], requests: readonly Pick<
     if (n === 0) return { text, title: BADGE_IDLE_TITLE };
     if (n === inPanel) return { text, title: "window.ml: something is waiting for you in the side panel on this tab" };
     if (!requests.length && n === 1) return { text, title: "window.ml: an agent start is waiting for you on this tab" };
-    if (!asks.length && n === 1) return { text, title: `window.ml: ${new URL(requests[0].origin).host} is asking for access` };
-    if (!asks.length) return { text, title: `window.ml: ${n} sites are asking for access` };
+    if (!asks.length && !inPanel && n === 1) return { text, title: `window.ml: ${new URL(requests[0].origin).host} is asking for access` };
+    if (!asks.length && !inPanel) return { text, title: `window.ml: ${n} sites are asking for access` };
     return { text, title: `window.ml: ${n} things are waiting for you` };
 }
 
