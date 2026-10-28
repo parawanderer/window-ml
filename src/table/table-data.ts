@@ -659,6 +659,7 @@ export async function storedColumns(bytes: ArrayBuffer, format: string, names: s
     } else if (format === "arrow-file" || format === "arrow-stream") {
         t = await tableFromArrow(bytes, { maxRows: Number.MAX_SAFE_INTEGER });
     } else {
+        if (format === "paged" || format === "bytes") throw new Error(`this stored value is ${format}, which is not a table, so it cannot be read by column.`);
         throw new Error(`a stored table in a format that cannot be read by column: ${format}`);
     }
     const idx = names.map((n) => {

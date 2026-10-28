@@ -174,16 +174,21 @@ idle) and a later read says `ValueMissing` and "re-run the step". An attached fi
 for the session's life, exempt from idle and budget eviction, and counted against the budget at attach time, so a file
 the store cannot hold is refused when it is attached, never lost later.
 
-**One copy of the same bytes.** Today `put` (value-store.ts) mints a new key per store and nothing checks for the same
-bytes, so fetching one 8 MB PDF three times stores 24 MB, and the old copies age out on their own clock. Slice 2
-splits the store into ROWS over BLOBS: a blob is kept once under the SHA-256 of its bytes (WebCrypto, in the worker),
-and each fetch or attach is still its own row with its own key, since a pointer names one fetch from one source at one
-time. The key stays the only handle: claims and tombstones are per row, so `ValueMissing` still says why THIS pointer
-is gone. A read through any row marks the blob read; eviction removes rows, and a blob goes with its last row. The
-budget charges a blob once, however many rows share it, and the hash is taken BEFORE the budget check, so a second copy
-of stored bytes is never refused for room it does not take. A document that changed hashes differently and is stored
-anew. An attached file's session-long hold is `planEviction`'s existing `protect` list, not a new mechanism; it
-protects the blob, so a fetched copy of the same bytes cannot take it out with it.
+**One copy of the same bytes.** (Built, slice 2a.) The value store is ROWS over BLOBS (value-store.ts): a blob is kept
+once under the SHA-256 of its bytes (WebCrypto, in the worker), and each fetch or attach is still its own row with its
+own key, since a pointer names one fetch from one source at one time. The key stays the only handle: claims and
+tombstones are per row, so `ValueMissing` still says why THIS pointer is gone. A read through any row reads the blob and
+marks THAT row read. The budget charges a blob once, however many rows share it, and the hash is taken BEFORE the budget
+check, so a second copy of stored bytes is never refused for room it does not take (even when the blob alone is over the
+budget) and evicts nothing. Idle eviction is per row; budget eviction is per blob: the rows sharing one are a group,
+read as recently as the latest of them, evicted whole, and skipped whole when any of them is protected. A blob is
+deleted in the transaction that deletes its last row; a row evicted while its blob stays frees no bytes, and its
+`Eviction` says so (`shared`). A document that changed hashes differently and is stored anew. An attached file's
+session-long hold is `planEviction`'s existing `protect` list, not a new mechanism; it protects the blob's whole group,
+so a fetched copy of the same bytes cannot take it out with it. Rows written before this (database version 1) carry no
+hash and own a blob under their own key: they are not rehashed, and read and go as before. Two formats join
+`ValueFormat` for what comes next: `paged` (a document as a list of pages, each with text and an optional render recipe)
+and `bytes` (raw bytes).
 
 **Python.** An attached file reaches `python_exec` as an INJECTED value, like a stored table, not as a path: there is
 no `/attached/` directory and no `open()` of one. The call names it, `files: { name: "@file:3fa91c2" }`, and the
