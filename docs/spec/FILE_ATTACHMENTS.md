@@ -1,7 +1,8 @@
 # Spec (WIP): attaching files to a message
 
 **Status: designed, not started (2026-10-28, Shane and the calm-chat-motion session).** The order is three slices,
-each landing on its own: text files, then PDFs, then documents as `@file:` pointers in agent runs.
+each landing on its own: text files, then PDFs, then documents as `@file:` pointers in agent runs. Slice 3's contact
+points with the python, shell and policies lanes were ruled on by their coordinator (2026-10-28, "Rulings" below).
 
 ## What it is for
 
@@ -111,12 +112,14 @@ Page 1: …the first page's text, to the preview cap…
 ```
 
 "Attached by the person" is there so a model does not take the name for a path on disk; `ml.sh` given an `@file:`
-pointer as an argument refuses with a sentence saying it is an attachment, not a file in the workspace.
+pointer as an argument refuses with a sentence saying it is an attachment, not a file in the workspace. That refusal
+is the shell call's one rule for every pointer prefix in argv, not a manifest's (SHELL.md).
 
 **Reading text by page.** The pipe dialect gains one verb, `pages N-M` (`PIPE_CMDS`, text-pipe.ts), which selects whole
 pages from a paged value before the other verbs run: `dereference("@file:3fa91c2", { pipe: "pages 3-5 | grep -i
 revenue" })`. A text file is one page per N lines (open: N), so the same verb pages a long log. Extending the dialect
-requires the adversarial tests in readonly-exec.md ("The rule for extending the dialect").
+requires the adversarial tests in readonly-exec.md ("The rule for extending the dialect"); `pages` gets its own bound
+(how many pages one pipe may select) with adversarial rows of its own.
 
 **Looking at pages.** `look` takes a document target: `look({ doc: "@file:3fa91c2", pages: "4", question })`. The
 pages are rendered from the stored bytes by pdf.js in the offscreen document, then go down the existing vision path
@@ -145,12 +148,17 @@ the store cannot hold is refused when it is attached, never lost later.
 bytes, so fetching one 8 MB PDF three times stores 24 MB, and the old copies age out on their own clock. Slice 2
 splits the store into ROWS over BLOBS: a blob is kept once under the SHA-256 of its bytes (WebCrypto, in the worker),
 and each fetch or attach is still its own row with its own key, since a pointer names one fetch from one source at one
-time. A read through any row marks the blob read; eviction removes rows, and a blob goes with its last row. A
-document that changed hashes differently and is stored anew. An attached file's session-long hold protects its blob,
-so a fetched copy of the same bytes cannot take it out with it.
+time. The key stays the only handle: claims and tombstones are per row, so `ValueMissing` still says why THIS pointer
+is gone. A read through any row marks the blob read; eviction removes rows, and a blob goes with its last row. The
+budget charges a blob once, however many rows share it, and the hash is taken BEFORE the budget check, so a second copy
+of stored bytes is never refused for room it does not take. A document that changed hashes differently and is stored
+anew. An attached file's session-long hold is `planEviction`'s existing `protect` list, not a new mechanism; it
+protects the blob, so a fetched copy of the same bytes cannot take it out with it.
 
-**Python.** `python_exec` can open an attached file as a file in its sandbox (`/attached/<name>`), read from the value
-store the way slice 5 of POINTER_VALUES reads a stored table, so a CSV or JSON is parsed by the code the model writes.
+**Python.** An attached file reaches `python_exec` as an INJECTED value, like a stored table, not as a path: there is
+no `/attached/` directory and no `open()` of one. The call names it, `files: { name: "@file:3fa91c2" }`, and the
+`tables` map accepts an `@file:` pointer as a source like a URL; the sandbox's existing `read_csv`/`open` redirect
+resolves a name it was given. Specified on the python side in PYTHON_DIALECT.md.
 
 ## What the person sees
 
@@ -169,6 +177,10 @@ store the way slice 5 of POINTER_VALUES reads a stored table, so a CSV or JSON i
 A file's text is untrusted input, the same as a web page's: an instruction written inside a PDF gets no authority a
 page's text would not get. The person attached it, which is consent to READ it, not to obey it.
 
+Reading an attachment (`dereference`, `look`, a `python_exec` source) is free by the effects algebra
+([`EFFECTS.md`](EFFECTS.md)): a read of a value the run already holds spends nothing and reaches nothing, so no policy
+line exists for it and none is added.
+
 Slice 3 adds a pointer kind and a `look` target, so it gets the red-team pass (site-access.md, "Adding a tool, a member
 or a message"). What a hostile page must not get, as tests that fail first:
 
@@ -176,8 +188,21 @@ or a message"). What a hostile page must not get, as tests that fail first:
   tab;
 - a pointer from one session does not open another session's file;
 - a file's name cannot break out of its `<file>` block or its outline line;
+- `navigate` landing on a PDF is a pass of its own: what the answered pointer reveals, and that it is judged as the
+  fetch it already is (#1129);
 - a PDF crafted to be slow or huge (deep nesting, a page of a million glyphs, a 100k-page count) is bounded by time and
   size limits in the offscreen document and fails with a sentence, not a hung run.
+
+## Rulings (2026-10-28, from the python/shell/policies coordinator)
+
+1. Python takes an attachment as an injected value (`files:`, and `@file:` in `tables`), never a path; above.
+2. Rows over blobs is fine: the key is the only handle, claims and tombstones per row, the budget charges a blob once,
+   the hold is the `protect` list, hash before the budget check.
+3. `@file:` is this spec's; nothing on the shell side uses it. The argv refusal is the shell call's rule for every
+   prefix.
+4. Reading an attachment is free (effects algebra); no policy line.
+5. Nothing in flight collides. `navigate` on a PDF is a new red-team pass; `pages` joins `PIPE_CMDS` with its own bound
+   and adversarial rows.
 
 ## Open
 
