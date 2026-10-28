@@ -23,7 +23,7 @@ import { startableOn, type StartKind, StartMenu } from "./new-session";
 import { PageChip } from "./page-chip";
 import { isPinned, RowMenu } from "./row-menu";
 import { toggleRuntime, foldedRuntimes, pinned, ListToggle, orderPins, readState } from "./view-mode";
-import { isUnread, UNTIL_READ } from "./read-marks";
+import { endingSeen, isUnread } from "./read-marks";
 import { pinnedInOrder } from "./pin-order";
 import { useReorder } from "./pin-reorder";
 
@@ -72,7 +72,7 @@ function RuntimeHead({ store, rt, folded, onStart }: { store: ChatStore; rt: Run
 
 /** One session in the list, from its index row (the transcript is fetched only when it is opened). The row and its
  *  `⋮` are siblings in a wrapper rather than one inside the other, because a button cannot hold a button. */
-function IndexRow({ store, s, rt, active, unread, showRuntime, showPin, reveal }: { store: ChatStore; s: SessionSummary; rt: RuntimeInfo; active: boolean; unread: boolean; showRuntime?: boolean;
+function IndexRow({ store, s, rt, active, unread, read, showRuntime, showPin, reveal }: { store: ChatStore; s: SessionSummary; rt: RuntimeInfo; active: boolean; unread: boolean; read: boolean; showRuntime?: boolean;
     /** mark it pinned, for a row OUTSIDE the Pinned group — where being in that group is the mark */
     showPin?: boolean;
     /** this row was just REVEALED by "older on this runtime": its place in that page, which staggers the animation.
@@ -82,8 +82,7 @@ function IndexRow({ store, s, rt, active, unread, showRuntime, showPin, reveal }
     const title = s.title || s.task || "(untitled)";
     const offset = rt.clockOffsetMs ?? 0;
     // A bad ending already shown on this device keeps its words ("failed", "stopped at its step cap") and loses its
-    // dot in calm view: the dot is for what you have not seen yet (read-marks.ts).
-    const read = UNTIL_READ.has(s.status) && !unread;
+    // dot in calm view: the dot is for what you have not seen yet (`endingSeen`, read-marks.ts).
     return (
         <div class={`chat-row-wrap${active ? " active" : ""}${reveal != null ? " revealed" : ""}${read ? " read" : ""}${unread ? " unread" : ""}`} style={reveal != null ? { "--i": String(reveal) } : undefined}>
             <button class={`row chat-row${active ? " active" : ""}`} data-session={key} onClick={() => openSession(key)}>
@@ -226,7 +225,7 @@ export function SessionList({ store, activeKey, narrow, onStart, gear, gearWide 
     const olderOn = (id: string) => sessions.filter((s) => s.id.runtime === id && !isPinned(s) && !isRecent(s));
     const row = (s: SessionSummary, showRuntime = false, showPin = false, reveal?: number) => {
         const key = keyOf(s);
-        return <IndexRow key={key} store={store} s={s} rt={rtOf.get(s.id.runtime)!} active={activeKey === key} unread={isUnread(marks, key, s.status, s.lastTs, localTs(s, rtOf.get(s.id.runtime)), activeKey === key)} showRuntime={showRuntime} showPin={showPin} reveal={reveal} />;
+        return <IndexRow key={key} store={store} s={s} rt={rtOf.get(s.id.runtime)!} active={activeKey === key} unread={isUnread(marks, key, s.status, s.lastTs, localTs(s, rtOf.get(s.id.runtime)), activeKey === key)} read={endingSeen(marks, key, s.status, s.lastTs)} showRuntime={showRuntime} showPin={showPin} reveal={reveal} />;
     };
     const revealed = shownOlder.value;
     return (

@@ -19,7 +19,7 @@ import { ago, approvalsPending, keyOf, needsYou, pinnedOf, sections, STATUS_LABE
 import { PinnedRows } from "../pinned-rows";
 import { setPinnedOrder, usePinnedOrder } from "../pinned-order";
 import { flushReadMarks, markRead, useReadMarks } from "../read-marks";
-import { isUnread, UNTIL_READ } from "../../../src/chat/read-marks";
+import { endingSeen, isUnread } from "../../../src/chat/read-marks";
 import { useSessionLayer } from "../layer";
 import { SIZE, usePalette } from "../theme";
 import { Badge, Dot, IconButton } from "../ui";
@@ -171,14 +171,14 @@ export function ListScreen() {
                         onOrder={(keys) => setPinnedOrder(keys, unpinned())}
                         onActions={(key) => void actOn(key, false)}
                         row={(x, moveBy) => (
-                            <Row s={x} unread={isUnread(marks, keyOf(x), x.status, x.lastTs, x.lastTs, keyOf(x) === layer.key)} runtimeName={e.runtimes.length > 1 ? names.get(x.id.runtime) : undefined} moveBy={moveBy}
+                            <Row s={x} unread={isUnread(marks, keyOf(x), x.status, x.lastTs, x.lastTs, keyOf(x) === layer.key)} read={endingSeen(marks, keyOf(x), x.status, x.lastTs)} runtimeName={e.runtimes.length > 1 ? names.get(x.id.runtime) : undefined} moveBy={moveBy}
                                 onPress={() => layer.open(keyOf(x), false)}
                                 onLongPress={() => void actOn(keyOf(x), false)} />
                         )} />
                 ) : (
                     // A pinned row opens ON its approval: that is what it is pinned for. It also names its runtime,
                     // since up here it is out of its machine's section.
-                    <Row s={item} unread={isUnread(marks, keyOf(item), item.status, item.lastTs, item.lastTs, keyOf(item) === layer.key)} runtimeName={section.runtime === null ? names.get(item.id.runtime) : undefined}
+                    <Row s={item} unread={isUnread(marks, keyOf(item), item.status, item.lastTs, item.lastTs, keyOf(item) === layer.key)} read={endingSeen(marks, keyOf(item), item.status, item.lastTs)} runtimeName={section.runtime === null ? names.get(item.id.runtime) : undefined}
                         onPress={() => layer.open(`${item.id.runtime}:${item.id.hash}`, section.runtime === null)}
                         onLongPress={() => void actOn(`${item.id.runtime}:${item.id.hash}`, section.runtime === null)} />
                 )}
@@ -191,17 +191,18 @@ export function ListScreen() {
 
 /** One session in the list: its title, where it stands, and when it last moved. `runtimeName` for a row out of its
  *  runtime's section (the pinned "needs you" group). */
-function Row({ s: x, unread, runtimeName, onPress, onLongPress, moveBy }: { s: SessionSummary; runtimeName?: string; onPress: () => void; onLongPress: () => void;
+function Row({ s: x, unread, read, runtimeName, onPress, onLongPress, moveBy }: { s: SessionSummary; runtimeName?: string; onPress: () => void; onLongPress: () => void;
     /** news this phone has not shown you (read-marks.ts): the title goes bold, and nothing else changes */
     unread?: boolean;
+    /** a bad ending this phone has already shown you (`endingSeen`): its words stay, its dot goes */
+    read?: boolean;
     /** a pinned row: move it one place up or down, which a screen reader offers since it cannot drag */
     moveBy?: (d: -1 | 1) => void }) {
     const p = usePalette();
     const title = x.title || x.task || "(untitled)";
     const label = STATUS_LABEL[x.status];
     const tone = STATUS_TONE[x.status];
-    // A bad ending already shown keeps its words and loses its dot.
-    const read = UNTIL_READ.has(x.status) && !unread;
+    // A bad ending already shown keeps its words and loses its dot (`endingSeen`).
     const dot = read ? "transparent" : tone === "busy" ? p.notice : tone === "err" ? p.err : tone === "stopped" ? p.warn : "transparent";
     return (
         <Pressable accessibilityRole="button" accessibilityLabel={title} accessibilityHint="Long press for this session's actions" onPress={onPress} onLongPress={onLongPress}

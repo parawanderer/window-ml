@@ -12,7 +12,7 @@ import { holds, mayCommand } from "../src/chat/grants.ts";
 import { resumableHere } from "../src/chat/grants.js";
 import { KEYS_KEY, KEYS_SENDS, KEYS_SENDS_ALONE, TARGET_KEY, keyUse, knowsKeys, lastTargets, noteKeyUse, rememberTarget } from "../src/chat/view-mode.tsx";
 import { flushReadMarks, CALM_KEY, GROUP_ALL_KEY, LIST_KEY, PINNED_KEY, PINNED_MODELS_KEY, READ_KEY, calm, dropPin, installViewPrefs, listOpen, markRead, orderPins, pinned, pinnedModels, readState, setCalm, setGroupAll, setListOpen, togglePin, togglePinnedModel } from "../src/chat/view-mode.tsx";
-import { READ_MARKS_MAX, UNTIL_READ, hasBaseline, isUnread, throttledWriter, markSeen, readMarksFrom, readStateFrom } from "../src/chat/read-marks.ts";
+import { READ_MARKS_MAX, UNTIL_READ, endingSeen, hasBaseline, isUnread, throttledWriter, markSeen, readMarksFrom, readStateFrom } from "../src/chat/read-marks.ts";
 import { pinnedInOrder } from "../src/chat/pin-order.js";
 import { groupAllTools, sessionMap, view } from "../src/sidebar/store.ts";
 import { SESSION_CONTRACT_VERSION } from "../src/session/session-host.ts";
@@ -1162,6 +1162,19 @@ const unread = (st, key, ts, open = false, status = "done") => isUnread(st, key,
 test("read marks: only a run that ended badly keeps its words once read; the set is the rule", () => {
     // Enumerated, not sampled: a status added to the index must be decided here on purpose.
     assert.deepEqual([...UNTIL_READ].sort(), ["cancelled", "capped", "error", "interrupted"]);
+});
+
+test("a bad ending's dot ignores the baseline: on a fresh device an old failure keeps its dot until it is opened here", () => {
+    const fresh = readStateFrom(undefined, 5000);
+    // Ended long before this device's first open: not unread (no bold title), but its dot is still news.
+    for (const st of UNTIL_READ) {
+        assert.equal(unread(fresh, K, 100, false, st), false);
+        assert.equal(endingSeen(fresh, K, st, 100), false, `${st}: the dot stays until seen here`);
+        assert.equal(endingSeen(markSeen(fresh, K, 100), K, st, 100), true, `${st}: opened, the dot goes`);
+        assert.equal(endingSeen(markSeen(fresh, K, 100), K, st, 150), false, `${st}: it went wrong again, the dot is back`);
+    }
+    // A status that is not a bad ending never has a dot to drop.
+    for (const st of ALL_STATUSES.filter((x) => !UNTIL_READ.has(x))) assert.equal(endingSeen(markSeen(fresh, K, 100), K, st, 100), false);
 });
 
 test("unread: the baseline is taken once, and nothing at or before it is unread, whatever its status", () => {

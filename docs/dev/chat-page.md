@@ -768,9 +768,15 @@ marks on the runtime's, so the list compares `lastTs - clockOffsetMs` to the bas
 Opening a session marks it seen up to its newest event, when the open pane is at the end of the transcript in a visible
 tab (on the phone, when it is open over the list: `mobile/src/read-marks.ts`); a run resumed that moves again is unread
 again. A bad ending is unread news like any other, and once seen keeps its words ("failed", "stopped at its step cap")
-and loses its dot in calm view. A RUNNING session is never unread (its dot says it is working, and a title that went bold on every step would be the mark that is always there); when it ends, or stops to wait on you, its newer event is news then. A running or waiting session keeps its status dot whatever you have seen. Storage hears of a mark at most every 2 s while a session streams and at once on leaving it, hiding the page or a status change (`throttledWriter`, `flushReadMarks`); the screen has it immediately. The marks keep
-the newest `READ_MARKS_MAX` sessions. Per device, like a pin; the first version stored the marks alone (a flat key to
-stamp map), and that loads with a baseline of now and its marks kept, so an upgrade marks nothing.
+and loses its dot in calm view. That dot ignores the baseline (`endingSeen`): a failure is worth one look on every
+device, so on a fresh device an old bad ending keeps its dot until it is opened there, though its title is not bold. A
+RUNNING session is never unread (its dot says it is working, and a title that went bold on every step would be the mark
+that is always there); when it ends, or stops to wait on you, its newer event is news then. A running or waiting session
+keeps its status dot whatever you have seen. Storage hears of a mark at most every 2 s while a session streams and at
+once on leaving it, hiding the page or a status change (`throttledWriter`, `flushReadMarks`); the screen has it
+immediately. The marks keep the newest `READ_MARKS_MAX` sessions. Per device, like a pin; the first version stored the
+marks alone (a flat key to stamp map), and that loads with a baseline of now and its marks kept, so an upgrade marks
+nothing.
 
 **Earlier events** (`EarlierEdge`, chat-app.tsx) draw the store's `earlier` state at the top of a transcript that does
 not reach its start: an older page is fetched as the edge scrolls into view, with the reading position held from the

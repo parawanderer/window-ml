@@ -43,6 +43,18 @@ export function isUnread(state: ReadState, key: string, status: ReadStatus, last
 }
 
 /**
+ * Whether a bad ending's dot has done its job here: the session ended in a way that waits to be read (`UNTIL_READ`) and
+ * this device has shown its newest event. The BASELINE plays no part: a failure is worth one look on every device, so
+ * on a fresh device an old bad ending keeps its dot until it is opened, as before the baseline existed. Only the bold
+ * title (`isUnread`) starts at the baseline.
+ */
+export function endingSeen(state: ReadState, key: string, status: ReadStatus, lastTs: number): boolean {
+    if (!UNTIL_READ.has(status)) return false;
+    const at = state.seen[key];
+    return typeof at === "number" && at >= lastTs;
+}
+
+/**
  * The state with `key` seen up to `lastTs`, or the same object when that changes nothing (so a caller can skip the
  * write). Never moves a mark BACK: a row reported late with an older stamp does not unread what was read.
  */
