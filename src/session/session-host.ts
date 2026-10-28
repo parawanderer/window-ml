@@ -860,7 +860,9 @@ export interface CommandError {
 }
 
 export type CommandResult<T extends CommandType> =
-    | { ok: true; data: CommandResultData[T] }
+    /** `note` is something the person should be told about a command that succeeded: a hub client sends images as a
+     *  smaller copy when the originals would not fit the hub's message limit. */
+    | { ok: true; data: CommandResultData[T]; note?: string }
     | { ok: false; error: CommandError };
 
 /* ------------------------------ the host ------------------------------ */

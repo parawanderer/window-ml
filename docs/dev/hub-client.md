@@ -90,6 +90,19 @@ two error paths for one question. A runtime absent from presence answers `not-fo
 because there is nobody to be slow; one that is connected and says nothing answers `unavailable`; and an abort is
 its own reason, because the command WAS sent and may still be carried out.
 
+**A command over the hub's payload limit is refused or has its images shrunk, and is never sent.** The relay CLOSES THE
+WHOLE CONNECTION on an envelope payload over `max_payload_bytes` (the welcome's `Limits`, `HubClient.limits`; 1 MiB less
+1 KiB by default), so a 1 to 3 MB photo as a data URL used to drop the phone, with every waiting command told "the hub
+closed". `HubClient.command` measures the SEALED bytes, exactly what the relay measures (no margin needed there), and
+throws `CommandTooLarge`. `HubConnection.send` then re-encodes the command's `images` (`fit-images.ts`: JPEG at 0.85,
+longest side stepped 2048, 1600, 1280, 1024, 768, 512, largest image first, and only until the whole fits, over a
+`Raster` it can be given in tests as `conn.raster`) and sends that, answering `ok` with a `note` that
+`ChatStore.send` shows as an info notice ("Sent as a smaller copy"). Images that fit are never decoded. If it still does
+not fit, or there is nothing to draw with, the answer is `invalid`: "too large to send through the hub: 2.4 MB; the hub
+takes up to 1.0 MB per message", and the connection stays up. Only the hub path does this; the local host sends images as
+they are. The shrunk copy fits to a budget with a 512-byte margin (the seal's measured overhead, the rest of the
+command, 3 bytes of JSON per image), and the exact check on the real seal has the last word.
+
 **The abort race is real and is handled twice.** Sealing and sending are asynchronous, so an abort can land between
 the check at the top of `send` and the listener being attached — at which point the listener is attached to a signal
 that has already fired and will never fire again. The flag is asked once more after everything the resolver needs is
@@ -361,6 +374,8 @@ storage on Android, "this device only, after first unlock"). A keystore holds by
   only an authenticated command inside its clock window can fill the replay window. Bytes reaching WebCrypto are
   `Uint8Array<ArrayBuffer>` (`bytes()` at every protobuf boundary), and the two implementations are kept honest by
   vectors in both directions, not by reading the spec twice.
+- **A payload over the hub's limit costs the CONNECTION, not just the message.** `HubClient.command` throws
+  `CommandTooLarge` before sending; do not add a path that calls `direct()` with a large body unchecked.
 - **WHO THE ROOT IS: a phone in a pocket, not a server and not a script.** An account's root key lives on the device
   people pair others FROM, which is a CLIENT — the phone app, or the hosted client on an iPad. `client-pairing.ts` is
   the only implementation with `createAccount`; `extension-pairing.ts` refuses it outright and reports `canCreate:

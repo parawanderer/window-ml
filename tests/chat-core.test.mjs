@@ -307,6 +307,25 @@ test("store: a refused command becomes a notice saying why", async () => {
     store.dispose();
 });
 
+test("store: a command that succeeded with a note tells the person, as an info notice", async () => {
+    const { store } = world();
+    await flush();
+    store.host.send = async () => ({ ok: true, data: {}, note: "Sent as a smaller copy to fit the hub's limit of 1.0 MB per message" });
+    const r = await store.send({ type: "session.send", session: { runtime: "box", hash: "aaaa0001" }, text: "x" });
+    assert.equal(r.ok, true);
+    const n = store.notices.value.at(-1);
+    assert.match(n.text, /smaller copy/);
+    assert.equal(n.tone, "info");
+    store.dispose();
+});
+
+test("only the hub connection shrinks images: the local host and the stores never import the fitter", async () => {
+    const { readFileSync, readdirSync } = await import("node:fs");
+    const users = readdirSync(new URL("../src/chat/", import.meta.url)).filter((f) => /\.tsx?$/.test(f) && f !== "fit-images.ts")
+        .filter((f) => /fit-images/.test(readFileSync(new URL(`../src/chat/${f}`, import.meta.url), "utf8")));
+    assert.deepEqual(users, ["hub-connection.ts"]);
+});
+
 /* ------------------------------ grants ------------------------------ */
 
 test("grants: scope, expiry and session coverage", () => {

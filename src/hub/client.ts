@@ -95,6 +95,14 @@ const WELCOME_TIMEOUT_MS = 15_000;
  */
 export const MAX_QUEUED_EVENTS = 4_096;
 
+/** A command whose sealed form is over the hub's `max_payload_bytes`; the relay would close the connection on it. */
+export class CommandTooLarge extends Error {
+    constructor(readonly size: number, readonly limit: number) {
+        super(`a command of ${size} bytes is over the hub's limit of ${limit}`);
+        this.name = "CommandTooLarge";
+    }
+}
+
 /** A connected, authenticated client. */
 export class HubClient {
     private readonly queue: HubEvent[] = [];
@@ -387,9 +395,21 @@ export class HubClient {
 
     /** Seal a command to `to` and send it. Resolves with the nonce its result will answer. */
     async command(to: Recipient, scope: string, body: Bytes): Promise<Bytes> {
+        const limit = this.limits.maxPayloadBytes;
+        // A sealed command is never smaller than its body, so a hopeless one is refused before it is encrypted.
+        if (limit > 0 && body.length > limit) throw new CommandTooLarge(body.length, limit);
         const { sealed, nonce } = await sealCommand(this.sender(), to, scope, body, this.now());
+        // The relay CLOSES THE CONNECTION on an envelope payload over its limit, so the check is on the sealed bytes,
+        // exactly what it will measure.
+        if (limit > 0 && sealed.length > limit) throw new CommandTooLarge(sealed.length, limit);
         this.direct(to.principal, Kind.KIND_COMMAND, sealed);
         return nonce;
+    }
+
+    /** What sealing adds to a command's body (signature, certificate chain, key, framing), measured by sealing an empty
+     *  one: the part of a command's size that does not depend on what it says. */
+    async commandOverhead(to: Recipient, scope: string): Promise<number> {
+        return (await sealCommand(this.sender(), to, scope, new Uint8Array(), this.now())).sealed.length;
     }
 
     /** Seal the result of a command back to whoever sent it. */
