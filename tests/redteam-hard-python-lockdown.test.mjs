@@ -47,10 +47,11 @@ async function cell(ns, source) {
 
 // --- reset ends the ownership history of values retained by the namespace ---------------------------------
 
+// Measured passing on core 35bd1d69 (#1263 at 56ab77fd): the closure's creating-run and persistence controls pass,
+// the outside-created closure control is refused, and post-reset keep(3) is refused.
 test("a list held by a cell-defined closure is not writable after reset", {
     skip,
     timeout: 60000,
-    todo: "measured on core 2e41d920: the worker wrapper retained a cell-defined closure; after dialectSetup reset/reload, keep(3) returned [1, 2, 3], while the outside-created closure control was refused",
 }, async (t) => {
     if (!fork) return t.skip("needs the restricted-mode fork core (npm run fetch-pyodide)");
     const ns = py.globals.get("dict")();
@@ -87,10 +88,11 @@ _outside_make()
 
 // --- the tier-3 shape and post-load checks account for closures a library function can return ---------------------
 
+// Measured passing on core 35bd1d69 (#1263 at 56ab77fd): libraryShape/libraryLoad and the creating-run control pass,
+// and the library-produced closure's post-reset keep(2) is refused.
 test("a tier-3 library cannot return a closure whose list stays writable after reset", {
     skip,
     timeout: 60000,
-    todo: "measured on core 2e41d920: libraryShape and libraryLoad admitted make(); its returned closure persisted through the worker wrapper, and keep(2) after reset returned [1, 2]",
 }, async (t) => {
     if (!fork) return t.skip("needs the restricted-mode fork core (npm run fetch-pyodide)");
     const source = `
