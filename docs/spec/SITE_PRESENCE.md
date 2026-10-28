@@ -139,6 +139,9 @@ not, record that and choose between `declarativeNetRequest` rules and following 
    FOUND 2026-10-27 by the janitor on the built step 2a: a document loading between a site turning visible and its
    registration covering it answers `open: true` with no injected.js in it. The security lane's own `@security` PR,
    after #1189.
+   As built: the content script says `PAGE_SCRIPT_MISSING` once when its gate opened and no hello came within 1.5 s; the
+   worker reads the presence of the sender's own origin (top frame, its named document only) and, when it is `full`, puts
+   the page scripts into that document. `injectPageScripts` gives a document them once.
 3. Tools in the content script's isolated world on hidden pages (the second bundle, behind no switch; the tools' tests
    run against both bundles; detection-surface's hidden-with-run `pageEvents` row goes to `[]`; rule 10: a separate
    agent's test-only red-team PR on main first, the lane's PR after), and `chrome.dom` for closed roots. Exec's default world is now a switch
