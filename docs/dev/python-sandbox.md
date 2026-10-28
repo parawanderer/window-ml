@@ -241,8 +241,9 @@ wrapper's cancel. What the cancel's tasks print goes to its own buffer, appended
 appended to the cell's error and the value dropped. In this order: restore the running loop; SPEND every task
 (`cancel()`, then let the loop turn, so its coroutine takes the `CancelledError` and finishes; a task that catches it
 and awaits again is cancelled again, at most 8 rounds, and one still pending refuses the cell's result with an error
-naming it); REVOKE what the cell handed to JavaScript (`cell-gate.ts`); then cancel every uncancelled `asyncio.Handle`
-that `gc.get_objects()` reaches (#998). **The spend is BOUNDED** (the host's only): one budget of 1 s for all its
+naming it); CUT the loop's queue (below); REVOKE what the cell handed to JavaScript (`cell-gate.ts`); then cancel every
+uncancelled `asyncio.Handle` that `gc.get_objects()` reaches (#998), unless the deadline cut the queue; then close the
+coroutine of every task whose cancel the cut dropped. **The spend is BOUNDED** (the host's only): one budget of 1 s for all its
 rounds, enforced by one `sys.monitoring` tool whose callbacks raise on every function start, line and backward jump a
 task runs past the deadline, and at once on a call (the `CALL` event) to `sys.settrace`/`setprofile`, `threading`'s, or
 any `sys.monitoring` function but the three getters (enumerated from the module at boot). A guarded call made from C
@@ -253,7 +254,7 @@ cell's result ("changed the cancel's sys.monitoring tool or set a trace or profi
 kill, like a loop inside a C function. A settrace hook that raises is
 taken down by CPython itself, so every handler after the first stop used to run untraced (a 4 s `finally` gave a 5 s
 spend); a monitoring callback that raises stays on, so a handler, a `finally` and a coroutine finalized as the task
-unwinds each stop at their first event. The tool's events are on only around the spend's `sleep(0)`; asyncio's,
+unwinds each stop at their first event. The tool's events are on only around the spend's turns of the loop; asyncio's,
 Pyodide's and the harness's own code is switched off where it stands (`DISABLE`). At the cancel's start a tool the cell
 left registered is cleared and freed (its callbacks would run during the spend on no clock) and refuses the result by
 name, and the cell's own trace and profile hooks are set to `None`. A task the tool stops ends with a private
@@ -261,6 +262,25 @@ name, and the cell's own trace and profile hooks are set to `None`. A task the t
 its namespace. A loop inside a C function raises no event, so it hangs to the 15 s kill; the worker marks the spend's
 start (`spending`, `cell-gate.ts` `onSpending`), and the offscreen names that kill (`SPEND_KILLED`) instead of
 "simplify the computation". Both cores have the events the bound needs (tests enumerate them).
+**The loop's queue is cut at the deadline** (`spend-queue.ts`, PYTHON_CANCEL_GAPS.md pins 15 to 17). Pyodide's loop
+gives every `call_soon` its own JavaScript callback in one FIFO (`webloop.scheduleCallback`, and with JSPI a second turn
+through `API.scheduleCallback`), so the spend's `sleep(0)` waited behind everything the cell queued, and a builtin
+callback raises no monitoring event: 250000 `call_soon(d.clear)` held the spend 3.3 to 3.8 s past its deadline. The
+lockdown replaces both schedulers at boot. The spend turns the loop through the queue's own one-shot (`turn`), whose
+chain is never cut; once the deadline has passed, every entry queued before it is dropped in JavaScript without
+entering Python, and when the cancel returns (`done`) everything still queued is dropped the same way. The cut is one
+swap of the pending map; what it dropped still holds the cell's objects, so it is released in batches after the cancel
+(`sweep`), and the worker waits for that before the next cell. A task whose cancel was dropped can never run again: the
+spend closes its coroutine under the tool with the deadline forced past, so its handlers stop at their first event, and
+the cell's result is refused ("N callbacks this cell queued were dropped at the spend's deadline, so <task> never took
+its cancel"). The revoke skips the callbacks the cut dropped, and the `gc.get_objects()` Handle walk is skipped after a
+deadline cut (every Handle the cut dropped is dead). Measured on the boot harness in node: a flood of 1 M builtin
+callbacks spends 1.6 s, 2 M spends 2.4 s; what remains past the 1 s budget is per-entry JavaScript (the raw scheduler
+still fires each dropped entry once, and the revoke walks the gate's items), about a quarter to a third of the time the
+cell spent queueing them. Under the monitoring tool 100000 builtin callbacks ran inside the budget, so the flood tests
+use a million. The largest flood a cell queues in 8 s with a heavier callback (1.59 M of `bytearray(256).clear`) cut in a
+2.1 s spend at 2.6 GB of JavaScript heap; a worker that dies of memory says so, and names the spend when it died in it
+(`memoryKilled`, `offscreen.ts`), instead of "Python worker stopped".
 The gate sits on Pyodide's three doors from a Python callable to JavaScript, never on the registries: every PyProxy
 (`Module.pyproxy_new`, revoked by pointing it at an inert callable), every once-callable (it registers with
 `Module.finalizationRegistry` and calls `Module.callPyObject`, revoked by blocking its pointer there) and every promise
