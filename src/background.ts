@@ -42,7 +42,7 @@ import { handleRunStateDump } from "./sw/sw-run-state";
 import { releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw/sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 import { costCalls } from "./sw/sw-prices";
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, tabGrants } from "./sw/sw-consent";
-import { syncPresence, isVisible, presence, injectPageScripts, injectRunTools, SITE_REQUESTS_KEY } from "./sw/sw-presence";
+import { syncPresence, isVisible, presence, injectRunTools, SITE_REQUESTS_KEY } from "./sw/sw-presence";
 import { isExtensionSender, senderFacts, editSiteAccess, pageRefusal, agentRefusal, readSiteLists, selfApprovalFacts, senderSelfApproves, siteLevels, siteSchemaReady, upgradeNotice, dismissUpgradeNotice } from "./sw/sw-site-access";
 import { policiesReady, forgetRunPolicies, addGlobalPolicy, editPolicy, removePolicy, policyView } from "./sw/sw-policies";
 import { POLICY_LABEL_MAX, POLICY_SOURCE_MAX } from "./sw/policy-valid";
