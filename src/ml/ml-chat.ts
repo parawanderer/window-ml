@@ -266,12 +266,17 @@ export const chat = async function(this: MlApi, prompt: string, options: ChatOpt
  * @param {Array} [options.tools=[]] Client-side tool definitions.
  * @param {string} [options.model=null] Model override.
  * @param {boolean} [options.think=null] Thinking flag; null omits it.
+ * @param {number} [options.numCtx=null] Context window to load the model with (Ollama `num_ctx`), as in ml.chat; a model
+ *   already resident at a bigger window keeps it.
+ * @param {number} [options.maxTokens=null] Hard cap on generated tokens, as in ml.chat; null omits it.
  * @returns {Promise<{content: string, tool_calls: Array<{id?: string, name: string, arguments: Object}>}>} The assistant message with tool calls.
  */
-export const step = async function(messages: NeutralMessage[], { tools = [], model = null, think = null, signal = null, hint = null }: {
+export const step = async function(messages: NeutralMessage[], { tools = [], model = null, think = null, numCtx = null, maxTokens = null, signal = null, hint = null }: {
     tools?: unknown[];
     model?: string | null;
     think?: boolean | null;
+    numCtx?: number | null;
+    maxTokens?: number | null;
     signal?: AbortSignal | null;
     /** What this request is for (RequestHint). Default: an agent step — a program that acts on the reply —
      *  in the session of the run whose tool is executing, if any. */
@@ -282,6 +287,7 @@ export const step = async function(messages: NeutralMessage[], { tools = [], mod
         "LLM_REQUEST",
         "LLM_RESPONSE",
         { "messages": messages, "tools": tools, "model": model, "think": think, "raw": true,
+          ...(numCtx != null ? { "numCtx": numCtx } : {}), ...(maxTokens != null ? { "maxTokens": maxTokens } : {}),
           "hint": hint ?? { use: "agent", ...(runSession ? { session: runSession } : {}) } },
         undefined,
         signal,   // abort kills the in-flight fetch AND rejects here (the agent loop converts it to a clean cancel)
