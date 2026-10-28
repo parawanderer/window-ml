@@ -582,11 +582,11 @@ await asyncio.sleep(0)
 });
 
 // --- P2-bound. a task that will not stop when cancelled, and the cancel a cell cannot rebind --------------------
-// PYTHON_CANCEL_GAPS.md pins 1 to 14. In the locked-down worker the cell's script and the cancel run as ONE coroutine
-// built at boot from captured callables (lockdown.ts `run_script`, `hostRunScript`): the cell's code is compiled in the
-// wrapper's globals, so a cancel read from there could be rebound by the cell. The spend has one budget (1 s) for all
-// its rounds, enforced on every line a task runs (settrace) and on every call that would take the hooks down
-// (setprofile). A loop inside a C function is beyond it; only the worker's 15 s kill ends that, named
+// PYTHON_CANCEL_GAPS.md pins 1 to 14 and 18 to 20. In the locked-down worker the cell's script and the cancel run as ONE
+// coroutine built at boot from captured callables (lockdown.ts `run_script`, `hostRunScript`): the cell's code is
+// compiled in the wrapper's globals, so a cancel read from there could be rebound by the cell. The spend has one budget
+// (1 s) for all its rounds, enforced by one sys.monitoring tool on every start, line and backward jump a task runs and on
+// every call that would take the hook down. A loop inside a C function is beyond it; only the worker's 15 s kill ends that, named
 // (python-reap.test.mjs). The adversarial half (aliases, Task.cancel, call_soon, __del__, a rebind from a task during
 // the spend) is the red team's, after the merge.
 
@@ -639,6 +639,132 @@ asyncio.ensure_future(_left()).set_name("leftover")
 await asyncio.sleep(0)
 "x"`);
     assert.match(String(r.error), STOPPED, `got ${JSON.stringify(r)}`);
+});
+
+// Pins 18 to 20: a settrace hook that raises is taken down by CPython itself, so every handler after the first SpendLate
+// ran untraced (measured on main: a 4 s finally gave a 5013 ms spend, its control 1011 ms). The busy loop is two lines:
+// on main the one-line `while True: pass` happened to stop anyway, so it would not fail first. The spend's hook is a
+// sys.monitoring tool, whose callbacks stay on after one raises.
+const AFTER_LATE = (finallyBody) => `
+import asyncio, sys, types
+_m = types.ModuleType("_rt_late")
+_m.log = []
+sys.modules["_rt_late"] = _m
+async def _left():
+    try:
+        await asyncio.sleep(10)
+    except BaseException:
+        try:
+            while True:
+                pass
+        finally:
+${finallyBody}
+asyncio.ensure_future(_left()).set_name("leftover")
+await asyncio.sleep(0)
+"x"`;
+
+test("P2-bound: a finally that runs after the bound stopped its task is stopped too, at its first line", { skip }, async () => {
+    const t0 = Date.now();
+    const r = await cell(AFTER_LATE(`            _m.log.append("finally ran")\n            import time\n            t0 = time.monotonic()\n            while time.monotonic() - t0 < 4: pass`));
+    const ms = Date.now() - t0;
+    assert.match(String(r.error), STOPPED, `got ${JSON.stringify(r)}`);
+    assert.ok(ms < 2500, `the finally's 4 s did not run: ${ms} ms`);
+    assert.deepEqual((await cell(`import sys\nlist(sys.modules["_rt_late"].log)`)).value, [], "the finally never ran a line");
+});
+
+test("P2-bound: a suspended coroutine the stopped task drops is finalized during the spend with none of its handlers run", { skip }, async () => {
+    // The coroutine is a local of the task only (the module holds a weak reference: a strong one would keep it alive), so
+    // CPython closes it as SpendLate unwinds the task, with the deadline past.
+    const r = await cell(`
+import asyncio, sys, types, weakref
+_m = types.ModuleType("_rt_fin")
+_m.log = []
+sys.modules["_rt_fin"] = _m
+async def _inner():
+    try:
+        await asyncio.sleep(10)
+    except BaseException:
+        _m.log.append("except ran")
+    finally:
+        _m.log.append("finally ran")
+async def _left():
+    c = _inner()
+    c.send(None)
+    _m.ref = weakref.ref(c)
+    try:
+        await asyncio.sleep(10)
+    except BaseException:
+        while True: pass
+asyncio.ensure_future(_left()).set_name("leftover")
+await asyncio.sleep(0)
+"x"`);
+    assert.match(String(r.error), STOPPED, `got ${JSON.stringify(r)}`);
+    const after = await cell(`import sys\n_m = sys.modules["_rt_fin"]\n[list(_m.log), _m.ref() is None]`);
+    assert.deepEqual(after.value, [[], true], "finalized, and neither handler ran");
+});
+
+test("P2-bound: a monitoring tool the cell left is cleared at the spend's start, and the result refused naming it (child process)", { skip, timeout: 300000 }, async () => {
+    // Its LINE callback spins only on the leftover task's handler, so it would run during the spend and nowhere else; a
+    // child process, because a spend that does not clear it never returns.
+    const r = await childCell(`
+import asyncio, sys
+M = sys.monitoring
+M.use_tool_id(3, "cell-tool")
+def _spin(code, line):
+    if code.co_name == "_left" and line >= code.co_firstlineno + 3:   # its except: only once the spend cancels it
+        while True: pass
+M.register_callback(3, M.events.LINE, _spin)
+M.set_events(3, M.events.LINE)
+async def _left():
+    try:
+        await asyncio.sleep(10)
+    except BaseException:
+        raise
+asyncio.ensure_future(_left()).set_name("leftover")
+await asyncio.sleep(0)
+"x"`, "host", 10000);
+    assert.ok(r.done, `the spend returned: ${r.out.slice(-400)}`);
+    assert.match(r.out, /left a sys\.monitoring tool registered: cell-tool \(id 3\)/);
+});
+
+test("P2-bound: every sys.monitoring call that installs, changes or removes a tool is refused during the spend", { skip }, async () => {
+    // Enumerated from the module, never a hand-typed list: a new installing call on a later core fails this row.
+    const names = (await cell(`import sys\nsorted(n for n in dir(sys.monitoring) if callable(getattr(sys.monitoring, n)) and not n.startswith("_") and n not in ("get_tool", "get_events", "get_local_events"))`)).value;
+    assert.ok(names.includes("set_events") && names.includes("free_tool_id"), `got ${JSON.stringify(names)}`);
+    // Each is called on the spend's OWN tool, so a call that went through would disarm it; the line after it logs.
+    const ARGS = { use_tool_id: "i, 'x'", free_tool_id: "i", clear_tool_id: "i", register_callback: "i, M.events.LINE, None", set_events: "i, 0", set_local_events: "i, _left.__code__, 0", restart_events: "" };
+    for (const n of names) {
+        assert.ok(n in ARGS, `a new sys.monitoring call this row does not know how to call: ${n}`);
+        const t0 = Date.now();
+        const r = await cell(`
+import asyncio, sys, types
+_m = types.ModuleType("_rt_mon")
+_m.log = []
+sys.modules["_rt_mon"] = _m
+async def _left():
+    try:
+        await asyncio.sleep(10)
+    except BaseException:
+        M = sys.monitoring
+        i = [k for k in range(6) if M.get_tool(k) is not None][0]
+        M.${n}(${ARGS[n]})
+        _m.log.append("went through")
+        while True: pass
+asyncio.ensure_future(_left()).set_name("leftover")
+await asyncio.sleep(0)
+"x"`);
+        const ms = Date.now() - t0;
+        assert.match(String(r.error), STOPPED, `${n}: ${JSON.stringify(r)}`);
+        assert.ok(ms < 2500, `${n}: refused at the call, not left to the kill: ${ms} ms`);
+        assert.deepEqual((await cell(`import sys\nlist(sys.modules["_rt_mon"].log)`)).value, [], `${n} was refused before it ran`);
+    }
+});
+
+test("P2-bound control: the same task with an empty finally is stopped at the budget", { skip }, async () => {
+    const t0 = Date.now();
+    const r = await cell(AFTER_LATE("            pass"));
+    assert.match(String(r.error), STOPPED, `got ${JSON.stringify(r)}`);
+    assert.ok(Date.now() - t0 < 2500);
 });
 
 test("P2-bound control: an ordinary task is spent at once; what its handler prints reaches the cell's stdout", { skip }, async () => {
@@ -714,16 +840,18 @@ test("P2-bound: which cancel each worker runs, by name", () => {
 
 // Both cores, enumerated (pin 4): what each takes for a Python-level spinner, measured 2026-10-27.
 const CORES = {
-    fork: { what: "the restricted-mode fork core (CI and the release)", reachesSettrace: true },
-    stock: { what: "stock Pyodide (a dev checkout without npm run fetch-pyodide)", reachesSettrace: true },
+    fork: { what: "the restricted-mode fork core (CI and the release)", hasMonitoring: true },
+    stock: { what: "stock Pyodide (a dev checkout without npm run fetch-pyodide)", hasMonitoring: true },
 };
-for (const [core, { what, reachesSettrace }] of Object.entries(CORES)) {
-    test(`P2-bound on the ${core} core: ${reachesSettrace ? "the harness reaches sys.settrace, so a spinner is stopped by the bound" : "no sys.settrace, so a spinner takes the 15 s kill only"}`, { skip }, async (t) => {
+for (const [core, { what, hasMonitoring }] of Object.entries(CORES)) {
+    test(`P2-bound on the ${core} core: ${hasMonitoring ? "the sys.monitoring events the bound needs exist, so a spinner is stopped by the bound" : "no sys.monitoring events for the bound, so a spinner takes the 15 s kill only"}`, { skip }, async (t) => {
         const loaded = py.runPython(`import importlib.util; importlib.util.find_spec("_restricted") is None`) ? "stock" : "fork";
         if (loaded !== core) return t.skip(`this run loaded ${CORES[loaded].what}, not ${what}`);
         assert.equal(typeof harness?.run_script, "function", "the lockdown built the host's cancel");
         const r = await leftover("        while True: pass");
-        if (reachesSettrace) assert.match(String(r.error), STOPPED);
+        if (hasMonitoring) assert.match(String(r.error), STOPPED);
+        const events = (await cell(`import sys\nE = sys.monitoring.events\n[hasattr(E, n) for n in ("PY_START", "LINE", "JUMP", "CALL")]`)).value;
+        assert.deepEqual(events, [hasMonitoring, hasMonitoring, hasMonitoring, hasMonitoring], "the monitoring events the bound needs exist on this core");
     });
 }
 
@@ -780,10 +908,15 @@ process.exit(0);
 test("P2-bound mutation and the C-function path, in child processes", { skip, timeout: 300000 }, async () => {
     const spin = `import asyncio\nasync def _left():\n    try:\n        await asyncio.sleep(10)\n    except BaseException:\n        while True: pass\nasyncio.ensure_future(_left()).set_name("leftover")\nawait asyncio.sleep(0)\n"x"`;
     const cLoop = `import asyncio, collections, itertools\nasync def _left():\n    try:\n        await asyncio.sleep(10)\n    except BaseException:\n        collections.deque(itertools.count(), maxlen=0)\nasyncio.ensure_future(_left()).set_name("leftover")\nawait asyncio.sleep(0)\n"x"`;
-    const [bounded, unbounded, inC] = await Promise.all([childCell(spin, "host", 10000), childCell(spin, "wrapper", 10000), childCell(cLoop, "host", 10000)]);
+    // A finally that spins after the bound stopped its task: with a hook CPython took down at the first raise, only the kill ended it.
+    const finallySpin = AFTER_LATE("            while True: pass");
+    // The two that must finish run apart from the two that spin for their whole limit, so neither shares the CPU with a spinner.
+    const [bounded, afterLate] = await Promise.all([childCell(spin, "host", 10000), childCell(finallySpin, "host", 10000)]);
+    const [unbounded, inC] = await Promise.all([childCell(spin, "wrapper", 10000), childCell(cLoop, "host", 10000)]);
     assert.ok(bounded.done && STOPPED.test(bounded.out), `control: with the bound the cell finishes, refused: ${bounded.out.slice(-400)}`);
     assert.equal(unbounded.done, false, "the bound off (the wrapper's unbounded spend): the same cell never finishes");
     assert.equal(inC.done, false, "a loop inside a C function is beyond the bound: only the worker's 15 s kill ends it");
+    assert.ok(afterLate.done && STOPPED.test(afterLate.out), `a finally that spins after the first stop is stopped too: ${afterLate.out.slice(-400)}`);
 });
 
 // --- P2-gate. the cell gate's doors (cell-gate.ts): every way a Python callable reaches a JS registry -----------
