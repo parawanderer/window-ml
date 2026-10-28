@@ -224,12 +224,18 @@ flaky), and the only entries that BLOCKED a run that day:
 
 Flaky only (passed on retry, never blocked a run), worth knowing because two may be PRODUCT bugs, not races:
 
-- **`site-access.spec.mjs` › `@security attack 15 › 15e: the shell's own admission keeps the page out of the card…`**
-  (e2e 3/3) — flaky 3 times, all on main: the run does not reach an ended status within 20 s of the approve click. The
-  security assertions before that step passed; the stall itself is unexplained. A @security test going flaky is a bug
-  report until proven otherwise. Local: 0 of 660 green on 2026-10-19 (15 solo, 5x full suite at 3 workers, 5x two parallel
-  full suites at 3 workers). No CI artifact yet of a stall. Next failure: download `e2e-results-3` and read the page
-  snapshot before theorising; do not raise the 20s and do not touch `idx.settled`'s meaning of "ended" without that.
+- **`site-access.spec.mjs` › `@security attack 13: cannot be cancelled by the page`** (`:258` on main; `:238` on
+  `7ae44af9`) — count 2. Once on run 40579352419 (2026-10-15 era); then BOTH tries on run 40712844338 (e2e 3/3 on #1244,
+  job 122902564352): times out at `idx.settled(hash)` after `approveInCard`, the run never left running/waiting within
+  its 20 s. The same shard is green on `7ae44af9` (run 40710327490) and the only commit between was a one-line chat-web
+  locator change, so not the diff; a rerun of the shard passed. A @security test going flaky is a bug report until
+  proven otherwise: security's test-only fix (#1255) replaces the settled poll with a wait on `fake.calls()` and names
+  the stage that stalled. Do not raise the 20 s and do not touch `idx.settled`'s meaning of "ended" without that.
+- **`site-access.spec.mjs` › `@security attack 15 › 15e: the shell's own admission keeps the page out of the card…`** —
+  see Recently removed (#1236 fixed the mechanism). The flaky history stands as a measurement: 3 flaky on main in the
+  80-run window of 2026-10-15 (the run did not reach an ended status within 20 s of the approve click, security
+  assertions before that step passed), 0 of 660 local on 2026-10-19 (15 solo, 5x full suite at 3 workers, 5x two
+  parallel full suites at 3 workers).
 - **`resource-panel.spec.mjs:2125` › the narrowed window is in storage** — deterministic-looking, not a race:
   `ml_res_window` Received 6 Expected < 6 on both tries; the on-screen check at `:2119` passed. Peer traced it to
   `settleScrub` in `src/sidebar/resource/resource-scrub.tsx:44-55` (400 ms re-armed `setTimeout`, `chrome.storage.local.set`
@@ -240,11 +246,33 @@ Flaky only (passed on retry, never blocked a run), worth knowing because two may
   not touch background start.
 - Seen once each: `site-access` 16a (@security), `site-access` 18 closed-shadow-root (`:1164`, 16.5 s), `site-access` 19
   DevTools-panel ask (`:1492`, 16.3 s), `cross-page` composer seq collision, `output-scroll` tail-follow, `chat-web`
-  phone tooltip, `focus-restore`, `bench-editor` traceback, `resource-panel` narrow window (`:3619`).
+  phone tooltip, `focus-restore`, `bench-editor` traceback, `resource-panel` narrow window (`:3619`),
+  `tooltips.spec.mjs:627` › a tip whose trigger disappears under a still pointer disappears with it.
+- Seen once each on 2026-10-28 (run 40708391759, head `95a9e87b`, every job green; each row failed its first attempt and
+  passed on retry #1): `resource-panel.spec.mjs:2537` › resource panel: the snap mark yields, focuses, and says what it
+  is out of (10.5 s on retry); `site-access.spec.mjs:520` › attack 8: approved, then revoked, and still calling without
+  a reload (1.9 s on retry); `site-access.spec.mjs:497` › an approved site's page-started Python is refused until the
+  person allows THIS site to approve its own actions (17.4 s on retry). The two site-access rows are the security
+  lane's if a second hit lands. `bench-editor.spec.mjs:207` traceback row — second sighting, also retry-passed here
+  (first is in the line above).
+- Node-suite, seen once each on 2026-10-28: `hub-host.test.mjs:96` › a session's events arrive in the contract's order,
+  with its own cursor (run 40700963610, hub job on #1238; got `["reset","first","backfilled","second","live"]`, expected
+  "second" before "backfilled" — the backfill command's result raced cursor 2's stream delivery; the job reran green)
+  and `python-spend-queue.test.mjs:184` › a flood of queued callbacks is cut at the deadline (run 40710327490 on #1244,
+  test node 26: "the spend took 1745 ms" against the row's `1500`; the PR's diff touches no python code). The flood
+  row's bound is pin 15's open question — my #1250 review says the ruled restatement (deadline + control slack + 250 ms
+  residual) is tighter than this measured value; read that before touching the constant.
 
 node:test had no real failures in that window: every `not ok` was a documented `# TODO`.
 
 Recently removed, recorded so nobody re-adds them from memory:
+
+- ~~`site-access.spec.mjs` › `@security attack 15 › 15e: the shell's own admission keeps the page out of the card…`~~ —
+  **fixed** in #1236 (`3967b0df`, 2026-10-28), SITE_PRESENCE step 3: a hidden page's run tools now attach in-process in
+  the content scripts' isolated world, so the step-2 late-port race is gone (injected.js arriving late under load let the
+  page end up holding the channel, and the approved click then went down a port nothing answered). The falsifier held:
+  15e ran green on #1236's own CI (e2e 3/3 job 122886731514, first try, 10.4 s), so the diagnosis stands. Do not add as
+  flake; the measurement history is kept on its line above.
 
 - ~~`session-index.spec.mjs:59`~~ and ~~`value-store.spec.mjs:176`~~ — **fixed** in #1194 (`16174bb2`, 2026-10-28), one
   race in the e2e harness, not two flakes: both specs wrote the self-approval list through `configureExtension` and
