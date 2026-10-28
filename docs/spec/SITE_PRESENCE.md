@@ -190,6 +190,12 @@ not, record that and choose between `declarativeNetRequest` rules and following 
    and an inline `style`; everything else of ours, the stylesheet with id `ml-sb-style` that the CDP shadow resolver
    looks for included, lives inside the closed root, which a page cannot read. The red team's row reads "no popover
    attribute of ours except on the anonymised host".
+   4a is #1279 OPEN 2026-10-28 (head 4c2c9db4, @security @ui; `src/sidebar/shell.ts`, `src/dom/dom.ts`, `src/ids.ts`;
+   the host anonymous under ruling (a), in the page only while a box is drawn, one implementation in every mode; the
+   e2e harness reads the highlight through `highlightTag`/`highlightBox` in `tests/e2e/harness.mjs`, and a test
+   reaches the host's tag through `inShell`'s `roots.highlightTag`; detection-surface row 7 split into 7, the card,
+   "No" on a visible page, and 7b, the anonymised highlight; the janitor asked by session-mail), verified; it holds
+   until the red team's rows PR has merged.
 5. The redirect measurement, then the rule.
 
 After step 2, and deferred: consuming a page's WebMCP tools (`document.modelContext`) as a window.ml adapter, with the rules
