@@ -671,7 +671,9 @@ consent, a run's approvals and origin grants). Any other hop is refused before i
 names the target to the model, which fetches it directly to be asked; a page's own `ml.fetch` is told only that it was
 another site, since its own fetch could not have read that `Location`. Events carry no handle on the fetch that caused
 them, so a hop is matched by URL and two fetches of one URL run one at a time; a `Location` that cannot be read is a
-refusal, never a follow. Adding the `webRequest` permission changes no install warning
+refusal, never a follow. A hop that is followed returns its body, so an untrusted caller now gets the body of a same-site
+hop to another origin (the registrable domain is the unit cookies are scoped to); the final-origin guard stays behind the
+judge as a belt, withholding a body whose last URL is outside the judged set. Adding the `webRequest` permission changes no install warning
 (`chrome.management.getPermissionWarningsByManifest`, measured on Chromium 151 against this manifest).
 
 Two fixed paths judge their own hops: `FETCH_SHEET` follows only `docs.google.com` and `*.googleusercontent.com` (the

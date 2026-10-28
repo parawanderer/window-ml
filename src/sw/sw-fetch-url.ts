@@ -149,11 +149,14 @@ export async function fetchUrlFor(payload: unknown, caller: FetchCaller): Promis
             // DIFFERENT, un-consented origin followed a redirect off the approved resource — withhold the body
             // (a consented public URL could redirect to a private/other target). The GET already happened but
             // no data leaves, and returning nothing is safe. exec (execOpen) trusts the code's own redirects.
-            // A rendered read is a navigation, which the hop judge does not see yet: its last URL is held to the old rule.
-            if (untrusted && !execOpen && rendered) {
+            // The belt behind the hop judge: whatever the chain did, a body whose last URL is outside the judged set (the
+            // same origin, an approved URL, or for a plain GET the same site as the first URL) is withheld. A rendered read is
+            // a navigation the judge does not see yet, so for it this is the only check, under the old same-origin rule.
+            if (untrusted && !execOpen) {
                 let sameOrigin = true;
                 try { sameOrigin = new URL(data.url).origin === new URL(url).origin; } catch { /* keep true */ }
-                if (!sameOrigin && !(caller.consented ? caller.consented(data.url) : !!fetchConsent.get(tabId!)?.has(data.url))) {
+                if (!sameOrigin && !approved(data.url) && (rendered || !hopIsOwn(url, data.url))) {
+                    if (!rendered && caller.disclose) return { error: `Refused: "${url}" redirected to a different origin on another site, which hasn't been approved, so its answer was withheld.` };
                     return { error: `"${url}" redirected to a different origin (${(() => { try { return new URL(data.url).origin; } catch { return data.url; } })()}), which hasn't been approved. Fetch that URL directly to approve it.` };
                 }
             }
