@@ -1,19 +1,24 @@
 // The PDF page measurements (src/pdf/pdf-measure.ts) on operator lists written by hand: the matrix math behind image
-// cover, the union of overlapping images, text under render mode 3 across save/restore, and the bounds on the walk.
+// cover, the union of overlapping images, the path union, text under render mode 3 across save/restore, and the bounds
+// on the walk.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { GLYPH_CAP, GRID, IMAGE_CAP, IDENTITY, OP_CAP, measureOps, measureText, multiply, pageText, unitSquareThrough } from "../src/pdf/pdf-measure.ts";
+import { GLYPH_CAP, GRID, IMAGE_CAP, IDENTITY, OP_CAP, PATH_CAP, measureOps, measureText, multiply, pageText, unitSquareThrough } from "../src/pdf/pdf-measure.ts";
 
 // A made-up operator table: nothing here depends on pdf.js's numbering.
 const NAMES = ["save", "restore", "transform", "paintFormXObjectBegin", "paintFormXObjectEnd", "paintImageXObject", "paintInlineImageXObject",
     "paintImageMaskXObject", "paintImageXObjectRepeat", "paintImageMaskXObjectRepeat", "paintImageMaskXObjectGroup", "paintInlineImageXObjectGroup",
-    "setTextRenderingMode", "showText", "showSpacedText", "nextLineShowText", "nextLineSetSpacingShowText", "beginText", "endText"];
+    "setTextRenderingMode", "showText", "showSpacedText", "nextLineShowText", "nextLineSetSpacingShowText", "beginText", "endText",
+    "constructPath", "fill", "eoFill", "stroke", "closeStroke", "fillStroke", "eoFillStroke", "closeFillStroke", "closeEOFillStroke", "endPath",
+    "clip", "eoClip", "shadingFill"];
 const OPS = Object.fromEntries(NAMES.map((n, i) => [n, i + 1]));
 const PAGE = [0, 0, 612, 792];
 /** An operator list from `[name, ...args]` rows. */
 const ops = (...rows) => ({ fnArray: rows.map(([n]) => OPS[n]), argsArray: rows.map(([n, ...a]) => n === "transform" ? a[0] : a) });
 const run = (rows, view = PAGE) => { const { fnArray, argsArray } = ops(...rows); return measureOps(fnArray, argsArray, OPS, view); };
 const near = (actual, expected, tol = 0.012) => assert.ok(Math.abs(actual - expected) <= tol, `${actual} is not within ${tol} of ${expected}`);
+/** A painted path as pdf.js 6 emits it: `constructPath` with the paint op, the path buffer and its box. */
+const path = (paint, box) => ["constructPath", OPS[paint], [new Float32Array(0)], box];
 const glyphs = (n) => Array.from({ length: n }, () => ({ unicode: "a", isSpace: false }));
 
 // --- the matrix math behind image cover ---
@@ -167,6 +172,59 @@ test("the form XObject's own begin and end bracket the render mode as well", () 
     assert.equal(m.visibleGlyphs, 1);
 });
 
+// --- the union of drawn paths ---
+
+test("a filled path covers its box, through the current matrix", () => {
+    const m = run([["save"], ["transform", [2, 0, 0, 2, 0, 0]], path("fill", [0, 0, 153, 198]), ["restore"]]);
+    near(m.pathCover, 0.25);   // 153x198 doubled is a quarter of the page
+    assert.equal(m.paths, 1);
+    assert.equal(m.imageCover, 0);
+    near(m.drawnCover, 0.25);
+});
+
+test("every fill and stroke variant counts; endPath (a clip) does not", () => {
+    for (const p of ["fill", "eoFill", "stroke", "closeStroke", "fillStroke", "eoFillStroke", "closeFillStroke", "closeEOFillStroke"]) near(run([path(p, [0, 0, 612, 396])]).pathCover, 0.5, 0.012);
+    const clip = run([path("endPath", [0, 0, 612, 396])]);
+    assert.equal(clip.pathCover, 0);
+    assert.equal(clip.paths, 0);
+});
+
+test("a straight rule is a box of no area and covers nothing", () => {
+    const m = run([path("stroke", [72, 400, 540, 400])]);
+    assert.equal(m.pathCover, 0);
+    assert.equal(m.paths, 1);
+});
+
+test("a path covering FULL_PAGE_COVER on its own is the page's background, left out", () => {
+    const m = run([path("fill", [0, 0, 612, 792]), path("fill", [0, 0, 306, 396])]);
+    near(m.pathCover, 0.25);
+    assert.equal(m.paths, 2);
+});
+
+test("drawn cover is the union of images and paths, not their sum", () => {
+    const m = run([["save"], ["transform", [306, 0, 0, 792, 0, 0]], ["paintImageXObject", "a", 1, 1], ["restore"], path("fill", [153, 0, 459, 792])]);
+    near(m.imageCover, 0.5);
+    near(m.pathCover, 0.5);
+    near(m.drawnCover, 0.75);
+});
+
+test("a shading fills the current clip's box, and the clip is restored with the graphics state", () => {
+    const m = run([
+        ["save"], ["clip"], path("endPath", [0, 0, 306, 396]), ["shadingFill", "sh0"], ["restore"],
+        ["save"], ["eoClip"], ["transform", [1, 0, 0, 1, 306, 396]], ["restore"],
+    ]);
+    near(m.pathCover, 0.25);
+    assert.equal(m.paths, 1);
+    // After the restore the clip is gone: a shading now covers the page, which is a background.
+    const after = run([["save"], ["clip"], path("endPath", [0, 0, 306, 396]), ["restore"], ["shadingFill", "sh0"]]);
+    assert.equal(after.pathCover, 0);
+});
+
+test("a path with no box (pdf.js's empty path) or a junk box is skipped", () => {
+    const m = run([["constructPath", OPS.fill, [null], null], path("fill", [0, 0, NaN, 10]), path("fill", { length: 4 })]);
+    assert.equal(m.pathCover, 0);
+});
+
 // --- bounds on the walk ---
 
 test("an operator list past OP_CAP is walked only that far, and says so", () => {
@@ -189,6 +247,17 @@ test("a million image paints cost IMAGE_CAP rasterisations, not a million", () =
     assert.equal(m.images, n);
     assert.equal(m.imageCover, 1);
     assert.ok(Date.now() - started < 3000, `${Date.now() - started} ms for ${IMAGE_CAP} rasterisations of ${GRID}x${GRID}`);
+});
+
+test("OP_CAP page-sized paths cost PATH_CAP rasterisations", () => {
+    const n = OP_CAP;
+    const fnArray = new Array(n).fill(OPS.constructPath);
+    const argsArray = Array.from({ length: n }, (_, i) => [OPS.fill, [null], [0, 0, 0.5 + (i % 7) / 100, 0.5]]);
+    const started = Date.now();
+    const m = measureOps(fnArray, argsArray, OPS, [0, 0, 1, 1]);
+    assert.equal(m.paths, n);
+    near(m.pathCover, 0.28, 0.02);
+    assert.ok(Date.now() - started < 3000, `${Date.now() - started} ms for ${PATH_CAP} rasterisations of ${GRID}x${GRID}`);
 });
 
 test("a repeat with a million positions stops at the cap", () => {

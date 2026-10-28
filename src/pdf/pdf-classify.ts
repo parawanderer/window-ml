@@ -18,9 +18,13 @@ export const BROKEN_MAX_RATIO = 0.3;
 export const BROKEN_MIN_CHARS = 20;
 /** PROVISIONAL. Image cover from which a page with little text is a scan: more than half the page is picture. */
 export const SCANNED_COVER = 0.5;
-/** PROVISIONAL. Image cover from which a page with text is "mixed": under it a logo or an icon stays a text page. */
-export const MIXED_COVER = 0.15;
-/** PROVISIONAL. Image cover under which a page with no text is blank: a stray speck is not content. */
+/** Image cover from which a page with text is "mixed": under it a logo or an icon stays a text page. Measured
+ *  (notebooks/pdf/pdf-thresholds.ipynb): the most image on a page a vision model calls text is 0.086. */
+export const MIXED_COVER = 0.1;
+/** Path cover (vector drawing) from which a page is "mixed": a chart or a diagram. Higher than `MIXED_COVER` because
+ *  boxes are drawn too (form fields, a framed header, shaded cells); measured in the same notebook. */
+export const MIXED_PATH_COVER = 0.3;
+/** PROVISIONAL. Drawn cover (images and paths) under which a page with no text is blank: a stray speck is not content. */
 export const BLANK_COVER = 0.02;
 /** PROVISIONAL. Usable characters under which a page has no text at all (a stray mark or two). */
 export const BLANK_CHARS = 3;
@@ -29,22 +33,26 @@ export const BLANK_CHARS = 3;
 export const OCR_INVISIBLE_SHARE = 0.9;
 
 /** The measurements `classifyPage` reads. */
-export type ClassifyInput = Pick<PageMeasure, "usableChars" | "brokenChars" | "brokenRatio" | "imageCover" | "fullPageImage" | "invisibleShare">;
+export type ClassifyInput = Pick<PageMeasure, "usableChars" | "brokenChars" | "brokenRatio" | "imageCover" | "pathCover" | "drawnCover" | "fullPageImage" | "invisibleShare">;
 
 /**
  * The page's kind. In order:
  *  1. invisible text over one full-page image, and the layer is trustworthy: `ocr-scan`;
- *  2. enough trustworthy text: `mixed` when images cover `MIXED_COVER` or more, else `text`;
- *  3. otherwise (little or broken text): a junk layer or `SCANNED_COVER` of picture is `scanned`; next to nothing at
- *     all is `blank`; a figure with a caption is `mixed`; a short page of text (a title page) is `text`.
- * A page of vector drawing with no text and no image reads as `blank`: the measurements do not see paths.
+ *  2. enough trustworthy text: `mixed` when it has a figure (images cover `MIXED_COVER`, or paths `MIXED_PATH_COVER`),
+ *     else `text`;
+ *  3. otherwise (little or broken text): a junk layer or `SCANNED_COVER` of picture is `scanned`; next to nothing drawn
+ *     at all is `blank`, and anything drawn with no text is `mixed`; a figure with a caption is `mixed`; a short page
+ *     of text (a title page) is `text`.
+ * A vector drawing with no text is `mixed` (its image goes), never `scanned`: `SCANNED_COVER` reads images only.
  */
 export function classifyPage(m: ClassifyInput): PageKind {
     const junk = m.brokenChars >= BROKEN_MIN_CHARS && m.brokenRatio > BROKEN_MAX_RATIO;
     const enough = m.usableChars >= TEXT_MIN_CHARS && m.brokenRatio <= BROKEN_MAX_RATIO;
     if (enough && m.fullPageImage && m.invisibleShare >= OCR_INVISIBLE_SHARE) return "ocr-scan";
-    if (enough) return m.imageCover >= MIXED_COVER ? "mixed" : "text";
+    const figure = m.imageCover >= MIXED_COVER || m.pathCover >= MIXED_PATH_COVER;
+    if (enough) return figure ? "mixed" : "text";
     if (junk || m.imageCover >= SCANNED_COVER) return "scanned";
-    if (m.usableChars < BLANK_CHARS && m.imageCover < BLANK_COVER) return "blank";
-    return m.imageCover >= MIXED_COVER ? "mixed" : "text";
+    // No text but something drawn: the drawing is all the page has, so its image goes whatever its size.
+    if (m.usableChars < BLANK_CHARS) return m.drawnCover < BLANK_COVER ? "blank" : "mixed";
+    return figure ? "mixed" : "text";
 }

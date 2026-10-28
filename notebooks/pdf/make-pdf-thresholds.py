@@ -84,10 +84,11 @@ def classify(m, c=C, ocr_min_chars=None):
     enough = m["usableChars"] >= c["TEXT_MIN_CHARS"] and clean
     ocr_enough = enough if ocr_min_chars is None else (m["usableChars"] >= ocr_min_chars and clean)
     if ocr_enough and m["fullPageImage"] and m["invisibleShare"] >= c["OCR_INVISIBLE_SHARE"]: return "ocr-scan"
-    if enough: return "mixed" if m["imageCover"] >= c["MIXED_COVER"] else "text"
+    figure = m["imageCover"] >= c["MIXED_COVER"] or m["pathCover"] >= c["MIXED_PATH_COVER"]
+    if enough: return "mixed" if figure else "text"
     if junk or m["imageCover"] >= c["SCANNED_COVER"]: return "scanned"
-    if m["usableChars"] < c["BLANK_CHARS"] and m["imageCover"] < c["BLANK_COVER"]: return "blank"
-    return "mixed" if m["imageCover"] >= c["MIXED_COVER"] else "text"
+    if m["usableChars"] < c["BLANK_CHARS"]: return "blank" if m["drawnCover"] < c["BLANK_COVER"] else "mixed"
+    return "mixed" if figure else "text"
 
 pages = pd.DataFrame(jsonl("pages.jsonl"))
 pages["src"] = pages.id.str.split("-").str[0]
@@ -249,17 +250,43 @@ display(pd.crosstab(e[e.o_kind.notna()].q_pic, e[e.o_kind.notna()].o_pic.astype(
 fig, ax = plt.subplots(figsize=(8, 2.2))
 for y, (lab, s) in enumerate([("qwen: text", e[~e.q_pic]), ("qwen: picture", e[e.q_pic])]):
     ax.scatter(s.imageCover, np.full(len(s), y) + np.random.default_rng(0).uniform(-0.15, 0.15, len(s)), s=10, alpha=0.6)
-ax.axvline(C["MIXED_COVER"], color="grey", ls="--", lw=1); ax.text(C["MIXED_COVER"], 1.35, " MIXED_COVER now", fontsize=8)
+ax.axvline(C["MIXED_COVER"], color="grey", ls="--", lw=1); ax.text(C["MIXED_COVER"], 1.35, " MIXED_COVER", fontsize=8)
 ax.set_yticks([0, 1], ["qwen: text", "qwen: picture"]); ax.set_xlabel("image cover (pages with enough text)"); ax.set_xlim(-0.01, 0.7)
 plt.tight_layout(); plt.show()
 """)
 
 md("""
-No page the model calls `text` has more than about 9% of its area under images, and between that and the present 15%
-every page is one the model sees a picture on. The cut moves down to just above the highest text page. What the
+No page the model calls `text` has more than about 9% of its area under images, and between that and the first value,
+15%, every page is one the model sees a picture on. So the cut is 0.1, just above the highest text page. What the
 image cover cannot reach is the column "no image at all": vector figures (charts, plots and diagrams drawn as paths)
-cover nothing by this measure. Both models call them `mixed` or `figure`; that needs a path-cover measure in
-`pdf-measure.ts`, not a threshold.
+cover nothing by this measure. Both models call them `mixed` or `figure`; the next section measures them.
+""")
+
+md("""
+## `MIXED_PATH_COVER`: vector drawing
+
+`pathCover` is the union of every filled or stroked path's box (`pdf-measure.ts`), with a page-sized background left
+out. On the pages with enough text whose image cover is under `MIXED_COVER`, the same sweep over path cover. Boxes are
+drawn as paths too (form fields, a framed header, shaded cells), so a low cut sends forms as pictures.
+""")
+
+code("""
+f = e[e.imageCover < C["MIXED_COVER"]]
+rows = []
+for cut in [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5]:
+    pic = f.pathCover >= cut
+    rows.append({"cut": cut, "image for nothing": int((pic & ~f.q_pic).sum()), "picture found": int((pic & f.q_pic).sum()),
+                 "picture still lost": int((~pic & f.q_pic).sum())})
+display(pd.DataFrame(rows).set_index("cut"))
+print(f"MIXED_PATH_COVER = {C['MIXED_PATH_COVER']}; the qwen-text pages over it, and the qwen-picture pages under it with some drawing:")
+display(f[(f.pathCover >= C["MIXED_PATH_COVER"]) & ~f.q_pic][["id", "n", "pathCover", "paths", "usableChars", "q_kind", "o_kind"]])
+display(f[(f.pathCover < C["MIXED_PATH_COVER"]) & (f.pathCover >= 0.1) & f.q_pic][["id", "n", "pathCover", "paths", "usableChars", "q_kind", "o_kind"]])
+""")
+
+md("""
+The cut sits where an image sent for nothing becomes rare. Lower cuts find more figures but mostly by sending forms
+and boxed pages; a figure under the cut is not lost for good, because a page sent without its image names what the
+measurements saw and the model can look at it (`docs/spec/FILE_ATTACHMENTS.md`, "What is held back is named").
 """)
 
 md("""
@@ -319,8 +346,10 @@ display(b[b.imageCover < C["SCANNED_COVER"]].sort_values("usableChars"))
 md("""
 The models call a page with only a page number (5 to 9 characters) `blank`; ours calls it `text`, which sends those
 characters and nothing else. The two cost the same, and the models split on them (Opus calls 2 `blank` and 2 `text`),
-so `BLANK_CHARS` stays. The pages ours calls `blank` that both models call `figure` are vector drawings again: the path
-measure, not the threshold.
+so `BLANK_CHARS` stays. The blank test reads drawn cover (images and paths together), and a page with no text but
+anything drawn is `mixed`, since the drawing is all it has. Both vector figures that read as `blank` before are `mixed`
+now: the floor plan (`pdfjs-22060-a1-01-plans`) by its paths, `pdfjs-personwithdog` by its gradients (`shadingFill`
+inside clip paths, counted by the clip's box).
 """)
 
 md("""
@@ -359,8 +388,12 @@ md("""
   for the reason in its section.
 - **For the reader, not the classifier**: a `scanned` page whose OCR layer is short and clean could send that text
   beside its image.
-- **Not a threshold**: vector figures. Both models see a picture where the image cover is 0; a path-cover measure in
-  `pdf-measure.ts` is the next change, after which this notebook is run again over a re-measured corpus.
+- **Vector figures**: `pdf-measure.ts` measures path cover; a page with text is `mixed` from `MIXED_PATH_COVER` (0.3)
+  of it, a page with no text but anything drawn is `mixed`, and `blank` reads images and paths together. The corpus
+  was re-measured with all three and this notebook re-run. Of the labelled pages, 21 changed kind, all to `mixed`: 19
+  where the local model sees a picture (`mixed` or `figure`), 2 where it says `text` (the boxed pages in the path
+  section). The kind agreement above falls by two all the same, because it compares names and the models' `figure` is
+  our `mixed`.
 """)
 
 nb = nbf.v4.new_notebook(cells=cells)
