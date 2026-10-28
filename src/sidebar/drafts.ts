@@ -15,7 +15,7 @@
 // (`ml-drafts`), since a few pasted screenshots are megabytes, past what localStorage will hold. On load the store is
 // read back in the background; each key it restores fills the memory and tells the listeners, so a box already drawn
 // shows its images. A save made on this page load before that read finishes wins over the restored copy. The images of
-// a send still held when the page died come back with its text. The store is capped (see `CAP_BYTES`), least recently
+// a send still held when the page died come back exactly when its text does (`loadDraft`, lazily, never at load: another tab's send may still be live). The store is capped (see `CAP_BYTES`), least recently
 // saved key first. Every storage call is guarded, since a private window or blocked site data throws, and the box must
 // still work: it then lasts the page, as before.
 
@@ -64,6 +64,12 @@ let queue: Promise<void> = Promise.resolve();
 const index = new Map<string, { bytes: number; at: number }>();
 // state: plumbing (keys saved on this page load before the restore finished; those win over the stored copy)
 const touched = new Set<string>();
+// state: cache (the held sends' images the restore found, by send id, until their text is reclaimed or they age out)
+const storedHeld = new Map<string, Rec>();
+// state: plumbing (send ids `loadDraft` declared dead before the restore finished, by key; claimed when it does)
+const pendingDead = new Map<string, string[]>();
+/** A held record no page has claimed for this long is an orphan (its owner is long gone and its text never asked for). */
+const ORPHAN_MS = 24 * 60 * 60 * 1000;
 let restoring = true;
 let lastAt = 0;
 
@@ -127,7 +133,6 @@ function restore(): void {
     void enqueue(async (db) => {
         const recs = (await req(db.transaction(STORE).objectStore(STORE).getAll())) as Rec[];
         const changed = new Set<string>();
-        const fresh: string[] = [];
         for (const r of recs) {
             if (!r || typeof r.id !== "string" || !Array.isArray(r.imgs) || !r.imgs.length) continue;
             if (r.id.startsWith(IMG) && !touched.has(r.key)) {
@@ -137,23 +142,39 @@ function restore(): void {
                 changed.add(r.key);
             }
         }
+        const now = Date.now();
         for (const r of recs) {
             if (!r || typeof r.id !== "string" || !Array.isArray(r.imgs) || !r.imgs.length || !r.id.startsWith(HELD)) continue;
             index.set(r.id, { bytes: r.bytes, at: r.at });
-            // A send this page load started cannot be in the store yet; one that is, belongs to a page that died.
-            if (r.id.startsWith(HELD + PAGE + ":")) continue;
-            images.set(r.key, [...r.imgs, ...(images.get(r.key) ?? [])]);
-            changed.add(r.key);
-            fresh.push(r.id);
+            // A held record is only claimed when its text is (`loadDraft`); one nobody claims for a day is an orphan.
+            if (now - r.at > ORPHAN_MS) persist(r.id, "", []);
+            else storedHeld.set(r.id.slice(HELD.length), r);
         }
         restoring = false;
         touched.clear();
         for (const k of changed) persist(IMG + k, k, images.get(k) ?? []);
-        for (const id of fresh) persist(id, "", []);
+        for (const [key, ids] of pendingDead) claimHeld(key, ids);
+        pendingDead.clear();
         for (const k of changed) for (const cb of listeners) { try { cb(k); } catch { /* a listener's fault is its own */ } }
     });
     // If the read itself failed the memory simply stays as it is.
     void queue.then(() => { restoring = false; touched.clear(); });
+}
+
+/**
+ * Move the stored images of the dead sends `ids` in front of `key`'s box, in the order of their text, drop their held
+ * records and tell the listeners. Before the restore has read the store, the ids wait for it.
+ */
+function claimHeld(key: string, ids: string[]): void {
+    if (restoring) { pendingDead.set(key, [...(pendingDead.get(key) ?? []), ...ids]); return; }
+    const recs = ids.map((id) => storedHeld.get(id)).filter((r): r is Rec => !!r);
+    for (const id of ids) storedHeld.delete(id);
+    if (!recs.length) return;
+    images.set(key, [...recs.flatMap((r) => r.imgs), ...(images.get(key) ?? [])]);
+    persist(IMG + key, key, images.get(key)!);
+    for (const r of recs) persist(r.id, "", []);
+    // Not inside the caller: it may be a render.
+    queueMicrotask(() => { for (const cb of listeners) { try { cb(key); } catch { /* a listener's fault is its own */ } } });
 }
 
 /** Resolves once every IndexedDB operation queued so far (the restore included) has finished. For tests and shutdown. */
@@ -188,6 +209,7 @@ export function loadDraft(key: string): string {
         text = joinDraft(dead.map((h) => h.text).join("\n\n"), text);
         write(DRAFT + key, text);
         write(SENDING + key, held.filter((h) => !dead.includes(h)));
+        claimHeld(key, dead.map((h) => h.id));
     }
     return text;
 }

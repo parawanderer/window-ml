@@ -156,7 +156,7 @@ test("storage that cannot open keeps today's in-memory behaviour, with no error"
     assert.deepEqual(B.loadDraftImages("im:b"), [IMG("BBBB")]);
 });
 
-test("a send held when the page died brings its images back with its text; a confirmed send clears them", async () => {
+test("a send held when the page died brings its images back with its text, when the box is drawn; a confirmed send clears them", async () => {
     globalThis.indexedDB = new fake.IDBFactory();
     const A = await reload();
     A.saveDraftImages("im:a", [IMG("CCCC")]);
@@ -167,13 +167,15 @@ test("a send held when the page died brings its images back with its text; a con
     const heard = [];
     B.onDraftRestored((k) => heard.push(k));
     await B.draftsSettled();
-    assert.deepEqual(heard, ["im:a"]);
-    assert.deepEqual(B.loadDraftImages("im:a"), [IMG("AAAA")]);
+    assert.deepEqual(heard, [], "nothing is claimed at load");
+    assert.deepEqual(B.loadDraftImages("im:a"), []);
     assert.equal(B.loadDraft("im:a"), "never confirmed");
+    assert.deepEqual(B.loadDraftImages("im:a"), [IMG("AAAA")]);
     await B.draftsSettled();
+    assert.deepEqual(heard, ["im:a"]);
     const C = await reload();
     await C.draftsSettled();
-    assert.deepEqual(C.loadDraftImages("im:a"), [IMG("AAAA")], "restored once, now an ordinary draft");
+    assert.deepEqual(C.loadDraftImages("im:a"), [IMG("AAAA")], "claimed once, now an ordinary draft");
     // A confirmed send leaves nothing.
     const ok = await C.sendHeld("im:z", "fine", [IMG("ZZZZ")], async () => ({ ok: true }));
     assert.equal(ok.ok, true);
@@ -181,6 +183,61 @@ test("a send held when the page died brings its images back with its text; a con
     const D = await reload();
     await D.draftsSettled();
     assert.deepEqual(D.loadDraftImages("im:z"), []);
+});
+
+test("another page's send still in flight keeps its images when this page loads; once that page died, drawing the box takes them in order", async () => {
+    globalThis.indexedDB = new fake.IDBFactory();
+    const A = await reload();
+    let release;
+    const live = A.sendHeld("im:a", "first", [IMG("1111")], () => new Promise((r) => { release = r; }));
+    void A.sendHeld("im:a", "second", [IMG("2222")], () => new Promise(() => {}));
+    await A.draftsSettled();
+    // Another tab loads meanwhile. Text is in the shared localStorage, images in the shared store.
+    const B = await reload();
+    await B.draftsSettled();
+    assert.deepEqual(B.loadDraftImages("im:a"), [], "a live send's images are not claimed at load");
+    // The first send succeeds on page A and drops its record; the second is never answered (page A dies).
+    release({ ok: true });
+    await live;
+    await A.draftsSettled();
+    assert.equal(B.loadDraft("im:a"), "second");
+    assert.deepEqual(B.loadDraftImages("im:a"), [IMG("2222")]);
+    const C = await reload();
+    await C.draftsSettled();
+    assert.deepEqual(C.loadDraftImages("im:a"), [IMG("2222")], "the confirmed send's images did not come back");
+});
+
+test("loadDraft before the restore finishes still gets the images once it does", async () => {
+    globalThis.indexedDB = new fake.IDBFactory();
+    const A = await reload();
+    void A.sendHeld("im:a", "dead one", [IMG("AAAA")], () => new Promise(() => {}));
+    await A.draftsSettled();
+    const B = await reload();
+    const heard = [];
+    B.onDraftRestored((k) => heard.push(k));
+    assert.equal(B.loadDraft("im:a"), "dead one");
+    assert.deepEqual(B.loadDraftImages("im:a"), [], "not yet");
+    await B.draftsSettled();
+    assert.deepEqual(B.loadDraftImages("im:a"), [IMG("AAAA")]);
+    assert.deepEqual(heard, ["im:a"]);
+});
+
+test("a held record nobody claimed for a day is deleted, not restored", async () => {
+    globalThis.indexedDB = new fake.IDBFactory();
+    const A = await reload();
+    void A.sendHeld("im:a", "old", [IMG("AAAA")], () => new Promise(() => {}));
+    await A.draftsSettled();
+    store.clear(); // its text is gone too: an orphan
+    const realNow = Date.now;
+    Date.now = () => realNow() + 25 * 3600 * 1000;
+    try {
+        const B = await reload();
+        await B.draftsSettled();
+    } finally { Date.now = realNow; }
+    const C = await reload();
+    await C.draftsSettled();
+    assert.equal(C.loadDraft("im:a"), "");
+    assert.deepEqual(C.loadDraftImages("im:a"), []);
 });
 
 // --- the upgrade: a profile from before the images were stored ---
