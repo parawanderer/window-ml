@@ -156,6 +156,9 @@ starts from main.
    What the refusal claims is unchanged (the import routes, while the finder stands); what bounds the rest is still
    step 3's strip, which these rows are measured against once it lands. The widening question (whether the builder
    should claim the two caller-frame forgeries, a library filename or a planted file) is Shane's, not taken here.
+   DECIDED 2026-10-28 (Shane, in the coordinator's session): NOT widened. The refusal claims the import routes only;
+   both forgeries are deliberate code visible on the card, and step 3's strip is what closes what they reach. They
+   stay the red team's unclaimed rows.
 3. **An ALLOW-LIST strip of the worker's `globalThis` after boot**, never a deny list: remove the real `Function`,
    `eval`, `importScripts`, `setTimeout`/`setInterval` with a string argument (`WebAssembly` compiles bytes, never a
    string, and `WebAssembly.instantiate`/`compile` on bytes STAY, since a `loadPackage` after the strip needs them; the
