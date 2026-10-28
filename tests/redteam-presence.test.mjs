@@ -144,6 +144,18 @@ test("a page that says it has no page script on a VISIBLE origin is still given 
     assert.deepEqual(executes(bg), [], "a page whose content script did not ask is not injected into");
 });
 
+test("two runs adopted at once on a hidden page's document put the run's tools into it once: a second copy would take the first one's channel", T, async () => {
+    const bg = worker({ extra: {
+        openTabs: [{ id: 7, url: "https://hidden.example/page" }],
+        onTabMessage: async (_tab, msg) => msg.type === "ADOPT_RUN_NOW" ? (msg.payload.injected === true ? { pageInfo: "here" } : { needInject: true }) : undefined,
+    } });
+    const start = (task) => bg.send({ type: "USER_START_RUN", keep: false, payload: { task, surface: "hud" } }, sender("https://hidden.example"));
+    const [a, b] = (await Promise.all([start("read it"), start("and this")])).map(plain);
+    assert.ok(a?.data?.hash && b?.data?.hash, `positive control: both runs started: ${JSON.stringify([a, b])}`);
+    const tools = executes(bg).filter((e) => JSON.stringify(e.files) === JSON.stringify(["injected-isolated.js"]));
+    assert.equal(tools.length, 1, `the run's tools went into the document more than once: ${JSON.stringify(tools)}`);
+});
+
 test("a run on a VISIBLE origin's document that loaded before its registration, whose content script asks, gets the page scripts in that document, not the run's tools in ours", T, async () => {
     const adopts = [];
     const bg = worker({ local: { ml_site_always: ["https://ok.example"] }, extra: {

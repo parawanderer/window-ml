@@ -883,7 +883,7 @@ function loadDomWorld(html = "", { url, beforeInjected, isolated = false } = {})
     // The browser reads any root, closed or open, whenever it was attached: jsdom keeps it on the host's implementation.
     if (isolated) context.chrome = { dom: { openOrClosedShadowRoot: (el) => { const root = jsdomIdl.implForWrapper(el)?._shadowRoot; return root ? jsdomIdl.wrapperForImpl(root) : null; } } };
     vm.createContext(context);
-    const pageContext = isolated ? vm.createContext({ console: mkConsole(), window: win, document: win.document, location: win.location, URL, Event: win.Event, CustomEvent: win.CustomEvent }) : context;
+    const pageContext = isolated ? vm.createContext({ console: mkConsole(), window: win, document: win.document, location: win.location, URL, Event: win.Event, CustomEvent: win.CustomEvent, setTimeout: win.setTimeout.bind(win), clearTimeout: win.clearTimeout.bind(win) }) : context;
     // The document_start patch first, as the browser runs it: it captures closed roots and answers the DOM tools' ask.
     if (!isolated) vm.runInContext(fs.readFileSync(path.join(DIST, "shadow-patch.js"), "utf8"), context);
     // The page's own scripts, which run before injected.js (it loads at document_idle).

@@ -16,7 +16,7 @@ import { SB_ROOT, SB_HOST, SB_TAB, SB_FRAME, SB_LIGHTBOX, SB_LIGHTBOX_X, SB_HIGH
 import { cleanImages } from "../contract/contract-run";
 import { onSessionDone, relaySessionToPage } from "./shell-session-relay";
 import { stepBudget } from "../agent/step-budget";
-import { resolveContextContainer, domToContext, queryAll, viewportRect, setClosedRootReader, ownHosts } from "../dom/dom";   // the content script sees the page DOM
+import { resolveContextContainer, domToContext, queryAll, viewportRect, setClosedRootReader } from "../dom/dom";   // the content script sees the page DOM
 import type { ElementContext } from "../contract/contract-run";
 import type { DebugMode } from "../contract/contract-config";
 import { eventSession, pageMayWrite, type WorkerClaim } from "../event-admission";
@@ -700,7 +700,6 @@ function hlContainer(): ShadowRoot {
     if (shellRoot) return shellRoot;
     if (hlRoot) return hlRoot;
     hlHost = document.createElement("div");
-    ownHosts().add(hlHost);
     markOwnHost(hlHost);
     hlHost.id = `${SB_ROOT}-hl`;
     hlHost.style.cssText = HOST_STYLE;
@@ -1353,7 +1352,6 @@ function mountOverlay(): void {
     // `:host{…!important}` rule inside it, which would beat that inline style.
     // Secrets still live in the iframe (its own extension origin), not in this shell.
     shellHost = document.createElement("div");
-    ownHosts().add(shellHost);
     shellHost.id = SB_ROOT;
     markOwnHost(shellHost);
     shellHost.style.cssText = HOST_STYLE;
@@ -1404,7 +1402,6 @@ function mountOverlay(): void {
 function mountCard(): void {
     if (cardHost) return;
     cardHost = document.createElement("div");
-    ownHosts().add(cardHost);
     cardHost.id = SB_CARD;
     markOwnHost(cardHost);
     cardHost.style.cssText = HOST_STYLE;
