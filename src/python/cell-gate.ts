@@ -36,6 +36,8 @@ export type CellGate = {
     takeDropped(): number;
     /** The cell's cancel started spending its tasks: tell the host (`onSpending`), so a kill that lands now is named. */
     spending(): void;
+    /** Leave out of `revoke` the once-callables `skip` names: the spend queue's cut ones, which never run (spend-queue.ts). */
+    skipping(skip: (fn: object) => boolean): void;
 };
 
 /** The Pyodide internals the gate hooks; the gate refuses to install without every one (a Pyodide upgrade must say so). */
@@ -102,6 +104,7 @@ export function installCellGate(py: any): CellGate {
     // reference per pointer while it is here, so the pointer is never reused by another object.
     const blocked = new Map<number, WeakRef<object>[]>();
     const consumed = new WeakSet<object>();
+    let skip: (fn: object) => boolean = () => false;
     const inert = py.runPython("def _ml_inert(*_a, **_k):\n    return None\n_ml_inert");
     const inertPtr: number = M.PyProxy_getAttrsQuiet(inert).shared.ptr;
     const isPyProxy = (f: unknown) => { try { return f instanceof py.ffi.PyProxy; } catch { return false; } };
@@ -191,7 +194,7 @@ export function installCellGate(py: any): CellGate {
                     M._Py_DecRef(old);
                 } else if (it.kind === "once") {
                     const w = it.ref.deref();
-                    if (!w || consumed.has(w)) continue;
+                    if (!w || consumed.has(w) || skip(w)) continue;
                     if (!blocked.has(it.ptr)) { blocked.set(it.ptr, []); M._Py_IncRef(it.ptr); }
                     blocked.get(it.ptr)!.push(new WeakRef(w));
                 } else {
@@ -214,6 +217,9 @@ export function installCellGate(py: any): CellGate {
         },
         spending() {
             try { spendingHook?.(); } catch { /* a log, never worth failing the cancel over */ }
+        },
+        skipping(f) {
+            skip = f;
         },
     };
     current = gate;

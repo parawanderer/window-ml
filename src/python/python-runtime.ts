@@ -9,6 +9,7 @@ import { ML_FACADE, ML_FACADE_NAMES } from "./ml-facade";
 import { OUTPUT_CEILING } from "../agent/output-clip";
 import { insideDefs, INSIDE_CELL } from "./python-dialect-run";
 import { cellBoundary } from "./cell-gate";
+import { spendSweep } from "./spend-queue";
 
 /** Pyodide's stdout handler for a STREAMED run: hands `onStdout` the exact text written, newlines included. The
  *  `batched` handler it replaces passes each line with its newline stripped, so a live cell read
@@ -767,6 +768,9 @@ export const cancelPath = (harness: unknown, hardened: boolean): "host" | "wrapp
  *   the script's own failure ("" if it ran), which the caller raises once it has the rest
  */
 export async function hostRunScript(harness: any, source: string, ns: any): Promise<{ out: string; refusal: string; error: string }> {
+    // What the last spend cut keeps that cell's contexts where `gc.get_objects()` finds them: released before this cell.
+    // The gate holds a reference to each cut callable it revoked until a boundary finds it spent, so one follows the sweep.
+    if (await spendSweep()) cellBoundary();
     let fn: any;
     try {
         fn = harness.run_script;
@@ -777,7 +781,11 @@ export async function hostRunScript(harness: any, source: string, ns: any): Prom
         } finally { r.destroy?.(); }
     } catch (e) {
         return { out: "", refusal: `RuntimeError: the cancel of what this cell scheduled failed (${String((e as Error)?.message || e).split("\n").filter(Boolean).pop()}), so the cell's result is refused.\n`, error: "" };
-    } finally { fn?.destroy?.(); }
+    } finally {
+        fn?.destroy?.();
+        // Start releasing what the spend cut, off the spend's path; the next cell waits for it (above).
+        void spendSweep();
+    }
 }
 
 // --- Sandbox hardening (the `readonly` mode) --------------------------------------
