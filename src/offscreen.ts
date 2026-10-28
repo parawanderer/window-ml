@@ -123,6 +123,17 @@ const wireByClient = new Map<string, { post: (m: unknown) => void; runMsgId: num
 /** The kill's error when it lands during the cancel's spend (the worker's `spending` mark). */
 export const SPEND_KILLED = `A task this cell left kept running after it was cancelled and would not stop (most likely inside a C function), so the Python sandbox was terminated after ${PY_TIMEOUT_MS / 1000}s and the cell's result is refused.`;
 
+/** Whether a worker's own error says it ran out of memory: wasm memory that could not grow, or a JS allocation that failed. */
+export const MEMORY_DEATH = /out of memory|\bOOM\b|allocation failed|Maximum memory size|Memory\.grow/i;
+
+/** The error a run gets when its worker died of memory (`reason` is the worker's own message): the cause named, and
+ *  during the cancel's spend, what the spend was doing (pin 3's shape: the kill names the leftover, not the cell). */
+export function memoryKilled(reason: string, spending: boolean): string {
+    return spending
+        ? `The Python sandbox ran out of memory while the cancel was spending what this cell left (tasks or callbacks it queued), so it was stopped and the cell's result is refused (${reason}).`
+        : `The Python sandbox ran out of memory, so it was stopped and the cell's result is refused (${reason}).`;
+}
+
 /** Arm a kill for run `id`: when it fires, that run fails with `error` and its worker is terminated,
  *  failing anything queued behind it on that principal. */
 function killAfter(id: number, ms: number, error: string, reason: "timeout" | "start-timeout"): ReturnType<typeof setTimeout> {
@@ -172,7 +183,7 @@ function killWorker(principal: string, reason: string): void {
     for (const [id, p] of [...pending.entries()]) {
         if (p.principal !== principal) continue;
         clearTimeout(p.timer);
-        p.resolve({ ok: false, stdout: "", error: `Python worker stopped (${reason}).` });
+        p.resolve({ ok: false, stdout: "", error: MEMORY_DEATH.test(reason) ? memoryKilled(reason, !!p.spending) : `Python worker stopped (${reason}).` });
         pending.delete(id);
     }
 }

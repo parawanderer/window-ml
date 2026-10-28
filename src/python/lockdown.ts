@@ -315,22 +315,26 @@ def _ml_make_cancel(revoke, spending, queue, proxy, loop_globals, schedule, loop
                         set_events(TOOL, 0)
                     except BaseException_:
                         pass
-            # 3. REVOKE what the cell handed to JavaScript (cell-gate.ts), then cancel every asyncio.Handle left.
-            try:
-                revoke()
-            except BaseException_:
-                pass
-            try:
-                for obj in get_objects():
-                    if isinstance_(obj, Handle) and not obj.cancelled():
-                        obj.cancel()
-            except BaseException_:
-                pass
-            # 4. CUT the loop's queue: nothing queued so far runs (each Handle in it is cancelled), and the deadline's count.
+            # 3. CUT the loop's queue: nothing queued so far runs, and the deadline's count. First, so the revoke and the
+            #    Handle walk below never pay for a flood the cut has already made inert.
             try:
                 cut = done()
             except BaseException_:
                 pass
+            # 4. REVOKE what the cell handed to JavaScript (cell-gate.ts), leaving out the callbacks the cut dropped (the
+            #    sweep destroys them), then cancel every asyncio.Handle left. Every Handle a loop queued was in the cut,
+            #    so after a deadline cut the walk is skipped: over a flood it cost seconds, on objects already inert.
+            try:
+                revoke()
+            except BaseException_:
+                pass
+            if not cut:
+                try:
+                    for obj in get_objects():
+                        if isinstance_(obj, Handle) and not obj.cancelled():
+                            obj.cancel()
+                except BaseException_:
+                    pass
             # 5. A task whose cancel the cut dropped can never run again: nothing is left to wake it. Close its coroutine
             #    now, under the tool with the deadline past, so its handlers stop at their first event instead of running
             #    whenever the task is collected; later spends leave it out.
@@ -627,6 +631,7 @@ export async function lockdownReadonly(py: any, scope: any = globalThis): Promis
         // The loop's queue (spend-queue.ts) goes in first: the gate wraps the same call entry point, outside it.
         queue ??= installSpendQueue(py);
         gate ??= installCellGate(py);
+        gate.skipping(queue.isDoomed);
         try {
             (globalThis as any).lockdown({ errorTaming: "unsafe", overrideTaming: "severe" });
         } catch (e) {

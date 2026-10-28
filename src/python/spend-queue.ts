@@ -15,7 +15,7 @@
 type Callback = ((...a: unknown[]) => unknown) & { destroy?: () => void };
 
 /** A queued entry: a webloop callback, or the second turn of a Python call holding a reference to `ptr`. */
-type Entry = { run: () => void; destroy?: () => void; ptr?: number };
+type Entry = { run: () => void; destroy?: () => void; ptr?: number; cb?: Callback };
 
 /** The loop's queue under the lockdown, and the cancel's three calls into it. */
 export type SpendQueue = {
@@ -35,6 +35,8 @@ export type SpendQueue = {
     sweep(): Promise<void>;
     /** How many cut entries are not released yet. */
     doomed(): number;
+    /** Whether `fn` is a webloop callback the queue cut: it never runs, and the sweep destroys it. */
+    isDoomed(fn: object): boolean;
 };
 
 /** How many cut entries one batch of the sweep releases before it yields. */
@@ -49,8 +51,13 @@ export const SWEEP_BATCH = 5000;
  */
 export function makeSpendQueue(raw: (cb: () => void, ms?: number) => void, decRef: (ptr: number) => void, now: () => number = () => performance.now()): SpendQueue {
     let seq = 0;
-    const pending = new Map<number, Entry>();   // state: plumbing — queued and not yet run, by sequence (ascending)
-    const doomed: Entry[] = [];   // state: plumbing — cut, waiting for the sweep
+    let pending = new Map<number, Entry>();   // state: plumbing — queued and not yet run, by sequence (ascending)
+    const doomed: Map<number, Entry>[] = [];   // state: plumbing — what each cut took, waiting for the sweep
+    let doomedN = 0;                           // how many entries `doomed` holds
+    // Each webloop callback's sequence while it is queued, written when it is queued (on the cell's time, not the
+    // spend's), so the cut stays one swap and the gate's revoke can still tell a cut callback by `cutSeq`.
+    const queuedAt = new WeakMap<object, number>();   // state: plumbing — keyed by the callback, gone when it runs
+    let cutSeq = 0;               // every entry at or below this sequence was cut
     let deadline = 0;             // the running spend's deadline (ms on `now`); 0 when none is running
     let lateCut = -1;             // how many entries the running spend's deadline cut; -1 until it has
     let turning = 0;              // > 0 while the cancel's one-shot runs: the webloop callback it queues is the cancel's wakeup
@@ -58,19 +65,15 @@ export function makeSpendQueue(raw: (cb: () => void, ms?: number) => void, decRe
     let callingPtr = 0;           // the Python object a call is starting for, while it queues its second turn
     let sweeping: Promise<void> | null = null;
 
-    // Move every queued entry up to `upTo` to the sweep; they never run.
-    const cut = (upTo: number): number => {
-        let n = 0;
-        for (const [s, e] of pending) {
-            if (s > upTo) break;
-            pending.delete(s);
-            doomed.push(e);
-            n++;
-        }
+    // Move every queued entry to the sweep in one swap, whatever the flood; they never run.
+    const cut = (): number => {
+        const n = pending.size;
+        if (n) { doomed.push(pending); doomedN += n; pending = new Map(); }
+        cutSeq = seq;
         return n;
     };
     const cutIfLate = () => {
-        if (deadline && lateCut < 0 && now() > deadline) lateCut = cut(seq);
+        if (deadline && lateCut < 0 && now() > deadline) lateCut = cut();
     };
     // An entry of the cancel's own chain goes straight to Pyodide's queue, where no cut reaches it. Each link is
     // recognised only by the one before it, never by anything the entry says about itself: a cell cannot queue one.
@@ -83,18 +86,20 @@ export function makeSpendQueue(raw: (cb: () => void, ms?: number) => void, decRe
         cutIfLate();   // the cut takes what was queued before the deadline, never this entry
         const s = ++seq;
         pending.set(s, e);
+        if (e.cb) queuedAt.set(e.cb, s);
         raw(() => {
             cutIfLate();
             const it = pending.get(s);
             if (it === undefined) return;
             pending.delete(s);
+            if (it.cb) queuedAt.delete(it.cb);
             it.run();
         }, ms);
     };
 
     return {
         schedule(cb, ms = 0) {
-            enqueue({ run: cb, destroy: () => cb.destroy?.() }, ms, "schedule");
+            enqueue({ run: cb, destroy: () => cb.destroy?.(), cb }, ms, "schedule");
         },
         hop(cb, ms = 0) {
             enqueue(callingPtr ? { run: cb, ptr: callingPtr } : { run: cb }, ms, "hop");
@@ -119,14 +124,22 @@ export function makeSpendQueue(raw: (cb: () => void, ms?: number) => void, decRe
             const n = Math.max(lateCut, 0);
             deadline = 0;
             lateCut = -1;
-            cut(seq);
+            cut();
             return n;
         },
         sweep() {
             sweeping ??= new Promise<void>((resolve) => {
                 const batch = () => {
-                    for (const e of doomed.splice(0, SWEEP_BATCH)) {
-                        try { if (e.ptr) decRef(e.ptr); else e.destroy?.(); } catch { /* released already */ }
+                    let left = SWEEP_BATCH;
+                    while (left > 0 && doomed.length) {
+                        const m = doomed[0];
+                        for (const [s, e] of m) {
+                            if (left-- <= 0) break;
+                            m.delete(s);
+                            doomedN--;
+                            try { if (e.ptr) decRef(e.ptr); else e.destroy?.(); } catch { /* released already */ }
+                        }
+                        if (!m.size) doomed.shift();
                     }
                     if (doomed.length) { raw(batch, 0); return; }
                     sweeping = null;
@@ -136,7 +149,8 @@ export function makeSpendQueue(raw: (cb: () => void, ms?: number) => void, decRe
             });
             return sweeping;
         },
-        doomed: () => doomed.length,
+        doomed: () => doomedN,
+        isDoomed: (fn) => { const s = queuedAt.get(fn); return s !== undefined && s <= cutSeq; },
     };
 }
 

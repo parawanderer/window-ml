@@ -29,7 +29,7 @@ globalThis.chrome = {
         sendMessage: (m) => { sent.push(m); return Promise.resolve(undefined); },
     },
 };
-const { SPEND_KILLED } = await import("../src/offscreen.ts");
+const { SPEND_KILLED, memoryKilled } = await import("../src/offscreen.ts");
 
 const send = (msg) => new Promise((resolve) => {
     for (const fn of listeners) { if (fn(msg, { id: "test" }, resolve) === true) return; }
@@ -228,4 +228,35 @@ test("control: a kill with no spending mark still blames the computation", async
     const r = await answer;
     assert.match(r.error, /exceeded 15s and was terminated — simplify the computation/);
     assert.equal(w.terminated, true);
+});
+
+// --- a worker that dies of memory ---
+// A heavier callback per entry in a flood can reach the heap limit before the 15 s kill (PYTHON_CANCEL_GAPS.md, pin 15):
+// the worker's own error then reaches the offscreen, and the run names memory as the cause, and the spend when it was in it.
+
+const WASM_OOM = "RangeError: WebAssembly.Memory.grow(): Maximum memory size exceeded";
+
+test("a worker that dies of memory during the spend names memory and the spend", async () => {
+    const { w, answer } = await startedCell("page:31", { spending: true });
+    w.onerror({ message: WASM_OOM });
+    const r = await answer;
+    assert.equal(r.ok, false);
+    assert.equal(r.error, memoryKilled(WASM_OOM, true));
+    assert.match(r.error, /ran out of memory while the cancel was spending what this cell left/);
+    assert.equal(w.terminated, true);
+});
+
+test("a worker that dies of memory in the cell's own code names memory, not the spend", async () => {
+    const { w, answer } = await startedCell("page:32", { spending: false });
+    w.onerror({ message: "Uncaught RangeError: Array buffer allocation failed" });
+    const r = await answer;
+    assert.match(r.error, /^The Python sandbox ran out of memory, so it was stopped/);
+    assert.doesNotMatch(r.error, /spending/);
+});
+
+test("control: any other worker death keeps its own message, with no memory named", async () => {
+    const { w, answer } = await startedCell("page:33", { spending: true });
+    w.onerror({ message: "Uncaught TypeError: x is not a function" });
+    const r = await answer;
+    assert.equal(r.error, "Python worker stopped (Uncaught TypeError: x is not a function).");
 });

@@ -177,6 +177,36 @@ test("a flood of queued callbacks is cut at the deadline: the spend returns with
     assert.deepEqual([next.error, next.value], [null, 1], "the worker and namespace survive; the dropped task is not spent again");
 });
 
+test("the largest flood under the kill, with a heavier callback per entry: cut and named, or a MemoryError, never a hang", { skip, timeout: 180000 }, async () => {
+    // Pin 15's stress case: 8 s of queueing is the largest flood that fits inside the 15 s kill. Each entry holds its own
+    // 256-byte buffer, so the heap is reached sooner than with a shared one. A worker that dies of memory instead is named
+    // by the offscreen (python-reap.test.mjs, "a worker that dies of memory"); here the interpreter must either cut and
+    // name the flood or raise Python's own MemoryError.
+    const heap0 = process.memoryUsage();
+    const r = await cell(`
+import asyncio, time
+_loop = asyncio.get_event_loop()
+async def _left():
+    try:
+        await asyncio.sleep(30)
+    except BaseException:
+        pass
+asyncio.ensure_future(_left()).set_name("heavy-leftover")
+await asyncio.sleep(0)
+_end = time.monotonic() + 8
+_n = 0
+while time.monotonic() < _end:
+    for _ in range(1000):
+        _loop.call_soon(bytearray(256).clear)
+    _n += 1000
+"queued"`);
+    const heap1 = process.memoryUsage();
+    console.log(`  heavy flood: spend ${r.spendMs} ms; rss +${heap1.rss - heap0.rss} bytes, JS heap +${heap1.heapUsed - heap0.heapUsed} bytes; ${String(r.error).slice(0, 80)}`);
+    assert.match(String(r.error), /callbacks this cell queued were dropped at the spend's deadline, so heavy-leftover|MemoryError/, `got ${JSON.stringify(r).slice(0, 400)}`);
+    const next = await cell(`1`);
+    assert.deepEqual([next.error, next.value], [null, 1], "the worker and namespace survive");
+});
+
 test("a flood with no task left is cut silently when the cancel returns: the value is returned", { skip, timeout: 60000 }, async () => {
     const r = await cell(`
 import asyncio
