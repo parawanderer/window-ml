@@ -27,8 +27,12 @@ async function startDataServer() {
     for (let i = 0; i < HUGE_ROWS; i++) huge.push(`${i},${["north", "south", "east", "west"][i % 4]},${(i % 97) + 0.5}`);
     const hugeBody = huge.join("\n");
     const srv = createServer((req, res) => {
-        const path = (req.url || "").split("?")[0];
-        const b = path === "/orders.csv" ? body : path === "/huge.csv" ? hugeBody : null;
+        const [path, query = ""] = (req.url || "").split("?");
+        // Each `?copy=` gets its own BYTES (row 0's region becomes a five-character tag of the copy id: same length, same
+        // sum): the store keeps identical bytes once, so two identical copies would share one blob and never evict.
+        const tag = (new URLSearchParams(query).get("copy") ?? "north").padEnd(5, "x").slice(0, 5);
+        const tagged = (b) => b.replace(/^(order_id,region,revenue\n0,)north,/, `$1${tag},`);
+        const b = path === "/orders.csv" ? tagged(body) : path === "/huge.csv" ? tagged(hugeBody) : null;
         if (b == null) { res.writeHead(404); return res.end("no"); }
         res.writeHead(200, { "content-type": "text/csv", "cache-control": "no-store" });
         res.end(b);
