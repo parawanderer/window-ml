@@ -167,7 +167,23 @@ not, record that and choose between `declarativeNetRequest` rules and following 
    approves a site models the approval before the reload. Separately fixed in #1236: a visible origin's document that
    loaded before its registration and asks `needInject` at adopt gets the page scripts in MAIN, not the isolated tools,
    which would have suppressed `PAGE_SCRIPT_MISSING` for good (unit row, mutation-checked).
-4. The side panel for the card and the transcript, and the anonymised highlight.
+4. The side panel for the card and the transcript, and the anonymised highlight. RULED 2026-10-28 on the security
+   lane's survey (main at 3e9f91b7: a hidden page during a user-started run gets `div#ml-sb-card` and
+   `div#ml-sb-root-hl` today; `chrome.sidePanel` is used nowhere): (1) scope is hidden pages only, as this section
+   reads; a visible page keeps today's overlay, card and devtools surfaces, and moving its card to the panel later is a
+   UI decision, not this step. (2) `chrome.sidePanel.open()` needs a user gesture, and a user-started run begins on one
+   of our surfaces, so the start click opens a per-tab panel for the run's tab (`setOptions` with the tab id, enabled
+   for the run, disabled when it ends); a gate that waits while the person has closed the panel shows the action badge
+   and waits, with the action set to open the panel on its click (that click is the gesture), and draws nothing in the
+   page but the highlight; the badge text and the panel's empty and closed states are new strings, named in the PR
+   body. (3) Two PRs: 4a the highlight, 4b the panel. The highlight is one implementation on every page (random
+   custom-element name per session, closed root, no `ml-` id, class or attribute, present only while the approval
+   waits), the e2e selectors moving to one helper, so there is no second drawer for visible pages; row 7 of
+   `docs/dev/detection-surface.md` splits, the card part staying "No" for visible origins. (4) Rule 10 as for step 3:
+   the red team's failing-first rows land on main first, in its own file (for a hidden page with a user-started run:
+   `domAdded` is only the anonymised host while an approval waits, no `ml-` token in the DOM before, during or after,
+   no `sidebar.html` frame, no popover attribute of ours, the visible page's card as the control); 4a merges after
+   them, 4b after 4a, the red team flipping after each.
 5. The redirect measurement, then the rule.
 
 After step 2, and deferred: consuming a page's WebMCP tools (`document.modelContext`) as a window.ml adapter, with the rules
