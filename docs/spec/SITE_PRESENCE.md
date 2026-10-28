@@ -147,7 +147,7 @@ not, record that and choose between `declarativeNetRequest` rules and following 
    #1236 MERGED 2026-10-28 at 3967b0df (CI green on run 40715649572; the janitor's dedupe finding fixed at 33d20d03 before the merge; the lane's clone removed), verified. It opened as #1236 OPEN (from `feat/hidden-isolated-tools-v2` with main and #1228 merged in, `@agent,@security`, janitor
    reviewer; the lane reports the red team's nine rows passing under step 3, five with a setup change to the step-3
    shape through the harness's `pageRealm`/`isolated` options and their assertions unchanged, which the red team is
-   checking; the eight site-access e2e rows that held a port now find none; the red team's setup review passed with two findings fixed, head fbd2f8b2), verified 2026-10-28; the red team flips (told the hour it merged); the attack-13 flake's test-only PR is #1255 OPEN (2026-10-28, `tests/e2e/site-access.spec.mjs` only, verified)
+   checking; the eight site-access e2e rows that held a port now find none; the red team's setup review passed with two findings fixed, head fbd2f8b2), verified 2026-10-28; the red team flips (told the hour it merged): #1259 OPEN 2026-10-28, test-only, `tests/redteam-presence.test.mjs`, verified; the attack-13 flake's test-only PR is #1255 OPEN (2026-10-28, `tests/e2e/site-access.spec.mjs` only, verified)
    the nine todos once it has merged.
    As built: the content script says `PAGE_SCRIPT_MISSING` once when its gate opened and no hello came within 1.5 s; the
    worker reads the presence of the sender's own origin (top frame, its named document only) and, when it is `full`, puts
