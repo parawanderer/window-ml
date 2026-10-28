@@ -438,6 +438,19 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         sendResponse({ data: resolveStart(p.requestId, p.decision, isExtensionSender(sender) ? undefined : sender.tab?.id ?? -1) });
         return;
     }
+    // A document answered open that has heard no page script (content.ts): it loaded between its origin turning visible and
+    // the registration covering it (SITE_PRESENCE.md step 2). Put the scripts in when the SENDER's origin is visible now;
+    // nothing in the message is read, and a hidden origin gets nothing, as at CONTENT_READY.
+    if (message.type === "PAGE_SCRIPT_MISSING") {
+        const tabId = sender.tab?.id;
+        if (tabId == null || (sender.frameId ?? 0) !== 0) { sendResponse({ data: false }); return; }
+        const doc = typeof sender.documentId === "string" ? sender.documentId : undefined;
+        void presence(sender.url ?? sender.tab?.url).catch(() => "hidden" as const).then(async (shown) => {
+            if (shown !== "full") return sendResponse({ data: false });
+            try { await injectPageScripts(tabId, doc); sendResponse({ data: true }); } catch { sendResponse({ data: false }); }
+        });
+        return true;
+    }
     if (message.type === "CONTENT_READY") {
         // Cross-page persistence: a fresh document loaded in a tab. If it still hosts live cross-page run(s),
         // reply with each run's rebuild-config so the new page re-adopts (rebuilds + re-registers its
