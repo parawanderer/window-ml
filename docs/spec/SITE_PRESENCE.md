@@ -220,6 +220,15 @@ not, record that and choose between `declarativeNetRequest` rules and following 
    reaches the host's tag through `inShell`'s `roots.highlightTag`; detection-surface row 7 split into 7, the card,
    "No" on a visible page, and 7b, the anonymised highlight; the janitor asked by session-mail), verified; it holds
    until the red team's rows PR has merged.
+   4b is #1297 OPEN 2026-10-28 (`feat/hidden-side-panel`, head 2f6414bc, @security @ui; `sw-side-panel.ts`,
+   `sidepanel.ts` and the panel, worker and e2e files its body lists; the janitor asked by session-mail),
+   verified; it merges after #1279 and the red team's step-4 rows. The lane measured per-tab side-panel options
+   surviving a worker restart (Chromium 151), so the rebuild at worker start is a re-check; the e2e route is the real
+   toolbar popup framing `sidepanel.html`, whose port as a tab carries `sender.tab` and is refused as the check says.
+   Two gaps found by the e2e move are 4b's and fixed in it: the panel's highlight did not draw in the default debug
+   mode, and the panel's card did not say where the target is. NEW in 4b: one content-script message, `ML_HL_POS`
+   (nine fixed labels, top frame only, sent only to an open panel); per AGENTS.md a new message type gets a red-team
+   row, e3's, in its step-4 rows PR or the one after. The two pre-existing gaps below are named as ruled in its body.
    FOUND 2026-10-28 by the security lane while building 4b, both checked against main by the coordinator, neither
    4b's: (i) `sw-debug.ts` serves the `ml-devtools` port against whatever tab id its init message names, with no
    sender check; only our own contexts can connect, but the content script in every tab is one, so a compromised
