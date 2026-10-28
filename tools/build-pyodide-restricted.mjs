@@ -2,7 +2,7 @@
 // run the dialect under wasm. Everything it pins (Pyodide tag, fork commit, emscripten, ABI) is read from
 // tools/pyodide-dist.json, the one place the version lives; `npm run fetch-pyodide` reads the same file.
 //
-//   node tools/build-pyodide-restricted.mjs [--work tmp/pyodide-build] [--cpython ~/git/cpython-restricted] [--jobs 10] [--pin <file>]
+//   node tools/build-pyodide-restricted.mjs [--work ~/git/window-ml/tmp/pyodide-build] [--cpython ~/git/cpython-restricted] [--jobs 10] [--pin <file>]
 //
 // Takes hours (emsdk install + CPython + link). Run it in the background. Output: <work>/out/ (the five
 // PYODIDE_CORE files), <work>/pyodide-restricted-<pyodide>-<sha8>.tar.gz, <work>/BUILD_REPORT.md, <work>/build.log.
@@ -25,7 +25,7 @@ const CORE = ["pyodide.mjs", "pyodide.asm.mjs", "pyodide.asm.wasm", "python_stdl
 const argv = process.argv.slice(2);
 const opt = (name, dflt) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : dflt; };
 const PIN_FILE = resolve(opt("--pin", join(ROOT, "tools/pyodide-dist.json"))); // a scratch pin tries a fork branch before it is merged
-const WORK = resolve(opt("--work", join(ROOT, "tmp/pyodide-build")));
+const WORK = resolve(opt("--work", join(homedir(), "git/window-ml/tmp/pyodide-build"))); // main's checkout, not this clone's: a clone is removed after its PR and the emsdk + Pyodide tree (~3 GB, hours) would go with it
 const CPYTHON_LOCAL = resolve(opt("--cpython", join(homedir(), "git/cpython-restricted")));
 const JOBS = opt("--jobs", "10");
 
