@@ -72,3 +72,127 @@ test("joinDraft skips blank sides", () => {
     assert.equal(D.joinDraft("", "b"), "b");
     assert.equal(D.joinDraft("a", "  "), "a");
 });
+
+// --- images written through to IndexedDB (ml-drafts) ---
+// A "reload" is a fresh import of drafts.ts (its own page id, empty Maps) over the same fake IndexedDB.
+import { createRequire } from "node:module";
+const fake = createRequire(import.meta.url)("fake-indexeddb");
+let n = 0;
+const reload = () => import(`../src/sidebar/drafts.ts?reload=${++n}`);
+const IMG = (c) => `data:image/png;base64,${c}`;
+
+test("images saved are back after a reload, and a box on screen is told", async () => {
+    globalThis.indexedDB = new fake.IDBFactory();
+    const A = await reload();
+    await A.draftsSettled();
+    A.saveDraftImages("im:a", [IMG("AAAA"), IMG("BBBB")]);
+    await A.draftsSettled();
+    const B = await reload();
+    const heard = [];
+    B.onDraftRestored((k) => heard.push(k));
+    assert.deepEqual(B.loadDraftImages("im:a"), [], "synchronous until the read lands");
+    await B.draftsSettled();
+    assert.deepEqual(B.loadDraftImages("im:a"), [IMG("AAAA"), IMG("BBBB")]);
+    assert.deepEqual(heard, ["im:a"]);
+});
+
+test("an empty list deletes the key from the store", async () => {
+    globalThis.indexedDB = new fake.IDBFactory();
+    const A = await reload();
+    A.saveDraftImages("im:a", [IMG("AAAA")]);
+    A.saveDraftImages("im:a", []);
+    await A.draftsSettled();
+    const B = await reload();
+    await B.draftsSettled();
+    assert.deepEqual(B.loadDraftImages("im:a"), []);
+});
+
+test("a save made before the restore finishes wins over the restored copy; an empty mount-save does not", async () => {
+    globalThis.indexedDB = new fake.IDBFactory();
+    const A = await reload();
+    A.saveDraftImages("im:a", [IMG("OLD1")]);
+    A.saveDraftImages("im:b", [IMG("BBBB")]);
+    await A.draftsSettled();
+    const B = await reload();
+    B.saveDraftImages("im:a", [IMG("NEW1")]);
+    B.saveDraftImages("im:b", []); // the composer's mount effect: nothing in memory yet, nothing changed
+    await B.draftsSettled();
+    assert.deepEqual(B.loadDraftImages("im:a"), [IMG("NEW1")]);
+    assert.deepEqual(B.loadDraftImages("im:b"), [IMG("BBBB")]);
+    const C = await reload();
+    await C.draftsSettled();
+    assert.deepEqual(C.loadDraftImages("im:a"), [IMG("NEW1")], "and the store holds the new one");
+});
+
+test("over the cap the least recently saved key goes first, and the memory keeps it", async () => {
+    globalThis.indexedDB = new fake.IDBFactory();
+    const A = await reload();
+    const big = IMG("x".repeat(Math.floor(A.CAP_BYTES / 2.5)));
+    A.saveDraftImages("im:old", [big]);
+    A.saveDraftImages("im:mid", [big]);
+    A.saveDraftImages("im:new", [big]);
+    await A.draftsSettled();
+    assert.deepEqual(A.loadDraftImages("im:old"), [big], "this page still has it");
+    const B = await reload();
+    await B.draftsSettled();
+    assert.deepEqual(B.loadDraftImages("im:old"), []);
+    assert.deepEqual(B.loadDraftImages("im:mid"), [big]);
+    assert.deepEqual(B.loadDraftImages("im:new"), [big]);
+});
+
+test("storage that cannot open keeps today's in-memory behaviour, with no error", async () => {
+    globalThis.indexedDB = { open() { throw new Error("SecurityError"); } };
+    const A = await reload();
+    A.saveDraftImages("im:a", [IMG("AAAA")]);
+    assert.deepEqual(A.loadDraftImages("im:a"), [IMG("AAAA")]);
+    const r = await A.sendHeld("im:a", "t", [IMG("AAAA")], async () => ({ ok: false }));
+    assert.equal(r.ok, false);
+    await A.draftsSettled();
+    assert.deepEqual(A.loadDraftImages("im:a"), [IMG("AAAA")]);
+    delete globalThis.indexedDB;
+    const B = await reload();
+    await B.draftsSettled();
+    B.saveDraftImages("im:b", [IMG("BBBB")]);
+    assert.deepEqual(B.loadDraftImages("im:b"), [IMG("BBBB")]);
+});
+
+test("a send held when the page died brings its images back with its text; a confirmed send clears them", async () => {
+    globalThis.indexedDB = new fake.IDBFactory();
+    const A = await reload();
+    A.saveDraftImages("im:a", [IMG("CCCC")]);
+    // The page dies with the send in flight: its promise never settles.
+    void A.sendHeld("im:a", "never confirmed", [IMG("AAAA")], () => new Promise(() => {}));
+    await A.draftsSettled();
+    const B = await reload();
+    const heard = [];
+    B.onDraftRestored((k) => heard.push(k));
+    await B.draftsSettled();
+    assert.deepEqual(heard, ["im:a"]);
+    assert.deepEqual(B.loadDraftImages("im:a"), [IMG("AAAA")]);
+    assert.equal(B.loadDraft("im:a"), "never confirmed");
+    await B.draftsSettled();
+    const C = await reload();
+    await C.draftsSettled();
+    assert.deepEqual(C.loadDraftImages("im:a"), [IMG("AAAA")], "restored once, now an ordinary draft");
+    // A confirmed send leaves nothing.
+    const ok = await C.sendHeld("im:z", "fine", [IMG("ZZZZ")], async () => ({ ok: true }));
+    assert.equal(ok.ok, true);
+    await C.draftsSettled();
+    const D = await reload();
+    await D.draftsSettled();
+    assert.deepEqual(D.loadDraftImages("im:z"), []);
+});
+
+// --- the upgrade: a profile from before the images were stored ---
+
+test("a profile with text drafts in localStorage and no image store loads the text, no images, no error", async () => {
+    globalThis.indexedDB = new fake.IDBFactory();
+    store.set("wml-draft:old:1", JSON.stringify("text typed last week"));
+    const A = await reload();
+    const heard = [];
+    A.onDraftRestored((k) => heard.push(k));
+    await A.draftsSettled();
+    assert.equal(A.loadDraft("old:1"), "text typed last week");
+    assert.deepEqual(A.loadDraftImages("old:1"), []);
+    assert.deepEqual(heard, []);
+});
