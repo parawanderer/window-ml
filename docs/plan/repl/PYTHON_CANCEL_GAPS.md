@@ -249,6 +249,16 @@ callback, FIFO, so the cancel's own wakeup waits behind the whole flood and no P
     overrun is worth narrowing is the lane's call after the per-phase breakdown its PR states (any tightening is a
     narrowing). A heavier callback per entry could reach the heap limit before the kill: hunt-2 carries a row for it,
     and a worker that dies of memory names memory as the cause (pin 3's shape).
+    BUILT: #1221 MERGED 2026-10-28 at 933e5e48 (the loop's queue cut at the spend's deadline, rebased on #1208's
+    monitoring spend), verified; the lane's figures on that head replace the 2026-10-27 ones: the cut on 1M callbacks
+    takes 1.6 s, on 2M 2.4 s, and on the heavy 1.59M flood 2.1 s at +2.6 GB JS heap; the residual past the deadline is
+    about a quarter to a third of the queueing time, and 100k builtin callbacks fit inside the budget. FOUND on the PR by
+    the janitor's review: a cell that rebinds the loop instance's `call_soon` inside the turn window had its callbacks
+    credited as the cancel's own chain, past the cut, outliving the cell with no refusal. Defended in the same PR, pinned
+    first by #1239 MERGED 3a992d40 (three rows under "P2-forge" in `tests/redteam-python-sandbox.test.mjs`, one per
+    binding: instance, class, `__getattribute__`): the cell returns its value; the next cell finds the loop restored
+    (the class, its classes' dicts, nothing shadowed on the instance); the forged chain stays frozen across later cells
+    and a 300 ms idle. The second red team's hunt-2 todo flips on 933e5e48.
 16. **Refusal, not a tag.** A leftover task whose cancel-step the flood pushed past the deadline never takes its cancel:
     telling that step apart from the cell's callbacks would need a per-entry tag a cell can forge from the closure, a
     proxy (rule 5). The cell's result is REFUSED by name with what was measured: the number of callbacks dropped at the
