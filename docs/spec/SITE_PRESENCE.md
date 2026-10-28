@@ -220,6 +220,18 @@ not, record that and choose between `declarativeNetRequest` rules and following 
    reaches the host's tag through `inShell`'s `roots.highlightTag`; detection-surface row 7 split into 7, the card,
    "No" on a visible page, and 7b, the anonymised highlight; the janitor asked by session-mail), verified; it holds
    until the red team's rows PR has merged.
+   FOUND 2026-10-28 by the security lane while building 4b, both checked against main by the coordinator, neither
+   4b's: (i) `sw-debug.ts` serves the `ml-devtools` port against whatever tab id its init message names, with no
+   sender check; only our own contexts can connect, but the content script in every tab is one, so a compromised
+   renderer could subscribe to another tab's run feed. (ii) `shell.ts` `applyMode` mounts the overlay in
+   `debugMode: "overlay"` with no presence gate, so a hidden page gets our DOM in that mode, against this
+   section's rule. RULED the same hour: both are the security lane's, as two PRs after 4b, each small: (i) the
+   `ml-sidepanel` check 4b adds (extension URL, no `sender.tab`) applies to `ml-devtools` too, and a port that
+   fails it is disconnected; (ii) the overlay mount waits on the worker's presence word as the card does. Rule 10:
+   the red team pins each as a failing-first row first, in its own files after its step-4 rows (a unit row for the
+   devtools port with a `sender.tab`-bearing connection refused, an e2e site-access row for a hidden page in
+   overlay mode with no `ml-sb-root`), and each fix merges after its row; the red team flips after. Both named in
+   the 4b PR body.
 5. The redirect measurement, then the rule.
 
 After step 2, and deferred: consuming a page's WebMCP tools (`document.modelContext`) as a window.ml adapter, with the rules
