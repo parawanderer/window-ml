@@ -790,11 +790,11 @@ test("monthKeyCounts counts the folder's encrypted months by the key that opens 
     await syncEnc(B, folder);
     const files = new Map([...folder.files, ["2026-06.sqlite", new Uint8Array([1, 2, 3])], ["2026-05.wmlbak", new Uint8Array([9, 9, 9])], ["notes.txt", new Uint8Array(1)]]);
     const dir = dirOf(files);
-    assert.deepEqual(await monthKeyCounts(dir, await A.store.read()), { byKey: { [A.keyId]: 2 }, unopened: 2 }, "B's month (a key A never held) and the damaged file are unopened; the plain file is not an encrypted month");
+    assert.deepEqual(await monthKeyCounts(dir, await A.store.read()), { byKey: { [A.keyId]: 2 }, unopened: 2, foreign: 1 }, "B's month (a key A never held) and the damaged file are unopened; the plain file is not an encrypted month");
     // A takes B's key: A's own key is retired and still opens its months, and B's now opens B's.
     await adoptKeyring(A.store, folder.files.get("2026-08.wmlbak"), { passphrase: "pw-of-b" });
-    assert.deepEqual(await monthKeyCounts(dir, await A.store.read()), { byKey: { [B.keyId]: 1, [A.keyId]: 2 }, unopened: 1 });
-    assert.deepEqual(await monthKeyCounts(dir, null), { byKey: {}, unopened: 4 }, "with no keyring nothing opens");
+    assert.deepEqual(await monthKeyCounts(dir, await A.store.read()), { byKey: { [B.keyId]: 1, [A.keyId]: 2 }, unopened: 1, foreign: 0 });
+    assert.deepEqual(await monthKeyCounts(dir, null), { byKey: {}, unopened: 4, foreign: 3 }, "with no keyring nothing opens, and every readable header names a key this install does not hold");
 });
 
 // --- telling a planted key from the real one (part 3e) ---
@@ -820,7 +820,7 @@ test("a planted file whose header names the key but whose payload does not open 
     // The install holds R, and S as a retired key: two real months under R and one under S count as they open.
     const mine = { ...R.ring, retired: [{ key: S.ring.key, keyId: S.keyId }] };
     const honest = dirOf(new Map([["2026-10.wmlbak", R.file], ["2026-11.wmlbak", r2], ["2026-09.wmlbak", S.file]]));
-    assert.deepEqual(await monthKeyCounts(honest, mine), { byKey: { [R.keyId]: 2, [S.keyId]: 1 }, unopened: 0 }, "control: real months count under the key that sealed them");
+    assert.deepEqual(await monthKeyCounts(honest, mine), { byKey: { [R.keyId]: 2, [S.keyId]: 1 }, unopened: 0, foreign: 0 }, "control: real months count under the key that sealed them");
     // The plant: three months whose headers name R and whose payloads no key opens. A folder writer needs no secret
     // for this, only bytes in the synced folder.
     const fakes = ["2026-01.wmlbak", "2026-02.wmlbak", "2026-03.wmlbak"].map(() => planted(R.file));
@@ -830,7 +830,7 @@ test("a planted file whose header names the key but whose payload does not open 
     }
     const files = new Map([["2026-10.wmlbak", R.file], ["2026-11.wmlbak", r2], ["2026-09.wmlbak", S.file],
         ["2026-01.wmlbak", fakes[0]], ["2026-02.wmlbak", fakes[1]], ["2026-03.wmlbak", fakes[2]]]);
-    assert.deepEqual(await monthKeyCounts(dirOf(files), mine), { byKey: { [R.keyId]: 2, [S.keyId]: 1 }, unopened: 3 },
+    assert.deepEqual(await monthKeyCounts(dirOf(files), mine), { byKey: { [R.keyId]: 2, [S.keyId]: 1 }, unopened: 3, foreign: 0 },
         "three planted files are not months under R: they show as unopened");
 });
 
@@ -846,8 +846,8 @@ test("a real month relabelled with another key's id opens under no key, and show
     relabelled.set(utf8.encode(S.keyId), at);
     assert.equal(readHeader(relabelled).keyId, S.keyId, "the label now names S");
     const counts = await monthKeyCounts(dirOf(new Map([["2026-10.wmlbak", relabelled]])), both);
-    assert.deepEqual(counts, { byKey: {}, unopened: 1 }, "under no key: S's key does not open R's chunks, and R's is not the one named");
-    assert.deepEqual(await monthKeyCounts(dirOf(new Map([["2026-10.wmlbak", R.file]])), both), { byKey: { [R.keyId]: 1 }, unopened: 0 }, "control: unrelabelled, it counts under R");
+    assert.deepEqual(counts, { byKey: {}, unopened: 1, foreign: 0 }, "under no key: S's key does not open R's chunks, and R's is not the one named");
+    assert.deepEqual(await monthKeyCounts(dirOf(new Map([["2026-10.wmlbak", R.file]])), both), { byKey: { [R.keyId]: 1 }, unopened: 0, foreign: 0 }, "control: unrelabelled, it counts under R");
 });
 
 test("a month under a key this install never held is unopened, and a retired key still counts what it opens", async () => {
@@ -855,6 +855,23 @@ test("a month under a key this install never held is unopened, and a retired key
     const R = await sealed("pass of R", "SQLite format 3\0 r");
     const S = await sealed("pass of S", "SQLite format 3\0 s");
     const dir = dirOf(new Map([["2026-10.wmlbak", R.file], ["2026-09.wmlbak", S.file]]));
-    assert.deepEqual(await monthKeyCounts(dir, R.ring), { byKey: { [R.keyId]: 1 }, unopened: 1 });
-    assert.deepEqual(await monthKeyCounts(dir, { ...S.ring, retired: [{ key: R.ring.key, keyId: R.keyId }] }), { byKey: { [S.keyId]: 1, [R.keyId]: 1 }, unopened: 0 });
+    assert.deepEqual(await monthKeyCounts(dir, R.ring), { byKey: { [R.keyId]: 1 }, unopened: 1, foreign: 1 });
+    assert.deepEqual(await monthKeyCounts(dir, { ...S.ring, retired: [{ key: R.ring.key, keyId: R.keyId }] }), { byKey: { [S.keyId]: 1, [R.keyId]: 1 }, unopened: 0, foreign: 0 });
+});
+
+// --- foreign: a header naming a key this install never held, told apart from damage (part 3f) ---
+
+test("foreign counts the files whose header reads and names a key the ring does not hold, apart from damage, and they stay in unopened", async () => {
+    const { monthKeyCounts } = await import("../src/archive/archive-folder.ts");
+    const R = await sealed("pass of R", "SQLite format 3\0 r");
+    const S = await sealed("pass of S", "SQLite format 3\0 s");
+    const damage = new Map([
+        ["2026-01.wmlbak", new Uint8Array([9, 9, 9])],            // no readable header
+        ["2026-02.wmlbak", new Uint8Array(0)],                    // empty
+        ["2026-03.wmlbak", planted(R.file)],                      // names a held key, opens under none
+    ]);
+    assert.deepEqual(await monthKeyCounts(dirOf(damage), R.ring), { byKey: {}, unopened: 3, foreign: 0 }, "damage is not another key");
+    const files = new Map([...damage, ["2026-09.wmlbak", S.file], ["2026-10.wmlbak", R.file]]);
+    assert.deepEqual(await monthKeyCounts(dirOf(files), R.ring), { byKey: { [R.keyId]: 1 }, unopened: 4, foreign: 1 }, "S's month is foreign and also unopened");
+    assert.deepEqual(await monthKeyCounts(dirOf(files), null), { byKey: {}, unopened: 5, foreign: 3 }, "no ring: every readable header is foreign, a planted one that names R included");
 });

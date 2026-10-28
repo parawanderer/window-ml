@@ -142,7 +142,9 @@ not, record that and choose between `declarativeNetRequest` rules and following 
    after #1189: #1206 MERGED 2026-10-28 at 295affd2, verified (with the janitor's one finding fixed in it: a failed
    inject no longer leaves its document marked as injected, with a red-team row). Step 3's build sits on the lane's
    `feat/hidden-isolated-tools-v2` (the tools' unit suites run against the isolated bundle too, a CI step; the
-   hidden-with-run trace asserts no `ml` global); its PR opens after the red team's five-property PR, which follows #1203.
+   hidden-with-run trace asserts no `ml` global); its PR opens after the red team's five-property PR, which follows #1203: that is #1228 OPEN (the
+   hidden-page step-3 properties failing-first and the :272/:309 ruling split, `@exec,@security`, janitor reviewer),
+   verified 2026-10-28; the lane's step-3 PR opens once it has merged.
    As built: the content script says `PAGE_SCRIPT_MISSING` once when its gate opened and no hello came within 1.5 s; the
    worker reads the presence of the sender's own origin (top frame, its named document only) and, when it is `full`, puts
    the page scripts into that document. `injectPageScripts` gives a document them once.

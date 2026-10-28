@@ -114,12 +114,14 @@ class _MlSpendLate(BaseException):
     """Raised in a task the cancel's spend stopped: it kept running past the spend's budget, or reached for its hook."""
 
 def _ml_make_cancel(revoke, spending, loop, set_running_loop, all_tasks, current_task, sleep, get_objects, Handle,
-                    settrace, setprofile, monitoring, monotonic, StringIO, redirect_stdout, redirect_stderr, guarded, skip_files,
+                    traces, th_hooks, monitoring, monotonic, StringIO, redirect_stdout, redirect_stderr, guarded, skip_files,
                     SpendLate, BaseException_, isinstance_, id_, len_, range_, sorted_, str_, getattr_, ROUNDS, BUDGET, CAP):
     # The spend's hook is a sys.monitoring tool (pins 18 to 20): a settrace hook that raises is taken down by CPython
     # itself, so every handler after the first SpendLate ran untraced; a monitoring callback that raises stays on.
-    use_tool_id, free_tool_id, clear_tool_id, register_callback, set_events, get_tool, DISABLE, TOOL, EVENTS = monitoring
+    use_tool_id, free_tool_id, clear_tool_id, register_callback, set_events, get_tool, get_events, DISABLE, TOOL, EVENTS = monitoring
     PY_START, LINE, JUMP, CALL = EVENTS
+    MASK = PY_START | LINE | JUMP | CALL
+    NAME = "window.ml spend"
     # The tasks' own output during the spend: kept up to CAP characters, then counted.
     class Out:
         def __init__(self):
@@ -154,6 +156,54 @@ def _ml_make_cancel(revoke, spending, loop, set_running_loop, all_tasks, current
                 return DISABLE
             if id_(fn) in guarded:
                 raise SpendLate()
+        HOOKS = ((PY_START, late), (LINE, late), (JUMP, late), (CALL, call))
+        # A guarded call made from C (functools.partial, map, a key= function) raises no CALL event, so the tool is
+        # checked after every turn instead: its name, its events and its callbacks. One that changed is taken back, and
+        # the cell's result refused; a handler that spins once the tool is off is left to the worker's kill.
+        def arm():
+            if get_tool(TOOL) != NAME:
+                if get_tool(TOOL) is not None:
+                    clear_tool_id(TOOL)
+                    free_tool_id(TOOL)
+                use_tool_id(TOOL, NAME)
+            for ev, fn in HOOKS:
+                register_callback(TOOL, ev, fn)
+        def intact(mask):
+            try:
+                if get_tool(TOOL) != NAME or get_events(TOOL) != mask:
+                    return False
+                for ev, fn in HOOKS:
+                    if register_callback(TOOL, ev, fn) is not fn:
+                        return False
+                return True
+            except BaseException_:
+                return False
+        tampered = False
+        # The same C path reaches sys.settrace and setprofile (and threading's), which change no tool: a trace or profile
+        # function a task installed during the spend would run on every frame of the next cell. Each is read and cleared
+        # after every turn and after the spend; the profile function sees the reads themselves, so a raise counts as set.
+        # threading's are read from its module dict: its gettrace is Python, which the tool stops once the deadline passed.
+        def untraced():
+            clean = True
+            for get, set_ in traces:
+                try:
+                    if get() is not None:
+                        clean = False
+                        set_(None)
+                except BaseException_:
+                    clean = False
+                    try:
+                        set_(None)
+                    except BaseException_:
+                        pass
+            for k in ("_trace_hook", "_profile_hook"):
+                try:
+                    if th_hooks.get(k) is not None:
+                        clean = False
+                        th_hooks[k] = None
+                except BaseException_:
+                    clean = False
+            return clean
         # A tool the cell left would run its callbacks during the spend, on no clock: cleared and freed first, and named.
         foreign = []
         for i in range_(6):
@@ -165,8 +215,7 @@ def _ml_make_cancel(revoke, spending, loop, set_running_loop, all_tasks, current
                     free_tool_id(i)
             except BaseException_:
                 pass
-        settrace(None)
-        setprofile(None)
+        untraced()
         hooked = False
         with redirect_stdout(out), redirect_stderr(out):
             # 1. The running loop: a cell's new_event_loop() replaced it, and a handle on the orphan crashes the next pump.
@@ -190,17 +239,22 @@ def _ml_make_cancel(revoke, spending, loop, set_running_loop, all_tasks, current
                     if deadline is None:
                         deadline = monotonic() + BUDGET
                         spending()
-                        use_tool_id(TOOL, "window.ml spend")
+                        arm()
                         hooked = True
-                        for ev, fn in ((PY_START, late), (LINE, late), (JUMP, late), (CALL, call)):
-                            register_callback(TOOL, ev, fn)
                     elif monotonic() > deadline:
                         break
-                    set_events(TOOL, PY_START | LINE | JUMP | CALL)
+                    if tampered:
+                        arm()
+                    set_events(TOOL, MASK)
                     try:
                         await sleep(0)
                     finally:
-                        set_events(TOOL, 0)
+                        if not untraced() or not intact(MASK):
+                            tampered = True
+                        try:
+                            set_events(TOOL, 0)
+                        except BaseException_:
+                            pass
             except BaseException_:
                 pass
             # 2b. A task that ended in an exception keeps its frames in the traceback, and whatever they held (a
@@ -208,8 +262,10 @@ def _ml_make_cancel(revoke, spending, loop, set_running_loop, all_tasks, current
             #     no clock. Cleared here, under the tool with the deadline forced past, so a finalizer stops at its first event.
             if hooked:
                 deadline = 0.0
-                set_events(TOOL, PY_START | LINE | JUMP | CALL)
                 try:
+                    if tampered:
+                        arm()
+                    set_events(TOOL, MASK)
                     for t in seen:
                         try:
                             e = t.exception() if t.done() and not t.cancelled() else None
@@ -226,14 +282,23 @@ def _ml_make_cancel(revoke, spending, loop, set_running_loop, all_tasks, current
                                 e = e.__context__
                         except BaseException_:
                             pass
+                except BaseException_:
+                    pass
                 finally:
-                    set_events(TOOL, 0)
+                    if not untraced() or not intact(MASK):
+                        tampered = True
+                    try:
+                        set_events(TOOL, 0)
+                    except BaseException_:
+                        pass
             if hooked:
                 try:
                     clear_tool_id(TOOL)
                     free_tool_id(TOOL)
                 except BaseException_:
                     pass
+            if not untraced():
+                tampered = True
             # 3. REVOKE what the cell handed to JavaScript (cell-gate.ts), then cancel every asyncio.Handle left.
             try:
                 revoke()
@@ -261,6 +326,8 @@ def _ml_make_cancel(revoke, spending, loop, set_running_loop, all_tasks, current
         refusal = ""
         if foreign:
             refusal += "RuntimeError: this cell left a sys.monitoring tool registered: " + ", ".join(foreign) + ". It was cleared before the cancel's spend, so the cell's result is refused rather than returned beside it.\\n"
+        if tampered:
+            refusal += "RuntimeError: a task this cell left changed the cancel's sys.monitoring tool or set a trace or profile function during the spend (a call made from C, such as functools.partial or map, which the hook does not see), so the cell's result is refused rather than returned beside it.\\n"
         if stopped:
             refusal += "RuntimeError: this cell left a task that kept running after it was cancelled: " + names(stopped) + ". It was stopped after " + str_(BUDGET) + " s (or when it tried to remove the cancel's hook), so the cell's result is refused rather than returned beside it.\\n"
         if unspent:
@@ -296,8 +363,9 @@ _ml_spend_guarded = frozenset(id(f) for f in (_ml_s.settrace, _ml_s.setprofile, 
 _ml_spend_skip = (_ml_os.path.dirname(_ml_aio.__file__), _ml_os.path.dirname(_ml_pyo.__file__), _ml_c.__file__, _ml_s._getframe().f_code.co_filename)
 _ml_cancel = _ml_make_cancel(_ml_cell_revoke, _ml_cell_spending, _ml_aio.get_event_loop(), _ml_aio._set_running_loop,
     _ml_aio.all_tasks, _ml_aio.current_task, _ml_aio.sleep, _ml_gc.get_objects, _ml_aio.Handle,
-    _ml_s.settrace, _ml_s.setprofile, (_ml_mon.use_tool_id, _ml_mon.free_tool_id, _ml_mon.clear_tool_id, _ml_mon.register_callback,
-    _ml_mon.set_events, _ml_mon.get_tool, _ml_mon.DISABLE, 4, (_ml_mon.events.PY_START, _ml_mon.events.LINE, _ml_mon.events.JUMP, _ml_mon.events.CALL)),
+    ((_ml_s.gettrace, _ml_s.settrace), (_ml_s.getprofile, _ml_s.setprofile)), _ml_th.__dict__,
+    (_ml_mon.use_tool_id, _ml_mon.free_tool_id, _ml_mon.clear_tool_id, _ml_mon.register_callback,
+    _ml_mon.set_events, _ml_mon.get_tool, _ml_mon.get_events, _ml_mon.DISABLE, 4, (_ml_mon.events.PY_START, _ml_mon.events.LINE, _ml_mon.events.JUMP, _ml_mon.events.CALL)),
     _ml_tm.monotonic, _ml_io.StringIO, _ml_c.redirect_stdout, _ml_c.redirect_stderr,
     _ml_spend_guarded, _ml_spend_skip, _MlSpendLate, BaseException, isinstance, id, len, range, sorted, str, getattr,
     8, 1.0, 20000)

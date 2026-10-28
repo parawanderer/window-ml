@@ -245,7 +245,12 @@ naming it); REVOKE what the cell handed to JavaScript (`cell-gate.ts`); then can
 that `gc.get_objects()` reaches (#998). **The spend is BOUNDED** (the host's only): one budget of 1 s for all its
 rounds, enforced by one `sys.monitoring` tool whose callbacks raise on every function start, line and backward jump a
 task runs past the deadline, and at once on a call (the `CALL` event) to `sys.settrace`/`setprofile`, `threading`'s, or
-any `sys.monitoring` function but the three getters (enumerated from the module at boot). A settrace hook that raises is
+any `sys.monitoring` function but the three getters (enumerated from the module at boot). A guarded call made from C
+(`functools.partial(set_events, …)()`, `map(clear_tool_id, …)`, a `key=` function) raises no `CALL` event, so after
+every turn the spend checks its tool's name, events and callbacks, and reads and clears the trace and profile
+functions (`sys`'s and `threading`'s, which change no tool), again after the spend: either one changed refuses the
+cell's result ("changed the cancel's sys.monitoring tool or set a trace or profile function"); a handler that spins once the tool is off hangs to the 15 s
+kill, like a loop inside a C function. A settrace hook that raises is
 taken down by CPython itself, so every handler after the first stop used to run untraced (a 4 s `finally` gave a 5 s
 spend); a monitoring callback that raises stays on, so a handler, a `finally` and a coroutine finalized as the task
 unwinds each stop at their first event. The tool's events are on only around the spend's `sleep(0)`; asyncio's,
