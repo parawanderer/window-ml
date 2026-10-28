@@ -61,6 +61,12 @@ const GENRES = {
         about: "the session archive: its SQL under two SQLite builds, the phone's bridge to it, and the folder section",
         files: ["archive-db.test.mjs", "archive-portable.test.mjs", "archive-bridge.test.mjs", "archive-section.test.mjs"],
     },
+    // Reading a PDF (docs/dev/pdf.md): the page measurements and the classifier, the reader over pdf.js's legacy build and
+    // the synthetic fixtures, the host over a fake worker.
+    pdf: {
+        about: "reading a PDF: page measurements, the classifier, the reader on the synthetic fixtures, the worker host",
+        files: ["pdf-measure.test.mjs", "pdf-classify.test.mjs", "pdf-read.test.mjs", "pdf-fixtures.test.mjs", "pdf-host.test.mjs"],
+    },
     // Backup and restore (docs/dev/backup.md): the file format and the keys, the storage-key inventory held to the sources,
     // the settings collect/preview/apply, the backup file over the archive's SQLite, and the sequence that drives them.
     backup: {

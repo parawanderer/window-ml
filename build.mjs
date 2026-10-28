@@ -40,6 +40,9 @@ const ENTRIES = {
     // Saved screenshots re-encoded as lossless WebP (libwebp, WASM), a dedicated worker the same document starts. Its
     // two wasm builds (SIMD and plain) are copied next to it (copyWebp).
     "image-worker": "src/session/image-worker.ts",
+    // PDFs read page by page and drawn (pdf.js, the legacy build, in-thread with its worker half bundled in: no nested worker),
+    // a dedicated worker the same offscreen document starts. Its wasm decoders, cmaps and fonts go to dist/pdfjs/ (copyPdfjs).
+    "pdf-worker": "src/pdf/pdf-worker.ts",
     // Content-script shell (hosts the iframe) + the Preact app that runs inside
     // the sidebar.html iframe.
     "sidebar-shell": "src/sidebar/shell.ts",
@@ -148,6 +151,17 @@ function copyWebp() {
     for (const f of ["webp_enc.wasm", "webp_enc_simd.wasm"]) cpSync(`node_modules/@jsquash/webp/codec/enc/${f}`, `${BUILD_DIR}/${f}`);
 }
 
+/** pdf.js's run-time files beside pdf-worker.js: the JBIG2/JPX/ICC wasm, the predefined CMaps, the 14 standard fonts. Not
+ *  its `*_nowasm_fallback.js` (this CSP allows wasm), nor quickjs-eval (PDF scripting, never run). */
+function copyPdfjs() {
+    const from = "node_modules/pdfjs-dist", to = `${BUILD_DIR}/pdfjs`;
+    mkdirSync(to, { recursive: true });
+    const keep = (src) => !/nowasm_fallback|quickjs/.test(src);
+    for (const [dir, dest] of [["wasm", "wasm"], ["cmaps", "cmaps"], ["standard_fonts", "standard_fonts"], ["iccs", "iccs"]]) {
+        cpSync(`${from}/${dir}`, `${to}/${dest}`, { recursive: true, filter: keep });
+    }
+}
+
 function copyKatexFonts() {
     const dir = "node_modules/katex/dist/fonts";
     if (!existsSync(dir)) { console.warn("⚠ katex not installed — math rendering disabled (npm i)."); return; }
@@ -208,7 +222,7 @@ if (watch) {
     const sidebarCtx = await esbuild.context({ ...base, entryPoints: uiEntries, minify: true, plugins: [copyPlugin] });
     await coreCtx.watch();
     await sidebarCtx.watch();
-    copyPyodide(); copyKatexFonts(); copySqlite(); copyWebp();   // once — static, not worth recopying on every rebuild
+    copyPyodide(); copyKatexFonts(); copySqlite(); copyWebp(); copyPdfjs();   // once — static, not worth recopying on every rebuild
     console.log(`watching… (${OUTDIR}/)`);
 } else {
     try {
@@ -224,6 +238,7 @@ if (watch) {
     copyKatexFonts();
     copySqlite();
     copyWebp();
+    copyPdfjs();
     // Regenerate the standalone visual previews (gitignored build artifacts): locate's canvas
     // annotate() label placement, and the legend word-clipping "visual test" notebook (CI uploads
     // the latter so a failing legend case can be reviewed by eye). Open the HTMLs in a browser.

@@ -81,9 +81,14 @@ every run have the chip.
 
 ## Slice 2: PDFs
 
-**Library.** pdf.js, run in the offscreen document (the worker has no DOM or canvas) and in the chat page's web build.
-Pinned like every vendored asset. The layout-model converters (Docling, Marker, MinerU) give better results on hard
-pages but are Python with neural models: a possible later service on a box, not the default.
+**Library.** pdf.js (`pdfjs-dist`, pinned exactly at 6.4.299, the legacy build), run in a dedicated worker the offscreen
+document starts (the service worker has no DOM or canvas, and a parse on the offscreen document's own thread would
+freeze the sidebar), and later in the chat page's web build. The layout-model converters (Docling, Marker, MinerU) give
+better results on hard pages but are Python with neural models: a possible later service on a box, not the default.
+
+**Built (slice 2b, the reader core).** `src/pdf/`: the measurements, the classifier, a bounded page-by-page reader and
+the worker, with nothing user-facing wired. How it runs, its bounds and where the PROVISIONAL thresholds live:
+[`docs/dev/pdf.md`](../dev/pdf.md).
 
 **Per page, not per document.** For each page pdf.js gives two measurements:
 
@@ -109,7 +114,8 @@ Digital Corpora sets (govdocs1, and the PDFs taken from Common Crawl), arXiv pap
 files for broken and adversarial ones. Each real page is labelled by looking at its render; a few hundred pages set two
 thresholds.
 
-The thresholds are measured, not guessed: a notebook over a set of real PDFs (papers, invoices, slides exported to
+The thresholds are measured, not guessed (the first values in `pdf-classify.ts` are provisional, picked against the
+synthetic fixtures above until this notebook exists): a notebook over a set of real PDFs (papers, invoices, slides exported to
 PDF, a scanned letter with a typed footnote, a form) records each page's two numbers and the right answer, and the
 cut-offs are read from it ([`docs/dev/notebooks.md`](../dev/notebooks.md)). The footnote-on-a-scan page is the case to
 tune for: some text, still a scan.
@@ -215,7 +221,10 @@ or a message"). What a hostile page must not get, as tests that fail first:
 - `navigate` landing on a PDF is a pass of its own: what the answered pointer reveals, and that it is judged as the
   fetch it already is (#1129);
 - a PDF crafted to be slow or huge (deep nesting, a page of a million glyphs, a 100k-page count) is bounded by time and
-  size limits in the offscreen document and fails with a sentence, not a hung run.
+  size limits in the offscreen document and fails with a sentence, not a hung run. Built in slice 2b: a page cap, a
+  per-page text cap, an operator cap on the measuring walk, a time budget between pages, a byte cap and a wall-clock kill
+  of the worker (`docs/dev/pdf.md`, "The bounds"). pdf.js corrects a lying page count by itself, so the 100k-page case is
+  tested with a stand-in whose count is trusted.
 
 ## Rulings (2026-10-28, from the python/shell/policies coordinator)
 

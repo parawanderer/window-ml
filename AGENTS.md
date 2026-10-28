@@ -29,6 +29,7 @@ file` finds the path:
 | `sidebar/` (+ `resource/`, `transcript/`, `card/`, `code/`, `export/`, `settings/`) | the panel, by view |
 | `gallery/` | the component gallery's page (`gallery.mjs`, the `gallery` skill) |
 | `shell/` | what describes a call to `ml.sh`: program manifests (`manifests/<program>.json`) and `describeCall`; the process host itself is [window-ml-host](https://github.com/parawanderer/window-ml-host) |
+| `pdf/` | reading a PDF page by page with pdf.js: the measurements, the classifier, the reader, the worker the offscreen document starts (`pdf-*`) |
 | `backup/` | the backup and archive-folder file format: compression, encryption, keys |
 | `lab/<topic>/` | LAB code: research that lives here but is not for window.ml (`lab/gradient/`). Each topic imports nothing outside its folder (`tests/lab.test.mjs`), has a `docs/spec/` file, and its PRs carry `@lab` |
 
@@ -115,6 +116,7 @@ it was learned by shipping the wrong version first.
 | the overlay vs DevTools surfaces, `debugMode`, shared UI components, tooltips, the transcript window | `docs/dev/sidebar.md` |
 | the chat page (`src/chat/`): the client store, hosts, stream rules, the web build | `docs/dev/chat-page.md` (+ `docs/spec/CHAT_PAGE.md`, `docs/spec/SESSION_CONTRACT.md`) |
 | the session archive (SQLite over OPFS, the offscreen worker, move-instead-of-delete) | `docs/dev/archive.md` |
+| reading a PDF (pdf.js in the offscreen document's worker, per-page measurements and kind, the bounds, the provisional thresholds) | `docs/dev/pdf.md` (+ `docs/spec/FILE_ATTACHMENTS.md`, slice 2) |
 | backup and restore, the archive folder's sync and its file format (compression, encryption, the passphrase) | `docs/dev/backup.md` |
 | the hub client (`src/hub/`): HPKE over WebCrypto, certificates, sealed commands, encrypted streams | `docs/dev/hub-client.md` |
 | which sites may use `window.ml`: the origin gate, the approved/denied lists, their settings | `docs/dev/site-access.md` (+ `docs/spec/SITE_ACCESS.md`) |
