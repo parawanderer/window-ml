@@ -18,7 +18,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { test, expect } from "@playwright/test";
-import { launchExtension, configureExtension, waitForMl, approveOrigin, inShell, waitInShell, watchRunEvents, warUrl } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, approveOrigin, inShell, waitInShell, watchRunEvents, warUrl, highlightTag, highlightBox } from "./harness.mjs";
 import { HANDLE_MAP } from "../../src/page-relay.ts";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startHostileSite, HOSTILE_RESOLVER_ARGS } from "./fixtures/hostile/server.mjs";
@@ -923,15 +923,17 @@ test.describe("@security attack 16: the page and the extension's own surfaces", 
 // focus, the selection, a hit test, or the shell's test hook (`__wmlShellRoots` lives on the content script's world's
 // global, which the main world cannot see). The tests' way in is that hook, through `inShell` (harness.mjs).
 test.describe("@security attack 17: the shell's shadow roots", () => {
-    const HOSTS = ["ml-sb-root", "ml-sb-card", "ml-sb-root-hl"];
+    /** Our hosts as the page finds them: the sidebar's and the card's by id, the highlight's by its tag for this page
+     *  session (the host is anonymous: SITE_PRESENCE step 4). `[label, selector]` pairs. */
+    const hostsOf = async (page) => [["sidebar", "#ml-sb-root"], ["card", "#ml-sb-card"], ["highlight", await highlightTag(page)]];
 
     /** In the page's main world: record every event, mutation and message that carries a node inside one of our roots. */
-    const watchForOurNodes = (page) => page.evaluate((ids) => {
+    const watchForOurNodes = async (page) => page.evaluate((hosts) => {
         const ours = (v) => {
             try {
                 if (!(v instanceof Node)) return false;
                 const r = v instanceof ShadowRoot ? v : v.getRootNode();
-                return r instanceof ShadowRoot && ids.includes(r.host?.id);
+                return r instanceof ShadowRoot && !!r.host && hosts.some(([, sel]) => r.host.matches(sel));
             } catch { return false; }
         };
         window.__ours = ours;
@@ -946,21 +948,21 @@ test.describe("@security attack 17: the shell's shadow roots", () => {
         window.addEventListener("message", (e) => { if ([e.source, e.data, ...(e.ports || [])].some(ours)) seen.push("message"); }, true);
         new MutationObserver((recs) => { for (const r of recs) if ([r.target, ...r.addedNodes, ...r.removedNodes].some(ours)) seen.push("mutation"); })
             .observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
-    }, HOSTS);
+    }, await hostsOf(page));
 
     /** In the page's main world: every way it found to a node inside our roots (empty is the secure answer), and which
      *  of our hosts are in its document. */
-    const pageReach = (page) => page.evaluate((ids) => {
+    const pageReach = async (page) => page.evaluate((sels) => {
         const ours = window.__ours;
         const found = [...window.__oursSeen];
-        const hosts = ids.map((id) => document.getElementById(id)).filter(Boolean);
-        for (const h of hosts) {
-            if (h.shadowRoot !== null) found.push(`#${h.id}.shadowRoot`);
-            try { h.attachShadow({ mode: "open" }); found.push(`#${h.id}.attachShadow succeeded`); } catch { /* it has its root */ }
+        const hosts = sels.map(([label, sel]) => [label, document.querySelector(sel)]).filter(([, h]) => h);
+        for (const [label, h] of hosts) {
+            if (h.shadowRoot !== null) found.push(`${label}.shadowRoot`);
+            try { h.attachShadow({ mode: "open" }); found.push(`${label}.attachShadow succeeded`); } catch { /* it has its root */ }
             const ask = {};
             window.dispatchEvent(new CustomEvent("wml-closed-roots", { detail: ask }));
-            if (typeof ask.read === "function" && ask.read(h)) found.push(`#${h.id} in the page world's closed-root capture`);
-            if (h.querySelector("iframe")) found.push(`#${h.id} has an iframe in reach`);
+            if (typeof ask.read === "function" && ask.read(h)) found.push(`${label} in the page world's closed-root capture`);
+            if (h.querySelector("iframe")) found.push(`${label} has an iframe in reach`);
         }
         if (typeof window.__wmlShellRoots !== "undefined") found.push("the shell's hook on the page's window");
         // A message from one of our frames hands the page that frame's window as its source (evil.js records them).
@@ -978,8 +980,8 @@ test.describe("@security attack 17: the shell's shadow roots", () => {
         for (const n of [document.activeElement, sel?.anchorNode, sel?.focusNode, range?.startContainer, range?.endContainer]) if (ours(n)) found.push("focus or selection");
         // A hit test over the whole viewport answers with the host, never a node inside it.
         for (let x = 4; x < innerWidth; x += 24) for (let y = 4; y < innerHeight; y += 24) if (document.elementsFromPoint(x, y).some(ours)) { found.push(`a hit test at ${x},${y}`); x = y = 1e9; }
-        return { found, hosts: hosts.map((h) => h.id) };
-    }, HOSTS);
+        return { found, hosts: hosts.map(([label]) => label) };
+    }, await hostsOf(page));
 
     /** Real input on every part of `which` root a person touches: hover, click, double-click, right-click, keys. */
     async function touch(page, which) {
@@ -1011,7 +1013,7 @@ test.describe("@security attack 17: the shell's shadow roots", () => {
             expect(await waitInShell(page, (roots) => !!roots.card?.querySelector("iframe") && !!roots.highlight?.childElementCount)).toBe(true);
             await touch(page, "card");
             const { found, hosts } = await pageReach(page);
-            expect(hosts.sort()).toEqual(["ml-sb-card", "ml-sb-root-hl"]);
+            expect(hosts.sort()).toEqual(["card", "highlight"]);
             expect(found).toEqual([]);
         } finally { await close(); }
     });
@@ -1025,7 +1027,7 @@ test.describe("@security attack 17: the shell's shadow roots", () => {
             await inShell(page, (roots) => roots.sidebar.getElementById("ml-sb-tab").click());   // open it, so the panel paints too
             await touch(page, "sidebar");
             const { found, hosts } = await pageReach(page);
-            expect(hosts).toEqual(["ml-sb-root"]);
+            expect(hosts).toEqual(["sidebar"]);
             expect(found).toEqual([]);
         } finally { await close(); }
     });
@@ -1068,12 +1070,13 @@ test.describe("@security attack 17: the shell's shadow roots", () => {
             fake.setScript([{ content: "first answer" }]);
             const hash = await userStartsRun(ext, idx, page, "say something");
             expect(await idx.settled(hash)).toBe("done");
-            // The highlight's root too, emptied again: then only the shell's stylesheet is in it.
+            // The highlight's root too, drawn: its host is anonymous (no id of ours, a random tag) and is in the page only
+            // while a box is drawn, so the resolver tells it by the shell's stylesheet inside it.
             expect(await idx.cmd({ type: "page.highlight", session: { runtime: "local", hash }, ref: { selector: "#next" } })).toMatchObject({ ok: true });
-            expect(await waitInShell(page, (roots) => !!roots.card?.querySelector("iframe") && !!roots.highlight?.getElementById("ml-highlight"))).toBe(true);
-            expect(await idx.cmd({ type: "page.highlight", session: { runtime: "local", hash }, ref: null })).toMatchObject({ ok: true });
-            expect(await waitInShell(page, (roots) => roots.highlight?.childElementCount === 1)).toBe(true);
-            const out = await page.evaluate(async () => {
+            expect(await waitInShell(page, (roots) => !!roots.card?.querySelector("iframe"))).toBe(true);
+            await expect.poll(() => highlightBox(page)).not.toBeNull();
+            const hlTag = await highlightTag(page);
+            const out = await page.evaluate(async (hlTag) => {
                 // The window route first: an approved page's raw request is unanswered too.
                 const viaWindow = await window.__raw("CDP_SHADOW_RESOLVE_REQUEST", { selector: "#ml-sb-card >>> *" }, 3000);
                 // Every node a patched builtin is handed while the resolver runs.
@@ -1101,12 +1104,11 @@ test.describe("@security attack 17: the shell's shadow roots", () => {
                 const renamed = await count("x-sealed, #renamed >>> *");
                 host.removeAttribute("id");
                 const noId = await count("x-sealed, html > div:not([id]) >>> *");
-                document.getElementById("ml-sb-root-hl").id = "renamed-hl";
-                const hl = await count("x-sealed, #renamed-hl >>> *");
+                const hl = await count(`x-sealed, ${hlTag} >>> *`);
                 Array.prototype.filter = filter;
                 const ours = filter.call(grabbed, (n) => { const r = n.getRootNode(); return r instanceof ShadowRoot && r.host.localName !== "x-sealed"; }).length;
                 return { viaWindow, control, byId, renamed, noId, hl, grabbed: ours };
-            });
+            }, hlTag);
             expect(out.control, "the resolver reads a sealed root of the page's own").toBe(1);
             // Each probe lists the page's own button and nothing from our roots.
             expect(out).toEqual({ viaWindow: { timeout: true }, control: 1, byId: 1, renamed: 1, noId: 1, hl: 1, grabbed: 0 });
@@ -1187,12 +1189,7 @@ test.describe("@security attack 18: the approval highlight", () => {
     }, where);
 
     /** The highlight box the shell drew, in viewport pixels, or null. */
-    const drawn = (page) => inShell(page, (roots) => {
-        const el = (roots.highlight || roots.sidebar)?.querySelector("#ml-highlight");
-        if (!el) return null;
-        const r = el.getBoundingClientRect();
-        return { left: Math.round(r.left), top: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) };
-    });
+    const drawn = highlightBox;
 
     for (const where of ["light", "open", "closed"])
     test(`18 (${where === "light" ? "light DOM" : `the page's own ${where} shadow root`}): the page neither hears the selector being approved nor moves its highlight`, async () => {
@@ -1277,12 +1274,8 @@ test.describe("@security attack 18: the approval highlight", () => {
         const tabId = await ext.sw.evaluate(async (u) => (await chrome.tabs.query({})).find((t) => t.url === u)?.id, page.url());
         await ext.sw.evaluate(([t, s]) => chrome.tabs.sendMessage(t, { type: "ML_HL_REMOTE", ref: { selector: s }, anyMode: true }), [tabId, sel]);
         await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-        return inShell(page, (roots) => {
-            const el = (roots.highlight || roots.sidebar)?.querySelector("#ml-highlight");
-            if (!el) return null;
-            const r = el.getBoundingClientRect();
-            return `${Math.round(r.left)},${Math.round(r.top)}`;
-        });
+        const box = await highlightBox(page);
+        return box && `${box.left},${box.top}`;
     };
 
     test("18 (parity): the highlight outlines the element the DOM tools act on, or nothing, never another", async () => {

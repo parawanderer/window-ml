@@ -23,3 +23,9 @@ export const isOwnUiId = (id: string): boolean => /^ml-(sb-|lightbox|highlight)/
 /** The event the main-world DOM tools (dom.ts) dispatch on window to get the reader of the closed shadow roots that
  *  shadow-patch.ts captured, which keeps them in its closure. */
 export const CLOSED_ROOTS_EVENT = "wml-closed-roots";
+
+/** A random custom-element name with no `ml-` in it, so a page cannot tell the highlight's host by its tag. */
+export function anonymousTag(): string {
+    const letters = (n: number) => Array.from(crypto.getRandomValues(new Uint8Array(n)), (b) => String.fromCharCode(97 + (b % 26))).join("");
+    for (;;) { const tag = `${letters(5)}-${letters(6)}`; if (!tag.includes("ml-")) return tag; }
+}
