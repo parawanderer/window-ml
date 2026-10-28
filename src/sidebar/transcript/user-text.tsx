@@ -184,7 +184,9 @@ export function FilePill({ summary, tip, refusal, onRemove }: { summary: string;
 }
 
 /** What was ATTACHED to a sent message as context rather than typed (a right-clicked element), as chips under its
- *  images: the rendered half of a message whose model-facing text had it folded in (`PromptDisplay`). */
+ *  images: the rendered half of a message whose model-facing text had it folded in (`PromptDisplay`).
+ *  @group sidebar/transcript
+ *  @gallery {"context": [{"kind": "file", "file": {"name": "server.log", "type": "text/plain", "bytes": 4210, "lines": 61}}]} */
 export function SentContext({ context }: { context?: readonly PromptContext[] | null }) {
     if (!context?.length) return null;
     return (

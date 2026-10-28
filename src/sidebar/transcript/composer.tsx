@@ -101,7 +101,9 @@ export function useImageAttach(initial?: () => string[], opts?: { files: FileAtt
     };
 }
 
-/** The text files waiting in a box, as pills with their reasons: a refused one says why and is not sent. */
+/** The text files waiting in a box, as pills with their reasons: a refused one says why and is not sent.
+ *  @group sidebar/transcript
+ *  @gallery {"docs": [{"name": "server.log", "type": "text/plain", "text": "a\nb\n"}, {"name": "x.bin", "type": "application/octet-stream", "why": "x.bin is not a text file"}], "reasons": [null, "x.bin is not a text file"], "onRemove": null} */
 export function FileStrip({ docs, reasons, onRemove }: { docs: PendingFile[]; reasons: (string | null)[]; onRemove: (i: number) => void }) {
     if (!docs.length) return null;
     return (
