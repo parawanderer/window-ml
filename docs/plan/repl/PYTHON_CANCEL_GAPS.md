@@ -258,7 +258,7 @@ callback, FIFO, so the cancel's own wakeup waits behind the whole flood and no P
     first by #1239 MERGED 3a992d40 (three rows under "P2-forge" in `tests/redteam-python-sandbox.test.mjs`, one per
     binding: instance, class, `__getattribute__`): the cell returns its value; the next cell finds the loop restored
     (the class, its classes' dicts, nothing shadowed on the instance); the forged chain stays frozen across later cells
-    and a 300 ms idle. The second red team's hunt-2 todo flips on 933e5e48.
+    and a 300 ms idle; the rows flipped plain in #1245 MERGED 1799c899. The second red team's hunt-2 todo flips on 933e5e48.
 16. **Refusal, not a tag.** A leftover task whose cancel-step the flood pushed past the deadline never takes its cancel:
     telling that step apart from the cell's callbacks would need a per-entry tag a cell can forge from the closure, a
     proxy (rule 5). The cell's result is REFUSED by name with what was measured: the number of callbacks dropped at the
