@@ -4305,6 +4305,22 @@ test("request hints: a one-shot ml.chat says nothing it cannot know; a conversat
     assert.deepEqual(hints[4], { use: "agent" }, "ml.step is the tool-loop primitive: a program acts on the reply");
 });
 
+test("ml.step passes numCtx and maxTokens on, as ml.chat does, and sends neither when not given", async () => {
+    const payloads = [];
+    const world = loadPageWorld({
+        onRuntimeMessage: (m) => {
+            if (m.type === "GET_CONFIG" || m.type === "MODEL_CAPS") return undefined;
+            payloads.push(m.payload);
+            return { data: reply("ok") };
+        },
+    });
+    await world.ml.step([{ role: "user", content: "x" }], { numCtx: 8192, maxTokens: 300 });
+    assert.equal(payloads[0].numCtx, 8192);
+    assert.equal(payloads[0].maxTokens, 300);
+    await world.ml.step([{ role: "user", content: "x" }]);
+    assert.ok(!("numCtx" in payloads[1]) && !("maxTokens" in payloads[1]), "absent, so the worker's own defaults apply");
+});
+
 // Pyodide pre-warm: a run that can call python_exec starts the runtime at run start, so its first call does not
 // pay the cold start; a run that cannot never pays the memory.
 test("a run with python_exec asks for a Pyodide pre-warm at start; a run without it does not", async () => {

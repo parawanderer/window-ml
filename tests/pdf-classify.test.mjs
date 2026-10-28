@@ -3,9 +3,12 @@
 // with the constants (they are written against the exported names), and the SHAPE of each decision stays.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BLANK_CHARS, BLANK_COVER, BROKEN_MAX_RATIO, BROKEN_MIN_CHARS, MIXED_COVER, OCR_INVISIBLE_SHARE, SCANNED_COVER, TEXT_MIN_CHARS, classifyPage } from "../src/pdf/pdf-classify.ts";
+import { BLANK_CHARS, BLANK_COVER, BROKEN_MAX_RATIO, BROKEN_MIN_CHARS, MIXED_COVER, MIXED_PATH_COVER, OCR_INVISIBLE_SHARE, SCANNED_COVER, TEXT_MIN_CHARS, classifyPage } from "../src/pdf/pdf-classify.ts";
 
-const page = (over = {}) => ({ usableChars: 0, brokenChars: 0, brokenRatio: 0, imageCover: 0, fullPageImage: false, invisibleShare: 0, ...over });
+const page = (over = {}) => {
+    const m = { usableChars: 0, brokenChars: 0, brokenRatio: 0, imageCover: 0, pathCover: 0, fullPageImage: false, invisibleShare: 0, ...over };
+    return { drawnCover: Math.max(m.imageCover, m.pathCover), ...m };
+};
 
 // --- the table's rows ---
 
@@ -50,6 +53,18 @@ test("MIXED_COVER: the share where a text page with a picture becomes mixed", ()
     assert.equal(classifyPage(page({ usableChars: 500, imageCover: MIXED_COVER })), "mixed");
 });
 
+test("MIXED_PATH_COVER: the share of vector drawing where a text page becomes mixed, higher than for images", () => {
+    assert.equal(classifyPage(page({ usableChars: 500, pathCover: MIXED_PATH_COVER - 0.01 })), "text");
+    assert.equal(classifyPage(page({ usableChars: 500, pathCover: MIXED_PATH_COVER })), "mixed");
+    assert.ok(MIXED_PATH_COVER > MIXED_COVER, "boxes are drawn too: a form's fields must not make it mixed");
+});
+
+test("a vector drawing with no text is mixed, never scanned or blank", () => {
+    assert.equal(classifyPage(page({ pathCover: 0.7 })), "mixed");
+    assert.equal(classifyPage(page({ pathCover: 1 })), "mixed", "SCANNED_COVER reads images only");
+    assert.equal(classifyPage(page({ pathCover: BLANK_COVER })), "mixed", "a small drawing alone is not blank: its image goes");
+});
+
 test("SCANNED_COVER: little text under that much picture is scanned, under it a figure with a caption is mixed", () => {
     assert.equal(classifyPage(page({ usableChars: 40, imageCover: SCANNED_COVER })), "scanned");
     assert.equal(classifyPage(page({ usableChars: 40, imageCover: SCANNED_COVER - 0.01 })), "mixed");
@@ -59,7 +74,7 @@ test("SCANNED_COVER: little text under that much picture is scanned, under it a 
 test("BLANK_CHARS and BLANK_COVER: a stray mark or a speck is still blank, one more is not", () => {
     assert.equal(classifyPage(page({ usableChars: BLANK_CHARS - 1, imageCover: BLANK_COVER - 0.001 })), "blank");
     assert.equal(classifyPage(page({ usableChars: BLANK_CHARS })), "text");
-    assert.equal(classifyPage(page({ imageCover: BLANK_COVER })), "text", "a small picture alone is not blank");
+    assert.equal(classifyPage(page({ imageCover: BLANK_COVER })), "mixed", "a small picture alone is not blank: its image goes");
 });
 
 test("BROKEN_MAX_RATIO: text with a third of its layer broken is junk; with the ratio at the limit it is trusted", () => {

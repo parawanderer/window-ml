@@ -260,12 +260,31 @@ Flaky only (passed on retry, never blocked a run), worth knowing because two may
   "second" before "backfilled" — the backfill command's result raced cursor 2's stream delivery; the job reran green)
   and `python-spend-queue.test.mjs:184` › a flood of queued callbacks is cut at the deadline (run 40710327490 on #1244,
   test node 26: "the spend took 1745 ms" against the row's `1500`; the PR's diff touches no python code). The flood
-  row's bound is pin 15's open question — my #1250 review says the ruled restatement (deadline + control slack + 250 ms
-  residual) is tighter than this measured value; read that before touching the constant.
+  row is fixed in #1269 (`973c979c`) — see Recently removed; run 40723506642 (#1250's head, test node 26) measured
+  1620 ms against the same `1500`, the sighting that ruled it.
+
+- Seen on 2026-10-28 (run 40731919596, e2e 3/3 on #1269 — a one-file `tests/python-spend-queue.test.mjs` diff,
+  none of these rows; the shard rerun passed): `review-look.spec.mjs:730` › the parameterized "Hiding or recolouring
+  our host" table, `mix-blend-mode:difference !important` variant — "the same pixels paint" at :737 (Expected
+  < 356.52, Received 262926), retry-passed; third sighting on that line and first for this variant (the
+  `visibility:hidden` variant twice: #1056 at :703/:730 and #1257's run 40721937102). `tooltips.spec.mjs:627` › a
+  tip whose trigger disappears under a still pointer disappears with it — second sighting, both a 15 s
+  `locator.waitFor` timeout, retry-passed (first is in the line above). `site-access.spec.mjs:1779` › `@security
+  the ask stub › with Let sites ask on, an unknown origin gets the stub…` — failed BOTH tries: `mlKeys(unknown)`
+  got `"undefined"` where `["requestAccess"]` was expected at :1787 after `stubRegistered`, i.e. the page had no
+  `window.ml` at all; the job rerun passed. That shape is the #1194 product gap through the ask-stub path (a
+  document that loads in the registration window and misses the catch-up gets no page script until its next
+  reload) — site-access lane's, a bug report until proven otherwise.
 
 node:test had no real failures in that window: every `not ok` was a documented `# TODO`.
 
 Recently removed, recorded so nobody re-adds them from memory:
+
+- ~~`python-spend-queue.test.mjs:184` › a flood of queued callbacks is cut at the deadline~~ — **fixed** in #1269
+  (`973c979c`, 2026-10-28): the fixed `1500` is replaced by pin 15's ruled formula, `1000 + control.spendMs +
+  max(250, queueMs / 2)`, with the cell timing its own queueing loop (`_queue_ms` via `time.monotonic()`) and the
+  harness reading it back, plus a 5 s kill-distance guard. Measured before the fix: 1745 ms (run 40710327490) and
+  1620 ms (run 40723506642), both against the row's `1500`. Do not add as flake; the constant was never the bound.
 
 - ~~`site-access.spec.mjs` › `@security attack 15 › 15e: the shell's own admission keeps the page out of the card…`~~ —
   **fixed** in #1236 (`3967b0df`, 2026-10-28), SITE_PRESENCE step 3: a hidden page's run tools now attach in-process in

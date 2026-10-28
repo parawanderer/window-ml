@@ -118,6 +118,54 @@ A worker `fetch` with `redirect: "manual"` gets an opaque response with no `Loca
 `Location`; if it does, the worker fetches with `manual`, judges the hop, and re-issues the request itself. If it does
 not, record that and choose between `declarativeNetRequest` rules and following with the body withheld (today).
 
+MEASURED 2026-10-28 by the security lane (Chromium 151, a scratch extension): `onHeadersReceived` with `extraHeaders` sees
+the worker's own fetches (`tabId` -1, initiator our extension) with the 302 and its `Location`; a `manual` fetch returns
+`opaqueredirect` and never requests the target (checked server-side); the event arrived before the fetch promise
+resolved in 50 of 50 runs. So the first branch holds: the worker fetches with `manual`, judges the hop by the list
+above, and re-issues the request itself (`sw-fetch.ts` and `sw-image-fetch.ts`). RULED the same day, on the lane's two
+questions:
+
+- **Tab renders are in this step.** An incognito or rendered fetch is a tab navigation, which non-blocking
+  `webRequest` cannot stop, and closing the tab after the hop is too late: the request has reached the origin, which
+  is the finding. The hold is a `declarativeNetRequest` SESSION rule scoped to the render tab's `tabId`, blocking
+  `main_frame` and `sub_frame` requests to any domain outside the judged set for that render (same registrable
+  domain, the https upgrade of the same host, origins approved in this run, the feature's declared pairs).
+  `onBeforeRedirect` reports a navigation's hop and target too, so the blocked hop becomes the same prompt naming
+  the target; on approval the rule widens and the tab re-navigates. The rule is per tab, removed when the render tab
+  closes, and never touches another tab. Two PRs: the worker-fetch half first, the tab-render half second.
+- **Matching an event to its fetch is by URL**, so same-URL fetches are serialized per worker (a queue keyed by URL),
+  and a missing or ambiguous `Location` is a prompt naming the URL, never a follow. If the serialization stalls a
+  real workload, that is a measured follow-up, not a reason to match by timing.
+- Expected, to be checked in the build and recorded in the PR body either way: adding the `webRequest` permission
+  raises no new install-time warning, since `<all_urls>` already carries the all-sites warning and `webRequest`
+  adds none of its own (`webRequestBlocking`, which does, is MV2 only).
+
+Rule 10: the redirect rows under Tests below are the red team's (e3), failing first on main; each half's rows merge
+before that half, with one row per half telling the worker's own fetch from a render tab's navigation, and the chain
+row mixing an allowed hop with a disallowed one. The lane flips nothing; the finder flips after each half merges.
+
+RULED 2026-10-28, the worker-fetch half's two interpretation calls (the lane builds on `feat/redirect-judge`):
+
+- **"A prompt that names the target" is a refusal, not a card inside the fetch.** An unjudged hop is refused before
+  the target is requested; the refusal names the target and says to fetch it directly, and `fetch_url` on that URL
+  takes the normal per-URL prompt. A page's own `ml.fetch` gets the refusal too, as pages get no prompts, but its
+  text says a cross-site redirect was refused and names the hop's origin only as another site, never the URL: a
+  page's same-origin fetch would see `opaqueredirect`, so the `Location` is not ours to hand it. The model and the
+  person see the full target; the page does not.
+- **Scope.** Hops are judged where the final-origin body guard applies today (an untrusted caller, not `execOpen`);
+  trusted surfaces and `execOpen` keep following. `FETCH_SHEET` follows same-site hops and the declared
+  `docs.google.com` to `*.googleusercontent.com` pair only; the sign-in hop to `accounts.google.com` is refused, not
+  declared, since following it with credentials fetches a login page and never the sheet, and the error says the
+  person is not signed in to Google in this browser. `FETCH_IMAGE_B64` is a declared exception to "any other hop
+  becomes a prompt": it keeps following (a page image that 302s to a CDN on another domain), with `credentials:
+  "omit"` and the public-host raster check applied on EVERY hop instead of only the last. The invariant that protects
+  there is no credentials, a public host and a raster body, which a hop cannot weaken once every hop is checked, and
+  breaking every CDN-backed image for a rule the credentialed paths need is not worth it. Rule 10: e3 pins the
+  exception's edge, an image whose chain hops through a private host (a `10.x` or localhost address) or a non-raster
+  body at any step is `IMAGE_FAILED` with no request made past the bad hop, in its step-5 rows PR.
+- The install-time warning for the `webRequest` permission is measured with
+  `chrome.management.getPermissionWarningsByManifest` and recorded in the PR body.
+
 ## Tests
 
 - **The measurement is the oracle.** Every `test.fixme` in `tests/e2e/detection-surface.spec.mjs` this spec removes is
@@ -167,7 +215,80 @@ not, record that and choose between `declarativeNetRequest` rules and following 
    approves a site models the approval before the reload. Separately fixed in #1236: a visible origin's document that
    loaded before its registration and asks `needInject` at adopt gets the page scripts in MAIN, not the isolated tools,
    which would have suppressed `PAGE_SCRIPT_MISSING` for good (unit row, mutation-checked).
-4. The side panel for the card and the transcript, and the anonymised highlight.
+4. The side panel for the card and the transcript, and the anonymised highlight. RULED 2026-10-28 on the security
+   lane's survey (main at 3e9f91b7: a hidden page during a user-started run gets `div#ml-sb-card` and
+   `div#ml-sb-root-hl` today; `chrome.sidePanel` is used nowhere): (1) scope is hidden pages only, as this section
+   reads; a visible page keeps today's overlay, card and devtools surfaces, and moving its card to the panel later is a
+   UI decision, not this step. (2) `chrome.sidePanel.open()` needs a user gesture, and a user-started run begins on one
+   of our surfaces, so the start click opens a per-tab panel for the run's tab (`setOptions` with the tab id, enabled
+   for the run, disabled when it ends); a gate that waits while the person has closed the panel shows the action badge
+   and waits, with the action set to open the panel on its click (that click is the gesture), and draws nothing in the
+   page but the highlight; the badge text and the panel's empty and closed states are new strings, named in the PR
+   body. AMENDED 2026-10-28 on the lane's 4b question: the action has a popup (`action.default_popup` in
+   `manifest.json`), and while it does the action click opens the popup, not the panel. The popup is the gesture:
+   the badge (`sw-badge.ts`), which already counts start asks per tab, also counts gates waiting on a hidden-page
+   run whose panel is closed, and the popup shows one "Open panel" row per such tab, naming the tab, whose click
+   calls `chrome.sidePanel.open` for that tab. The popup's existing Show for a start ask, which brings up the
+   in-page card today, opens the panel instead on a hidden page. No per-tab popup state and no
+   `openPanelOnActionClick`: a popup cleared per tab would have to be rebuilt after a worker restart and would take
+   the popup away on that tab while the gate waits, for one click saved. The row's text is a new string, named in
+   the PR body. AMENDED 2026-10-28 on the lane's measurement (Chromium 151: `sidePanel.open` must run before the
+   gesture handler's first await, and rejects "No active side panel" on a tab whose panel is disabled, while an
+   un-awaited `setOptions` followed by `open` in the same tick succeeds; the panel page loads only while its tab is
+   active): the panel is enabled per tab whenever the tab's top document is HIDDEN, and disabled when it is visible,
+   written on the navigation commit and by the site-list sync that already walks the open tabs; it no longer follows
+   the run. A start gesture that lands in the worker (Alt+Space, the context menu) calls `sidePanel.open` for the
+   tab synchronously: success is a hidden page and the panel's composer opens; "No active side panel" is a visible
+   page and the in-page composer opens as today, once the presence read confirms it; a read that says hidden after
+   all (a navigation race) mounts nothing in the page, leaves the panel enabled and shows the badge. A run's end
+   leaves the panel enabled, showing the run as finished, empty after the next navigation. The invariants the red
+   team's rows keep: the decision is the browser's answer, never anything the page posts; nothing of the panel's
+   state reaches the page; the enablement is rebuilt from the open tabs when the worker starts, so a restart cannot
+   leave a hidden tab without its start surface (the lane measures whether Chrome keeps per-tab options across a
+   worker restart and says so in the PR body). The panel page is not among Playwright's pages; the e2e reaches it
+   through a CDP target or opens its document as a tab, in `docs/dev/e2e-harness.md`. Alternative rejected: enabling
+   at run start would leave the two gestures that matter most on a hidden page doing nothing there, with a new popup
+   row as the only start. (3) Two PRs: 4a the highlight, 4b the panel. The highlight is one implementation on every page (random
+   custom-element name per session, closed root, no `ml-` id, class or attribute, present only while the approval
+   waits), the e2e selectors moving to one helper, so there is no second drawer for visible pages; row 7 of
+   `docs/dev/detection-surface.md` splits, the card part staying "No" for visible origins. (4) Rule 10 as for step 3:
+   the red team's failing-first rows land on main first, in its own file (for a hidden page with a user-started run:
+   `domAdded` is only the anonymised host while an approval waits, no `ml-` token in the DOM before, during or after,
+   no `sidebar.html` frame, no popover attribute of ours, the visible page's card as the control); 4a merges after
+   them, 4b after 4a, the red team flipping after each. RULED the same day, on the lane's conflict: the anonymised
+   host keeps `popover="manual"` and the top-layer keeper (`shell-top-layer.ts`), so a page's own modal, fullscreen
+   element or popover cannot cover the box marking what the person is approving; `popover` is not a name of ours,
+   and the host is already the one thing `domAdded` shows. The host carries exactly its random tag name, `popover`
+   and an inline `style`; everything else of ours, the stylesheet with id `ml-sb-style` that the CDP shadow resolver
+   looks for included, lives inside the closed root, which a page cannot read. The red team's row reads "no popover
+   attribute of ours except on the anonymised host".
+   4a is #1279 OPEN 2026-10-28 (head 4c2c9db4, @security @ui; `src/sidebar/shell.ts`, `src/dom/dom.ts`, `src/ids.ts`;
+   the host anonymous under ruling (a), in the page only while a box is drawn, one implementation in every mode; the
+   e2e harness reads the highlight through `highlightTag`/`highlightBox` in `tests/e2e/harness.mjs`, and a test
+   reaches the host's tag through `inShell`'s `roots.highlightTag`; detection-surface row 7 split into 7, the card,
+   "No" on a visible page, and 7b, the anonymised highlight; the janitor asked by session-mail), verified; it holds
+   until the red team's rows PR has merged.
+   4b is #1297 OPEN 2026-10-28 (`feat/hidden-side-panel`, head 2f6414bc, @security @ui; `sw-side-panel.ts`,
+   `sidepanel.ts` and the panel, worker and e2e files its body lists; the janitor asked by session-mail),
+   verified; it merges after #1279 and the red team's step-4 rows. The lane measured per-tab side-panel options
+   surviving a worker restart (Chromium 151), so the rebuild at worker start is a re-check; the e2e route is the real
+   toolbar popup framing `sidepanel.html`, whose port as a tab carries `sender.tab` and is refused as the check says.
+   Two gaps found by the e2e move are 4b's and fixed in it: the panel's highlight did not draw in the default debug
+   mode, and the panel's card did not say where the target is. NEW in 4b: one content-script message, `ML_HL_POS`
+   (nine fixed labels, top frame only, sent only to an open panel); per AGENTS.md a new message type gets a red-team
+   row, e3's, in its step-4 rows PR or the one after. The two pre-existing gaps below are named as ruled in its body.
+   FOUND 2026-10-28 by the security lane while building 4b, both checked against main by the coordinator, neither
+   4b's: (i) `sw-debug.ts` serves the `ml-devtools` port against whatever tab id its init message names, with no
+   sender check; only our own contexts can connect, but the content script in every tab is one, so a compromised
+   renderer could subscribe to another tab's run feed. (ii) `shell.ts` `applyMode` mounts the overlay in
+   `debugMode: "overlay"` with no presence gate, so a hidden page gets our DOM in that mode, against this
+   section's rule. RULED the same hour: both are the security lane's, as two PRs after 4b, each small: (i) the
+   `ml-sidepanel` check 4b adds (extension URL, no `sender.tab`) applies to `ml-devtools` too, and a port that
+   fails it is disconnected; (ii) the overlay mount waits on the worker's presence word as the card does. Rule 10:
+   the red team pins each as a failing-first row first, in its own files after its step-4 rows (a unit row for the
+   devtools port with a `sender.tab`-bearing connection refused, an e2e site-access row for a hidden page in
+   overlay mode with no `ml-sb-root`), and each fix merges after its row; the red team flips after. Both named in
+   the 4b PR body.
 5. The redirect measurement, then the rule.
 
 After step 2, and deferred: consuming a page's WebMCP tools (`document.modelContext`) as a window.ml adapter, with the rules

@@ -95,7 +95,9 @@ the worker, with nothing user-facing wired. How it runs, its bounds and where th
 1. **Usable text**: the text layer's characters after dropping a broken layer (mostly U+FFFD, or glyphs with no
    Unicode mapping, past a ratio).
 2. **Image cover**: the share of the page that image draws cover, from the operator list (each `paintImageXObject`
-   and its transform gives a box; the union's area over the page's).
+   and its transform gives a box; the union's area over the page's). Vector drawing (charts and diagrams drawn as
+   paths) is measured the same way as **path cover**, from each filled or stroked path's box, and counts as a figure
+   at a higher share than images, because form fields and framed boxes are drawn as paths too.
 
 | Page | Usable text | Image cover | Sent |
 | --- | --- | --- | --- |
@@ -106,6 +108,12 @@ the worker, with nothing user-facing wired. How it runs, its bounds and where th
 
 The OCR'd scan (what ocrmypdf and most office scanners write) would otherwise read as "mixed" and send every page
 twice. It is told apart by the invisible text over a single full-page image, not by the two measurements.
+
+**What is held back is named.** The thresholds pick a cheap default; the model can always look at a page itself
+(slice 3's `look` target, `png()` in Python). So a page sent without its image says what the measurements saw when
+they saw something: a `text` page with a drawn share under the figure cut gets a short note naming it ("page N: images
+or drawing cover 12%; look at it to see them"). Missing a figure costs a look; an image sent for nothing costs its
+tokens on every turn. The note's floor and wording are open, and land with slice 3.
 
 **The test PDFs.** Synthetic fixtures, committed, with the answer known by construction: a text page, the same page
 rasterised, that scan with a one-line footnote, the scan with an invisible OCR layer, a page with a chart over a share
@@ -195,6 +203,28 @@ no `/attached/` directory and no `open()` of one. The call names it, `files: { n
 `tables` map accepts an `@file:` pointer as a source like a URL; the sandbox's existing `read_csv`/`open` redirect
 resolves a name it was given. Specified on the python side in PYTHON_DIALECT.md.
 
+A paged document is injected as the pages, not only as its bytes (Shane, 2026-10-28): raw PDF bytes are close to
+useless in the sandbox, which has no PDF library and would spend its step budget parsing one.
+
+```python
+doc = files["report"]
+doc.pages[3].text, doc.pages[3].kind, doc.pages[3].measure   # what the reader already computed
+doc.pages[3].png(scale=1)   # rendered on demand by the offscreen pdf.js
+doc.bytes                   # the file as attached
+```
+
+- `text`, `kind` and `measure` are the stored value's own fields, read with the value: no call leaves the sandbox.
+- `png()` is the one crossing. It asks the offscreen document to render that page from the stored bytes, the same
+  render `look` uses, and returns PNG bytes for code to crop, measure or tile. It is bounded per cell (pages rendered
+  and total pixels; open: the `look` bound of eight screens), the scale is clamped, and a render that fails or runs
+  over its time answers with a sentence, never a hung cell. It reads only the document the cell was given.
+- Pixels in a cell are numbers, not sight: a model that wants to SEE a page uses `look`, which stays the one vision
+  path and the one place page images are counted against the context.
+
+`png()` is a new call out of the sandbox, so it gets the red-team pass with the rest of slice 3: a cell cannot render a
+document it was not given, cannot pass the bound by looping or by asking for a huge scale, and a crafted page cannot
+hang the cell past its budget.
+
 ## What the person sees
 
 - **Calm view**: a chip per file, under the message like sent images: the name and a summary ("report.pdf · PDF, 48
@@ -248,6 +278,15 @@ or a message"). What a hostile page must not get, as tests that fail first:
   budget, and whether it scales with the model's context window.
 - The per-command size cap: for text it is `FILE_INLINE_MAX` itself, well under the hub's frame limit; open again for
   the bytes a PDF sends.
-- The PDF thresholds (the notebook).
+- The PDF thresholds: read against labelled real pages in `notebooks/pdf/pdf-thresholds.ipynb` (2026-10-28);
+  `MIXED_COVER` is 0.1 and path cover counts from `MIXED_PATH_COVER` 0.3. Open: the floor of the held-back note.
+- `png()`'s bound per cell (pages and pixels), and whether a `scanned` page's short clean OCR layer travels with its
+  image.
+- Math in a PDF's text layer reads lossily (measured on the Adam paper, 2026-10-28): subscripts flatten onto the
+  baseline, a stacked super- and subscript splits across lines, an accent lands on the previous token, a glyph with no
+  Unicode mapping (ε, ⊙) is dropped, and fraction bars and radical overlines (drawn rules) are lost. Such a page is
+  still `text`, so no image goes with it. Leaning answer (Shane, 2026-10-28): no math-density measure; the prompt tells
+  the model that a PDF page with math may need its image, looked at directly. Where that sentence goes (the system
+  prompt or the attachment's own note) is open, and it lands with slice 3's `look` target.
 - Lines per page for a text file, and the per-call page cap of `look`.
 - Whether the page-image fallback for a scanned page without a vision model uses the reader model or OCR.

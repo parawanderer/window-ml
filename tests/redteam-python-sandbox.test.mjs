@@ -672,6 +672,17 @@ test("P2-bound: a finally that runs after the bound stopped its task is stopped 
     assert.deepEqual((await cell(`import sys\nlist(sys.modules["_rt_late"].log)`)).value, [], "the finally never ran a line");
 });
 
+// The property's pin from now on (coordinator, PR-3): the raising-settrace case in its 4 s-finally form (two-line
+// busy loop), with the mutation check. Bound off — the wrapper's unbounded spend — nothing stops the busy loop, so
+// the case hangs under the child-process limit; that hang is the hole #1182's monitoring switch closed. Both halves
+// in child processes, so the hung one is killed rather than left in the suite.
+test("P2-bound property (pin 18): the raising-settrace case is stopped at the finally's first line, and bound off it hangs (child processes)", { skip, timeout: 300000 }, async () => {
+    const case4s = AFTER_LATE(`            _m.log.append("finally ran")\n            import time\n            t0 = time.monotonic()\n            while time.monotonic() - t0 < 4: pass`);
+    const [bounded, unbounded] = await Promise.all([childCell(case4s, "host", 10000), childCell(case4s, "wrapper", 10000)]);
+    assert.ok(bounded.done && STOPPED.test(bounded.out), `the bound stops the case and refuses the cell: ${bounded.out.slice(-400)}`);
+    assert.equal(unbounded.done, false, "the bound off (the wrapper's unbounded spend): the case hangs in its two-line busy loop");
+});
+
 test("P2-bound: a suspended coroutine the stopped task drops is finalized during the spend with none of its handlers run", { skip }, async () => {
     // The coroutine is a local of the task only (the module holds a weak reference: a strong one would keep it alive), so
     // CPython closes it as SpendLate unwinds the task, with the deadline past.
@@ -758,6 +769,92 @@ await asyncio.sleep(0)
         assert.ok(ms < 2500, `${n}: refused at the call, not left to the kill: ${ms} ms`);
         assert.deepEqual((await cell(`import sys\nlist(sys.modules["_rt_mon"].log)`)).value, [], `${n} was refused before it ran`);
     }
+});
+
+// The enumeration's mutation half (coordinator, PR-3): guard off — the wrapper's unbounded spend, which arms no
+// monitoring tool and so raises no CALL event on the cell's own calls — the same shape of call goes through in the
+// handler window. One enumerated function, `use_tool_id`, on an id the cell names. Guard on (the host spend) refuses
+// that call at the CALL event, before it runs: the log below stays empty for the guarded run.
+test("P2-bound mutation: guard off (the wrapper's unbounded spend), one enumerated call goes through in the same handler", { skip }, async () => {
+    const body = (tag) => `
+import asyncio, sys, types
+_m = types.ModuleType("${tag}")
+_m.log = []
+sys.modules["${tag}"] = _m
+async def _left():
+    try:
+        await asyncio.sleep(10)
+    except BaseException:
+        sys.monitoring.use_tool_id(5, "cell-tool")
+        _m.log.append("went through")
+        sys.monitoring.free_tool_id(5)
+        raise
+asyncio.ensure_future(_left()).set_name("leftover")
+await asyncio.sleep(0)
+"x"`;
+    const off = await cell(body("_rt_mon_off"), { cancel: "wrapper" });
+    assert.deepEqual([off.error, off.value], [null, "x"], `the wrapper's cell returns beside its leftover: ${JSON.stringify(off)}`);
+    const offRead = await cell(`import sys\nlist(sys.modules["_rt_mon_off"].log)`);
+    assert.deepEqual(offRead.value, ["went through"], `guard off: the enumerated call went through in the handler, read ${JSON.stringify(offRead)}`);
+    const on = await cell(body("_rt_mon_on"));
+    assert.match(String(on.error), STOPPED, `guard on: refused at the call, got ${JSON.stringify(on)}`);
+    assert.deepEqual((await cell(`import sys\nlist(sys.modules["_rt_mon_on"].log)`)).value, [], "guard on: the call was refused before it ran");
+});
+
+// A guarded call made from C raises no CALL event, so the guard above never sees it: the spend checks its tool after
+// every turn and refuses the result when it changed. Each form here reached the tool unrefused on 42237e59.
+const FROM_C = {
+    "functools.partial": "functools.partial(M.set_events, i, 0)()",
+    "map": "list(map(M.clear_tool_id, [i]))",
+    "map, freeing it": "list(map(M.free_tool_id, [i]))",
+    "a key= function": "sorted([i], key=M.clear_tool_id)",
+};
+const FROM_C_CELL = (form, then) => `
+import asyncio, sys, types, functools
+_m = types.ModuleType("_rt_mon")
+_m.log = []
+sys.modules["_rt_mon"] = _m
+async def _left():
+    try:
+        await asyncio.sleep(10)
+    except BaseException:
+        M = sys.monitoring
+        i = [k for k in range(6) if M.get_tool(k) is not None][0]
+        ${form}
+        _m.log.append("went through")
+${then}
+asyncio.ensure_future(_left()).set_name("leftover")
+await asyncio.sleep(0)
+"x"`;
+
+for (const [how, form] of Object.entries(FROM_C)) {
+    test(`P2-bound: a sys.monitoring call made from C (${how}) is not seen at the call, and the spend refuses the result`, { skip }, async () => {
+        const r = await cell(FROM_C_CELL(form, "        raise"));
+        assert.match(String(r.error), /changed the cancel's sys\.monitoring tool/, `got ${JSON.stringify(r)}`);
+        assert.deepEqual((await cell(`import sys\n[list(sys.modules["_rt_mon"].log), [sys.monitoring.get_tool(k) for k in range(6)]]`)).value,
+            [["went through"], [null, null, null, null, null, null]], "the call went through, and no tool is left registered");
+    });
+}
+
+for (const [how, form] of Object.entries({
+    "sys.settrace": "functools.partial(sys.settrace, lambda *a: None)()",
+    "sys.setprofile": "functools.partial(sys.setprofile, lambda *a: None)()",
+    "threading.settrace": "import threading; functools.partial(threading.settrace, lambda *a: None)()",
+    "threading.setprofile": "import threading; functools.partial(threading.setprofile, lambda *a: None)()",
+})) {
+    test(`P2-bound: ${how} called from C during the spend is refused and cleared before the next cell`, { skip }, async () => {
+        const r = await cell(FROM_C_CELL(form, "        raise"));
+        assert.match(String(r.error), /set a trace or profile function/, `got ${JSON.stringify(r)}`);
+        assert.deepEqual((await cell(`import sys, threading\n[list(sys.modules["_rt_mon"].log), sys.gettrace() is None, sys.getprofile() is None, threading.gettrace() is None, threading.getprofile() is None]`)).value,
+            [["went through"], true, true, true, true]);
+    });
+}
+
+test("P2-bound: a handler that turns the tool off from C and then spins is left to the worker's kill (child process)", { skip, timeout: 300000 }, async () => {
+    // The known limit, named: once the tool is off nothing stops the spin, and the spend never turns to check it. Under
+    // the never-yields ruling the worker's kill bounds it. This row fails when something stops it in-process.
+    const r = await childCell(FROM_C_CELL(FROM_C["functools.partial"], "        while True:\n            pass"), "host", 10000);
+    assert.ok(!r.done, `left to the kill: ${r.out.slice(-400)}`);
 });
 
 test("P2-bound control: the same task with an empty finally is stopped at the budget", { skip }, async () => {
@@ -980,6 +1077,7 @@ _loop = asyncio.get_event_loop()
 await asyncio.sleep(0.05)
 {"evil": _m.evil, "spies": len(_m.spies), "in_dict": "call_soon" in vars(_loop), "class_is_orig": type(_loop).call_soon is _m.orig, "ga_is_orig": type(_loop).__getattribute__ is _m.orig_ga}`);
         assert.ok(r2.value?.evil > 0 && r2.value?.spies > 0, `positive control: the rebound call_soon forged a self-rescheduling chain, got ${JSON.stringify(r2)}`);
+        assert.ok(r2.value?.spies < 60, `a saturated spy is a tripped fuse: the chain ran out the 60-cap with the loop still live, got ${JSON.stringify(r2.value)}`);
         assert.equal(r2.value.class_is_orig, true, "the class's call_soon is no longer the original");
         assert.equal(r2.value.in_dict, false, "the loop still carries a shadowed call_soon");
         assert.equal(r2.value.ga_is_orig, true, "the class's __getattribute__ is no longer the original");
