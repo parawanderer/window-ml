@@ -15,9 +15,10 @@
 // (`ml-drafts`), since a few pasted screenshots are megabytes, past what localStorage will hold. On load the store is
 // read back in the background; each key it restores fills the memory and tells the listeners, so a box already drawn
 // shows its images. A save made on this page load before that read finishes wins over the restored copy. The images of
-// a send still held when the page died come back exactly when its text does (`loadDraft`, lazily, never at load: another tab's send may still be live). The store is capped (see `CAP_BYTES`), least recently
-// saved key first. Every storage call is guarded, since a private window or blocked site data throws, and the box must
-// still work: it then lasts the page, as before.
+// a send still held when the page died come back exactly when its text does (`loadDraft`, lazily, never at load:
+// another tab's send may still be live). The store is capped (see `CAP_BYTES`), least recently saved key first. Every
+// storage call is guarded, since a private window or blocked site data throws, and the box must still work: it then
+// lasts the page, as before.
 
 const DRAFT = "wml-draft:";
 const SENDING = "wml-sending:";
