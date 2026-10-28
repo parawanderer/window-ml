@@ -118,6 +118,54 @@ A worker `fetch` with `redirect: "manual"` gets an opaque response with no `Loca
 `Location`; if it does, the worker fetches with `manual`, judges the hop, and re-issues the request itself. If it does
 not, record that and choose between `declarativeNetRequest` rules and following with the body withheld (today).
 
+MEASURED 2026-10-28 by the security lane (Chromium 151, a scratch extension): `onHeadersReceived` with `extraHeaders` sees
+the worker's own fetches (`tabId` -1, initiator our extension) with the 302 and its `Location`; a `manual` fetch returns
+`opaqueredirect` and never requests the target (checked server-side); the event arrived before the fetch promise
+resolved in 50 of 50 runs. So the first branch holds: the worker fetches with `manual`, judges the hop by the list
+above, and re-issues the request itself (`sw-fetch.ts` and `sw-image-fetch.ts`). RULED the same day, on the lane's two
+questions:
+
+- **Tab renders are in this step.** An incognito or rendered fetch is a tab navigation, which non-blocking
+  `webRequest` cannot stop, and closing the tab after the hop is too late: the request has reached the origin, which
+  is the finding. The hold is a `declarativeNetRequest` SESSION rule scoped to the render tab's `tabId`, blocking
+  `main_frame` and `sub_frame` requests to any domain outside the judged set for that render (same registrable
+  domain, the https upgrade of the same host, origins approved in this run, the feature's declared pairs).
+  `onBeforeRedirect` reports a navigation's hop and target too, so the blocked hop becomes the same prompt naming
+  the target; on approval the rule widens and the tab re-navigates. The rule is per tab, removed when the render tab
+  closes, and never touches another tab. Two PRs: the worker-fetch half first, the tab-render half second.
+- **Matching an event to its fetch is by URL**, so same-URL fetches are serialized per worker (a queue keyed by URL),
+  and a missing or ambiguous `Location` is a prompt naming the URL, never a follow. If the serialization stalls a
+  real workload, that is a measured follow-up, not a reason to match by timing.
+- Expected, to be checked in the build and recorded in the PR body either way: adding the `webRequest` permission
+  raises no new install-time warning, since `<all_urls>` already carries the all-sites warning and `webRequest`
+  adds none of its own (`webRequestBlocking`, which does, is MV2 only).
+
+Rule 10: the redirect rows under Tests below are the red team's (e3), failing first on main; each half's rows merge
+before that half, with one row per half telling the worker's own fetch from a render tab's navigation, and the chain
+row mixing an allowed hop with a disallowed one. The lane flips nothing; the finder flips after each half merges.
+
+RULED 2026-10-28, the worker-fetch half's two interpretation calls (the lane builds on `feat/redirect-judge`):
+
+- **"A prompt that names the target" is a refusal, not a card inside the fetch.** An unjudged hop is refused before
+  the target is requested; the refusal names the target and says to fetch it directly, and `fetch_url` on that URL
+  takes the normal per-URL prompt. A page's own `ml.fetch` gets the refusal too, as pages get no prompts, but its
+  text says a cross-site redirect was refused and names the hop's origin only as another site, never the URL: a
+  page's same-origin fetch would see `opaqueredirect`, so the `Location` is not ours to hand it. The model and the
+  person see the full target; the page does not.
+- **Scope.** Hops are judged where the final-origin body guard applies today (an untrusted caller, not `execOpen`);
+  trusted surfaces and `execOpen` keep following. `FETCH_SHEET` follows same-site hops and the declared
+  `docs.google.com` to `*.googleusercontent.com` pair only; the sign-in hop to `accounts.google.com` is refused, not
+  declared, since following it with credentials fetches a login page and never the sheet, and the error says the
+  person is not signed in to Google in this browser. `FETCH_IMAGE_B64` is a declared exception to "any other hop
+  becomes a prompt": it keeps following (a page image that 302s to a CDN on another domain), with `credentials:
+  "omit"` and the public-host raster check applied on EVERY hop instead of only the last. The invariant that protects
+  there is no credentials, a public host and a raster body, which a hop cannot weaken once every hop is checked, and
+  breaking every CDN-backed image for a rule the credentialed paths need is not worth it. Rule 10: e3 pins the
+  exception's edge, an image whose chain hops through a private host (a `10.x` or localhost address) or a non-raster
+  body at any step is `IMAGE_FAILED` with no request made past the bad hop, in its step-5 rows PR.
+- The install-time warning for the `webRequest` permission is measured with
+  `chrome.management.getPermissionWarningsByManifest` and recorded in the PR body.
+
 ## Tests
 
 - **The measurement is the oracle.** Every `test.fixme` in `tests/e2e/detection-surface.spec.mjs` this spec removes is
