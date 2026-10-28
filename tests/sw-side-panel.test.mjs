@@ -351,6 +351,27 @@ test("PANEL_START_RUN: refused without a numeric tabId", async () => {
     }
 });
 
+test("PANEL_START_RUN: the panel starts a run on the tab it names, a hidden one, with the tools in our world only", async () => {
+    const adopts = [];
+    const bg = loadBackground({
+        config: { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "m", apiFormat: "openai", ocrModel: "", debugMode: "off" },
+        siteGate: true,
+        openTabs: [{ id: 8, url: "https://hidden.example/p", title: "H" }],
+        local: { ml_site_schema: 2 },
+        onFetch: () => jsonResponse({ choices: [{ message: { content: "done" } }] }),
+        onTabMessage: async (_tab, msg) => {
+            if (msg.type !== "ADOPT_RUN_NOW") return undefined;
+            adopts.push(msg.payload);
+            return msg.payload.injected === true ? { pageInfo: "here" } : { needInject: true };
+        },
+    });
+    const res = await bg.send({ type: "PANEL_START_RUN", keep: false, payload: { task: "read it", surface: "hud", tabId: 8 } }, { url: `${EXT}sidepanel.html?tabId=8` });
+    assert.ok(res?.data?.hash, `the run started: ${JSON.stringify(res)}`);
+    assert.ok(adopts.length >= 1, "the run adopted the named tab");
+    const ex = bg.scriptingCalls.filter(([k]) => k === "executeScript").map(([, i]) => i);
+    assert.ok(ex.length >= 1 && ex.every((i) => i.world === "ISOLATED" && i.target.tabId === 8), JSON.stringify(ex));
+});
+
 test("PANEL_WAITS: refused for a page sender and for a web url; the extension gets { tabs }", async () => {
     const bg = worker();
     for (const sender of [pageSender(), { url: "https://evil.example/p" }, {}]) {
