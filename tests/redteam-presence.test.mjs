@@ -581,7 +581,10 @@ test("step 3 P2: a hidden page with a run sees no event of ours, no window.ml gl
     w.asContent({ __mlSidebar: "present" }); w.asContent({ __mlSidebar: "ready" });
     await flush(20);
     assert.deepEqual([...new Set(w.dispatchedEvents)], [], "a hidden page with a run must see no event of ours on its window");
-    assert.equal(w.pageRun("typeof globalThis.ml"), "undefined", "a hidden page with a run must have no window.ml global");
+    // Control: the same read finds window.ml when the bundle runs in the page's realm (today's late MAIN injection).
+    const today = loadPageWorld({ visible: false, main: "injected.js", onRuntimeMessage: () => undefined });
+    assert.equal(today.pageRun("typeof window.ml"), "object", "control: the read sees window.ml when the bundle shares the page's realm");
+    assert.equal(w.pageRun("typeof window.ml"), "undefined", "a hidden page with a run must have no window.ml global");
     assert.deepEqual(plain(w.windowPosts), [], "a hidden page with a run must have nothing of ours posted on its window");
 });
 
@@ -654,9 +657,7 @@ test("step 3 P4b: our own hosts' closed roots are never read into a tool result"
 // shape — so a kept builtin kept at module load IS the page's wrapper.
 
 test("step 3 P5: wrapping MessagePort.prototype.postMessage, window.dispatchEvent, Element.prototype.attachShadow and JSON.stringify sees nothing of a hidden-page run", { ...T, todo: "The vectors each wrap meets today: page-channel.ts keeps nativePost at module load, which IS the page's wrapper when the page wrapped first (the wrap-after-load case is the kept builtin's defence and holds — see the :272 ruling in redteam-exec-shared-world.test.mjs), so the port's posts cross it; the ml-page-port hand-off and ml:ready go through the page's window.dispatchEvent; shadow-patch.js displaces the page's Element.prototype.attachShadow with its own; and the exec's value serialisation (tools.ts, the main-world :240 row's vector) calls the page's JSON.stringify — exec-routing refuses an exec on a hidden page today, so that half pins the tool stack step 3 moves into the isolated world. Fixed when nothing of ours runs in MAIN there at all." }, async () => {
-    const w = loadPageWorld({
-        visible: false, main: "injected-isolated.js", pageRealm: true, onRuntimeMessage: () => undefined,
-        beforeInjected: `
+    const WRAPS = `
             class Element {}
             Element.prototype.attachShadow = function (init) { return { __shimRoot: true, mode: init && init.mode }; };
             globalThis.Element = Element;
@@ -673,15 +674,25 @@ test("step 3 P5: wrapping MessagePort.prototype.postMessage, window.dispatchEven
                 __jsonSeen.push(v == null ? String(v) : typeof v === "object" ? "obj[" + Object.keys(v).slice(0, 6).join(",") + "]" : typeof v + ":" + String(v).slice(0, 40));
                 return realJson.apply(this, arguments);
             };
-        `,
-    });
-    await flush(10);
-    const adopt = plain(await w.fireRuntimeMessage({ type: "ADOPT_RUN_NOW", payload: { runId: "r-wrap", rebuild: { toolNames: ["exec"], builtBy: "worker" }, injected: true } }));
-    assert.equal(typeof adopt?.pageInfo, "string", `positive control: the run was adopted: ${JSON.stringify(adopt)}`);
-    const tool = plain(await w.fireRuntimeMessage({ type: "RUN_TOOL_IN_PAGE", payload: { runId: "r-wrap", name: "exec", args: { js: "({ price: 10 })" }, stream: true } }));
-    assert.ok(tool && JSON.stringify(tool).length > 2, `positive control: the delegated tool answered: ${JSON.stringify(tool)}`);
-    await w.fireRuntimeMessage({ type: "CANCEL_TOOL_IN_PAGE", payload: { runId: "r-wrap", callId: "c1" } });
-    await flush(20);
+        `;
+    // The page wraps first, then a run on it: adopt, an exec whose value is serialised, a cancel. Returns the world.
+    const runUnderWraps = async (opts) => {
+        const w = loadPageWorld({ visible: false, onRuntimeMessage: () => undefined, beforeInjected: WRAPS, ...opts });
+        await flush(10);
+        const adopt = plain(await w.fireRuntimeMessage({ type: "ADOPT_RUN_NOW", payload: { runId: "r-wrap", rebuild: { toolNames: ["exec"], builtBy: "worker" }, injected: true } }));
+        assert.equal(typeof adopt?.pageInfo, "string", `positive control: the run was adopted: ${JSON.stringify(adopt)}`);
+        const tool = plain(await w.fireRuntimeMessage({ type: "RUN_TOOL_IN_PAGE", payload: { runId: "r-wrap", name: "exec", args: { js: "({ price: 10 })" }, stream: true } }));
+        assert.ok(tool && JSON.stringify(tool).length > 2, `positive control: the delegated tool answered: ${JSON.stringify(tool)}`);
+        await w.fireRuntimeMessage({ type: "CANCEL_TOOL_IN_PAGE", payload: { runId: "r-wrap", callId: "c1" } });
+        await flush(20);
+        return w;
+    };
+    // Control: the same wraps, with the bundle in the page's realm (today's late MAIN injection), read the run.
+    const today = await runUnderWraps({ main: "injected.js" });
+    assert.ok(plain(today.pageRun("__postSeen")).length > 0, "control: the postMessage wrap reads a run whose bundle shares the page's realm");
+    assert.ok(plain(today.pageRun("__dispSeen")).length > 0, "control: the dispatchEvent wrap sees a run whose bundle shares the page's realm");
+    assert.ok(plain(today.pageRun("__jsonSeen")).length > 0, "control: the JSON.stringify wrap reads a run whose bundle shares the page's realm");
+    const w = await runUnderWraps({ main: "injected-isolated.js", pageRealm: true });
     assert.deepEqual(plain(w.pageRun("__postSeen")), [], "the page's MessagePort.prototype.postMessage wrap read the run's port traffic");
     assert.deepEqual(plain(w.pageRun("__dispSeen")), [], "the page's window.dispatchEvent wrap saw an event of ours");
     assert.equal(w.pageRun("Element.prototype.attachShadow === __attachWrap"), true, "shadow-patch.js displaced the page's Element.prototype.attachShadow");
