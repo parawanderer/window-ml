@@ -144,6 +144,28 @@ Rule 10: the redirect rows under Tests below are the red team's (e3), failing fi
 before that half, with one row per half telling the worker's own fetch from a render tab's navigation, and the chain
 row mixing an allowed hop with a disallowed one. The lane flips nothing; the finder flips after each half merges.
 
+RULED 2026-10-28, the worker-fetch half's two interpretation calls (the lane builds on `feat/redirect-judge`):
+
+- **"A prompt that names the target" is a refusal, not a card inside the fetch.** An unjudged hop is refused before
+  the target is requested; the refusal names the target and says to fetch it directly, and `fetch_url` on that URL
+  takes the normal per-URL prompt. A page's own `ml.fetch` gets the refusal too, as pages get no prompts, but its
+  text says a cross-site redirect was refused and names the hop's origin only as another site, never the URL: a
+  page's same-origin fetch would see `opaqueredirect`, so the `Location` is not ours to hand it. The model and the
+  person see the full target; the page does not.
+- **Scope.** Hops are judged where the final-origin body guard applies today (an untrusted caller, not `execOpen`);
+  trusted surfaces and `execOpen` keep following. `FETCH_SHEET` follows same-site hops and the declared
+  `docs.google.com` to `*.googleusercontent.com` pair only; the sign-in hop to `accounts.google.com` is refused, not
+  declared, since following it with credentials fetches a login page and never the sheet, and the error says the
+  person is not signed in to Google in this browser. `FETCH_IMAGE_B64` is a declared exception to "any other hop
+  becomes a prompt": it keeps following (a page image that 302s to a CDN on another domain), with `credentials:
+  "omit"` and the public-host raster check applied on EVERY hop instead of only the last. The invariant that protects
+  there is no credentials, a public host and a raster body, which a hop cannot weaken once every hop is checked, and
+  breaking every CDN-backed image for a rule the credentialed paths need is not worth it. Rule 10: e3 pins the
+  exception's edge, an image whose chain hops through a private host (a `10.x` or localhost address) or a non-raster
+  body at any step is `IMAGE_FAILED` with no request made past the bad hop, in its step-5 rows PR.
+- The install-time warning for the `webRequest` permission is measured with
+  `chrome.management.getPermissionWarningsByManifest` and recorded in the PR body.
+
 ## Tests
 
 - **The measurement is the oracle.** Every `test.fixme` in `tests/e2e/detection-surface.spec.mjs` this spec removes is
