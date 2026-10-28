@@ -208,7 +208,9 @@ _cv = contextvars.ContextVar("ml_probe")
 def _queue():
     secret = {"marker": "A-SECRET"}
     _cv.set("A-CONTEXT")
-    for _ in range(100000):
+    # Under the monitoring tool a C callback raises no event, so 100000 of them ran inside the budget (measured); a
+    # million are cut, as are 400000.
+    for _ in range(1000000):
         _loop.call_soon(secret.clear)
 async def _left():
     try:
