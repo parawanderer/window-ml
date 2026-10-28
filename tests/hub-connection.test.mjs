@@ -274,3 +274,129 @@ test("a grant opens through the connection, verified, so a key from the wrong se
         conn.close();
     } finally { hub.stop(); }
 });
+
+// --- a command larger than the hub takes ---
+
+/** A phone, a runtime that answers `runtime.info` with `{}` and a connection, against a real hub; `limit` is what the hub gave. */
+async function oversizeWorld() {
+    const hub = await startHub();
+    const root = await generateIdentity();
+    const runtime = await device(root, Role.ROLE_RUNTIME, [], "Work laptop");
+    const phone = await device(root, Role.ROLE_CLIENT, [SCOPE.view, SCOPE.drive]);
+    const common = { url: hub.url, hubName: HUB, accountRoot: root.publicKey };
+    const conn = await HubConnection.open({ ...common, ...phone, role: Role.ROLE_CLIENT });
+    const rt = await HubClient.connect({ ...common, ...runtime, role: Role.ROLE_RUNTIME });
+    const seen = [];
+    runtimeThatAnswers(rt, (c) => { seen.push(c); return { ok: true, data: {} }; });
+    const id = hex(runtime.principal);
+    await poll("the runtime's presence", () => conn.peer(id));
+    const closed = [];
+    conn.onClose((r) => closed.push(r));
+    const stop = () => { rt.close(); conn.close(); hub.stop(); };
+    return { conn, id, seen, closed, limit: conn.hubClient.limits.maxPayloadBytes, stop };
+}
+
+test("a command over the hub's payload limit is refused here, in words, and the connection stays up", T, async () => {
+    const w = await oversizeWorld();
+    try {
+        const session = { runtime: w.id, hash: "aaaa0001" };
+        const r = await w.conn.send({ type: "session.send", session, text: "x".repeat(w.limit + 5_000) });
+        assert.equal(r.ok, false);
+        assert.equal(r.error.code, "invalid");
+        assert.match(r.error.message, /too large to send through the hub: \d+(\.\d)? MB; the hub takes up to \d+(\.\d)? MB per message/);
+        await new Promise((res) => setTimeout(res, 300));
+        assert.deepEqual(w.closed, [], "the relay closes a connection that sends an oversize payload; this one never sent it");
+        assert.equal(w.seen.length, 0, "nothing reached the runtime");
+        const next = await w.conn.send({ type: "session.send", session, text: "small" });
+        assert.equal(next.ok, true, "the next command works on the same connection");
+    } finally { w.stop(); }
+});
+
+// --- images that would not fit are sent as smaller copies ---
+
+/** A raster with no pixels: every image is 2400x2400, and a copy at `w`x`h` encodes to w*h/4 characters, so the
+ *  longest side decides the size the way a real JPEG's does, only predictably. */
+function fakeRaster({ smaller = true } = {}) {
+    const calls = { decode: 0, encode: [] };
+    return {
+        calls,
+        decode: async () => { calls.decode++; return { source: {}, width: 2400, height: 2400, close() {} }; },
+        canvas: (w, h) => ({ width: w, height: h, getContext: () => ({ fillRect() {}, drawImage() {} }) }),
+        encode: async (c, opts) => { calls.encode.push({ w: c.width, h: c.height, ...opts }); return `data:image/jpeg;base64,${"J".repeat(smaller ? Math.round(c.width * c.height / 4) : 5_000_000)}`; },
+    };
+}
+const png = (n) => `data:image/png;base64,${"A".repeat(n)}`;
+
+test("images over the limit are re-encoded smaller until the command fits, and the person is told", T, async () => {
+    const w = await oversizeWorld();
+    try {
+        const raster = fakeRaster();
+        w.conn.raster = raster;
+        const small = png(30_000);
+        const session = { runtime: w.id, hash: "aaaa0001" };
+        const r = await w.conn.send({ type: "session.send", session, text: "look", images: [png(1_700_000), small, png(1_700_000)] });
+        assert.equal(r.ok, true, JSON.stringify(r));
+        assert.match(r.note, /smaller copy/);
+        const got = w.seen.at(-1).images;
+        assert.equal(got.length, 3, "none dropped, order kept");
+        assert.ok(got[0].startsWith("data:image/jpeg") && got[2].startsWith("data:image/jpeg"), "the large ones were re-encoded");
+        assert.equal(got[1], small, "an image that was not needed to fit is never touched");
+        assert.ok(got.join("").length < w.limit);
+        assert.ok(raster.calls.encode.every((e) => e.type === "image/jpeg" && e.quality === 0.85));
+        assert.ok(Math.max(...raster.calls.encode.map((e) => e.w)) <= 2048, "stepped down from 2048, never up");
+        await new Promise((res) => setTimeout(res, 300));
+        assert.deepEqual(w.closed, [], "the connection is still up");
+    } finally { w.stop(); }
+});
+
+test("images that fit are never decoded, re-encoded or noted", T, async () => {
+    const w = await oversizeWorld();
+    try {
+        const raster = fakeRaster();
+        w.conn.raster = raster;
+        const images = [png(400_000), png(300_000)];
+        const r = await w.conn.send({ type: "session.send", session: { runtime: w.id, hash: "aaaa0001" }, text: "look", images });
+        assert.equal(r.ok, true);
+        assert.equal(r.note, undefined);
+        assert.deepEqual(w.seen.at(-1).images, images, "byte for byte");
+        assert.equal(raster.calls.decode, 0);
+    } finally { w.stop(); }
+});
+
+test("images that still do not fit after shrinking are refused with the size, and nothing is sent", T, async () => {
+    const w = await oversizeWorld();
+    try {
+        w.conn.raster = fakeRaster({ smaller: false });   // a copy is never smaller, so none is used
+        const r = await w.conn.send({ type: "agent.start", runtime: w.id, task: "t", target: { kind: "new-tab" }, images: [png(2_500_000)] });
+        assert.equal(r.ok, false);
+        assert.equal(r.error.code, "invalid");
+        assert.match(r.error.message, /^too large to send through the hub: 2\.\d MB; the hub takes up to 1\.0 MB per message$/);
+        assert.equal(w.seen.length, 0);
+        await new Promise((res) => setTimeout(res, 300));
+        assert.deepEqual(w.closed, []);
+    } finally { w.stop(); }
+});
+
+test("with nothing to draw an image with, an oversize command with images is refused rather than sent", T, async () => {
+    const w = await oversizeWorld();
+    try {
+        w.conn.raster = null;
+        const r = await w.conn.send({ type: "session.send", session: { runtime: w.id, hash: "aaaa0001" }, text: "", images: [png(1_700_000)] });
+        assert.equal(r.ok, false);
+        assert.equal(r.error.code, "invalid");
+        assert.equal(w.seen.length, 0);
+    } finally { w.stop(); }
+});
+
+test("a command just under the limit is sent as it is: the bound is the sealed size, not a rule of thumb", T, async () => {
+    const w = await oversizeWorld();
+    try {
+        w.conn.raster = fakeRaster();
+        const session = { runtime: w.id, hash: "aaaa0001" };
+        const overhead = await w.conn.hubClient.commandOverhead(w.conn.peer(w.id).recipient, "drive");
+        const head = JSON.stringify({ type: "session.send", session, text: "" }).length;
+        const r = await w.conn.send({ type: "session.send", session, text: "x".repeat(w.limit - overhead - head - 64) });
+        assert.equal(r.ok, true, JSON.stringify(r));
+        assert.equal(w.seen.length, 1);
+    } finally { w.stop(); }
+});

@@ -25,14 +25,17 @@ export interface RasterCanvas {
     getContext(type: "2d", options?: CanvasRenderingContext2DSettings): Raster2D | null;
 }
 
+/** How `Raster.encode` writes: PNG by default, JPEG when a smaller lossy copy is wanted. */
+export interface RasterEncode { type?: "image/png" | "image/jpeg"; quality?: number }
+
 /** Where images and canvases come from, and how a canvas becomes a PNG data URL. */
 export interface Raster {
     /** Decode an image data URL. Rejects when it is not an image. */
     decode(dataUrl: string): Promise<RasterImage>;
     /** A blank `w`×`h` canvas. */
     canvas(w: number, h: number): RasterCanvas;
-    /** The canvas as a `data:image/png;base64,…` URL. */
-    encode(c: RasterCanvas): Promise<string>;
+    /** The canvas as a `data:image/png;base64,…` URL, or as `opts.type` at `opts.quality` (0..1, lossy types only). */
+    encode(c: RasterCanvas, opts?: RasterEncode): Promise<string>;
 }
 
 /** The page's raster: `Image`, a document `<canvas>` and `toDataURL`, as every vision helper drew before the seam. */
@@ -48,7 +51,7 @@ export const pageRaster: Raster = {
         c.width = w; c.height = h;
         return c as unknown as RasterCanvas;
     },
-    encode: async (c) => (c as unknown as HTMLCanvasElement).toDataURL("image/png"),
+    encode: async (c, opts) => (c as unknown as HTMLCanvasElement).toDataURL(opts?.type ?? "image/png", opts?.quality),
 };
 
 /** Base64 of bytes, in chunks: a screenshot is too large for one spread into `String.fromCharCode`. */
@@ -65,9 +68,10 @@ export const workerRaster: Raster = {
         return { source: bitmap, width: bitmap.width, height: bitmap.height, close: () => bitmap.close() };
     },
     canvas: (w, h) => new OffscreenCanvas(w, h) as unknown as RasterCanvas,
-    encode: async (c) => {
-        const blob = await (c as unknown as OffscreenCanvas).convertToBlob({ type: "image/png" });
-        return `data:image/png;base64,${bytesToBase64(new Uint8Array(await blob.arrayBuffer()))}`;
+    encode: async (c, opts) => {
+        const type = opts?.type ?? "image/png";
+        const blob = await (c as unknown as OffscreenCanvas).convertToBlob({ type, quality: opts?.quality });
+        return `data:${type};base64,${bytesToBase64(new Uint8Array(await blob.arrayBuffer()))}`;
     },
 };
 

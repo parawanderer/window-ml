@@ -425,6 +425,7 @@ export class ChatStore {
         if (!r.ok && !opts?.quiet && r.error.code !== "aborted") {
             this.notify(`${FAILURE[r.error.code] ?? "Failed"}${r.error.message ? `: ${r.error.message}` : ""}`, "error");
         }
+        if (r.ok && r.note) this.notify(r.note);
         return r;
     }
 

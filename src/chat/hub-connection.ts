@@ -14,7 +14,9 @@ import { verifyChain } from "../hub/keys";
 import type { Bytes } from "../hub/hpke";
 import type { Grant, Recipient } from "../hub/seal";
 import type { Position } from "../hub/wire";
-import { HubClient, type HubEvent } from "../hub/client";
+import { CommandTooLarge, HubClient, type HubEvent } from "../hub/client";
+import { pageRaster, workerRaster, type Raster } from "../raster";
+import { fitImages } from "./fit-images";
 import { Role } from "../hub/wire";
 import { COMMAND_SCOPE, type Command, type CommandResult, type CommandType } from "../session/session-host";
 
@@ -61,6 +63,23 @@ const decoder = new TextDecoder();
 /** Bytes WebCrypto and the seal take: what this module allocates is always its own. */
 const bytes = (s: string): Bytes => encoder.encode(s) as Bytes;
 
+/** Room left under the hub's limit for what a measurement cannot see (a length prefix that grew a byte or two). */
+const SIZE_MARGIN = 512;
+
+/** A size as the person reads it: megabytes to one decimal. */
+const mb = (n: number): string => `${(n / 1048576).toFixed(1)} MB`;
+
+/** The refusal for a command over the hub's limit, in the sentence the composer shows. */
+const tooLarge = <T extends CommandType>(e: CommandTooLarge): CommandResult<T> =>
+    fail("invalid", `too large to send through the hub: ${mb(e.size)}; the hub takes up to ${mb(e.limit)} per message`);
+
+/** The raster a smaller copy of an image is drawn with, where this runs: a page's, a worker's, or none (node). */
+function defaultRaster(): Raster | null {
+    if (typeof document !== "undefined") return pageRaster;
+    if (typeof OffscreenCanvas !== "undefined" && typeof createImageBitmap !== "undefined") return workerRaster;
+    return null;
+}
+
 /**
  * A connection to a hub, pumping its events into peers and command answers.
  *
@@ -78,6 +97,8 @@ export class HubConnection {
     /** by `<publisher hex>:<channel hex>`: every stream this connection is subscribed to, and who hears it */
     private readonly streams = new Map<string, (e: StreamEvent) => void>();
     private stopped = false;
+    /** What re-encodes an image smaller when a command would not fit the hub; null shrinks nothing (the refusal applies). */
+    raster: Raster | null = defaultRaster();
 
     private constructor(
         private readonly client: HubClient,
@@ -130,14 +151,26 @@ export class HubConnection {
         if (!this.scopes.has(scope)) return fail("forbidden", `this device does not hold \`${scope}\` on this account`);
 
         let nonce: Bytes;
+        let note: string | undefined;
         try {
-            nonce = await this.client.command(peer.recipient, scope, bytes(JSON.stringify(command)));
+            try {
+                nonce = await this.client.command(peer.recipient, scope, bytes(JSON.stringify(command)));
+            } catch (e) {
+                // The relay closes the WHOLE connection on a payload over its limit, so an oversize command is never
+                // sent: its images are re-encoded smaller if that can make it fit, and it is refused if not.
+                if (!(e instanceof CommandTooLarge)) throw e;
+                const fitted = await this.fitImagesOf(command, peer.recipient, scope, e);
+                if (!fitted) return tooLarge(e);
+                note = `Sent as a smaller copy to fit the hub's limit of ${mb(e.limit)} per message`;
+                nonce = await this.client.command(peer.recipient, scope, bytes(JSON.stringify(fitted)));
+            }
         } catch (e) {
+            if (e instanceof CommandTooLarge) return tooLarge(e);
             return fail("unavailable", `could not reach ${peer.name}: ${(e as Error)?.message || e}`);
         }
         const key = hex(nonce);
 
-        return await new Promise<CommandResult<C["type"]>>((resolve) => {
+        const result = await new Promise<CommandResult<C["type"]>>((resolve) => {
             let done = false;
             const settle = (r: CommandResult<C["type"]>): void => {
                 if (done) return;
@@ -163,6 +196,22 @@ export class HubConnection {
             // an abort straight after a send an abort rather than a wait for the timeout.
             if (opts?.signal?.aborted) settle(fail("aborted", "cancelled while it was being sent"));
         });
+        return note && result.ok ? { ...result, note } : result;
+    }
+
+    /**
+     * The command with its images re-encoded smaller so that it fits the hub, or null when it carries none, nothing
+     * here can draw them, or the smallest copies still do not fit. Only called for a command already known to be over.
+     */
+    private async fitImagesOf<C extends Command>(command: C, to: Recipient, scope: string, over: CommandTooLarge): Promise<C | null> {
+        const images = "images" in command && Array.isArray(command.images) ? (command.images as string[]) : [];
+        if (!images.length || !this.raster) return null;
+        const overhead = await this.client.commandOverhead(to, scope);
+        // What the images may add up to: the limit, less the seal, the rest of the command and each image's quotes and comma.
+        const rest = bytes(JSON.stringify({ ...command, images: [] })).length;
+        const budget = over.limit - overhead - rest - 3 * images.length - SIZE_MARGIN;
+        const fitted = await fitImages(images, budget, this.raster);
+        return fitted && fitted.shrunk > 0 ? { ...command, images: fitted.images } : null;
     }
 
     /**
@@ -325,7 +374,7 @@ export class HubConnection {
 
 /** A refusal, at whatever command type the caller is waiting on: the `ok: false` branch names no data, so one
  *  function answers every command and nothing has to be cast at the call site. */
-const fail = <T extends CommandType>(code: "not-found" | "unavailable" | "aborted" | "failed" | "forbidden", message: string): CommandResult<T> =>
+const fail = <T extends CommandType>(code: "not-found" | "invalid" | "unavailable" | "aborted" | "failed" | "forbidden", message: string): CommandResult<T> =>
     ({ ok: false, error: { code, message } });
 
 /**
