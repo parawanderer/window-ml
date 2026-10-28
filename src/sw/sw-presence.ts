@@ -156,6 +156,11 @@ export async function presence(url: string | undefined): Promise<Presence> {
     return presenceOf(await readSiteLists(), origin, await sitesMayAsk());
 }
 
+/** The documents `injectPageScripts` has put the page scripts into, oldest first, so none is given them twice. Lost with
+ *  the worker; a document that outlives it is asked about again only by a list change (showInOpenTabs). */
+const injectedDocs = new Set<string>();   // state: plumbing
+const INJECTED_DOCS_MAX = 512;   // state: fixed
+
 /**
  * Put the main-world scripts into the document a tab shows now, for a run the person started on a hidden page. The page
  * has been running its own code, so it can watch this happen: from here on it sees what a page with window.ml sees.
@@ -166,6 +171,13 @@ export async function presence(url: string | undefined): Promise<Presence> {
  * @throws when the extension may not script the tab or the document is gone
  */
 export async function injectPageScripts(tabId: number, documentId?: string): Promise<void> {
+    // A document is given them once: a second injected.js would replace window.ml and, after the re-arm, take the content
+    // script's port from the first, orphaning a run on it (a repeated PAGE_SCRIPT_MISSING, or one racing showInOpenTabs).
+    if (documentId) {
+        if (injectedDocs.has(documentId)) return;
+        injectedDocs.add(documentId);
+        if (injectedDocs.size > INJECTED_DOCS_MAX) injectedDocs.delete(injectedDocs.values().next().value as string);
+    }
     const target = documentId ? { tabId, documentIds: [documentId] } : { tabId };
     // First the content script drops any port the page handed it, so the one it takes next is injected.js's
     // (page-channel.ts). No answer (no content script there yet) is no harm: a fresh one is armed already.

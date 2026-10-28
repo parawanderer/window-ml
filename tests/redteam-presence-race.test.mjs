@@ -13,8 +13,9 @@
 // origins (userinfo, other scheme, other port, suffix host); frameId != 0; no tab; origin revoked while the message is in
 // flight; a navigation between the send and the inject (the target is the sender's documentId, never the tab); the page
 // forging the message on its window or on the port; a hidden / pending / ask-only gate; a hello that arrives late.
-// Shapes that are OPEN are `todo` tests: no documentId (falls back to the tab's CURRENT document), and a repeated message
-// (injects twice; the second run replaces window.ml and re-arms the port, orphaning a run on the first instance).
+// Found OPEN by this pass and closed in the same PR: a sender with no documentId (it fell back to the tab's CURRENT
+// document; now refused), and a repeated message (it injected twice, the second injected.js replacing window.ml and
+// re-arming the port; now injectPageScripts gives a document the scripts once).
 // Not worth a test: the content script is the only producer and `contentReady` retries only when the worker gave NO answer,
 // so the real sender cannot repeat; the page cannot forge the hello on a hidden page because the gate drops it unread.
 import { test } from "node:test";
@@ -102,7 +103,7 @@ test("an origin revoked while the message is in flight gets nothing: the lists a
 
 // --- 2. a visible page is not injected twice ---
 
-test("a repeated PAGE_SCRIPT_MISSING from one document injects once", { ...T, todo: "OPEN: the handler keeps no per-document memory, so a repeat injects again; the second injected.js replaces window.ml and, after the PAGE_PORT_ARM, takes the content script's port, orphaning a run on the first instance. The only producer (content.ts) sends once, so a page cannot cause it; a worker-side race with showInOpenTabs (sw-presence.ts, injects on gate open + alive:false) can" }, async () => {
+test("a repeated PAGE_SCRIPT_MISSING from one document injects once", T, async () => {
     const bg = worker();
     assert.deepEqual(plain(await bg.send(MISSING, sender(OK, "doc-r"))), { data: true });
     await bg.send(MISSING, sender(OK, "doc-r"));
@@ -143,7 +144,7 @@ test("the tab id comes from the sender, never from the message", T, async () => 
     assert.deepEqual(executes(bg).map((e) => e.target), [{ tabId: 7, documentIds: ["doc-mine"] }]);
 });
 
-test("a sender with no documentId is not injected into the tab's CURRENT document", { ...T, todo: "OPEN: injectPageScripts(tabId, undefined) targets {tabId}, i.e. whatever top document the tab shows when executeScript runs (and PAGE_PORT_ARM goes to frameId 0), so a navigation after the origin check lands the scripts in a page whose origin was never read. Real content-script senders always carry documentId, so this is a fail-open on an absent field, not a reachable page attack; the fix is to answer {data:false} when sender.documentId is not a string" }, async () => {
+test("a sender with no documentId is not injected into the tab's CURRENT document", T, async () => {
     const bg = worker();
     const { documentId: _d, ...noDoc } = sender(OK);
     await bg.send(MISSING, noDoc);

@@ -443,8 +443,9 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     // nothing in the message is read, and a hidden origin gets nothing, as at CONTENT_READY.
     if (message.type === "PAGE_SCRIPT_MISSING") {
         const tabId = sender.tab?.id;
-        if (tabId == null || (sender.frameId ?? 0) !== 0) { sendResponse({ data: false }); return; }
+        // The sender's own document only: with none named, the scripts would go to whatever the tab shows when they run.
         const doc = typeof sender.documentId === "string" ? sender.documentId : undefined;
+        if (tabId == null || (sender.frameId ?? 0) !== 0 || !doc) { sendResponse({ data: false }); return; }
         void presence(sender.url ?? sender.tab?.url).catch(() => "hidden" as const).then(async (shown) => {
             if (shown !== "full") return sendResponse({ data: false });
             try { await injectPageScripts(tabId, doc); sendResponse({ data: true }); } catch { sendResponse({ data: false }); }
