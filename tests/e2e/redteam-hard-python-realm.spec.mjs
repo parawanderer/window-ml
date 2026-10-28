@@ -1,7 +1,7 @@
 // redteam-hard-python-realm.spec.mjs — independent real-browser-worker measurements of the readonly lockdown's post-strip global surface.
 // A worker-hosted run names the JS bridge and its sidebar card is approved by clicking Allow as the person; an external
 // approval intentionally would not lift that refusal. The URL constructor is every row's same-cell live-global control.
-// The location row is expected to fail on core 2e41d920; SHOW_PENDING=1 removes the marker to expose the exact assertion.
+// The location row is expected to fail before its owner correction; SHOW_PENDING=1 removes the marker to expose the exact assertion.
 
 import { test, expect } from "@playwright/test";
 import { existsSync, readFileSync } from "node:fs";
@@ -97,7 +97,7 @@ test("under CI, a job that fetched the fork core ships it in dist/pyodide", () =
 
 test("a lifted cell cannot read location on the real worker global after the strip", async () => {
     test.skip(!HAS_FORK, NEED_FORK);
-    pending("measured on core 2e41d920: the real browser worker returned location.present=true and href=chrome-extension://<id>/python-worker.js");
+    pending("measured on the real browser worker: location.present=true and href=chrome-extension://<id>/python-worker.js");
     const r = await runCell(probeCode("location"), "realm location probe");
     expect(r.URL, "positive control: the allow-listed URL constructor must remain readable").toBe(true);
     expect(r.present, `the worker location must be unreadable after lockdown, got ${r.href}`).toBe(false);
