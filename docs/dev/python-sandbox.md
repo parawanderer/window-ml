@@ -267,7 +267,12 @@ gives every `call_soon` its own JavaScript callback in one FIFO (`webloop.schedu
 through `API.scheduleCallback`), so the spend's `sleep(0)` waited behind everything the cell queued, and a builtin
 callback raises no monitoring event: 250000 `call_soon(d.clear)` held the spend 3.3 to 3.8 s past its deadline. The
 lockdown replaces both schedulers at boot. The spend turns the loop through the queue's own one-shot (`turn`), whose
-chain is never cut; once the deadline has passed, every entry queued before it is dropped in JavaScript without
+chain is never cut. Each link of the chain is the first entry the one before it queues, nothing after it, and while the
+one-shot sets its Future's result the loop's class is a class made for that call, whose `call_soon` reaches only what
+boot captured: a cell that rebound `call_soon` (on the loop, its class or `__getattribute__`) would otherwise run inside
+the one-shot and have its callbacks counted as the cancel's own. Step 1 of every cancel also puts the loop back as boot
+found it (its class, its classes' dicts, no method shadowed on the loop), as it does `webloop.scheduleCallback`, so a
+rebound `call_soon` does not queue the cell's code from the harness's own calls in later cells. Once the deadline has passed, every entry queued before it is dropped in JavaScript without
 entering Python, and when the cancel returns (`done`) everything still queued is dropped the same way. The cut is one
 swap of the pending map; what it dropped still holds the cell's objects, so it is released in batches after the cancel
 (`sweep`), and the worker waits for that before the next cell. A task whose cancel was dropped can never run again: the

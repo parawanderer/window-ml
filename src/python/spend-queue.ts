@@ -7,7 +7,8 @@
 // deadline never sees it (PYTHON_CANCEL_GAPS.md pins 15 to 17). The lockdown puts this queue in both places: once the
 // spend's deadline has passed, every entry queued before it is dropped in JS without entering Python. Entries queued
 // after it run, and so does the cancel's own chain: its one-shot (`turn`), the wakeup that one-shot queues, and that
-// wakeup's second turn. When the cancel returns (`done`) everything still queued is cut the same way: the cancel has
+// wakeup's second turn. Each link is the FIRST entry queued while the one before it runs, never anything after it: a
+// cell that gets code run inside the one-shot (a callback it added to the cancel's Future) only queues behind the wakeup. When the cancel returns (`done`) everything still queued is cut the same way: the cancel has
 // cancelled every Handle by then, so a cut entry would only cost a trip into Python. What was cut still holds the cell's
 // Python objects alive, so it is released in batches after the cancel (`sweep`), never on the spend's path.
 
@@ -60,8 +61,8 @@ export function makeSpendQueue(raw: (cb: () => void, ms?: number) => void, decRe
     let cutSeq = 0;               // every entry at or below this sequence was cut
     let deadline = 0;             // the running spend's deadline (ms on `now`); 0 when none is running
     let lateCut = -1;             // how many entries the running spend's deadline cut; -1 until it has
-    let turning = 0;              // > 0 while the cancel's one-shot runs: the webloop callback it queues is the cancel's wakeup
-    let waking = 0;               // > 0 while that wakeup runs: the second turn it queues is the wakeup's own
+    let turning = false;          // while the cancel's one-shot runs and has queued nothing yet: what it queues next is the cancel's wakeup
+    let waking = false;           // while that wakeup runs and has queued nothing yet: the second turn it queues next is the wakeup's own
     let callingPtr = 0;           // the Python object a call is starting for, while it queues its second turn
     let sweeping: Promise<void> | null = null;
 
@@ -76,13 +77,14 @@ export function makeSpendQueue(raw: (cb: () => void, ms?: number) => void, decRe
         if (deadline && lateCut < 0 && now() > deadline) lateCut = cut();
     };
     // An entry of the cancel's own chain goes straight to Pyodide's queue, where no cut reaches it. Each link is
-    // recognised only by the one before it, never by anything the entry says about itself: a cell cannot queue one.
+    // recognised only by the one before it, as the first thing it queues, never by anything the entry says about itself.
     const enqueue = (e: Entry, ms: number, kind: "schedule" | "hop") => {
         if (kind === "schedule" && turning) {
-            raw(() => { waking++; try { e.run(); } finally { waking--; } }, ms);
+            turning = false;
+            raw(() => { waking = true; try { e.run(); } finally { waking = false; } }, ms);
             return;
         }
-        if (kind === "hop" && waking) { raw(e.run, ms); return; }
+        if (kind === "hop" && waking) { waking = false; raw(e.run, ms); return; }
         cutIfLate();   // the cut takes what was queued before the deadline, never this entry
         const s = ++seq;
         pending.set(s, e);
@@ -115,8 +117,8 @@ export function makeSpendQueue(raw: (cb: () => void, ms?: number) => void, decRe
         },
         turn(fn) {
             raw(() => {
-                turning++;
-                try { fn(); } finally { turning--; fn.destroy?.(); }
+                turning = true;
+                try { fn(); } finally { turning = false; fn.destroy?.(); }
             }, 0);
         },
         done() {

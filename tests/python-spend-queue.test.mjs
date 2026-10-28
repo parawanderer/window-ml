@@ -116,6 +116,22 @@ test("a link of the chain is recognised only by the one before it: a hop from th
     assert.equal(q.done(), 2, "both were cut by the deadline");
 });
 
+test("a link of the chain is only the FIRST entry the one before it queues: what it queues after the wakeup is cut", () => {
+    const { q, pump, cb, at, fifo } = fakeQueue();
+    const ran = [];
+    q.mark(1);
+    // A cell that gets code run inside the one-shot (a done callback on the cancel's Future) queues behind the wakeup;
+    // the wakeup's own second turn is likewise the first hop it queues, never a second.
+    const wakeup = Object.assign(() => { q.hop(() => ran.push("wakeup's python")); q.hop(() => ran.push("second hop")); }, { destroy() {} });
+    q.turn(Object.assign(() => { q.schedule(wakeup); q.schedule(cb("queued after the wakeup", ran)); }, { destroy() {} }));
+    fifo.shift()();   // the one-shot: queues the wakeup, then the callback
+    fifo.shift()();   // the wakeup: queues its second turn, then another hop; all before the deadline
+    at(1001);
+    pump();
+    assert.deepEqual(ran, ["wakeup's python"]);
+    assert.equal(q.done(), 2, "the callback and the second hop were cut by the deadline");
+});
+
 test("done cuts everything still queued, counting only what the deadline cut", () => {
     const { q, pump, cb, at } = fakeQueue();
     const ran = [];

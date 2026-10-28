@@ -124,7 +124,7 @@ class _MlSpendLate(BaseException):
     """Raised in a task the cancel's spend stopped: it kept running past the spend's budget, or reached for its hook."""
 
 def _ml_make_cancel(revoke, spending, queue, proxy, loop_globals, schedule, loop, set_running_loop, all_tasks, current_task, Future,
-                    get_objects, Handle, traces, th_hooks, monitoring, monotonic, StringIO, redirect_stdout, redirect_stderr, guarded,
+                    sealing, get_objects, Handle, traces, th_hooks, monitoring, monotonic, StringIO, redirect_stdout, redirect_stderr, guarded,
                     skip_files, SpendLate, BaseException_, isinstance_, id_, len_, range_, sorted_, str_, getattr_, ref_, ROUNDS, BUDGET, CAP):
     # The spend's hook is a sys.monitoring tool (pins 18 to 20): a settrace hook that raises is taken down by CPython
     # itself, so every handler after the first SpendLate ran untraced; a monitoring callback that raises stays on.
@@ -146,6 +146,51 @@ def _ml_make_cancel(revoke, spending, queue, proxy, loop_globals, schedule, loop
         def flush(self):
             pass
     mark, turn, done = queue
+    # The turn's one-shot sets a Future's result, and the Future wakes the cancel through loop.call_soon, looked up on
+    # the loop when it fires. What that queues is the cancel's own link (spend-queue.ts), so a cell that rebound it on the
+    # loop, its class or its class's __getattribute__ would run inside the one-shot and queue there. For that one call the
+    # loop's class is a class made then, which no cell has seen, whose call_soon is a data descriptor (it wins over the
+    # loop's own dict) reaching only what was captured here: webloop's scheduler and a once-callable over Context.run.
+    set_class, type_, property_, object_, getattribute, once = sealing
+    def wake(cb, *args, context=None):
+        def run():
+            try:
+                if context is None:
+                    cb(*args)
+                else:
+                    context.run(cb, *args)
+            except BaseException_:
+                pass
+        schedule(once(run, _may_syncify=True), 0)
+    # A cell can rebind the loop's methods (on the loop, its class or a base), so that the loop's own calls run its code:
+    # every later call_soon, the harness's own included, would queue it again, across cells. Step 1 puts the loop back
+    # as boot found it, as it does webloop's scheduler: its class, its classes' dicts, and no method shadowed on the loop.
+    loop_cls = type_(loop)
+    loop_bases = [(c, dict(c.__dict__)) for c in loop_cls.__mro__ if c is not object_]
+    shadowable = {k for _c, snap in loop_bases for k, v in snap.items() if callable(v)}
+    set_attr, del_attr = type_.__setattr__, type_.__delattr__
+    def restore_loop():
+        if type_(loop) is not loop_cls:
+            set_class(loop, loop_cls)
+        for c, snap in loop_bases:
+            now = c.__dict__
+            for k in [k for k in now if k not in snap]:
+                del_attr(c, k)
+            for k, v in snap.items():
+                if now.get(k) is not v:
+                    set_attr(c, k, v)
+        d = getattribute(loop, "__dict__")
+        for k in [k for k in d if k in shadowable]:
+            del d[k]
+    def settle(fut):
+        if fut.done():
+            return
+        was = type_(loop)
+        set_class(loop, type_("WebLoop", (object_,), {"__getattribute__": getattribute, "call_soon": property_(lambda self: wake)}))
+        try:
+            fut.set_result(None)
+        finally:
+            set_class(loop, was)
     # Tasks whose cancel the queue's cut dropped (step 5), by id, each with a weak reference to tell a reused id apart.
     dead = {}
     def is_dead(t):
@@ -236,12 +281,17 @@ def _ml_make_cancel(revoke, spending, queue, proxy, loop_globals, schedule, loop
         hooked = False
         with redirect_stdout(out), redirect_stderr(out):
             # 1. The running loop: a cell's new_event_loop() replaced it, and a handle on the orphan crashes the next pump.
-            #    And the loop's queue: a cell that rebound webloop's scheduleCallback would hold the cancel's wakeup.
+            #    And the loop's queue: a cell that rebound webloop's scheduleCallback would hold the cancel's wakeup, and
+            #    one that rebound the loop's methods would queue its own code from every call the loop makes.
             try:
                 set_running_loop(loop)
             except BaseException_:
                 pass
             loop_globals["scheduleCallback"] = schedule
+            try:
+                restore_loop()
+            except BaseException_:
+                pass
             # 2. SPEND every task: cancel it and let the loop turn, so it takes the CancelledError and finishes. A task
             #    that catches the cancel and awaits again is cancelled again, ROUNDS times. The rounds share ONE budget,
             #    enforced on every line, jump and start a task runs and on every call that would take the hook down (one
@@ -270,7 +320,7 @@ def _ml_make_cancel(revoke, spending, queue, proxy, loop_globals, schedule, loop
                     # a cell's flood of queued callbacks is dropped there instead of holding the cancel past it.
                     try:
                         turned = Future(loop=loop)
-                        turn(proxy(lambda: turned.done() or turned.set_result(None)))
+                        turn(proxy(lambda: settle(turned)))
                         await turned
                     finally:
                         if not untraced() or not intact(MASK):
@@ -420,10 +470,11 @@ _ml_spend_guarded = frozenset(id(f) for f in (_ml_s.settrace, _ml_s.setprofile, 
     *(getattr(_ml_mon, n) for n in dir(_ml_mon) if not n.startswith("_") and n not in ("get_tool", "get_events", "get_local_events")
       and callable(getattr(_ml_mon, n)))) if f is not None)
 _ml_spend_skip = (_ml_os.path.dirname(_ml_aio.__file__), _ml_os.path.dirname(_ml_pyo.__file__), _ml_c.__file__, _ml_s._getframe().f_code.co_filename)
-from pyodide.ffi import create_proxy as _ml_proxy
+from pyodide.ffi import create_proxy as _ml_proxy, create_once_callable as _ml_once
 import pyodide.webloop as _ml_wl
 _ml_cancel = _ml_make_cancel(_ml_cell_revoke, _ml_cell_spending, _ml_spend_queue, _ml_proxy, _ml_wl.__dict__, _ml_wl.scheduleCallback,
-    _ml_aio.get_event_loop(), _ml_aio._set_running_loop, _ml_aio.all_tasks, _ml_aio.current_task, _ml_aio.Future, _ml_gc.get_objects, _ml_aio.Handle,
+    _ml_aio.get_event_loop(), _ml_aio._set_running_loop, _ml_aio.all_tasks, _ml_aio.current_task, _ml_aio.Future,
+    (object.__dict__["__class__"].__set__, type, property, object, object.__getattribute__, _ml_once), _ml_gc.get_objects, _ml_aio.Handle,
     ((_ml_s.gettrace, _ml_s.settrace), (_ml_s.getprofile, _ml_s.setprofile)), _ml_th.__dict__,
     (_ml_mon.use_tool_id, _ml_mon.free_tool_id, _ml_mon.clear_tool_id, _ml_mon.register_callback,
     _ml_mon.set_events, _ml_mon.get_tool, _ml_mon.get_events, _ml_mon.DISABLE, 4, (_ml_mon.events.PY_START, _ml_mon.events.LINE, _ml_mon.events.JUMP, _ml_mon.events.CALL)),
@@ -475,7 +526,7 @@ object.__setattr__(_h, "_MlHarnessMod__ml_refs", {
     # The worker runs every cell's script through this (python-worker.ts \`hostRunScript\`): the script, then the cancel.
     "run_script": _ml_run,
 })
-del _ml_gate_calls, _ml_cell_begin, _ml_cell_revoke, _ml_cell_spending, _ml_spend_queue, _ml_proxy, _ml_wl, _MlSpendLate, _ml_spend_guarded, _ml_spend_skip, _ml_make_cancel, _ml_cancel, _ml_make_run, _ml_run, _ml_eval_async
+del _ml_gate_calls, _ml_cell_begin, _ml_cell_revoke, _ml_cell_spending, _ml_spend_queue, _ml_proxy, _ml_once, _ml_wl, _MlSpendLate, _ml_spend_guarded, _ml_spend_skip, _ml_make_cancel, _ml_cancel, _ml_make_run, _ml_run, _ml_eval_async
 _h
 `;
 
