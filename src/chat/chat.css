@@ -593,12 +593,11 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-peek { flex: 0 0 auto; }
 .chat-peek:disabled { opacity: .5; cursor: progress; }
 
-/* Something happened in a session while you were reading another one. A dot, in the accent, where the unread mark
-   goes in every list that has one — and NOT a count, because the number of events a run emits is not a number
-   anybody wants read to them. */
-.chat-moved {
-    width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: 0 0 auto; align-self: center;
-}
+/* A session with news this device has not seen (read-marks.ts `isUnread`): its TITLE goes bold, and nothing else
+   changes. The dot slot is spoken for: it says what the run is doing (running, waiting, stopped, failed), and an
+   accent dot for "unread" there was the same colour as a running one in calm. NOT a count: the number of events a run
+   emits is not a number anybody wants read to them. */
+.chat-row-wrap.unread .row-title, .chat.calm .chat-row-wrap.unread .row-title { font-weight: 700; }
 
 /* ============================ THE DOCK: panels around the reading column ============================
    (dock.tsx) The box's resource panel and the Python bench, each on the edge the person picked. The frame sits in the

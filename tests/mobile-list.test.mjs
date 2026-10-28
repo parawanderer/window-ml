@@ -106,14 +106,14 @@ test("pinned sessions: one group in this phone's order, the unplaced after by re
     assert.deepEqual(sections([rt("laptop"), rt("box")], all).map((x) => [x.runtime.id, x.data.map((s) => s.id.hash)]), [["box", []], ["laptop", ["d"]]]);
 });
 
-// --- a bad ending's dot: the phone drops it by the page's rule (src/chat/read-marks.ts) once the session was open ---
+// --- unread: the phone asks the page's rule (src/chat/read-marks.ts) with its own state ---
 
-test("read dots: every status the phone may stop dotting once read is one it dots in colour, and a busy one is never among them", async () => {
-    const { UNTIL_READ, seenEnding } = await import("../src/chat/read-marks.ts");
+test("unread dots: every bad ending the phone words is one it dots in colour, and a busy one is never among them", async () => {
+    const { UNTIL_READ, isUnread } = await import("../src/chat/read-marks.ts");
     for (const st of UNTIL_READ) assert.ok(STATUS_TONE[st] === "err" || STATUS_TONE[st] === "stopped", `${st} has a dot to drop`);
     for (const st of Object.keys(STATUS_TONE)) if (STATUS_TONE[st] === "busy") assert.equal(UNTIL_READ.has(st), false, `${st} is work, not news`);
-    // The phone's row asks the shared rule with its own marks: opened at the newest event, the dot goes.
     const x = ses("a", "1", { status: "capped", lastTs: 100 });
-    assert.equal(seenEnding(x.status, x.lastTs, {}, "a:1"), false);
-    assert.equal(seenEnding(x.status, x.lastTs, { "a:1": 100 }, "a:1"), true);
+    assert.equal(isUnread({ since: 50, seen: {} }, "a:1", x.lastTs, x.lastTs, false), true);
+    assert.equal(isUnread({ since: 50, seen: { "a:1": 100 } }, "a:1", x.lastTs, x.lastTs, false), false);
+    assert.equal(isUnread({ since: 150, seen: {} }, "a:1", x.lastTs, x.lastTs, false), false, "older than the baseline");
 });

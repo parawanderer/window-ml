@@ -11,8 +11,8 @@ import { hostServices } from "../src/chat/host-services.ts";
 import { holds, mayCommand } from "../src/chat/grants.ts";
 import { resumableHere } from "../src/chat/grants.js";
 import { KEYS_KEY, KEYS_SENDS, KEYS_SENDS_ALONE, TARGET_KEY, keyUse, knowsKeys, lastTargets, noteKeyUse, rememberTarget } from "../src/chat/view-mode.tsx";
-import { CALM_KEY, GROUP_ALL_KEY, LIST_KEY, PINNED_KEY, PINNED_MODELS_KEY, READ_KEY, calm, dropPin, installViewPrefs, listOpen, markRead, orderPins, pinned, pinnedModels, readMarks, setCalm, setGroupAll, setListOpen, togglePin, togglePinnedModel } from "../src/chat/view-mode.tsx";
-import { READ_MARKS_MAX, UNTIL_READ, markSeen, readMarksFrom, seenEnding } from "../src/chat/read-marks.ts";
+import { CALM_KEY, GROUP_ALL_KEY, LIST_KEY, PINNED_KEY, PINNED_MODELS_KEY, READ_KEY, calm, dropPin, installViewPrefs, listOpen, markRead, orderPins, pinned, pinnedModels, readState, setCalm, setGroupAll, setListOpen, togglePin, togglePinnedModel } from "../src/chat/view-mode.tsx";
+import { READ_MARKS_MAX, UNTIL_READ, hasBaseline, isUnread, markSeen, readMarksFrom, readStateFrom } from "../src/chat/read-marks.ts";
 import { pinnedInOrder } from "../src/chat/pin-order.js";
 import { groupAllTools, sessionMap, view } from "../src/sidebar/store.ts";
 import { SESSION_CONTRACT_VERSION } from "../src/session/session-host.ts";
@@ -1152,57 +1152,106 @@ test("a nested ask inside a running step: the page (and the phone, which embeds 
     assert.equal(st.pending, true, "the step itself keeps running");
 });
 
-// --- a bad ending's list dot: shown until this device has shown you the session, and back if it ends badly again ---
+// --- unread: a session with news since this device's baseline, until it has been opened (read-marks.ts) ---
 
 const ALL_STATUSES = ["running", "waiting", "done", "error", "cancelled", "capped", "interrupted"];
+const K = "laptop:aaaa0001";
+/** Unread as the list asks it: the runtime's clock and this device's agree here, and nothing is open unless said. */
+const unread = (st, key, ts, open = false) => isUnread(st, key, ts, ts, open);
 
-test("read marks: only a run that ended badly waits to be read; one still working, or done, never does", () => {
-    // Enumerated, not sampled: the set is the rule, and a status added to the index must be decided here on purpose.
+test("read marks: only a run that ended badly keeps its words once read; the set is the rule", () => {
+    // Enumerated, not sampled: a status added to the index must be decided here on purpose.
     assert.deepEqual([...UNTIL_READ].sort(), ["cancelled", "capped", "error", "interrupted"]);
-    const marks = { "laptop:aaaa0001": 500 };
-    for (const st of ALL_STATUSES) assert.equal(seenEnding(st, 100, marks, "laptop:aaaa0001"), UNTIL_READ.has(st), st);
 });
 
-test("read marks: the UPGRADE: a device that never stored a mark draws every dot it drew before", () => {
-    // What the old code stored is nothing at all under this key; a junk value is the same as nothing.
-    for (const raw of [undefined, null, "x", 7, [], [1, 2]]) {
-        installViewPrefs(fakePrefs(raw === undefined ? {} : { [READ_KEY]: raw }));
-        assert.deepEqual(readMarks.value, {});
-        for (const st of ALL_STATUSES) assert.equal(seenEnding(st, 100, readMarks.value, "laptop:aaaa0001"), false, st);
-    }
+test("unread: the baseline is taken once, and nothing at or before it is unread, whatever its status", () => {
+    const st = readStateFrom(undefined, 1000);
+    assert.equal(st.since, 1000);
+    assert.deepEqual(st.seen, {});
+    for (const _ of ALL_STATUSES) assert.equal(unread(st, K, 1000), false, "at the baseline");
+    assert.equal(unread(st, K, 400), false, "before it: the first open marks nothing");
+    // Loading again later finds the stored baseline and never moves it.
+    const stored = { since: 1000, seen: {} };
+    assert.equal(readStateFrom(stored, 9999).since, 1000);
+    // Reading and marking never move it either.
+    assert.equal(markSeen(st, K, 2000).since, 1000);
 });
 
-test("read marks: seen up to the newest event; a later event that ends badly again brings the dot back", () => {
-    const k = "laptop:aaaa0001";
-    let m = markSeen({}, k, 100);
-    assert.equal(seenEnding("capped", 100, m, k), true);
-    assert.equal(seenEnding("error", 160, m, k), false, "resumed and failed again: news again");
-    assert.equal(seenEnding("capped", 100, m, "laptop:bbbb0002"), false, "another session is not read by this one");
-    // Never moves back, and an unchanged mark is the SAME object, so the caller skips the write.
-    assert.equal(markSeen(m, k, 90), m);
-    assert.equal(markSeen(m, k, 100), m);
-    assert.equal(markSeen(m, k, NaN), m);
-    m = markSeen(m, k, 160);
-    assert.equal(m[k], 160);
+test("unread: a session that moves after the baseline is unread until it is opened, and again when it moves", () => {
+    let st = readStateFrom(undefined, 1000);
+    assert.equal(unread(st, K, 1500), true, "moved after the baseline, or created on another device");
+    assert.equal(unread(st, K, 1500, true), false, "the one open is never unread");
+    st = markSeen(st, K, 1500);
+    assert.equal(unread(st, K, 1500), false, "opened: seen");
+    assert.equal(unread(st, K, 1800), true, "resumed and moved again: news again");
+    assert.equal(unread(st, "laptop:bbbb0002", 1500), true, "another session is not read by this one");
+    // Never moves a mark back, and an unchanged mark is the SAME object, so the caller skips the write.
+    assert.equal(markSeen(st, K, 1400), st);
+    assert.equal(markSeen(st, K, 1500), st);
+    assert.equal(markSeen(st, K, NaN), st);
 });
 
-test("read marks: a device keeps the newest marks only, and drops anything stored that is not a stamp", () => {
-    let m = {};
-    for (let i = 0; i < READ_MARKS_MAX + 20; i++) m = markSeen(m, `laptop:${i}`, 1000 + i);
-    assert.equal(Object.keys(m).length, READ_MARKS_MAX);
-    assert.equal(m["laptop:0"], undefined, "the oldest went");
-    assert.equal(m[`laptop:${READ_MARKS_MAX + 19}`], 1000 + READ_MARKS_MAX + 19, "the newest stayed");
+test("unread: the clocks are told apart: the baseline is this device's, the marks are the runtime's", () => {
+    const st = { since: 1000, seen: { [K]: 5_000_000 } };
+    assert.equal(isUnread(st, K, 5_000_100, 900, false), false, "runtime stamp is later than the mark, but the device clock says before the baseline");
+    assert.equal(isUnread(st, K, 5_000_100, 1100, false), true);
+});
+
+test("unread: a bad ending is unread like any other news, and read once seen", () => {
+    let st = readStateFrom(undefined, 1000);
+    for (const _ of UNTIL_READ) assert.equal(unread(st, K, 1200), true);
+    st = markSeen(st, K, 1200);
+    assert.equal(unread(st, K, 1200), false);
+    assert.equal(unread(st, K, 1260), true, "resumed and failed again");
+});
+
+test("unread: a device keeps the newest marks only, and drops anything stored that is not a stamp", () => {
+    let st = readStateFrom(undefined, 0);
+    for (let i = 0; i < READ_MARKS_MAX + 20; i++) st = markSeen(st, `laptop:${i}`, 1000 + i);
+    assert.equal(Object.keys(st.seen).length, READ_MARKS_MAX);
+    assert.equal(st.seen["laptop:0"], undefined, "the oldest went");
+    assert.equal(st.seen[`laptop:${READ_MARKS_MAX + 19}`], 1000 + READ_MARKS_MAX + 19, "the newest stayed");
+    assert.equal(st.since, 0, "the cap does not touch the baseline");
     assert.deepEqual(readMarksFrom({ a: 1, b: "2", c: null, d: Infinity, e: 3 }), { a: 1, e: 3 });
 });
 
-test("view prefs: a read mark is this device's, written once, and survives a reload", () => {
+test("unread: THE UPGRADE: marks stored without a baseline load with it set now, nothing suddenly unread, a read ending still read", () => {
+    // What the first version wrote: a flat key → stamp map. Junk is the same as nothing.
+    const old = { [K]: 100, "laptop:bbbb0002": 80 };
+    assert.equal(hasBaseline(old), false);
+    const st = readStateFrom(old, 5000);
+    assert.equal(st.since, 5000);
+    assert.deepEqual(st.seen, old);
+    for (const k of Object.keys(old)) assert.equal(unread(st, k, 4000), false, "everything that already existed is not news");
+    assert.equal(unread(st, K, 5100), true, "but what moves afterwards is");
+    for (const raw of [undefined, null, "x", 7, [], [1, 2]]) {
+        const j = readStateFrom(raw, 5000);
+        assert.deepEqual(j, { since: 5000, seen: {} });
+        assert.equal(hasBaseline(raw), false);
+    }
+});
+
+test("view prefs: the baseline is written the first time, a read mark is this device's, and both survive a reload", () => {
     const prefs = fakePrefs();
+    const t0 = Date.now();
     installViewPrefs(prefs);
-    markRead("laptop:aaaa0001", 100);
-    assert.deepEqual(prefs.all.get(READ_KEY), { "laptop:aaaa0001": 100 });
+    const first = prefs.all.get(READ_KEY);
+    assert.ok(first.since >= t0 && first.since <= Date.now(), "the baseline is stored on first load");
+    assert.deepEqual(first.seen, {});
+    markRead(K, 100);
+    assert.deepEqual(prefs.all.get(READ_KEY).seen, { [K]: 100 });
+    assert.equal(prefs.all.get(READ_KEY).since, first.since);
     const before = prefs.all.get(READ_KEY);
-    markRead("laptop:aaaa0001", 100);   // seen again, nothing new: no write
+    markRead(K, 100);   // seen again, nothing new: no write
     assert.equal(prefs.all.get(READ_KEY), before);
+    // A reload: the state is re-read from storage, the baseline is the stored one, and an unseen session stays unread.
     installViewPrefs(fakePrefs({ [READ_KEY]: prefs.all.get(READ_KEY) }));
-    assert.equal(seenEnding("capped", 100, readMarks.value, "laptop:aaaa0001"), true);
+    assert.equal(readState.value.since, first.since);
+    assert.equal(unread(readState.value, K, 100), false);
+    assert.equal(isUnread(readState.value, "laptop:cccc0003", first.since + 5, first.since + 5, false), true);
+    // The upgrade through the real loader: the old flat map is kept, a baseline is added and stored.
+    const up = fakePrefs({ [READ_KEY]: { [K]: 100 } });
+    installViewPrefs(up);
+    assert.deepEqual(readState.value.seen, { [K]: 100 });
+    assert.equal(up.all.get(READ_KEY).since, readState.value.since);
 });

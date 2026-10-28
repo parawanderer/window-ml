@@ -743,12 +743,6 @@ filtered locally, so a runtime without these commands finds by title. An archive
 **A runtime's group folds**, by id, stored per device. A folded head draws no count: the list is not where a number
 of sessions helps anyone, and an open group with nothing recent says so in words.
 
-**What moved while you were elsewhere** is marked with a dot (`movedSince`). Deliberately NOT stored: it answers
-"what happened while I was here", which is the brainstorming case — you are talking in one session and the run in
-the next tab gets somewhere — and not "what is unread", which would mark every session on the device the first time
-the page is opened and teach everyone to ignore the mark. A session seen for the first time is never marked, and
-reading one IS catching up with it.
-
 **Recent and pinned** (`SessionList`, `row-menu.tsx`). The list shows the last `RECENT_DAYS` (30) of each runtime,
 under a **Pinned** group that spans runtimes, and ends in an "Older sessions" row with a count that opens the search
 page. A session that is RUNNING or WAITING is recent however long ago it started: the list never files away
@@ -761,12 +755,22 @@ retention and eviction, and it reaches every device as an upsert, so a pin made 
 back rather than left claiming a pin the runtime refused. A runtime with no `session.pin` keeps the device's pin
 alone.
 
-**A bad ending's dot lasts until it has been read** (`read-marks.ts`, `readMarks`, `view.read`). A capped, failed,
-cancelled or interrupted session's list dot hides in calm view once this device has shown you its newest event:
-on the page, the open pane is at the end of the transcript in a visible tab; on the phone, the session is open over
-the list (`mobile/src/read-marks.ts`). The mark is that event's `lastTs`, so a run resumed that ends badly again
-gets its dot back. The status words stay. A running or waiting dot never hides: that is work, not news. Per device,
-like a pin; a device with no marks draws every dot, as before.
+**A session with news you have not seen is UNREAD** (`read-marks.ts` `isUnread`, `readState`, `view.read`): its title is
+bold in the list, and nothing else changes (the dot slot says what the run is doing, and an accent dot there was the
+same colour as a running one; there is no count, because the number of events a run emits is not one anybody wants read
+to them). Unread means the session's `lastTs` is later than BOTH this device's baseline and the newest event of it that
+has been on screen here, and it is not the session open now. The BASELINE is the moment this device first loaded its
+state, stored once (`{ since, seen }`) and never moved: a naive stored "unread" would mark every session the first time
+the page opens, and a mark on everything teaches nobody anything. So a session that last moved before the baseline is
+never unread, and what happens after it is news: a session that moved while you were in another one, a run that
+finished while the app was closed, a session started on another device. The baseline is on THIS device's clock and the
+marks on the runtime's, so the list compares `lastTs - clockOffsetMs` to the baseline and the raw `lastTs` to the mark.
+Opening a session marks it seen up to its newest event, when the open pane is at the end of the transcript in a visible
+tab (on the phone, when it is open over the list: `mobile/src/read-marks.ts`); a run resumed that moves again is unread
+again. A bad ending is unread news like any other, and once seen keeps its words ("failed", "stopped at its step cap")
+and loses its dot in calm view. A running or waiting session keeps its status dot whatever you have seen. The marks keep
+the newest `READ_MARKS_MAX` sessions. Per device, like a pin; the first version stored the marks alone (a flat key to
+stamp map), and that loads with a baseline of now and its marks kept, so an upgrade marks nothing.
 
 **Earlier events** (`EarlierEdge`, chat-app.tsx) draw the store's `earlier` state at the top of a transcript that does
 not reach its start: an older page is fetched as the edge scrolls into view, with the reading position held from the

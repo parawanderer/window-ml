@@ -772,15 +772,16 @@ test("desktop: the list folds a runtime away, and marks what moved while you wer
     await page.locator(".chat-rt[data-runtime='laptop']").click();
     await expect(rows).toHaveCount(8);
 
-    // A session that moves while another one is open is marked; reading it is catching up with it.
-    await expect(row(page, WAITING).locator(".chat-moved")).toHaveCount(0);
+    // A session that moves after this device's baseline is unread (a bold title); opening it is catching up with it.
+    const unread = page.locator(`.chat-row-wrap.unread:has(.chat-row[data-session="${WAITING}"])`);
+    await expect(unread).toHaveCount(0);
     await page.evaluate((k) => globalThis.__chatFake.emit(k, {
         kind: "agent-step", id: `${k}-9`, ts: Date.now(), save: true, session: { hash: k.split(":")[1], turn: 9 },
         step: 3, seq: 9, tool: "exec", arguments: { js: "1" }, result: "1",
     }), WAITING);
-    await expect(row(page, WAITING).locator(".chat-moved")).toBeVisible();
+    await expect(unread.last()).toBeVisible();
     await row(page, WAITING).click();
-    await expect(row(page, WAITING).locator(".chat-moved")).toHaveCount(0);
+    await expect(unread).toHaveCount(0);
     expect(errors).toEqual([]);
     await page.close();
 });

@@ -32,7 +32,6 @@ import { useNotifications } from "./notify";
 import { useFadeEdges } from "./fade-edges";
 import { ExportChat, exportingChat, type PartialWhy } from "./export-dialog";
 import { ViewToggle, calm, codeSize, panelSize, keyUse, knowsKeys, listOpen, logOpen, markRead, noteKeyUse, pane, setCalm, setLogOpen, setPane, setStateOpen, stateOpen } from "./view-mode";
-import { UNTIL_READ } from "./read-marks";
 import { MenuItem } from "./menu";
 import { SessionModelPicker } from "./model-picker";
 import { DeleteConfirm, RenameDialog, SessionActions, usePeek } from "./row-menu";
@@ -44,7 +43,7 @@ import { DockFrame, type DockPanel } from "./dock";
 import type { ChatExtras } from "./extras";
 import { clientUi, lightboxSrc, type ClientPlatform } from "./platform";
 import { PageChip } from "./page-chip";
-import { useMovedSince, SessionList } from "./session-list";
+import { SessionList } from "./session-list";
 import { useNarrow } from "./narrow";
 import { pinGlide } from "./pin-glide";
 
@@ -342,7 +341,7 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
     const lastTs = summary?.lastTs ?? 0, status = summary?.status;
     const noteRead = () => {
         const el = scroller.current;
-        if (!ready || !el || !status || !UNTIL_READ.has(status) || document.visibilityState !== "visible") return;
+        if (!ready || !el || !status || document.visibilityState !== "visible") return;
         if (el.scrollHeight - el.scrollTop - el.clientHeight < 40) markRead(sessionKey, lastTs);
     };
     useEffect(() => {
@@ -697,7 +696,6 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
     // stops an idle worker every half minute, which took the Extension tab away with it.
     const settingsRt = store.runtimes.value.find((r) => r.capabilities.localSettings && extras?.settings?.(r.id) != null);
     const main = mainView.value;
-    useMovedSince(store, key);
     useEffect(() => { if (key) store.open(key); else store.close(); }, [key]);
     useEffect(() => { if (key) { setStarting(null); mainView.value = null; } }, [key]);   // opening a session puts the form and the search page away
     // The compose button opens the start page: it closes whatever is open, because the start page IS the empty page.
