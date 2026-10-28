@@ -184,7 +184,23 @@ not, record that and choose between `declarativeNetRequest` rules and following 
    in-page card today, opens the panel instead on a hidden page. No per-tab popup state and no
    `openPanelOnActionClick`: a popup cleared per tab would have to be rebuilt after a worker restart and would take
    the popup away on that tab while the gate waits, for one click saved. The row's text is a new string, named in
-   the PR body. (3) Two PRs: 4a the highlight, 4b the panel. The highlight is one implementation on every page (random
+   the PR body. AMENDED 2026-10-28 on the lane's measurement (Chromium 151: `sidePanel.open` must run before the
+   gesture handler's first await, and rejects "No active side panel" on a tab whose panel is disabled, while an
+   un-awaited `setOptions` followed by `open` in the same tick succeeds; the panel page loads only while its tab is
+   active): the panel is enabled per tab whenever the tab's top document is HIDDEN, and disabled when it is visible,
+   written on the navigation commit and by the site-list sync that already walks the open tabs; it no longer follows
+   the run. A start gesture that lands in the worker (Alt+Space, the context menu) calls `sidePanel.open` for the
+   tab synchronously: success is a hidden page and the panel's composer opens; "No active side panel" is a visible
+   page and the in-page composer opens as today, once the presence read confirms it; a read that says hidden after
+   all (a navigation race) mounts nothing in the page, leaves the panel enabled and shows the badge. A run's end
+   leaves the panel enabled, showing the run as finished, empty after the next navigation. The invariants the red
+   team's rows keep: the decision is the browser's answer, never anything the page posts; nothing of the panel's
+   state reaches the page; the enablement is rebuilt from the open tabs when the worker starts, so a restart cannot
+   leave a hidden tab without its start surface (the lane measures whether Chrome keeps per-tab options across a
+   worker restart and says so in the PR body). The panel page is not among Playwright's pages; the e2e reaches it
+   through a CDP target or opens its document as a tab, in `docs/dev/e2e-harness.md`. Alternative rejected: enabling
+   at run start would leave the two gestures that matter most on a hidden page doing nothing there, with a new popup
+   row as the only start. (3) Two PRs: 4a the highlight, 4b the panel. The highlight is one implementation on every page (random
    custom-element name per session, closed root, no `ml-` id, class or attribute, present only while the approval
    waits), the e2e selectors moving to one helper, so there is no second drawer for visible pages; row 7 of
    `docs/dev/detection-surface.md` splits, the card part staying "No" for visible origins. (4) Rule 10 as for step 3:
