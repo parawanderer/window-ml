@@ -58,8 +58,8 @@ All three degrade gracefully, but knowing them saves a confusing minute:
 3. **The context window, `numCtx`.** `numCtx` is sent as Ollama's `num_ctx`,
    which sizes a local model's context. A provider API behind LiteLLM refuses
    it: Anthropic answers HTTP 400 `num_ctx: Extra inputs are not permitted`.
-   Leave `numCtx` out for a cloud model (its window is the provider's); and
-   `maxTokens`, which every provider understands, is still fine to send.
+   Leave `numCtx` out for a cloud model (its window is the provider's).
+   `maxTokens`, which every provider understands, is fine to send.
 
 ## Structured output
 
