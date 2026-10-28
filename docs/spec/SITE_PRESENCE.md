@@ -176,7 +176,15 @@ not, record that and choose between `declarativeNetRequest` rules and following 
    for the run, disabled when it ends); a gate that waits while the person has closed the panel shows the action badge
    and waits, with the action set to open the panel on its click (that click is the gesture), and draws nothing in the
    page but the highlight; the badge text and the panel's empty and closed states are new strings, named in the PR
-   body. (3) Two PRs: 4a the highlight, 4b the panel. The highlight is one implementation on every page (random
+   body. AMENDED 2026-10-28 on the lane's 4b question: the action has a popup (`action.default_popup` in
+   `manifest.json`), and while it does the action click opens the popup, not the panel. The popup is the gesture:
+   the badge (`sw-badge.ts`), which already counts start asks per tab, also counts gates waiting on a hidden-page
+   run whose panel is closed, and the popup shows one "Open panel" row per such tab, naming the tab, whose click
+   calls `chrome.sidePanel.open` for that tab. The popup's existing Show for a start ask, which brings up the
+   in-page card today, opens the panel instead on a hidden page. No per-tab popup state and no
+   `openPanelOnActionClick`: a popup cleared per tab would have to be rebuilt after a worker restart and would take
+   the popup away on that tab while the gate waits, for one click saved. The row's text is a new string, named in
+   the PR body. (3) Two PRs: 4a the highlight, 4b the panel. The highlight is one implementation on every page (random
    custom-element name per session, closed root, no `ml-` id, class or attribute, present only while the approval
    waits), the e2e selectors moving to one helper, so there is no second drawer for visible pages; row 7 of
    `docs/dev/detection-surface.md` splits, the card part staying "No" for visible origins. (4) Rule 10 as for step 3:
