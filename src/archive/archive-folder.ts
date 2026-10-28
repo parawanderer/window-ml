@@ -36,15 +36,26 @@ function idb(): Promise<IDBDatabase> {
 }
 
 /**
- * Keep (or with null, forget) the picked folder's handle, where the page and the worker both find it. Any call drops the
- * folder's pinned key (`saveFolderPin`) in the same transaction: a pin belongs to the folder it was set for.
+ * Keep (or with null, forget) the picked folder's handle, where the page and the worker both find it. The folder's
+ * pinned key (`saveFolderPin`) is kept only when `handle` is the same entry as the stored one (`isSameEntry`, the
+ * reconnect after a lost permission) and dropped otherwise: null, no stored handle, another folder, a handle without
+ * `isSameEntry`, or a comparison that throws. A pin belongs to the folder it was set for. `isSameEntry` is async, so the
+ * stored handle is read first, in its own transaction, and the write that follows is one transaction.
  */
 export async function saveFolder(handle: FileSystemDirectoryHandle | null): Promise<void> {
+    let same = false;
+    if (handle) {
+        try {
+            const old = await loadFolder();
+            const cmp = (old as { isSameEntry?: (o: unknown) => Promise<boolean> } | null)?.isSameEntry;
+            same = typeof cmp === "function" && (await cmp.call(old, handle)) === true;
+        } catch { same = false; }
+    }
     const db = await idb();
     await new Promise<void>((resolve, reject) => {
         const t = db.transaction(STORE, "readwrite");
         if (handle) t.objectStore(STORE).put(handle, KEY); else t.objectStore(STORE).delete(KEY);
-        t.objectStore(STORE).delete(PIN_KEY);
+        if (!same) t.objectStore(STORE).delete(PIN_KEY);
         t.oncomplete = () => resolve();
         t.onerror = () => reject(t.error);
     });
@@ -185,12 +196,18 @@ export async function readMonthHead(dir: FileSystemDirectoryHandle, month: strin
     return file ? readHeadAndFirstChunk(await file.getFile()) : null;
 }
 
-/** What `monthKeyCounts` found: month files per key this install holds, and the files that open under none of them. */
+/** What `monthKeyCounts` found: month files per key this install holds, the files that open under none of them, and those that name a key it never held. */
 export interface KeyCounts {
     /** encrypted month files that open under the key with this id (current or retired) */
     byKey: Record<string, number>;
     /** encrypted month files that open under no key this install holds, whatever their header says */
     unopened: number;
+    /**
+     * encrypted month files whose header reads and names a key id that is in no key of the ring (with no ring, every
+     * readable encrypted header). Also counted in `unopened`; damage (unreadable, no header, a held key that does not
+     * open) is not here. What keeps a refresh from pinning this install's key over a genuine second machine's months.
+     */
+    foreign: number;
 }
 
 /**
@@ -198,19 +215,21 @@ export interface KeyCounts {
  * `keyFor(ring, header.keyId)` is K AND K opens its first chunk (`opensFirstChunk`, one AES-GCM per month), so a header
  * that merely names a key, over a payload nothing opens, counts for nobody. The header is the chunks' associated data,
  * so a relabelled real month opens under no key either and shows in `unopened` instead of vanishing. Files that cannot
- * be read, files under a key this install never held, and files that do not open all count as `unopened`. A header and
+ * be read, files under a key this install never held, and files that do not open all count as `unopened`; of those, the
+ * ones whose header reads and names a key this install never held also count as `foreign` (part 3f). A header and
  * first chunk read through the handle the page holds; no worker op. What Settings tells a person before they forget a
  * retired key.
  * @param ring this install's keyring (never handed to a component); null before set-up, when every file is unopened
  */
 export async function monthKeyCounts(dir: FileSystemDirectoryHandle, ring: Keyring | null): Promise<KeyCounts> {
-    const out: KeyCounts = { byKey: {}, unopened: 0 };
+    const out: KeyCounts = { byKey: {}, unopened: 0, foreign: 0 };
     for (const f of await monthFiles(dir)) {
         if (f.form !== "encrypted") continue;
         try {
             const head = await readMonthHead(dir, f.month);
-            const key = head && ring ? keyFor(ring, readHeader(head).keyId) : null;
-            if (!head || !key) { out.unopened++; continue; }
+            const keyId = head ? readHeader(head).keyId : null;
+            const key = head && ring && keyId ? keyFor(ring, keyId) : null;
+            if (!head || !key) { out.unopened++; if (head) out.foreign++; continue; }
             await opensFirstChunk(head, key);
             out.byKey[key.keyId] = (out.byKey[key.keyId] ?? 0) + 1;
         } catch { out.unopened++; }

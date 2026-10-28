@@ -240,6 +240,8 @@ test("other-key: beside the existing line, a field for the other install's secre
 test("other-key: a wrong secret says so and keeps the typed text", async () => {
     const host = show({ report: conn({ skipped: [skip("2026-08", "other-key", "ka")] }), adoptWrong: true, onAdoptKey() {} });
     assert.match(host.textContent, /does not open this folder's files/);
+    assert.match(host.textContent, /If the key matched, these files may not be what they say\./, "an id was shown, so the line is there");
+    assert.doesNotMatch(show({ report: conn({ skipped: [skip("2026-08", "other-key")] }), adoptWrong: true, onAdoptKey() {} }).textContent, /may not be what they say/, "no id shown, no such line");
     const field = host.querySelector('.arch-adopt input[type="password"]');
     assert.ok(field.classList.contains("err"));
     typeInto(field, "typed"); await flush();
@@ -282,7 +284,7 @@ const RK = [{ keyId: "9f3a1c7e2b40d815", since: Date.UTC(2026, 9, 20, 12) }, { k
 const rows = (host) => [...host.querySelectorAll(".arch-rk")].map((r) => r.querySelector(".arch-rk-row").textContent);
 
 test("retired keys: short id, the date or 'retired earlier', and how many months are under each; the section lists them under the form", () => {
-    const host = show({ report: conn({ keyring: { set: true, keyId: "k1", retired: RK } }), keyCounts: { byKey: { "9f3a1c7e2b40d815": 2 }, unopened: 0 } });
+    const host = show({ report: conn({ keyring: { set: true, keyId: "k1", retired: RK } }), keyCounts: { byKey: { "9f3a1c7e2b40d815": 2 }, unopened: 0, foreign: 0 } });
     const [dated, undated] = rows(host);
     assert.match(dated, /^9f3a 1c7e 2b40 d815retired \d+\/\d+\/\d+, 2 months in the folderForget$/);
     assert.match(undated, /^c04b 77aa 19e2 f6d3retired earlier, 0 months in the folderForget$/);
@@ -300,7 +302,7 @@ test("retired keys with the folder unreadable here: the list without counts", ()
 
 test("forget says what it costs once, then acts only on the second click; cancel leaves it", async () => {
     const got = [];
-    const host = show({ report: conn({ keyring: { set: true, keyId: "k1", retired: RK } }), keyCounts: { byKey: { "9f3a1c7e2b40d815": 3 }, unopened: 0 }, onForgetKey: (k) => got.push(k) });
+    const host = show({ report: conn({ keyring: { set: true, keyId: "k1", retired: RK } }), keyCounts: { byKey: { "9f3a1c7e2b40d815": 3 }, unopened: 0, foreign: 0 }, onForgetKey: (k) => got.push(k) });
     [...host.querySelectorAll(".arch-rk button")][0].click(); await flush();
     assert.deepEqual(got, [], "the first click only asks");
     const ask = host.querySelector(".arch-rk-ask");
@@ -317,7 +319,7 @@ test("the notice: months still under the key are skipped; none under it is said 
     assert.match(forgetNotice(0), /^Files under this key will ask for its passphrase or recovery key on this install\. No month in the folder is under it, so nothing there is affected\.$/);
     assert.match(forgetNotice(1), /1 month in the folder is still under it and will be skipped until another install rewrites it\./);
     assert.match(forgetNotice(4), /4 months in the folder are still under it/);
-    const host = show({ report: conn({ keyring: { set: true, keyId: "k1", retired: [RK[1]] } }), keyCounts: { byKey: {}, unopened: 0 } });
+    const host = show({ report: conn({ keyring: { set: true, keyId: "k1", retired: [RK[1]] } }), keyCounts: { byKey: {}, unopened: 0, foreign: 0 } });
     host.querySelector(".arch-rk button").click();
     return flush().then(() => assert.match(host.querySelector(".arch-rk-ask").textContent, /No month in the folder is under it/));
 });
@@ -345,12 +347,12 @@ test("the form choice shows This install's key when a keyring is set, and not be
 
 test("the adopt block names the key in the files and says to check it against the other machine; a report with no key id shows no such line", () => {
     const host = show({ report: conn({ skipped: [skip("2026-09", "other-key", OTHER)] }) });
-    assert.match(host.querySelector(".arch-adopt").textContent, /Key in these files: c04b 77aa 19e2 f6d3\. Check it matches the key shown in Settings on the other machine before you enter its secret\./);
+    assert.match(host.querySelector(".arch-adopt").textContent, /These files say they are under c04b 77aa 19e2 f6d3\. Check it matches the key shown in Settings on the other machine before you enter its secret; entering it is what checks the files\./);
     const old = show({ report: conn({ skipped: [skip("2026-09", "other-key")] }) });
     assert.ok(old.querySelector(".arch-adopt"), "the offer itself is unchanged");
-    assert.doesNotMatch(old.textContent, /Key in these files/);
+    assert.doesNotMatch(old.textContent, /say they are under/);
     const fresh = show({ report: conn({ keyring: { set: false }, skipped: [skip("2026-08", "needs-key", OTHER)] }) });
-    assert.match(fresh.textContent, /Key in these files: c04b 77aa 19e2 f6d3/, "a new machine sees it too");
+    assert.match(fresh.textContent, /These files say they are under c04b 77aa 19e2 f6d3/, "a new machine sees it too");
 });
 
 test("the forget notice adds the unopened sentence when files open under no key, and not when none do", () => {
@@ -361,7 +363,7 @@ test("the forget notice adds the unopened sentence when files open under no key,
     assert.doesNotMatch(none, /nothing there is affected/, "unopened files may be under it, so it is not the safe case");
     assert.match(none, /No month in the folder opens under it\. 2 more files/);
     assert.match(forgetNotice(0, 0), /No month in the folder is under it, so nothing there is affected\.$/);
-    const host = show({ report: conn({ keyring: { set: true, keyId: "k1", retired: [RK[0]] } }), keyCounts: { byKey: { [RK[0].keyId]: 1 }, unopened: 3 } });
+    const host = show({ report: conn({ keyring: { set: true, keyId: "k1", retired: [RK[0]] } }), keyCounts: { byKey: { [RK[0].keyId]: 1 }, unopened: 3, foreign: 0 } });
     host.querySelector(".arch-rk button").click();
     return flush().then(() => assert.match(host.querySelector(".arch-rk-ask").textContent, /3 more files in the folder open under no key/));
 });
@@ -371,12 +373,16 @@ test("This folder's key changed: only with a pin and an other-key skip naming a 
     const host = show({ report: conn({ skipped }), pin: PIN, onAdoptKey() {} });
     const text = changedText(host);
     assert.match(text, /^This folder's key changed\./);
+    assert.match(text, /2 months say they are under c04b 77aa 19e2 f6d3\./, "the files' claim, not a fact");
+    assert.match(changedText(show({ report: conn({ skipped: [skip("2026-09", "other-key", OTHER)] }), pin: PIN })), /1 month says it is under c04b 77aa 19e2 f6d3\./);
     assert.ok(text.includes("9f3a 1c7e 2b40 d815") && text.includes("c04b 77aa 19e2 f6d3"), "both ids, in the helper's format");
+    const mixed = changedText(show({ report: conn({ skipped: [skip("2026-09", "other-key", OTHER), skip("2026-08", "other-key", "54526a29cd3f30e6")] }), pin: PIN }));
+    assert.match(mixed, /1 month says it is under c04b 77aa 19e2 f6d3, and 1 more says it is under another key\./, "a month naming another id is not counted under the one named (red-team R6 on 3f)");
     assert.match(text, /If you did not change the key on your other machine, do not enter a secret here: someone who can write to this folder may have added these files\./);
     const order = [...host.querySelectorAll(".arch-skips > *")].map((e) => e.className);
     assert.match(order[0], /arch-changed/, "it leads");
     assert.ok(host.querySelector(".arch-adopt"), "adoption stays possible");
-    assert.match(host.querySelector(".arch-adopt").textContent, /Key in these files: c04b 77aa 19e2 f6d3/);
+    assert.match(host.querySelector(".arch-adopt").textContent, /These files say they are under c04b 77aa 19e2 f6d3/);
     // The pin itself, or no other-key skip, or a skip with no id: no changed-key block.
     assert.equal(changedText(show({ report: conn({ skipped: [skip("2026-09", "other-key", PIN)] }), pin: PIN })), null, "skips under the pinned key are not a change");
     assert.equal(changedText(show({ report: conn({ skipped: [skip("2026-09", "other-key")] }), pin: PIN })), null, "a report with no key id names nothing to compare");
@@ -391,7 +397,7 @@ test("THE UPGRADE: an install with no pin (a new machine, or one from before 3e 
         assert.equal(changedText(host), null, `pin ${pin}`);
         assert.doesNotMatch(host.textContent, /key changed|someone who can write/);
         assert.match(host.textContent, /1 month is encrypted with another install's key\. It is left as it was\./);
-        assert.match(host.textContent, /Key in these files: c04b 77aa 19e2 f6d3/);
+        assert.match(host.textContent, /These files say they are under c04b 77aa 19e2 f6d3/);
         assert.ok(host.querySelector(".arch-adopt"));
     }
 });
@@ -402,16 +408,19 @@ test("the changed key is named from the key most skipped months share, and a pin
     assert.ok(text.includes("c04b 77aa 19e2 f6d3"), text);
 });
 
-test("a refresh pins the folder's key only when it is connected, encrypted, synced, nothing is skipped or unopened, and no pin is set", () => {
+test("a refresh pins the folder's key unless a month names a key this install does not hold: connected, encrypted, synced, no pin, no other-key skip, no foreign header", () => {
     const r = conn();
-    assert.equal(folderPinToSet(r, null, [], 0), "k1");
-    assert.equal(folderPinToSet(r, "kk", [], 0), null, "already pinned: never moved by a refresh");
-    assert.equal(folderPinToSet(r, null, [skip("2026-09", "other-key", OTHER)], 0), null, "a month was skipped");
-    assert.equal(folderPinToSet(r, null, [], 1), null, "a file opens under no key");
+    const clean = { byKey: {}, unopened: 0, foreign: 0 };
+    assert.equal(folderPinToSet(r, null, [], clean), "k1");
+    assert.equal(folderPinToSet(r, "kk", [], clean), null, "already pinned: never moved by a refresh");
+    assert.equal(folderPinToSet(r, null, [skip("2026-09", "other-key", OTHER)], clean), null, "a month was skipped for another key");
+    assert.equal(folderPinToSet(r, null, [], { ...clean, unopened: 1, foreign: 1 }), null, "a header names a key this install does not hold");
+    assert.equal(folderPinToSet(r, null, [skip("2026-09", "unreadable")], { ...clean, unopened: 2 }), "k1", "damage and unopenable files do not hold it off");
+    assert.equal(folderPinToSet(r, null, [skip("2026-09", "needs-key", OTHER)], clean), "k1", "only other-key skips block");
     assert.equal(folderPinToSet(r, null, [], null), null, "the folder could not be read here");
-    assert.equal(folderPinToSet(conn({ lastSync: null }), null, [], 0), null, "never synced");
-    assert.equal(folderPinToSet(conn({ form: "plain" }), null, [], 0), null);
-    assert.equal(folderPinToSet(conn({ form: null }), null, [], 0), null);
-    assert.equal(folderPinToSet(conn({ state: "needs-grant" }), null, [], 0), null);
-    assert.equal(folderPinToSet(conn({ keyring: { set: false } }), null, [], 0), null);
+    assert.equal(folderPinToSet(conn({ lastSync: null }), null, [], clean), null, "never synced");
+    assert.equal(folderPinToSet(conn({ form: "plain" }), null, [], clean), null);
+    assert.equal(folderPinToSet(conn({ form: null }), null, [], clean), null);
+    assert.equal(folderPinToSet(conn({ state: "needs-grant" }), null, [], clean), null);
+    assert.equal(folderPinToSet(conn({ keyring: { set: false } }), null, [], clean), null);
 });

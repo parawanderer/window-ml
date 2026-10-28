@@ -156,19 +156,38 @@ export async function presence(url: string | undefined): Promise<Presence> {
     return presenceOf(await readSiteLists(), origin, await sitesMayAsk());
 }
 
+/** The documents `injectPageScripts` has put the page scripts into, oldest first, so none is given them twice. Lost with
+ *  the worker; a document that outlives it is asked about again only by a list change (showInOpenTabs). */
+const injectedDocs = new Set<string>();   // state: plumbing
+const INJECTED_DOCS_MAX = 512;   // state: fixed
+
 /**
  * Put the main-world scripts into the document a tab shows now, for a run the person started on a hidden page. The page
  * has been running its own code, so it can watch this happen: from here on it sees what a page with window.ml sees.
  * A closed shadow root the page attached before this is not captured.
  * @param tabId the tab
  * @param documentId the document to put them in, when known, so a tab that navigated meanwhile is not given them
- * @returns once both files have run in the top frame
+ * @returns once both files have run in the top frame, or at once for a document that already received them (so a
+ *   resolved call means the scripts are there, not that they were injected now)
  * @throws when the extension may not script the tab or the document is gone
  */
 export async function injectPageScripts(tabId: number, documentId?: string): Promise<void> {
+    // A document is given them once: a second injected.js would replace window.ml and, after the re-arm, take the content
+    // script's port from the first, orphaning a run on it (a repeated PAGE_SCRIPT_MISSING, or one racing showInOpenTabs).
+    if (documentId) {
+        if (injectedDocs.has(documentId)) return;
+        injectedDocs.add(documentId);
+        if (injectedDocs.size > INJECTED_DOCS_MAX) injectedDocs.delete(injectedDocs.values().next().value as string);
+    }
     const target = documentId ? { tabId, documentIds: [documentId] } : { tabId };
     // First the content script drops any port the page handed it, so the one it takes next is injected.js's
     // (page-channel.ts). No answer (no content script there yet) is no harm: a fresh one is armed already.
-    await chrome.tabs.sendMessage(tabId, { type: "PAGE_PORT_ARM" }, documentId ? { documentId } : { frameId: 0 }).catch(() => undefined);
-    await chrome.scripting.executeScript({ target, world: "MAIN", files: PAGE_SCRIPT_FILES });
+    try {
+        await chrome.tabs.sendMessage(tabId, { type: "PAGE_PORT_ARM" }, documentId ? { documentId } : { frameId: 0 }).catch(() => undefined);
+        await chrome.scripting.executeScript({ target, world: "MAIN", files: PAGE_SCRIPT_FILES });
+    } catch (e) {
+        // Only a document that received them stays marked, or a later call would answer for scripts that are not there.
+        if (documentId) injectedDocs.delete(documentId);
+        throw e;
+    }
 }

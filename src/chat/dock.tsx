@@ -133,19 +133,22 @@ export function DockFrame({ panels, narrow, children }: { panels: readonly DockP
     const zoomed = maximized.value && open.includes(maximized.value) ? maximized.value : null;
     // A zoom whose panel has closed is over.
     useEffect(() => { if (maximized.value && !zoomed) maximized.value = null; }, [zoomed]);
-    // Escape comes back from a zoom, unless a menu or dialog over it wants the key first.
+    // Escape comes back from a zoom, unless a menu or dialog over it wants the key first. Installed for the frame's
+    // life and asking whether a zoom is on when the key arrives, NOT installed by the zoom: an effect runs a frame
+    // after the render that drew `.max`, and an Escape in that frame found no listener and was lost for good, so
+    // the zoom could not be dismissed (chat-page.spec.mjs "zoom until Escape", on a loaded runner; tests/dock-zoom.test.mjs).
     useEffect(() => {
-        if (!zoomed) return;
         const onKey = (e: KeyboardEvent) => {
+            if (e.key !== "Escape" || e.defaultPrevented || !maximized.value || dockDrag.value) return;
             // `:not(.leaving)` — a menu now stays in the DOM for the beat it takes to animate away (use-dismiss.ts),
             // and a menu on its way out is not one that wants this key: without it, the Escape that closed a menu
             // left a corpse that swallowed the NEXT Escape, so a zoomed panel could not be dismissed.
-            if (e.key !== "Escape" || e.defaultPrevented || document.querySelector(".chat-menu:not(.leaving), .chat-dialog") || dockDrag.value) return;
+            if (document.querySelector(".chat-menu:not(.leaving), .chat-dialog")) return;
             maximized.value = null;
         };
         document.addEventListener("keydown", onKey);
         return () => document.removeEventListener("keydown", onKey);
-    }, [zoomed]);
+    }, []);
     const byId = new Map(panels.map((p) => [p.id, p]));
     const ctx: DockCtx = { layout, open, byId, frame, narrow };
     // A phone lays the page out one pane at a time, the list included, so there is no column to frame: the panels

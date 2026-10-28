@@ -32,6 +32,9 @@ window-ml pins and verifies, as `scripts/fetch-hub.mjs` does for the hub binary.
 - **Moving the fork commit moves three pin fields**: `cpython.commit`, `cpython.restrictedPySha256` (the commit's
   `Lib/restricted.py`) and `patches.count`, the number of commits `format-patch` exports from base to commit with
   `Tools/restricted` excluded. The recipe refuses a count that disagrees (`ca282158`, 2026-10-24: 21 to 24).
+- **The work dir is `~/git/window-ml/tmp/pyodide-build` whichever clone runs the recipe.** It was the running clone's
+  own `tmp/`, so removing the clone after its PR took the emsdk + Pyodide tree (3.3 GB, hours) with it (2e41d920,
+  2026-10-28). A rerun keeps that tree and rebuilds CPython only. Two builds at once would share it: run one at a time.
 - **A shallow `--cpython` clone is not used**: `format-patch` needs the whole range down to the base, so the recipe
   makes its own full clone of the fork in the work dir instead, which adds a clone to a clean build.
 - **A failed build leaves a half-made install tree** (`cpython/installs/`) that a rerun trusts; delete `cpython/installs`
