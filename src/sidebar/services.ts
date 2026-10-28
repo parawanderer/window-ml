@@ -11,6 +11,7 @@
 // Session identifiers are the session's KEY in this client (`Session.hash`): the bare hash for the sidebar's own
 // sessions, `runtime:hash` in the chat page. An implementation that needs the bare hash takes it with `bareHash`.
 
+import type { AttachedFile } from "../contract/contract-run";
 import type { SendOutcome } from "./drafts";
 
 /** A small utility-model call the UI makes about a session: its title, a block summary, `explain` notes, an
@@ -50,7 +51,13 @@ export interface SidebarServices {
     answerStart?(requestId: string, decision: "allow" | "always" | "deny"): void;
     /** A message to a session: steers a running agent, or starts its next turn. Resolves when the host knows whether it
      *  was taken, so the composer can put the text back on a failure (drafts.ts); never rejects. */
-    sendToSession(session: string, text: string, images?: string[]): Promise<SendOutcome>;
+    sendToSession(session: string, text: string, images?: string[], files?: AttachedFile[]): Promise<SendOutcome>;
+    /**
+     * Does the runtime behind this session take text files with a message (`capabilities.attachFiles`)? A runtime
+     * without it would IGNORE a `files` field and send the message without them, so the composer refuses a file
+     * rather than send one there. Read during render, like `sideCalls`.
+     */
+    acceptsFiles(session: string): boolean;
     cancelSession(session: string): void;
     /** continue a run stopped at its step cap, or retry a failed one. `maxSteps` is a budget chosen for this
      *  continuation; omitted keeps the run's own. A retry never carries one — it is the same turn again. */
@@ -162,6 +169,7 @@ const UNAVAILABLE: SidebarServices = {
     bench: false,
     answerApproval() {},
     sendToSession: async () => ({ ok: false, error: "no host is installed" }),
+    acceptsFiles: () => false,
     cancelSession() {},
     continueSession() {},
     canContinue: () => false,

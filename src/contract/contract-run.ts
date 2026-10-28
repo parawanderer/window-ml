@@ -111,8 +111,21 @@ export interface ElementContext {
 
 /** Something a person attached to a message that was folded into the TEXT the model got, kept structured so the UI
  *  can draw it as an object beside their words instead of as text they never typed. Today only a right-clicked element;
- *  a `kind` so a selection or a tab can join it. */
-export type PromptContext = { kind: "element"; element: ElementContext };
+ *  a `kind` so a selection or a tab can join it. A `file` is a text file's DESCRIPTOR only (docs/spec/FILE_ATTACHMENTS.md):
+ *  its text is in the message's own `text` as a `<file>` block, so it is not carried twice. */
+export type PromptContext = PromptElementContext | PromptFileContext;
+/** A right-clicked element, folded into a message. */
+export interface PromptElementContext { kind: "element"; element: ElementContext }
+/** A text file attached to a message. */
+export interface PromptFileContext { kind: "file"; file: AttachedFileInfo }
+
+/** A text file a person attached to a message, as a client sends it (slice 1 of docs/spec/FILE_ATTACHMENTS.md carries
+ *  the DECODED text; the base64 `data` the spec first described comes with PDFs). `type` is the browser's MIME type
+ *  for the file, "text/plain" when it names none. */
+export interface AttachedFile { name: string; type: string; text: string }
+
+/** What a transcript keeps of an attached file: everything but the text, which the message holds. */
+export interface AttachedFileInfo { name: string; type: string; bytes: number; lines: number }
 
 /** How a person's message is SHOWN when the text the model got is not what they typed: their own words, and what they
  *  attached. Present only when the two differ; the message's `text`/`task` stays exactly what the model saw, which is
@@ -133,7 +146,10 @@ export function promptLine(text: string, display?: PromptDisplay | null): string
     if (!display) return text;
     if (display.typed) return display.typed;
     const el = display.context.find((c) => c.kind === "element");
-    return el ? `About a selected ${el.element.role || "element"}` : text;
+    if (el) return `About a selected ${el.element.role || "element"}`;
+    const files = display.context.filter((c): c is Extract<PromptContext, { kind: "file" }> => c.kind === "file");
+    if (files.length) return files.length === 1 ? `About ${files[0].file.name}` : `About ${files.length} files`;
+    return text;
 }
 
 /** How many hex characters of a session hash are SHOWN. The rest is still copied, and still what resumes it. */

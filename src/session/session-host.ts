@@ -7,7 +7,7 @@
 // can all import it. Every value arriving through it is UNTRUSTED input to the client: strings render as escaped
 // text, and an unknown kind, command or version is skipped, never guessed at.
 import type { JsonSchema } from "../contract";
-import type { ElementContext } from "../contract/contract-run";
+import type { AttachedFile, ElementContext } from "../contract/contract-run";
 import type { NeutralMessage, TokenUsage } from "../contract/contract-chat";
 import type { MlDebugEvent } from "../contract/contract-debug";
 import type { FolderState } from "../archive/archive-folder";
@@ -130,6 +130,9 @@ export interface RuntimeCapabilities {
     headless?: boolean;
     /** RESERVED: accepts `agent.start` with `lineage` (a subagent started by another agent). False today. */
     lineage?: boolean;
+    /** `files` on `chat.start`, `agent.start` and `session.send`: text files sent whole inside the message. A runtime
+     *  without it ignores the field, so a client must not send one there. */
+    attachFiles?: boolean;
     /** the boxes this runtime uses */
     boxes?: BoxRef[];
     /** the long-term session archive, present while it is switched on (`sessionArchive`). Reachable through
@@ -391,6 +394,14 @@ export type IdempotencyKey = string;
 /** An image a client sends: a `data:image/*` URL. Runtimes cap the count and size and drop anything else. */
 export type ImageDataUrl = string;
 
+/**
+ * A text file a client sends with a message, on `chat.start`, `agent.start` and `session.send`: its name, its type and
+ * its DECODED text (docs/spec/FILE_ATTACHMENTS.md, slice 1). A runtime checks it itself (count, name length, total
+ * text: `filesRefusal`, attached-files.ts) and answers `invalid` with the reason; a runtime that does not list
+ * `capabilities.attachFiles` would IGNORE the field, so a client sends it only to one that does.
+ */
+export type { AttachedFile };
+
 /** Every command a client can send, by `type`. A runtime answers a type it does not know with `unsupported`, so a
  *  newer client talking to an older runtime degrades to a message, never to a guess. The scope each needs is in
  *  {@link COMMAND_SCOPE}. */
@@ -398,7 +409,7 @@ export type Command =
     /** A message to a session: steers a running agent (seen at its next step boundary), or starts the next turn of
      *  an idle agent or chat. Text, images, or both. */
     | {
-        type: "session.send"; session: SessionId; text: string; images?: ImageDataUrl[]; elementContext?: ElementContext; idempotencyKey?: IdempotencyKey;
+        type: "session.send"; session: SessionId; text: string; images?: ImageDataUrl[]; files?: AttachedFile[]; elementContext?: ElementContext; idempotencyKey?: IdempotencyKey;
         /** {@link ClientUi}: what the sending client says it can show. A claim; absent from an older client. */
         ui?: ClientUi;
     }
@@ -454,14 +465,14 @@ export type Command =
         /** A NESTED ask inside step `seq` (a call made while the step ran); absent for the step's own gate. */
         ask?: string }
     | {
-        type: "chat.start"; runtime: RuntimeId; text: string; images?: ImageDataUrl[];
+        type: "chat.start"; runtime: RuntimeId; text: string; images?: ImageDataUrl[]; files?: AttachedFile[];
         model?: string; system?: string; think?: boolean | null;
         /** absent: the session is saved */
         ephemeral?: true;
         idempotencyKey?: IdempotencyKey;
     }
     | {
-        type: "agent.start"; runtime: RuntimeId; task: string; images?: ImageDataUrl[]; target: AgentTarget;
+        type: "agent.start"; runtime: RuntimeId; task: string; images?: ImageDataUrl[]; files?: AttachedFile[]; target: AgentTarget;
         model?: string; maxSteps?: number;
         /** {@link ClientUi}: what the sending client says it can show. A claim; absent from an older client. */
         ui?: ClientUi;

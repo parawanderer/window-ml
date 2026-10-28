@@ -1441,6 +1441,26 @@ test("a composer follow-up with a right-clicked element, to a page-built handle:
     assert.equal(last.at(-1).content, say.text, "the model got exactly the text the raw view shows");
 });
 
+test("a composer follow-up with attached files, to a page-built handle: the model gets the blocks, the bubble shows the words and the chip", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("first answer"), reply("the disk is full")]) });
+    const events = [];
+    world.fromInjected((e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    world.asContent({ __mlSidebar: "ready" });
+    const a = world.ml.createAgent({ tools: [], maxSteps: 3 });
+    await a.run("first task");
+    const files = [{ name: "server.log", type: "text/plain", text: "boot ok\nfatal: disk\n" }];
+    world.asContent({ __mlSessionSend: { hash: a.hash, text: "why did it die?", files } });
+    for (let i = 0; i < 50 && !events.some((e) => e.kind === "agent-result" && e.summary === "the disk is full"); i++) await new Promise((r) => setTimeout(r, 5));
+    const say = events.find((e) => e.kind === "agent-say");
+    assert.ok(say, "the follow-up was shown as a message");
+    assert.equal(say.text, 'why did it die?\n\n<file name="server.log" type="text/plain" bytes="20">\nboot ok\nfatal: disk\n</file>');
+    assert.deepEqual(JSON.parse(JSON.stringify(say.display)), { typed: "why did it die?", context: [{ kind: "file", file: { name: "server.log", type: "text/plain", bytes: 20, lines: 2 } }] });
+    const last = world.runtimeCalls.filter((c) => c.payload && c.payload.messages).at(-1).payload.messages;
+    assert.equal(last.at(-1).content, say.text, "the model got exactly the text the raw view shows");
+    // A malformed list off the channel is no files, not a half-built message.
+    world.asContent({ __mlSessionSend: { hash: a.hash, text: "again", files: [{ name: "x" }] } });
+});
+
 test("follow-up run: the answer set is CLEARED between turns — a 2nd turn that designates nothing carries no stale answer", async () => {
     // The purge invariant (page loop): turn 1 designates a text answer via the `answer` tool → res.answer is
     // non-empty. Turn 2 designates NOTHING; the loop clears the answer set at the turn boundary (answerSet.clear()),

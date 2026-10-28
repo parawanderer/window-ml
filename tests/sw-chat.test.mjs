@@ -241,3 +241,41 @@ test("a session hash is long enough to stay unique, and short where it is read",
     assert.equal(HASH_SHOWN, 8);
     assert.equal(one.slice(0, HASH_SHOWN).length, 8);
 });
+
+// --- attached text files (docs/spec/FILE_ATTACHMENTS.md, slice 1) ---
+
+const NOTES = { name: "notes.md", type: "text/markdown", text: "# todo\n- ship\n" };
+
+test("a chat started with files sends the model the typed words and the file's block, and the event keeps the two apart", T, async () => {
+    const w = world();
+    await startBackgroundChat({ text: "summarise", files: [NOTES] });
+    await until(() => w.of("chat-result").length === 1, "the turn to finish");
+
+    const block = '<file name="notes.md" type="text/markdown" bytes="14">\n# todo\n- ship\n</file>';
+    const [start] = w.of("chat");
+    assert.equal(start.request.messages.at(-1).content, `summarise\n\n${block}`, "what the model got, exactly");
+    assert.deepEqual(start.display, { typed: "summarise", context: [{ kind: "file", file: { name: "notes.md", type: "text/markdown", bytes: 14, lines: 2 } }] });
+    assert.equal(w.of("chat-result")[0].content, `re: summarise\n\n${block}`, "the fake model echoes what it was sent");
+});
+
+test("a later turn sends the files again as part of the history, and a message of only a file is a turn", T, async () => {
+    const w = world();
+    const hash = await startBackgroundChat({ text: "read this", files: [NOTES] });
+    await until(() => w.of("chat-result").length === 1, "turn 1");
+    assert.equal(await sendBackgroundChat(hash, "", undefined, [{ name: "b.txt", type: "text/plain", text: "more" }]), "turn");
+    await until(() => w.of("chat-result").length === 2, "turn 2");
+
+    const second = w.of("chat")[1];
+    assert.equal(second.request.messages[0].content.includes('<file name="notes.md"'), true, "the first turn's file is still in the history the model reads");
+    assert.equal(second.request.messages.at(-1).content, '<file name="b.txt" type="text/plain" bytes="4">\nmore\n</file>');
+    assert.equal(second.display.typed, "");
+    assert.ok(w.stored.get(hash).messages[0].content.includes("<file name=\"notes.md\""), "saved with the files, so a resume has them");
+});
+
+test("a turn without files is unchanged: no display on the event, the typed text is the message", T, async () => {
+    const w = world();
+    await startBackgroundChat({ text: "plain" });
+    await until(() => w.of("chat-result").length === 1, "the turn to finish");
+    assert.equal("display" in w.of("chat")[0], false);
+    assert.equal(w.of("chat")[0].request.messages.at(-1).content, "plain");
+});

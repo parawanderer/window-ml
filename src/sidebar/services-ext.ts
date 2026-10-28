@@ -61,6 +61,8 @@ export const extensionServices: SidebarServices = {
     // The shell, or the DevTools panel, forwards it as SET_START_APPROVAL, having checked it came from this frame.
     answerStart: (requestId, decision) => toHost({ __mlSidebarApp: "startDecision", requestId, decision }),
     // A post to the page, which answers nothing: what goes wrong from there shows in the run itself.
+    // The overlay and DevTools composers do not attach files in this slice (docs/spec/FILE_ATTACHMENTS.md): only the chat page's.
+    acceptsFiles: () => false,
     sendToSession: async (hash, text, images) => { toHost({ __mlSidebarApp: "sessionSend", hash, text, images }); return { ok: true }; },
     cancelSession: (hash) => toHost({ __mlSidebarApp: "sessionCancel", hash }),
     continueSession: (hash, maxSteps) => toHost({ __mlSidebarApp: "continueRun", hash, ...(maxSteps ? { maxSteps } : {}) }),

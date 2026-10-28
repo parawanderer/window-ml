@@ -7,11 +7,12 @@
 // long, and whether a line wraps depends on the width it is drawn at, which a count cannot know.
 
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
-import { IconChevron, IconCheck, IconCompose, IconCopy } from "../icons";
+import { IconChevron, IconCheck, IconCompose, IconCopy, IconFile, IconInfo } from "../icons";
 import { clearHighlight, ClickableImg, cursorTipOn, highlightEl, openCtxMenu } from "../ui-kit";
 import { useCopy } from "../copy-hash";
 import type { ElementContext } from "../../contract";
 import type { PromptContext } from "../../contract/contract-run";
+import { FILE_SENT_TIP, fileSummary } from "../../attached-files";
 import { truncate } from "../format";
 import { useJustArrived } from "./history-paint";
 import type { ComponentChildren } from "preact";
@@ -159,9 +160,53 @@ export function ElementPill({ ctx, onRemove }: { ctx: ElementContext; onRemove?:
     );
 }
 
+/**
+ * A FILE ATTACHED TO A MESSAGE, as a chip: its name and a summary ("server.log · text, 412 lines"), then either an
+ * info icon whose tip says how it went ("Sent to the model in full."), or, in the composer, a reason it will not be
+ * sent (drawn in the warning colour, the file left out of the send) and an × to take it out.
+ * @param summary the chip's text, name first
+ * @param tip what the info icon says; absent in the composer
+ * @param refusal why this file is refused, when it is
+ * @param onRemove the × (the composer's chip only)
+ * @gallery {"summary": "server.log · text, 412 lines", "tip": "Sent to the model in full."}
+ * @group sidebar/transcript
+ */
+export function FilePill({ summary, tip, refusal, onRemove }: { summary: string; tip?: string; refusal?: string | null; onRemove?: () => void }) {
+    return (
+        <span class={`el-pill file-pill${refusal ? " refused" : ""}`}>
+            <span class="el-pill-ic" aria-hidden="true"><IconFile /></span>
+            {/* A refused file shows its reason INSTEAD of its summary: the reason names the file already. */}
+            <span class="el-pill-txt">{refusal || summary}</span>
+            {tip ? <span class="file-pill-info" role="img" aria-label={tip} tabIndex={0} {...cursorTipOn(tip)}><IconInfo /></span> : null}
+            {onRemove ? <button type="button" class="el-pill-x" onClick={onRemove} aria-label={`Remove ${summary.split(" · ")[0]}`} {...cursorTipOn("Remove")}>×</button> : null}
+        </span>
+    );
+}
+
 /** What was ATTACHED to a sent message as context rather than typed (a right-clicked element), as chips under its
- *  images: the rendered half of a message whose model-facing text had it folded in (`PromptDisplay`). */
+ *  images: the rendered half of a message whose model-facing text had it folded in (`PromptDisplay`).
+ *  @group sidebar/transcript
+ *  @gallery {"context": [{"kind": "file", "file": {"name": "server.log", "type": "text/plain", "bytes": 4210, "lines": 61}}]} */
 export function SentContext({ context }: { context?: readonly PromptContext[] | null }) {
     if (!context?.length) return null;
-    return <div class="sent-ctx">{context.map((c, i) => c.kind === "element" ? <ElementPill key={i} ctx={c.element} /> : null)}</div>;
+    return (
+        <div class="sent-ctx">
+            {context.map((c, i) => c.kind === "element" ? <ElementPill key={i} ctx={c.element} />
+                : c.kind === "file" ? <FilePill key={i} summary={fileSummary(c.file)} tip={FILE_SENT_TIP} /> : null)}
+        </div>
+    );
 }
+
+/** The RENDERED ⇄ RAW switch: a view drawn for a person, or exactly what the model sent or got. One control for a tool
+ *  step's In/Out and a user message whose text had context folded in, so "raw" means the same thing everywhere. */
+export function RawToggle({ raw, onRaw, tips, disabled }: { raw: boolean; onRaw: (raw: boolean) => void; tips: { rendered: string; raw: string }; disabled?: boolean }) {
+    return (
+        <div class={`rr-toggle${disabled ? " reserved" : ""}`}>
+            <span class="tt"><button class={raw ? "" : "on"} disabled={disabled} onClick={() => onRaw(false)}>rendered</button><span class="tt-pop left" role="tooltip">{tips.rendered}</span></span>
+            <span class="tt"><button class={raw ? "on" : ""} disabled={disabled} onClick={() => onRaw(true)}>raw</button><span class="tt-pop left" role="tooltip">{tips.raw}</span></span>
+        </div>
+    );
+}
+
+/** What the two halves of a user message's switch say. */
+export const PROMPT_RAW_TIPS = { rendered: "What you wrote, and what you attached.", raw: "Exactly what the model got, with everything folded into your message." };

@@ -9,7 +9,7 @@
 
 import type { ElementContext } from "../contract";
 import type { StartRunPayload } from "../contract/contract-messages";
-import { shortHash, type PromptDisplay, type PromptOrigin } from "../contract/contract-run";
+import { shortHash, type AttachedFile, type PromptDisplay, type PromptOrigin } from "../contract/contract-run";
 import { framePrompt } from "../agent/prompts";
 import { promptSurfaceOf } from "../agent/prompt-surface";
 import { stepBudget } from "../agent/step-budget";
@@ -165,7 +165,7 @@ export function steerRun(hash: string, text: string, origin?: PromptOrigin, disp
  *   the body's `surface`
  * @returns what happened, or null when this is not the worker's run to drive
  */
-export async function userRunAction(hash: string, action: "send" | "continue", body: { text?: string; images?: string[]; elementContext?: ElementContext; maxSteps?: number; surface?: string }, fromTabId?: number, sentFrom?: PromptOrigin): Promise<"steer" | "turn" | "continued" | "busy" | "none" | null> {
+export async function userRunAction(hash: string, action: "send" | "continue", body: { text?: string; images?: string[]; files?: AttachedFile[]; elementContext?: ElementContext; maxSteps?: number; surface?: string }, fromTabId?: number, sentFrom?: PromptOrigin): Promise<"steer" | "turn" | "continued" | "busy" | "none" | null> {
     const stored = bgRuns.get(hash);
     const live = runInboxes.get(hash);
     const tabId = stored?.tabId ?? live?.tabId;
@@ -179,14 +179,14 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
         if (decision === "always" || decision === "session") {
             // The page relays it, as the run's handle lives there: its copy of exactly this text is the person's turn,
             // not one of the site's (docs/spec/SITE_ACCESS_SLICE3.md, Q2). Framed as the page frames it (injected.ts).
-            await notePersonTurn(hash, action === "send" ? framePrompt(String(body.text || ""), body.elementContext).text : "", action === "send" ? body.images : [], stepBudget(body.maxSteps));
+            await notePersonTurn(hash, action === "send" ? framePrompt(String(body.text || ""), body.elementContext, body.files).text : "", action === "send" ? body.images : [], stepBudget(body.maxSteps));
             return null;
         }
         makeWorkerRun(hash);
     }
     const surface = promptSurfaceOf(body.surface);
     const origin: PromptOrigin | undefined = sentFrom ?? (surface ? { surface } : undefined);
-    const { text, display } = action === "send" ? framePrompt(String(body.text || ""), body.elementContext) : { text: "", display: undefined };
+    const { text, display } = action === "send" ? framePrompt(String(body.text || ""), body.elementContext, body.files) : { text: "", display: undefined };
     if (action === "send" && !text && !(body.images && body.images.length)) return "none";
     if (runControllers.has(hash)) {
         if (action === "continue") return "busy";

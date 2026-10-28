@@ -19,6 +19,7 @@ import { serializeSessionJson } from "./export-json";
 import type { Session, AgentStep } from "../store";
 import { pretty, fullStamp, beautifyJs, escapeHtml, highlight, markdown, truncate } from "../format";
 import { promptLine, type PromptDisplay } from "../../contract/contract-run";
+import { fileSummary } from "../../attached-files";
 import { splitAnswer, hasTokens, resolveTokenStep } from "../../pointers/answer-tokens";
 import { runStats, fmtTokPerSec } from "../../contract/contract-chat";
 import { fmtDur, timedText } from "../timestamps";
@@ -256,10 +257,11 @@ function htmlSink() {
     return { sink, done: () => o.join("\n") };
 }
 
-/** The meta rows naming what a person ATTACHED to a message as context (a right-clicked element): its role, its
- *  selector and its first line, which is how they would recognise it. */
+/** The meta rows naming what a person ATTACHED to a message as context: a right-clicked element's role, selector and
+ *  first line, which is how they would recognise it; a text file's name and size. */
 function attachedRows(display?: PromptDisplay): [string, string][] {
     return (display?.context || []).map((c): [string, string] => {
+        if (c.kind === "file") return ["File", `${fileSummary(c.file)}, ${c.file.bytes} bytes`];
         const first = (c.element.text || "").split("\n").find((l) => l.trim())?.trim() || "";
         return ["Element", `${c.element.role || "element"} \`${c.element.selector}\`${first ? ` · "${truncate(first, 80)}"` : ""}`];
     });
@@ -562,7 +564,14 @@ function writeChat(s: Session, d: Sink): void {
     d.code(annotatedConfig(s.config), "javascript");
     s.turns.forEach((t, i) => {
         d.head(`Turn ${i + 1} · ${fullStamp(t.ts)}`);
-        d.speech("User", null, t.user || "");
+        if (!t.display) d.speech("User", null, t.user || "");
+        else {
+            // Files folded in: the words, the files named, and the text the model got, whole (a `<file>` tag written
+            // bare would vanish from a rendered Markdown page).
+            d.speech("User", null, promptLine(t.user || "", t.display));
+            for (const [k, v] of attachedRows(t.display)) d.note(`${k}: ${v}`);
+            d.details("User · raw (as the model got it)", () => d.code(t.user || ""));
+        }
         (t.images || []).forEach((img, j) => d.image(img, `turn-${i + 1}-img-${j + 1}`, `turn ${i + 1} image ${j + 1}`));
         if (t.reasoning) d.details("Thinking", () => d.prose(t.reasoning!));
         if (t.status === "err") d.inline("Error", t.error || "(unknown)");

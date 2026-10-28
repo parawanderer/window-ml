@@ -53,6 +53,16 @@ test("a surface run gets the Commander kit, says where it came from, and keeps t
     assert.deepEqual(r.origin, { surface: "hud" });
 });
 
+test("a run started with files gets the blocks after the task and a display that keeps the words and the files apart", () => {
+    const f = { name: "server.log", type: "text/plain", text: "boot ok\nfatal: disk\n" };
+    const r = userRunOptions(kit, { task: "  why did it fail?  ", files: [f], surface: "chat" });
+    assert.equal(r.task, 'why did it fail?\n\n<file name="server.log" type="text/plain" bytes="20">\nboot ok\nfatal: disk\n</file>');
+    assert.deepEqual(r.display, { typed: "why did it fail?", context: [{ kind: "file", file: { name: "server.log", type: "text/plain", bytes: 20, lines: 2 } }] });
+    const alone = userRunOptions(kit, { task: "", files: [f], surface: "chat" });
+    assert.ok(alone.task.startsWith("<file name="), "files and no words is a task of only the blocks");
+    assert.equal(userRunOptions(kit, { task: "plain", surface: "chat" }).display, undefined, "no files, no display: as before");
+});
+
 test("an unrecognised surface reads as the HUD, and a bad budget is dropped rather than passed on", () => {
     const r = userRunOptions(kit, { task: "x", surface: "evil", maxSteps: -3 });
     assert.deepEqual(r.origin, { surface: "hud" });

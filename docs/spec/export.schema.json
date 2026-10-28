@@ -456,27 +456,38 @@
         "context": {
           "type": "array",
           "items": {
-            "type": "object",
-            "properties": {
-              "kind": {
-                "type": "string",
-                "const": "element"
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PromptElementContext"
               },
-              "element": {
-                "$ref": "#/$defs/ElementContext"
+              {
+                "$ref": "#/$defs/PromptFileContext"
               }
-            },
-            "required": [
-              "kind",
-              "element"
-            ],
-            "additionalProperties": true
+            ]
           }
         }
       },
       "required": [
         "typed",
         "context"
+      ],
+      "additionalProperties": true
+    },
+    "PromptElementContext": {
+      "type": "object",
+      "description": "A right-clicked element, folded into a message.",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "element"
+        },
+        "element": {
+          "$ref": "#/$defs/ElementContext"
+        }
+      },
+      "required": [
+        "kind",
+        "element"
       ],
       "additionalProperties": true
     },
@@ -541,6 +552,49 @@
         "text",
         "media",
         "links"
+      ],
+      "additionalProperties": true
+    },
+    "PromptFileContext": {
+      "type": "object",
+      "description": "A text file attached to a message.",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "file"
+        },
+        "file": {
+          "$ref": "#/$defs/AttachedFileInfo"
+        }
+      },
+      "required": [
+        "kind",
+        "file"
+      ],
+      "additionalProperties": true
+    },
+    "AttachedFileInfo": {
+      "type": "object",
+      "description": "What a transcript keeps of an attached file: everything but the text, which the message holds.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "bytes": {
+          "type": "number"
+        },
+        "lines": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "name",
+        "type",
+        "bytes",
+        "lines"
       ],
       "additionalProperties": true
     },

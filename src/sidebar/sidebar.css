@@ -970,6 +970,16 @@ textarea.cinput { resize: none; overflow-y: auto; line-height: 1.5; font: inheri
 .el-pill-x { flex: 0 0 auto; width: 15px; height: 15px; line-height: 13px; text-align: center; border-radius: 50%;
   border: none; background: transparent; color: var(--fg-faint); cursor: pointer; font-size: 12px; padding: 0; }
 .el-pill-x:hover { color: var(--fg); background: var(--bg); }
+/* An attached TEXT FILE (`FilePill`): the element pill's shape, with the info icon that says how it was sent, or, in the
+   composer, the reason the file is refused (it is left out of the send) in the warning colour. */
+.file-pill .el-pill-ic { display: inline-flex; color: var(--fg-faint); }
+.file-pill-info { flex: 0 0 auto; display: inline-flex; color: var(--fg-faint); cursor: help; }
+.file-pill-info:hover, .file-pill-info:focus-visible { color: var(--fg-dim); }
+.file-pill.refused { border-color: var(--warn); border-radius: 14px; }
+.file-pill.refused .el-pill-txt { color: var(--warn); white-space: normal; }
+/* The files waiting in a composer, as a row of pills beside the image thumbnails. */
+.cfiles { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.cfiles .el-pill { margin-bottom: 0; }
 /* Context-usage gauge (bottom-right of the composer): a small dial icon + a thin
    bar + the figure — outlined track, colour only in the fill. */
 .usage-gauge { gap: 5px; }

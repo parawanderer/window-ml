@@ -61,10 +61,15 @@ export function hostServices(store: ChatStore, platform: ClientPlatform, reading
             const id = idOf(key);
             if (id) void store.send({ type: "approval.answer", session: id, seq, decision: decision ? "approve" : "deny", ...(persist ? { persist } : {}), ...(feedback ? { feedback } : {}), ...(ask !== undefined ? { ask } : {}) });
         },
-        sendToSession: async (key, text, images) => {
+        // Reads the runtimes signal, so a render that asks stays subscribed to the capability appearing.
+        acceptsFiles: (key) => {
+            const id = idOf(key as SessionKey);
+            return !!id && !!store.runtimes.value.find((r) => r.id === id.runtime)?.capabilities.attachFiles;
+        },
+        sendToSession: async (key, text, images, files) => {
             const id = idOf(key);
             if (!id) return { ok: false, error: "no such session here" };
-            const r = await store.send({ type: "session.send", session: id, text, ...(images?.length ? { images } : {}) });
+            const r = await store.send({ type: "session.send", session: id, text, ...(images?.length ? { images } : {}), ...(files?.length ? { files } : {}) });
             return r.ok ? { ok: true } : { ok: false, error: r.error.message || r.error.code };
         },
         cancelSession: (key) => {

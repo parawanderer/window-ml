@@ -907,3 +907,76 @@ test("approval.answer with an ask id resolves that NESTED ask's key; a malformed
         assert.equal(code(await w.run({ type: "approval.answer", session: sid("aaaa0001"), seq: 2, decision: "approve", ask })), "invalid", `ask ${JSON.stringify(ask)}`);
     assert.equal(w.named("resolve").length, 1, "no malformed id reached the resolver, so none fell back to the step's own gate");
 });
+
+// --- attached text files: `files` on chat.start, agent.start and session.send (docs/spec/FILE_ATTACHMENTS.md, slice 1) ---
+
+const LOG = { name: "server.log", type: "text/plain", text: "boot ok\nlistening\n" };
+
+test("files ride on chat.start, agent.start and session.send to the path that takes the message, whole", async () => {
+    const w = world({ hostsChat: () => true });
+    assert.equal(code(await w.run({ type: "chat.start", runtime: "local", text: "why?", files: [LOG] })), "ok");
+    assert.deepEqual(w.named("startChat")[0][1], { text: "why?", files: [LOG] });
+
+    assert.equal(code(await w.run({ type: "agent.start", runtime: "local", task: "why?", files: [LOG], target: { kind: "tab", tabId: TAB } })), "ok");
+    assert.deepEqual(w.named("startAgent")[0][2], { task: "why?", files: [LOG] });
+
+    w.index.ingest(chatStart("c0ffee01"), { trusted: true });
+    assert.equal(code(await w.run({ type: "session.send", session: sid("c0ffee01"), text: "and?", files: [LOG] })), "ok");
+    assert.deepEqual(w.named("sendChat")[0].slice(1), ["c0ffee01", "and?", [], [LOG]]);
+});
+
+test("session.send with files to a run goes to its page for the framing, never as a bare steer, even while it runs", async () => {
+    const w = world();
+    w.index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
+    assert.equal(code(await w.run({ type: "session.send", session: sid("aaaa0001"), text: "look", files: [LOG] })), "ok");
+    assert.equal(w.named("steer").length, 0, "a steer carries text only: it would lose the files");
+    assert.deepEqual(w.named("toPage")[0][3], { hash: "aaaa0001", text: "look", files: [LOG] });
+});
+
+test("a message of files and no words is valid on all three; no words, no image and no file is still not", async () => {
+    const w = world({ hostsChat: () => true });
+    w.index.ingest(chatStart("c0ffee01"), { trusted: true });
+    assert.equal(code(await w.run({ type: "chat.start", runtime: "local", text: "", files: [LOG] })), "ok");
+    assert.equal(code(await w.run({ type: "agent.start", runtime: "local", task: " ", files: [LOG], target: { kind: "tab", tabId: TAB } })), "ok");
+    assert.equal(code(await w.run({ type: "session.send", session: sid("c0ffee01"), text: "", files: [LOG] })), "ok");
+    assert.equal(code(await w.run({ type: "chat.start", runtime: "local", text: "", files: [] })), "invalid");
+    assert.match((await w.run({ type: "agent.start", runtime: "local", task: "", target: { kind: "tab", tabId: TAB } })).error.message, /task, an image or a file/);
+});
+
+test("the runtime re-checks files: a bad shape, too many, a long name and a total over the cap are each refused with the reason", async () => {
+    const w = world({ hostsChat: () => true });
+    w.index.ingest(chatStart("c0ffee01"), { trusted: true });
+    const cmds = (files) => [
+        { type: "chat.start", runtime: "local", text: "x", files },
+        { type: "agent.start", runtime: "local", task: "x", files, target: { kind: "tab", tabId: TAB } },
+        { type: "session.send", session: sid("c0ffee01"), text: "x", files },
+    ];
+    const refused = async (files) => { const out = []; for (const c of cmds(files)) out.push(await w.run(c)); return out; };
+
+    for (const r of await refused("a string")) assert.match(r.error.message, /list of \{ name, type, text \}/);
+    for (const r of await refused([{ name: "a", type: "text/plain", text: "x" }, { name: "b" }])) assert.equal(r.error.code, "invalid", "one bad file refuses the lot, not trims it");
+    for (const r of await refused(Array.from({ length: 11 }, (_, i) => ({ name: `f${i}`, type: "text/plain", text: "x" })))) assert.match(r.error.message, /up to 10 files/);
+    for (const r of await refused([{ name: "n".repeat(256), type: "text/plain", text: "x" }])) assert.match(r.error.message, /name takes up to 255/);
+    const big = [{ name: "a.txt", type: "text/plain", text: "x".repeat(20_000) }, { name: "b.txt", type: "text/plain", text: "y".repeat(20_000) }];
+    const [chat, agent, send] = await refused(big);
+    assert.equal(chat.error.message, "b.txt is too large to send whole together with the other files: 20 kB; a message takes up to 32 kB of files");
+    assert.match(agent.error.message, /on demand in a later change/, "the agent wording");
+    assert.doesNotMatch(send.error.message, /on demand/, "a message to a chat has the chat wording");
+    assert.equal(w.named("startChat").length + w.named("startAgent").length + w.named("sendChat").length + w.named("toPage").length, 0, "nothing was started or sent");
+});
+
+test("a message to a run with an oversized file gets the agent wording", async () => {
+    const w = world();
+    w.index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
+    const r = await w.run({ type: "session.send", session: sid("aaaa0001"), text: "x", files: [{ name: "server.log", type: "text/plain", text: "x".repeat(210_000) }] });
+    assert.match(r.error.message, /^server\.log is too large to send whole: 210 kB; a message takes up to 32 kB of files\. An agent run will read large files on demand/);
+});
+
+test("a command without files is unchanged: the paths see no files key (the upgrade of every existing client)", async () => {
+    const w = world({ steer: (hash, text) => { w.calls.push(["steer", hash, text]); return true; } });
+    await w.run({ type: "chat.start", runtime: "local", text: "hello" });
+    assert.equal("files" in w.named("startChat")[0][1], false);
+    w.index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
+    await w.run({ type: "session.send", session: sid("aaaa0001"), text: "look" });
+    assert.equal(w.named("steer").length, 1, "a text-only message still steers directly");
+});
