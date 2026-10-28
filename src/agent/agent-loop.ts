@@ -1166,7 +1166,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // A CUT copy says where the rest is and how to read it, on the result itself: the clause in the system prompt
             // teaches `dereference`, but the moment a model needs it is when it is holding a truncated output.
             const cutLine = tokenId && !mintedView && heldChars
-                ? `\n[your copy is cut: @tool:${tokenId} holds ${heldChars} chars of this output. Read further with dereference and a pipe (grep, sed -n, tail -n) instead of running it again.]`
+                ? `\n[your copy is cut: @tool:${tokenId} holds ${heldChars} chars of this output. Read further with dereference and a pipe (grep PATTERN, head -n N, tail -n N; lines A to B: head -n B | tail -n B-A+1) instead of running it again.]`
                 : "";
             // The step budget, said on the last result of a step once few are left: the cap is read live (a handle or
             // Continue can raise it mid-run), so a number in the system prompt would go stale.
