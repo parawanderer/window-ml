@@ -152,9 +152,7 @@ test("a keep covers its own worker only: the other run's worker is reaped on its
 
 // --- (b) what ends the keep ---
 
-test("a keep never outlives its turn: a keep-bearing cell arriving after the turn ended arms nothing", {
-    todo: "a keep-bearing cell after PY_DELETE_RUN re-arms keptPrincipals (offscreen.ts's keep gate has no 'the turn is still live' check, and sw-python.ts re-sends keep without an active-run check): the keep outlives its turn — python-cancel",
-}, async (t) => {
+test("a keep never outlives its turn: a keep-bearing cell arriving after the turn ended arms nothing", async (t) => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
     const { w } = await turnCell("b1", { keep: true });
     t.mock.timers.tick(DAY);
@@ -182,23 +180,37 @@ test("the turn's end lands mid-cell: the keep dies with the turn even while the 
     assert.equal(w.terminated, true, "the keep ended with the turn: the settled clock applies even mid-cell");
 });
 
-test("a keep is the turn's, not its worker's: a kill mid-turn does not end the keep", {
-    todo: "killWorker clears the keep (offscreen.ts) though python_exec promises it 'until this run ends' (python-tool.ts): either the keep survives a kill or the promise must say a kill ends it — ruling needed, python-cancel",
-}, async (t) => {
+test("a kill ends the keep and the next cell is told as loss: the keep shields the idle reap only", async (t) => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
-    const first = await turnCell("b3", { keep: true });
+    // The ruled promise (python-tool.ts): "Keep your names through idle gaps over 30 min (a run that waits hours
+    // between calls) until this run ends or its sandbox is killed (a timeout, a crash, a cancel), which the next cell
+    // is told as loss." The keep exists against the idle reap, not against loss — a kill has already lost the
+    // namespace — and nothing arms it again without a NEW keep: true (the turn is still live here: no PY_DELETE_RUN).
+    // The replies carry the run's scope manifest (python-run-namespace.test.mjs's shape) as REALISM only — it is not
+    // load-bearing: the kill's loss note is written at killWorker whatever a reply carries (nsLoss, offscreen.ts), and
+    // the only reader of result.bench is the state registry's inspector. What guards this half against a vacuous pass
+    // is the nsReset match itself: a telling that stopped comes back "" and fails loud.
+    const bench = { bench: { id: "run-b3", vars: [{ name: "x", type: "int" }] } };
+    const first = await runCell({ principal: "run:b3", wire: { client: "mlw-b3-1", run: "b3" }, keep: true }, bench);
     t.mock.timers.tick(DAY);
     await settle();
-    assert.equal(first.w.terminated, false, "control: the keep holds its worker through a day idle");
-    await startedCell({ principal: "run:b3", wire: { client: "mlw-b3-x", run: "b3" }, keep: true });   // a cell that never answers
-    t.mock.timers.tick(15000);   // the cell cap kills the worker mid-turn
+    assert.equal(first.w.terminated, false, "control: the keep holds its worker through a day idle (the promise's first half)");
+    await startedCell({ principal: "run:b3", wire: { client: "mlw-b3-2", run: "b3" }, keep: true });   // a cell that never answers
+    t.mock.timers.tick(15000);   // the cell cap kills the sandbox mid-turn (a timeout)
     await settle();
     assert.equal(first.w.terminated, true, "the kill landed");
-    const second = await turnCell("b3");   // the turn's later cell on a fresh worker, keeping nothing
+    const second = await runCell({ principal: "run:b3", wire: { client: "mlw-b3-3", run: "b3" } }, { ...bench, stdout: "two" });
+    assert.match(second.answer.nsReset ?? "", /^namespace reset at .*: timeout$/, "the next cell is told as loss");
+    assert.match(second.answer.stdout, /^namespace reset at .*: timeout\ntwo$/, "and the loss line opens its result");
     t.mock.timers.tick(DAY);
     await settle();
     await drainReap(second.w);
-    assert.equal(second.w.terminated, false, "the keep ends with the turn (PY_DELETE_RUN), not with its worker");
+    assert.equal(second.w.terminated, true, "the kill ended the keep: a later cell without keep: true keeps nothing");
+    const third = await runCell({ principal: "run:b3", wire: { client: "mlw-b3-4", run: "b3" }, keep: true }, bench);
+    t.mock.timers.tick(DAY);
+    await settle();
+    assert.equal(third.w.terminated, false, "only a NEW keep: true arms again");
+    assert.equal(third.w.posts.at(-1).takeDropped, undefined);
 });
 
 // --- (c) what a page or the model cannot get through it ---
@@ -219,9 +231,7 @@ test("a page's python_exec arms no keep and no noTimeout, even carrying forged w
     assert.equal(m.principal, "page:9", "the principal is the sender's tab, not the payload's claim");
 });
 
-test("a keep is armed only on the service worker's word: a tab-context PY_RUN arms no keep", {
-    todo: "the offscreen's keep gate takes no sender's word (the bridges lift at the same call does — !sender.tab): a tab-context PY_RUN arms a keep — python-cancel (defence-in-depth: no relay path emits PY_RUN today, page-relay.ts HANDLE_MAP)",
-}, async (t) => {
+test("a keep is armed only on the service worker's word: a tab-context PY_RUN arms no keep", async (t) => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
     const workerWord = await runCell({ principal: "run:c0", wire: { client: "mlw-c0", run: "c0" }, keep: true }, {}, SW);
     const tabWord = await runCell({ principal: "run:c1", wire: { client: "mlw-c1", run: "c1" }, keep: true }, {}, TAB);
@@ -232,9 +242,7 @@ test("a keep is armed only on the service worker's word: a tab-context PY_RUN ar
     assert.equal(workerWord.w.terminated, false, "control: the same message from the service worker keeps");
 });
 
-test("a tab-context PY_DELETE_RUN ends no turn: nothing is posted, no keep cleared", {
-    todo: "the PY_DELETE_RUN listener checks no sender (PY_DROP_LIBRARIES at the same file does): a tab-context message ends a run's turn — python-cancel (defence-in-depth: no relay path emits PY_DELETE_RUN today)",
-}, async (t) => {
+test("a tab-context PY_DELETE_RUN ends no turn: nothing is posted, no keep cleared", async (t) => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
     const mine = await turnCell("c2", { keep: true });   // control: the service worker's delete DOES end a turn
     const theirs = await turnCell("c3", { keep: true });
@@ -272,16 +280,12 @@ test("the clocks are the documented values and reapDelay's decision table is the
     }
 });
 
-test("a page's worker is on the settled clock whatever the flags say: a keep cannot reach it", {
-    todo: "reapDelay trusts (holdsRun, kept) for a page: principal — unreachable through armReap today (heldRun is null for page:) but off-spec: a keep must not move a page's worker off the settled clock — python-cancel",
-}, () => {
+test("a page's worker is on the settled clock whatever the flags say: a keep cannot reach it", () => {
     assert.equal(reapDelay("page:7", true, false), REAP_SETTLED_MS, "a page's worker holds no live turn's namespace (heldRun is null for page:): the settled clock");
     assert.equal(reapDelay("page:7", true, true), REAP_SETTLED_MS, "a keep is a worker-hosted turn's: it cannot reach a page's worker");
 });
 
-test("a cell that lands during the reap's handover ask keeps its worker, slow or fast", {
-    todo: "reapWorker re-checks only what is still PENDING after the takeDropped ask, so a cell that finished inside the ask's window does not stop the reap (its comment promises a posted cell is 'not idle any more'): the worker is shut right after serving it — python-cancel",
-}, async (t) => {
+test("a cell that lands during the reap's handover ask keeps its worker, slow or fast", async (t) => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
     // Slow control: the cell is still running when the ask answers — the reap stands down.
     const slow = await turnCell("d1");
