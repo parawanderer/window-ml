@@ -596,9 +596,10 @@ export async function fetchRenderedContent(url: string, incognito: boolean, cdp:
         tabId = tab.id;
     }
     if (tabId == null) { await pending?.dispose(); throw new Error(`Couldn't open a ${incognito ? "private " : ""}tab to render "${url}".`); }
-    // A tab the extension opened to read a page: nothing in it starts an agent (SITE_ACCESS_SLICE3.md, Q17).
-    noteAgentTab(tabId, "");
     try {
+        // A tab the extension opened to read a page: nothing in it starts an agent (SITE_ACCESS_SLICE3.md, Q17). Inside the
+        // try, so a throw here still closes the tab and releases the guard's lock.
+        noteAgentTab(tabId, "");
         guard = await pending?.bind(tabId);
         // Before the deferred/lazy widgets fire, make the (backgrounded/minimized) tab believe it's foregrounded
         // so focus/visibility-gated loads run — only when the user enabled CDP (it attaches the debugger).
