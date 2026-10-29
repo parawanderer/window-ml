@@ -285,7 +285,9 @@ hop's body returned and the cross-site hop refused with no request to the target
    test-only: the new `site-presence-step4.spec.mjs` under `tests/e2e/`; rows (a), (b) and (d) fail first under
    `holeOpen("step4a")` with the leak asserted positively, (c) and (e) hold on main and are pinned, c's evidence being
    that both iframes sit in closed shadow roots and `window.length` stays 1; the visible page's card is the control;
-   the janitor asked by session-mail), verified. Order under rule 10 as amended: #1313 merges on main first; the
+   the janitor asked by session-mail), verified. #1313 MERGED 2026-10-29 at 60fccc2c (run 40841039943 green; the
+   janitor's review: no findings, its one nit on row (d)'s style message fixed at f19316b4 before the merge),
+   verified. Order under rule 10 as amended: #1313 merges on main first; the
    flip of (a), (b) and (d) is the red team's own commit on #1279's branch, its file only, pushed when the security
    lane says the fix is ready; #1279 merges after that, on the lane's return from Shane's pause.
    4b is #1297 OPEN 2026-10-28 (`feat/hidden-side-panel`, head 2f6414bc, @security @ui; `sw-side-panel.ts`,
