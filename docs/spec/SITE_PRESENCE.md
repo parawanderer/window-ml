@@ -281,6 +281,13 @@ hop's body returned and the cross-site hop refused with no request to the target
    reaches the host's tag through `inShell`'s `roots.highlightTag`; detection-surface row 7 split into 7, the card,
    "No" on a visible page, and 7b, the anonymised highlight; the janitor asked by session-mail), verified; it holds
    until the red team's rows PR has merged.
+   The rows PR is #1313 OPEN 2026-10-29 (`redteam/site-presence-step4-rows`, head 73939ac5 on a6917059, @security,
+   test-only: the new `site-presence-step4.spec.mjs` under `tests/e2e/`; rows (a), (b) and (d) fail first under
+   `holeOpen("step4a")` with the leak asserted positively, (c) and (e) hold on main and are pinned, c's evidence being
+   that both iframes sit in closed shadow roots and `window.length` stays 1; the visible page's card is the control;
+   the janitor asked by session-mail), verified. Order under rule 10 as amended: #1313 merges on main first; the
+   flip of (a), (b) and (d) is the red team's own commit on #1279's branch, its file only, pushed when the security
+   lane says the fix is ready; #1279 merges after that, on the lane's return from Shane's pause.
    4b is #1297 OPEN 2026-10-28 (`feat/hidden-side-panel`, head 2f6414bc, @security @ui; `sw-side-panel.ts`,
    `sidepanel.ts` and the panel, worker and e2e files its body lists; the janitor asked by session-mail),
    verified; it merges after #1279 and the red team's step-4 rows. The lane measured per-tab side-panel options
