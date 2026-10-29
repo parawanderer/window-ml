@@ -130,6 +130,13 @@ export interface AttachedPdf { name: string; type: string; data: string }
 /** A file as a command carries it: a text file's text, or a PDF's bytes. */
 export type SentFile = AttachedFile | AttachedPdf;
 
+/** A PDF sent ahead in `file.put` chunks and named by its hash (FILE_ATTACHMENTS.md, "Over the hub: chunks in an
+ *  acknowledged window"): the runtime puts its bytes back before it reads the files. */
+export interface AttachedFileRef { name: string; type: string; sha256: string; bytes: number }
+
+/** A file as a command may carry it on the wire: inline, or by reference to the chunks it was sent in. */
+export type WireFile = SentFile | AttachedFileRef;
+
 /** What a transcript keeps of an attached file: everything but the text, which the message holds. A PDF has `pages`
  *  (the count the file states) and `lines` 0. */
 export interface AttachedFileInfo { name: string; type: string; bytes: number; lines: number; pages?: number }

@@ -168,6 +168,22 @@ more chunks), each sized to the payload limit less the seal's overhead. The send
   upload past it would slow every session's live replies on that account.
 - The same reference by hash spares the extension's own chat page a second copy of a file attached twice.
 
+Built (2026-10-29, `file-frame.ts`, `file-chunks.ts`, `HubConnection.putFile`; how it works: `docs/dev/hub-client.md`):
+
+- The chunk follows the JSON after a zero byte. `file.have` comes first, so an older runtime (`unsupported`) gets the
+  PDF inline, and a runtime that holds part of the file is sent the rest. Both need `drive`, the scope of the send.
+- The cap is checked before a chunk is sent: with the default 32 MiB burst, `0.6 x` is 19.2 MiB, under the 20.
+- A hub `UNAVAILABLE` now reaches the chunk's waiter through the envelope's `ref`, and a runtime going offline settles
+  everything waiting on it, since the hub discards what it had queued to it. The composer hears either at once.
+- The runtime keeps a finished file by hash for 15 minutes after its last use, so the same file attached again is
+  named, not sent. In worker memory: an eviction costs a re-send, never a wrong file.
+- A finished file is the ACCOUNT's, not its sender's (accepted 2026-10-29): any device with `drive` that names its
+  hash may attach it, and `file.have` tells such a device whether the runtime holds a file it can name, so one that
+  guesses a document learns another device sent it within the TTL. Every device holding `drive` is the same person's,
+  under one root. An upload in progress stays its sender's, so another device cannot spoil it. A device with `view`
+  alone is refused both commands, and one declaring `drive` it does not hold fails to open and goes unanswered.
+- Not built: progress in the composer while the chunks go.
+
 **Images go only to a model known to see them: unknown is refused.** (Built.) A worker chat attached images without
 asking; it now asks the question an agent run does (`_modelVision`, image-gate.ts: Ollama reports vision or not, or
 the person declared the default model in Settings; anything else is UNKNOWN, never "no"). The reader is the OCR model
@@ -212,8 +228,7 @@ at most `PDF_ATTACH_MAX` (20 MB). What the build decided where the rulings were 
 - A new bound: the reader reads at most `READER_PAGE_MAX` (32) pages of a message, each a model call the person waits
   for; past it a scan is named like one past the image cap. A page is drawn at scale 2 (144 dpi).
 - Not built yet: the bytes in the value store (slice 3 needs them; nothing reads them before it), PDFs to an agent run
-  (refused by name), and the hub's `file.put` chunks (over the hub a PDF rides inside the command, so only one under
-  the payload limit gets through until then).
+  (refused by name). The hub's `file.put` chunks came after (above).
 
 ## Slice 3: an attached file as an `@file:` pointer
 

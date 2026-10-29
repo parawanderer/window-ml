@@ -23,6 +23,7 @@ import { defineState } from "../state-registry";
 import { bgRuns, makeWorkerRun, trackRun, untrackRun } from "./sw-runs";
 import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
 import { isExtensionSender } from "./sw-site-access";
+import { fileChunks } from "./sw-file-chunks";
 import { fetchLLM, streamLLM, getConfig, listAvailableModels, modelCapabilitiesBatch, residentContextLength } from "./sw-llm";
 import { workerMl } from "./worker-ml";
 import { ocrRequest } from "../ml/ml-vision";
@@ -328,6 +329,8 @@ export function configureSessionCommands(run: RunDeps): void {
     });
     handler = createCommandHandler({
         runtime: localRuntimeId(),
+        // A PDF a hub client sent ahead in chunks (sw-file-chunks.ts), put back in the message that names it.
+        heldFile: (sha256) => fileChunks.get(sha256),
         ownsRuntime: isLocalRuntime,
         // ONE description, shared with the runtime list, so a client that asks cannot be told something the list
         // does not already say.
