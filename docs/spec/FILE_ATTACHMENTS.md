@@ -198,6 +198,23 @@ when one is set, and otherwise is named in the block with what can get it: "page
 This chat cannot show them." Once slice 3's `look` on a page exists, an agent run's note names it as the recovery;
 until then the note says there is none, since a recovery named must be callable now.
 
+**Built for worker chats (2026-10-29).** A runtime listing `capabilities.attachPdf` takes `{ name, type, data }` in
+`files` on `chat.start` and on `session.send` to a chat, `data` the bytes as base64 (the extension's channel is JSON),
+at most `PDF_ATTACH_MAX` (20 MB). What the build decided where the rulings were silent:
+
+- The PDF is read BEFORE the turn (`prepare`, sw-chat.ts), so a PDF that will not open, pages holding more than the
+  text cap, and an image refusal all answer the command (`invalid`, `unsupported`) and nothing is sent. Pages are
+  drawn and read INSIDE the turn; the person's message appears in the transcript once they are.
+- Only a pasted image or a scanned page can refuse a message. A page with a figure keeps its text, so to a model of
+  unknown vision with no reader it goes with "(page N has a figure you cannot see)" rather than refusing the PDF.
+- `<page n="3" image="2">` says which of the message's images is that page (pasted images are numbered first);
+  `<page n="5" read-by="…">` holds the reader's reading in place of a scan's text. A blank page has no section.
+- A new bound: the reader reads at most `READER_PAGE_MAX` (32) pages of a message, each a model call the person waits
+  for; past it a scan is named like one past the image cap. A page is drawn at scale 2 (144 dpi).
+- Not built yet: the bytes in the value store (slice 3 needs them; nothing reads them before it), PDFs to an agent run
+  (refused by name), and the hub's `file.put` chunks (over the hub a PDF rides inside the command, so only one under
+  the payload limit gets through until then).
+
 ## Slice 3: an attached file as an `@file:` pointer
 
 **The prefix.** `@file:`, its own, beside `@tool:`, `@pt:` and `@box:`: the value came from the person, not from a

@@ -9,8 +9,8 @@ import type { NeutralMessage } from "../contract/contract-chat";
 import { MAX_CONTINUE_STEPS } from "../agent/step-budget";
 import { AGENT_START_PAGE } from "../contract/contract-config";
 import type { MlDebugEvent } from "../contract/contract-debug";
-import type { AttachedFile, PromptOrigin } from "../contract/contract-run";
-import { checkFilesField, type FileTarget } from "../attached-files";
+import type { AttachedFile, PromptOrigin, SentFile } from "../contract/contract-run";
+import { FilesRefused, checkFilesField, textFiles, type FileTarget } from "../attached-files";
 import { clientUiOf } from "../agent/current-client";
 import type { SessionHistory } from "./session-store";
 import type { Command, CommandError, CommandFrom, CommandResult, CommandType, ListedSession, ModelChoice, SessionId, SessionSummary, StorageReport, TabGroupInfo, TabInfo } from "./session-host";
@@ -81,11 +81,12 @@ export interface CommandDeps {
     /** forget what the worker keeps for a finished session: its stored chat history, its resumable snapshot */
     forgetStored(hash: string): Promise<void>;
     /** start a chat this worker hosts (no tab), resolving with its hash once the first turn is under way */
-    startChat(opts: { text: string; images?: string[]; files?: AttachedFile[]; model?: string; system?: string; think?: boolean | null; ephemeral?: boolean; vision?: true }): Promise<string>;
+    startChat(opts: { text: string; images?: string[]; files?: SentFile[]; model?: string; system?: string; think?: boolean | null; ephemeral?: boolean; vision?: true }): Promise<string>;
     /** the next turn of a worker-hosted chat; `not-found` when this worker does not host it and storage has nothing.
      *  Both throw `ImagesRefused` (image-gate.ts) before a turn whose images may not be sent; `vision: true` is the
-     *  person's word that the model sees. */
-    sendChat(hash: string, text: string, images?: string[], files?: AttachedFile[], vision?: true): Promise<"turn" | "busy" | "not-found">;
+     *  person's word that the model sees. Both throw `FilesRefused` (attached-files.ts) before a turn whose PDF cannot
+     *  be read or holds more text than a message takes. */
+    sendChat(hash: string, text: string, images?: string[], files?: SentFile[], vision?: true): Promise<"turn" | "busy" | "not-found">;
     /** switch a worker-hosted chat's model from its next turn; false when this worker does not host it */
     setChatModel(hash: string, model: string): Promise<boolean>;
     /** switch a run whose loop this worker hosts: `running` takes it at the next model call, `stored` at its next turn;
@@ -154,7 +155,7 @@ export const SCREENSHOT_MAX_BYTES = 4 * 1024 * 1024;
 /** Mid-run steers carry text only (the loop's inbox has no image slot); images go with a new turn. */
 const STEER_TEXT_MAX = 20_000;
 /** The files of a command, checked by the one rule (attached-files.ts), as the result a handler returns on a refusal. */
-export function checkedFiles(raw: unknown, target: FileTarget): { files?: AttachedFile[]; error?: CommandResult<any> } {
+export function checkedFiles(raw: unknown, target: FileTarget): { files?: SentFile[]; error?: CommandResult<any> } {
     const r = checkFilesField(raw, target);
     return r.reason ? { error: fail("invalid", r.reason) } : r.files ? { files: r.files } : {};
 }
@@ -390,7 +391,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             const tabId = t.tabId;
 
             const r = await deps.startAgent(tabId, {
-                task, ...(images.length ? { images } : {}), ...(att.files ? { files: att.files } : {}),
+                task, ...(images.length ? { images } : {}), ...(att.files ? { files: textFiles(att.files) } : {}),
                 ...(c.model ? { model: c.model } : {}),
                 ...(c.maxSteps != null ? { maxSteps: c.maxSteps } : {}),
                 ...(c.vision === true ? { vision: true as const } : {}),
@@ -511,6 +512,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
                 return ok({ session: { runtime: deps.runtime, hash } });
             } catch (err) {
                 if (err instanceof ImagesRefused) return fail("unsupported", err.message);
+                if (err instanceof FilesRefused) return fail("invalid", err.message);
                 return fail("failed", (err as Error)?.message || String(err));
             }
         },
@@ -530,6 +532,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
                 let outcome: "turn" | "busy" | "not-found";
                 try { outcome = await (c.vision === true ? deps.sendChat(s.id.hash, text, images, att.files, true) : deps.sendChat(s.id.hash, text, images, att.files)); } catch (err) {
                     if (err instanceof ImagesRefused) return fail("unsupported", err.message);
+                    if (err instanceof FilesRefused) return fail("invalid", err.message);
                     throw err;
                 }
                 if (outcome === "turn") return ok({ mode: "turn" });
@@ -544,7 +547,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
                 if (text.length > STEER_TEXT_MAX) return fail("invalid", "that message is too long to steer with");
                 if (deps.steer(s.id.hash, text, commandOrigin(from, c.ui))) return ok({ mode: "steer" });
             }
-            const r = await viaPage(s.id.hash, "send", { text, ...(images.length ? { images } : {}), ...(att.files ? { files: att.files } : {}), ...(c.elementContext ? { elementContext: c.elementContext } : {}) }, commandOrigin(from, c.ui));
+            const r = await viaPage(s.id.hash, "send", { text, ...(images.length ? { images } : {}), ...(att.files ? { files: textFiles(att.files) } : {}), ...(c.elementContext ? { elementContext: c.elementContext } : {}) }, commandOrigin(from, c.ui));
             if (typeof r !== "string") return r;
             if (r === "steer" || r === "turn") return ok({ mode: r });
             return fail("not-found", "the page no longer holds this session (it was reloaded, or the session was never resumable)");

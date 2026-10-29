@@ -112,7 +112,7 @@ export interface ElementContext {
 /** Something a person attached to a message that was folded into the TEXT the model got, kept structured so the UI
  *  can draw it as an object beside their words instead of as text they never typed. Today only a right-clicked element;
  *  a `kind` so a selection or a tab can join it. A `file` is a text file's DESCRIPTOR only (docs/spec/FILE_ATTACHMENTS.md):
- *  its text is in the message's own `text` as a `<file>` block, so it is not carried twice. */
+ *  its text is in the message's own `text` as a `<file>` block, so it is not carried twice. A PDF's descriptor too. */
 export type PromptContext = PromptElementContext | PromptFileContext;
 /** A right-clicked element, folded into a message. */
 export interface PromptElementContext { kind: "element"; element: ElementContext }
@@ -120,12 +120,19 @@ export interface PromptElementContext { kind: "element"; element: ElementContext
 export interface PromptFileContext { kind: "file"; file: AttachedFileInfo }
 
 /** A text file a person attached to a message, as a client sends it (slice 1 of docs/spec/FILE_ATTACHMENTS.md carries
- *  the DECODED text; the base64 `data` the spec first described comes with PDFs). `type` is the browser's MIME type
- *  for the file, "text/plain" when it names none. */
+ *  the DECODED text). `type` is the browser's MIME type for the file, "text/plain" when it names none. */
 export interface AttachedFile { name: string; type: string; text: string }
 
-/** What a transcript keeps of an attached file: everything but the text, which the message holds. */
-export interface AttachedFileInfo { name: string; type: string; bytes: number; lines: number }
+/** A PDF a person attached to a message, as a client sends it: its BYTES as base64 (the channel is JSON), which the
+ *  runtime reads page by page (FILE_ATTACHMENTS.md, "Wiring a PDF through the attach path"). Only a chat takes one. */
+export interface AttachedPdf { name: string; type: string; data: string }
+
+/** A file as a command carries it: a text file's text, or a PDF's bytes. */
+export type SentFile = AttachedFile | AttachedPdf;
+
+/** What a transcript keeps of an attached file: everything but the text, which the message holds. A PDF has `pages`
+ *  (the count the file states) and `lines` 0. */
+export interface AttachedFileInfo { name: string; type: string; bytes: number; lines: number; pages?: number }
 
 /** How a person's message is SHOWN when the text the model got is not what they typed: their own words, and what they
  *  attached. Present only when the two differ; the message's `text`/`task` stays exactly what the model saw, which is

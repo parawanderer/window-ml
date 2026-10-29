@@ -31,7 +31,7 @@ test("planImages over every answer, reader and override", () => {
         for (const reader of [null, "ocr-model"]) {
             for (const forced of [false, true]) {
                 const got = planImages(sees, reader, forced);
-                const want = forced || sees === "yes" ? { route: "model" }
+                const want = forced || sees === "yes" ? (reader ? { route: "model", reader } : { route: "model" })
                     : reader ? { route: "reader", reader }
                         : sees === "no" ? { route: "named" }
                             : { route: "refused", message: VISION_UNKNOWN_REFUSAL };

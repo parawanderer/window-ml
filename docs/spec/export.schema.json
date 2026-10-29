@@ -575,7 +575,7 @@
     },
     "AttachedFileInfo": {
       "type": "object",
-      "description": "What a transcript keeps of an attached file: everything but the text, which the message holds.",
+      "description": "What a transcript keeps of an attached file: everything but the text, which the message holds. A PDF has `pages` (the count the file states) and `lines` 0.",
       "properties": {
         "name": {
           "type": "string"
@@ -587,6 +587,9 @@
           "type": "number"
         },
         "lines": {
+          "type": "number"
+        },
+        "pages": {
           "type": "number"
         }
       },

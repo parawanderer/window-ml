@@ -274,10 +274,27 @@ test("a file that is not text is refused by name next to its chip and is not sen
         new win.File([new Uint8Array([0xff, 0xfe, 0x00, 0x80])], "x.bin", { type: "application/octet-stream" }),
         new win.File([new TextEncoder().encode("%PDF-1.7")], "report.pdf", { type: "application/pdf" }),
         textFile("ok.txt", "fine"));
-    assert.deepEqual(pills(host).map(why), ["x.bin is not a text file", "report.pdf is not a text file; PDFs come in a later change", null]);
+    assert.deepEqual(pills(host).map(why), ["x.bin is not a text file", "report.pdf is a PDF, which this runtime does not read", null]);
     send(host).click();
     await flush();
     assert.deepEqual(startCommands()[0].files, [{ name: "ok.txt", type: "text/plain", text: "fine" }], "only what was accepted");
+});
+
+test("a runtime that reads PDFs takes one as its bytes on a chat, offers .pdf in the picker, and refuses it on a run", async () => {
+    const PDF_CAN = { ...CAN, attachPdf: true };
+    const pdf = () => new win.File([new TextEncoder().encode("%PDF-1.7\n")], "paper.pdf", { type: "application/pdf" });
+    const chat = await mount("chat", PDF_CAN);
+    assert.match(chat.querySelector('input[type="file"]').getAttribute("accept"), /application\/pdf,\.pdf/);
+    await pasteFiles(chat, pdf());
+    assert.deepEqual(pills(chat).map(why), [null]);
+    assert.match(pills(chat)[0].textContent, /paper\.pdf · PDF, 9 B/);
+    send(chat).click();
+    await flush();
+    assert.deepEqual(startCommands().at(-1).files, [{ name: "paper.pdf", type: "application/pdf", data: "JVBERi0xLjcK" }]);
+
+    const agent = await mount("agent", PDF_CAN);
+    await pasteFiles(agent, pdf());
+    assert.equal(why(pills(agent)[0]), "paper.pdf is a PDF; an agent run will read PDFs in a later change");
 });
 
 test("a file over the cap says its size and the limit, with the chat wording on a chat and the agent wording on a run", async () => {

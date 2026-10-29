@@ -1023,3 +1023,45 @@ test("any other failure to start a chat is still failed, not a vision refusal", 
     const r = await w.run({ type: "chat.start", runtime: "local", text: "hi" });
     assert.deepEqual([code(r), r.error.message], ["failed", "backend down"]);
 });
+
+// --- PDFs: `files` carrying a PDF's bytes on chat.start and session.send to a chat (FILE_ATTACHMENTS.md, "Wiring a PDF") ---
+
+const PDF_FILE = { name: "paper.pdf", type: "application/pdf", data: "JVBERi0xLjQK" };
+
+test("a PDF reaches a chat as its bytes, typed as a PDF, on chat.start and on session.send", async () => {
+    const w = world({ hostsChat: () => true });
+    assert.equal(code(await w.run({ type: "chat.start", runtime: "local", text: "read", files: [{ ...PDF_FILE, type: "text/html" }] })), "ok");
+    assert.deepEqual(w.named("startChat")[0][1].files, [PDF_FILE], "the type is the runtime's, not the client's claim");
+    w.index.ingest(chatStart("c0ffee01"), { trusted: true });
+    assert.equal(code(await w.run({ type: "session.send", session: sid("c0ffee01"), text: "and", files: [PDF_FILE] })), "ok");
+    assert.deepEqual(w.named("sendChat")[0][4], [PDF_FILE]);
+});
+
+test("a PDF to an agent run is refused as invalid, naming the file, and the run is not started", async () => {
+    const w = world();
+    const r = await w.run({ type: "agent.start", runtime: "local", task: "read", files: [PDF_FILE], target: { kind: "tab", tabId: TAB } });
+    assert.deepEqual([code(r), r.error.message], ["invalid", "paper.pdf is a PDF; an agent run will read PDFs in a later change"]);
+    assert.equal(w.named("startAgent").length, 0);
+});
+
+test("data that is not base64 is a malformed files field", async () => {
+    const w = world();
+    const r = await w.run({ type: "chat.start", runtime: "local", text: "read", files: [{ ...PDF_FILE, data: "not base64!" }] });
+    assert.equal(code(r), "invalid");
+    assert.equal(w.named("startChat").length, 0);
+});
+
+test("a PDF the runtime will not read answers chat.start and session.send as invalid, with the reason", async () => {
+    const { FilesRefused } = await import("../src/attached-files.ts");
+    const why = "paper.pdf: This PDF is password protected, so it cannot be read.";
+    const w = world({
+        hostsChat: () => true,
+        startChat: async () => { throw new FilesRefused(why); },
+        sendChat: async () => { throw new FilesRefused(why); },
+    });
+    const started = await w.run({ type: "chat.start", runtime: "local", text: "", files: [PDF_FILE] });
+    assert.deepEqual([code(started), started.error.message], ["invalid", why]);
+    w.index.ingest(chatStart("c0ffee01"), { trusted: true });
+    const sent = await w.run({ type: "session.send", session: sid("c0ffee01"), text: "", files: [PDF_FILE] });
+    assert.deepEqual([code(sent), sent.error.message], ["invalid", why]);
+});

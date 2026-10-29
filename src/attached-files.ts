@@ -1,10 +1,12 @@
-// attached-files.ts — a text file attached to a message: what counts as text, how much one message may carry, the
-// `<file>` block the model reads, and the words a refusal uses (docs/spec/FILE_ATTACHMENTS.md, slice 1).
+// attached-files.ts — a file attached to a message: what counts as text, how much one message may carry, the
+// `<file>` block the model reads, and the words a refusal uses (docs/spec/FILE_ATTACHMENTS.md, slice 1). A PDF is
+// carried as its bytes and read by the runtime; its `<page>` sections come from pdf-frame.ts and are wrapped here.
 //
 // Pure, with no `chrome` and no DOM: the composer (to refuse a file before sending), the runtime's command check (the
 // rule), the chat host and the agent's prompt framing (to build the message) all import this one copy.
 
-import type { AttachedFile, AttachedFileInfo, ElementContext, PromptContext, PromptDisplay } from "./contract/contract-run";
+import type { AttachedFile, AttachedFileInfo, AttachedPdf, ElementContext, PromptContext, PromptDisplay, SentFile } from "./contract/contract-run";
+import { b64ToBytes, bytesToB64 } from "./pdf/pdf-wire";
 
 /**
  * The most text one message may carry in files, counted in CHARACTERS of decoded text across all of its files.
@@ -18,8 +20,45 @@ export const FILES_MAX_COUNT = 10;
 /** The longest file name kept, in characters; a longer one is refused by the runtime rather than cut. */
 export const FILE_NAME_MAX = 255;
 
+/** The largest PDF one message may carry, in bytes. The hub's cap is lower (`min(20 MiB, 0.6 x the burst)`), and is
+ *  that runtime's to apply. */
+export const PDF_ATTACH_MAX = 20 * 1024 * 1024;
+
 /** The picker's `accept` list: the common text and source types. It only OFFERS them; the test is {@link decodeTextFile}. */
 export const TEXT_FILE_ACCEPT = "text/*,.txt,.md,.log,.csv,.tsv,.json,.jsonl,.yaml,.yml,.toml,.xml,.html,.css,.js,.mjs,.ts,.tsx,.jsx,.py,.rs,.go,.java,.c,.h,.cpp,.sh,.sql,.ini,.cfg,.conf,.env";
+
+/** The picker's `accept` entries for a PDF, added when the runtime reads them. */
+export const PDF_FILE_ACCEPT = "application/pdf,.pdf";
+
+/** A PDF a runtime has read, ready to frame: its `<page>` sections (pdf-frame.ts) and what the block states. */
+export interface ReadPdfFile { name: string; type: string; bytes: number; pages: number; body: string; escaped: number }
+
+/** A file as the model's message frames it: a text file, or a PDF the runtime read. */
+export type FramedFile = AttachedFile | ReadPdfFile;
+
+/** Is `f` a PDF's bytes, as a command carries them? */
+export const isPdfFile = (f: SentFile): f is AttachedPdf => typeof (f as AttachedPdf).data === "string";
+/** Is `f` a PDF the runtime has read? */
+export const isReadPdf = (f: FramedFile): f is ReadPdfFile => typeof (f as ReadPdfFile).body === "string";
+
+/** How many bytes a base64 string holds, without decoding it. */
+export function b64Bytes(b64: string): number {
+    const pad = b64.endsWith("==") ? 2 : b64.endsWith("=") ? 1 : 0;
+    return Math.max(0, Math.floor(b64.length / 4) * 3 - pad);
+}
+
+/** The text files of `fs`: what a path that does not read PDFs takes (`filesRefusal` refuses a PDF to an agent run
+ *  first, and a page's composer does not offer one). */
+export function textFiles(fs?: readonly SentFile[] | null): AttachedFile[] | undefined {
+    const out = (fs ?? []).filter((f): f is AttachedFile => !isPdfFile(f));
+    return out.length ? out : undefined;
+}
+
+/** A message's files could not be sent once the runtime read them (a PDF that would not open, or more text than a
+ *  message takes); the message is the reason, naming the file. Thrown before the turn, so nothing is sent. */
+export class FilesRefused extends Error {
+    constructor(message: string) { super(message); this.name = "FilesRefused"; }
+}
 
 /** Is the message going to a chat or to an agent run? Only the refusal's wording differs. */
 export type FileTarget = "chat" | "agent";
@@ -52,17 +91,47 @@ export function lineCount(text: string): number {
 }
 
 /** A file's descriptor, as a transcript keeps it. */
-export function fileInfo(f: AttachedFile): AttachedFileInfo {
+export function fileInfo(f: FramedFile): AttachedFileInfo {
+    if (isReadPdf(f)) return { name: f.name, type: f.type, bytes: f.bytes, lines: 0, pages: f.pages };
     return { name: f.name, type: f.type, bytes: utf8Length(f.text), lines: lineCount(f.text) };
 }
 
-/** "server.log · text, 412 lines": what the calm view's chip says. */
+/** "server.log · text, 412 lines", "paper.pdf · PDF, 12 pages": what the calm view's chip says. */
 export function fileSummary(i: AttachedFileInfo): string {
+    if (i.pages != null) return `${i.name} · PDF, ${i.pages} page${i.pages === 1 ? "" : "s"}`;
     return `${i.name} · text, ${i.lines} line${i.lines === 1 ? "" : "s"}`;
 }
 
 /** The sentence under a sent file's chip. Slice 1 sends every file whole; later slices add the other outcomes. */
 export const FILE_SENT_TIP = "Sent to the model in full.";
+
+/** The sentence under a sent PDF's chip. */
+export const PDF_SENT_TIP = "Read page by page: each page's text, and the image of a page that needed one. The message names what was not sent.";
+
+/** The tip for a sent file's chip. */
+export const fileSentTip = (i: AttachedFileInfo): string => (i.pages != null ? PDF_SENT_TIP : FILE_SENT_TIP);
+
+/** Do these bytes, name or type say PDF? */
+export function looksPdf(name: string, type: string, bytes: Uint8Array): boolean {
+    return type === "application/pdf" || /\.pdf$/i.test(name) || (bytes.length >= 5 && String.fromCharCode(...bytes.subarray(0, 5)) === "%PDF-");
+}
+
+/**
+ * A picked PDF, checked and carried as its bytes: the runtime reads it. Refused when it does not start with `%PDF-`
+ * (anywhere in its first KB, as the reader allows) or is past {@link PDF_ATTACH_MAX}.
+ * @param name the file's name
+ * @param bytes its content
+ */
+export function encodePdfFile(name: string, bytes: Uint8Array): { ok: true; file: AttachedPdf } | { ok: false; reason: string } {
+    if (bytes.length > PDF_ATTACH_MAX) return { ok: false, reason: tooLargePdf(name, bytes.length) };
+    if (!String.fromCharCode(...bytes.subarray(0, 1024)).includes("%PDF-")) return { ok: false, reason: `${name} is not a PDF` };
+    return { ok: true, file: { name, type: "application/pdf", data: bytesToB64(bytes) } };
+}
+
+/** The sentence for a PDF past {@link PDF_ATTACH_MAX}. */
+export function tooLargePdf(name: string, bytes: number): string {
+    return `${name} is too large to send: ${sizeLabel(bytes)}; a PDF takes up to ${PDF_ATTACH_MAX / 1024 / 1024} MB`;
+}
 
 /**
  * Decode a picked file as text. A file is text if it decodes as UTF-8 (`fatal`) and holds no NUL byte; the extension
@@ -73,8 +142,7 @@ export const FILE_SENT_TIP = "Sent to the model in full.";
  * @param bytes its content
  */
 export function decodeTextFile(name: string, type: string, bytes: Uint8Array): { ok: true; file: AttachedFile } | { ok: false; reason: string } {
-    const pdf = type === "application/pdf" || /\.pdf$/i.test(name) || (bytes.length >= 5 && String.fromCharCode(...bytes.subarray(0, 5)) === "%PDF-");
-    if (pdf) return { ok: false, reason: `${name} is not a text file; PDFs come in a later change` };
+    if (looksPdf(name, type, bytes)) return { ok: false, reason: `${name} is a PDF, which this runtime does not read` };
     if (bytes.includes(0)) return { ok: false, reason: `${name} is not a text file` };
     try {
         const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -105,11 +173,18 @@ export const FILE_READ_MAX_BYTES = FILE_INLINE_MAX * 4;
  * @param files the files of ONE message, in attach order
  * @param target where the message goes: an agent run says that reading on demand is a later change
  */
-export function filesRefusal(files: readonly AttachedFile[], target: FileTarget): string | null {
+export function filesRefusal(files: readonly SentFile[], target: FileTarget): string | null {
     if (files.length > FILES_MAX_COUNT) return `a message takes up to ${FILES_MAX_COUNT} files`;
-    let total = 0;
+    let total = 0, pdfBytes = 0;
     for (const f of files) {
         if (f.name.length > FILE_NAME_MAX) return `a file name takes up to ${FILE_NAME_MAX} characters`;
+        if (isPdfFile(f)) {
+            // A PDF's text is counted by the runtime once it has read the pages (textCapRefusal); here, its bytes.
+            if (target === "agent") return `${f.name} is a PDF; an agent run will read PDFs in a later change`;
+            pdfBytes += b64Bytes(f.data);
+            if (pdfBytes > PDF_ATTACH_MAX) return tooLargePdf(f.name, b64Bytes(f.data));
+            continue;
+        }
         total += f.text.length;
         if (total > FILE_INLINE_MAX) {
             return tooLarge(f.name, f.text.length, f.text.length <= FILE_INLINE_MAX, target);
@@ -124,9 +199,9 @@ export function filesRefusal(files: readonly AttachedFile[], target: FileTarget)
  * @param files the files in the box
  * @param target where the message will go
  */
-export function pendingRefusals(files: readonly AttachedFile[], target: FileTarget): (string | null)[] {
+export function pendingRefusals(files: readonly SentFile[], target: FileTarget): (string | null)[] {
     const out: (string | null)[] = [];
-    const kept: AttachedFile[] = [];
+    const kept: SentFile[] = [];
     for (const f of files) {
         const why = filesRefusal([...kept, f], target);
         out.push(why);
@@ -151,7 +226,11 @@ export function attr(v: string): string {
  * all compare these bytes.
  * @param f the file
  */
-export function fileBlock(f: AttachedFile): string {
+export function fileBlock(f: FramedFile): string {
+    if (isReadPdf(f)) {
+        const head = `<file name="${attr(f.name)}" type="${attr(f.type)}" bytes="${f.bytes}" pages="${f.pages}"${f.escaped ? ` escaped="${f.escaped}"` : ""}>`;
+        return `${head}\n${f.body}${f.body && !f.body.endsWith("\n") ? "\n" : ""}</file>`;
+    }
     let n = 0;
     const text = f.text.replace(/<\/file/gi, () => { n++; return "<\\/file"; });
     const head = `<file name="${attr(f.name)}" type="${attr(f.type)}" bytes="${utf8Length(f.text)}"${n ? ` escaped="${n}"` : ""}>`;
@@ -159,23 +238,23 @@ export function fileBlock(f: AttachedFile): string {
 }
 
 /** The blocks of `files` in attach order, blank-line separated; "" for none. */
-export function fileBlocks(files: readonly AttachedFile[]): string {
+export function fileBlocks(files: readonly FramedFile[]): string {
     return files.map(fileBlock).join("\n\n");
 }
 
 /** `typed` with the files' blocks after it, in attach order. */
-export function withFileBlocks(typed: string, files?: readonly AttachedFile[] | null): string {
+export function withFileBlocks(typed: string, files?: readonly FramedFile[] | null): string {
     if (!files?.length) return typed;
     return [typed.trim() ? typed : "", fileBlocks(files)].filter(Boolean).join("\n\n");
 }
 
 /** A message with files and nothing else folded in: the model-facing text, and how to show it (absent without files). */
-export function frameFiles(typed: string, files?: readonly AttachedFile[] | null): { text: string; display?: PromptDisplay } {
+export function frameFiles(typed: string, files?: readonly FramedFile[] | null): { text: string; display?: PromptDisplay } {
     return files?.length ? { text: withFileBlocks(typed, files), display: fileDisplay(typed, files) } : { text: typed };
 }
 
 /** The file entries of a message's display context. */
-export function fileContexts(files?: readonly AttachedFile[] | null): PromptContext[] {
+export function fileContexts(files?: readonly FramedFile[] | null): PromptContext[] {
     return (files ?? []).map((f) => ({ kind: "file" as const, file: fileInfo(f) }));
 }
 
@@ -186,13 +265,21 @@ export function fileContexts(files?: readonly AttachedFile[] | null): PromptCont
  * @param v whatever arrived
  * @returns the files, or undefined when there are none or the shape is wrong
  */
-export function cleanFiles(v: unknown): AttachedFile[] | undefined {
+export function cleanFiles(v: unknown): SentFile[] | undefined {
     if (!Array.isArray(v)) return undefined;
-    const out: AttachedFile[] = [];
+    const out: SentFile[] = [];
     for (const x of v) {
         if (!x || typeof x !== "object") return undefined;
-        const { name, type, text } = x as Record<string, unknown>;
-        if (typeof name !== "string" || !name || typeof text !== "string") return undefined;
+        const { name, type, text, data } = x as Record<string, unknown>;
+        if (typeof name !== "string" || !name) return undefined;
+        if (data !== undefined && text !== undefined) return undefined;   // both: neither shape, so not a guess
+        if (typeof data === "string") {
+            // A PDF's bytes: base64 that decodes (b64ToBytes is null otherwise), typed as a PDF whatever was claimed.
+            if (!b64ToBytes(data)) return undefined;
+            out.push({ name, type: "application/pdf", data });
+            continue;
+        }
+        if (typeof text !== "string") return undefined;
         out.push({ name, type: typeof type === "string" && type ? type : "text/plain", text });
     }
     return out.length ? out : undefined;
@@ -206,10 +293,10 @@ export function cleanFiles(v: unknown): AttachedFile[] | undefined {
  * @param target where the message goes (only the wording of a size refusal differs)
  * @returns the files (absent for none), or the reason to answer `invalid` with
  */
-export function checkFilesField(raw: unknown, target: FileTarget): { files?: AttachedFile[]; reason?: string } {
+export function checkFilesField(raw: unknown, target: FileTarget): { files?: SentFile[]; reason?: string } {
     if (raw == null || (Array.isArray(raw) && !raw.length)) return {};
     const files = cleanFiles(raw);
-    if (!files || files.length !== (raw as unknown[]).length) return { reason: "files must be a list of { name, type, text }" };
+    if (!files || files.length !== (raw as unknown[]).length) return { reason: "files must be a list of { name, type, text } or, for a PDF, { name, type, data }" };
     const reason = filesRefusal(files, target);
     return reason ? { reason } : { files };
 }
@@ -218,6 +305,20 @@ export function checkFilesField(raw: unknown, target: FileTarget): { files?: Att
 export const isFileContext = (c: PromptContext): c is Extract<PromptContext, { kind: "file" }> => c.kind === "file";
 
 /** A display for a message with files and no element (an element's framing is `framePrompt`'s, prompts.ts). */
-export function fileDisplay(typed: string, files: readonly AttachedFile[], element?: ElementContext | null): PromptDisplay {
+export function fileDisplay(typed: string, files: readonly FramedFile[], element?: ElementContext | null): PromptDisplay {
     return { typed: typed.trim(), context: [...(element ? [{ kind: "element" as const, element }] : []), ...fileContexts(files)] };
+}
+
+/**
+ * Why the files of a chat message cannot be sent once its PDFs are read, or null: slice 1's cap on the TEXT a
+ * message carries in files, counted over the text files and the text of every page read.
+ * @param sizes each file's name and characters of text, in attach order
+ */
+export function textCapRefusal(sizes: readonly { name: string; chars: number }[]): string | null {
+    let total = 0;
+    for (const f of sizes) {
+        total += f.chars;
+        if (total > FILE_INLINE_MAX) return tooLarge(f.name, f.chars, f.chars <= FILE_INLINE_MAX, "chat");
+    }
+    return null;
 }

@@ -4,15 +4,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
     backgroundChats, cancelBackgroundChat, configureBackgroundChats, forgetBackgroundChat, isBackgroundChat,
-    sendBackgroundChat, startBackgroundChat, MAX_BG_CHATS,
+    sendBackgroundChat, startBackgroundChat, MAX_BG_CHATS, MAX_TURN_IMAGES, READER_PAGE_MAX, CHAT_PAGE_RECOVERY,
 } from "../src/sw/sw-chat.ts";
+import { FilesRefused, FILE_INLINE_MAX } from "../src/attached-files.ts";
+import { ImagesRefused } from "../src/image-gate.ts";
 
 // A hung turn would otherwise hang the runner rather than fail the test.
 const T = { timeout: 5000 };
 
 /** A worker whose model call, storage and clock are scriptable. `answer` may resolve, reject, or wait. `stream`, when
  *  given, is the worker's streamed call (a turn then takes it instead of `call`), and `clock` the worker's clock. */
-function world({ answer, stream, clock, plan, read } = {}) {
+function world({ answer, stream, clock, plan, read, pdf } = {}) {
     const events = [];
     const stored = new Map();
     let pending = null;
@@ -29,6 +31,7 @@ function world({ answer, stream, clock, plan, read } = {}) {
         // Where images go: to the model unless a test says otherwise; `asked` records each question.
         images: async (model, forced) => { asked.push({ model, forced }); return plan ? plan(model, forced) : { route: "model" }; },
         read: read ?? (async (image, reader) => `${reader} read ${image.length} chars`),
+        ...(pdf ? { pdf } : {}),
     };
     const asked = [];
     configureBackgroundChats(deps);
@@ -360,4 +363,131 @@ test("named: a model known not to see, with no reader, is told each image was no
     const msg = w.of("chat")[0].request.messages.at(-1);
     assert.equal(msg.images, undefined);
     assert.equal(msg.content, "here\n\n[Pasted image was not sent: you can't see images, and no reader model is set to read it.]");
+});
+
+// --- PDFs: read before the turn, pages drawn in it (docs/spec/FILE_ATTACHMENTS.md, "Wiring a PDF") ---
+
+/** A read document: one page per kind given, page n's text "text of n" (a scan's is empty). */
+const docOf = (...kinds) => ({ pageCount: kinds.length, pages: kinds.map((kind, i) => ({ n: i + 1, kind, text: kind === "scanned" || kind === "blank" ? "" : `text of ${i + 1}`, measure: {} })) });
+/** The offscreen reader, scripted: `read` answers with `doc` (or a refusal), `render` draws page n as "png-n". */
+function reader(doc, { renderFails = [] } = {}) {
+    const calls = { read: 0, render: [] };
+    return {
+        calls,
+        read: async () => { calls.read++; return doc.ok === false ? doc : { ok: true, doc }; },
+        render: async (_b64, n, scale) => {
+            calls.render.push({ n, scale });
+            return renderFails.includes(n) ? { ok: false, code: "unreadable", refusal: "This PDF could not be read." } : { ok: true, pngB64: `png-${n}`, width: 1, height: 1, scale };
+        },
+    };
+}
+const PDF = { name: "paper.pdf", type: "application/pdf", data: "JVBERi0xLjQK" };   // "%PDF-1.4\n"
+const userOf = (w) => w.of("chat")[0].request.messages.at(-1);
+
+test("a text PDF: one <file> block of <page> sections, no vision asked, no page drawn, the chip counts pages", T, async () => {
+    const r = reader(docOf("text", "blank", "ocr-scan"));
+    const w = world({ pdf: r });
+    await startBackgroundChat({ text: "summarise", files: [PDF] });
+    await until(() => w.of("chat-result").length === 1, "the turn");
+    const u = userOf(w);
+    assert.equal(u.content, 'summarise\n\n<file name="paper.pdf" type="application/pdf" bytes="9" pages="3">\n<page n="1">\ntext of 1\n</page>\n<page n="3">\ntext of 3\n</page>\n</file>');
+    assert.equal(u.images, undefined);
+    assert.deepEqual(w.asked, [], "nothing would send an image, so vision is not asked");
+    assert.deepEqual(r.calls.render, []);
+    assert.deepEqual(w.of("chat")[0].display.context, [{ kind: "file", file: { name: "paper.pdf", type: "application/pdf", bytes: 9, lines: 0, pages: 3 } }]);
+});
+
+test("to the model: a scan is drawn and numbered after the pasted images, and the event carries every image", T, async () => {
+    const r = reader(docOf("scanned", "text", "mixed"));
+    const w = world({ pdf: r });
+    await startBackgroundChat({ text: "", images: ["data:image/png;base64,pasted"], files: [PDF] });
+    await until(() => w.of("chat-result").length === 1, "the turn");
+    const u = userOf(w);
+    assert.match(u.content, /<page n="1" image="2">\n<\/page>/);
+    assert.match(u.content, /<page n="3" image="3">\ntext of 3\n<\/page>/);
+    assert.deepEqual(u.images, ["data:image/png;base64,pasted", "data:image/png;base64,png-1", "data:image/png;base64,png-3"]);
+    assert.deepEqual(w.of("chat")[0].request.images, u.images);
+    assert.deepEqual(r.calls.render.map((c) => c.n), [1, 3]);
+});
+
+test("past the image cap: the reader reads the scans past it, and with no reader they are named with the recovery", T, async () => {
+    const kinds = Array.from({ length: MAX_TURN_IMAGES + 2 }, () => "scanned");
+    for (const withReader of [true, false]) {
+        const w = world({ pdf: reader(docOf(...kinds)), plan: () => (withReader ? { route: "model", reader: "ocr" } : { route: "model" }) });
+        await startBackgroundChat({ text: "", files: [PDF] });
+        await until(() => w.of("chat-result").length === 1, "the turn");
+        const u = userOf(w);
+        assert.equal(u.images.length, MAX_TURN_IMAGES);
+        if (withReader) {
+            assert.match(u.content, /<page n="9" read-by="ocr">\nocr read \d+ chars\n<\/page>/);
+            assert.doesNotMatch(u.content, /not sent/);
+        } else {
+            assert.ok(u.content.includes(`pages 9-10 are scans not sent as images. ${CHAT_PAGE_RECOVERY}`), u.content);
+        }
+    }
+});
+
+test("to a reader: each scan is read in place of its text, a figure is named, and the reader's pages are capped", T, async () => {
+    const kinds = ["mixed", ...Array.from({ length: READER_PAGE_MAX + 1 }, () => "scanned")];
+    const w = world({ pdf: reader(docOf(...kinds)), plan: () => ({ route: "reader", reader: "ocr" }) });
+    await startBackgroundChat({ text: "", files: [PDF] });
+    await until(() => w.of("chat-result").length === 1, "the turn");
+    const u = userOf(w);
+    assert.equal(u.images, undefined);
+    assert.match(u.content, /<page n="1">\ntext of 1\n\(page 1 has a figure you cannot see\)\n<\/page>/);
+    assert.equal((u.content.match(/read-by="ocr"/g) ?? []).length, READER_PAGE_MAX);
+    assert.ok(u.content.includes(`page ${READER_PAGE_MAX + 2} is a scan not sent as an image. ${CHAT_PAGE_RECOVERY}`), u.content);
+});
+
+test("named: a model known not to see gets each scan named with what would read it", T, async () => {
+    const w = world({ pdf: reader(docOf("scanned")), plan: () => ({ route: "named" }) });
+    await startBackgroundChat({ text: "", files: [PDF] });
+    await until(() => w.of("chat-result").length === 1, "the turn");
+    assert.match(userOf(w).content, /<page n="1">\n\(page 1 is a scan this model cannot see; set a reader model in Settings to have it read\)\n<\/page>/);
+});
+
+test("unknown vision, no reader: a scan refuses the message before it starts; a figure alone does not", T, async () => {
+    const refused = () => ({ route: "refused", message: "may not see" });
+    const w = world({ pdf: reader(docOf("scanned")), plan: refused });
+    await assert.rejects(startBackgroundChat({ text: "", files: [PDF] }), (e) => e instanceof ImagesRefused && e.message === "may not see");
+    assert.deepEqual(w.events, []);
+    assert.deepEqual(backgroundChats(), []);
+
+    const f = world({ pdf: reader(docOf("mixed")), plan: refused });
+    await startBackgroundChat({ text: "", files: [PDF] });
+    await until(() => f.of("chat-result").length === 1, "the turn");
+    assert.match(userOf(f).content, /\(page 1 has a figure you cannot see\)/);
+});
+
+test("a page that will not draw says so in its section and takes no image number", T, async () => {
+    const w = world({ pdf: reader(docOf("scanned", "scanned"), { renderFails: [1] }) });
+    await startBackgroundChat({ text: "", files: [PDF] });
+    await until(() => w.of("chat-result").length === 1, "the turn");
+    const u = userOf(w);
+    assert.match(u.content, /<page n="1">\n\(page 1 could not be drawn as an image: This PDF could not be read\.\)\n<\/page>/);
+    assert.match(u.content, /<page n="2" image="1">/);
+    assert.equal(u.images.length, 1);
+});
+
+test("refused before the turn: a PDF that will not read, more text than a message takes, or no reader at all", T, async () => {
+    const cases = [
+        [reader({ ok: false, code: "encrypted", refusal: "This PDF is password protected, so it cannot be read." }), "paper.pdf: This PDF is password protected, so it cannot be read."],
+        [reader({ pageCount: 1, pages: [{ n: 1, kind: "text", text: "x".repeat(FILE_INLINE_MAX + 1), measure: {} }] }), /^paper\.pdf is too large to send whole/],
+        [undefined, "paper.pdf is a PDF, which this runtime does not read"],
+    ];
+    for (const [pdf, why] of cases) {
+        const w = world({ pdf });
+        await assert.rejects(startBackgroundChat({ text: "", files: [PDF] }), (e) => e instanceof FilesRefused && (typeof why === "string" ? e.message === why : why.test(e.message)));
+        assert.deepEqual(w.events, []);
+    }
+});
+
+test("a later message with a PDF is read before its turn, and a refusal leaves the chat idle", T, async () => {
+    const r = reader({ ok: false, code: "damaged", refusal: "This PDF is damaged or incomplete, so it cannot be read." });
+    const w = world({ pdf: r });
+    const hash = await startBackgroundChat({ text: "hi" });
+    await until(() => w.of("chat-result").length === 1, "the first turn");
+    await assert.rejects(sendBackgroundChat(hash, "", undefined, [PDF]), FilesRefused);
+    assert.equal(w.of("chat").length, 1);
+    assert.equal(await sendBackgroundChat(hash, "again"), "turn");
 });

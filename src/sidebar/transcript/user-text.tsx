@@ -12,7 +12,7 @@ import { clearHighlight, ClickableImg, cursorTipOn, highlightEl, openCtxMenu } f
 import { useCopy } from "../copy-hash";
 import type { ElementContext } from "../../contract";
 import type { PromptContext } from "../../contract/contract-run";
-import { FILE_SENT_TIP, fileSummary } from "../../attached-files";
+import { fileSentTip, fileSummary } from "../../attached-files";
 import { truncate } from "../format";
 import { useJustArrived } from "./history-paint";
 import type { ComponentChildren } from "preact";
@@ -192,7 +192,7 @@ export function SentContext({ context }: { context?: readonly PromptContext[] | 
     return (
         <div class="sent-ctx">
             {context.map((c, i) => c.kind === "element" ? <ElementPill key={i} ctx={c.element} />
-                : c.kind === "file" ? <FilePill key={i} summary={fileSummary(c.file)} tip={FILE_SENT_TIP} /> : null)}
+                : c.kind === "file" ? <FilePill key={i} summary={fileSummary(c.file)} tip={fileSentTip(c.file)} /> : null)}
         </div>
     );
 }

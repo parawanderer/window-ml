@@ -27,6 +27,8 @@ import { fetchLLM, streamLLM, getConfig, listAvailableModels, modelCapabilitiesB
 import { workerMl } from "./worker-ml";
 import { ocrRequest } from "../ml/ml-vision";
 import { planImages } from "../image-gate";
+import { ensureOffscreen } from "./sw-offscreen";
+import type { PdfMessage } from "../pdf/pdf-wire";
 import { pythonBundlePresent } from "./sw-python";
 import { recordHousekeeping, senderOrigin } from "./sw-housekeeping";
 import { archiveCall, lastFolderReport, onFolderChange, scheduleFolderSync, syncFolder } from "./sw-archive";
@@ -129,7 +131,7 @@ function localRuntime(): RuntimeInfo {
         // backend behind it); `pythonBench` is MEASURED, because a checkout without the wheels builds a bundle whose
         // bench would fail at run time. `localSettings`: this browser's pages may edit its settings, which only the
         // extension's own pages can (a phone over the hub reports the capability and holds nothing to edit with).
-        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore, resourcePanel: true, pythonBench: pythonBundled, localSettings: true, switchModel: true, attachFiles: true, ...archiveCapability(), ...blankStartCapability(), ...shellCapabilities(), ...(attentionCodes().length ? { attention: attentionCodes() } : {}) },
+        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore, resourcePanel: true, pythonBench: pythonBundled, localSettings: true, switchModel: true, attachFiles: true, attachPdf: true, ...archiveCapability(), ...blankStartCapability(), ...shellCapabilities(), ...(attentionCodes().length ? { attention: attentionCodes() } : {}) },
         // This browser's own pages hold every scope.
         grants: [{ scope: "view" }, { scope: "drive" }, { scope: "approve" }, { scope: "screen" }],
     };
@@ -302,12 +304,16 @@ export function configureSessionCommands(run: RunDeps): void {
         now: () => Date.now(),
         // The question an agent run asks (run-assembly.ts): the chat's model, then the reader the person set.
         images: async (model, forced) => {
-            if (forced) return planImages("unknown", null, true);
             const ml = workerMl("");
             const target = model || (await getConfig()).model || null;
             const ocr = (await getConfig()).ocrModel || null;
             const reader = ocr && ocr !== target && (await ml._modelVision(ocr)) !== "no" ? ocr : null;
-            return planImages(await ml._modelVision(target), reader, false);
+            return planImages(forced ? "unknown" : await ml._modelVision(target), reader, forced);
+        },
+        // The offscreen document's PDF reader (docs/dev/pdf.md): only the service worker may ask it.
+        pdf: {
+            read: async (b64) => { await ensureOffscreen(); return await chrome.runtime.sendMessage({ type: "PDF_READ", b64 } satisfies PdfMessage); },
+            render: async (b64, n, scale) => { await ensureOffscreen(); return await chrome.runtime.sendMessage({ type: "PDF_RENDER", b64, n, scale } satisfies PdfMessage); },
         },
         read: async (image, reader, signal) => {
             const r = await fetchLLM(ocrRequest(image, { model: reader }), signal);
