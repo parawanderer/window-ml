@@ -13,7 +13,7 @@ import { truncate, elPath, describeSkeleton, queryAll, selectorError, shadowHost
 import { makeAnswerFacade } from "./pointers/answer-set";
 import { accessibleName, roleOf, ariaState } from "./dom/a11y";
 import { framePrompt } from "./agent/prompts";
-import { cleanFiles } from "./attached-files";
+import { cleanFiles, textFiles } from "./attached-files";
 import { promptSurfaceOf } from "./agent/prompt-surface";
 import { pageContext, resolvePoint, resolveBox, agentState, mlRange } from "./util";
 import { suspiciousChars } from "./agent/security";
@@ -623,7 +623,7 @@ import { pageWorld } from "./page-world";
                 // same way a fresh "ask about this" run does (framePrompt), so an appended turn/steer gets the
                 // element's clean content + selector. An element-only send (no typed text) is then non-empty.
                 // `display` keeps what was typed and the element, so the bubble shows those, not the framed block.
-                const { text, display } = framePrompt(rawText, d.__mlSessionSend.elementContext, cleanFiles(d.__mlSessionSend.files));
+                const { text, display } = framePrompt(rawText, d.__mlSessionSend.elementContext, textFiles(cleanFiles(d.__mlSessionSend.files)));
                 if (!text && !(images && images.length)) { done("none"); return; }   // allow an image-only follow-up
                 const h = handleRegistry.get(hash);
                 // An AGENT handle holds live state: steer a RUNNING loop (say — text only, no image mid-steer),

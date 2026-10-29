@@ -21,7 +21,7 @@ export function visionAnswer(caps: string[] | null, declared: { isDefault: boole
 
 /** The path a message's images take. */
 export type ImagePlan =
-    | { route: "model" }
+    | { route: "model"; reader?: string }
     | { route: "reader"; reader: string }
     | { route: "named" }
     | { route: "refused"; message: string };
@@ -35,11 +35,11 @@ export const VISION_UNKNOWN_REFUSAL = "This model may not see images. If it does
  * @param sees whether the receiving model sees images
  * @param reader a reader model known to see, or null when none is set or it does not see
  * @param forced the person declared this model sees (`vision: true`): the images go to it, unprobed
- * @returns the model when it sees or is declared to; else the reader when one is set; else named when the model is
- *   known not to see; else refused, before anything is sent
+ * @returns the model when it sees or is declared to (with the reader, for what is past the image cap); else the
+ *   reader when one is set; else named when the model is known not to see; else refused, before anything is sent
  */
 export function planImages(sees: VisionAnswer, reader: string | null, forced: boolean): ImagePlan {
-    if (forced || sees === "yes") return { route: "model" };
+    if (forced || sees === "yes") return reader ? { route: "model", reader } : { route: "model" };
     if (reader) return { route: "reader", reader };
     if (sees === "no") return { route: "named" };
     return { route: "refused", message: VISION_UNKNOWN_REFUSAL };

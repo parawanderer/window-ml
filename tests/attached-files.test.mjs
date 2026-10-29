@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import {
     FILE_INLINE_MAX, FILES_MAX_COUNT, FILE_NAME_MAX, checkFilesField, cleanFiles, decodeTextFile, fileBlock, fileBlocks,
     filesRefusal, frameFiles, lineCount, pendingRefusals, sizeLabel, withFileBlocks,
+    PDF_ATTACH_MAX, b64Bytes, encodePdfFile, fileInfo, fileSentTip, fileSummary, textCapRefusal, textFiles, FILE_SENT_TIP, PDF_SENT_TIP,
 } from "../src/attached-files.ts";
 import { framePrompt } from "../src/agent/prompts.ts";
 import { promptLine } from "../src/contract/contract-run.ts";
@@ -30,11 +31,11 @@ test("bytes that are not UTF-8, or hold a NUL, are refused by name", () => {
 });
 
 test("a PDF is refused with the sentence that says they come later, by type, name or magic bytes", () => {
-    const want = "report.pdf is not a text file; PDFs come in a later change";
+    const want = "report.pdf is a PDF, which this runtime does not read";
     assert.equal(decodeTextFile("report.pdf", "application/pdf", enc("%PDF-1.7\n")).reason, want);
     assert.equal(decodeTextFile("report.pdf", "", enc("hello")).reason, want, "by name alone");
     assert.equal(decodeTextFile("report.pdf", "", enc("%PDF-1.4 ...")).reason, want);
-    assert.equal(decodeTextFile("scan", "", enc("%PDF-1.4 ...")).reason, "scan is not a text file; PDFs come in a later change", "by magic bytes alone");
+    assert.equal(decodeTextFile("scan", "", enc("%PDF-1.4 ...")).reason, "scan is a PDF, which this runtime does not read", "by magic bytes alone");
 });
 
 // --- the cap ---
@@ -187,4 +188,58 @@ test("a list or title for a message of files and no words names the files, not t
     assert.equal(promptLine(two.text, two.display), "About 2 files");
     const typed = framePrompt("why?", null, [file("a", "x")]);
     assert.equal(promptLine(typed.text, typed.display), "why?");
+});
+
+// --- PDFs: carried as bytes, read by the runtime ---
+
+const pdfBytes = (n = 64) => { const b = new Uint8Array(n); b.set(enc("%PDF-1.7\n")); return b; };
+
+test("a PDF is carried as base64 of its bytes, and b64Bytes counts them back without decoding", () => {
+    for (const n of [9, 10, 11, 64]) {
+        const r = encodePdfFile("a.pdf", pdfBytes(n));
+        assert.equal(r.ok, true);
+        assert.equal(r.file.type, "application/pdf");
+        assert.equal(b64Bytes(r.file.data), n, `${n} bytes`);
+    }
+});
+
+test("a PDF is refused when it has no %PDF- header in its first KB, or is past the cap", () => {
+    assert.equal(encodePdfFile("x.pdf", enc("hello")).reason, "x.pdf is not a PDF");
+    const late = new Uint8Array(1100); late.set(enc("%PDF-1.4"), 1050);
+    assert.equal(encodePdfFile("late.pdf", late).ok, false, "the header past the first KB");
+    const early = new Uint8Array(1100); early.set(enc("%PDF-1.4"), 500);
+    assert.equal(encodePdfFile("junk-first.pdf", early).ok, true, "junk before the header, as pdf.js allows");
+    assert.match(encodePdfFile("big.pdf", new Uint8Array(PDF_ATTACH_MAX + 1)).reason, /^big\.pdf is too large to send: .*a PDF takes up to 20 MB$/);
+});
+
+test("off the wire: a PDF's data must be base64, and its type is a PDF whatever was claimed", () => {
+    assert.deepEqual(cleanFiles([{ name: "a.pdf", type: "text/html", data: "JVBERg==" }]), [{ name: "a.pdf", type: "application/pdf", data: "JVBERg==" }]);
+    assert.equal(cleanFiles([{ name: "a.pdf", type: "", data: "%%%" }]), undefined);
+    assert.equal(cleanFiles([{ name: "a.pdf", type: "", data: "JVBERg==", text: "both" }]), undefined, "text and data together is neither");
+});
+
+test("a PDF to an agent run is refused by name; to a chat it counts its bytes, not text", () => {
+    const pdf = { name: "p.pdf", type: "application/pdf", data: "JVBERg==" };
+    assert.equal(filesRefusal([pdf], "agent"), "p.pdf is a PDF; an agent run will read PDFs in a later change");
+    assert.equal(filesRefusal([pdf, file("big.txt", "x".repeat(FILE_INLINE_MAX))], "chat"), null);
+    const huge = { ...pdf, data: "A".repeat(Math.ceil((PDF_ATTACH_MAX + 3) / 3) * 4) };
+    assert.match(filesRefusal([huge], "chat"), /too large to send/);
+    assert.deepEqual(textFiles([pdf, file("a.txt", "a")]), [file("a.txt", "a")]);
+    assert.equal(textFiles([pdf]), undefined);
+});
+
+test("the text cap applies to what the pages hold, naming the file that tips it", () => {
+    assert.equal(textCapRefusal([{ name: "a.txt", chars: 10 }, { name: "p.pdf", chars: FILE_INLINE_MAX - 10 }]), null);
+    assert.match(textCapRefusal([{ name: "a.txt", chars: 10 }, { name: "p.pdf", chars: FILE_INLINE_MAX }]), /^p\.pdf is too large to send whole together with the other files/);
+});
+
+test("a read PDF's block states its bytes and pages; its chip counts pages and has the PDF tip", () => {
+    const read = { name: 'a "b".pdf', type: "application/pdf", bytes: 1234, pages: 2, body: '<page n="1">\nx\n</page>', escaped: 1 };
+    assert.equal(fileBlock(read), '<file name="a &quot;b&quot;.pdf" type="application/pdf" bytes="1234" pages="2" escaped="1">\n<page n="1">\nx\n</page>\n</file>');
+    const info = fileInfo(read);
+    assert.deepEqual(info, { name: 'a "b".pdf', type: "application/pdf", bytes: 1234, lines: 0, pages: 2 });
+    assert.equal(fileSummary(info), 'a "b".pdf · PDF, 2 pages');
+    assert.equal(fileSummary({ ...info, pages: 1 }), 'a "b".pdf · PDF, 1 page');
+    assert.equal(fileSentTip(info), PDF_SENT_TIP);
+    assert.equal(fileSentTip(fileInfo(file("a.txt", "a"))), FILE_SENT_TIP);
 });

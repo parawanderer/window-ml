@@ -12,7 +12,8 @@ import {
     type SessionId, type SessionIndexUpdate, type SessionKey, type SessionStreamMessage, type SessionSummary, type StreamPosition, type TabGroupInfo, type TabInfo, type Unsubscribe, type ListedSession,
 } from "../session/session-host";
 import { capTitle } from "../session/session-title";
-import { checkFilesField, frameFiles } from "../attached-files";
+import { b64Bytes, checkFilesField, frameFiles, isPdfFile, type FramedFile } from "../attached-files";
+import type { SentFile } from "../contract/contract-run";
 import { holds } from "./grants";
 
 interface Logged { cursor: number; event: MlDebugEvent }
@@ -80,6 +81,11 @@ const newHash = () => (0xd0000000 + ++hashSeq).toString(16);
 
 /** The scripted host. Construct it with runtimes and sessions, then drive it from a test or the page's console
  *  (`window.__chatFake` in the web build). */
+/** The fake host reads no PDF: each stands in as one page saying so, so the chip and the framing still draw. */
+function fakeRead(files?: SentFile[]): FramedFile[] | undefined {
+    return files?.map((f) => isPdfFile(f) ? { name: f.name, type: f.type, bytes: b64Bytes(f.data), pages: 1, body: "<page n=\"1\">\n(the fake host does not read PDFs)\n</page>", escaped: 0 } : f);
+}
+
 export class FakeHost implements SessionHost {
     readonly self: Principal;
     /** every command received, in order, whatever its outcome */
@@ -442,7 +448,7 @@ export class FakeHost implements SessionHost {
                 if (!caps.chat) return fail("unsupported", "this runtime holds no chats");
                 const att = checkFilesField(c.files, "chat");
                 if (att.reason) return fail("invalid", att.reason);
-                const framed = frameFiles(c.text, att.files);
+                const framed = frameFiles(c.text, fakeRead(att.files));
                 const hash = newHash();
                 const key = sessionKey({ runtime: rt.id, hash });
                 this.addSession({ id: { runtime: rt.id, hash }, kind: "chat", status: "done", createdTs: Date.now(), lastTs: Date.now(), pendingApprovals: 0, saved: !c.ephemeral, task: c.text });
@@ -463,7 +469,7 @@ export class FakeHost implements SessionHost {
                 if (c.target.kind === "tab" && !this.tabs.some((t) => c.target.kind === "tab" && t.tabId === c.target.tabId)) return fail("not-found", "no such tab");
                 const att = checkFilesField(c.files, "agent");
                 if (att.reason) return fail("invalid", att.reason);
-                const framed = frameFiles(c.task, att.files);
+                const framed = frameFiles(c.task, fakeRead(att.files));
                 const hash = newHash();
                 const key = sessionKey({ runtime: rt.id, hash });
                 this.addSession({ id: { runtime: rt.id, hash }, kind: "agent", status: "running", createdTs: Date.now(), lastTs: Date.now(), pendingApprovals: 0, saved: !c.ephemeral, task: c.task });
@@ -507,7 +513,7 @@ export class FakeHost implements SessionHost {
             case "session.send": {
                 const att = checkFilesField(c.files, h.summary.kind === "agent" ? "agent" : "chat");
                 if (att.reason) return fail("invalid", att.reason);
-                const framed = frameFiles(c.text, att.files);
+                const framed = frameFiles(c.text, fakeRead(att.files));
                 if (h.summary.kind === "agent") {
                     this.emit(key, { ...base, kind: "agent-say", text: framed.text, ...(framed.display ? { display: framed.display } : {}), ...(c.images ? { images: c.images } : {}), sayId: `say-${now}` });
                     return ok({ mode: h.summary.status === "running" || h.summary.status === "waiting" ? "steer" : "turn" });

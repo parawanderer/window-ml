@@ -7,7 +7,7 @@
 // can all import it. Every value arriving through it is UNTRUSTED input to the client: strings render as escaped
 // text, and an unknown kind, command or version is skipped, never guessed at.
 import type { JsonSchema } from "../contract";
-import type { AttachedFile, ElementContext } from "../contract/contract-run";
+import type { AttachedFile, AttachedPdf, ElementContext, SentFile } from "../contract/contract-run";
 import type { NeutralMessage, TokenUsage } from "../contract/contract-chat";
 import type { MlDebugEvent } from "../contract/contract-debug";
 import type { FolderState } from "../archive/archive-folder";
@@ -133,6 +133,9 @@ export interface RuntimeCapabilities {
     /** `files` on `chat.start`, `agent.start` and `session.send`: text files sent whole inside the message. A runtime
      *  without it ignores the field, so a client must not send one there. */
     attachFiles?: boolean;
+    /** `files` may carry a PDF's bytes (`{ name, type, data }`) on `chat.start` and on `session.send` to a chat: the
+     *  runtime reads it page by page. A runtime without it refuses the field as malformed. */
+    attachPdf?: boolean;
     /** the boxes this runtime uses */
     boxes?: BoxRef[];
     /** the long-term session archive, present while it is switched on (`sessionArchive`). Reachable through
@@ -402,6 +405,14 @@ export type ImageDataUrl = string;
  */
 export type { AttachedFile };
 
+/**
+ * A PDF a client sends with a message, on `chat.start` and on `session.send` to a chat: its name, `type`
+ * "application/pdf" and its BYTES as base64 in `data` (FILE_ATTACHMENTS.md, "Wiring a PDF through the attach path").
+ * The runtime reads it page by page; a PDF it cannot read, or one whose pages hold more text than a message takes,
+ * is answered `invalid` with the reason. Only a runtime listing `capabilities.attachPdf` takes one.
+ */
+export type { AttachedPdf, SentFile };
+
 /** Every command a client can send, by `type`. A runtime answers a type it does not know with `unsupported`, so a
  *  newer client talking to an older runtime degrades to a message, never to a guess. The scope each needs is in
  *  {@link COMMAND_SCOPE}. */
@@ -409,7 +420,7 @@ export type Command =
     /** A message to a session: steers a running agent (seen at its next step boundary), or starts the next turn of
      *  an idle agent or chat. Text, images, or both. */
     | {
-        type: "session.send"; session: SessionId; text: string; images?: ImageDataUrl[]; files?: AttachedFile[]; elementContext?: ElementContext; idempotencyKey?: IdempotencyKey;
+        type: "session.send"; session: SessionId; text: string; images?: ImageDataUrl[]; files?: SentFile[]; elementContext?: ElementContext; idempotencyKey?: IdempotencyKey;
         /** `true`: the person says the chat's model sees images, so they go to it unprobed. Without it, images for a
          *  model whose vision is not known are refused (`unsupported`) when no reader model is set. A chat's only:
          *  an agent run's vision is decided at `agent.start`. */
@@ -469,7 +480,7 @@ export type Command =
         /** A NESTED ask inside step `seq` (a call made while the step ran); absent for the step's own gate. */
         ask?: string }
     | {
-        type: "chat.start"; runtime: RuntimeId; text: string; images?: ImageDataUrl[]; files?: AttachedFile[];
+        type: "chat.start"; runtime: RuntimeId; text: string; images?: ImageDataUrl[]; files?: SentFile[];
         model?: string; system?: string; think?: boolean | null;
         /** `true`: the person says the model sees images, so they go to it unprobed. Without it, images for a model
          *  whose vision is not known are refused (`unsupported`) when no reader model is set. */

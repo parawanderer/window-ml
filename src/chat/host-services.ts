@@ -67,6 +67,10 @@ export function hostServices(store: ChatStore, platform: ClientPlatform, reading
             const id = idOf(key as SessionKey);
             return !!id && !!store.runtimes.value.find((r) => r.id === id.runtime)?.capabilities.attachFiles;
         },
+        acceptsPdf: (key) => {
+            const id = idOf(key as SessionKey);
+            return !!id && !!store.runtimes.value.find((r) => r.id === id.runtime)?.capabilities.attachPdf;
+        },
         sendToSession: async (key, text, images, files) => {
             const id = idOf(key);
             if (!id) return { ok: false, error: "no such session here" };

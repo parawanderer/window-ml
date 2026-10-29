@@ -19,9 +19,12 @@
  * feed of a session something else already reports (AGENTS.md's trap, which is about recording a run twice); it is
  * the only feed of a session nothing else can see.
  */
-import { hintSession, shortHash, type AttachedFile, type RequestHint } from "../contract/contract-run";
-import { frameFiles } from "../attached-files";
+import { hintSession, shortHash, type AttachedFile, type AttachedPdf, type RequestHint, type SentFile } from "../contract/contract-run";
+import { FilesRefused, b64Bytes, frameFiles, isPdfFile, textCapRefusal, type FramedFile } from "../attached-files";
 import { ImagesRefused, namedNote, readerNote, type ImagePlan } from "../image-gate";
+import { pageSections, planPages, wantsImage, type PageAim, type PageOutcome } from "../pdf/pdf-frame";
+import type { PdfDoc } from "../pdf/pdf-read";
+import type { PdfReadReply, PdfRenderReply } from "../pdf/pdf-wire";
 import { type LlmResult, type NeutralMessage } from "../contract/contract-chat";
 import { type StoredSession } from "../contract/contract-messages";
 import { type MlDebugEvent } from "../contract/contract-debug";
@@ -32,6 +35,14 @@ import { type MlDebugEvent } from "../contract/contract-debug";
 export const MAX_BG_CHATS = 32;
 /** Images on one turn, matching what the page path accepts from the composer. */
 export const MAX_TURN_IMAGES = 8;
+
+/** How many pages of a message's PDFs the reader model may read, past which a scan is named as not sent: each is a
+ *  model call the person waits for before the answer starts. A first figure. */
+export const READER_PAGE_MAX = 32;
+/** The scale a page is drawn at for a model or a reader: 144 dpi, legible small print on a letter page. */
+export const PAGE_IMAGE_SCALE = 2;
+/** What a chat says can get a page it held back: nothing yet (slice 3's `look` on a page is an agent run's). */
+export const CHAT_PAGE_RECOVERY = "This chat cannot show them.";
 
 /** The least time between two live `chat-stream` previews of one turn: the cadence an agent run streams at
  *  (`STREAM_EMIT_MS`, sw-run-host.ts), smooth enough to read and not a flood of events into the index. */
@@ -57,7 +68,15 @@ export interface ChatDeps {
     images(model: string | null, forced: boolean): Promise<ImagePlan>;
     /** `reader`'s transcription of one image, for a model that does not see */
     read(image: string, reader: string, signal: AbortSignal): Promise<string>;
+    /** the offscreen document's PDF reader (pdf-wire.ts): a PDF read page by page, and one page drawn as a PNG.
+     *  Absent, a message with a PDF is refused. */
+    pdf?: { read(b64: string): Promise<PdfReadReply>; render(b64: string, n: number, scale: number): Promise<PdfRenderReply> };
 }
+
+/** A message's files once its PDFs are read: a text file as sent, a PDF with its pages and what each page sends. */
+type ReadFile = AttachedFile | { pdf: AttachedPdf; doc: PdfDoc; aims: PageAim[] };
+/** What a turn needs decided before it starts: where its pasted images go, and its files read. */
+interface Prepared { plan: ImagePlan; files?: ReadFile[] }
 
 /** A chat this worker is hosting. */
 interface BgChat {
@@ -114,7 +133,7 @@ export function cancelBackgroundChat(hash: string): boolean {
 export async function startBackgroundChat(opts: {
     text: string;
     images?: string[];
-    files?: AttachedFile[];
+    files?: SentFile[];
     model?: string;
     system?: string;
     think?: boolean | null;
@@ -122,7 +141,7 @@ export async function startBackgroundChat(opts: {
     vision?: true;
 }): Promise<string> {
     const d = need();
-    const plan = await imagePlan(d, opts.model ?? null, opts.images, opts.vision === true);
+    const prep = await prepare(d, opts.model ?? null, opts.images, opts.files, opts.vision === true);
     evict();
     const hash = mintHash();
     const chat: BgChat = {
@@ -137,7 +156,7 @@ export async function startBackgroundChat(opts: {
         lastTs: d.now(),
     };
     chats.set(hash, chat);
-    void turn(chat, opts.text, opts.images, opts.files, plan);
+    void turn(chat, opts.text, opts.images, prep);
     return hash;
 }
 
@@ -153,26 +172,82 @@ export async function setBackgroundChatModel(hash: string, model: string): Promi
 
 /** The next turn of a background chat. `not-found` when this worker does not host it and storage cannot bring it
  *  back; `busy` while a turn is still running, since a chat has no inbox to steer into. Throws {@link ImagesRefused}
- *  before the turn when its images may not be sent (`vision: true` is the person's word that the model sees). */
-export async function sendBackgroundChat(hash: string, text: string, images?: string[], files?: AttachedFile[], vision?: true): Promise<"turn" | "busy" | "not-found"> {
+ *  before the turn when its images may not be sent (`vision: true` is the person's word that the model sees), and
+ *  {@link FilesRefused} when a PDF cannot be read or its pages hold more text than a message takes. */
+export async function sendBackgroundChat(hash: string, text: string, images?: string[], files?: SentFile[], vision?: true): Promise<"turn" | "busy" | "not-found"> {
     const chat = chats.get(hash) ?? (await rehydrate(hash));
     if (!chat) return "not-found";
     if (chat.running) return "busy";
-    const plan = await imagePlan(need(), chat.model, images, vision === true);
-    if (chat.running) return "busy";   // another send took the turn while the plan was asked for
-    void turn(chat, text, images, files, plan);
+    const prep = await prepare(need(), chat.model, images, files, vision === true);
+    if (chat.running) return "busy";   // another send took the turn while the files were read
+    void turn(chat, text, images, prep);
     return "turn";
 }
 
 /**
- * Where a message's images go, asked BEFORE a turn starts so a refusal reaches the command and nothing is sent.
- * @throws {ImagesRefused} when the model's vision is not known and no reader is set
+ * What a message sends, decided BEFORE a turn starts so a refusal reaches the command and nothing is sent: each PDF
+ * read (offscreen, docs/dev/pdf.md), the text cap applied to what its pages hold, and where images go. Vision is
+ * asked only when something would send an image: a pasted one, a scanned page, or a page with a figure.
+ * @throws {FilesRefused} a PDF would not read, or the files hold more text than a message takes
+ * @throws {ImagesRefused} an image would be sent, the model's vision is not known and no reader is set
  */
-async function imagePlan(d: ChatDeps, model: string | null, images: string[] | undefined, forced: boolean): Promise<ImagePlan> {
-    if (!images?.length) return { route: "model" };
-    const plan = await d.images(model, forced);
-    if (plan.route === "refused") throw new ImagesRefused(plan.message);
-    return plan;
+async function prepare(d: ChatDeps, model: string | null, images: string[] | undefined, files: SentFile[] | undefined, forced: boolean): Promise<Prepared> {
+    const read: ReadFile[] = [];
+    for (const f of files ?? []) {
+        if (!isPdfFile(f)) { read.push(f); continue; }
+        if (!d.pdf) throw new FilesRefused(`${f.name} is a PDF, which this runtime does not read`);
+        const r = await d.pdf.read(f.data).catch(() => null);
+        if (!r) throw new FilesRefused(`${f.name} could not be read: the PDF reader did not answer`);
+        if (!r.ok) throw new FilesRefused(`${f.name}: ${r.refusal}`);
+        read.push({ pdf: f, doc: r.doc, aims: [] });
+    }
+    const why = textCapRefusal(read.map((f) => "pdf" in f
+        ? { name: f.pdf.name, chars: f.doc.pages.reduce((n, p) => n + p.text.length, 0) }
+        : { name: f.name, chars: f.text.length }));
+    if (why) throw new FilesRefused(why);
+    const docs = read.flatMap((f) => ("pdf" in f ? [f.doc] : []));
+    const kinds = docs.flatMap((doc) => doc.pages.map((p) => wantsImage(p.kind)));
+    const scans = kinds.includes("scan");
+    let plan: ImagePlan = { route: "model" };
+    if (images?.length || scans || kinds.includes("figure")) {
+        plan = await d.images(model, forced);
+        if (plan.route === "refused") {
+            if (images?.length || scans) throw new ImagesRefused(plan.message);
+            // Only figures: a page with a figure still has its text, so it goes with a line naming the figure.
+            plan = { route: "named" };
+        }
+    }
+    if (docs.length) {
+        const reader = plan.route === "reader" || plan.route === "model" ? plan.reader ?? null : null;
+        // Pasted images come first, then the pages that need one, in page order (FILE_ATTACHMENTS.md).
+        const room = MAX_TURN_IMAGES - Math.min(images?.length ?? 0, MAX_TURN_IMAGES);
+        const aims = planPages(docs, plan.route, { images: room, reader: !!reader, readerMax: READER_PAGE_MAX });
+        let i = 0;
+        for (const f of read) if ("pdf" in f) f.aims = aims[i++];
+    }
+    return { plan, ...(read.length ? { files: read } : {}) };
+}
+
+/**
+ * Draw the pages a PDF sends as images, and have the reader read the ones it reads, one after another; a page that
+ * will not draw says why in its section. Stops at a cancel.
+ */
+async function drawPages(d: ChatDeps, f: { pdf: AttachedPdf; doc: PdfDoc; aims: PageAim[] }, reader: string | null, signal: AbortSignal): Promise<Map<number, PageOutcome>> {
+    const out = new Map<number, PageOutcome>();
+    for (let i = 0; i < f.doc.pages.length; i++) {
+        const aim = f.aims[i];
+        if (aim !== "image" && aim !== "reader") continue;
+        if (signal.aborted) break;
+        const n = f.doc.pages[i].n;
+        const r = await d.pdf!.render(f.pdf.data, n, PAGE_IMAGE_SCALE).catch(() => null);
+        if (!r?.ok) { out.set(n, { failed: r ? r.refusal : "the PDF reader did not answer" }); continue; }
+        const image = `data:image/png;base64,${r.pngB64}`;
+        if (aim === "image") { out.set(n, { image }); continue; }
+        let text = "";
+        try { text = reader ? await d.read(image, reader, signal) : ""; } catch { /* reader unavailable: the section says so */ }
+        out.set(n, { read: text });
+    }
+    return out;
 }
 
 /**
@@ -182,7 +257,8 @@ async function imagePlan(d: ChatDeps, model: string | null, images: string[] | u
  * derived from the hash and the turn number rather than drawn at random, so a turn that is somehow reported twice
  * is recognised as one turn rather than recorded as two.
  */
-async function turn(chat: BgChat, text: string, images: string[] | undefined, files: AttachedFile[] | undefined, plan: ImagePlan): Promise<void> {
+async function turn(chat: BgChat, text: string, images: string[] | undefined, prep: Prepared): Promise<void> {
+    const { plan } = prep;
     const d = need();
     const id = `${chat.hash}-${++chat.turns}`;
     const session = { hash: chat.hash, turn: chat.turns };
@@ -192,7 +268,7 @@ async function turn(chat: BgChat, text: string, images: string[] | undefined, fi
     // Images go to the model only when it sees (or the person said it does); otherwise each is replaced by a note the
     // model reads, the reader's transcription or a line naming it as not sent (image-gate.ts).
     const shown = (images ?? []).slice(0, MAX_TURN_IMAGES);
-    const pictures = plan.route === "model" ? shown : [];
+    const pictures = plan.route === "model" ? [...shown] : [];
     const notes: string[] = [];
     if (plan.route === "reader") {
         for (let i = 0; i < shown.length; i++) {
@@ -203,7 +279,18 @@ async function turn(chat: BgChat, text: string, images: string[] | undefined, fi
     } else if (plan.route === "named") {
         for (let i = 0; i < shown.length; i++) notes.push(namedNote(i, shown.length));
     }
-    // Attached text files are part of the message the model reads, as `<file>` blocks after the typed words; `display`
+    // A PDF's pages are drawn and read now, inside the turn the person is waiting on; their images follow the pasted
+    // ones, numbered in the `<page image="…">` that carries each (pdf-frame.ts).
+    const reader = plan.route === "reader" || plan.route === "model" ? plan.reader ?? null : null;
+    const files: FramedFile[] = [];
+    for (const f of prep.files ?? []) {
+        if (!("pdf" in f)) { files.push(f); continue; }
+        const outcomes = await drawPages(d, f, reader, controller.signal);
+        const s = pageSections(f.doc, f.aims, outcomes, { firstImage: pictures.length + 1, reader, recovery: CHAT_PAGE_RECOVERY });
+        pictures.push(...s.images);
+        files.push({ name: f.pdf.name, type: f.pdf.type, bytes: b64Bytes(f.pdf.data), pages: f.doc.pageCount, body: s.body, escaped: s.escaped });
+    }
+    // Attached files are part of the message the model reads, as `<file>` blocks after the typed words; `display`
     // keeps the words and the files apart for the transcript (attached-files.ts).
     const framed = frameFiles(text, files);
     const content = notes.length ? (framed.text ? `${framed.text}\n\n${notes.join("\n\n")}` : notes.join("\n\n")) : framed.text;
