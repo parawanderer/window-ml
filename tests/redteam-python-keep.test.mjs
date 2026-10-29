@@ -186,8 +186,10 @@ test("a kill ends the keep and the next cell is told as loss: the keep shields t
     // between calls) until this run ends or its sandbox is killed (a timeout, a crash, a cancel), which the next cell
     // is told as loss." The keep exists against the idle reap, not against loss — a kill has already lost the
     // namespace — and nothing arms it again without a NEW keep: true (the turn is still live here: no PY_DELETE_RUN).
-    // The replies carry the run's scope manifest (python-run-namespace.test.mjs's shape): without it the kill has no
-    // dict to report lost.
+    // The replies carry the run's scope manifest (python-run-namespace.test.mjs's shape) as REALISM only — it is not
+    // load-bearing: the kill's loss note is written at killWorker whatever a reply carries (nsLoss, offscreen.ts), and
+    // the only reader of result.bench is the state registry's inspector. What guards this half against a vacuous pass
+    // is the nsReset match itself: a telling that stopped comes back "" and fails loud.
     const bench = { bench: { id: "run-b3", vars: [{ name: "x", type: "int" }] } };
     const first = await runCell({ principal: "run:b3", wire: { client: "mlw-b3-1", run: "b3" }, keep: true }, bench);
     t.mock.timers.tick(DAY);
