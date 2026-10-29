@@ -100,8 +100,7 @@ inherits everything: a height cap (Settings → Appearance, per-cell drag-to-res
 (new output scrolls into view only while you're parked at the bottom; scroll up and it holds; RULED 2026-10-29 on
 #1345's diagnosis: "parked at the bottom" means the READER scrolled there, so a find reveal whose own `scrollTop`
 write clamps at the content tail must not re-arm follow through its own scroll event, or the next delta's tail-snap
-walks the match the reader asked for out of view in under a second; the re-arm in `onScroll` is an OPEN DEFECT,
-fix owner to be assigned, the janitor reviews it), and an in-cell
+walks the match the reader asked for out of view in under a second; the re-arm in `onScroll` was an OPEN DEFECT; the fix is #1353 OPEN (head b62ad9b6, verified 2026-10-29, @ui, touching only `src/sidebar/transcript/render-panel.tsx` and `tests/output-cell.test.mjs`): the reveal records the `scrollTop` it wrote and `onScroll` ignores an event at that value, through a pure `judgeScroll` beside `atBottomOf`; `atBottomOf` stays pure; the janitor reviews, the lane arms merge-when-green after the review comment is posted; #1345's poll reaches its branch by rebase since #1345 is still open), and an in-cell
 **Ctrl+F find** (substring only — no regex — with a case toggle, match count, ↑/↓ navigation, painted via the
 CSS Custom Highlight API so the syntax highlighting underneath is untouched). `exec`'s Out is a rendered cell
 too (console / value / error sections), matching python's instead of a raw blob.
