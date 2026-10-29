@@ -18,3 +18,6 @@ export function validList(v: unknown, scope: StoredPolicy["scope"]): StoredPolic
 
 /** The longest policy source and label the policy page may store: a policy is a predicate, not a program. */
 export const POLICY_SOURCE_MAX = 10_000, POLICY_LABEL_MAX = 200;
+
+/** The most rules one `propose_policy` proposal may carry: a card is read by a person, and a long one is not. */
+export const PROPOSAL_ROWS_MAX = 8;
