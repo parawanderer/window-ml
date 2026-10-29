@@ -101,6 +101,10 @@ export interface RunAgentHostDeps {
      *  (sw-policies.ts `navigateFacts`), or undefined when none decides. A `deny` refuses it without a card, an `ask`
      *  always shows the card, an `allow` skips the card a cross-origin navigate would show. */
     navPolicy?(url: string): { decision: "allow" | "deny" | "ask"; label: string } | "unknown" | undefined;
+    /** What the person's policies say of the click or type about to be gated (sw-policies.ts `actFacts`), judged on the element
+     *  the page resolves for it: a `deny` refuses it without a card, an `allow` skips the card, an `ask` shows it. Undefined when
+     *  none decides. */
+    actPolicy?(tool: string, args: Record<string, unknown>): Promise<{ decision: "allow" | "deny" | "ask"; label: string; text?: string } | undefined>;
     /** The model's text when the run is held on a page a `deny` policy denies (sw/nav-arrival.ts): every call is refused
      *  with it, without a card; undefined when the run may act on its page. */
     arrivalRefused?(): string | undefined;
@@ -205,6 +209,13 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
                 // this call REUSED as a "reused a grant" note — else the background path silently drops it.
                 const reusedSheets = externalSheetIds(args).filter(id => isApproved(id));
                 return reusedSheets.length ? { approval: prov, reused: reusedSheets.map(id => ({ kind: "sheet" as const, detail: id })) } : prov;
+            }
+            // click and type: the `act` consumer. An `allow` row (or the self-approval list) skips the card; anything else asks as before.
+            if (name === "click" || name === "type") {
+                return (deps.actPolicy?.(name, args) ?? Promise.resolve(undefined)).then((pol) => {
+                    if (pol?.decision === "deny") return { approval: "denied" as const, refused: pol.text ?? `Refused by the policy "${pol.label}", without asking: the ${name} was not made. Do not retry it; the person set this rule.` };
+                    return pol?.decision === "allow" ? { approval: "consented" as const, reused: [{ kind: "policy" as const, detail: pol.label }] } : null;
+                });
             }
             // navigate: the interactive mode of a fetch as you (docs/spec/POLICIES.md, "Navigate is a fetch"). A POLICY first,
             // as for fetch_url: a `deny` wins over the free same-origin navigate, an `ask` shows the card. Then a cross-origin

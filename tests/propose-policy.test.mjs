@@ -303,6 +303,15 @@ test("a rule the run already holds joins the new proposal's group, and the polic
     assert.equal(pols.find((p) => p.source === ALLOW_SITE.when).proposal, second, "the repeated row is in the second proposal's group, so the group is whole");
 });
 
+test("the model is told the STORED label of a rule the run already held, and that the label it sent was not kept", T, async () => {
+    const { results } = await workerRun([
+        { name: "propose_policy", args: { rules: [ALLOW_SITE, DENY_ADMIN] } },
+        { name: "propose_policy", args: { rules: [{ ...ALLOW_SITE, label: "A new wording" }, ALLOW_USER] } },
+    ]);
+    assert.match(results[1], new RegExp(`allow "${ALLOW_SITE.label}" \\(the run already held the rule "${ALLOW_SITE.label}", so "A new wording" was not kept\\)`));
+    assert.ok(!/A new wording"[;.]/.test(results[1].replace(/so "A new wording" was not kept/, "")), "the sent label is not offered as the stored one");
+});
+
 test("a multi-rule proposal the person refuses adds none of its rows", T, async () => {
     const { bg, results } = await workerRun([{ name: "propose_policy", args: { rules: [ALLOW_SITE, DENY_ADMIN] } }], { answer: () => false });
     assert.match(results[0], /^Denied by the user/);
