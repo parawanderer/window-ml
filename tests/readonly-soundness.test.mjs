@@ -296,3 +296,19 @@ test("a page-realm survey runs the page's own code when it reads a page value: t
     // The page leg's refusal of pointer reads is tests/delegation.test.mjs; ml.current is a refusal on the page realm.
     await assert.rejects(evalReadonly("ml.current", doc, { getModel: async () => "m" }), NotInDialect, "the page leg has no ml.current");
 });
+
+test("the argument walk reads an object's members as data and a page ARRAY's elements directly: an index getter runs", async () => {
+    // Pinned as it is (evaluator.ts `expanded`): a descriptor a read would cost more than the walk charges a part, and
+    // on the page leg the page's own code running is accepted (the test above). A member that must not run one reads
+    // its arguments as data itself (DATA_MEMBERS: pipe, jsonPath).
+    const doc = new JSDOM("<!doctype html><body></body>").window.document;
+    let onObject = 0, onIndex = 0;
+    const obj = { get x() { onObject++; return 1; } };
+    const arr = [0];
+    Object.defineProperty(arr, 0, { enumerable: true, get() { onIndex++; return 1; } });
+    const ml = { info: async () => obj, models: async () => arr, schema: (v) => typeof v };
+    await evalReadonly("ml.schema(await ml.info())", doc, ml);
+    assert.equal(onObject, 0, "an object's getter is not run by the walk");
+    await evalReadonly("ml.schema(await ml.models())", doc, ml);
+    assert.equal(onIndex, 1, "an array index's getter is, once");
+});
