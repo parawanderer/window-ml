@@ -142,7 +142,7 @@ questions:
 
 Rule 10: the redirect rows under Tests below are the red team's (e3), failing first on main; each half's rows merge
 before that half, with one row per half telling the worker's own fetch from a render tab's navigation, and the chain
-row mixing an allowed hop with a disallowed one. The lane flips nothing; the finder flips after each half merges.
+row mixing an allowed hop with a disallowed one. The lane flips nothing. AMENDED 2026-10-29 per #1307: these are Playwright rows, so the finder flips each half as its own commit on that half's branch, its file only, before the half merges, not after.
 
 RULED 2026-10-28, the worker-fetch half's two interpretation calls (the lane builds on `feat/redirect-judge`):
 
@@ -170,7 +170,7 @@ RULED 2026-10-28, the worker-fetch half's two interpretation calls (the lane bui
 The worker-fetch half is #1305 OPEN 2026-10-28 (`feat/redirect-judge`, head 7caf34dc, @security; the new
 `sw-redirects.ts` under `src/sw/` with its unit file, `sw-fetch.ts`, `sw-fetch-url.ts`, `sw-image-fetch.ts`,
 `background.ts`, `manifest.json`, `docs/dev/site-access.md`), verified; it merges after e3's redirect rows for this
-half. FOUND while building it: under concurrency the headers event can arrive AFTER the fetch resolves (6 of 180 hops),
+half. Those rows are #1349 OPEN (head a6dc6572, `redteam/step5-worker-redirect-rows`, @security, verified 2026-10-29: site-presence-step5.spec.mjs under tests/e2e plus a redirect fixture server with its own cert; the janitor reviews). FOUND while building it: under concurrency the headers event can arrive AFTER the fetch resolves (6 of 180 hops),
 so `hopOnce` waits up to 2 s for its own event and holds the URL until it lands; 0 of 600 after. RULED the same day on
 the consequence the lane named: a judged hop that is followed returns its body to the caller, so a same-site hop to
 another origin (one registrable domain, two origins) now yields its body to an untrusted caller where the old
