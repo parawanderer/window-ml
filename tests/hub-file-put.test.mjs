@@ -68,7 +68,7 @@ async function world({ files = new FileChunks({ maxFileBytes: 20 * 1048576, maxT
     const command = conn.hubClient.command.bind(conn.hubClient);
     conn.hubClient.command = (to, scope, body) => { sealed.push(new TextDecoder().decode(body.subarray(0, 200)).split("\u0000")[0]); return command(to, scope, body); };
     const close = async () => { conn.close(); rt.stop(); await running; hub.stop(); };
-    return { conn, rt, id, puts, got, sealed, phone, files, close, stopRuntime: async () => { rt.stop(); await running; } };
+    return { conn, rt, id, puts, got, sealed, phone, files, root, common, runtime, close, stopRuntime: async () => { rt.stop(); await running; } };
 }
 
 const start = (w, files) => w.conn.send({ type: "chat.start", runtime: w.id, text: "summarise", files });
@@ -189,4 +189,41 @@ test("ADVERSARIAL: bytes after the JSON of any other command are refused, and a 
         assert.deepEqual([b.ok, b.error.code], [false, "invalid"]);
         assert.equal(w.got.length, 0);
     } finally { await w.close(); }
+});
+
+test("ADVERSARIAL: a device holding only `view` can neither send a chunk nor ask what the runtime holds, whichever scope it declares", LIVE, async () => {
+    const w = await world();
+    let raw;
+    try {
+        // A file the phone sent, so `file.have` would have something to tell.
+        const data = pdf(50_000, 5);
+        await w.files.put(hex(w.phone.principal), { sha256: await sha256Hex(data), index: 0, count: 1, bytes: data.length }, data);
+        const viewer = await device(w.root, Role.ROLE_CLIENT, [SCOPE.view], "viewer");
+        // A bare client: HubConnection would not send these, which is why the runtime has to refuse them.
+        raw = await HubClient.connect({ ...w.common, ...viewer, role: Role.ROLE_CLIENT });
+        const to = { principal: w.runtime.principal, agreementKey: w.runtime.agreement.publicKey };
+        const answerTo = async (nonce) => {
+            for (;;) {
+                const e = await raw.next();
+                if (e.kind === "closed") assert.fail(e.reason);
+                if (e.kind === "result" && e.opened.answers.every((b, i) => b === nonce[i])) return JSON.parse(new TextDecoder().decode(e.opened.body));
+            }
+        };
+        const json = (c) => new TextEncoder().encode(JSON.stringify(c));
+        const sha256 = "d".repeat(64);
+        const put = frameChunk(json({ type: "file.put", runtime: w.id, sha256, index: 0, count: 1, bytes: 3 }), Uint8Array.of(1, 2, 3));
+        const a = await answerTo(await raw.command(to, SCOPE.view, put));
+        assert.deepEqual([a.ok, a.error.code], [false, "forbidden"], JSON.stringify(a));
+        const b = await answerTo(await raw.command(to, SCOPE.view, json({ type: "file.have", runtime: w.id, sha256: await sha256Hex(data) })));
+        assert.deepEqual([b.ok, b.error.code], [false, "forbidden"], JSON.stringify(b));
+        // Declaring `drive` it does not hold fails to open (seal.ts, OpenError "scope"), and a command that does not open
+        // is dropped unanswered: nothing reaches the store.
+        const declared = await Promise.race([
+            raw.command(to, SCOPE.drive, put).then((n) => answerTo(n)).then((r) => ({ answered: r }), (e) => ({ refused: String(e?.message ?? e) })),
+            new Promise((r) => setTimeout(() => r({ silent: true }), 3000)),
+        ]);
+        assert.deepEqual(declared, { silent: true });
+        assert.equal(w.puts.length, 0, "the store never saw a chunk");
+        assert.equal(w.files.heldBytes(), data.length, "and holds only the phone's file");
+    } finally { raw?.close(); await w.close(); }
 });

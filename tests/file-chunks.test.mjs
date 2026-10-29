@@ -124,6 +124,18 @@ test("ADVERSARIAL: a put that cannot be a chunk of a real file is refused before
     assert.equal(store.heldBytes(), 0);
 });
 
+test("ADVERSARIAL: a chunk sent again with other bytes replaces the first, and the file is refused by its hash, never kept wrong", async () => {
+    const { store } = world();
+    const f = await fileOf(600, 2);
+    await store.put("phone", { ...f.put(0), sha256: f.sha256 }, f.chunks[0]);
+    await store.put("phone", { ...f.put(0), sha256: f.sha256 }, bytesOf(300, 9));
+    const r = await store.put("phone", { ...f.put(1), sha256: f.sha256 }, f.chunks[1]);
+    assert.deepEqual([r.ok, r.code], [false, "invalid"]);
+    assert.match(r.message, /do not hash to/);
+    assert.equal(store.get(f.sha256), null);
+    assert.equal(store.heldBytes(), 0);
+});
+
 test("ADVERSARIAL: chunks adding up past the bytes they claim are refused, and the upload dropped", async () => {
     const { store } = world();
     const sha256 = "b".repeat(64);
