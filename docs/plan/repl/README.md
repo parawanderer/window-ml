@@ -214,7 +214,7 @@ merging after it. The worked example and the demo site follow it, not with it.
 "As built" block narrows the ruling at every point, no finding; the allow-row as-you hole it raised was corrected first,
 #1116). Not built: the policy page's rows show no facts yet, `interactive` included; that is #1122 (`@agent,@ui`) and
 needs Shane's design. The red team's stacked pass now targets main, merging after the janitor's review. The lane moves
-to site-access slice 3 PR 3. The worked example and the demo site are the next item here, UNASSIGNED.
+to site-access slice 3 PR 3. The worked example and the demo site are the next item here, UNASSIGNED. ASSIGNED 2026-10-29 by Shane to a new lane, `[window-ml policies]` (Sonnet, a fresh clone), briefed by session-mail `20261029-repl-specs-to-policies-worked-example-brief.md`: item 1 the worked example and acceptance test in three PRs (the multi-row proposal, the `act` consumer with the self-approval origins, the approved policy as the person's word under `crossOrigin: false`), item 2 the fourth rule and the demo site; #1122 held for Shane's design; the janitor reviews, e3 pins each new surface after, the security lane keeps the gates.
 Extended the same day: the worked example and acceptance test (a task on another site scoped by a proposed policy),
 needing a multi-rule `propose_policy`, an `act` consumer that folds in the self-approval origin list, and an approved
 policy counting as the person's word under `crossOrigin: false` (`POLICIES.md`, "Worked example and acceptance test").
