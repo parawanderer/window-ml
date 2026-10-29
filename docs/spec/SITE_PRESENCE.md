@@ -289,7 +289,7 @@ hop's body returned and the cross-site hop refused with no request to the target
    janitor's review: no findings, its one nit on row (d)'s style message fixed at f19316b4 before the merge),
    verified. Order under rule 10 as amended: #1313 merges on main first; the
    flip of (a), (b) and (d) is the red team's own commit on #1279's branch, its file only, pushed when the security
-   lane says the fix is ready; #1279 merges after that, on the lane's return from Shane's pause.
+   lane says the fix is ready; #1279 merges after that. CONFIRMED 2026-10-29 by the lane: the fix is ready at head 641111ae, the flip goes today, and the lane merges once it lands. The lane's order after it (heads verified the same day): #1297 (2f6414bc) merges main in after #1279 and then takes e3's 4b rows; #1305 (4ae5f79b) waits on e3's worker-half redirect rows; #1316 (e7399b14, based on #1305's branch) waits on e3's render rows (a)–(g), then #1305 merging. The lane was never paused by Shane: the coordinator's record of a pause came from the lane's own 2026-10-28 evening message and was wrong.
    4b is #1297 OPEN 2026-10-28 (`feat/hidden-side-panel`, head 2f6414bc, @security @ui; `sw-side-panel.ts`,
    `sidepanel.ts` and the panel, worker and e2e files its body lists; the janitor asked by session-mail),
    verified; it merges after #1279 and the red team's step-4 rows. The lane measured per-tab side-panel options
