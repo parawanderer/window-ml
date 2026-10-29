@@ -67,7 +67,6 @@ list. See [CLOUD-MODELS.md](CLOUD-MODELS.md).
 | Call | Purpose |
 | --- | --- |
 | `ml.chat(prompt, options?)` | One-shot chat. Returns the reply text. A **raw model call**: it sees only the prompt you pass (plus `images`), never the page — to ask about the page, pass the text in yourself or use `ml.agent`. |
-| `ml.chatShort(prompt, options?)` | Same, with a brevity suffix. |
 | `ml.createChat(options?)` | Multi-turn history object (below). |
 | `ml.models()` | Available model ids on the server. |
 | `ml.getModel()` / `ml.setModel(id)` | Read / persistently switch the default model. `setModel` validates against the server list and syncs the popup. |
@@ -80,7 +79,6 @@ list. See [CLOUD-MODELS.md](CLOUD-MODELS.md).
 | `ml.createAgent(options?)` | A stateful agent handle — `run`/`say`/`cancel`/`fork` + `hash`/`messages`/`maxSteps` (live). The agent analogue of `createChat`. See [Agent](#tools-agents). |
 | `ml.chat(prompt, { toolIds })` | Server-side tools: OpenWebUI runs the tools and returns the finished answer. See [Tools](#tools-agents). |
 | `ml.serverTools()` | List the server-side tools your key may use — the valid `toolIds`, each with its function specs. `[]` on a non-OpenWebUI endpoint. |
-| `ml.logChat` / `ml.logChatShort` | `console.log` variants. |
 
 Options (all optional, both for `chat` and `createChat`):
 

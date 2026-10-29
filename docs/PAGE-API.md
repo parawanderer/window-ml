@@ -18,12 +18,14 @@ world, and both get exactly what the site is allowed.
 | A userscript in the page's world (Tampermonkey, *User JavaScript and CSS*) | the page's origin | the same |
 | A userscript in an isolated world | nothing | no `window.ml`; bridge with `window.postMessage` |
 | A run you start (the HUD, the sidebar, the chat page) | the extension | works on any page, allowed or not; each gated tool asks you |
+| The model, in a run the site started in the worker (`ml.agent`) | the run | the run's tools, each gated tool asking you; the site's turns are marked as the site's |
 | An extension page (Settings, the panel) | the extension | the trusted surface; not a page caller |
 
 The split that matters is between the page API (everything a page calls, under its site's access) and the run you
 start yourself. Your run is built by the extension, so the page it works on is lent nothing: no `window.ml` appears
-there because of it, and on a page that may not use `window.ml` its tools run out of the page's reach. Only inside such
-a run, in a script you approved, do `ml.current` and `ml.sh` exist; no page ever has them.
+there because of it, and on a page that may not use `window.ml` its tools run out of the page's reach. `ml.current` and
+`ml.sh` exist only in a script you approved inside a run the extension hosts: the one you start, or one the site started
+in the worker. A page's own `window.ml` never has them, and neither does a run with `host: "page"`.
 
 ## What a site gets, by its access
 
@@ -34,7 +36,7 @@ A site is one origin: `http://` and `https://`, and every port, are separate dec
 | Not allowed (the default), or denied | absent | nothing: no script of ours, no message, no answer. A denied site and an unknown one look the same |
 | Not allowed, but may ask ("Let it ask" for the site, or "Let sites ask for access" for every site) | `{ requestAccess }` only | ask to use `window.ml` |
 | Allowed, for the browser session or always | the full API | every member, each under the rules below; ask for agents or self-approval |
-| Allowed, with agents at Ask each time or Always | the full API | also start agents in the worker (`ml.agent`, `ml.createAgent`) |
+| Allowed, with agents at Ask each time or Always | the full API | also start agents in the worker (`ml.agent`, `ml.createAgent`, `ml.resumeAgent`) |
 | Allowed, and listed under "Sites that approve their own actions" | the full API | also answer its own approval prompts: the strongest grant, for a site you control |
 
 A newly allowed site starts with agents Off. The person sets every level in DevTools Settings → Permissions; the popup
@@ -86,21 +88,25 @@ It never throws. It resolves with one of:
 
 The `reason` of a refusal is one of: `needs a user gesture`, `only a page's top frame on http or https can ask`, `too
 many requests are waiting; try again later`, `this browser does not take requests from sites`, `ask for access first`
-(asking for agents or self-approval before the site is allowed), `this page was opened by a running agent`.
+(asking for self-approval before the site is allowed), `this page was opened by a running agent`.
 
 ## What an allowed page can call
 
-Free, with no prompt: the model calls (`chat`, `chatShort`, `createChat`, `resumeChat`, `step`, `embed`, `read`), the
+Free, with no prompt: the model calls (`chat`, `createChat` and `resumeChat` for sessions that survive a reload, `step`,
+`embed`, `read`), the
 model and server readouts (`models`, `getModel`, `setModel`, `config`, `info`, `ps`, `capabilities`, `unload`,
-`serverTools`), `screenshot` of its own tab, the session store, and the client-side helpers (`schema`, `defineTool`,
+`serverTools`), `screenshot` of its own tab, and the client-side helpers (`schema`, `defineTool`,
 `pipe`, `jsonPath` and the rest). `config()` is the non-secret subset: never the server URL or the key. `setModel`
 takes only a model the server lists.
 
 Under rules of their own:
 
-- `ml.fetch` reads the page's own origin freely, with or without cookies and rendered. Any other URL is refused, unless
-  the person approved it for this tab in a run, or it is spelled out in a script the person approved. A redirect is
-  followed only to the same site or to a URL already approved. Only `http(s)` URLs, never a local file.
+- `ml.fetch` reads the page's own origin freely, with or without cookies and rendered, and, without cookies and not
+  rendered, the extension's own published source (a setting, on by default). Without cookies, any other URL needs the person's approval for this
+  tab in a run, or to be spelled out in a script the person approved. With cookies, any other URL needs a per-URL
+  approval of `fetch_url` in a run; an approved script cannot supply it. A response that was redirected to another
+  origin the person has not approved is withheld, except in an approved script, whose own redirects are trusted. Only
+  `http(s)` URLs, never a local file. A site that approves its own actions is refused none of this.
 - `ml.agent`, `ml.createAgent` and `ml.resumeAgent` need the site's agent level. At Ask each time the person sees a
   card with the site's task in its own words, and nothing runs until they allow it; the model reads every turn the site
   sends as the site's, never as the person's. A page may always cancel its own run. `ml.agent({ host: "page" })` runs
