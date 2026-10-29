@@ -485,6 +485,34 @@ test("session.model: a running loop's next step and a worker chat's next turn go
     assert.equal((await result(6)).error.code, "invalid");
 });
 
+test("session.send: a file sent as a later turn of a worker chat reaches the model", T, async () => {
+    let port;
+    const turns = [];
+    const cmd = (id, command) => port.send({ type: "cmd", id, command });
+    const result = async (id) => {
+        for (let i = 0; i < 200; i++) { const r = port.messages.find((m) => m.type === "result" && m.id === id); if (r) return r.result; await flush(); }
+        return null;
+    };
+    const bg = loadBackground({
+        config,
+        onFetch: (call) => {
+            if (!/chat\/completions/.test(call.url)) return jsonResponse({ data: [{ id: "default-model" }, { id: "m" }] });
+            turns.push(call.body.messages.at(-1).content);
+            return jsonResponse({ choices: [{ message: { content: `answer ${turns.length}` } }] });
+        },
+    });
+    port = bg.connect("ml-sessions", PAGE);
+    port.send({ type: "sessions" });
+    cmd(1, { type: "chat.start", runtime: "local", text: "hello", model: "m" });
+    const hash = (await result(1)).data.session.hash;
+    for (let i = 0; i < 100 && turns.length < 1; i++) await flush();
+    for (let i = 0; i < 50; i++) await flush();
+    cmd(2, { type: "session.send", session: { runtime: "local", hash }, text: "what does it say?", files: [{ name: "notes.txt", type: "text/plain", text: "the meeting moved to Thursday" }] });
+    assert.equal((await result(2)).ok, true);
+    for (let i = 0; i < 100 && turns.length < 2; i++) await flush();
+    assert.match(String(turns[1]), /<file name="notes.txt" type="text\/plain" bytes="29">\nthe meeting moved to Thursday\n<\/file>/);
+});
+
 test("session storage stats answer an extension page and refuse a page", T, async () => {
     const { IDBFactory } = require("fake-indexeddb");
     const idb = new IDBFactory();

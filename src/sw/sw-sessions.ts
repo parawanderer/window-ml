@@ -445,7 +445,7 @@ export function configureSessionCommands(run: RunDeps): void {
             }
         },
         startPage: () => agentStartPage,
-        sendChat: (hash, text, images) => sendBackgroundChat(hash, text, images),
+        sendChat: (hash, text, images, files) => sendBackgroundChat(hash, text, images, files),
         setChatModel: (hash, model) => setBackgroundChatModel(hash, model),
         checkModel: async (model) => {
             // The same two checks `setModel` makes, without making it the default: the server offers it, and the
