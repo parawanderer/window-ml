@@ -2,6 +2,7 @@
 // run it: `runAsync` awaits each yield, `runSync` serves the callbacks a host method invokes synchronously.
 
 import type { CurrentSnapshot } from "../agent/current-context";
+import { isEmbedding } from "../ml/embedding";   // by brand, as a table is; embedding.ts imports nothing
 import { isTable, isStoredTable } from "../table/table-brand";   // a table facade is recognised by BRAND, and the brand module is itself dependency-free
 import { NotInDialect, Stopped, MAX_STRING, MAX_COLLECTION, Denied, riskyRegex, MAX_STORED_CELLS, STEP_BUDGET, NeedsPage, MAX_CALL_DEPTH, HOST_CHARS_PER_STEP, HOST_SCAN_CHARS_PER_STEP, FIXED_SLICE_FREE_CHARS, HOST_SCAN_ELEMENTS_PER_STEP, HOST_COPY_ELEMENTS_PER_STEP, EXPANDED_PARTS_PER_STEP, MAX_EXPANDED, MAX_EXPANDED_CHARS } from "./limits";
 import { Node } from "./parser";
@@ -86,10 +87,11 @@ const COERCES_CALLBACK = new Set(["sort", "replace", "replaceAll", "stringify"])
 
 /** `ml` members that read their arguments as DATA and charge their own work, so the dialect neither walks nor charges
  *  them: `pipe` unwraps its source from own data properties and charges each stage per character, `jsonPath` reads
- *  members as data, charges every node, and refuses a getter or a cycle. Every other member (`range`, `dereference`,
- *  `schema`, `fetch`, `queryAll`, `a11y`, `capabilities`) may coerce or walk an argument, and the answer facade's
- *  `add` coerces with `String`. */
-const DATA_MEMBERS = new Set(["pipe", "jsonPath"]);
+ *  members as data, charges every node, and refuses a getter or a cycle; `embed` copies its strings out of own data
+ *  properties, charges their characters, and hands the host only the copies (policy.ts `mlFacade`). Every other member
+ *  (`range`, `dereference`, `schema`, `fetch`, `queryAll`, `a11y`, `capabilities`) may coerce or walk an argument, and
+ *  the answer facade's `add` coerces with `String`. */
+const DATA_MEMBERS = new Set(["pipe", "jsonPath", "embed"]);
 
 /** A Map, Set or Array ITERATOR is materialised into an array when a host call returns one: a walk cannot see through an
  *  iterator without consuming it, and a Map's could carry a shared-part key into `Object.fromEntries`. */
@@ -382,6 +384,31 @@ export class Evaluator {
             if (stored && (key === "col" || key === "select" || key === "records" || (key === "head" && height > t.rows.length))) {
                 this.storedCells += height * width;
                 if (this.storedCells > MAX_STORED_CELLS) throw new NotInDialect(`reading over ${MAX_STORED_CELLS.toLocaleString("en-US")} cells of stored tables in one script, which is too much work to run without asking`);
+            }
+        }
+        // An EMBEDDING's comparisons are O(dimensions) a candidate inside one host call. Their arguments are read as
+        // data first: another real embedding for `dot`, and for `rank` an array of plain `{ key, embedding }` objects
+        // whose two members are own DATA properties, so the host's reads of them run no getter.
+        if (isEmbedding(obj)) {
+            const dims = obj.dims;
+            if (key === "dot") {
+                if (!isEmbedding(args[0])) throw new TypeError("dot takes another embedding from ml.embed");
+                this.tick(Math.floor(dims / HOST_SCAN_ELEMENTS_PER_STEP));
+            }
+            if (key === "rank") {
+                const c = args[0];
+                const wrong = () => new TypeError("rank takes an array of { key, embedding }, each embedding from ml.embed");
+                if (!Array.isArray(c)) throw wrong();
+                if (c.length > MAX_COLLECTION) big();
+                for (let i = 0; i < c.length; i++) {
+                    const x = Object.getOwnPropertyDescriptor(c, i)?.value;
+                    if (x === null || typeof x !== "object" || Array.isArray(x) || !isWritableTarget(x)) throw wrong();
+                    const k = Object.getOwnPropertyDescriptor(x, "key"), e = Object.getOwnPropertyDescriptor(x, "embedding");
+                    if (k && !("value" in k)) throw wrong();
+                    if (!e || !("value" in e) || !isEmbedding(e.value)) throw wrong();
+                }
+                // Each candidate's dot product, then the sort: n log n comparisons of two numbers.
+                this.tick(Math.floor(c.length * dims / HOST_SCAN_ELEMENTS_PER_STEP) + Math.floor(c.length * Math.log2(c.length + 1) / HOST_SCAN_ELEMENTS_PER_STEP));
             }
         }
     }
