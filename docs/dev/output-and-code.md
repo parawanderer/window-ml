@@ -97,7 +97,11 @@ view froze on its first lines while a "[+N chars]" count ticked up beside it.
 *The output cell.* `python_exec` and `exec` render their Out through ONE shared **`OutputCell`**
 (src/sidebar/transcript/render-panel.tsx) — a future code-ish tool (a `bash_exec`, say) wraps its own sections in it and
 inherits everything: a height cap (Settings → Appearance, per-cell drag-to-resize), scrolling, **tail-follow**
-(new output scrolls into view only while you're parked at the bottom; scroll up and it holds), and an in-cell
+(new output scrolls into view only while you're parked at the bottom; scroll up and it holds; RULED 2026-10-29 on
+#1345's diagnosis: "parked at the bottom" means the READER scrolled there, so a find reveal whose own `scrollTop`
+write clamps at the content tail must not re-arm follow through its own scroll event, or the next delta's tail-snap
+walks the match the reader asked for out of view in under a second; the re-arm in `onScroll` is an OPEN DEFECT,
+fix owner to be assigned, the janitor reviews it), and an in-cell
 **Ctrl+F find** (substring only — no regex — with a case toggle, match count, ↑/↓ navigation, painted via the
 CSS Custom Highlight API so the syntax highlighting underneath is untouched). `exec`'s Out is a rendered cell
 too (console / value / error sections), matching python's instead of a raw blob.
