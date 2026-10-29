@@ -289,6 +289,52 @@ doc.bytes                   # the file as attached
 document it was not given, cannot pass the bound by looping or by asking for a huge scale, and a crafted page cannot
 hang the cell past its budget.
 
+**What composes from these (Shane, 2026-10-29).** Nothing above is built for a particular question, and two choices
+keep the general ones answerable: a document's pages keep their NUMBERS through every read (`pages N-M`, `doc.pages[n]`,
+the outline's count), and a page's image is reachable from code (`png()`) as well as through `look`. With those, "where
+does this PDF talk about X, and show me that page" is a survey the model can write from the API docs: read the pages
+one by one, `ml.embed` the query with each page (or each chunk, keeping its page number), rank by cosine, then
+`look({ doc, pages })` at the best. It is free only once `ml.embed` is a read-only member of the dialect (planned, with
+its own cost: a charge per call and per input character, and a per-survey cap measured from embedding throughput).
+
+## One reader per format, two framings (Shane, 2026-10-29)
+
+A file the person attaches and a body a fetch returns are the same thing underneath: bytes and a type. Each format
+gets ONE reader, used by both paths, and the rules above the reader are shared; only the framing differs.
+
+**Shared, per format:**
+
+| Format | The reader | Attach today | `fetch_url` / `ml.fetch` today |
+| --- | --- | --- | --- |
+| text | a decode of the bytes, the declared charset first, UTF-8 otherwise | UTF-8 only (`decodeTextFile`) | the response's charset |
+| tables: csv, tsv, parquet, arrow | `table-data.ts` (the delimiter discovered, parquet and arrow in the worker) | csv and tsv as text; parquet and arrow refused as "not a text file" | parsed into `FetchResult.table` |
+| PDF | `pdf-read.ts` in the offscreen worker, `pdf-frame.ts` for the pages a model gets | read page by page (worker chats) | "a PDF document, N bytes" |
+
+Each column is missing what the other has, which is the argument for one layer: an attached parquet should work the
+day a fetched one does, and a fetched PDF should read the way an attached one does.
+
+**Shared, above the reader:** the text cap and what happens past it (inline below it; above it a pointer read by page
+or range, with an outline and the size stated); the held-back notes ([HELD_BACK.md](HELD_BACK.md)); the vision gate for
+page images (image-gate.ts). Today an attached text file past the cap is refused while a fetched one of the same size
+becomes a `@tool:` pointer: the person, the more trusted source, gets the worse answer. Slice 3's `@file:` pointer is
+that rule for attachments and should reuse the `@tool:` value path, not a parallel store.
+
+**Different, by design:**
+
+- **Provenance and trust.** The model must tell "the person attached this" from "a site served this": `<file>` and
+  "attached by the person" against a fetch result's "fetched from <host>". Both are untrusted text; the label is what
+  lets a model weigh an instruction found inside it.
+- **Lifetime.** A fetch can be repeated, so its value is evicted like any other; an attachment cannot, so it is held for
+  the session ("Eviction differs by producer", slice 3).
+- **The recovery a held-back note names.** A worker chat has no tools ("This chat cannot show them."); an agent run
+  names the call that gets the page.
+
+Where there are no tools (a worker chat), "past the cap" cannot become a pointer. Decided (Shane, 2026-10-29): a PDF
+past the cap is no longer refused whole. Its pages go in order while they fit and the rest are named ("pages 12-30
+were not sent: past the text a message takes. This chat cannot show them."), and the cap is sized from the model's
+context length where the backend reports it, a fixed figure otherwise. With slice 3 a worker chat gets one read-only
+`read_pages` call over its own attachments, the same reader an agent run gets.
+
 ## What the person sees
 
 - **Calm view**: a chip per file, under the message like sent images: the name and a summary ("report.pdf · PDF, 48
@@ -354,3 +400,5 @@ or a message"). What a hostile page must not get, as tests that fail first:
   prompt or the attachment's own note) is open, and it lands with slice 3's `look` target.
 - Lines per page for a text file, and the per-call page cap of `look`.
 - Whether the page-image fallback for a scanned page without a vision model uses the reader model or OCR.
+- Whether embeddings of an attached document are kept with it, keyed by the blob's SHA-256, so a second question does
+  not embed every page again.
