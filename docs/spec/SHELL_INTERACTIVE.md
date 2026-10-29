@@ -4,7 +4,8 @@
 take for a script to hold a running program, read what it shows and type into it, and in which order the pieces are
 worth having. It refines the open question at the end of [`SHELL.md`](SHELL.md) ("Interactive programs") and changes
 nothing that is built: today one call is one process or pipe, stdin closed, no terminal, a time limit, output capped,
-a cancel handle if it detaches ([`SHELL.md`](SHELL.md), "One call"), and the host protocol knows `start`, `done`,
+a cancel handle if it detaches ([`SHELL.md`](SHELL.md), "One call"; the detach itself is
+[`ASYNC_CALLS.md`](ASYNC_CALLS.md) mode 1), and the host protocol knows `start`, `done`,
 `cancel` and `status` only.
 
 ## What the shape is

@@ -503,7 +503,9 @@ browser: every worker-hosted run that ran Python kept a whole Pyodide realm. Now
   turn's later cells too, and ENDS WITH THE TURN: `PY_DELETE_RUN` clears it, and the worker is then on the 5 min clock.
   A keep never outlives its turn, so it never holds a realm for a run nobody is running. The run log records
   `python`/`keep` once per turn, so the person sees the model asked. It also ends with its SANDBOX: a kill (a
-  timeout, a crash, a cancel) clears it and the next cell is told the loss; the tool's description says so.
+  timeout, a crash, a cancel) clears it and the next cell is told the loss; the tool's description says so. A cell that DETACHES from the loop
+  (`docs/spec/ASYNC_CALLS.md`, mode 1, not built) takes this same lifetime: it holds its worker as a running message
+  does and ends with the turn or the sandbox, never later.
   What arms one is three checks: the sender is the service worker (`!sender.tab`, as for the bridges lift; `PY_DELETE_RUN`
   takes a stricter one, `sender.id` must be the extension's and no tab, since only the service worker posts it), the wire names the cell's own run, and the turn is live. The last is
   `endedRuns` (every run `PY_DELETE_RUN` ended, bounded to 256) plus `turnLive`: the service worker stamps a keep
