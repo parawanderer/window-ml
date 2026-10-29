@@ -6,7 +6,7 @@ import type { PolicyConsumer, StoredPolicy } from "./sw-policies";
 export const GLOBAL_POLICIES_KEY = "ml_policies_global";
 
 /** Every consumer, for checking what storage held. */
-export const CONSUMERS: ReadonlySet<string> = new Set<PolicyConsumer>(["fetch", "sh"]);
+export const CONSUMERS: ReadonlySet<string> = new Set<PolicyConsumer>(["fetch", "sh", "act"]);
 
 /** Keep only well-formed policies of a scope from what storage held; anything else is dropped, never guessed at. */
 export function validList(v: unknown, scope: StoredPolicy["scope"]): StoredPolicy[] {
