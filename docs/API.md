@@ -1,6 +1,16 @@
 # The `window.ml` API
 
-The page-facing API. Setup is in [SETUP.md](SETUP.md); what needs a patched server is in [FORKED-BACKENDS.md](FORKED-BACKENDS.md).
+The members of `window.ml` and how to call them. Setup is in [SETUP.md](SETUP.md); what needs a patched server is in
+[FORKED-BACKENDS.md](FORKED-BACKENDS.md).
+
+## Who may call it
+
+`window.ml` lives in the page, so a call from the DevTools console, from a userscript and from the site's own scripts
+is one caller: the page's site, and each gets what that site is allowed. A site you have not allowed has no `window.ml`
+at all; one you let ask has `ml.requestAccess` and nothing else; an allowed site has the members below, and some of
+them (a fetch of another origin, Python, starting agents) need more. A run you start yourself from the HUD, the sidebar
+or the chat page is different: the extension builds it, it works on any page, and every action it takes asks you.
+What each kind of site gets, how a page asks for more, and the refusals it sees: [PAGE-API.md](PAGE-API.md).
 
 ## Backends and API formats
 
@@ -445,6 +455,10 @@ if (v.warn) document.title = "🥪 " + v.why;
 on injection. (A sandboxed/isolated-world userscript won't see `window.ml` —
 bridge via `window.postMessage` instead.)
 
+The userscript is the page's caller, so this works only on a site you have allowed. On any other site there is no
+`window.ml`, or only `ml.requestAccess`, and `ml:ready` fires only once you allow the site: [PAGE-API.md](PAGE-API.md),
+"Waiting for `window.ml`".
+
 > **Worked example:** [`examples/youtube-summarizer.user.js`](../examples/youtube-summarizer.user.js)
 > is a full userscript that injects an in-page **AI Summary** panel into the
 > YouTube watch page — it summarizes the video via an OpenWebUI server-side
@@ -491,7 +505,7 @@ DevTools Settings, until you answer; nothing opens by itself. It resolves with `
 `{ state: "pending" }`, `{ state: "denied" }` or `{ state: "refused", reason }` and never throws. A site you have not
 allowed sees nothing of window.ml, unless you let it ask: "Let it ask" in the toolbar button's popup for that site, or
 "Let sites ask for access" in DevTools Settings for every site. Such a site has a `window.ml` with `requestAccess` only,
-and asks to use window.ml with `await ml.requestAccess({ reason })`. The design is [spec/SITE_ACCESS.md](spec/SITE_ACCESS.md), with the implementation reference
+and asks to use window.ml with `await ml.requestAccess({ reason })`. The page's side of all this, member by member: [PAGE-API.md](PAGE-API.md). The design is [spec/SITE_ACCESS.md](spec/SITE_ACCESS.md), with the implementation reference
 for the remaining slice in [spec/SITE_ACCESS_SLICE3.md](spec/SITE_ACCESS_SLICE3.md).
 
 **Starting agents.** Starting an agent is a second permission per site (Off, Ask each time, Always, Denied), set in
