@@ -259,7 +259,7 @@ test.describe("@security SITE_PRESENCE step 4: a hidden page and a run the perso
             expect(host.id ?? null, "no id").toBe(null);
             expect(host.popover, `the top-layer keeper's popover="manual" (the ruled exception)`).toBe("manual");
             expect(host.attrs.map(([n]) => n).sort(), "its attributes enumerate to exactly popover and style").toEqual(["popover", "style"]);
-            expect(host.attrs.find(([n]) => n === "style")?.[1] ?? "", "the inline style positions the box over the target").not.toBe("");
+            expect(host.attrs.find(([n]) => n === "style")?.[1] ?? "", "the inline style is set (its exact content is the fix's tests' to pin)").not.toBe("");
             expect(host.attrs.map(([n, v]) => `${n}=${v}`).join(" "), "no ml- name or value on the host").not.toMatch(ML_TOKEN);
         } finally {
             await h.close();
