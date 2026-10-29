@@ -164,7 +164,20 @@ RULED 2026-10-28, the worker-fetch half's two interpretation calls (the lane bui
   exception's edge, an image whose chain hops through a private host (a `10.x` or localhost address) or a non-raster
   body at any step is `IMAGE_FAILED` with no request made past the bad hop, in its step-5 rows PR.
 - The install-time warning for the `webRequest` permission is measured with
-  `chrome.management.getPermissionWarningsByManifest` and recorded in the PR body.
+  `chrome.management.getPermissionWarningsByManifest` and recorded in the PR body. MEASURED 2026-10-28: none added,
+  the same three warnings with and without it.
+
+The worker-fetch half is #1305 OPEN 2026-10-28 (`feat/redirect-judge`, head 7caf34dc, @security; the new
+`sw-redirects.ts` under `src/sw/` with its unit file, `sw-fetch.ts`, `sw-fetch-url.ts`, `sw-image-fetch.ts`,
+`background.ts`, `manifest.json`, `docs/dev/site-access.md`), verified; it merges after e3's redirect rows for this
+half. FOUND while building it: under concurrency the headers event can arrive AFTER the fetch resolves (6 of 180 hops),
+so `hopOnce` waits up to 2 s for its own event and holds the URL until it lands; 0 of 600 after. RULED the same day on
+the consequence the lane named: a judged hop that is followed returns its body to the caller, so a same-site hop to
+another origin (one registrable domain, two origins) now yields its body to an untrusted caller where the old
+final-origin guard withheld it. That is the rule's meaning: the registrable domain is the unit cookies are scoped to,
+and the list above names it as followed, not as followed-with-the-body-withheld. The final-origin guard stays as the
+belt: a body from any origin outside the judged set is still withheld, and e3's rows pin both edges, the same-site
+hop's body returned and the cross-site hop refused with no request to the target.
 
 ## Tests
 
