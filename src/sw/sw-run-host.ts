@@ -35,7 +35,7 @@ import { extractGrants, fetchUrlLiterals, tabGrantsForCall } from "./grant-extra
 import { parseInfo } from "../resource/resource-capacity";
 import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from "./sw-cdp";
 import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, grantOnceFetch, consentFetch, fetchConsent } from "./sw-consent";
-import { ASK_POLICY_CAUSE, navOnlyWhy, startLeftWhy, judgeCall, fetchFacts, navigateFacts, actFacts, noteAct, actsOf, rememberFetchUrls, withPolicies, addRunPolicy, askWhyOf, askedByPolicy, withoutAsked, takeArchiveNotice } from "./sw-policies";
+import { ASK_POLICY_CAUSE, navOnlyWhy, startLeftWhy, judgeCall, fetchFacts, navigateFacts, actFacts, noteAct, dropActs, actsOf, rememberFetchUrls, withPolicies, addRunPolicy, askWhyOf, askedByPolicy, withoutAsked, takeArchiveNotice } from "./sw-policies";
 import { checkProposals, recordedFetches, measureBreadth, breadthNote, measureActBreadth, actBreadthNote, type PolicyProposal } from "./policy-proposal";
 import { approveManifest, checkManifestProposal, draftCardNote, type CheckedManifest } from "./sw-manifest-proposal";
 import { approveLibrary, checkLibraryProposal, isLibraryDraft, precheckLibrary, type CheckedLibrary } from "./sw-library-proposal";
@@ -652,7 +652,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     // Undoes what this turn registered: run when the turn settles, and when its setup throws before the loop starts.
     let unhostAsks: (() => void) | undefined;   // set once the run's steps may raise nested asks (sw-asks.ts)
     let unwatchArrivals: (() => void) | undefined;   // set once the run judges its tab's arrivals (nav-arrival.ts)
-    const settle = (): void => { unhostAsks?.(); unwatchArrivals?.(); if (unwatchArrivals) watchBetweenTurns(tabId, runId); cancelReasons.delete(runId); noteRunEnd(runId); runControllers.delete(runId); runInboxes.delete(runId); untrackRun(tabId, runId); deleteRun(runId); deletePythonRun(runId); releaseDebugger(tabId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); ROOT C: drop its kept Python namespace
+    const settle = (): void => { unhostAsks?.(); unwatchArrivals?.(); if (unwatchArrivals) watchBetweenTurns(tabId, runId); cancelReasons.delete(runId); noteRunEnd(runId); dropActs(runId); runControllers.delete(runId); runInboxes.delete(runId); untrackRun(tabId, runId); deleteRun(runId); deletePythonRun(runId); releaseDebugger(tabId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); ROOT C: drop its kept Python namespace
     /** Ends the run's session on every surface when the setup throws after its start event went out; set once the fan exists. */
     let endSession: ((error: string) => void) | undefined;
     try {

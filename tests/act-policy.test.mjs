@@ -104,7 +104,7 @@ test("a consumer that is not fetch or act is refused, and an act rule that reads
     const bad = PP.checkProposals({ rules: [{ effect: "allow", consumer: "sh", when: "(c) => true", label: "x" }] });
     assert.match(bad.error, /rule 1: .*"consumer"/);
     const lacks = PP.checkProposals({ effect: "allow", consumer: "act", when: "(c) => c.credentials", label: "x" });
-    assert.ok("proposal" in lacks || /does not run/.test(lacks.error), "a missing field reads as unknown, not as a crash");
+    assert.match(lacks.error, /does not run/, "the strict facade refuses a field the call lacks");
     const typo = PP.checkProposals({ effect: "allow", consumer: "act", when: "(c) => c.element.nmae === 'x'", label: "x" });
     assert.match(typo.error ?? "", /does not run/);
 });

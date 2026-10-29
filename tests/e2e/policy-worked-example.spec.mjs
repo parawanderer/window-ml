@@ -57,9 +57,14 @@ async function run(page, task, decide = () => true) {
             await new Promise((r) => setTimeout(r, 20));
         }
     })();
+    // A nested ask (the arrival card) is pending only until the run ends, which can be before a poll sees it; the step
+    // events carry every ask raised, so the cards are completed from them once the run is over.
+    const fromEvents = () => {
+        for (const e of events) for (const a of e.asks ?? []) if (!cards.some((c) => c.askId === a.id)) cards.push({ key: a.id, askId: a.id, tool: a.kind });
+    };
     return {
         events, cards,
-        done: async (calls) => { await expect.poll(() => fake.calls().length, { timeout: 40000 }).toBeGreaterThanOrEqual(calls); await new Promise((r) => setTimeout(r, 500)); on = false; await loop; await watcher.close(); },
+        done: async (calls) => { await expect.poll(() => fake.calls().length, { timeout: 40000 }).toBeGreaterThanOrEqual(calls); await new Promise((r) => setTimeout(r, 500)); on = false; await loop; await watcher.close(); fromEvents(); },
     };
 }
 

@@ -541,7 +541,7 @@ export function actFacts(url: string, action: "click" | "type", element: ActElem
     return { kind: "act", url, host, action, element: { tag: element.tag, href: element.href, name: element.name }, effects: "unknown" };
 }
 
-/** One click or type this run made, as the worker resolved it: what an `act` proposal's breadth is measured over. */
+/** One click or type this run resolved (made or refused), as the worker resolved it: what an `act` proposal's breadth is measured over. */
 export interface ActRecord { url: string; action: "click" | "type"; element: ActElement }
 
 /** Acts kept per run for a proposal's breadth; past it the oldest go. */
@@ -549,9 +549,12 @@ const ACTS_PER_RUN_MAX = 100;
 const actsByRun = new Map<string, ActRecord[]>();
 defineState({
     id: "policies.acts", scope: "session", realm: "worker", audience: "human", lostOn: ["worker-eviction"],
-    describe: "The clicks and types a run made, as the worker resolved them (page, action, element): only so a proposed rule over them can say how far it reaches.",
+    describe: "The clicks and types a run resolved, made or refused, as the worker resolved them (page, action, element): only so a proposed rule over them can say how far it reaches.",
     read: ({ runId }) => { const l = runId ? actsByRun.get(runId) : undefined; return l?.length ? l.map((a) => ({ ...a, element: { ...a.element } })) : undefined; },
 });
+
+/** Forget a run's acts, when it ends. */
+export function dropActs(runId: string): void { actsByRun.delete(runId); }
 
 /** Remember a click or a type the worker resolved, for the breadth of a later proposal. */
 export function noteAct(runId: string, a: ActRecord): void {
@@ -560,7 +563,7 @@ export function noteAct(runId: string, a: ActRecord): void {
     actsByRun.set(runId, l.slice(-ACTS_PER_RUN_MAX));
 }
 
-/** The clicks and types a run made, oldest first. */
+/** The clicks and types a run resolved, made or refused, oldest first. */
 export const actsOf = (runId: string): readonly ActRecord[] => actsByRun.get(runId) ?? [];
 
 /** The policy that allows exactly one URL a person saw on a card, as code (`JSON.stringify` makes the literal). */
