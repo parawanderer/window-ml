@@ -113,6 +113,17 @@ const libraryPrincipals = new Set<string>();   // state: plumbing — which live
 // to keep it. One timer per idle worker, cleared when the principal posts again.
 const reapTimers = new Map<string, ReturnType<typeof setTimeout>>();   // state: plumbing — one idle clock per worker
 const keptPrincipals = new Set<string>();   // state: plumbing — `run:<id>` workers whose live turn asked to keep them
+// Runs whose turn `PY_DELETE_RUN` ended: a keep naming one arms nothing unless its cell says its turn is live again (a
+// resumed turn of the same run id). Bounded, oldest first: a run that is never resumed leaves one short string.
+const ENDED_RUNS_MAX = 256;
+const workerUses = new Map<string, number>();   // state: plumbing — how often each principal's worker was asked for: a reap's ask sees a use inside its window
+const endedRuns = new Set<string>();
+defineState({
+    id: "python.ended-runs", scope: "run", realm: "offscreen", audience: "human", lostOn: ["offscreen-close", "browser-restart"],
+    describe: "Whether the run's turn has ended, so a keep that arrives unstamped afterwards arms nothing (py-reap.ts); bounded to the last 256 ended runs.",
+    heldOnly: true,
+    read: ({ runId }) => runId && endedRuns.has(runId) ? true : undefined,
+});
 let nextId = 1;
 type WireStamp = { client: string; run: string | null };
 const pending = new Map<number, { resolve: (r: PyResult) => void; timer: ReturnType<typeof setTimeout>; streamId?: string; armOnStart?: boolean; principal: string; wire?: WireStamp; spending?: boolean }>();   // state: plumbing
@@ -231,6 +242,7 @@ async function reapWorker(principal: string, idleMs: number): Promise<void> {
     if (!entry || [...pending.values()].some((p) => p.principal === principal)) return;
     const run = heldRun(principal);
     const id = nextId++;
+    const usesBefore = workerUses.get(principal) ?? 0;
     const dropped = await new Promise<PyResult["dropped"] | undefined>((resolve) => {
         const timer = setTimeout(() => { pending.delete(id); resolve(undefined); }, REAP_ANSWER_MS);
         pending.set(id, { resolve: (r) => { clearTimeout(timer); resolve(r?.dropped); }, timer, principal });
@@ -238,7 +250,8 @@ async function reapWorker(principal: string, idleMs: number): Promise<void> {
         catch { clearTimeout(timer); pending.delete(id); resolve(undefined); }
     });
     // A cell posted while the worker answered: it is not idle any more, and its own answer restarts the clock.
-    if (workers.get(principal) !== entry || [...pending.values()].some((p) => p.principal === principal)) return;
+    // A cell that started and finished inside the window is no longer pending, and still means the worker was not idle.
+    if (workers.get(principal) !== entry || (workerUses.get(principal) ?? 0) !== usesBefore || [...pending.values()].some((p) => p.principal === principal)) return;
     try { entry.w.terminate(); } catch { /* already gone */ }
     workers.delete(principal);
     libraryPrincipals.delete(principal);
@@ -258,6 +271,7 @@ async function reapWorker(principal: string, idleMs: number): Promise<void> {
 
 function ensureWorker(principal: string, readonly: boolean): Worker {
     clearReap(principal);
+    workerUses.set(principal, (workerUses.get(principal) ?? 0) + 1);
     const existing = workers.get(principal);
     if (existing) return existing.w;
     // `name` is how the worker knows which sandbox it is: a readonly worker boots locked down (`lockdownReadonly`),
@@ -501,7 +515,12 @@ chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
         ? { client: String(msg.wire.client), run: msg.wire.run ?? null }
         : undefined;
     // A KEEP (py-reap.ts) is a live turn's, on its own worker: only a cell of a worker-hosted run carries one.
-    if (msg.keep === true && wireStamp?.run && msg.principal === `run:${wireStamp.run}`) keptPrincipals.add(msg.principal);
+    // Only the service worker may arm one, and only for a turn `PY_DELETE_RUN` has not ended: its cell says so with `turnLive`
+    // (it checked the run was live when it sent), which a resumed turn of the same run id needs to re-open the gate.
+    if (msg.keep === true && !sender.tab && wireStamp?.run && msg.principal === `run:${wireStamp.run}` && (msg.turnLive === true || !endedRuns.has(wireStamp.run))) {
+        if (msg.turnLive === true) endedRuns.delete(wireStamp.run);
+        keptPrincipals.add(msg.principal);
+    }
     withStoredTables(msg.tables ?? null)
         .then((t) => "error" in t
             ? { ok: false, stdout: "", error: t.error }
@@ -529,9 +548,12 @@ chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
 // from the run-end path; it is forwarded as `deleteRun` to EVERY worker holding a dict for the run (`runPrincipals`):
 // the run's own `run:<id>` and, for its full-mode cells, the shared `full` worker, where a dict left behind is readable
 // from another full-mode run's cell. The principal the message names is asked too.
-chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
     if (msg?.type !== "PY_DELETE_RUN" || typeof msg.run !== "string" || !msg.run) return undefined;
+    if (sender.id !== chrome.runtime.id || sender.tab) return undefined;   // the service worker's word only, like every message here
     const run = String(msg.run);
+    endedRuns.delete(run); endedRuns.add(run);   // re-added last: the oldest is evicted first
+    if (endedRuns.size > ENDED_RUNS_MAX) endedRuns.delete(endedRuns.values().next().value as string);
     const principals = new Set(runPrincipals.get(run) ?? []);
     principals.add(String(msg.principal ?? `run:${run}`));
     keptPrincipals.delete(`run:${run}`);   // the turn ended, and its keep with it (py-reap.ts)

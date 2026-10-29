@@ -495,20 +495,29 @@ browser: every worker-hosted run that ran Python kept a whole Pyodide realm. Now
   clock starts when the last one answers and stops when the principal posts again.
 - **How long it waits** depends on what the shut costs. A worker that holds no namespace of a live turn waits
   `REAP_SETTLED_MS` (5 min) and loses only its warmth: the turn settled and `PY_DELETE_RUN` emptied it, or it is a
-  page's stateless principal. A worker that holds a live turn's namespace waits `REAP_LIVE_MS` (30 min); the names are
+  page's stateless principal (`reapDelay` returns the 5 min for any `page:` whatever the flags say). A worker that holds a live turn's namespace waits `REAP_LIVE_MS` (30 min); the names are
   lost, and the run's next cell opens with `namespace reset at <time>: idle (…keep: true…)`, as after a kill. The bench
   (`own`) and the `full` worker are never reaped.
 - **A keep** is a worker-hosted turn asking, through `python_exec` `keep: true`, to hold its worker through idle gaps
   of any length (a run that works overnight). It applies only to that run's own `run:<id>` worker, holds for the
   turn's later cells too, and ENDS WITH THE TURN: `PY_DELETE_RUN` clears it, and the worker is then on the 5 min clock.
   A keep never outlives its turn, so it never holds a realm for a run nobody is running. The run log records
-  `python`/`keep` once per turn, so the person sees the model asked.
+  `python`/`keep` once per turn, so the person sees the model asked. It also ends with its SANDBOX: a kill (a
+  timeout, a crash, a cancel) clears it and the next cell is told the loss; the tool's description says so.
+  What arms one is three checks: the sender is the service worker (`!sender.tab`, as for the bridges lift, and
+  `PY_DELETE_RUN` takes the same test), the wire names the cell's own run, and the turn is live. The last is
+  `endedRuns` (every run `PY_DELETE_RUN` ended, bounded to 256) plus `turnLive`: the service worker stamps a keep
+  `turnLive` only when `runControllers` still has the run, and checks again at every send, so the retry after
+  `forgetOffscreen` cannot re-arm a keep after the turn's end. A resumed turn reuses the run id, which is why the
+  ended record alone cannot decide: its first keep arrives stamped and re-opens the gate.
 - **Before the shut** the worker is asked (`takeDropped`) for the callables its last cell handed to JavaScript that
   fired since (`cell-gate.ts`); no cell will report them now. A worker that does not answer in 2 s is terminated
-  anyway. The offscreen sends `PY_REAPED { run, live, dropped? }`, and the run log gets `python`/`reap` (a live turn's
+  anyway. A cell that started and finished while the worker answered also stops the reap (`workerUses` moved: a
+  finished cell is no longer pending, and the worker was not idle). The offscreen sends `PY_REAPED { run, live, dropped? }`, and the run log gets `python`/`reap` (a live turn's
   namespace went) and `python`/`dropped` (`at-reap`). The housekeeping log gets `pyodide`/`reap`.
 
-Tests: `tests/python-reap.test.mjs` (the clocks and the keep, mocked timers), `tests/python-run-namespace.test.mjs`
+Tests: `tests/python-reap.test.mjs` (the clocks and the keep, mocked timers), `tests/redteam-python-keep.test.mjs` (the
+adversarial shapes), `tests/python-keep-fixes.test.mjs` (the fixes' positive controls), `tests/python-run-namespace.test.mjs`
 (`PY_REAPED` and the keep in the service worker), `tests/worker-media.test.mjs` (the tool offers `keep` only where
 names persist).
 

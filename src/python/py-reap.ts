@@ -28,7 +28,8 @@ export const REAP_LIVE_MS = 30 * 60_000;
  * @returns the delay in ms, or null
  */
 export function reapDelay(principal: string, holdsRun: boolean, kept: boolean): number | null {
-    if (!principal.startsWith("run:") && !principal.startsWith("page:")) return null;
+    if (principal.startsWith("page:")) return REAP_SETTLED_MS;   // a page never holds a live turn's namespace: no flag moves it
+    if (!principal.startsWith("run:")) return null;
     if (!holdsRun) return REAP_SETTLED_MS;
     return kept ? null : REAP_LIVE_MS;
 }
