@@ -20,9 +20,9 @@
  * the only feed of a session nothing else can see.
  */
 import { hintSession, shortHash, type AttachedFile, type AttachedPdf, type RequestHint, type SentFile } from "../contract/contract-run";
-import { FilesRefused, b64Bytes, frameFiles, isPdfFile, textCapRefusal, type FramedFile } from "../attached-files";
+import { FILE_INLINE_MAX, FilesRefused, b64Bytes, frameFiles, isPdfFile, textCapRefusal, type FramedFile } from "../attached-files";
 import { ImagesRefused, namedNote, readerNote, type ImagePlan } from "../image-gate";
-import { pageSections, planPages, wantsImage, type PageAim, type PageOutcome } from "../pdf/pdf-frame";
+import { fitPages, pageSections, planPages, wantsImage, type PageAim, type PageOutcome } from "../pdf/pdf-frame";
 import type { PdfDoc } from "../pdf/pdf-read";
 import type { PdfReadReply, PdfRenderReply } from "../pdf/pdf-wire";
 import { type LlmResult, type NeutralMessage } from "../contract/contract-chat";
@@ -39,6 +39,24 @@ export const MAX_TURN_IMAGES = 8;
 /** How many pages of a message's PDFs the reader model may read, past which a scan is named as not sent: each is a
  *  model call the person waits for before the answer starts. A first figure. */
 export const READER_PAGE_MAX = 32;
+/** How much of a model's context a message's PDF text may take, at about 3.5 characters a token: half, so the
+ *  question, the history and the answer keep the rest (FILE_ATTACHMENTS.md, "One reader per format"). */
+export const PDF_CONTEXT_SHARE = 0.5;
+/** Characters a token, for sizing that share: a conservative figure for English prose. */
+export const CHARS_PER_TOKEN = 3.5;
+/** The least page text a message takes when the context is known, so a small context still gets its first pages. */
+export const PDF_TEXT_FLOOR = 4_000;
+
+/**
+ * How many characters of page text a message's PDFs may carry: a share of the model's context when the model is
+ * loaded and says how long it is, and slice 1's cap on file text when it is not.
+ * @param contextTokens the context the model is loaded with, or null when that is not known
+ */
+export function pdfTextBudget(contextTokens: number | null): number {
+    if (!contextTokens || contextTokens <= 0) return FILE_INLINE_MAX;
+    return Math.max(PDF_TEXT_FLOOR, Math.floor(contextTokens * CHARS_PER_TOKEN * PDF_CONTEXT_SHARE));
+}
+
 /** The scale a page is drawn at for a model or a reader: 144 dpi, legible small print on a letter page. */
 export const PAGE_IMAGE_SCALE = 2;
 /** What a chat says can get a page it held back: nothing yet (slice 3's `look` on a page is an agent run's). */
@@ -71,6 +89,9 @@ export interface ChatDeps {
     /** the offscreen document's PDF reader (pdf-wire.ts): a PDF read page by page, and one page drawn as a PNG.
      *  Absent, a message with a PDF is refused. */
     pdf?: { read(b64: string): Promise<PdfReadReply>; render(b64: string, n: number, scale: number): Promise<PdfRenderReply> };
+    /** the context `model` (null: the default) is loaded with, in tokens, or null when it is not loaded or does not
+     *  say; sizes how much of a PDF a message sends ({@link pdfTextBudget}). Absent: not known. */
+    contextTokens?(model: string | null): Promise<number | null>;
 }
 
 /** A message's files once its PDFs are read: a text file as sent, a PDF with its pages and what each page sends. */
@@ -173,7 +194,7 @@ export async function setBackgroundChatModel(hash: string, model: string): Promi
 /** The next turn of a background chat. `not-found` when this worker does not host it and storage cannot bring it
  *  back; `busy` while a turn is still running, since a chat has no inbox to steer into. Throws {@link ImagesRefused}
  *  before the turn when its images may not be sent (`vision: true` is the person's word that the model sees), and
- *  {@link FilesRefused} when a PDF cannot be read or its pages hold more text than a message takes. */
+ *  {@link FilesRefused} when a PDF cannot be read or its text files hold more text than a message takes. */
 export async function sendBackgroundChat(hash: string, text: string, images?: string[], files?: SentFile[], vision?: true): Promise<"turn" | "busy" | "not-found"> {
     const chat = chats.get(hash) ?? (await rehydrate(hash));
     if (!chat) return "not-found";
@@ -188,7 +209,8 @@ export async function sendBackgroundChat(hash: string, text: string, images?: st
  * What a message sends, decided BEFORE a turn starts so a refusal reaches the command and nothing is sent: each PDF
  * read (offscreen, docs/dev/pdf.md), the text cap applied to what its pages hold, and where images go. Vision is
  * asked only when something would send an image: a pasted one, a scanned page, or a page with a figure.
- * @throws {FilesRefused} a PDF would not read, or the files hold more text than a message takes
+ * @throws {FilesRefused} a PDF would not read, or the text files hold more text than a message takes (a PDF's pages
+ *   past what is left are named, not refused)
  * @throws {ImagesRefused} an image would be sent, the model's vision is not known and no reader is set
  */
 async function prepare(d: ChatDeps, model: string | null, images: string[] | undefined, files: SentFile[] | undefined, forced: boolean): Promise<Prepared> {
@@ -201,12 +223,19 @@ async function prepare(d: ChatDeps, model: string | null, images: string[] | und
         if (!r.ok) throw new FilesRefused(`${f.name}: ${r.refusal}`);
         read.push({ pdf: f, doc: r.doc, aims: [] });
     }
-    const why = textCapRefusal(read.map((f) => "pdf" in f
-        ? { name: f.pdf.name, chars: f.doc.pages.reduce((n, p) => n + p.text.length, 0) }
-        : { name: f.name, chars: f.text.length }));
+    // Text files are sent whole or refused, as in slice 1. A PDF's pages go in order while their text fits in what
+    // is left, and the rest are named as not sent (pdf-frame.ts, `cut`).
+    const texts = read.flatMap((f) => ("pdf" in f ? [] : [f]));
+    const why = textCapRefusal(texts.map((f) => ({ name: f.name, chars: f.text.length })));
     if (why) throw new FilesRefused(why);
     const docs = read.flatMap((f) => ("pdf" in f ? [f.doc] : []));
-    const kinds = docs.flatMap((doc) => doc.pages.map((p) => wantsImage(p.kind)));
+    let chars = 0;
+    if (docs.length) {
+        const ctx = d.contextTokens ? await d.contextTokens(model).catch(() => null) : null;
+        chars = Math.max(0, pdfTextBudget(ctx) - texts.reduce((n, f) => n + f.text.length, 0));
+    }
+    const fit = fitPages(docs, chars);
+    const kinds = docs.flatMap((doc, i) => doc.pages.slice(0, fit[i]).map((p) => wantsImage(p.kind)));
     const scans = kinds.includes("scan");
     let plan: ImagePlan = { route: "model" };
     if (images?.length || scans || kinds.includes("figure")) {
@@ -221,7 +250,7 @@ async function prepare(d: ChatDeps, model: string | null, images: string[] | und
         const reader = plan.route === "reader" || plan.route === "model" ? plan.reader ?? null : null;
         // Pasted images come first, then the pages that need one, in page order (FILE_ATTACHMENTS.md).
         const room = MAX_TURN_IMAGES - Math.min(images?.length ?? 0, MAX_TURN_IMAGES);
-        const aims = planPages(docs, plan.route, { images: room, reader: !!reader, readerMax: READER_PAGE_MAX });
+        const aims = planPages(docs, plan.route, { images: room, reader: !!reader, readerMax: READER_PAGE_MAX, chars });
         let i = 0;
         for (const f of read) if ("pdf" in f) f.aims = aims[i++];
     }

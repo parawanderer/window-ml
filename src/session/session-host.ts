@@ -408,8 +408,8 @@ export type { AttachedFile };
 /**
  * A PDF a client sends with a message, on `chat.start` and on `session.send` to a chat: its name, `type`
  * "application/pdf" and its BYTES as base64 in `data` (FILE_ATTACHMENTS.md, "Wiring a PDF through the attach path").
- * The runtime reads it page by page; a PDF it cannot read, or one whose pages hold more text than a message takes,
- * is answered `invalid` with the reason. Only a runtime listing `capabilities.attachPdf` takes one.
+ * The runtime reads it page by page; a PDF it cannot read is answered `invalid` with the reason, and the pages past
+ * the text a message takes are named in its block as not sent. Only a runtime listing `capabilities.attachPdf` takes one.
  */
 export type { AttachedPdf, SentFile };
 

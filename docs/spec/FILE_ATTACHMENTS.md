@@ -132,8 +132,8 @@ tune for: some text, still a scan.
 This is what the commercial APIs do on a vision model (each page as text and image); the difference is that a page
 image is sent only where the measurements say it carries something the text does not.
 
-**Size.** The cap from slice 1 applies to the text the pages produce. A PDF past it goes to a chat refused with the
-reason, and to an agent as a pointer.
+**Size.** A cap applies to the text the pages produce. A chat sends the pages that fit, in order, and names the rest
+("One reader per format, two framings" below); an agent takes a PDF past it as a pointer.
 
 ### Wiring a PDF through the attach path (decided 2026-10-29)
 
@@ -202,9 +202,9 @@ until then the note says there is none, since a recovery named must be callable 
 `files` on `chat.start` and on `session.send` to a chat, `data` the bytes as base64 (the extension's channel is JSON),
 at most `PDF_ATTACH_MAX` (20 MB). What the build decided where the rulings were silent:
 
-- The PDF is read BEFORE the turn (`prepare`, sw-chat.ts), so a PDF that will not open, pages holding more than the
-  text cap, and an image refusal all answer the command (`invalid`, `unsupported`) and nothing is sent. Pages are
-  drawn and read INSIDE the turn; the person's message appears in the transcript once they are.
+- The PDF is read BEFORE the turn (`prepare`, sw-chat.ts), so a PDF that will not open, text files past the text
+  cap, and an image refusal all answer the command (`invalid`, `unsupported`) and nothing is sent. Pages are drawn
+  and read INSIDE the turn; the person's message appears in the transcript once they are.
 - Only a pasted image or a scanned page can refuse a message. A page with a figure keeps its text, so to a model of
   unknown vision with no reader it goes with "(page N has a figure you cannot see)" rather than refusing the PDF.
 - `<page n="3" image="2">` says which of the message's images is that page (pasted images are numbered first);
@@ -352,6 +352,18 @@ were not sent: past the text a message takes. This chat cannot show them."), and
 context length where the backend reports it, a fixed figure otherwise. With slice 3 a worker chat gets one read-only
 `read_pages` call over its own attachments, the same reader an agent run gets.
 
+Built (2026-10-29, `pdfTextBudget` and `fitPages`):
+
+- The budget is half the context the model is LOADED with (Ollama's `/api/ps`; a worker chat sends no `num_ctx`, so
+  that is the context it runs with) at 3.5 characters a token, at least 4,000 characters. A model that is not loaded,
+  or a backend that does not say, gets `FILE_INLINE_MAX`.
+- Text files count first and are still sent whole or refused, as in slice 1. The PDFs get what is left.
+- Pages go in page order across the message's PDFs while their text fits. The first page that does not, and every
+  page after it, is `cut`: named after the sections, never drawn, never sent to the reader, and not asked about for
+  vision, so a scan past the cut cannot refuse the message. The file keeps its `pages` count.
+- Not counted: the history already in the chat, the section tags, and what a reader writes for a page (at most
+  `READER_PAGE_MAX` pages). The half share is the margin for them.
+
 ## What the person sees
 
 - **Calm view**: a chip per file, under the message like sent images: the name and a summary ("report.pdf · PDF, 48
@@ -402,7 +414,7 @@ or a message"). What a hostile page must not get, as tests that fail first:
 ## Open
 
 - `FILE_INLINE_MAX` is 32,000 characters as a first figure (slice 1); still open: measuring it against the prompt
-  budget, and whether it scales with the model's context window.
+  budget. A PDF's page budget scales with the loaded context (built 2026-10-29); text files do not yet.
 - The per-command size cap: for text it is `FILE_INLINE_MAX` itself, well under the hub's frame limit; for a PDF's
   bytes, decided 2026-10-29 (chunks, 20 MiB, "Wiring a PDF through the attach path").
 - The PDF thresholds: read against labelled real pages in `notebooks/pdf/pdf-thresholds.ipynb` (2026-10-28);

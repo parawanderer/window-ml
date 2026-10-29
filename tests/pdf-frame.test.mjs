@@ -2,7 +2,7 @@
 // named, and the `<page>` sections with what was held back (docs/spec/FILE_ATTACHMENTS.md, "Wiring a PDF").
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { escapePageText, pageRanges, pageSections, planPages, wantsImage } from "../src/pdf/pdf-frame.ts";
+import { escapePageText, fitPages, pageRanges, pageSections, planPages, wantsImage } from "../src/pdf/pdf-frame.ts";
 
 const KINDS = ["text", "scanned", "mixed", "ocr-scan", "blank"];
 const doc = (...kinds) => ({ pageCount: kinds.length, pages: kinds.map((kind, i) => ({ n: i + 1, kind, text: `t${i + 1}`, measure: {} })) });
@@ -30,6 +30,36 @@ test("planPages over every kind, route, room and reader", () => {
 test("the image room and the reader's pages are spent in page order across documents", () => {
     const aims = planPages([doc("scanned", "mixed"), doc("scanned", "scanned", "scanned")], "model", { images: 2, reader: true, readerMax: 2 });
     assert.deepEqual(aims, [["image", "image"], ["reader", "reader", "held-scan"]]);
+});
+
+// --- past the text a message takes: pages go in order while they fit ---
+
+test("fitPages counts leading pages across documents, and the first page that does not fit ends every count after it", () => {
+    const d = (...lens) => ({ pageCount: lens.length, pages: lens.map((n, i) => ({ n: i + 1, kind: "text", text: "x".repeat(n), measure: {} })) });
+    assert.deepEqual(fitPages([d(3, 3), d(3)]), [2, 1], "absent: every page fits");
+    assert.deepEqual(fitPages([d(3, 3), d(3)], 9), [2, 1], "exactly full fits");
+    assert.deepEqual(fitPages([d(3, 3), d(3)], 8), [2, 0]);
+    assert.deepEqual(fitPages([d(3, 5, 1), d(1)], 4), [1, 0], "a later page that would fit is not sent after one that did not");
+    assert.deepEqual(fitPages([d(0, 10), d(0)], 0), [1, 0], "an empty page costs nothing, until the cut");
+    assert.deepEqual(fitPages([d(10)], 9), [0], "a first page too long cuts the whole document");
+});
+
+test("a cut page takes no image and no reader page, and every kind past the cut is cut", () => {
+    const d = { pageCount: 4, pages: ["scanned", "text", "scanned", "mixed"].map((kind, i) => ({ n: i + 1, kind, text: kind === "scanned" ? "" : "abcd", measure: {} })) };
+    assert.deepEqual(planPages([d], "model", { images: 8, reader: true, readerMax: 8, chars: 4 }), [["image", "text", "image", "cut"]]);
+    assert.deepEqual(planPages([d], "model", { images: 8, reader: true, readerMax: 8, chars: 3 }), [["image", "cut", "cut", "cut"]]);
+    for (const route of ["model", "reader", "named"]) {
+        assert.deepEqual(planPages([d], route, { images: 8, reader: true, readerMax: 8, chars: 0 })[0].slice(1), ["cut", "cut", "cut"], route);
+    }
+});
+
+test("cut pages are named after the sections, after the held-back images, and drawn as nothing", () => {
+    const d = { pageCount: 5, pages: [1, 2, 3, 4, 5].map((n) => ({ n, kind: "text", text: `t${n}`, measure: {} })) };
+    const s = pageSections(d, ["text", "held-figure", "cut", "cut", "cut"], new Map(), { firstImage: 1, reader: null, recovery: "This chat cannot show them." });
+    assert.equal(s.body, '<page n="1">\nt1\n</page>\n<page n="2">\nt2\n</page>\npage 2 has a figure not sent as an image. This chat cannot show them.\npages 3-5 were not sent: past the text a message takes. This chat cannot show them.');
+    assert.deepEqual(s.images, []);
+    const one = pageSections(d, ["text", "text", "text", "text", "cut"], new Map(), { firstImage: 1, reader: null, recovery: "R." });
+    assert.match(one.body, /\npage 5 was not sent: past the text a message takes\. R\.$/);
 });
 
 // --- the sections ---
