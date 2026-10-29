@@ -107,3 +107,7 @@ offscreen document to read and render the fixtures.
 - pdf.js trims text that falls outside the page, so a test for a huge text run needs it on the page (many small lines).
 - `chrome.runtime.sendMessage` is JSON: send base64, never a typed array.
 - The document handle has no `destroy()`; the loading task's `destroy()` frees it.
+- The worker has no `document`, and pdf.js outside node assumes one for its canvas AND filter factories: `source()`
+  passes `OffscreenCanvasFactory` and `NoDomFilterFactory`. Without the second, a page with a transfer function, a
+  luminosity soft mask or a knockout group refused as `unreadable` ("reading 'URL'"); given "none", pdf.js draws each
+  of them pixel by pixel (`filters.pdf`).
