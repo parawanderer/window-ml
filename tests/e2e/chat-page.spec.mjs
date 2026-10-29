@@ -125,6 +125,35 @@ test("starting a chat from the page: the worker hosts it, with no tab behind it,
     } finally { await ext.context.close(); await fake.stop(); }
 });
 
+test("a PDF attached to a chat is read by the runtime: its text in <page> sections, a scan drawn and sent as an image", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    const fixture = (name) => path.join(import.meta.dirname, "..", "fixtures", "pdf", name);
+    try {
+        // The default model declared as seeing, so a scan goes to it as the page's image (image-gate.ts).
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "off", defaultModelVision: "yes" });
+        fake.setScript([{ content: "read it" }]);
+        const { page: chat, errors } = await openChatPage(ext);
+        await chat.getByRole("button", { name: /^Kind:/ }).click();
+        await chat.getByRole("listbox", { name: "Kind" }).getByRole("option", { name: /^Chat/ }).click();
+        await chat.locator('.chat-start-box input[type="file"]').setInputFiles([fixture("text.pdf"), fixture("scan.pdf")]);
+        await expect(chat.locator(".chat-start-box .cfiles .file-pill")).toHaveCount(2);
+        await chat.locator(".chat-start-box textarea").fill("what do these say?");
+        await chat.locator(".chat-start-box textarea").press("Enter");
+
+        await expect(chat.locator(".chat-main")).toContainText("read it");
+        const [call] = fake.calls();
+        const sent = JSON.stringify(call.messages.at(-1));
+        expect(sent).toContain('<file name=\\"text.pdf\\" type=\\"application/pdf\\"');
+        expect(sent).toContain("The committee met on the fourth of March");
+        expect(sent).toContain('<page n=\\"1\\" image=\\"1\\">');
+        expect(sent).toMatch(/data:image\/png;base64,/);
+        // The chips say what was sent, from the runtime's descriptor: a page count, not the bytes.
+        await expect(chat.locator(".chat-main .file-pill", { hasText: "text.pdf · PDF, 1 page" })).toBeVisible();
+        expect(errors).toEqual([]);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
 /** A two-card box for the fake backend to report, so the resource panel has something to draw. */
 const GiB = 1024 ** 3;
 const card = (id, free) => ({ gpu_id: String(id), name: `CUDA${id}`, runner: "CUDA", compute: "12.0", driver: "13.2", total_memory: 101972967424, physical_memory: 102641958912, free_memory: free });

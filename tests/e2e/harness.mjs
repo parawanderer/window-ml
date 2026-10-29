@@ -349,7 +349,7 @@ async function shellContext(page, timeout) {
 
 /**
  * RUN `fn` WHERE THE SHELL LIVES: the content script's isolated world of `page`'s top frame, which shares the page's DOM
- * but none of its JS objects. `fn(roots, arg)` gets `{ sidebar, card, highlight }`, the shell's shadow roots (null when
+ * but none of its JS objects. `fn(roots, arg)` gets `{ sidebar, card, highlight, highlightTag }`, the shell's shadow roots (null when
  * not mounted), and its result comes back by value (JSON), like `page.evaluate`'s.
  *
  * The roots are CLOSED, so `host.shadowRoot` is null in every world and Playwright's selectors do not enter them: this
@@ -358,7 +358,7 @@ async function shellContext(page, timeout) {
  * nothing: pass what it needs as `arg`.
  * @template T
  * @param {any} page the page
- * @param {(roots: { sidebar: ShadowRoot | null, card: ShadowRoot | null, highlight: ShadowRoot | null }, arg: any) => T | Promise<T>} fn
+ * @param {(roots: { sidebar: ShadowRoot | null, card: ShadowRoot | null, highlight: ShadowRoot | null, highlightTag: string }, arg: any) => T | Promise<T>} fn
  * @param {any} [arg] JSON-serializable
  * @param {{ timeout?: number }} [opts] how long to wait for the content script (default 15 s)
  * @returns {Promise<T>}
@@ -401,11 +401,32 @@ export async function onChannel(page, fn, arg, opts) {
 }
 
 /**
+ * The highlight host's tag for this page session. The host is anonymous (a random custom-element name and no id of ours,
+ * docs/spec/SITE_PRESENCE.md step 4), so a test learns the name from the shell's hook; it is the page's locator for the host.
+ * @param {any} page the page
+ * @returns {Promise<string>}
+ */
+export const highlightTag = (page) => inShell(page, (roots) => roots.highlightTag);
+
+/**
+ * The highlight box the shell drew, in viewport pixels (rounded), or null when none is drawn: the one place a test reads
+ * the box inside the highlight's closed root.
+ * @param {any} page the page
+ * @returns {Promise<{ left: number, top: number, width: number, height: number } | null>}
+ */
+export const highlightBox = (page) => inShell(page, (roots) => {
+    const el = roots.highlight?.querySelector("#ml-highlight");
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { left: Math.round(r.left), top: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) };
+});
+
+/**
  * Poll {@link inShell} until `fn` returns something truthy, and return it: `page.waitForFunction` for our closed roots.
  * A throw (the shell not mounted yet) counts as "not yet".
  * @template T
  * @param {any} page the page
- * @param {(roots: { sidebar: ShadowRoot | null, card: ShadowRoot | null, highlight: ShadowRoot | null }, arg: any) => T | Promise<T>} fn
+ * @param {(roots: { sidebar: ShadowRoot | null, card: ShadowRoot | null, highlight: ShadowRoot | null, highlightTag: string }, arg: any) => T | Promise<T>} fn
  * @param {any} [arg] JSON-serializable
  * @param {{ timeout?: number, interval?: number }} [opts] default 15 s, polling every 100 ms
  * @returns {Promise<T>}

@@ -1,4 +1,5 @@
-// pdf-measure.ts — what one PDF page holds, as numbers: usable text, how much of the page images cover, invisible text.
+// pdf-measure.ts — what one PDF page holds, as numbers: usable text, how much of the page images and drawn paths cover,
+// invisible text.
 //
 // Pure: it reads pdf.js's `textContent` items and operator list (`fnArray`/`argsArray`) and returns a `PageMeasure`;
 // it imports nothing from pdf.js (the operator numbers come in as a table), so it runs in node tests on made-up lists.
@@ -26,6 +27,13 @@ export interface PageMeasure {
     fullPageImage: boolean;
     /** How many image paints were counted. */
     images: number;
+    /** Share of the page covered by the union of every filled or stroked path's box: vector drawing (charts, diagrams,
+     *  rules, shaded cells). A path whose box alone covers `FULL_PAGE_COVER` is a page background and is left out. */
+    pathCover: number;
+    /** Share of the page covered by images and paths together: the union of both. */
+    drawnCover: number;
+    /** How many path paints were counted (page backgrounds included). */
+    paths: number;
     /** Glyphs shown with a visible text render mode (0 to 2, 4 to 6) and with an invisible one (3 and 7). */
     visibleGlyphs: number;
     invisibleGlyphs: number;
@@ -40,6 +48,8 @@ export interface PageMeasure {
 export const OP_CAP = 200_000;
 /** At most this many image paints are rasterised into the union; the rest are counted and ignored. */
 export const IMAGE_CAP = 2_000;
+/** At most this many path paints are rasterised into the union; the rest are counted and ignored. */
+export const PATH_CAP = 2_000;
 /** At most this many glyph objects are visited when telling visible text from invisible. */
 export const GLYPH_CAP = 2_000_000;
 /** At most this many characters of text are examined for broken ones; a page past it is judged on its first part. */
@@ -112,6 +122,12 @@ export function unitSquareThrough(m: Matrix): [number, number][] {
     return ([[0, 0], [1, 0], [1, 1], [0, 1]] as const).map(([x, y]) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]] as [number, number]);
 }
 
+/** An axis-aligned box `[x0, y0, x1, y1]` (pdf.js's path `minMax`) as the matrix that maps the unit square onto it. */
+export function boxMatrix(b: ArrayLike<number>): Matrix | null {
+    const [x0, y0, x1, y1] = [0, 1, 2, 3].map((i) => Number(b[i]));
+    return [x0, y0, x1, y1].every(Number.isFinite) ? [x1 - x0, 0, 0, y1 - y0, x0, y0] : null;
+}
+
 /** The cells of a GRID x GRID sample of `view` that the unit square through `m` covers (indices into the grid). */
 function coveredCells(m: Matrix, view: readonly [number, number, number, number]): number[] {
     const det = m[0] * m[3] - m[1] * m[2];
@@ -138,9 +154,10 @@ function coveredCells(m: Matrix, view: readonly [number, number, number, number]
     return cells;
 }
 
-/** What the operator walk finds: the image union, and the glyphs by visibility. */
+/** What the operator walk finds: the image and path unions, and the glyphs by visibility. */
 export interface OpsMeasure {
     imageCover: number; largestImage: number; fullPageImage: boolean; images: number;
+    pathCover: number; drawnCover: number; paths: number;
     visibleGlyphs: number; invisibleGlyphs: number; invisibleShare: number;
     ops: number; opsCapped: boolean;
 }
@@ -163,17 +180,26 @@ function glyphCount(arg: unknown, budget: { left: number }): number {
 /**
  * Walk a page's operator list: track the current matrix and text render mode through `save`/`restore`, `transform` and
  * form XObjects, rasterise every image paint's box (the unit square through the matrix) into one coverage grid clipped
- * to `view`, and count glyphs shown under each render mode. Stops at `OP_CAP` operators.
+ * to `view`, every filled or stroked path's box into a second, and count glyphs shown under each render mode. Stops at
+ * `OP_CAP` operators.
  *
- * Not tracked: clip paths (an image clipped small still counts whole), a form's own /BBox, vector art with no image
- * in it, and `paintSolidColorImageMask` (a filled rectangle, not a picture).
+ * Paths are read as pdf.js 6 emits them: one `constructPath` per painted path, `[paintOp, [buffer], minMax]`, the box
+ * in the current user space. A path's BOX is what counts, so a stroked frame covers what it encloses and a straight
+ * rule (a box of no area) covers nothing. `endPath` paints nothing (a clip) and is skipped. A `shadingFill` (`sh`, a
+ * gradient) paints the current clip, so the box of the last clip path is tracked through `save`/`restore` and counted as
+ * one path; with no clip it is the whole page, a background.
+ *
+ * Not tracked: clip paths (an image clipped small still counts whole), a form's own /BBox, fill colour (a white
+ * rectangle counts), and `paintSolidColorImageMask` (a filled rectangle, not a picture).
  */
 export function measureOps(fnArray: ArrayLike<number>, argsArray: ArrayLike<unknown>, OPS: OpsTable, view: readonly [number, number, number, number]): OpsMeasure {
     const total = fnArray.length;
     const n = Math.min(total, OP_CAP);
-    const grid = new Uint8Array(GRID * GRID);
+    const grid = new Uint8Array(GRID * GRID), pathGrid = new Uint8Array(GRID * GRID);
     let ctm: Matrix = IDENTITY, mode = 0, images = 0, largest = 0, covered = 0, visible = 0, invisible = 0;
-    const stack: { ctm: Matrix; mode: number }[] = [];
+    let paths = 0, pathCovered = 0;
+    let clipBox: Matrix | null = null, clipping = false;
+    const stack: { ctm: Matrix; mode: number; clipBox: Matrix | null }[] = [];
     const budget = { left: GLYPH_CAP };
     const is = (name: string) => OPS[name];
     const save = is("save"), restore = is("restore"), transform = is("transform"), formBegin = is("paintFormXObjectBegin"), formEnd = is("paintFormXObjectEnd");
@@ -183,6 +209,9 @@ export function measureOps(fnArray: ArrayLike<number>, argsArray: ArrayLike<unkn
     const maskGroupOp = is("paintImageMaskXObjectGroup"), inlineGroupOp = is("paintInlineImageXObjectGroup");
     const showOps = new Set(["showText", "showSpacedText", "nextLineShowText"].map(is));
     const showOpsSpaced = is("nextLineSetSpacingShowText");
+    const pathOp = is("constructPath"), clipOps = new Set(["clip", "eoClip"].map(is)), shadingOp = is("shadingFill");
+    const pathPaints = new Set(["fill", "eoFill", "stroke", "closeStroke", "fillStroke", "eoFillStroke", "closeFillStroke", "closeEOFillStroke"].map(is));
+    const background = FULL_PAGE_COVER * GRID * GRID;
 
     /** Rasterise one box into the union. */
     const paint = (m: Matrix) => {
@@ -192,16 +221,31 @@ export function measureOps(fnArray: ArrayLike<number>, argsArray: ArrayLike<unkn
         if (cells.length > largest) largest = cells.length;
         for (const c of cells) if (!grid[c]) { grid[c] = 1; covered++; }
     };
+    /** Rasterise one path's box into the path union, unless it is the page's background. */
+    const paintPath = (m: Matrix) => {
+        paths++;
+        if (paths > PATH_CAP) return;
+        const cells = coveredCells(m, view);
+        if (cells.length >= background) return;
+        for (const c of cells) if (!pathGrid[c]) { pathGrid[c] = 1; pathCovered++; }
+    };
 
     for (let i = 0; i < n; i++) {
         const fn = fnArray[i], args = argsArray[i] as unknown[] | undefined;
-        if (fn === save) stack.push({ ctm, mode });
-        else if (fn === restore) { const s = stack.pop(); if (s) { ctm = s.ctm; mode = s.mode; } }
+        if (fn === save) stack.push({ ctm, mode, clipBox });
+        else if (fn === restore) { const s = stack.pop(); if (s) { ctm = s.ctm; mode = s.mode; clipBox = s.clipBox; } clipping = false; }
         else if (fn === transform) { const m = asMatrix(args); if (m) ctm = multiply(m, ctm); }
-        else if (fn === formBegin) { stack.push({ ctm, mode }); const m = asMatrix(args?.[0]); if (m) ctm = multiply(m, ctm); }
-        else if (fn === formEnd) { const s = stack.pop(); if (s) { ctm = s.ctm; mode = s.mode; } }
+        else if (fn === formBegin) { stack.push({ ctm, mode, clipBox }); const m = asMatrix(args?.[0]); if (m) ctm = multiply(m, ctm); }
+        else if (fn === formEnd) { const s = stack.pop(); if (s) { ctm = s.ctm; mode = s.mode; clipBox = s.clipBox; } clipping = false; }
         else if (fn === tr) mode = Number(args?.[0]) || 0;
         else if (imageOps.has(fn)) paint(ctm);
+        else if (clipOps.has(fn)) clipping = true;
+        else if (fn === pathOp && args) {
+            // The path a clip operator precedes becomes the clip, whatever paints it (`W n` is the usual form).
+            const b = args[2] ? boxMatrix(args[2] as ArrayLike<number>) : null;
+            if (clipping) { clipping = false; if (b) clipBox = multiply(b, ctm); }
+            if (b && pathPaints.has(Number(args[0]))) paintPath(multiply(b, ctm));
+        } else if (fn === shadingOp) paintPath(clipBox ?? [view[2] - view[0], 0, 0, view[3] - view[1], view[0], view[1]]);
         else if (fn === repeatOp && args) {
             const [, sx, sy, pos] = args as [unknown, number, number, ArrayLike<number>];
             for (let k = 0; pos && k + 1 < pos.length && k < 2 * IMAGE_CAP + 2; k += 2) paint(multiply([sx, 0, 0, sy, pos[k], pos[k + 1]], ctm));
@@ -220,9 +264,12 @@ export function measureOps(fnArray: ArrayLike<number>, argsArray: ArrayLike<unkn
         }
     }
     const shown = visible + invisible;
+    let drawn = 0;
+    for (let c = 0; c < GRID * GRID; c++) if (grid[c] || pathGrid[c]) drawn++;
     return {
         imageCover: covered / (GRID * GRID), largestImage: largest / (GRID * GRID), fullPageImage: largest / (GRID * GRID) >= FULL_PAGE_COVER,
-        images, visibleGlyphs: visible, invisibleGlyphs: invisible, invisibleShare: shown ? invisible / shown : 0,
+        images, pathCover: pathCovered / (GRID * GRID), drawnCover: drawn / (GRID * GRID), paths,
+        visibleGlyphs: visible, invisibleGlyphs: invisible, invisibleShare: shown ? invisible / shown : 0,
         ops: total, opsCapped: total > OP_CAP,
     };
 }

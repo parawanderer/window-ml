@@ -118,6 +118,67 @@ A worker `fetch` with `redirect: "manual"` gets an opaque response with no `Loca
 `Location`; if it does, the worker fetches with `manual`, judges the hop, and re-issues the request itself. If it does
 not, record that and choose between `declarativeNetRequest` rules and following with the body withheld (today).
 
+MEASURED 2026-10-28 by the security lane (Chromium 151, a scratch extension): `onHeadersReceived` with `extraHeaders` sees
+the worker's own fetches (`tabId` -1, initiator our extension) with the 302 and its `Location`; a `manual` fetch returns
+`opaqueredirect` and never requests the target (checked server-side); the event arrived before the fetch promise
+resolved in 50 of 50 runs. So the first branch holds: the worker fetches with `manual`, judges the hop by the list
+above, and re-issues the request itself (`sw-fetch.ts` and `sw-image-fetch.ts`). RULED the same day, on the lane's two
+questions:
+
+- **Tab renders are in this step.** An incognito or rendered fetch is a tab navigation, which non-blocking
+  `webRequest` cannot stop, and closing the tab after the hop is too late: the request has reached the origin, which
+  is the finding. The hold is a `declarativeNetRequest` SESSION rule scoped to the render tab's `tabId`, blocking
+  `main_frame` and `sub_frame` requests to any domain outside the judged set for that render (same registrable
+  domain, the https upgrade of the same host, origins approved in this run, the feature's declared pairs).
+  `onBeforeRedirect` reports a navigation's hop and target too, so the blocked hop becomes the same prompt naming
+  the target; on approval the rule widens and the tab re-navigates. The rule is per tab, removed when the render tab
+  closes, and never touches another tab. Two PRs: the worker-fetch half first, the tab-render half second.
+- **Matching an event to its fetch is by URL**, so same-URL fetches are serialized per worker (a queue keyed by URL),
+  and a missing or ambiguous `Location` is a prompt naming the URL, never a follow. If the serialization stalls a
+  real workload, that is a measured follow-up, not a reason to match by timing.
+- Expected, to be checked in the build and recorded in the PR body either way: adding the `webRequest` permission
+  raises no new install-time warning, since `<all_urls>` already carries the all-sites warning and `webRequest`
+  adds none of its own (`webRequestBlocking`, which does, is MV2 only).
+
+Rule 10: the redirect rows under Tests below are the red team's (e3), failing first on main; each half's rows merge
+before that half, with one row per half telling the worker's own fetch from a render tab's navigation, and the chain
+row mixing an allowed hop with a disallowed one. The lane flips nothing; the finder flips after each half merges.
+
+RULED 2026-10-28, the worker-fetch half's two interpretation calls (the lane builds on `feat/redirect-judge`):
+
+- **"A prompt that names the target" is a refusal, not a card inside the fetch.** An unjudged hop is refused before
+  the target is requested; the refusal names the target and says to fetch it directly, and `fetch_url` on that URL
+  takes the normal per-URL prompt. A page's own `ml.fetch` gets the refusal too, as pages get no prompts, but its
+  text says a cross-site redirect was refused and names the hop's origin only as another site, never the URL: a
+  page's same-origin fetch would see `opaqueredirect`, so the `Location` is not ours to hand it. The model and the
+  person see the full target; the page does not.
+- **Scope.** Hops are judged where the final-origin body guard applies today (an untrusted caller, not `execOpen`);
+  trusted surfaces and `execOpen` keep following. `FETCH_SHEET` follows same-site hops and the declared
+  `docs.google.com` to `*.googleusercontent.com` pair only; the sign-in hop to `accounts.google.com` is refused, not
+  declared, since following it with credentials fetches a login page and never the sheet, and the error says the
+  person is not signed in to Google in this browser. `FETCH_IMAGE_B64` is a declared exception to "any other hop
+  becomes a prompt": it keeps following (a page image that 302s to a CDN on another domain), with `credentials:
+  "omit"` and the public-host raster check applied on EVERY hop instead of only the last. The invariant that protects
+  there is no credentials, a public host and a raster body, which a hop cannot weaken once every hop is checked, and
+  breaking every CDN-backed image for a rule the credentialed paths need is not worth it. Rule 10: e3 pins the
+  exception's edge, an image whose chain hops through a private host (a `10.x` or localhost address) or a non-raster
+  body at any step is `IMAGE_FAILED` with no request made past the bad hop, in its step-5 rows PR.
+- The install-time warning for the `webRequest` permission is measured with
+  `chrome.management.getPermissionWarningsByManifest` and recorded in the PR body. MEASURED 2026-10-28: none added,
+  the same three warnings with and without it.
+
+The worker-fetch half is #1305 OPEN 2026-10-28 (`feat/redirect-judge`, head 7caf34dc, @security; the new
+`sw-redirects.ts` under `src/sw/` with its unit file, `sw-fetch.ts`, `sw-fetch-url.ts`, `sw-image-fetch.ts`,
+`background.ts`, `manifest.json`, `docs/dev/site-access.md`), verified; it merges after e3's redirect rows for this
+half. FOUND while building it: under concurrency the headers event can arrive AFTER the fetch resolves (6 of 180 hops),
+so `hopOnce` waits up to 2 s for its own event and holds the URL until it lands; 0 of 600 after. RULED the same day on
+the consequence the lane named: a judged hop that is followed returns its body to the caller, so a same-site hop to
+another origin (one registrable domain, two origins) now yields its body to an untrusted caller where the old
+final-origin guard withheld it. That is the rule's meaning: the registrable domain is the unit cookies are scoped to,
+and the list above names it as followed, not as followed-with-the-body-withheld. The final-origin guard stays as the
+belt: a body from any origin outside the judged set is still withheld, and e3's rows pin both edges, the same-site
+hop's body returned and the cross-site hop refused with no request to the target.
+
 ## Tests
 
 - **The measurement is the oracle.** Every `test.fixme` in `tests/e2e/detection-surface.spec.mjs` this spec removes is
@@ -220,6 +281,36 @@ not, record that and choose between `declarativeNetRequest` rules and following 
    reaches the host's tag through `inShell`'s `roots.highlightTag`; detection-surface row 7 split into 7, the card,
    "No" on a visible page, and 7b, the anonymised highlight; the janitor asked by session-mail), verified; it holds
    until the red team's rows PR has merged.
+   The rows PR is #1313 OPEN 2026-10-29 (`redteam/site-presence-step4-rows`, head 73939ac5 on a6917059, @security,
+   test-only: the new `site-presence-step4.spec.mjs` under `tests/e2e/`; rows (a), (b) and (d) fail first under
+   `holeOpen("step4a")` with the leak asserted positively, (c) and (e) hold on main and are pinned, c's evidence being
+   that both iframes sit in closed shadow roots and `window.length` stays 1; the visible page's card is the control;
+   the janitor asked by session-mail), verified. #1313 MERGED 2026-10-29 at 60fccc2c (run 40841039943 green; the
+   janitor's review: no findings, its one nit on row (d)'s style message fixed at f19316b4 before the merge),
+   verified. Order under rule 10 as amended: #1313 merges on main first; the
+   flip of (a), (b) and (d) is the red team's own commit on #1279's branch, its file only, pushed when the security
+   lane says the fix is ready; #1279 merges after that. CONFIRMED 2026-10-29 by the lane: the fix is ready at head 641111ae, the flip goes today, and the lane merges once it lands. LANDED 2026-10-29: e3's flip is c249e7fe on #1279's branch (one commit on 641111ae, its test file only, verified), rows (a)/(b)/(d) assert the defended outcome; #1279 is the lane's to merge. RULED 2026-10-29 (measured by the lane on #1279's head ca246b07 with main merged in): the rows of #1313 bundled two steps under one key. With the highlight anonymised, rows (a), (b) and (d) still see `div#ml-sb-card` in the hidden page during the run, which is step 4b's card-to-side-panel move (#1297), not 4a. The key splits: `OPEN = { step4a: false, step4b: true }`; in each of (a), (b), (d) the highlight half asserts the defended outcome now and the card half stays gated on `step4b`, asserting the leak positively while it is open; (c), (e) and the visible-page control are unchanged. The red team pushes the split as its own commit on #1279's branch, its file only, then #1279 merges; #1297 flips `step4b` the same way before it merges. 4a and 4b are not held to merge together. LANDED 2026-10-29: the split is 3f6f412e on #1279's branch (one commit on ca246b07, the test file only, verified); 6/6 green at the head, and with `step4b` flipped closed locally (a), (b), (d) fail at exactly the card-half assertions. Two facts the rows now pin for 4b: the card host persists after the run ends, and it mounts with `popover="manual"` beside the anonymised host. #1279 merges on 4a alone. The lane's PAGE-API doc #1321 MERGED 5083f0db the same day, the janitor's seven findings fixed. RULED 2026-10-29 on the lane's write-up of gaps (6) and (7) (for e3's failing-first rows; the file is the lane's, in the main checkout's `tmp/`): (7)'s fourth property is REQUIRED, not a reading to confirm: under `debugMode: "overlay"` a hidden page with a user-started run gets nothing of ours in its DOM during the run either, since (4) above allows only the anonymised highlight host while an approval waits, the run's UI being the side panel; the row asserts on any inserted host, never an id, with the allowed site's overlay as the control. (6)'s reachability is the red team's judgement; a row with no reachable page path still lands as defence in depth with its one-line reason. The lane's order after it (heads verified the same day): #1297 (2f6414bc) merges main in after #1279 and then takes e3's 4b rows; #1305 (4ae5f79b) waits on e3's worker-half redirect rows; #1316 (e7399b14, based on #1305's branch) waits on e3's render rows (a)–(g), then #1305 merging. The lane was never paused by Shane: the coordinator's record of a pause came from the lane's own 2026-10-28 evening message and was wrong.
+   4b is #1297 OPEN 2026-10-28 (`feat/hidden-side-panel`, head 2f6414bc, @security @ui; `sw-side-panel.ts`,
+   `sidepanel.ts` and the panel, worker and e2e files its body lists; the janitor asked by session-mail),
+   verified; it merges after #1279 and the red team's step-4 rows. The lane measured per-tab side-panel options
+   surviving a worker restart (Chromium 151), so the rebuild at worker start is a re-check; the e2e route is the real
+   toolbar popup framing `sidepanel.html`, whose port as a tab carries `sender.tab` and is refused as the check says.
+   Two gaps found by the e2e move are 4b's and fixed in it: the panel's highlight did not draw in the default debug
+   mode, and the panel's card did not say where the target is. NEW in 4b: one content-script message, `ML_HL_POS`
+   (nine fixed labels, top frame only, sent only to an open panel); per AGENTS.md a new message type gets a red-team
+   row, e3's, in its step-4 rows PR or the one after. The two pre-existing gaps below are named as ruled in its body.
+   FOUND 2026-10-28 by the security lane while building 4b, both checked against main by the coordinator, neither
+   4b's: (i) `sw-debug.ts` serves the `ml-devtools` port against whatever tab id its init message names, with no
+   sender check; only our own contexts can connect, but the content script in every tab is one, so a compromised
+   renderer could subscribe to another tab's run feed. (ii) `shell.ts` `applyMode` mounts the overlay in
+   `debugMode: "overlay"` with no presence gate, so a hidden page gets our DOM in that mode, against this
+   section's rule. RULED the same hour: both are the security lane's, as two PRs after 4b, each small: (i) the
+   `ml-sidepanel` check 4b adds (extension URL, no `sender.tab`) applies to `ml-devtools` too, and a port that
+   fails it is disconnected; (ii) the overlay mount waits on the worker's presence word as the card does. Rule 10:
+   the red team pins each as a failing-first row first, in its own files after its step-4 rows (a unit row for the
+   devtools port with a `sender.tab`-bearing connection refused, an e2e site-access row for a hidden page in
+   overlay mode with no `ml-sb-root`), and each fix merges after its row; the red team flips after. Both named in
+   the 4b PR body.
 5. The redirect measurement, then the rule.
 
 After step 2, and deferred: consuming a page's WebMCP tools (`document.modelContext`) as a window.ml adapter, with the rules

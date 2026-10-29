@@ -36,7 +36,7 @@ import { parseInfo } from "../resource/resource-capacity";
 import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from "./sw-cdp";
 import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, grantOnceFetch, consentFetch, fetchConsent } from "./sw-consent";
 import { ASK_POLICY_CAUSE, navOnlyWhy, startLeftWhy, judgeCall, fetchFacts, navigateFacts, rememberFetchUrls, withPolicies, addRunPolicy, askWhyOf, askedByPolicy, withoutAsked, takeArchiveNotice } from "./sw-policies";
-import { checkProposal, recordedFetches, measureBreadth, breadthNote, type PolicyProposal } from "./policy-proposal";
+import { checkProposals, recordedFetches, measureBreadth, breadthNote, type PolicyProposal } from "./policy-proposal";
 import { approveManifest, checkManifestProposal, draftCardNote, type CheckedManifest } from "./sw-manifest-proposal";
 import { approveLibrary, checkLibraryProposal, isLibraryDraft, precheckLibrary, type CheckedLibrary } from "./sw-library-proposal";
 import { isExtensionSender } from "./sw-site-access";
@@ -1599,7 +1599,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // told to the model and never shown to the person as a card.
                     if (name === "propose_policy") {
                         if (!offersProposals()) return `Error: propose_policy is not offered in this run.`;
-                        const c = checkProposal(args);
+                        const c = checkProposals(args);
                         return "error" in c ? c.error : null;
                     }
                     // A manifest draft is resolved through the host and checked as the store would; nothing runs.
@@ -1647,14 +1647,20 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // propose_policy's card is the worker's alone: the code as sent, led by its breadth, measured here over
                     // the run's own fetch_url calls and a probe of unrelated sites, never anything the model said of it. What
                     // the person approves is `proposal`, and only that is added (the resolve below).
-                    let proposal: PolicyProposal | undefined;
+                    let proposal: PolicyProposal[] | undefined;
                     if (tool === "propose_policy") {
-                        const c = offersProposals() ? checkProposal(args) : undefined;
-                        if (c && "proposal" in c) {
-                            proposal = c.proposal;
+                        const c = offersProposals() ? checkProposals(args) : undefined;
+                        if (c && "proposals" in c) {
+                            proposal = c.proposals;
                             let messages: readonly import("../contract").NeutralMessage[] = [];
                             try { messages = contextByRun.get(runId)?.().messages ?? bgRuns.get(runId)?.messages ?? []; } catch { /* no history: measured over nothing, and the card says so */ }
-                            renderIn = { type: "code", text: proposal.source, lang: "javascript", format: true, note: breadthNote(proposal, measureBreadth(proposal, recordedFetches(messages))) };
+                            const calls = recordedFetches(messages);
+                            const notes = proposal.map((q) => breadthNote(q, measureBreadth(q, calls)));
+                            // One card, each rule its own section with its own measured note; one answer adds them all.
+                            renderIn = proposal.length === 1
+                                ? { type: "code", text: proposal[0].source, lang: "javascript", format: true, note: notes[0] }
+                                : { type: "code", text: proposal.map((q, i) => `// Rule ${i + 1} of ${proposal!.length}: ${q.effect}\n${q.source}`).join("\n\n"), lang: "javascript",
+                                    note: proposal.map((_, i) => `Rule ${i + 1} of ${proposal!.length}. ${notes[i]}`).join("\n\n") };
                         } else renderIn = { type: "code", text: "", lang: "javascript", note: "This proposal cannot be added: the run does not offer propose_policy, or it does not run." };
                     }
                     // propose_manifest's card is the worker's too: the draft pinned to what the host resolved, led by how it
@@ -1757,8 +1763,11 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                                     // A proposed library: loaded under the gate, and stored only if that load agrees.
                                     if (ok && tool === "propose_manifest" && library && offersManifests()) approveLibrary(runId, library);
                                     if (ok && tool === "propose_policy" && proposal && offersProposals()) {
-                                        const added = addRunPolicy(runId, { consumer: "fetch", ...proposal, origin: "proposed" });
-                                        recordRunLog(runId, { subsystem: "policy", kind: "added", reason: added.label, detail: { policy: added.id, effect: added.effect, tool } });
+                                        const group = proposal.length > 1 ? `prop-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}` : undefined;
+                                        for (const q of proposal) {
+                                            const added = addRunPolicy(runId, { consumer: "fetch", ...q, origin: "proposed", proposal: group });
+                                            recordRunLog(runId, { subsystem: "policy", kind: "added", reason: added.label, detail: { policy: added.id, effect: added.effect, tool, ...(group ? { proposal: group } : {}) } });
+                                        }
                                     }
                                 } catch (e) {
                                     recordRunLog(runId, { level: "error", subsystem: "tool", kind: "threw", reason: "approve", key: thrownKey(e), detail: { tool } });

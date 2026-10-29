@@ -46,6 +46,9 @@ last review is more than 30 days or 25 such commits old. It never fails anything
 
 Not a checklist: new ideas are welcome, and each still goes through step 4.
 
+- **What is held back is named.** A result the machinery cut, capped or lost says so, how much, and the call that
+  gets the rest, in the text the model reads ([`../spec/HELD_BACK.md`](../spec/HELD_BACK.md), with the open gaps).
+  A review checks every new cut against it.
 - **Triggers stay, mechanics move.** A model that does not know an option exists never looks it up, so the schema keeps
   WHEN to reach for it; HOW it behaves once used goes to `agent_api_docs({ tool })` (`tool-details.ts`, #544).
   -16% per call, no model worse (#544).

@@ -219,7 +219,8 @@ ml.pipe(r.stdout, "grep -c '^ '");         // stdout and stderr are pointers, he
   `timeout` and git aliases start other programs. The manifest marks such runners, the card says the call runs
   something else, and none of them is ever in the free tier on its own word.
 - **No terminal, stdin closed:** a program that prompts fails at once instead of hanging; a time limit applies; a long
-  one detaches with a cancel handle.
+  one detaches with a cancel handle. That detach is mode 1 of [`ASYNC_CALLS.md`](ASYNC_CALLS.md), the one executor
+  that has it today; the handle, the inbox return and the wake on a missed expectation are specified there.
 - **Session state is data.** `cwd` and `env` are kept by the host per session and passed to each spawn; `env` writes
   have their own whitelist, since `PAGER`, `GIT_EXTERNAL_DIFF`, `LD_PRELOAD` or `GIT_SSH_COMMAND` turn a read into
   running code. A call's `env` ADDS to the session's; in the Python shim, `env={**os.environ, …}` would carry the

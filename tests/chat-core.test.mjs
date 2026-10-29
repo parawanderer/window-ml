@@ -412,6 +412,38 @@ test("services: files are offered only for a runtime that lists attachFiles, and
     store.dispose();
 });
 
+test("services: session.send carries vision: true for a chat the person said sees images, and only with images", async () => {
+    const { setSeesImages, visionUnreported } = await import("../src/chat/sees-images.tsx");
+    sessionMap.clear();
+    view.value = { name: "list" };
+    const fake = new FakeHost({
+        runtimes: [runtime("new", { capabilities: { chat: true, agent: true } })],
+        sessions: [{ summary: summary("new", "cccc0001"), events: [agentStart("cccc0001", "t")] }],
+    });
+    const store = new ChatStore(fake);
+    store.start();
+    const svc = hostServices(store, { kind: "web", prefs: { get: () => undefined, set() {} }, openImage() {}, saveFile() {}, copyText: async () => true });
+    await flush();
+    const key = "new:cccc0001";
+    const pic = ["data:image/png;base64,AAAA"];
+    await svc.sendToSession(key, "look", pic);
+    assert.equal("vision" in fake.commands.at(-1), false, "not said: not sent");
+    setSeesImages(key, true);
+    await svc.sendToSession(key, "look", pic);
+    assert.equal(fake.commands.at(-1).vision, true);
+    await svc.sendToSession(key, "words only");
+    assert.equal("vision" in fake.commands.at(-1), false, "no images, nothing to say");
+    setSeesImages(key, false);
+    await svc.sendToSession(key, "look", pic);
+    assert.equal("vision" in fake.commands.at(-1), false, "turned off again");
+    // Whose vision only the person can tell: a cloud model, or one listed with no kinds; never one the list lacks.
+    assert.equal(visionUnreported({ id: "c", where: "cloud", kinds: ["completion"] }), true);
+    assert.equal(visionUnreported({ id: "k" }), true);
+    assert.equal(visionUnreported({ id: "o", kinds: ["completion"], where: "local" }), false);
+    assert.equal(visionUnreported(undefined), false);
+    store.dispose();
+});
+
 test("services: approvals, messages and side calls become contract commands on the session's runtime", async () => {
     const { fake, store } = world();
     fake.addSession(summary("laptop", "gate0001", { status: "waiting", pendingApprovals: 1 }), [

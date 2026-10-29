@@ -12,7 +12,7 @@
 // and we re-send the handshake on it, so a page-load race (our handshake landing before
 // injected's async <script> is listening — which stranded the devtools panel on Ctrl+R)
 // can't leave it un-live.
-import { SB_ROOT, SB_HOST, SB_TAB, SB_FRAME, SB_LIGHTBOX, SB_LIGHTBOX_X, SB_HIGHLIGHT, SB_CARD, SB_STYLE } from "../ids";
+import { SB_ROOT, SB_HOST, SB_TAB, SB_FRAME, SB_LIGHTBOX, SB_LIGHTBOX_X, SB_HIGHLIGHT, SB_CARD, SB_STYLE, anonymousTag } from "../ids";
 import { cleanImages } from "../contract/contract-run";
 import { onSessionDone, relaySessionToPage } from "./shell-session-relay";
 import { stepBudget } from "../agent/step-budget";
@@ -685,23 +685,22 @@ function showLightbox(src: string): void {
 // content script), so it can resolve the selector + rect itself. Off-target / not-found → just hide.
 let highlightEl: HTMLElement | null = null;
 let hlSeq = 0;   // monotonic — a later hover/clear invalidates a still-pending async token resolve
-// The root the highlight box is drawn into. In OVERLAY mode that's the full shell's shadow root.
-// In DEVTOOLS mode no overlay is mounted, so lazily create a highlight-ONLY shadow host (same
-// isolation, just the highlight CSS) the first time a remote highlight arrives — so the panel's
-// hover can still outline the page. Torn down with everything else in teardown().
+// The root the highlight box is drawn into: a host of its own in every mode, ANONYMOUS (docs/spec/SITE_PRESENCE.md, step
+// 4): a random custom-element name per page session, a closed root, no id, class or attribute of ours on the host (our
+// names stay inside the root), and in the page only while a box is drawn. Torn down with everything else in teardown().
 let hlHost: HTMLElement | null = null;
 let hlRoot: ShadowRoot | null = null;
+/** The highlight host's tag for this page session. */
+const HL_TAG = anonymousTag();   // state: fixed — one per content-script lifetime
 /** The shell's hosts in the browser's top layer, lowest first, raised again after the page puts something of its own
  *  there and restored after it takes one out, within a budget (shell-top-layer.ts). */
 const topLayer = topLayerKeeper(() => [hlHost, shellHost, cardHost], browserTopLayerDoc(), browserClock);   // state: ui — which hosts are in the top layer, dropped with them
 /** Each host's own stylesheet and its rules at mount, so a shot can tell the page's edits to them (shell-shot.ts). */
 const ownSheets = new Map<ShadowRoot, { style: Element; sheet: string }>();   // state: ui — the shell's own stylesheets, dropped with their hosts
 function hlContainer(): ShadowRoot {
-    if (shellRoot) return shellRoot;
     if (hlRoot) return hlRoot;
-    hlHost = document.createElement("div");
+    hlHost = document.createElement(HL_TAG);
     markOwnHost(hlHost);
-    hlHost.id = `${SB_ROOT}-hl`;
     hlHost.style.cssText = HOST_STYLE;
     hlRoot = hlHost.attachShadow({ mode: "closed" });
     const style = document.createElement("style");
@@ -740,7 +739,15 @@ function drawHighlight(left: number, top: number, width: number, height: number,
         else { try { void chrome.runtime.sendMessage({ type: "ML_HL_POS", pos }).catch(() => {}); } catch { /* context gone */ } }
     }
 }
-function hideHighlight(): void { hlSeq++; hlKind = ""; lastHlRef = null; if (highlightEl) { highlightEl.remove(); highlightEl = null; } }
+function hideHighlight(): void { hlSeq++; hlKind = ""; lastHlRef = null; highlightEl = null; dropHlHost(); }
+/** Take the highlight's host out of the page: it is there only while a box is drawn. */
+function dropHlHost(): void {
+    if (!hlHost) return;
+    topLayer.release(hlHost);
+    hlHost.remove();
+    if (hlRoot) ownSheets.delete(hlRoot);
+    hlHost = hlRoot = null;
+}
 // Reposition on scroll/resize: the box/@pt marker is computed from getBoundingClientRect (viewport coords)
 // and drawn position:fixed, so a page scroll slides the element out from under a now-frozen box (and an @pt
 // off its target). Re-run the LAST highlight — throttled to one frame — so it tracks. Capture-phase catches
@@ -848,7 +855,7 @@ const shotRoots = (): ShotRoots => ({
  * `chrome.dom.openOrClosedShadowRoot`, so the hook gives nobody anything new. Never post a root, or a node in one, to the
  * page: that is the one way this would hand the page our UI.
  */
-Object.defineProperty(globalThis, "__wmlShellRoots", { configurable: true, value: () => ({ sidebar: shellRoot, card: cardRoot, highlight: hlRoot }) });
+Object.defineProperty(globalThis, "__wmlShellRoots", { configurable: true, value: () => ({ sidebar: shellRoot, card: cardRoot, highlight: hlRoot, highlightTag: HL_TAG }) });
 
 /** The page's hide handshake for a page-hosted screenshot, bounded (shell-shot.ts). */
 const shot = pageShotGate({
@@ -1532,9 +1539,7 @@ function openComposer(ctx: ElementContext | null = null): void {
 function teardown(): void {
     hideLightbox();
     hideHighlight();
-    if (hlRoot) ownSheets.delete(hlRoot);
     if (shellRoot) ownSheets.delete(shellRoot);
-    if (hlHost) { topLayer.release(hlHost); hlHost.remove(); hlHost = hlRoot = null; }   // the devtools-mode highlight-only host
     if (shellHost) { topLayer.release(shellHost); shellHost.remove(); shellHost = panel = frame = shellRoot = null; closeHostPort(); }
     unmountCard();
     offPage(onWindowMessage);

@@ -23,6 +23,7 @@ default: [`../spec/EFFECTS.md`](../spec/EFFECTS.md). The language a policy is wr
 | What the model reads | `policies` on `CurrentSnapshot` (`src/agent/current-context.ts`) |
 | A proposal from the model: its check, its measured breadth, the card's note | `src/sw/policy-proposal.ts` |
 | The `propose_policy` tool (reports the decision; adds nothing) | `src/tools/propose-policy-tool.ts` |
+| Several rules in one proposal (`rules`, `checkProposals`, `PROPOSAL_ROWS_MAX`): one card with a note per rule, one answer adds all, each its own run policy sharing `StoredPolicy.proposal` | `src/sw/policy-proposal.ts`, `src/sw/sw-run-host.ts` |
 | Its gate: precheck, card, the add in the resolve (`offersProposals`) | `src/sw/sw-run-host.ts` |
 | Every policy source written anywhere, for measuring a grammar or a lifter over ("The policy corpus" below) | `tests/fixtures/policy-corpus.json` |
 | The lifter: a source that fits the tree's fragment, as a tree ("The lifter" below) | `src/readonly-exec/policy-lift.ts` |

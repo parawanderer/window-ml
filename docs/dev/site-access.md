@@ -5,7 +5,8 @@ Slice 3 is being built from its implementation reference, [../spec/SITE_ACCESS_S
 its PR 1 (the levels in storage, the self-approval list by origin, the upgrade) is in "The lists" below, and its PR 2
 (the agent level enforced, and the start card) in "Starting agents", and its PR 3 (the toolbar badge and the popup's agent
 controls) in "The badge and the popup", and its PR 4 (`ml.requestAccess` from a site already allowed) in "Sites asking for
-access". A site not yet allowed cannot ask until PR 4b (the stub, from SITE_PRESENCE.md).
+access". A site not yet allowed asks through the stub (`ask.ts`, SITE_PRESENCE.md). What a page gets, written for a
+site's developer: [../PAGE-API.md](../PAGE-API.md).
 What has been checked about the page-facing surface, what has not, and the plan: [security-audit.md](security-audit.md).
 What a page can observe of window.ml installed and acting in it, measured per tool: [detection-surface.md](detection-surface.md).
 

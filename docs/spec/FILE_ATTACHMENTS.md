@@ -95,7 +95,9 @@ the worker, with nothing user-facing wired. How it runs, its bounds and where th
 1. **Usable text**: the text layer's characters after dropping a broken layer (mostly U+FFFD, or glyphs with no
    Unicode mapping, past a ratio).
 2. **Image cover**: the share of the page that image draws cover, from the operator list (each `paintImageXObject`
-   and its transform gives a box; the union's area over the page's).
+   and its transform gives a box; the union's area over the page's). Vector drawing (charts and diagrams drawn as
+   paths) is measured the same way as **path cover**, from each filled or stroked path's box, and counts as a figure
+   at a higher share than images, because form fields and framed boxes are drawn as paths too.
 
 | Page | Usable text | Image cover | Sent |
 | --- | --- | --- | --- |
@@ -106,6 +108,13 @@ the worker, with nothing user-facing wired. How it runs, its bounds and where th
 
 The OCR'd scan (what ocrmypdf and most office scanners write) would otherwise read as "mixed" and send every page
 twice. It is told apart by the invisible text over a single full-page image, not by the two measurements.
+
+**What is held back is named.** The thresholds pick a cheap default; the model can always look at a page itself
+(slice 3's `look` target, `png()` in Python). So a page sent without its image says what the measurements saw when
+they saw something: a `text` page with a drawn share under the figure cut gets a short note naming it ("page N: images
+or drawing cover 12%; look at it to see them"). Missing a figure costs a look; an image sent for nothing costs its
+tokens on every turn. The note's floor and wording are open, and land with slice 3. The rule the note follows, and
+the other places window.ml holds something back, are in [HELD_BACK.md](HELD_BACK.md).
 
 **The test PDFs.** Synthetic fixtures, committed, with the answer known by construction: a text page, the same page
 rasterised, that scan with a one-line footnote, the scan with an invisible OCR layer, a page with a chart over a share
@@ -123,8 +132,103 @@ tune for: some text, still a scan.
 This is what the commercial APIs do on a vision model (each page as text and image); the difference is that a page
 image is sent only where the measurements say it carries something the text does not.
 
-**Size.** The cap from slice 1 applies to the text the pages produce. A PDF past it goes to a chat refused with the
-reason, and to an agent as a pointer.
+**Size.** A cap applies to the text the pages produce. A chat sends the pages that fit, in order, and names the rest
+("One reader per format, two framings" below); an agent takes a PDF past it as a pointer.
+
+### Wiring a PDF through the attach path (decided 2026-10-29)
+
+Shane's rulings on four forks, with the hub's constraints from the `[window-ml hub]` session (window-ml-hub 95cb341).
+
+**The runtime reads the PDF, from its bytes.** `AttachedFile` gains `data` (the bytes) in place of `text` for a PDF.
+The client checks the file (magic bytes, the size cap below) and sends it; it does not extract or classify. The runtime
+reads it through the offscreen reader (`PDF_READ`, `docs/dev/pdf.md`), renders the pages that need an image
+(`PDF_RENDER`), and keeps the bytes in the value store, claimed by the session, for slice 3's `look` and `png()`. A
+client that extracted the pages would be trusted to say what the file holds, and the web build and the phone would each
+carry pdf.js. What the model gets is one `<file>` block, a `<page n="…">` section per page read, with slice 1's escape
+extended to `</page`; whatever the reader held back (the page cap, the time budget, a page that would not read) is named
+in the block by the rule in [HELD_BACK.md](HELD_BACK.md).
+
+**Over the hub: chunks in an acknowledged window.** A PDF is usually past the hub's payload limit (`(1<<20)-1024`,
+announced in `Welcome.limits`; a frame over it closes the sender's connection, so the client's `CommandTooLarge` check
+stays). The client sends the file as `file.put { sha256, index, count }` commands, a `KIND_COMMAND` with a `file.put`
+scope, the chunk as RAW bytes beside the JSON (base64 would spend a third more of the account's rate budget and a third
+more chunks), each sized to the payload limit less the seal's overhead. The send then names the file by
+`{ name, type, sha256, bytes }`. No hub change.
+
+- **At most 4 chunks unacknowledged**; the runtime answers each with a `COMMAND_RESULT`. A runtime's outbound queue on
+  the hub is 16 MiB, and a frame that does not fit closes the RUNTIME's connection, every session it serves with it, so
+  a fast sender to a slow runtime must not burst. The window bounds that at a quarter, and gives progress and resume.
+- **Done is the runtime's word, never "all sent".** Frames queued to a runtime whose connection drops are discarded
+  silently. After a reconnect the client asks which indices the runtime holds for that `sha256` and sends the rest.
+  Chunks are addressed by index; the hub delivers in order today, but promises nothing.
+- **An offline runtime stores nothing**: each chunk is refused at once (`UNAVAILABLE`), so the composer says the
+  runtime is offline instead of waiting.
+- **Cap**: `min(20 MiB, 0.6 x the account's burst allowance)` per attachment and per send, the allowance from
+  `Welcome`. The account's rate (8 MiB/s, a 32 MiB burst) is shared with the runtime's own event publishing, so one
+  upload past it would slow every session's live replies on that account.
+- The same reference by hash spares the extension's own chat page a second copy of a file attached twice.
+
+Built (2026-10-29, `file-frame.ts`, `file-chunks.ts`, `HubConnection.putFile`; how it works: `docs/dev/hub-client.md`):
+
+- The chunk follows the JSON after a zero byte. `file.have` comes first, so an older runtime (`unsupported`) gets the
+  PDF inline, and a runtime that holds part of the file is sent the rest. Both need `drive`, the scope of the send.
+- The cap is checked before a chunk is sent: with the default 32 MiB burst, `0.6 x` is 19.2 MiB, under the 20.
+- A hub `UNAVAILABLE` now reaches the chunk's waiter through the envelope's `ref`, and a runtime going offline settles
+  everything waiting on it, since the hub discards what it had queued to it. The composer hears either at once.
+- The runtime keeps a finished file by hash for 15 minutes after its last use, so the same file attached again is
+  named, not sent. In worker memory: an eviction costs a re-send, never a wrong file.
+- A finished file is the ACCOUNT's, not its sender's (accepted 2026-10-29): any device with `drive` that names its
+  hash may attach it, and `file.have` tells such a device whether the runtime holds a file it can name, so one that
+  guesses a document learns another device sent it within the TTL. Every device holding `drive` is the same person's,
+  under one root. An upload in progress stays its sender's, so another device cannot spoil it. A device with `view`
+  alone is refused both commands, and one declaring `drive` it does not hold fails to open and goes unanswered.
+- Not built: progress in the composer while the chunks go.
+
+**Images go only to a model known to see them: unknown is refused.** (Built.) A worker chat attached images without
+asking; it now asks the question an agent run does (`_modelVision`, image-gate.ts: Ollama reports vision or not, or
+the person declared the default model in Settings; anything else is UNKNOWN, never "no"). The reader is the OCR model
+in Settings when it is set and not known to be blind. When a message would send an image (pasted, or a page that
+needs one) and the answer is:
+
+| The model… | The message |
+| --- | --- |
+| sees, or the person said it does (`vision: true`) | is sent with the images |
+| does not see or is UNKNOWN, and a reader model is set | goes with the reader's reading of each image, attributed to the reader |
+| does not see, and no reader model is set | goes with each image or page named ("page 3 is a scan this model cannot see; set a reader model in Settings to have it read") |
+| is UNKNOWN, and no reader model is set | is refused before sending (`unsupported`), with a sentence: "This model may not see images. If it does, turn on 'This model sees images' and send again." Nothing is dropped and nothing is sent. |
+
+An unknown model with a reader goes to the reader (decided 2026-10-29): no pixels reach a model nobody confirmed, and
+"does not see" can be declared only for the default model, so refusing there would leave another cloud model only
+the choice of forcing images on it.
+
+The override is `vision: true` on `chat.start`, `agent.start` and `session.send`, the person's declaration, meaning
+what `ml.agent({ vision: true })` means: send the images to the run's own model, no probe. `session.send` carries it
+for a chat only; an agent run's vision is decided at `agent.start`. The composer offers it as the "This model sees
+images" toggle when the model's vision is not reported (sees-images.tsx), on the start page and in a chat's composer;
+the refusal is checked again in the runtime. This changes what a worker chat does with a pasted image: a model of
+unknown vision used to get it, unread.
+
+**Eight images per turn, the rest named.** `MAX_TURN_IMAGES` stays 8, a hard cap, with no token budget. Images the
+person pasted count first, then the pages that need one, in page order. A page past the cap goes to the reader model
+when one is set, and otherwise is named in the block with what can get it: "pages 9-48 are scans not sent as images.
+This chat cannot show them." Once slice 3's `look` on a page exists, an agent run's note names it as the recovery;
+until then the note says there is none, since a recovery named must be callable now.
+
+**Built for worker chats (2026-10-29).** A runtime listing `capabilities.attachPdf` takes `{ name, type, data }` in
+`files` on `chat.start` and on `session.send` to a chat, `data` the bytes as base64 (the extension's channel is JSON),
+at most `PDF_ATTACH_MAX` (20 MB). What the build decided where the rulings were silent:
+
+- The PDF is read BEFORE the turn (`prepare`, sw-chat.ts), so a PDF that will not open, text files past the text
+  cap, and an image refusal all answer the command (`invalid`, `unsupported`) and nothing is sent. Pages are drawn
+  and read INSIDE the turn; the person's message appears in the transcript once they are.
+- Only a pasted image or a scanned page can refuse a message. A page with a figure keeps its text, so to a model of
+  unknown vision with no reader it goes with "(page N has a figure you cannot see)" rather than refusing the PDF.
+- `<page n="3" image="2">` says which of the message's images is that page (pasted images are numbered first);
+  `<page n="5" read-by="…">` holds the reader's reading in place of a scan's text. A blank page has no section.
+- A new bound: the reader reads at most `READER_PAGE_MAX` (32) pages of a message, each a model call the person waits
+  for; past it a scan is named like one past the image cap. A page is drawn at scale 2 (144 dpi).
+- Not built yet: the bytes in the value store (slice 3 needs them; nothing reads them before it), PDFs to an agent run
+  (refused by name). The hub's `file.put` chunks came after (above).
 
 ## Slice 3: an attached file as an `@file:` pointer
 
@@ -217,6 +321,64 @@ doc.bytes                   # the file as attached
 document it was not given, cannot pass the bound by looping or by asking for a huge scale, and a crafted page cannot
 hang the cell past its budget.
 
+**What composes from these (Shane, 2026-10-29).** Nothing above is built for a particular question, and two choices
+keep the general ones answerable: a document's pages keep their NUMBERS through every read (`pages N-M`, `doc.pages[n]`,
+the outline's count), and a page's image is reachable from code (`png()`) as well as through `look`. With those, "where
+does this PDF talk about X, and show me that page" is a survey the model can write from the API docs: read the pages
+one by one, `ml.embed` the query with each page (or each chunk, keeping its page number), rank by cosine, then
+`look({ doc, pages })` at the best. It is free only once `ml.embed` is a read-only member of the dialect (planned, with
+its own cost: a charge per call and per input character, and a per-survey cap measured from embedding throughput).
+
+## One reader per format, two framings (Shane, 2026-10-29)
+
+A file the person attaches and a body a fetch returns are the same thing underneath: bytes and a type. Each format
+gets ONE reader, used by both paths, and the rules above the reader are shared; only the framing differs.
+
+**Shared, per format:**
+
+| Format | The reader | Attach today | `fetch_url` / `ml.fetch` today |
+| --- | --- | --- | --- |
+| text | a decode of the bytes, the declared charset first, UTF-8 otherwise | UTF-8 only (`decodeTextFile`) | the response's charset |
+| tables: csv, tsv, parquet, arrow | `table-data.ts` (the delimiter discovered, parquet and arrow in the worker) | csv and tsv as text; parquet and arrow refused as "not a text file" | parsed into `FetchResult.table` |
+| PDF | `pdf-read.ts` in the offscreen worker, `pdf-frame.ts` for the pages a model gets | read page by page (worker chats) | "a PDF document, N bytes" |
+
+Each column is missing what the other has, which is the argument for one layer: an attached parquet should work the
+day a fetched one does, and a fetched PDF should read the way an attached one does.
+
+**Shared, above the reader:** the text cap and what happens past it (inline below it; above it a pointer read by page
+or range, with an outline and the size stated); the held-back notes ([HELD_BACK.md](HELD_BACK.md)); the vision gate for
+page images (image-gate.ts). Today an attached text file past the cap is refused while a fetched one of the same size
+becomes a `@tool:` pointer: the person, the more trusted source, gets the worse answer. Slice 3's `@file:` pointer is
+that rule for attachments and should reuse the `@tool:` value path, not a parallel store.
+
+**Different, by design:**
+
+- **Provenance and trust.** The model must tell "the person attached this" from "a site served this": `<file>` and
+  "attached by the person" against a fetch result's "fetched from <host>". Both are untrusted text; the label is what
+  lets a model weigh an instruction found inside it.
+- **Lifetime.** A fetch can be repeated, so its value is evicted like any other; an attachment cannot, so it is held for
+  the session ("Eviction differs by producer", slice 3).
+- **The recovery a held-back note names.** A worker chat has no tools ("This chat cannot show them."); an agent run
+  names the call that gets the page.
+
+Where there are no tools (a worker chat), "past the cap" cannot become a pointer. Decided (Shane, 2026-10-29): a PDF
+past the cap is no longer refused whole. Its pages go in order while they fit and the rest are named ("pages 12-30
+were not sent: past the text a message takes. This chat cannot show them."), and the cap is sized from the model's
+context length where the backend reports it, a fixed figure otherwise. With slice 3 a worker chat gets one read-only
+`read_pages` call over its own attachments, the same reader an agent run gets.
+
+Built (2026-10-29, `pdfTextBudget` and `fitPages`):
+
+- The budget is half the context the model is LOADED with (Ollama's `/api/ps`; a worker chat sends no `num_ctx`, so
+  that is the context it runs with) at 3.5 characters a token, at least 4,000 characters. A model that is not loaded,
+  or a backend that does not say, gets `FILE_INLINE_MAX`.
+- Text files count first and are still sent whole or refused, as in slice 1. The PDFs get what is left.
+- Pages go in page order across the message's PDFs while their text fits. The first page that does not, and every
+  page after it, is `cut`: named after the sections, never drawn, never sent to the reader, and not asked about for
+  vision, so a scan past the cut cannot refuse the message. The file keeps its `pages` count.
+- Not counted: the history already in the chat, the section tags, and what a reader writes for a page (at most
+  `READER_PAGE_MAX` pages). The half share is the margin for them.
+
 ## What the person sees
 
 - **Calm view**: a chip per file, under the message like sent images: the name and a summary ("report.pdf · PDF, 48
@@ -267,12 +429,20 @@ or a message"). What a hostile page must not get, as tests that fail first:
 ## Open
 
 - `FILE_INLINE_MAX` is 32,000 characters as a first figure (slice 1); still open: measuring it against the prompt
-  budget, and whether it scales with the model's context window.
-- The per-command size cap: for text it is `FILE_INLINE_MAX` itself, well under the hub's frame limit; open again for
-  the bytes a PDF sends.
+  budget. A PDF's page budget scales with the loaded context (built 2026-10-29); text files do not yet.
+- The per-command size cap: for text it is `FILE_INLINE_MAX` itself, well under the hub's frame limit; for a PDF's
+  bytes, decided 2026-10-29 (chunks, 20 MiB, "Wiring a PDF through the attach path").
 - The PDF thresholds: read against labelled real pages in `notebooks/pdf/pdf-thresholds.ipynb` (2026-10-28);
-  `MIXED_COVER` moves to 0.1 and a vector-path cover is still to be measured.
+  `MIXED_COVER` is 0.1 and path cover counts from `MIXED_PATH_COVER` 0.3. Open: the floor of the held-back note.
 - `png()`'s bound per cell (pages and pixels), and whether a `scanned` page's short clean OCR layer travels with its
   image.
+- Math in a PDF's text layer reads lossily (measured on the Adam paper, 2026-10-28): subscripts flatten onto the
+  baseline, a stacked super- and subscript splits across lines, an accent lands on the previous token, a glyph with no
+  Unicode mapping (ε, ⊙) is dropped, and fraction bars and radical overlines (drawn rules) are lost. Such a page is
+  still `text`, so no image goes with it. Leaning answer (Shane, 2026-10-28): no math-density measure; the prompt tells
+  the model that a PDF page with math may need its image, looked at directly. Where that sentence goes (the system
+  prompt or the attachment's own note) is open, and it lands with slice 3's `look` target.
 - Lines per page for a text file, and the per-call page cap of `look`.
 - Whether the page-image fallback for a scanned page without a vision model uses the reader model or OCR.
+- Whether embeddings of an attached document are kept with it, keyed by the blob's SHA-256, so a second question does
+  not embed every page again.

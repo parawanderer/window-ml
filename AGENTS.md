@@ -122,6 +122,7 @@ it was learned by shipping the wrong version first.
 | which sites may use `window.ml`: the origin gate, the approved/denied lists, their settings | `docs/dev/site-access.md` (+ `docs/spec/SITE_ACCESS.md`) |
 | what a page can observe of window.ml acting in it (globals, stacks, event trust, CDP traces, request headers) | `docs/dev/detection-surface.md` |
 | notifications: what reaches someone with the app closed, on which surface, and what a real push would still add | `docs/spec/NOTIFICATIONS.md` |
+| a call that outlives its turn, a wake on an event, a detach, a background task: the three modes and the one inbox | `docs/spec/ASYNC_CALLS.md` (concept, nothing built) |
 | the patched Ollama/OpenWebUI features and how the client reads them | `docs/FORKED-BACKENDS.md` |
 | the e2e harness, observe, the bench, live probes, demos | `docs/dev/e2e-harness.md` (+ each tool's skill in `.claude/skills/`) |
 | the system prompt, a tool's description, anything else the model reads | `docs/dev/prompt-review.md` (+ `docs/spec/PROMPT_BUDGET.md`) |
@@ -216,8 +217,8 @@ subsystem gets a doc and a row in the table above.
 harness or script gets `.claude/skills/<name>/SKILL.md`, its detail in e2e-harness.md or working-in-the-repo.md.
 
 **RULE — review the prompt now and then, without being asked:** after a stretch of agent-loop or tool work, and at
-least monthly (`docs/dev/prompt-review.md`). Last review: **2026-10-21** (`propose_policy`'s details, measured on the
-policy-fetch interview). A review commit carries `Prompt-Review: <date>`; update the date here with it.
+least monthly (`docs/dev/prompt-review.md`). Last review: **2026-10-29** (`python_exec` `keep`'s description: a kill ends it, measured by the
+red-team rows). A review commit carries `Prompt-Review: <date>`; update the date here with it.
 
 **RULE — a complex analysis worth keeping, or a measurement a decision rests on, goes in a notebook, not in a
 reply:** `notebooks/<topic>/`, run with `node scripts/nb.mjs`. `docs/dev/notebooks.md`; the `notebooks` skill.

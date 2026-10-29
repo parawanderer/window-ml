@@ -7,7 +7,7 @@
 // can all import it. Every value arriving through it is UNTRUSTED input to the client: strings render as escaped
 // text, and an unknown kind, command or version is skipped, never guessed at.
 import type { JsonSchema } from "../contract";
-import type { AttachedFile, ElementContext } from "../contract/contract-run";
+import type { AttachedFile, AttachedFileRef, AttachedPdf, ElementContext, SentFile, WireFile } from "../contract/contract-run";
 import type { NeutralMessage, TokenUsage } from "../contract/contract-chat";
 import type { MlDebugEvent } from "../contract/contract-debug";
 import type { FolderState } from "../archive/archive-folder";
@@ -133,6 +133,9 @@ export interface RuntimeCapabilities {
     /** `files` on `chat.start`, `agent.start` and `session.send`: text files sent whole inside the message. A runtime
      *  without it ignores the field, so a client must not send one there. */
     attachFiles?: boolean;
+    /** `files` may carry a PDF's bytes (`{ name, type, data }`) on `chat.start` and on `session.send` to a chat: the
+     *  runtime reads it page by page. A runtime without it refuses the field as malformed. */
+    attachPdf?: boolean;
     /** the boxes this runtime uses */
     boxes?: BoxRef[];
     /** the long-term session archive, present while it is switched on (`sessionArchive`). Reachable through
@@ -402,6 +405,21 @@ export type ImageDataUrl = string;
  */
 export type { AttachedFile };
 
+/**
+ * A PDF a client sends with a message, on `chat.start` and on `session.send` to a chat: its name, `type`
+ * "application/pdf" and its BYTES as base64 in `data` (FILE_ATTACHMENTS.md, "Wiring a PDF through the attach path").
+ * The runtime reads it page by page; a PDF it cannot read is answered `invalid` with the reason, and the pages past
+ * the text a message takes are named in its block as not sent. Only a runtime listing `capabilities.attachPdf` takes one.
+ */
+export type { AttachedPdf, SentFile };
+
+/**
+ * A PDF named by its SHA-256, on a command sent over the hub, once its bytes have arrived in `file.put` chunks
+ * (FILE_ATTACHMENTS.md, "Over the hub: chunks in an acknowledged window"). The runtime puts the bytes back in place
+ * of the reference before it checks the files; one it does not hold is answered `invalid` ("send it again").
+ */
+export type { AttachedFileRef, WireFile };
+
 /** Every command a client can send, by `type`. A runtime answers a type it does not know with `unsupported`, so a
  *  newer client talking to an older runtime degrades to a message, never to a guess. The scope each needs is in
  *  {@link COMMAND_SCOPE}. */
@@ -409,7 +427,11 @@ export type Command =
     /** A message to a session: steers a running agent (seen at its next step boundary), or starts the next turn of
      *  an idle agent or chat. Text, images, or both. */
     | {
-        type: "session.send"; session: SessionId; text: string; images?: ImageDataUrl[]; files?: AttachedFile[]; elementContext?: ElementContext; idempotencyKey?: IdempotencyKey;
+        type: "session.send"; session: SessionId; text: string; images?: ImageDataUrl[]; files?: WireFile[]; elementContext?: ElementContext; idempotencyKey?: IdempotencyKey;
+        /** `true`: the person says the chat's model sees images, so they go to it unprobed. Without it, images for a
+         *  model whose vision is not known are refused (`unsupported`) when no reader model is set. A chat's only:
+         *  an agent run's vision is decided at `agent.start`. */
+        vision?: true;
         /** {@link ClientUi}: what the sending client says it can show. A claim; absent from an older client. */
         ui?: ClientUi;
     }
@@ -465,8 +487,11 @@ export type Command =
         /** A NESTED ask inside step `seq` (a call made while the step ran); absent for the step's own gate. */
         ask?: string }
     | {
-        type: "chat.start"; runtime: RuntimeId; text: string; images?: ImageDataUrl[]; files?: AttachedFile[];
+        type: "chat.start"; runtime: RuntimeId; text: string; images?: ImageDataUrl[]; files?: WireFile[];
         model?: string; system?: string; think?: boolean | null;
+        /** `true`: the person says the model sees images, so they go to it unprobed. Without it, images for a model
+         *  whose vision is not known are refused (`unsupported`) when no reader model is set. */
+        vision?: true;
         /** absent: the session is saved */
         ephemeral?: true;
         idempotencyKey?: IdempotencyKey;
@@ -528,6 +553,15 @@ export type Command =
      */
     | { type: "session.backfill"; session: SessionId; before?: number; limit?: number }
     | { type: "runtime.info"; runtime: RuntimeId }
+    /**
+     * One chunk of a file sent ahead of the message that names it, over the hub only: the chunk's RAW bytes follow
+     * this JSON in the sealed body, after a zero byte (file-frame.ts). `index` counts from 0 of `count`; `bytes` is
+     * the whole file's size and `sha256` its hash, which the runtime checks once every chunk is in. At most 4 are
+     * sent unanswered. A runtime that does not take them answers `unsupported`, and the client sends the file inline.
+     */
+    | { type: "file.put"; runtime: RuntimeId; sha256: string; index: number; count: number; bytes: number }
+    /** Which chunks of a file this runtime holds, so a client that lost its connection sends only the rest. */
+    | { type: "file.have"; runtime: RuntimeId; sha256: string }
     | { type: "tabs.list"; runtime: RuntimeId }
     /** The devices paired with this runtime's account, as a person manages them. Needs `admin`, which is granted at
      *  the runtime and never passed on. */
@@ -621,6 +655,10 @@ export const COMMAND_SCOPE: { readonly [T in CommandType]: Scope } = {
     "session.resume": "drive",
     "session.backfill": "view",
     "runtime.info": "view",
+    // Sending a file is part of sending the message that names it, so it needs what `session.send` needs. A scope of
+    // its own would be missing from every certificate already issued.
+    "file.put": "drive",
+    "file.have": "drive",
     "tabs.list": "drive",
     "device.list": "admin",
     // NOT `admin`: a device renews ITSELF, so gating it on an administrative scope would lock the devices most likely
@@ -840,6 +878,10 @@ export interface CommandResultData {
      *  some sites). Absent or 0 when it may read every site; a browser's own pages are left out without being counted. */
     "tabs.list": { tabs: TabInfo[]; groups?: TabGroupInfo[]; withheld?: number };
     "device.list": { devices: DeviceInfo[] };
+    /** `complete`: every chunk is in and the bytes hash to `sha256`; `held`: how many chunks the runtime holds */
+    "file.put": { held: number; complete: boolean };
+    /** the chunk indices held, and the count they were sent as (0 and none when it holds nothing of the file) */
+    "file.have": { held: number[]; count: number; complete: boolean };
     /** The new window, so a list can say when it next needs attention without asking again, and the new CHAIN, which
      *  is the renewal itself: each certificate base64 of its protobuf encoding, leaf first, as a keyring holds one. A
      *  certificate carries only public keys, so this is not secret material; it travels sealed because every answer

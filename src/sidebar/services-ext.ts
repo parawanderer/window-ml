@@ -63,6 +63,7 @@ export const extensionServices: SidebarServices = {
     // A post to the page, which answers nothing: what goes wrong from there shows in the run itself.
     // The overlay and DevTools composers do not attach files in this slice (docs/spec/FILE_ATTACHMENTS.md): only the chat page's.
     acceptsFiles: () => false,
+    acceptsPdf: () => false,
     sendToSession: async (hash, text, images) => { toHost({ __mlSidebarApp: "sessionSend", hash, text, images }); return { ok: true }; },
     cancelSession: (hash) => toHost({ __mlSidebarApp: "sessionCancel", hash }),
     continueSession: (hash, maxSteps) => toHost({ __mlSidebarApp: "continueRun", hash, ...(maxSteps ? { maxSteps } : {}) }),

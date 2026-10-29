@@ -41,6 +41,11 @@ write every ruling into the spec it changes within the hour, and keep the plan's
 10. **The classifier rule.** A session that has worked on an exploit may be stopped on defence work afterwards. Keep
     exploit work and defence work in different sessions; a defence design is written as a document that names no
     recipe (PYODIDE_LOCKDOWN.md), so a fresh session can build it.
+    AMENDED 2026-10-28 (the #1274 incident): the finder's rows merge first as a test-only PR, the builder's fix PR
+    after, and the finder flips its node:test todos on the fix's merge sha. A Playwright failing-first row cannot
+    wait for that sha: `test.fail` goes red the moment the fix makes it pass, so the fix PR's CI cannot go green.
+    For an e2e row the finder pushes the flip as its own commit onto the builder's branch, touching only its own
+    files, before the fix PR merges; the builder never edits the finder's file either way.
 
 ## Open threads, as of 2026-10-15 evening
 

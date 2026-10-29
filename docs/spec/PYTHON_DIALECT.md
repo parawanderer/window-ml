@@ -362,6 +362,19 @@ numpy and pandas are pinned to the versions in the Pyodide lock, the environment
 than pretended away. Running Pyodide under Node at the host would make placement bit-identical and is kept as an option
 for a case that needs it, not the default.
 
+**Where a host-placed cell's values live.** RULED 2026-10-28 (Shane, in the coordinator's session; the host kernel is
+designed, not scheduled). A value's home does not move because a cell is placed at the host: a fetched table and an
+attached file live in the browser's value store, a process's output lives at the host, and the namespace entry is a
+handle to that home. A host cell that needs a browser-held value gets it by ONE content-addressed copy over native
+messaging into a host-side store keyed by the same SHA-256 the browser's store uses, so the bytes move once per value,
+never per cell, and both stores charge their own budget; a host cell's result comes back the same way, as Arrow rows,
+and becomes a pointer in the browser's store as a Pyodide result does. A paged document stays rendered in the browser
+(pdf.js in the offscreen document); a host cell's `png()` is one bounded crossing per page, as
+[`FILE_ATTACHMENTS.md`](FILE_ATTACHMENTS.md) has it. The operation goes to the value where it can (`ml.pipe` on a
+host-held value runs at the host, [`SHELL.md`](SHELL.md)); the copy is for a cell that needs the whole value. The
+transport's own limits (native messaging's per-message cap on the host-to-browser direction) are measured before the
+build and bound the page size of a `png()` and the frame size of the copy; nothing in this rule depends on the number.
+
 **Local kernel Python vs. CLI Python scripts on disk (`ml.sh`).** Host-placed `python_exec` ("local kernel Python") and
 running a Python script via `ml.sh.run(["python3", "script.py", ...])` do not share a gate:
 

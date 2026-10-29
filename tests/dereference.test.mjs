@@ -508,8 +508,18 @@ test("a cut output tells the model where the rest is and how to read it, on the 
         [call("exec", { js: "x" })],
         () => ({ result: full.slice(0, 120) + "…", renderOut: { type: "exec-out", stdout: full, seen: 120 } }));
     const out = results.find((r) => r.name === "exec").result;
-    assert.match(out, /\n\[your copy is cut: @tool:[0-9a-f]{7} holds \d+ chars of this output\. Read further with dereference and a pipe \(grep, sed -n, tail -n\) instead of running it again\.\]$/);
+    const m = /\n\[your copy is cut: @tool:[0-9a-f]{7} holds \d+ chars of this output\. Read further with dereference and a pipe \((.+)\) instead of running it again\.\]$/.exec(out);
+    assert.ok(m, out);
     assert.doesNotMatch(out, / {2}/, "model-facing text never pads");
+    // Every form the note teaches runs in the pipe dialect: it once advised `sed -n`, which the dialect refuses.
+    const { runPipe } = await import("../src/pointers/text-pipe.ts");
+    const forms = m[1].split(/[,;]|: /).map((f) => f.trim()).filter((f) => /^[a-z]/.test(f) && !/^lines /.test(f));
+    assert.ok(forms.length >= 4, `forms read from the note: ${JSON.stringify(forms)}`);
+    for (const f of forms) {
+        const pipe = f.replace("PATTERN", "row").replace("B-A+1", "3").replace(/\b[NB]\b/g, "20");
+        assert.doesNotThrow(() => runPipe(full, pipe), `the note teaches "${f}", which the pipe dialect refuses`);
+    }
+    assert.equal(runPipe(full, "head -n 20 | tail -n 3"), "row 18\nrow 19\nrow 20", "the range form reads lines A to B");
 });
 
 test("a cut RETURN value (nothing printed) is cut the same way: its pointer holds the fuller value, and the note says so", async () => {

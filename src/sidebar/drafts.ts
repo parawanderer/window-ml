@@ -11,9 +11,10 @@
 //   - A send still held when the page died (the app killed, the tab closed) was never confirmed: the next page load
 //     puts it back in the box. The transcript says whether it arrived; losing it is the worse mistake.
 //
-// Attached TEXT FILES ride the same mechanism: kept in memory, written through to the same IndexedDB store (a record's
-// items are JSON strings of `{ name, type, text }` instead of data URLs), held with a send and put back with it when
-// the send fails or its page died. Only files that are text are kept; a refused file is not a draft.
+// Attached FILES ride the same mechanism: kept in memory, written through to the same IndexedDB store (a record's
+// items are JSON strings of `{ name, type, text }`, or a PDF's `{ name, type, data }`, instead of data URLs), held with
+// a send and put back with it when the send fails or its page died. Only files that will be sent are kept; a refused
+// file is not a draft.
 //
 // Images are kept in memory (the synchronous source: `loadDraftImages` never waits) AND written through to IndexedDB
 // (`ml-drafts`), since a few pasted screenshots are megabytes, past what localStorage will hold. On load the store is
@@ -24,7 +25,7 @@
 // storage call is guarded, since a private window or blocked site data throws, and the box must still work: it then
 // lasts the page, as before.
 
-import type { AttachedFile } from "../contract/contract-run";
+import type { SentFile } from "../contract/contract-run";
 import { cleanFiles } from "../attached-files";
 
 const DRAFT = "wml-draft:";
@@ -45,9 +46,9 @@ const images = new Map<string, string[]>();
 // state: ui (the images of each send in flight, by send id; also in IndexedDB until the send's result arrives)
 const heldImages = new Map<string, string[]>();
 // state: ui (the box's attached text files by session key; written through to IndexedDB `ml-drafts`, like the images)
-const files = new Map<string, AttachedFile[]>();
+const files = new Map<string, SentFile[]>();
 // state: ui (the files of each send in flight, by send id; also in IndexedDB until the send's result arrives)
-const heldFiles = new Map<string, AttachedFile[]>();
+const heldFiles = new Map<string, SentFile[]>();
 // state: plumbing (who hears of a restore)
 const listeners = new Set<(key: string) => void>();
 
@@ -145,9 +146,9 @@ function dropHeld(id: string): void {
 const same = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && a.every((u, i) => u === b[i]);
 
 /** Files as the records keep them: one JSON string each, so a record's items stay opaque strings for the size cap. */
-const packFiles = (fs: readonly AttachedFile[]): string[] => fs.map((f) => JSON.stringify(f));
-const unpackFiles = (items: readonly string[]): AttachedFile[] => items.flatMap((s) => { try { return cleanFiles([JSON.parse(s)]) ?? []; } catch { return []; } });
-const sameFiles = (a: readonly AttachedFile[], b: readonly AttachedFile[]): boolean => same(packFiles(a), packFiles(b));
+const packFiles = (fs: readonly SentFile[]): string[] => fs.map((f) => JSON.stringify(f));
+const unpackFiles = (items: readonly string[]): SentFile[] => items.flatMap((s) => { try { return cleanFiles([JSON.parse(s)]) ?? []; } catch { return []; } });
+const sameFiles = (a: readonly SentFile[], b: readonly SentFile[]): boolean => same(packFiles(a), packFiles(b));
 
 /** Read the store back into the memory; what was saved on this page load meanwhile wins. */
 function restore(): void {
@@ -275,12 +276,12 @@ export function saveDraftImages(key: string, imgs: string[]): void {
 }
 
 /** The box's attached text files for `key`: the memory's, which the IndexedDB copy fills in shortly after load. */
-export function loadDraftFiles(key: string): AttachedFile[] {
+export function loadDraftFiles(key: string): SentFile[] {
     return files.get(key) ?? [];
 }
 
 /** Keep the box's attached text files for `key`. */
-export function saveDraftFiles(key: string, fs: readonly AttachedFile[]): void {
+export function saveDraftFiles(key: string, fs: readonly SentFile[]): void {
     if (sameFiles(files.get(key) ?? [], fs)) return;
     if (restoring) touched.add(FIL + key);
     if (fs.length) files.set(key, [...fs]);
@@ -299,7 +300,7 @@ export function onDraftRestored(cb: (key: string) => void): () => void {
  * text and images come back into the saved draft for `key` (in front of anything typed meanwhile) and every listener
  * hears of it. Never throws: a `send` that throws counts as a failure.
  */
-export async function sendHeld(key: string, text: string, imgs: string[], send: () => Promise<SendOutcome>, attached: readonly AttachedFile[] = []): Promise<SendOutcome> {
+export async function sendHeld(key: string, text: string, imgs: string[], send: () => Promise<SendOutcome>, attached: readonly SentFile[] = []): Promise<SendOutcome> {
     const id = `${PAGE}:${++seq}`;
     write(SENDING + key, [...(read<Held[]>(SENDING + key) ?? []), { id, text }]);
     if (imgs.length) { heldImages.set(id, imgs); persist(HELD + id, key, imgs); }

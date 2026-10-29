@@ -5,7 +5,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { assets, fixture, pdfLib } from "./fixtures/pdf-node.mjs";
-import { BYTES_CAP, PAGE_CAP, RENDER_PIXEL_CAP, clampScale, looksLikePdf, readPdf, refusalFor, renderPage } from "../src/pdf/pdf-read.ts";
+import { BYTES_CAP, NoDomFilterFactory, PAGE_CAP, RENDER_PIXEL_CAP, clampScale, looksLikePdf, readPdf, refusalFor, renderPage } from "../src/pdf/pdf-read.ts";
 import { OP_CAP } from "../src/pdf/pdf-measure.ts";
 
 const read = (name, opts = {}) => readPdf(pdfLib, fixture(name), { assets, ...opts });
@@ -221,6 +221,31 @@ test("a render's scale is kept in range and lowered to fit the pixel cap", () =>
     const s = clampScale(8, 612, 792);   // 8x of a letter page is 31 megapixels
     assert.ok(612 * 792 * s * s <= RENDER_PIXEL_CAP * 1.0001);
     assert.ok(s < 8 && s > 4);
+});
+
+test("pdf.js is given the filter factory that needs no DOM", async () => {
+    let src;
+    const lib = { ...pdfLib, getDocument: (s) => { src = s; return { promise: Promise.reject(new Error("stop here")), destroy: async () => {} }; } };
+    await readPdf(lib, fixture("text.pdf"), { assets });
+    assert.equal(src.FilterFactory, NoDomFilterFactory);
+});
+
+test("the no-DOM filter factory has every method of pdf.js's own and draws no filter", async () => {
+    // pdf.js's default in node is its BaseFilterFactory, every method a no-op: ours must have each one, or a page that
+    // reaches a missing method throws, the way the DOM factory's `document.URL` did in the worker.
+    const task = pdfLib.getDocument({ data: fixture("text.pdf"), verbosity: 0, ...(assets.wasm ? { wasmUrl: assets.wasm } : {}) });
+    try {
+        const doc = await task.promise;
+        const names = new Set();
+        for (let p = Object.getPrototypeOf(doc.filterFactory); p && p !== Object.prototype; p = Object.getPrototypeOf(p)) {
+            for (const k of Object.getOwnPropertyNames(p)) if (k !== "constructor" && typeof p[k] === "function") names.add(k);
+        }
+        assert.ok(names.has("addLuminosityFilter"), [...names].join(", "));
+        const ours = new NoDomFilterFactory();
+        for (const k of names) assert.equal(typeof ours[k], "function", `NoDomFilterFactory lacks ${k}`);
+        for (const k of names) if (k.startsWith("add")) assert.equal(ours[k]([new Uint8Array(256)]), "none", k);
+        assert.equal(ours.createSelectionStyle(), null);
+    } finally { await task.destroy(); }
 });
 
 /** A stand-in pdf.js: `numPages` as the file claims, `pages` of which can be read. Page text is a fixed sentence. */
