@@ -599,6 +599,27 @@ fetch":
   longer refuses outright. Starting on one page and working on another site is then exactly the example: nothing
   crosses until the card is answered.
 
+**RULED 2026-10-29 on the policies lane's design note** (session-mail
+`20261029-policies-to-repl-specs-worked-example-design-note.md`), the lane's recommendations taken on all five:
+
+- **Order.** (a) ships the list-shaped proposal with `fetch` rows only, since `checkProposal` refuses an `act` row
+  until (b) adds the consumer; the example's `act` row first appears in (b)'s test, and the three-row card of the
+  acceptance test is (b)'s. The one-rule form (`effect`, `when`, `label`) stays accepted as an upgrade rule.
+- **Element facts.** `c.element` is `{ tag, href, name }` as the worker resolved the element AT THE CLICK. `tag` is
+  always a string. `href` is `null` when the element has none, so an `allow` that read it never fires and a `deny`
+  or `ask` that read it fires, the null-fact rule. `name` is the accessible name the worker resolved, `""` when the
+  element has none: that is a fact (a nameless button), not an unknown; `null` only when the worker could not resolve
+  the element at all, in which case the click is refused anyway.
+- **The person's word under `crossOrigin: false`** is exactly: `navigateFacts(url)` of THIS navigate is allowed by an
+  approved policy of origin `proposed` or `person`, never a builtin, judged per navigate; nothing broader, and no
+  `allow` on another consumer's facts counts. The fetch gate's own word is the security lane's and unchanged.
+- **The click precheck** (`run-delegation.ts`, `builtin-tools.ts`) gains the element's tag and accessible name beside
+  `clickHref`, minimal and named in the PR body; it is the same resolution the click runs on, which is what "never
+  the model's description" requires.
+- **The demo site** is built once, as a fixture inside PR (b), with every page the paragraph below lists; item 2's
+  PR adds the fourth row, the redirecting variant and the log assertions. The builtin `act` policy READS the
+  self-approval list in (b); retiring the old mechanism is site access's, later.
+
 **The acceptance test** (e2e, `fake-llm`, two local origins A and B so the cross-origin path is real): the run starts
 on A; the scripted model calls `propose_policy` with the three rows; the test reads the card (three rows, each with a
 breadth note over the probes, zero recorded calls said as such) and approves; `navigate(B)` runs with no card; a click
