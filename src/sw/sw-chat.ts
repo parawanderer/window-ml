@@ -21,6 +21,7 @@
  */
 import { hintSession, shortHash, type AttachedFile, type RequestHint } from "../contract/contract-run";
 import { frameFiles } from "../attached-files";
+import { ImagesRefused, namedNote, readerNote, type ImagePlan } from "../image-gate";
 import { type LlmResult, type NeutralMessage } from "../contract/contract-chat";
 import { type StoredSession } from "../contract/contract-messages";
 import { type MlDebugEvent } from "../contract/contract-debug";
@@ -51,6 +52,11 @@ export interface ChatDeps {
     load(hash: string): Promise<StoredSession | null>;
     save(hash: string, session: StoredSession): Promise<void>;
     now(): number;
+    /** where a message's images go for `model` (null: the default): to it, to a reader, named, or refused
+     *  (image-gate.ts). `forced` is the person's `vision: true`. */
+    images(model: string | null, forced: boolean): Promise<ImagePlan>;
+    /** `reader`'s transcription of one image, for a model that does not see */
+    read(image: string, reader: string, signal: AbortSignal): Promise<string>;
 }
 
 /** A chat this worker is hosting. */
@@ -113,8 +119,10 @@ export async function startBackgroundChat(opts: {
     system?: string;
     think?: boolean | null;
     ephemeral?: boolean;
+    vision?: true;
 }): Promise<string> {
     const d = need();
+    const plan = await imagePlan(d, opts.model ?? null, opts.images, opts.vision === true);
     evict();
     const hash = mintHash();
     const chat: BgChat = {
@@ -129,7 +137,7 @@ export async function startBackgroundChat(opts: {
         lastTs: d.now(),
     };
     chats.set(hash, chat);
-    void turn(chat, opts.text, opts.images, opts.files);
+    void turn(chat, opts.text, opts.images, opts.files, plan);
     return hash;
 }
 
@@ -144,13 +152,27 @@ export async function setBackgroundChatModel(hash: string, model: string): Promi
 }
 
 /** The next turn of a background chat. `not-found` when this worker does not host it and storage cannot bring it
- *  back; `busy` while a turn is still running, since a chat has no inbox to steer into. */
-export async function sendBackgroundChat(hash: string, text: string, images?: string[], files?: AttachedFile[]): Promise<"turn" | "busy" | "not-found"> {
+ *  back; `busy` while a turn is still running, since a chat has no inbox to steer into. Throws {@link ImagesRefused}
+ *  before the turn when its images may not be sent (`vision: true` is the person's word that the model sees). */
+export async function sendBackgroundChat(hash: string, text: string, images?: string[], files?: AttachedFile[], vision?: true): Promise<"turn" | "busy" | "not-found"> {
     const chat = chats.get(hash) ?? (await rehydrate(hash));
     if (!chat) return "not-found";
     if (chat.running) return "busy";
-    void turn(chat, text, images, files);
+    const plan = await imagePlan(need(), chat.model, images, vision === true);
+    if (chat.running) return "busy";   // another send took the turn while the plan was asked for
+    void turn(chat, text, images, files, plan);
     return "turn";
+}
+
+/**
+ * Where a message's images go, asked BEFORE a turn starts so a refusal reaches the command and nothing is sent.
+ * @throws {ImagesRefused} when the model's vision is not known and no reader is set
+ */
+async function imagePlan(d: ChatDeps, model: string | null, images: string[] | undefined, forced: boolean): Promise<ImagePlan> {
+    if (!images?.length) return { route: "model" };
+    const plan = await d.images(model, forced);
+    if (plan.route === "refused") throw new ImagesRefused(plan.message);
+    return plan;
 }
 
 /**
@@ -160,21 +182,35 @@ export async function sendBackgroundChat(hash: string, text: string, images?: st
  * derived from the hash and the turn number rather than drawn at random, so a turn that is somehow reported twice
  * is recognised as one turn rather than recorded as two.
  */
-async function turn(chat: BgChat, text: string, images?: string[], files?: AttachedFile[]): Promise<void> {
+async function turn(chat: BgChat, text: string, images: string[] | undefined, files: AttachedFile[] | undefined, plan: ImagePlan): Promise<void> {
     const d = need();
     const id = `${chat.hash}-${++chat.turns}`;
     const session = { hash: chat.hash, turn: chat.turns };
-    // Attached text files are part of the message the model reads, as `<file>` blocks after the typed words; `display`
-    // keeps the words and the files apart for the transcript (attached-files.ts).
-    const framed = frameFiles(text, files);
-    const user: NeutralMessage = { role: "user", content: framed.text };
-    const display = framed.display;
-    const pictures = (images ?? []).slice(0, MAX_TURN_IMAGES);
-    if (pictures.length) user.images = pictures;
-    const messages = [...chat.messages, user];
     const controller = new AbortController();
     chat.running = controller;
     chat.lastTs = d.now();
+    // Images go to the model only when it sees (or the person said it does); otherwise each is replaced by a note the
+    // model reads, the reader's transcription or a line naming it as not sent (image-gate.ts).
+    const shown = (images ?? []).slice(0, MAX_TURN_IMAGES);
+    const pictures = plan.route === "model" ? shown : [];
+    const notes: string[] = [];
+    if (plan.route === "reader") {
+        for (let i = 0; i < shown.length; i++) {
+            let read = "";
+            try { read = await d.read(shown[i], plan.reader, controller.signal); } catch { /* reader unavailable: the note says so */ }
+            notes.push(readerNote(i, shown.length, plan.reader, read));
+        }
+    } else if (plan.route === "named") {
+        for (let i = 0; i < shown.length; i++) notes.push(namedNote(i, shown.length));
+    }
+    // Attached text files are part of the message the model reads, as `<file>` blocks after the typed words; `display`
+    // keeps the words and the files apart for the transcript (attached-files.ts).
+    const framed = frameFiles(text, files);
+    const content = notes.length ? (framed.text ? `${framed.text}\n\n${notes.join("\n\n")}` : notes.join("\n\n")) : framed.text;
+    const user: NeutralMessage = { role: "user", content };
+    const display = framed.display;
+    if (pictures.length) user.images = pictures;
+    const messages = [...chat.messages, user];
 
     const streaming = !!d.stream;
     d.emit({

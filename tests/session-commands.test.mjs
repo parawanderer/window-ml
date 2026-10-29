@@ -980,3 +980,46 @@ test("a command without files is unchanged: the paths see no files key (the upgr
     await w.run({ type: "session.send", session: sid("aaaa0001"), text: "look" });
     assert.equal(w.named("steer").length, 1, "a text-only message still steers directly");
 });
+
+// --- images a chat's model may not see: vision on chat.start and session.send, refusals answered (src/image-gate.ts) ---
+
+const PIC = "data:image/png;base64,AAAA";
+const REFUSAL = "This model may not see images. If it does, turn on 'This model sees images' and send again.";
+
+test("vision: true rides on chat.start and on session.send to a worker chat; absent, it is not passed", async () => {
+    const w = world({ hostsChat: () => true });
+    assert.equal(code(await w.run({ type: "chat.start", runtime: "local", text: "see", images: [PIC], vision: true })), "ok");
+    assert.equal(w.named("startChat")[0][1].vision, true);
+    assert.equal(code(await w.run({ type: "chat.start", runtime: "local", text: "see", images: [PIC], vision: "yes" })), "ok");
+    assert.equal("vision" in w.named("startChat")[1][1], false, "only true is the person's word");
+
+    w.index.ingest(chatStart("c0ffee01"), { trusted: true });
+    assert.equal(code(await w.run({ type: "session.send", session: sid("c0ffee01"), text: "and", images: [PIC], vision: true })), "ok");
+    assert.deepEqual(w.named("sendChat")[0].slice(1), ["c0ffee01", "and", [PIC], undefined, true]);
+});
+
+test("a refusal of a chat's images answers chat.start and session.send as unsupported, with the sentence", async () => {
+    const { ImagesRefused } = await import("../src/image-gate.ts");
+    const w = world({
+        hostsChat: () => true,
+        startChat: async () => { throw new ImagesRefused(REFUSAL); },
+        sendChat: async () => { throw new ImagesRefused(REFUSAL); },
+    });
+    const started = await w.run({ type: "chat.start", runtime: "local", text: "see", images: [PIC] });
+    assert.deepEqual([code(started), started.error.message], ["unsupported", REFUSAL]);
+    w.index.ingest(chatStart("c0ffee01"), { trusted: true });
+    const sent = await w.run({ type: "session.send", session: sid("c0ffee01"), text: "see", images: [PIC] });
+    assert.deepEqual([code(sent), sent.error.message], ["unsupported", REFUSAL]);
+});
+
+test("an agent run refused for its images answers agent.start as unsupported, with the sentence alone", async () => {
+    const w = world({ startAgent: async () => ({ outcome: "none", error: `ImagesRefused: ${REFUSAL}` }) });
+    const r = await w.run({ type: "agent.start", runtime: "local", task: "see", images: [PIC], target: { kind: "tab", tabId: TAB } });
+    assert.deepEqual([code(r), r.error.message], ["unsupported", REFUSAL]);
+});
+
+test("any other failure to start a chat is still failed, not a vision refusal", async () => {
+    const w = world({ startChat: async () => { throw new Error("backend down"); } });
+    const r = await w.run({ type: "chat.start", runtime: "local", text: "hi" });
+    assert.deepEqual([code(r), r.error.message], ["failed", "backend down"]);
+});

@@ -24,6 +24,9 @@ import { bgRuns, makeWorkerRun, trackRun, untrackRun } from "./sw-runs";
 import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
 import { isExtensionSender } from "./sw-site-access";
 import { fetchLLM, streamLLM, getConfig, listAvailableModels, modelCapabilitiesBatch } from "./sw-llm";
+import { workerMl } from "./worker-ml";
+import { ocrRequest } from "../ml/ml-vision";
+import { planImages } from "../image-gate";
 import { pythonBundlePresent } from "./sw-python";
 import { recordHousekeeping, senderOrigin } from "./sw-housekeeping";
 import { archiveCall, lastFolderReport, onFolderChange, scheduleFolderSync, syncFolder } from "./sw-archive";
@@ -297,6 +300,19 @@ export function configureSessionCommands(run: RunDeps): void {
         },
         save: saveChatSession,
         now: () => Date.now(),
+        // The question an agent run asks (run-assembly.ts): the chat's model, then the reader the person set.
+        images: async (model, forced) => {
+            if (forced) return planImages("unknown", null, true);
+            const ml = workerMl("");
+            const target = model || (await getConfig()).model || null;
+            const ocr = (await getConfig()).ocrModel || null;
+            const reader = ocr && ocr !== target && (await ml._modelVision(ocr)) !== "no" ? ocr : null;
+            return planImages(await ml._modelVision(target), reader, false);
+        },
+        read: async (image, reader, signal) => {
+            const r = await fetchLLM(ocrRequest(image, { model: reader }), signal);
+            return String((r as { content?: string | null }).content || "").trim();
+        },
     });
     handler = createCommandHandler({
         runtime: localRuntimeId(),
@@ -445,7 +461,7 @@ export function configureSessionCommands(run: RunDeps): void {
             }
         },
         startPage: () => agentStartPage,
-        sendChat: (hash, text, images, files) => sendBackgroundChat(hash, text, images, files),
+        sendChat: (hash, text, images, files, vision) => sendBackgroundChat(hash, text, images, files, vision),
         setChatModel: (hash, model) => setBackgroundChatModel(hash, model),
         checkModel: async (model) => {
             // The same two checks `setModel` makes, without making it the default: the server offers it, and the

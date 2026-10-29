@@ -410,6 +410,10 @@ export type Command =
      *  an idle agent or chat. Text, images, or both. */
     | {
         type: "session.send"; session: SessionId; text: string; images?: ImageDataUrl[]; files?: AttachedFile[]; elementContext?: ElementContext; idempotencyKey?: IdempotencyKey;
+        /** `true`: the person says the chat's model sees images, so they go to it unprobed. Without it, images for a
+         *  model whose vision is not known are refused (`unsupported`) when no reader model is set. A chat's only:
+         *  an agent run's vision is decided at `agent.start`. */
+        vision?: true;
         /** {@link ClientUi}: what the sending client says it can show. A claim; absent from an older client. */
         ui?: ClientUi;
     }
@@ -467,6 +471,9 @@ export type Command =
     | {
         type: "chat.start"; runtime: RuntimeId; text: string; images?: ImageDataUrl[]; files?: AttachedFile[];
         model?: string; system?: string; think?: boolean | null;
+        /** `true`: the person says the model sees images, so they go to it unprobed. Without it, images for a model
+         *  whose vision is not known are refused (`unsupported`) when no reader model is set. */
+        vision?: true;
         /** absent: the session is saved */
         ephemeral?: true;
         idempotencyKey?: IdempotencyKey;

@@ -13,7 +13,8 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { ModelChoice, RuntimeInfo } from "../session/session-host";
 import { loadDraft, loadDraftFiles, loadDraftImages, saveDraft, saveDraftFiles, saveDraftImages } from "../sidebar/drafts";
-import { IconEye, IconEyeOff, IconSend, IconWarn } from "../sidebar/icons";
+import { IconSend, IconWarn } from "../sidebar/icons";
+import { modelCache, SeesImagesToggle, visionUnreported } from "./sees-images";
 import { FileStrip, ThumbStrip, useImageAttach } from "../sidebar/transcript/composer";
 import { cursorTipOn } from "../sidebar/ui-kit";
 import type { ChatStore } from "./chat-store";
@@ -27,9 +28,6 @@ import { BlankStartDialog } from "./blank-start-dialog";
 import { startableOn, useTargetPick, type StartKind } from "./new-session";
 import { onOpenGround, startField } from "./start-field";
 import { keyUse, knowsKeys, noteKeyUse } from "./view-mode";
-
-/** Each runtime's model list as last answered, for the page's life: a start page opened again draws it at once. */
-const modelCache = new Map<string, ModelChoice[]>();
 
 /** How long a runtime that dropped away still keeps the start page drawn: the extension's worker is stopped by the
  *  browser whenever it idles (about every 30 seconds) and is back within a second, and redrawing the page from
@@ -104,9 +102,10 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
     // waits (with a placeholder pill the real one fades into, rather than a pill that jumps into the row).
     const [models, setModels] = useState<ModelChoice[] | null>(() => (rt ? modelCache.get(rt.id) ?? null : null));
     const [model, setModel] = useState("");
-    // NATIVE VISION for this run, as the Commander's eye toggle has it: offered only for a model the runtime says is a
-    // CLOUD one (an Ollama model's vision is probed, and an unknown provenance gets no toggle), and dropped whenever
-    // the model or the device changes, so a choice made for one model never rides along to another.
+    // "THIS MODEL SEES IMAGES", the person's word (`vision: true`), as the Commander's eye toggle has it: offered only
+    // for a model whose vision the runtime does not report (a cloud model, or one listed with no kinds; an Ollama
+    // model's vision is probed), and dropped whenever the model or the device changes, so a choice made for one model
+    // never rides along to another. Without it, a runtime refuses images for such a model when no reader is set.
     const [vision, setVision] = useState(false);
     useEffect(() => { setVision(false); }, [model, rt?.id]);
     const canList = !!rt && mayCommand(rt, "models.list");
@@ -163,8 +162,8 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
         const images = att.imgs, files = att.sendable;
         try {
             const r = kind === "chat"
-                ? await store.send({ type: "chat.start", runtime: rt.id, text: text.trim(), ...(images.length ? { images } : {}), ...(files.length ? { files } : {}), ...(model ? { model } : {}) })
-                : await store.send({ type: "agent.start", runtime: rt.id, task: text.trim(), ...(images.length ? { images } : {}), ...(files.length ? { files } : {}), target: pick.target(), ...(model ? { model } : {}), ...(vision && cloud ? { vision: true as const } : {}), ...(streaming ? { stream: true as const } : {}) });
+                ? await store.send({ type: "chat.start", runtime: rt.id, text: text.trim(), ...(images.length ? { images } : {}), ...(files.length ? { files } : {}), ...(model ? { model } : {}), ...(vision && unreported ? { vision: true as const } : {}) })
+                : await store.send({ type: "agent.start", runtime: rt.id, task: text.trim(), ...(images.length ? { images } : {}), ...(files.length ? { files } : {}), target: pick.target(), ...(model ? { model } : {}), ...(vision && unreported ? { vision: true as const } : {}), ...(streaming ? { stream: true as const } : {}) });
             // A refusal is already a notice; what was typed stays, to be changed and tried again.
             if (r.ok) { saveDraft("start", ""); saveDraftImages("start", []); saveDraftFiles("start", []); att.clear(); onStarted(`${r.data.session.runtime}:${r.data.session.hash}`); }
         } finally { setBusy(false); }
@@ -180,15 +179,8 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
         ? <ModelPicker key={`${kind}-${rt.id}`} models={models} value={model} onChange={setModel} head={head} />
         : models === null && canList ? <span class={`tp-pill tp-pill-model${head ? " chat-head-model" : ""} tp-pill-wait`} role="status" aria-label="Loading models" /> : null);
     const chosen = models?.find((m) => (model ? m.id === model : m.default));
-    const cloud = kind === "agent" && chosen?.where === "cloud";
-    const visionToggle = cloud ? (
-        <button class={`cmp-vis${vision ? " on" : ""}`} type="button" aria-pressed={vision}
-            aria-label={vision ? "Native vision on for this run" : "Native vision off for this run"}
-            {...cursorTipOn(vision
-                ? "This run: the model sees images itself (native vision). Click to turn off."
-                : "This run: no native vision, so images go to the reader model. Click to turn on for a cloud model that can see.")}
-            onClick={() => setVision((v) => !v)}>{vision ? <IconEye /> : <IconEyeOff />}</button>
-    ) : null;
+    const unreported = visionUnreported(chosen);
+    const visionToggle = unreported ? <SeesImagesToggle on={vision} onToggle={() => setVision((v) => !v)} /> : null;
     const modelTop = modelAs(false);
     const modelHead = modelAs(true);
     // The session composer's own button and tooltip. On a wide page the row's first control; on a phone, at the foot beside send, where the row has no room for a 40px target.

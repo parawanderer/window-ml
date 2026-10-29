@@ -378,6 +378,7 @@ export interface MlApi {
     _loadTable(name: string, src: string | Element | TableValue, raw?: boolean): Promise<{ name: string; source: TableSource; preview?: (string | number | boolean | null)[][]; rowCount?: number; data: { kind: "rows"; columns: string[]; rows: (string | number | boolean | null)[][] } | { kind: "html"; html: string } | { kind: "value"; key: string; label: string; columns: string[]; delimiter?: string; headerless?: boolean } }>;
     _resolveVisionModel(agentModel: string | null, vision: boolean | string | null): Promise<string | null>;
     _modelSees(model: string | null): Promise<boolean>;
+    _modelVision(model: string | null): Promise<import("./image-gate").VisionAnswer>;
     _nativeLookTool(memory?: VisionMemory): MlTool;
     /** Cross-page persistence: rebuild a run's BUILTIN toolset from a serializable RebuildConfig (tool names
      *  + carried vision facts) on a fresh document after a same-site navigation. */
