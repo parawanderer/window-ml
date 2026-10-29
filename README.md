@@ -183,7 +183,7 @@ can subvert it. Keep its site access on "On click". See [the trust model](docs/A
 Against stock Ollama and OpenWebUI the agent works; the parts that need a modified backend say "not reported"
 instead.
 
-Docs: [setup](docs/SETUP.md), [backend from scratch](docs/FULL-SETUP.md), [page API](docs/API.md),
+Docs: [setup](docs/SETUP.md), [backend from scratch](docs/FULL-SETUP.md), [API](docs/API.md), [what a site gets](docs/PAGE-API.md),
 [what needs which modified backend](docs/FORKED-BACKENDS.md), [notes for the agent](AGENTS.md) and
 [docs/dev/](docs/dev/), [building and testing](CONTRIBUTING.md).
 

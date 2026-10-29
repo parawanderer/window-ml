@@ -1,8 +1,9 @@
 # Reading a PDF
 
-How a PDF is opened, measured and classified, page by page, in the offscreen document. Nothing user-facing calls this
-yet (file attachments slice 2b, [`FILE_ATTACHMENTS.md`](../spec/FILE_ATTACHMENTS.md)); a later PR wires it to the chat
-and to `fetch_url`. The folder is `src/pdf/`.
+How a PDF is opened, measured and classified, page by page, in the offscreen document. A PDF attached to a worker chat
+is read through it (`sw-chat.ts` asks `PDF_READ` before the turn and `PDF_RENDER` for each page that sends an image,
+[`FILE_ATTACHMENTS.md`](../spec/FILE_ATTACHMENTS.md), "Wiring a PDF through the attach path"); agent runs and
+`fetch_url` do not use it yet. The folder is `src/pdf/`.
 
 ## The pieces
 
@@ -69,19 +70,30 @@ Per page, in the pdf.js user space of the page's `view` box:
   variants is the unit square through the current matrix. `save`/`restore`, `transform` and a form XObject's matrix
   (`paintFormXObjectBegin`/`End`) are tracked. The boxes are rasterised into a 128 x 128 sample of the page and
   united, so overlap is not counted twice and a rotated image is counted by its own area. Resolution is under 1% per
-  edge. Not tracked: clip paths, a form's `/BBox`, vector drawing, `paintSolidColorImageMask`. A page of vector art with
-  no text and no image reads as `blank`.
+  edge. Not tracked: clip paths, a form's `/BBox`, `paintSolidColorImageMask`.
+- Path cover: pdf.js 6 emits each painted path as one `constructPath`, `[paintOp, [buffer], minMax]`, with the box in
+  the current user space. Every fill or stroke variant's box goes through the same matrix into a second grid;
+  `endPath` (a clip) paints nothing and is skipped. The BOX counts, not the ink: a stroked frame covers what it
+  encloses, a straight rule (no area) covers nothing, and a fraction bar adds nothing either. One path covering
+  `FULL_PAGE_COVER` alone is the page's background and is left out. Fill colour is not read, so a white box counts.
+  A `shadingFill` (`sh`, a gradient) paints the current clip, so the box of the path after the last `clip`/`eoClip`
+  is tracked through `save`/`restore` and forms, and the shading counts as one path of that box (with no clip, the
+  page: a background). Pictures made of clipped gradients (`pdfjs-personwithdog`) are drawn this way.
+  At most `PATH_CAP` (2,000) paths are rasterised. `drawnCover` is the union of both grids, and is what `blank` reads.
 - Invisible text: glyphs under render mode 3 or 7, tracked across `save`/`restore` and form XObjects, against visible.
 - Whether one image alone covers `FULL_PAGE_COVER` (0.9) of the page.
 
-## The thresholds are PROVISIONAL
+## The thresholds
 
-`pdf-classify.ts` holds them, each with a one-line reason. They are first values chosen against the synthetic fixtures
-(`tests/fixtures/pdf/`, written by `scripts/make-pdf-fixtures.mjs`, checked byte for byte by `tests/pdf-fixtures.test.mjs`).
-The notebook over real documents that the spec calls for (`docs/dev/notebooks.md`) replaces them; the tests are
-written against the exported names, so a changed value moves the boundary tests with it and the shape of each decision
-stays. The decisions that are not numbers: a junk text layer is `scanned` (the page is sent as its image); a scan whose
-OCR layer is itself junk is `scanned` too; `ocr-scan` needs invisible text over ONE full-page image.
+`pdf-classify.ts` holds them, each with a one-line reason. `notebooks/pdf/pdf-thresholds.ipynb` reads them against
+vision models' labels of real pages and ports the classifier to Python, asserting the port reproduces every measured
+kind: change a constant and re-run `notebooks/pdf/measure-corpus.mjs` in the same PR. `MIXED_COVER` (0.1) and
+`MIXED_PATH_COVER` (0.3) are measured there; the rest keep their first values, chosen against the synthetic fixtures
+(`tests/fixtures/pdf/`, written by `scripts/make-pdf-fixtures.mjs`, checked byte for byte by
+`tests/pdf-fixtures.test.mjs`), and the notebook found no reason to move them. The tests are written against the
+exported names, so a changed value moves the boundary tests with it. The decisions that are not numbers: a junk text
+layer is `scanned` (the page is sent as its image); a scan whose OCR layer is itself junk is `scanned` too; `ocr-scan`
+needs invisible text over ONE full-page image; a vector drawing with no text is `mixed`, never `scanned`.
 
 ## Testing
 
@@ -96,3 +108,7 @@ offscreen document to read and render the fixtures.
 - pdf.js trims text that falls outside the page, so a test for a huge text run needs it on the page (many small lines).
 - `chrome.runtime.sendMessage` is JSON: send base64, never a typed array.
 - The document handle has no `destroy()`; the loading task's `destroy()` frees it.
+- The worker has no `document`, and pdf.js outside node assumes one for its canvas AND filter factories: `source()`
+  passes `OffscreenCanvasFactory` and `NoDomFilterFactory`. Without the second, a page with a transfer function, a
+  luminosity soft mask or a knockout group refused as `unreadable` ("reading 'URL'"); given "none", pdf.js draws each
+  of them pixel by pixel (`filters.pdf`).

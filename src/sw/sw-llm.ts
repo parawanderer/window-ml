@@ -390,7 +390,7 @@ export async function residentModels(config: MlConfig): Promise<any[]> {
 // `context_length`), or null when it isn't resident or the server is too old to
 // report it. Used to skip a num_ctx override that would needlessly reload an
 // already-loaded model. Matches on the full tagged name (only normalising :latest).
-async function residentContextLength(config: MlConfig, model: string): Promise<number | null> {
+export async function residentContextLength(config: MlConfig, model: string): Promise<number | null> {
     const norm = (m: string) => m.replace(/:latest$/, "");
     const hit = (await residentModels(config)).find(
         (x: any) => x.model === model || x.name === model || norm(x.model || x.name || "") === norm(model));

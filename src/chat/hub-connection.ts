@@ -18,7 +18,10 @@ import { CommandTooLarge, HubClient, type HubEvent } from "../hub/client";
 import { pageRaster, workerRaster, type Raster } from "../raster";
 import { fitImages } from "./fit-images";
 import { Role } from "../hub/wire";
-import { COMMAND_SCOPE, type Command, type CommandResult, type CommandType } from "../session/session-host";
+import { COMMAND_SCOPE, type AttachedFileRef, type Command, type CommandResult, type CommandType, type WireFile } from "../session/session-host";
+import { PDF_ATTACH_MAX } from "../attached-files";
+import { b64ToBytes } from "../pdf/pdf-wire";
+import { FILE_PUT_WINDOW, chunkSize, fileCap, frameChunk, sha256Hex } from "../hub/file-frame";
 
 /** How long a sealed command waits for its result before the caller is told the runtime did not answer. */
 export const COMMAND_TIMEOUT_MS = 30_000;
@@ -66,6 +69,12 @@ const bytes = (s: string): Bytes => encoder.encode(s) as Bytes;
 /** Room left under the hub's limit for what a measurement cannot see (a length prefix that grew a byte or two). */
 const SIZE_MARGIN = 512;
 
+/** The hub's payload limit when it announces none (`(1<<20)-1024`, the relay's own default). */
+const HUB_PAYLOAD_DEFAULT = (1 << 20) - 1024;
+
+/** `Error.Code.CODE_LIMIT` (hub.proto): a frame over a limit, which sending it again will not fix. */
+const HUB_CODE_LIMIT = 5;
+
 /** A size as the person reads it: megabytes to one decimal. */
 const mb = (n: number): string => `${(n / 1048576).toFixed(1)} MB`;
 
@@ -91,6 +100,9 @@ export class HubConnection {
     /** by command nonce, in hex. The resolver is typed at the command it belongs to, which only its own `send`
      *  knows, so the map holds the widest shape and each `send` narrows its own. */
     private readonly waiting = new Map<string, (r: CommandResult<CommandType>) => void>();
+    /** by command nonce, in hex: the peer each waiting command was sealed to, so a peer going offline settles them. The
+     *  hub discards what it had queued to a runtime whose connection dropped, so nothing would ever answer them. */
+    private readonly waitingOn = new Map<string, string>();
     private readonly peerListeners = new Set<(peers: HubPeer[]) => void>();
     private readonly closeListeners = new Set<(reason: string) => void>();
     private closedWith: string | null = null;
@@ -150,15 +162,24 @@ export class HubConnection {
         const scope = COMMAND_SCOPE[command.type];
         if (!this.scopes.has(scope)) return fail("forbidden", `this device does not hold \`${scope}\` on this account`);
 
+        // A PDF goes ahead in `file.put` chunks and the command names it by hash: inline it is usually past the limit.
+        const ahead = await this.filesAhead(command, peer, runtime, opts);
+        if ("ok" in ahead) return ahead;
+        return await this.deliver(ahead, peer, scope, null, opts);
+    }
+
+    /** Seal one command (with `raw` bytes after its JSON, for a `file.put`) and wait for its answer. */
+    private async deliver<C extends Command>(command: C, peer: HubPeer, scope: string, raw: Uint8Array | null, opts?: { signal?: AbortSignal; timeoutMs?: number }): Promise<CommandResult<C["type"]>> {
         let nonce: Bytes;
         let note: string | undefined;
         try {
             try {
-                nonce = await this.client.command(peer.recipient, scope, bytes(JSON.stringify(command)));
+                const json = bytes(JSON.stringify(command));
+                nonce = await this.client.command(peer.recipient, scope, raw ? frameChunk(json, raw) as Bytes : json);
             } catch (e) {
                 // The relay closes the WHOLE connection on a payload over its limit, so an oversize command is never
                 // sent: its images are re-encoded smaller if that can make it fit, and it is refused if not.
-                if (!(e instanceof CommandTooLarge)) throw e;
+                if (!(e instanceof CommandTooLarge) || raw) throw e;
                 const fitted = await this.fitImagesOf(command, peer.recipient, scope, e);
                 if (!fitted) return tooLarge(e);
                 note = `Sent as a smaller copy to fit the hub's limit of ${mb(e.limit)} per message`;
@@ -176,6 +197,7 @@ export class HubConnection {
                 if (done) return;
                 done = true;
                 this.waiting.delete(key);
+                this.waitingOn.delete(key);
                 clearTimeout(timer);
                 opts?.signal?.removeEventListener("abort", onAbort);
                 resolve(r);
@@ -190,6 +212,7 @@ export class HubConnection {
             );
             opts?.signal?.addEventListener("abort", onAbort, { once: true });
             this.waiting.set(key, settle as (r: CommandResult<CommandType>) => void);
+            this.waitingOn.set(key, peer.id);
             // Sealing and sending is asynchronous, so an abort can land BETWEEN the check at the top and this
             // listener existing — in which case the listener is attached to a signal that has already fired and
             // will never fire again. Asking once more, after everything `settle` needs is in place, is what makes
@@ -197,6 +220,73 @@ export class HubConnection {
             if (opts?.signal?.aborted) settle(fail("aborted", "cancelled while it was being sent"));
         });
         return note && result.ok ? { ...result, note } : result;
+    }
+
+    /**
+     * The command with each inline PDF sent ahead in `file.put` chunks and named by hash in its place, or the command
+     * as it is when it carries none or the runtime does not take chunks (an older one answers `file.have` with
+     * `unsupported`, and the PDF goes inline, which fits only when it is small). A failure of any chunk is the answer.
+     */
+    private async filesAhead<C extends Command>(command: C, peer: HubPeer, runtime: string, opts?: { signal?: AbortSignal; timeoutMs?: number }): Promise<C | CommandResult<C["type"]>> {
+        if (command.type !== "chat.start" && command.type !== "session.send") return command;
+        const files = (command as { files?: WireFile[] }).files ?? [];
+        if (!files.some((f) => typeof (f as { data?: unknown }).data === "string")) return command;
+        const out: WireFile[] = [];
+        for (const f of files) {
+            const data = typeof (f as { data?: unknown }).data === "string" ? (f as { data: string }).data : null;
+            if (data === null) { out.push(f); continue; }
+            const r = await this.putFile(runtime, peer, f.name, data, opts);
+            if (r === "inline") return command;
+            if ("ok" in r) return r as CommandResult<C["type"]>;
+            out.push(r);
+        }
+        return { ...command, files: out };
+    }
+
+    /**
+     * Send one file in chunks of what the hub takes, at most {@link FILE_PUT_WINDOW} unanswered, after asking which the
+     * runtime already holds; done is the runtime's word (`complete`), never "all sent".
+     * @returns the reference to send in the file's place, `inline` when the runtime does not take chunks, or the failure
+     */
+    private async putFile(runtime: string, peer: HubPeer, name: string, b64: string, opts?: { signal?: AbortSignal; timeoutMs?: number }): Promise<AttachedFileRef | "inline" | CommandResult<CommandType>> {
+        const data = b64ToBytes(b64);
+        if (!data) return fail("invalid", `${name} is not valid base64`);
+        const cap = fileCap(PDF_ATTACH_MAX, this.client.limits.accountBurstBytes);
+        if (data.length > cap) return fail("invalid", `${name} is too large to send through this hub: ${mb(data.length)}; it takes files up to ${mb(cap)}`);
+        const sha256 = await sha256Hex(data);
+        const ref: AttachedFileRef = { name, type: "application/pdf", sha256, bytes: data.length };
+        const scope = COMMAND_SCOPE["file.put"];
+        const have = await this.deliver({ type: "file.have", runtime, sha256 }, peer, scope, null, opts);
+        if (!have.ok) return have.error.code === "unsupported" ? "inline" : have;
+        if (have.data.complete) return ref;
+        const header = (index: number, count: number): Bytes => bytes(JSON.stringify({ type: "file.put", runtime, sha256, index, count, bytes: data.length }));
+        const limit = this.client.limits.maxPayloadBytes > 0 ? this.client.limits.maxPayloadBytes : HUB_PAYLOAD_DEFAULT;
+        const overhead = await this.client.commandOverhead(peer.recipient, scope);
+        // Sized for the longest header this file's chunks can carry: every index and count written at full width.
+        const widest = header(data.length, data.length).length;
+        const size = chunkSize(limit, overhead, widest, SIZE_MARGIN);
+        if (size < 1) return fail("invalid", "this hub's limit leaves no room for a file chunk");
+        const count = Math.ceil(data.length / size);
+        const held = have.data.count === count ? new Set(have.data.held) : new Set<number>();
+        const todo = Array.from({ length: count }, (_, i) => i).filter((i) => !held.has(i));
+        let next = 0, complete = false;
+        let failed: CommandResult<CommandType> | null = null;
+        const lane = async (): Promise<void> => {
+            while (!failed && next < todo.length) {
+                const i = todo[next++];
+                const put = { type: "file.put" as const, runtime, sha256, index: i, count, bytes: data.length };
+                const r = await this.deliver(put, peer, scope, data.subarray(i * size, (i + 1) * size), opts);
+                if (!r.ok) { failed ??= r; return; }
+                if (r.data.complete) complete = true;
+            }
+        };
+        await Promise.all(Array.from({ length: Math.min(FILE_PUT_WINDOW, todo.length) }, lane));
+        if (failed) return failed;
+        if (complete) return ref;
+        // Every chunk was answered and none said complete (the last ones were already held): ask, rather than assume.
+        const after = await this.deliver({ type: "file.have", runtime, sha256 }, peer, scope, null, opts);
+        if (!after.ok) return after;
+        return after.data.complete ? ref : fail("unavailable", `${peer.name} did not confirm it holds all of ${name}; send it again`);
     }
 
     /**
@@ -307,6 +397,11 @@ export class HubConnection {
             await this.onPresence(event);
             return;
         }
+        // The hub refusing a command we sent (its runtime offline or behind): its waiter hears it now, not at the timeout.
+        if (event.kind === "error" && event.nonce) {
+            this.waiting.get(hex(event.nonce))?.(fail(event.code === HUB_CODE_LIMIT ? "invalid" : "unavailable", `the hub did not deliver it: ${event.message}`));
+            return;
+        }
         if (event.kind === "result") {
             const answers = event.opened.answers;
             if (!answers) return;
@@ -332,6 +427,9 @@ export class HubConnection {
             if (!held) return;
             held.online = false;
             held.lastSeen = this.now();
+            for (const [key, peerId] of [...this.waitingOn]) {
+                if (peerId === id) this.waiting.get(key)?.(fail("unavailable", `${held.name} went offline before it answered`));
+            }
             this.announce();
             return;
         }

@@ -3393,9 +3393,9 @@ test("a returned value drawn as a tree is the size its text is, at the page's co
     await page.close();
 });
 
-// --- native vision on the start page, as the Commander offers it ---
+// --- "This model sees images" on the start page, as the Commander offers it (docs/spec/FILE_ATTACHMENTS.md) ---
 
-test("the start page offers native vision for a cloud model's run only, and sends it only when turned on", async () => {
+test("the start page offers 'This model sees images' for a model whose vision is not reported, and sends it only when turned on", async () => {
     const { page, errors } = await open(DESKTOP);
     const eye = page.locator(".chat-start-row .cmp-vis");
     const modelPill = page.getByRole("button", { name: /^Model:/ });
@@ -3413,9 +3413,11 @@ test("the start page offers native vision for a cloud model's run only, and send
     await expect(eye).toHaveAttribute("aria-pressed", "false");
     await eye.click();
     await expect(eye).toHaveAttribute("aria-pressed", "true");
-    // A chat has no vision decision to make (its images go to the model as they are): no toggle there.
+    await expect(eye).toHaveAccessibleName("This model sees images");
+    // A chat asks the same question of its model now (a runtime refuses its images while it cannot tell): the toggle
+    // is there too, and the choice made for this model stays across the kind.
     await pickKind(page, "Chat");
-    await expect(eye).toHaveCount(0);
+    await expect(eye).toHaveAttribute("aria-pressed", "true");
     await pickKind(page, "Agent");
     // Another model drops the choice: it was made for that model, and does not ride along.
     await pickModel(/gemma3:27b/);
@@ -3434,6 +3436,14 @@ test("the start page offers native vision for a cloud model's run only, and send
     await box.fill("read the chart again");
     await box.press("Enter");
     await expect.poll(async () => (await commands(page)).at(-1)).toMatchObject({ type: "agent.start", task: "read the chart again", vision: true });
+
+    await page.goto(server.url);
+    await pickKind(page, "Chat");
+    await pickModel(/gemini-flash-latest/);
+    await eye.click();
+    await box.fill("what is in it");
+    await box.press("Enter");
+    await expect.poll(async () => (await commands(page)).at(-1)).toMatchObject({ type: "chat.start", text: "what is in it", vision: true });
     expect(errors).toEqual([]);
     await page.close();
 });

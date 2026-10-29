@@ -6,7 +6,7 @@ import { senderTrust, tabGrants } from "./sw-consent";
 import { isExtensionSender } from "./sw-site-access";
 import { recordHousekeeping } from "./sw-housekeeping";
 import { ensureOffscreen, forgetOffscreen } from "./sw-offscreen";
-import { activeRuns, execReads, isWorkerRun, pageValueSession } from "./sw-runs";
+import { activeRuns, execReads, isWorkerRun, pageValueSession, runControllers } from "./sw-runs";
 import { valueHolders, budgetBytes as valueBudgetBytes, claimValue } from "./sw-values";
 import { PY_PACKAGE_LOADS } from "../python/python-env";
 import { defineJob } from "../job-registry";
@@ -252,11 +252,16 @@ export async function runPython(payload: any, requestId: string | undefined, cal
     // The lift, only for the exact code the person approved, and only outside the dialect (an inside cell needs none).
     const bridges = outside && caller.bridges === true && !!caller.pyCodeOk?.(String(payload?.code ?? ""));
     if (keep && !keptRuns.has(caller.wireRun!)) { keptRuns.add(caller.wireRun!); recordRunLog(caller.wireRun!, { subsystem: "python", kind: "keep" }); }
-    const run = { type: "PY_RUN", principal, ...(wire ? { wire: { client: wire.handle, run: caller.wireRun ?? null } } : {}), ...(valueBudget ? { valueBudget } : {}), code: payload?.code, image: payload?.image ?? null, hardened: true, tables: payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}), ...(inside ? { inside: true } : {}), ...(keep ? { keep: true } : {}), ...(bridges ? { bridges: true } : {}) };
+    const run = { type: "PY_RUN", principal, ...(wire ? { wire: { client: wire.handle, run: caller.wireRun ?? null } } : {}), ...(valueBudget ? { valueBudget } : {}), code: payload?.code, image: payload?.image ?? null, hardened: true, tables: payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}), ...(inside ? { inside: true } : {}), ...(keep ? { keep: true, turnLive: true } : {}), ...(bridges ? { bridges: true } : {}) };
     // A cell inside the dialect may import the person's approved tier 3 libraries: they ride every inside run, and the
     // sandbox loads each pin once.
     if (inside) { const libraries = await dialectLibraries(); if (libraries.length) Object.assign(run, { libraries }); }
-    const attempt = () => ensureOffscreen().then(() => chrome.runtime.sendMessage(run));
+    // A keep is a LIVE turn's: checked again at every send, since the awaits above and the retry below can cross the turn's
+    // end (`deletePythonRun`), and a keep landing after it would outlive its turn in the offscreen document.
+    const attempt = () => ensureOffscreen().then(() => {
+        if (keep && !runControllers.has(caller.wireRun!)) { delete (run as { keep?: boolean }).keep; delete (run as { turnLive?: boolean }).turnLive; }
+        return chrome.runtime.sendMessage(run);
+    });
     try {
         const res = await attempt().catch((err) => {
             // The offscreen doc can be gone (SW slept and the doc was torn down, or a stale cached-ready) → "Receiving

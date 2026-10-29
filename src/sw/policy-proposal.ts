@@ -8,7 +8,7 @@
 import type { NeutralMessage } from "../contract/contract-chat";
 import { evalPolicy, type PolicyEffect } from "../readonly-exec";
 import { fetchFacts, navigateFacts } from "./sw-policies";
-import { POLICY_LABEL_MAX, POLICY_SOURCE_MAX } from "./policy-valid";
+import { POLICY_LABEL_MAX, POLICY_SOURCE_MAX, PROPOSAL_ROWS_MAX } from "./policy-valid";
 
 /** A proposal as the worker accepted it: the strings it checked, which are what the card shows and what is added. */
 export interface PolicyProposal {
@@ -118,6 +118,34 @@ export function checkProposal(args: Record<string, unknown>): { proposal: Policy
     const r = evalPolicy(when, fetchFacts(FIXED_PROBE_URLS[0]), effect);
     if (r.broken) return { error: `Error: the policy does not run: ${r.broken}. It is not proposed.` };
     return { proposal: { effect, source: when, label: label.trim() } };
+}
+
+export { PROPOSAL_ROWS_MAX };
+
+/**
+ * Check a proposal as the model sent it: a list of `rules`, or the one-rule form (`effect`, `when`, `label`) older calls
+ * use. Each row is checked as {@link checkProposal} does, and a bad row refuses the whole proposal, naming the row.
+ * @param args the call's arguments
+ * @returns the accepted rows in the order sent, or the error the model reads
+ */
+export function checkProposals(args: Record<string, unknown>): { proposals: PolicyProposal[] } | { error: string } {
+    if (args.rules === undefined) {
+        const c = checkProposal(args);
+        return "error" in c ? c : { proposals: [c.proposal] };
+    }
+    if (args.effect !== undefined || args.when !== undefined || args.label !== undefined) return { error: `Error: send either "rules" or "effect", "when" and "label", not both.` };
+    const rules = args.rules;
+    if (!Array.isArray(rules) || !rules.length) return { error: `Error: "rules" must be a non-empty list of { effect, when, label }.` };
+    if (rules.length > PROPOSAL_ROWS_MAX) return { error: `Error: "rules" holds ${rules.length} rules; at most ${PROPOSAL_ROWS_MAX} in one proposal.` };
+    const proposals: PolicyProposal[] = [];
+    for (let i = 0; i < rules.length; i++) {
+        const r = rules[i];
+        if (!r || typeof r !== "object" || Array.isArray(r)) return { error: `Error: rule ${i + 1} must be an object { effect, when, label }.` };
+        const c = checkProposal(r as Record<string, unknown>);
+        if ("error" in c) return { error: c.error.replace(/^Error: /, `Error: rule ${i + 1}: `) };
+        proposals.push(c.proposal);
+    }
+    return { proposals };
 }
 
 /**

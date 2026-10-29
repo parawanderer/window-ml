@@ -1,6 +1,7 @@
 # Open topic: headless agents, subagents and background runs
 
-**Status: open, deliberately deferred** (noted 2026-09-15). The chat page ([`CHAT_PAGE.md`](CHAT_PAGE.md)) shows a
+**Status: open, deliberately deferred** (noted 2026-09-15). A spawned run's handle is a detached call's handle:
+[`ASYNC_CALLS.md`](ASYNC_CALLS.md) owns that shape (await, cancel, join, the inbox return) and this file uses it. The chat page ([`CHAT_PAGE.md`](CHAT_PAGE.md)) shows a
 disabled "headless" option as a placeholder for this.
 
 ## What exists today
