@@ -619,14 +619,19 @@ fetch":
 - **The demo site** is built once, as a fixture inside PR (b), with every page the paragraph below lists; item 2's
   PR adds the fourth row, the redirecting variant and the log assertions. The builtin `act` policy READS the
   self-approval list in (b); retiring the old mechanism is site access's, later.
-- **The card's rows, as first built.** (a) is #1332 OPEN 2026-10-29 (`policies/worked-example-multi-row`, head
-  1acc5dc8; @agent @exec @security; `propose-policy-tool.ts`, `policy-proposal.ts`, `sw-policies.ts`,
+- **The card's rows, as first built.** (a) is #1332 MERGED d7f3d01f on 2026-10-29 (head b95441dc, verified;
+  `policies/worked-example-multi-row`; @agent @exec @security; `propose-policy-tool.ts`, `policy-proposal.ts`, `sw-policies.ts`,
   `sw-run-host.ts`, `worker-tools.ts`, `docs/dev/policies.md`, the rows in `tests/propose-policy.test.mjs` in both
   orders; the janitor asked), verified. It renders the proposal as ONE code block headed `// Rule i of n: <effect>`
   per rule, with the breadth notes stacked under it, each prefixed `Rule i of n.` RULED: that meets "its own row with
   its own breadth note" for now, since each rule and its note are numbered and a person or the acceptance test can
   match them; a true per-row card (each rule's code with its note beneath it) is a `@ui` follow-up in this lane
-  after (b), not a blocker of (a).
+  after (b), not a blocker of (a). The janitor's other three findings were fixed before the merge: the "three
+  rules" tests send three rows; a repeated row takes the new proposal id and the stored label wins; `rules` declares
+  `maxItems` and the cap is tested at exactly `PROPOSAL_ROWS_MAX`. RULED 2026-10-29: the tool's "Added" line, which the
+  model reads, names the STORED label for a repeated row, not the one the model sent, with a note that the sent label
+  was not kept; what the model is told must match the store (one small change at the start of (b)'s branch). The
+  red team pins the multi-row surface in its own file as a PR after #1332.
 
 **The acceptance test** (e2e, `fake-llm`, two local origins A and B so the cross-origin path is real): the run starts
 on A; the scripted model calls `propose_policy` with the three rows; the test reads the card (three rows, each with a
