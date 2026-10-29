@@ -184,6 +184,7 @@ function killWorker(principal: string, reason: string): void {
         libraryPrincipals.delete(principal);
         clearReap(principal);
         keptPrincipals.delete(principal);
+        workerUses.delete(principal);
         respawned.add(principal);   // the next spawn for this principal is a respawn: its kept namespace died
         for (const runId of killedRuns) {
             runPrincipals.get(runId)?.delete(principal);
@@ -256,6 +257,7 @@ async function reapWorker(principal: string, idleMs: number): Promise<void> {
     workers.delete(principal);
     libraryPrincipals.delete(principal);
     keptPrincipals.delete(principal);
+    workerUses.delete(principal);
     clearReap(principal);   // the answer above re-armed it
     if (run) {
         runPrincipals.get(run)?.delete(principal);

@@ -208,7 +208,7 @@ export interface MlApi {
     fetchTool(): MlTool;
     /** Run a sandboxed Python snippet (Pyodide/WASM, numpy + Pillow) with an optional
      *  screenshot injected as `img`/`img_np`. No network/filesystem/DOM. `keep` holds a worker-hosted run's sandbox
-     *  through idle gaps until its turn ends; a page's call has no run to keep, so it is ignored there. */
+     *  through idle gaps until its turn ends or its sandbox is killed (a timeout, a crash, a cancel), which the next cell is told as loss; a page's call has no run to keep, so it is ignored there. */
     pythonExec(code: string, opts?: { image?: string | Element | null; margin?: number; tableRaw?: boolean; tables?: string | Element | TableValue | Record<string, string | Element | TableValue> | null; keep?: boolean; onStdout?: (chunk: string, ts?: number) => void }): Promise<{ ok: boolean; value?: unknown; stdout: string; stdoutDropped?: number; error?: string; render?: "latex" | "img" | "figure"; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] }; bootMs?: number; runMs?: number }>;
     /** Built-in sandboxed-Python tool factory (numpy/Pillow pixel/array work). */
     pythonTool(): MlTool;

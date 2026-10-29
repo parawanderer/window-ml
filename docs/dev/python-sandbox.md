@@ -504,8 +504,8 @@ browser: every worker-hosted run that ran Python kept a whole Pyodide realm. Now
   A keep never outlives its turn, so it never holds a realm for a run nobody is running. The run log records
   `python`/`keep` once per turn, so the person sees the model asked. It also ends with its SANDBOX: a kill (a
   timeout, a crash, a cancel) clears it and the next cell is told the loss; the tool's description says so.
-  What arms one is three checks: the sender is the service worker (`!sender.tab`, as for the bridges lift, and
-  `PY_DELETE_RUN` takes the same test), the wire names the cell's own run, and the turn is live. The last is
+  What arms one is three checks: the sender is the service worker (`!sender.tab`, as for the bridges lift; `PY_DELETE_RUN`
+  takes a stricter one, `sender.id` must be the extension's and no tab, since only the service worker posts it), the wire names the cell's own run, and the turn is live. The last is
   `endedRuns` (every run `PY_DELETE_RUN` ended, bounded to 256) plus `turnLive`: the service worker stamps a keep
   `turnLive` only when `runControllers` still has the run, and checks again at every send, so the retry after
   `forgetOffscreen` cannot re-arm a keep after the turn's end. A resumed turn reuses the run id, which is why the

@@ -175,3 +175,14 @@ test("a keep leaves the service worker stamped turnLive, and a call without keep
     const { pyRuns } = await wireRun(async () => {}, { calls });
     assert.deepEqual(pyRuns.map((m) => [m.keep ?? null, m.turnLive ?? null]), [[true, true], [null, null]]);
 });
+
+// --- what the keep promises ---
+
+test("every copy of the keep's promise names the kill clause: the tool description and the contract's JSDoc", async () => {
+    const { buildPythonTool } = await import("../src/python/python-tool.ts");
+    const { defineTool } = await import("../src/ml/ml-tool-factories.ts");
+    const tool = buildPythonTool({ defineTool, _queryAll: () => [], pythonExec: async () => ({ ok: true, stdout: "" }), _mintToken: async () => "@pt:abcdef12" });
+    assert.match(tool.parameters.properties.keep.description, /until this run ends or its sandbox is killed \(a timeout, a crash, a cancel\), which the next cell is told as loss/);
+    const { readFileSync } = await import("node:fs");
+    assert.match(readFileSync(new URL("../src/contract.ts", import.meta.url), "utf8"), /until its turn ends or its sandbox is killed \(a timeout, a crash, a cancel\), which the next cell is told as loss/);
+});
