@@ -67,6 +67,31 @@ subsystem. Do not build a second copy of any of these.
   and a run is already a handle with `run`, `continue` and `cancel` (`ml.createAgent`). A detached call's handle and
   a spawned subtask's handle are the same shape, which `HEADLESS_AGENTS.md` should use rather than invent.
 
+## Two kinds of executor, and what "detach" can mean for each
+
+(Added 2026-10-29 from an outside review Shane had made of this file.) The Jupyter line applies here exactly, and the
+first draft blurred it. In a kernel, `a = run_mcmc()` blocks the one execution thread for as long as it runs, while
+`subprocess.Popen(["python", "sim.py"])` hands the kernel a pid and a descriptor and the process runs on its own.
+The harness has both kinds, and "detach" is a different thing for each:
+
+- **Out of thread: real background compute.** An `ml.sh` call is a process on the host with its own pid, exit code
+  and output redirection; a fetch is the browser's. These run on while the loop does anything else, can be polled,
+  tailed and cancelled, and are what a detached call MEANS in full. Parallel work is several of these.
+- **In thread: the harness's own kernel.** A `python_exec` cell runs in a single-threaded Pyodide worker; a cell in a
+  tight numeric loop blocks that worker's event loop, and so does `exec`'s main-world eval in the page. Neither can
+  be lease-detached from its thread without killing it. Detaching one means only that the service worker STOPS
+  AWAITING it: the loop is free for shell, DOM and text work, and the kernel is BUSY AND LOCKED until the cell
+  returns or its sandbox is killed. A further `python_exec` of that run queues behind the detached cell or is told
+  "busy with <id>", never runs beside it; nothing can read a half-mutated namespace, so there is no race to warn
+  about, only a lock to state. There is no second worker per run, by the reset-ownership ruling that the worker
+  boundary is the run boundary (`docs/dev/python-sandbox.md`), and no fork in Pyodide: a model that wants parallel
+  Python launches scripts through `ml.sh`.
+- **Interrupting an in-thread call is a kill, and the spec says so.** The sandbox's bounded 1 s cancel is the asyncio
+  tail that runs after a cell's script as one coroutine with it ("Where the cancel runs"); it never reaches a
+  running synchronous frame. The only cancel for a detached tight loop is terminating the worker, which loses the
+  run's namespace and tells the next cell the loss, as the keep's rule already states. `exec` has not even that:
+  the page's JavaScript runs to its end. The result of `cancel(id)` names which happened.
+
 ## Mode 1: the escalation lease
 
 The call is dispatched synchronously with a lease. Inside the lease the value drops into the turn as today, zero
@@ -88,8 +113,8 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
    investigate"). The watchdog's diagnostic value is that the number was the MODEL'S prediction, so a miss is
    evidence its model of the world is wrong; a harness-supplied number is only a timer, and the two messages must
    never be merged. The still-live call can resolve later and arrive normally.
-3. **Cancel is honest per executor.** `python_exec`: the cell's bounded cancel, or the sandbox kill, after which the
-   keep is gone and the next cell is told the loss, as the reap already says. `ml.sh`: the host's `cancel`, or its
+3. **Cancel is honest per executor.** `python_exec`: the sandbox kill for a running frame (the bounded cancel is the
+   asyncio tail, above), after which the keep is gone and the next cell is told the loss, as the reap already says. `ml.sh`: the host's `cancel`, or its
    deadline kill. A fetch: its abort. `exec`'s main-world eval CANNOT be interrupted once running; cancel there only
    stops awaiting it, and the result says so rather than implying the JavaScript stopped. A cancel's effect is a
    fact in the result, never a promise.
@@ -97,20 +122,30 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
    page-hosted loop) cancels every detached call of that run by its executor's cancel, and what cannot be cancelled is
    reported as an orphan, the way the shell's status already reports its orphan list. A detached cell holds its
    worker as a running message does (the reap's "idle" is no message running or queued), so no clock reaps it, and
-   it ends with the turn exactly as a keep does.
+   it ends with the turn exactly as a keep does; while it runs the kernel is locked, as above. For `ml.sh` the
+   sweeper EXISTS: a call's default policy kills its process group, a `kill`-policy call is killed when the native
+   port closes, which is what a service-worker eviction or a crashed tab does to it, an entry swept after the host
+   itself died is reported `host-lost`, and a policy that chooses otherwise parks the process on the ORPHAN list the
+   status reports (`SHELL.md`, the kill policy and its orphan list). That is the dead-man's switch; this file adds
+   the loop-side reporting, not a second one.
 5. **The handle is the run's.** It is answered only for the run that made it, from that run's own tab or the service
    worker, with the sender checks the inbox already has; a page cannot await, cancel or read another run's call. A
    detached call, its wake and its collection are records in the run log (`python`/`detached`, `shell`/`detached`,
    with the id), so the person sees what ran past its lease and what was cancelled.
 6. **A detached result crosses the same checks as a tool result:** output cap, scrub (`sw-scrub.ts`), and the
    `@tool:` pointer rules for a large value. Nothing reaches the model through the inbox that could not have reached
-   it as the call's return.
+   it as the call's return. The output of a call that runs for hours is BOUNDED AT THE EXECUTOR, not only at the
+   return: the host already caps a shell call's output, and a detached cell's stdout is a fixed-size ring buffer in
+   the worker (the last N KB), never an unbounded array. The inbox carries status and tail only; the model inspects
+   more with `tail(id, { lines })` on the handle, and the full capped output is a value it can point at, as a tool's
+   large result is today.
 
 ## Mode 2: the push subscription
 
 `subscribe({ on, times, ttl })` registers an observer and returns at once with an id. `on` is a predicate in the
 read-only dialect over a source (a DOM event on a selector, a network response once network inspection exists, a
-detached call's completion, a value changing in `ml.current`, mail arriving per `AGENT_MAIL.md`); `times` is the
+detached call's completion, a value changing in `ml.current`, a file appearing or changing on the host through `ml.sh`, a host process's exit,
+mail arriving per `AGENT_MAIL.md`); `times` is the
 CARDINALITY (`1`, `n`, or unbounded); `ttl` ends it. A match is queued in the run inbox and injected at the next turn
 boundary as `[event <id>: <payload>]`; the subscription is dropped at its count or its TTL, and the model is told
 which.
@@ -182,6 +217,9 @@ the first PR, as every REPL lane does.
   the page holds dies with it; the worker's copy is the one that survives.
 - Whether network inspection (the biggest win in the agent's own feedback) ships as a mode-2 source first or as a
   tool first.
+- The ring buffer's size for a detached cell, and whether `tail` reads the worker's buffer live while the cell runs
+  (the worker is busy, so the buffer is read by the offscreen document, which holds it) or only at the detach and
+  the end.
 
 ## Related
 
