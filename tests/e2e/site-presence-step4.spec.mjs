@@ -25,9 +25,13 @@ import { startFakeLlm } from "./fake-llm.mjs";
  *  bundled two fixes under one key, and the lane measured #1279's fix at ca246b07 holding the highlight half of
  *  (a)/(b)/(d) while the HUD card still failed them). `step4a` is the anonymised highlight host (PR #1279): flipped
  *  false on its branch 2026-10-29 (head `641111ae`), so each row's highlight half asserts the defended outcome.
- *  `step4b` is the HUD card's move to the side panel (PR #1297): open, so each row's card half asserts the leak
- *  positively — the named card mount in dom-adds, the ml- token, the named popover — until #1297's branch flips it. */
-const OPEN = { step4a: false, step4b: true };
+ *  `step4b` is the HUD card's move to the side panel (PR #1297): flipped false on its branch 2026-10-29 (head
+ *  `6fb1d6b1`). With the card off the hidden page, the host these rows describe is drawn only once the TAB'S SIDE
+ *  PANEL renders the card and asks for it (measured on that head with the panel up: the page's one addition is the
+ *  anonymised host, `popover="manual"`, `style="all: initial !important;"`, no id; no card host, no sidebar.html
+ *  frame, `window.length` still 1) — so the hidden rows run with the panel open, which is the configuration 4b
+ *  ships, and the visible page's control keeps the in-page card. */
+const OPEN = { step4a: false, step4b: false };
 
 /** Whether `slice` is still open, recording it on the test so the report says which holes this run demonstrated. */
 function holeOpen(slice, what) {
@@ -88,12 +92,51 @@ async function readDom(b, targetId) {
 }
 
 /**
+ * Open this tab's SIDE PANEL the way a person does, so a hidden page's run UI has somewhere to live (step 4b): the
+ * worker opens the extension's popup, and a `sidepanel.html?tabId=<N>` iframe goes into the popup page. The panel is
+ * an extension page, not a frame of the tab, so nothing of it enters the page's DOM. The route is the fix's own
+ * (the security lane's answer, 2026-10-29); this file only drives it — a person's click is what `openPopup` stands
+ * in for. Resolves once the popup page is up and the iframe is in it; the caller waits for the PAGE's own record of
+ * the highlight host, which the card asks for once it has rendered.
+ * @param {any} b the clean browser
+ * @param {number} tabId the tab the panel is for
+ */
+async function openPanel(b, tabId) {
+    await b.sw(() => chrome.action.openPopup());
+    const popupUrl = `chrome-extension://${b.extensionId}/popup.html`;
+    const deadline = Date.now() + 15000;
+    for (;;) {
+        const { targetInfos } = await b.cdp.send("Target.getTargets");
+        const popup = targetInfos.find((t) => t.type === "page" && t.url === popupUrl);
+        if (popup) {
+            const { sessionId } = await b.cdp.send("Target.attachToTarget", { targetId: popup.targetId, flatten: true });
+            try {
+                const src = `chrome-extension://${b.extensionId}/sidepanel.html?tabId=${tabId}`;
+                const r = await b.cdp.send("Runtime.evaluate", {
+                    expression: `(() => { const f = document.createElement("iframe"); f.id = "spec-panel"; f.src = ${JSON.stringify(src)}; f.style.cssText = "position:absolute;top:0;left:0;width:400px;height:900px;border:0"; document.body.appendChild(f); return f.src; })()`,
+                    returnByValue: true,
+                }, sessionId);
+                if (r.result?.value !== src) throw new Error(`the panel iframe did not land in the popup: ${JSON.stringify(r)}`);
+                return;
+            } finally {
+                await b.cdp.send("Target.detachFromTarget", { sessionId }).catch(() => {});
+            }
+        }
+        if (Date.now() > deadline) throw new Error("the extension's popup never appeared over CDP, so the side panel could not be opened");
+        await sleep(100);
+    }
+}
+
+/**
  * One row's scenario in a fresh clean browser: a probe tab on `host`, then a run the person starts on it, HELD at its
  * first gate (the `type` on #field) until `release` — so `during` is read while an approval waits, and `readAfter`
  * once the run has settled. `adds(lo, hi)` is the probe's own dom-add records in a window (its `t` and the test's
  * clock are the same machine).
+ * @param {string} host the page's fixture hostname
+ * @param {{ panel?: boolean }} [opts] `panel` opens the tab's side panel while the gate holds (a hidden page's run
+ *  UI lives there, and the highlight host these rows describe is drawn only when the card asks for it)
  */
-async function heldRun(host) {
+async function heldRun(host, { panel = false } = {}) {
     const site = await startProbeSite();
     const fake = await startFakeLlm({ model: "fake-model" });
     fake.setSide(() => ({ content: "1" }));
@@ -117,6 +160,12 @@ async function heldRun(host) {
         const n0 = driver();
         await b.sw(({ tabId }) => globalThis.__mlStartUserRunForTest(tabId, { task: "do the scripted step", surface: "hud", hud: "quiet" }, { approvalRouting: "both" }), { tabId: page.tabId });
         const gate = await waitFor(async () => (await b.sw(() => globalThis.__mlApprovals.list()))[0] ?? null, 30000, "the approval gate to open");
+        // The panel opens while the gate holds: the card renders IN the panel and then asks the page's shell for the
+        // approval highlight, and the probe's own record of that host is the signal that the draw has happened.
+        if (panel) {
+            await openPanel(b, page.tabId);
+            await waitFor(() => page.reports().some((e) => e.kind === "dom-add" && CUSTOM_TAG.test(String(e.tag ?? ""))), 15000, "the panel's card to ask for the page's highlight host");
+        }
         // The mounts ride an async draw (the card's app asks for the approval highlight over a rendered reference):
         // measured 2026-10-29 the card lands at run start +27-66 ms and the highlight root at +141-239 ms, eight runs
         // of nine — once it had not arrived 1.2 s in. A fixed 3 s settle from the gate covers the tail without a
@@ -193,7 +242,7 @@ test.describe("@security SITE_PRESENCE step 4: a hidden page and a run the perso
 
     test("row (a): a waiting approval adds exactly one host element — a random custom-element name, nothing of ours on it", async () => {
         test.setTimeout(90_000);
-        const h = await heldRun("other.test");
+        const h = await heldRun("other.test", { panel: true });
         try {
             expect(h.gate.tool, "the run gated on the scripted type (the run machinery's positive control)").toBe("type");
             const adds = h.adds(h.t0, h.tHeld);
@@ -228,7 +277,7 @@ test.describe("@security SITE_PRESENCE step 4: a hidden page and a run the perso
 
     test("row (b): no ml- token anywhere in the hidden page's DOM, before, during or after the run", async () => {
         test.setTimeout(90_000);
-        const h = await heldRun("other.test");
+        const h = await heldRun("other.test", { panel: true });
         try {
             expect(h.gate.tool, "the run gated on the scripted type (the run machinery's positive control)").toBe("type");
             await h.release();
@@ -261,7 +310,7 @@ test.describe("@security SITE_PRESENCE step 4: a hidden page and a run the perso
 
     test("row (c): no sidebar.html frame in the page — the page's own cross-origin frame is the scan's control", async () => {
         test.setTimeout(90_000);
-        const h = await heldRun("other.test");
+        const h = await heldRun("other.test", { panel: true });
         try {
             expect(h.gate.tool, "the run gated on the scripted type (the run machinery's positive control)").toBe("type");
             await h.release();
@@ -281,7 +330,7 @@ test.describe("@security SITE_PRESENCE step 4: a hidden page and a run the perso
 
     test("row (d): no popover attribute of ours except on the anonymised host, whose shape is exactly the ruled one", async () => {
         test.setTimeout(90_000);
-        const h = await heldRun("other.test");
+        const h = await heldRun("other.test", { panel: true });
         try {
             expect(h.gate.tool, "the run gated on the scripted type (the run machinery's positive control)").toBe("type");
             const pops = h.during.popovers;
@@ -314,7 +363,7 @@ test.describe("@security SITE_PRESENCE step 4: a hidden page and a run the perso
 
     test("row (e): after the run ends, domAdded is empty again", async () => {
         test.setTimeout(90_000);
-        const h = await heldRun("other.test");
+        const h = await heldRun("other.test", { panel: true });
         try {
             expect(h.gate.tool, "the run gated on the scripted type (the run machinery's positive control)").toBe("type");
             expect(h.adds(h.t0, h.tHeld), "the run mounts something while the gate holds (the control: the probe records adds)").not.toEqual([]);
