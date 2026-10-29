@@ -113,7 +113,8 @@ twice. It is told apart by the invisible text over a single full-page image, not
 (slice 3's `look` target, `png()` in Python). So a page sent without its image says what the measurements saw when
 they saw something: a `text` page with a drawn share under the figure cut gets a short note naming it ("page N: images
 or drawing cover 12%; look at it to see them"). Missing a figure costs a look; an image sent for nothing costs its
-tokens on every turn. The note's floor and wording are open, and land with slice 3.
+tokens on every turn. The note's floor and wording are open, and land with slice 3. The rule the note follows, and
+the other places window.ml holds something back, are in [HELD_BACK.md](HELD_BACK.md).
 
 **The test PDFs.** Synthetic fixtures, committed, with the answer known by construction: a text page, the same page
 rasterised, that scan with a one-line footnote, the scan with an invisible OCR layer, a page with a chart over a share
