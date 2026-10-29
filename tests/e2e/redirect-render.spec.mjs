@@ -1,7 +1,7 @@
 // redirect-render.spec.mjs — a rendered fetch_url's tab follows a redirect only to a hop it judged (SITE_PRESENCE step 5).
 //
-// The render tab opens blank and a declarativeNetRequest session rule scoped to it blocks main- and sub-frame requests
-// off the first URL's site before they leave (sw-redirects.ts, guardRenderTab). One server answers every hostname; it
+// A declarativeNetRequest session rule, installed before the render tab exists and narrowed to it, blocks its main- and
+// sub-frame requests off the first URL's site before they leave (sw-redirects.ts, prepareRenderGuard). One server answers every hostname; it
 // records each request, so "never requested" is asserted on the server, not inferred from the result.
 
 import { test, expect } from "@playwright/test";
