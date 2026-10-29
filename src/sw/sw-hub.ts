@@ -14,6 +14,7 @@ import { HubRuntime, type HubRuntimeStatus } from "../hub/runtime/hub-runtime";
 import { DeviceRegistry, type DeviceState } from "../hub/runtime/hub-devices";
 import type { DeviceInfo } from "../session/session-host";
 import { LOCAL_RUNTIME, localRuntimeId, runSessionCommand, sessionServer } from "./sw-sessions";
+import { fileChunks } from "./sw-file-chunks";
 
 /** Where this browser stands with a hub, for Settings. `unpaired` is the usual state and not an error. */
 export type HubState =
@@ -93,6 +94,7 @@ export function ensureHubRuntime(): Promise<void> {
                 membership: m,
                 devices,
                 signer: me.identity,
+                files: fileChunks,
                 side: {
                     localIds: [localRuntimeId(), LOCAL_RUNTIME],
                     list: () => sessionServer.index.list(),

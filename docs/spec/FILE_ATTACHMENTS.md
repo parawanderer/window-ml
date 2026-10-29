@@ -168,6 +168,17 @@ more chunks), each sized to the payload limit less the seal's overhead. The send
   upload past it would slow every session's live replies on that account.
 - The same reference by hash spares the extension's own chat page a second copy of a file attached twice.
 
+Built (2026-10-29, `file-frame.ts`, `file-chunks.ts`, `HubConnection.putFile`; how it works: `docs/dev/hub-client.md`):
+
+- The chunk follows the JSON after a zero byte. `file.have` comes first, so an older runtime (`unsupported`) gets the
+  PDF inline, and a runtime that holds part of the file is sent the rest. Both need `drive`, the scope of the send.
+- The cap is checked before a chunk is sent: with the default 32 MiB burst, `0.6 x` is 19.2 MiB, under the 20.
+- A hub `UNAVAILABLE` now reaches the chunk's waiter through the envelope's `ref`, and a runtime going offline settles
+  everything waiting on it, since the hub discards what it had queued to it. The composer hears either at once.
+- The runtime keeps a finished file by hash for 15 minutes after its last use, so the same file attached again is
+  named, not sent. In worker memory: an eviction costs a re-send, never a wrong file.
+- Not built: progress in the composer while the chunks go.
+
 **Images go only to a model known to see them: unknown is refused.** (Built.) A worker chat attached images without
 asking; it now asks the question an agent run does (`_modelVision`, image-gate.ts: Ollama reports vision or not, or
 the person declared the default model in Settings; anything else is UNKNOWN, never "no"). The reader is the OCR model
