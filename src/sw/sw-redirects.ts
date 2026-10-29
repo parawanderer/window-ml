@@ -83,6 +83,7 @@ function onHeaders(d: chrome.webRequest.OnHeadersReceivedDetails): undefined {
 export function watchRedirects(): void {
     if (watching || !globalThis.chrome?.webRequest?.onHeadersReceived) return;
     watching = true;
+    swept = clearRenderRules();
     chrome.webRequest.onHeadersReceived.addListener(onHeaders, { urls: ["<all_urls>"], tabId: -1 }, ["responseHeaders", "extraHeaders"]);
 }
 
@@ -136,4 +137,81 @@ export async function judgedFetch(url: string, init: RequestInit, judge: HopJudg
         at = next;
     }
     throw new Error("too many redirects");
+}
+
+// --- a render tab's navigations: a declarativeNetRequest session rule per tab ---
+
+/** The session-rule ids render guards use, one per render tab: `RENDER_RULE_BASE` up to `RENDER_RULE_BASE + RENDER_RULE_SPAN`. */
+export const RENDER_RULE_BASE = 900_000_000;
+const RENDER_RULE_SPAN = 1_000_000;
+let nextRule = 0;   // state: plumbing
+/** The start-up sweep of a previous worker's rules, which a new guard waits for so the sweep never takes its rule. */
+let swept: Promise<void> = Promise.resolve();   // state: plumbing
+
+/** What a render tab's guard saw: a navigation the rule blocked, as the hop that led to it. */
+export interface RenderGuard {
+    /** The first navigation the rule blocked since the last `clear`, or null. */
+    blocked(): { from: string; to: string } | null;
+    /** Forget the blocked navigation, before the tab navigates again. */
+    clear(): void;
+    /** Let navigations to `url`'s host (and its subdomains) through, from now on. */
+    widen(url: string): Promise<void>;
+    /** Remove the rule and the listeners. */
+    dispose(): Promise<void>;
+}
+
+/**
+ * Hold a render tab to the judged set before it navigates: a session rule blocks its main-frame and sub-frame requests to
+ * any domain outside `start`'s registrable domain, so a hop off it is stopped before the request leaves (SITE_PRESENCE
+ * step 5, the tab-render half). Non-blocking `webRequest` reports the hop and its target, which the caller judges.
+ * @param tabId the render tab, still on `about:blank`
+ * @param start the URL it is about to load
+ * @returns the guard; dispose it when the tab closes
+ */
+export async function guardRenderTab(tabId: number, start: string): Promise<RenderGuard> {
+    await swept;
+    const id = RENDER_RULE_BASE + (nextRule++ % RENDER_RULE_SPAN);
+    const domains = [siteOf(new URL(start))];
+    const rule = (): chrome.declarativeNetRequest.Rule => ({
+        id, priority: 1, action: { type: "block" as chrome.declarativeNetRequest.RuleActionType },
+        condition: { tabIds: [tabId], resourceTypes: ["main_frame", "sub_frame"] as chrome.declarativeNetRequest.ResourceType[], excludedRequestDomains: domains },
+    });
+    await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [id], addRules: [rule()] });
+    const cameFrom = new Map<string, string>();
+    let committed = start;
+    let hit: { from: string; to: string } | null = null;
+    const filter = { urls: ["<all_urls>"], tabId, types: ["main_frame" as chrome.webRequest.ResourceType] };
+    const onRedirect = (d: chrome.webRequest.OnBeforeRedirectDetails): undefined => { cameFrom.set(d.redirectUrl, d.url); return undefined; };
+    const onDone = (d: chrome.webRequest.OnCompletedDetails): undefined => { committed = d.url; return undefined; };
+    const onError = (d: chrome.webRequest.OnErrorOccurredDetails): undefined => {
+        if (d.error === "net::ERR_BLOCKED_BY_CLIENT" && !hit) hit = { from: cameFrom.get(d.url) ?? committed, to: d.url };
+        return undefined;
+    };
+    chrome.webRequest.onBeforeRedirect.addListener(onRedirect, filter);
+    chrome.webRequest.onCompleted.addListener(onDone, filter);
+    chrome.webRequest.onErrorOccurred.addListener(onError, filter);
+    return {
+        blocked: () => hit,
+        clear: () => { hit = null; cameFrom.clear(); },
+        widen: async (url) => {
+            const host = new URL(url).hostname;
+            if (!domains.includes(host)) domains.push(host);
+            await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [id], addRules: [rule()] });
+        },
+        dispose: async () => {
+            chrome.webRequest.onBeforeRedirect.removeListener(onRedirect);
+            chrome.webRequest.onCompleted.removeListener(onDone);
+            chrome.webRequest.onErrorOccurred.removeListener(onError);
+            await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [id] }).catch(() => undefined);
+        },
+    };
+}
+
+/** Remove every render rule a previous worker left: session rules outlive the worker, and a render does not. */
+async function clearRenderRules(): Promise<void> {
+    const dnr = globalThis.chrome?.declarativeNetRequest;
+    if (!dnr?.getSessionRules) return;
+    const stale = (await dnr.getSessionRules().catch(() => [] as chrome.declarativeNetRequest.Rule[]))
+        .map((r) => r.id).filter((id) => id >= RENDER_RULE_BASE && id < RENDER_RULE_BASE + RENDER_RULE_SPAN);
+    if (stale.length) await dnr.updateSessionRules({ removeRuleIds: stale }).catch(() => undefined);
 }
