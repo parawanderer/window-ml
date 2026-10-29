@@ -243,7 +243,11 @@ export function brokenReason(id: string): string | undefined { return brokenWhy.
 export function addRunPolicy(runId: string, p: Pick<StoredPolicy, "consumer" | "effect" | "source" | "label" | "origin"> & { proposal?: string }): StoredPolicy {
     const list = byRun.get(runId) ?? [];
     const same = list.find((q) => q.source === p.source && q.effect === p.effect && q.consumer === p.consumer);
-    if (same) return { ...same };
+    if (same) {
+        // A repeated row keeps its stored label and joins this proposal's group, so the group is whole.
+        if (p.proposal && same.proposal !== p.proposal) { same.proposal = p.proposal; saveRuns(); }
+        return { ...same };
+    }
     const made: StoredPolicy = { ...p, id: newId(), scope: "run", created: Date.now() };
     byRun.delete(runId);   // re-inserted last, so the cap drops the oldest session rather than this one
     byRun.set(runId, [...list, made]);

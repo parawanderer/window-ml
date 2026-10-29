@@ -7,6 +7,7 @@
 
 import type { MlTool } from "../contract/contract-agent";
 import type { defineTool } from "../ml/ml-tool-factories";
+import { PROPOSAL_ROWS_MAX } from "../sw/policy-valid";
 
 /** What the tool needs of the worker. Absent: the descriptor alone, whose run refuses (only the worker runs it). */
 export interface ProposePolicyDeps {
@@ -29,7 +30,7 @@ export function proposePolicyTool(define: typeof defineTool, deps?: ProposePolic
         description: "Ask the person to let matching fetch_url calls of this run go without asking (allow), be refused without asking (deny), or always be put to them (ask). " +
             "They see your code, with which of this run's calls it matches and whether it matches other sites, and approve or refuse it. " +
             "Propose an allow only after several approvals of similar fetches; keep it narrow, e.g. one host. " +
-            "Several rules go in one proposal as rules; a deny beats an allow.",
+            "Several rules go in `rules`; a deny beats an allow.",
         parameters: {
             type: "object",
             properties: {
@@ -42,7 +43,8 @@ export function proposePolicyTool(define: typeof defineTool, deps?: ProposePolic
                 label: { type: "string", description: "One short sentence the person reads, e.g. \"Read docs.python.org\"." },
                 rules: {
                     type: "array",
-                    description: "Several rules, instead of effect, when and label.",
+                    maxItems: PROPOSAL_ROWS_MAX,
+                    description: "Instead of effect, when and label.",
                     items: {
                         type: "object",
                         properties: { effect: { type: "string", enum: ["allow", "deny", "ask"] }, when: { type: "string" }, label: { type: "string" } },

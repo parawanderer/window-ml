@@ -8,7 +8,7 @@
 import type { NeutralMessage } from "../contract/contract-chat";
 import { evalPolicy, type PolicyEffect } from "../readonly-exec";
 import { fetchFacts, navigateFacts } from "./sw-policies";
-import { POLICY_LABEL_MAX, POLICY_SOURCE_MAX } from "./policy-valid";
+import { POLICY_LABEL_MAX, POLICY_SOURCE_MAX, PROPOSAL_ROWS_MAX } from "./policy-valid";
 
 /** A proposal as the worker accepted it: the strings it checked, which are what the card shows and what is added. */
 export interface PolicyProposal {
@@ -120,8 +120,7 @@ export function checkProposal(args: Record<string, unknown>): { proposal: Policy
     return { proposal: { effect, source: when, label: label.trim() } };
 }
 
-/** The most rules one proposal may carry: a card is read by a person, and a long one is not. */
-export const PROPOSAL_ROWS_MAX = 8;
+export { PROPOSAL_ROWS_MAX };
 
 /**
  * Check a proposal as the model sent it: a list of `rules`, or the one-rule form (`effect`, `when`, `label`) older calls

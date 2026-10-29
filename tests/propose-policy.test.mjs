@@ -252,6 +252,7 @@ test("RED TEAM: a page's START_RUN that lists propose_policy gets no card for it
 // --- several rules in one proposal (docs/spec/POLICIES.md, "Worked example and acceptance test") ---
 
 const ALLOW_SITE = { effect: "allow", when: '(c) => c.url.startsWith("https://other.example/")', label: "Read other.example" };
+const ALLOW_USER = { effect: "allow", when: '(c) => c.url.startsWith("https://other.example/user/")', label: "Read other.example/user" };
 const DENY_ADMIN = { effect: "deny", when: '(c) => c.url.startsWith("https://other.example/admin/")', label: "Never read other.example/admin" };
 
 test("checkProposals takes a list or the one-rule form, names the bad row, and caps the list", () => {
@@ -264,24 +265,43 @@ test("checkProposals takes a list or the one-rule form, names the bad row, and c
     assert.ok("error" in PP.checkProposals({ rules: [ALLOW_SITE], label: "x" }), "rules beside the one-rule fields is refused");
 });
 
-for (const order of [["allow", "deny"], ["deny", "allow"]]) {
-    test(`ACCEPTANCE: three rules are one card and one answer, and the deny beats the allow when sent ${order.join(" then ")}`, T, async () => {
-        const rules = order.map((e) => (e === "allow" ? ALLOW_SITE : DENY_ADMIN));
+for (const [name, rules] of [["the spec's order", [ALLOW_SITE, ALLOW_USER, DENY_ADMIN]], ["the deny first", [DENY_ADMIN, ALLOW_USER, ALLOW_SITE]]]) {
+    test(`ACCEPTANCE: three rules are one card and one answer, and the deny beats the allows in ${name}`, T, async () => {
         const { bg, cards, results, fetched } = await workerRun([
             { name: "propose_policy", args: { rules } },
             { name: "fetch_url", args: { url: "https://other.example/user/x" } },
             { name: "fetch_url", args: { url: "https://other.example/admin/x" } },
         ]);
         assert.deepEqual(cards.map((c) => c.tool), ["propose_policy"], "one card for the proposal, none for the fetch inside the rules");
-        assert.match(cards[0].renderIn.note, /Rule 1 of 2\..*Rule 2 of 2\./s, "each rule has its own measured note");
+        assert.match(cards[0].renderIn.note, /Rule 1 of 3\..*Rule 2 of 3\..*Rule 3 of 3\./s, "each rule has its own measured note");
         assert.match(results[0], /^Added for this run: /);
         assert.match(results[2], /^(Denied|Refused) by/, "the admin read is refused by the deny");
         assert.deepEqual(fetched, ["https://other.example/user/x"], "only the allowed page was fetched");
         const pols = await runPolicies(bg);
-        assert.equal(pols.length, 2);
+        assert.equal(pols.length, 3);
         assert.ok(pols.every((p) => p.origin === "proposed" && p.proposal && p.proposal === pols[0].proposal), "the rows share a proposal id");
     });
 }
+
+test("a proposal of exactly PROPOSAL_ROWS_MAX rules is accepted whole, and the schema declares the cap", T, async () => {
+    const rules = Array.from({ length: PP.PROPOSAL_ROWS_MAX }, (_, i) => ({ ...ALLOW_SITE, when: `(c) => c.url.startsWith("https://other.example/p${i}/")`, label: `Read p${i}` }));
+    const { bg, cards } = await workerRun([{ name: "propose_policy", args: { rules } }]);
+    assert.equal(cards.length, 1);
+    assert.equal((await runPolicies(bg)).length, PP.PROPOSAL_ROWS_MAX);
+    const { proposePolicyTool } = await import("../src/tools/propose-policy-tool.ts");
+    assert.equal(proposePolicyTool((d) => d).parameters.properties.rules.maxItems, PP.PROPOSAL_ROWS_MAX);
+});
+
+test("a rule the run already holds joins the new proposal's group, and the policy it names is the one in force", T, async () => {
+    const { bg } = await workerRun([
+        { name: "propose_policy", args: { rules: [ALLOW_SITE, DENY_ADMIN] } },
+        { name: "propose_policy", args: { rules: [ALLOW_SITE, ALLOW_USER] } },
+    ]);
+    const pols = await runPolicies(bg);
+    const second = pols.find((p) => p.source === ALLOW_USER.when).proposal;
+    assert.equal(pols.length, 3, "the repeated row is not stored twice");
+    assert.equal(pols.find((p) => p.source === ALLOW_SITE.when).proposal, second, "the repeated row is in the second proposal's group, so the group is whole");
+});
 
 test("a multi-rule proposal the person refuses adds none of its rows", T, async () => {
     const { bg, results } = await workerRun([{ name: "propose_policy", args: { rules: [ALLOW_SITE, DENY_ADMIN] } }], { answer: () => false });
