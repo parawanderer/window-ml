@@ -85,6 +85,30 @@ test("a page renders to a PNG of the size asked for, and a huge scale is lowered
     }
 });
 
+test("a transfer function, a soft mask and a knockout group render with no DOM, each drawn as the file says", async () => {
+    // The worker has no `document`, which pdf.js's default filter factory reads: these failed to render until the
+    // reader gave pdf.js one that answers "none", after which pdf.js applies them pixel by pixel (filters.pdf's header).
+    const ext = await launchExtension();
+    try {
+        const r = await pdf(ext, { type: "PDF_RENDER", b64: b64("filters.pdf"), n: 1, scale: 1 });
+        expect(r.ok, JSON.stringify(r)).toBe(true);
+        const page = await ext.context.newPage();
+        const grays = await page.evaluate(async (b64) => {
+            const bmp = await createImageBitmap(await (await fetch(`data:image/png;base64,${b64}`)).blob());
+            const ctx = new OffscreenCanvas(bmp.width, bmp.height).getContext("2d");
+            ctx.drawImage(bmp, 0, 0);
+            // The squares' row (PDF y 375), at the transfer square, the soft-mask square, the first knockout square
+            // alone, and where the two knockout squares overlap.
+            return [125, 305, 430, 500].map((x) => ctx.getImageData(x, 792 - 375, 1, 1).data[0]);
+        }, r.pngB64);
+        // 0.2 gray inverted is 0.8 (204); the inverted black mask lets the black fill through (0); half of half
+        // opacity is 191, and the overlap is no darker, because a knockout group's second square replaces the first.
+        expect(grays).toEqual([204, 0, 191, 191]);
+    } finally {
+        await ext.close();
+    }
+});
+
 test("the adversarial fixtures come back bounded, each with an answer inside the wall-clock cap", async () => {
     test.setTimeout(120_000);
     const ext = await launchExtension();
