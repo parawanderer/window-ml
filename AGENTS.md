@@ -122,6 +122,7 @@ it was learned by shipping the wrong version first.
 | which sites may use `window.ml`: the origin gate, the approved/denied lists, their settings | `docs/dev/site-access.md` (+ `docs/spec/SITE_ACCESS.md`) |
 | what a page can observe of window.ml acting in it (globals, stacks, event trust, CDP traces, request headers) | `docs/dev/detection-surface.md` |
 | notifications: what reaches someone with the app closed, on which surface, and what a real push would still add | `docs/spec/NOTIFICATIONS.md` |
+| a call that outlives its turn, a wake on an event, a detach, a background task: the three modes and the one inbox | `docs/spec/ASYNC_CALLS.md` (concept, nothing built) |
 | the patched Ollama/OpenWebUI features and how the client reads them | `docs/FORKED-BACKENDS.md` |
 | the e2e harness, observe, the bench, live probes, demos | `docs/dev/e2e-harness.md` (+ each tool's skill in `.claude/skills/`) |
 | the system prompt, a tool's description, anything else the model reads | `docs/dev/prompt-review.md` (+ `docs/spec/PROMPT_BUDGET.md`) |

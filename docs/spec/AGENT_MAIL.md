@@ -1,6 +1,8 @@
 # Agent mail: a queryable inbox agents address without a human in the middle
 
-Parked design, 2026-10-04. Nothing is built. Written by the session that spent a day being the failure mode, so
+Parked design, 2026-10-04. Nothing is built. Mail arriving is one SOURCE of the run inbox that
+[`ASYNC_CALLS.md`](ASYNC_CALLS.md) specifies (a mode-2 subscription); that file owns how anything reaches a running
+loop, this one what a message is. Written by the session that spent a day being the failure mode, so
 every claim below has a dated example behind it rather than a guess about what agents might want.
 
 Sub-topic of the subagent / local-execution / cross-device coordination work: see `HEADLESS_AGENTS.md`,
