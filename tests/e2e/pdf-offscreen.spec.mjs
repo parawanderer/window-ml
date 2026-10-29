@@ -103,7 +103,8 @@ test("a transfer function, a soft mask and a knockout group render with no DOM, 
         }, r.pngB64);
         // 0.2 gray inverted is 0.8 (204); the inverted black mask lets the black fill through (0); half of half
         // opacity is 191, and the overlap is no darker, because a knockout group's second square replaces the first.
-        expect(grays).toEqual([204, 0, 191, 191]);
+        // Within 2 (Linux rounds the knockout to 190): without each effect the gray would be 51, 255 and 159.
+        [204, 0, 191, 191].forEach((want, i) => expect(Math.abs(grays[i] - want), `square ${i}: ${grays}`).toBeLessThanOrEqual(2));
     } finally {
         await ext.close();
     }
