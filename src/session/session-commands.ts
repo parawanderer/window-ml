@@ -17,6 +17,8 @@ import type { Command, CommandError, CommandFrom, CommandResult, CommandType, Li
 import type { SessionIndex } from "./session-index";
 import { capTitle } from "./session-title";
 import { approvalKey } from "../approval-key";
+import { ImagesRefused, VISION_UNKNOWN_REFUSAL } from "../image-gate";
+
 
 /** What a page said it did with a relayed session action. `no-answer`: it did not reply in time. */
 export type PageOutcome = "steer" | "turn" | "cancelled" | "continued" | "busy" | "none" | "no-answer";
@@ -79,9 +81,11 @@ export interface CommandDeps {
     /** forget what the worker keeps for a finished session: its stored chat history, its resumable snapshot */
     forgetStored(hash: string): Promise<void>;
     /** start a chat this worker hosts (no tab), resolving with its hash once the first turn is under way */
-    startChat(opts: { text: string; images?: string[]; files?: AttachedFile[]; model?: string; system?: string; think?: boolean | null; ephemeral?: boolean }): Promise<string>;
-    /** the next turn of a worker-hosted chat; `not-found` when this worker does not host it and storage has nothing */
-    sendChat(hash: string, text: string, images?: string[], files?: AttachedFile[]): Promise<"turn" | "busy" | "not-found">;
+    startChat(opts: { text: string; images?: string[]; files?: AttachedFile[]; model?: string; system?: string; think?: boolean | null; ephemeral?: boolean; vision?: true }): Promise<string>;
+    /** the next turn of a worker-hosted chat; `not-found` when this worker does not host it and storage has nothing.
+     *  Both throw `ImagesRefused` (image-gate.ts) before a turn whose images may not be sent; `vision: true` is the
+     *  person's word that the model sees. */
+    sendChat(hash: string, text: string, images?: string[], files?: AttachedFile[], vision?: true): Promise<"turn" | "busy" | "not-found">;
     /** switch a worker-hosted chat's model from its next turn; false when this worker does not host it */
     setChatModel(hash: string, model: string): Promise<boolean>;
     /** switch a run whose loop this worker hosts: `running` takes it at the next model call, `stored` at its next turn;
@@ -398,6 +402,8 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             }
             // The page answered that it started nothing, or never answered at all. A run that started anyway would
             // still appear in the index, so this says what is known rather than inventing a session id.
+            // A run whose pasted images may not be sent is refused before it starts, with the same sentence as a chat.
+            if (r.error?.includes(VISION_UNKNOWN_REFUSAL)) return fail("unsupported", VISION_UNKNOWN_REFUSAL);
             if (r.error) return fail("failed", r.error);
             if (r.outcome === "none") return fail("failed", "the page did not start a run");
             return fail("unavailable", "the page did not answer; it may still be loading, or the extension cannot run there");
@@ -498,11 +504,13 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
                     ...(typeof c.system === "string" && c.system ? { system: c.system } : {}),
                     ...(c.think != null ? { think: c.think } : {}),
                     ...(c.ephemeral ? { ephemeral: true } : {}),
+                    ...(c.vision === true ? { vision: true as const } : {}),
                 });
                 // "Sessions started by a command are saved unless `ephemeral`" (SESSION_CONTRACT.md §Commands).
                 if (!c.ephemeral) deps.keepSession(hash);
                 return ok({ session: { runtime: deps.runtime, hash } });
             } catch (err) {
+                if (err instanceof ImagesRefused) return fail("unsupported", err.message);
                 return fail("failed", (err as Error)?.message || String(err));
             }
         },
@@ -519,7 +527,11 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             // turn. Checked BEFORE the run paths, which both end at a tab this session does not have.
             if (pagelessChat(s.id.hash)) {
                 if (text.length > CHAT_TEXT_MAX) return fail("invalid", "that message is too long");
-                const outcome = await deps.sendChat(s.id.hash, text, images, att.files);
+                let outcome: "turn" | "busy" | "not-found";
+                try { outcome = await (c.vision === true ? deps.sendChat(s.id.hash, text, images, att.files, true) : deps.sendChat(s.id.hash, text, images, att.files)); } catch (err) {
+                    if (err instanceof ImagesRefused) return fail("unsupported", err.message);
+                    throw err;
+                }
                 if (outcome === "turn") return ok({ mode: "turn" });
                 if (outcome === "busy") return fail("conflict", "the chat is still answering the last message");
                 return fail("not-found", "this browser no longer holds that chat");

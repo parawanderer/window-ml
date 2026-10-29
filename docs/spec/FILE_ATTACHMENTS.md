@@ -168,22 +168,29 @@ more chunks), each sized to the payload limit less the seal's overhead. The send
   upload past it would slow every session's live replies on that account.
 - The same reference by hash spares the extension's own chat page a second copy of a file attached twice.
 
-**Images go only to a model known to see them: unknown is refused.** A worker chat attaches images today without
-asking; it now asks the question an agent run does (`_modelSees`: Ollama reports vision, or the person declared the
-default model as seeing in Settings). When a message would send an image (pasted, or a page that needs one) and the
-answer is:
+**Images go only to a model known to see them: unknown is refused.** (Built.) A worker chat attached images without
+asking; it now asks the question an agent run does (`_modelVision`, image-gate.ts: Ollama reports vision or not, or
+the person declared the default model in Settings; anything else is UNKNOWN, never "no"). The reader is the OCR model
+in Settings when it is set and not known to be blind. When a message would send an image (pasted, or a page that
+needs one) and the answer is:
 
 | The model… | The message |
 | --- | --- |
-| sees | is sent with the images |
-| does not see, and a reader model is set | goes with the reader's reading of each image, attributed to the reader |
-| does not see, and no reader model is set | goes with each such page named ("page 3 is a scan this model cannot see; set a reader model in Settings to have it read") |
-| is UNKNOWN | is refused before sending, with a sentence: "This model may not see images. If it does, turn on 'This model sees images' and send again." Nothing is dropped and nothing is sent. |
+| sees, or the person said it does (`vision: true`) | is sent with the images |
+| does not see or is UNKNOWN, and a reader model is set | goes with the reader's reading of each image, attributed to the reader |
+| does not see, and no reader model is set | goes with each image or page named ("page 3 is a scan this model cannot see; set a reader model in Settings to have it read") |
+| is UNKNOWN, and no reader model is set | is refused before sending (`unsupported`), with a sentence: "This model may not see images. If it does, turn on 'This model sees images' and send again." Nothing is dropped and nothing is sent. |
+
+An unknown model with a reader goes to the reader (decided 2026-10-29): no pixels reach a model nobody confirmed, and
+"does not see" can be declared only for the default model, so refusing there would leave another cloud model only
+the choice of forcing images on it.
 
 The override is `vision: true` on `chat.start`, `agent.start` and `session.send`, the person's declaration, meaning
-what `ml.agent({ vision: true })` means: send the images to the run's own model, no probe. The composer offers it as a
-toggle when the model's vision is unknown; the refusal is checked again in the runtime. This changes what a worker
-chat does with a pasted image today: a model of unknown vision used to get it, unread.
+what `ml.agent({ vision: true })` means: send the images to the run's own model, no probe. `session.send` carries it
+for a chat only; an agent run's vision is decided at `agent.start`. The composer offers it as the "This model sees
+images" toggle when the model's vision is not reported (sees-images.tsx), on the start page and in a chat's composer;
+the refusal is checked again in the runtime. This changes what a worker chat does with a pasted image: a model of
+unknown vision used to get it, unread.
 
 **Eight images per turn, the rest named.** `MAX_TURN_IMAGES` stays 8, a hard cap, with no token budget. Images the
 person pasted count first, then the pages that need one, in page order. A page past the cap goes to the reader model

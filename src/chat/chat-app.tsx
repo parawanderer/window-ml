@@ -34,6 +34,7 @@ import { ExportChat, exportingChat, type PartialWhy } from "./export-dialog";
 import { ViewToggle, calm, codeSize, panelSize, keyUse, knowsKeys, listOpen, logOpen, flushReadMarks, markRead, noteKeyUse, pane, setCalm, setLogOpen, setPane, setStateOpen, stateOpen } from "./view-mode";
 import { MenuItem } from "./menu";
 import { SessionModelPicker } from "./model-picker";
+import { ChatSeesImages } from "./sees-images";
 import { DeleteConfirm, RenameDialog, SessionActions, usePeek } from "./row-menu";
 import { GearMenu, Rail, mainView, openSession } from "./nav";
 import { SearchPage } from "./search-page";
@@ -110,6 +111,15 @@ function useHashRoute(): void {
         else { history.pushState(null, "", want); pushedEntry = true; }
         seenHash = location.hash;
     }, [key, main, tab]);
+}
+
+/** What a session's composer draws beside send: a chat's "This model sees images" toggle (sees-images.tsx), and the
+ *  model picker where the page puts it below. */
+function composerTools(store: ChatStore, rt: RuntimeInfo | undefined, summary: SessionSummary | undefined, sessionKey: SessionKey, modelBelow: boolean) {
+    if (!rt || !summary) return undefined;
+    const eye = summary.kind === "chat" ? <ChatSeesImages store={store} rt={rt} model={summary.model ?? null} sessionKey={sessionKey} /> : null;
+    const picker = modelBelow && summary.model ? <ModelTop store={store} rt={rt} model={summary.model} sessionKey={sessionKey} summary={summary} quiet /> : null;
+    return eye || picker ? <>{eye}{picker}</> : undefined;
 }
 
 /** Sessions whose runtime answered `unsupported` to a switch: their loop runs in a page, whose script owns the model. */
@@ -493,7 +503,7 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
                         <span class="chat-resume-what">The tab this run worked in has closed.</span><span class="chat-resume-go">Resume on a page</span>
                     </button>
             ) : s && canDrive ? <Composer s={s} multiline keys={{ learned: knowsKeys(keyUse.value), used: noteKeyUse }}
-                tools={modelBelow && summary?.model && rt ? <ModelTop store={store} rt={rt} model={summary.model} sessionKey={sessionKey} summary={summary} quiet /> : undefined} />
+                tools={composerTools(store, rt, summary, sessionKey, modelBelow)} />
                 : s && rt ? <div class="chat-readonly">{!rt.online ? `${rt.name} is offline. You can read this session, and send to it once it is back.` : `This device may watch sessions on ${rt.name}, not drive them.`}</div>
                     : null}
         </main>

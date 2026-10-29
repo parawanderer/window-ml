@@ -31,7 +31,7 @@ import { currentAnswer, currentDeref, currentServerAllow, currentHasTool, curren
 import { installToolDelegation, registerRun, endRun } from "./agent/run-delegation";
 import { models, serverTools, execServerTool, info, capabilities, getModel, embed, config, setModel, ps, unload } from "./ml/ml-server";
 import { defineTool, lookTool, locateTool, clickTool, typeTool, navigateTool, fetchTool, pythonTool, chatMetaTool } from "./ml/ml-tool-factories";
-import { read, screenshot, _shotBox, _stitchFullPage, _resolveVisionModel, _modelSees, _nativeLookTool, _imageToDataUrl, _fetchImageBase64 } from "./ml/ml-vision";
+import { read, screenshot, _shotBox, _stitchFullPage, _resolveVisionModel, _modelSees, _modelVision, _nativeLookTool, _imageToDataUrl, _fetchImageBase64 } from "./ml/ml-vision";
 import { mlFetchCache } from "./ml/ml-fetch-cache";
 import { pythonExec, _loadTable, _resolveTable } from "./ml/ml-python";
 import { createChat, resumeChat, chat, step } from "./ml/ml-chat";
@@ -220,6 +220,7 @@ import { pageWorld } from "./page-world";
         chatMetaTool: chatMetaTool,
         _resolveVisionModel: _resolveVisionModel,
         _modelSees: _modelSees,
+        _modelVision: _modelVision,
         _nativeLookTool: _nativeLookTool,
         // The built-in ml.agent({ logDebug: true }) tracer; pass as onStep too.
         _logStep: logStep,

@@ -11,6 +11,7 @@ import type { SidebarServices } from "../sidebar/services";
 import { view } from "../sidebar/store";
 import type { ChatStore } from "./chat-store";
 import { mayCommand } from "./grants";
+import { seesImages } from "./sees-images";
 import type { ClientPlatform } from "./platform";
 
 /**
@@ -69,7 +70,8 @@ export function hostServices(store: ChatStore, platform: ClientPlatform, reading
         sendToSession: async (key, text, images, files) => {
             const id = idOf(key);
             if (!id) return { ok: false, error: "no such session here" };
-            const r = await store.send({ type: "session.send", session: id, text, ...(images?.length ? { images } : {}), ...(files?.length ? { files } : {}) });
+            const vision = !!images?.length && seesImages.value.has(key as SessionKey);
+            const r = await store.send({ type: "session.send", session: id, text, ...(images?.length ? { images } : {}), ...(files?.length ? { files } : {}), ...(vision ? { vision: true as const } : {}) });
             return r.ok ? { ok: true } : { ok: false, error: r.error.message || r.error.code };
         },
         cancelSession: (key) => {

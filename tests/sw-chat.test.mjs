@@ -12,7 +12,7 @@ const T = { timeout: 5000 };
 
 /** A worker whose model call, storage and clock are scriptable. `answer` may resolve, reject, or wait. `stream`, when
  *  given, is the worker's streamed call (a turn then takes it instead of `call`), and `clock` the worker's clock. */
-function world({ answer, stream, clock } = {}) {
+function world({ answer, stream, clock, plan, read } = {}) {
     const events = [];
     const stored = new Map();
     let pending = null;
@@ -26,11 +26,15 @@ function world({ answer, stream, clock } = {}) {
         load: async (hash) => stored.get(hash) ?? null,
         save: async (hash, session) => { stored.set(hash, session); },
         now: clock ?? (() => 1000),
+        // Where images go: to the model unless a test says otherwise; `asked` records each question.
+        images: async (model, forced) => { asked.push({ model, forced }); return plan ? plan(model, forced) : { route: "model" }; },
+        read: read ?? (async (image, reader) => `${reader} read ${image.length} chars`),
     };
+    const asked = [];
     configureBackgroundChats(deps);
     for (const hash of backgroundChats()) forgetBackgroundChat(hash);   // the module's map is worker-wide
     return {
-        events, stored, deps,
+        events, stored, deps, asked,
         kinds: () => events.map((e) => e.kind),
         of: (kind) => events.filter((e) => e.kind === kind),
         hold: () => new Promise((resolve) => { pending = resolve; }),
@@ -278,4 +282,82 @@ test("a turn without files is unchanged: no display on the event, the typed text
     await until(() => w.of("chat-result").length === 1, "the turn to finish");
     assert.equal("display" in w.of("chat")[0], false);
     assert.equal(w.of("chat")[0].request.messages.at(-1).content, "plain");
+});
+
+// --- images: to the model, to a reader, named, or refused before anything is sent (src/image-gate.ts) ---
+
+const PNG = "data:image/png;base64,AAAA";
+
+test("a chat whose images may not be sent is refused before it starts: no chat, no event, no model call", T, async () => {
+    let calls = 0;
+    const w = world({ plan: () => ({ route: "refused", message: "This model may not see images." }), answer: async () => { calls++; return { content: "x" }; } });
+    await assert.rejects(startBackgroundChat({ text: "what is this", images: [PNG], model: "cloud-x" }), { name: "ImagesRefused", message: "This model may not see images." });
+    assert.deepEqual(backgroundChats(), []);
+    assert.deepEqual(w.events, []);
+    assert.equal(calls, 0);
+    assert.deepEqual(w.asked, [{ model: "cloud-x", forced: false }]);
+});
+
+test("a later message refused for its images leaves the chat idle and its history untouched", T, async () => {
+    let refuse = false;
+    const w = world({ plan: () => (refuse ? { route: "refused", message: "no" } : { route: "model" }) });
+    const hash = await startBackgroundChat({ text: "hi" });
+    await until(() => w.of("chat-result").length === 1, "turn 1");
+    refuse = true;
+    await assert.rejects(sendBackgroundChat(hash, "and this?", [PNG]), { name: "ImagesRefused" });
+    assert.equal(w.of("chat").length, 1, "no second turn was started");
+    refuse = false;
+    assert.equal(await sendBackgroundChat(hash, "plain words"), "turn", "the chat is not left busy");
+});
+
+test("vision: true is passed to the question as the person's word, on start and on send", T, async () => {
+    const w = world();
+    const hash = await startBackgroundChat({ text: "look", images: [PNG], vision: true });
+    await until(() => w.of("chat-result").length === 1, "turn 1");
+    assert.equal(await sendBackgroundChat(hash, "again", [PNG], undefined, true), "turn");
+    await until(() => w.of("chat-result").length === 2, "turn 2");
+    assert.deepEqual(w.asked.map((a) => a.forced), [true, true]);
+});
+
+test("a message without images asks nothing", T, async () => {
+    const w = world({ plan: () => ({ route: "refused", message: "no" }) });
+    await startBackgroundChat({ text: "words only" });
+    await until(() => w.of("chat-result").length === 1, "the turn");
+    assert.deepEqual(w.asked, []);
+});
+
+test("to the model: the images ride on the message and on the event", T, async () => {
+    const w = world();
+    await startBackgroundChat({ text: "see", images: [PNG] });
+    await until(() => w.of("chat-result").length === 1, "the turn");
+    const [start] = w.of("chat");
+    assert.deepEqual(start.request.messages.at(-1).images, [PNG]);
+    assert.deepEqual(start.request.images, [PNG]);
+});
+
+test("to a reader: the model gets each reading, credited to the reader, and no pixels", T, async () => {
+    const w = world({ plan: () => ({ route: "reader", reader: "llava" }), read: async (image, reader) => `text of ${image === PNG ? "png" : "?"} by ${reader}` });
+    await startBackgroundChat({ text: "what does it say", images: [PNG, PNG] });
+    await until(() => w.of("chat-result").length === 1, "the turn");
+    const [start] = w.of("chat");
+    const msg = start.request.messages.at(-1);
+    assert.equal(msg.images, undefined);
+    assert.equal(start.request.images, null);
+    assert.equal(msg.content, "what does it say\n\n[Pasted image 1: you can't see images, so llava transcribed its text:]\ntext of png by llava\n\n[Pasted image 2: you can't see images, so llava transcribed its text:]\ntext of png by llava");
+});
+
+test("to a reader that fails: the note says the image could not be read, and the turn still runs", T, async () => {
+    const w = world({ plan: () => ({ route: "reader", reader: "llava" }), read: async () => { throw new Error("down"); } });
+    await startBackgroundChat({ text: "", images: [PNG] });
+    await until(() => w.of("chat-result").length === 1, "the turn");
+    assert.equal(w.of("chat")[0].request.messages.at(-1).content, "[Pasted image: you can't see images, so llava transcribed its text:]\n(could not read the image)");
+});
+
+test("named: a model known not to see, with no reader, is told each image was not sent", T, async () => {
+    const w = world({ plan: () => ({ route: "named" }) });
+    await startBackgroundChat({ text: "here", images: [PNG] });
+    await until(() => w.of("chat-result").length === 1, "the turn");
+    const msg = w.of("chat")[0].request.messages.at(-1);
+    assert.equal(msg.images, undefined);
+    assert.equal(msg.content, "here\n\n[Pasted image was not sent: you can't see images, and no reader model is set to read it.]");
 });
