@@ -321,6 +321,9 @@ test.describe("exec", () => {
         // use the content scripts' world's builtins (rows 1 and 6).
         expect(row.during.globalsAdded).not.toContain("ml");
         expect(row.during.extensionCallers).toEqual([]);
+        // The run's card is in the tab's side panel, which is not the page: nothing of it is added to the page's DOM.
+        expect(row.during.domAdded.filter((d) => /ml-sb-card/.test(d)), "a hidden page was given the HUD card").toEqual([]);
+        expect(row.during.domAttrs.filter((d) => /ml-sb-card/.test(d))).toEqual([]);
     });
 
     test("isolated world with streaming: the binding is named for the world, so the page never sees it", async () => {
@@ -328,6 +331,7 @@ test.describe("exec", () => {
         expect(row.cdp).toEqual(["(attach)", "Runtime.enable", "Runtime.addBinding", "Page.getFrameTree", "Page.createIsolatedWorld", "Runtime.evaluate", "Runtime.evaluate", "Runtime.removeBinding", "(detach)"]);
         expect(row.during).toMatchObject(NO_CDP);
         expect(row.load.final.mlIsoStream).toBe(false);
+        expect(row.during.domAdded.filter((d) => /ml-sb-card/.test(d)), "a hidden page was given the HUD card").toEqual([]);
     });
 
     test("strict-CSP page (main world through CDP): no console swap, no injected.js stack", async () => {
