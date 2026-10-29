@@ -631,7 +631,7 @@ fetch":
   `maxItems` and the cap is tested at exactly `PROPOSAL_ROWS_MAX`. RULED 2026-10-29: the tool's "Added" line, which the
   model reads, names the STORED label for a repeated row, not the one the model sent, with a note that the sent label
   was not kept; what the model is told must match the store (one small change at the start of (b)'s branch). The
-  red team pins the multi-row surface in its own file as a PR after #1332.
+  red team pins the multi-row surface in its own file as a PR after #1332. (b) is #1347 OPEN (head b84a003a, `policies/act-consumer`, @agent @exec @security, verified 2026-10-29): the `act` consumer, the demo-site fixture (a server under tests/e2e/fixtures/demo-site) and the acceptance spec (policy-worked-example.spec.mjs under tests/e2e), which also carries item 2's fourth row (Delete and Publish refused with the row named, the server log showing only the approve, the redirect variant held on arrival), so item 2 is in (b), not its own PR. Shared code it names: the click/type precheck returns the element's tag, href and accessible name, and `autoApprove` may return a promise because the element comes from the page. The stored-label Added line is in it. Not in it: (c), the @ui per-row card, red-team rows. The janitor reviews; the lane merges with `--await-review`.
 
 **The acceptance test** (e2e, `fake-llm`, two local origins A and B so the cross-origin path is real): the run starts
 on A; the scripted model calls `propose_policy` with the three rows; the test reads the card (three rows, each with a
