@@ -202,7 +202,7 @@ function onWorkerMessage(message: PageMessage & { event?: unknown }, _sender: ch
         return undefined;
     }
     if (!message || message.type !== "RUN_TOOL_IN_PAGE") return undefined;
-    const { runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, verifyInWorker, stream, finish: finishTurn, reads, answerShape, answerSelect, geometry, pageRead } = (message.payload || {}) as { pageRead?: unknown; verifyInWorker?: boolean; runId: string; name: string; args: unknown; reads?: unknown[]; answerShape?: unknown[]; answerSelect?: unknown; geometry?: unknown; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; stream?: boolean; finish?: boolean };
+    const { runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, verifyInWorker, stream, finish: finishTurn, reads, answerShape, answerSelect, geometry, pageRead, crossOriginWord } = (message.payload || {}) as { crossOriginWord?: boolean; pageRead?: unknown; verifyInWorker?: boolean; runId: string; name: string; args: unknown; reads?: unknown[]; answerShape?: unknown[]; answerSelect?: unknown; geometry?: unknown; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; stream?: boolean; finish?: boolean };
     // Nothing of ours is in this page, so nothing will ever answer. Fail fast, and post nothing to it.
     if (!gateOpen()) { sendResponse({ result: SHUT_MSG }); return true; }
     const callId = Math.random().toString(36).slice(2);
@@ -235,7 +235,7 @@ function onWorkerMessage(message: PageMessage & { event?: unknown }, _sender: ch
         finish({ result: `Error: the page didn't respond while running "${name}" (timed out). It may be mid-navigation. Re-check the page (look / pageInfo) and retry, or navigate to a different page.` }, false);
     }, TOOL_RELAY_TIMEOUT_MS);
     onPage(onResult);
-    toPage({ type: "PAGE_TOOL_RUN", callId, runId, name, args, reads, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, verifyInWorker, stream, finish: finishTurn, answerShape, answerSelect, geometry, pageRead });
+    toPage({ type: "PAGE_TOOL_RUN", callId, runId, name, args, reads, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, verifyInWorker, stream, finish: finishTurn, answerShape, answerSelect, geometry, pageRead, crossOriginWord: crossOriginWord === true });
     return true;   // async sendResponse (the window round-trip completes later)
 }
 

@@ -165,3 +165,44 @@ test("type on B/other asks, since no row allows it; refused on the card it types
     expect(cardsOf(o)).toEqual(["propose_policy", "type"]);
     expect(only(o, "type")[0].approval).toBe("denied");
 });
+
+// --- the person's word under crossOrigin: false (a run a page built, which may not leave its site on its own) ---
+
+/** Add (or, with `remove`, remove) a global policy as the policy page does: POLICIES from an extension page. */
+async function policyOp(payload) {
+    const ui = await ext.context.newPage();
+    await ui.goto(`chrome-extension://${ext.extensionId}/popup.html`);
+    const r = await ui.evaluate((pl) => chrome.runtime.sendMessage({ type: "POLICIES", payload: pl }), payload);
+    await ui.close();
+    return r;
+}
+
+/** A page-built run on A with `crossOrigin` off, whose model navigates to B/user/x; `source` (when given) is the person's policy over the navigate, saved first. Returns B's requests. */
+async function pageBuiltNavigate(source) {
+    const B = siteB.url;
+    // The worker hosts the loop (a debug surface is on), which is what the policies govern; the page's own loop answers for itself.
+    await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", modelFilter: "", debugMode: "devtools", autoApproveReadonly: false });
+    await ext.sw.evaluate((origins) => chrome.storage.local.set({ ml_site_always: origins }), [siteA.url, B]);
+    const added = source ? await policyOp({ op: "add", consumer: "fetch", effect: "allow", source, label: "Go anywhere on the demo site" }) : null;
+    const page = await ext.context.newPage();
+    await page.goto(siteA.url + "/");
+    await waitForMl(page);
+    siteB.reset();
+    const script = [{ tool: "navigate", args: { url: B + "/user/x" } }, { content: "done" }];
+    fake.setScript(script);
+    await page.evaluate(() => { void window.ml.agent("go to the demo site", { env: false, crossOrigin: false }); return true; });
+    await expect.poll(() => fake.calls().length, { timeout: 40000 }).toBeGreaterThanOrEqual(script.length);
+    await new Promise((r) => setTimeout(r, 500));
+    const out = { requests: siteB.requests() };
+    await page.close();
+    if (added) for (const g of added.data.global) await policyOp({ op: "remove", id: g.id });
+    await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", modelFilter: "", debugMode: "off", autoApproveReadonly: false });
+    return out;
+}
+
+test("a run without crossOrigin is refused a cross-site navigate; an approved policy of the person's that allows it lets that navigate go", async () => {
+    const none = await pageBuiltNavigate(null);
+    expect(none.requests.some((r) => r.startsWith("/user/x")), "with no policy the page's navigate tool refuses").toBe(false);
+    const allowed = await pageBuiltNavigate(`(c) => c.url.startsWith("${siteB.url}/") && c.interactive`);
+    expect(allowed.requests.some((r) => r.startsWith("/user/x")), "the person's word lets this navigate go").toBe(true);
+});

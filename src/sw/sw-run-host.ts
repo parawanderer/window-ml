@@ -568,7 +568,14 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     // body (`textValue`): a page's answer is deserialized, so it can never be one of them, and a copy made on the way
     // (a verify's) is not one either, which fails closed. state: plumbing
     const workerEnvelopes = new WeakSet<object>();
-    const sendTool = async (payload: { runId: string; name: string; args: Record<string, unknown>; stream?: boolean; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; reads?: PreRead[]; answerShape?: AnswerShapeItem[] }, onStream?: (chunk: string, ts?: number) => void, documentId?: string, pageRouted = false): Promise<unknown> => {
+    /** Whether an approved policy of the person's (proposed or person, never a builtin) allows a navigate to `url`. */
+    const personAllowsNav = (url: string): boolean => {
+        let dest: URL | undefined;
+        try { dest = new URL(url.startsWith("//") ? "https:" + url : url, tabPageUrl.get(tabId) ?? p.pageUrl ?? undefined); } catch { return false; }
+        const j = judgeCall(runId, "fetch", navigateFacts(dest.href));
+        return j.decision === "allow" && !!j.by && j.by !== "builtin" && (j.by.origin === "proposed" || j.by.origin === "person");
+    };
+    const sendTool = async (payload: { runId: string; name: string; args: Record<string, unknown>; stream?: boolean; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; reads?: PreRead[]; answerShape?: AnswerShapeItem[]; crossOriginWord?: true }, onStream?: (chunk: string, ts?: number) => void, documentId?: string, pageRouted = false): Promise<unknown> => {
         // A worker-built run's REMOTE tool never goes to the page, which has no such tool. If this worker does not hold
         // it (rehydrated after an eviction, or a resumed session), it is rebuilt first.
         const tabUrl = tabUrlNow;
@@ -595,6 +602,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             await arrivalSettled(tabId);
             if (arrivalHold(runId)) throw new Error("the tab arrived on a page this run is held on");
         };
+        // A run that may not cross origins is let cross by the person's word: THIS navigate's destination is allowed by an
+        // approved policy (origin `proposed` or `person`, never a builtin), judged now, at the send (POLICIES.md, "The person's word").
+        if (payload.name === "navigate" && !p.crossOrigin && !payload.renderOnly && !payload.precheck && !payload.readonlyTry && personAllowsNav(String(payload.args.url ?? ""))) payload = { ...payload, crossOriginWord: true };
         // `look` of a run whose vision is the worker's runs here (worker-look.ts), pinned to the document the tab holds
         // once any navigation settles; the page is asked geometry only. A preview it still draws (the target's label) is
         // sent the target alone, never the question. A run that does not offer `look` never gets here with a call (the
