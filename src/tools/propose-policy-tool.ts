@@ -10,8 +10,8 @@ import type { defineTool } from "../ml/ml-tool-factories";
 
 /** What the tool needs of the worker. Absent: the descriptor alone, whose run refuses (only the worker runs it). */
 export interface ProposePolicyDeps {
-    /** The checked proposal, or the error the model reads. */
-    check(args: Record<string, unknown>): { proposal: { effect: string; source: string; label: string } } | { error: string };
+    /** The checked rows, in the order sent, or the error the model reads. */
+    check(args: Record<string, unknown>): { proposals: { effect: string; source: string; label: string }[] } | { error: string };
     /** Whether the run now holds this exact policy: the person approved it. */
     added(p: { effect: string; source: string }): boolean;
 }
@@ -28,7 +28,8 @@ export function proposePolicyTool(define: typeof defineTool, deps?: ProposePolic
         summary: "Asks the person for a rule that answers matching fetch_url calls of this run without a card, or always shows one.",
         description: "Ask the person to let matching fetch_url calls of this run go without asking (allow), be refused without asking (deny), or always be put to them (ask). " +
             "They see your code, with which of this run's calls it matches and whether it matches other sites, and approve or refuse it. " +
-            "Propose an allow only after several approvals of similar fetches; keep it narrow, e.g. one host.",
+            "Propose an allow only after several approvals of similar fetches; keep it narrow, e.g. one host. " +
+            "Several rules go in one proposal as rules; a deny beats an allow.",
         parameters: {
             type: "object",
             properties: {
@@ -39,17 +40,28 @@ export function proposePolicyTool(define: typeof defineTool, deps?: ProposePolic
                         "Fields: url, host, method, credentials, rendered, interactive (true for navigate). Use === only.",
                 },
                 label: { type: "string", description: "One short sentence the person reads, e.g. \"Read docs.python.org\"." },
+                rules: {
+                    type: "array",
+                    description: "Several rules, instead of effect, when and label.",
+                    items: {
+                        type: "object",
+                        properties: { effect: { type: "string", enum: ["allow", "deny", "ask"] }, when: { type: "string" }, label: { type: "string" } },
+                        required: ["effect", "when", "label"],
+                    },
+                },
             },
-            required: ["effect", "when", "label"],
+            required: [],
         },
         requiresApproval: true,
         run: async (args: Record<string, unknown>) => {
             if (!deps) return "Error: propose_policy runs only in a run the extension started for you.";
             const r = deps.check(args);
             if ("error" in r) return r.error;
-            return deps.added(r.proposal)
-                ? `Added for this run: "${r.proposal.label}". ${r.proposal.effect === "ask" ? "Matching fetch_url calls now always ask the person." : `Matching fetch_url calls are now ${r.proposal.effect === "allow" ? "fetched" : "refused"} without asking.`}`
-                : "Not added: the person did not approve it. Matching calls still ask.";
+            const rows = r.proposals;
+            if (!rows.every((q) => deps.added(q))) return "Not added: the person did not approve it. Matching calls still ask.";
+            if (rows.length > 1) return `Added for this run: ${rows.map((q) => `${q.effect} "${q.label}"`).join("; ")}. A deny beats an allow.`;
+            const q = rows[0];
+            return `Added for this run: "${q.label}". ${q.effect === "ask" ? "Matching fetch_url calls now always ask the person." : `Matching fetch_url calls are now ${q.effect === "allow" ? "fetched" : "refused"} without asking.`}`;
         },
     });
 }

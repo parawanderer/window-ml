@@ -33,6 +33,8 @@ export interface StoredPolicy {
     label: string;
     origin: PolicyOrigin;
     created: number;
+    /** Set on the rows of one multi-rule proposal, the same id on each, so the policy page can show them together. */
+    proposal?: string;
 }
 
 /** What judging one call decided: the answer, the policy that gave it, and every policy that broke on the way.
@@ -238,7 +240,7 @@ export function runPolicies(runId: string): StoredPolicy[] { return (byRun.get(r
 export function brokenReason(id: string): string | undefined { return brokenWhy.get(id); }
 
 /** Add a policy to a run, unless the run already has one with the same source and effect; returns the run's copy. */
-export function addRunPolicy(runId: string, p: Pick<StoredPolicy, "consumer" | "effect" | "source" | "label" | "origin">): StoredPolicy {
+export function addRunPolicy(runId: string, p: Pick<StoredPolicy, "consumer" | "effect" | "source" | "label" | "origin"> & { proposal?: string }): StoredPolicy {
     const list = byRun.get(runId) ?? [];
     const same = list.find((q) => q.source === p.source && q.effect === p.effect && q.consumer === p.consumer);
     if (same) return { ...same };

@@ -248,3 +248,49 @@ test("RED TEAM: a page's START_RUN that lists propose_policy gets no card for it
     assert.ok(!cards.includes("propose_policy"), `a card was shown for the page's proposal: ${JSON.stringify(cards)}`);
     assert.equal((await runPolicies(bg)).length, 0);
 });
+
+// --- several rules in one proposal (docs/spec/POLICIES.md, "Worked example and acceptance test") ---
+
+const ALLOW_SITE = { effect: "allow", when: '(c) => c.url.startsWith("https://other.example/")', label: "Read other.example" };
+const DENY_ADMIN = { effect: "deny", when: '(c) => c.url.startsWith("https://other.example/admin/")', label: "Never read other.example/admin" };
+
+test("checkProposals takes a list or the one-rule form, names the bad row, and caps the list", () => {
+    assert.deepEqual(PP.checkProposals(NARROW), { proposals: [PP.checkProposal(NARROW).proposal] }, "the one-rule form is kept");
+    const two = PP.checkProposals({ rules: [ALLOW_SITE, DENY_ADMIN] });
+    assert.deepEqual(two.proposals.map((p) => p.effect), ["allow", "deny"], "rows keep the order sent");
+    const bad = PP.checkProposals({ rules: [ALLOW_SITE, { ...DENY_ADMIN, when: "this is not code" }] });
+    assert.match(bad.error, /^Error: rule 2: /);
+    for (const rules of [[], "x", [null], [[ALLOW_SITE]], Array(PP.PROPOSAL_ROWS_MAX + 1).fill(ALLOW_SITE)]) assert.ok("error" in PP.checkProposals({ rules }), JSON.stringify(rules).slice(0, 40));
+    assert.ok("error" in PP.checkProposals({ rules: [ALLOW_SITE], label: "x" }), "rules beside the one-rule fields is refused");
+});
+
+for (const order of [["allow", "deny"], ["deny", "allow"]]) {
+    test(`ACCEPTANCE: three rules are one card and one answer, and the deny beats the allow when sent ${order.join(" then ")}`, T, async () => {
+        const rules = order.map((e) => (e === "allow" ? ALLOW_SITE : DENY_ADMIN));
+        const { bg, cards, results, fetched } = await workerRun([
+            { name: "propose_policy", args: { rules } },
+            { name: "fetch_url", args: { url: "https://other.example/user/x" } },
+            { name: "fetch_url", args: { url: "https://other.example/admin/x" } },
+        ]);
+        assert.deepEqual(cards.map((c) => c.tool), ["propose_policy"], "one card for the proposal, none for the fetch inside the rules");
+        assert.match(cards[0].renderIn.note, /Rule 1 of 2\..*Rule 2 of 2\./s, "each rule has its own measured note");
+        assert.match(results[0], /^Added for this run: /);
+        assert.match(results[2], /^(Denied|Refused) by/, "the admin read is refused by the deny");
+        assert.deepEqual(fetched, ["https://other.example/user/x"], "only the allowed page was fetched");
+        const pols = await runPolicies(bg);
+        assert.equal(pols.length, 2);
+        assert.ok(pols.every((p) => p.origin === "proposed" && p.proposal && p.proposal === pols[0].proposal), "the rows share a proposal id");
+    });
+}
+
+test("a multi-rule proposal the person refuses adds none of its rows", T, async () => {
+    const { bg, results } = await workerRun([{ name: "propose_policy", args: { rules: [ALLOW_SITE, DENY_ADMIN] } }], { answer: () => false });
+    assert.match(results[0], /^Denied by the user/);
+    assert.equal((await runPolicies(bg)).length, 0);
+});
+
+test("a multi-rule proposal with one row that does not run is told to the model and never shown", T, async () => {
+    const { cards, results } = await workerRun([{ name: "propose_policy", args: { rules: [ALLOW_SITE, { ...DENY_ADMIN, when: "nope" }] } }]);
+    assert.deepEqual(cards, []);
+    assert.match(results[0], /^Error: rule 2: /);
+});
