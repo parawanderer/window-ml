@@ -310,8 +310,8 @@ export function fileDisplay(typed: string, files: readonly FramedFile[], element
 }
 
 /**
- * Why the files of a chat message cannot be sent once its PDFs are read, or null: slice 1's cap on the TEXT a
- * message carries in files, counted over the text files and the text of every page read.
+ * Why the text files of a chat message cannot be sent, or null: slice 1's cap on the TEXT a message carries in files.
+ * A PDF is not counted here: its pages go while they fit and the rest are named (sw-chat.ts, `pdfTextBudget`).
  * @param sizes each file's name and characters of text, in attach order
  */
 export function textCapRefusal(sizes: readonly { name: string; chars: number }[]): string | null {

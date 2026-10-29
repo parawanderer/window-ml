@@ -23,7 +23,7 @@ import { defineState } from "../state-registry";
 import { bgRuns, makeWorkerRun, trackRun, untrackRun } from "./sw-runs";
 import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
 import { isExtensionSender } from "./sw-site-access";
-import { fetchLLM, streamLLM, getConfig, listAvailableModels, modelCapabilitiesBatch } from "./sw-llm";
+import { fetchLLM, streamLLM, getConfig, listAvailableModels, modelCapabilitiesBatch, residentContextLength } from "./sw-llm";
 import { workerMl } from "./worker-ml";
 import { ocrRequest } from "../ml/ml-vision";
 import { planImages } from "../image-gate";
@@ -314,6 +314,12 @@ export function configureSessionCommands(run: RunDeps): void {
         pdf: {
             read: async (b64) => { await ensureOffscreen(); return await chrome.runtime.sendMessage({ type: "PDF_READ", b64 } satisfies PdfMessage); },
             render: async (b64, n, scale) => { await ensureOffscreen(); return await chrome.runtime.sendMessage({ type: "PDF_RENDER", b64, n, scale } satisfies PdfMessage); },
+        },
+        // A worker chat sends no num_ctx, so a loaded model answers with the context it is loaded with.
+        contextTokens: async (model) => {
+            const config = await getConfig();
+            const target = model || config.model;
+            return target ? await residentContextLength(config, target) : null;
         },
         read: async (image, reader, signal) => {
             const r = await fetchLLM(ocrRequest(image, { model: reader }), signal);

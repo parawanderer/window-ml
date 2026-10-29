@@ -19,8 +19,9 @@ export type PageRoute = "model" | "reader" | "named";
  * - `named-scan`: a scan this model cannot see and nothing can read; named in its section
  * - `figure`: its text, and a line saying it has a figure the model cannot see
  * - `held-scan`, `held-figure`: past the image cap; named after the pages
+ * - `cut`: past the text the message takes, with every page after it; named after the pages, and not drawn
  */
-export type PageAim = "text" | "image" | "reader" | "named-scan" | "figure" | "held-scan" | "held-figure";
+export type PageAim = "text" | "image" | "reader" | "named-scan" | "figure" | "held-scan" | "held-figure" | "cut";
 
 /** What a planned page came to: the rendered image (a data URL) or why it was not drawn, and the reader's text. */
 export interface PageOutcome { image?: string; failed?: string; read?: string }
@@ -31,16 +32,39 @@ export function wantsImage(kind: string): "scan" | "figure" | null {
 }
 
 /**
+ * How many leading pages of each document fit in `chars` characters of page text, in page order across the
+ * documents: the first page that does not fit ends the count, for it and for every document after it.
+ * @param docs the documents, in attach order
+ * @param chars the characters of page text the message takes (absent: every page fits)
+ */
+export function fitPages(docs: readonly PdfDoc[], chars?: number): number[] {
+    let room = chars ?? Infinity, cut = false;
+    return docs.map((doc) => {
+        let n = 0;
+        for (const p of doc.pages) {
+            if (cut || p.text.length > room) { cut = true; break; }
+            room -= p.text.length;
+            n++;
+        }
+        return n;
+    });
+}
+
+/**
  * Decide each page of each document, in page order across the documents.
  * @param docs the documents, in attach order
  * @param route where images go for this model
  * @param opts `images`: how many images the model may still get this message (the cap less what was pasted);
- *   `reader`: whether a reader model is set (a scan past the cap goes to it); `readerMax`: how many pages it may read
+ *   `reader`: whether a reader model is set (a scan past the cap goes to it); `readerMax`: how many pages it may read;
+ *   `chars`: how many characters of page text the message takes (absent: no limit). Pages go in order while their
+ *   text fits; the first that does not, and every page after it in any document, is `cut`, and takes no image.
  */
-export function planPages(docs: readonly PdfDoc[], route: PageRoute, opts: { images: number; reader: boolean; readerMax: number }): PageAim[][] {
+export function planPages(docs: readonly PdfDoc[], route: PageRoute, opts: { images: number; reader: boolean; readerMax: number; chars?: number }): PageAim[][] {
     let images = Math.max(0, opts.images), reads = Math.max(0, opts.readerMax);
+    const fit = fitPages(docs, opts.chars);
     const read = (): PageAim => (opts.reader && reads > 0 ? (reads--, "reader") : "held-scan");
-    return docs.map((doc) => doc.pages.map((p): PageAim => {
+    return docs.map((doc, d) => doc.pages.map((p, i): PageAim => {
+        if (i >= fit[d]) return "cut";
         const want = wantsImage(p.kind);
         if (!want) return "text";
         if (route === "model") {
@@ -85,7 +109,7 @@ export function pageSections(doc: PdfDoc, aims: readonly PageAim[], outcomes: Re
     let escaped = 0, k = opts.firstImage;
     const images: string[] = [];
     const parts: string[] = [];
-    const heldScans: number[] = [], heldFigures: number[] = [];
+    const heldScans: number[] = [], heldFigures: number[] = [], cut: number[] = [];
     const section = (n: number, attrs: string, lines: string[]): void => {
         const body = lines.filter(Boolean).map((l) => { const e = escapePageText(l); escaped += e.escaped; return e.text; }).join("\n");
         parts.push(`<page n="${n}"${attrs}>\n${body}${body && !body.endsWith("\n") ? "\n" : ""}</page>`);
@@ -95,6 +119,7 @@ export function pageSections(doc: PdfDoc, aims: readonly PageAim[], outcomes: Re
         const text = p.text.trim() ? p.text : "";
         const out = outcomes.get(p.n) ?? {};
         if (aim === "text") { if (text) section(p.n, "", [text]); return; }
+        if (aim === "cut") { cut.push(p.n); return; }
         if (aim === "held-scan") { heldScans.push(p.n); return; }
         if (aim === "held-figure") { heldFigures.push(p.n); if (text) section(p.n, "", [text]); return; }
         if (aim === "figure") { section(p.n, "", [text, `(page ${p.n} has a figure you cannot see)`]); return; }
@@ -108,6 +133,7 @@ export function pageSections(doc: PdfDoc, aims: readonly PageAim[], outcomes: Re
         : `pages ${pageRanges(ns)} ${what[1]}. ${opts.recovery}`;
     if (heldScans.length) parts.push(held(heldScans, ["is a scan not sent as an image", "are scans not sent as images"]));
     if (heldFigures.length) parts.push(held(heldFigures, ["has a figure not sent as an image", "have figures not sent as images"]));
+    if (cut.length) parts.push(held(cut, ["was not sent: past the text a message takes", "were not sent: past the text a message takes"]));
     if (doc.truncated) parts.push(doc.truncated.sentence);
     return { body: parts.join("\n"), escaped, images, nextImage: k };
 }
