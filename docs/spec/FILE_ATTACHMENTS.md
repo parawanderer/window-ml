@@ -135,6 +135,62 @@ image is sent only where the measurements say it carries something the text does
 **Size.** The cap from slice 1 applies to the text the pages produce. A PDF past it goes to a chat refused with the
 reason, and to an agent as a pointer.
 
+### Wiring a PDF through the attach path (decided 2026-10-29)
+
+Shane's rulings on four forks, with the hub's constraints from the `[window-ml hub]` session (window-ml-hub 95cb341).
+
+**The runtime reads the PDF, from its bytes.** `AttachedFile` gains `data` (the bytes) in place of `text` for a PDF.
+The client checks the file (magic bytes, the size cap below) and sends it; it does not extract or classify. The runtime
+reads it through the offscreen reader (`PDF_READ`, `docs/dev/pdf.md`), renders the pages that need an image
+(`PDF_RENDER`), and keeps the bytes in the value store, claimed by the session, for slice 3's `look` and `png()`. A
+client that extracted the pages would be trusted to say what the file holds, and the web build and the phone would each
+carry pdf.js. What the model gets is one `<file>` block, a `<page n="…">` section per page read, with slice 1's escape
+extended to `</page`; whatever the reader held back (the page cap, the time budget, a page that would not read) is named
+in the block by the rule in [HELD_BACK.md](HELD_BACK.md).
+
+**Over the hub: chunks in an acknowledged window.** A PDF is usually past the hub's payload limit (`(1<<20)-1024`,
+announced in `Welcome.limits`; a frame over it closes the sender's connection, so the client's `CommandTooLarge` check
+stays). The client sends the file as `file.put { sha256, index, count }` commands, a `KIND_COMMAND` with a `file.put`
+scope, the chunk as RAW bytes beside the JSON (base64 would spend a third more of the account's rate budget and a third
+more chunks), each sized to the payload limit less the seal's overhead. The send then names the file by
+`{ name, type, sha256, bytes }`. No hub change.
+
+- **At most 4 chunks unacknowledged**; the runtime answers each with a `COMMAND_RESULT`. A runtime's outbound queue on
+  the hub is 16 MiB, and a frame that does not fit closes the RUNTIME's connection, every session it serves with it, so
+  a fast sender to a slow runtime must not burst. The window bounds that at a quarter, and gives progress and resume.
+- **Done is the runtime's word, never "all sent".** Frames queued to a runtime whose connection drops are discarded
+  silently. After a reconnect the client asks which indices the runtime holds for that `sha256` and sends the rest.
+  Chunks are addressed by index; the hub delivers in order today, but promises nothing.
+- **An offline runtime stores nothing**: each chunk is refused at once (`UNAVAILABLE`), so the composer says the
+  runtime is offline instead of waiting.
+- **Cap**: `min(20 MiB, 0.6 x the account's burst allowance)` per attachment and per send, the allowance from
+  `Welcome`. The account's rate (8 MiB/s, a 32 MiB burst) is shared with the runtime's own event publishing, so one
+  upload past it would slow every session's live replies on that account.
+- The same reference by hash spares the extension's own chat page a second copy of a file attached twice.
+
+**Images go only to a model known to see them: unknown is refused.** A worker chat attaches images today without
+asking; it now asks the question an agent run does (`_modelSees`: Ollama reports vision, or the person declared the
+default model as seeing in Settings). When a message would send an image (pasted, or a page that needs one) and the
+answer is:
+
+| The model… | The message |
+| --- | --- |
+| sees | is sent with the images |
+| does not see, and a reader model is set | goes with the reader's reading of each image, attributed to the reader |
+| does not see, and no reader model is set | goes with each such page named ("page 3 is a scan this model cannot see; set a reader model in Settings to have it read") |
+| is UNKNOWN | is refused before sending, with a sentence: "This model may not see images. If it does, turn on 'This model sees images' and send again." Nothing is dropped and nothing is sent. |
+
+The override is `vision: true` on `chat.start`, `agent.start` and `session.send`, the person's declaration, meaning
+what `ml.agent({ vision: true })` means: send the images to the run's own model, no probe. The composer offers it as a
+toggle when the model's vision is unknown; the refusal is checked again in the runtime. This changes what a worker
+chat does with a pasted image today: a model of unknown vision used to get it, unread.
+
+**Eight images per turn, the rest named.** `MAX_TURN_IMAGES` stays 8, a hard cap, with no token budget. Images the
+person pasted count first, then the pages that need one, in page order. A page past the cap goes to the reader model
+when one is set, and otherwise is named in the block with what can get it: "pages 9-48 are scans not sent as images.
+This chat cannot show them." Once slice 3's `look` on a page exists, an agent run's note names it as the recovery;
+until then the note says there is none, since a recovery named must be callable now.
+
 ## Slice 3: an attached file as an `@file:` pointer
 
 **The prefix.** `@file:`, its own, beside `@tool:`, `@pt:` and `@box:`: the value came from the person, not from a
@@ -277,8 +333,8 @@ or a message"). What a hostile page must not get, as tests that fail first:
 
 - `FILE_INLINE_MAX` is 32,000 characters as a first figure (slice 1); still open: measuring it against the prompt
   budget, and whether it scales with the model's context window.
-- The per-command size cap: for text it is `FILE_INLINE_MAX` itself, well under the hub's frame limit; open again for
-  the bytes a PDF sends.
+- The per-command size cap: for text it is `FILE_INLINE_MAX` itself, well under the hub's frame limit; for a PDF's
+  bytes, decided 2026-10-29 (chunks, 20 MiB, "Wiring a PDF through the attach path").
 - The PDF thresholds: read against labelled real pages in `notebooks/pdf/pdf-thresholds.ipynb` (2026-10-28);
   `MIXED_COVER` is 0.1 and path cover counts from `MIXED_PATH_COVER` 0.3. Open: the floor of the held-back note.
 - `png()`'s bound per cell (pages and pixels), and whether a `scanned` page's short clean OCR layer travels with its
