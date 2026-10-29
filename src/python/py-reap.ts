@@ -11,7 +11,8 @@
 //   run's next cell like a kill's;
 // - a KEEP exempts that second kind: the model asked (`python_exec` `keep: true`) to hold its namespace through long
 //   gaps, a run that works overnight. It lasts until the turn ends (`PY_DELETE_RUN`), after which the worker is the
-//   first kind again. A keep never outlives its turn, so it never holds a realm for a run nobody is running.
+//   first kind again, or until the sandbox is killed (a timeout, a crash, a cancel), which the next cell is told as
+//   loss. A keep never outlives its turn, so it never holds a realm for a run nobody is running.
 //
 // The bench's own surface (`own`) and the shared `full` worker are never reaped: the bench keeps a person's variables.
 
