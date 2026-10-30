@@ -7,6 +7,11 @@
 // content script relays only page-relay.ts's HANDLE_MAP types — none of which opens one. These rows are the property a
 // fix must hold so that the next relay, or a content script's mistake, cannot turn into a read of another tab's run.
 //
+// The rule the fix serves by, measured before the rows were written: a devtools page's port carries `tab: null` (the
+// security lane logged `port.sender` from the worker against a real DevTools window, one port per tab), so "an extension
+// page with no tab" covers the product's own panel; the e2e watcher's page-in-a-tab is covered by "its tab's top document
+// is ours"; and our own frame inside a page — a tab whose URL is the page's — is the shape that stays refused.
+//
 // Failing-first, the node:test way: the rows a fix must turn are `{ todo: true }` until it lands (they fail on main at
 // the assertion each one carries), and the flip is a commit of mine after its merge sha that drops the option.
 import { test } from "node:test";
@@ -77,10 +82,14 @@ test("a port from a web URL with no tab reads nothing", { todo: TODO }, async ()
     assert.equal(port.wasDisconnected(), true);
 });
 
-test("an extension URL WITH a tab is refused too (an extension page in a tab is still a tab)", { todo: TODO }, async () => {
+test("an extension URL FRAMED INTO A PAGE is refused (its sender.url is ours, its tab's is the page's)", { todo: TODO }, async () => {
     const bg = loadBackground({ config: CONFIG });
     await seed(bg);
-    const port = openPort(bg, RUN_TAB, { url: "chrome-extension://test/devtools.html", tab: { id: SNEAK_TAB } });
+    // The shape is reachable: our card/overlay iframe runs on any page. Only our code runs in it, so this is not a
+    // hole today — it is the edge of the rule the fix serves by: an extension page with NO tab (a devtools page,
+    // measured: its port carries `tab: null`) or with its own page as the tab's top document. A frame inside a
+    // page has a tab, and that tab is the page's.
+    const port = openPort(bg, RUN_TAB, { url: "chrome-extension://test/card.html", tab: { id: SNEAK_TAB, url: `https://page-${SNEAK_TAB}.test/` }, frameId: 0 });
     await settle();
     assert.deepEqual(port.messages, [], `the sender is never read today: ${JSON.stringify(port.messages)}`);
     assert.equal(port.wasDisconnected(), true);
@@ -97,6 +106,23 @@ test("a port that names no tab reads nothing, from any sender", async () => {
         await settle();
         assert.deepEqual(port.messages, [], `a port with no tab read something: ${JSON.stringify(port.messages)}`);
     }
+});
+
+test("an extension page as a tab's own top document reads the stream (the e2e watcher's shape)", async () => {
+    const bg = loadBackground({ config: CONFIG });
+    await seed(bg);
+    // harness.mjs `watchRunEvents` opens popup.html in a window of its own, so the port's sender is our page AND
+    // carries that tab, whose `url` is the same extension page. The fix serves it; on main nothing is checked and
+    // it is served too, so the row is a control on both sides — and what a rule built on `sender.tab` alone must
+    // not break.
+    const own = { url: "chrome-extension://test/popup.html", tab: { id: RUN_TAB, url: "chrome-extension://test/popup.html" }, frameId: 0 };
+    const port = openPort(bg, RUN_TAB, own);
+    await settle();
+    assert.deepEqual(read(port).replayKinds, SECRETS.map((e) => e.kind), "the whole buffer, in order");
+    await live(bg);
+    await settle();
+    assert.equal(read(port).live, 1, "and the live event after it");
+    assert.equal(port.wasDisconnected(), false);
 });
 
 test("the DevTools panel's own port reads the buffered replay, then each live event (the control)", async () => {
