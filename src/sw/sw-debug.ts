@@ -59,12 +59,23 @@ export function resetDebug(tabId: number): void {
  *  panel of a hidden page (sw-side-panel.ts), which only an extension page may open. */
 const FEED_INIT: Record<string, string> = { "ml-devtools": "ml-devtools-init", "ml-sidepanel": "ml-sidepanel-init" };   // state: fixed
 
+/** Whether a port's sender is all ours: one of the extension's pages that is either in no tab (the DevTools panel, whose
+ *  port carries none, measured; the side panel) or the top document of its tab. Our page framed into a web page is
+ *  not: its tab is the web page's. */
+function ownSender(sender: chrome.runtime.MessageSender | undefined): boolean {
+    const ours = chrome.runtime.getURL("");
+    if (!(typeof sender?.url === "string" && sender.url.startsWith(ours))) return false;
+    return !sender.tab || (typeof sender.tab.url === "string" && sender.tab.url.startsWith(ours));
+}
+
 /** Serve one `ml-devtools` or `ml-sidepanel` port: register it against the tab it says it shows, replay that tab's
- *  buffer so a panel opened mid-run catches up, and unregister on disconnect. A port that names no tab gets nothing. */
+ *  buffer so a panel opened mid-run catches up, and unregister on disconnect. A port that names no tab gets nothing.
+ *  Either feed carries a run's prompts and tool results, so another sender's port is closed unread (SITE_PRESENCE gap 6);
+ *  the side panel's is further held to no tab at all. */
 export function serveDevtoolsPort(port: chrome.runtime.Port): void {
     const init = FEED_INIT[port.name];
     if (!init) return;
-    if (port.name === "ml-sidepanel" && !(typeof port.sender?.url === "string" && port.sender.url.startsWith(chrome.runtime.getURL("")) && !port.sender.tab)) return;
+    if (!ownSender(port.sender) || (port.name === "ml-sidepanel" && port.sender?.tab)) { port.disconnect(); return; }
     let tabId: number | null = null;
     port.onMessage.addListener((msg: any) => {
         if (msg?.type === init && typeof msg.tabId === "number" && tabId == null) {

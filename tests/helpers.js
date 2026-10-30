@@ -586,6 +586,9 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         // background pushes; messages[] collects them.
         connect: (name = "LLM_STREAM", sender = undefined) => {
             if (!siteGate && sender) approveSender(sender);
+            // The DevTools feed's port is the panel's unless a test says otherwise: an extension page with no tab, as a
+            // devtools page's port was measured to carry (serveDevtoolsPort closes any other sender's).
+            if (!sender && name === "ml-devtools") sender = { url: "chrome-extension://test/panel.html" };
             const messages = [];
             const clientHandlers = [];
             const backgroundHandlers = [];
