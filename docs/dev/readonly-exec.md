@@ -838,4 +838,7 @@ unsafely" — new tests prove the new surface keeps that.
 - **An extension can break an argument made for an EARLIER one** (`for…of` and the owned `Set`/`Map` mutators):
   "The rule for extending the dialect" above.
 - **A kind decided by `Object.prototype.toString` is a page's choice.** Borrow the intrinsic that throws without the
-  internal slot (`policy.ts`: `isStringObject`, `isRegExpObject`, `drainIterator`); a cross-realm iterator is no longer drained.
+  internal slot (`policy.ts`: `isStringObject`, `isRegExpObject`, `drainIterator`); the internal slots are realm-agnostic, so a foreign realm's real value still passes.
+  **Open** (a coercion that runs the object's own `toString`, with or without a tag): `[o].join("")` and `concat(o).join`, a pattern
+  object coerced by native `replaceAll`/`replace` (`ToString(searchValue)`, which also reads the tag), and `String(obj).length`
+  (`evaluator.ts` `replace`/`replaceAll` charge) on a real String object carrying its own `toString`.

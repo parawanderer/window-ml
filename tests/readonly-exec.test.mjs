@@ -2032,15 +2032,23 @@ test("a page object tagged String, RegExp or an iterator is refused every method
     }
 });
 
-test("a tagged page object is no RegExp to the evaluator: its source, flags and tag never run as a search pattern", async () => {
+test("a tagged page object is no RegExp to the evaluator: its source and flags never run as a search pattern", async () => {
     const { o, ran } = claimed("RegExp");
     Object.defineProperty(o, "source", { get() { ran.push("source"); return "a"; } });
     Object.defineProperty(o, "flags", { get() { ran.push("flags"); return "g"; } });
-    for (const js of [`const o = await ml.models(); return "abc".replaceAll(o, "x")`, `const o = await ml.models(); return "abc".match(o)`]) {
-        ran.length = 0;
-        await run(js, world(), handed(o)).catch(() => {});
-        assert.ok(!ran.includes("source") && !ran.includes("flags"), `${js} read the page's regexp fields: ${JSON.stringify(ran)}`);
-    }
+    // match: refused outright, nothing runs.
+    await assert.rejects(run(`const o = await ml.models(); return "abc".match(o)`, world(), handed(o)), outOfDialect);
+    assert.deepEqual(ran, [], "match ran the page's object");
+    // replaceAll: native ToString(searchValue) still resolves it (the open item in readonly-exec.md), but never as a regexp.
+    ran.length = 0;
+    await run(`const o = await ml.models(); return "abc".replaceAll(o, "x")`, world(), handed(o)).catch(() => {});
+    assert.ok(!ran.includes("source") && !ran.includes("flags"), `replaceAll read the page's regexp fields: ${JSON.stringify(ran)}`);
+});
+
+test("a pattern object is not coerced by native replaceAll: its tag getter never runs", { todo: "open: ToString(searchValue) reads the page's Symbol.toStringTag; the same hole as [o].join(\"\")" }, async () => {
+    const { o, ran } = claimed("RegExp");
+    await run(`const o = await ml.models(); return "abc".replaceAll(o, "x")`, world(), handed(o)).catch(() => {});
+    assert.deepEqual(ran, []);
 });
 
 test("a tagged page object returned by a host call is not drained as an iterator: its own Symbol.iterator never runs", async () => {
