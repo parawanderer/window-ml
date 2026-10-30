@@ -215,7 +215,11 @@ Three rules make it a mechanism rather than a lookup table:
 - **Kinds are decided structurally**, never by `instanceof` or a constructor name. The dialect can hold a value
   from an iframe's realm (`ml.queryAll` pierces them), and a page can name a class anything it likes. `Set` and
   `Map` are identified by borrowing their prototype's own `size` getter, which throws on anything that is not
-  one — a brand no shape-copying can fake.
+  one — a brand no shape-copying can fake. So are `Date` (`Date.prototype.getTime`), a String object
+  (`String.prototype.valueOf`), a RegExp (the `global` accessor) and an Array/Set/Map iterator (the intrinsic
+  `next`, `drainIterator`). **Never by `Object.prototype.toString`**: a page answers that tag through a
+  `Symbol.toStringTag` getter, which both picks the kind and RUNS (the red team's pin, #1381,
+  `tests/readonly-exec.test.mjs` "a kind is decided by a BRAND").
 
 Ownership stays a SEPARATE, orthogonal gate: the kind answers "is this name meaningful here", `owned` answers
 "may I mutate THIS object". A `Set` reached off a page object is still a `Set`, and must still not be mutable.
@@ -833,3 +837,8 @@ unsafely" — new tests prove the new surface keeps that.
 - **Gaps degrade to "asks the human", never to "runs unsafely"**, and each extension's tests prove it still does.
 - **An extension can break an argument made for an EARLIER one** (`for…of` and the owned `Set`/`Map` mutators):
   "The rule for extending the dialect" above.
+- **A kind decided by `Object.prototype.toString` is a page's choice.** Borrow the intrinsic that throws without the
+  internal slot (`policy.ts`: `isStringObject`, `isRegExpObject`, `drainIterator`); the internal slots are realm-agnostic, so a foreign realm's real value still passes.
+  **Open** (a coercion that runs the object's own `toString`, with or without a tag): `[o].join("")` and `concat(o).join`, a pattern
+  object coerced by native `replaceAll`/`replace` (`ToString(searchValue)`, which also reads the tag), and `String(obj).length`
+  (`evaluator.ts` `replace`/`replaceAll` charge) on a real String object carrying its own `toString`.

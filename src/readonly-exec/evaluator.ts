@@ -7,7 +7,7 @@ import { NotInDialect, Stopped, MAX_STRING, MAX_COLLECTION, Denied, riskyRegex, 
 import { Node } from "./parser";
 import { regexSteps } from "./regex-cost";
 import { replaceSize, replaceWorstCase } from "./replace-size";
-import { isSet, isMap, isWritableTarget, ReadonlyRealm, DENIED_PROPS, isDomCollection, SAFE_CONSTRUCTORS, ANSWER_METHODS, methodAllowed, kindOf, MUTATING_METHODS, CALLABLE_ROOTS, argWrites } from "./policy";
+import { isSet, isMap, isStringObject, isRegExpObject, drainIterator, isWritableTarget, ReadonlyRealm, DENIED_PROPS, isDomCollection, SAFE_CONSTRUCTORS, ANSWER_METHODS, methodAllowed, kindOf, MUTATING_METHODS, CALLABLE_ROOTS, argWrites } from "./policy";
 import { PrintSwap, abridgeRow, diffSwap, jsonPathKey } from "./print";
 
 /** Per-frame set of names declared `const`, kept off the frame's own enumerable keys. */
@@ -91,15 +91,11 @@ const COERCES_CALLBACK = new Set(["sort", "replace", "replaceAll", "stringify"])
  *  `add` coerces with `String`. */
 const DATA_MEMBERS = new Set(["pipe", "jsonPath"]);
 
-/** A Map, Set or Array ITERATOR is materialised into an array when a host call returns one: a walk cannot see through an
- *  iterator without consuming it, and a Map's could carry a shared-part key into `Object.fromEntries`. */
-const MATERIALISED = new Set(["[object Map Iterator]", "[object Set Iterator]", "[object Array Iterator]"]);
-
 /** Marks, on the walk's stack, that the container below it is being left. */
 const LEAVE = Symbol("leave");
 
-/** A RegExp, of any realm, by its tag. A page object could claim the tag, but that only adds a check. */
-const isRegExp = (v: unknown): v is RegExp => v !== null && typeof v === "object" && Object.prototype.toString.call(v) === "[object RegExp]";
+/** A RegExp, of any realm, by its BRAND (`isRegExpObject`): a page object can claim the tag, and reading it runs the page's getter. */
+const isRegExp = (v: unknown): v is RegExp => v !== null && typeof v === "object" && isRegExpObject(v);
 
 /** The mediated evaluator: walks the parsed AST as a generator, gating every read, call, write and allocation. */
 /** The `ml.current` fields `adoptCurrent` treats specially; every other field is copied whole. */
@@ -265,7 +261,7 @@ export class Evaluator {
             const coll = !(Array.isArray(x) || isWritableTarget(x)) && (isSet(x) || isMap(x));
             if (!(Array.isArray(x) || isWritableTarget(x)) && !coll) {
                 // A String object (a pointer's text) is its characters; anything else is one part, read no further.
-                if (Object.prototype.toString.call(x) === "[object String]") chars += String(x).length;
+                if (isStringObject(x)) chars += String.prototype.valueOf.call(x).length;
                 continue;
             }
             if (onPath.has(x)) continue;
@@ -1088,7 +1084,9 @@ export class Evaluator {
             if ((key === "replace" || key === "replaceAll") && typeof args[1] === "function" && (typeof obj === "string" || kindOf(obj) === "string"))
                 this.replacing = { depth: this.depth, chars: String(obj).length };
             try { out = fn.apply(obj, args); } finally { for (const h of held) this.release(h); this.coercingAt = wasCoercing; this.replacing = wasReplacing; }
-            if (out !== null && typeof out === "object" && MATERIALISED.has(Object.prototype.toString.call(out))) out = Array.from(out as Iterable<unknown>);
+            // A Map, Set or Array ITERATOR is materialised into an array when a host call returns one: a walk cannot see
+            // through an iterator without consuming it, and a Map's could carry a shared-part key into `Object.fromEntries`.
+            if (out !== null && typeof out === "object") out = drainIterator(out) ?? out;
             // A NEW array is charged its length: what `slice`, `map` or `split` built is a copy proportional to it.
             if (Array.isArray(out) && out !== obj) this.tick(Math.floor(out.length / HOST_COPY_ELEMENTS_PER_STEP));
             // Auto-await an ml call ONLY when it actually returns a promise (getModel/config/… round-trip),
