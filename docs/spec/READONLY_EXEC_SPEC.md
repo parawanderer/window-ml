@@ -227,3 +227,33 @@ the approval path.
   approval-fatigue reducer for an honest model, and it **fails closed**.
 - On Trusted-Types pages the *fallback* eval is still dead (no worse than today);
   the win is that in-dialect surveys now run there at all.
+
+## Red-team findings on the kind dispatch (2026-10-30)
+
+The red team's `ml.embed` pass (#1336, `feat/readonly-ml-embed`) landed two test-only PRs, both verified at
+their heads, each a `{ todo }` row asserting the defended outcome beside controls that pin what holds today:
+
+- **A page picks its own kind.** `kindOf` in `src/readonly-exec/policy.ts` decides the `string` and `regexp`
+  kinds by the `Object.prototype.toString` tag, which a page sets through `Symbol.toStringTag`, so a tagged
+  page object chooses its member set and the dispatch then calls the object's OWN method: measured on main,
+  `o.toUpperCase()` and `o.split("x")` run the page's functions and return its values, and a claimed `RegExp`
+  gets its own `test`, `exec` and `source`. Any other tag is `NotInDialect`. The Date, Set and Map branches
+  beside it already refuse the trick by a borrowed getter. Pinned by #1381 (base main,
+  `redteam-brand-tag.test.mjs`, two todos, two controls). RULED: this is a defect of the dialect on main,
+  not of `ml.embed`, since every member inherits the dispatch, so the fix lands on MAIN as its own PR (`@exec`
+  `@security`, by #1336's builder, who is in that file already, and #1336 rebases onto it), by the same
+  borrowed-brand pattern the Date branch uses; it merges after #1381 and the janitor's comment, and the red
+  team flips its todos after as a flip-only PR on main (rule 10). A fix on the embed branch alone would leave
+  the hole on main until that branch merges and was refused for that reason.
+- **The tag getter runs before the shape is refused.** `ml.embed`'s `textOf` (`policy.ts`) brand-checks with
+  the same tag, so a page-installed `Symbol.toStringTag` getter runs, twice per call, before a String-shaped
+  object is refused. Pinned by #1380 (base `feat/readonly-ml-embed`, `redteam-embed.test.mjs`, one todo,
+  five rows holding: a String-shaped object refused with its `valueOf` never run; a Proxy bounded, its traps
+  stated; an inherited index and a hole each a TypeError naming the index with no host call; `ml.embed` absent
+  from a policy's predicate realm; no site-access e2e row since the member adds no message type and no
+  privileged fetch). RULED: fixed on the embed branch by its builder before #1336 merges, the borrowed getter
+  again; the red team flips its todo as its own commit on that branch, its own file only, before the merge
+  (the 2026-10-28 amendment to rule 10).
+
+Both PRs also claim three stray `redteam-*` files for the `redteam` genre in `scripts/test.mjs`, which
+`--check-genres` was refusing every commit over; whichever merges first carries the claim.
