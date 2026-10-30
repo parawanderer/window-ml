@@ -174,7 +174,9 @@ test("@security SITE_PRESENCE step 5 (render): R3: a script navigation to anothe
         const results = await run(h, renderOf(h.site, "/script"));
         expect(pathsTo(h.site, "attacker.test"), "the page itself was rendered (the anchor, both sides)").toContain("/script");
         if (holeOpen("renderGuard", "the rendered page's script navigates the tab off-site and its target is requested")) {
-            expect(pathsTo(h.site, "victim.test"), "today's leak: the script's target is requested").toContain("/secret");
+            // The leak has a signal of its own — the fixture's log — so it waits on that, never on the 60 ms beat having
+            // landed inside the render's window: a torn-down tab under CI load would otherwise redden an OPEN row.
+            await expect.poll(() => pathsTo(h.site, "victim.test"), { timeout: 30_000, message: "the script's target to be requested (today's leak, read from the log)" }).toContain("/secret");
         } else {
             expect(h.site.requestsTo("victim.test"), "the script's target was never requested").toEqual([]);
         }
