@@ -716,8 +716,19 @@ Two fixed paths judge their own hops: `FETCH_SHEET` follows only `docs.google.co
 sign-in hop to `accounts.google.com` is refused as "not signed in"), and `FETCH_IMAGE_B64` holds every hop to the
 public-host rule, so a CDN on another site is followed, a declared exception: it carries no credentials on any hop and
 reads only a public raster image. A trusted surface and an approved exec's literal URLs (`execOpen`) still follow every
-hop. A `rendered` read follows redirects as a navigation, which the hop judge does not see; its last URL is still held to
-the old rule (body withheld off an unapproved origin), and the tab-render half is the next PR.
+hop.
+
+A `rendered` read is held the same way, as a navigation (`prepareRenderGuard`): a `declarativeNetRequest` session rule
+blocks main-frame and sub-frame requests from the render tab to any domain outside the first URL's site, so an off-site
+302, a later hop of a chain and a script navigation are all stopped before a request leaves, and an off-site frame does
+not load. Non-blocking `webRequest` reports the blocked URL and the hop that led to it; the judge above decides, and a
+followed hop widens the rule and loads the first URL again. The tab must be created with its URL: opening it blank and
+navigating it sends `Sec-Fetch-Site: cross-site` instead of `none` (measured on Chromium 151;
+`detection-surface.spec.mjs` asserts it). So the rule goes in before the tab exists, covering every tab but the ones open
+then, and is narrowed to the new tab once it has an id; renders prepare one at a time, and a tab a person opens in that
+window of milliseconds is held to the render's site for it. Rules use ids from `RENDER_RULE_BASE`, and a new worker
+sweeps any left behind. The `declarativeNetRequestWithHostAccess` permission adds no install warning (measured as above).
+A re-load after an approved hop is a `tabs.update`; what `Sec-Fetch-Site` that one sends is not measured.
 
 **What a request carries besides its URL.** `GET`, no body; `Accept`, `Accept-Language` and `User-Agent`; cookies only
 in the as-you mode, which a person approves per URL each time, or per origin by approving a navigate there, and which is
