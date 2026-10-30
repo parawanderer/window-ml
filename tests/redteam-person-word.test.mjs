@@ -47,7 +47,7 @@ async function run(calls, { policies = [] } = {}) {
     const fromPage = { tab: { id: 7, url: SITE }, url: SITE, origin: "https://site.example", frameId: 0 };
     const tab = { id: 7, windowId: 3, active: true, url: SITE, title: "Site" };
     let turns = 0, docN = 1, bg;
-    const navs = [], gates = [];
+    const navs = [], gates = [], sent = [];
     const answered = new Set();
     const sender = () => ({ tab: { id: 7, url: tab.url }, url: tab.url, origin: new URL(tab.url).origin, frameId: 0, documentId: `doc-${docN}` });
     const ready = async (url) => {
@@ -79,8 +79,9 @@ async function run(calls, { policies = [] } = {}) {
             if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
             const p = plain(msg.payload);
             if (p.finish) return { result: "" };
-            if (p.precheck) return { result: "", precheckFailed: false };
+            if (p.precheck) return { result: "", precheckFailed: false, element: { tag: "button", href: null, name: "Go" } };
             if (p.renderOnly || p.readonlyTry || p.geometry) return { result: "" };
+            sent.push({ name: p.name, word: p.crossOriginWord === true });
             if (p.name === "navigate") {
                 const to = p.args.url;
                 navs.push({ url: to, word: p.crossOriginWord === true });
@@ -94,14 +95,17 @@ async function run(calls, { policies = [] } = {}) {
     });
     void bg.send({ type: "START_RUN", payload: {
         runId: "pagerun-word-rt", task: "do it", systemPrompt: "S",
-        tools: [{ name: "navigate", description: "go", parameters: { type: "object", properties: { url: { type: "string" } } }, requiresApproval: true, capabilities: [] }],
+        tools: [
+            { name: "navigate", description: "go", parameters: { type: "object", properties: { url: { type: "string" } } }, requiresApproval: true, capabilities: [] },
+            { name: "click", description: "click", parameters: { type: "object", properties: { selector: { type: "string" } } }, requiresApproval: true, capabilities: [], precheck: true },
+        ],
         model: "m", think: null, maxSteps: 8, autoApprovePython: false, autoApproveReadonly: false, surface: "off",
         crossOrigin: false, approvalRouting: "ui", pageOrigin: "https://site.example",
-        rebuild: { toolNames: ["navigate"], model: "m", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: false },
+        rebuild: { toolNames: ["navigate", "click"], model: "m", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: false },
     } }, fromPage);
     for (let i = 0; i < 600 && turns <= calls.length; i++) await sleep(1);
     await sleep(60);
-    return { calls: navs, gates };
+    return { calls: navs, gates, sent };
 }
 
 // --- (1) the NAVIGATE's facts ---
@@ -139,4 +143,14 @@ test("RED TEAM: a navigate no policy decided carries no word; the person's own r
     const allowed = await run([{ name: "navigate", args: { url: SITE } }], { policies: [ALLOW_SITE] });
     assert.deepEqual(allowed.calls.map((n) => n.word), [true], "the person's own row for the run's page did not carry the word");
     assert.deepEqual(allowed.gates, [], "an allow row needs no card");
+});
+
+// --- (4) the mark is on the MESSAGE, never on the run ---
+
+test("RED TEAM: the word rides the one navigate message; the run's next delegated call carries none", T, async () => {
+    // POLICIES.md (c): "the mark is on the MESSAGE, never in the tool's args". If it were held on the run (a flag, a
+    // rebuilt cross-origin tool kept for later calls), every later delegated call would carry it, and the page's tool
+    // list would have gained a cross-origin navigate for the rest of the run.
+    const r = await run([{ name: "navigate", args: { url: OTHER } }, { name: "click", args: { selector: "#go" } }], { policies: [ALLOW_NAV] });
+    assert.deepEqual(r.sent.map((s) => [s.name, s.word]), [["navigate", true], ["click", false]], JSON.stringify(r.sent));
 });
