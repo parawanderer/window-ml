@@ -10,6 +10,7 @@ import type { FetchResult } from "../contract";
 import { pageValueSession, activeRuns } from "./sw-runs";
 import { judgeCall, fetchFacts } from "./sw-policies";
 import { storeFetchedBody, claimValue } from "./sw-values";
+import { hopIsOwn, RedirectRefused, type HopJudge } from "./sw-redirects";
 
 /** Who an `ml.fetch` is for: a page through the relay, or a run's tool answered in the worker. */
 export interface FetchCaller {
@@ -129,6 +130,12 @@ export async function fetchUrlFor(payload: unknown, caller: FetchCaller): Promis
             }
         }
         const execOpen = tabId != null && !!tabGrants(tabId)?.fetchUrls?.has(url);
+        // Whether a URL a redirect reached was approved for this caller, as the first URL was above.
+        const approved = (u: string): boolean => caller.consented ? caller.consented(u) : tabId != null && !!fetchConsent.get(tabId)?.has(u);
+        // Every hop of an untrusted caller's fetch is judged before its target is requested: the same site, an http to
+        // https upgrade of the host, or a URL already approved (docs/spec/SITE_PRESENCE.md, "Redirects on auto-approved
+        // fetches"). An approved exec's literal URLs keep following, as a trusted surface's do.
+        const judge: HopJudge | undefined = untrusted && !execOpen ? ({ from, to }) => hopIsOwn(from, to) || approved(to) : undefined;
         try {
             // rendered: an uncredentialed render is INCOGNITO (session-less — a safe read, which is why a
             // same-origin one is free); a credentialed render uses the SESSION tab (as-you → always prompts).
@@ -137,15 +144,19 @@ export async function fetchUrlFor(payload: unknown, caller: FetchCaller): Promis
             // A table whose preview is not the whole of it hands back its body; it is stored only once the result is
             // actually released below.
             const kept: { body?: import("./sw-fetch").FetchedBody; } = {};
-            const data = rendered ? await fetchRenderedContent(url, !credentials, !!cfg.cdp) : await fetchUrlContent(url, credentials, format, (b) => { kept.body = b; });
+            const data = rendered ? await fetchRenderedContent(url, !credentials, !!cfg.cdp) : await fetchUrlContent(url, credentials, format, (b) => { kept.body = b; }, judge);
             // Redirect guard: a per-URL-consented fetch (NOT a surface/whitelisted/exec one) that ends on a
             // DIFFERENT, un-consented origin followed a redirect off the approved resource — withhold the body
             // (a consented public URL could redirect to a private/other target). The GET already happened but
             // no data leaves, and returning nothing is safe. exec (execOpen) trusts the code's own redirects.
+            // The belt behind the hop judge: whatever the chain did, a body whose last URL is outside the judged set (the
+            // same origin, an approved URL, or for a plain GET the same site as the first URL) is withheld. A rendered read is
+            // a navigation the judge does not see yet, so for it this is the only check, under the old same-origin rule.
             if (untrusted && !execOpen) {
                 let sameOrigin = true;
                 try { sameOrigin = new URL(data.url).origin === new URL(url).origin; } catch { /* keep true */ }
-                if (!sameOrigin && !(caller.consented ? caller.consented(data.url) : !!fetchConsent.get(tabId!)?.has(data.url))) {
+                if (!sameOrigin && !approved(data.url) && (rendered || !hopIsOwn(url, data.url))) {
+                    if (!rendered && caller.disclose) return { error: `Refused: "${url}" redirected to a different origin on another site, which hasn't been approved, so its answer was withheld.` };
                     return { error: `"${url}" redirected to a different origin (${(() => { try { return new URL(data.url).origin; } catch { return data.url; } })()}), which hasn't been approved. Fetch that URL directly to approve it.` };
                 }
             }
@@ -160,6 +171,15 @@ export async function fetchUrlFor(payload: unknown, caller: FetchCaller): Promis
             return { data };
         }
         catch (err) {
+            // A refused hop's target was never requested. A page is told only that it was another site: it could not have
+            // read that Location itself (its own fetch sees an opaque redirect), and the model and the person can.
+            if (err instanceof RedirectRefused) {
+                const to = err.hop.to;
+                if (!to) return { error: `Refused: "${url}" redirected, but the extension could not read where to, so the redirect was not followed.` };
+                return { error: caller.disclose
+                    ? `Refused: "${url}" redirected to a different origin on another site, which hasn't been approved, so the redirect was not followed.`
+                    : `Refused: "${url}" redirected to "${to}", which hasn't been approved, so the redirect was not followed. Fetch "${to}" directly to approve it.` };
+            }
             const m = (err as Error)?.message || String(err);
             // A redirect loop / too-many-redirects surfaces as a generic "Failed to fetch" (Chrome opaques the
             // reason), so we can only HINT at it — the exact hops aren't visible to fetch.

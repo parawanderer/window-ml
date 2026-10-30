@@ -698,14 +698,26 @@ GET changes state, an analytics or logging endpoint, a URL shortener. That is th
 information-flow control (CaMeL, FIDES: label what the run read, and ask before a request whose URL carries labelled
 data), which is not built.
 
-**Redirects.** Every fetch follows them (`redirect: "follow"`, `sw-fetch.ts`). A per-URL-consented or same-origin fetch
-that ends on an origin nobody consented to has its body withheld (`fetchUrlFor`), but the request to the redirect target
-has already gone, carrying what the first URL carried. For a URL a person approved, they saw that URL whole. On the
-origin-wide paths above, an open redirect on a consented origin delivers a URL the model composed to any host, with
-nobody asked. An approved exec's literal URLs (`execOpen`) trust their redirects outright. Not fixed: a worker sees an
-opaque response under `redirect: "manual"`, never the `Location`, so approving each hop is not possible from `fetch`
-alone. The proposal is `redirect: "error"` on the origin-wide auto-approved paths, turning a redirect into a prompt for
-the URL; a `rendered` read follows redirects as a navigation and needs its own answer.
+**Redirects.** An untrusted caller's `ml.fetch` and `fetch_url` follow a redirect one hop at a time (`sw-redirects.ts`,
+SITE_PRESENCE step 5): each hop is fetched with `redirect: "manual"`, its `Location` is read from
+`webRequest.onHeadersReceived` (the worker's own request: tabId -1, the extension as initiator; the event arrives before
+`fetch` resolves, measured 50 of 50 on Chromium 151), and the target is requested only when the hop stays on the same
+registrable domain, upgrades http to https on the same host, or reaches a URL already approved for the caller (the tab's
+consent, a run's approvals and origin grants). Any other hop is refused before its target is requested, and the refusal
+names the target to the model, which fetches it directly to be asked; a page's own `ml.fetch` is told only that it was
+another site, since its own fetch could not have read that `Location`. Events carry no handle on the fetch that caused
+them, so a hop is matched by URL and two fetches of one URL run one at a time; a `Location` that cannot be read is a
+refusal, never a follow. A hop that is followed returns its body, so an untrusted caller now gets the body of a same-site
+hop to another origin (the registrable domain is the unit cookies are scoped to); the final-origin guard stays behind the
+judge as a belt, withholding a body whose last URL is outside the judged set. Adding the `webRequest` permission changes no install warning
+(`chrome.management.getPermissionWarningsByManifest`, measured on Chromium 151 against this manifest).
+
+Two fixed paths judge their own hops: `FETCH_SHEET` follows only `docs.google.com` and `*.googleusercontent.com` (the
+sign-in hop to `accounts.google.com` is refused as "not signed in"), and `FETCH_IMAGE_B64` holds every hop to the
+public-host rule, so a CDN on another site is followed, a declared exception: it carries no credentials on any hop and
+reads only a public raster image. A trusted surface and an approved exec's literal URLs (`execOpen`) still follow every
+hop. A `rendered` read follows redirects as a navigation, which the hop judge does not see; its last URL is still held to
+the old rule (body withheld off an unapproved origin), and the tab-render half is the next PR.
 
 **What a request carries besides its URL.** `GET`, no body; `Accept`, `Accept-Language` and `User-Agent`; cookies only
 in the as-you mode, which a person approves per URL each time, or per origin by approving a navigate there, and which is

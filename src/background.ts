@@ -69,6 +69,7 @@ import { pythonPrewarm, pythonExec, relayPyStdout, deletePythonRun, dropPythonLi
 import { focusLineFor } from "./sw/sw-focus";
 import { eventSession, pageMayWrite, withoutPageWhy, WORKER_ONLY_KINDS, type WorkerClaim } from "./event-admission";   // what a page may add to a session the worker speaks for
 import { fetchUrlFor, pageFetchCaller } from "./sw/sw-fetch-url";
+import { watchRedirects } from "./sw/sw-redirects";
 import { fetchImageDataUrl } from "./sw/sw-image-fetch";
 import { approvalKey } from "./approval-key";
 import { raiseAsk } from "./sw/sw-asks";
@@ -1494,6 +1495,10 @@ function rightClickedContext(tabId: number): Promise<unknown> {
 // Right-click "Ask window.ml about this" — the content-script shell resolves the clicked element's
 // semantic container + clean context and opens the Commander pre-loaded with it (see shell.ts). Created on
 // install (persists); re-created defensively in case the item was cleared. contextMenus may be absent in tests.
+// A redirect hop's target, read for the worker's judged fetches (sw-redirects.ts); registered at the top level, so a
+// fetch in a worker that just woke still sees its hop.
+watchRedirects();
+
 chrome.runtime.onInstalled?.addListener((details) => {
     // A deliberate reload or an update (NOT an idle SW respawn — that never fires onInstalled): invalidate any
     // in-flight background run. Its snapshot may be from OLD code, and this is often how you kill a runaway —

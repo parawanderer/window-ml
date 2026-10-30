@@ -14,6 +14,7 @@ import { readCapped, decodeCapped, binaryKind } from "./body-read";
 import { ensureDebuggerAttached, releaseDebugger } from "./sw-cdp";
 import { incognitoEnableSteps } from "../util";
 import { noteAgentTab } from "./sw-start-approval";
+import { judgedFetch, RedirectRefused, type HopJudge } from "./sw-redirects";
 
 // ---- Google Sheets CSV fetch (python_exec `sheet`) ----
 // Fetch the sheet's CSV export with the user's own cookies (credentials:"include"), so a
@@ -130,9 +131,11 @@ const FETCH_TABLE_MAX = 64_000_000;
  *  A response that might be a binary table is read as bytes and, if the magic says it is not one after all,
  *  decoded to text here — so a mislabelled body costs a decode rather than being corrupted by a text read before
  *  anything can look at it. */
-async function rawGet(url: string, credentials: boolean, accept?: string): Promise<{ res: Response; text: string; bytes?: ArrayBuffer; arrow?: ArrayBuffer; whole?: Uint8Array; truncated: boolean; parquetTooLarge?: number; arrowTooLarge?: number; binary?: { kind: string; size: number }; ms: number }> {
+async function rawGet(url: string, credentials: boolean, accept?: string, judge?: HopJudge): Promise<{ res: Response; text: string; bytes?: ArrayBuffer; arrow?: ArrayBuffer; whole?: Uint8Array; truncated: boolean; parquetTooLarge?: number; arrowTooLarge?: number; binary?: { kind: string; size: number }; ms: number }> {
     const t0 = Date.now();
-    const res = await fetch(url, { method: "GET", credentials: credentials ? "include" : "omit", redirect: "follow", headers: browserFetchHeaders(accept) });
+    // A judge follows only the hops it allows (sw-redirects.ts); without one, the browser follows every hop.
+    const init: RequestInit = { method: "GET", credentials: credentials ? "include" : "omit", headers: browserFetchHeaders(accept) };
+    const res = judge ? await judgedFetch(url, init, judge) : await fetch(url, { ...init, redirect: "follow" });
     if (maybeBinaryTable(res.headers?.get?.("content-type") || "", res.url || url)) {
         const { bytes, truncated } = await readCapped(res, FETCH_BINARY_MAX);
         const isParquetStart = bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x41 && bytes[2] === 0x52 && bytes[3] === 0x31;
@@ -331,13 +334,15 @@ async function parquetResult(requested: string, r: { res: Response; bytes: Array
  *
  *  `keep` receives the whole body of a table the result only PREVIEWS (past the parse cap), for the value store. It is a
  *  callback rather than a store call because the caller may still withhold the result (a redirect off the approved
- *  origin), and a body nobody was given must not be stored. */
-export async function fetchUrlContent(url: string, credentials = false, format: FetchFormat = "markdown", keep?: KeepBody): Promise<FetchResult> {
+ *  origin), and a body nobody was given must not be stored.
+ *
+ *  `judge`, when given, decides every redirect hop of every rung before its target is requested (sw-redirects.ts). */
+export async function fetchUrlContent(url: string, credentials = false, format: FetchFormat = "markdown", keep?: KeepBody, judge?: HopJudge): Promise<FetchResult> {
     // A URL whose extension already names a data/code file never negotiates: there is no prose twin, and
     // sending a Markdown-first Accept to an API that honours it could change what comes back.
     const dataShape = ["json", "csv", "parquet", "arrow", "code"].includes(typeFromExtension(url)?.type || "");
     const negotiating = format === "markdown" && !dataShape;
-    const first = await rawGet(url, credentials, negotiating ? MD_ACCEPT : undefined);
+    const first = await rawGet(url, credentials, negotiating ? MD_ACCEPT : undefined, judge);
     // A BINARY table short-circuits everything: there is no Markdown twin of a Parquet file, and no text body
     // to classify. It is decoded HERE, in the worker, rather than shipped to the page as bytes — the page
     // wants the table, and a TableLike crosses the message channel far more cheaply than the file does.
@@ -389,7 +394,7 @@ export async function fetchUrlContent(url: string, credentials = false, format: 
                  note: declaredHref ? "declared, but cross-origin — a page-supplied URL doesn't ride this page's grant" : "the page declares none" });
     } else {
         try {
-            const r = await rawGet(declared, credentials);
+            const r = await rawGet(declared, credentials, undefined, judge);
             const hit = isMarkdownResponse(r.res.ok, ctOf(r), r.text);
             record({ strategy: "declared", url: declared, status: r.res.status, contentType: ctOf(r), bytes: r.text.length, ms: r.ms,
                      outcome: hit ? "hit" : "not-markdown" });
@@ -412,7 +417,7 @@ export async function fetchUrlContent(url: string, credentials = false, format: 
         record({ strategy: "sibling", url: sibling, outcome: "skipped", note: "skipped — this origin has no .md siblings (seen earlier)" });
     } else {
         try {
-            const r = await rawGet(sibling, credentials);
+            const r = await rawGet(sibling, credentials, undefined, judge);
             const hit = isMarkdownResponse(r.res.ok, ctOf(r), r.text);
             record({ strategy: "sibling", url: sibling, status: r.res.status, contentType: ctOf(r), bytes: r.text.length, ms: r.ms,
                      outcome: hit ? "hit" : "not-markdown" });
@@ -621,12 +626,28 @@ export async function fetchRenderedContent(url: string, incognito: boolean, cdp:
     }
 }
 
+/** The hops a sheet's export may take: within `docs.google.com`, and from it to `*.googleusercontent.com`, where a large
+ *  export is served. Named by host, not by site: `accounts.google.com` shares the site, and following the sign-in hop
+ *  with cookies fetches a login page, never the sheet. */
+export const sheetHop: HopJudge = ({ to }) => {
+    try {
+        const u = new URL(to);
+        return u.protocol === "https:" && (u.hostname === "docs.google.com" || u.hostname.endsWith(".googleusercontent.com"));
+    } catch { return false; }
+};
+
 export async function fetchSheetCsv(url: string): Promise<{ csv: string; name: string | null }> {
     if (!url) throw new Error("No sheet URL.");
     if (!SHEET_URL_OK.test(url)) throw new Error("Refused: only Google Sheets CSV-export URLs can be fetched here.");
     let res: Response;
-    try { res = await fetch(url, { credentials: "include", redirect: "follow" }); }
+    try { res = await judgedFetch(url, { credentials: "include" }, sheetHop); }
     catch (e: any) {
+        if (e instanceof RedirectRefused) {
+            if (e.hop.to && new URL(e.hop.to).hostname === "accounts.google.com") throw new Error(
+                "Not signed in to Google in this browser. Tell the USER to open the sheet's link in this browser and " +
+                "sign in, then ask you to try again.");
+            throw new Error(`Refused: the sheet's export redirected to ${e.hop.to ?? "a target the extension could not read"}, which is not a Google Sheets host, so it was not followed.`);
+        }
         // A network throw here is usually the extension's SERVICE-WORKER host access being WITHHELD:
         // "On click" grants activeTab (content scripts on the tab) but NOT the background fetch's
         // host permission, so the CSV fetch is unauthorized even while you're ON the sheet. And the
