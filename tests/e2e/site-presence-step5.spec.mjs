@@ -15,8 +15,10 @@
 // What the worker half must hold (the lane's brief): a hop is followed when it stays on the same registrable
 // domain, upgrades http→https on the same host, goes to an origin/URL already approved in this run, or is a
 // declared pair (FETCH_SHEET: docs.google.com → *.googleusercontent.com); any other hop is refused BEFORE
-// its target gets a request. A page's own ml.fetch is told only "another site", never the Location; the
-// model and the person see the full target ("Fetch that URL directly to approve it."). FETCH_SHEET's
+// its target gets a request. Disclosure follows WHO READS THE RESULT: a page's own ml.fetch, and a run the
+// PAGE started (its tool results live in the page's world), are told only "another site", never the
+// Location; a WORKER-hosted run's model sees the full target ("Fetch that URL directly to approve it."),
+// and so does the person. FETCH_SHEET's
 // accounts.google.com sign-in hop is refused with "not signed in to Google in this browser". FETCH_IMAGE_B64
 // is the declared exception: it keeps following a cross-site (CDN) hop, but the public-host raster check
 // applies on EVERY hop before requesting it — a chain that hops a loopback/private host is IMAGE_FAILED
@@ -162,27 +164,64 @@ test("@security SITE_PRESENCE step 5: W1: ml.fetch's cross-site hop never reques
     }
 });
 
-// --- W2: a run's fetch_url, cross-site hop (the tool's refusal names the target; the model is told to fetch it directly) ---
+// --- W2: a PAGE-started run's fetch_url, cross-site hop (the refusal names only "another site": this run's tool
+//     results pass through the page's own world, so the page must not learn where an opaque hop points) ---
 
-test("@security SITE_PRESENCE step 5: W2: a run's fetch_url cross-site hop never requests the target", async () => {
+test("@security SITE_PRESENCE step 5: W2: a page run's fetch_url cross-site hop never requests the target, and the page is told only 'another site'", async () => {
     test.setTimeout(90_000);
     const h = await rowSetup("attacker.test");
     try {
         const tabsBefore = await h.ext.sw.evaluate(() => chrome.tabs.query({}));
-        // Server-side hop: the first URL does not spell the target, so "the model sees the full target" below is the
-        // tool's sentence and not the echo of what the model itself asked for.
+        // Server-side hop: the first URL does not spell the target, so the assertions below read the worker's
+        // sentence and not an echo of the URL the run itself asked for.
         const first = h.site.url("attacker.test", h.site.hopTo(h.site.url("victim.test", "/secret")));
         const seen = joined(await runThroughTools(h, [{ tool: "fetch_url", args: { url: first } }]));
         if (holeOpen("step5worker", "the run's fetch follows the hop and requests the unapproved target")) {
             expect(h.site.requestsTo("victim.test").map((q) => q.path), "today's leak: the hop's target is requested").toContain("/secret");
+            // Main names the target in its final-origin guard's error, which is the leak's own text reaching the model.
+            expect(seen, "today: the target is named").toContain("victim.test");
+        } else {
+            expect(h.site.requestsTo("victim.test"), "the hop's target was never requested").toEqual([]);
+            // The run is the PAGE's (`ml.agent`), so its tool results live in the page's world: the same rule as a
+            // page's own `ml.fetch` (W1). Naming the Location here would hand the page what its own fetch could not
+            // read. A WORKER-hosted run's refusal DOES name the target — that is W2b's row.
+            expect(seen, "the page-relayed refusal names only another site").toMatch(/another site/i);
+            expect(seen, "never the Location").not.toContain("victim.test");
+            expect(seen).not.toContain("/secret");
+        }
+        expect(seen).toMatch(/redirect/i);
+        await expectNoTabOrFrame(h, tabsBefore, "the judged hop is still a worker fetch: no tab, no frame");
+    } finally {
+        await h.close();
+    }
+});
+
+// --- W2b: a WORKER-hosted run's fetch_url — nobody but the model reads this result, so the refusal names the target
+//     ("Fetch that URL directly to approve it" is the ruled path for the person) ---
+
+test("@security SITE_PRESENCE step 5: W2b: a worker-hosted run's refusal names the target it did not fetch", async () => {
+    test.setTimeout(90_000);
+    const h = await rowSetup("attacker.test");
+    try {
+        const first = h.site.url("attacker.test", h.site.hopTo(h.site.url("victim.test", "/secret")));
+        const before = h.fake.calls().length;
+        h.fake.setScript([
+            { tool: "fetch_url", args: { url: first } },
+            (req) => ({ content: req.messages.filter((m) => m.role === "tool").map((m) => String(m.content ?? "")).join("\n") }),
+        ]);
+        const tabId = await h.ext.sw.evaluate(async (u) => (await chrome.tabs.query({})).find((t) => t.url === u)?.id, h.page.url());
+        void h.ext.sw.evaluate(({ tabId }) => globalThis.__mlStartUserRunForTest(tabId, { task: "read it", surface: "hud", hud: "quiet" }, { approvalRouting: "both" }), { tabId });
+        await driveApprovals(h.ext, h.fake, 2, before);
+        await expect.poll(() => h.fake.calls().length - before, { timeout: 30000 }).toBeGreaterThanOrEqual(2);
+        const seen = h.fake.calls().at(-1).messages.filter((m) => m.role === "tool").map((m) => String(m.content ?? "")).join("\n");
+        if (holeOpen("step5worker", "the worker-shape run's fetch follows the hop and requests the unapproved target")) {
+            expect(h.site.requestsTo("victim.test").map((q) => q.path), "today's leak: the hop's target is requested").toContain("/secret");
         } else {
             expect(h.site.requestsTo("victim.test"), "the hop's target was never requested").toEqual([]);
         }
-        // Both sides (a pin): the tool's result is a refusal, and it names the full target for the model —
-        // "Fetch that URL directly to approve it" is the ruled path for the person.
-        expect(seen, "the model sees the full target").toContain("victim.test");
-        expect(seen).toMatch(/redirect/i);
-        await expectNoTabOrFrame(h, tabsBefore, "the judged hop is still a worker fetch: no tab, no frame");
+        // Both sides: the run is the WORKER's, so its result is read by the model and the run's own log, never by a
+        // page script — naming the target is how the person is offered "Fetch that URL directly to approve it".
+        expect(seen, "the model is told the target it was refused").toContain("victim.test");
     } finally {
         await h.close();
     }
@@ -224,10 +263,14 @@ test("@security SITE_PRESENCE step 5: W3b: the same hop in a fresh run never req
         const seen = joined(await runThroughTools(h, [{ tool: "fetch_url", args: { url: h.site.url("attacker.test", h.site.hopTo(ok)) } }]));
         if (holeOpen("step5worker", "the fresh run's fetch follows the hop and requests the unapproved target")) {
             expect(h.site.requestsTo("partner.test").map((q) => q.path), "today's leak: the hop's target is requested").toContain("/ok");
+            expect(seen, "today: the target is named").toContain("partner.test");
         } else {
             expect(h.site.requestsTo("partner.test"), "the hop's target was never requested").toEqual([]);
+            // A page's run, as W2: the page's world reads this result, so it is told only another site (W2b is the
+            // worker-hosted half).
+            expect(seen, "the page-relayed refusal names only another site").toMatch(/another site/i);
+            expect(seen, "never the Location").not.toContain("partner.test");
         }
-        expect(seen, "the refusal names the target (both sides)").toContain("partner.test");
     } finally {
         await h.close();
     }
@@ -249,10 +292,13 @@ test("@security SITE_PRESENCE step 5: W4: a mixed chain — the same-site hop is
         expect(h.site.requestsTo("b.site.test").map((q) => q.path), "the judged-allowed hop is followed (the anchor)").toContain(hop2);
         if (holeOpen("step5worker", "the chain's disallowed hop is followed: the target is requested")) {
             expect(h.site.requestsTo("victim.test").map((q) => q.path), "today's leak: the chain's last target is requested").toContain("/secret");
+            expect(seen, "today: the target is named").toContain("victim.test");
         } else {
             expect(h.site.requestsTo("victim.test"), "the disallowed hop's target was never requested").toEqual([]);
+            // A page's run, as W2: only "another site" reaches the page's world (W2b is the worker-hosted half).
+            expect(seen, "the page-relayed refusal names only another site").toMatch(/another site/i);
+            expect(seen, "never the Location").not.toContain("victim.test");
         }
-        expect(seen, "the refusal names the target (both sides)").toContain("victim.test");
     } finally {
         await h.close();
     }
