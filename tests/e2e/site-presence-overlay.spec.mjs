@@ -25,8 +25,9 @@ import { startProbeSite, DETECT_RESOLVER_ARGS } from "./fixtures/detect/server.m
 import { openProbe, waitFor, sleep } from "./fixtures/detect/measure.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 
-/** The slices that have NOT landed, one per fix. `gap7` is SITE_PRESENCE gaps (7), the security lane's fix to come. */
-const OPEN = { gap7: true };
+/** The slices that have NOT landed, one per fix. `gap7` was SITE_PRESENCE gaps (7): flipped on the fix's branch, so
+ *  every row below asserts the defended outcome and the leak side is no longer reachable from this file. */
+const OPEN = { gap7: false };
 
 /** Whether `slice` is still open, recording it on the test so the report says which holes this run demonstrated. */
 function holeOpen(slice, what) {
