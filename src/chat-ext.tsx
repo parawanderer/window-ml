@@ -4,6 +4,7 @@
 // It lives OUT here rather than in `src/chat/` because it is the one file of the chat page that knows about
 // `chrome`: everything under `src/chat/` must build for a phone, and `scripts/build-web.mjs` fails on a `chrome.*`
 // reference to keep it that way. The same reason `sidebar/services-ext.ts` sits beside the seam it fills.
+import { installConsoleMl } from "./chat-console";   // first: it sets the page channel's world before anything opens it
 import { useNarrow } from "./chat/narrow";
 import { HousekeepingView } from "./sidebar/housekeeping-log";
 import { RunLogView } from "./sidebar/run-log-view";
@@ -185,5 +186,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
     config.value = { ...config.value, ...patch } as MlConfig;
 });
 try { installTooltipLayer(document); } catch { /* no DOM */ }
+// `ml` in this page's DevTools console: the chat and model members (chat-console.ts).
+installConsoleMl();
 store.start();
 render(<ChatApp store={store} platform={extensionPlatform} extras={extras} />, document.getElementById("root") || document.body);

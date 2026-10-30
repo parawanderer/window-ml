@@ -232,6 +232,9 @@ reply:** `notebooks/<topic>/`, run with `node scripts/nb.mjs`. `docs/dev/noteboo
 - **Iterating? Run a GENRE: `npm run test:core`** (the `test-genres` skill); run the full `npm test` before you commit.
 - **Tests: `npm test`** (`node:test`, real files in `node:vm` with mocked `chrome`). A new primitive gets a test in
   `tests/background.test.js` and `tests/relay.test.js`.
+- **RULE — scratch output (a saved diff, a probe, a detached run's log, a review draft, a CI artifact) goes in YOUR
+  SESSION'S SCRATCHPAD**, the path the system prompt states, never `/tmp`: a read there prompts the user; the
+  scratchpad does not. → working-in-the-repo.md
 - **Several sessions at once? Each gets its own CLONE** as a sibling directory (`.env`, `pyodide-wheels` and
   `pyodide-core` symlinked, `git config core.hooksPath .githooks`, `npm ci`). Never `git add -A` in a shared tree.
 - **RULE — a clone or worktree you CREATED for a topic, you REMOVE once its PR has merged**, after checking it holds
