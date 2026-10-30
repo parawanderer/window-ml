@@ -595,9 +595,7 @@ fetch":
   the policy named; an `allow` skips the card. A click on an element whose `href` the `fetch` rows deny is refused up
   front, the describe layer of the arrival rule above.
 - **A policy the person approved is the person's word for leaving the origin.** `crossOrigin: false` means "no
-  cross-origin without the person's word", and a card or an approved `allow` naming the origin is that word; it no
-  longer refuses outright. Starting on one page and working on another site is then exactly the example: nothing
-  crosses until the card is answered.
+  cross-origin without the person's word", and an approved `allow` for THIS navigate is that word; it no longer refuses outright. AMENDED 2026-10-30 on the janitor's review of #1358: a navigate CARD is not that word. The page's tool refuses the navigate before any card, and the person of the worked example speaks through the proposal card, which is the approved rows; the exact rule is the 2026-10-29 bullet below, which #1358 implements. Carrying the word on a card answer for one call would be a separate change, not built. Starting on one page and working on another site is then exactly the example: nothing crosses until the rows are approved.
 
 **RULED 2026-10-29 on the policies lane's design note** (session-mail
 `20261029-policies-to-repl-specs-worked-example-design-note.md`), the lane's recommendations taken on all five:
