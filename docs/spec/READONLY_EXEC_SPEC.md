@@ -269,4 +269,8 @@ rows pass against the branch. RULED 2026-10-30 on two gaps the lane found, neith
 main after #1393 and #1336, behind the red team's rows (e3, after its #1358 (c) pin): `[o].join("")` and
 `concat(o).join("")` run a page object's own `toString`, fixed by refusing any non-primitive element at `join`; a
 genuine String object carrying an own `toString` has it run by native ToString(this) in `split`/`replace`, fixed by
-dispatching string-kind methods on `String.prototype.valueOf.call(obj)` when the receiver is an object.
+dispatching string-kind methods on `String.prototype.valueOf.call(obj)` when the receiver is an object. MEASURED 2026-10-30 by the janitor on #1380's
+head (comment 6517655342, verified): the embed todo row's `tag === 0` needs BOTH fixes, because the tag getter runs
+from two sites in one `ml.embed` call, the `isRegExp` preflight in the evaluator (#1393's fix) and `textOf` in the
+policy. RULED: #1393 merges first; the embed branch is rebased onto main with it; the `textOf` fix lands and is
+measured on that head; the red team's flip is on that head and never on a `textOf`-only one.
