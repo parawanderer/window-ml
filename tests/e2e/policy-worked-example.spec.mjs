@@ -216,6 +216,8 @@ test("a run without crossOrigin is refused a cross-site navigate; an approved po
     expect(none.requests.some((r) => r.startsWith("/user/x")), "with no policy the page's navigate tool refuses").toBe(false);
     const allowed = await pageBuiltNavigate(`(c) => c.url.startsWith("${siteB.url}/") && c.interactive`);
     expect(allowed.requests.some((r) => r.startsWith("/user/x")), "the person's word lets this navigate go").toBe(true);
+});
+
 // --- a click by point (what locate produces) is judged as the click on the element under the point ---
 
 /** A python_exec that mints a point inside the page element `selector`, then the click on the token it returns. */
