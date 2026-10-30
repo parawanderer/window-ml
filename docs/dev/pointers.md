@@ -134,8 +134,9 @@ Every eviction decision is `planEviction` (pure): idle values (unread for `IDLE_
 ONE global byte budget holds the incoming write, with `protect` for a value being read at that moment. A write the budget
 cannot hold, once everything it may evict is gone, is refused (`ValueTooLarge`) and evicts nothing. A `held` row (a file
 the person attached, which cannot be fetched again) is never evicted for idleness or the budget while a session holds
-it, and its blob's group is skipped whole; it goes when its last session ends, and is refused when it is stored if it
-does not fit beside the held values (FILE_ATTACHMENTS.md, "Eviction differs by producer"). Ending a session evicts what
+it, and the budget pass skips its blob's group whole (another row over the same bytes may still idle out, as a `shared`
+eviction that frees nothing); it goes when its last session ends, and is refused when it is stored if it does not fit
+beside the held values, the refusal naming the held bytes (FILE_ATTACHMENTS.md, "Eviction differs by producer"). Ending a session evicts what
 it alone held (`releaseSession`; a value two sessions hold stays until both end, since one tab's fetch cache hands the
 same key to both); a periodic `sweep` catches orphans, because the service worker is evicted without warning
 and an in-memory idea of ownership dies with it. Every evicted key leaves a TOMBSTONE (kept `TOMBSTONE_MS`), so a read
