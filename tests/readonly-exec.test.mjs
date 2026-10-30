@@ -2002,3 +2002,79 @@ test("FAILURE (stored table): a survey that reads a stored column and then leave
     await assert.rejects(run, outOfDialect);
     assert.deepEqual(data, STORED_PREVIEW(1000), "the preview is untouched; the column the script got was its own copy");
 });
+
+// --- ADVERSARIAL: a kind is decided by a BRAND, never by a tag the page sets -------------------------------------------
+// `kindOf` and the evaluator's regexp, String-object and iterator checks used to read `Object.prototype.toString`, which a
+// page answers through `Symbol.toStringTag` (and which RUNS its getter). Each now borrows an intrinsic that throws on
+// anything without the internal slot. Every row asserts two things: the page's own function never runs, and neither does
+// its tag getter.
+
+/** A page object claiming `tag`, with `extra` own members that record themselves in `ran`. */
+function claimed(tag, extra = {}) {
+    const ran = [];
+    const o = { get [Symbol.toStringTag]() { ran.push("tag"); return tag; } };
+    for (const [k, f] of Object.entries(extra)) o[k] = (...a) => { ran.push(k); return f(...a); };
+    return { o, ran };
+}
+const handed = (o) => ({ models: async () => o });
+
+test("a page object tagged String, RegExp or an iterator is refused every method of that kind, and runs nothing", async () => {
+    for (const [tag, js] of [
+        ["String", `const o = await ml.models(); return o.toUpperCase()`],
+        ["String", `const o = await ml.models(); return o.split("x")`],
+        ["RegExp", `const o = await ml.models(); return o.test("x")`],
+        ["RegExp", `const o = await ml.models(); return o.exec("x")`],
+        ["Array Iterator", `const o = await ml.models(); return o.next()`],
+    ]) {
+        const { o, ran } = claimed(tag, { toUpperCase: () => "P", split: () => ["P"], test: () => true, exec: () => ["P"], next: () => ({ done: true }) });
+        await assert.rejects(run(js, world(), handed(o)), outOfDialect, `${tag}: ${js}`);
+        assert.deepEqual(ran, [], `${tag}: ${js} ran ${JSON.stringify(ran)}`);
+    }
+});
+
+test("a tagged page object is no RegExp to the evaluator: its source, flags and tag never run as a search pattern", async () => {
+    const { o, ran } = claimed("RegExp");
+    Object.defineProperty(o, "source", { get() { ran.push("source"); return "a"; } });
+    Object.defineProperty(o, "flags", { get() { ran.push("flags"); return "g"; } });
+    for (const js of [`const o = await ml.models(); return "abc".replaceAll(o, "x")`, `const o = await ml.models(); return "abc".match(o)`]) {
+        ran.length = 0;
+        await run(js, world(), handed(o)).catch(() => {});
+        assert.ok(!ran.includes("source") && !ran.includes("flags"), `${js} read the page's regexp fields: ${JSON.stringify(ran)}`);
+    }
+});
+
+test("a tagged page object returned by a host call is not drained as an iterator: its own Symbol.iterator never runs", async () => {
+    const { o, ran } = claimed("Array Iterator");
+    o[Symbol.iterator] = () => { ran.push("iterator"); return [1][Symbol.iterator](); };
+    o.next = () => { ran.push("next"); return { done: true }; };
+    await run(`const o = await ml.models(); return [o].at(0)`, world(), handed(o));
+    assert.deepEqual(ran, [], `the page's iterator was run: ${JSON.stringify(ran)}`);
+});
+
+test("a replacer that returns a String-tagged page object is refused, and its toString never runs", async () => {
+    const { o, ran } = claimed("String", { toString: () => "P" });
+    await assert.rejects(run(`const o = await ml.models(); return "abc".replace("a", () => o)`, world(), handed(o)), outOfDialect);
+    assert.deepEqual(ran, []);
+});
+
+test("the real thing still passes the brand: a String subclass (its own valueOf unrun), a re-tagged String, a foreign-realm RegExp, a Map iterator", async () => {
+    const ran = [];
+    class Deref extends String { valueOf() { ran.push("valueOf"); return "PAGE"; } }
+    const s = new Deref("a,b");
+    assert.deepEqual((await run(`const s = await ml.models(); return s.split(",")`, world(), handed(s))).value, ["a", "b"]);
+    assert.deepEqual(ran, [], "a String-shaped object's own valueOf ran");
+    const retagged = Object.assign(new String("xy"), { [Symbol.toStringTag]: "Whatever" });
+    assert.equal((await run(`const s = await ml.models(); return s.toUpperCase()`, world(), handed(retagged))).value, "XY");
+    const foreign = new (new JSDOM("").window.RegExp)("b");
+    assert.equal((await run(`const r = await ml.models(); return r.test("abc")`, world(), handed(foreign))).value, true);
+    assert.deepEqual((await run(`const m = new Map([["k", 1]]); return m.keys()`)).value, ["k"]);
+    assert.deepEqual((await run(`return [5, 6].entries()`)).value, [[0, 5], [1, 6]]);
+});
+
+test("RegExp.prototype is no regexp, and a Proxy is no String or RegExp, and the borrowed brands touch none of its traps", async () => {
+    const trapped = [];
+    const proxy = new Proxy({}, { get(t, k) { trapped.push(String(k)); return undefined; }, getPrototypeOf() { trapped.push("gpo"); return RegExp.prototype; } });
+    await assert.rejects(run(`const o = await ml.models(); return o.test("x")`, world(), handed(proxy)), refused);
+    await assert.rejects(run(`const o = await ml.models(); return o.test("x")`, world(), handed(RegExp.prototype)), refused);
+    assert.ok(!trapped.some((t) => t === "global" || t === "valueOf"), `a borrowed brand touched a trap: ${trapped}`);
+});
