@@ -251,7 +251,8 @@ is the shell call's one rule for every pointer prefix in argv, not a manifest's 
 
 **Reading text by page.** The pipe dialect gains one verb, `pages N-M` (`PIPE_CMDS`, text-pipe.ts), which selects whole
 pages from a paged value before the other verbs run: `dereference("@file:3fa91c2", { pipe: "pages 3-5 | grep -i
-revenue" })`. A text file is one page per N lines (open: N), so the same verb pages a long log. Extending the dialect
+revenue" })`. Both reads take `@file:`: the `dereference` tool, which the run loop answers with text (agent-loop.ts
+`derefLocally`, which today resolves only `@tool:`), and `ml.dereference` in code, which returns the typed value. A text file is one page per N lines (open: N), so the same verb pages a long log. Extending the dialect
 requires the adversarial tests in readonly-exec.md ("The rule for extending the dialect"); `pages` gets its own bound
 (how many pages one pipe may select) with adversarial rows of its own.
 
@@ -449,8 +450,10 @@ the call ran.
 
 1. Attach the PDF to an agent session. The first request carries the outline (`@file:`, the page count, which pages are
    figures or scans), not the text.
-2. `exec`, a read-only survey: `dereference` with `pages 3-5 | grep`. It runs with no approval card, and the next
-   request carries those pages' lines with their page numbers.
+2. The `dereference` TOOL on the `@file:` pointer with `pages 3-5 | grep`, answered by the run loop: the next request
+   carries the header line and those pages' lines with their page numbers, and a piped read mints its own pointer.
+   Then the same read as `ml.dereference` inside `exec`, a read-only survey: it runs with no approval card and hands
+   code the typed value. No e2e test has a scripted model call `dereference` today (`test-index.mjs --driven --gaps`).
 3. `python_exec` in `readonly` mode with `files: { doc: "@file:…" }`: reads `doc.pages[n].text` and `.kind`, calls
    `png()` on one page and returns its size. The next request carries both. A cell asking `png()` for more pages than
    its bound gets the sentence, and the cell still ends.
