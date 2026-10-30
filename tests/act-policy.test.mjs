@@ -3,7 +3,7 @@
 // "Acting on a page is a consumer" and the fourth row).
 //
 // The pure parts: the facts and the null-fact rule, the element a page resolves, the proposal of `act` rows and its breadth.
-// The run host's use of them (the precheck, the gate) is tested in act-policy-host.test.mjs, and the whole in
+// The run host's use of them (the precheck, the gate) is tested by the `act:` rows of tests/nav-arrival-host.test.mjs, and the whole in
 // tests/e2e/policy-worked-example.spec.mjs.
 import { test } from "node:test";
 import assert from "node:assert/strict";
