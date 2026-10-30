@@ -34,8 +34,13 @@ const actPolicy = (id, effect, source, label) => ({ id, scope: "global", consume
 const DENY_CLICKS = actPolicy("a-deny", "deny", '(c) => c.action === "click"', "No clicks here");
 /** An allow over the run's own page, so a click no deny covers runs with no card: the control beside DENY_NOT_APPROVE. */
 const ALLOW_CLICKS = actPolicy("a-allow", "allow", '(c) => c.action === "click" && c.url.startsWith("https://site.example/")', "Click on site.example");
-/** The fourth rule's shape: everything on the page but the one named button. */
+/** The fourth rule's shape: everything on the page but the one named button. It is also true of `null`, so it decides
+ *  for an element nobody resolved — which is exactly what the unresolved-point row below asserts, and why the row about
+ *  a RESOLVED element carries a rule of its own. */
 const DENY_NOT_APPROVE = actPolicy("a-fourth", "deny", '(c) => c.action === "click" && c.element.name !== "Approve This Draft"', "Only Approve This Draft");
+/** A deny that can only fire for an element the page RESOLVED: `null` is not equal to a name, so a judge that never
+ *  read the resolved element cannot green the row that uses this one. */
+const DENY_DELETE = actPolicy("a-deny-delete", "deny", '(c) => c.action === "click" && c.element.name === "Delete"', "Never Delete");
 /** Rows written on a NAMELESS button — the fact `""` — which must never decide for an element nobody resolved. */
 const ALLOW_NAMELESS = actPolicy("a-allow-empty", "allow", '(c) => c.action === "click" && c.element.name === ""', "Click nameless buttons");
 const DENY_NAMELESS = actPolicy("a-deny-empty", "deny", '(c) => c.action === "click" && c.element.name === ""', "Never a nameless button");
@@ -117,13 +122,14 @@ test("RED TEAM: a box token is refused by the precheck before the act judge: no 
 
 test("RED TEAM: a point token is judged on the element the page resolved under it, and on nothing the token itself says", async () => {
     // The point names no element: the page hit-tests it (the act precheck, #1360) and the worker judges THAT element.
-    // Here the page answers for the point as the fixed precheck does, and the fourth rule refuses the wrong button.
+    // The deny speaks only of the resolved name ("Delete"), so a judge that never read the element lets the point run:
+    // `toPage` would then hold the point as well as `#approve`.
     const pt = "@pt:120:340:abc";
     const r = await actRun([{ name: "click", args: { selector: pt } }, { name: "click", args: { selector: "#approve" } }], {
-        policies: [ALLOW_CLICKS, DENY_NOT_APPROVE],
+        policies: [ALLOW_CLICKS, DENY_DELETE],
         precheck: (n, a) => (a.selector === pt ? { result: "", precheckFailed: false, element: { tag: "button", href: null, name: "Delete" } } : resolving(BUTTONS)(n, a)),
     });
-    assert.match(r.results[0], /Only Approve This Draft/, "a point over the Delete button was not judged by the rule on its name");
+    assert.match(r.results[0], /Never Delete/, "a point over the Delete button was not judged by the rule on its name");
     assert.deepEqual(r.toPage.map((x) => x.args.selector), ["#approve"], "the point the rule refuses reached the page, or the button it allows did not");
     assert.equal(r.cards.length, 0, "no card: the rule decided both");
 });
