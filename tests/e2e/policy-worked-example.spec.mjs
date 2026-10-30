@@ -40,7 +40,7 @@ const rules = (B) => [
  * Returns the cards shown, the run's events and a way to wait for it to end.
  */
 async function run(page, task, decide = () => true) {
-    const events = [], cards = [];
+    const events = [], cards = [], base = fake.calls().length;   // the fake's calls span the whole spec: this run's are the ones after `base`
     const watcher = await watchRunEvents(ext, page, (e) => events.push(e));
     const tabId = await ext.sw.evaluate((u) => chrome.tabs.query({}).then((ts) => ts.find((t) => t.url === u)?.id), page.url());
     await ext.sw.evaluate((t) => { void globalThis.__mlStartUserRunForTest(t, { task: "do the task", surface: "hud" }, { approvalRouting: "both" }); }, tabId);
@@ -64,7 +64,7 @@ async function run(page, task, decide = () => true) {
     };
     return {
         events, cards,
-        done: async (calls) => { await expect.poll(() => fake.calls().length, { timeout: 40000 }).toBeGreaterThanOrEqual(calls); await new Promise((r) => setTimeout(r, 500)); on = false; await loop; await watcher.close(); fromEvents(); },
+        done: async (calls) => { await expect.poll(() => fake.calls().length - base, { timeout: 40000 }).toBeGreaterThanOrEqual(calls); await new Promise((r) => setTimeout(r, 500)); on = false; await loop; await watcher.close(); fromEvents(); },
     };
 }
 
@@ -164,4 +164,56 @@ test("type on B/other asks, since no row allows it; refused on the card it types
     ], (g) => g.tool !== "type");
     expect(cardsOf(o)).toEqual(["propose_policy", "type"]);
     expect(only(o, "type")[0].approval).toBe("denied");
+});
+
+// --- the person's word under crossOrigin: false (a run a page built, which may not leave its site on its own) ---
+
+/** Add (or, with `remove`, remove) a global policy as the policy page does: POLICIES from an extension page. */
+async function policyOp(payload) {
+    const ui = await ext.context.newPage();
+    await ui.goto(`chrome-extension://${ext.extensionId}/popup.html`);
+    const r = await ui.evaluate((pl) => chrome.runtime.sendMessage({ type: "POLICIES", payload: pl }), payload);
+    await ui.close();
+    return r;
+}
+
+/** A page-built run on A with `crossOrigin` off, whose model navigates to B/user/x; `source` (when given) is the person's policy over the navigate, saved first. Returns B's requests. */
+async function pageBuiltNavigate(source) {
+    const B = siteB.url;
+    const settings = { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", modelFilter: "", autoApproveReadonly: false };
+    const sitesBefore = await ext.sw.evaluate(() => chrome.storage.local.get("ml_site_always").then((r) => r.ml_site_always));
+    let added = [], page;
+    try {
+        // The worker hosts the loop (a debug surface is on), which is what the policies govern; the page's own loop answers for itself.
+        await configureExtension(ext.sw, { ...settings, debugMode: "devtools" });
+        await ext.sw.evaluate((origins) => chrome.storage.local.set({ ml_site_always: origins }), [siteA.url, B]);
+        if (source) {
+            added = (await policyOp({ op: "add", consumer: "fetch", effect: "allow", source, label: "Go anywhere on the demo site" })).data.global;
+            expect(added.length, "the policy was added").toBeGreaterThan(0);
+        }
+        page = await ext.context.newPage();
+        await page.goto(siteA.url + "/");
+        await waitForMl(page);
+        siteB.reset();
+        const script = [{ tool: "navigate", args: { url: B + "/user/x" } }, { content: "done" }];
+        fake.setScript(script);
+        const base = fake.calls().length;
+        await page.evaluate(() => { void window.ml.agent("go to the demo site", { env: false, crossOrigin: false }); return true; });
+        await expect.poll(() => fake.calls().length - base, { timeout: 40000 }).toBeGreaterThanOrEqual(script.length);
+        await new Promise((r) => setTimeout(r, 500));
+        return { requests: siteB.requests() };
+    } finally {
+        // Whatever failed above, the shared worker is left as it was found: no row, the debug surface off, the site list back.
+        await page?.close().catch(() => {});
+        for (const g of added) await policyOp({ op: "remove", id: g.id });
+        await ext.sw.evaluate((prior) => (prior === undefined ? chrome.storage.local.remove("ml_site_always") : chrome.storage.local.set({ ml_site_always: prior })), sitesBefore);
+        await configureExtension(ext.sw, { ...settings, debugMode: "off" });
+    }
+}
+
+test("a run without crossOrigin is refused a cross-site navigate; an approved policy of the person's that allows it lets that navigate go", async () => {
+    const none = await pageBuiltNavigate(null);
+    expect(none.requests.some((r) => r.startsWith("/user/x")), "with no policy the page's navigate tool refuses").toBe(false);
+    const allowed = await pageBuiltNavigate(`(c) => c.url.startsWith("${siteB.url}/") && c.interactive`);
+    expect(allowed.requests.some((r) => r.startsWith("/user/x")), "the person's word lets this navigate go").toBe(true);
 });

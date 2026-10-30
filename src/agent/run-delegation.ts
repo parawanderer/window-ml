@@ -121,11 +121,11 @@ export const stopSurvey = (runId: string): void => { surveyStops.get(runId)?.abo
 /** A tool of a BACKGROUND-hosted run, executed in the page. Every model call made on its behalf — the tool's
  *  own, and the verify captures below that call vision directly — is labelled as part of the run that caused it
  *  (RequestHint: `use: "agent"`, the run's session). */
-export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; verifyInWorker?: boolean; reads?: PreRead[]; answerShape?: AnswerShapeItem[]; answerSelect?: AnswerArgs; geometry?: GeometryRequest; pageRead?: PageReadRequest; onStream?: (text: string, ts?: number) => void } = {}): Promise<PageToolEnvelope> {
+export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; verifyInWorker?: boolean; reads?: PreRead[]; answerShape?: AnswerShapeItem[]; answerSelect?: AnswerArgs; geometry?: GeometryRequest; pageRead?: PageReadRequest; crossOriginWord?: boolean; onStream?: (text: string, ts?: number) => void } = {}): Promise<PageToolEnvelope> {
     return withRunSession(hintSession(runId), () => runDelegatedToolIn(runId, name, args, opts));
 }
 
-async function runDelegatedToolIn(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; verifyInWorker?: boolean; reads?: PreRead[]; answerShape?: AnswerShapeItem[]; answerSelect?: AnswerArgs; geometry?: GeometryRequest; pageRead?: PageReadRequest; onStream?: (text: string, ts?: number) => void } = {}): Promise<PageToolEnvelope> {
+async function runDelegatedToolIn(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; verifyInWorker?: boolean; reads?: PreRead[]; answerShape?: AnswerShapeItem[]; answerSelect?: AnswerArgs; geometry?: GeometryRequest; pageRead?: PageReadRequest; crossOriginWord?: boolean; onStream?: (text: string, ts?: number) => void } = {}): Promise<PageToolEnvelope> {
     const run = runs.get(runId);
     if (!run) return { result: `Error: no active agent run "${runId}" on this page (it may have ended).`, noRun: true };
     // A worker-built run's `answer` tool runs in the worker, and asks the page only for a selector's elements: this
@@ -237,7 +237,9 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
             return { result: v.content || "", image: v.image, imageLabel: v.imageLabel, feedback: v.feedback };
         });
     }
-    const tool = run.byName[name];
+    // A navigate the person's own policy allows (the worker judged it, and says so on the message): this call may cross
+    // origins though the run was not started with `crossOrigin`.
+    const tool = name === "navigate" && opts.crossOriginWord && run.byName[name] ? (window.ml as unknown as import("../contract").MlApi).navigateTool({ crossOrigin: true }) : run.byName[name];
     if (!tool) return { result: `Error: no tool named "${name}".` };
     // Approval preview: compute the In render for the CALL without RUNNING the tool (side-effect-free).
     if (opts.renderOnly) {
@@ -375,7 +377,7 @@ export function envelopeFrom(tool: MlTool, args: Record<string, unknown>, env: A
 export function installToolDelegation(): void {
     onIsolated(async (event: ChannelMessage) => {
         if (!event.data || event.data.type !== "PAGE_TOOL_RUN") return;
-        const { callId, runId, name, args, reads, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, verifyInWorker: inWorker, stream, finish, answerShape, answerSelect, geometry, pageRead } = event.data as { verifyInWorker?: boolean; answerShape?: AnswerShapeItem[]; answerSelect?: AnswerArgs; geometry?: GeometryRequest; pageRead?: PageReadRequest; callId: string; runId: string; name: string; args: Record<string, unknown>; reads?: PreRead[]; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; stream?: boolean; finish?: boolean };
+        const { callId, runId, name, args, reads, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, verifyInWorker: inWorker, stream, finish, answerShape, answerSelect, geometry, pageRead, crossOriginWord } = event.data as { crossOriginWord?: boolean; verifyInWorker?: boolean; answerShape?: AnswerShapeItem[]; answerSelect?: AnswerArgs; geometry?: GeometryRequest; pageRead?: PageReadRequest; callId: string; runId: string; name: string; args: Record<string, unknown>; reads?: PreRead[]; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; stream?: boolean; finish?: boolean };
         // The END of a turn of a run the WORKER holds (sw-run-host.ts): it ends the run's registration here, as the page
         // path's caller does. Nothing of the run comes with it (the worker keeps the run's answer), and nothing goes back.
         if (finish) {
@@ -391,7 +393,7 @@ export function installToolDelegation(): void {
             try { toIsolated({ type: "PAGE_TOOL_STREAM", runId, chunk, ts, ...(skipped ? { skipped } : {}) }); } catch { /* non-cloneable → drop */ }
         }) : null;
         const onStream = sender ? (chunk: string, ts?: number) => sender.push(chunk, ts) : undefined;
-        const envelope = await runDelegatedTool(runId, name, args || {}, { reads: Array.isArray(reads) ? reads : [], renderOnly: !!renderOnly, readonlyTry: !!readonlyTry, precheck: !!precheck, verifyAt, verifyViewport: !!verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, verifyInWorker: inWorker === true, ...(Array.isArray(answerShape) ? { answerShape } : {}), ...(answerSelect && typeof answerSelect === "object" ? { answerSelect } : {}), ...(geometry && typeof geometry === "object" ? { geometry } : {}), ...(pageRead && typeof pageRead === "object" ? { pageRead } : {}), onStream });
+        const envelope = await runDelegatedTool(runId, name, args || {}, { reads: Array.isArray(reads) ? reads : [], renderOnly: !!renderOnly, readonlyTry: !!readonlyTry, precheck: !!precheck, verifyAt, verifyViewport: !!verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, verifyInWorker: inWorker === true, ...(Array.isArray(answerShape) ? { answerShape } : {}), ...(answerSelect && typeof answerSelect === "object" ? { answerSelect } : {}), ...(geometry && typeof geometry === "object" ? { geometry } : {}), ...(pageRead && typeof pageRead === "object" ? { pageRead } : {}), ...(crossOriginWord === true ? { crossOriginWord: true } : {}), onStream });
         sender?.flush();   // the last lines go out BEFORE the result, which supersedes the live view
         toIsolated({ type: "PAGE_TOOL_RESULT", callId, envelope });
     });

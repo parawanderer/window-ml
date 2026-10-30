@@ -95,6 +95,12 @@ consumer by widening `PolicyConsumer` and `validList`, and give it a facts build
   store not read yet carries it to a card, `allow` skips the cross-origin card. An `allow` with no card adds the origin
   to the turn's `consentedOrigins` only, never to the run's as-you grants (`grantRunOrigin`, `worker-tools.ts`): only a
   person on a card grants an origin as-you (the 2026-10-24 correction).
+- A run built without `crossOrigin` (a page's own `ml.agent`) has a `navigate` tool that refuses a cross-origin URL. The
+  person's word lifts that for ONE call: when this navigate's `navigateFacts` is allowed by a policy of origin `proposed` or
+  `person` (never a builtin, never another consumer's `allow`), `sendTool` (`sw-run-host.ts`) marks the message
+  `crossOriginWord` at the send, and the page's `runDelegatedTool` runs that call with a `crossOrigin: true` tool. It is
+  a field of the message, never of the tool's arguments, so a model cannot say it. A `deny` or `ask` still wins in
+  `autoApprove`, and the arrival is still judged.
 - Every page the run's tab COMMITS while the run is live (`nav-arrival.ts`, from `webNavigation.onCommitted`), whoever
   caused it. `arrivalVerdict` turns the judgement into a hold, a consent, or a pass; a builtin answer and no answer both
   pass and consent nothing. An `ask` asks about every arrival it covers, an origin already consented included.
