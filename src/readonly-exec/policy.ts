@@ -467,8 +467,9 @@ export function mlFacade(ml: unknown, reused?: string[], answerFacade?: unknown,
     const hostEmbed = (ml as Record<string, unknown>)["embed"];
     if (typeof hostEmbed === "function" && !worker) {
         let chars = 0, calls = 0;
+        // A String OBJECT is told by BRAND (`isStringObject`), never by the tag: reading it runs the getter a page can set.
         const textOf = (x: unknown): string | null =>
-            typeof x === "string" ? x : x !== null && typeof x === "object" && Object.prototype.toString.call(x) === "[object String]" ? String.prototype.valueOf.call(x) : null;
+            typeof x === "string" ? x : x !== null && typeof x === "object" && isStringObject(x) ? String.prototype.valueOf.call(x) : null;
         out.embed = (input: unknown, opts?: unknown): unknown => {
             if (opts !== undefined) throw new Denied("ml.embed with options (a { model }) chooses what runs; in a survey only the configured embedding model does, so it needs approval");
             const many = Array.isArray(input);

@@ -55,6 +55,19 @@ test("one string gives one embedding; a String object is a string", async () => 
     assert.deepEqual(h.calls.map((c) => c[0]), ["cat", "dog"], "a String object reaches the host as a primitive");
 });
 
+test("a String object is told by brand: a page's tag getter and valueOf never run, a re-tagged real String still embeds", async () => {
+    let ran = 0;
+    const h = host();
+    const real = Object.defineProperty(new String("dog"), Symbol.toStringTag, { get() { ran++; return "Whatever"; } });
+    const fake = { get [Symbol.toStringTag]() { ran++; return "String"; }, valueOf() { ran++; return "cat"; } };
+    h.ml.models = async () => [real, fake];
+    await assert.rejects(run(`const [a, b] = await ml.models(); return await ml.embed(b)`, h.ml), (e) => e instanceof TypeError);
+    assert.equal(ran, 0, "page code ran while ml.embed read its input");
+    assert.equal((await run(`const [a] = await ml.models(); return (await ml.embed(a)).dims`, h.ml)).value, 4);
+    assert.equal(ran, 0, "a real String's tag getter ran");
+    assert.deepEqual(h.calls.map((c) => c[0]), ["dog"]);
+});
+
 test("an embedding is told apart by brand: Embedding.from grants it, a lookalike does not", () => {
     assert.ok(isEmbedding(Embedding.from([1, 0])));
     assert.ok(!isEmbedding({ dims: 2, values: [1, 0], dot() { return 1; } }));
