@@ -23,7 +23,7 @@ import { eventSession, pageMayWrite, type WorkerClaim } from "../event-admission
 import { answerShotRects, pageShotGate, sheetText, HOST_STYLE, setHostHidden, type ShotRoots } from "./shell-shot";
 import { topLayerKeeper, browserTopLayerDoc, browserClock } from "./shell-top-layer";
 import { approvalPayload } from "../approval-key";
-import { gateOpen, whenOpen, whenEverOpen } from "../page-gate";
+import { gateOpen, whenOpen, whenEverOpen, whenVisible } from "../page-gate";
 import { markOwnHost } from "../page-gesture";
 import { toPage, onPage, offPage, type ChannelMessage } from "../page-channel";
 
@@ -1553,7 +1553,7 @@ function teardown(): void {
 
 // The single entry point for the three debug surfaces. `off` draws nothing up-front and leaves
 // injected's bus dormant — it just listens for a background-hosted run and mounts the corner card
-// lazily. `overlay` mounts the in-page shell (whose iframe app hands back the `ready`). `devtools`
+// lazily. `overlay` mounts the in-page shell (whose iframe app hands back the `ready`) once the origin is visible. `devtools`
 // forwards the stream to the background (for the DevTools panel) but draws NO overlay — attach()/
 // handshake() posts `ready` itself (no iframe app to wait for).
 let mode: DebugMode = "off";
@@ -1565,7 +1565,9 @@ function applyMode(next: DebugMode): void {
     mode = next;
     if (mode === "off") { attach(listPageSessions); return; }   // listen for a background run; the card mounts lazily
     attach(true);
-    if (mode === "overlay") mountOverlay();
+    // Only on a page whose origin may use window.ml, on the worker's word: a hidden page gets no overlay, a run there
+    // included, whose card is the side panel (SITE_PRESENCE gap 7). A mode changed back before then mounts nothing.
+    if (mode === "overlay") whenVisible(() => { if (mode === "overlay") mountOverlay(); });
 }
 
 // The off-mode card's acrylic must match the APP's resolved theme (config.theme, auto → OS), so a

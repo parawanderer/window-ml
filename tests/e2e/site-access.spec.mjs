@@ -1098,6 +1098,8 @@ test.describe("@security attack 17: the shell's shadow roots", () => {
     test("17a: the overlay sidebar: the page reads no root of ours, by any path", async () => {
         const { site, ext, close } = await setup({ debugMode: "overlay" });
         try {
+            // the overlay mounts only on a page that may use window.ml, so approve the site's origin first
+            await allowSite(ext, site.origin("evil.test"));
             const page = await open(ext, site.url("evil.test"));
             await watchForOurNodes(page);
             await waitInShell(page, (roots) => !!roots.sidebar?.getElementById("ml-sb-tab"));
