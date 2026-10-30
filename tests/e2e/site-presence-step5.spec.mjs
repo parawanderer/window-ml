@@ -412,6 +412,10 @@ test("@security SITE_PRESENCE step 5: W8a: an image chain hopping a loopback hos
         const r = await h.page.evaluate((u) => window.ml._fetchImageBase64(u).then((d) => ({ ok: true, d: String(d).slice(0, 32) }), (e) => ({ ok: false, err: String(e) })), first);
         expect(r.ok, "IMAGE_FAILED on both sides (the pin: every failure is one text)").toBe(false);
         expect(String(r.err), "the one failure text").toContain("Could not read that URL as an image");
+        // The liveness anchor, OUTSIDE the branch (the janitor's finding): the chain's first hop was really answered
+        // with the redirect, so a fixture that stopped redirecting cannot green this row in either form — the closed
+        // form's two empty-log assertions would otherwise hold on a dead hop, and the OPEN branch alone held its anchor.
+        expect(h.site.requestsTo("img.test").map((q) => q.status), "the fixture answered the chain's first hop with a 302").toContain(302);
         if (holeOpen("step5worker", "the image fetch follows the private hop: the loopback host and what lies past it are requested")) {
             expect(h.site.requestsTo("localhost").length, "today's leak: the loopback host is requested").toBeGreaterThan(0);
             expect(h.site.requestsTo("victim.test").map((q) => q.path), "and so is the chain's last target").toContain("/secret");

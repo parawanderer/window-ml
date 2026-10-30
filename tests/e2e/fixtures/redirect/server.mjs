@@ -77,7 +77,12 @@ function exportHop(id) {
 function handle(via, log, req, res, hops) {
     const host = String(req.headers.host || "").split(":")[0].toLowerCase();
     const url = new URL(req.url || "/", `http://${host}`);
-    log.push({ via, host, path: `${url.pathname}${url.search}`, t: Date.now(), headers: req.headers });
+    const entry = { via, host, path: `${url.pathname}${url.search}`, t: Date.now(), headers: req.headers, status: null };
+    log.push(entry);
+    // What this listener ANSWERED, on the entry itself: a row whose claim is an absence needs the request to have been
+    // answered with the redirect it expected, or a fixture that stopped redirecting would green it (W8a's anchor).
+    const writeHead = res.writeHead.bind(res);
+    res.writeHead = (code, ...rest) => { entry.status = code; return writeHead(code, ...rest); };
     const to = url.searchParams.get("to");
     if (url.pathname === "/r" && to) {
         res.writeHead(302, { location: to, "content-type": "text/plain" });
@@ -154,13 +159,13 @@ function handle(via, log, req, res, hops) {
  *   tlsUrl: (host: string, path?: string) => string, tlsOrigin: (host: string) => string,
  *   loopbackUrl: (path?: string) => string,
  *   hopTo: (target: string) => string,
- *   requests: () => Array<{via: string, host: string, path: string, t: number, headers: Record<string, string>}>,
- *   requestsTo: (host: string) => Array<{via: string, host: string, path: string, t: number, headers: Record<string, string>}>,
+ *   requests: () => Array<{via: string, host: string, path: string, t: number, headers: Record<string, string>, status: number|null}>,
+ *   requestsTo: (host: string) => Array<{via: string, host: string, path: string, t: number, headers: Record<string, string>, status: number|null}>,
  *   clear: () => void, stop: () => Promise<void>,
  * }>}
  */
 export function startRedirectSite() {
-    /** @type {Array<{via: string, host: string, path: string, t: number, headers: Record<string, string>}>} */
+    /** @type {Array<{via: string, host: string, path: string, t: number, headers: Record<string, string>, status: number|null}>} */
     const log = [];
     /** Hop targets by number, for `/r/<n>`: see the header's route list. Never cleared with the log. */
     const hops = new Map();
