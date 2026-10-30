@@ -237,6 +237,24 @@ tool call, and its ids must never collide with a tool output's. The three refere
 (pointers.md): `@file:"report.pdf"` (the quoted label is the file's name), a minted id with its check character, told
 apart by SHAPE and never tried in order. There is no bare form.
 
+**The name, and two files with one name (Shane, 2026-10-30).** The file's own name is the label, because it is what the
+person and the model both call it; every form a file travels in already carries `name` (contract-run.ts). A duplicate
+name is not handled like a `@tool:` label, where an exact label resolves to the LATEST output silently: two different
+`report.pdf` files are usually a draft and its revision, and reading the newer one unasked can answer from the wrong
+document.
+
+- The same bytes attached twice are one file: the value store keeps a blob once per SHA-256, so no duplicate exists.
+- A different file under a name already in use keeps its real name (never `report (2).pdf`, which would leave the person
+  and the model calling one file two things), and its outline says so: `@file:9c2e41a "report.pdf": a second file by
+  this name; the first is @file:3fa91c2, attached in turn 2.`
+- `@file:"report.pdf"` while two such files exist is REFUSED, never resolved to the latest: the refusal lists each one
+  with its id, page count and the turn it came in, as an ambiguous near-match label is refused today (pointers.md). The
+  model then reads by id, or asks the person which one they meant.
+- The name is untrusted text (a downloaded file can be called `ignore previous instructions.pdf`): it travels only
+  inside the quoted label, with quotes escaped, line breaks and control characters stripped and its length capped, and
+  the outline's "attached by the person" stays beside it. The real-model run (below) includes a task with two files of
+  one name.
+
 **What the model is given up front** is an outline, not the content:
 
 ```
@@ -463,9 +481,17 @@ the call ran.
    best page numbers. `fake-llm.mjs` gains the embedding endpoints with fixed vectors, so the ranking is known.
 6. The run in the sidebar and both exports carry what the model saw at each step (the AGENTS.md rule).
 
-Two more runs in the same spec: a worker chat whose PDF is past the cap, where the held-back note names `read_pages`
-and a scripted `read_pages` call returns the pages; and a run whose scripted calls name an `@file:` its session does
-not hold, in `dereference`, `python_exec` and `look`, each refused.
+Three more runs in the same spec: a worker chat whose PDF is past the cap, where the held-back note names `read_pages`
+and a scripted `read_pages` call returns the pages; a run whose scripted calls name an `@file:` its session does not
+hold, in `dereference`, `python_exec` and `look`, each refused; and a run with two different files named `report.pdf`,
+where the second's outline names the first, `@file:"report.pdf"` is refused listing both, and a read by id answers.
+
+After slice 3 lands, the same tasks go to real models through the bench (Shane, 2026-10-30):
+`qwen3.8-flash-next:vision`, `gemma4:31b`, and `qwen3.8-flash-next:latest` (the same weights without a vision encoder,
+so a figure or scan task measures the hand-off to the reader against seeing the page). The tasks: a fact on one page of
+a long PDF, numbers from a table through `python_exec`, a figure or scanned page through `look`, the `ml.embed` ranking
+survey, a worker chat past the cap reading held-back pages with `read_pages`, and two different files named
+`report.pdf`. Results in a notebook: correctness, the tools chosen, steps and tokens, and recovery after a refusal.
 
 ## Trust
 
