@@ -270,6 +270,9 @@ CPython), which a green local `npm test` is not. Why each of these: `docs/dev/wo
   the forked Ollama/OpenWebUI. A missing topic gets a new `@` label with a description, not a stretched old one.
 - **A PR that changes what the phone app does gets `run:android-flows`** (a trigger, not a topic). The `phone` skill.
 - **A PR that conflicts with its base has NO checks at all**; **a CANCELLED check prints as `fail`**.
+- **RULE — never write `fix #N`, `close #N` or `resolve #N` in a PR body or commit message unless you MEAN to close
+  N.** GitHub reads the pair anywhere in prose, case-insensitive, and closes N when the squash lands on main; plan,
+  spec and red-team bodies name other lanes' PRs beside those words constantly. Write "#N (the fix)". → working-in-the-repo.md
 - **RULE — every GitHub post an agent makes says WHICH SESSION made it** (comment, review, inline remark, PR body):
   end with `> *Drafted by <harness> · work: <slug> · session <id8> · <model>*` and `<!-- agent-post: harness=… work=…
   session=<full id> model=… -->`; the work slug is session-mail's name for your work. Not in commits.

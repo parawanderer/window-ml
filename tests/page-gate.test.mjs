@@ -4,7 +4,7 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 
-const { setGate, gateState, whenOpen, whenEverOpen, whenDecided } = await import("../src/page-gate.ts");
+const { setGate, gateState, whenOpen, whenEverOpen, whenDecided, setVisible, gateVisible, whenVisible } = await import("../src/page-gate.ts");
 
 beforeEach(() => { delete globalThis.__mlPageGate; });
 
@@ -76,4 +76,33 @@ test("whenDecided runs on a close as on an open", () => {
     whenDecided(() => ran.push(gateState()));
     setGate(false);
     assert.deepEqual(ran, ["closed"]);
+});
+
+// --- whenVisible: the origin's visibility, which an open gate alone does not say (SITE_PRESENCE gap 7) ---
+
+test("an open gate is not a visible origin: what waits for visibility does not run when a run opens a hidden page", () => {
+    const ran = [];
+    whenVisible(() => ran.push("overlay"));
+    setGate(false);
+    setGate(true);   // the worker put a run's page script into a hidden page
+    assert.equal(gateState(), "open");
+    assert.equal(gateVisible(), false);
+    assert.deepEqual(ran, [], "the overlay mounted on a hidden page because a run opened its gate");
+});
+
+test("whenVisible runs on the worker's word, once, and at once after it", () => {
+    const ran = [];
+    whenVisible(() => ran.push("a"));
+    setVisible();
+    setVisible();
+    assert.deepEqual(ran, ["a"]);
+    whenVisible(() => ran.push("b"));
+    assert.deepEqual(ran, ["a", "b"]);
+});
+
+test("whenVisible keeps at most 16 while the origin is not visible", () => {
+    let ran = 0;
+    for (let i = 0; i < 40; i++) whenVisible(() => ran++);
+    setVisible();
+    assert.equal(ran, 16);
 });
