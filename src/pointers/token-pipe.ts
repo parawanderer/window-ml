@@ -18,6 +18,7 @@ import { type TableLike } from "../table/table-data";
 export type { DerefRead, DerefMeta } from "../contract/contract-pointers";
 import { isTokenShape } from "./token-id";
 import { editDistance, lexicalSimilarity, type LexicalMetric } from "./label-match";
+import { FileShelf } from "./file-pointer";
 
 /** The tool name, shared by the loop (which answers it) and the toolset builder (which advertises it). */
 export const DEREF_TOOL = "dereference";
@@ -185,6 +186,9 @@ export function displayPipe(pipe: string | string[] | null | undefined): string 
  *  dereference by the name it remembers instead of a hex id it never saw. */
 export class TokenStore {
     private byId = new Map<string, TokenValue>();
+    /** The files the person attached to this session, `@file:` pointers: apart from the tool outputs, never evicted
+     *  by them, and never resolved by a `@tool:` reference. */
+    readonly files = new FileShelf();
 
     /** How many pointers a store keeps. A store lives for a whole SESSION (every turn of an agent handle), not
      *  one turn, and an entry can carry a big `full` capture or a screenshot data URL — so it has to be bounded

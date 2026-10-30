@@ -185,6 +185,29 @@ test("HALTING: sed may not multiply its input past the cap, and a line stage may
     assert.match(g.message, /produced over/);
 });
 
+// --- ADVERSARIAL: the `pages` verb inside a survey ----------------------------------------------------------------------
+// `pages` joined the dialect for attached files (FILE_ATTACHMENTS.md, slice 3). A survey can hand it any text, so its
+// bounds are checked here as the dialect sees them: a request it cannot serve is an error the model can correct, and
+// its work is charged like every other stage's.
+
+const PAGED = `ml.range(2000).map((i) => "<page n=\\"" + (i + 1) + "\\">\\nline " + (i + 1) + "\\n</page>").join("\\n")`;
+
+test("ADVERSARIAL: `pages` in a survey reads a paged string, and a request past its bound is a plain error, not a hang", async () => {
+    assert.equal((await run(`return ml.pipe(${PAGED}, "pages 7 | grep line")`)).value, "line 7");
+    for (const [pipe, why] of [["pages 1-999999", /at most 50 pages/], ["pages 1-" + "9".repeat(300), /can't read/], ["pages 2001", /holds pages 1-2000; it has no page 2001/]]) {
+        const r = await inWorker(`return ml.pipe(${PAGED}, ${JSON.stringify(pipe)})`);
+        assertNotHung(r, pipe, 200_000);
+        assert.ok(r.threw && r.threw !== "NotInDialect" && r.threw !== "Denied", `${pipe}: ${JSON.stringify(r)}`);
+        assert.match(r.message, why, pipe);
+    }
+});
+
+test("HALTING: `pages` over a large paged string, many times over, spends the step budget and ends at the human gate", async () => {
+    const r = await fallsBack(`const t = ${PAGED} + "\\n" + "x".repeat(1000000); return ml.range(2000).map(() => ml.pipe(t, "pages 3")).length`,
+        "two thousand page reads of a 1M-character string");
+    assert.match(r.message, /too much work/);
+});
+
 // --- FAILURE: a refused pipe leaves nothing behind ----------------------------------------------------------------------
 
 test("FAILURE: a survey that curates its answer and then pipes a refused pattern has changed nothing", async () => {

@@ -38,6 +38,18 @@ background-hosted paths with no page round-trip and no approval.
   (`sed 's|http://a|X|'`, quoted, since a bare `|` separates stages). No addresses, no `-n`, no other
   commands: a model reaching for `sed -n '2p'` gets a refusal naming what the verb does accept, and `head`
   is what it wanted. It is a LINE verb, so it composes with the structural stages in either order.
+- **`pages` reads an attached file by page** (FILE_ATTACHMENTS.md, slice 3): `pages 3`, `pages 3-5`, `pages 3,7-9`
+  selects whole `<page n="k">` sections, in page order, before the line verbs run (`pages 3-5 | grep -i revenue`).
+  The request is parsed and bounded (`PIPE_PAGES_MAX`, 50 pages a stage, six digits a number) before any page is
+  gathered, so `pages 1-999999` costs nothing. An absent page is refused naming the pages held, never answered
+  empty. The sections are written by file-pointer.ts `fileSections`, which escapes `<page`, `</page` and `</file`
+  inside a page's text, so a page cannot open a section of its own and be read as another page.
+- **`@file:` is an attached file's pointer**, beside `@tool:`. The run's `TokenStore` holds files on a separate
+  `FileShelf` (file-pointer.ts): never evicted by tool outputs, and an id in its own domain (`fileId`), so a
+  `@tool:` reference never resolves to a file. Two forms, told apart by shape: a minted id, and the file's own name
+  quoted. A name two files share is REFUSED, listing both, never resolved to the latest; the same bytes attached
+  twice are one pointer. `derefLocally` reads the document from the value store on every read, so a file whose
+  rows are gone fails with the store's reason. `ml.dereference` in code refuses `@file:` with a sentence for now.
 - The pointer carries the value's **TYPE**, from the render descriptor the step already produced — so `keys`
   on a DataFrame means its COLUMNS, and two casts the line dialect can't express work: `latex`, and `img`,
   which never dumps the payload but says it IS base64 image data, how large, and what to do instead.
