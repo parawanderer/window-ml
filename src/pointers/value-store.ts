@@ -146,6 +146,11 @@ function heldAfter(rows: readonly ValueRow[], plan: readonly Eviction[]): number
     return [...size.values()].reduce((n, b) => n + b, 0);
 }
 
+/** The bytes of held rows a session still holds, each blob charged once: what no eviction can free. */
+function heldBytes(rows: readonly ValueRow[]): number {
+    return heldAfter(rows.filter((r) => r.held && r.sessions.length), []);
+}
+
 /** A read of a key the store does not hold. The message is what a model or a person reads, so it says why when it knows. */
 export class ValueMissing extends Error {
     readonly key: string;
@@ -167,8 +172,10 @@ const WHY: Record<EvictReason, string> = {
 
 /** A write the budget cannot hold even after evicting everything it may. */
 export class ValueTooLarge extends Error {
-    constructor(bytes: number, budget: number) {
-        super(`a ${bytes.toLocaleString("en-US")}-byte value does not fit the value store's ${budget.toLocaleString("en-US")}-byte budget, so it was not stored.`);
+    /** @param held bytes of attached files the store keeps for their sessions, when they are why the value does not fit */
+    constructor(bytes: number, budget: number, held = 0) {
+        const beside = held > 0 ? ` beside the ${held.toLocaleString("en-US")} bytes of attached files it keeps for their sessions` : "";
+        super(`a ${bytes.toLocaleString("en-US")}-byte value does not fit the value store's ${budget.toLocaleString("en-US")}-byte budget${beside}, so it was not stored.`);
         this.name = "ValueTooLarge";
     }
 }
@@ -290,7 +297,7 @@ export class ValueStore {
                 const plan = planEviction(rows, { budgetBytes: budget, now: this.now(), idleMs: this.idleMs, incoming: blob.size, protect: meta.protect });
                 // What the plan leaves must hold the write, or nothing is evicted for it: with held (attached) rows the
                 // budget can be full of values that may not go.
-                if (heldAfter(rows, plan) + blob.size > budget) throw new ValueTooLarge(blob.size, budget);
+                if (heldAfter(rows, plan) + blob.size > budget) throw new ValueTooLarge(blob.size, budget, heldBytes(rows));
                 await this.apply(plan);
             }
             const now = this.now();

@@ -378,13 +378,23 @@ test("planEviction: a held row a session holds is neither idle-swept nor budget-
     const now = 10 * IDLE_MS;
     const rows = [
         row("attached", 600, now - 3 * IDLE_MS, { held: true, sessions: ["s"], blob: "h1" }),
-        row("fetched-copy", 600, now - 3 * IDLE_MS, { blob: "h1", sessions: ["t"] }),
+        // Recent, so the budget pass faces the whole h1 group: an idle copy would leave by the idle pass first.
+        row("fetched-copy", 600, now - MIN, { blob: "h1", sessions: ["t"] }),
         row("fetched", 300, now - MIN, { sessions: ["t"] }),
     ];
     const plan = planEviction(rows, { budgetBytes: 500, now, incoming: 100 });
-    assert.ok(!plan.some((e) => e.key === "attached"), "the attachment stays, however long unread and however full the budget");
-    assert.ok(!plan.some((e) => e.key === "fetched-copy" && e.reason === "budget"), "a fetched copy of the same bytes cannot take it out with it");
-    assert.ok(plan.some((e) => e.key === "fetched" && e.reason === "budget"), "an ordinary value goes for the room");
+    assert.deepEqual(plan.map((e) => [e.key, e.reason]), [["fetched", "budget"]],
+        "the attachment and its copy stay however full the budget; an ordinary value goes for the room");
+});
+
+test("planEviction: an idle copy of a held file's bytes idles out as a shared row, freeing nothing and taking nothing with it", () => {
+    const now = 10 * IDLE_MS;
+    const rows = [
+        row("attached", 600, now - 3 * IDLE_MS, { held: true, sessions: ["s"], blob: "h1" }),
+        row("fetched-copy", 600, now - 3 * IDLE_MS, { blob: "h1", sessions: ["t"] }),
+    ];
+    const plan = planEviction(rows, { budgetBytes: 5000, now });
+    assert.deepEqual(plan.map((e) => [e.key, e.reason, !!e.shared]), [["fetched-copy", "idle", true]]);
 });
 
 test("planEviction: a held row nobody holds is evicted like any other, so a claim that never landed does not pin it forever", () => {
@@ -397,8 +407,9 @@ test("store: a held put that the budget cannot hold beside the held values is re
     const { store, evicted } = makeStore({ budget: 1000 });
     const first = await store.put(blob(700), { format: "bytes", session: "s", held: true });
     const fetched = await store.put(blob(100), { format: "csv", session: "t" });
-    await assert.rejects(store.put(blob(400), { format: "bytes", session: "s", held: true }), ValueTooLarge,
-        "700 held + 400 is past 1000 even with every evictable value gone");
+    await assert.rejects(store.put(blob(400), { format: "bytes", session: "s", held: true }),
+        (e) => e instanceof ValueTooLarge && /1,000-byte budget beside the 700 bytes of attached files it keeps for their sessions/.test(e.message),
+        "700 held + 400 is past 1000 even with every evictable value gone, and the refusal says the held files are why");
     assert.deepEqual(evicted, [], "the fetched value was not evicted for a write that still would not fit");
     await store.get(first.key);
     await store.get(fetched.key);
