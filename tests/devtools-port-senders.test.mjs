@@ -1,0 +1,123 @@
+// devtools-port-senders.test.mjs — the DevTools feed's port (`serveDevtoolsPort`, src/sw/sw-debug.ts): WHO may read a
+// tab's debug stream. A port named `ml-devtools` and the first init message's `tabId` are all it takes today, so any
+// context that can open a runtime port reads another tab's run — its prompts, its tool results — by naming its id.
+// SITE_PRESENCE gaps (6): the sender decides, not the tab id.
+//
+// No reachable hostile path exists TODAY: a Port needs `chrome.runtime`, which a page's main world does not have, and the
+// content script relays only page-relay.ts's HANDLE_MAP types — none of which opens one. These rows are the property a
+// fix must hold so that the next relay, or a content script's mistake, cannot turn into a read of another tab's run.
+//
+// Failing-first, the node:test way: the rows a fix must turn are `{ todo: true }` until it lands (they fail on main at
+// the assertion each one carries), and the flip is a commit of mine after its merge sha that drops the option.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const { loadBackground } = require("./helpers");
+
+const TODO = "gaps (6) is open on main: the fix lands behind this row";
+const CONFIG = { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "default-model", apiFormat: "openai", ocrModel: "" };
+const RUN_TAB = 1;   // the tab whose run is live, and whose stream the buffer holds
+const SNEAK_TAB = 2; // the tab a hostile context runs in, naming RUN_TAB's id
+const SECRETS = [
+    { kind: "agent", session: { hash: "s1" }, task: "pay the invoice" },
+    { kind: "tool", step: 1, call: { name: "fetch_url", args: { url: "https://bank.test/statement" } } },
+];
+
+/** The DevTools panel's shape: one of the extension's own pages, and no tab of its own. */
+const PANEL = { url: "chrome-extension://test/devtools.html" };
+/** A content script's shape: the page's URL and the tab it runs in (Chrome sets both). */
+const tabSender = (id, url = `https://page-${id}.test/`) => ({ url, tab: { id, url }, frameId: 0 });
+
+const settle = () => new Promise((r) => setTimeout(r, 0));
+
+/** Put a live run's events in the tab's replay ring, the way the shell forwards them (ML_DEBUG_EVENT). */
+async function seed(bg) {
+    for (const event of SECRETS) await bg.send({ type: "ML_DEBUG_EVENT", event }, tabSender(RUN_TAB));
+}
+
+/** A live event after the port is connected: what a panel sees as the run goes on. */
+const live = (bg) => bg.send({ type: "ML_DEBUG_EVENT", event: { kind: "agent", session: { hash: "s1" }, task: "and the second one" } }, tabSender(RUN_TAB));
+
+/** Open a `ml-devtools` port naming `tabId`, as devtools.ts does. */
+function openPort(bg, tabId, sender) {
+    const port = bg.connect("ml-devtools", sender);
+    port.send({ type: "ml-devtools-init", tabId });
+    return port;
+}
+
+/** What a port read of the run's stream: the kinds in its replay, and how many live events followed. */
+const read = (port) => {
+    const replay = port.messages.find((m) => Array.isArray(m.replay));
+    return { replayKinds: replay ? [...replay.replay].map((e) => e.kind) : null, live: port.messages.filter((m) => m.__mlDebug).length };
+};
+
+// --- the DevTools feed's port: which senders may read a tab's stream ---
+
+test("a content script's port reads nothing of another tab's run", { todo: TODO }, async () => {
+    const bg = loadBackground({ config: CONFIG });
+    await seed(bg);
+    const port = openPort(bg, RUN_TAB, tabSender(SNEAK_TAB));
+    await settle();
+    // Today: `[{ replay: [the run's start, its fetch of bank.test] }]` — the whole buffer, to a page's content script.
+    assert.deepEqual(port.messages, [], `the replay was handed to a page's content script: ${JSON.stringify(port.messages)}`);
+    await live(bg);
+    await settle();
+    assert.deepEqual(port.messages, [], "and the run went on into it");
+    assert.equal(port.wasDisconnected(), true, "the worker closes the port it refuses");
+});
+
+test("a port from a web URL with no tab reads nothing", { todo: TODO }, async () => {
+    const bg = loadBackground({ config: CONFIG });
+    await seed(bg);
+    const port = openPort(bg, RUN_TAB, { url: "https://evil.example/" });
+    await settle();
+    assert.deepEqual(port.messages, [], `any url at all is served today: ${JSON.stringify(port.messages)}`);
+    assert.equal(port.wasDisconnected(), true);
+});
+
+test("an extension URL WITH a tab is refused too (an extension page in a tab is still a tab)", { todo: TODO }, async () => {
+    const bg = loadBackground({ config: CONFIG });
+    await seed(bg);
+    const port = openPort(bg, RUN_TAB, { url: "chrome-extension://test/devtools.html", tab: { id: SNEAK_TAB } });
+    await settle();
+    assert.deepEqual(port.messages, [], `the sender is never read today: ${JSON.stringify(port.messages)}`);
+    assert.equal(port.wasDisconnected(), true);
+});
+
+// --- what both sides already hold: the floor, the panel's control, and the entry a refusal must leave ---
+
+test("a port that names no tab reads nothing, from any sender", async () => {
+    const bg = loadBackground({ config: CONFIG });
+    await seed(bg);
+    for (const sender of [PANEL, tabSender(SNEAK_TAB), { url: "https://evil.example/" }]) {
+        const port = bg.connect("ml-devtools", sender);
+        port.send({ type: "ml-devtools-init" });
+        await settle();
+        assert.deepEqual(port.messages, [], `a port with no tab read something: ${JSON.stringify(port.messages)}`);
+    }
+});
+
+test("the DevTools panel's own port reads the buffered replay, then each live event (the control)", async () => {
+    const bg = loadBackground({ config: CONFIG });
+    await seed(bg);
+    const port = openPort(bg, RUN_TAB, PANEL);
+    await settle();
+    assert.deepEqual(read(port).replayKinds, SECRETS.map((e) => e.kind), "the whole buffer, in order");
+    await live(bg);
+    await settle();
+    assert.equal(read(port).live, 1, "and the live event after it");
+    assert.equal(port.wasDisconnected(), false);
+});
+
+test("a refused port leaves no entry: the panel that opens next still gets the full replay", { todo: TODO }, async () => {
+    const bg = loadBackground({ config: CONFIG });
+    await seed(bg);
+    const hostile = openPort(bg, RUN_TAB, tabSender(SNEAK_TAB));
+    await settle();
+    const panel = openPort(bg, RUN_TAB, PANEL);
+    await settle();
+    assert.deepEqual(read(panel).replayKinds, SECRETS.map((e) => e.kind), "the panel behind a refused port still gets the whole buffer");
+    assert.deepEqual(hostile.messages, [], "the refused port read nothing");
+});
