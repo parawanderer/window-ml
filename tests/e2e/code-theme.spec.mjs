@@ -7,7 +7,7 @@
 // be drawn on the panel's white.
 import { test, expect } from "@playwright/test";
 import path from "node:path";
-import { configureExtension, launchExtension, inShell, waitInShell } from "./harness.mjs";
+import { configureExtension, launchExtension, inShell, waitInShell, approveOrigin } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -18,6 +18,8 @@ const SHOTS = process.env.SHOTS;   // a directory to screenshot into, for eyebal
 async function openSidebar(fake, ext) {
     const page = await ext.context.newPage();
     await page.setViewportSize({ width: 1280, height: 900 });
+    // the overlay mounts only on a page that may use window.ml, so approve the fake server's origin first
+    await approveOrigin(ext.sw, new URL(fake.url).origin);
     await page.goto(`${fake.url}/api/version`);
     await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
     await inShell(page, (roots) => {

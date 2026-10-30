@@ -13,7 +13,7 @@
 // attack does put extension pixels somewhere, so a pass is not a page that hid the UI altogether.
 import { test, expect } from "@playwright/test";
 import http from "node:http";
-import { launchExtension, configureExtension, inShell, waitInShell, waitForMl, onChannel, warUrl } from "./harness.mjs";
+import { launchExtension, configureExtension, inShell, waitInShell, waitForMl, approveOrigin, onChannel, warUrl } from "./harness.mjs";
 import { TAMPERED, RESTYLED_COVERS, MOVED_COVERS } from "../../src/sw/shot-mask.ts";
 
 /** A page that is one flat green with a transparent target box at (300,300) 200×100, on a local http server. */
@@ -57,6 +57,8 @@ async function setup(ext, site) {
     await configureExtension(ext.sw, { debugMode: "overlay", cdp: false });
     const page = await ext.context.newPage();
     await page.setViewportSize({ width: 1280, height: 720 });
+    // the overlay mounts only on a page that may use window.ml, so approve the site's origin first
+    await approveOrigin(ext.sw, new URL(site.url).origin);
     await page.goto(site.url);
     await page.waitForSelector("#ml-sb-root", { state: "attached", timeout: 15000 });
     await waitInShell(page, (roots) => !!roots.sidebar?.getElementById("ml-sb-tab"));
