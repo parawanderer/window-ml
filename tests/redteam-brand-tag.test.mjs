@@ -12,14 +12,13 @@
 // "a page object can claim Symbol.toStringTag = 'Date', and since a date now has methods, a claimed one would have its
 // OWN getTime called" — the borrowed getter throws on an object without the internal slot. That is the shape of the fix.
 //
-// A hole still open lands as a `{ todo }` row asserting the DEFENDED outcome; the controls beside it pin what already
-// holds, so the fixture cannot pass by refusing nothing.
+// The two hole rows landed as `{ todo }` on main, each failing at the assertion it carries, and are flipped here — the
+// rule-10 flip, this file only — now that the dialect decides kinds by brand (#1393). The controls beside them pin what
+// already held, so the fixture cannot pass by refusing nothing.
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
 import { evalReadonly, NotInDialect } from "../src/readonly-exec.ts";
-
-const TODO = { todo: "open: kindOf trusts a page-settable Symbol.toStringTag for the String and RegExp kinds" };
 
 const doc = () => new JSDOM("<!doctype html><body><p>hi</p></body>").window.document;
 
@@ -41,13 +40,13 @@ async function withValue(o, js) {
 
 // --- the hole: a claimed tag decides the member set ---
 
-test("RED TEAM: Symbol.toStringTag = 'String' does not grant the string member set (the page's own method must not run)", TODO, async () => {
+test("RED TEAM: Symbol.toStringTag = 'String' does not grant the string member set (the page's own method must not run)", async () => {
     const { o, ran } = pageObject("String", { toUpperCase: () => "PAGE" });
     await assert.rejects(withValue(o, `const o = await ml.models(); return o.toUpperCase()`), (e) => e instanceof NotInDialect, "a claimed String was allowed the string member set");
     assert.deepEqual(ran, [], `the dialect ran the page's own method: ${JSON.stringify(ran)}`);
 });
 
-test("RED TEAM: Symbol.toStringTag = 'RegExp' does not grant the regexp member set (nor hand back the page's fields)", TODO, async () => {
+test("RED TEAM: Symbol.toStringTag = 'RegExp' does not grant the regexp member set (nor hand back the page's fields)", async () => {
     const { o, ran } = pageObject("RegExp", { test: () => true, exec: () => ["PAGE"] });
     await assert.rejects(withValue(o, `const r = await ml.models(); return r.test("x")`), (e) => e instanceof NotInDialect, "a claimed RegExp was allowed the regexp member set");
     assert.deepEqual(ran, [], `the dialect ran the page's own method: ${JSON.stringify(ran)}`);
