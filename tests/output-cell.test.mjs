@@ -8,7 +8,7 @@ import { JSDOM } from "jsdom";
 import { createRequire } from "node:module";
 const require_ = createRequire(import.meta.url);
 
-let h, render, OutputCell, RenderPanel, ValueOut, findMatches, atBottomOf, scrollerX, doc;
+let h, render, OutputCell, RenderPanel, ValueOut, findMatches, atBottomOf, judgeScroll, scrollerX, doc;
 
 before(async () => {
     const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", { pretendToBeVisual: true });
@@ -24,7 +24,7 @@ before(async () => {
     // Load preact through require, NOT `import("preact")`: tsx compiles the .tsx component to CJS, so an
     // ESM import here would be a SECOND preact instance and its hooks would have no current component.
     ({ h, render } = require_("preact"));
-    ({ OutputCell, RenderPanel, ValueOut, findMatches, atBottomOf, scrollerX } = await import("../src/sidebar/transcript/render-panel.tsx"));
+    ({ OutputCell, RenderPanel, ValueOut, findMatches, atBottomOf, judgeScroll, scrollerX } = await import("../src/sidebar/transcript/render-panel.tsx"));
 });
 
 // Preact defers effects to a rAF tick, and the find bar computes its match count IN an effect — so a
@@ -67,6 +67,24 @@ test("atBottomOf: parked at the bottom follows; scrolled up holds", () => {
     assert.equal(atBottomOf({ scrollHeight: 1000, scrollTop: 790, clientHeight: 200 }), true, "a few px of slack still counts");
     assert.equal(atBottomOf({ scrollHeight: 1000, scrollTop: 400, clientHeight: 200 }), false);
     assert.equal(atBottomOf({ scrollHeight: 120, scrollTop: 0, clientHeight: 260 }), true, "no overflow → stay armed");
+});
+
+test("judgeScroll: a find reveal's own scroll event at the clamped bottom does not re-arm follow; the reader's does", () => {
+    const bottom = { scrollHeight: 1000, scrollTop: 800, clientHeight: 200 };
+    // The reveal parked the match, the write clamped at the tail (800), and the browser reports it as a scroll.
+    let st = judgeScroll(bottom, 800, false);
+    assert.deepEqual(st, { follow: false, ownWrite: null }, "the reveal's own event is not the reader returning to the bottom");
+    // The reader's next scroll is judged as before: up holds, back to the bottom resumes.
+    st = judgeScroll({ ...bottom, scrollTop: 400 }, st.ownWrite, st.follow);
+    assert.equal(st.follow, false, "scrolled up stays held");
+    st = judgeScroll(bottom, st.ownWrite, st.follow);
+    assert.equal(st.follow, true, "the reader scrolling back to the bottom resumes following");
+});
+
+test("judgeScroll: a reader's scroll that differs from the reveal's write is judged normally and clears the record", () => {
+    const st = judgeScroll({ scrollHeight: 1000, scrollTop: 790, clientHeight: 200 }, 800, false);
+    assert.deepEqual(st, { follow: true, ownWrite: null }, "coalesced event at another position is the reader's");
+    assert.deepEqual(judgeScroll({ scrollHeight: 1000, scrollTop: 100, clientHeight: 200 }, null, true), { follow: false, ownWrite: null }, "no record: as before");
 });
 
 /* ---------------- the cell + its find bar (rendered) ---------------- */
