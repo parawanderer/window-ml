@@ -257,3 +257,16 @@ their heads, each a `{ todo }` row asserting the defended outcome beside control
 
 Both PRs also claim three stray `redteam-*` files for the `redteam` genre in `scripts/test.mjs`, which
 `--check-genres` was refusing every commit over; whichever merges first carries the claim.
+
+LANDED 2026-10-30 (verified): the main fix is #1393 OPEN (head 93e5d62f, `@exec @security`, the dialect lane on Sonnet:
+`policy.ts`, `evaluator.ts`, five adversarial rows in `tests/readonly-exec.test.mjs` failing on main, readonly-exec.md
+updated); it merges after #1381 and the janitor's comment. The re-read found three more tag-decided kinds in the
+evaluator, fixed in the same PR by the same borrowed brand and measured on main first: a tagged page object as a search
+pattern had its `source`/`flags` getters run; `expanded()` ran its `toString` through `String(x)`; one returned from a
+host call had its own `Symbol.iterator` run. One consequence, not handled: an iterator from another realm is no longer
+drained (a one-line reason in readonly-exec.md; a control row for the red team). The unchanged `redteam-brand-tag`
+rows pass against the branch. RULED 2026-10-30 on two gaps the lane found, neither tag-dependent, each its own PR on
+main after #1393 and #1336, behind the red team's rows (e3, after its #1358 (c) pin): `[o].join("")` and
+`concat(o).join("")` run a page object's own `toString`, fixed by refusing any non-primitive element at `join`; a
+genuine String object carrying an own `toString` has it run by native ToString(this) in `split`/`replace`, fixed by
+dispatching string-kind methods on `String.prototype.valueOf.call(obj)` when the receiver is an object.
