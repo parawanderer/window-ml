@@ -1064,8 +1064,10 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // `kinds: true` additionally reports each model's CAPABILITIES, so a picker can tell a chat model
         // from an embedding one. OPT-IN because it costs an /api/show per model (~60-110ms each, bounded
         // concurrency, cached for the worker's life): the settings and popup pickers want it, while the
-        // composer and the VRAM panel just want names and must not pay for it.
-        const wantKinds = !sender.tab && !!(message.payload as { kinds?: unknown })?.kinds;
+        // composer and the VRAM panel just want names and must not pay for it. The overlay sidebar is OUR page in
+        // a frame of a web page's tab, so it has `sender.tab` like a page does: `!sender.tab` alone left its
+        // Settings with no capabilities and an embedding picker that said no model reports the capability.
+        const wantKinds = (!sender.tab || isExtensionSender(sender)) && !!(message.payload as { kinds?: unknown })?.kinds;
         Promise.all([listAvailableModels(sender.tab ? {} : (message.payload || {})), getConfig()])
             .then(async ([{ ids, ollamaModels }, cfg]) => {
                 const keep = (m: string) => modelFilterAllows(m, cfg.modelFilter);

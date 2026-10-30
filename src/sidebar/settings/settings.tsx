@@ -1589,8 +1589,12 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                         refuse a model that works. But a model we CAN see, and that does not report the
                         capability, fails at request time with nothing on screen to explain it. */}
                     {embedProblem ? <div class="hint err">{embedProblem}</div> : null}
+                    {/* "None reports it" is a claim about capabilities READ. When none could be read the list is
+                        empty for that reason, and saying the server has no embedding model would be false. */}
                     {!embedProblem && !embedListed.length && models.value.length
-                        ? <div class="hint">No model on this server reports the <b>embedding</b> capability, so there is nothing to suggest. Anything typed here is still accepted.</div> : null}
+                        ? <div class="hint">{models.value.some(m => modelKinds.value[m])
+                            ? <>No model on this server reports the <b>embedding</b> capability, so there is nothing to suggest.</>
+                            : <>This server's model capabilities could not be read, so there is nothing to suggest.</>} Anything typed here is still accepted.</div> : null}
                     {c.embeddingModel.trim() && embedDims.value[c.embeddingModel.trim()]
                         ? <div class="set-hint">{embedDims.value[c.embeddingModel.trim()]} dimensions</div> : null}
                 </div>
