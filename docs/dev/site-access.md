@@ -340,9 +340,11 @@ highlight on a waiting click's target, so the card, the transcript and the start
   it drew with `ML_HL_POS`: the worker takes one of the nine labels (`HL_POSITIONS`) from a top frame and hands it to that
   tab's OPEN panel, never queued.
 - **A run's end leaves the panel enabled**, showing the run as finished; it is empty after the next navigation.
-- **Not yet closed:** the DevTools panel's `ml-devtools` port takes any extension sender's `tabId`, and `debugMode:
-  "overlay"` mounts `#ml-sb-root` on a hidden page. Both are pre-existing and ruled for the security lane's follow-ups
-  (SITE_PRESENCE.md step 4).
+- **The overlay never mounts on a hidden page**, a run there included: with `debugMode: "overlay"` the shell mounts it
+  only once the worker has said the origin is visible (`whenVisible`, page-gate.ts: the `CONTENT_READY` reply's
+  `open`, or `PRESENCE_OPEN`). An open gate does not say that, since a run's page script opens a hidden page's gate too.
+- **Not yet closed:** the DevTools panel's `ml-devtools` port takes any extension sender's `tabId`. It is pre-existing
+  and ruled for the security lane's follow-up (SITE_PRESENCE.md step 4).
 
 ## Starting agents
 
