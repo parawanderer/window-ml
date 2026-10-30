@@ -371,3 +371,52 @@ test("formats: a paged or bytes value is refused as a table with a sentence, not
         await assert.rejects(storedColumns(new ArrayBuffer(4), f, ["a"]), new RegExp(`this stored value is ${f}, which is not a table`));
     }
 });
+
+// --- held rows: a file the person attached is kept for its session's life ---
+
+test("planEviction: a held row a session holds is neither idle-swept nor budget-evicted, and its blob's group is skipped whole", () => {
+    const now = 10 * IDLE_MS;
+    const rows = [
+        row("attached", 600, now - 3 * IDLE_MS, { held: true, sessions: ["s"], blob: "h1" }),
+        row("fetched-copy", 600, now - 3 * IDLE_MS, { blob: "h1", sessions: ["t"] }),
+        row("fetched", 300, now - MIN, { sessions: ["t"] }),
+    ];
+    const plan = planEviction(rows, { budgetBytes: 500, now, incoming: 100 });
+    assert.ok(!plan.some((e) => e.key === "attached"), "the attachment stays, however long unread and however full the budget");
+    assert.ok(!plan.some((e) => e.key === "fetched-copy" && e.reason === "budget"), "a fetched copy of the same bytes cannot take it out with it");
+    assert.ok(plan.some((e) => e.key === "fetched" && e.reason === "budget"), "an ordinary value goes for the room");
+});
+
+test("planEviction: a held row nobody holds is evicted like any other, so a claim that never landed does not pin it forever", () => {
+    const now = 10 * IDLE_MS;
+    const plan = planEviction([row("stray", 10, now - IDLE_MS, { held: true })], { budgetBytes: 1000, now });
+    assert.deepEqual(plan.map((e) => [e.key, e.reason]), [["stray", "idle"]]);
+});
+
+test("store: a held put that the budget cannot hold beside the held values is refused, and evicts nothing for it", async () => {
+    const { store, evicted } = makeStore({ budget: 1000 });
+    const first = await store.put(blob(700), { format: "bytes", session: "s", held: true });
+    const fetched = await store.put(blob(100), { format: "csv", session: "t" });
+    await assert.rejects(store.put(blob(400), { format: "bytes", session: "s", held: true }), ValueTooLarge,
+        "700 held + 400 is past 1000 even with every evictable value gone");
+    assert.deepEqual(evicted, [], "the fetched value was not evicted for a write that still would not fit");
+    await store.get(first.key);
+    await store.get(fetched.key);
+});
+
+test("store: a held value goes when its session ends, and an idle sweep before that leaves it", async () => {
+    const { store, evicted, tick } = makeStore({ budget: 10_000, idleMs: HOUR });
+    const held = await store.put(blob(10), { format: "bytes", session: "s", held: true });
+    tick(5 * HOUR);
+    await store.sweep();
+    await store.get(held.key);
+    await store.releaseSession("s");
+    assert.deepEqual(evicted.map((e) => [e.key, e.reason]), [[held.key, "session-end"]]);
+    await assert.rejects(store.get(held.key), ValueMissing);
+});
+
+test("upgrade: a row written before `held` existed has no field and is evicted as before", () => {
+    const now = 10 * IDLE_MS;
+    const old = { key: "v-old", bytes: 10, lastReadAt: now - IDLE_MS, createdAt: 0, sessions: ["s"], format: "text" };
+    assert.deepEqual(planEviction([old], { budgetBytes: 1000, now }).map((e) => e.key), ["v-old"]);
+});
