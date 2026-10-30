@@ -87,6 +87,14 @@ test("actElement of a point token is the element under the point, as the click h
     assert.equal(actElement({ selector: mintBox({ left: 0, top: 0, right: 20, bottom: 20 }) }), undefined, "a box is not clickable: the precheck refuses it");
 });
 
+test("actElement of a point on or inside a canvas is the canvas, as clickAt retargets it", async () => {
+    const { mintPoint } = await import("../src/util.ts");
+    mount(`<canvas id="c" aria-label="Board"><span id="fallback">Fallback</span></canvas><button id="b">Go</button>`);
+    document.elementFromPoint = (x) => document.getElementById(x === 10 ? "fallback" : "b");
+    assert.deepEqual(actElement({ selector: mintPoint(10, 5) }), { tag: "canvas", href: null, name: "Board" }, "a hit inside the canvas resolves the canvas");
+    assert.equal(actElement({ selector: mintPoint(50, 5) }).tag, "button", "a hit outside any canvas is the element itself");
+});
+
 test("actElement is the name AT THE CALL: a button renamed by script is read under its new name", () => {
     mount(`<button id="b">Approve This Draft</button>`);
     assert.equal(actElement({ selector: "#b" }).name, "Approve This Draft");
