@@ -439,6 +439,30 @@ The files a session holds, in one place, in the CALM view.
 - The panel: closed by default, never opened by an attach, remembered across a reload, a sheet at phone width, and a
   file listed only once held. A gallery entry for it with rows in each state.
 
+### A scripted model that uses the tools (Shane, 2026-10-30)
+
+Unit tests check each part; this checks that a model can get from an attached file to an answer through the tools as
+they are actually wired. One e2e spec against `fake-llm.mjs`, its scripted turns calling the tools the way a model
+would. The fixture is a PDF built for it: known text on known pages, one figure page, one scanned page. After every
+turn the test reads the NEXT request the model received (`fake.calls()`) and asserts what it was given, not only that
+the call ran.
+
+1. Attach the PDF to an agent session. The first request carries the outline (`@file:`, the page count, which pages are
+   figures or scans), not the text.
+2. `exec`, a read-only survey: `dereference` with `pages 3-5 | grep`. It runs with no approval card, and the next
+   request carries those pages' lines with their page numbers.
+3. `python_exec` in `readonly` mode with `files: { doc: "@file:…" }`: reads `doc.pages[n].text` and `.kind`, calls
+   `png()` on one page and returns its size. The next request carries both. A cell asking `png()` for more pages than
+   its bound gets the sentence, and the cell still ends.
+4. `look({ doc, pages })`: the pages go down the vision path, counted against the context like any page image.
+5. With `ml.embed` in the dialect (#1336): a survey that embeds each page, ranks them against a query and returns the
+   best page numbers. `fake-llm.mjs` gains the embedding endpoints with fixed vectors, so the ranking is known.
+6. The run in the sidebar and both exports carry what the model saw at each step (the AGENTS.md rule).
+
+Two more runs in the same spec: a worker chat whose PDF is past the cap, where the held-back note names `read_pages`
+and a scripted `read_pages` call returns the pages; and a run whose scripted calls name an `@file:` its session does
+not hold, in `dereference`, `python_exec` and `look`, each refused.
+
 ## Trust
 
 A file's text is untrusted input, the same as a web page's: an instruction written inside a PDF gets no authority a
