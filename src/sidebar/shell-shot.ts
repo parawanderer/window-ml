@@ -21,18 +21,6 @@ import { onTopLayer } from "./shell-top-layer";
  */
 export const HOST_STYLE = "all: initial !important;";
 
-/**
- * Hide or show a host for the page's own shot. A plain `style.visibility` is not `!important` and loses to the host's
- * own {@link HOST_STYLE}, so the hide is `!important` too, and showing removes it to fall back to `all: initial`.
- * @param host the shadow host, if mounted
- * @param hidden whether to hide it
- */
-export function setHostHidden(host: HTMLElement | null, hidden: boolean): void {
-    if (!host) return;
-    if (hidden) host.style.setProperty("visibility", "hidden", "important");
-    else host.style.removeProperty("visibility");
-}
-
 /** What the shell hides for the page's own shot and brings back after: the sidebar, the off-mode card, the lightbox, the hover box. */
 export interface ShotSurface {
     /** Hide everything that would land in a capture (called again while already hidden: must be idempotent). */
@@ -44,6 +32,9 @@ export interface ShotSurface {
 /** How long the page's hide is held with no "show": past the longest page-hosted capture (the quota retries, about
  *  3 s), so a page cannot hide the sidebar and the approval card for as long as it likes by never saying show. */
 export const PAGE_SHOT_HOLD_MS = 5000;
+
+/** How long the worker's hide around a trusted click is held with no "show": past the click's three dispatches. */
+export const CLICK_HIDE_HOLD_MS = 2000;
 
 /** The two frames a hide waits before it is acknowledged, so the hidden state has painted before the capture fires. */
 const afterTwoFrames = (fn: () => void): void => { requestAnimationFrame(() => requestAnimationFrame(fn)); };

@@ -274,3 +274,21 @@ test("pickLabelSpot hugOnly: never escapes to a corner, even when every hug spot
     const spot = pickLabelSpot(box, label, img, score, 4, /* hugOnly */ true);
     assert.equal(spot.hug, true, "hug-only stays beside the box (no corner + leader)");
 });
+
+// ---- The hit-test hide (withHiddenSidebar) against the hosts' own `all: initial !important` (SITE_PRESENCE gap 8) ----
+
+test("withHiddenSidebar hides each host with !important while it runs, and restores it after", () => {
+    const doc = world(`<div id="ml-sb-root" style="all: initial !important;"></div><div id="ml-sb-card" style="all: initial !important;"></div>`);
+    const hosts = ["ml-sb-root", "ml-sb-card"].map((id) => doc.getElementById(id));
+    const during = locate.withHiddenSidebar(() => hosts.map((h) => [h.style.getPropertyValue("visibility"), h.style.getPropertyPriority("visibility")]));
+    assert.deepEqual(during, [["hidden", "important"], ["hidden", "important"]], "a plain visibility loses to the host's own !important and the hit-test returns the host");
+    assert.deepEqual(hosts.map((h) => h.style.getPropertyValue("visibility")), ["", ""]);
+});
+
+test("withHiddenSidebar leaves a host a shot already hid still hidden after it runs", () => {
+    const doc = world(`<div id="ml-sb-root" style="all: initial !important;"></div>`);
+    const h = doc.getElementById("ml-sb-root");
+    h.style.setProperty("visibility", "hidden", "important");
+    locate.withHiddenSidebar(() => null);
+    assert.deepEqual([h.style.getPropertyValue("visibility"), h.style.getPropertyPriority("visibility")], ["hidden", "important"]);
+});

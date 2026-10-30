@@ -90,6 +90,9 @@ export async function cdpClick(tabId: number, x: number, y: number): Promise<{ o
     const at = await ensureDebuggerAttached(tabId);   // reuses a live attachment; attaches once per run (see the lifecycle above)
     if ("error" in at) return { error: `Couldn't attach the debugger to click a reserved element (${at.error}). Another debugger (DevTools?) may be attached to this tab.`, ...(at.needsPermission ? { needsPermission: true } : {}) };
     const target: chrome.debugger.Debuggee = { tabId };
+    // The browser hit-tests the point with our UI on top, so it is hidden first: the act judge resolved the element
+    // beneath it (locate.ts `withHiddenSidebar`), and the click has to reach that one, not our host.
+    const hidden = await setClickHide(tabId, true);
     try {
         for (const params of cdpClickPlan(x, y)) {
             await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", params);
@@ -98,8 +101,27 @@ export async function cdpClick(tabId: number, x: number, y: number): Promise<{ o
     } catch (e) {
         return { error: `The CDP click failed (${(e as Error)?.message || e}).` };
     } finally {
+        if (hidden) void setClickHide(tabId, false);
         touchDebugger(tabId);   // keep the attachment warm; the run's finally (or the idle timer) detaches
     }
+}
+
+/** How long a click waits for the shell's hide to paint (two frames) before it dispatches anyway. */
+export const CLICK_HIDE_ACK_MS = 500;
+
+/**
+ * Ask the tab's top-frame shell to hide or show the extension's UI around a trusted click (shell.ts `CLICK_HIDE`).
+ * A tab with no shell (or one that never answers within {@link CLICK_HIDE_ACK_MS}) has nothing to wait for.
+ * @param tabId the tab being clicked
+ * @param hidden hide before the dispatch, or show after it
+ * @returns whether the shell acknowledged
+ */
+async function setClickHide(tabId: number, hidden: boolean): Promise<boolean> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+        const ack = Promise.resolve().then(() => chrome.tabs.sendMessage(tabId, { type: "CLICK_HIDE", hidden }, { frameId: 0 })).then((r) => !!r?.ok, () => false);
+        return await Promise.race([ack, new Promise<boolean>((r) => { timer = setTimeout(() => r(false), CLICK_HIDE_ACK_MS); })]);
+    } finally { clearTimeout(timer); }
 }
 
 /** A fresh random hex string of `n` bytes. */

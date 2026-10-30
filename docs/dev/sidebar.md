@@ -80,6 +80,14 @@ screen holds nothing painted before the watch. The worker paints every place see
 not hide: an inline hide is page-owned DOM, so a stylesheet overrides it, a MutationObserver times every shot, and a page
 that blocks its main thread holds the ack.
 
+**Keeping the extension out of a click (SITE_PRESENCE gap 8).** The act judge hit-tests a point with our hosts hidden
+(`withHiddenSidebar`, locate.ts), so a trusted click has to reach the same element: `cdpClick` (sw-cdp.ts) sends the
+shell `CLICK_HIDE` (top frame, worker only), waits for its ack two frames after the hide or 500 ms, dispatches, and
+shows. Every hide is `setHostHidden` (`dom/host-hide.ts`): `visibility: hidden !important`, since a plain one loses to
+the hosts' own `all: initial !important` and the hit-test returns the host. The page's shot and the worker's click each
+hold the hide on their own (`shotHolders`, shell.ts), so the page's `show` cannot bring our UI back under a click; the
+click's hide lifts itself after 2 s, and does not pin the scroll the way a shot does (the click may scroll the page).
+
 The roots are closed (below), but the hosts sit in the page's document, so the page can still act on the hosts, their
 ancestors and the top layer. What the shell cannot bound
 is `tampered` and refused with one fixed sentence: a host moved off the root element (into a frame of the page's), an
