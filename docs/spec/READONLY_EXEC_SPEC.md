@@ -260,7 +260,7 @@ Both PRs also claim three stray `redteam-*` files for the `redteam` genre in `sc
 
 LANDED 2026-10-30 (verified): the main fix is #1393 OPEN (head 93e5d62f, `@exec @security`, the dialect lane on Sonnet:
 `policy.ts`, `evaluator.ts`, five adversarial rows in `tests/readonly-exec.test.mjs` failing on main, readonly-exec.md
-updated); it merges after #1381 and the janitor's comment. The re-read found three more tag-decided kinds in the
+updated); it merges after #1381 and the janitor's comment. #1381 MERGED 0b2b0932 on 2026-10-30 (verified): the two todos and two controls are on main. e3 flips the todos as a flip-only PR on main after #1393 merges, carrying the control-1 `ran` destructure fix in the same commit. The re-read found three more tag-decided kinds in the
 evaluator, fixed in the same PR by the same borrowed brand and measured on main first: a tagged page object as a search
 pattern had its `source`/`flags` getters run; `expanded()` ran its `toString` through `String(x)`; one returned from a
 host call had its own `Symbol.iterator` run. One consequence, not handled: an iterator from another realm is no longer
