@@ -241,7 +241,7 @@ their heads, each a `{ todo }` row asserting the defended outcome beside control
   beside it already refuse the trick by a borrowed getter. Pinned by #1381 (base main,
   `redteam-brand-tag.test.mjs`, two todos, two controls). RULED: this is a defect of the dialect on main,
   not of `ml.embed`, since every member inherits the dispatch, so the fix lands on MAIN as its own PR (`@exec`
-  `@security`, by #1336's builder, who is in that file already, and #1336 rebases onto it), by the same
+  `@security`, by #1336's builder, and #1336 rebases onto it; UPDATE the same day: that builder's session was gone, so Shane started the dialect lane, `[window-ml dialect] brand fix + ml.embed` on Sonnet, briefed by the coordinator with both fixes and #1336 itself from here), by the same
   borrowed-brand pattern the Date branch uses; it merges after #1381 and the janitor's comment, and the red
   team flips its todos after as a flip-only PR on main (rule 10). A fix on the embed branch alone would leave
   the hole on main until that branch merges and was refused for that reason.
