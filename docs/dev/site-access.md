@@ -5,7 +5,8 @@ Slice 3 is being built from its implementation reference, [../spec/SITE_ACCESS_S
 its PR 1 (the levels in storage, the self-approval list by origin, the upgrade) is in "The lists" below, and its PR 2
 (the agent level enforced, and the start card) in "Starting agents", and its PR 3 (the toolbar badge and the popup's agent
 controls) in "The badge and the popup", and its PR 4 (`ml.requestAccess` from a site already allowed) in "Sites asking for
-access". A site not yet allowed cannot ask until PR 4b (the stub, from SITE_PRESENCE.md).
+access". A site not yet allowed asks through the stub (`ask.ts`, SITE_PRESENCE.md). What a page gets, written for a
+site's developer: [../PAGE-API.md](../PAGE-API.md).
 What has been checked about the page-facing surface, what has not, and the plan: [security-audit.md](security-audit.md).
 What a page can observe of window.ml installed and acting in it, measured per tool: [detection-surface.md](detection-surface.md).
 
@@ -307,6 +308,41 @@ on. Marking works only on an unknown origin; a deny or a revoke clears the mark,
 - **`REQUEST_ACCESS` is ungated** (`PAGE_UNGATED_TYPES`, `page-relay.ts`): the router skips the origin gate for it but
   still passes its answer through the `forPage` scrub. The handler refuses an extension sender and lets a page ask only
   when its presence is not `hidden`.
+
+### A hidden page's surface: the side panel
+
+[SITE_PRESENCE.md](../spec/SITE_PRESENCE.md) step 4. A hidden page gets nothing of ours in its DOM during a run but the
+highlight on a waiting click's target, so the card, the transcript and the start composer live in Chrome's side panel
+(`src/sidebar/sidepanel.html`, the card app under an extension page). The worker's half is `src/sw/sw-side-panel.ts`.
+
+- **The panel is enabled per tab while the tab's top document is hidden, and disabled while it is visible.** `notePage`
+  reads the presence of the URL the browser reports (never anything the page posted) on every top-frame navigation
+  commit, and `syncAllPanels` reads every open tab at worker start and after a change to the lists; a failed read
+  counts as hidden. Chrome keeps the per-tab options across a worker restart (measured, Chromium 151), so the start walk
+  is a re-check.
+- **The browser holds the decision a start gesture needs.** `sidePanel.open` must run before the gesture handler's first
+  await, and rejects "No active side panel" on a tab whose panel is disabled (measured). Alt+Space and the context menu
+  call `startGesture`, which calls `open` synchronously: success means hidden and the panel's composer opens (a cue);
+  a rejection means visible, and the in-page composer opens only after a fresh presence read agrees. A read that says
+  hidden after all (a navigation raced the options) puts nothing in the page, and the cue waits for the panel, which the
+  badge points to. The context menu's element comes from the shell (`ML_ELEMENT_CONTEXT`), which mounts nothing.
+- **The cut.** Every send of a run's UI to a tab (`ML_DEBUG_TO_PAGE`) goes through `toPageUi`, which drops it when the
+  tab's top document is hidden: the panel has the run through its port. A browser with no `chrome.sidePanel` keeps
+  the page's own surfaces.
+- **The panel's port.** The panel connects `ml-sidepanel`, served beside the DevTools panel's `ml-devtools` feed
+  (`sw-debug.ts`, the same buffer and replay); only an extension page with no `sender.tab` may hold one, and its
+  `tabId` is accepted once. `servePanelPort` registers it against that tab and flushes the cues that waited for it.
+  The panel starts a run with `PANEL_START_RUN` (extension sender, no tab, a numeric `payload.tabId`), since
+  `USER_START_RUN` reads the tab from `sender`; everything else is the card app's usual relay (`relayAppToWorker`,
+  `app-host.ts`, shared with `panel.ts`).
+- **The approval highlight stays on the page.** The panel's card asks for it over `ML_HL_REMOTE`, which the worker marks
+  `anyMode` for the side panel's own sender only, so the shell draws it in every debug mode. The shell tells the panel where
+  it drew with `ML_HL_POS`: the worker takes one of the nine labels (`HL_POSITIONS`) from a top frame and hands it to that
+  tab's OPEN panel, never queued.
+- **A run's end leaves the panel enabled**, showing the run as finished; it is empty after the next navigation.
+- **Not yet closed:** the DevTools panel's `ml-devtools` port takes any extension sender's `tabId`, and `debugMode:
+  "overlay"` mounts `#ml-sb-root` on a hidden page. Both are pre-existing and ruled for the security lane's follow-ups
+  (SITE_PRESENCE.md step 4).
 
 ## Starting agents
 
@@ -816,6 +852,12 @@ Its "Waiting for you" block lists this tab's start asks from `START_ASKS`, an ex
 (`isExtensionSender`) that answers a tab's asks and, given `show`, sends `ML_SHOW_START_ASK` to that tab's top frame only
 when the ask is on that tab. The shell unfolds the run's card (`__mlShowRun`) without focusing it: a start card never
 takes focus, so the page's own Enter cannot land on Allow.
+
+On a hidden page the ask is in the side panel instead: `START_ASKS` with `show` cues the panel (`__mlShowRun`), and the
+popup's Show calls `sidePanel.open` for the tab first. The badge also counts what waits on a hidden tab whose panel is
+closed (`closedPanelWaits`: the run's gates through `runInboxes`, and the cues no panel has taken), titled "window.ml:
+something is waiting for you in the side panel on this tab" when that is all of it. The popup lists those tabs from
+`PANEL_WAITS` (extension senders only), one "Open panel" row each; its click is the gesture `sidePanel.open` needs.
 
 ## Sites asking for access
 

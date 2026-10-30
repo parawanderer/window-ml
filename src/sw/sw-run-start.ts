@@ -34,6 +34,7 @@ import { defineTool } from "../ml/ml-tool-factories";
 import { notePersonTurn } from "./sw-start-approval";
 import { adoptOnTab } from "./adopt-run";
 import { holdStands } from "./nav-arrival";
+import { toPageUi } from "./sw-side-panel";
 
 /** What a run is given when the person set no step budget: the same default `ml.agent` and `createAgent` use. */
 const DEFAULT_MAX_STEPS = 10;
@@ -129,7 +130,7 @@ let steerSeq = 0;
  * @param event the session event
  */
 export function announce(tabId: number, event: Record<string, unknown>): void {
-    chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => { /* tab gone */ });
+    toPageUi(tabId, { type: "ML_DEBUG_TO_PAGE", event });
     relayDebugEvent(tabId, event);
     ingestSessionEvent(event, { tabId, trusted: true });
     bufferReplay(tabId, event);

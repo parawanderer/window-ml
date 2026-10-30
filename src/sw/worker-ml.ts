@@ -13,7 +13,7 @@ import { modelFilterAllows, publicConfig } from "../contract/contract-config";
 import { senderSelfApproves } from "./sw-site-access";
 import type { MlApi } from "../contract";
 import { defineTool, lookTool, locateTool, navigateTool, fetchTool, clickTool, typeTool, pythonTool, chatMetaTool } from "../ml/ml-tool-factories";
-import { _resolveVisionModel, _modelSees, _nativeLookTool, ocrRequest } from "../ml/ml-vision";
+import { _resolveVisionModel, _modelSees, _modelVision, _nativeLookTool, ocrRequest } from "../ml/ml-vision";
 import { getConfig, modelCapabilities, listAvailableModels, listServerTools, fetchLLM } from "./sw-llm";
 import { executeServerTool, serverToolResult } from "./sw-tools";
 import { makeDomTools } from "../tools/tools";
@@ -46,7 +46,7 @@ export function workerMl(tabUrl: string): WorkerMl {
             if (typeof image === "string" && image.startsWith("data:")) return image;
             throw new Error("the worker can only take an image as a data URL");
         },
-        _resolveVisionModel, _modelSees, _nativeLookTool,
+        _resolveVisionModel, _modelSees, _modelVision, _nativeLookTool,
         lookTool, locateTool, navigateTool, fetchTool, clickTool, typeTool, pythonTool, chatMetaTool,
         // A REMOTE tool of a run the worker built runs here, not in the page (sw-local-tools.ts): the page would have
         // to read the backend's tool list to build it, and its arguments leave the machine. Its `run` is the page's
@@ -62,4 +62,4 @@ export function workerMl(tabUrl: string): WorkerMl {
 }
 
 /** The worker's `ml`: what assembly reads, the Commander kit's factories, and a remote tool's backend call. */
-export type WorkerMl = AssemblyMl & Pick<MlApi, "capabilities" | "_modelSees" | "clickTool" | "typeTool" | "pythonTool" | "chatMetaTool" | "execServerTool">;
+export type WorkerMl = AssemblyMl & Pick<MlApi, "capabilities" | "_modelSees" | "_modelVision" | "clickTool" | "typeTool" | "pythonTool" | "chatMetaTool" | "execServerTool">;

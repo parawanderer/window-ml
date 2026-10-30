@@ -116,6 +116,22 @@ out["mixed.pdf"] = onePage(textBlock(PROSE.slice(0, 6), { y: 740 }) + `q 408 0 0
 }
 // A blank page: an empty content stream.
 out["blank.pdf"] = onePage("").build();
+// The three things pdf.js draws through a canvas FILTER, which in a worker (no DOM) it must do by pixel instead: a
+// transfer function in the graphics state (left square, 0.2 gray inverted to 0.8), a luminosity soft mask with a
+// transfer function (middle square, a black mask inverted to opaque, so the black fill shows), and a knockout group at
+// half opacity (right squares). Inverting makes each of the first two squares differ from what it would be without it.
+{
+    const d = new Doc();
+    const catalog = d.reserve(), pages = d.reserve(), page = d.reserve();
+    const invert = d.add("<< /FunctionType 2 /Domain [0 1] /C0 [1] /C1 [0] /N 1 >>");
+    const mask = d.add(Doc.stream(`/Type /XObject /Subtype /Form /BBox [0 0 ${W} ${H}] /Group << /S /Transparency /CS /DeviceGray >>`, "0 g 230 300 150 150 re f"));
+    const knock = d.add(Doc.stream(`/Type /XObject /Subtype /Form /BBox [0 0 ${W} ${H}] /Group << /S /Transparency /K true >> /Resources << /ExtGState << /H << /ca 0.5 >> >> >>`, "/H gs 0 g 410 300 150 150 re f 0 g 450 340 150 150 re f"));
+    const c = d.add(Doc.stream("", "q /TR gs 0.2 g 50 300 150 150 re f Q\nq /SM gs 0 g 230 300 150 150 re f Q\nq /KO gs /K Do Q\n"));
+    d.set(catalog, `<< /Type /Catalog /Pages ${pages} 0 R >>`);
+    d.set(pages, `<< /Type /Pages /Kids [${page} 0 R] /Count 1 >>`);
+    d.set(page, `<< /Type /Page /Parent ${pages} 0 R /MediaBox [0 0 ${W} ${H}] /Contents ${c} 0 R /Resources << /ExtGState << /TR << /TR ${invert} 0 R >> /SM << /SMask << /Type /Mask /S /Luminosity /G ${mask} 0 R /TR ${invert} 0 R >> >> /KO << /ca 0.5 >> >> /XObject << /K ${knock} 0 R >> >> >>`);
+    out["filters.pdf"] = d.build();
+}
 
 // ---- Adversarial ----
 // A page tree claiming 100,000 pages and holding three. pdf.js walks the tree and corrects the count (numPages is 3),

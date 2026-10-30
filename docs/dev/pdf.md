@@ -1,8 +1,9 @@
 # Reading a PDF
 
-How a PDF is opened, measured and classified, page by page, in the offscreen document. Nothing user-facing calls this
-yet (file attachments slice 2b, [`FILE_ATTACHMENTS.md`](../spec/FILE_ATTACHMENTS.md)); a later PR wires it to the chat
-and to `fetch_url`. The folder is `src/pdf/`.
+How a PDF is opened, measured and classified, page by page, in the offscreen document. A PDF attached to a worker chat
+is read through it (`sw-chat.ts` asks `PDF_READ` before the turn and `PDF_RENDER` for each page that sends an image,
+[`FILE_ATTACHMENTS.md`](../spec/FILE_ATTACHMENTS.md), "Wiring a PDF through the attach path"); agent runs and
+`fetch_url` do not use it yet. The folder is `src/pdf/`.
 
 ## The pieces
 
@@ -107,3 +108,7 @@ offscreen document to read and render the fixtures.
 - pdf.js trims text that falls outside the page, so a test for a huge text run needs it on the page (many small lines).
 - `chrome.runtime.sendMessage` is JSON: send base64, never a typed array.
 - The document handle has no `destroy()`; the loading task's `destroy()` frees it.
+- The worker has no `document`, and pdf.js outside node assumes one for its canvas AND filter factories: `source()`
+  passes `OffscreenCanvasFactory` and `NoDomFilterFactory`. Without the second, a page with a transfer function, a
+  luminosity soft mask or a knockout group refused as `unreadable` ("reading 'URL'"); given "none", pdf.js draws each
+  of them pixel by pixel (`filters.pdf`).

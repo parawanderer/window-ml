@@ -55,6 +55,7 @@ export const ALLOWED_GLOBALS: readonly string[] = Object.freeze([
     "WebAssembly", // compiles bytes, never a string: kept whole (Pyodide's WASM runtime needs it)
     "setTimeout", "setInterval", "clearTimeout", "clearInterval", // string arguments refused below
     "AbortController", "AbortSignal",
+    "crypto", // computes on bytes the cell holds: kept whole, Pyodide's random source reads it per call (os.urandom, secrets, uuid4)
 ]);
 
 /** The evaluator and host-surface names the strip must ensure are ABSENT (never kept, even if a realm adds one).
@@ -719,23 +720,30 @@ export async function lockdownReadonly(py: any, scope: any = globalThis): Promis
 
     // 3. The allow-list strip. Delete everything outside ALLOWED_GLOBALS; also force-remove the known
     //    evaluator/host names even if a realm invents an alias for one. Timers become string-refusing
-    //    wrappers. WebAssembly is kept whole — it compiles bytes, never a string. Prototype chain too:
-    //    `onmessage`, `postMessage` etc. live on `DedicatedWorkerGlobalScope.prototype`, not as own
-    //    properties of `self`, so an own-property delete alone leaves them reachable.
+    //    wrappers. WebAssembly is kept whole — it compiles bytes, never a string. The prototype chain is
+    //    the surface too: `location`, `navigator`, `onmessage`, `postMessage` etc. are accessors and
+    //    methods on `WorkerGlobalScope.prototype` and up, not own properties of `self`, so an own-property
+    //    delete alone leaves them readable. A name the scope still reaches after its delete is shadowed.
+    //    The walk stops at the realm's own `globalThis`: a worker's chain never holds it, and a stand-in
+    //    scope that inherits from it (a test's fake `self`) must not strip the test realm.
     const keep = new Set(ALLOWED_GLOBALS);
+    const shadow = (name: string) => {
+        try { Object.defineProperty(scope, name, { value: undefined, writable: false, configurable: false }); } catch { /* non-configurable */ }
+    };
     for (const name of Object.getOwnPropertyNames(scope)) {
         if (keep.has(name)) continue;
-        try { delete scope[name]; } catch { try { Object.defineProperty(scope, name, { value: undefined, writable: false, configurable: false }); } catch { /* non-configurable */ } }
+        try { delete scope[name]; } catch { shadow(name); }
+    }
+    for (let proto = Object.getPrototypeOf(scope); proto && proto !== Object.prototype && proto !== globalThis; proto = Object.getPrototypeOf(proto)) {
+        for (const name of Object.getOwnPropertyNames(proto)) {
+            if (keep.has(name) || name === "constructor") continue;
+            try { delete proto[name]; } catch { /* non-configurable: shadowed below */ }
+            if (name in scope && !Object.prototype.hasOwnProperty.call(scope, name)) shadow(name);
+        }
     }
     for (const name of STRIPPED_NAMES) {
         try { delete scope[name]; } catch { /* gone or non-configurable */ }
-        // Walk the prototype chain and delete there too (the WorkerGlobalScope methods are prototype
-        // accessors: `delete self.postMessage` is a no-op when `postMessage` is on the prototype).
-        let proto = Object.getPrototypeOf(scope);
-        while (proto && proto !== Object.prototype) {
-            try { delete proto[name]; } catch { /* non-configurable */ }
-            proto = Object.getPrototypeOf(proto);
-        }
+        if (name in scope && !Object.prototype.hasOwnProperty.call(scope, name)) shadow(name);
     }
     // Timers: a STRING argument is the browser's indirect-eval path. Keep the function; refuse the string.
     for (const name of TIMER_NAMES) {

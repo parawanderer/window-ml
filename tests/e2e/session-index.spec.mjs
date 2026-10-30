@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, highlightTag } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 
@@ -130,7 +130,7 @@ test("page.highlight draws on the session's tab even with the debug panel off", 
         await expect.poll(async () => (await rows()).length).toBe(1);
         const [{ hash }] = await rows();
         expect(await rows.cmd({ type: "page.highlight", session: { runtime: "local", hash }, ref: { selector: "body" } })).toEqual({ ok: true, data: {} });
-        await expect(page.locator("#ml-sb-root-hl")).toHaveCount(1);
+        await expect(page.locator(await highlightTag(page))).toHaveCount(1);
     } finally { await ext.context.close(); await fake.stop(); await site.stop(); }
 });
 

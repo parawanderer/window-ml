@@ -9,6 +9,7 @@ import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
 import { queryAll, shadowHostReport, firstHopSealed } from "../src/dom/dom.ts";
+import { anonymousTag, isOwnUiId } from "../src/ids.ts";
 
 /** Boot a jsdom document and install it as the global queryAll reads. Returns the document. */
 function mount(html) {
@@ -284,6 +285,32 @@ test("queryAll EXCLUDES the extension's own injected UI (light-DOM lightbox + ov
     // A page shadow root's content is UNaffected (only OUR ml-* hosts are skipped).
     const w = doc.createElement("my-widget"); doc.body.append(w); w.attachShadow({ mode: "open" }).innerHTML = '<button id="inner">In</button>';
     assert.ok(queryAll("button").map(e => e.id).includes("inner"), "a normal page shadow root is still pierced");
+});
+
+// The highlight's host is ANONYMOUS (SITE_PRESENCE step 4): a random custom-element name and no id of ours, so the id skip
+// cannot see it. The isolated world tells it by identity, from the own-host set the shell marks it in.
+test("queryAll skips an anonymous host the shell marked as its own, and still returns a look-alike the page made", () => {
+    const doc = mount(`<button id="page">Page</button>`);
+    const tag = anonymousTag();
+    const ours = doc.createElement(tag), theirs = doc.createElement(tag);
+    doc.body.append(ours, theirs);
+    ours.attachShadow({ mode: "open" }).innerHTML = '<button id="hud">HUD</button>';
+    globalThis.__mlOwnHosts = new WeakSet([ours]);
+    try {
+        assert.deepEqual(queryAll(tag), [theirs], "our host is skipped by identity; the page's element of the same tag is not");
+        assert.deepEqual(queryAll("button").map((e) => e.id), ["page"], "nothing inside our host's root is reached");
+        assert.deepEqual(queryAll(tag, true).length, 2, "includeExtensionUi re-includes it");
+    } finally { delete globalThis.__mlOwnHosts; }
+});
+
+test("anonymousTag is a valid custom-element name with no ml- in it, fresh each call", () => {
+    const tags = Array.from({ length: 500 }, anonymousTag);
+    for (const t of tags) {
+        assert.match(t, /^[a-z]{5}-[a-z]{6}$/);
+        assert.ok(!t.includes("ml-") && !isOwnUiId(t), t);
+        assert.doesNotThrow(() => new JSDOM("").window.document.createElement(t).attachShadow({ mode: "closed" }), `${t} takes a shadow root`);
+    }
+    assert.ok(new Set(tags).size > 495, "the tags are random, not one fixed name");
 });
 
 test("queryAll({ includeExtensionUi }) re-includes the HUD — both light-DOM and its shadow content", () => {

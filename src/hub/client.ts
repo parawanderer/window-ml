@@ -71,7 +71,7 @@ export type HubEvent =
     | { kind: "backfilled"; stream: StreamRef | undefined; epoch: number; seq: number; truncated: boolean }
     | { kind: "gap"; stream: StreamRef | undefined; dropped: number }
     /** the hub reporting something about this connection; THROTTLED leaves it open, the rest close it */
-    | { kind: "error"; code: number; message: string; ref: number }
+    | { kind: "error"; code: number; message: string; ref: number; nonce?: Bytes }
     /** the socket closed: nothing more will arrive, and every later `next()` resolves with this again */
     | { kind: "closed"; reason: string }
     /** events dropped because the consumer stopped reading: a full queue is reported, never silent */
@@ -94,6 +94,9 @@ const WELCOME_TIMEOUT_MS = 15_000;
  * unbounded queue turns that into a tab's memory; past this the oldest are dropped and the loss is reported.
  */
 export const MAX_QUEUED_EVENTS = 4_096;
+
+/** How many sent commands' refs are remembered for an `Error` about one. */
+const MAX_REFS = 1024;
 
 /** A command whose sealed form is over the hub's `max_payload_bytes`; the relay would close the connection on it. */
 export class CommandTooLarge extends Error {
@@ -122,6 +125,11 @@ export class HubClient {
      */
     private pairing: { resolve: (paired: { offer: Bytes; answer: Bytes }) => void; reject: (e: Error) => void } | null = null;
     private pairingChain: Promise<unknown> = Promise.resolve();
+    /** The nonce of each command sent, by the `ref` its envelope carried, so an `Error` the hub sends about one (its
+     *  recipient offline or behind: `UNAVAILABLE`) reaches whoever waits on that command's answer. The latest
+     *  {@link MAX_REFS}; the hub answers at once or not at all. */
+    private refs = new Map<number, Bytes>();
+    private nextRef = 1;
 
     private constructor(
         private readonly socket: WebSocket,
@@ -302,7 +310,10 @@ export class HubClient {
         }
         if (frame.error) {
             const e: HubErrorFrame = frame.error;
-            this.push({ kind: "error", code: e.code, message: e.message, ref: e.ref });
+            // About a command we sent: carry its nonce, which is what its waiter is keyed by.
+            const nonce = e.ref ? this.refs.get(e.ref) : undefined;
+            if (nonce) this.refs.delete(e.ref);
+            this.push({ kind: "error", code: e.code, message: e.message, ref: e.ref, ...(nonce ? { nonce } : {}) });
             return;
         }
         if (frame.envelope) await this.onEnvelope(frame.envelope);
@@ -402,7 +413,10 @@ export class HubClient {
         // The relay CLOSES THE CONNECTION on an envelope payload over its limit, so the check is on the sealed bytes,
         // exactly what it will measure.
         if (limit > 0 && sealed.length > limit) throw new CommandTooLarge(sealed.length, limit);
-        this.direct(to.principal, Kind.KIND_COMMAND, sealed);
+        const ref = this.nextRef++;
+        this.refs.set(ref, nonce);
+        if (this.refs.size > MAX_REFS) this.refs.delete(this.refs.keys().next().value!);
+        this.direct(to.principal, Kind.KIND_COMMAND, sealed, ref);
         return nonce;
     }
 
@@ -419,8 +433,8 @@ export class HubClient {
     }
 
     /** Send already-sealed bytes to a principal, for kinds this client does not build itself (`BULK`, a grant). */
-    direct(to: Bytes, kind: Kind, payload: Bytes): void {
-        this.send([{ envelope: { principal: to, kind, payload, sender: new Uint8Array(), seq: 0, epoch: 0, ref: 0, coalesce: new Uint8Array() } }]);
+    direct(to: Bytes, kind: Kind, payload: Bytes, ref = 0): void {
+        this.send([{ envelope: { principal: to, kind, payload, sender: new Uint8Array(), seq: 0, epoch: 0, ref, coalesce: new Uint8Array() } }]);
     }
 
     /** Open a stream key granted to this principal, wherever it arrived (a key channel, or direct). */

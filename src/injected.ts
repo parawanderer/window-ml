@@ -13,7 +13,7 @@ import { truncate, elPath, describeSkeleton, queryAll, selectorError, shadowHost
 import { makeAnswerFacade } from "./pointers/answer-set";
 import { accessibleName, roleOf, ariaState } from "./dom/a11y";
 import { framePrompt } from "./agent/prompts";
-import { cleanFiles } from "./attached-files";
+import { cleanFiles, textFiles } from "./attached-files";
 import { promptSurfaceOf } from "./agent/prompt-surface";
 import { pageContext, resolvePoint, resolveBox, agentState, mlRange } from "./util";
 import { suspiciousChars } from "./agent/security";
@@ -31,7 +31,7 @@ import { currentAnswer, currentDeref, currentServerAllow, currentHasTool, curren
 import { installToolDelegation, registerRun, endRun } from "./agent/run-delegation";
 import { models, serverTools, execServerTool, info, capabilities, getModel, embed, config, setModel, ps, unload } from "./ml/ml-server";
 import { defineTool, lookTool, locateTool, clickTool, typeTool, navigateTool, fetchTool, pythonTool, chatMetaTool } from "./ml/ml-tool-factories";
-import { read, screenshot, _shotBox, _stitchFullPage, _resolveVisionModel, _modelSees, _nativeLookTool, _imageToDataUrl, _fetchImageBase64 } from "./ml/ml-vision";
+import { read, screenshot, _shotBox, _stitchFullPage, _resolveVisionModel, _modelSees, _modelVision, _nativeLookTool, _imageToDataUrl, _fetchImageBase64 } from "./ml/ml-vision";
 import { mlFetchCache } from "./ml/ml-fetch-cache";
 import { pythonExec, _loadTable, _resolveTable } from "./ml/ml-python";
 import { createChat, resumeChat, chat, step } from "./ml/ml-chat";
@@ -220,6 +220,7 @@ import { pageWorld } from "./page-world";
         chatMetaTool: chatMetaTool,
         _resolveVisionModel: _resolveVisionModel,
         _modelSees: _modelSees,
+        _modelVision: _modelVision,
         _nativeLookTool: _nativeLookTool,
         // The built-in ml.agent({ logDebug: true }) tracer; pass as onStep too.
         _logStep: logStep,
@@ -622,7 +623,7 @@ import { pageWorld } from "./page-world";
                 // same way a fresh "ask about this" run does (framePrompt), so an appended turn/steer gets the
                 // element's clean content + selector. An element-only send (no typed text) is then non-empty.
                 // `display` keeps what was typed and the element, so the bubble shows those, not the framed block.
-                const { text, display } = framePrompt(rawText, d.__mlSessionSend.elementContext, cleanFiles(d.__mlSessionSend.files));
+                const { text, display } = framePrompt(rawText, d.__mlSessionSend.elementContext, textFiles(cleanFiles(d.__mlSessionSend.files)));
                 if (!text && !(images && images.length)) { done("none"); return; }   // allow an image-only follow-up
                 const h = handleRegistry.get(hash);
                 // An AGENT handle holds live state: steer a RUNNING loop (say — text only, no image mid-steer),

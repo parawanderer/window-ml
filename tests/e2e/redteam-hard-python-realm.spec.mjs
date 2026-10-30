@@ -1,7 +1,7 @@
 // redteam-hard-python-realm.spec.mjs — independent real-browser-worker measurements of the readonly lockdown's post-strip global surface.
 // A worker-hosted run names the JS bridge and its sidebar card is approved by clicking Allow as the person; an external
 // approval intentionally would not lift that refusal. The URL constructor is every row's same-cell live-global control.
-// The location row is expected to fail before its owner correction; SHOW_PENDING=1 removes the marker to expose the exact assertion.
+// The location row runs unmarked against the owner correction; the three other names remain passing negative rows.
 
 import { test, expect } from "@playwright/test";
 import { existsSync, readFileSync } from "node:fs";
@@ -14,9 +14,6 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const STDLIB = join(HERE, "../../dist/pyodide/python_stdlib.zip");
 const HAS_FORK = existsSync(join(HERE, "../../dist/pyodide/pyodide.mjs")) && existsSync(STDLIB) && readFileSync(STDLIB).includes("restricted.py");
 const NEED_FORK = "needs the restricted-mode fork core in dist/pyodide (npm run fetch-pyodide, then build)";
-
-/** Mark the measured open row; SHOW_PENDING=1 runs it unmarked so a setup failure cannot masquerade as the finding. */
-const pending = (why) => test.fail(!process.env.SHOW_PENDING, why);
 
 let fake = null;
 let ext = null;
@@ -97,7 +94,6 @@ test("under CI, a job that fetched the fork core ships it in dist/pyodide", () =
 
 test("a lifted cell cannot read location on the real worker global after the strip", async () => {
     test.skip(!HAS_FORK, NEED_FORK);
-    pending("measured on the real browser worker: location.present=true and href=chrome-extension://<id>/python-worker.js");
     const r = await runCell(probeCode("location"), "realm location probe");
     expect(r.URL, "positive control: the allow-listed URL constructor must remain readable").toBe(true);
     expect(r.present, `the worker location must be unreadable after lockdown, got ${r.href}`).toBe(false);

@@ -275,7 +275,11 @@ export class Evaluator {
                 throw new NotInDialect("a value with its own toJSON, which a serialisation would call: it needs approval");
             onPath.add(x);
             stack.push(x, LEAVE);
-            // An object's members are read as DATA: a getter is not run by the walk (on the page it is the page's code).
+            // An object's members are read as DATA: a getter is not run by the walk. An ARRAY's elements are read
+            // directly, so a getter on a page array's index does run: a descriptor a read costs 35 ns an element against
+            // the walk's charge of about 20 a part, and on the page leg the page's code running is accepted anyway
+            // (docs/dev/readonly-exec.md, "Threat questions answered"); the worker has no page values. A member that
+            // must not run one reads its arguments as data itself (DATA_MEMBERS).
             // A Map's keys and values, and a Set's members, are walked too: `Object.fromEntries(map)` coerces each key.
             const kids: unknown[] = Array.isArray(x) ? x
                 : coll ? (isMap(x) ? [...(x as Map<unknown, unknown>)].flat() : [...(x as Set<unknown>)])

@@ -104,6 +104,7 @@ function source(bytes: Uint8Array, assets: PdfAssets | undefined): Record<string
         data: bytes,
         verbosity: 0,
         ...(typeof OffscreenCanvas === "function" ? { CanvasFactory: OffscreenCanvasFactory } : {}),
+        FilterFactory: NoDomFilterFactory,
         isEvalSupported: false, enableXfa: false, useSystemFonts: false, disableFontFace: true,
         maxImageSize: MAX_IMAGE_PIXELS,
         ...(assets?.cmaps ? { cMapUrl: assets.cmaps, cMapPacked: true } : {}),
@@ -179,6 +180,25 @@ export class OffscreenCanvasFactory {
     }
     reset(cc: { canvas: OffscreenCanvas }, width: number, height: number) { cc.canvas.width = width; cc.canvas.height = height; }
     destroy(cc: { canvas: OffscreenCanvas | null; context: unknown }) { if (cc.canvas) cc.canvas.width = cc.canvas.height = 0; cc.canvas = null; cc.context = null; }
+}
+
+/**
+ * A filter factory pdf.js can use with no DOM: every filter is "none". Outside node pdf.js defaults to one that builds
+ * SVG filters in `document`, which a worker has not, so a page with a transfer function, a luminosity soft mask or a
+ * knockout group failed to render. Given "none", pdf.js applies each of them pixel by pixel instead, so nothing is lost.
+ * Its methods are pdf.js's `BaseFilterFactory`'s (tests/pdf-read.test.mjs checks them against the installed pdf.js).
+ */
+export class NoDomFilterFactory {
+    addFilter() { return "none"; }
+    addHCMFilter() { return "none"; }
+    addAlphaFilter() { return "none"; }
+    addLuminosityFilter() { return "none"; }
+    addKnockoutFilter() { return "none"; }
+    addHighlightHCMFilter() { return "none"; }
+    addSelectionHCMFilter() { return "none"; }
+    addSelectionFilter() { return "none"; }
+    createSelectionStyle() { return null; }
+    destroy() { /* nothing was made */ }
 }
 
 /** A page rendered: PNG bytes, the pixel size, and the scale actually used (lowered if the request would pass the cap). */

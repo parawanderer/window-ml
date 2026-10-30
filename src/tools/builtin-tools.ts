@@ -1133,6 +1133,25 @@ export function clickHref({ selector, index = 0 }: { selector: string; index?: n
     return link?.href || undefined;
 }
 
+/**
+ * What a click or a type is on, as the page resolves the element NOW: its tag, its nearest link's absolute `href`, its
+ * accessible name. The facts the worker's `act` policies judge (docs/spec/POLICIES.md), read from the same resolution
+ * the call then runs on, never from the model's description. Name and tag are empty for a point or a box token, which
+ * resolve no element; `name` is "" for an element without one.
+ * @param args the call's selector and index
+ * @returns tag, href (null for none) and name, or undefined when no element resolves
+ */
+export function actElement({ selector, index = 0 }: { selector: string; index?: number }): { tag: string; href: string | null; name: string } | undefined {
+    const s = (selector || "").trim();
+    let el: Element | null | undefined;
+    if (s === "@focus" || s === "") el = typeof document !== "undefined" ? document.activeElement : null;
+    else if (BOX_RE.test(s) || POINT_RE.test(s)) return undefined;
+    else { try { el = queryAll(selector)[index]; } catch { return undefined; } }
+    if (!el) return undefined;
+    const link = el.closest("a[href], area[href]") as HTMLAnchorElement | HTMLAreaElement | null;
+    return { tag: el.tagName.toLowerCase(), href: link?.href || null, name: accessibleName(el) };
+}
+
 export const buildClickTool = (ml: MlApi): MlTool => {
     // Side-effect-free resolution → an ERROR STRING if the click is doomed (an @box region, a stale
     // @pt, an invalid selector, or no match), else null. The loop uses it to SKIP the approval prompt

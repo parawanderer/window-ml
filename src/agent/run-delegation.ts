@@ -22,7 +22,7 @@ import { executeTool, toolContext, answerSetFor, withRunSession, withRunDeref } 
 import { expandPointers } from "../pointers/pointer-macro";
 import { columnsViaBackground } from "../tools/deref-read";
 import { preResolvedDeref, type PreRead } from "../pointers/named-reads";
-import { captureVerify, captureVerifyElement, clickHref, verifyInWorker } from "../tools/builtin-tools";
+import { actElement, captureVerify, captureVerifyElement, clickHref, verifyInWorker } from "../tools/builtin-tools";
 import { pageVisionHost, pageGeometry, answerGeometry, type PageGeometry, type GeometryRequest } from "../dom/page-geometry";
 import { htmlToMarkdown } from "../dom/html-to-md";
 import { clipOut, elLine, errText } from "../dom/dom";
@@ -251,7 +251,9 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
         try { pre = typeof tool.precheck === "function" ? tool.precheck(args) : null; } catch { pre = null; }
         // A click that follows a link says where to, for the worker to judge before the click (nav-arrival.ts).
         const href = !pre && name === "click" ? clickHref(args as { selector: string; index?: number }) : undefined;
-        return { result: pre || "", precheckFailed: !!pre, ...(href ? { href } : {}) };
+        // A click or a type says what it is on (tag, link, accessible name), for the worker's `act` policies to judge.
+        const element = !pre && (name === "click" || name === "type") ? actElement(args as { selector: string; index?: number }) : undefined;
+        return { result: pre || "", precheckFailed: !!pre, ...(href ? { href } : {}), ...(element ? { element } : {}) };
     }
     // Read-only try (exec only): run the mediated interpreter (no eval, no mutation). If in-dialect it
     // BOTH decides auto-approve AND produces the result → the background skips the gate. Out-of-dialect

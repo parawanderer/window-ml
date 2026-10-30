@@ -18,11 +18,25 @@ import { stepBudget } from "./step-budget";
 import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, tooltokensClause, DEREF_CLAUSE, shadowClause, SHADOW_TRIGGER_TOOLS, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, currentClause, HUD_PROSE_QUIET, HUD_PROSE_PROGRESS, framePrompt } from "./prompts";
 import { buildDereferenceTool } from "../tools/tools";
 import { withToolDetails } from "../tools/tool-details";
+import { ImagesRefused, namedNote, planImages, readerNote } from "../image-gate";
 
 /** The part of `window.ml` assembly reads: config and capability probes, the model and server-tool lists, the tool
  *  factories, and the OCR reader for a pasted image. The worker's adapter implements exactly this. */
 export type AssemblyMl = Pick<MlApi, "domTools" | "defineTool" | "config" | "models" | "serverTools" | "read" | "_imageToDataUrl"
-    | "_resolveVisionModel" | "_nativeLookTool" | "lookTool" | "locateTool" | "navigateTool" | "fetchTool" | "clickTool" | "typeTool">;
+    | "_resolveVisionModel" | "_modelVision" | "_nativeLookTool" | "lookTool" | "locateTool" | "navigateTool" | "fetchTool" | "clickTool" | "typeTool">;
+
+/**
+ * The reader a person SET (Settings' OCR model), when no reader resolved because its vision is not reported: setting
+ * it is the person's word that it reads images. One known not to see, or the driver itself, is no reader.
+ * @param ml the run's `ml`
+ * @param driver the run's driver model
+ * @returns the reader, or null
+ */
+async function readerSet(ml: AssemblyMl, driver: string | null): Promise<string | null> {
+    const ocr = (await ml.config().catch(() => null))?.ocrModel || null;
+    if (!ocr || ocr === driver) return null;
+    return (await ml._modelVision(ocr)) === "no" ? null : ocr;
+}
 
 /** The options of `ml.agent` that decide what a run CONTAINS, as opposed to how it is driven or observed. */
 export interface AssemblyOptions {
@@ -223,28 +237,34 @@ export async function assembleRun(ml: AssemblyMl, task: string, { tools = null, 
         if (docs) toolset.push(docs);
     }
     // Composer attachments for THIS turn's first user message (a screenshot pasted/uploaded into the
-    // HUD/sidebar). A vision-capable driver sees them natively; otherwise transcribe via the reader
-    // (ml.read → the OCR model) and fold the text into the task, so a text-only agent still gets the
-    // content — with an honest note it didn't see the pixels itself. driverSees/runVisionModel are the
-    // SAME values that chose native-vs-delegated `look`, so the image path matches the tool path.
+    // HUD/sidebar). A vision-capable driver sees them natively; otherwise the reader transcribes them
+    // and the text is folded into the task, so a text-only agent still gets the content, with an honest
+    // note it didn't see the pixels itself. With no reader, a driver known not to see is told each image
+    // was not sent, and one whose vision is not known refuses the run before anything is sent
+    // (image-gate.ts). driverSees/runVisionModel are the SAME values that chose native-vs-delegated
+    // `look`, so the image path matches the tool path.
     let pendingImages: string[] | undefined;
     let turnImages: string[] = [];   // the resolved data URLs, for the debug transcript (shown in BOTH the vision + OCR cases)
     if (images && images.length) {
-        try {
-            const urls = await Promise.all(images.map(im => ml._imageToDataUrl(im)));
+        let urls: string[] | null = null;
+        try { urls = await Promise.all(images.map(im => ml._imageToDataUrl(im))); } catch { /* image conversion failed → proceed without the attachment */ }
+        if (urls) {
             turnImages = urls;
-            if (driverSees) pendingImages = urls;
+            const plan = driverSees ? planImages("yes", null, false)
+                : planImages(await ml._modelVision(runModel), runVisionModel || (await readerSet(ml, runModel)), false);
+            if (plan.route === "refused") throw new ImagesRefused(plan.message);
+            if (plan.route === "model") pendingImages = urls;
             else {
                 const notes: string[] = [];
                 for (let i = 0; i < urls.length; i++) {
+                    if (plan.route === "named") { notes.push(namedNote(i, urls.length)); continue; }
                     let txt = "";
-                    try { txt = await ml.read(urls[i], { model: runVisionModel }); } catch { /* reader unavailable → leave blank */ }
-                    const which = urls.length > 1 ? ` ${i + 1}` : "";
-                    notes.push(`[Pasted image${which} — you can't see images, so here is its transcribed text:]\n${txt || "(could not read the image)"}`);
+                    try { txt = await ml.read(urls[i], { model: plan.reader }); } catch { /* reader unavailable → the note says so */ }
+                    notes.push(readerNote(i, urls.length, plan.reader, txt));
                 }
                 task = task ? `${task}\n\n${notes.join("\n\n")}` : notes.join("\n\n");
             }
-        } catch { /* image conversion failed → proceed without the attachment */ }
+        }
     }
     // Unattended run: no human to approve, so shape the toolset for read-only autonomy. exec and
     // python_exec are kept ONLY when their read-only auto-approve path is configured on (a readonly

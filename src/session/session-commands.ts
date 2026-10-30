@@ -9,14 +9,17 @@ import type { NeutralMessage } from "../contract/contract-chat";
 import { MAX_CONTINUE_STEPS } from "../agent/step-budget";
 import { AGENT_START_PAGE } from "../contract/contract-config";
 import type { MlDebugEvent } from "../contract/contract-debug";
-import type { AttachedFile, PromptOrigin } from "../contract/contract-run";
-import { checkFilesField, type FileTarget } from "../attached-files";
+import type { AttachedFile, PromptOrigin, SentFile } from "../contract/contract-run";
+import { FilesRefused, checkFilesField, textFiles, type FileTarget } from "../attached-files";
+import { bytesToB64 } from "../pdf/pdf-wire";
 import { clientUiOf } from "../agent/current-client";
 import type { SessionHistory } from "./session-store";
 import type { Command, CommandError, CommandFrom, CommandResult, CommandType, ListedSession, ModelChoice, SessionId, SessionSummary, StorageReport, TabGroupInfo, TabInfo } from "./session-host";
 import type { SessionIndex } from "./session-index";
 import { capTitle } from "./session-title";
 import { approvalKey } from "../approval-key";
+import { ImagesRefused, VISION_UNKNOWN_REFUSAL } from "../image-gate";
+
 
 /** What a page said it did with a relayed session action. `no-answer`: it did not reply in time. */
 export type PageOutcome = "steer" | "turn" | "cancelled" | "continued" | "busy" | "none" | "no-answer";
@@ -52,6 +55,9 @@ export interface CommandDeps {
     index: SessionIndex;
     /** remove a session from the index and end its subscriptions */
     removeFromIndex(id: SessionId): void;
+    /** a file sent ahead in `file.put` chunks (hub-runtime.ts), by its SHA-256, or null when this runtime does not
+     *  hold it. Absent: a command naming a file by hash is answered `invalid`. */
+    heldFile?(sha256: string): Uint8Array | null;
     /** what this runtime IS, for a client that reached it over a transport that cannot know */
     describe(): { kind: "browser" | "desktop" | "headless"; contractVersion: number; capabilities: unknown };
     /** http(s) tabs this browser has open */
@@ -79,9 +85,12 @@ export interface CommandDeps {
     /** forget what the worker keeps for a finished session: its stored chat history, its resumable snapshot */
     forgetStored(hash: string): Promise<void>;
     /** start a chat this worker hosts (no tab), resolving with its hash once the first turn is under way */
-    startChat(opts: { text: string; images?: string[]; files?: AttachedFile[]; model?: string; system?: string; think?: boolean | null; ephemeral?: boolean }): Promise<string>;
-    /** the next turn of a worker-hosted chat; `not-found` when this worker does not host it and storage has nothing */
-    sendChat(hash: string, text: string, images?: string[], files?: AttachedFile[]): Promise<"turn" | "busy" | "not-found">;
+    startChat(opts: { text: string; images?: string[]; files?: SentFile[]; model?: string; system?: string; think?: boolean | null; ephemeral?: boolean; vision?: true }): Promise<string>;
+    /** the next turn of a worker-hosted chat; `not-found` when this worker does not host it and storage has nothing.
+     *  Both throw `ImagesRefused` (image-gate.ts) before a turn whose images may not be sent; `vision: true` is the
+     *  person's word that the model sees. Both throw `FilesRefused` (attached-files.ts) before a turn whose PDF cannot
+     *  be read, or whose text files hold more text than a message takes. */
+    sendChat(hash: string, text: string, images?: string[], files?: SentFile[], vision?: true): Promise<"turn" | "busy" | "not-found">;
     /** switch a worker-hosted chat's model from its next turn; false when this worker does not host it */
     setChatModel(hash: string, model: string): Promise<boolean>;
     /** switch a run whose loop this worker hosts: `running` takes it at the next model call, `stored` at its next turn;
@@ -150,9 +159,33 @@ export const SCREENSHOT_MAX_BYTES = 4 * 1024 * 1024;
 /** Mid-run steers carry text only (the loop's inbox has no image slot); images go with a new turn. */
 const STEER_TEXT_MAX = 20_000;
 /** The files of a command, checked by the one rule (attached-files.ts), as the result a handler returns on a refusal. */
-export function checkedFiles(raw: unknown, target: FileTarget): { files?: AttachedFile[]; error?: CommandResult<any> } {
-    const r = checkFilesField(raw, target);
+export function checkedFiles(raw: unknown, target: FileTarget, held?: (sha256: string) => Uint8Array | null): { files?: SentFile[]; error?: CommandResult<any> } {
+    const resolved = resolveFileRefs(raw, held);
+    if ("refused" in resolved) return { error: fail("invalid", resolved.refused) };
+    const r = checkFilesField(resolved.files, target);
     return r.reason ? { error: fail("invalid", r.reason) } : r.files ? { files: r.files } : {};
+}
+
+/**
+ * `files` with each file named by hash (`{ name, type, sha256, bytes }`, sent ahead in `file.put` chunks) put back as
+ * the PDF it names, so the one rule (`checkFilesField`) checks what arrived inline and what arrived in chunks alike.
+ * @returns the list to check (as it came, when it is not a list), or why a reference cannot be put back
+ */
+function resolveFileRefs(raw: unknown, held?: (sha256: string) => Uint8Array | null): { files: unknown } | { refused: string } {
+    if (!Array.isArray(raw)) return { files: raw };
+    const out: unknown[] = [];
+    for (const f of raw) {
+        const r = f as Record<string, unknown> | null;
+        if (!r || typeof r !== "object" || r.sha256 === undefined) { out.push(f); continue; }
+        const name = typeof r.name === "string" ? r.name : "a file";
+        // A hash beside inline bytes or text is neither shape: which one the person meant is not a guess to make.
+        if (typeof r.sha256 !== "string" || r.text !== undefined || r.data !== undefined) return { refused: `${name}: a file is sent inline or named by its sha256, not both` };
+        const bytes = held?.(r.sha256 as string) ?? null;
+        if (!bytes) return { refused: `${name} is not on this runtime: send it again` };
+        if (typeof r.bytes === "number" && r.bytes !== bytes.length) return { refused: `${name} is ${bytes.length} bytes here, not ${r.bytes}: send it again` };
+        out.push({ name: r.name, type: "application/pdf", data: bytesToB64(bytes) });
+    }
+    return { files: out };
 }
 
 /** One message's text, on a chat this worker hosts. Long enough for a pasted document, short of a denial of service. */
@@ -376,7 +409,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             if (c.lineage) return fail("unsupported", "this browser does not start subagents yet");
             const task = typeof c.task === "string" ? c.task : "";
             const images = Array.isArray(c.images) ? c.images.filter((i): i is string => typeof i === "string" && i.startsWith("data:image/")) : [];
-            const att = checkedFiles(c.files, "agent");
+            const att = checkedFiles(c.files, "agent", deps.heldFile);
             if (att.error) return att.error;
             if (!task.trim() && !images.length && !att.files) return fail("invalid", "a run needs a task, an image or a file");
             if (task.length > CHAT_TEXT_MAX) return fail("invalid", "that task is too long");
@@ -386,7 +419,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             const tabId = t.tabId;
 
             const r = await deps.startAgent(tabId, {
-                task, ...(images.length ? { images } : {}), ...(att.files ? { files: att.files } : {}),
+                task, ...(images.length ? { images } : {}), ...(att.files ? { files: textFiles(att.files) } : {}),
                 ...(c.model ? { model: c.model } : {}),
                 ...(c.maxSteps != null ? { maxSteps: c.maxSteps } : {}),
                 ...(c.vision === true ? { vision: true as const } : {}),
@@ -398,6 +431,8 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             }
             // The page answered that it started nothing, or never answered at all. A run that started anyway would
             // still appear in the index, so this says what is known rather than inventing a session id.
+            // A run whose pasted images may not be sent is refused before it starts, with the same sentence as a chat.
+            if (r.error?.includes(VISION_UNKNOWN_REFUSAL)) return fail("unsupported", VISION_UNKNOWN_REFUSAL);
             if (r.error) return fail("failed", r.error);
             if (r.outcome === "none") return fail("failed", "the page did not start a run");
             return fail("unavailable", "the page did not answer; it may still be loading, or the extension cannot run there");
@@ -483,7 +518,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             if (bad) return bad;
             const text = typeof c.text === "string" ? c.text : "";
             const images = Array.isArray(c.images) ? c.images.filter((i): i is string => typeof i === "string" && i.startsWith("data:image/")) : [];
-            const att = checkedFiles(c.files, "chat");
+            const att = checkedFiles(c.files, "chat", deps.heldFile);
             if (att.error) return att.error;
             if (!text.trim() && !images.length && !att.files) return fail("invalid", "a chat needs a message, an image or a file");
             if (text.length > CHAT_TEXT_MAX) return fail("invalid", "that message is too long");
@@ -498,11 +533,14 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
                     ...(typeof c.system === "string" && c.system ? { system: c.system } : {}),
                     ...(c.think != null ? { think: c.think } : {}),
                     ...(c.ephemeral ? { ephemeral: true } : {}),
+                    ...(c.vision === true ? { vision: true as const } : {}),
                 });
                 // "Sessions started by a command are saved unless `ephemeral`" (SESSION_CONTRACT.md §Commands).
                 if (!c.ephemeral) deps.keepSession(hash);
                 return ok({ session: { runtime: deps.runtime, hash } });
             } catch (err) {
+                if (err instanceof ImagesRefused) return fail("unsupported", err.message);
+                if (err instanceof FilesRefused) return fail("invalid", err.message);
                 return fail("failed", (err as Error)?.message || String(err));
             }
         },
@@ -512,14 +550,19 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             if (s.error) return s.error;
             const text = typeof c.text === "string" ? c.text : "";
             const images = Array.isArray(c.images) ? c.images.filter((i): i is string => typeof i === "string" && i.startsWith("data:image/")) : [];
-            const att = checkedFiles(c.files, pagelessChat(s.id.hash) ? "chat" : "agent");
+            const att = checkedFiles(c.files, pagelessChat(s.id.hash) ? "chat" : "agent", deps.heldFile);
             if (att.error) return att.error;
             if (!text.trim() && !images.length && !att.files && !c.elementContext) return fail("invalid", "a message needs text, an image, a file or an element");
             // A chat this worker hosts has no tab to relay to, and no loop to steer: the message is simply its next
             // turn. Checked BEFORE the run paths, which both end at a tab this session does not have.
             if (pagelessChat(s.id.hash)) {
                 if (text.length > CHAT_TEXT_MAX) return fail("invalid", "that message is too long");
-                const outcome = await deps.sendChat(s.id.hash, text, images, att.files);
+                let outcome: "turn" | "busy" | "not-found";
+                try { outcome = await (c.vision === true ? deps.sendChat(s.id.hash, text, images, att.files, true) : deps.sendChat(s.id.hash, text, images, att.files)); } catch (err) {
+                    if (err instanceof ImagesRefused) return fail("unsupported", err.message);
+                    if (err instanceof FilesRefused) return fail("invalid", err.message);
+                    throw err;
+                }
                 if (outcome === "turn") return ok({ mode: "turn" });
                 if (outcome === "busy") return fail("conflict", "the chat is still answering the last message");
                 return fail("not-found", "this browser no longer holds that chat");
@@ -532,7 +575,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
                 if (text.length > STEER_TEXT_MAX) return fail("invalid", "that message is too long to steer with");
                 if (deps.steer(s.id.hash, text, commandOrigin(from, c.ui))) return ok({ mode: "steer" });
             }
-            const r = await viaPage(s.id.hash, "send", { text, ...(images.length ? { images } : {}), ...(att.files ? { files: att.files } : {}), ...(c.elementContext ? { elementContext: c.elementContext } : {}) }, commandOrigin(from, c.ui));
+            const r = await viaPage(s.id.hash, "send", { text, ...(images.length ? { images } : {}), ...(att.files ? { files: textFiles(att.files) } : {}), ...(c.elementContext ? { elementContext: c.elementContext } : {}) }, commandOrigin(from, c.ui));
             if (typeof r !== "string") return r;
             if (r === "steer" || r === "turn") return ok({ mode: r });
             return fail("not-found", "the page no longer holds this session (it was reloaded, or the session was never resumable)");

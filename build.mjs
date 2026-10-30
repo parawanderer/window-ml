@@ -59,6 +59,8 @@ const ENTRIES = {
     // background (see sidebar/panel.ts).
     "devtools": "src/sidebar/devtools.ts",
     "panel": "src/sidebar/panel.ts",
+    // The side panel of a hidden page: the card's app for one tab, outside the page (sidebar/sidepanel.ts).
+    "sidepanel": "src/sidebar/sidepanel.ts",
     // Standalone PDF-print tab (window.print() is suppressed inside docked DevTools; a real tab isn't).
     "print": "src/sidebar/print.ts",
     // The chat page as a tab of this browser, over the local runtime (src/chat-ext.tsx). The same app the web
@@ -76,6 +78,7 @@ const ASSETS = [
     ["src/sidebar/sidebar.css", "sidebar.css"],
     ["src/sidebar/devtools.html", "devtools.html"],
     ["src/sidebar/panel.html", "panel.html"],
+    ["src/sidebar/sidepanel.html", "sidepanel.html"],
     ["src/sidebar/print.html", "print.html"],
     ["src/offscreen.html", "offscreen.html"],
     ["src/chat/chat.html", "chat.html"],

@@ -11,7 +11,8 @@
 //   run's next cell like a kill's;
 // - a KEEP exempts that second kind: the model asked (`python_exec` `keep: true`) to hold its namespace through long
 //   gaps, a run that works overnight. It lasts until the turn ends (`PY_DELETE_RUN`), after which the worker is the
-//   first kind again. A keep never outlives its turn, so it never holds a realm for a run nobody is running.
+//   first kind again, or until the sandbox is killed (a timeout, a crash, a cancel), which the next cell is told as
+//   loss. A keep never outlives its turn, so it never holds a realm for a run nobody is running.
 //
 // The bench's own surface (`own`) and the shared `full` worker are never reaped: the bench keeps a person's variables.
 
@@ -28,7 +29,8 @@ export const REAP_LIVE_MS = 30 * 60_000;
  * @returns the delay in ms, or null
  */
 export function reapDelay(principal: string, holdsRun: boolean, kept: boolean): number | null {
-    if (!principal.startsWith("run:") && !principal.startsWith("page:")) return null;
+    if (principal.startsWith("page:")) return REAP_SETTLED_MS;   // a page never holds a live turn's namespace: no flag moves it
+    if (!principal.startsWith("run:")) return null;
     if (!holdsRun) return REAP_SETTLED_MS;
     return kept ? null : REAP_LIVE_MS;
 }
