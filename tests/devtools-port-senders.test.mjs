@@ -13,7 +13,8 @@
 // is ours"; and our own frame inside a page — a tab whose URL is the page's — is the shape that stays refused.
 //
 // Failing-first, the node:test way: the rows a fix must turn are `{ todo: true }` until it lands (they fail on main at
-// the assertion each one carries), and the flip is a commit of mine after its merge sha that drops the option.
+// the assertion each one carries), and the flip is MY OWN COMMIT on the fix's branch (#1369), its file only, before the
+// fix merges: the fix's own CI run then proves the defended assertions, rather than main carrying an unproven fix.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -96,6 +97,17 @@ test("an extension URL FRAMED INTO A PAGE is refused (its sender.url is ours, it
 });
 
 // --- what both sides already hold: the floor, the panel's control, and the entry a refusal must leave ---
+
+test("a port whose sender names no url and no tab reads nothing", { todo: TODO }, async () => {
+    // The sender that exists but identifies nothing: `{}` is truthy, so a rule tempted to fall back to "the panel shape"
+    // when the sender is falsy still has to refuse it. On main nothing is read, so the buffer comes back as to any port.
+    const bg = loadBackground({ config: CONFIG });
+    await seed(bg);
+    const port = openPort(bg, RUN_TAB, {});
+    await settle();
+    assert.deepEqual(port.messages, [], `a sender naming nothing was served: ${JSON.stringify(port.messages)}`);
+    assert.equal(port.wasDisconnected(), true, "the worker closes the port it refuses");
+});
 
 test("a port that names no tab reads nothing, from any sender", async () => {
     const bg = loadBackground({ config: CONFIG });
