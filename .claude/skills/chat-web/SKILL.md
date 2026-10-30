@@ -12,7 +12,7 @@ grant, one view-only, one offline) and a session in each state the page draws.
 ```bash
 node scripts/build-web.mjs                     # dist-web/ only (npm run build does it too, after the extension)
 node tests/e2e/chat-shots.mjs                  # 12 PNGs, phone + desktop, into tests/e2e/artifacts/chat/
-THEME=light OUT=/tmp/shots node tests/e2e/chat-shots.mjs
+THEME=light OUT=$SCRATCH/shots node tests/e2e/chat-shots.mjs
 SERVE=1 node tests/e2e/chat-shots.mjs          # serve dist-web/ and print the URL; open it and poke at it
                                                # …/start-field-tune.html: sliders over the start page's dot field
                                                # <url>/client.html is the standalone client (a real hub, no fake)
