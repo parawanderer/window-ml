@@ -9,7 +9,7 @@ description: Record what the chat page draws frame by frame during a scripted re
 node scripts/frames.mjs --scenario reload --turns 12                     # 12 turns, reload, record the reload (phone)
 node scripts/frames.mjs --scenario send   --turns 6 --width desktop      # record sending one more message through its reply
 node scripts/frames.mjs --scenario stream --turns 3 --ms 5000 --watch '.msg.asst:last-of-type' --watch '.composer'
-node scripts/frames.mjs --scenario reload --turns 12 --dist ../other-clone/dist --out /tmp/frames-before
+node scripts/frames.mjs --scenario reload --turns 12 --dist ../other-clone/dist --out $SCRATCH/frames-before
 ```
 
 - Needs a build (`npm run build`); `--dist` loads another build the way `E2E_DIST` does. Flags: `--width phone|desktop`

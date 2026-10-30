@@ -192,7 +192,7 @@ A failing shard uploads `test-results/` as `e2e-results-<shard>`: each failed te
 accessibility snapshot at the moment it failed), its trace and screenshots.
 
 ```bash
-gh run download <run-id> -n e2e-results-1 -D /tmp/e2e-1 && find /tmp/e2e-1 -name error-context.md
+gh run download <run-id> -n e2e-results-1 -D $SCRATCH/e2e-1 && find $SCRATCH/e2e-1 -name error-context.md
 ```
 
 Read that before theorising: a failure that passes locally is usually a page in a state the test did not expect, and

@@ -435,6 +435,28 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
   suite globs `tests/*.test.*`; E2E is `tests/e2e/*.spec.mjs`). See the fuller
   writeup below.
 
+## Scratch files go in your session's scratchpad, never in `/tmp`
+
+A diff you save to read or hand over, a probe or a throwaway test driver, the log of a detached build or suite, a
+review body before it is posted, a downloaded CI artifact: all of it goes in YOUR SESSION'S SCRATCHPAD, the directory
+the harness names for you (Claude Code: the `Scratchpad directory` line in the system prompt,
+`/private/tmp/claude-<uid>/<project-slug>/<SESSION-ID>/scratchpad`). Not `/tmp`, not `~/tmp`, not a folder you
+invent beside the clone. The skills' examples write `$SCRATCH/<file>`; `SCRATCH` is that path.
+
+**Why.** Claude Code lets a session read and write its own scratchpad without asking, and this machine's allowlist
+(the clone's local `settings.local.json`, gitignored) lets every session in the project READ any session's scratchpad the same way. A file
+under `/tmp` is outside both, so every `cat` of it, by you or by the peer you handed it to, stops the session with a
+permission prompt that the user has to answer by hand. A review body drafted in `/tmp`, a diff copied there for the
+janitor, a probe script run from there: each one cost a prompt per read, across a day of PRs (Shane, 2026-10-30).
+
+**What it is not for.** The scratchpad is session-specific and is not a record: a thing another session must FIND
+later goes in session-mail (`~/git/session-mail/README.md`); a checkpoint or a handover goes in the clone's
+gitignored `tmp/`; what a probe found goes in a committed test (the `redteam` skill). Name a scratchpad file to a
+peer by its complete absolute path, in one piece, since a relative one names a different file in every clone.
+
+**Other harnesses.** Use your harness's equivalent when it has one. Without one, a folder under the clone's
+gitignored `tmp/` is the fallback, never `/tmp`.
+
 ## Claude Code's memory folder
 
 Claude Code keeps a memory per checkout outside the repo, in `~/.claude/projects/<checkout path, non-alphanumerics as
