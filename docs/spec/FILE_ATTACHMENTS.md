@@ -252,7 +252,8 @@ is the shell call's one rule for every pointer prefix in argv, not a manifest's 
 **Reading text by page.** The pipe dialect gains one verb, `pages N-M` (`PIPE_CMDS`, text-pipe.ts), which selects whole
 pages from a paged value before the other verbs run: `dereference("@file:3fa91c2", { pipe: "pages 3-5 | grep -i
 revenue" })`. Both reads take `@file:`: the `dereference` tool, which the run loop answers with text (agent-loop.ts
-`derefLocally`, which today resolves only `@tool:`), and `ml.dereference` in code, which returns the typed value. A text file is one page per N lines (open: N), so the same verb pages a long log. Extending the dialect
+`derefLocally`, which today resolves only `@tool:`), and `ml.dereference` in code, which returns the typed value. A text
+file is one page per N lines (open: N), so the same verb pages a long log. Extending the dialect
 requires the adversarial tests in readonly-exec.md ("The rule for extending the dialect"); `pages` gets its own bound
 (how many pages one pipe may select) with adversarial rows of its own.
 
