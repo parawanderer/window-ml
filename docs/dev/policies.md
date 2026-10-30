@@ -400,7 +400,7 @@ A click or a type is judged as `act` (`actFacts`: `url`, `host`, `action`, `elem
   the accessible name (`""` for none; null only when nothing resolved, so a `deny` written on what is allowed fires). The page's word,
   as `clickHref` already was: a rule binds what the model may attempt, never the page's honesty. A click by `@pt:` token (what `locate`
   produces) is the click on the element under the point: `actElement` makes the same hit-test `clickAt` makes, so a deny written on the
-  accessible name judges it, and a link around the element is its `href`. A box token is taken at its centre (today the click and type prechecks refuse a box before it runs, so this is the judgement a future box click would meet). A
+  accessible name judges it, and a link around the element is its `href`. A box token resolves none (the click is refused outright). A
   page that predates the `element` field sends none, and the call is judged with null facts: a deny fires, an allow does not.
 - **`autoApprove` is async.** The element comes from the page, so the loop awaits it (`agent-loop.ts`). A `deny` row refuses the call
   with the policy named and no card; an `allow` skips the card; an `ask` or nothing asks as before. The link a click follows is judged

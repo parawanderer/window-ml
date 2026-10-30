@@ -19,7 +19,7 @@ import { LOCATE } from "./tool-details";
 // python_exec output (stdout / value / error) fed to the model is capped per slot — default bigger than
 // exec's 500 (data output legitimately runs longer), the model can raise it per-call (gated). See run().
 import { READER_MAX_TOKENS } from "../contract/contract-render";
-import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX, POINT_RE, PT_LOOK_RADIUS, resolvePoint, resolveBox, markSeen, seenNearby, BOX_RE } from "../util";
+import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX, POINT_RE, PT_LOOK_RADIUS, resolvePoint, markSeen, seenNearby, BOX_RE } from "../util";
 import { annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridDims, validateCells, cellsBox, viewportBox, colorWordHues, pickOverlayColor, pickAccentColor, withHiddenSidebar, regionBox, REGION_NAMES, adjacentCells, type RegionName, type MarkFilter, type Box } from "../dom/locate";
 import { OpaqueKind, canvasAt, reservedSurfaceAt, pageVisionHost } from "../dom/page-geometry";
 import type { VisionHost, Geometry, GeoMark } from "./vision-host";
@@ -1137,7 +1137,7 @@ export function clickHref({ selector, index = 0 }: { selector: string; index?: n
  * What a click or a type is on, as the page resolves the element NOW: its tag, its nearest link's absolute `href`, its
  * accessible name. The facts the worker's `act` policies judge (docs/spec/POLICIES.md), read from the same resolution
  * the call then runs on, never from the model's description. A point token resolves the element under the point, as the click
- * will hit it, and a box token the element under its centre. `name` is "" for an element without one.
+ * will hit it; a box token resolves none (the click is refused). `name` is "" for an element without one.
  * @param args the call's selector and index
  * @returns tag, href (null for none) and name, or undefined when no element resolves
  */
@@ -1145,10 +1145,10 @@ export function actElement({ selector, index = 0 }: { selector: string; index?: 
     const s = (selector || "").trim();
     let el: Element | null | undefined;
     if (s === "@focus" || s === "") el = typeof document !== "undefined" ? document.activeElement : null;
-    else if (POINT_RE.test(s) || BOX_RE.test(s)) {
-        // The element the click lands on: the same hit-test `clickAt` makes (topmost at the point, a canvas first). A box is
-        // taken at its centre.
-        const pt = POINT_RE.test(s) ? resolvePoint(s) : (() => { const b = resolveBox(s); return b ? { x: Math.round((b.left + b.right) / 2), y: Math.round((b.top + b.bottom) / 2) } : null; })();
+    else if (BOX_RE.test(s)) return undefined;   // a region is not clickable: the click's precheck refuses it
+    else if (POINT_RE.test(s)) {
+        // The element the click lands on: the same hit-test `clickAt` makes (topmost at the point, a canvas first).
+        const pt = resolvePoint(s);
         if (!pt) return undefined;
         el = withHiddenSidebar(() => canvasAt(pt.x, pt.y) || (() => { try { return document.elementFromPoint(pt.x, pt.y); } catch { return null; } })());
     }

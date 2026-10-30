@@ -75,7 +75,7 @@ test("actElement is the tag, the nearest link's absolute href and the accessible
     assert.deepEqual(actElement({ selector: "#t" }), { tag: "input", href: null, name: "Search" });
 });
 
-test("actElement of a point token is the element under the point, as the click hits it; a stale token resolves none, and a box is taken at its centre", async () => {
+test("actElement of a point token is the element under the point, as the click hits it; a box token and a stale token resolve none", async () => {
     const { mintPoint, mintBox } = await import("../src/util.ts");
     mount(`<a id="l" href="/admin/"><button id="b">Approve This Draft</button></a><button id="d">Delete</button>`);
     const at = { 10: "b", 50: "d" };
@@ -84,9 +84,7 @@ test("actElement of a point token is the element under the point, as the click h
     assert.deepEqual(actElement({ selector: mintPoint(50, 5) }), { tag: "button", href: null, name: "Delete" });
     assert.equal(actElement({ selector: mintPoint(99, 5) }), undefined, "nothing under the point");
     assert.equal(actElement({ selector: "@pt:00000000" }), undefined, "a token that does not resolve");
-    assert.equal(actElement({ selector: mintBox({ left: 0, top: 0, right: 20, bottom: 20 }) }).name, "Approve This Draft", "the centre (10, 10) is on the first button");
-    assert.equal(actElement({ selector: mintBox({ left: 40, top: 0, right: 60, bottom: 20 }) }).name, "Delete", "the centre (50, 10)");
-    assert.equal(actElement({ selector: "@box:00000000" }), undefined, "a box that does not resolve");
+    assert.equal(actElement({ selector: mintBox({ left: 0, top: 0, right: 20, bottom: 20 }) }), undefined, "a box is not clickable: the precheck refuses it");
 });
 
 test("actElement is the name AT THE CALL: a button renamed by script is read under its new name", () => {
