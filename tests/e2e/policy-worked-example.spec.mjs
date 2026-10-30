@@ -40,7 +40,7 @@ const rules = (B) => [
  * Returns the cards shown, the run's events and a way to wait for it to end.
  */
 async function run(page, task, decide = () => true) {
-    const events = [], cards = [];
+    const events = [], cards = [], base = fake.calls().length;   // the fake's calls span the whole spec: this run's are the ones after `base`
     const watcher = await watchRunEvents(ext, page, (e) => events.push(e));
     const tabId = await ext.sw.evaluate((u) => chrome.tabs.query({}).then((ts) => ts.find((t) => t.url === u)?.id), page.url());
     await ext.sw.evaluate((t) => { void globalThis.__mlStartUserRunForTest(t, { task: "do the task", surface: "hud" }, { approvalRouting: "both" }); }, tabId);
@@ -64,7 +64,7 @@ async function run(page, task, decide = () => true) {
     };
     return {
         events, cards,
-        done: async (calls) => { await expect.poll(() => fake.calls().length, { timeout: 40000 }).toBeGreaterThanOrEqual(calls); await new Promise((r) => setTimeout(r, 500)); on = false; await loop; await watcher.close(); fromEvents(); },
+        done: async (calls) => { await expect.poll(() => fake.calls().length - base, { timeout: 40000 }).toBeGreaterThanOrEqual(calls); await new Promise((r) => setTimeout(r, 500)); on = false; await loop; await watcher.close(); fromEvents(); },
     };
 }
 
@@ -190,8 +190,9 @@ async function pageBuiltNavigate(source) {
     siteB.reset();
     const script = [{ tool: "navigate", args: { url: B + "/user/x" } }, { content: "done" }];
     fake.setScript(script);
+    const base = fake.calls().length;
     await page.evaluate(() => { void window.ml.agent("go to the demo site", { env: false, crossOrigin: false }); return true; });
-    await expect.poll(() => fake.calls().length, { timeout: 40000 }).toBeGreaterThanOrEqual(script.length);
+    await expect.poll(() => fake.calls().length - base, { timeout: 40000 }).toBeGreaterThanOrEqual(script.length);
     await new Promise((r) => setTimeout(r, 500));
     const out = { requests: siteB.requests() };
     await page.close();
