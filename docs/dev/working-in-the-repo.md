@@ -435,6 +435,28 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
   suite globs `tests/*.test.*`; E2E is `tests/e2e/*.spec.mjs`). See the fuller
   writeup below.
 
+## Scratch files go in your session's scratchpad, never in `/tmp`
+
+A diff you save to read or hand over, a probe or a throwaway test driver, the log of a detached build or suite, a
+review body before it is posted, a downloaded CI artifact: all of it goes in YOUR SESSION'S SCRATCHPAD, the directory
+the harness names for you (Claude Code: the `Scratchpad directory` line in the system prompt,
+`/private/tmp/claude-<uid>/<project-slug>/<SESSION-ID>/scratchpad`). Not `/tmp`, not `~/tmp`, not a folder you
+invent beside the clone. The skills' examples write `$SCRATCH/<file>`; `SCRATCH` is that path.
+
+**Why.** Claude Code lets a session read and write its own scratchpad without asking, and this machine's allowlist
+(the clone's local `settings.local.json`, gitignored) lets every session in the project READ any session's scratchpad the same way. A file
+under `/tmp` is outside both, so every `cat` of it, by you or by the peer you handed it to, stops the session with a
+permission prompt that the user has to answer by hand. A review body drafted in `/tmp`, a diff copied there for the
+janitor, a probe script run from there: each one cost a prompt per read, across a day of PRs (Shane, 2026-10-30).
+
+**What it is not for.** The scratchpad is session-specific and is not a record: a thing another session must FIND
+later goes in session-mail (`~/git/session-mail/README.md`); a checkpoint or a handover goes in the clone's
+gitignored `tmp/`; what a probe found goes in a committed test (the `redteam` skill). Name a scratchpad file to a
+peer by its complete absolute path, in one piece, since a relative one names a different file in every clone.
+
+**Other harnesses.** Use your harness's equivalent when it has one. Without one, a folder under the clone's
+gitignored `tmp/` is the fallback, never `/tmp`.
+
 ## Claude Code's memory folder
 
 Claude Code keeps a memory per checkout outside the repo, in `~/.claude/projects/<checkout path, non-alphanumerics as
@@ -522,6 +544,14 @@ third word, and a run whose every job was cancelled still concludes `failure` �
 for free: a 3-minute `test` leg sitting at 22, or a row of jobs all ending at ~27, was starved of a runner
 rather than slowed down. Poll a run by ID too — `gh run list` has returned a stale page and sent a watch loop
 off onto runs from a fortnight earlier. Four red mains on 2026-10-05 were all of this and none were real.
+
+**A PR body or commit message that says `fix #N`, `close #N` or `resolve #N` CLOSES N when it merges**, and GitHub
+reads the pair anywhere in prose, case-insensitive, with no punctuation needed: "the lockdown fix #1274 is released"
+in a plan PR closed the security lane's open #1274 (2026-10-28), and "the close #1369's sender helper" in a red-team
+rows PR closed the open fix PR #1369 when its squash landed (2026-10-30; the close event on N cites the commit). The
+squash commit takes the PR body, so a body that was safe as a comment is not safe as a commit. Write "#N (the fix)"
+or "the fix PR #N", and before `gh pr create` grep the body for `(fix|close|resolve)[a-z]* #`. A PR closed this way
+is reopened with `gh pr reopen N` and main merged in; nothing is lost but the hour spent finding out.
 
 **And the `background-work` skill (`.claude/skills/background-work/SKILL.md`) is how to run ANY slow
 thing** — CI, an e2e suite (minutes, even parallel), a bench sweep — without stalling the session: start it with

@@ -227,3 +227,50 @@ the approval path.
   approval-fatigue reducer for an honest model, and it **fails closed**.
 - On Trusted-Types pages the *fallback* eval is still dead (no worse than today);
   the win is that in-dialect surveys now run there at all.
+
+## Red-team findings on the kind dispatch (2026-10-30)
+
+The red team's `ml.embed` pass (#1336, `feat/readonly-ml-embed`) landed two test-only PRs, both verified at
+their heads, each a `{ todo }` row asserting the defended outcome beside controls that pin what holds today:
+
+- **A page picks its own kind.** `kindOf` in `src/readonly-exec/policy.ts` decides the `string` and `regexp`
+  kinds by the `Object.prototype.toString` tag, which a page sets through `Symbol.toStringTag`, so a tagged
+  page object chooses its member set and the dispatch then calls the object's OWN method: measured on main,
+  `o.toUpperCase()` and `o.split("x")` run the page's functions and return its values, and a claimed `RegExp`
+  gets its own `test`, `exec` and `source`. Any other tag is `NotInDialect`. The Date, Set and Map branches
+  beside it already refuse the trick by a borrowed getter. Pinned by #1381 (base main,
+  `redteam-brand-tag.test.mjs`, two todos, two controls). RULED: this is a defect of the dialect on main,
+  not of `ml.embed`, since every member inherits the dispatch, so the fix lands on MAIN as its own PR (`@exec`
+  `@security`, by #1336's builder, and #1336 rebases onto it; UPDATE the same day: that builder's session was gone, so Shane started the dialect lane, `[window-ml dialect] brand fix + ml.embed` on Sonnet, briefed by the coordinator with both fixes and #1336 itself from here), by the same
+  borrowed-brand pattern the Date branch uses; it merges after #1381 and the janitor's comment, and the red
+  team flips its todos after as a flip-only PR on main (rule 10). A fix on the embed branch alone would leave
+  the hole on main until that branch merges and was refused for that reason.
+- **The tag getter runs before the shape is refused.** `ml.embed`'s `textOf` (`policy.ts`) brand-checks with
+  the same tag, so a page-installed `Symbol.toStringTag` getter runs, twice per call, before a String-shaped
+  object is refused. Pinned by #1380 (base `feat/readonly-ml-embed`, `redteam-embed.test.mjs`, one todo,
+  five rows holding: a String-shaped object refused with its `valueOf` never run; a Proxy bounded, its traps
+  stated; an inherited index and a hole each a TypeError naming the index with no host call; `ml.embed` absent
+  from a policy's predicate realm; no site-access e2e row since the member adds no message type and no
+  privileged fetch). RULED: fixed on the embed branch by its builder before #1336 merges, the borrowed getter
+  again; the red team flips its todo as its own commit on that branch, its own file only, before the merge
+  (the 2026-10-28 amendment to rule 10).
+
+Both PRs also claim three stray `redteam-*` files for the `redteam` genre in `scripts/test.mjs`, which
+`--check-genres` was refusing every commit over; whichever merges first carries the claim.
+
+LANDED 2026-10-30 (verified): the main fix is #1393 OPEN (head 93e5d62f, `@exec @security`, the dialect lane on Sonnet:
+`policy.ts`, `evaluator.ts`, five adversarial rows in `tests/readonly-exec.test.mjs` failing on main, readonly-exec.md
+updated); it merges after #1381 and the janitor's comment. #1381 MERGED 0b2b0932 on 2026-10-30 (verified): the two todos and two controls are on main. e3 flips the todos as a flip-only PR on main after #1393 merges, carrying the control-1 `ran` destructure fix in the same commit. UPDATE 2026-10-30 (verified): #1393 is at 8f281314 with the janitor's two findings answered (the cross-realm clause struck from readonly-exec.md, the janitor having measured that such an iterator still drains; the pattern row asserting per leg, with the `replaceAll` tag read pinned as a todo and named in the doc's open list beside join and the `String(obj).length` charge); re-reviewed clean (comment 6518194363), the lane re-arms its merge. The control fix is e3's own test-only PR #1399 (`redteam/brand-tag-control`, 7fb5eab1: the control asserted on a local `ran` for the `undefined` tag, so "Thing" and "Object" could never red it; it now keeps `pageObject`'s return and filters the getter's own tag read; the second janitor reviews, behind `--await-review`), so the flip-only PR after #1393 carries the two todo flips alone. The re-read found three more tag-decided kinds in the
+evaluator, fixed in the same PR by the same borrowed brand and measured on main first: a tagged page object as a search
+pattern had its `source`/`flags` getters run; `expanded()` ran its `toString` through `String(x)`; one returned from a
+host call had its own `Symbol.iterator` run. One consequence, not handled: an iterator from another realm is no longer
+drained (a one-line reason in readonly-exec.md; a control row for the red team). The unchanged `redteam-brand-tag`
+rows pass against the branch. RULED 2026-10-30 on two gaps the lane found, neither tag-dependent, each its own PR on
+main after #1393 and #1336, behind the red team's rows (e3, after its #1358 (c) pin): `[o].join("")` and
+`concat(o).join("")` run a page object's own `toString`, fixed by refusing any non-primitive element at `join`; a
+genuine String object carrying an own `toString` has it run by native ToString(this) in `split`/`replace`, fixed by
+dispatching string-kind methods on `String.prototype.valueOf.call(obj)` when the receiver is an object. MEASURED 2026-10-30 by the janitor on #1380's
+head (comment 6517655342, verified): the embed todo row's `tag === 0` needs BOTH fixes, because the tag getter runs
+from two sites in one `ml.embed` call, the `isRegExp` preflight in the evaluator (#1393's fix) and `textOf` in the
+policy. RULED: #1393 merges first; the embed branch is rebased onto main with it; the `textOf` fix lands and is
+measured on that head; the red team's flip is on that head and never on a `textOf`-only one. #1393 MERGED 471c2e9e on 2026-10-30 (verified): the brand decides String, RegExp and iterator kinds on main. Open now, in this order: the dialect lane rebases the embed branch onto main and lands the `textOf` fix there, measured on that head; e3 flips #1380's row on that head; e3's flip-only PR on main for #1381's two todos may open now (the two flips alone, per the ruling above); the join and String-receiver PRs follow behind e3's rows.

@@ -7,7 +7,7 @@
 //   node scripts/probe.mjs dist-web/index.html --phone --touch --dark     # a phone: 390x844, a finger, dark scheme
 //   node scripts/probe.mjs dist-native/embed-demo.html --phone \
 //       --wait '.chat-row' --eval 'document.querySelectorAll(".chat-row").length'
-//   node scripts/probe.mjs http://127.0.0.1:5173/#/settings --size 1280x800 --webkit --shot /tmp/s.png
+//   node scripts/probe.mjs http://127.0.0.1:5173/#/settings --size 1280x800 --webkit --shot $SCRATCH/s.png
 //
 // A path is served over HTTP from its own directory (IndexedDB and WebCrypto need an origin), with the hash or query
 // kept. `--wait` takes milliseconds or a selector. `--eval` is an EXPRESSION (wrap statements in an IIFE); its value is

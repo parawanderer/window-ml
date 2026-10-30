@@ -55,13 +55,19 @@ export function resetDebug(tabId: number): void {
     if (ports) for (const p of ports) { try { p.postMessage({ reset: true }); } catch { /* port closing */ } }
 }
 
-/** Serve one `ml-devtools` port: register it against the tab it says it inspects, replay that tab's buffer so
- *  a panel opened mid-run catches up, and unregister on disconnect. A port that names no tab gets nothing. */
+/** The ports that take a tab's debug feed, each with the message that names its tab: the DevTools panel, and the side
+ *  panel of a hidden page (sw-side-panel.ts), which only an extension page may open. */
+const FEED_INIT: Record<string, string> = { "ml-devtools": "ml-devtools-init", "ml-sidepanel": "ml-sidepanel-init" };   // state: fixed
+
+/** Serve one `ml-devtools` or `ml-sidepanel` port: register it against the tab it says it shows, replay that tab's
+ *  buffer so a panel opened mid-run catches up, and unregister on disconnect. A port that names no tab gets nothing. */
 export function serveDevtoolsPort(port: chrome.runtime.Port): void {
-    if (port.name !== "ml-devtools") return;
+    const init = FEED_INIT[port.name];
+    if (!init) return;
+    if (port.name === "ml-sidepanel" && !(typeof port.sender?.url === "string" && port.sender.url.startsWith(chrome.runtime.getURL("")) && !port.sender.tab)) return;
     let tabId: number | null = null;
     port.onMessage.addListener((msg: any) => {
-        if (msg?.type === "ml-devtools-init" && typeof msg.tabId === "number") {
+        if (msg?.type === init && typeof msg.tabId === "number" && tabId == null) {
             const tid: number = msg.tabId;   // const local: TS narrows it (a captured `let` wouldn't)
             tabId = tid;
             let set = devtoolsPorts.get(tid);

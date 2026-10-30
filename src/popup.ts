@@ -596,8 +596,8 @@ function openSelfApproval(r: WaitingRequest): void {
 /** Draw the block: the sites asking for access, then this tab's start asks with Show; hidden when nothing waits. */
 function renderWaiting(asks: WaitingAsk[] = waitingAsks, requests: WaitingRequest[] = waitingRequests): void {
     waitingAsks = asks; waitingRequests = requests;
-    $("waiting").hidden = asks.length + requests.length === 0;
-    $("waitingList").replaceChildren(...requests.map(requestRow), ...asks.map((a) => {
+    $("waiting").hidden = asks.length + requests.length + panelWaitsNow.length === 0;
+    $("waitingList").replaceChildren(...requests.map(requestRow), ...panelWaitsNow.map(panelRow), ...asks.map((a) => {
         const row = document.createElement("div");
         row.className = "wait-row";
         const line = document.createElement("div");
@@ -607,9 +607,12 @@ function renderWaiting(asks: WaitingAsk[] = waitingAsks, requests: WaitingReques
         line.append("An agent start from ", origin, " is waiting on this tab.");
         const show = document.createElement("button");
         show.textContent = "Show";
-        show.title = "Open the card on the page";
+        show.title = "Open the card: on the page, or in the side panel on a site that can't use window.ml";
         show.addEventListener("click", async () => {
             if (siteTabId == null) return;
+            // A hidden page's card is its side panel (SITE_PRESENCE.md step 4): opened here, inside the click, before any
+            // await; it fails on a visible page, which has no panel, and the worker then shows the card on the page.
+            void chrome.sidePanel?.open?.({ tabId: siteTabId }).catch(() => { /* a visible page: no panel */ });
             const r = await startAsks({ tabId: siteTabId, show: a.requestId });
             if (r.shown) window.close();   // the card is on the page now: get out of its way
             else renderWaiting(r.asks);    // answered or expired meanwhile
@@ -618,8 +621,37 @@ function renderWaiting(asks: WaitingAsk[] = waitingAsks, requests: WaitingReques
         return row;
     }));
 }
+/** A tab whose closed side panel has something waiting, as the worker lists it. */
+interface PanelWait { tabId: number; origin: string; waiting: number }
+/** Ask the worker which tabs' closed side panels have something waiting. */
+function panelWaitList(): Promise<PanelWait[]> {
+    return new Promise((resolve) => {
+        chrome.runtime.sendMessage({ type: "PANEL_WAITS" }, (res: { data?: { tabs?: PanelWait[] } } | undefined) => {
+            void chrome.runtime.lastError;
+            resolve(res?.data?.tabs ?? []);
+        });
+    });
+}
+/** One "Open panel" row: the tab named by its origin, and the click that opens its side panel and brings it forward. */
+function panelRow(w: PanelWait): HTMLElement {
+    const row = document.createElement("div");
+    row.className = "wait-row";
+    const line = document.createElement("div");
+    line.className = "hint";
+    const origin = document.createElement("code");
+    origin.textContent = w.origin;   // the origin the browser reported, never a title the page set
+    line.append("window.ml is waiting for you in the side panel of ", origin, ".");
+    const open = button("Open panel", "Open window.ml's side panel on that tab", () => {
+        // Inside the click, before any await: the browser opens a side panel only on a gesture.
+        void chrome.sidePanel?.open?.({ tabId: w.tabId }).then(() => { void chrome.tabs.update(w.tabId, { active: true }).finally(() => window.close()); }, () => { void loadWaiting(); });
+    });
+    row.append(line, open);
+    return row;
+}
+let panelWaitsNow: PanelWait[] = [];   // state: ui (what the block drew last)
 async function loadWaiting(): Promise<void> {
-    const [asks, requests] = await Promise.all([siteTabId == null ? { asks: [] } : startAsks({ tabId: siteTabId }), accessRequests()]);
+    const [asks, requests, panels] = await Promise.all([siteTabId == null ? { asks: [] } : startAsks({ tabId: siteTabId }), accessRequests(), panelWaitList()]);
+    panelWaitsNow = panels;
     renderWaiting(asks.asks, requests);
 }
 async function editSite(edit: (origin: string) => SiteEdit) {

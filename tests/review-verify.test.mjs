@@ -144,6 +144,7 @@ const ENVELOPE = {
     reused: "person",           // the "reused a grant" note on the step
     precheckFailed: "plumbing", // skips the gate, its `result` goes to the model
     href: "plumbing",           // judged by the worker before a click (nav-arrival.ts); reaches the model only parsed, as the URL a policy denies
+    element: "plumbing",        // tag, link and accessible name, judged by the worker's `act` policies; never shown to the model
     cdpClick: "model",          // x, y and hint are printed into the result; the verify's point is checked
     cdpExec: "plumbing",        // the approved args.js runs, never the echoed source
     cdpShadowClick: "model",    // the selector is printed into the result; the worker resolves it itself

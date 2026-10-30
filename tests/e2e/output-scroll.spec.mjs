@@ -125,18 +125,19 @@ test("output cell: tail-follows at the bottom, holds still when scrolled up", as
         //     search for a line near the bottom, and the cell must scroll to it.
         await scrollTo(cell, () => 0);
         await page.keyboard.type("scroll-line 55");
-        await sleep(500);
-        const afterType = await cell.evaluate((el) => el.scrollTop);
-        expect(afterType, "typing scrolled the match into view (no need to press the arrow first)").toBeGreaterThan(20);
-        // The match itself must be inside the visible band, not merely 'somewhere scrolled'.
-        const visible = await cell.evaluate((el) => {
+        // The match itself must be inside the visible band, not merely 'somewhere scrolled'. Wait ON that
+        // condition: the reveal runs per keystroke and lands late under CI load, and it need not HOLD — the
+        // tail-snap may walk the match back out while the stream runs, which is tail-follow's own contract,
+        // not this step's invariant ("typing scrolled the match into view").
+        await expect.poll(async () => cell.evaluate((el) => {
             const hit = el.querySelector("*") && document.getSelection ? null : null;   // (paint is CSS-only; measure by text)
             const rows = [...el.querySelectorAll("*")].filter(n => /scroll-line 55/.test(n.textContent || "") && !n.children.length);
             if (!rows.length) return false;
             const r = rows[0].getBoundingClientRect(), b = el.getBoundingClientRect();
             return r.top >= b.top - 2 && r.bottom <= b.bottom + 2;
-        });
-        expect(visible, "the matched line is on screen inside the cell").toBe(true);
+        }), { timeout: 15000, message: "the matched line is on screen inside the cell" }).toBe(true);
+        const afterType = await cell.evaluate((el) => el.scrollTop);
+        expect(afterType, "typing scrolled the match into view (no need to press the arrow first)").toBeGreaterThan(20);
         await page.keyboard.press("Escape");
         await sleep(200);
 

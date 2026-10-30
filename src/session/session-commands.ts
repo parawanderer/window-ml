@@ -11,6 +11,7 @@ import { AGENT_START_PAGE } from "../contract/contract-config";
 import type { MlDebugEvent } from "../contract/contract-debug";
 import type { AttachedFile, PromptOrigin, SentFile } from "../contract/contract-run";
 import { FilesRefused, checkFilesField, textFiles, type FileTarget } from "../attached-files";
+import { bytesToB64 } from "../pdf/pdf-wire";
 import { clientUiOf } from "../agent/current-client";
 import type { SessionHistory } from "./session-store";
 import type { Command, CommandError, CommandFrom, CommandResult, CommandType, ListedSession, ModelChoice, SessionId, SessionSummary, StorageReport, TabGroupInfo, TabInfo } from "./session-host";
@@ -54,6 +55,9 @@ export interface CommandDeps {
     index: SessionIndex;
     /** remove a session from the index and end its subscriptions */
     removeFromIndex(id: SessionId): void;
+    /** a file sent ahead in `file.put` chunks (hub-runtime.ts), by its SHA-256, or null when this runtime does not
+     *  hold it. Absent: a command naming a file by hash is answered `invalid`. */
+    heldFile?(sha256: string): Uint8Array | null;
     /** what this runtime IS, for a client that reached it over a transport that cannot know */
     describe(): { kind: "browser" | "desktop" | "headless"; contractVersion: number; capabilities: unknown };
     /** http(s) tabs this browser has open */
@@ -155,9 +159,33 @@ export const SCREENSHOT_MAX_BYTES = 4 * 1024 * 1024;
 /** Mid-run steers carry text only (the loop's inbox has no image slot); images go with a new turn. */
 const STEER_TEXT_MAX = 20_000;
 /** The files of a command, checked by the one rule (attached-files.ts), as the result a handler returns on a refusal. */
-export function checkedFiles(raw: unknown, target: FileTarget): { files?: SentFile[]; error?: CommandResult<any> } {
-    const r = checkFilesField(raw, target);
+export function checkedFiles(raw: unknown, target: FileTarget, held?: (sha256: string) => Uint8Array | null): { files?: SentFile[]; error?: CommandResult<any> } {
+    const resolved = resolveFileRefs(raw, held);
+    if ("refused" in resolved) return { error: fail("invalid", resolved.refused) };
+    const r = checkFilesField(resolved.files, target);
     return r.reason ? { error: fail("invalid", r.reason) } : r.files ? { files: r.files } : {};
+}
+
+/**
+ * `files` with each file named by hash (`{ name, type, sha256, bytes }`, sent ahead in `file.put` chunks) put back as
+ * the PDF it names, so the one rule (`checkFilesField`) checks what arrived inline and what arrived in chunks alike.
+ * @returns the list to check (as it came, when it is not a list), or why a reference cannot be put back
+ */
+function resolveFileRefs(raw: unknown, held?: (sha256: string) => Uint8Array | null): { files: unknown } | { refused: string } {
+    if (!Array.isArray(raw)) return { files: raw };
+    const out: unknown[] = [];
+    for (const f of raw) {
+        const r = f as Record<string, unknown> | null;
+        if (!r || typeof r !== "object" || r.sha256 === undefined) { out.push(f); continue; }
+        const name = typeof r.name === "string" ? r.name : "a file";
+        // A hash beside inline bytes or text is neither shape: which one the person meant is not a guess to make.
+        if (typeof r.sha256 !== "string" || r.text !== undefined || r.data !== undefined) return { refused: `${name}: a file is sent inline or named by its sha256, not both` };
+        const bytes = held?.(r.sha256 as string) ?? null;
+        if (!bytes) return { refused: `${name} is not on this runtime: send it again` };
+        if (typeof r.bytes === "number" && r.bytes !== bytes.length) return { refused: `${name} is ${bytes.length} bytes here, not ${r.bytes}: send it again` };
+        out.push({ name: r.name, type: "application/pdf", data: bytesToB64(bytes) });
+    }
+    return { files: out };
 }
 
 /** One message's text, on a chat this worker hosts. Long enough for a pasted document, short of a denial of service. */
@@ -381,7 +409,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             if (c.lineage) return fail("unsupported", "this browser does not start subagents yet");
             const task = typeof c.task === "string" ? c.task : "";
             const images = Array.isArray(c.images) ? c.images.filter((i): i is string => typeof i === "string" && i.startsWith("data:image/")) : [];
-            const att = checkedFiles(c.files, "agent");
+            const att = checkedFiles(c.files, "agent", deps.heldFile);
             if (att.error) return att.error;
             if (!task.trim() && !images.length && !att.files) return fail("invalid", "a run needs a task, an image or a file");
             if (task.length > CHAT_TEXT_MAX) return fail("invalid", "that task is too long");
@@ -490,7 +518,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             if (bad) return bad;
             const text = typeof c.text === "string" ? c.text : "";
             const images = Array.isArray(c.images) ? c.images.filter((i): i is string => typeof i === "string" && i.startsWith("data:image/")) : [];
-            const att = checkedFiles(c.files, "chat");
+            const att = checkedFiles(c.files, "chat", deps.heldFile);
             if (att.error) return att.error;
             if (!text.trim() && !images.length && !att.files) return fail("invalid", "a chat needs a message, an image or a file");
             if (text.length > CHAT_TEXT_MAX) return fail("invalid", "that message is too long");
@@ -522,7 +550,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             if (s.error) return s.error;
             const text = typeof c.text === "string" ? c.text : "";
             const images = Array.isArray(c.images) ? c.images.filter((i): i is string => typeof i === "string" && i.startsWith("data:image/")) : [];
-            const att = checkedFiles(c.files, pagelessChat(s.id.hash) ? "chat" : "agent");
+            const att = checkedFiles(c.files, pagelessChat(s.id.hash) ? "chat" : "agent", deps.heldFile);
             if (att.error) return att.error;
             if (!text.trim() && !images.length && !att.files && !c.elementContext) return fail("invalid", "a message needs text, an image, a file or an element");
             // A chat this worker hosts has no tab to relay to, and no loop to steer: the message is simply its next

@@ -173,7 +173,8 @@ export function kindOf(obj: unknown): MethodKind | null {
     // A String OBJECT, not a primitive: `ml.dereference` returns a String subclass (DerefText) so a pointer
     // read is usable as the string it is. It must get the string methods, or the wrapper silently costs the
     // caller `.split`/`.startsWith`.
-    if (Object.prototype.toString.call(o) === "[object String]") return "string";
+    // By BRAND, not by `toString` tag (a page sets that through Symbol.toStringTag, and reading it RUNS the page's getter).
+    if (isStringObject(o)) return "string";
     // Set / Map, told apart by their own brand rather than by prototype identity: calling the getter on a
     // foreign object throws, which is the check. (`size` is an accessor on Set.prototype/Map.prototype.)
     if (isSet(o)) return "set";
@@ -183,7 +184,7 @@ export function kindOf(obj: unknown): MethodKind | null {
     // methods, a claimed one would have its OWN `getTime` called. The borrowed getter throws on anything without a
     // Date's internal slot, across realms too.
     if (isDate(o)) return "date";
-    if (Object.prototype.toString.call(o) === "[object RegExp]") return "regexp";
+    if (isRegExpObject(o)) return "regexp";
     // A DOCUMENT before an element: it answers `getElementById`, which an element does not.
     if (typeof (o as { createElement?: unknown }).createElement === "function" && typeof (o as { getElementById?: unknown }).getElementById === "function") return "document";
     if (typeof (o as { nodeType?: unknown }).nodeType === "number") return "element";
@@ -212,6 +213,32 @@ export const isMap = brandCheck(Map.prototype, "size");
 /** Is this a real Date, from any realm? Its own getter cannot be faked: `Date.prototype.getTime` throws on anything
  *  else, whatever it claims to be. */
 const isDate = (o: object): boolean => { try { Date.prototype.getTime.call(o); return true; } catch { return false; } };
+
+/** Is this a real String object, from any realm? Asked by BORROWING `String.prototype.valueOf`, which throws on anything
+ *  without a String's internal slot and never runs the object's own `valueOf`, `toString` or `Symbol.toStringTag`. */
+export const isStringObject = (o: object): boolean => { try { String.prototype.valueOf.call(o); return true; } catch { return false; } };
+
+const regexpGlobal = Object.getOwnPropertyDescriptor(RegExp.prototype, "global")?.get;
+
+/** Is this a real RegExp, from any realm? Asked by BORROWING the `global` accessor: it throws on anything without a
+ *  RegExp's internal slot, and answers `undefined` only for this realm's `RegExp.prototype`, which is no regexp. */
+export const isRegExpObject = (o: object): boolean => { try { return typeof regexpGlobal?.call(o) === "boolean"; } catch { return false; } };
+
+const ITERATOR_NEXTS = [[], new Set(), new Map()].map((c) => Object.getPrototypeOf((c as Iterable<unknown>)[Symbol.iterator]()).next as (this: unknown) => IteratorResult<unknown>);
+
+/** The items of a real Array, Set or Map ITERATOR of this realm, drained by BORROWING the intrinsic `next` (it throws on
+ *  anything that is no such iterator, before consuming a thing), or null when `o` is not one. Never runs the object's own
+ *  `next`, `Symbol.iterator` or `Symbol.toStringTag`, which a page object can all set. */
+export function drainIterator(o: object): unknown[] | null {
+    for (const next of ITERATOR_NEXTS) {
+        let r: IteratorResult<unknown>;
+        try { r = next.call(o); } catch { continue; }
+        const items: unknown[] = [];
+        for (; !r.done; r = next.call(o)) items.push(r.value);
+        return items;
+    }
+    return null;
+}
 
 /** May `key` be CALLED on `obj`? The whole method gate, in one place: the receiver's kind decides, an
  *  unrecognised receiver gets nothing, and "*" holds only what is harmless everywhere. */

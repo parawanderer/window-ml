@@ -41,7 +41,7 @@ const onB = (adopts) => adopts.filter((a) => a.includes("b.example"));
  * the model's n-th call (from 0) is answered; `addPolicy(bg, row)` adds a policy as the policy page does. A page in
  * `redirects` sends the tab on to its value once it has loaded, as a script on it would.
  */
-async function hostRun(calls, { policies = [], clickTo = {}, precheck = () => undefined, card = () => true, ask = () => true, between, onCall, redirects = {} } = {}) {
+async function hostRun(calls, { local: extraLocal = {}, policies = [], clickTo = {}, precheck = () => undefined, card = () => true, ask = () => true, between, onCall, redirects = {} } = {}) {
     const tab = { id: 7, windowId: 3, active: true, url: START, title: "Site" };
     let turns = 0, docN = 1, bg, hash;
     const seen = [], cards = [], whys = [], asks = [], toPage = [], adopts = [], readies = [], fetched = [];
@@ -61,7 +61,7 @@ async function hostRun(calls, { policies = [], clickTo = {}, precheck = () => un
         }
     };
     bg = loadBackground({
-        config, openTabs: [tab], siteGate: true, local: { ml_policies_global: policies, ml_site_always: ["https://site.example", "https://b.example"] },
+        config, openTabs: [tab], siteGate: true, local: { ml_policies_global: policies, ml_site_always: ["https://site.example", "https://b.example"], ...extraLocal },
         onFetch: async (call) => {
             if (call.url.startsWith("https://b.example/") || call.url.startsWith("https://site.example/api")) { fetched.push(call.url); return { ok: true, status: 200, url: call.url, headers: { get: (h) => (/content-type/i.test(h) ? "text/html; charset=utf-8" : null) }, text: async () => "<h1>B</h1>", arrayBuffer: async () => new TextEncoder().encode("<h1>B</h1>").buffer, body: null }; }
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
@@ -424,4 +424,74 @@ test("RED TEAM: a page that hides the link from the precheck gains nothing: the 
     ], { policies: [DENY_ADMIN], clickTo: { "#innocent": ADMIN }, precheck: () => ({ result: "", precheckFailed: false, href: "https://site.example/harmless" }), ask: () => undefined });
     assert.deepEqual(r.toPage.map((x) => x.name), ["click"]);
     assert.match(r.results[1], /"No admin pages" denies: no tool runs on this page/);
+});
+
+// --- the act consumer: a click or a type judged on the element the page resolved (docs/spec/POLICIES.md, "Acting on a page is a consumer") ---
+
+/** A saved global policy over act. */
+const actPolicy = (id, effect, source, label) => ({ ...policy(id, effect, source, label), consumer: "act" });
+const ALLOW_CLICK_START = actPolicy("a-allow", "allow", '(c) => c.action === "click" && c.url.startsWith("https://site.example/")', "Click on site.example");
+const DENY_ALL_BUT_APPROVE = actPolicy("a-deny", "deny", '(c) => c.action === "click" && c.element.name !== "Approve This Draft"', "Only Approve This Draft");
+const ASK_CLICKS = actPolicy("a-ask", "ask", '(c) => c.action === "click"', "Check with me before a click");
+/** The page's precheck: the element each selector resolves to. */
+const elements = (map) => (p) => (map[p.args.selector] ? { result: "", precheckFailed: false, element: map[p.args.selector] } : undefined);
+const BUTTONS = {
+    "#approve": { tag: "button", href: null, name: "Approve This Draft" },
+    "#delete": { tag: "button", href: null, name: "Delete" },
+    "#field": { tag: "input", href: null, name: "Search" },
+};
+
+test("act: with no policy a click asks, as before", T, async () => {
+    const r = await hostRun([{ name: "click", args: { selector: "#approve" } }], { precheck: elements(BUTTONS) });
+    assert.deepEqual(r.cards, ["click"]);
+    assert.deepEqual(r.toPage.map((x) => x.name), ["click"]);
+});
+
+test("act: an allow row on click skips the card, and the same row does not cover a type", T, async () => {
+    const r = await hostRun([{ name: "click", args: { selector: "#approve" } }, { name: "type", args: { selector: "#field", text: "x" } }],
+        { policies: [ALLOW_CLICK_START], precheck: elements(BUTTONS) });
+    assert.deepEqual(r.cards, ["type"], "the click ran with no card; the type asked, since no row allows it");
+    assert.deepEqual(r.toPage.map((x) => x.name), ["click", "type"]);
+});
+
+test("act: a deny row refuses the click before any card or click, the policy named, on the element the page resolved", T, async () => {
+    const r = await hostRun([{ name: "click", args: { selector: "#delete" } }, { name: "click", args: { selector: "#approve" } }],
+        { policies: [ALLOW_CLICK_START, DENY_ALL_BUT_APPROVE], precheck: elements(BUTTONS) });
+    assert.equal(r.results.length, 2);
+    assert.match(r.results[0], /Refused by the policy "Only Approve This Draft", without asking/);
+    assert.deepEqual(r.cards, [], "no card for either");
+    assert.deepEqual(r.toPage.map((x) => x.name), ["click"], "only the approve click reached the page");
+    const log = await r.log();
+    assert.ok(log.some((l) => l.kind === "deny" && l.detail.tool === "click" && l.detail.element === "Delete"), JSON.stringify(log));
+});
+
+test("act: an ask row cards a click an allow row would have let through, and the person's answer rules", T, async () => {
+    const r = await hostRun([{ name: "click", args: { selector: "#approve" } }], { policies: [ALLOW_CLICK_START, ASK_CLICKS], precheck: elements(BUTTONS), card: () => false });
+    assert.deepEqual(r.cards, ["click"]);
+    assert.deepEqual(r.toPage, [], "refused on the card, so never made");
+});
+
+test("act: a click whose element the page could not resolve is judged with a null name, so a deny written on what is allowed fires", T, async () => {
+    const r = await hostRun([{ name: "click", args: { selector: "#gone" } }], { policies: [ALLOW_CLICK_START, DENY_ALL_BUT_APPROVE], precheck: () => undefined });
+    assert.match(r.results[0], /Refused by the policy "Only Approve This Draft"/);
+    assert.deepEqual(r.toPage, []);
+});
+
+test("act: a site on the self-approval list is the builtin allow for a click, and a deny row still beats it", T, async () => {
+    const SELF = { local: { ml_site_selfapprove: ["https://site.example"] } };
+    const free = await hostRun([{ name: "click", args: { selector: "#approve" } }], { precheck: elements(BUTTONS), ...SELF });
+    assert.deepEqual(free.cards, [], "no card on a self-approving site");
+    const denied = await hostRun([{ name: "click", args: { selector: "#delete" } }], { policies: [DENY_ALL_BUT_APPROVE], precheck: elements(BUTTONS), ...SELF });
+    assert.match(denied.results[0], /Refused by the policy/);
+    assert.deepEqual(denied.toPage, []);
+});
+
+test("act: an allow row on click never lets a click through to a link a fetch row denies", T, async () => {
+    const r = await hostRun([{ name: "click", args: { selector: "#admin-link" } }], {
+        policies: [ALLOW_CLICK_START, DENY_ADMIN],
+        precheck: (p) => ({ result: "", precheckFailed: false, href: ADMIN, element: { tag: "a", href: ADMIN, name: "Admin" } }),
+    });
+    assert.match(r.results[0], /which the policy "No admin pages" denies: the click was not made/);
+    assert.deepEqual(r.cards, []);
+    assert.deepEqual(r.toPage, [], "the click never reached the page");
 });

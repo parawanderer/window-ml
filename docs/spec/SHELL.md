@@ -225,6 +225,23 @@ ml.pipe(r.stdout, "grep -c '^ '");         // stdout and stderr are pointers, he
   have their own whitelist, since `PAGER`, `GIT_EXTERNAL_DIFF`, `LD_PRELOAD` or `GIT_SSH_COMMAND` turn a read into
   running code. A call's `env` ADDS to the session's; in the Python shim, `env={**os.environ, …}` would carry the
   sandbox's environment to the host, so it is refused with a steer. Restoring them is free; files a command wrote are NOT rolled back (only a container snapshot does that).
+- **A session is a VALUE, held by the script, never by the host** (ruled 2026-10-30, Shane's question: a model
+  should write `sh = ml.sh.session()` and `sh.cd("repo")` in one cell and `sh.cat("file.txt")` in the next, with the
+  cwd kept). `ml.sh.session()` returns an object holding `cwd`, the `env` additions and options (`check`); every call
+  it makes sends `{ argv, cwd, env }` explicitly, exactly as the plain form does, and the host keeps no per-session
+  state. Persistence across cells then costs nothing new: a worker-hosted run keeps one Python namespace across its
+  cells (`docs/dev/python-sandbox.md`, "A run's namespace"), so `sh` survives as any variable does, and in JavaScript
+  from the console it lives in the page heap; one rule in both languages, no new lifetime. Loss is already specified:
+  a reap, a kill or an evicted worker loses `sh` with the rest of the namespace and the next cell is told
+  `namespace reset`, so nothing dangles at the host, nothing joins the owner table, and a resumed run has nothing to
+  "find". The card is unchanged, since it already shows the cwd on every call, so a stale `cd` can hide nothing. The
+  `with ml.sh.session() as sh:` form is the same object with nothing to tear down, documented as optional sugar; the
+  bare form is the primary one, being what a model writes in a REPL. `sh.cd(path)` and `sh.env(name, value)` mutate
+  the value, under the same root check and env whitelist as a call's own `cwd`/`env`. A shell metacharacter in an
+  argv item (`sh.echo("foo", ">>", "bar.txt")`) stays refused with the steer to the explicit form, above; the cwd
+  persistence does not change that. A host-held session with an id appears only when there is host state to own, a
+  slice-1 container ("a session's container can be thrown away or kept"), and the cwd is never the reason to
+  create one early. This closes the "Session state across turns" open question below.
 - **`&&` is the calling language's control flow** (ruled 2026-10-20, Shane's question): a chain of calls is judged one
   call at a time as each arrives, suspending on an ask, and nothing new is needed to express it. In Python a result's
   truth value IS `ok` (`okCodes` applied, never `code == 0`, or grep's 1 breaks the chain), so
@@ -646,7 +663,8 @@ sandbox; Anthropic's `sandbox-runtime` is the reference for the profiles, not a 
 
 - **Containers on macOS**: Docker or Podman (a VM either way) or Apple's own `container`; what the person has to
   install before slice 1 works.
-- **Session state across turns**: whether `cwd`/`env` live per run or per session, and what a resumed session finds.
+- **Session state across turns**: RULED 2026-10-30, see "A session is a VALUE" above: `cwd`/`env` live in the
+  session value in the run's namespace, lost with it, and a resumed run finds nothing at the host.
 - **Resolve, then run**: the host resolves paths for the decision and then spawns; a symlink swapped between the two is
   a race for the CHILD'S opens, which reopen by name. The host's own reads open by descriptor without following links
   ("Workspace roots"); the child's are bounded by the OS sandbox in host mode and by construction in a container, and

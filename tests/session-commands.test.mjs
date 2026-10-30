@@ -1065,3 +1065,40 @@ test("a PDF the runtime will not read answers chat.start and session.send as inv
     const sent = await w.run({ type: "session.send", session: sid("c0ffee01"), text: "", files: [PDF_FILE] });
     assert.deepEqual([code(sent), sent.error.message], ["invalid", why]);
 });
+
+// --- a PDF named by hash: sent ahead in `file.put` chunks over the hub (FILE_ATTACHMENTS.md, "Over the hub") ---
+
+const PDF_BYTES = Uint8Array.from(atob(PDF_FILE.data), (c) => c.charCodeAt(0));
+const PDF_REF = { name: "paper.pdf", type: "application/pdf", sha256: "e".repeat(64), bytes: PDF_BYTES.length };
+
+test("a PDF named by hash is put back as its bytes before the files are checked, on chat.start and session.send", async () => {
+    const w = world({ hostsChat: () => true, heldFile: (sha) => (sha === PDF_REF.sha256 ? PDF_BYTES : null) });
+    assert.equal(code(await w.run({ type: "chat.start", runtime: "local", text: "read", files: [PDF_REF] })), "ok");
+    assert.deepEqual(w.named("startChat")[0][1].files, [PDF_FILE]);
+    w.index.ingest(chatStart("c0ffee01"), { trusted: true });
+    assert.equal(code(await w.run({ type: "session.send", session: sid("c0ffee01"), text: "and", files: [{ name: "n.txt", type: "text/plain", text: "hi" }, PDF_REF] })), "ok");
+    assert.deepEqual(w.named("sendChat")[0][4], [{ name: "n.txt", type: "text/plain", text: "hi" }, PDF_FILE], "inline and by hash, in the order sent");
+});
+
+test("a hash this runtime does not hold, or holds at another size, is refused as invalid with what to do", async () => {
+    for (const [held, files, why] of [
+        [undefined, [PDF_REF], "paper.pdf is not on this runtime: send it again"],
+        [() => null, [PDF_REF], "paper.pdf is not on this runtime: send it again"],
+        [() => PDF_BYTES, [{ ...PDF_REF, bytes: 99 }], `paper.pdf is ${PDF_BYTES.length} bytes here, not 99: send it again`],
+    ]) {
+        const w = world({ hostsChat: () => true, ...(held ? { heldFile: held } : {}) });
+        const r = await w.run({ type: "chat.start", runtime: "local", text: "read", files });
+        assert.deepEqual([code(r), r.error.message], ["invalid", why]);
+        assert.equal(w.named("startChat").length, 0);
+    }
+});
+
+test("ADVERSARIAL: a reference meets the same rules as the inline PDF it stands for: refused to an agent run, typed as a PDF", async () => {
+    const w = world({ heldFile: () => PDF_BYTES });
+    const r = await w.run({ type: "agent.start", runtime: "local", task: "read", files: [{ ...PDF_REF, type: "text/plain" }], target: { kind: "tab", tabId: TAB } });
+    assert.deepEqual([code(r), r.error.message], ["invalid", "paper.pdf is a PDF; an agent run will read PDFs in a later change"]);
+    const both = await w.run({ type: "chat.start", runtime: "local", text: "x", files: [{ ...PDF_REF, data: PDF_FILE.data }] });
+    assert.deepEqual([code(both), both.error.message], ["invalid", "paper.pdf: a file is sent inline or named by its sha256, not both"], "a hash beside inline bytes is neither shape");
+    const odd = await w.run({ type: "chat.start", runtime: "local", text: "x", files: [{ ...PDF_REF, sha256: 5 }] });
+    assert.equal(code(odd), "invalid");
+});

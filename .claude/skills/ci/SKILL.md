@@ -192,7 +192,7 @@ A failing shard uploads `test-results/` as `e2e-results-<shard>`: each failed te
 accessibility snapshot at the moment it failed), its trace and screenshots.
 
 ```bash
-gh run download <run-id> -n e2e-results-1 -D /tmp/e2e-1 && find /tmp/e2e-1 -name error-context.md
+gh run download <run-id> -n e2e-results-1 -D $SCRATCH/e2e-1 && find $SCRATCH/e2e-1 -name error-context.md
 ```
 
 Read that before theorising: a failure that passes locally is usually a page in a state the test did not expect, and
@@ -245,7 +245,7 @@ Flaky only (passed on retry, never blocked a run), worth knowing because two may
   START_RUNs through a held restore and a 20ms wait; timing-sensitive. Rerun the job before blaming a diff that does
   not touch background start.
 - Seen once each: `site-access` 16a (@security), `site-access` 18 closed-shadow-root (`:1164`, 16.5 s), `site-access` 19
-  DevTools-panel ask (`:1492`, 16.3 s), `cross-page` composer seq collision, `output-scroll` tail-follow, `chat-web`
+  DevTools-panel ask (`:1492`, 16.3 s), `cross-page` composer seq collision, `chat-web`
   phone tooltip, `focus-restore`, `bench-editor` traceback, `resource-panel` narrow window (`:3619`),
   `tooltips.spec.mjs:627` › a tip whose trigger disappears under a still pointer disappears with it.
 - Seen once each on 2026-10-28 (run 40708391759, head `95a9e87b`, every job green; each row failed its first attempt and
@@ -276,9 +276,41 @@ Flaky only (passed on retry, never blocked a run), worth knowing because two may
   document that loads in the registration window and misses the catch-up gets no page script until its next
   reload) — site-access lane's, a bug report until proven otherwise.
 
+- Seen once each (2026-10-28/29): `tests/redteam-python-sandbox.test.mjs` › `P2-handle route: a method of a Task
+  SUBCLASS the cell defines does not run once the result is returned` (run 40753575484 attempt 1 on #1279, test
+  node 26: `nothing scheduled by this route may run after the result returned, got {"woke":["armed","ran"]}` at
+  :365; the job reran green — a second sighting is the python-cancel lane's bug report). `tests/e2e/redteam-hard-
+  python-realm.spec.mjs:98` › `a lifted cell cannot read location on the real worker global after the strip` (run
+  40833665768 on #1310, e2e 2/3: one ✘ at 20.7 s, no retry line and no summary entry in that log). Same run's
+  actual red: `tests/e2e/pdf-offscreen.spec.mjs:88` › `a transfer function, a soft mask and a knockout group render
+  with no DOM, each drawn as the file says` (failed both tries, `expect(grays).toEqual([204, 0, 191, 191])` got
+  `[204, 0, 190, 190]`).
+
+- Seen on 2026-10-30 (run 41013403177, e2e 3/3 on #1367, the chat-page lane's own report; #1367's diff touches no
+  page gate): `site-access.spec.mjs:1870` › `@security the ask stub › a marked origin's top frame alone gets
+  window.ml…` — failed once, retry-passed: `mlKeys(page)` was `"undefined"` where `["requestAccess"]` was expected
+  at :1879 — the :1779 ask-stub shape again (second sighting), site-access lane's, a bug report until proven
+  otherwise. And `site-access.spec.mjs:2069` › attack 7 — failed both tries and is NOT a flake: #1367 lets our own
+  pages framed in a tab get LIST_MODELS kinds, so the `popup.html` the test opens as a tab now POSTs `/api/show` and
+  `postHits` counts it; fixed in the test on #1367 with Shane's OK (the baseline is taken after the popup's model
+  listing settles, asserting the attack adds no POST). Do not add :2069 as flake.
+
 node:test had no real failures in that window: every `not ok` was a documented `# TODO`.
 
 Recently removed, recorded so nobody re-adds them from memory:
+
+- ~~`output-scroll.spec.mjs:34` › `output cell: tail-follows at the bottom, holds still when scrolled up`~~ —
+  **fixed** in #1345 (`263e8359`, 2026-10-29), the wait and not the product: the `the matched line is on screen
+  inside the cell` measure ran one-shot after `sleep(500)`; it now polls the byte-identical predicate (15 s cap
+  that fails at the cap) and `afterType > 20` asserts after the poll. Measured before the fix: 9 of the 76
+  `tests.yml` runs of 2026-10-28 18:41Z to 2026-10-29 16:00Z (every run's every attempt enumerated) — 4 failed
+  both tries and job-reran green (40747850251, 40748503732, 40755698187 attempt 1, 40757874958 attempt 2), 5
+  retry-passed `1 flaky` (40751367821, 40752713621, 40874036389 on main; 40752930715, 40850226606 on PRs), 7 of
+  the 9 in one 82-minute burst on 2026-10-28, all on e2e (2/3). The fix's proof: 10 of 10 e2e (2/3) shard reruns
+  green on the head (the tally on #1345, jobs 123586226871–123637910312), the standard for a fixed-wait
+  replacement. The reveal-vs-follow race it exposed (find's
+  `follow.current = false` undone by its own clamped scroll event, render-panel.tsx:968/:973) is routed to the
+  sidebar lane in #1345's body. Do not add as flake.
 
 - ~~`python-spend-queue.test.mjs:184` › a flood of queued callbacks is cut at the deadline~~ — **fixed** in #1269
   (`973c979c`, 2026-10-28): the fixed `1500` is replaced by pin 15's ruled formula, `1000 + control.spendMs +
@@ -396,6 +428,10 @@ code. The easy fixes (a sleep, a retry, a looser assertion) turn CI green and hi
   "it's just the flaky one" unless the run says *flaky* rather than *failed*.
 - **Re-run only to test a flake hypothesis** (`gh run rerun <id> --failed`), and say so. Re-running to
   get a different answer is how a real intermittent bug becomes permanent.
+- **A job rerun mints a NEW job id** (the mechanics note on #1345's tally): the old id reads `completed|success`
+  forever, so a loop polling a remembered id fires the next rerun into a run that is still going (403 "The workflow
+  run containing this job is already running"). POST `actions/jobs/<current id>/rerun`, then poll the run's jobs
+  list until the shard's row id differs from the posted one AND is completed.
 - **A fresh worktree needs `npm ci`.** Worktrees do not get `node_modules`, and since `@types/node`
   became a devDependency a stale one fails with `Cannot find type definition file for 'node'` — which
   reads like a tsconfig problem rather than a missing install. Symlinking the main checkout's

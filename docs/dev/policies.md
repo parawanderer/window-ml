@@ -23,7 +23,11 @@ default: [`../spec/EFFECTS.md`](../spec/EFFECTS.md). The language a policy is wr
 | What the model reads | `policies` on `CurrentSnapshot` (`src/agent/current-context.ts`) |
 | A proposal from the model: its check, its measured breadth, the card's note | `src/sw/policy-proposal.ts` |
 | The `propose_policy` tool (reports the decision; adds nothing) | `src/tools/propose-policy-tool.ts` |
+| Several rules in one proposal (`rules`, `checkProposals`, `PROPOSAL_ROWS_MAX`): one card with a note per rule, one answer adds all, each its own run policy sharing `StoredPolicy.proposal` | `src/sw/policy-proposal.ts`, `src/sw/sw-run-host.ts` |
 | Its gate: precheck, card, the add in the resolve (`offersProposals`) | `src/sw/sw-run-host.ts` |
+| The `act` consumer (a click or a type): `actFacts`, the recorded acts a proposal's breadth is measured over (`noteAct`), `actElement` (the page's resolution of the element) | `src/sw/sw-policies.ts`, `src/tools/builtin-tools.ts` |
+| Its gate: `actPolicy` asks the page for the element, judges, and the self-approval list is the builtin `allow`; `autoApprove` is async for this | `src/sw/sw-run-host.ts`, `src/agent/agent-host.ts`, `src/agent/agent-loop.ts` |
+| The acceptance test: four rules, two origins, the demo site's server-side log | `tests/e2e/policy-worked-example.spec.mjs`, `tests/e2e/fixtures/demo-site/server.mjs` |
 | Every policy source written anywhere, for measuring a grammar or a lifter over ("The policy corpus" below) | `tests/fixtures/policy-corpus.json` |
 | The lifter: a source that fits the tree's fragment, as a tree ("The lifter" below) | `src/readonly-exec/policy-lift.ts` |
 
@@ -91,6 +95,12 @@ consumer by widening `PolicyConsumer` and `validList`, and give it a facts build
   store not read yet carries it to a card, `allow` skips the cross-origin card. An `allow` with no card adds the origin
   to the turn's `consentedOrigins` only, never to the run's as-you grants (`grantRunOrigin`, `worker-tools.ts`): only a
   person on a card grants an origin as-you (the 2026-10-24 correction).
+- A run built without `crossOrigin` (a page's own `ml.agent`) has a `navigate` tool that refuses a cross-origin URL. The
+  person's word lifts that for ONE call: when this navigate's `navigateFacts` is allowed by a policy of origin `proposed` or
+  `person` (never a builtin, never another consumer's `allow`), `sendTool` (`sw-run-host.ts`) marks the message
+  `crossOriginWord` at the send, and the page's `runDelegatedTool` runs that call with a `crossOrigin: true` tool. It is
+  a field of the message, never of the tool's arguments, so a model cannot say it. A `deny` or `ask` still wins in
+  `autoApprove`, and the arrival is still judged.
 - Every page the run's tab COMMITS while the run is live (`nav-arrival.ts`, from `webNavigation.onCommitted`), whoever
   caused it. `arrivalVerdict` turns the judgement into a hold, a consent, or a pass; a builtin answer and no answer both
   pass and consent nothing. An `ask` asks about every arrival it covers, an origin already consented included.
@@ -287,7 +297,7 @@ The model never adds a policy; it asks for one, and the person answers a card (`
   the precheck, the card and the add, because within the turn of a hand-over `p` is still the page's.
 - **Checked before any card** (`checkProposal`, the gate's precheck): `effect` is `allow`, `deny` or `ask`, `when` a source of
   at most `POLICY_SOURCE_MAX` that runs over a probe call without breaking, `label` at most `POLICY_LABEL_MAX`. A
-  proposal that fails is said to the model and never shown to the person. Fetch only for now (`consumer: "fetch"`).
+  proposal that fails is said to the model and never shown to the person. A row's `consumer` is `fetch` (the default) or `act`; an `act` row is checked over a click on a nameless button, and its breadth (`measureActBreadth`) is over the clicks and types the worker resolved this run (`noteAct`), not over `fetch_url` calls.
 - **The card leads with the breadth, which the worker measures.** `recordedFetches` reads the run's `fetch_url` calls
   from its messages (`contextByRun`, else the settled snapshot), pairing each call with its result by id;
   `measureBreadth` evaluates the proposal over them and over hosts the run never used: `FIXED_PROBE_URLS` (loopback and
@@ -380,3 +390,21 @@ answers taught, for anyone writing a policy or a lifter rewrite:
   type carries for a policy with a lifetime; no policy has one.
 - A page-built run's card is not judged again when a policy changes: its descriptor carries no facts, because its
   fetch runs in the page and an `allow` cannot answer it (see Traps). A `deny` would; it is left for the run's next call.
+
+## The act consumer
+
+A click or a type is judged as `act` (`actFacts`: `url`, `host`, `action`, `element: { tag, href, name }`, effects unknown).
+
+- **The element is the page's resolution at the call.** `actPolicy` (`sw-run-host.ts`) sends a precheck to the page, which returns the
+  element its selector resolves to (`actElement`, `builtin-tools.ts`): `href` is the nearest link's absolute URL (null for none), `name`
+  the accessible name (`""` for none; null only when nothing resolved, so a `deny` written on what is allowed fires). The page's word,
+  as `clickHref` already was: a rule binds what the model may attempt, never the page's honesty. A click by `@pt:` token (what `locate`
+  produces) is the click on the element under the point as the synthetic click lands (a CDP click on a point our own sidebar or card covers can land inside them: the security lane's overlay work, not decided here): `actElement` makes the same hit-test `clickAt` makes, so a deny written on the
+  accessible name judges it, and a link around the element is its `href`. A box token resolves none (the click is refused outright). A
+  page that predates the `element` field sends none, and the call is judged with null facts: a deny fires, an allow does not.
+- **`autoApprove` is async.** The element comes from the page, so the loop awaits it (`agent-loop.ts`). A `deny` row refuses the call
+  with the policy named and no card; an `allow` skips the card; an `ask` or nothing asks as before. The link a click follows is judged
+  first as a `fetch` navigation (`clickLinkRefusal`), so an `allow` on the click never lets it through to a page a `fetch` row denies.
+- **The self-approval list is the builtin `allow`** when no row decides (`senderSelfApproves`, read, never changed).
+- **Test with** `tests/act-policy.test.mjs` (facts, element, proposals), the `act:` tests in `tests/nav-arrival-host.test.mjs` (the host),
+  and `tests/e2e/policy-worked-example.spec.mjs` (the worked example against the demo site).

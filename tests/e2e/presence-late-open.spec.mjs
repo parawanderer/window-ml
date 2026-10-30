@@ -1,15 +1,15 @@
-// presence-late-open.spec.mjs — a page allowed AFTER the sidebar's app is up still shows its own runs
+// presence-late-open.spec.mjs — the overlay's app loaded BEFORE injected.js still shows the page's own runs
 // (docs/spec/SITE_PRESENCE.md, step 2).
 //
-// A hidden page gets injected.js only once its origin is allowed, so the overlay's app can be listening before the
-// page script exists. The bus goes live on the shell's `ready`; the app's own handshake sent that while the page was
-// hidden, so the shell has to say it again when injected.js says hello. On CI's slower runners this order was the
-// usual one and a page's run never reached the session list.
+// A hidden page gets neither injected.js nor the overlay (step 4); both arrive once its origin is allowed, in either
+// order, so the app can be listening before the page script exists. The bus goes live on the shell's `ready`; when the
+// app's handshake sent that first, the shell has to say it again when injected.js says hello. On CI's slower runners
+// this order was the usual one and a page's run never reached the session list.
 import { test, expect } from "@playwright/test";
-import { launchExtension, configureExtension, waitForMl, waitInShell, openRunInSidebar } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, approveOrigin, waitInShell, openRunInSidebar } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 
-test("a page allowed after the overlay's app loaded gets its run into the session list", async () => {
+test("on a page just allowed, the overlay's app opened before injected.js gets the page's run into the session list", async () => {
     const fake = await startFakeLlm({ model: "fake-model" });
     const ext = await launchExtension();
     try {
@@ -20,7 +20,10 @@ test("a page allowed after the overlay's app loaded gets its run into the sessio
         await page.goto(`${fake.url}/api/version`);
         await waitForMl(page, { approve: false });
         expect(await page.evaluate(() => "ml" in window), "precondition: the page is hidden").toBe(false);
-        // The app first, while the page has no page script.
+        expect(await page.evaluate(() => !!document.getElementById("ml-sb-root")), "precondition: a hidden page has no overlay").toBe(false);
+        // The overlay mounts only once the origin is allowed (SITE_PRESENCE.md step 4), so allow it, then open the app
+        // without waiting for the page script: the app can still load before injected.js reaches the open page.
+        await approveOrigin(ext.sw, new URL(page.url()).origin);
         await waitInShell(page, (roots) => !!roots.sidebar?.getElementById("ml-sb-tab"));
         await waitInShell(page, (roots) => { /** @type {HTMLElement} */ (roots.sidebar?.getElementById("ml-sb-tab")).click(); return true; });
         await expect.poll(() => page.frames().some((f) => /sidebar\.html/.test(f.url())), { timeout: 15000 }).toBe(true);

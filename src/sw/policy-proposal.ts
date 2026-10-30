@@ -7,11 +7,13 @@
 
 import type { NeutralMessage } from "../contract/contract-chat";
 import { evalPolicy, type PolicyEffect } from "../readonly-exec";
-import { fetchFacts, navigateFacts } from "./sw-policies";
-import { POLICY_LABEL_MAX, POLICY_SOURCE_MAX } from "./policy-valid";
+import { actFacts, fetchFacts, navigateFacts, type ActRecord } from "./sw-policies";
+import { POLICY_LABEL_MAX, POLICY_SOURCE_MAX, PROPOSAL_ROWS_MAX } from "./policy-valid";
 
 /** A proposal as the worker accepted it: the strings it checked, which are what the card shows and what is added. */
 export interface PolicyProposal {
+    /** What the rule judges: a `fetch_url` or navigate (the default), or a click or a type on a page. */
+    consumer: "fetch" | "act";
     effect: PolicyEffect;
     source: string;
     label: string;
@@ -105,6 +107,8 @@ export function relatedProbes(matched: readonly string[]): { siblings: string[];
  */
 export function checkProposal(args: Record<string, unknown>): { proposal: PolicyProposal } | { error: string } {
     const { effect, when, label } = args;
+    const consumer = args.consumer ?? "fetch";
+    if (consumer !== "fetch" && consumer !== "act") return { error: `Error: "consumer" must be "fetch" or "act".` };
     if (effect !== "allow" && effect !== "deny" && effect !== "ask") return { error: `Error: "effect" must be "allow", "deny" or "ask".` };
     if (typeof when !== "string" || !when.trim()) return { error: `Error: "when" must be the policy's code, a function (c) => boolean.` };
     if (when.length > POLICY_SOURCE_MAX) return { error: `Error: "when" is longer than ${POLICY_SOURCE_MAX} characters; a policy is a predicate, not a program.` };
@@ -115,9 +119,38 @@ export function checkProposal(args: Record<string, unknown>): { proposal: Policy
     if (/["\p{Cc}\p{Zl}\p{Zp}]/u.test(label)) return { error: `Error: "label" may not hold a double quote, a line break or a control character.` };
     // Evaluated once over a probe: a policy that cannot be read, or reads a field a fetch call does not have, is
     // refused here rather than shown to the person as a rule that would never answer anything.
-    const r = evalPolicy(when, fetchFacts(FIXED_PROBE_URLS[0]), effect);
+    const probe = consumer === "act" ? actFacts(FIXED_PROBE_URLS[0], "click", { tag: "button", href: null, name: "" }) : fetchFacts(FIXED_PROBE_URLS[0]);
+    const r = evalPolicy(when, probe, effect);
     if (r.broken) return { error: `Error: the policy does not run: ${r.broken}. It is not proposed.` };
-    return { proposal: { effect, source: when, label: label.trim() } };
+    return { proposal: { consumer, effect, source: when, label: label.trim() } };
+}
+
+export { PROPOSAL_ROWS_MAX };
+
+/**
+ * Check a proposal as the model sent it: a list of `rules`, or the one-rule form (`effect`, `when`, `label`) older calls
+ * use. Each row is checked as {@link checkProposal} does, and a bad row refuses the whole proposal, naming the row.
+ * @param args the call's arguments
+ * @returns the accepted rows in the order sent, or the error the model reads
+ */
+export function checkProposals(args: Record<string, unknown>): { proposals: PolicyProposal[] } | { error: string } {
+    if (args.rules === undefined) {
+        const c = checkProposal(args);
+        return "error" in c ? c : { proposals: [c.proposal] };
+    }
+    if (args.effect !== undefined || args.when !== undefined || args.label !== undefined) return { error: `Error: send either "rules" or "effect", "when" and "label", not both.` };
+    const rules = args.rules;
+    if (!Array.isArray(rules) || !rules.length) return { error: `Error: "rules" must be a non-empty list of { effect, when, label }.` };
+    if (rules.length > PROPOSAL_ROWS_MAX) return { error: `Error: "rules" holds ${rules.length} rules; at most ${PROPOSAL_ROWS_MAX} in one proposal.` };
+    const proposals: PolicyProposal[] = [];
+    for (let i = 0; i < rules.length; i++) {
+        const r = rules[i];
+        if (!r || typeof r !== "object" || Array.isArray(r)) return { error: `Error: rule ${i + 1} must be an object { effect, when, label }.` };
+        const c = checkProposal(r as Record<string, unknown>);
+        if ("error" in c) return { error: c.error.replace(/^Error: /, `Error: rule ${i + 1}: `) };
+        proposals.push(c.proposal);
+    }
+    return { proposals };
 }
 
 /**
@@ -192,4 +225,51 @@ export function breadthNote(p: PolicyProposal, b: ProposalBreadth): string {
         : p.effect === "ask" ? " It also asks before the run goes to those pages."
         : " It also stops the run going to those pages.";
     return `${head} ${past} ${reach}${wide}${nav} Measured, not proven: other URLs may match.`;
+}
+
+/** What an `act` proposal would have matched: the run's recorded clicks and types, and clicks on pages of unrelated hosts. */
+export interface ActBreadth {
+    /** The clicks and types this run made, as the worker resolved them. */
+    recorded: number;
+    /** Those it matches. */
+    matched: ActRecord[];
+    /** How many unrelated pages a click on a nameless button was tried on. */
+    tried: number;
+    /** Those it matches too: non-empty means it reaches past this run's sites. */
+    strays: string[];
+}
+
+/**
+ * Measure what an `act` proposal matches: the run's recorded acts, and a click on a nameless button of each probe URL.
+ * @param p the accepted proposal
+ * @param acts the run's recorded clicks and types
+ * @param probes the URLs on unrelated hosts to try (fresh ones by default)
+ * @returns the breadth
+ */
+export function measureActBreadth(p: PolicyProposal, acts: readonly ActRecord[], probes: readonly string[] = probeUrls()): ActBreadth {
+    const hit = (url: string, action: "click" | "type", e: ActRecord["element"]): boolean => evalPolicy(p.source, actFacts(url, action, e), p.effect).decision === p.effect;
+    const matched = acts.filter((a) => hit(a.url, a.action, a.element));
+    const used = new Set(acts.map((a) => hostOf(a.url)));
+    const others = probes.filter((u) => !used.has(hostOf(u)));
+    const strays = others.filter((u) => hit(u, "click", { tag: "button", href: null, name: "" }));
+    return { recorded: acts.length, matched, tried: others.length, strays };
+}
+
+/**
+ * The card's first line for an `act` rule: what it does and how far it reaches, over recorded clicks and types, saying so
+ * when there are none.
+ * @param p the accepted proposal
+ * @param b its breadth
+ * @returns one paragraph for the card's note
+ */
+export function actBreadthNote(p: PolicyProposal, b: ActBreadth): string {
+    const verb = p.effect === "allow" ? "click or type without asking" : p.effect === "ask" ? "ask the person before a click or a type" : "refuse a click or a type without asking";
+    const head = `Proposed by the model for this run: ${verb} when this code returns true. "${p.label}".`;
+    const line = (a: ActRecord): string => `${a.action} "${a.element.name ?? ""}" on ${a.url}`;
+    const past = !b.recorded ? "This run has made no click or type to measure it against."
+        : !b.matched.length ? `It matches none of this run's ${b.recorded} clicks and types.`
+        : `It matches ${b.matched.length} of this run's ${b.recorded} clicks and types (${b.matched.slice(0, 3).map(line).join("; ")}${b.matched.length > 3 ? `; and ${b.matched.length - 3} more` : ""}).`;
+    const reach = b.strays.length ? `It ALSO matches a click on a nameless button of sites this run never used (${b.strays.map(hostOf).join(", ")}): it reaches past this run's sites.`
+        : `It matched none of the ${b.tried} unrelated sites a click was tried on.`;
+    return `${head} ${past} ${reach} Measured, not proven: other pages and buttons may match.`;
 }

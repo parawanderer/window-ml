@@ -13,7 +13,7 @@
 // attack does put extension pixels somewhere, so a pass is not a page that hid the UI altogether.
 import { test, expect } from "@playwright/test";
 import http from "node:http";
-import { launchExtension, configureExtension, inShell, waitInShell, waitForMl, onChannel, warUrl } from "./harness.mjs";
+import { launchExtension, configureExtension, inShell, waitInShell, waitForMl, approveOrigin, onChannel, warUrl } from "./harness.mjs";
 import { TAMPERED, RESTYLED_COVERS, MOVED_COVERS } from "../../src/sw/shot-mask.ts";
 
 /** A page that is one flat green with a transparent target box at (300,300) 200×100, on a local http server. */
@@ -57,6 +57,8 @@ async function setup(ext, site) {
     await configureExtension(ext.sw, { debugMode: "overlay", cdp: false });
     const page = await ext.context.newPage();
     await page.setViewportSize({ width: 1280, height: 720 });
+    // the overlay mounts only on a page that may use window.ml, so approve the site's origin first
+    await approveOrigin(ext.sw, new URL(site.url).origin);
     await page.goto(site.url);
     await page.waitForSelector("#ml-sb-root", { state: "attached", timeout: 15000 });
     await waitInShell(page, (roots) => !!roots.sidebar?.getElementById("ml-sb-tab"));
@@ -81,13 +83,13 @@ async function withShell(fn) {
 }
 
 /** Put `text` in a stylesheet inside our shadow root, from the shell's own world (the page no longer can: attack 17). */
-const shadowCss = (page, text) => inShell(page, (roots, t) => { const st = document.createElement("style"); st.textContent = t; roots.sidebar.append(st); }, text);
-/** Set `decls` as `!important` inline styles on the element `id` inside our shadow root, from the shell's own world
- *  (the page no longer can: attack 17). */
-const inlineCss = (page, id, decls) => inShell(page, (roots, { id, decls }) => {
-    const e = roots.sidebar.getElementById(id) ?? roots.sidebar.querySelector(`#${id}`);
+const shadowCss = (page, text, which = "sidebar") => inShell(page, (roots, { t, which }) => { const st = document.createElement("style"); st.textContent = t; roots[which].append(st); }, { t: text, which });
+/** Set `decls` as `!important` inline styles on the element `id` inside our shadow root `which` (the highlight has a root
+ *  of its own), from the shell's own world (the page no longer can: attack 17). */
+const inlineCss = (page, id, decls, which = "sidebar") => inShell(page, (roots, { id, decls, which }) => {
+    const e = roots[which].getElementById(id) ?? roots[which].querySelector(`#${id}`);
     for (const [k, v] of Object.entries(decls)) e.style.setProperty(k, v, "important");
-}, { id, decls });
+}, { id, decls, which });
 
 // --- control: the open sidebar is in a bare capture and not in the worker's shot ---
 
@@ -548,7 +550,7 @@ for (const offset of ["40px", "-30px"]) {
         await withShell(async (s, ext) => {
             await highlight(ext, s.tabId);
             await s.page.waitForTimeout(300);
-            await inlineCss(s.page, "ml-highlight", { "outline-offset": offset });
+            await inlineCss(s.page, "ml-highlight", { "outline-offset": offset }, "highlight");
             await s.page.waitForTimeout(150);
             const inner = { left: 300 + 35, top: 300 + 35, width: 200 - 70, height: 100 - 70 };   // left unmasked by design; the -30px ring is outside it
             expect(await offGreen(s.page, (await s.bare()).dataUrl, offset === "40px" ? TARGET : inner), "the ring paints").toBeGreaterThan(0);
@@ -562,7 +564,7 @@ for (const offset of ["40px", "-30px"]) {
 test("an outline-offset on the highlight by a stylesheet in our root (the page can no longer put one there: attack 17) refuses the shot", async () => {
     await withShell(async (s, ext) => {
         await highlight(ext, s.tabId);
-        await shadowCss(s.page, "#ml-highlight{outline-offset:40px !important}");
+        await shadowCss(s.page, "#ml-highlight{outline-offset:40px !important}", "highlight");
         await s.page.waitForTimeout(300);
         expect((await s.shoot()).error).toBe(TAMPERED);
     });

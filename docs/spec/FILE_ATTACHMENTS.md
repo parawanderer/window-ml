@@ -168,6 +168,22 @@ more chunks), each sized to the payload limit less the seal's overhead. The send
   upload past it would slow every session's live replies on that account.
 - The same reference by hash spares the extension's own chat page a second copy of a file attached twice.
 
+Built (2026-10-29, `file-frame.ts`, `file-chunks.ts`, `HubConnection.putFile`; how it works: `docs/dev/hub-client.md`):
+
+- The chunk follows the JSON after a zero byte. `file.have` comes first, so an older runtime (`unsupported`) gets the
+  PDF inline, and a runtime that holds part of the file is sent the rest. Both need `drive`, the scope of the send.
+- The cap is checked before a chunk is sent: with the default 32 MiB burst, `0.6 x` is 19.2 MiB, under the 20.
+- A hub `UNAVAILABLE` now reaches the chunk's waiter through the envelope's `ref`, and a runtime going offline settles
+  everything waiting on it, since the hub discards what it had queued to it. The composer hears either at once.
+- The runtime keeps a finished file by hash for 15 minutes after its last use, so the same file attached again is
+  named, not sent. In worker memory: an eviction costs a re-send, never a wrong file.
+- A finished file is the ACCOUNT's, not its sender's (accepted 2026-10-29): any device with `drive` that names its
+  hash may attach it, and `file.have` tells such a device whether the runtime holds a file it can name, so one that
+  guesses a document learns another device sent it within the TTL. Every device holding `drive` is the same person's,
+  under one root. An upload in progress stays its sender's, so another device cannot spoil it. A device with `view`
+  alone is refused both commands, and one declaring `drive` it does not hold fails to open and goes unanswered.
+- Not built: progress in the composer while the chunks go.
+
 **Images go only to a model known to see them: unknown is refused.** (Built.) A worker chat attached images without
 asking; it now asks the question an agent run does (`_modelVision`, image-gate.ts: Ollama reports vision or not, or
 the person declared the default model in Settings; anything else is UNKNOWN, never "no"). The reader is the OCR model
@@ -212,8 +228,7 @@ at most `PDF_ATTACH_MAX` (20 MB). What the build decided where the rulings were 
 - A new bound: the reader reads at most `READER_PAGE_MAX` (32) pages of a message, each a model call the person waits
   for; past it a scan is named like one past the image cap. A page is drawn at scale 2 (144 dpi).
 - Not built yet: the bytes in the value store (slice 3 needs them; nothing reads them before it), PDFs to an agent run
-  (refused by name), and the hub's `file.put` chunks (over the hub a PDF rides inside the command, so only one under
-  the payload limit gets through until then).
+  (refused by name). The hub's `file.put` chunks came after (above).
 
 ## Slice 3: an attached file as an `@file:` pointer
 
@@ -221,6 +236,24 @@ at most `PDF_ATTACH_MAX` (20 MB). What the build decided where the rulings were 
 tool call, and its ids must never collide with a tool output's. The three reference forms are the pointer rules'
 (pointers.md): `@file:"report.pdf"` (the quoted label is the file's name), a minted id with its check character, told
 apart by SHAPE and never tried in order. There is no bare form.
+
+**The name, and two files with one name (Shane, 2026-10-30).** The file's own name is the label, because it is what the
+person and the model both call it; every form a file travels in already carries `name` (contract-run.ts). A duplicate
+name is not handled like a `@tool:` label, where an exact label resolves to the LATEST output silently: two different
+`report.pdf` files are usually a draft and its revision, and reading the newer one unasked can answer from the wrong
+document.
+
+- The same bytes attached twice are one file: the value store keeps a blob once per SHA-256, so no duplicate exists.
+- A different file under a name already in use keeps its real name (never `report (2).pdf`, which would leave the person
+  and the model calling one file two things), and its outline says so: `@file:9c2e41a "report.pdf": a second file by
+  this name; the first is @file:3fa91c2, attached in turn 2.`
+- `@file:"report.pdf"` while two such files exist is REFUSED, never resolved to the latest: the refusal lists each one
+  with its id, page count and the turn it came in, as an ambiguous near-match label is refused today (pointers.md). The
+  model then reads by id, or asks the person which one they meant.
+- The name is untrusted text (a downloaded file can be called `ignore previous instructions.pdf`): it travels only
+  inside the quoted label, with quotes escaped, line breaks and control characters stripped and its length capped, and
+  the outline's "attached by the person" stays beside it. The real-model run (below) includes a task with two files of
+  one name.
 
 **What the model is given up front** is an outline, not the content:
 
@@ -236,7 +269,9 @@ is the shell call's one rule for every pointer prefix in argv, not a manifest's 
 
 **Reading text by page.** The pipe dialect gains one verb, `pages N-M` (`PIPE_CMDS`, text-pipe.ts), which selects whole
 pages from a paged value before the other verbs run: `dereference("@file:3fa91c2", { pipe: "pages 3-5 | grep -i
-revenue" })`. A text file is one page per N lines (open: N), so the same verb pages a long log. Extending the dialect
+revenue" })`. Both reads take `@file:`: the `dereference` tool, which the run loop answers with text (agent-loop.ts
+`derefLocally`, which today resolves only `@tool:`), and `ml.dereference` in code, which returns the typed value. A text
+file is one page per N lines (open: N), so the same verb pages a long log. Extending the dialect
 requires the adversarial tests in readonly-exec.md ("The rule for extending the dialect"); `pages` gets its own bound
 (how many pages one pipe may select) with adversarial rows of its own.
 
@@ -349,8 +384,15 @@ that rule for attachments and should reuse the `@tool:` value path, not a parall
 Where there are no tools (a worker chat), "past the cap" cannot become a pointer. Decided (Shane, 2026-10-29): a PDF
 past the cap is no longer refused whole. Its pages go in order while they fit and the rest are named ("pages 12-30
 were not sent: past the text a message takes. This chat cannot show them."), and the cap is sized from the model's
-context length where the backend reports it, a fixed figure otherwise. With slice 3 a worker chat gets one read-only
-`read_pages` call over its own attachments, the same reader an agent run gets.
+context length where the backend reports it, a fixed figure otherwise.
+
+**Reading the pages held back (Shane, 2026-10-30).** An agent run gets no tool for this: it already reads pages from
+code, by `dereference` with `pages N-M` or `doc.pages[n]` in `python_exec`, and the held-back note names that call. A
+second tool doing the same would be two ways to one thing. A worker chat has no tools, so with slice 3 it gets exactly
+one, `read_pages`: read-only, over its own attachments, the same reader underneath, and its held-back note names it.
+Giving worker chats the read-only dialect instead would be a far larger surface to red-team for this one job; naming
+an agent run instead ("start a run to read them") leaves the model stuck, which is the thing the note is there to
+prevent. `read_pages` is a new agent-facing call, so it gets the red-team pass.
 
 Built (2026-10-29, `pdfTextBudget` and `fitPages`):
 
@@ -375,6 +417,81 @@ Built (2026-10-29, `pdfTextBudget` and `fitPages`):
 - **Exports**: both carry what the model saw (the AGENTS.md rule); the JSON export also carries each file's descriptor.
 - **The composer and the start page**: the "＋" takes files as well as images, a dropped or pasted file attaches the
   same way, and a refused file says why next to its chip before anything is sent.
+- **Upload progress**: a file going to a runtime through the hub goes in 4 MiB chunks (`file.put`), and its chip in the
+  composer carries a bar from the count of chunks the runtime has accepted. A chunk sent again does not move it back;
+  an upload that fails partway says so on the chip, with the reason, and never freezes at a fraction. The bar is gone
+  once the file is held. A file small enough for one command shows no bar.
+
+### The files panel (Shane, 2026-10-30)
+
+The files a session holds, in one place, in the CALM view.
+
+- **Where.** A panel on the right of the chat, its own, not the dev view's dock (dock-layout.ts), which is for
+  rearranging debugging panels. It has tabs, and Files is the first: a canvas, artifacts or a whiteboard later become
+  tabs of this panel, not panels of their own.
+- **Getting rid of it.** Closed until opened, from a header button carrying the session's file count. It never opens
+  itself: attaching a file moves the count, not the panel. Whether it is open is remembered per device (UI state,
+  marked as such in the state registry), and a close button sits in its header.
+- **Narrow screens.** On a phone it opens as a full-height sheet, the app's existing sheet look; on a narrow desktop
+  window it slides over the chat rather than squeezing it. A calm-view change is a change to `mobile/` too (the one
+  design language rule), so the phone gets it in the same work.
+- **A row per file**: the name, size and page count; what the model was sent ("pages 1-11 sent, 12-30 held back"); and
+  the chip's own actions (open the file). An upload in progress is a row with its bar.
+- **What "held" means.** The hub keeps a file's chunks only in transit (15 minutes, an LRU over 60 MiB); a file is
+  listed once the session's runtime holds it, and an attached file is then held for the session's life ("Eviction
+  differs by producer"). A file the runtime could not keep is never listed as if it were there.
+- **Nothing lives only here.** The panel can be closed, so what it shows is also where it happened: the progress on
+  the composer's chip, and what was sent or held back on the message's chip. The panel gathers them; it is never the
+  only place a fact is shown.
+- **Not in it, for now**: documents the agent fetched. They are evicted like any value and can be fetched again; the
+  panel is the person's own files.
+
+### Tests for the panel and the progress bar
+
+- The progress figure is a pure function of chunks accepted and chunks expected: a unit test runs it through a chunk
+  accepted, a chunk sent again, and an upload refused partway, and gives the finished and the one-command cases their
+  own assertions.
+- One e2e test through a real `wmlhub` (the CI `hub` job's binary; `chat-pairing.spec.mjs` and
+  `remote-stream.spec.mjs` already pair the chat page with a runtime through one): the chat page attaches a PDF larger
+  than one chunk and sends it. On a local hub the upload ends in a blink, so the test does not wait to SEE the bar: the
+  bar records every value it was given, and the test asserts that series rose through each chunk to the whole, that
+  the file reached the runtime, and that the bar is gone.
+- The panel: closed by default, never opened by an attach, remembered across a reload, a sheet at phone width, and a
+  file listed only once held. A gallery entry for it with rows in each state.
+
+### A scripted model that uses the tools (Shane, 2026-10-30)
+
+Unit tests check each part; this checks that a model can get from an attached file to an answer through the tools as
+they are actually wired. One e2e spec against `fake-llm.mjs`, its scripted turns calling the tools the way a model
+would. The fixture is a PDF built for it: known text on known pages, one figure page, one scanned page. After every
+turn the test reads the NEXT request the model received (`fake.calls()`) and asserts what it was given, not only that
+the call ran.
+
+1. Attach the PDF to an agent session. The first request carries the outline (`@file:`, the page count, which pages are
+   figures or scans), not the text.
+2. The `dereference` TOOL on the `@file:` pointer with `pages 3-5 | grep`, answered by the run loop: the next request
+   carries the header line and those pages' lines with their page numbers, and a piped read mints its own pointer.
+   Then the same read as `ml.dereference` inside `exec`, a read-only survey: it runs with no approval card and hands
+   code the typed value. No e2e test has a scripted model call `dereference` today (`test-index.mjs --driven --gaps`).
+3. `python_exec` in `readonly` mode with `files: { doc: "@file:…" }`: reads `doc.pages[n].text` and `.kind`, calls
+   `png()` on one page and returns its size. The next request carries both. A cell asking `png()` for more pages than
+   its bound gets the sentence, and the cell still ends.
+4. `look({ doc, pages })`: the pages go down the vision path, counted against the context like any page image.
+5. With `ml.embed` in the dialect (#1336): a survey that embeds each page, ranks them against a query and returns the
+   best page numbers. `fake-llm.mjs` gains the embedding endpoints with fixed vectors, so the ranking is known.
+6. The run in the sidebar and both exports carry what the model saw at each step (the AGENTS.md rule).
+
+Three more runs in the same spec: a worker chat whose PDF is past the cap, where the held-back note names `read_pages`
+and a scripted `read_pages` call returns the pages; a run whose scripted calls name an `@file:` its session does not
+hold, in `dereference`, `python_exec` and `look`, each refused; and a run with two different files named `report.pdf`,
+where the second's outline names the first, `@file:"report.pdf"` is refused listing both, and a read by id answers.
+
+After slice 3 lands, the same tasks go to real models through the bench (Shane, 2026-10-30):
+`qwen3.8-flash-next:vision`, `gemma4:31b`, and `qwen3.8-flash-next:latest` (the same weights without a vision encoder,
+so a figure or scan task measures the hand-off to the reader against seeing the page). The tasks: a fact on one page of
+a long PDF, numbers from a table through `python_exec`, a figure or scanned page through `look`, the `ml.embed` ranking
+survey, a worker chat past the cap reading held-back pages with `read_pages`, and two different files named
+`report.pdf`. Results in a notebook: correctness, the tools chosen, steps and tokens, and recovery after a refusal.
 
 ## Trust
 
@@ -431,3 +548,5 @@ or a message"). What a hostile page must not get, as tests that fail first:
 - Whether the page-image fallback for a scanned page without a vision model uses the reader model or OCR.
 - Whether embeddings of an attached document are kept with it, keyed by the blob's SHA-256, so a second question does
   not embed every page again.
+- Where a worker chat keeps its attachments so `read_pages` can reach them after the message is sent: the value store,
+  as an agent run's `@file:` rows are, or the session store. The files panel lists from the same place.

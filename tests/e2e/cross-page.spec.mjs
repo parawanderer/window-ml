@@ -6,7 +6,7 @@
 
 import { test, expect } from "@playwright/test";
 import { createServer } from "node:http";
-import { launchExtension, configureExtension, waitForMl, watchRunEvents, onChannel, inShell, clickInShell, approveOrigin } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, watchRunEvents, onChannel, inShell, clickInShell, approveOrigin, revokeOrigin, openSidePanel, cardInPage } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 
@@ -62,10 +62,39 @@ test.beforeEach(({}, testInfo) => {
 // One browser is shared by every test below (beforeAll), so they run in order in ONE worker even though the
 // suite is fullyParallel.
 test.describe.configure({ mode: "default" });
+
+// A run that navigates to another ORIGIN lands on a page the person has not allowed to use window.ml, which is HIDDEN: its
+// card is in the tab's side panel and the page has none (docs/spec/SITE_PRESENCE.md step 4). The card tests for that
+// landing run twice, on a destination that is hidden (the panel) and on one the person allowed (the page's own corner card,
+// what these tests were written against). The allowed half takes the destination off the list again when it is done.
+const DESTINATIONS = ["hidden", "allowed"];
+
+/** Allow the cross origin for an "allowed" destination; a no-op for a hidden one. */
+const allowDestination = (dest) => dest === "allowed" ? approveOrigin(ext.sw, site.crossOrigin) : undefined;
+/** The undo, for a `finally`. */
+const releaseDestination = (dest) => dest === "allowed" ? revokeOrigin(ext.sw, site.crossOrigin).catch(() => {}) : undefined;
+
+/**
+ * Where the run's card text is read on the page the run landed on: the page's own corner card for an "allowed" destination,
+ * the tab's side panel for a hidden one (and the hidden page is checked to hold none of the card).
+ * @returns {Promise<() => Promise<string>>}
+ */
+async function cardTextOn(page, dest) {
+    if (dest === "hidden") {
+        const panel = await openSidePanel(ext, page);
+        return async () => {
+            const text = await panel.text();
+            expect(await cardInPage(page).catch(() => ({ host: false, frames: 0 })), "a hidden page was given the card").toEqual({ host: false, frames: 0 });
+            return text;
+        };
+    }
+    const card = () => page.frames().filter((f) => f.url().includes("sidebar.html") && !f.isDetached()).pop();
+    return async () => { const f = card(); try { return f ? ((await f.locator("body").textContent()) || "") : ""; } catch { return ""; } };
+}
 test.beforeAll(async () => {
     fake = BACKEND ? null : await startFakeLlm({ model: "fake-model" });
     site = await startPageServer({});
-    ext = await launchExtension();
+    ext = await launchExtension({ sidePanel: true });
     await configureExtension(ext.sw, {
         chatUrl: BACKEND || fake.url,
         apiKey: process.env.E2E_KEY || "",   // a hosted backend (e.g. Groq) needs the bearer token
@@ -672,7 +701,9 @@ test("csp-sandbox: a delegated tool on a script-blocking page FAILS FAST with an
 
 // The reported bug: the corner HUD card reappears after a SAME-origin nav but NOT a CROSS-DOMAIN one. Devtools
 // coexist card + a run that navigates to a DIFFERENT origin — the card must rebuild on the destination origin.
-test("cross-domain (HUD card): the corner card reappears on the destination ORIGIN after a cross-origin nav", async () => {
+for (const dest of DESTINATIONS)
+test(`cross-domain (HUD card, ${dest} destination): the run's card is on the destination ORIGIN after a cross-origin nav`, async () => {
+    await allowDestination(dest);
     await configureExtension(ext.sw, { debugMode: "devtools", agentHudInDevtools: true });
     const page = await ext.context.newPage();
     await page.goto(site.url + "/");
@@ -692,16 +723,19 @@ test("cross-domain (HUD card): the corner card reappears on the destination ORIG
     await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(3);
     expect(new URL(page.url()).host).toBe(new URL(site.crossOrigin).host);   // really left the first origin
 
-    // The corner HUD card must appear ON THE DESTINATION ORIGIN with the answer.
-    const card = () => page.frames().filter((f) => f.url().includes("sidebar.html") && !f.isDetached()).pop();
-    await expect.poll(async () => { const f = card(); try { return f ? ((await f.locator("body").textContent()) || "") : ""; } catch { return ""; } }, { timeout: 20000 }).toContain("must show THIS on the other origin");
+    // The corner HUD card must appear ON THE DESTINATION ORIGIN with the answer (a hidden one: in its side panel).
+    const cardText = await cardTextOn(page, dest);
+    await expect.poll(cardText, { timeout: 20000 }).toContain("must show THIS on the other origin");
     await page.close();
     await configureExtension(ext.sw, { debugMode: "off", agentHudInDevtools: false });   // restore
+    await releaseDestination(dest);
 });
 
 // The EXACT reported repro: a RESUME (follow-up "can you go to youtube…") that navigates CROSS-DOMAIN. A
 // resume emits no `agent` start, so the destination-origin card must rebuild from the replay/steps alone.
-test("cross-domain (HUD card): a RESUME that navigates cross-origin still shows the card on the destination origin", async () => {
+for (const dest of DESTINATIONS)
+test(`cross-domain (HUD card, ${dest} destination): a RESUME that navigates cross-origin still shows the card on the destination origin`, async () => {
+    await allowDestination(dest);
     await configureExtension(ext.sw, { debugMode: "devtools", agentHudInDevtools: true });
     const page = await ext.context.newPage();
     await page.goto(site.url + "/");
@@ -729,10 +763,11 @@ test("cross-domain (HUD card): a RESUME that navigates cross-origin still shows 
     await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), gate.key);
     await expect.poll(() => page.url(), { timeout: 20000 }).toContain(new URL(site.crossOrigin).host);
 
-    const card = () => page.frames().filter((f) => f.url().includes("sidebar.html") && !f.isDetached()).pop();
-    await expect.poll(async () => { const f = card(); try { return f ? ((await f.locator("body").textContent()) || "") : ""; } catch { return ""; } }, { timeout: 20000 }).toContain("must show THIS across the domain");
+    const cardText = await cardTextOn(page, dest);
+    await expect.poll(cardText, { timeout: 20000 }).toContain("must show THIS across the domain");
     await page.close();
     await configureExtension(ext.sw, { debugMode: "off", agentHudInDevtools: false });
+    await releaseDestination(dest);
 });
 
 // The reported repro's ACTUAL trigger: a LONG session (many tool calls) that then navigates cross-origin. The
@@ -742,7 +777,10 @@ test("cross-domain (HUD card): a RESUME that navigates cross-origin still shows 
 // before the flush → the app orphaned every step → the corner card rendered EMPTY (the DevTools panel, fed by
 // a surviving port, kept working — exactly what was reported). pushBg now pins the start (shell twin of the
 // background pushReplay fix). Skips under a real backend (needs the scripted 120-call turn).
-(BACKEND ? test.skip : test)("cross-domain (HUD card): a >200-event session still rebuilds the card after a cross-origin nav (bgRing start not dropped)", async () => {
+for (const dest of DESTINATIONS)
+(BACKEND ? test.skip : test)(`cross-domain (HUD card, ${dest} destination): a >200-event session still rebuilds the card after a cross-origin nav (bgRing start not dropped)`, async () => {
+    // Hidden: the card is the side panel's, fed the worker's replay buffer (the twin of the shell's ring this was found in).
+    await allowDestination(dest);
     await configureExtension(ext.sw, { debugMode: "devtools", agentHudInDevtools: true });
     const page = await ext.context.newPage();
     await page.goto(site.url + "/");
@@ -773,10 +811,11 @@ test("cross-domain (HUD card): a RESUME that navigates cross-origin still shows 
     await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), gate.key);
     await expect.poll(() => page.url(), { timeout: 20000 }).toContain(new URL(site.crossOrigin).host);
 
-    const card = () => page.frames().filter((f) => f.url().includes("sidebar.html") && !f.isDetached()).pop();
-    await expect.poll(async () => { const f = card(); try { return f ? ((await f.locator("body").textContent()) || "") : ""; } catch { return ""; } }, { timeout: 20000 }).toContain("must show THIS on the destination origin");
+    const cardText = await cardTextOn(page, dest);
+    await expect.poll(cardText, { timeout: 20000 }).toContain("must show THIS on the destination origin");
     await page.close();
     await configureExtension(ext.sw, { debugMode: "off", agentHudInDevtools: false });
+    await releaseDestination(dest);
 });
 
 // Variant B — cross-DOMAIN. Even WITH { crossOrigin: true }, leaving the origin is a scope escalation, so a
@@ -1157,6 +1196,9 @@ test("orient-on-nav: the navigate tool result carries the destination page's con
 // the HUD card showed the answer — but the overlay detail on the new origin stayed "running · N steps" with
 // no answer, i.e. agent-result never landed on the destination page's sidebar.)
 test("cross-domain: the destination-origin sidebar shows the ANSWER and clears 'running' when the run completes", async () => {
+    // The overlay sidebar is the page's own surface, so the destination is one the person allowed (the durable-resume test above
+    // leaves it so; stated here so this test does not depend on that). A hidden destination has the card in its side panel.
+    await approveOrigin(ext.sw, site.crossOrigin);
     await configureExtension(ext.sw, { debugMode: "overlay" });
     const page = await ext.context.newPage();
     await page.goto(site.url + "/");
