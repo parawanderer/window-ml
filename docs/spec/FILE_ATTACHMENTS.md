@@ -364,8 +364,15 @@ that rule for attachments and should reuse the `@tool:` value path, not a parall
 Where there are no tools (a worker chat), "past the cap" cannot become a pointer. Decided (Shane, 2026-10-29): a PDF
 past the cap is no longer refused whole. Its pages go in order while they fit and the rest are named ("pages 12-30
 were not sent: past the text a message takes. This chat cannot show them."), and the cap is sized from the model's
-context length where the backend reports it, a fixed figure otherwise. With slice 3 a worker chat gets one read-only
-`read_pages` call over its own attachments, the same reader an agent run gets.
+context length where the backend reports it, a fixed figure otherwise.
+
+**Reading the pages held back (Shane, 2026-10-30).** An agent run gets no tool for this: it already reads pages from
+code, by `dereference` with `pages N-M` or `doc.pages[n]` in `python_exec`, and the held-back note names that call. A
+second tool doing the same would be two ways to one thing. A worker chat has no tools, so with slice 3 it gets exactly
+one, `read_pages`: read-only, over its own attachments, the same reader underneath, and its held-back note names it.
+Giving worker chats the read-only dialect instead would be a far larger surface to red-team for this one job; naming
+an agent run instead ("start a run to read them") leaves the model stuck, which is the thing the note is there to
+prevent. `read_pages` is a new agent-facing call, so it gets the red-team pass.
 
 Built (2026-10-29, `pdfTextBudget` and `fitPages`):
 
@@ -390,6 +397,47 @@ Built (2026-10-29, `pdfTextBudget` and `fitPages`):
 - **Exports**: both carry what the model saw (the AGENTS.md rule); the JSON export also carries each file's descriptor.
 - **The composer and the start page**: the "＋" takes files as well as images, a dropped or pasted file attaches the
   same way, and a refused file says why next to its chip before anything is sent.
+- **Upload progress**: a file going to a runtime through the hub goes in 4 MiB chunks (`file.put`), and its chip in the
+  composer carries a bar from the count of chunks the runtime has accepted. A chunk sent again does not move it back;
+  an upload that fails partway says so on the chip, with the reason, and never freezes at a fraction. The bar is gone
+  once the file is held. A file small enough for one command shows no bar.
+
+### The files panel (Shane, 2026-10-30)
+
+The files a session holds, in one place, in the CALM view.
+
+- **Where.** A panel on the right of the chat, its own, not the dev view's dock (dock-layout.ts), which is for
+  rearranging debugging panels. It has tabs, and Files is the first: a canvas, artifacts or a whiteboard later become
+  tabs of this panel, not panels of their own.
+- **Getting rid of it.** Closed until opened, from a header button carrying the session's file count. It never opens
+  itself: attaching a file moves the count, not the panel. Whether it is open is remembered per device (UI state,
+  marked as such in the state registry), and a close button sits in its header.
+- **Narrow screens.** On a phone it opens as a full-height sheet, the app's existing sheet look; on a narrow desktop
+  window it slides over the chat rather than squeezing it. A calm-view change is a change to `mobile/` too (the one
+  design language rule), so the phone gets it in the same work.
+- **A row per file**: the name, size and page count; what the model was sent ("pages 1-11 sent, 12-30 held back"); and
+  the chip's own actions (open the file). An upload in progress is a row with its bar.
+- **What "held" means.** The hub keeps a file's chunks only in transit (15 minutes, an LRU over 60 MiB); a file is
+  listed once the session's runtime holds it, and an attached file is then held for the session's life ("Eviction
+  differs by producer"). A file the runtime could not keep is never listed as if it were there.
+- **Nothing lives only here.** The panel can be closed, so what it shows is also where it happened: the progress on
+  the composer's chip, and what was sent or held back on the message's chip. The panel gathers them; it is never the
+  only place a fact is shown.
+- **Not in it, for now**: documents the agent fetched. They are evicted like any value and can be fetched again; the
+  panel is the person's own files.
+
+### Tests for the panel and the progress bar
+
+- The progress figure is a pure function of chunks accepted and chunks expected: a unit test runs it through a chunk
+  accepted, a chunk sent again, and an upload refused partway, and gives the finished and the one-command cases their
+  own assertions.
+- One e2e test through a real `wmlhub` (the CI `hub` job's binary; `chat-pairing.spec.mjs` and
+  `remote-stream.spec.mjs` already pair the chat page with a runtime through one): the chat page attaches a PDF larger
+  than one chunk and sends it. On a local hub the upload ends in a blink, so the test does not wait to SEE the bar: the
+  bar records every value it was given, and the test asserts that series rose through each chunk to the whole, that
+  the file reached the runtime, and that the bar is gone.
+- The panel: closed by default, never opened by an attach, remembered across a reload, a sheet at phone width, and a
+  file listed only once held. A gallery entry for it with rows in each state.
 
 ## Trust
 
@@ -446,3 +494,5 @@ or a message"). What a hostile page must not get, as tests that fail first:
 - Whether the page-image fallback for a scanned page without a vision model uses the reader model or OCR.
 - Whether embeddings of an attached document are kept with it, keyed by the blob's SHA-256, so a second question does
   not embed every page again.
+- Where a worker chat keeps its attachments so `read_pages` can reach them after the message is sent: the value store,
+  as an agent run's `@file:` rows are, or the session store. The files panel lists from the same place.
