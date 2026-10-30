@@ -7,6 +7,8 @@
 //   node scripts/test-index.mjs '' --file sidebar     # one file's tests
 //   node scripts/test-index.mjs --sections            # the sections, with how many tests each holds
 //   node scripts/test-index.mjs --stats               # how many tests, by file
+//   node scripts/test-index.mjs --driven python_exec  # which e2e tests have a SCRIPTED model call a tool
+//   node scripts/test-index.mjs --driven --gaps       # the builtin tools no scripted model calls in any e2e test
 //
 // The checks (each exits 1 on a finding). Only the RATCHET runs in the pre-commit hook and CI's `tools` job; the
 // other two are surveys, and ship red — 1,826 tests predate this and a check that fails on arrival is one people
@@ -115,6 +117,33 @@ export function testsIn(file) {
     return { summary: summaryOf(lines), tests: out, sectioned: marks.length > 0 };
 }
 
+/** Every tool call a scripted fake model makes in one e2e spec: a `tool: "<name>"` step in a file that starts
+ *  `fake-llm.mjs`, filed under the test it sits in, or "(file scope)" for a script shared by several. These are the
+ *  tests that drive the REAL tools end to end the way a model would, which no unit test does. */
+export function drivenIn(file) {
+    const text = readFileSync(file, "utf8");
+    if (!/startFakeLlm|fake-llm/.test(text)) return [];
+    const { code, strings } = scan(text);
+    const tests = testsIn(file).tests;
+    const out = [];
+    // A scripted turn is `{ tool, args }` (fake-llm.mjs's FakeStep). A run EVENT also has a `tool` key, followed by
+    // `arguments`, `toolMs` or `result`, and a test that draws one drives nothing, so it is not counted.
+    for (const m of code.matchAll(new RegExp(`(?<![\\w$])tool\\s*:\\s*${MARKED}(?=\\s*(?:,\\s*args\\b|\\}))`, "g"))) {
+        const tool = strings[Number(m[1])]?.value;
+        if (!tool || !/^[A-Za-z_][\w-]*$/.test(tool)) continue;
+        const line = lineAt(code, m.index);
+        const owner = tests.filter((t) => t.line <= line).at(-1);
+        out.push({ tool, file: relative(ROOT, file), line, test: owner?.name ?? "(file scope)" });
+    }
+    return out;
+}
+
+/** The builtin tools, by name, as the tool registry declares them. */
+function builtinTools() {
+    const src = readFileSync(join(ROOT, "src/tools/tool-registry.ts"), "utf8");
+    return [...src.matchAll(/defineBuiltinTool\(\{\s*name:\s*"(\w+)"/g)].map((m) => m[1]);
+}
+
 /** The whole index, one entry per test. */
 function build() {
     const files = [];
@@ -135,7 +164,20 @@ const pattern = args.find((a) => !a.startsWith("--") && args[args.indexOf(a) - 1
 const files = build();
 const all = files.flatMap((f) => f.tests.map((t) => ({ ...t, summary: f.summary })));
 
-if (flag("stats")) {
+if (flag("driven")) {
+    // What a scripted model drives end to end: the e2e specs only, since a unit test's fake model never reaches the
+    // real tools. `--gaps` turns it round and names the builtin tools nothing scripted calls.
+    const calls = testFiles().filter((f) => f.endsWith(".spec.mjs")).flatMap(drivenIn);
+    if (flag("gaps")) {
+        const driven = new Set(calls.map((c) => c.tool));
+        const missing = builtinTools().filter((t) => !driven.has(t));
+        for (const t of missing) console.log(`${t}\tno e2e test has a scripted model call it`);
+        console.error(`\ntest-index: ${missing.length} builtin tool(s) no scripted model calls.`);
+    } else {
+        const rx = pattern ? new RegExp(flag("word") ? `^(?:${pattern})$` : pattern, "i") : null;
+        for (const c of calls) if (!rx || rx.test(c.tool)) console.log(`${c.tool}\t${c.file}:${c.line}\t${c.test}`);
+    }
+} else if (flag("stats")) {
     for (const f of files.filter((x) => x.tests.length).sort((a, b) => b.tests.length - a.tests.length)) {
         const marks = new Set(f.tests.map((t) => t.section).filter(Boolean)).size;
         console.log(`${f.tests.length}\t${marks} section${marks === 1 ? "" : "s"}\t${f.path}`);

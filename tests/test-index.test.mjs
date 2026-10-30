@@ -9,7 +9,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const { testsIn } = await import("../scripts/test-index.mjs");
+const { testsIn, drivenIn } = await import("../scripts/test-index.mjs");
 
 /** Write one throwaway test file and index it. */
 function index(source) {
@@ -122,4 +122,41 @@ test("one", () => {});
 test("a file that opens with code rather than a comment has no summary", () => {
     const { summary } = index(`import { test } from "node:test";\ntest("one", () => {});\n`);
     assert.equal(summary, "");
+});
+
+// --- which tools a scripted model drives end to end (`--driven`) ---
+
+/** Write one throwaway e2e spec and list its scripted tool calls. */
+function driven(source) {
+    const dir = mkdtempSync(join(tmpdir(), "tidx-"));
+    const file = join(dir, "sample.spec.mjs");
+    writeFileSync(file, source);
+    try { return drivenIn(file).map((c) => [c.tool, c.line, c.test]); } finally { rmSync(dir, { recursive: true, force: true }); }
+}
+
+test("a scripted turn counts under the test it sits in, and a shared script under the file", () => {
+    assert.deepEqual(driven(`import { startFakeLlm } from "./fake-llm.mjs";
+const SHARED = [{ tool: "python_exec", args: { code: "1" } }];
+test("reads a page", async () => {
+    fake.setScript([{ tool: "exec", args: { js: "1" } },
+        { tool: "answer" }]);
+});
+`), [["python_exec", 2, "(file scope)"], ["exec", 4, "reads a page"], ["answer", 5, "reads a page"]]);
+});
+
+test("a run EVENT with a tool key drives nothing, and neither does a file with no fake model", () => {
+    assert.deepEqual(driven(`import { startFakeLlm } from "./fake-llm.mjs";
+test("draws a step", async () => {
+    emit({ kind: "agent-step", tool: "exec", arguments: { js: "1" }, result: "1" });
+    frames.push({ step: 1, tool: "look", toolMs: 4000 });
+});
+`), []);
+    assert.deepEqual(driven(`test("no fake", () => { run([{ tool: "exec", args: {} }]); });\n`), []);
+});
+
+test("a tool name built at runtime or in a comment is not guessed at", () => {
+    assert.deepEqual(driven(`import { startFakeLlm } from "./fake-llm.mjs";
+// { tool: "click", args: {} }
+test("t", () => { fake.setScript([{ tool: name, args: {} }, { tool: \`x\${y}\`, args: {} }]); });
+`), []);
 });
