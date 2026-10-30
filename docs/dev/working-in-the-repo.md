@@ -545,6 +545,14 @@ for free: a 3-minute `test` leg sitting at 22, or a row of jobs all ending at ~2
 rather than slowed down. Poll a run by ID too — `gh run list` has returned a stale page and sent a watch loop
 off onto runs from a fortnight earlier. Four red mains on 2026-10-05 were all of this and none were real.
 
+**A PR body or commit message that says `fix #N`, `close #N` or `resolve #N` CLOSES N when it merges**, and GitHub
+reads the pair anywhere in prose, case-insensitive, with no punctuation needed: "the lockdown fix #1274 is released"
+in a plan PR closed the security lane's open #1274 (2026-10-28), and "the close #1369's sender helper" in a red-team
+rows PR closed the open fix PR #1369 when its squash landed (2026-10-30; the close event on N cites the commit). The
+squash commit takes the PR body, so a body that was safe as a comment is not safe as a commit. Write "#N (the fix)"
+or "the fix PR #N", and before `gh pr create` grep the body for `(fix|close|resolve)[a-z]* #`. A PR closed this way
+is reopened with `gh pr reopen N` and main merged in; nothing is lost but the hour spent finding out.
+
 **And the `background-work` skill (`.claude/skills/background-work/SKILL.md`) is how to run ANY slow
 thing** — CI, an e2e suite (minutes, even parallel), a bench sweep — without stalling the session: start it with
 `run_in_background: true` and go and do other work, because the harness re-invokes you when it exits.
