@@ -126,12 +126,17 @@ test("@security SITE_PRESENCE step 5 (render): R1: a cross-site 302 is refused w
         expect(pathsTo(h.site, "attacker.test"), "the first URL was requested (the anchor)").toContain("/start");
         if (holeOpen("renderGuard", "the tab follows the off-site 302 and requests its target")) {
             expect(pathsTo(h.site, "victim.test"), "today's leak: the hop's target is requested by the render's tab").toContain("/secret");
+            // Main's final-origin guard names the target in its error, and that error reaches the model.
+            expect(joined(results), "today: the target is named").toContain("victim.test");
         } else {
             expect(h.site.requestsTo("victim.test"), "the hop's target was never requested").toEqual([]);
+            // This run is the PAGE's (`window.ml.agent`), so every tool result passes through the page's world: the
+            // same rule as a page's own ml.fetch (SITE_PRESENCE, "Redirects on auto-approved fetches") — the page is
+            // told only another site, never where the hop pointed.
+            expect(joined(results), "the page-relayed refusal names only another site").toMatch(/another site/i);
+            expect(joined(results), "never the Location").not.toContain("victim.test");
         }
-        // Both sides (a pin): the model is told the target, and is never handed the other site's content as if it
-        // were the page it asked for.
-        expect(joined(results), "the refusal names the target").toContain("victim.test");
+        // Both sides (a pin): the model is never handed the other site's content as if it were the page it asked for.
         expect(joined(results), "and the model does not get the other site's body").not.toContain("top secret");
     } finally {
         await h.close();
@@ -148,10 +153,13 @@ test("@security SITE_PRESENCE step 5 (render): R2: a chain is refused at its cro
         expect(pathsTo(h.site, "attacker.test"), "the same-site first hop was followed (the anchor, both sides)").toContain("/hop2");
         if (holeOpen("renderGuard", "the tab follows the chain and requests the second hop's target")) {
             expect(pathsTo(h.site, "victim.test"), "today's leak: the chain's last target is requested").toContain("/secret");
+            expect(joined(results), "today: the target is named").toContain("victim.test");
         } else {
             expect(h.site.requestsTo("victim.test"), "the second hop's target was never requested").toEqual([]);
+            // A page's run, as R1: only "another site" reaches the page's world.
+            expect(joined(results), "the page-relayed refusal names only another site").toMatch(/another site/i);
+            expect(joined(results), "never the Location").not.toContain("victim.test");
         }
-        expect(joined(results), "the refusal names the target (both sides)").toContain("victim.test");
     } finally {
         await h.close();
     }
@@ -230,10 +238,13 @@ test("@security SITE_PRESENCE step 5 (render): R6: the same hop in a fresh run n
         expect(pathsTo(h.site, "attacker.test"), "the first URL was requested (the anchor, both sides)").toContain("/to-partner");
         if (holeOpen("renderGuard", "the fresh run's render follows the hop and requests the unapproved target")) {
             expect(pathsTo(h.site, "partner.test"), "today's leak: the unapproved target is requested").toContain("/ok");
+            expect(joined(results), "today: the target is named").toContain("partner.test");
         } else {
             expect(h.site.requestsTo("partner.test"), "the unapproved target was never requested").toEqual([]);
+            // A page's run, as R1: only "another site" reaches the page's world.
+            expect(joined(results), "the page-relayed refusal names only another site").toMatch(/another site/i);
+            expect(joined(results), "never the Location").not.toContain("partner.test");
         }
-        expect(joined(results), "the refusal names the target (both sides)").toContain("partner.test");
     } finally {
         await h.close();
     }
