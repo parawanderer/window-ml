@@ -8,6 +8,7 @@
 // the headless shell — see launchExtension). `dist/` must be built first (pretest:e2e).
 
 import { chromium } from "@playwright/test";
+import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -60,8 +61,12 @@ async function allowIncognito(/** @type {import("@playwright/test").BrowserConte
  *
  * `userDataDir` reuses a profile: launch, close, and launch again on the same directory to test what survives a
  * closed browser (IndexedDB, storage). Absent, every launch is a fresh temporary profile.
+ *
+ * `sidePanel` opens a DevTools port on a free local port (`cdpEndpoint` in the result), which {@link openSidePanel} needs
+ * to reach the extension's views that Playwright's own connection does not list. A spec that never calls it leaves it off.
  */
-export async function launchExtension(/** @type {{ headful?: boolean, dist?: string, args?: string[], incognito?: boolean, userDataDir?: string }} */ { dist, headful, args = [], incognito = false, userDataDir = "" } = {}) {
+export async function launchExtension(/** @type {{ headful?: boolean, dist?: string, args?: string[], incognito?: boolean, userDataDir?: string, sidePanel?: boolean }} */ { dist, headful, args = [], incognito = false, userDataDir = "", sidePanel = false } = {}) {
+    const cdpPort = sidePanel ? await freePort() : 0;
     // `E2E_DIST` runs a whole spec against a bundle built ELSEWHERE (`node build.mjs --outdir <dir>`), so a suite
     // can test a change while `dist/` is still loaded in a window someone is using — rebuilding it underneath a
     // live extension is exactly the hazard the build rule warns about.
@@ -88,6 +93,7 @@ export async function launchExtension(/** @type {{ headful?: boolean, dist?: str
             // Extra switches for one spec, e.g. `--host-resolver-rules` so several hostnames reach one local server
             // as distinct origins (tests/e2e/site-access.spec.mjs).
             ...args,
+            ...(cdpPort ? [`--remote-debugging-port=${cdpPort}`] : []),
         ],
     });
     // The background service worker registers on load; wait for it if it hasn't appeared yet.
@@ -95,7 +101,18 @@ export async function launchExtension(/** @type {{ headful?: boolean, dist?: str
     if (!sw) sw = await context.waitForEvent("serviceworker", { timeout: 15000 });
     const extensionId = new URL(sw.url()).host;
     if (incognito) sw = await allowIncognito(context, extensionId);
-    return { context, sw, extensionId, close: () => context.close() };
+    const cdpEndpoint = cdpPort ? `http://127.0.0.1:${cdpPort}` : null;
+    const ext = { context, sw, extensionId, cdpEndpoint, close: async () => { await panelBrowsers.get(ext)?.then((/** @type {any} */ b) => b.close()).catch(() => {}); await context.close(); } };
+    return ext;
+}
+
+/** A TCP port nothing listens on now. */
+function freePort() {
+    return new Promise((resolve, reject) => {
+        const srv = net.createServer();
+        srv.once("error", reject);
+        srv.listen(0, "127.0.0.1", () => { const { port } = /** @type {any} */ (srv.address()); srv.close(() => resolve(port)); });
+    });
 }
 
 /**
@@ -234,6 +251,35 @@ export async function approveOrigin(sw, origin, { agents = "always" } = {}) {
     // The worker registers the page scripts for the origin on the change (sw-presence.ts); wait for it, so a page
     // opened next is covered from its first navigation. A deadline that passes is an error, never a pass.
     await awaitPageScriptRegistration(sw, [origin]);
+}
+
+/**
+ * Take an origin off the approved list and the per-site levels, as a person revoking the site would, and wait until the
+ * worker no longer registers the page scripts for it: the undo of {@link approveOrigin}, for a spec that allows a site for
+ * part of its tests and must leave the next one a hidden page.
+ * @param {any} sw the extension's service worker
+ * @param {string} origin e.g. `http://127.0.0.1:43210`
+ * @param {number} [timeout] ms to wait for the registration to go
+ */
+export async function revokeOrigin(sw, origin, timeout = 15000) {
+    await sw.evaluate(async (/** @type {string} */ o) => {
+        const got = await chrome.storage.local.get(["ml_site_always", "ml_site_agents"]);
+        const list = Array.isArray(got.ml_site_always) ? /** @type {string[]} */ (got.ml_site_always) : [];
+        await chrome.storage.local.set({ ml_site_always: list.filter((x) => x !== o) });
+        const levels = /** @type {Record<string, string>} */ (got.ml_site_agents && typeof got.ml_site_agents === "object" ? got.ml_site_agents : {});
+        const { [o]: _drop, ...rest } = levels;
+        await chrome.storage.local.set({ ml_site_agents: rest });
+    }, origin);
+    const still = await sw.evaluate(async (/** @type {[string, number]} */ [o, ms]) => {
+        const u = new URL(o), pattern = `${u.protocol}//${u.hostname}:${u.port || (u.protocol === "https:" ? "443" : "80")}/*`;
+        const deadline = Date.now() + ms;
+        for (;;) {
+            const have = (await chrome.scripting.getRegisteredContentScripts()).flatMap((r) => r.matches ?? []);
+            if (!have.includes(pattern) || Date.now() > deadline) return have.includes(pattern);
+            await new Promise((r) => setTimeout(r, 20));
+        }
+    }, [origin, timeout]);
+    if (still) throw new Error(`the worker still registers the page scripts for ${origin} ${timeout} ms after it was revoked`);
 }
 
 /**
@@ -555,6 +601,126 @@ export async function openRunInSidebar(page, { width, task, timeout = 20000 } = 
         text: document.body.innerText.slice(0, 300),
     })).catch(() => null);
     throw new Error(`clicked the session row but the detail view never rendered — saw: ${JSON.stringify(seen)}`);
+}
+
+/** Per launched extension, the second Playwright connection {@link openSidePanel} reads the extension's popup view through. */
+const panelBrowsers = new WeakMap();
+/** Per launched extension, the popup view that holds its side panels. */
+const panelHosts = new WeakMap();
+
+/**
+ * The extension's real toolbar popup, as a Playwright page, with no tab behind it.
+ *
+ * Why not simply open `sidepanel.html?tabId=N` in a tab: the worker serves the panel's port to an extension page with NO
+ * `sender.tab` (`servePanelPort`, `serveDevtoolsPort`), and every frame of a tab has one, an iframe in an extension page
+ * in a tab included (measured). The browser's own side panel has none, but it is not among `context.pages()`, and
+ * headless Chromium makes no target for it when `sidePanel.open` runs. The action popup has none either; the first
+ * connection (`launchPersistentContext`) does not list it, a second one over the DevTools port does.
+ * @param {any} ext the extension, launched with `{ sidePanel: true }`
+ * @returns {Promise<any>} the popup page
+ */
+async function panelHost(ext) {
+    if (!ext.cdpEndpoint) throw new Error("openSidePanel: launch the extension with launchExtension({ sidePanel: true })");
+    const known = panelHosts.get(ext);
+    if (known && !known.isClosed()) return known;
+    const popup = `chrome-extension://${ext.extensionId}/popup.html`;
+    const failed = await ext.sw.evaluate(() => chrome.action.openPopup().then(() => null, (/** @type {any} */ e) => String(e?.message ?? e)));
+    if (failed) throw new Error(`openSidePanel: the popup would not open: ${failed}`);
+    // A connection made BEFORE the popup opened never lists it, so connect after, and again if the popup was reopened.
+    await panelBrowsers.get(ext)?.then((/** @type {any} */ b) => b.close()).catch(() => {});
+    const browser = chromium.connectOverCDP(ext.cdpEndpoint);
+    panelBrowsers.set(ext, browser);
+    const b = await browser;
+    for (let i = 0; i < 100; i++) {
+        for (const p of b.contexts().flatMap((/** @type {any} */ c) => c.pages())) {
+            if (p.url() !== popup) continue;
+            // A spec's own helper tab on popup.html is a page here too; only the real popup has no tab.
+            const inTab = await p.evaluate(() => new Promise((r) => chrome.tabs.getCurrent((t) => r(!!t)))).catch(() => true);
+            if (!inTab) { await p.waitForLoadState().catch(() => {}); panelHosts.set(ext, p); return p; }
+        }
+        await new Promise((r) => setTimeout(r, 100));
+    }
+    throw new Error("openSidePanel: the popup view never appeared on the DevTools port");
+}
+
+/**
+ * THE SIDE PANEL OF A HIDDEN PAGE, as a test reaches it (docs/dev/e2e-harness.md, "The side panel"). A page whose origin
+ * may not use window.ml gets no card in its DOM; the run's card app runs in `sidepanel.html?tabId=N` instead, fed over the
+ * worker's `ml-sidepanel` port. This loads that page, for the tab `page` is in, in an iframe of the extension's popup view
+ * (see {@link panelHost} for why that and not a tab), and returns handles on the card app inside it. The product's check
+ * on the port is unchanged: the iframe has no `sender.tab`.
+ *
+ * The popup is at most 800x600, so a taller panel is scrolled inside it (Playwright scrolls to what it clicks); the app
+ * inside still lays out at the full `width` x `height`, but a screenshot of `host` shows only the popup's viewport.
+ *
+ * Open it before or after the run: the port replays the tab's buffered events. `frame()` is the same `sidebar.html` frame the
+ * in-page card is, so a helper that takes a card frame takes it. A popup closes when the browser's focus moves, which a
+ * spec that opens a tab does, so every method loads the panel again when it finds it gone (`app()` alone does not).
+ * @param {any} ext the extension, launched with `{ sidePanel: true }`
+ * @param {any} page the page whose tab's panel to open
+ * @param {{ tabId?: number, width?: number, height?: number, timeout?: number }} [opts] the panel's size (default 400x900)
+ * @returns {Promise<{ tabId: number, host: any, sidepanel: () => any, app: () => any, frame: () => Promise<any>, text: () => Promise<string>, empty: () => Promise<boolean>, approve: () => Promise<void>, steps: () => Promise<string[]>, close: () => Promise<void> }>}
+ */
+export async function openSidePanel(ext, page, { tabId, width = 400, height = 900, timeout = 20000 } = {}) {
+    const url = page.url();
+    const id = tabId ?? await ext.sw.evaluate(async (/** @type {string} */ u) => (await chrome.tabs.query({})).find((t) => t.url === u)?.id ?? null, url);
+    if (id == null) throw new Error(`openSidePanel: no tab is on ${url}`);
+    /** @type {any} */
+    let host = null;
+    const sidepanel = () => host?.frames().find((/** @type {any} */ f) => f.url().includes(`sidepanel.html?tabId=${id}`) && !f.isDetached());
+    const app = () => { const sp = sidepanel(); return sp ? host.frames().find((/** @type {any} */ f) => f.parentFrame() === sp && /sidebar\.html/.test(f.url()) && !f.isDetached()) : undefined; };
+    /** (Re)load the panel when it is not up. A popup closes when the browser's focus moves (a spec opening a tab does that), and
+     *  the panel is gone with it; the worker's port replays the run to the next one, as it does to a panel opened late. */
+    const ensure = async () => {
+        if (host && !host.isClosed() && app()) return;
+        host = await panelHost(ext);
+        await host.evaluate((/** @type {[number, number, number, string]} */ [n, w, h, src]) => {
+            document.getElementById(`sp-${n}`)?.remove();
+            const f = document.createElement("iframe");
+            f.id = `sp-${n}`;
+            f.src = src;
+            // Over the popup's own content, which is not the point here, and wide enough that the popup grows to it.
+            f.style.cssText = `position:absolute;left:0;top:0;z-index:2147483647;width:${w}px;height:${h}px;border:0;background:#fff`;
+            document.documentElement.style.cssText = "margin:0;padding:0;overflow:auto;min-width:" + w + "px;min-height:" + h + "px";
+            document.body.style.cssText = "margin:0;padding:0;overflow:visible;width:" + w + "px;height:" + h + "px";
+            document.body.append(f);
+        }, /** @type {[number, number, number, string]} */ ([id, width, height, `chrome-extension://${ext.extensionId}/sidepanel.html?tabId=${id}`]));
+        const deadline = Date.now() + timeout;
+        while (!app()) {
+            if (Date.now() > deadline) throw new Error("openSidePanel: the panel's app frame never appeared");
+            await new Promise((r) => setTimeout(r, 100));
+        }
+    };
+    await ensure();
+    return {
+        tabId: id,
+        get host() { return host; },
+        sidepanel, app,
+        /** The card app's frame, loading the panel again first if it closed. */
+        frame: async () => { await ensure(); return app(); },
+        /** The card app's text, or "" while it is not there. */
+        text: async () => { await ensure().catch(() => {}); const f = app(); return f ? await f.locator("body").innerText().catch(() => "") : ""; },
+        /** Whether the panel shows its "nothing running on this tab" note. */
+        empty: async () => { await ensure(); const f = sidepanel(); return f ? await f.evaluate(() => document.body.hasAttribute("data-empty")).catch(() => true) : true; },
+        /** Allow the call the card is asking about, by clicking its button as the person does. */
+        approve: async () => { await ensure(); await app().locator(".appr-btn.yes:not(.remember)").click(); },
+        /** The text of every step row of the run the card shows. */
+        steps: async () => { await ensure(); const f = app(); return f ? await f.locator(".astep").allInnerTexts().catch(() => []) : []; },
+        close: async () => { await host?.evaluate((/** @type {number} */ n) => document.getElementById(`sp-${n}`)?.remove(), id).catch(() => {}); },
+    };
+}
+
+/**
+ * Whether the page has anything of the card in its DOM: the host element, or a frame of the extension's `sidebar.html`.
+ * A hidden page must have neither (the card is in its side panel, {@link openSidePanel}).
+ * @param {any} page
+ * @returns {Promise<{ host: boolean, frames: number }>}
+ */
+export async function cardInPage(page) {
+    return {
+        host: await page.evaluate(() => !!document.getElementById("ml-sb-card")),
+        frames: page.frames().filter((/** @type {any} */ f) => f.url().includes("sidebar.html")).length,
+    };
 }
 
 /** SAY WHAT THE DEMO IS DOING, on screen. A narrated demo is watched, and a watcher who cannot tell which

@@ -427,7 +427,7 @@ export function buildWorkerTools(runId: string, tabId: number, tabUrl: () => str
     const pageAnswer = () => makeDomTools(defineTool).find((t) => t.name === "answer")!;
     // `look` and `locate` are none of these: the run host builds them for each call (worker-look.ts, worker-locate.ts).
     return wanted.map((n) => (n === "fetch_url" ? fetchTool.call(ml) : n === "python_exec" ? pythonTool.call(ml) : n === "agent_api_docs" ? apiDocsTool(defineTool, docs) : n === "answer" ? workerAnswerTool(runId, pageAnswer())
-        : n === "propose_policy" ? proposePolicyTool(defineTool, { check: checkProposals, added: (q) => runPolicies(runId).some((r) => r.consumer === "fetch" && r.source === q.source && r.effect === q.effect) })
+        : n === "propose_policy" ? proposePolicyTool(defineTool, { check: checkProposals, added: (q) => runPolicies(runId).find((r) => r.consumer === q.consumer && r.source === q.source && r.effect === q.effect)?.label })
         : n === "propose_manifest" ? proposeManifestTool(defineTool, { outcome: (a) => isLibraryDraft(a) ? libraryOutcome(runId, a) : proposalOutcome(runId, a) })
         : null)).filter((t): t is MlTool => !!t);
 }

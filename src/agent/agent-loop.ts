@@ -48,6 +48,9 @@ export interface ToolRunResult { result: string; elements?: unknown[]; renderIn?
      *  itself (ToolResult.textValue). */
     textValue?: string; }
 
+/** What `autoApprove` answers: the provenance, or it with the grants it reused, or the refusal text of a policy, or null to ask. */
+type AutoApproval = Approval | { approval: Approval; reused?: import("../contract").ReusedGrant[]; refused?: string } | null;
+
 export interface AgentLoopDeps {
     // One model turn → the assistant message (content + normalized tool_calls + usage + the separate
     // reasoning/thinking channel, which the sidebar shows as a collapsible "think" section).
@@ -74,7 +77,7 @@ export interface AgentLoopDeps {
     // Returns the provenance to skip the gate, or null to require it — OR an object also naming the prior
     // grants this call REUSED (e.g. an already-approved Google Sheet), surfaced on the step for transparency.
     // `refused` is a call a policy refuses without asking: it does not run, and the model reads why.
-    autoApprove?(name: string, args: Record<string, unknown>): Approval | { approval: Approval; reused?: import("../contract").ReusedGrant[]; refused?: string } | null;
+    autoApprove?(name: string, args: Record<string, unknown>): AutoApproval | Promise<AutoApproval>;
     // Read-only try (exec only): attempt the call via the mediated read-only interpreter, which is
     // side-effect-free (it can't mutate) — so it BOTH decides "auto-approve" AND returns the result. A
     // non-null result skips the gate AND runTool (the interpreter already ran it). null → gate as normal.
@@ -953,8 +956,8 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 catch (e) { threw(call.name, "readonly", e); ro = null; }
                 // A refused try leaves nothing behind, and lines it streamed are something (docs/dev/readonly-exec.md).
                 if (!ro) fan?.discard();
-                let autoRaw: ReturnType<NonNullable<AgentLoopDeps["autoApprove"]>> = null;
-                try { autoRaw = ro ? null : (deps.autoApprove?.(call.name, args) || null); }
+                let autoRaw: AutoApproval = null;
+                try { autoRaw = ro ? null : ((await deps.autoApprove?.(call.name, args)) || null); }
                 catch (e) { threw(call.name, "auto-approve", e); autoRaw = null; }
                 // autoApprove may return the bare provenance OR { approval, reused } (grants it reused).
                 const auto: { approval: Approval; reused?: import("../contract").ReusedGrant[]; refused?: string } | null = autoRaw ? (typeof autoRaw === "string" ? { approval: autoRaw, reused: undefined } : autoRaw) : null;
