@@ -57,12 +57,16 @@ test("RED TEAM: Symbol.toStringTag = 'RegExp' does not grant the regexp member s
 
 test("RED TEAM: control — the same object with any other tag is refused, and the page's own method never runs", async () => {
     for (const tag of [undefined, "Thing", "Object"]) {
-        const extra = { toUpperCase: () => "PAGE" };
+        // The counter has to be the one the object's own method pushes into: `pageObject(tag, extra).o` drops the
+        // `ran` array `pageObject` made, so the tag loop read an empty array for "Thing" and "Object" and the two tags
+        // it was written for could not red it.
         const ran = [];
-        const o = tag === undefined ? { toUpperCase: () => { ran.push("toUpperCase"); return "PAGE"; } } : pageObject(tag, extra).o;
-        const rejected = await withValue(o, `const o = await ml.models(); return o.toUpperCase()`).then(() => false, (e) => e instanceof NotInDialect);
+        const method = () => { ran.push("toUpperCase"); return "PAGE"; };
+        const built = tag === undefined ? { o: { toUpperCase: method }, ran } : pageObject(tag, { toUpperCase: method });
+        const rejected = await withValue(built.o, `const o = await ml.models(); return o.toUpperCase()`).then(() => false, (e) => e instanceof NotInDialect);
         assert.equal(rejected, true, `a ${tag ?? "untagged"} object was allowed 'toUpperCase'`);
-        assert.deepEqual(ran, [], `the page's own method ran for tag ${tag}`);
+        // `tag` is the getter's own record, which the dialect is free to read; the method's call is the claim.
+        assert.deepEqual(built.ran.filter((r) => r !== "tag"), [], `the page's own method ran for tag ${tag}`);
     }
 });
 
