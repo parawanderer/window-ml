@@ -1089,6 +1089,195 @@ await asyncio.sleep(0.05)
     });
 }
 
+// --- P2-noyield. the adversarial half of the never-yield bound (#1150, PYTHON_CANCEL_GAPS.md pins 6, 9, 12, 13, 14) -----
+// The lane pinned the bound from its own side (P2-bound, P2-spend, P2-forge above). This section is the half its ruling
+// handed to the red team, and it does not repeat what is already pinned: pin 14's named row is P2-handle's ("nothing a
+// cell hands the loop runs once the result is returned", `call_soon` among its routes), and the one-line `while True`
+// spinner, the bare settrace alias and `setprofile(None)` are P2-bound's. What is left is every way the brief names of
+// getting PAST the refusal: re-installing a hook, rebinding the module instead of the function, the class a captured
+// callable dispatches through, a rebind made by a task during the spend, a generator and `exec`, the budget as a clock,
+// a thread, and a `__del__` that raises. Each row was measured on the fork core before it was written; the ones that could
+// not be made at all say so and assert the fact that closes them, so a core that changes reddens the row instead of
+// silently measuring nothing. Pin 13's own row is the `CORES` loop above; the rows here name the core they ran on.
+
+/** The fork core's name, as the run reports it: this section's rows skip a stock core rather than measure a different path. */
+function onFork(t) {
+    if (py.runPython(`import importlib.util; importlib.util.find_spec("_restricted") is not None`)) return true;
+    t.skip("this run loaded the stock core; the rows here were measured on the fork core and a stock run measures another path");
+    return false;
+}
+
+test("P2-noyield (pin 6): a handler that re-installs a trace hook is stopped at its first line, and the same through functools.partial is caught by the tool-change guard, each refused by name", { skip, timeout: 120000 }, async (t) => {
+    if (!onFork(t)) return;
+    // Positive control: the same leftover with a handler that returns is spent and the cell's value comes back.
+    assert.deepEqual([(await leftover("        pass")).value], ["x"], "control: a handler that stops is spent, and the cell returns its value");
+    for (const [what, handler, wanted] of [
+        ["by name", "        sys.settrace(lambda *a: None)\n        while True: pass", STOPPED],
+        // The disarm guard refuses the CALL, so the handler dies on that line and the task is stopped there.
+        ["through an alias", "        st = sys.settrace\n        st(lambda *a: None)\n        while True: pass", STOPPED],
+        // A call the hook cannot see (C dispatches it): the tool-change guard names it instead, and the spinner still stops.
+        ["through functools.partial", "        import functools\n        st = functools.partial(sys.settrace)\n        st(lambda *a: None)\n        while True: pass",
+            /changed the cancel's sys\.monitoring tool or set a trace or profile function during the spend/],
+    ]) {
+        const r = await leftover(handler);
+        assert.match(String(r.error), wanted, `${what}: got ${JSON.stringify(r)}`);
+        assert.match(String(r.error), STOPPED, `${what}: the spinner is named as well, got ${JSON.stringify(r)}`);
+        assert.equal(r.value, null, `${what}: a refused cell returns no value`);
+        assert.ok(r.ms < 6000, `${what}: stopped by the bound, not left to the 15 s kill: ${r.ms} ms`);
+        assert.deepEqual((await cell("import sys\n[sys.gettrace(), sys.getprofile()]")).value, [null, null], `${what}: no hook left behind`);
+    }
+});
+
+test("P2-noyield (pin 12): a cell that rebinds sys.settrace and sys.setprofile ON THE MODULE, never calling them, still has its spinner stopped and refused by name", { skip, timeout: 120000 }, async (t) => {
+    if (!onFork(t)) return;
+    // Pin 8's rule, from the other side: the cancel captures CALLABLES, never modules, so the module a cell can write into
+    // is not one the bound reads. The write really lands (the row would otherwise be about a rebind that never happened).
+    const r = await cell(`
+import asyncio, sys, types
+_m = types.ModuleType("_rt_ny_mod"); _m.orig = sys.settrace; _m.orig_p = sys.setprofile; sys.modules["_rt_ny_mod"] = _m
+async def _left():
+    try:
+        await asyncio.sleep(10)
+    except BaseException:
+        sys.settrace = "REBOUND"
+        sys.setprofile = "REBOUND"
+        while True: pass
+asyncio.ensure_future(_left()).set_name("leftover")
+await asyncio.sleep(0)
+"x"`);
+    assert.match(String(r.error), STOPPED, `a module rebind disarmed the bound: ${JSON.stringify(r)}`);
+    assert.equal(r.value, null, "a refused cell returns no value");
+    const seen = await cell(`
+import sys
+_m = sys.modules["_rt_ny_mod"]
+_now = (type(sys.settrace).__name__, type(sys.setprofile).__name__)
+sys.settrace = _m.orig
+sys.setprofile = _m.orig_p
+{"during": _now, "restored": [sys.gettrace(), sys.getprofile()]}`);
+    assert.deepEqual(seen.value, { during: ["str", "str"], restored: [null, null] },
+        `positive control: the module's names were really replaced for the spend, and both hooks are None after, got ${JSON.stringify(seen)}`);
+});
+
+test("P2-noyield (pin 12): writing asyncio.Task.cancel is refused by CPython's immutable type, and the class a captured callable dispatches through is unchanged", { skip }, async () => {
+    // The one surface pin 8 could not close by capture (a class the cancel's callables dispatch through) is closed by the
+    // runtime itself on this core: `asyncio.Task` IS `_asyncio.Task`, an immutable C type. The row is written as an
+    // enumeration, so a core that makes it writable reddens rather than quietly passes.
+    const control = await cell(`class _A: pass\n_A.f = lambda self: None\n_A.f.__qualname__`);
+    assert.equal(control.value, "_user.<locals>.<lambda>", "positive control: an ordinary class DOES take the write");
+    const r = await cell(`import asyncio\nasyncio.Task.cancel = lambda self, *a, **k: None\n1`);
+    assert.match(String(r.error), /TypeError: cannot set 'cancel' attribute of immutable type '_asyncio\.Task'/,
+        `the write to the captured callable's class must be refused by name, got ${JSON.stringify(r)}`);
+    assert.equal(r.value, null, "the cell that wrote it returns no value");
+    assert.deepEqual((await cell(`import asyncio\n[asyncio.Task.cancel.__qualname__, asyncio.Future.cancel.__qualname__]`)).value,
+        ["Task.cancel", "Future.cancel"], "and the classes the cancel dispatches through are untouched for the next cell");
+});
+
+test("P2-noyield (pin 12): a task that takes the hook down DURING the spend is named, and the spinner beside it is still stopped", { skip, timeout: 120000 }, async (t) => {
+    if (!onFork(t)) return;
+    // The rebind made from a task of the cell's own, running while the spend is turning — not from the cell's body, which
+    // is P2-bound's alias rows. What is asserted is the property, not the saboteur's fate: whether its timer gets a turn
+    // depends on the loop turning during the spend's rounds, and it is measured both ways (named as "so saboteur … never
+    // took its cancel" in one run, never reached in two), so a row asserting the naming would be a race, not a pin.
+    const r = await cell(`
+import asyncio, sys
+async def _left():
+    try:
+        await asyncio.sleep(10)
+    except BaseException:
+        while True: pass
+async def _sab():
+    await asyncio.sleep(0.02)
+    sys.settrace(None)
+asyncio.ensure_future(_left()).set_name("leftover")
+asyncio.ensure_future(_sab()).set_name("saboteur")
+await asyncio.sleep(0)
+"x"`);
+    assert.match(String(r.error), STOPPED, `a rebind from a task during the spend must not disarm the bound: ${JSON.stringify(r)}`);
+    assert.equal(r.value, null, "a refused cell returns no value");
+    assert.deepEqual((await cell("import sys\n[sys.gettrace(), sys.getprofile()]")).value, [null, null], "no hook left behind");
+});
+
+test("P2-noyield (pin 6): a generator and an exec that reach a Python-level spin are stopped; through exec into a C loop nothing is seen, and only the kill ends it (child processes)", { skip, timeout: 300000 }, async (t) => {
+    if (!onFork(t)) return;
+    for (const [what, handler] of [
+        ["a generator", "        def _g():\n            while True:\n                yield 1\n        for _ in _g():\n            pass"],
+        ["exec", '        exec("while True: pass")'],
+    ]) {
+        const r = await leftover(handler);
+        assert.match(String(r.error), STOPPED, `a spin reached by ${what} is inside the bound: ${JSON.stringify(r)}`);
+        assert.ok(r.ms < 6000, `${what}: stopped by the spend's bound, not the kill: ${r.ms} ms`);
+    }
+    // The C loop is the pinned exception (pin 3): no Python frame, no line event, so the budget never fires and the 15 s
+    // kill is the only end. In a child process, so the hang is killed rather than left in the suite. The exec'd code
+    // imports its own names: the cell's body is compiled inside a function, so a name imported at the cell's top level is
+    // a local of that function and the exec'd globals do not carry it — measured: it raised NameError, the task died, and
+    // the cell came back "x" with no refusal, which would have read as the bound stopping it.
+    const inC = await childCell('import asyncio\nasync def _left():\n    try:\n        await asyncio.sleep(10)\n    except BaseException:\n        exec("import collections, itertools\\ncollections.deque(itertools.count(), maxlen=0)")\nasyncio.ensure_future(_left()).set_name("leftover")\nawait asyncio.sleep(0)\n"x"', "host", 10000);
+    assert.equal(inC.done, false, "a C loop reached through exec is beyond the bound: only the worker's 15 s kill ends it");
+});
+
+test("P2-noyield (pin 6): the spend's budget is a clock the cell can read but a TOTAL it cannot renegotiate, round after round", { skip, timeout: 120000 }, async (t) => {
+    if (!onFork(t)) return;
+    // The handler measures the clock and spends just under a second's worth in each round, yielding between rounds so the
+    // spend's next round cancels it again. A per-round budget would hand it another full budget every round (pin 2).
+    const t0 = Date.now();
+    const r = await cell(`
+import asyncio, sys, time, types
+_m = types.ModuleType("_rt_ny_clock"); _m.rounds = 0; sys.modules["_rt_ny_clock"] = _m
+async def _left():
+    try:
+        await asyncio.sleep(10)
+    except BaseException:
+        while True:
+            _m.rounds += 1
+            t = time.monotonic()
+            while time.monotonic() - t < 0.4:
+                pass
+            try:
+                await asyncio.sleep(0.001)
+            except BaseException:
+                pass
+asyncio.ensure_future(_left()).set_name("leftover")
+await asyncio.sleep(0)
+"x"`);
+    const ms = Date.now() - t0;
+    assert.match(String(r.error), STOPPED, `got ${JSON.stringify(r)}`);
+    const rounds = (await cell(`import sys\nsys.modules["_rt_ny_clock"].rounds`)).value;
+    assert.ok(rounds >= 2, `positive control: the handler had more than one round to spend on a clock, got ${rounds}`);
+    assert.ok(ms < 2500, `${rounds} rounds of 0.4 s each must not each buy a budget: ${ms} ms`);
+});
+
+test("P2-noyield (pin 6): a thread cannot be started on this core, so a thread started before the cancel cannot exist here (enumerated, not assumed)", { skip }, async () => {
+    // The brief names it, so the row measures it rather than leaving it unprobed. Pyodide raises at `start()`; if a core
+    // ever starts real threads, this row reddens and the case becomes the red team's to write.
+    const r = await cell(`
+import threading
+_m = {"constructed": None, "started": None, "alive": None}
+def _spin():
+    while True:
+        pass
+_t = threading.Thread(target=_spin, daemon=True, name="spinner")
+_m["constructed"] = type(_t).__name__
+try:
+    _t.start()
+    _m["started"] = "ok"
+except BaseException as e:
+    _m["started"] = type(e).__name__ + ": " + str(e)
+_m["alive"] = _t.is_alive()
+_m`);
+    assert.deepEqual(r.value, { constructed: "Thread", started: "RuntimeError: can't start new thread", alive: false },
+        `a thread was started on this core: the "a thread started before the cancel" case is now real, got ${JSON.stringify(r)}`);
+});
+
+test("P2-noyield (pin 12): a BaseException raised from a __del__ of an object the cancel touches leaves the refusal and the interpreter intact", { skip, timeout: 120000 }, async (t) => {
+    if (!onFork(t)) return;
+    const r = await leftover("        class _Boom:\n            def __del__(self):\n                raise BaseException(\"boom\")\n        _b = _Boom()\n        del _b\n        while True: pass");
+    assert.match(String(r.error), STOPPED, `the deallocator's exception must not replace the refusal: ${JSON.stringify(r)}`);
+    assert.equal(r.value, null, "a refused cell returns no value");
+    assert.doesNotMatch(String(r.error), /boom/, "and it must not reach the cell's error text");
+    assert.deepEqual([(await cell("1 + 1")).value], [2], "the interpreter survives it");
+});
+
 // --- P2-gate. the cell gate's doors (cell-gate.ts): every way a Python callable reaches a JS registry -----------
 // The three doors are a PyProxy (`pyproxy_new`), a once-callable (`finalizationRegistry` + `callPyObject`) and a promise
 // handle (`Promise.prototype.then`/`finally`). Each route below must schedule successfully ("sched-ok", so a refused
