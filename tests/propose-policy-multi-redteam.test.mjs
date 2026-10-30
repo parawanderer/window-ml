@@ -84,12 +84,18 @@ async function workerRun(calls, { answer = () => true, local = {} } = {}) {
 
 /** A proposal's rows as the checked list names them: `effect|source`, which is what the store and the card both use. */
 const ids = (rows) => rows.map((q) => `${q.effect}|${q.source}`);
+/** The same ids for rows as the MODEL wrote them, whose code is `when` rather than the stored `source`. */
+const sent = (rules) => rules.map((r) => `${r.effect}|${r.when}`);
+/** Every order of `xs`, enumerated rather than sampled: the invariants below are over the WHOLE set of orders, so a
+ *  hand-written list of four is the wrong shape for the claim (a review found exactly that). */
+const permutations = (xs) => (xs.length <= 1 ? [xs] : xs.flatMap((x, i) => permutations([...xs.slice(0, i), ...xs.slice(i + 1)]).map((rest) => [x, ...rest])));
 
 // --- (a) no row is dropped, or reordered behind an allow, by the order the model sent them ---
 
 test("(a) checkProposals returns every row, in the order sent, for every order of a deny, an inert row and an ask", () => {
     const rows = [ALLOW_SITE, INERT, DENY_ADMIN];
-    const orders = [[0, 1, 2], [2, 1, 0], [1, 2, 0], [2, 0, 1]];
+    const orders = permutations([0, 1, 2]);
+    assert.equal(orders.length, 6, "the enumeration itself: a 3-row set has six orders");
     for (const order of orders) {
         const c = PP.checkProposals({ rules: order.map((i) => rows[i]) });
         assert.ok("proposals" in c, `order ${order} refused: ${JSON.stringify(c).slice(0, 120)}`);
@@ -109,11 +115,20 @@ test("(a) the store holds every row of an approved proposal, in send order, incl
 });
 
 test("(a) an ask row beats a broader allow over the same URLs in either order: the call asks, it is not auto-approved", T, async () => {
+    // The allow ALONE auto-approves the same call — measured, and the control the row needs: without it, a fetch card
+    // that appears with no policy stored at all (the default) reads exactly like the ask winning.
+    const alone = await workerRun([
+        { name: "propose_policy", args: { rules: [ALLOW_SITE] } },
+        { name: "fetch_url", args: { url: "https://other.example/x" } },
+    ]);
+    assert.deepEqual(alone.cards.map((c) => c.tool), ["propose_policy"], "the control: the stored allow auto-approves the call, so the fetch shows no card");
+    assert.equal(alone.fetched.length, 1, "the control: and the call was made");
     for (const rules of [[ALLOW_SITE, ASK_SITE], [ASK_SITE, ALLOW_SITE]]) {
-        const { cards, fetched } = await workerRun([
+        const { bg, cards, fetched } = await workerRun([
             { name: "propose_policy", args: { rules } },
             { name: "fetch_url", args: { url: "https://other.example/x" } },
         ]);
+        assert.deepEqual(ids(await runPolicies(bg)), sent(rules), `the store holds both rows (${rules[0].effect} first)`);
         assert.equal(fetched.length, 1, `the call was made with ${rules[0].effect} first`);
         assert.deepEqual(cards.map((c) => c.tool), ["propose_policy", "fetch_url"], `an allow overrode the ask (${rules[0].effect} first) — the ask is the person's question and nothing beats it`);
     }
@@ -178,16 +193,30 @@ test("(c) repeating a stored rule with a new label changes no stored label, adds
 });
 
 test("(c) the same source with another EFFECT is a second row, not a rewrite: the earlier label survives and the deny wins", T, async () => {
+    // ONE source across the two effects: with the deny on its own narrower source, `ids` already differs on `source`
+    // alone and the row would hold whether or not the store keys by effect (a review measured the pair, not the key).
+    const DENY_SAME = { effect: "deny", when: ALLOW_SITE.when, label: "Never auto-read other.example" };
     const { bg, results } = await workerRun([
         { name: "propose_policy", args: { rules: [ALLOW_SITE] } },
-        { name: "propose_policy", args: { rules: [DENY_ADMIN] } },
-        { name: "fetch_url", args: { url: "https://other.example/admin/x" } },
+        { name: "propose_policy", args: { rules: [DENY_SAME] } },
+        { name: "fetch_url", args: { url: "https://other.example/x" } },
     ]);
     const pols = await runPolicies(bg);
-    assert.equal(pols.length, 2, "a row with the same source and another effect replaced a stored one");
+    assert.deepEqual(pols.map((p) => [p.effect, p.source]), [["allow", ALLOW_SITE.when], ["deny", ALLOW_SITE.when]], "the store did not key the two rows by effect as well as by source");
     assert.equal(pols[0].label, ALLOW_SITE.label, "the allow keeps its own label");
-    assert.equal(pols[1].label, DENY_ADMIN.label, "the deny keeps its own");
-    assert.match(String(results[2]), /^(Denied|Refused) by/, "the deny did not beat the allow");
+    assert.equal(pols[1].label, DENY_SAME.label, "the deny keeps its own");
+    assert.match(String(results[2]), /^(Denied|Refused) by/, "the deny did not beat the allow on a URL both rows match");
+});
+
+test("(c) a narrow deny under a broader allow is stored beside it and wins on the URLs it names alone", T, async () => {
+    const { bg, results, fetched } = await workerRun([
+        { name: "propose_policy", args: { rules: [ALLOW_SITE, DENY_ADMIN] } },
+        { name: "fetch_url", args: { url: "https://other.example/admin/x" } },
+        { name: "fetch_url", args: { url: "https://other.example/x" } },
+    ]);
+    assert.deepEqual(ids(await runPolicies(bg)), sent([ALLOW_SITE, DENY_ADMIN]), "the narrow deny was swallowed by the broader allow at store time");
+    assert.match(String(results[1]), /^(Denied|Refused) by/, "the broader allow beat the narrow deny");
+    assert.deepEqual(fetched, ["https://other.example/x"], "the denied URL was fetched anyway");
 });
 
 test("(c) the same source for another CONSUMER is a second row: an act rule never stands in for a fetch rule", T, async () => {
