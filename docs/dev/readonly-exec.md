@@ -42,6 +42,8 @@ Good for:
 - Reading the run's own earlier outputs (`@tool:` pointers, `ml.dereference`) and its own setup (`ml.config()`,
   `ml.getModel()`, `ml.ps()`).
 - Curating the run's answer (`ml.answer.add(…)`).
+- Finding where a long text talks about something: embed its pages with `ml.embed([...])` and `rank` them against a
+  query, within the caps below.
 - Walking a nested structure recursively, to a bounded depth.
 
 Not for, and falls back to approval: anything with an effect (a click, typing, a fetch of a new URL, changing the
@@ -54,10 +56,13 @@ These hold for every script, and every extension of the dialect has to keep them
 `tests/readonly-exec.test.mjs`.
 
 1. **Read-only with respect to the page.** Nothing outside the script changes, with one exception: `ml.answer`,
-   the run's own answer set, which a survey may curate.
+   the run's own answer set, which a survey may curate. It starts one kind of request and no other: `ml.embed`, to the
+   configured embedding model through the worker, never at a URL or model the script names ("ml.embed: the one live
+   call" below).
 2. **A failed attempt leaves nothing behind.** That is what makes trying the interpreter first safe. The only
    thing a survey can change outside itself is the answer set, and `evalReadonly` restores it when the survey
-   falls out of dialect.
+   falls out of dialect. An `ml.embed` it made has spent the embedding server's time, within the caps, and changed
+   nothing anything else reads.
 3. **No escape.** No string is ever compiled, the realm (`window`, `Function`, a constructor chain) is unreachable
    through the object graph, and no effectful method can be called.
 4. **Every script halts, and its cost is bounded.** Two separate properties; see [Halting](#halting).
@@ -315,6 +320,7 @@ still take hours: loops nested over large collections, an array doubled forty ti
 | `MAX_EXPANDED`, `EXPANDED_PARTS_PER_STEP`, `MAX_EXPANDED_CHARS` | 5,000,000 parts, 16 a step; 100,000,000 chars | An array that SHARES its parts expands to far more than it holds: forty lines of `d = [d, d]` are 2^40 leaves, and `String(d)` at depth 24 took 3 s in one host call, doubling per level. So whatever is about to expand a value walks it first, counting a part (and a string's characters) each time a walk would visit it, charges it, and refuses it past either cap: the arguments of a host call that may coerce or walk them (every call but a store, `push`, `set`, `add`, an array's identity comparison, a one-level reader, a printed string, and the two `ml` members that read their arguments as data and charge their own work, `pipe` and `jsonPath`; every other `ml` member's arguments are walked, since `range` does `Number(a)`, `dereference` `String(ref)`, `schema` walks its value, and the answer facade's `add` does `String(x)`), the receiver of `join`, `toString`, a default `sort`, `flat` and `flatMap`, every coercion of an object (`+`, `<`, `-`, unary `-`/`+`, a template, a computed key, a callable root, a coercing constructor), what a script arrow RETURNS to a host call that coerces it (a `sort` comparator, a `replace`/`replaceAll` replacer, a `JSON.stringify` replacer), and the value the survey returns, which every caller serialises outside any budget. The walk enters arrays, plain objects, and a Map's keys and values or a Set's members; it reads an object's members as data, never running a getter, an array's elements directly (an index getter on a page array runs: a descriptor a read costs 35 ns an element against the walk's 20 a part, and the page leg runs the page's code anyway), and does not follow a cycle. A value carrying its own function-valued `toJSON` is refused when walked: `JSON.stringify` would call it, in the dialect or in the caller's serialisation of the result, and what it returns is never walked. |
 | `PIPE_CHARS_PER_STEP` | 64 chars | `ml.pipe` is one host call doing work proportional to its input, which the step count never sees: a pipe inside a `.map` would cost one step per call. So each stage is charged its input and its output at this rate. Calibrated on the slowest stage (`sort`, ~200M chars/s) so a budget spent on pipes is about a second, like everything else. |
 | `ml.jsonPath` | 1 step per node | One query is one host call whose work the step count never sees, and `$..[?@..x]` is quadratic in depth. Every node a descent visits, every member a selector or filter reads, every step of a `==` comparison and every key of a printed Normalized Path is charged to `STEP_BUDGET`. Each `match()`/`search()` pattern passes `riskyRegex` after translation from I-Regexp, and each test is priced on its value (`REGEX_UNITS_PER_STEP`); `match()` is anchored, so it starts once. Only a sanitized `{ paths }` is forwarded. Data is read as DATA: a getter (on a member or an array index), a `Map` or a DOM node is an error, not a walk, and a cycle under `..` is an error (`tests/readonly-jsonpath.test.mjs`). A RESULT whose matches nest inside each other is large: `$..*` returned bare over JSON of about 500,000 nodes at depth 10 expands past `MAX_EXPANDED` and the survey is refused when it returns or prints it; `.length` or a projection of the matches answers (a 5,000-item, 45,000-match query returns fine). |
+| `EMBED_SURVEY_CHARS`, `EMBED_SURVEY_CALLS`, `EMBED_CALL_INPUTS` | 500,000 chars, 32 calls; 512 strings a call | `ml.embed` is a round trip to the embedding server, whose time the step budget cannot see: the steps measure the interpreter, about a second, and charged in steps a survey could embed about five pages. So the server's work has caps of its own, per survey, checked before each call, and the interpreter's own work (the inputs scanned) is charged at `HOST_SCAN_CHARS_PER_STEP`. Measured in `notebooks/readonly/embed-cost.ipynb` (CPU placement, as the default config sends it): `embeddinggemma:300m` embeds about 23,000 characters a second, so the character cap is about 27 s of it, 250 pages of 2,000 characters; `qwen3-embedding:0.6b` is about four times slower, 87 s. The cap is in characters, not seconds, so the wall time scales with the model a person picked, and Stop halts the survey at its await. One call alone is 120 to 450 ms, mostly the round trip, which the call cap bounds; batching is the answer to it. `dot` and `rank` on an embedding are charged their dimensions (times the candidates, plus the sort) at `HOST_SCAN_ELEMENTS_PER_STEP`. |
 | `OUTPUT_CEILING` | 32,000,000 chars | The console output one survey KEEPS (output-clip.ts, shared with every tool). `MAX_STRING` bounds one string, not how many are printed: 200 prints of a 9 MB string were 1.8 GB held and then `Invalid string length` when joined. Past it a line is counted, not kept and not streamed. |
 
 Going over any limit throws `NotInDialect`, so the script goes to the human, who sees the code. The exception is
@@ -388,6 +394,30 @@ is refuse the page's own survey, which on a run that was not stopped reaches the
 person, never one that runs. Tests: `tests/readonly-stop.test.mjs` (the escapes through `try`, `finally`, an async
 IIFE and `.then`; the checkpoint; each realm; the loop) and `tests/e2e/cancel-states.spec.mjs` (Stop in each state a
 run streams through, in the real extension).
+
+## ml.embed: the one live call
+
+Added 2026-10-29 (Shane's ruling, "add ml.embed to the read-only dialect"), so a survey can map where a long text talks
+about something, embed its pages and rank them against a query, without a prompt; with the page numbers kept, the
+pages it finds are the ones a later call reads or looks at (`docs/spec/FILE_ATTACHMENTS.md`, slice 3, "What composes
+from these"). Everything else in the dialect reads what is already there. This calls a model, so it is held to more:
+
+- **Only the configured model.** Any second argument (`{ model }`, or anything else) is `Denied`, and the host is handed
+  one argument. The worker resolves the model from the config, as it does for every `ml.embed`.
+- **Inputs read as data** (policy.ts `mlFacade`; `embed` is in evaluator.ts `DATA_MEMBERS`): a string, a String object,
+  or an array of them, copied out of own indexed DATA properties, so a getter on a page array never runs, and the host
+  gets a fresh array of the copies, never the script's own. Anything else is a `TypeError` a survey can catch.
+- **Caps on the server's work, per survey**, before each call (the `EMBED_*` row under Halting). Past one, the survey
+  goes to the person, who sees the code.
+- **The result is an `embedding` receiver kind**, told by brand (`isEmbedding`: membership of a WeakSet that only
+  `Embedding.from` adds to, as `asTable` grants the table kind), so a page object shaped like one gets no methods. Its
+  methods are `dot` and `rank`; both take only real embeddings, `rank` an array of plain `{ key, embedding }` whose two
+  members are own data properties, checked before the host reads them, and both are charged their dimensions. `values`
+  is frozen.
+- **A page member.** In the worker it is absent whatever the host has, so a worker survey defers to the page, and the
+  Python wire's facade (sw-ml-wire.ts), which has no meter, never gets it.
+
+Tests: `tests/readonly-embed.test.mjs`.
 
 ## Working on fetched tables
 
@@ -693,9 +723,11 @@ of the dialect, asked six questions and described the design in four claims. The
   an unattended run refuses instead. The approved script then runs from the start as real JavaScript: `eval` in the page's
   main world, CDP `Runtime.evaluate` in the main world when the page's CSP forbids `eval` (a worker-built run with the CDP
   setting on), or an isolated world as above, and nowhere when that world is needed and none is available.
-- *"Network access is mediated: a fetch needs approval for its domain."* The dialect has NO network access. `ml.fetch`
-  there answers only from a cache of URLs an approved call already fetched, in either realm, and refuses `fresh` and
-  credentialed modes; nothing else it can construct, call or read starts a request (`tests/e2e/readonly-loads.spec.mjs`).
+- *"Network access is mediated: a fetch needs approval for its domain."* The dialect has NO network access of its own
+  choosing. `ml.fetch` there answers only from a cache of URLs an approved call already fetched, in either realm, and
+  refuses `fresh` and credentialed modes; nothing else it can construct, call or read starts a request
+  (`tests/e2e/readonly-loads.spec.mjs`), except `ml.embed` (added 2026-10-29): the page's own `ml.embed`, so the worker
+  sends it to the configured embedding model on the configured server, with nothing the script names but the strings.
   Outside the dialect the authority is not a wrapper in some world but the worker (`fetchUrlFor`, `sw-fetch-url.ts`),
   which judges each request by the sender the browser reports, and approval is per URL, with the origin-wide
   auto-approvals `docs/dev/site-access.md` lists under "What an approval lets leave".

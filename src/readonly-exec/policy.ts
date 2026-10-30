@@ -2,7 +2,8 @@
 // allowlist, the callable roots and safe constructors, and the `ml` facade the dialect sees.
 
 import { isTable } from "../table/table-brand";   // a table facade is recognised by BRAND, and the brand module is itself dependency-free
-import { Denied, riskyRegex, PIPE_CHARS_PER_STEP, MAX_STRING, NotInDialect, NeedsPage } from "./limits";
+import { isEmbedding } from "../ml/embedding";   // an embedding is recognised by BRAND too; embedding.ts imports nothing
+import { Denied, riskyRegex, PIPE_CHARS_PER_STEP, MAX_STRING, NotInDialect, NeedsPage, EMBED_SURVEY_CHARS, EMBED_SURVEY_CALLS, EMBED_CALL_INPUTS, HOST_SCAN_CHARS_PER_STEP } from "./limits";
 
 // Property names that can walk back to the realm (window/Function/…). Denied on
 // every read, static or computed. `constructor`/`__proto__` kill the
@@ -54,7 +55,7 @@ export const isDomCollection = (x: any): boolean =>
 // Set, and must not be mutable.
 type MethodKind =
     | "array" | "string" | "number" | "date" | "regexp" | "set" | "map" | "promise"
-    | "element" | "document" | "collection" | "style" | "console" | "table"
+    | "element" | "document" | "collection" | "style" | "console" | "table" | "embedding"
     | "Math" | "JSON" | "ObjectCtor" | "ArrayCtor" | "PromiseCtor" | "DateCtor" | "NumberCtor";
 
 const BY_KIND: Record<MethodKind | "*", readonly string[]> = {
@@ -107,6 +108,9 @@ const BY_KIND: Record<MethodKind | "*", readonly string[]> = {
     // could never have joined a flat list. Each returns plain data or another facade, reads nothing outside
     // the table, and mutates nothing — the facade itself refuses writes.
     table: ["col", "select", "records", "head"],
+    // An `ml.embed` result (embedding.ts): a unit vector and the two comparisons on it. Each is O(dimensions x
+    // candidates), charged before it runs (evaluator.ts `preflight`), and neither reads anything but other embeddings.
+    embedding: ["dot", "rank"],
     Math: ["max", "min", "floor", "ceil", "round", "abs", "pow", "sqrt", "sign", "trunc"],
     JSON: ["stringify", "parse"],
     ObjectCtor: ["keys", "values", "entries", "fromEntries", "assign"],
@@ -163,6 +167,8 @@ export function kindOf(obj: unknown): MethodKind | null {
     // shape-testing it would trip its own guard — and a page must not be able to CLAIM the kind, which a
     // property or a well-known symbol would allow (see table-brand.ts). Only `asTable` grants membership.
     if (isTable(obj)) return "table";
+    // The same for an embedding: only `Embedding.from` grants it, so a page object cannot claim `dot`.
+    if (isEmbedding(obj)) return "embedding";
     const o = obj as Record<string, unknown>;
     // A String OBJECT, not a primitive: `ml.dereference` returns a String subclass (DerefText) so a pointer
     // read is usable as the string it is. It must get the string methods, or the wrapper silently costs the
@@ -440,6 +446,56 @@ export function mlFacade(ml: unknown, reused?: string[], answerFacade?: unknown,
                     if (why) throw new Denied(`ml.jsonPath: the pattern ${JSON.stringify(src)} has ${why}, which can run for hours on one value — it needs approval`);
                 },
             });
+        };
+    }
+    // `ml.embed(text | texts)` — the ONE survey member that makes a live model call: the configured embedding model,
+    // nothing else, so a survey can find WHERE a long text talks about something (embed its pages, rank them against
+    // a query) without a prompt. Free on four conditions, because a call is a round trip to the embedding server
+    // whose time the step budget cannot see:
+    //   - only the configured model: any second argument (`{ model }`) goes to the person;
+    //   - the inputs are read as DATA here: a string, a String object, or an array of them, copied out of own
+    //     indexed data properties, so a getter on a page array never runs; anything else is a TypeError the
+    //     survey can catch;
+    //   - each call is charged the interpreter's own work, its inputs scanned (a vector costs a step an element read,
+    //     and `dot`/`rank` are charged their dimensions);
+    //   - the server's work is capped per survey: EMBED_SURVEY_CHARS characters and EMBED_SURVEY_CALLS calls in all,
+    //     EMBED_CALL_INPUTS strings a call; past any of them the survey goes to the person, who sees the code.
+    // A survey that embeds and then falls out of dialect has spent that time, but changed nothing anyone else reads:
+    // the vectors were the survey's own, and the approved run that replaces it embeds again.
+    // A PAGE member: in the worker it is absent whatever the host has, so a worker survey defers to the page, and a
+    // facade built with no meter (the Python wire's, sw-ml-wire.ts) never makes a live call.
+    const hostEmbed = (ml as Record<string, unknown>)["embed"];
+    if (typeof hostEmbed === "function" && !worker) {
+        let chars = 0, calls = 0;
+        // A String OBJECT is told by BRAND (`isStringObject`), never by the tag: reading it runs the getter a page can set.
+        const textOf = (x: unknown): string | null =>
+            typeof x === "string" ? x : x !== null && typeof x === "object" && isStringObject(x) ? String.prototype.valueOf.call(x) : null;
+        out.embed = (input: unknown, opts?: unknown): unknown => {
+            if (opts !== undefined) throw new Denied("ml.embed with options (a { model }) chooses what runs; in a survey only the configured embedding model does, so it needs approval");
+            const many = Array.isArray(input);
+            let texts: string[];
+            if (many) {
+                const arr = input as unknown[];
+                const n = Object.getOwnPropertyDescriptor(arr, "length")?.value;
+                if (typeof n !== "number" || n > EMBED_CALL_INPUTS) throw new NotInDialect(`ml.embed of more than ${EMBED_CALL_INPUTS.toLocaleString("en-US")} strings in one call, which is too much to embed without asking`);
+                texts = [];
+                for (let i = 0; i < n; i++) {
+                    const t = textOf(Object.getOwnPropertyDescriptor(arr, i)?.value);
+                    if (t === null) throw new TypeError(`ml.embed takes a string or an array of strings; item ${i} is not a string`);
+                    texts.push(t);
+                }
+            } else {
+                const t = textOf(input);
+                if (t === null) throw new TypeError("ml.embed takes a string or an array of strings");
+                texts = [t];
+            }
+            const size = texts.reduce((a, t) => a + t.length, 0);
+            if (++calls > EMBED_SURVEY_CALLS) throw new NotInDialect(`more than ${EMBED_SURVEY_CALLS} ml.embed calls in one survey, which is too much to embed without asking; pass an array to embed many strings in one call`);
+            if ((chars += size) > EMBED_SURVEY_CHARS) throw new NotInDialect(`ml.embed of over ${EMBED_SURVEY_CHARS.toLocaleString("en-US")} characters in one survey, which is too much to embed without asking`);
+            meter?.charge(Math.ceil(size / HOST_SCAN_CHARS_PER_STEP));
+            // A fresh array of the copied strings, never the script's own, and no options: the configured model. What
+            // it builds (a unit vector a string) is bounded by EMBED_CALL_INPUTS; reading one costs a step an element.
+            return (hostEmbed as (i: unknown) => unknown).call(ml, many ? texts : texts[0]);
         };
     }
     // `ml.answer` — the run's curated answer set (a curate-only facade: add/remove/clear/dump/length, built by
