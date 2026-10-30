@@ -217,3 +217,33 @@ test("a run without crossOrigin is refused a cross-site navigate; an approved po
     const allowed = await pageBuiltNavigate(`(c) => c.url.startsWith("${siteB.url}/") && c.interactive`);
     expect(allowed.requests.some((r) => r.startsWith("/user/x")), "the person's word lets this navigate go").toBe(true);
 });
+
+// --- a click by point (what locate produces) is judged as the click on the element under the point ---
+
+/** A python_exec that mints a point inside the page element `selector`, then the click on the token it returns. */
+const clickByPoint = (selector) => [
+    { tool: "python_exec", args: { code: "return [5, 5]", image: selector, cast: "pt" } },
+    (body) => {
+        const t = JSON.stringify(body.messages).match(/@pt:[0-9a-f]+/g)?.at(-1);
+        return t ? { tool: "click", args: { selector: t } } : { content: "no token" };
+    },
+];
+
+test("a click by point on the named button runs with no card; a point on a different button is refused with the fourth rule named", async () => {
+    await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", defaultModelVision: "yes", debugMode: "off", autoApproveReadonly: false, autoApprovePython: true });
+    try {
+        const o = await worked((B) => [
+            { tool: "navigate", args: { url: B + "/user/approvals" } },
+            ...clickByPoint("#delete"),
+            ...clickByPoint("#approve"),
+        ]);
+        const [del, approve] = only(o, "click");
+        expect(del.approval, "a point on Delete is the click on Delete").toBe("denied");
+        expect(del.result).toContain('Refused by the policy "Only Approve This Draft on the approvals page", without asking');
+        expect(approve.approval, "a point on the named button is allowed").toBe("consented");
+        expect(o.log, "the server saw one approve and no delete").toEqual(["approve"]);
+        expect(cardsOf(o).filter((t) => t === "click")).toEqual([]);
+    } finally {
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", modelFilter: "", debugMode: "off", autoApproveReadonly: false });
+    }
+});

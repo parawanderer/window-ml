@@ -251,10 +251,11 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
     if (opts.precheck) {
         let pre: string | null = null;
         try { pre = typeof tool.precheck === "function" ? tool.precheck(args) : null; } catch { pre = null; }
-        // A click that follows a link says where to, for the worker to judge before the click (nav-arrival.ts).
-        const href = !pre && name === "click" ? clickHref(args as { selector: string; index?: number }) : undefined;
-        // A click or a type says what it is on (tag, link, accessible name), for the worker's `act` policies to judge.
+        // A click or a type says what it is on (tag, link, accessible name), for the worker's `act` policies to judge. A point
+        // token is resolved to the element under it, so a click by point is judged as the click on that element.
         const element = !pre && (name === "click" || name === "type") ? actElement(args as { selector: string; index?: number }) : undefined;
+        // A click that follows a link says where to, for the worker to judge before the click (nav-arrival.ts).
+        const href = !pre && name === "click" ? clickHref(args as { selector: string; index?: number }) ?? element?.href ?? undefined : undefined;
         return { result: pre || "", precheckFailed: !!pre, ...(href ? { href } : {}), ...(element ? { element } : {}) };
     }
     // Read-only try (exec only): run the mediated interpreter (no eval, no mutation). If in-dialect it
