@@ -123,11 +123,15 @@ test.describe("@security SITE_PRESENCE gap (7): the overlay on a page that gets 
         const s = await scene("overlay");
         try {
             const page = await openProbe(s.b, s.site, HIDDEN, "/");
-            // Measured on main 2026-10-30: the mount lands ~40 ms after the config reaches the shell; 1.5 s covers a
-            // cold worker start (the config read is the shell's first async step) without turning a slow run into a pass.
-            await sleep(1500);
-            const adds = oursAdded(page);
             const open = holeOpen("gap7", "the overlay mounts its host on a page that may not use window.ml");
+            // The leak side has a signal of its own — the host's `dom-add` record — so it waits on that, never on a
+            // settle: a slow CI mount past the settle would redden an OPEN row with no change to the hole. The defended
+            // side has nothing to wait on (the absence is the claim), so the window IS the claim. Measured on main
+            // 2026-10-30: the mount lands ~40 ms after the config reaches the shell; 1.5 s covers a cold worker start
+            // (the config read is the shell's first async step) without turning a slow run into a pass.
+            if (open) await waitFor(() => oursAdded(page).includes("div#ml-sb-root"), 30000, "the overlay's host to mount on the hidden page");
+            else await sleep(1500);
+            const adds = oursAdded(page);
             if (open) expect(adds, "today's leak: the overlay's host, on a page with no run").toContain("div#ml-sb-root");
             else expect(adds, "nothing of ours was added to the hidden page").toEqual([]);
             const dom = await readDom(s.b, page.targetId);
@@ -146,10 +150,12 @@ test.describe("@security SITE_PRESENCE gap (7): the overlay on a page that gets 
             await sleep(1200);
             const tSwitch = Date.now();
             await s.setConfig("overlay");
-            await sleep(1500);
-            const after = page.reports().filter((e) => e.kind === "dom-add" && e.t >= tSwitch);
-            const adds = after.filter(ours).map((e) => `${e.tag}${e.id ? "#" + e.id : ""}`);
+            const after = () => page.reports().filter((e) => e.kind === "dom-add" && e.t >= tSwitch && ours(e)).map((e) => `${e.tag}${e.id ? "#" + e.id : ""}`);
             const open = holeOpen("gap7", "the overlay mounts into a page already open, when the mode changes");
+            // As in row (7.1): the leak has a record to wait on, the absence does not, so only the defended side settles.
+            if (open) await waitFor(() => after().includes("div#ml-sb-root"), 30000, "the host to appear on the running page");
+            else await sleep(1500);
+            const adds = after();
             if (open) expect(adds, "today's leak: the host appears on the running page").toContain("div#ml-sb-root");
             else expect(adds, "the mode change put nothing into the hidden page").toEqual([]);
             const dom = await readDom(s.b, page.targetId);
@@ -189,11 +195,13 @@ test.describe("@security SITE_PRESENCE gap (7): the overlay on a page that gets 
             const gate = await waitFor(async () => (await s.b.sw(() => globalThis.__mlApprovals.list()))[0] ?? null, 30000, "the approval gate to open");
             expect(gate.tool, "the run gated on the scripted type (the run machinery's positive control)").toBe("type");
             const tHeld = Date.now();
-            // Measured on main 2026-10-30: the overlay's mount lands ~40 ms after the shell's config read, and the
-            // shell here starts with the run. The 2 s settle is from the gate, after the shell was loaded.
-            await sleep(2000);
-            const adds = oursAdded(page);
             const open = holeOpen("gap7", "the overlay mounts while a run the person started acts on the page");
+            // As in row (7.1), and the gate above is already signal-based: the leak side waits on the host's own record,
+            // and only the absence half settles from the gate. Measured on main 2026-10-30: the overlay's mount lands
+            // ~40 ms after the shell's config read, and the shell here starts with the run.
+            if (open) await waitFor(() => oursAdded(page).includes("div#ml-sb-root"), 30000, "the overlay's host to mount while the run acts");
+            else await sleep(2000);
+            const adds = oursAdded(page);
             if (open) expect(adds, "today's leak: the overlay's host, while the run acts").toContain("div#ml-sb-root");
             else expect(adds, "the shell put nothing of the overlay into the page during the run").toEqual([]);
             const dom = await readDom(s.b, page.targetId);
