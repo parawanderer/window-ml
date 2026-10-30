@@ -12,7 +12,7 @@
 // and we re-send the handshake on it, so a page-load race (our handshake landing before
 // injected's async <script> is listening — which stranded the devtools panel on Ctrl+R)
 // can't leave it un-live.
-import { SB_ROOT, SB_HOST, SB_TAB, SB_FRAME, SB_LIGHTBOX, SB_LIGHTBOX_X, SB_HIGHLIGHT, SB_CARD, SB_STYLE } from "../ids";
+import { SB_ROOT, SB_HOST, SB_TAB, SB_FRAME, SB_LIGHTBOX, SB_LIGHTBOX_X, SB_HIGHLIGHT, SB_CARD, SB_STYLE, anonymousTag } from "../ids";
 import { cleanImages } from "../contract/contract-run";
 import { onSessionDone, relaySessionToPage } from "./shell-session-relay";
 import { stepBudget } from "../agent/step-budget";
@@ -685,23 +685,22 @@ function showLightbox(src: string): void {
 // content script), so it can resolve the selector + rect itself. Off-target / not-found → just hide.
 let highlightEl: HTMLElement | null = null;
 let hlSeq = 0;   // monotonic — a later hover/clear invalidates a still-pending async token resolve
-// The root the highlight box is drawn into. In OVERLAY mode that's the full shell's shadow root.
-// In DEVTOOLS mode no overlay is mounted, so lazily create a highlight-ONLY shadow host (same
-// isolation, just the highlight CSS) the first time a remote highlight arrives — so the panel's
-// hover can still outline the page. Torn down with everything else in teardown().
+// The root the highlight box is drawn into: a host of its own in every mode, ANONYMOUS (docs/spec/SITE_PRESENCE.md, step
+// 4): a random custom-element name per page session, a closed root, no id, class or attribute of ours on the host (our
+// names stay inside the root), and in the page only while a box is drawn. Torn down with everything else in teardown().
 let hlHost: HTMLElement | null = null;
 let hlRoot: ShadowRoot | null = null;
+/** The highlight host's tag for this page session. */
+const HL_TAG = anonymousTag();   // state: fixed — one per content-script lifetime
 /** The shell's hosts in the browser's top layer, lowest first, raised again after the page puts something of its own
  *  there and restored after it takes one out, within a budget (shell-top-layer.ts). */
 const topLayer = topLayerKeeper(() => [hlHost, shellHost, cardHost], browserTopLayerDoc(), browserClock);   // state: ui — which hosts are in the top layer, dropped with them
 /** Each host's own stylesheet and its rules at mount, so a shot can tell the page's edits to them (shell-shot.ts). */
 const ownSheets = new Map<ShadowRoot, { style: Element; sheet: string }>();   // state: ui — the shell's own stylesheets, dropped with their hosts
 function hlContainer(): ShadowRoot {
-    if (shellRoot) return shellRoot;
     if (hlRoot) return hlRoot;
-    hlHost = document.createElement("div");
+    hlHost = document.createElement(HL_TAG);
     markOwnHost(hlHost);
-    hlHost.id = `${SB_ROOT}-hl`;
     hlHost.style.cssText = HOST_STYLE;
     hlRoot = hlHost.attachShadow({ mode: "closed" });
     const style = document.createElement("style");
@@ -732,10 +731,23 @@ function drawHighlight(left: number, top: number, width: number, height: number,
     lab.className = "ml-hl-label";
     lab.textContent = label;
     highlightEl.replaceChildren(lab);
-    // Tell the card where on the page the approval target sits (the card is the frame in off mode).
-    if (hlKind === "approve" && frame) toApp({ __mlHighlightPos: posLabel(left + width / 2, top + height / 2) });
+    // Tell the card where on the page the approval target sits: the frame in off mode, else the tab's side panel (a
+    // hidden page's card), through the worker, which drops it when no panel is open.
+    if (hlKind === "approve") {
+        const pos = posLabel(left + width / 2, top + height / 2);
+        if (frame) toApp({ __mlHighlightPos: pos });
+        else { try { void chrome.runtime.sendMessage({ type: "ML_HL_POS", pos }).catch(() => {}); } catch { /* context gone */ } }
+    }
 }
-function hideHighlight(): void { hlSeq++; hlKind = ""; lastHlRef = null; if (highlightEl) { highlightEl.remove(); highlightEl = null; } }
+function hideHighlight(): void { hlSeq++; hlKind = ""; lastHlRef = null; highlightEl = null; dropHlHost(); }
+/** Take the highlight's host out of the page: it is there only while a box is drawn. */
+function dropHlHost(): void {
+    if (!hlHost) return;
+    topLayer.release(hlHost);
+    hlHost.remove();
+    if (hlRoot) ownSheets.delete(hlRoot);
+    hlHost = hlRoot = null;
+}
 // Reposition on scroll/resize: the box/@pt marker is computed from getBoundingClientRect (viewport coords)
 // and drawn position:fixed, so a page scroll slides the element out from under a now-frozen box (and an @pt
 // off its target). Re-run the LAST highlight — throttled to one frame — so it tracks. Capture-phase catches
@@ -843,7 +855,7 @@ const shotRoots = (): ShotRoots => ({
  * `chrome.dom.openOrClosedShadowRoot`, so the hook gives nobody anything new. Never post a root, or a node in one, to the
  * page: that is the one way this would hand the page our UI.
  */
-Object.defineProperty(globalThis, "__wmlShellRoots", { configurable: true, value: () => ({ sidebar: shellRoot, card: cardRoot, highlight: hlRoot }) });
+Object.defineProperty(globalThis, "__wmlShellRoots", { configurable: true, value: () => ({ sidebar: shellRoot, card: cardRoot, highlight: hlRoot, highlightTag: HL_TAG }) });
 
 /** The page's hide handshake for a page-hosted screenshot, bounded (shell-shot.ts). */
 const shot = pageShotGate({
@@ -1465,6 +1477,11 @@ function unmountCard(): void {
 // background's ML_ASK_ABOUT_THIS cue, below, then the Commander opens pre-loaded with it.
 let lastAskEl: Element | null = null;
 addEventListener("contextmenu", e => { const t = e.target; if (t instanceof Element) lastAskEl = t; }, true);
+/** The last right-clicked element's semantic container and clean context, or null (none, or it is gone). */
+function rightClickedContext(): ElementContext | null {
+    if (!lastAskEl || !lastAskEl.isConnected) return null;
+    try { return domToContext(resolveContextContainer(lastAskEl), lastAskEl); } catch { return null; }   // a plain composer
+}
 
 // The Spotlight command bar: mount the HUD card on demand (even with no run) and tell its app to open
 // the composer, so the user can START a run from the keyboard OR a right-click. Buffered until the iframe
@@ -1522,9 +1539,7 @@ function openComposer(ctx: ElementContext | null = null): void {
 function teardown(): void {
     hideLightbox();
     hideHighlight();
-    if (hlRoot) ownSheets.delete(hlRoot);
     if (shellRoot) ownSheets.delete(shellRoot);
-    if (hlHost) { topLayer.release(hlHost); hlHost.remove(); hlHost = hlRoot = null; }   // the devtools-mode highlight-only host
     if (shellHost) { topLayer.release(shellHost); shellHost.remove(); shellHost = panel = frame = shellRoot = null; closeHostPort(); }
     unmountCard();
     offPage(onWindowMessage);
@@ -1654,21 +1669,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     else if (msg?.type === "ML_SHOW_START_ASK" && typeof msg.runId === "string") showStartAsk(msg.runId);
     // Right-click "Ask window.ml about this": resolve the last right-clicked element's semantic container
     // + clean context RIGHT HERE (the content script sees the page DOM) and open the Commander with it.
-    else if (msg?.type === "ML_ASK_ABOUT_THIS") {
-        let ctx: ElementContext | null = null;
-        if (lastAskEl && lastAskEl.isConnected) {
-            try { ctx = domToContext(resolveContextContainer(lastAskEl), lastAskEl); } catch { /* fall back to a plain composer */ }
-        }
-        openComposer(ctx);
-    }
+    else if (msg?.type === "ML_ASK_ABOUT_THIS") openComposer(rightClickedContext());
+    // The same element for a hidden page's side panel (sw-side-panel.ts): read here, answered to the worker alone, and
+    // nothing is mounted in the page.
+    else if (msg?.type === "ML_ELEMENT_CONTEXT") { sendResponse({ ctx: rightClickedContext() }); return; }
     // Right-click "Add this to the current run": resolve the element the SAME way, but hand it to the app to
     // APPEND to whichever run is open (the app knows its selected/current session; the shell doesn't). The
     // app opens the composer in "append" mode, or falls back to a fresh one if nothing's open.
     else if (msg?.type === "ML_ADD_TO_CURRENT_RUN") {
-        let ctx: ElementContext | null = null;
-        if (lastAskEl && lastAskEl.isConnected) {
-            try { ctx = domToContext(resolveContextContainer(lastAskEl), lastAskEl); } catch { /* fall back to a plain composer */ }
-        }
+        const ctx = rightClickedContext();
         if (!hudActive()) return;
         if (!cardHost) mountCard();
         if (cardReady && frame) { toApp({ __mlAddToCurrentRun: { ctx } }); try { frame.focus(); } catch { /* ignore */ } }

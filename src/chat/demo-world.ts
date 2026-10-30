@@ -30,7 +30,7 @@ export function demoHost(now = Date.now(), opts: { latencyMs?: number; streamMs?
             id: "laptop", name: "Work laptop", kind: "browser", online: true, contractVersion: SESSION_CONTRACT_VERSION, grants: EVERY,
             // Its archive folder lost the browser's permission (a restart after "Allow this time"), so the search page
             // and Settings → Runtimes both have something to say about it.
-            capabilities: { chat: true, agent: true, tabs: true, screenshots: true, highlight: true, sideCalls: true, persistence: true, switchModel: true, attachFiles: true, archive: { folder: "needs-grant", pending: 2, lastSync: now - 3 * 24 * 60 * min } },
+            capabilities: { chat: true, agent: true, tabs: true, screenshots: true, highlight: true, sideCalls: true, persistence: true, switchModel: true, attachFiles: true, attachPdf: true, archive: { folder: "needs-grant", pending: 2, lastSync: now - 3 * 24 * 60 * min } },
         },
         {
             id: "lab-box", name: "Lab box", kind: "desktop", online: true, contractVersion: SESSION_CONTRACT_VERSION, grants: [{ scope: "view" }],

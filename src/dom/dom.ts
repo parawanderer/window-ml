@@ -568,13 +568,18 @@ const TRAILING_NTH_NATIVE = /^([\s\S]*):nth-(?:of-type|child)\(\s*(\d+)\s*\)\s*$
 // not page content): `ml.queryAll("button")` was finding the HUD's own controls (in the overlay shadow root,
 // which deepQueryAll pierced while it was open). Those roots are CLOSED now and attached in the content script's
 // isolated world, whose attachShadow shadow-patch.ts never wraps, so `traversableRoot` returns null for them and
-// nothing inside is reachable with or without `includeExtensionUi`. The skip stays for the light-DOM hosts.
+// nothing inside is reachable with or without `includeExtensionUi`. The skip stays for the light-DOM hosts. The
+// highlight's host carries no id (it is anonymous, SITE_PRESENCE step 4), so in the isolated world a host is also told
+// by identity, from `ownHosts`; the main world's set is empty, and there that host reads as an empty custom element.
 const EXT_UI_SEL = '[id^="ml-sb-"], [id^="ml-lightbox"], [id^="ml-highlight"]';
+/** Is `el` a host the shell marked as its own? Reads the set without making it: a world with none (an isolated exec's)
+ *  must be left without the global. */
+const markedOwnHost = (el: Element): boolean => !!(globalThis as unknown as { __mlOwnHosts?: WeakSet<Element> }).__mlOwnHosts?.has(el);
 /** Is `el` itself an extension-UI ROOT host (so its subtree — incl. its shadow — is our own UI)? */
-export const isExtUiRoot = (el: Element): boolean => { try { return el.matches(EXT_UI_SEL); } catch { return false; } };
+export const isExtUiRoot = (el: Element): boolean => { try { return markedOwnHost(el) || el.matches(EXT_UI_SEL); } catch { return false; } };
 /** Is `el` inside the extension's own UI (a LIGHT-DOM check via closest — the shadow case is handled by not
  *  recursing into ext-UI hosts, so nothing from our overlay's shadow ever reaches here). */
-export const isExtUi = (el: Element): boolean => { try { return !!el.closest(EXT_UI_SEL); } catch { return false; } };
+export const isExtUi = (el: Element): boolean => { try { return markedOwnHost(el) || !!el.closest(EXT_UI_SEL); } catch { return false; } };
 
 export const deepQueryAll = (selector: string, root: ParentNode = document, includeExtensionUi = false): Element[] => {
     const out: Element[] = [];

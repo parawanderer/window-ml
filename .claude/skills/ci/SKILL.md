@@ -245,7 +245,7 @@ Flaky only (passed on retry, never blocked a run), worth knowing because two may
   START_RUNs through a held restore and a 20ms wait; timing-sensitive. Rerun the job before blaming a diff that does
   not touch background start.
 - Seen once each: `site-access` 16a (@security), `site-access` 18 closed-shadow-root (`:1164`, 16.5 s), `site-access` 19
-  DevTools-panel ask (`:1492`, 16.3 s), `cross-page` composer seq collision, `output-scroll` tail-follow, `chat-web`
+  DevTools-panel ask (`:1492`, 16.3 s), `cross-page` composer seq collision, `chat-web`
   phone tooltip, `focus-restore`, `bench-editor` traceback, `resource-panel` narrow window (`:3619`),
   `tooltips.spec.mjs:627` › a tip whose trigger disappears under a still pointer disappears with it.
 - Seen once each on 2026-10-28 (run 40708391759, head `95a9e87b`, every job green; each row failed its first attempt and
@@ -276,9 +276,30 @@ Flaky only (passed on retry, never blocked a run), worth knowing because two may
   document that loads in the registration window and misses the catch-up gets no page script until its next
   reload) — site-access lane's, a bug report until proven otherwise.
 
+- Seen once each (2026-10-28/29): `tests/redteam-python-sandbox.test.mjs` › `P2-handle route: a method of a Task
+  SUBCLASS the cell defines does not run once the result is returned` (run 40753575484 attempt 1 on #1279, test
+  node 26: `nothing scheduled by this route may run after the result returned, got {"woke":["armed","ran"]}` at
+  :365; the job reran green — a second sighting is the python-cancel lane's bug report). `tests/e2e/redteam-hard-
+  python-realm.spec.mjs:98` › `a lifted cell cannot read location on the real worker global after the strip` (run
+  40833665768 on #1310, e2e 2/3: one ✘ at 20.7 s, no retry line and no summary entry in that log). Same run's
+  actual red: `tests/e2e/pdf-offscreen.spec.mjs:88` › `a transfer function, a soft mask and a knockout group render
+  with no DOM, each drawn as the file says` (failed both tries, `expect(grays).toEqual([204, 0, 191, 191])` got
+  `[204, 0, 190, 190]`).
+
 node:test had no real failures in that window: every `not ok` was a documented `# TODO`.
 
 Recently removed, recorded so nobody re-adds them from memory:
+
+- ~~`output-scroll.spec.mjs:34` › `output cell: tail-follows at the bottom, holds still when scrolled up`~~ —
+  **fixed** in #1345 (`263e8359`, 2026-10-29), the wait and not the product: the `the matched line is on screen
+  inside the cell` measure ran one-shot after `sleep(500)`; it now polls the byte-identical predicate (15 s cap
+  that fails at the cap) and `afterType > 20` asserts after the poll. Measured before the fix: 9 of the 76
+  `tests.yml` runs of 2026-10-28 18:41Z to 2026-10-29 16:00Z (every run's every attempt enumerated) — 4 failed
+  both tries and job-reran green (40747850251, 40748503732, 40755698187 attempt 1, 40757874958 attempt 2), 5
+  retry-passed `1 flaky` (40751367821, 40752713621, 40874036389 on main; 40752930715, 40850226606 on PRs), 7 of
+  the 9 in one 82-minute burst on 2026-10-28, all on e2e (2/3). The reveal-vs-follow race it exposed (find's
+  `follow.current = false` undone by its own clamped scroll event, render-panel.tsx:968/:973) is routed to the
+  sidebar lane in #1345's body. Do not add as flake.
 
 - ~~`python-spend-queue.test.mjs:184` › a flood of queued callbacks is cut at the deadline~~ — **fixed** in #1269
   (`973c979c`, 2026-10-28): the fixed `1500` is replaced by pin 15's ruled formula, `1000 + control.spendMs +

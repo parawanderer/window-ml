@@ -11,8 +11,8 @@ import type { Session } from "../store";
 import { IconSend, IconStop } from "../icons";
 import { ClickableImg } from "../ui-kit";
 import { FilePill } from "./user-text";
-import { FILE_READ_MAX_BYTES, TEXT_FILE_ACCEPT, decodeTextFile, fileInfo, fileSummary, pendingRefusals, tooLarge, type FileTarget } from "../../attached-files";
-import type { AttachedFile } from "../../contract/contract-run";
+import { FILE_READ_MAX_BYTES, PDF_ATTACH_MAX, b64Bytes, PDF_FILE_ACCEPT, TEXT_FILE_ACCEPT, decodeTextFile, encodePdfFile, fileInfo, fileSummary, looksPdf, pendingRefusals, sizeLabel, tooLarge, tooLargePdf, type FileTarget } from "../../attached-files";
+import type { SentFile } from "../../contract/contract-run";
 import { UsageBar } from "./usage";
 import { SpendChip } from "./spend";
 import { RunStatsBar } from "./agent-detail";
@@ -26,9 +26,9 @@ const COMPOSER_MAX_H = 180;
 // the page deciding from the handle's live state. Claude-Code touch: while a run is IN FLIGHT and the box
 // is EMPTY, the submit button becomes a STOP that cancels; type anything and it's a send again.
 /** A file waiting in a box. `text` is its decoded text; a refused file has none, or has `why`/`tooBig` instead. */
-export interface PendingFile { name: string; type: string; text?: string; /** refused: not a text file, or this runtime takes no files */ why?: string; /** refused unread: its size in bytes */ tooBig?: number }
+export interface PendingFile { name: string; type: string; text?: string; /** a PDF's bytes, base64 */ data?: string; /** refused: not a text file, or this runtime takes no files */ why?: string; /** refused unread: its size in bytes */ tooBig?: number; /** a PDF refused unread */ pdf?: true }
 /** What a box needs to take text files: where the message goes, whether the runtime takes them, what the draft held. */
-export interface FileAttachOpts { target: () => FileTarget; accepts: () => boolean; initial?: () => AttachedFile[] }
+export interface FileAttachOpts { target: () => FileTarget; accepts: () => boolean; /** the runtime reads PDFs (`capabilities.attachPdf`) */ acceptsPdf?: () => boolean; initial?: () => SentFile[] }
 
 /**
  * THE ATTACH STATE of a box, shared by BOTH composers (session and Spotlight) and the start page: a file upload, a
@@ -49,9 +49,19 @@ export function useImageAttach(initial?: () => string[], opts?: { files: FileAtt
     const fileOpts = opts?.files;
     const addDoc = async (f: File): Promise<void> => {
         if (!fileOpts?.accepts()) { setDocs(a => [...a, { name: f.name, type: f.type, why: `${f.name} cannot be sent: this runtime does not take files yet` }]); return; }
-        if (f.size >= FILE_READ_MAX_BYTES) { setDocs(a => [...a, { name: f.name, type: f.type, tooBig: f.size }]); return; }
+        // A PDF goes as its bytes, read by the runtime; its size is checked before it is read.
+        const pdf = !!fileOpts.acceptsPdf?.();
+        const named = looksPdf(f.name, f.type, new Uint8Array());
+        if (pdf && named && f.size > PDF_ATTACH_MAX) { setDocs(a => [...a, { name: f.name, type: f.type, tooBig: f.size, pdf: true }]); return; }
+        if (!(pdf && named) && f.size >= FILE_READ_MAX_BYTES) { setDocs(a => [...a, { name: f.name, type: f.type, tooBig: f.size }]); return; }
         try {
-            const r = decodeTextFile(f.name, f.type, new Uint8Array(await f.arrayBuffer()));
+            const bytes = new Uint8Array(await f.arrayBuffer());
+            if (pdf && looksPdf(f.name, f.type, bytes)) {
+                const p = encodePdfFile(f.name, bytes);
+                setDocs(a => [...a, p.ok ? { name: p.file.name, type: p.file.type, data: p.file.data } : { name: f.name, type: f.type, why: p.reason }]);
+                return;
+            }
+            const r = decodeTextFile(f.name, f.type, bytes);
             setDocs(a => [...a, r.ok ? { name: r.file.name, type: r.file.type, text: r.file.text } : { name: f.name, type: f.type, why: r.reason }]);
         } catch { setDocs(a => [...a, { name: f.name, type: f.type, why: `${f.name} could not be read` }]); }
     };
@@ -88,17 +98,28 @@ export function useImageAttach(initial?: () => string[], opts?: { files: FileAtt
     // Why each pending file is refused (null: it will be sent). Derived on every render, so switching a start page from
     // a chat to an agent run changes the wording, and removing a file frees the room it took.
     const target = fileOpts?.target() ?? "chat";
-    const fits = pendingRefusals(docs.filter(d => d.text !== undefined) as AttachedFile[], target);
+    const fits = pendingRefusals(docs.map(sentFile).filter((f): f is SentFile => !!f), target);
     let k = 0;
-    const reasons = docs.map((d): string | null => d.why ?? (d.tooBig != null ? tooLarge(d.name, d.tooBig, false, target) : fits[k++] ?? null));
-    const sendable: AttachedFile[] = docs.filter((d, i) => d.text !== undefined && !reasons[i]).map(d => ({ name: d.name, type: d.type, text: d.text! }));
+    const reasons = docs.map((d): string | null => d.why ?? (d.tooBig != null ? (d.pdf ? tooLargePdf(d.name, d.tooBig) : tooLarge(d.name, d.tooBig, false, target)) : fits[k++] ?? null));
+    const sendable: SentFile[] = docs.map((d, i) => (reasons[i] ? null : sentFile(d))).filter((f): f is SentFile => !!f);
     return {
         imgs, setImgs, loading, addFiles, onPaste, onDragOver, onDrop, fileRef,
-        docs, setDocs, reasons, sendable, canFiles: !!fileOpts, acceptsFiles: !!fileOpts?.accepts(), fileAccept: fileOpts?.accepts() ? `image/*,${TEXT_FILE_ACCEPT}` : "image/*",
+        docs, setDocs, reasons, sendable, canFiles: !!fileOpts, acceptsFiles: !!fileOpts?.accepts(),
+        fileAccept: fileOpts?.accepts() ? `image/*,${TEXT_FILE_ACCEPT}${fileOpts.acceptsPdf?.() ? `,${PDF_FILE_ACCEPT}` : ""}` : "image/*",
         remove: (i: number) => setImgs(a => a.filter((_, j) => j !== i)),
         removeDoc: (i: number) => setDocs(a => a.filter((_, j) => j !== i)),
         clear: () => { setImgs([]); setDocs([]); },
     };
+}
+
+/** A pending file as a command carries it, or null while it is refused unread. */
+export const sentFile = (d: PendingFile): SentFile | null =>
+    d.data !== undefined ? { name: d.name, type: d.type, data: d.data } : d.text !== undefined ? { name: d.name, type: d.type, text: d.text } : null;
+
+/** What a pending file's pill says: a text file's lines, a PDF's size (its pages are counted once the runtime reads it). */
+function pendingSummary(d: PendingFile): string {
+    if (d.data !== undefined) return `${d.name} · PDF, ${sizeLabel(b64Bytes(d.data))}`;
+    return d.text !== undefined ? fileSummary(fileInfo({ name: d.name, type: d.type, text: d.text })) : d.name;
 }
 
 /** The text files waiting in a box, as pills with their reasons: a refused one says why and is not sent.
@@ -109,7 +130,7 @@ export function FileStrip({ docs, reasons, onRemove }: { docs: PendingFile[]; re
     return (
         <div class="cfiles">
             {docs.map((d, i) => (
-                <FilePill key={`${i}${d.name}`} summary={d.text !== undefined ? fileSummary(fileInfo({ name: d.name, type: d.type, text: d.text })) : d.name}
+                <FilePill key={`${i}${d.name}`} summary={pendingSummary(d)}
                     refusal={reasons[i]} onRemove={() => onRemove(i)} />
             ))}
         </div>
@@ -206,7 +227,7 @@ export function Composer({ s, multiline, tools, keys }: { s: Session; multiline?
     const key = s.hash;
     const [text, setText] = useState(() => loadDraft(key));
     const att = useImageAttach(() => loadDraftImages(key), {
-        files: { target: () => (s.kind === "agent" ? "agent" : "chat"), accepts: () => services().acceptsFiles(key), initial: () => loadDraftFiles(key) },
+        files: { target: () => (s.kind === "agent" ? "agent" : "chat"), accepts: () => services().acceptsFiles(key), acceptsPdf: () => services().acceptsPdf(key), initial: () => loadDraftFiles(key) },
     });
     const type = (t: string) => { setText(t); saveDraft(key, t); };
     // Another session in the same box: its own draft. Not on mount, which `useState` already read: an effect runs after

@@ -45,7 +45,6 @@ after(async () => {
 
 test("a location accessor on the worker prototype is unreadable after the strip", {
     skip,
-    todo: "measured on the real browser worker and this Node prototype model: location remained readable and href named python-worker.js; postMessage, close and fetch were unreadable",
 }, async (t) => {
     if (!fork) return t.skip("needs the restricted-mode fork core (npm run fetch-pyodide)");
     assert.equal(beforeHref, WORKER_URL, "positive control: the prototype accessor must be readable before the strip");

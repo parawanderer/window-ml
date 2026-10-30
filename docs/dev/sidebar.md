@@ -41,6 +41,14 @@ the app handshakes `ready`). The buffer **replays on connect** (a panel opened m
 catches up); a fresh shell mount sends `ML_DEBUG_RESET` so stale events don't replay after
 navigation. Spec: `docs/spec/DEVTOOLS_PANEL_PLAN.md`.
 
+**A third host: the side panel, on hidden pages only.** `sidepanel.html`/`sidepanel.ts` host the card app
+(`__mlSidebarSurface: "card"`) in Chrome's side panel for a tab whose top document is hidden, where nothing of ours
+may enter the page (site-access.md, "A hidden page's surface: the side panel"). It reads its tab from `?tabId=`, takes
+the run's events on the `ml-sidepanel` port (the DevTools feed's buffer and replay), and relays the app's messages with
+`relayAppToWorker` (`app-host.ts`), which `panel.ts` shares; only the start goes its own way, as `PANEL_START_RUN`. A
+new app→parent message handled in `relayAppToWorker` reaches both. The panel page loads only while its tab is
+active, and it is not among Playwright's pages.
+
 **Debug surface (`debugMode`).** One config, three values — `"off"` / `"overlay"` /
 `"devtools"` (was the `sidebar` boolean) — set in the toolbar popup or Settings → Appearance.
 `shell.ts` `applyMode` drives it: `overlay` mounts the in-page shell; `devtools` **attaches
@@ -87,7 +95,7 @@ stylesheet beats, timed or not; a `:host` rule inside our root would, and the cl
 there. The checks for a stylesheet or rule in our root stay as a second line. The highlight's translucent tint over the
 outlined element stays in the shot.
 
-**The shadow roots are CLOSED.** All three (`#ml-sb-root`, `#ml-sb-card`, `#ml-sb-root-hl`) are attached with `mode:
+**The shadow roots are CLOSED.** All three (`#ml-sb-root`, `#ml-sb-card`, and the highlight's anonymous host) are attached with `mode:
 "closed"` in the content script's isolated world, and the shell keeps its own reference to each (`shellRoot`,
 `cardRoot`, `hlRoot`): our code never reads `.shadowRoot`, which is null in every world. What the page cannot get, each a
 test in `tests/e2e/site-access.spec.mjs` (attack 17): a root through the host, a global or an expando, an event's target
@@ -170,8 +178,10 @@ is one-way (page→panel). The overlay can reach the page (its parent is a conte
 the panel routes `panel → background → content-script shell`, keyed by the inspected
 `tabId`. **Hover-highlight uses exactly this**: the app posts `__mlHighlight`; `panel.ts`
 forwards it to the background as `ML_HL_REMOTE {tabId, ref}`, which `chrome.tabs.sendMessage`s
-to the tab's `shell.ts`, which draws the box (in devtools mode it lazily mounts a
-highlight-only shadow host, since no overlay is present). `SET_APPROVAL` is the same shape.
+to the tab's `shell.ts`, which draws the box in a host of its own in every mode, ANONYMOUS (SITE_PRESENCE
+step 4): a random custom-element name per page session (`anonymousTag`, ids.ts), no id or class of ours on it, our
+names only inside its closed root, and in the page only while a box is drawn. A test finds it with `highlightTag` and
+reads the box with `highlightBox` (e2e harness.mjs); `dom.ts` tells it from page content by identity (`ownHosts`). `SET_APPROVAL` is the same shape.
 The shell resolves a highlight's SELECTOR itself, in its isolated world, with the DOM tools' `queryAll` and
 `chrome.dom.openOrClosedShadowRoot` for the page's closed roots (`setClosedRootReader`); only an `@pt`/`@box` token,
 whose coordinates live in the main world's registry, is asked of `injected.ts` over the window (attack 18 in the spec).

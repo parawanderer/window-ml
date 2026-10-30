@@ -372,6 +372,10 @@ export interface PageToolEnvelope {
     /** a passed `click` precheck's link: the absolute `href` of the resolved element's nearest link, which the worker
      *  judges before the click (nav-arrival.ts). The page's word: the arrival is judged again whatever it says. */
     href?: string;
+    /** a passed `click` or `type` precheck's element, as the page resolved it: its tag, the absolute `href` of its nearest
+     *  link (null for none) and its accessible name ("" for none). The facts the worker's `act` policies judge. The page's
+     *  word, which a policy binds only as far as the page is honest about it (docs/spec/POLICIES.md). */
+    element?: { tag: string; href: string | null; name: string };
     /** RESERVED-surface click: the page-side tool couldn't synth-click a cross-origin iframe / sealed shadow
      *  target and needs a CDP click at this viewport coordinate — the BACKGROUND (trusted) does it. `hint` is
      *  an optional stuck-loop re-snap nudge the background appends to the click result. */

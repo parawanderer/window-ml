@@ -35,11 +35,11 @@ import { extractGrants, fetchUrlLiterals, tabGrantsForCall } from "./grant-extra
 import { parseInfo } from "../resource/resource-capacity";
 import { cdpClick, cdpShadowResolve, cdpKeyType, cdpEval, releaseDebugger } from "./sw-cdp";
 import { grantsFor, dropCallGrants, serverToolKey, pendingApprovals, grantCredFetch, grantOnceFetch, consentFetch, fetchConsent } from "./sw-consent";
-import { ASK_POLICY_CAUSE, navOnlyWhy, startLeftWhy, judgeCall, fetchFacts, navigateFacts, rememberFetchUrls, withPolicies, addRunPolicy, askWhyOf, askedByPolicy, withoutAsked, takeArchiveNotice } from "./sw-policies";
-import { checkProposal, recordedFetches, measureBreadth, breadthNote, type PolicyProposal } from "./policy-proposal";
+import { ASK_POLICY_CAUSE, navOnlyWhy, startLeftWhy, judgeCall, fetchFacts, navigateFacts, actFacts, noteAct, dropActs, actsOf, rememberFetchUrls, withPolicies, addRunPolicy, askWhyOf, askedByPolicy, withoutAsked, takeArchiveNotice } from "./sw-policies";
+import { checkProposals, recordedFetches, measureBreadth, breadthNote, measureActBreadth, actBreadthNote, type PolicyProposal } from "./policy-proposal";
 import { approveManifest, checkManifestProposal, draftCardNote, type CheckedManifest } from "./sw-manifest-proposal";
 import { approveLibrary, checkLibraryProposal, isLibraryDraft, precheckLibrary, type CheckedLibrary } from "./sw-library-proposal";
-import { isExtensionSender } from "./sw-site-access";
+import { isExtensionSender, senderSelfApproves } from "./sw-site-access";
 import { relayDebugEvent } from "./sw-debug";
 import { streamAgentTurn, fetchLLM, getConfig, modelCapabilities, residentModels, fetchOllamaInfo } from "./sw-llm";
 import { ensureLocalTools, noteLocalStep, runLocalTool, runsInWorker } from "./sw-local-tools";
@@ -77,6 +77,7 @@ import { arrivalAnsweredText, arrivalDeniedText, clickDeniedText, arrivalWaiting
 import { adoptOnTab } from "./adopt-run";
 import { approvalFor, cancelReasons, gatePageTurn, noteRunEnd, noteRunStart, personClaimed } from "./sw-start-approval";
 import { pageTurnText } from "../agent-start";
+import { toPageUi } from "./sw-side-panel";
 
 // The model-facing cap cdpEval clips its console to (exec's default per-slot cap) — the UI keeps far more, so
 // `seen` marks where the model's copy stopped, exactly like the main-world exec path.
@@ -510,6 +511,39 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     const storedP = (): StartRunPayload => (p.builtBy !== "worker" && isWorkerRun(runId)
         ? { ...p, builtBy: "worker", tools: withoutProposals(p.tools), ...(p.rebuild ? { rebuild: { ...p.rebuild, builtBy: "worker" } } : {}) } : p);
     const tabUrlNow = (): string => tabPageUrl.get(tabId) || p.pageUrl || "";
+    /** The page's precheck answer for a click or a type, from `actPolicy` to the precheck that follows it in the same call. */
+    const precheckOnce = new Map<string, Partial<import("../contract").PageToolEnvelope> | null>();   // state: plumbing — one call's precheck, between the two steps that read it
+    const actKey = (tool: string, a: unknown): string => `${tool}\0${JSON.stringify(a)}`;
+    /** What the model reads when a click follows a link a policy denies, or undefined: the describe layer of the arrival rule. */
+    const clickLinkRefusal = (href: unknown): string | undefined => {
+        if (typeof href !== "string") return undefined;
+        const j = judgeCall(runId, "fetch", navigateFacts(href));
+        const v = arrivalVerdict(href, j);
+        if (v.kind !== "deny" || !j.by || j.by === "builtin") return undefined;
+        recordRunLog(runId, { subsystem: "policy", kind: "deny", reason: j.by.label, detail: { policy: j.by.id, scope: j.by.scope, tool: "click", url: v.url } });
+        return clickDeniedText(v);
+    };
+    /** What the policies say of a click or a type (the `act` consumer, docs/spec/POLICIES.md), judged on the element the page resolves for it. */
+    const judgeAct = async (name: string, a: Record<string, unknown>): Promise<{ decision: "allow" | "deny" | "ask"; label: string; text?: string } | undefined> => {
+        if (name !== "click" && name !== "type") return undefined;
+        const env = await sendTool({ runId, name, args: a, precheck: true }).catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;
+        precheckOnce.set(actKey(name, a), env);
+        if (env?.precheckFailed) return undefined;   // doomed: the gate reports why, not a policy
+        // The link a click follows is judged first, as the precheck does: an `allow` on the click never lets a denied page through.
+        const linkRefused = name === "click" ? clickLinkRefusal(env?.href) : undefined;
+        if (linkRefused) return { decision: "deny" as const, label: "", text: linkRefused };
+        const url = tabUrlNow();
+        const element = env?.element ?? { tag: "", href: null, name: null };
+        noteAct(runId, { url, action: name, element });
+        const j = judgeCall(runId, "act", actFacts(url, name, element));
+        for (const b of j.broken) recordRunLog(runId, { level: "warn", subsystem: "policy", kind: "broken", reason: b.reason, detail: { policy: b.policy.id, tool: name } });
+        if (j.decision && j.by && j.by !== "builtin") {
+            recordRunLog(runId, { subsystem: "policy", kind: j.decision, reason: j.by.label, detail: { policy: j.by.id, scope: j.by.scope, tool: name, url, element: element.name ?? "" } });
+            return { decision: j.decision, label: j.by.label };
+        }
+        if (!j.decision && url && await senderSelfApproves({ url }).catch(() => false)) return { decision: "allow" as const, label: "this site is on the self-approval list" };
+        return undefined;
+    };
     /** Take a verify in the worker, pinned to `doc`, with the run's vision facts (carried in its rebuild config). */
     /** The run's vision facts for the worker's look, locate and verify: the worker's own for a run it built, a handed-over
      *  page-built run's held to what the runtime offers (run-vision.ts). Asked once per driver model. */
@@ -619,7 +653,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     // Undoes what this turn registered: run when the turn settles, and when its setup throws before the loop starts.
     let unhostAsks: (() => void) | undefined;   // set once the run's steps may raise nested asks (sw-asks.ts)
     let unwatchArrivals: (() => void) | undefined;   // set once the run judges its tab's arrivals (nav-arrival.ts)
-    const settle = (): void => { unhostAsks?.(); unwatchArrivals?.(); if (unwatchArrivals) watchBetweenTurns(tabId, runId); cancelReasons.delete(runId); noteRunEnd(runId); runControllers.delete(runId); runInboxes.delete(runId); untrackRun(tabId, runId); deleteRun(runId); deletePythonRun(runId); releaseDebugger(tabId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); ROOT C: drop its kept Python namespace
+    const settle = (): void => { unhostAsks?.(); unwatchArrivals?.(); if (unwatchArrivals) watchBetweenTurns(tabId, runId); cancelReasons.delete(runId); noteRunEnd(runId); dropActs(runId); runControllers.delete(runId); runInboxes.delete(runId); untrackRun(tabId, runId); deleteRun(runId); deletePythonRun(runId); releaseDebugger(tabId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); ROOT C: drop its kept Python namespace
     /** Ends the run's session on every surface when the setup throws after its start event went out; set once the fan exists. */
     let endSession: ((error: string) => void) | undefined;
     try {
@@ -726,7 +760,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             // Always fan to the PAGE (overlay / off card). For devtools ALSO fan to the panel — and the
             // page fan lets the optional corner card coexist with the panel (agentHudInDevtools); the
             // shell drops the page copy when no card is mounted, and never loops it back to the panel.
-            chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => { /* tab gone / no receiver */ });
+            toPageUi(tabId, { type: "ML_DEBUG_TO_PAGE", event });
             // ALWAYS feed a connected DevTools panel (no-op if none). A background-hosted run is the SOLE source
             // of its events — the shell receives them over chrome.runtime and never re-forwards them as ML_DEBUG_EVENT, so
             // this can't double-relay. Gating on `surface === "devtools"` left an off/card run's panel (if the
@@ -739,7 +773,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         /** A site-run notice (contract-debug.ts `SiteRunEvent`) to every surface showing the run, and into the replay a
          *  re-adopting page's shell rebuilds the card from. */
         const siteNotice = (event: Record<string, unknown>): void => {
-            chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => {});
+            toPageUi(tabId, { type: "ML_DEBUG_TO_PAGE", event });
             relayDebugEvent(tabId, event);
             if (p.crossPage !== false) bufferReplay(tabId, event);
             // The site's mark and its turns reach the session index too (it takes them from the worker only), so the chat
@@ -750,7 +784,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // "seen" indicator (agent-say-seen), which keys off its own id, not a step position.
         const fanEvent = (event: Record<string, unknown>): void => {
             if (abortCtl.signal.aborted) return;
-            chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => {});
+            toPageUi(tabId, { type: "ML_DEBUG_TO_PAGE", event });
             relayDebugEvent(tabId, event);   // always feed a connected panel (see emitStep — no double, no-op if none)
             ingestSessionEvent(event, { tabId, trusted: true, hosts: byWorker() });
             if (p.crossPage !== false) bufferReplay(tabId, event);
@@ -906,7 +940,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             // A run the WORKER built (or was handed: a durable resume, `makeWorkerRun`) has no page-side caller at all, on
             // any surface, so it fans its own from the start.
             if (p.surface !== "off" && !hasNavigated && !byWorker()) return;
-            chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => {});
+            toPageUi(tabId, { type: "ML_DEBUG_TO_PAGE", event });
             // We're the SOLE fanner in this branch (off, or overlay/devtools post-nav), so feed a connected panel
             // too — regardless of surface. Gating on `devtools` left an off/card run's answer never reaching a
             // connected panel (stuck on "running"). No double (page-side isn't fanning here); no-op without a panel.
@@ -1598,7 +1632,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // told to the model and never shown to the person as a card.
                     if (name === "propose_policy") {
                         if (!offersProposals()) return `Error: propose_policy is not offered in this run.`;
-                        const c = checkProposal(args);
+                        const c = checkProposals(args);
                         return "error" in c ? c.error : null;
                     }
                     // A manifest draft is resolved through the host and checked as the store would; nothing runs.
@@ -1620,19 +1654,14 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     }
                     if (name === "exec") { const refused = pageWorldRefusal(args.world); if (refused) return refused; }
                     if (!p.tools.some((t) => t.name === name && t.precheck)) return null;
-                    const env = await sendTool({ runId, name, args, precheck: true })
-                        .catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;
+                    // A click or a type was just prechecked by `actPolicy` (the loop asks it first): that answer is used once.
+                    const key = actKey(name, args);
+                    const env = precheckOnce.has(key) ? precheckOnce.get(key) ?? null
+                        : await sendTool({ runId, name, args, precheck: true }).catch(() => null) as Partial<import("../contract").PageToolEnvelope> | null;
+                    precheckOnce.delete(key);
                     if (env && env.precheckFailed) return env.result || "";
                     // A click on a link a policy denies is refused before the click: the describe layer of the arrival rule.
-                    if (name === "click" && typeof env?.href === "string") {
-                        const j = judgeCall(runId, "fetch", navigateFacts(env.href));
-                        const v = arrivalVerdict(env.href, j);
-                        if (v.kind === "deny" && j.by && j.by !== "builtin") {
-                            recordRunLog(runId, { subsystem: "policy", kind: "deny", reason: j.by.label, detail: { policy: j.by.id, scope: j.by.scope, tool: "click", url: v.url } });
-                            return clickDeniedText(v);
-                        }
-                    }
-                    return null;
+                    return name === "click" ? clickLinkRefusal(env?.href) ?? null : null;
                 },
                 approve: async ({ tool, arguments: args, seq, step, askWhy: gateWhy }) => {
                     // A page the run is held on is answered first (nav-arrival.ts): this call's card follows only if the
@@ -1646,14 +1675,20 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // propose_policy's card is the worker's alone: the code as sent, led by its breadth, measured here over
                     // the run's own fetch_url calls and a probe of unrelated sites, never anything the model said of it. What
                     // the person approves is `proposal`, and only that is added (the resolve below).
-                    let proposal: PolicyProposal | undefined;
+                    let proposal: PolicyProposal[] | undefined;
                     if (tool === "propose_policy") {
-                        const c = offersProposals() ? checkProposal(args) : undefined;
-                        if (c && "proposal" in c) {
-                            proposal = c.proposal;
+                        const c = offersProposals() ? checkProposals(args) : undefined;
+                        if (c && "proposals" in c) {
+                            proposal = c.proposals;
                             let messages: readonly import("../contract").NeutralMessage[] = [];
                             try { messages = contextByRun.get(runId)?.().messages ?? bgRuns.get(runId)?.messages ?? []; } catch { /* no history: measured over nothing, and the card says so */ }
-                            renderIn = { type: "code", text: proposal.source, lang: "javascript", format: true, note: breadthNote(proposal, measureBreadth(proposal, recordedFetches(messages))) };
+                            const calls = recordedFetches(messages);
+                            const notes = proposal.map((q) => q.consumer === "act" ? actBreadthNote(q, measureActBreadth(q, actsOf(runId))) : breadthNote(q, measureBreadth(q, calls)));
+                            // One card, each rule its own section with its own measured note; one answer adds them all.
+                            renderIn = proposal.length === 1
+                                ? { type: "code", text: proposal[0].source, lang: "javascript", format: true, note: notes[0] }
+                                : { type: "code", text: proposal.map((q, i) => `// Rule ${i + 1} of ${proposal!.length}: ${q.effect}\n${q.source}`).join("\n\n"), lang: "javascript",
+                                    note: proposal.map((_, i) => `Rule ${i + 1} of ${proposal!.length}. ${notes[i]}`).join("\n\n") };
                         } else renderIn = { type: "code", text: "", lang: "javascript", note: "This proposal cannot be added: the run does not offer propose_policy, or it does not run." };
                     }
                     // propose_manifest's card is the worker's too: the draft pinned to what the host resolved, led by how it
@@ -1756,8 +1791,11 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                                     // A proposed library: loaded under the gate, and stored only if that load agrees.
                                     if (ok && tool === "propose_manifest" && library && offersManifests()) approveLibrary(runId, library);
                                     if (ok && tool === "propose_policy" && proposal && offersProposals()) {
-                                        const added = addRunPolicy(runId, { consumer: "fetch", ...proposal, origin: "proposed" });
-                                        recordRunLog(runId, { subsystem: "policy", kind: "added", reason: added.label, detail: { policy: added.id, effect: added.effect, tool } });
+                                        const group = proposal.length > 1 ? `prop-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}` : undefined;
+                                        for (const q of proposal) {
+                                            const added = addRunPolicy(runId, { ...q, origin: "proposed", proposal: group });
+                                            recordRunLog(runId, { subsystem: "policy", kind: "added", reason: added.label, detail: { policy: added.id, effect: added.effect, tool, ...(group ? { proposal: group } : {}) } });
+                                        }
                                     }
                                 } catch (e) {
                                     recordRunLog(runId, { level: "error", subsystem: "tool", kind: "threw", reason: "approve", key: thrownKey(e), detail: { tool } });
@@ -1802,6 +1840,14 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     if (h?.kind !== "deny") return undefined;
                     raiseDenyCard();
                     return arrivalDeniedText(h);
+                },
+                // A click or a type is the `act` consumer, judged on the element the page resolves for it (docs/spec/POLICIES.md,
+                // "Acting on a page is a consumer"). The self-approval list is the builtin `allow`, and any row beats it.
+                actPolicy: async (name, a) => {
+                    const v = await judgeAct(name, a);
+                    // An answer that decides ends the call before its precheck runs: nothing is left for a later, identical call to reuse.
+                    if (v && v.decision !== "ask") precheckOnce.delete(actKey(name, a));
+                    return v;
                 },
                 // A navigate is the `fetch` consumer in its interactive mode: a policy over a host or a URL governs it as it
                 // governs the fetch. An `allow` covers a navigate whoever built the run: its arrival is judged again there.

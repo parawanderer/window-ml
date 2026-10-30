@@ -103,6 +103,27 @@ takes up to 1.0 MB per message", and the connection stays up. Only the hub path 
 they are. The shrunk copy fits to a budget with a 512-byte margin (the seal's measured overhead, the rest of the
 command, 3 bytes of JSON per image), and the exact check on the real seal has the last word.
 
+**A PDF goes ahead in chunks** (`filesAhead`/`putFile`, `file-frame.ts`; FILE_ATTACHMENTS.md, "Over the hub: chunks
+in an acknowledged window"). A `chat.start` or `session.send` carrying a PDF's base64 first asks `file.have` for its
+SHA-256: an older runtime answers `unsupported` and the command goes inline as before (which fits only when the PDF is
+small); one that holds the file whole is sent nothing; one that holds part is sent the rest. Each `file.put` is the
+command's JSON, a zero byte, then the chunk RAW: JSON never holds a zero byte, the sealed body is opaque to the hub, and
+base64 would spend a third more of the account's rate. A chunk is the hub's limit less the measured seal, the widest
+header this file's chunks can carry and `SIZE_MARGIN`. Four lanes send at most `FILE_PUT_WINDOW` (4) unanswered; done
+is the runtime's `complete`, never "all sent", and with every chunk answered and none complete the client asks
+`file.have` again rather than assume. Then the command is sealed with `{ name, type, sha256, bytes }` in the file's
+place. A PDF past `fileCap` (the runtime's 20 MiB, or 0.6 of the account's `accountBurstBytes` when that is less; the
+default 32 MiB burst gives 19.2) is refused before a chunk is sent. Tested end to end against the real hub
+(`tests/hub-file-put.test.mjs`): the window holding at four, resume, the inline fallback, and a runtime going away.
+
+**Nothing waits out the timeout for a runtime that is gone.** Two routes, both needed. The hub answers a command to an
+offline or lagging principal with `Error{UNAVAILABLE}` carrying the envelope's `ref`, which `HubClient.command` now sets
+(a counter) and maps back to the command's nonce (`refs`, the latest 1,024), so the event reaches the waiter; before,
+every direct envelope said `ref: 0` and the error was dropped. And the hub DISCARDS what it had queued to a runtime whose
+connection dropped, so commands already sent are never answered: when presence says the peer went offline, every
+command waiting on it settles `unavailable` (`waitingOn`). `CODE_LIMIT` answers `invalid`, since sending it again will
+not fit either.
+
 **The abort race is real and is handled twice.** Sealing and sending are asynchronous, so an abort can land between
 the check at the top of `send` and the listener being attached — at which point the listener is attached to a signal
 that has already fired and will never fire again. The flag is asked once more after everything the resolver needs is
@@ -175,6 +196,15 @@ reading it (`tests/hub-runtime.test.mjs`); `sw-hub.ts` plugs it into the worker.
   id they had.
 - **A device is a device because its chain verifies** to the account root, from presence; its key grants follow the
   VERIFIED leaf (`view`), never what presence claims.
+- **A `file.put` is the one command with bytes after its JSON** (`unframe`); any other command carrying some is
+  `invalid`. `file.put` and `file.have` are answered here, beside `device.*`, from `opts.files` (`FileChunks`,
+  `file-chunks.ts`; the worker's one copy is `sw-file-chunks.ts`), never by the local handler, which never sees raw
+  bytes. Both need `drive`, the scope of the message that names the file: a new scope would be missing from every
+  certificate already issued. An upload in progress is keyed by the sender and the hash, so one device's chunks cannot
+  spoil another's; a finished file by its hash alone, checked against it once the last chunk is in. Bounded: 20 MiB a
+  file, three files' worth in all (the least recently used go first), 15 minutes after the last touch. The local
+  handler puts a file back by its hash (`checkedFiles`' `heldFile`) and a hash it does not hold is `invalid`, "send it
+  again".
 - **A command must declare the scope its type needs.** The seal proves the sender holds the scope it declared; only
   the runtime knows which scope `session.delete` needs, so `opened.scope !== COMMAND_SCOPE[type]` is `forbidden`
   before the handler sees anything. Tested with a bare client sealing a delete under `view`.

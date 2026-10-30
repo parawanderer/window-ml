@@ -100,7 +100,7 @@ that subscribed it, and never after its `Unsubscribe` returns.
 A `RuntimeInfo` carries three things a client renders from:
 
 - **`capabilities`**: what the runtime can do (`chat`, `agent`, `tabs`, `screenshots`, `highlight`, `persistence`,
-  `sideCalls`, `pythonBench`, `resourcePanel`, `localSettings`, `switchModel`, `attachFiles` (`files` on the three commands that send a message), `devices`, and the reserved `headless` and `lineage`), which
+  `sideCalls`, `pythonBench`, `resourcePanel`, `localSettings`, `switchModel`, `attachFiles` (`files` on the three commands that send a message), `attachPdf` (a PDF's bytes in `files`, to a chat), `devices`, and the reserved `headless` and `lineage`), which
   `boxes` it uses, the session `archive` with its folder's state (present only while the archive is on), and
   `attention`: what needs someone's hand on the runtime (`no-model`, `backend-unreachable`, `site-access`, …), as
   codes a client words itself, since a runtime's text is untrusted. **Absent means no.** A client renders by capability and never assumes a browser.
@@ -176,7 +176,7 @@ runtime answers a type or option it does not offer with `unsupported`.
 
 | Command | Scope | Capability | Today |
 | --- | --- | --- | --- |
-| `session.send`: text, images, files, or any of them; steers a running agent or starts the next turn. `files` (`AttachedFile[]`: `{ name, type, text }`, decoded text) is checked by the runtime (at most 10, a name of at most 255 characters, at most 32,000 characters of text across them, else `invalid` with the reason, never trimmed) and goes into the message as `<file>` blocks. A message with only files is valid; the same `files` field is on `chat.start` and `agent.start`. With files, a running agent is not steered directly (a steer carries text only) but through its page or the worker's resume, which frame it | drive | `attachFiles` for `files` | `sessionSend` → `ML_SESSION_REMOTE` / the page's handle registry |
+| `session.send`: text, images, files, or any of them; steers a running agent or starts the next turn. `files` (`AttachedFile[]`: `{ name, type, text }`, decoded text) is checked by the runtime (at most 10, a name of at most 255 characters, at most 32,000 characters of text across them, else `invalid` with the reason, never trimmed) and goes into the message as `<file>` blocks. A message with only files is valid; the same `files` field is on `chat.start` and `agent.start`. With `attachPdf`, a file to a chat may be a PDF, `{ name, type, data }` with its bytes as base64 (at most 20 MB), or over the hub `{ name, type, sha256, bytes }` naming one sent ahead in `file.put` chunks, which the runtime puts back first (`invalid`, "send it again", when it does not hold it): the runtime reads it before the turn and answers `invalid` with the reason when it will not read, and sends its pages in order while their text fits (a share of the loaded model's context, else the text cap), naming the rest; to an agent run it is `invalid`. `vision: true` on `session.send` (a chat) and `chat.start` is the person's word that the model sees images; without it, images for a model whose vision is not reported and no reader model set are refused `unsupported` with the sentence (FILE_ATTACHMENTS.md). With files, a running agent is not steered directly (a steer carries text only) but through its page or the worker's resume, which frame it | drive | `attachFiles` for `files` | `sessionSend` → `ML_SESSION_REMOTE` / the page's handle registry |
 | `session.cancel` | drive | | `sessionCancel` → `CANCEL_RUN` |
 | `session.continue`: past the step cap, optionally with a `maxSteps` the person chose (a whole number, 1 to `MAX_CONTINUE_STEPS`; anything else is `invalid`, never rounded). Omitted keeps the cap the run was started with. A budget given here STICKS for the run's later turns, and the runtime announces it with an `agent-cap` so every surface counts against the same number. Answers `{ maxSteps }` when one was applied | drive | | `continueRun` |
 | `session.delete` | drive | `persistence` for saved sessions | nothing |
@@ -199,6 +199,8 @@ runtime answers a type or option it does not offer with `unsupported`.
 | `tab.screenshot`: on demand, size-capped | screen | `screenshots` | `CAPTURE_TAB` |
 | `page.highlight`: a selector, a canvas token, or clear | drive | `highlight` | `__mlHighlight` → `ML_HL_REMOTE` |
 | `side.call`: a utility-model call about a session | drive | `sideCalls` | `FETCH_LLM` with `extend: "utility"` |
+| `file.put`: one chunk of a PDF sent ahead of the message that names it, over the hub only: `{ runtime, sha256, index, count, bytes }`, the chunk's raw bytes after the JSON and a zero byte in the sealed body. Answers `{ held, complete }`; `complete` once every chunk is in and the bytes hash to `sha256`. At most 4 unanswered (FILE_ATTACHMENTS.md, "Over the hub") | drive | (the hub path; `unsupported` from a runtime that takes none, and the client sends inline) | nothing |
+| `file.have`: which chunks of a file this runtime holds, `{ held, count, complete }`, so a client sends only the rest | drive | (as `file.put`) | nothing |
 | `device.list` | admin | `devices` | nothing |
 | `device.renew`: a fresh certificate for the asking device, which still holds a valid one | view | `devices` | nothing |
 | `device.revoke`: unpair, and rotate the stream keys it held | admin | `devices` | nothing |
@@ -368,8 +370,8 @@ arbitrary generations on someone's main model. `purpose` and `session` go on the
   skipped, never guessed at.
 - **Images a client sends** are `data:image/*` URLs; runtimes cap their count and size (`cleanImages`) and drop
   anything else.
-- **Files a client sends** (`files`, text only so far: docs/spec/FILE_ATTACHMENTS.md) are untrusted text like a web
-  page's: the runtime checks their shape, count, name length and total size (`checkFilesField`), refuses rather than
+- **Files a client sends** (`files`: text, and a PDF's bytes to a chat, docs/spec/FILE_ATTACHMENTS.md) are untrusted
+  text like a web page's (a PDF's is the text its pages hold, read in the offscreen document's PDF worker): the runtime checks their shape, count, name length and total size (`checkFilesField`), refuses rather than
   trims, and writes them into the model's message as `<file>` blocks whose name is attribute-escaped and whose text
   cannot close its own block. A transcript carries only their descriptor (`PromptContext` kind `file`: name, type,
   bytes, lines), beside the message text that holds them. A runtime that does not list `capabilities.attachFiles`

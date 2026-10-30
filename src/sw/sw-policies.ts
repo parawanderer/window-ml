@@ -17,7 +17,7 @@ import { validList, CONSUMERS, GLOBAL_POLICIES_KEY, POLICY_LABEL_MAX } from "./p
 
 /** Which kind of call a policy is about; a policy is only ever evaluated over calls of its own consumer. `sh` is
  *  `ml.sh` (docs/spec/SHELL.md), whose facts its own consumer builds. */
-export type PolicyConsumer = "fetch" | "sh";
+export type PolicyConsumer = "fetch" | "sh" | "act";
 
 /** Where a policy came from: written by the person, added by answering an approval card, or proposed by the model and
  *  approved by the person on its own card (`propose_policy`). */
@@ -33,6 +33,8 @@ export interface StoredPolicy {
     label: string;
     origin: PolicyOrigin;
     created: number;
+    /** Set on the rows of one multi-rule proposal, the same id on each, so the policy page can show them together. */
+    proposal?: string;
 }
 
 /** What judging one call decided: the answer, the policy that gave it, and every policy that broke on the way.
@@ -238,10 +240,14 @@ export function runPolicies(runId: string): StoredPolicy[] { return (byRun.get(r
 export function brokenReason(id: string): string | undefined { return brokenWhy.get(id); }
 
 /** Add a policy to a run, unless the run already has one with the same source and effect; returns the run's copy. */
-export function addRunPolicy(runId: string, p: Pick<StoredPolicy, "consumer" | "effect" | "source" | "label" | "origin">): StoredPolicy {
+export function addRunPolicy(runId: string, p: Pick<StoredPolicy, "consumer" | "effect" | "source" | "label" | "origin"> & { proposal?: string }): StoredPolicy {
     const list = byRun.get(runId) ?? [];
     const same = list.find((q) => q.source === p.source && q.effect === p.effect && q.consumer === p.consumer);
-    if (same) return { ...same };
+    if (same) {
+        // A repeated row keeps its stored label and joins this proposal's group, so the group is whole.
+        if (p.proposal && same.proposal !== p.proposal) { same.proposal = p.proposal; saveRuns(); }
+        return { ...same };
+    }
     const made: StoredPolicy = { ...p, id: newId(), scope: "run", created: Date.now() };
     byRun.delete(runId);   // re-inserted last, so the cap drops the oldest session rather than this one
     byRun.set(runId, [...list, made]);
@@ -516,6 +522,49 @@ export function fetchFacts(url: string, opts: { credentials?: boolean; rendered?
 /** The facts of a navigation to `url`, the run's own `navigate` or a page its tab arrived on: a fetch as you, rendered,
  *  that the run then acts in (docs/spec/POLICIES.md, "Navigate is a fetch"). */
 export const navigateFacts = (url: string): ReturnType<typeof fetchFacts> => fetchFacts(url, { credentials: true, rendered: true, interactive: true });
+
+/** What a click or a type is on, as the worker resolved the element at the call: the facts the `act` consumer gives a policy. */
+export interface ActElement {
+    /** The element's tag, lower case. */
+    tag: string;
+    /** Its nearest link's absolute URL, or null when it has none: an `allow` that read it never fires, a `deny` does. */
+    href: string | null;
+    /** Its accessible name, "" when it has none (a fact: a nameless button), or null when the element could not be resolved. */
+    name: string | null;
+}
+
+/** The facts of a click or a type on a page: the page's `url` and `host`, the `action`, and the element as the worker
+ *  resolved it (docs/spec/POLICIES.md, "Acting on a page is a consumer"). Its effects are `unknown`: nothing frees it. */
+export function actFacts(url: string, action: "click" | "type", element: ActElement): Record<string, unknown> & { effects: EffectsData } {
+    let host = "";
+    try { host = new URL(url).hostname.toLowerCase(); } catch { /* no host */ }
+    return { kind: "act", url, host, action, element: { tag: element.tag, href: element.href, name: element.name }, effects: "unknown" };
+}
+
+/** One click or type this run resolved (made or refused), as the worker resolved it: what an `act` proposal's breadth is measured over. */
+export interface ActRecord { url: string; action: "click" | "type"; element: ActElement }
+
+/** Acts kept per run for a proposal's breadth; past it the oldest go. */
+const ACTS_PER_RUN_MAX = 100;
+const actsByRun = new Map<string, ActRecord[]>();
+defineState({
+    id: "policies.acts", scope: "session", realm: "worker", audience: "human", lostOn: ["worker-eviction"],
+    describe: "The clicks and types a run resolved, made or refused, as the worker resolved them (page, action, element): only so a proposed rule over them can say how far it reaches.",
+    read: ({ runId }) => { const l = runId ? actsByRun.get(runId) : undefined; return l?.length ? l.map((a) => ({ ...a, element: { ...a.element } })) : undefined; },
+});
+
+/** Forget a run's acts, when it ends. */
+export function dropActs(runId: string): void { actsByRun.delete(runId); }
+
+/** Remember a click or a type the worker resolved, for the breadth of a later proposal. */
+export function noteAct(runId: string, a: ActRecord): void {
+    const l = actsByRun.get(runId) ?? [];
+    l.push({ url: a.url, action: a.action, element: { ...a.element } });
+    actsByRun.set(runId, l.slice(-ACTS_PER_RUN_MAX));
+}
+
+/** The clicks and types a run resolved, made or refused, oldest first. */
+export const actsOf = (runId: string): readonly ActRecord[] => actsByRun.get(runId) ?? [];
 
 /** The policy that allows exactly one URL a person saw on a card, as code (`JSON.stringify` makes the literal). */
 export function fetchUrlPolicySource(url: string): string {

@@ -16,6 +16,7 @@ import { makeBackgroundTaskPromise } from "../bridge";
 import { VIEWS_PARAM, targetRender, lookViews, BOX_OVER_TEXT_TIP, legendFor, pointedImageNote } from "../tools/builtin-tools";
 import type { MlApi } from "../contract";
 import type { MlPublicConfig } from "../contract/contract-config";
+import { visionAnswer, type VisionAnswer } from "../image-gate";
 import type { MlTool, ToolResult } from "../contract/contract-agent";
 import type { ShotBox, VisionMemory } from "../contract/contract-render";
 import { queryAll, isElement, viewportRect, errText } from "../dom/dom";
@@ -409,18 +410,25 @@ export const _resolveVisionModel = async function(this: MlApi, agentModel: strin
  * @returns {Promise<boolean>} True if the model has vision capability.
  */
 export const _modelSees = async function(this: MlApi, model: string | null): Promise<boolean> {
-    if (!model) return false;
+    return (await this._modelVision(model)) === "yes";
+};
+
+/**
+ * Whether `model` sees images: "yes", "no", or "unknown", kept apart (image-gate.ts `visionAnswer`). What Ollama
+ * reports is authoritative; a backend that cannot say (cloud / non-Ollama / old Ollama) falls back to the person's
+ * declaration for the DEFAULT model, the only way such a model can be marked as seeing or not (e.g. HUD native vision
+ * on gpt-4o/minimax). Caps are cached in the worker.
+ *
+ * @param {string|null} model The model id to check.
+ * @returns {Promise<VisionAnswer>} The answer; "unknown" when there is no model or nothing can tell.
+ */
+export const _modelVision = async function(this: MlApi, model: string | null): Promise<VisionAnswer> {
+    if (!model) return "unknown";
     let caps: string[] | null;
     try { caps = await this.capabilities(model); } catch (e) { caps = null; }
-    if (Array.isArray(caps)) return caps.includes("vision");   // we KNOW (Ollama /api/show) — authoritative
-    // Undeterminable (cloud / non-Ollama / old Ollama): fall back to the user's declared capability for
-    // the DEFAULT model — the only way such a model can be marked vision-capable (e.g. HUD native vision
-    // on gpt-4o/minimax). Detection above always wins for Ollama, so this never overrides a known answer.
-    try {
-        const cfg = await this.config();
-        if (cfg && cfg.model && model === cfg.model && cfg.defaultModelVision) return cfg.defaultModelVision === "yes";
-    } catch (e) { /* no config → treat as unknown = no */ }
-    return false;
+    let cfg: MlPublicConfig | null = null;
+    if (!Array.isArray(caps)) { try { cfg = await this.config(); } catch (e) { /* no config → unknown */ } }
+    return visionAnswer(caps, { isDefault: !!cfg?.model && model === cfg.model, defaultModelVision: cfg?.defaultModelVision ?? "" });
 };
 
 /**

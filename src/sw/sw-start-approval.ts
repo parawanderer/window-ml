@@ -21,6 +21,7 @@ import { defineState } from "../state-registry";
 import { relayDebugEvent } from "./sw-debug";
 import { editSiteAccess, siteLevels } from "./sw-site-access";
 import { runInboxes } from "./sw-runs";
+import { toPageUi } from "./sw-side-panel";
 
 /** The session-storage key of the approvals. */
 export const APPROVALS_KEY = "ml_start_approved";
@@ -389,7 +390,7 @@ async function refundPersonTurn(runId: string, text: string, turn: PersonTurn, i
 /** Fan a site-run notice to every surface showing the tab's runs: the card or overlay, and a DevTools panel. Never
  *  the session index or the replay buffer: an ask is live, and a page can read the replay back (`DUMP_EVENTS`). */
 function fan(tabId: number, event: Record<string, unknown>): void {
-    chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => { /* tab gone */ });
+    toPageUi(tabId, { type: "ML_DEBUG_TO_PAGE", event });
     relayDebugEvent(tabId, event);
 }
 

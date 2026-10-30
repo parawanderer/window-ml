@@ -22,6 +22,8 @@ import { ChannelKey, replyTo, type Opened } from "../seal";
 import { encodeRevocations } from "../revocation";
 import type { Identity } from "../keys";
 import type { DeviceRegistry } from "./hub-devices";
+import type { FileChunks } from "./file-chunks";
+import { unframe } from "../file-frame";
 import { Kind, Role } from "../wire";
 
 /** How far back a freshly issued window reaches, so a device whose clock runs a little behind is not refused. */
@@ -103,6 +105,8 @@ export class HubRuntime {
             signer?: Identity;
             /** how often to check whether the list is due for its daily re-sign */
             resignCheckMs?: number;
+            /** the files being sent in `file.put` chunks. Absent: `file.*` is `unsupported`, and a client sends inline */
+            files?: FileChunks;
         },
     ) {}
 
@@ -260,9 +264,13 @@ export class HubRuntime {
         // (The certificate's are proto strings; `ml.current.client` keys `may` by the known scopes only, so an unknown one
         // read through the cast is dropped there.)
         const granted = (reg ? reg.allowed(hex(opened.from), leafScopes) : leafScopes) as readonly Scope[];
-        try { command = JSON.parse(decoder.decode(opened.body)) as Command; } catch { /* below */ }
+        // A `file.put` carries its chunk RAW after its JSON (file-frame.ts); no other command carries anything there.
+        const { json, chunk } = unframe(opened.body);
+        try { command = JSON.parse(decoder.decode(json)) as Command; } catch { /* below */ }
         if (!command || typeof command !== "object" || typeof command.type !== "string") {
             result = { ok: false, error: { code: "invalid", message: "not a command" } };
+        } else if (chunk !== null && command.type !== "file.put") {
+            result = { ok: false, error: { code: "invalid", message: `${command.type} carries no bytes after its JSON` } };
         } else if (!(command.type in COMMAND_SCOPE)) {
             result = { ok: false, error: { code: "unsupported", message: "this runtime does not know that command" } };
         } else if (opened.scope !== COMMAND_SCOPE[command.type as CommandType]) {
@@ -275,6 +283,8 @@ export class HubRuntime {
             // cannot change that, so the allowlist is what enforces it — the same place, and the same immediacy, as a
             // revocation. Worded as the account's decision rather than as a broken certificate.
             result = { ok: false, error: { code: "forbidden", message: `this device is no longer allowed \`${opened.scope}\` on this account` } };
+        } else if (command.type === "file.put" || command.type === "file.have") {
+            result = await this.file(command, chunk, hex(opened.from));
         } else if (command.type.startsWith("device.")) {
             ({ result, rotate } = await this.device(command, principal, opened.chain, hex(opened.from)));
         } else {
@@ -295,6 +305,20 @@ export class HubRuntime {
             await publishList().catch(() => {});
             client.close();
         }
+    }
+
+    /** `file.put` and `file.have`, against the chunks this runtime holds for the sender. */
+    private async file(command: Extract<Command, { type: "file.put" | "file.have" }>, chunk: Uint8Array | null, from: string): Promise<CommandResult<CommandType>> {
+        const files = this.opts.files;
+        if (!files) return { ok: false, error: { code: "unsupported", message: "this runtime does not take files in chunks" } };
+        if (command.type === "file.have") {
+            if (typeof command.sha256 !== "string") return { ok: false, error: { code: "invalid", message: "sha256 must be a string" } };
+            return { ok: true, data: files.have(from, command.sha256) } as CommandResult<CommandType>;
+        }
+        if (!chunk) return { ok: false, error: { code: "invalid", message: "file.put carries its chunk after its JSON" } };
+        const r = await files.put(from, command, chunk);
+        return r.ok ? { ok: true, data: { held: r.held, complete: r.complete } } as CommandResult<CommandType>
+            : { ok: false, error: { code: r.code, message: r.message } };
     }
 
     /** `device.list`, `device.revoke` and `device.renew`. Re-scoping is not built yet. */

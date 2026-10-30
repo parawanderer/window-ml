@@ -3181,6 +3181,56 @@ test("composer image: a TEXT-ONLY agent gets the pasted image transcribed (OCR f
     assert.match(firstUser.content, /can't see images/);
 });
 
+test("composer image: a model of UNKNOWN vision with no reader refuses the run before any model call", async () => {
+    const calls = [];
+    const world = loadPageWorld({
+        onRuntimeMessage: (m) => {
+            if (m.type === "GET_CONFIG") return { data: { model: "cloud-x", ocrModel: "", defaultModelVision: "", pageApprovalAllowed: true } };
+            if (m.type === "MODEL_CAPS") return { data: null };   // a backend that cannot say
+            calls.push(m.type);
+            return { data: { content: "done", tool_calls: [] } };
+        }
+    });
+    await assert.rejects(world.ml.agent("what's this?", { images: ["data:image/png;base64,PASTED"] }), /This model may not see images\. If it does, turn on 'This model sees images'/);
+    assert.ok(!calls.includes("FETCH_LLM"), "nothing was sent to a model");
+});
+
+test("composer image: a model KNOWN not to see, with no reader, is told the image was not sent", async () => {
+    const steps = [];
+    const world = loadPageWorld({
+        onRuntimeMessage: (m) => {
+            if (m.type === "GET_CONFIG") return { data: { model: "text-llm", ocrModel: "", pageApprovalAllowed: true } };
+            if (m.type === "MODEL_CAPS") return { data: ["completion"] };
+            if (m.type === "FETCH_LLM" && m.payload?.ocr) throw new Error("no reader was asked for");
+            steps.push(m.payload.messages);
+            return { data: { content: "done", tool_calls: [] } };
+        }
+    });
+    await world.ml.agent("read it", { images: ["data:image/png;base64,PASTED"] });
+    const firstUser = steps[0].find(m => m.role === "user");
+    assert.ok(!firstUser.images);
+    assert.match(firstUser.content, /\[Pasted image was not sent: you can't see images, and no reader model is set to read it\.\]/);
+});
+
+test("composer image: a model of unknown vision with a reader SET whose vision is unreported goes to that reader", async () => {
+    const steps = [];
+    const read = [];
+    const world = loadPageWorld({
+        onRuntimeMessage: (m) => {
+            if (m.type === "GET_CONFIG") return { data: { model: "cloud-x", ocrModel: "cloud-reader", pageApprovalAllowed: true } };
+            if (m.type === "MODEL_CAPS") return { data: null };
+            if (m.type === "FETCH_LLM" && m.payload?.ocr) { read.push(m.payload.model); return { data: "TEXT-42" }; }
+            steps.push(m.payload.messages);
+            return { data: { content: "done", tool_calls: [] } };
+        }
+    });
+    await world.ml.agent("read it", { images: ["data:image/png;base64,PASTED"] });
+    const firstUser = steps[0].find(m => m.role === "user");
+    assert.ok(!firstUser.images, "no pixels to a model whose vision is not known");
+    assert.deepEqual(read, ["cloud-reader"]);
+    assert.match(firstUser.content, /cloud-reader transcribed its text:\]\nTEXT-42/);
+});
+
 test("vision:true forces NATIVE look on the agent's own model, bypassing the caps probe", async () => {
     const steps = [];
     const world = loadPageWorld({

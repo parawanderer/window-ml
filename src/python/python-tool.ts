@@ -126,7 +126,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                 },
                 tableRaw: { type: "boolean", description: "Load table cells as raw STRINGS (skip the default numeric/currency auto-cast). Use only for ZIP/SKU/leading-zero IDs that casting would corrupt." },
                 // Only where names persist (a worker-hosted run): the sandbox is shut after 30 min idle (py-reap.ts).
-                ...(mintVia ? { keep: { type: "boolean", description: "Keep your names through idle gaps over 30 min (a run that waits hours between calls) until this run ends. Otherwise an idle sandbox is shut and its names lost." } } : {}),
+                ...(mintVia ? { keep: { type: "boolean", description: "Keep your names through idle gaps over 30 min (a run that waits hours between calls) until this run ends or its sandbox is killed (a timeout, a crash, a cancel), which the next cell is told as loss. Otherwise an idle sandbox is shut and its names lost." } } : {}),
                 ...outputCapParams("python_exec", "Prefer returning a compact result."),
                 ...retryParams("python_exec"),
             },
