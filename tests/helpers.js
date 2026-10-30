@@ -584,11 +584,13 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         // Simulates the content script opening a streaming Port. Returns a client
         // handle: send(msg) posts to the background port; onMessage(fn) receives
         // background pushes; messages[] collects them.
-        connect: (name = "LLM_STREAM", sender = undefined) => {
+        connect: (...args) => {
+            const name = args[0] ?? "LLM_STREAM";
+            // The DevTools feed's port is the panel's when a test names no sender: an extension page with no tab, as a
+            // devtools page's port was measured to carry (serveDevtoolsPort closes any other sender's). A sender passed
+            // as undefined or null is a test asking for no sender, and gets none.
+            const sender = args.length < 2 && name === "ml-devtools" ? { url: "chrome-extension://test/panel.html" } : args[1];
             if (!siteGate && sender) approveSender(sender);
-            // The DevTools feed's port is the panel's unless a test says otherwise: an extension page with no tab, as a
-            // devtools page's port was measured to carry (serveDevtoolsPort closes any other sender's).
-            if (!sender && name === "ml-devtools") sender = { url: "chrome-extension://test/panel.html" };
             const messages = [];
             const clientHandlers = [];
             const backgroundHandlers = [];
