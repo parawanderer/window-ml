@@ -617,3 +617,59 @@ test("python figure: both looks tell the model what the pixels are; native look 
     const capture = await buildNativeLookTool({ defineTool }, { host }).run({ ...args, _imageDrawn: undefined, _imageLabel: "@tool:abc1234 (captured at step 1)" });
     assert.match(capture.content, /screenshot captured EARLIER in this run .*, not the page as it is now/);
 });
+
+// --- an attached file: `@file:` read by pages (FILE_ATTACHMENTS.md, slice 3) -------------------------------------------
+
+const { fileId } = await import("../src/pointers/file-pointer.ts");
+const FILE_DOC = { pageCount: 4, pages: [1, 2, 3, 4].map((n) => ({ n, text: `page ${n} text\nrevenue ${n * 10}`, kind: "text", measure: {} })) };
+/** A store holding one attached file, and a value store that answers its document by key. */
+function withFile(over = {}) {
+    const tokenStore = new TokenStore();
+    const f = tokenStore.files.note({ id: fileId("abcdef", 0), name: "report.pdf", type: "application/pdf", bytes: 900, pages: 4, read: 4, turn: 1,
+        doc: "k-doc", data: "k-data", sha256: "aa", chars: 100, figures: [], scans: [], ...over });
+    const reads = [];
+    const readText = async (key) => { reads.push(key); if (key !== "k-doc") throw new Error("ValueMissing: evicted"); return JSON.stringify(FILE_DOC); };
+    return { tokenStore, f, reads, readText };
+}
+
+test("dereference @file: reads pages through the pipe, from the stored document, with a header naming who attached it", async () => {
+    const { tokenStore, f, reads, readText } = withFile();
+    const r = await drive([call("dereference", { token: `@file:${f.id}`, pipe: "pages 2-3 | grep revenue" })], () => ({ result: "" }), { tokenStore, readText });
+    assert.equal(derefResult(r), `@file:${f.id} "report.pdf": attached by the person. PDF, 4 pages.\n\nrevenue 20\nrevenue 30`);
+    assert.deepEqual(reads, ["k-doc"]);
+});
+
+test("dereference @file: by its quoted name; with no pipe, every page as sections", async () => {
+    const { tokenStore, readText } = withFile();
+    const r = await drive([call("dereference", { token: '@file:"report.pdf"' })], () => ({ result: "" }), { tokenStore, readText });
+    assert.match(derefResult(r), /<page n="1">\npage 1 text\nrevenue 10\n<\/page>\n<page n="2">/);
+});
+
+test("dereference @file: errors are sentences the model can act on: an absent page, an unknown file, a document gone", async () => {
+    const { tokenStore, f, readText } = withFile();
+    const r = await drive([
+        call("dereference", { token: `@file:${f.id}`, pipe: "pages 9" }, "a"),
+        call("dereference", { token: "@file:report.pdf" }, "b"),
+        call("dereference", { token: "@tool:" + f.id }, "c"),
+    ], () => ({ result: "" }), { tokenStore, readText });
+    const out = r.results.filter((x) => x.name === "dereference").map((x) => x.result);
+    assert.match(out[0], /^Error: `pages`: this file holds pages 1-4; it has no page 9\./);
+    assert.match(out[1], /^Error: '@file:report\.pdf' is a file NAME, and a name must be quoted/);
+    assert.match(out[2], /^Error: MemoryFault: pointer '@tool:/, "a file's id is not a tool output's");
+    const gone = withFile({ doc: "k-gone" });
+    const g = await drive([call("dereference", { token: `@file:${gone.f.id}`, pipe: "pages 1" })], () => ({ result: "" }), { tokenStore: gone.tokenStore, readText: gone.readText });
+    assert.match(derefResult(g), /^Error: ValueMissing: evicted/);
+});
+
+test("the inventory lists attached files before tool outputs, with how to read one", async () => {
+    const { tokenStore, f, readText } = withFile();
+    const r = await drive([call("dereference", {})], () => ({ result: "" }), { tokenStore, readText });
+    assert.equal(derefResult(r), `1 file attached by the person:\n  @file:${f.id} "report.pdf" PDF, 4 pages, turn 1\nRead one by pages: token "@file:${f.id}", pipe "pages 1-3".\nNo tool outputs captured yet.`);
+});
+
+test("ml.dereference in code refuses an attached file with a sentence naming the tool that reads it", async () => {
+    const { tokenStore, f, readText } = withFile();
+    let sink;
+    await drive([], () => ({ result: "" }), { tokenStore, readText, tokenSink: (fn) => { sink = fn; } });
+    assert.throws(() => sink(`@file:${f.id}`), /cannot read an attached file yet\. Read its pages with the dereference tool/);
+});

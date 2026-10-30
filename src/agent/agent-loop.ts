@@ -31,7 +31,9 @@ import { resolveOutputCap } from "../contract/contract-pointers";
 import { recordAppended, snapshotCurrent, type CurrentSnapshot, type RecordedMeta } from "./current-context";
 import type { RunLogEvent } from "../log/run-log";
 import { TokenStore, derefPipe, describeToken, extraBeyondModel, memoryFault, cleanLabel, nameOf, shortType, isAliasRef, parseLabel, DEREF_TOOL, type TokenKind, type TokenValue, type DerefRead } from "../pointers/token-pipe";
-import type { PipeLimits } from "../pointers/text-pipe";
+import { runPipe, type PipeLimits } from "../pointers/text-pipe";
+import { FILE_PREFIX, fileRef, fileSections, quoteName } from "../pointers/file-pointer";
+import type { PdfDoc } from "../pdf/pdf-read";
 import { CITABLE_TOOLS } from "../tools/tool-params";
 
 export type Approval = "readonly" | "sandbox" | "same-origin" | "consented" | "self-source" | "user" | "denied" | "skipped" | "cancelled";
@@ -620,6 +622,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         // Still answer with the inventory (that is what it needs to recover), but say the pipe was dropped
         // rather than silently ignoring an argument it deliberately wrote.
         if (!ref) return { result: pipe.trim() ? `${inventory()}\n\n(Your \`pipe\` was not applied: no pointer was named to apply it to.)` : inventory() };
+        if (ref.startsWith(FILE_PREFIX)) return await derefFile(ref, pipe);
         const { value: v, matched, score, via } = tokenStore.resolveRef(ref, opts.labelMatch);
         // A pointer that doesn't resolve is usually a HALLUCINATED id (six plausible hex characters that were
         // never minted), so name the closest real ones rather than just saying no — the model can then correct
@@ -684,6 +687,23 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             return { result: `Error: ${(e as Error)?.message || e}` };
         }
     };
+    /** `dereference` of an attached file: its pages as `<page>` sections, through the pipe (`pages 3-5 | grep …`), clipped
+     *  like any read from the value store. The document is read from the value store each time, so a file whose rows
+     *  are gone fails with the store's reason. */
+    const derefFile = async (ref: string, pipe: string): Promise<ToolRunResult> => {
+        const r = tokenStore.files.resolve(ref);
+        if (!r.file) return { result: `Error: ${r.error}` };
+        const f = r.file;
+        try {
+            if (!opts.readText) throw new Error("this run cannot read attached files.");
+            const sections = fileSections(JSON.parse(await opts.readText(f.doc)) as PdfDoc);
+            const text = clipOut(pipe.trim() ? runPipe(sections, pipe) : sections, UI_OUT_CAP);
+            const head = `${fileRef(f)} ${quoteName(f.name)}: attached by the person. PDF, ${f.pages} page${f.pages === 1 ? "" : "s"}.`;
+            return { result: `${head}\n\n${text}`, renderOut: derefRender(text) };
+        } catch (e) {
+            return { result: `Error: ${(e as Error)?.message || e}` };
+        }
+    };
     const tokenList = (): string =>
         tokenStore.size ? tokenStore.all().map(v => `@tool:${v.id} (${nameOf(v)}, step ${v.step})`).join(", ") : "(nothing captured yet)";
     /** Everything this session holds a pointer to — what it is, what it was called, and how far back. The
@@ -692,11 +712,16 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
      *  every run. One line each, no column padding (it is read by a model). */
     const inventory = (): string => {
         const all = tokenStore.all();
-        if (!all.length) return "No pointers captured yet this session. Run a tool with `token: true` (or a short label) and its output becomes readable here.";
+        const files = tokenStore.files.all();
+        const attached = files.length
+            ? `${files.length} file${files.length === 1 ? "" : "s"} attached by the person:\n${files.map((f) => `  ${fileRef(f)} ${quoteName(f.name)} PDF, ${f.pages} pages, turn ${f.turn}`).join("\n")}\n`
+                + `Read one by pages: token "${fileRef(files[files.length - 1])}", pipe "pages 1-3".`
+            : "";
+        if (!all.length) return attached ? `${attached}\nNo tool outputs captured yet.` : "No pointers captured yet this session. Run a tool with `token: true` (or a short label) and its output becomes readable here.";
         const lines = all.map((v) => `  @tool:${v.id} (${nameOf(v)}) ${shortType(v)}, step ${v.step}`);
         const labelled = all.find((v) => v.label);
         const byLabel = labelled ? ` — or by its label: @tool:${JSON.stringify(labelled.label)}.` : "";
-        return `${all.length} pointer${all.length === 1 ? "" : "s"} in this session:\n${lines.join("\n")}\n`
+        return `${attached ? `${attached}\n` : ""}${all.length} pointer${all.length === 1 ? "" : "s"} in this session:\n${lines.join("\n")}\n`
             + `Read one by passing it as \`token\`, e.g. "@tool:${all[all.length - 1].id}"${byLabel}`;
     };
     /** `look` at an IMAGE POINTER. A screenshot the run already captured is addressable like any other output,
@@ -718,6 +743,8 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     // Hand the resolver to the host (see tokenSink). Throws exactly what the tool would return, so a failed
     // read inside exec surfaces the same MemoryFault / pipe error the model sees from the tool itself.
     opts.tokenSink?.((ref: string, pipe?: string | string[], limits?: PipeLimits): DerefRead => {
+        // The tool reads an attached file; code does not yet (its typed read is a later change, FILE_ATTACHMENTS.md).
+        if (String(ref).trim().startsWith(FILE_PREFIX)) throw new Error(`ml.dereference cannot read an attached file yet. Read its pages with the dereference tool: token "${String(ref).trim()}", pipe "pages 1-3".`);
         const { value: v, matched, score } = tokenStore.resolveRef(ref, opts.labelMatch);
         if (!v) throw new Error(memoryFault(ref, tokenStore.nearest(ref), seq));
         // A soft label match travels BESIDE the value, never inside it: the caller here is a script that will
