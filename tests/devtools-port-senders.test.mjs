@@ -109,6 +109,20 @@ test("a port whose sender names no url and no tab reads nothing", { todo: TODO }
     assert.equal(port.wasDisconnected(), true, "the worker closes the port it refuses");
 });
 
+test("a port connected with NO sender at all reads nothing", { todo: TODO }, async () => {
+    // The other side of the falsy-sender edge: #1369's helper makes a falsy sender into the panel shape, so a port that
+    // brings no sender must be refused rather than served as the panel. Chrome always fills a sender in, so this is the
+    // close on that helper's default, not a shape a page can reach.
+    const bg = loadBackground({ config: CONFIG });
+    await seed(bg);
+    for (const sender of [undefined, null]) {
+        const port = bg.connect("ml-devtools", sender);
+        port.send({ type: "ml-devtools-init", tabId: RUN_TAB });
+        await settle();
+        assert.deepEqual(port.messages, [], `a port with no sender was served: ${JSON.stringify(port.messages)}`);
+    }
+});
+
 test("a port that names no tab reads nothing, from any sender", async () => {
     const bg = loadBackground({ config: CONFIG });
     await seed(bg);
