@@ -444,6 +444,14 @@ asks for `pills` on a wide screen (its five groups as a secondary pill row in th
 layout a search already draws, so a search lands on the matching section either way. The DevTools panel and the overlay
 keep the default `tabs`.
 
+**`ml` in the page's own console** (`src/chat-console.ts`). An extension page gets no `injected.js`, so the entry builds
+the members that need no page under them (`chat`, `createChat`, `resumeChat`, `schema`, the model and server members)
+from the same `ml-*` modules and relays their messages itself, as `content.ts` does for a site: one-shot requests
+through `HANDLE_MAP`, a streamed chat on the `LLM_STREAM` port. Both ends of the page channel are in this one world
+(`page-world-isolated`, imported first). It opens nothing: the worker already treats an extension page as the person's
+(`isExtensionSender`). `agent`, `step`, `fetch` and the DOM tools are absent, since a run never starts on a page we own.
+Its chats are not recorded as sessions. `chat-page.spec.mjs` checks every member is window.ml's own.
+
 It sits at `src/` rather than in `src/chat/` because it is the one file of the chat page that knows `chrome`
 exists, and everything under `src/chat/` has to build for a phone. `sidebar/services-ext.ts` sits beside its seam
 for the same reason.

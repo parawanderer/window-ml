@@ -598,6 +598,20 @@ each turn) trips it — hence the rate-limit backoff (`docs/dev/architecture.md`
 usefully (tiny CPU models botch tool-calling), so a free hosted API is the only real-model option in
 CI; do real iteration on a local GPU box instead.
 
+### A scripted model driving the tools
+
+The tests that matter most for the agent are the ones where `fake-llm.mjs` plays the model and its scripted turns
+(`{ tool, args }`) call the REAL tools, so the run goes through the gate, the tool, the pointer store and back into
+the next request. A unit test's fake model never gets past the tool's boundary; these are the only tests that check a
+model can get from a question to an answer through the tools as they are wired.
+
+- **Assert on what the model received**, read from the next request (`fake.calls()`), not only on what the panel
+  shows. A tool that ran and handed the model the wrong text passes a test that only looks at the screen.
+- **Which tools have one:** `node scripts/test-index.mjs --driven <regex>` lists every scripted call (the tool, the
+  line, the test), and `--driven --gaps` names the builtin tools no scripted model calls in any e2e test. It reads the
+  scripts themselves, so a new test counts without being tagged. A run EVENT drawn by a test (`tool` beside
+  `arguments`, `toolMs` or `result`) drives nothing and is not counted.
+
 ## The frame recorder (`scripts/frames.mjs`)
 
 Records what the chat page DRAWS, for animation work verified by an agent that cannot watch video. It launches the built extension against `fake-llm.mjs`, starts a chat through the start box (on a phone it first clicks "New session", since the list comes first), plays N turns, then records one `--scenario`: `reload`, `send` or `stream` (the fake's `streamDelayMs` is 70 for that one).

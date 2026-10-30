@@ -3,7 +3,7 @@
 // "Acting on a page is a consumer" and the fourth row).
 //
 // The pure parts: the facts and the null-fact rule, the element a page resolves, the proposal of `act` rows and its breadth.
-// The run host's use of them (the precheck, the gate) is tested in act-policy-host.test.mjs, and the whole in
+// The run host's use of them (the precheck, the gate) is tested by the `act:` rows of tests/nav-arrival-host.test.mjs, and the whole in
 // tests/e2e/policy-worked-example.spec.mjs.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -73,6 +73,26 @@ test("actElement is the tag, the nearest link's absolute href and the accessible
     assert.deepEqual(actElement({ selector: "#n" }), { tag: "button", href: null, name: "" }, "a nameless button is a fact, not an unknown");
     assert.equal(actElement({ selector: "#al" }).name, "Delete");
     assert.deepEqual(actElement({ selector: "#t" }), { tag: "input", href: null, name: "Search" });
+});
+
+test("actElement of a point token is the element under the point, as the click hits it; a box token and a stale token resolve none", async () => {
+    const { mintPoint, mintBox } = await import("../src/util.ts");
+    mount(`<a id="l" href="/admin/"><button id="b">Approve This Draft</button></a><button id="d">Delete</button>`);
+    const at = { 10: "b", 50: "d" };
+    document.elementFromPoint = (x) => document.getElementById(at[x]) ?? null;
+    assert.deepEqual(actElement({ selector: mintPoint(10, 5) }), { tag: "button", href: "https://a.example/admin/", name: "Approve This Draft" }, "the link around the button is the click's too");
+    assert.deepEqual(actElement({ selector: mintPoint(50, 5) }), { tag: "button", href: null, name: "Delete" });
+    assert.equal(actElement({ selector: mintPoint(99, 5) }), undefined, "nothing under the point");
+    assert.equal(actElement({ selector: "@pt:00000000" }), undefined, "a token that does not resolve");
+    assert.equal(actElement({ selector: mintBox({ left: 0, top: 0, right: 20, bottom: 20 }) }), undefined, "a box is not clickable: the precheck refuses it");
+});
+
+test("actElement of a point on or inside a canvas is the canvas, as clickAt retargets it", async () => {
+    const { mintPoint } = await import("../src/util.ts");
+    mount(`<canvas id="c" aria-label="Board"><span id="fallback">Fallback</span></canvas><button id="b">Go</button>`);
+    document.elementFromPoint = (x) => document.getElementById(x === 10 ? "fallback" : "b");
+    assert.deepEqual(actElement({ selector: mintPoint(10, 5) }), { tag: "canvas", href: null, name: "Board" }, "a hit inside the canvas resolves the canvas");
+    assert.equal(actElement({ selector: mintPoint(50, 5) }).tag, "button", "a hit outside any canvas is the element itself");
 });
 
 test("actElement is the name AT THE CALL: a button renamed by script is read under its new name", () => {

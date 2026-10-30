@@ -1267,3 +1267,43 @@ test("#/settings/extension/backup opens the Storage section and scrolls to Backu
         await page.close();
     } finally { await ext.close(); }
 });
+
+// --- `ml` in the chat page's own console (chat-console.ts) ---
+
+// The chat page is an extension page, so no injected.js puts window.ml there; chat-console.ts builds the chat and model
+// members from the same modules and relays them itself. Each member must be window.ml's own (a typo'd or renamed one
+// would be a different API in one console), a one-shot chat, a streamed chat and the model list must reach the worker,
+// and nothing that starts a run or reads a page is there.
+test("the chat page's console has ml with window.ml's chat and model members, and no agent", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const site = await startPageServer({});
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model" });
+        fake.setScript([{ content: "one-shot answer" }, { content: "streamed answer" }]);
+        const { page, errors } = await openChatPage(ext);
+
+        const members = await page.evaluate(() => Object.keys(window.ml).filter((k) => k !== "ready").sort());
+        const site1 = await ext.context.newPage();
+        await site1.goto(site.url + "/");
+        await waitForMl(site1);
+        const kinds = await site1.evaluate((names) => names.map((n) => typeof window.ml[n]), members);
+        expect(kinds.every((k) => k === "function"), `every console member is a window.ml function: ${members}`).toBe(true);
+        for (const absent of ["agent", "createAgent", "step", "look", "fetch", "read", "pythonExec"]) {
+            expect(members, `${absent} needs a site's page`).not.toContain(absent);
+        }
+
+        expect(await page.evaluate(async () => (await window.ml.ready) === window.ml)).toBe(true);
+        expect(await page.evaluate(() => window.ml.chat("hello"))).toBe("one-shot answer");
+        const streamed = await page.evaluate(async () => {
+            const deltas = [];
+            const c = window.ml.createChat({});
+            const reply = await c.chat("again", { onToken: (d) => deltas.push(d) });
+            return { reply, deltas: deltas.join(""), turns: c.messages.length };
+        });
+        expect(streamed).toEqual({ reply: "streamed answer", deltas: "streamed answer", turns: 2 });
+        expect(await page.evaluate(async () => (await window.ml.models()).map((m) => m.id ?? m.name ?? m))).toContain("fake-model");
+        expect(fake.calls().length).toBe(2);
+        expect(errors).toEqual([]);
+    } finally { await ext.context.close(); await fake.stop(); await site.stop(); }
+});

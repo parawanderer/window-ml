@@ -42,6 +42,11 @@ export interface ValueRow {
     format: ValueFormat;
     /** Where it came from, for the housekeeping log and an error message: a URL, a tool name. */
     source?: string;
+    /** A file the person attached (docs/spec/FILE_ATTACHMENTS.md, "Eviction differs by producer"): it cannot be fetched
+     *  again, so while a session holds it it is never evicted for idleness or for the budget, and goes only when its last
+     *  session ends. Charged to the budget when it is stored, so one the store cannot hold is refused then. An unheld
+     *  row (absent on every row written before this) is evicted as before. */
+    held?: true;
     createdAt: number;
     lastReadAt: number;
 }
@@ -101,6 +106,8 @@ function markShared(plan: Eviction[], all: readonly ValueRow[]): Eviction[] {
  *   works per blob: the rows sharing one are a group, read as recently as the most recently read of them, evicted whole,
  *   and skipped whole when any row of it is protected. A per-session budget lets fifty sessions each fill their own.
  * - `protect` (row keys) is never evicted: a value being read at the moment a write needs room.
+ * - A `held` row a session holds is never evicted here, and its blob's group is skipped whole like a protected one; only
+ *   its session's end takes it. A held row nobody holds (its claim never landed) is evicted like any other.
  * - A row evicted while its blob stays for other rows is marked `shared`: it frees no bytes.
  *
  * Returns the evictions in the order to apply them. If the budget still cannot hold `incoming` (it alone is larger, or
@@ -108,6 +115,7 @@ function markShared(plan: Eviction[], all: readonly ValueRow[]): Eviction[] {
  */
 export function planEviction(rows: readonly ValueRow[], o: { budgetBytes: number; now: number; idleMs?: number; incoming?: number; protect?: readonly string[] }): Eviction[] {
     const idleMs = o.idleMs ?? IDLE_MS, incoming = o.incoming ?? 0, protect = new Set(o.protect ?? []);
+    for (const r of rows) if (r.held && r.sessions.length) protect.add(r.key);
     const out: Eviction[] = [];
     const evict = (r: ValueRow, reason: EvictReason) => out.push({ key: r.key, reason, bytes: r.bytes, sessions: r.sessions, ...(r.source ? { source: r.source } : {}) });
     const kept: ValueRow[] = [];
@@ -128,6 +136,14 @@ export function planEviction(rows: readonly ValueRow[], o: { budgetBytes: number
         total -= size(g);
     }
     return markShared(out, rows);
+}
+
+/** The bytes the store holds once `plan` is applied, each blob charged once. */
+function heldAfter(rows: readonly ValueRow[], plan: readonly Eviction[]): number {
+    const gone = new Set(plan.map((e) => e.key));
+    const size = new Map<string, number>();
+    for (const r of rows) if (!gone.has(r.key)) size.set(blobOf(r), Math.max(size.get(blobOf(r)) ?? 0, r.bytes));
+    return [...size.values()].reduce((n, b) => n + b, 0);
 }
 
 /** A read of a key the store does not hold. The message is what a model or a person reads, so it says why when it knows. */
@@ -262,7 +278,7 @@ export class ValueStore {
      * values, then least recently read blobs) and refuses a value the budget cannot hold at all, rather than evicting
      * everything for a write that still would not fit.
      */
-    async put(blob: Blob, meta: { format: ValueFormat; source?: string; session?: string; protect?: readonly string[] }): Promise<ValueRow> {
+    async put(blob: Blob, meta: { format: ValueFormat; source?: string; session?: string; protect?: readonly string[]; held?: true }): Promise<ValueRow> {
         const hash = await sha256Hex(blob);
         for (let attempt = 0; ; attempt++) {
             const db = await this.open();
@@ -270,11 +286,15 @@ export class ValueStore {
             if (!stored) {
                 const budget = await this.budgetBytes();
                 if (blob.size > budget) throw new ValueTooLarge(blob.size, budget);
-                const plan = planEviction(await this.rows(), { budgetBytes: budget, now: this.now(), idleMs: this.idleMs, incoming: blob.size, protect: meta.protect });
+                const rows = await this.rows();
+                const plan = planEviction(rows, { budgetBytes: budget, now: this.now(), idleMs: this.idleMs, incoming: blob.size, protect: meta.protect });
+                // What the plan leaves must hold the write, or nothing is evicted for it: with held (attached) rows the
+                // budget can be full of values that may not go.
+                if (heldAfter(rows, plan) + blob.size > budget) throw new ValueTooLarge(blob.size, budget);
                 await this.apply(plan);
             }
             const now = this.now();
-            const row: ValueRow = { key: mintKey(), sessions: meta.session ? [meta.session] : [], bytes: blob.size, blob: hash, format: meta.format, ...(meta.source ? { source: meta.source } : {}), createdAt: now, lastReadAt: now };
+            const row: ValueRow = { key: mintKey(), sessions: meta.session ? [meta.session] : [], bytes: blob.size, blob: hash, format: meta.format, ...(meta.source ? { source: meta.source } : {}), ...(meta.held ? { held: true as const } : {}), createdAt: now, lastReadAt: now };
             const tx = db.transaction([ROWS, BLOBS], "readwrite");
             const blobs = tx.objectStore(BLOBS);
             const present = await done(blobs.count(hash)) > 0;

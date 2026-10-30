@@ -27,7 +27,7 @@ import { ToolDefsView } from "../transcript/agent-detail";   // the SAME viewer 
 import { applyTheme, applyFont, applyCodePrefs, panelThemeActive } from "../prefs";
 import { CODE_THEME_PRESETS, DEFAULT_CODE_THEME, VSCODE_THEME_ID, convertVscodeTheme, parseJsonc, type CodeThemePreset, type ConvertedTheme } from "../../code-themes";
 import { convertStored } from "../code/code-theme-css";
-import { IconCheck } from "../icons";
+import { IconCheck, IconSearch } from "../icons";
 import { Disclosure } from "../disclosure";
 import { toHost } from "../parent-channel";
 import { ShellSectionBody } from "./shell-section";
@@ -1469,11 +1469,16 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
     const all = searching || layout === "one-page";
     const show = (t: SettingsTab) => all || tab === t;
     const head = (t: SettingsTab) => (all ? <div class="set-search-tab">{SETTINGS_TABS.find((x) => x.id === t)!.label}</div> : null);
+    const searchBox = (
+        <input class="set-search" type="search" placeholder="Search every setting…" aria-label="Search settings" value={q}
+            onInput={(e: any) => { settingsQuery.value = e.target.value; }}
+            onKeyDown={(e: KeyboardEvent) => { if (e.key === "Escape" && settingsQuery.value) { e.preventDefault(); e.stopPropagation(); settingsQuery.value = ""; } }} />
+    );
     return (
         <div class="settings">
-            <input class="set-search" type="search" placeholder="Search every setting…" aria-label="Search settings" value={q}
-                onInput={(e: any) => { settingsQuery.value = e.target.value; }}
-                onKeyDown={(e: KeyboardEvent) => { if (e.key === "Escape" && settingsQuery.value) { e.preventDefault(); e.stopPropagation(); settingsQuery.value = ""; } }} />
+            {layout === "tabs" ? searchBox
+                // The chat page's search pill (chat.css `.chat-search-box`), the same box its Search page types into.
+                : <label class="chat-search-box set-search-box"><IconSearch />{searchBox}</label>}
             {all ? null : layout === "pills"
                 // The chat page's own segmented pills (chat.css), so the page does not show two tab styles stacked.
                 ? <div class="chat-seg set-pills" role="tablist" aria-label="Extension settings">
@@ -1584,8 +1589,12 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                         refuse a model that works. But a model we CAN see, and that does not report the
                         capability, fails at request time with nothing on screen to explain it. */}
                     {embedProblem ? <div class="hint err">{embedProblem}</div> : null}
+                    {/* "None reports it" is a claim about capabilities READ. When none could be read the list is
+                        empty for that reason, and saying the server has no embedding model would be false. */}
                     {!embedProblem && !embedListed.length && models.value.length
-                        ? <div class="hint">No model on this server reports the <b>embedding</b> capability, so there is nothing to suggest. Anything typed here is still accepted.</div> : null}
+                        ? <div class="hint">{models.value.some(m => modelKinds.value[m])
+                            ? <>No model on this server reports the <b>embedding</b> capability, so there is nothing to suggest.</>
+                            : <>This server's model capabilities could not be read, so there is nothing to suggest.</>} Anything typed here is still accepted.</div> : null}
                     {c.embeddingModel.trim() && embedDims.value[c.embeddingModel.trim()]
                         ? <div class="set-hint">{embedDims.value[c.embeddingModel.trim()]} dimensions</div> : null}
                 </div>
