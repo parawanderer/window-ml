@@ -116,7 +116,8 @@ const GENRES = {
             "redteam-image-fetch.test.mjs", "redteam-isolated-channel.test.mjs", "redteam-mermaid.test.mjs", "redteam-isolated.test.mjs", "redteam-presence.test.mjs", "redteam-presence-race.test.mjs",
             "redteam-ml-wire.test.mjs", "redteam-operand-check.test.mjs", "redteam-page-run-builtby.test.mjs", "redteam-propose-manifest.test.mjs", "redteam-render-values.test.mjs",
             "redteam-run-payload.test.mjs", "redteam-text-captures.test.mjs", "redteam-tool-throw.test.mjs",
-            "redteam-worker-shot.test.mjs"],
+            "redteam-worker-shot.test.mjs", "redteam-hard-python-cancel.test.mjs", "redteam-policy-ask-free-tiers.test.mjs",
+            "redteam-presence-ask.test.mjs", "redteam-embed.test.mjs"],
     },
     // The chat page's own logic (the client store, the view prefs, the local host) and the check that its web build
     // never reaches `chrome`. Its browser half is Playwright: `npm run test:chat` runs both.
