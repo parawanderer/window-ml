@@ -78,9 +78,13 @@ async function driveApprovals(ext, fake, want, before) {
 
 /**
  * Drive a run's tool calls through a real agent run (the page's `window.ml.agent`, `approvalRouting: "both"`),
- * approving every gate, and return what the model saw on its final turn: each tool's message content.
+ * approving every gate, and return what the model saw on its final turn PER TOOL CALL: `results[i]` is the
+ * content of the model turn answering step `i`. A row that claims something about one call reads its own
+ * index — joining every result would let an earlier call's content satisfy an assertion about a later one
+ * (W3a's first, direct fetch carries the same body its hop does).
  * @param {{ext: any, fake: any, page: any}} h
  * @param {Array<{tool: string, args: Record<string, unknown>}>} tools
+ * @returns {Promise<string[]>} one content string per tool message, in call order
  */
 async function runThroughTools(h, tools, task = "do the scripted steps and report") {
     const before = h.fake.calls().length;
@@ -90,8 +94,12 @@ async function runThroughTools(h, tools, task = "do the scripted steps and repor
     await runPromise.catch(() => {});
     await expect.poll(() => h.fake.calls().length - before, { timeout: 30000 }).toBeGreaterThanOrEqual(tools.length + 1);
     const msgs = h.fake.calls().at(-1).messages;
-    return msgs.filter((m) => m.role === "tool" && typeof m.content === "string").map((m) => m.content).join("\n---\n");
+    return msgs.filter((m) => m.role === "tool" && typeof m.content === "string").map((m) => m.content);
 }
+
+/** Every tool result of a run, joined: for a row whose claim spans the whole run ("the model saw X
+ *  somewhere"), never for one that names a single call. */
+const joined = (results) => results.join("\n---\n");
 
 /** The worker's own request shape on the log — `sec-fetch-site: none`, no Referer/Origin (a tab navigation
  *  would send `mode: navigate` and a Referer). W9's distinguishing claim, folded into the rows whose hop is
@@ -159,7 +167,7 @@ test("@security SITE_PRESENCE step 5: W2: a run's fetch_url cross-site hop never
     try {
         const tabsBefore = await h.ext.sw.evaluate(() => chrome.tabs.query({}));
         const first = h.site.url("attacker.test", "/r?to=" + encodeURIComponent(h.site.url("victim.test", "/secret")));
-        const seen = await runThroughTools(h, [{ tool: "fetch_url", args: { url: first } }]);
+        const seen = joined(await runThroughTools(h, [{ tool: "fetch_url", args: { url: first } }]));
         if (holeOpen("step5worker", "the run's fetch follows the hop and requests the unapproved target")) {
             expect(h.site.requestsTo("victim.test").map((q) => q.path), "today's leak: the hop's target is requested").toContain("/secret");
         } else {
@@ -182,12 +190,19 @@ test("@security SITE_PRESENCE step 5: W3a: a hop to a URL the run approved is fo
     const h = await rowSetup("attacker.test");
     try {
         const ok = h.site.url("partner.test", "/ok");
-        const seen = await runThroughTools(h, [
+        // Two calls on purpose, and read PER CALL: the first approves the URL by fetching it directly, the second
+        // reaches the same URL through attacker.test's `/r`. The direct call's own result carries the body
+        // whatever the hop does, so its evidence cannot be the row's — the hop's body is `results.at(-1)`, and
+        // the log is asked for the exact `/ok` path TWICE (one per call; a refused hop leaves only the direct
+        // one). `/ok` alone, not `/ok.md`: a text/plain body takes no Markdown-ladder alternate (measured — an
+        // HTML target logs two per fetch).
+        const results = await runThroughTools(h, [
             { tool: "fetch_url", args: { url: ok } },
             { tool: "fetch_url", args: { url: h.site.url("attacker.test", "/r?to=" + encodeURIComponent(ok)) } },
         ]);
-        expect(seen, "the approved hop is followed on both sides").toContain("ok from partner.test");
-        expect(h.site.requestsTo("partner.test").map((q) => q.path)).toContain("/ok");
+        expect(results, "one tool result per call").toHaveLength(2);
+        expect(results.at(-1), "the approved hop is followed on both sides").toContain("ok from partner.test");
+        expect(h.site.requestsTo("partner.test").filter((q) => q.path === "/ok"), "exactly two: the direct call and the hop through /r").toHaveLength(2);
     } finally {
         await h.close();
     }
@@ -200,7 +215,7 @@ test("@security SITE_PRESENCE step 5: W3b: the same hop in a fresh run never req
     const h = await rowSetup("attacker.test");
     try {
         const ok = h.site.url("partner.test", "/ok");
-        const seen = await runThroughTools(h, [{ tool: "fetch_url", args: { url: h.site.url("attacker.test", "/r?to=" + encodeURIComponent(ok)) } }]);
+        const seen = joined(await runThroughTools(h, [{ tool: "fetch_url", args: { url: h.site.url("attacker.test", "/r?to=" + encodeURIComponent(ok)) } }]));
         if (holeOpen("step5worker", "the fresh run's fetch follows the hop and requests the unapproved target")) {
             expect(h.site.requestsTo("partner.test").map((q) => q.path), "today's leak: the hop's target is requested").toContain("/ok");
         } else {
@@ -220,7 +235,7 @@ test("@security SITE_PRESENCE step 5: W4: a mixed chain — the same-site hop is
     try {
         const chain = h.site.url("b.site.test", "/r?to=" + encodeURIComponent(h.site.url("victim.test", "/secret")));
         const first = h.site.url("a.site.test", "/r?to=" + encodeURIComponent(chain));
-        const seen = await runThroughTools(h, [{ tool: "fetch_url", args: { url: first } }]);
+        const seen = joined(await runThroughTools(h, [{ tool: "fetch_url", args: { url: first } }]));
         // Hop 1 (b.site.test, same registrable domain) is followed on both sides: its log is the row's anchor.
         // The logged path carries `/r`'s query (`/r?to=…`), so compare the pathname only.
         expect(h.site.requestsTo("b.site.test").map((q) => q.path.split("?")[0]), "the judged-allowed hop is followed (the anchor)").toContain("/r");
@@ -243,7 +258,7 @@ test("@security SITE_PRESENCE step 5: W5: the same-site hop's body comes back", 
     try {
         const tabsBefore = await h.ext.sw.evaluate(() => chrome.tabs.query({}));
         const first = h.site.url("a.site.test", "/r?to=" + encodeURIComponent(h.site.url("b.site.test", "/body")));
-        const seen = await runThroughTools(h, [{ tool: "fetch_url", args: { url: first } }]);
+        const seen = joined(await runThroughTools(h, [{ tool: "fetch_url", args: { url: first } }]));
         // The hop is followed on BOTH sides — its request is the row's anchor, and its shape is the worker's.
         const logged = h.site.requestsTo("b.site.test").filter((q) => q.path === "/body");
         expect(logged, "the judged hop is followed and requested (the anchor)").toHaveLength(1);
@@ -268,7 +283,7 @@ test("@security SITE_PRESENCE step 5: W6: the same-host http→https upgrade hop
     const h = await rowSetup("a.site.test");
     try {
         const first = h.site.url("a.site.test", "/r?to=" + encodeURIComponent(h.site.tlsUrl("a.site.test", "/ok")));
-        const seen = await runThroughTools(h, [{ tool: "fetch_url", args: { url: first } }]);
+        const seen = joined(await runThroughTools(h, [{ tool: "fetch_url", args: { url: first } }]));
         // The hop is followed on BOTH sides — the request reaches the TLS listener, which is the row's anchor.
         expect(h.site.requestsTo("a.site.test").filter((q) => q.via === "tls").map((q) => q.path), "the upgrade hop is requested over TLS (the anchor)").toContain("/ok");
         if (holeOpen("step5worker", "the followed upgrade hop's body is withheld by the final-origin guard")) {

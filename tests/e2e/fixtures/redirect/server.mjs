@@ -11,7 +11,9 @@
 // openssl at run time. Regenerate with:
 //   openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -keyout key.pem -out cert.pem \
 //     -subj "/CN=redirect-fixture.test (window-ml e2e test-only key)" \
-//     -addext "subjectAltName=DNS:docs.google.com,DNS:accounts.google.com,DNS:googleusercontent.com,DNS:a.site.test,DNS:b.site.test,DNS:attacker.test,DNS:victim.test,DNS:partner.test,DNS:localhost"
+//     -addext "subjectAltName=DNS:docs.google.com,DNS:accounts.google.com,DNS:googleusercontent.com,DNS:*.googleusercontent.com,DNS:a.site.test,DNS:b.site.test,DNS:attacker.test,DNS:victim.test,DNS:partner.test,DNS:localhost"
+// (The wildcard covers the declared pair's hop target `u0.googleusercontent.com`; without it that hop dies in
+// TLS whenever the browser stops being told to ignore certificate errors.)
 //
 // Routes (every listener; `?to=` gives the Location):
 //   /r?to=<url>                      → 302 to <url>
