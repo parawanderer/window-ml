@@ -17,6 +17,11 @@
 //
 // Routes (every listener; `?to=` gives the Location):
 //   /r?to=<url>                      → 302 to <url>
+//   /r/<n>                           → 302 to the URL registered under `n` by `site.hopTo(url)`. A row whose first
+//                                      URL must not SPELL the hop's target registers it here: a hostile page that
+//                                      writes `<url>?to=<target>` puts the target in its own URL, so the refusal it
+//                                      reads back echoes it and "the refusal never names the target" is decided by the
+//                                      page's text rather than by the worker's. The 302's body does not name it either.
 //   /ok                              → 200 text/plain "ok from <host>"
 //   /body                            → 200 text/plain "body from <host>"
 //   /secret                          → 200 text/html "top secret" (the leak target; a non-raster body)
@@ -69,7 +74,7 @@ function exportHop(id) {
 /** Answer one request on `via`. Everything is logged first: which listener answered, for which host, and what
  *  was asked (headers included — the step-5 rows read `sec-fetch-*` off the log to tell a worker fetch from a
  *  tab's navigation). */
-function handle(via, log, req, res) {
+function handle(via, log, req, res, hops) {
     const host = String(req.headers.host || "").split(":")[0].toLowerCase();
     const url = new URL(req.url || "/", `http://${host}`);
     log.push({ via, host, path: `${url.pathname}${url.search}`, t: Date.now(), headers: req.headers });
@@ -78,6 +83,17 @@ function handle(via, log, req, res) {
         res.writeHead(302, { location: to, "content-type": "text/plain" });
         res.end(`moved to ${to}`);
         return;
+    }
+    // A hop registered server-side (`site.hopTo`): the Location is the only place the target is written, so nothing
+    // the page could have written, and nothing it reads back, carries it.
+    const table = /^\/r\/(\d+)$/.exec(url.pathname);
+    if (table) {
+        const target = hops.get(Number(table[1]));
+        if (target) {
+            res.writeHead(302, { location: target, "content-type": "text/plain" });
+            res.end("moved");
+            return;
+        }
     }
     if (url.pathname === "/") {
         res.writeHead(200, { "content-type": "text/html" });
@@ -137,6 +153,7 @@ function handle(via, log, req, res) {
  *   url: (host: string, path?: string) => string, origin: (host: string) => string,
  *   tlsUrl: (host: string, path?: string) => string, tlsOrigin: (host: string) => string,
  *   loopbackUrl: (path?: string) => string,
+ *   hopTo: (target: string) => string,
  *   requests: () => Array<{via: string, host: string, path: string, t: number, headers: Record<string, string>}>,
  *   requestsTo: (host: string) => Array<{via: string, host: string, path: string, t: number, headers: Record<string, string>}>,
  *   clear: () => void, stop: () => Promise<void>,
@@ -145,9 +162,12 @@ function handle(via, log, req, res) {
 export function startRedirectSite() {
     /** @type {Array<{via: string, host: string, path: string, t: number, headers: Record<string, string>}>} */
     const log = [];
-    const http = createHttpServer((req, res) => handle("http", log, req, res));
-    const tls = createHttpsServer({ key: TLS_KEY, cert: TLS_CERT }, (req, res) => handle("tls", log, req, res));
-    const loopback = createHttpServer((req, res) => handle("loopback", log, req, res));
+    /** Hop targets by number, for `/r/<n>`: see the header's route list. Never cleared with the log. */
+    const hops = new Map();
+    let nextHop = 1;
+    const http = createHttpServer((req, res) => handle("http", log, req, res, hops));
+    const tls = createHttpsServer({ key: TLS_KEY, cert: TLS_CERT }, (req, res) => handle("tls", log, req, res, hops));
+    const loopback = createHttpServer((req, res) => handle("loopback", log, req, res, hops));
     return new Promise((resolve) => {
         http.listen(0, "127.0.0.1", () => {
             tls.listen(0, "127.0.0.1", () => {
@@ -164,6 +184,9 @@ export function startRedirectSite() {
                         tlsUrl: (host, path = "/") => `https://${host}:${tlsPort}${path}`,
                         tlsOrigin: (host) => `https://${host}:${tlsPort}`,
                         loopbackUrl: (path = "/") => `http://localhost:${loopbackPort}${path}`,
+                        /** Register `target` as a hop and return the PATH that 302s to it: a first URL that does not
+                         *  spell the target. Each call is a new number, so rows never share a registration. */
+                        hopTo: (target) => { const n = nextHop++; hops.set(n, target); return `/r/${n}`; },
                         requests: () => [...log],
                         requestsTo: (host) => log.filter((r) => r.host === host),
                         clear: () => { log.length = 0; },

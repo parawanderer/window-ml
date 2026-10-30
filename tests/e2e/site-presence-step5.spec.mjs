@@ -141,7 +141,10 @@ test("@security SITE_PRESENCE step 5: W1: ml.fetch's cross-site hop never reques
     test.setTimeout(90_000);
     const h = await rowSetup("attacker.test");
     try {
-        const first = h.site.url("attacker.test", "/r?to=" + encodeURIComponent(h.site.url("victim.test", "/secret")));
+        // The hop is registered SERVER-SIDE, so the first URL the page writes does not spell `victim.test`: with a
+        // `?to=` first URL the page's own refusal echoes its request URL, and the "never names the Location" pin
+        // below would be decided by the page's text rather than by the worker's.
+        const first = h.site.url("attacker.test", h.site.hopTo(h.site.url("victim.test", "/secret")));
         const r = await h.page.evaluate((u) => window.ml.fetch(u).then((x) => ({ ok: true, text: x.text, url: x.url }), (e) => ({ ok: false, err: String(e) })), first);
         if (holeOpen("step5worker", "the worker follows the cross-site hop: the target is requested and the page's error names the Location")) {
             expect(h.site.requestsTo("victim.test").map((q) => q.path), "today's leak: the hop's target is requested").toContain("/secret");
@@ -166,7 +169,9 @@ test("@security SITE_PRESENCE step 5: W2: a run's fetch_url cross-site hop never
     const h = await rowSetup("attacker.test");
     try {
         const tabsBefore = await h.ext.sw.evaluate(() => chrome.tabs.query({}));
-        const first = h.site.url("attacker.test", "/r?to=" + encodeURIComponent(h.site.url("victim.test", "/secret")));
+        // Server-side hop: the first URL does not spell the target, so "the model sees the full target" below is the
+        // tool's sentence and not the echo of what the model itself asked for.
+        const first = h.site.url("attacker.test", h.site.hopTo(h.site.url("victim.test", "/secret")));
         const seen = joined(await runThroughTools(h, [{ tool: "fetch_url", args: { url: first } }]));
         if (holeOpen("step5worker", "the run's fetch follows the hop and requests the unapproved target")) {
             expect(h.site.requestsTo("victim.test").map((q) => q.path), "today's leak: the hop's target is requested").toContain("/secret");
@@ -215,7 +220,8 @@ test("@security SITE_PRESENCE step 5: W3b: the same hop in a fresh run never req
     const h = await rowSetup("attacker.test");
     try {
         const ok = h.site.url("partner.test", "/ok");
-        const seen = joined(await runThroughTools(h, [{ tool: "fetch_url", args: { url: h.site.url("attacker.test", "/r?to=" + encodeURIComponent(ok)) } }]));
+        // Server-side hop, so the refusal's naming of the target is the tool's own.
+        const seen = joined(await runThroughTools(h, [{ tool: "fetch_url", args: { url: h.site.url("attacker.test", h.site.hopTo(ok)) } }]));
         if (holeOpen("step5worker", "the fresh run's fetch follows the hop and requests the unapproved target")) {
             expect(h.site.requestsTo("partner.test").map((q) => q.path), "today's leak: the hop's target is requested").toContain("/ok");
         } else {
@@ -233,12 +239,14 @@ test("@security SITE_PRESENCE step 5: W4: a mixed chain — the same-site hop is
     test.setTimeout(90_000);
     const h = await rowSetup("a.site.test");
     try {
-        const chain = h.site.url("b.site.test", "/r?to=" + encodeURIComponent(h.site.url("victim.test", "/secret")));
-        const first = h.site.url("a.site.test", "/r?to=" + encodeURIComponent(chain));
+        // Both hops are registered server-side, so neither URL spells the target: "the refusal names the target"
+        // below is the tool's sentence, not an echo of what the model asked for.
+        const hop2 = h.site.hopTo(h.site.url("victim.test", "/secret"));
+        const chain = h.site.url("b.site.test", hop2);
+        const first = h.site.url("a.site.test", h.site.hopTo(chain));
         const seen = joined(await runThroughTools(h, [{ tool: "fetch_url", args: { url: first } }]));
         // Hop 1 (b.site.test, same registrable domain) is followed on both sides: its log is the row's anchor.
-        // The logged path carries `/r`'s query (`/r?to=…`), so compare the pathname only.
-        expect(h.site.requestsTo("b.site.test").map((q) => q.path.split("?")[0]), "the judged-allowed hop is followed (the anchor)").toContain("/r");
+        expect(h.site.requestsTo("b.site.test").map((q) => q.path), "the judged-allowed hop is followed (the anchor)").toContain(hop2);
         if (holeOpen("step5worker", "the chain's disallowed hop is followed: the target is requested")) {
             expect(h.site.requestsTo("victim.test").map((q) => q.path), "today's leak: the chain's last target is requested").toContain("/secret");
         } else {
