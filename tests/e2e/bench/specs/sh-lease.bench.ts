@@ -22,8 +22,8 @@
 
 import { defineBench } from "../spec";
 
-/** The local models, overridden by SH_LEASE_MODELS (comma-separated): the box's default and one smaller. */
-const MODELS = (process.env.SH_LEASE_MODELS || "gemma4:31b,gemma4:e4b").split(",").map((s) => s.trim()).filter(Boolean);
+/** The local models, overridden by SH_LEASE_MODELS (comma-separated): the box's default, one smaller, and qwen3.8-flash-next:vision (one of the larger that does well; Shane, 2026-11-07). */
+const MODELS = (process.env.SH_LEASE_MODELS || "gemma4:31b,gemma4:e4b,qwen3.8-flash-next:vision").split(",").map((s) => s.trim()).filter(Boolean);
 
 /** The result lines the scripts end with: a right answer reports its own. */
 export const TOKENS = { build: "BUILD OK 7f3a19", quick: "CHECK OK c42e07" };
