@@ -53,8 +53,12 @@ test("RED TEAM: a String-shaped object's Symbol.toStringTag getter never runs (t
     let tag = 0;
     const h = host();
     h.ml.models = async () => ({ get [Symbol.toStringTag]() { tag++; return "String"; }, valueOf() { return "cat"; } });
-    await assert.rejects(run(`return await ml.embed(await ml.models())`, h), (e) => e instanceof TypeError && /ml\.embed takes a string/.test(String(e.message)), "a String-shaped input whose tag is a getter must be refused as a non-string, by name");
+    // The property comes FIRST: on the tag-read mutant the call is refused anyway, so a refusal check in front of it
+    // would report only the TypeError and hide `tag === 1`, which is the thing this row exists to see.
+    let outcome = null;
+    await run(`return await ml.embed(await ml.models())`, h).catch((e) => { outcome = e; });
     assert.equal(tag, 0, "Object.prototype.toString ran the page's Symbol.toStringTag getter from an argument read");
+    assert.ok(outcome instanceof TypeError && /ml\.embed takes a string/.test(String(outcome.message)), `a String-shaped input whose tag is a getter is refused as a non-string, by name; got ${outcome === null ? "no error" : JSON.stringify(String(outcome.message))}`);
     assert.equal(h.calls.length, 0, "a refused input still reached the embedding host");
 });
 
