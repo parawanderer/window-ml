@@ -1,7 +1,8 @@
 # Spec (WIP): attaching files to a message
 
-**Status: slices 1 and 2 built (2026-10-28/29); slice 3 under way: the held rows, the `@file:` pointer and the `pages`
-verb are built, attaching a PDF to an agent run is next (Shane and the calm-chat-motion session).** The order is
+**Status: slices 1 and 2 built (2026-10-28/29); slice 3 under way: the held rows, the `@file:` pointer, the `pages`
+verb and attaching a PDF to an agent run are built; `ml.dereference` of `@file:`, `look` at a document, Python's
+`files`, the files panel and upload progress are next (Shane and the calm-chat-motion session).** The order is
 three slices, each landing on its own: text files, then PDFs, then documents as `@file:` pointers in agent runs. Slice
 3's contact points with the python, shell and policies lanes were ruled on by their coordinator (2026-10-28,
 "Rulings" below).
@@ -281,6 +282,16 @@ the `FileShelf` a run's `TokenStore` holds files on; the `pages` verb (`PIPE_PAG
 `@file:` branch and the inventory's files. The outline says `Read with dereference(@file:…, pipe "pages 1-3")` only:
 `look` with a document target is not built. Nothing notes a file on the shelf yet: attaching a PDF to an agent run,
 which mints the pointer and stores its rows, is the next change. `ml.dereference` refuses `@file:` with a sentence.
+
+**Built (2026-11-07, the attaching side).** A PDF attached to an agent run's first message (`agent.start`, the HUD,
+the panel) is read once in the offscreen document, its bytes (`bytes`) and read document (`paged`) stored as held rows
+of the run's session, and noted on the run's shelf (sw-attach.ts). The task carries the outline in place of the
+pages: `<file name="report.pdf" type="application/pdf" bytes="…" pages="48" pointer="@file:3fa91c2">` with the
+outline as its body. A PDF that will not read, or that the store cannot keep beside what it holds, refuses the start
+with the reason, and what was stored by then is released. The pointers ride `StartRunPayload.files` (stripped from a
+page's own payload, honoured only on a worker-built run), so the shelf comes back after a worker eviction. A message
+to a run under way is refused a PDF ("an agent run takes a PDF only when it starts"), never sent without it; adding
+a file mid-run is open.
 
 **Looking at pages.** `look` takes a document target: `look({ doc: "@file:3fa91c2", pages: "4", question })`. The
 pages are rendered from the stored bytes by pdf.js in the offscreen document, then go down the existing vision path

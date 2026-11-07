@@ -137,6 +137,77 @@ test("a run a PAGE built cannot dress its task up: a display on its START_RUN is
     assert.equal("display" in start, false, "the transcript shows the page's task as the model got it");
 });
 
+// --- a PDF attached at the start: an `@file:` pointer the run reads by page (sw-attach.ts) ---
+
+const PDF = { name: "report.pdf", type: "application/pdf", data: Buffer.from("%PDF-1.7 annual").toString("base64") };
+const PDF_DOC = { pageCount: 2, pages: [{ n: 1, text: "Annual report", kind: "text", measure: {} }, { n: 2, text: "Revenue grew 12% in the second half.", kind: "text", measure: {} }] };
+
+/** A worker with a value store and a PDF reader, whose model reads page 2 of the file its task names on every turn. */
+async function pdfWorld() {
+    const { IDBFactory } = require("fake-indexeddb");
+    const reads = [];
+    const bg = loadBackground({
+        config, openTabs: [SITE], indexedDB: new IDBFactory(),
+        onPdfRead: (msg) => { reads.push(msg.b64); return { ok: true, doc: PDF_DOC }; },
+        onFetch: (call) => {
+            if (!call.url.includes("/chat/completions")) return jsonResponse({});
+            const msgs = call.body.messages;
+            const ptr = msgs.map((m) => String(m.content ?? "")).join("\n").match(/pointer="(@file:[^"]+)"/)?.[1];
+            return msgs.at(-1).role === "tool" || !ptr
+                ? jsonResponse({ choices: [{ message: { content: "done" } }] })
+                : jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: `d${msgs.length}`, type: "function", function: { name: "dereference", arguments: JSON.stringify({ token: ptr, pipe: "pages 2" }) } }] } }] });
+        },
+        onTabMessage: async (_t, msg) => (msg.type === "ADOPT_RUN_NOW" ? { pageInfo: "" } : msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.finish ? { result: "" } : undefined),
+    });
+    const chats = () => bg.calls.filter((c) => c.url.includes("/chat/completions"));
+    const toolReplies = () => chats().flatMap((c) => c.body.messages.filter((m) => m.role === "tool").map((m) => m.content));
+    const state = async (hash, id) => JSON.parse(JSON.stringify((await bg.send({ type: "DUMP_RUN_STATE", payload: { run: hash } }, EXT)).data.entries.find((e) => e.id === id)?.value ?? null));
+    return { bg, reads, chats, toolReplies, state };
+}
+
+test("a PDF at the start: the task carries its outline under its pointer, the rows are held for the session, and the run reads a page by it", T, async () => {
+    const w = await pdfWorld();
+    const { hash } = await w.bg.context.__mlStartUserRunForTest(7, { task: "what grew?", files: [PDF], surface: "hud" });
+    for (let i = 0; i < 100 && w.chats().length < 2; i++) await flush(4);
+    assert.equal(w.reads.length, 1, "read once, in the offscreen document");
+    const user = w.chats()[0].body.messages.find((m) => m.role === "user").content;
+    assert.match(user, /^what grew\?\n\n<file name="report\.pdf" type="application\/pdf" bytes="15" pages="2" pointer="@file:[^"]+">\n@file:\S+ "report\.pdf": attached by the person\. PDF, 2 pages/);
+    assert.ok(!user.includes("Revenue grew"), "page 2 is not in the task, only the first page's preview");
+    assert.match(w.toolReplies().at(-1), /<page n="2">\nRevenue grew 12% in the second half\.\n<\/page>/, "the pointer reads the stored document");
+    const rows = (await w.bg.context.__mlValues.rows()).filter((r) => r.sessions.includes(hash));
+    assert.deepEqual(rows.map((r) => [r.format, r.held, r.source]).sort(), [["bytes", true, "report.pdf"], ["paged", true, "report.pdf"]]);
+    assert.deepEqual((await w.state(hash, "run.files")).map((f) => [f.name, f.pages, f.turn]), [["report.pdf", 2, 1]]);
+});
+
+test("a session whose pointer store newer sessions pushed out keeps its file: the next turn's store puts the pointer back from the payload and reads it", T, async () => {
+    const w = await pdfWorld();
+    const { hash } = await w.bg.context.__mlStartUserRunForTest(7, { task: "what grew?", files: [PDF], surface: "hud" });
+    for (let i = 0; i < 100 && w.chats().length < 2; i++) await flush(4);
+    for (let n = 0; n < 24; n++) await w.bg.context.__mlStartUserRunForTest(7, { task: `other ${n}`, surface: "hud" });
+    await flush(40);
+    const held = (await w.bg.context.__mlValues.rows()).filter((r) => r.sessions.includes(hash));
+    assert.equal(held.length, 2, "the file's rows outlive its pointer store");
+    const before = w.toolReplies().length;
+    const r = await w.bg.send({ type: "USER_RUN_ACTION", payload: { hash, action: "send", text: "and again?", surface: "hud" } }, { tab: { id: 7, url: SITE.url }, url: SITE.url });
+    assert.equal(r.data, "turn");
+    for (let i = 0; i < 200 && w.toolReplies().length <= before; i++) await flush(4);
+    assert.match(w.toolReplies().at(-1), /Revenue grew 12%/, "the pointer resolves and its document reads");
+});
+
+test("a PDF that will not read refuses the start with its reason, and nothing is stored or started", T, async () => {
+    const { IDBFactory } = require("fake-indexeddb");
+    const bg = loadBackground({ config, openTabs: [SITE], indexedDB: new IDBFactory(), onPdfRead: () => ({ ok: false, code: "encrypted", refusal: "This PDF is encrypted." }),
+        onFetch: () => jsonResponse({ choices: [{ message: { content: "done" } }] }), onTabMessage: async () => ({ pageInfo: "" }) });
+    await assert.rejects(bg.context.__mlStartUserRunForTest(7, { task: "read", files: [PDF], surface: "hud" }), /report\.pdf: This PDF is encrypted\./);
+    assert.deepEqual(await bg.context.__mlValues.rows(), []);
+    assert.equal(bg.calls.filter((c) => c.url.includes("/chat/completions")).length, 0);
+});
+
+test("a run started with a malformed files list is refused by the one rule, whichever surface sent it", T, async () => {
+    const { bg } = world();
+    await assert.rejects(bg.context.__mlStartUserRunForTest(7, { task: "read", files: [{ name: "x", type: "application/pdf", body: "forged outline", pointer: "@file:abc" }], surface: "hud" }), /files must be a list of/);
+});
+
 // --- where a person's message was typed, as the channel it came over says ---
 
 const EXT = { id: "ext", url: "chrome-extension://ext/sidebar.html", origin: "chrome-extension://ext" };

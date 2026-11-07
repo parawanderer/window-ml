@@ -137,6 +137,9 @@ export interface StartRunPayload {
     /** how `task` is shown when it is not what the person typed (a right-clicked element folded in). Honoured only on
      *  a run the worker built: a page's run shows its task as the model got it. */
     display?: import("./contract-run").PromptDisplay;
+    /** the files the person attached, as `@file:` pointers (file-pointer.ts): the run's shelf is put back from these
+     *  after the worker is evicted. Honoured only on a run the worker built; a page's payload has it removed. */
+    files?: import("../pointers/file-pointer").FilePointer[];
     systemPrompt: string;
     tools: { name: string; description: string; parameters: JsonSchema; requiresApproval: boolean; capabilities: string[]; precheck?: boolean; summary?: string; remote?: RemoteToolTarget }[];
     model: string | null;

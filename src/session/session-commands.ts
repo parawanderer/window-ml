@@ -129,9 +129,9 @@ export interface CommandDeps {
     archivedPolicyLoss?(hash: string): { at: number; labels: string[] } | undefined;
     /** note in the session's own transcript that it has been picked up on another page */
     noteResumed(hash: string, tabId: number, note: { id: string; url: string; fromUrl?: string; afterMs: number; dropped: string[]; kept?: string[] }): void;
-    /** start a run on a tab, through that page's own start path; resolves with what the page reported */
+    /** start a run on a tab, assembled in the worker (`startUserRun`), never by the page it acts on; resolves with how it started */
     /** `error`: why nothing started, in words the person can act on */
-    startAgent(tabId: number, opts: { task: string; images?: string[]; files?: AttachedFile[]; model?: string; maxSteps?: number; vision?: true; stream?: true }, origin?: PromptOrigin): Promise<{ outcome: PageOutcome | "started"; hash?: string; error?: string }>;
+    startAgent(tabId: number, opts: { task: string; images?: string[]; files?: SentFile[]; model?: string; maxSteps?: number; vision?: true; stream?: true }, origin?: PromptOrigin): Promise<{ outcome: PageOutcome | "started"; hash?: string; error?: string }>;
     /** open a new tab at a URL and wait until the extension can talk to it; rejects when it never answers */
     openTab(url: string): Promise<number>;
     /** the page a blank agent target opens when the command names no URL ("" when unset) */
@@ -423,7 +423,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             const tabId = t.tabId;
 
             const r = await deps.startAgent(tabId, {
-                task, ...(images.length ? { images } : {}), ...(att.files ? { files: textFiles(att.files) } : {}),
+                task, ...(images.length ? { images } : {}), ...(att.files ? { files: att.files } : {}),
                 ...(c.model ? { model: c.model } : {}),
                 ...(c.maxSteps != null ? { maxSteps: c.maxSteps } : {}),
                 ...(c.vision === true ? { vision: true as const } : {}),
@@ -556,7 +556,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             if (s.error) return s.error;
             const text = typeof c.text === "string" ? c.text : "";
             const images = Array.isArray(c.images) ? c.images.filter((i): i is string => typeof i === "string" && i.startsWith("data:image/")) : [];
-            const att = checkedFiles(c.files, pagelessChat(s.id.hash) ? "chat" : "agent", deps.heldFile);
+            const att = checkedFiles(c.files, pagelessChat(s.id.hash) ? "chat" : "agent-turn", deps.heldFile);
             if (att.error) return att.error;
             if (!text.trim() && !images.length && !att.files && !c.elementContext) return fail("invalid", "a message needs text, an image, a file or an element");
             const tooMany = imagesRefusal(images.length);

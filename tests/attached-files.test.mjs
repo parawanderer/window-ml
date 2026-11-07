@@ -218,9 +218,11 @@ test("off the wire: a PDF's data must be base64, and its type is a PDF whatever 
     assert.equal(cleanFiles([{ name: "a.pdf", type: "", data: "JVBERg==", text: "both" }]), undefined, "text and data together is neither");
 });
 
-test("a PDF to an agent run is refused by name; to a chat it counts its bytes, not text", () => {
+test("a PDF may start an agent run and is refused by name to a run under way; to a chat it counts its bytes, not text", () => {
     const pdf = { name: "p.pdf", type: "application/pdf", data: "JVBERg==" };
-    assert.equal(filesRefusal([pdf], "agent"), "p.pdf is a PDF; an agent run will read PDFs in a later change");
+    assert.equal(filesRefusal([pdf], "agent"), null);
+    assert.equal(filesRefusal([pdf], "agent-turn"), "p.pdf is a PDF; an agent run takes a PDF only when it starts, so start a new run with it");
+    assert.match(filesRefusal([file("big.txt", "x".repeat(FILE_INLINE_MAX + 1))], "agent-turn"), /on demand in a later change$/, "a run under way has the agent wording");
     assert.equal(filesRefusal([pdf, file("big.txt", "x".repeat(FILE_INLINE_MAX))], "chat"), null);
     const huge = { ...pdf, data: "A".repeat(Math.ceil((PDF_ATTACH_MAX + 3) / 3) * 4) };
     assert.match(filesRefusal([huge], "chat"), /too large to send/);

@@ -307,8 +307,8 @@ export const GATED_TOOL_NAMES: ReadonlySet<string> = GATED_BUILTINS;
 
 /**
  * A page's START_RUN payload as the worker may trust it. A page's payload may ask for MORE gating, never less.
- * - Removed, the worker's to set: `builtBy`, `rebuild.builtBy`, `display` and `origin` (the PromptOrigin: a page could
- *   stamp its prompt as typed on an extension surface). Only the worker's own `hostRun` call
+ * - Removed, the worker's to set: `builtBy`, `rebuild.builtBy`, `display`, `files` (pointers naming value-store rows)
+ *   and `origin` (the PromptOrigin: a page could stamp its prompt as typed on an extension surface). Only the worker's own `hostRun` call
  *   (sw-run-start.ts) marks a run worker-built, and `makeWorkerRun` hands one over; a page's claim would give its run the
  *   worker's tool routing, grants, vision and answer, and lock the run as the person's.
  * - Removed from `tools`: `propose_policy`, which only a run the worker built offers (a page's run asking the person for
@@ -327,7 +327,7 @@ export const GATED_TOOL_NAMES: ReadonlySet<string> = GATED_BUILTINS;
  */
 export function pageStartPayload(payload: unknown, sender: chrome.runtime.MessageSender, cfg: Pick<MlConfig, "autoApprovePython" | "autoApproveReadonly" | "autoApproveSelfSource" | "selfIntrospection">): unknown {
     if (!payload || typeof payload !== "object") return payload;
-    const { builtBy: _b, display: _d, origin: _p, pageOrigin: _o, pageUrl: _u, ...rest } = payload as StartRunPayload;
+    const { builtBy: _b, display: _d, files: _f, origin: _p, pageOrigin: _o, pageUrl: _u, ...rest } = payload as StartRunPayload;
     // The budget RESUME_RUN honours, so a page cannot ask for an unbounded run; an invalid one is no budget, and the loop's default applies.
     const budget = stepBudget(rest.maxSteps);
     if (budget) rest.maxSteps = budget; else delete (rest as { maxSteps?: number }).maxSteps;

@@ -25,6 +25,7 @@ import { type StartRunPayload } from "../contract/contract-messages";
 import { createNavBarrier } from "./nav-barrier";
 import { releaseSessionValues } from "./sw-values";
 import { TokenStore } from "../pointers/token-pipe";
+import type { FilePointer } from "../pointers/file-pointer";
 import { defineState } from "../state-registry";
 import { type CurrentSnapshot } from "../agent/current-context";
 import { contextTextOf, messageRow, pointerRow } from "../agent/state-rows";
@@ -593,15 +594,40 @@ function contextText(runId: string): string | null {
     return msgs ? contextTextOf(msgs) : null;
 }
 
-/** This run's pointer store, created on the first turn and REUSED by every later turn of the same session. */
+defineState({
+    id: "run.files", scope: "session", realm: "worker", audience: "model", lostOn: [],
+    describe: "The files the person attached to the run, as `@file:` pointers: name, pages, the turn each came in. Kept in the run's payload, so the pointers come back after the worker is evicted.",
+    read: ({ runId }) => {
+        const files = runId ? workerFiles(runId) : [];
+        return files.length ? files.map((f) => ({ id: f.id, name: f.name, pages: f.pages, read: f.read, turn: f.turn })) : undefined;
+    },
+});
+
+/** The files a run the worker built holds, from its payload (a page's payload never carries them, `pageStartPayload`). */
+function workerFiles(runId: string): FilePointer[] {
+    const p = bgRuns.get(runId)?.p;
+    return p?.builtBy === "worker" && Array.isArray(p.files) ? p.files : [];
+}
+
+/** This run's pointer store, created on the first turn and REUSED by every later turn of the same session. A store
+ *  made after the worker was evicted puts the run's attached files back on its shelf. */
 export const sessionTokens = (runId: string): TokenStore => {
     const existing = tokensByRun.get(runId);
     if (existing) { tokensByRun.delete(runId); tokensByRun.set(runId, existing); return existing; }   // keep it fresh
     const fresh = new TokenStore();
+    for (const f of workerFiles(runId)) fresh.files.note(f);
     tokensByRun.set(runId, fresh);
-    while (tokensByRun.size > MAX_TOKEN_SESSIONS) releaseSessionTokens(tokensByRun.keys().next().value as string);
+    while (tokensByRun.size > MAX_TOKEN_SESSIONS) dropTokenStore(tokensByRun.keys().next().value as string);
     return fresh;
 };
+
+/** A store pushed out by newer sessions: its `@tool:` values go, but a live session's attached files stay, since their
+ *  pointers come back from the payload with the next store ({@link sessionTokens}). */
+function dropTokenStore(runId: string): void {
+    const keep = workerFiles(runId).flatMap((f) => [f.doc, f.data]);
+    if (!keep.length) { releaseSessionTokens(runId); return; }
+    tokensByRun.delete(runId); releaseSessionValues(runId, keep); dropLocalTools(runId); releaseShOutputs(runId); forgetArrivalRun(runId);
+}
 
 /** Release a SESSION's pointers — only when the session itself is gone (its bgRuns entry dropped, or its store pushed
  *  out by newer sessions), never at the end of a turn. Paired with every `bgRuns.delete` so the two lifetimes cannot

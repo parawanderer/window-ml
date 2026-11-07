@@ -497,7 +497,7 @@ export type Command =
         idempotencyKey?: IdempotencyKey;
     }
     | {
-        type: "agent.start"; runtime: RuntimeId; task: string; images?: ImageDataUrl[]; files?: AttachedFile[]; target: AgentTarget;
+        type: "agent.start"; runtime: RuntimeId; task: string; images?: ImageDataUrl[]; files?: WireFile[]; target: AgentTarget;
         model?: string; maxSteps?: number;
         /** {@link ClientUi}: what the sending client says it can show. A claim; absent from an older client. */
         ui?: ClientUi;
