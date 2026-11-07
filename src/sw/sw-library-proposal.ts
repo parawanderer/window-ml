@@ -85,7 +85,8 @@ export async function checkLibraryProposal(ctx: ShCallContext, args: Record<stri
     if (storedLibraries().some((s) => s.module === d.module)) return { error: `Error: a library named ${d.module} is already stored.` };
     const f = await resolveFile(ctx, d);
     if ("error" in f) return f;
-    const r = await shRun(ctx, [["cat", f.path]]);
+    // The extension's own read: nothing awaits it as a task, so it never detaches.
+    const r = await shRun({ ...ctx, lease: false }, [["cat", f.path]]);
     if ("error" in r) return { error: `Error: reading ${d.path} with cat was refused: ${r.error}` };
     const out = (r.ok as ShResult).stdout;
     if (!(r.ok as ShResult).ok || out.error) return { error: `Error: cat could not read ${d.path}${out.error ? `: ${out.error}` : ""}.` };

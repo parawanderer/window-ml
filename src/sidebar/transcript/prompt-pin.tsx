@@ -32,7 +32,7 @@ export function promptsOf(s: Session): PinPrompt[] {
         const says = (s.says || []).map((m, i) => ({ m, i })).sort((a, b) => a.m.atStep - b.m.atStep || a.m.ts - b.m.ts);
         return [
             { key: "task", text: text(s.taskDisplay?.typed ?? s.task, s.taskImages), who: s.site ? hostOf(s.site) : "you" },
-            ...says.map(({ m, i }) => ({ key: `s${i}`, text: text(m.display?.typed ?? m.text, m.images), who: m.site ? hostOf(m.site) : "you" })),
+            ...says.map(({ m, i }) => ({ key: `s${i}`, text: text(m.display?.typed ?? m.text, m.images), who: m.task ? `task ${m.task}` : m.site ? hostOf(m.site) : "you" })),
         ].filter((p) => p.text);
     }
     if (s.kind === "embed") return [];

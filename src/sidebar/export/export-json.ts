@@ -190,7 +190,7 @@ function agentMessages(s: Session): ExportMessage[] {
         pos: x.atStep || 0, ts: x.ts, isSay: true,
         msg: compact<ExportMessage>({
             role: "user" as const, text: x.text, at: iso(x.ts) || new Date(0).toISOString(),
-            atStep: x.atStep, images: x.images?.length ? x.images : undefined, display: x.display,
+            atStep: x.atStep, images: x.images?.length ? x.images : undefined, display: x.display, task: x.task,
         }),
     }));
     const answers = (s.answers || []).map(a => ({

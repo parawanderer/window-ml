@@ -42,7 +42,7 @@ export function ShowWork({ run }: { run: Session }) {
     // why a fixed answer-before-say fraction mis-orders a chat-style turn that ran no tool steps.
     const traceItems: { pos: number; ts: number; el: preact.JSX.Element }[] = [
         ...(run.task || run.taskImages?.length ? [{ pos: -1, ts: run.createdTs || 0, el: <CardTraceMsg key="task" label="you asked" text={run.task || ""} cls="acard-you" images={run.taskImages} display={run.taskDisplay} /> }] : []),
-        ...(run.says || []).map((s, i) => ({ pos: s.atStep + 0.5, ts: s.ts, el: <CardTraceMsg key={`say${i}`} label="you asked" text={s.text} cls="acard-you" images={s.images} steer={s.id ? { seen: s.seen } : undefined} display={s.display} /> })),
+        ...(run.says || []).map((s, i) => ({ pos: s.atStep + 0.5, ts: s.ts, el: <CardTraceMsg key={`say${i}`} label={s.task ? `task ${s.task}` : "you asked"} text={s.text} cls="acard-you" images={s.images} steer={s.id ? { seen: s.seen } : undefined} display={s.display} /> })),
         ...pastAnswers.map((a, i) => ({ pos: a.atStep + 0.5, ts: a.ts, el: <CardTraceMsg key={`ans${i}`} label={a.cancelled ? "cancelled" : a.hitCap ? "stopped early" : "answered"} text={a.text || "(no reply)"} cls="acard-ans" /> })),
         ...turns.map(t => ({ pos: t.step, ts: 0, el: <AgentTurn key={`t${t.step}`} turn={t} max={run.maxSteps} hash={run.hash} /> })),
     ].sort((a, b) => a.pos - b.pos || a.ts - b.ts);

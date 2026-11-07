@@ -806,26 +806,32 @@ export function SteerSeen({ seen }: { seen: boolean }) {
     );
 }
 
-// A user message in the conversation — the initial task, a follow-up run()'s task, or a mid-run say().
-// All render as "you"; a mid-run steer additionally carries a `steer` delivery indicator (queued/seen).
-// With a `display` (context was folded into `text`), it shows what was typed and the attachment, and a
-// rendered/raw switch to the exact `text` the model got. Without one, `text` IS what was typed: no switch.
-// `pin` is the key the prompt pin finds it by (`promptsOf`, prompt-pin.tsx).
-export const UserBubble = ({ text, ts, images, steer, display, site, pin }: { text: string; ts: number; images?: string[]; steer?: { seen?: boolean }; display?: PromptDisplay; site?: string; pin?: string }) => {
+/** A user message in the conversation — the initial task, a follow-up run()'s task, or a mid-run say().
+ *  They render as "you"; a mid-run steer additionally carries a `steer` delivery indicator (queued/seen).
+ *  With a `display` (context was folded into `text`), it shows what was typed and the attachment, and a
+ *  rendered/raw switch to the exact `text` the model got. Without one, `text` IS what was typed: no switch.
+ *  `pin` is the key the prompt pin finds it by (`promptsOf`, prompt-pin.tsx). A `site` sent it (the site's name is its
+ *  speaker); a `task` is a detached call's result the run inbox carried to the model (docs/spec/ASYNC_CALLS.md): no one
+ *  typed it, so the task's id is its speaker.
+ *  @group sidebar/transcript
+ *  @gallery you {"text": "Build it and run the tests.", "ts": 0}
+ *  @gallery site {"text": "Summarise this page.", "ts": 0, "site": "https://news.example"}
+ *  @gallery task {"text": "[task t1a2b3c done after 47 s: ml.sh exit 0, ok; stdout @tool:3f9a2c1 (2418 B): \"Compiling…\"; stderr empty]", "ts": 0, "task": "t1a2b3c"} */
+export function UserBubble({ text, ts, images, steer, display, site, task, pin }: { text: string; ts: number; images?: string[]; steer?: { seen?: boolean }; display?: PromptDisplay; site?: string; task?: string; pin?: string }) {
     const [raw, setRaw] = useState(false);
     const shown = display && !raw ? display.typed : text;
     return (
         <ArrivingMsg ts={ts}>
-            <div class={`msg user${shown || display ? "" : " no-text"}${site ? " from-site" : ""}`} data-prompt={pin}>
+            <div class={`msg user${shown || display ? "" : " no-text"}${site ? " from-site" : ""}${task ? " from-task" : ""}`} data-prompt={pin}>
                 {/* A message a SITE sent carries its name, never "you" (docs/spec/SITE_ACCESS_SLICE3.md, Q2a). */}
-                <div class="mrow"><span class="who">{site ? hostOf(site) : "you"}</span>{steer ? <SteerSeen seen={!!steer.seen} /> : null}{display ? <RawToggle raw={raw} onRaw={setRaw} tips={PROMPT_RAW_TIPS} /> : null}<span class="sp" />{shown ? <UserActions text={shown} /> : null}<Stamp ts={ts} /></div>
+                <div class="mrow"><span class="who">{task ? `task ${task}` : site ? hostOf(site) : "you"}</span>{steer ? <SteerSeen seen={!!steer.seen} /> : null}{display ? <RawToggle raw={raw} onRaw={setRaw} tips={PROMPT_RAW_TIPS} /> : null}<span class="sp" />{shown ? <UserActions text={shown} /> : null}<Stamp ts={ts} /></div>
                 {shown ? <UserText text={shown} /> : null}
             </div>
             <SentImages images={images} />
             {display && !raw ? <SentContext context={display.context} /> : null}
         </ArrivingMsg>
     );
-};
+}
 
 // The absolute destination of a `navigate` step (the resolved URL the action render carries, else the raw arg).
 export const navTargetOf = (st: AgentStep): string => {
@@ -1055,7 +1061,7 @@ export function AgentRunView({ s }: { s: Session }) {
             el: <ResumeDivider key={`r${i}-${r.id}`} r={r} />,
         })),
         ...(s.answers || []).map((a, i) => ({ pos: a.atStep + 0.5, ts: a.ts, el: answer(a, `a${i}`, i) })),
-        ...(s.says || []).map((sy, i) => ({ pos: sy.atStep + 0.5, ts: sy.ts, el: <UserBubble key={`s${i}`} pin={`s${i}`} text={sy.text} ts={sy.ts} images={sy.images} steer={sy.id ? { seen: sy.seen } : undefined} display={sy.display} site={sy.site} /> })),
+        ...(s.says || []).map((sy, i) => ({ pos: sy.atStep + 0.5, ts: sy.ts, el: <UserBubble key={`s${i}`} pin={`s${i}`} text={sy.text} ts={sy.ts} images={sy.images} steer={sy.id ? { seen: sy.seen } : undefined} display={sy.display} site={sy.site} task={sy.task} /> })),
         // The worker's quiet lines (a start a page this run opened asked for, Q17).
         ...(s.notes || []).map((n, i) => ({ pos: n.atStep + 0.5, ts: n.ts, el: <div key={`n${i}`} class="arun-note">{n.text}</div> })),
     ].sort((a, b) => a.pos - b.pos || a.ts - b.ts);

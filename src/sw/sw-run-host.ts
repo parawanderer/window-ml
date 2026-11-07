@@ -47,6 +47,7 @@ import { lookPreviewArgs, workerLook } from "./worker-look";
 import { workerLocate } from "./worker-locate";
 import { runVision, workerWroteVision, type RunVision } from "./run-vision";
 import { withUserWatches } from "./sw-shared-watches";
+import { endTasks, openTasks, withTasks } from "./sw-tasks";
 import { routeExec, execNames, surveyMayEnterPage, withoutWorld, worldCardNote, type ExecRoute } from "./exec-routing";
 import { defaultExecWorld } from "../contract/contract-config";
 import { outputCapPrecheck } from "../contract/contract-pointers";
@@ -664,7 +665,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     // Undoes what this turn registered: run when the turn settles, and when its setup throws before the loop starts.
     let unhostAsks: (() => void) | undefined;   // set once the run's steps may raise nested asks (sw-asks.ts)
     let unwatchArrivals: (() => void) | undefined;   // set once the run judges its tab's arrivals (nav-arrival.ts)
-    const settle = (): void => { unhostAsks?.(); unwatchArrivals?.(); if (unwatchArrivals) watchBetweenTurns(tabId, runId); cancelReasons.delete(runId); noteRunEnd(runId); dropActs(runId); runControllers.delete(runId); runInboxes.delete(runId); untrackRun(tabId, runId); deleteRun(runId); deletePythonRun(runId); releaseDebugger(tabId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); ROOT C: drop its kept Python namespace
+    const settle = (): void => { unhostAsks?.(); unwatchArrivals?.(); if (unwatchArrivals) watchBetweenTurns(tabId, runId); cancelReasons.delete(runId); noteRunEnd(runId); dropActs(runId); runControllers.delete(runId); runInboxes.delete(runId); void endTasks(runId); untrackRun(tabId, runId); deleteRun(runId); deletePythonRun(runId); releaseDebugger(tabId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); ROOT C: drop its kept Python namespace
     /** Ends the run's session on every surface when the setup throws after its start event went out; set once the fan exists. */
     let endSession: ((error: string) => void) | undefined;
     try {
@@ -800,6 +801,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             ingestSessionEvent(event, { tabId, trusted: true, hosts: byWorker() });
             if (p.crossPage !== false) bufferReplay(tabId, event);
         };
+        // A detached call's result, once the inbox carries it: drawn as the task's, never as the person's words.
+        openTasks(runId, (text, task) => fanEvent({ kind: "agent-task-say", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, text, task }));
         // The run's steps may now raise nested asks: a call made from inside a running step that needs the person.
         unhostAsks = hostAsks({
             runId, unattended: !!p.unattended, routing: p.approvalRouting || "ui", signal: abortCtl.signal,
@@ -1191,7 +1194,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                                 // What the world may ask for while it runs: re-pipes of what it was sent, those stored tables, and ml.sh.
                                 serve: isoServer(runId, reads, { deref: wholeDerefFor(runId), holders: valueHolders, columns: readStoredColumns, ...(sh ? { sh } : {}) }),
                                 // Made only for a script that names it, as a survey's is (tryReadonly below).
-                                ...(snap && execNames(js).current ? { current: async () => withPolicies(withRuntime(await withEnv(await withUserWatches(snap({ model: modelNow(), log: eventsForRun(await runLog.all(), runId) })), tabId, !!p.autoApproveReadonly, !byWorker())), runId) } : {}),
+                                ...(snap && execNames(js).current ? { current: async () => withTasks(withPolicies(withRuntime(await withEnv(await withUserWatches(snap({ model: modelNow(), log: eventsForRun(await runLog.all(), runId) })), tabId, !!p.autoApproveReadonly, !byWorker())), runId), runId) } : {}),
                             });
                             // A reading taken after a wait for the person is not simultaneous with one taken before: say so.
                             return shWaited >= 1000 ? { ...out, result: `${out.result}\n(ml.sh waited ${Math.round(shWaited / 1000)} s for the person to approve.)` } : out;
@@ -1592,7 +1595,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // into it (sw-shared-watches.ts), which is async, and the evaluator asks for the snapshot synchronously.
                     // A snapshot that cannot be made is not the run's end: the survey falls through to the person.
                     let current: import("../agent/current-context").CurrentSnapshot | undefined;
-                    try { current = snap && wantsLog ? withPolicies(withRuntime(await withEnv(await withUserWatches(snap({ model: modelNow(), log })), tabId, !!p.autoApproveReadonly, !byWorker())), runId) : undefined; } catch (e) {
+                    try { current = snap && wantsLog ? await withTasks(withPolicies(withRuntime(await withEnv(await withUserWatches(snap({ model: modelNow(), log })), tabId, !!p.autoApproveReadonly, !byWorker())), runId), runId) : undefined; } catch (e) {
                         recordRunLog(runId, { level: "warn", subsystem: "routing", kind: "current-failed", reason: e instanceof Error ? e.message || e.name : String(e), detail: { tool: name } });
                         return null;
                     }
@@ -1957,7 +1960,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     const items = (runInboxes.get(runId)?.queue || []).splice(0);
                     for (const it of items) if (it.id) fanEvent({ kind: "agent-say-seen", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, sayId: it.id });
                     // Each says where it was typed, so a run steered from another surface reports THAT one.
-                    return items.map(it => (it.origin || it.images ? { text: it.text, ...(it.origin ? { origin: it.origin } : {}), ...(it.images ? { images: it.images } : {}) } : it.text));
+                    // A task's result is no one's typing: it carries its id and leaves the run's latest origin standing.
+                    return items.map(it => (it.task ? { text: it.text, task: it.task } : it.origin || it.images ? { text: it.text, ...(it.origin ? { origin: it.origin } : {}), ...(it.images ? { images: it.images } : {}) } : it.text));
                 },
                 signal: abortCtl.signal,
                 // chat_metadata: the run's model FACTS from the SW's caches (the loop supplies the live
