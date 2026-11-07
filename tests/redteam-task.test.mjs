@@ -13,7 +13,7 @@
 // at all fails rather than passing by refusing nothing.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { JSDOM } from "jsdom";
 import { fakeNativeHost } from "./fake-native-host.mjs";
 
@@ -225,13 +225,16 @@ test("RED TEAM: ml.current.tasks reads this run's rows; a script's write changes
 test("RED TEAM: only sw-tasks.ts sets the inbox's task mark, and a page cannot write a task line's event", async () => {
     // An inbox item's `task` field is what the transcript and the export draw as a task's, so the one writer is the
     // property: a page's steer (background.ts) and a page turn (sw-page-turn.ts) carry id/text/origin and never it.
-    for (const f of ["src/background.ts", "src/sw/sw-run-start.ts", "src/sw/sw-page-turn.ts"]) {
-        const src = readFileSync(new URL(`../${f}`, import.meta.url), "utf8");
-        const pushes = src.split("\n").filter((l) => /queue\.push\(/.test(l));
-        assert.ok(pushes.length > 0, `${f}: no inbox writer found, so this row checks nothing`);
-        for (const p of pushes) assert.doesNotMatch(p, /\btask\s*:/, `${f} sets a task mark: ${p.trim()}`);
+    // Enumerated over EVERY source file, not a list of the ones known today: an inbox push is a line calling
+    // `queue.push(` on something named `inbox`, and the only file whose push sets a mark must be sw-tasks.ts — both
+    // directions, so a new writer reds this and sw-tasks losing the mark reds it instead of making it vacuous.
+    const root = new URL("../src/", import.meta.url);
+    const pushes = [];
+    for (const f of readdirSync(root, { recursive: true }).filter((x) => /\.(ts|tsx|js|mjs)$/.test(String(x)))) {
+        for (const line of readFileSync(new URL(String(f), root), "utf8").split("\n")) if (/inbox!?\.queue\.push\(/.test(line)) pushes.push([String(f), line]);
     }
-    assert.match(readFileSync(new URL("../src/sw/sw-tasks.ts", import.meta.url), "utf8"), /queue\.push\(\{ text, task: t\.id \}\)/, "sw-tasks no longer writes the mark this row reads");
+    assert.ok(pushes.length >= 4, `no inbox writer found (${pushes.length}), so this row checks nothing`);
+    assert.deepEqual([...new Set(pushes.filter(([, l]) => /\btask\s*:/.test(l)).map(([f]) => f))], ["sw/sw-tasks.ts"], `the inbox's task mark is not sw-tasks' alone: ${JSON.stringify(pushes.map(([f, l]) => `${f}: ${l.trim()}`))}`);
     for (const claim of ["hosts", "owns", "none"]) assert.equal(pageMayWrite("agent-task-say", claim), false, `a page wrote a task line (${claim})`);
 });
 
