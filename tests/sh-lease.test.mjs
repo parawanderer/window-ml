@@ -306,3 +306,42 @@ test("ml.current.tasks is absent with no task, and one row per task with the rul
     await endTasks("run-rows");
     assert.equal((await withTasks(snap(), "run-rows")).tasks, undefined, "the rows outlived the turn");
 });
+
+// --- the bench varies the lease per cell: a build-time define, the shipped 15 s otherwise ---
+
+test("__SH_LEASE_MS__ sets the lease a build ships, as the bench's cells define it; absent, the 15 s placeholder", async () => {
+    const esbuild = await import("esbuild");
+    const vm = await import("node:vm");
+    const entry = new URL("../src/shell/sh-call.ts", import.meta.url).pathname;
+    const leaseOf = async (define) => {
+        const out = await esbuild.build({ entryPoints: [entry], bundle: true, write: false, format: "cjs", platform: "neutral", logLevel: "silent", ...(define ? { define } : {}) });
+        const mod = { exports: {} };
+        vm.runInNewContext(out.outputFiles[0].text, { module: mod, exports: mod.exports, crypto: globalThis.crypto, TextEncoder, TextDecoder });
+        return mod.exports.SH_LEASE_MS;
+    };
+    assert.equal(await leaseOf({ __SH_LEASE_MS__: "5000" }), 5000);
+    assert.equal(await leaseOf({ __SH_LEASE_MS__: "60000" }), 60000);
+    assert.equal(await leaseOf(), 15000, "undefined: the shipped placeholder");
+});
+
+test("build.mjs refuses an __SH_LEASE_MS__ that is not a positive integer, before it builds anything", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const root = new URL("..", import.meta.url).pathname;
+    for (const bad of ["0", "-5", "15s", "1.5", ""]) {
+        const out = mkdtempSync(join(tmpdir(), "wml-lease-"));
+        try {
+            const r = spawnSync(process.execPath, ["build.mjs", "--outdir", join(out, "d"), "--define", `__SH_LEASE_MS__=${bad}`], { cwd: root, encoding: "utf8", timeout: 20000 });
+            assert.notEqual(r.status, 0, `${JSON.stringify(bad)} built`);
+            assert.match(r.stderr, /__SH_LEASE_MS__ must be a positive integer of milliseconds/);
+        } finally { rmSync(out, { recursive: true, force: true }); }
+    }
+});
+
+test("the task line reads under a second as \"<1 s\", never \"0 s\"", async () => {
+    const { taskLineText } = await import("../src/sidebar/transcript/task-line.tsx");
+    assert.equal(taskLineText("t1", { status: "done", ms: 300, code: 0 }), "✓ task t1 finished · <1 s · exit 0");
+    assert.equal(taskLineText("t1", { status: "done", ms: 1600, code: 0 }), "✓ task t1 finished · 2 s · exit 0");
+});

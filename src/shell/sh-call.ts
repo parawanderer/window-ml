@@ -125,9 +125,13 @@ export class ShRefused extends Error {
 /** The options `ml.sh.run` takes. Anything else is refused by name, so `shell: true` is told it does nothing. */
 const RUN_OPTIONS = ["cwd", "env", "timeoutMs", "expectMs"] as const;
 
+/** The lease a bench cell builds in (build.mjs `--define __SH_LEASE_MS__=…`); undefined when nothing defined it. */
+declare const __SH_LEASE_MS__: number | undefined;
+
 /** How long a call runs before it DETACHES into a task when the script gives no `expectMs` (docs/spec/ASYNC_CALLS.md,
- *  mode 1). A PLACEHOLDER: the default is a bench question (rule 1), seconds and not minutes until one answers it. */
-export const SH_LEASE_MS = 15_000;   // state: fixed
+ *  mode 1). A PLACEHOLDER: the default is a bench question (rule 1), seconds and not minutes until one answers it. The
+ *  bench varies it per cell through `__SH_LEASE_MS__`; what ships is 15 s. */
+export const SH_LEASE_MS = typeof __SH_LEASE_MS__ === "number" ? __SH_LEASE_MS__ : 15_000;   // state: fixed
 
 /** The host's own time limit for a call that names no `timeoutMs` (window-ml-host `DEFAULT_TIMEOUT_MS`): what a detached
  *  call is told it still runs under. */

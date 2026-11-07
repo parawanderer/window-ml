@@ -11,7 +11,8 @@ export function taskLineText(task: string, end?: TaskEndView): string {
     if (!end) return `task ${task} finished`;
     const mark = end.status === "done" ? "✓" : end.status === "failed" ? "✗" : "–";
     const verb = end.status === "done" ? "finished" : end.status;
-    return [`${mark} task ${task} ${verb}`, `${Math.round(end.ms / 1000)} s`, ...(end.code !== null ? [`exit ${end.code}`] : [])].join(" · ");
+    // Under a second reads "<1 s", never "0 s": a task that detached with a small expectMs can end that soon.
+    return [`${mark} task ${task} ${verb}`, end.ms < 1000 ? "<1 s" : `${Math.round(end.ms / 1000)} s`, ...(end.code !== null ? [`exit ${end.code}`] : [])].join(" · ");
 }
 
 /** A DETACHED CALL'S RESULT on the calm surfaces (the chat page's calm view, the HUD card): one quiet line in the style
