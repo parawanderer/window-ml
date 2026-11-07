@@ -3311,6 +3311,23 @@ html[data-focus] .action-verb { font-weight: 500; }
 /* A caption above a rendered block saying it is not literally what the caller wrote — `exec` uses it for
    expanded pointer macros. Quiet: it explains the render, it is not part of it. */
 .rp-note { font-size: .85em; color: var(--fg-dim); margin: 0 0 4px; font-style: italic; }
+/* A several-rule policy proposal (`rules` on a code descriptor): one section per rule, its effect first, so an allow and a
+   deny proposed together are told apart without reading the `// Rule i of n` comment lines. */
+/* One rule of a several-rule proposal: a divider above every section but the first. */
+.rule-section { border-top: 1px solid var(--border); padding-top: 4px; margin-top: 4px; }
+.rule-section:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
+/* The heading row of a rule section: its number, then its effect. */
+.rule-head { display: flex; gap: 8px; align-items: baseline; font-size: .85em; margin-bottom: 2px; }
+/* A rule section's "Rule i of n" label. */
+.rule-n { color: var(--fg-dim); }
+/* A rule section's effect word (allow, deny or ask), coloured by .rule-allow, .rule-deny and .rule-ask. */
+.rule-effect { font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+/* The effect word of an allow rule. */
+.rule-allow { color: var(--ok); }
+/* The effect word of a deny rule. */
+.rule-deny { color: var(--err); }
+/* The effect word of an ask rule. */
+.rule-ask { color: var(--warn); }
 /* The print boundary's notes, after a part of an exec's output: each names, in JSONPath, what the print showed as a
    view rather than as the value. A cell of their own just under the output, so they read as part of it. */
 /* An exec's print notes, inside its output cell after the output: a code block of their own, spaced off the output. */

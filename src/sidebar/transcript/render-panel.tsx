@@ -1528,7 +1528,10 @@ export function PyBenchOut({ d, running, marks }: { d: Extract<RenderDescriptor,
  *
  *  Exported so the ANSWER's embedded citations draw code the same way a step does: `![the code](@tool:…:in)`
  *  used to render a bare `Code`, so the same block was explainable in one surface and inert in the other,
- *  purely because of where it was cited. Pass `ctx` to get the tools; without it this is just the block. */
+ *  purely because of where it was cited. Pass `ctx` to get the tools; without it this is just the block.
+ *
+ *  A descriptor with several `rules` (a policy proposal) draws one section per rule instead.
+ *  @gallery {"d":{"type":"code","lang":"javascript","text":"// Rule 1 of 2: allow\nreturn true;\n\n// Rule 2 of 2: deny\nreturn false;","note":"Rule 1 of 2. Covers 3 of 3 fetches.\n\nRule 2 of 2. Covers none.","rules":[{"effect":"allow","source":"return c.host === \"a.example\";","note":"Covers 3 of 3 fetches."},{"effect":"deny","source":"return c.url.includes(\"/admin/\");","note":"Covers none."}]}} */
 export function CodeRender({ d, failLine, ctx, failed }: { d: Extract<RenderDescriptor, { type: "code" }>; failLine?: number | null; ctx?: CodeCtx; failed?: boolean }) {
     const rv = rev.value;   // subscribe: a landed annotation repaints the block (retained via data-rev below)
     const [map, setMap] = useState<number[] | null>(null);
@@ -1538,6 +1541,19 @@ export function CodeRender({ d, failLine, ctx, failed }: { d: Extract<RenderDesc
     const shown = displaySource(d.text, d.lang, d.format, d.marks);
     const block = useRef<HTMLDivElement>(null);
     const find = useCodeFind(block);
+    // A several-rule proposal draws one section per rule. `text` stays the whole proposal (the raw view and the export
+    // read it); the sections are the same rules, each under its own effect and its own measured note.
+    if (d.rules && d.rules.length > 1) return (
+        <div class="code-block rule-sections" data-cite="in">
+            {d.rules.map((r, i) => (
+                <section class="rule-section" data-effect={r.effect} key={i}>
+                    <div class="rule-head"><span class="rule-n">Rule {i + 1} of {d.rules!.length}</span><span class={`rule-effect rule-${r.effect}`}>{r.effect}</span></div>
+                    <Code text={r.source} lang={d.lang} format={d.format} />
+                    <div class="rp-note">{r.note}</div>
+                </section>
+            ))}
+        </div>
+    );
     return (
         <div class="code-block" data-cite="in" data-rev={rv} data-py-map={map ? JSON.stringify(map) : undefined}
             ref={block} tabIndex={0} onKeyDown={find.onKey}>
