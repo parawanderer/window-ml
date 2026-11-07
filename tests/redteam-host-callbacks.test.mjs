@@ -6,13 +6,13 @@
 // worker's mediated interpreter, whose whole promise is that page code does not run (src/readonly-exec/evaluator.ts;
 // docs/dev/readonly-exec.md).
 //
-// Every position below is measured RUNNING the page's function on main and lands `{ todo }` while the hole is open:
-// each asserts the function never ran, that the survey is refused, and that the refusal names the method (the ruled
-// shape — a caller reading the refusal must know which call was the problem). Twenty rows over NINETEEN admitted
-// names, because `collection` admits one name on two host receivers (`querySelectorAll` and `getElementsByTagName`);
-// nothing else in `BY_KIND` hands an argument to the host to be called. The three shapes already refused name no
-// method: they assert the defence that exists. One control row shows a function written IN the script still works in
-// every one of those positions, so a fix that refused every callback fails here rather than passing.
+// Every position below was measured RUNNING the page's function before the fix, and each asserts the function never
+// ran, that the survey is refused, and that the refusal names the method (the ruled shape — a caller reading the
+// refusal must know which call was the problem). Twenty rows over NINETEEN admitted names, because `collection`
+// admits one name on two host receivers (`querySelectorAll` and `getElementsByTagName`); nothing else in `BY_KIND`
+// hands an argument to the host to be called. The three shapes already refused name no method: they assert the
+// defence that exists. One control row shows a function written IN the script still works in every one of those
+// positions, so a fix that refused every callback fails here rather than passing.
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
@@ -62,9 +62,9 @@ const REFUSED_ALREADY = [
 // --- the hole: the host calls the page's function ---
 
 for (const [why, js, named] of CALLBACKS) {
-    // Measured on main (7e937260): every one of these calls the page's function — map [3,3], sort [2], reduce [4],
-    // forEach [3,3], Array.from [2,2], JSON.stringify [2] — and answers with its result.
-    test(`RED TEAM: ${why} does not run a page function handed as its callback`, { todo: `open: ${why} calls the page's function; the whitelist admits the method and nothing checks the argument` }, async () => {
+    // Measured before the fix (main 7e937260): every one of these calls the page's function — map [3,3], sort [2],
+    // reduce [4], forEach [3,3], Array.from [2,2], JSON.stringify [2] — and answers with its result.
+    test(`RED TEAM: ${why} does not run a page function handed as its callback`, async () => {
         const ran = [];
         const r = await run(js, pageFunction(ran)).catch((e) => ({ refused: String(e) }));
         assert.deepEqual(ran, [], `${why} ran the page's function: ${JSON.stringify(ran)}`);
