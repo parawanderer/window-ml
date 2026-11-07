@@ -32,6 +32,8 @@ const DUTY = {
     "unapproved-page": "site",  // the page's approval: a user-started run's survey keeps its leg there
 };
 const PLAIN = "return document.title.length";
+/** How the worker's own survey accounted for each: the reason its record gives, on the worker, never the page. */
+const RECORD = { sh: "script-isolated", pointer: "no-page-reads", current: "no-page-reads" };
 
 /** Run one survey: what the page was asked to evaluate, and what routing recorded. */
 async function survey(js, { approved = true } = {}) {
@@ -52,13 +54,15 @@ test("CONTROL: a plain survey reaches the page's leg, which evaluates it, and no
 // --- a script the policy isolates never reaches the page ---
 
 for (const [reason, js] of Object.entries(SCRIPT_NAMED)) {
-    // A hole is open for `sh` on main: the worker's survey comes back `needs-page` (its `ml` has no `ml.sh`), and the
-    // page leg runs, so the page's main world evaluates a script that reaches the process host. Measured: the records
-    // are `readonly-page / refused-in-page` then `exec-refused / sh`. Flip this to a plain test with the fix.
-    test(`RED TEAM: a survey naming ${reason} is never handed to the page to evaluate`, reason === "sh" ? { ...T, todo: true } : T, async () => {
+    // The `sh` row was the hole: on the page default the worker's survey came back `needs-page` (its `ml` has no
+    // `ml.sh`) and the page leg ran, so the page's main world evaluated a script that reaches the process host (the
+    // records were `readonly-page / refused-in-page` then `exec-refused / sh`). The leg is now decided on the script.
+    test(`RED TEAM: a survey naming ${reason} is never handed to the page to evaluate`, T, async () => {
         const r = await survey(js);
         assert.equal(r.tries.length, 0, `the page was asked to evaluate a script policy isolates for ${reason}: ${JSON.stringify(r.tries.map((p) => p.args))}`);
         assert.deepEqual(r.ro.filter(([k]) => k === "readonly-page"), [], `the run log says the page surveyed it: ${JSON.stringify(r.ro)}`);
+        // And the worker's own survey says so: the decision is the script's, recorded where the run log keeps it.
+        assert.deepEqual(r.ro, [["readonly-worker", RECORD[reason]]], `${reason}: the survey is not recorded as the worker's: ${JSON.stringify(r.ro)}`);
     });
 }
 
@@ -73,7 +77,7 @@ test("RED TEAM: a survey on an unapproved page keeps its page leg: the run is th
 
 // --- every reason: placed, or this row fails ---
 
-test("RED TEAM: every reason the routing module exports is placed, and each script-named one is one of the rows above", { todo: true }, async () => {
+test("RED TEAM: every reason the routing module exports is placed, and each script-named one is one of the rows above", async () => {
     const route = await import("../src/sw/exec-routing.ts");
     const reasons = route.EXEC_REASONS;
     assert.ok(Array.isArray(reasons) && reasons.length, "exec-routing.ts does not export EXEC_REASONS as a runtime list");
