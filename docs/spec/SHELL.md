@@ -256,8 +256,10 @@ ml.pipe(r.stdout, "grep -c '^ '");         // stdout and stderr are pointers, he
 RULED 2026-11-07 (the bench lane's proposal, `20261107-1357Z-bench-to-repl-specs-sh-tilde-proposal.md`; Shane's
 agreement reached the coordinator relayed, "it saves tokens", recorded as relayed until he confirms): the HOST
 expands a leading `~` in an `ml.sh.run` argument. Today argv is passed as written with no shell, so
-`["cat", "~/.ssh/config"]` names `<cwd>/~/.ssh/config`, reads free inside the workspace and finds nothing; in the
-bench's canary gemma4:31b spent a step on that and fell back to `sh -c`, which always asks. The rule: the host
+`["cat", "~/notes.txt"]` names `<cwd>/~/notes.txt`, reads free inside the workspace and finds nothing (CORRECTED
+2026-11-07 by the bench lane: a literal `~/.ssh/config` does NOT read free, since the credential-store segment match
+applies anywhere in the path, so it asks, as qwen's canary run showed); in the bench's canary gemma4:31b spent a step
+on `~` and fell back to `sh -c`, which always asks. The rule: the host
 expands at resolve time, in the facts pass that already resolves path arguments, from the `HOME` it already passes
 through, so the facts, the judging, the card and the spawn see one path; the judge never sees an unexpanded `~`,
 because an expansion after judging would let `~/.ssh/config` pass as an in-root relative path. POSIX tilde-prefix
