@@ -839,6 +839,11 @@ unsafely" — new tests prove the new surface keeps that.
   "The rule for extending the dialect" above.
 - **A kind decided by `Object.prototype.toString` is a page's choice.** Borrow the intrinsic that throws without the
   internal slot (`policy.ts`: `isStringObject`, `isRegExpObject`, `drainIterator`); the internal slots are realm-agnostic, so a foreign realm's real value still passes.
-  **Open** (a coercion that runs the object's own `toString`, with or without a tag): `[o].join("")` and `concat(o).join`, a pattern
+- **`join` turns only data into text.** The host's `join` coerces each element by running its own `toString`/`valueOf`, so an
+  array reaching `join`, `toString`, `+` or a template is checked first (`evaluator.ts` `joinsData`, before `expands`): a primitive or an
+  array of them passes; any other element (a page object, a script-built one with a `toString` arrow, a Date, a function) is
+  `NotInDialect`, as is a getter or an inherited index (own data descriptors are read, never run). A Proxy array's traps are page
+  code by design and are not made worse. `sort()` with no comparator also coerces its elements and is not gated here.
+  **Open** (a coercion that runs the object's own `toString`, with or without a tag): a pattern
   object coerced by native `replaceAll`/`replace` (`ToString(searchValue)`, which also reads the tag), and `String(obj).length`
   (`evaluator.ts` `replace`/`replaceAll` charge) on a real String object carrying its own `toString`.

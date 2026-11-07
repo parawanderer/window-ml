@@ -2086,3 +2086,64 @@ test("RegExp.prototype is no regexp, and a Proxy is no String or RegExp, and the
     await assert.rejects(run(`const o = await ml.models(); return o.test("x")`, world(), handed(RegExp.prototype)), refused);
     assert.ok(!trapped.some((t) => t === "global" || t === "valueOf"), `a borrowed brand touched a trap: ${trapped}`);
 });
+
+// --- ADVERSARIAL: `join` (and what is `join` underneath) turns only data into text -------------------------------------------
+// The host's `join` coerces each element by running its OWN `toString`/`valueOf`, page code the interpreter cannot see. So an
+// array reaching `join`, `toString`, `+` or a template is checked first: primitives and arrays of them pass, anything else
+// is `NotInDialect`. Elements are read as own data descriptors (a getter or an inherited index is refused, not run).
+
+test("join refuses an object element, whoever built it, and no function runs", async () => {
+    const ran = [];
+    const page = { toString() { ran.push("page.toString"); return "P"; }, valueOf() { ran.push("page.valueOf"); return "P"; } };
+    for (const js of [
+        `const o = await ml.models(); return [o].join("")`,
+        `const o = await ml.models(); return [].concat(o).join("-")`,
+        `const o = await ml.models(); return [1, [2, [o]]].join(",")`,
+        `const o = await ml.models(); return [o].toString()`,
+        `const o = await ml.models(); return [o] + ""`,
+        "const o = await ml.models(); return `${[o]}`",
+        `return [{ toString: () => "x" }].join("")`,
+        `return [{ a: 1 }].join("")`,
+        `return [new Date(0)].join("")`,
+        `return [[1], () => 2].join("")`,
+    ]) {
+        await assert.rejects(run(js, world(), handed(page)), outOfDialect, js);
+        assert.deepEqual(ran, [], `${js} ran ${JSON.stringify(ran)}`);
+    }
+});
+
+test("join refuses an element that is a getter or inherited, and runs neither", async () => {
+    const ran = [];
+    const withGetter = []; Object.defineProperty(withGetter, 0, { get() { ran.push("getter"); return "x"; }, enumerable: true }); withGetter.length = 1;
+    const inherits = new Array(1); Object.setPrototypeOf(inherits, Object.assign([], { 0: { toString() { ran.push("inherited"); return "I"; } } }));
+    for (const arr of [withGetter, inherits]) {
+        await assert.rejects(run(`const a = await ml.models(); return a.join("")`, world(), handed(arr)), outOfDialect);
+    }
+    assert.deepEqual(ran, [], `page code ran: ${JSON.stringify(ran)}`);
+});
+
+test("the controls: joining the page's own strings, numbers, nulls, holes and nested arrays of them still works", async () => {
+    assert.equal((await run(`return ["a", 1, null, undefined, true].join("-")`)).value, "a-1---true");
+    assert.equal((await run(`return [1, [2, [3, "x"]]].join(",")`)).value, "1,2,3,x");
+    assert.equal((await run(`return [1, 2].toString()`)).value, "1,2");
+    assert.equal((await run(`return [1, 2] + ""`)).value, "1,2");
+    assert.equal((await run("return `${[1, [2]]}`")).value, "1,2");
+    assert.equal((await run(`const a = await ml.models(); return a.join("+")`, world(), handed(["x", "y"]))).value, "x+y");
+    assert.equal((await run(`const a = await ml.models(); return a.join("-")`, world(), handed([1, , 3]))).value, "1--3", "a real hole is empty text");
+    assert.equal((await run(`const a = [1]; a.push(a); return a.join("-")`)).value, "1-", "a cycle prints empty, as join does");
+});
+
+test("join's refusal is the SAME gate when the array falls out of dialect afterwards: nothing is left behind", async () => {
+    const doc = world();
+    const before = doc.body.innerHTML;
+    await assert.rejects(run(`const o = await ml.models(); document.body.setAttribute("x", "1"); return [o].join("")`, doc, handed({ toString() { return "P"; } })), outOfDialect);
+    assert.equal(doc.body.innerHTML, before);
+});
+
+test("join over a large nested array is still bounded before the element check, and finishes", async () => {
+    // Halting: the walk is `expands`-bounded first (a shared-part array refuses), then each node is visited once.
+    await assert.rejects(run(`let d = [1]; for (const i of Array.from({ length: 40 }, (_, k) => k)) d = [d, d]; return d.join(",")`), outOfDialect);
+    const t0 = Date.now();
+    assert.equal((await run(`return Array.from({ length: 2000 }, (_, k) => k).join(",").length`)).value, 8889);
+    assert.ok(Date.now() - t0 < 5000);
+});
