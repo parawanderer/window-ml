@@ -341,6 +341,18 @@ test("a follow-up image the run may not send (vision not known, no reader) is re
     assert.equal(fanned(bg, "agent-say").length, 0, "nothing is shown as sent");
 });
 
+test("from the DevTools or side panel (ML_SESSION_REMOTE), a refused follow-up image is said in the run's step list, and nothing goes to the page", T, async () => {
+    const { bg, chats } = world();
+    const { hash } = await bg.context.__mlStartUserRunForTest(7, { task: "first", surface: "hud" });
+    await flush(20);
+    const before = bg.tabMessages.filter(([, m]) => m.type === "ML_SESSION_TO_PAGE").length;
+    void bg.send({ type: "ML_SESSION_REMOTE", tabId: 7, action: "send", hash, text: "and this?", images: [IMG], surface: "hud" }, EXT);
+    await flush(20);
+    assert.equal(chats().length, 1, "no turn went out");
+    assert.match(fanned(bg, "agent-note").at(-1)?.text ?? "", /^Your message was not sent: /);
+    assert.equal(bg.tabMessages.filter(([, m]) => m.type === "ML_SESSION_TO_PAGE").length, before);
+});
+
 test("ADVERSARIAL: a page's RESUME_RUN cannot put images into a turn: only the worker's own call carries them", T, async () => {
     const { bg, chats } = world();
     await bg.send({ type: "START_RUN", payload: {

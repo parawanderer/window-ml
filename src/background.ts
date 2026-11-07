@@ -398,7 +398,11 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // A run the worker built is driven from here: the page never carries the person's message (sw-run-start.ts).
         if ((message.action === "send" || message.action === "continue") && typeof message.hash === "string") {
             void userRunAction(message.hash, message.action, { text: message.text, images: message.images, surface: message.surface, maxSteps: message.maxSteps }, message.tabId)
-                .then((mine) => { if (!mine) toPage(); }, toPage);
+                .then((mine) => { if (!mine) toPage(); }, (e) => {
+                    // As on USER_RUN_ACTION: a refused turn is said in the run's step list, never handed to the page.
+                    if (e instanceof ImagesRefused) { noteRefusedTurn(message.hash as string, e.message); return; }
+                    toPage();
+                });
             return;
         }
         toPage();
