@@ -320,14 +320,14 @@ export class Evaluator {
     /** A COERCION of an operand (`+`, `<`, a template, a computed key): an object becomes a string through its
      *  `toString`, which for an array is `join`, so it is walked first. Two strings compared cost their shorter one. */
     private coerces(...vs: unknown[]): void {
-        for (const v of vs) if (v !== null && typeof v === "object") { if (Array.isArray(v)) this.joinsData(v); this.expands(v); }
+        for (const v of vs) if (v !== null && typeof v === "object") { if (Array.isArray(v)) this.joinsData(v, "this coercion"); this.expands(v); }
     }
     /** Refuse an array that `join` (so `toString`, `+`, a template, and a `sort` with no comparator) would turn into text by COERCING an element: only a
      *  primitive, or an array of them, becomes text without running a function the page chose, since the host calls an
      *  object's own `toString`/`valueOf` for it. Elements are read as own DATA descriptors, so a getter is refused instead of
      *  run and a hole must be a real one (nothing inherited). Run BEFORE `expands`, which reads elements too. Each array is visited once, charged its length, and past MAX_EXPANDED elements it is refused. A Proxy's
      *  traps are page code by design and are not made worse here; a cycle is followed once, as `join` prints it empty. */
-    private joinsData(arr: unknown[]): void {
+    private joinsData(arr: unknown[], via: string): void {
         const seen = new Set<object>();
         const stack: unknown[][] = [arr];
         let visited = 0;
@@ -336,20 +336,19 @@ export class Evaluator {
             if (seen.has(a)) continue;
             seen.add(a);
             const n = Object.getOwnPropertyDescriptor(a, "length")?.value;
-            if (typeof n !== "number") throw new NotInDialect("an array whose length is not plain data, which join would read by running page code");
-            if ((visited += n) > MAX_EXPANDED) throw new NotInDialect("a value too large to join without asking");
-            this.tick(Math.floor(n / HOST_SCAN_ELEMENTS_PER_STEP));
+            if (typeof n !== "number") throw new NotInDialect(`an array whose length is not plain data, which ${via} would read by running page code`);
+            if ((visited += n) > MAX_EXPANDED) throw new NotInDialect(`a value too large for ${via} without asking`);
             for (let i = 0; i < n; i++) {
                 const d = Object.getOwnPropertyDescriptor(a, i);
                 if (d === undefined) {
-                    if (i in a) throw new NotInDialect(`item ${i} is inherited, which join would read by running page code`);
+                    if (i in a) throw new NotInDialect(`item ${i} is inherited, which ${via} would read by running page code`);
                     continue;
                 }
-                if (!("value" in d)) throw new NotInDialect(`item ${i} is a getter, which join would run`);
+                if (!("value" in d)) throw new NotInDialect(`item ${i} is a getter, which ${via} would run`);
                 const v = d.value;
                 if (Array.isArray(v)) stack.push(v);
                 else if (v !== null && (typeof v === "object" || typeof v === "function"))
-                    throw new NotInDialect(`item ${i} is an object, which join would turn into text by running its own toString: join strings and numbers`);
+                    throw new NotInDialect(`item ${i} is an object, which ${via} would turn into text by running its own toString: use strings and numbers`);
             }
         }
     }
@@ -371,8 +370,11 @@ export class Evaluator {
         // A RegExp the script did not build (a page value's property, on the page realm) never passed the literal or
         // `new RegExp` check, so every one a call is handed, as receiver or argument, is checked here.
         for (const v of [obj, ...args]) if (isRegExp(v)) this.patternArg(String(v.source));
+        // join's SEPARATOR is coerced by the host like an element: an object (or function) would run its own toString.
+        if (Array.isArray(obj) && key === "join" && args[0] !== null && (typeof args[0] === "object" || typeof args[0] === "function"))
+            throw new NotInDialect("the separator is an object, which join would turn into text by running its own toString: use a string");
         if (Array.isArray(obj) && key === "join" && obj.length * String(args[0] ?? ",").length > MAX_STRING) big();
-        if (Array.isArray(obj) && ARRAY_EXPANDS.has(key)) { if (key === "join" || key === "toString" || (key === "sort" && args[0] === undefined)) this.joinsData(obj); this.expands(obj); }
+        if (Array.isArray(obj) && ARRAY_EXPANDS.has(key)) { if (key === "join" || key === "toString" || (key === "sort" && args[0] === undefined)) this.joinsData(obj, key === "toString" ? "toString" : key === "join" ? "join" : "a sort with no comparator"); this.expands(obj); }
         else if (Array.isArray(obj) && ARRAY_SCANS.has(key)) this.tick(Math.floor(obj.length / HOST_SCAN_ELEMENTS_PER_STEP));
         else if (Array.isArray(obj) && ARRAY_MOVES.has(key)) this.tick(Math.floor(obj.length / HOST_COPY_ELEMENTS_PER_STEP));
         // The ARGUMENTS: a host method may coerce, copy or walk any of them, so each is charged its size and an array

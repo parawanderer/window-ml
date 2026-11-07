@@ -2151,3 +2151,46 @@ test("join over a large nested array is still bounded before the element check, 
     assert.equal((await run(`return Array.from({ length: 2000 }, (_, k) => k).join(",").length`)).value, 8889);
     assert.ok(Date.now() - t0 < 5000);
 });
+
+// --- join's guard, the arguments and branches the first rows did not pin ---------------------------------------------------
+
+test("join's SEPARATOR is data too: an object separator is refused and its own toString never runs", async () => {
+    const ran = [];
+    const page = { toString() { ran.push("toString"); return "P"; }, valueOf() { ran.push("valueOf"); return "P"; } };
+    for (const js of [
+        `const o = await ml.models(); return [1, 2].join(o)`,
+        `const o = await ml.models(); return [1, 2].join([o])`,
+        `return [1, 2].join({ toString: () => "x" })`,
+        `return [1, 2].join(() => "x")`,
+    ]) {
+        await assert.rejects(run(js, world(), handed(page)), outOfDialect, js);
+        assert.deepEqual(ran, [], `${js} ran ${JSON.stringify(ran)}`);
+    }
+    assert.equal((await run(`return [1, 2].join(null)`)).value, "1null2", "a primitive separator (null included) is unchanged");
+    assert.equal((await run(`return [1, 2].join(3)`)).value, "132");
+});
+
+test("sort(undefined) is a comparator-less sort, and its refusal names sort, not join", async () => {
+    const ran = [];
+    const page = { toString() { ran.push("toString"); return "P"; } };
+    for (const js of [`const o = await ml.models(); return [o, 2].sort(undefined)`, `const o = await ml.models(); return [o, 2].sort()`]) {
+        await assert.rejects(run(js, world(), handed(page)), (e) => outOfDialect(e) && /sort/.test(e.message) && !/join would/.test(e.message), js);
+    }
+    await assert.rejects(run(`const o = await ml.models(); return [o].join("")`, world(), handed(page)), (e) => /which join would/.test(e.message));
+    assert.deepEqual(ran, [], `page code ran: ${JSON.stringify(ran)}`);
+});
+
+test("the guard's remaining branches: an expanding coercion is still refused, an enormous length is refused unread, a lying length is refused", async () => {
+    // `expands` after `joinsData` in a coercion: a part-sharing array of primitives passes the element check once and is then
+    // refused by the expansion bound, instead of the host building a 2^40-element string.
+    await assert.rejects(run(`let d = [1]; for (const k of Array.from({ length: 40 }, (_, i) => i)) d = [d, d]; return d + ""`), outOfDialect);
+    await assert.rejects(run("let d = [1]; for (const k of Array.from({ length: 40 }, (_, i) => i)) d = [d, d]; return `${d}`"), outOfDialect);
+    // joinsData's own cap: refused from the length alone, before one element is read.
+    const huge = Array.from({ length: 6 }, () => { const a = []; a.length = 1_000_000; return a; });
+    const t0 = Date.now();
+    await assert.rejects(run(`const a = await ml.models(); return a + ""`, world(), handed(huge)), (e) => outOfDialect(e) && /too large for this coercion without asking/.test(e.message));
+    assert.ok(Date.now() - t0 < 2000, "the length was refused without walking it");
+    // A length the page reports as something other than a number (a Proxy's descriptor trap) is not trusted.
+    const lying = new Proxy([], { getOwnPropertyDescriptor(t, k) { return k === "length" ? { value: "2", writable: true, enumerable: false, configurable: false } : Reflect.getOwnPropertyDescriptor(t, k); } });
+    await assert.rejects(run(`const a = await ml.models(); return a.join(",")`, world(), handed(lying)), (e) => outOfDialect(e) && /length is not plain data/.test(e.message));
+});
