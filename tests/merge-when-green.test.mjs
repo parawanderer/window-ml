@@ -5,7 +5,7 @@ import assert from "node:assert";
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { judge, testLineCounts, deletedTests, diskOnly, keepBench, agentMarker, isOwnPost, postKey, pickUnread, localImports, pinPlan, PIN_SUPPORT, touchesTool, diffPaths } from "../scripts/merge-when-green.mjs";
+import { judge, testLineCounts, deletedTests, diskOnly, keepBench, agentMarker, isOwnPost, postKey, pickUnread, postedByOthersAfter, localImports, pinPlan, PIN_SUPPORT, touchesTool, diffPaths } from "../scripts/merge-when-green.mjs";
 
 // --- the rule: green pipeline, no test removed, nothing unread ---
 
@@ -42,7 +42,7 @@ test("--await-review: a green PR with no post by anyone else is pending, not OK;
     const waiting = judge({ ...green, awaitReview: true, postedByOthers: 0 });
     assert.equal(waiting.ok, false);
     assert.equal(waiting.pending, true);
-    assert.match(waiting.reason, /no review posted yet \(--await-review\)/);
+    assert.match(waiting.reason, /no review posted after abcdef01's commit yet \(--await-review\)/);
     const posted = judge({ ...green, awaitReview: true, postedByOthers: 1, reviews: 1 });
     assert.equal(posted.ok, false);
     assert.equal(!!posted.pending, false);
@@ -50,6 +50,36 @@ test("--await-review: a green PR with no post by anyone else is pending, not OK;
     assert.equal(judge({ ...green, awaitReview: true, postedByOthers: 1, reviews: 0 }).ok, true);
     // Without the flag nothing changes: no posts is OK, as before.
     assert.equal(judge({ ...green, postedByOthers: 0 }).ok, true);
+});
+
+test("--await-review counts only a post created after the head commit: an older review holds the arm, one on this head releases it", () => {
+    const headAt = "2026-11-07T12:00:00+01:00";   // 11:00Z: the posts below straddle it, in another offset's shape
+    const older = [{ kind: "comment", id: "111", author: "bob", own: false, at: "2026-11-07T10:00:00Z" }];
+    const newer = [{ kind: "review", id: "222", author: "carol", own: false, at: "2026-11-07T12:30:00+01:00" }];
+    // A re-review cycle: the older head's review exists, the newer head has none — the arm holds.
+    assert.equal(postedByOthersAfter(older, headAt), 0);
+    assert.equal(judge({ ...green, awaitReview: true, postedByOthers: postedByOthersAfter(older, headAt) }).pending, true);
+    // A post after the head commit releases it; from there the unread rule applies as before.
+    assert.equal(postedByOthersAfter([...older, ...newer], headAt), 1);
+    const released = judge({ ...green, awaitReview: true, postedByOthers: postedByOthersAfter([...older, ...newer], headAt), reviews: 1 });
+    assert.equal(!!released.pending, false);
+    assert.match(released.reason, /read them/);
+    // The session's own post never releases the arm (a marker is text anyone can write), nor one with no date, nor
+    // one at the commit's own moment: only strictly after counts.
+    const own = [{ kind: "comment", id: "3", author: "parawanderer", own: true, at: "2026-11-07T13:00:00Z" }];
+    const undated = [{ kind: "comment", id: "4", author: "dave", own: false, at: null }];
+    const sameMoment = [{ kind: "comment", id: "5", author: "erin", own: false, at: headAt }];
+    for (const none of [own, undated, sameMoment]) assert.equal(postedByOthersAfter(none, headAt), 0, JSON.stringify(none));
+});
+
+test("pickUnread carries when each post was created: a review's submitted_at, a comment's created_at, null when GitHub sent none", () => {
+    const dated = {
+        reviews: [{ id: 1, body: "x", user: { login: "a" }, submitted_at: "2026-11-07T10:00:00Z" }],
+        comments: [{ id: 2, body: "y", user: { login: "b" }, created_at: "2026-11-07T11:00:00Z" }],
+        inline: [{ id: 3, body: "z", user: { login: "c" }, created_at: "2026-11-07T12:00:00Z" }],
+    };
+    assert.deepEqual(pickUnread(dated, {}).map((u) => u.at), ["2026-11-07T10:00:00Z", "2026-11-07T11:00:00Z", "2026-11-07T12:00:00Z"]);
+    assert.equal(pickUnread({ comments: [{ id: 4, body: "w", user: { login: "d" } }] }, {})[0].at, null);
 });
 
 test("a test whose body changes counts the same removed and added, so an edit is not a removal", () => {
