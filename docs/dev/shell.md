@@ -164,30 +164,8 @@ the extension shows the answer yet: the agent-status line it is meant for is `AG
 
 ## Detached calls (ASYNC_CALLS.md, mode 1)
 
-A call that runs past its lease DETACHES into a task instead of holding the step: the script's `await ml.sh.run(...)`
-throws `Detached` with `e.task` (a `MlError` with `.task` in a cell), the process runs on, and its result reaches the
-model through the run inbox at the next step boundary. The spec is [`ASYNC_CALLS.md`](../spec/ASYNC_CALLS.md); this
-is how the shell half is built.
-
-- **The lease is `expectMs ?? SH_LEASE_MS`** (`sh-call.ts`), measured from `start`, never while a card waits. 15 s is a
-  PLACEHOLDER until the bench answers rule 1. `shRun` races `runCall`, which is the whole call as before, against a
-  timer: the timer answers the script and registers the task (`detachTask`, `sw-tasks.ts`); `runCall` keeps
-  `withShell` held until `done`, so the port is never idle-closed under a detached call and the kill policy is the
-  host's, unchanged. The `Detached` text says which case it was (the script's estimate, or the default) and the
-  host's time limit (`timeoutMs`, or the host's 120 s).
-- **One task table for every executor** (`sw-tasks.ts`, state `run.tasks`): statuses `running`, `done`, `failed`,
-  `cancelled`, `orphaned`. An executor gives `cancel`, `tail` and a `settled` promise; `ml.sh`'s `tail` is null, since
-  the host reports a call's output only at `done` (the host `peek` op is the next slice).
-- **The result goes one way, once:** to a `task await` waiting on it, else into `runInboxes` as `{ text, task }` (only
-  `sw-tasks.ts` sets `task`), fanned as `agent-task-say` (worker-only, event-admission.ts) and drawn and exported
-  under the task's id, never as the person's words. Each stream's text is cut to exec's output cap with its pointer.
-- **No task outlives its turn:** the run host's `settle` calls `endTasks`, which cancels each running task through the
-  host; a cancel that cannot reach it is logged `task`/`orphaned`. The inbox is closed first, so a result that lands
-  after is dropped.
-- **The `task` tool** (`task-tool.ts`, a worker builtin offered with `ml.sh`) is keyed by the loop's run id: another
-  run's id and an invented one read the same `UnknownTask`. `ml.current.tasks` is computed at the snapshot's instant
-  by `withTasks`, beside `withPolicies`; Python has no `ml.current` yet.
-- **A call that must not detach** (the extension's own read in `sw-library-proposal.ts`) passes `lease: false`.
+A call that runs past its lease detaches into a task: [`async-calls.md`](async-calls.md) is how that is built (the
+lease, the task table, the inbox, the `task` tool), for `ml.sh` and every executor after it.
 
 ## Capabilities
 
