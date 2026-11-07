@@ -8,18 +8,15 @@
 // (EMBED_SURVEY_CHARS, EMBED_SURVEY_CALLS, EMBED_CALL_INPUTS) are the feature's own adversarial rows in
 // tests/readonly-embed.test.mjs; this file is about what the member must never be talked into.
 //
-// The landing form for a hole still open on #1336: a `{ todo }` row asserting the DEFENDED outcome, beside a plain row
-// pinning today's refusal, so the fixture cannot pass by refusing nothing.
+// Failing-first, the node:test way: the row for the hole open on #1336 landed as `{ todo: true }`, failing at the
+// assertion it carries, beside a plain row pinning the refusal so the fixture cannot pass by refusing nothing. The
+// flip is MY OWN COMMIT on #1336's branch, this file only, before the fix merges: `{ todo }` is gone, so #1336's own
+// CI run proves the defended assertion rather than main carrying an unproven fix.
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
 import { evalReadonly, NotInDialect, Denied } from "../src/readonly-exec.ts";
 import { Embedding } from "../src/ml/embedding.ts";
-
-/** `textOf`'s brand read (`Object.prototype.toString`) runs a page getter, so a page can make the survey execute code
- *  during an argument read the dialect documents as data. Open on #1336: the row is a todo asserting the defended
- *  outcome, and flips when the fix lands. */
-const TODO = { todo: "open on #1336: Object.prototype.toString runs the page's Symbol.toStringTag getter" };
 
 const doc = () => new JSDOM("<!doctype html><body><p>hi</p></body>").window.document;
 const vect = (t) => { const s = String(t); const v = ["cat", "dog"].map((w) => s.split(w).length - 1); return v.some(Boolean) ? [v[0], v[1], 1] : [0.01, 0, 3]; };
@@ -52,7 +49,7 @@ test("RED TEAM: an input that PRETENDS to be a String wrapper is refused and is 
     assert.equal(h.calls.length, 0, "a refused input still reached the embedding host");
 });
 
-test("RED TEAM: a String-shaped object's Symbol.toStringTag getter never runs (the read is data)", TODO, async () => {
+test("RED TEAM: a String-shaped object's Symbol.toStringTag getter never runs (the read is data)", async () => {
     let tag = 0;
     const h = host();
     h.ml.models = async () => ({ get [Symbol.toStringTag]() { tag++; return "String"; }, valueOf() { return "cat"; } });
