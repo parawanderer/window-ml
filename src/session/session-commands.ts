@@ -9,7 +9,7 @@ import type { NeutralMessage } from "../contract/contract-chat";
 import { MAX_CONTINUE_STEPS } from "../agent/step-budget";
 import { AGENT_START_PAGE } from "../contract/contract-config";
 import type { MlDebugEvent } from "../contract/contract-debug";
-import type { AttachedFile, PromptOrigin, SentFile } from "../contract/contract-run";
+import { imagesRefusal, type AttachedFile, type PromptOrigin, type SentFile } from "../contract/contract-run";
 import { FilesRefused, checkFilesField, textFiles, type FileTarget } from "../attached-files";
 import { bytesToB64 } from "../pdf/pdf-wire";
 import { clientUiOf } from "../agent/current-client";
@@ -156,7 +156,7 @@ export const MAX_PINNED = 100;
 export const SIDE_CALL_MAX_TOKENS = 1024;
 /** A screenshot's size ceiling, whatever the client asks for. */
 export const SCREENSHOT_MAX_BYTES = 4 * 1024 * 1024;
-/** Mid-run steers carry text only (the loop's inbox has no image slot); images go with a new turn. */
+/** The longest steer's text. Images ride a steer of a worker-built run as they ride its next turn (`steerRun`). */
 const STEER_TEXT_MAX = 20_000;
 /** The files of a command, checked by the one rule (attached-files.ts), as the result a handler returns on a refusal. */
 export function checkedFiles(raw: unknown, target: FileTarget, held?: (sha256: string) => Uint8Array | null): { files?: SentFile[]; error?: CommandResult<any> } {
@@ -295,7 +295,9 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             const outcome = await deps.toPage(t.tabId, action, { hash, ...body }, origin);
             if (outcome === "no-answer") return fail("unavailable", "the page this session runs on did not answer; it may still be loading");
             return outcome;
-        } catch {
+        } catch (e) {
+            // A worker-built run's turn refused its images before anything was sent (vision not known, no reader).
+            if (e instanceof ImagesRefused) return fail("unsupported", e.message);
             return fail("unavailable", "the page this session ran on is not reachable (reloaded, or the extension cannot run there)");
         }
     };
@@ -412,6 +414,8 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             const att = checkedFiles(c.files, "agent", deps.heldFile);
             if (att.error) return att.error;
             if (!task.trim() && !images.length && !att.files) return fail("invalid", "a run needs a task, an image or a file");
+            const tooMany = imagesRefusal(images.length);
+            if (tooMany) return fail("invalid", tooMany);
             if (task.length > CHAT_TEXT_MAX) return fail("invalid", "that task is too long");
             if (c.maxSteps != null && (!Number.isInteger(c.maxSteps) || c.maxSteps <= 0)) return fail("invalid", "maxSteps must be a positive whole number");
             const t = await resolveTarget(c.target as { kind?: unknown; tabId?: unknown; url?: unknown } | undefined);
@@ -521,6 +525,8 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             const att = checkedFiles(c.files, "chat", deps.heldFile);
             if (att.error) return att.error;
             if (!text.trim() && !images.length && !att.files) return fail("invalid", "a chat needs a message, an image or a file");
+            const tooMany = imagesRefusal(images.length);
+            if (tooMany) return fail("invalid", tooMany);
             if (text.length > CHAT_TEXT_MAX) return fail("invalid", "that message is too long");
             if (c.system != null && typeof c.system !== "string") return fail("invalid", "a system prompt must be text");
             if (typeof c.system === "string" && c.system.length > CHAT_SYSTEM_MAX) return fail("invalid", "that system prompt is too long");
@@ -553,6 +559,8 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             const att = checkedFiles(c.files, pagelessChat(s.id.hash) ? "chat" : "agent", deps.heldFile);
             if (att.error) return att.error;
             if (!text.trim() && !images.length && !att.files && !c.elementContext) return fail("invalid", "a message needs text, an image, a file or an element");
+            const tooMany = imagesRefusal(images.length);
+            if (tooMany) return fail("invalid", tooMany);
             // A chat this worker hosts has no tab to relay to, and no loop to steer: the message is simply its next
             // turn. Checked BEFORE the run paths, which both end at a tab this session does not have.
             if (pagelessChat(s.id.hash)) {

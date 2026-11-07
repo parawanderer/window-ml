@@ -152,6 +152,19 @@ test("the × on a thumbnail removes that image", async () => {
     assert.deepEqual(loadDraftImages("start"), [IMG2]);
 });
 
+test("past eight images the strip says so and marks the ones over, the start waits, and removing one lets it go", async () => {
+    saveDraftImages("start", Array.from({ length: 9 }, (_, i) => (i % 2 ? IMG2 : IMG)));
+    const host = await mount("agent");
+    await type(host, "compare these");
+    assert.equal(host.querySelector(".cthumbs-why")?.textContent, "a message takes up to 8 images; remove 1");
+    assert.deepEqual([...host.querySelectorAll(".cthumb")].map((t) => t.classList.contains("over")), [false, false, false, false, false, false, false, false, true]);
+    assert.equal(send(host).disabled, true, "nothing goes with fewer images than were attached");
+    host.querySelectorAll(".cthumb-x")[8].click();
+    await flush();
+    assert.equal(host.querySelector(".cthumbs-why"), null);
+    assert.equal(send(host).disabled, false);
+});
+
 test("images held for the start draft are back when the page is mounted again", async () => {
     saveDraftImages("start", [IMG]);
     const host = await mount("agent");
