@@ -276,6 +276,12 @@ starting only once `peek`, #1437, #1451 and #1453 are through; the window-ml tes
 canary row (must ASK and show the expanded path, never read free as a workspace path) are the bench lane's, finder's
 own file. Independent of the lease bench.
 
+TRAP (the bench lane, 2026-11-07, measured): a stored WORKSPACE manifest for a script that calls other programs must
+declare `runs-code`; with `effects: ["read"]` alone, `envelopeFor` sends `{write: "none", exec: "program-only"}` and
+the host refuses every child of `bash` (`/usr/bin/sleep: Permission denied`) while the call still reports `ok: true`,
+because builtins such as `echo` run. The lease bench's first matrix was invalid for this reason. The Settings
+manifest editor should warn when an entrypoint script's manifest lacks `runs-code` (open item for the shell UI).
+
 ## The API's shape: borrowed, not invented
 
 The calls above are illustrative. The SHAPE should be one models already know, executed differently underneath: the
