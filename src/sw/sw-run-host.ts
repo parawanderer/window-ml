@@ -47,7 +47,7 @@ import { lookPreviewArgs, workerLook } from "./worker-look";
 import { workerLocate } from "./worker-locate";
 import { runVision, workerWroteVision, type RunVision } from "./run-vision";
 import { withUserWatches } from "./sw-shared-watches";
-import { routeExec, execNames, withoutWorld, worldCardNote, type ExecRoute } from "./exec-routing";
+import { routeExec, execNames, surveyMayEnterPage, withoutWorld, worldCardNote, type ExecRoute } from "./exec-routing";
 import { defaultExecWorld } from "../contract/contract-config";
 import { outputCapPrecheck } from "../contract/contract-pointers";
 import { pageWorldRefusal, withExecWorld } from "../tools/tool-details";
@@ -1569,6 +1569,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     if (!byWorker() && pageWorldRefusal(world)) return null;
                     const worldAsked = byWorker() && world !== undefined;
                     if (worldAsked && (typeof args.js !== "string" || (await execRoute(args.js, world)).where === "refused")) return null;
+                    // Nor one policy isolates for what the SCRIPT names (`ml.sh`, `ml.current`, a pointer), on any setting.
+                    const scriptLegOk = !byWorker() || typeof args.js !== "string" || surveyMayEnterPage(args.js);
                     let pageLegOk = !worldAsked || world === "page";
                     if (pageLegOk && !worldAsked && byWorker() && typeof args.js === "string" && defaultExecWorld((await getConfig()).execDefaultWorld) === "isolated") {
                         const r = await execRoute(args.js, undefined);
@@ -1600,8 +1602,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         recordRunLog(runId, { subsystem: "routing", kind: "readonly-worker", reason: w.kind === "answered" ? "no-page-reads" : "out-of-dialect", detail: { tool: name } });
                         return w.kind === "answered" ? { result: w.result, renderIn: w.renderIn, renderOut: w.renderOut } : null;
                     }
-                    if (!pageLegOk) {
-                        recordRunLog(runId, { subsystem: "routing", kind: "readonly-worker", reason: "world-isolated", detail: { tool: name } });
+                    if (!scriptLegOk || !pageLegOk) {
+                        recordRunLog(runId, { subsystem: "routing", kind: "readonly-worker", reason: scriptLegOk ? "world-isolated" : "script-isolated", detail: { tool: name } });
                         return null;
                     }
                     // Live console lines reach the loop's fan the way a delegated tool's do (delegateStreams). Dropped

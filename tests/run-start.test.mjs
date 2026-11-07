@@ -657,13 +657,14 @@ test("a pointer read is answered in the worker from the run's own store; the pag
     assert.deepEqual(log.map((r) => r.kind), ["readonly-page", "readonly-worker"]);
 });
 
-test("a survey that needs the page AND the run's pointers reaches the person: the page leg refuses it", T, async () => {
-    // The worker reads the pointer, reaches `document`, defers; the page leg refuses pointer reads (run-delegation.ts),
-    // which the fake page plays by answering `readonly: false`. Either way, nothing is auto-approved.
+test("a survey that needs the page AND the run's pointers reaches the person: it never goes to the page leg", T, async () => {
+    // The worker reads the pointer, reaches `document`, defers; a script naming a pointer has no page leg (exec-routing.ts
+    // `surveyMayEnterPage`), so it goes to the gate. Were it sent, the page leg would refuse the pointer read
+    // (run-delegation.ts), which the fake page plays by answering `readonly: false`. Either way, nothing is auto-approved.
     const { toPage, log } = await surveyRun(["document.title", "document.title + @tool:exec"],
         (js) => (/dereference/.test(js) || /@tool:/.test(js) ? { readonly: false, result: "" } : { readonly: true, result: "value: \"Site\"" }));
-    assert.equal(toPage.filter((p) => p.readonlyTry).length, 2);
-    assert.deepEqual(log.map((r) => [r.kind, r.reason]), [["readonly-page", "reads-page"], ["readonly-page", "refused-in-page"]]);
+    assert.equal(toPage.filter((p) => p.readonlyTry).length, 1, "only the plain survey went to the page");
+    assert.deepEqual(log.map((r) => [r.kind, r.reason]), [["readonly-page", "reads-page"], ["readonly-worker", "script-isolated"]]);
 });
 
 // --- the pointer values an approved exec is sent (slice 2 part 1c) ---
@@ -1087,9 +1088,12 @@ test("what real models got wrong about ml.current is said where agent_api_docs s
 });
 
 test("the flag OFF: no word of ml.current in the prompt, and a survey naming it is not answered from the run's context", T, async () => {
-    const { system, toPage } = await surveyRun(["ml.current.run.step"], () => ({ readonly: false }), { selfIntrospection: false });
+    const { system, toPage, log } = await surveyRun(["ml.current.run.step"], () => ({ readonly: false }), { selfIntrospection: false });
     assert.doesNotMatch(system, /ml\.current/);
-    assert.equal(toPage.length > 0, true, "with no snapshot in the worker the survey went on to the page, which refuses it");
+    // With no snapshot in the worker the survey needs more than the worker has; a script naming ml.current has no page
+    // leg, so it goes to the gate.
+    assert.equal(toPage.filter((p) => p.readonlyTry).length, 0, "the page was asked to survey a script naming ml.current");
+    assert.deepEqual(log.map((r) => [r.kind, r.reason]), [["readonly-worker", "script-isolated"]]);
 });
 
 test("read-only exec NOT auto-approved: the prompt does not offer ml.current, which no survey could then reach", T, async () => {

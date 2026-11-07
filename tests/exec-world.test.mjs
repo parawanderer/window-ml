@@ -12,7 +12,7 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const { jsonResponse, loadBackground } = require("./helpers");
-const { routeExec, pageGlobalHint, PAGE_GLOBAL_HINT, withoutWorld } = await import("../src/sw/exec-routing.ts");
+const { routeExec, pageGlobalHint, PAGE_GLOBAL_HINT, withoutWorld, EXEC_REASONS, surveyMayEnterPage } = await import("../src/sw/exec-routing.ts");
 const { BUILD_DEFAULT_WORLD, defaultExecWorld, DEFAULT_CONFIG } = await import("../src/contract/contract-config.ts");
 const { pageWorldRefusal, EXEC_WORLD_PARAM } = await import("../src/tools/tool-details.ts");
 const { envOf } = await import("../src/sw/sw-current-env.ts");
@@ -331,4 +331,35 @@ test("on the default build, a world-less read-only survey still auto-answers on 
     assert.deepEqual(r.roLog, [["readonly-page", "reads-page"]]);
     assert.equal(r.approvals, 0, "no gate");
     assert.match(r.results[0], /SURVEYED IN THE PAGE/);
+});
+
+// --- a read-only survey's page leg, decided on the script alone ---
+
+/** Every reason, placed: `page` keeps the survey's page leg, `script` is read off the script and loses it, `call` is
+ *  never read off the script (the page's approval, the call's `world`, the default world). An unplaced one fails. */
+const LEG = { plain: "page", sh: "script", current: "script", pointer: "script", "unapproved-page": "call", requested: "call", default: "call" };
+
+test("every route reason is placed for the survey's page leg, and only a plain script keeps it", () => {
+    assert.deepEqual([...EXEC_REASONS].sort(), Object.keys(LEG).sort(), `a reason is not placed: ${EXEC_REASONS.filter((r) => !(r in LEG))}`);
+    const any = { userScripts: true, cdp: true };
+    for (const reason of EXEC_REASONS) {
+        if (LEG[reason] === "call") {
+            for (const js of Object.values(SCRIPTS)) assert.notEqual(routeExec(js, true, any).reason, reason, `${reason} was read off a script`);
+            continue;
+        }
+        const js = SCRIPTS[reason];
+        assert.ok(js, `${reason} has no script here`);
+        assert.equal(routeExec(js, true, any).reason, reason);
+        assert.equal(surveyMayEnterPage(js), LEG[reason] === "page", reason);
+    }
+    // ml.sh outranks the others when a script names several, and none of them has a page leg.
+    assert.equal(surveyMayEnterPage(`${SCRIPTS.pointer}; ${SCRIPTS.sh}`), false);
+});
+
+test("on the default config, a survey naming ml.sh never reaches the page's leg: it goes to the gate and runs isolated", T, async () => {
+    const r = await worldRun([{ js: SCRIPTS.sh }], { autoRO: true });
+    assert.equal(r.execMsgs.filter((p) => p.readonlyTry).length, 0, "the page was asked to survey a script that reaches the process host");
+    assert.deepEqual(r.roLog, [["readonly-worker", "script-isolated"]]);
+    assert.deepEqual(r.log, [["exec-isolated", "sh"]]);
+    assert.equal(r.approvals, 1, "it went to the gate");
 });
