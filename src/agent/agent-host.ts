@@ -271,7 +271,7 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
         pushToolImages: pushToolImages as AgentLoopDeps["pushToolImages"],
         // Mid-run steering: drain the SW-side inbox (a.say() → INJECT_MESSAGE) and inject as user turns.
         drainInbox: deps.drainInbox,
-        pushUser: (messages, text) => (messages as NeutralMessage[]).push({ role: "user", content: text }),
+        pushUser: (messages, text, images) => (messages as NeutralMessage[]).push({ role: "user", content: text, ...(images?.length ? { images } : {}) }),
         // Wrap emit to checkpoint the live history after each COMPLETED step (the DONE emit, not the pending
         // START) — so a snapshot for durable resume lands once a step's result is in `built`.
         emit: (deps.emit || deps.checkpoint) ? ((ev) => {

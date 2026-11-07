@@ -118,8 +118,8 @@ export interface AgentLoopDeps {
     // Mid-run STEERING (a.say()): drained at each step boundary (before the model call) — returns any user
     // messages queued since the last step, injected via pushUser so the model sees them on its next turn.
     // Omit → no steering. The queue lives in the caller's world (page handle / SW inbox).
-    drainInbox?(): (string | { text: string; origin?: PromptOrigin })[];
-    pushUser?(messages: unknown[], text: string): void;
+    drainInbox?(): (string | { text: string; origin?: PromptOrigin; images?: string[] })[];
+    pushUser?(messages: unknown[], text: string, images?: string[]): void;
     // Self-introspection (ml.chatMetaTool): resolve the run's model facts for the metadata summary.
     // World-specific (page: ml.capabilities/ml.ps/config; background: the SW's caches). The token/message
     // counts come from the loop itself (accurate on BOTH paths), so only the MODEL facts need a dep.
@@ -886,7 +886,8 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // the page. A plain string carries no origin and leaves the current one standing.
             const text = typeof queued === "string" ? queued : queued.text;
             if (typeof queued !== "string" && queued.origin) lastOrigin = queued.origin;
-            pushed(() => deps.pushUser?.(messages, text), { surface: lastOrigin?.surface ?? null, client: clientOf(lastOrigin) });
+            const images = typeof queued === "string" ? undefined : queued.images;
+            pushed(() => deps.pushUser?.(messages, text, images), { surface: lastOrigin?.surface ?? null, client: clientOf(lastOrigin) });
         }
         // A CANCEL_RUN mid-generation aborts the in-flight fetch, which REJECTS here — convert that to a
         // clean cancel (don't propagate as a run error), same as the boundary check. Re-throw a real error.

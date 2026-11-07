@@ -12,7 +12,7 @@ import { IconSend, IconStop } from "../icons";
 import { ClickableImg } from "../ui-kit";
 import { FilePill } from "./user-text";
 import { FILE_READ_MAX_BYTES, PDF_ATTACH_MAX, b64Bytes, PDF_FILE_ACCEPT, TEXT_FILE_ACCEPT, decodeTextFile, encodePdfFile, fileInfo, fileSummary, looksPdf, pendingRefusals, sizeLabel, tooLarge, tooLargePdf, type FileTarget } from "../../attached-files";
-import type { SentFile } from "../../contract/contract-run";
+import { TURN_IMAGES_MAX, imagesRefusal, type SentFile } from "../../contract/contract-run";
 import { UsageBar } from "./usage";
 import { SpendChip } from "./spend";
 import { RunStatsBar } from "./agent-detail";
@@ -140,12 +140,16 @@ export function FileStrip({ docs, reasons, onRemove }: { docs: PendingFile[]; re
 // The attached-image thumbnail strip: previews with an × to remove, plus spinner placeholders for
 // in-flight decodes. Renders nothing when there are no images and nothing decoding. A thumbnail opens full size
 // on click, as a sent image does (`ClickableImg`), so what is about to be sent can be checked before sending.
+// Past the cap (`TURN_IMAGES_MAX`), the images that do not fit are drawn faded with the reason, and the send waits for
+// them to be removed: a message is never sent with fewer images than were attached.
 export function ThumbStrip({ imgs, loading, onRemove }: { imgs: string[]; loading: number; onRemove: (i: number) => void }) {
     if (!imgs.length && !loading) return null;
+    const why = imagesRefusal(imgs.length);
     return (
         <div class="cthumbs">
+            {why ? <div class="cthumbs-why" role="status">{why}</div> : null}
             {imgs.map((src, i) => (
-                <div class="cthumb" key={i}>
+                <div class={`cthumb${i >= TURN_IMAGES_MAX ? " over" : ""}`} key={i}>
                     <ClickableImg src={src} alt="attachment" />
                     <button class="cthumb-x" onClick={() => onRemove(i)} aria-label="Remove image" title="Remove">×</button>
                 </div>
@@ -256,6 +260,7 @@ export function Composer({ s, multiline, tools, keys }: { s: Session; multiline?
     const send = () => {
         const t = text.trim();
         if (!t && !att.imgs.length && !att.sendable.length) return;
+        if (imagesRefusal(att.imgs.length)) return;   // the strip says why
         const imgs = att.imgs, files = att.sendable;
         setText(""); att.clear();
         void sendHeld(key, t, imgs, () => services().sendToSession(key, t, imgs, files), files);

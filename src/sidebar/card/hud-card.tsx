@@ -32,7 +32,7 @@ import { ComposerCard } from "./card-composer";
 import { hostOf } from "../../agent-start";
 import { StartAskBody, StartAskFoot, StartAskExpired, SiteWaitPrompt, startAskPending, startAskExpired } from "./card-start";
 import { toHost } from "../parent-channel";
-import { promptLine } from "../../contract/contract-run";
+import { imagesRefusal, promptLine } from "../../contract/contract-run";
 
 /* ------------------------------ off-mode card ----------------------------
  * The "card" surface. When debug is OFF but a privileged ml.agent run must be
@@ -722,6 +722,7 @@ export function CardReply({ hash }: { hash: string }) {
     const send = () => {
         const t = text.trim();
         if (!t && !att.imgs.length) return;
+        if (imagesRefusal(att.imgs.length)) return;   // the strip says why
         toHost({ __mlSidebarApp: "sessionSend", hash, text: t, images: att.imgs });
         // Optimistic: flip the session to WORKING now so the card morphs to the orb the instant you hit
         // Enter, instead of showing the stale answer until the follow-up's first event lands (in off/card

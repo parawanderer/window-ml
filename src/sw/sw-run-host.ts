@@ -358,18 +358,18 @@ export interface SiteTurn { origin: string; person: boolean; first: boolean; doc
 
 /** Host a START_RUN / RESUME_RUN on `tabId`: the body of `startBackgroundRun`, callable by the worker itself for a run
  *  it built (sw-run-start.ts), where there is no sender. `sendResponse` fires once the whole run finishes. `turnOrigin`
- *  is where a resumed turn's message was typed: an argument rather than a payload field, because a page's RESUME_RUN
- *  reaches here unfiltered and must not stamp its message as typed somewhere else. */
-export function hostRun(message: any, tabId: number, sendResponse: (r: any) => void, turnOrigin?: import("../contract/contract-run").PromptOrigin, site?: SiteTurn): void {
+ *  is where a resumed turn's message was typed, and `turnImages` the images it carries: arguments rather than payload
+ *  fields, because a page's RESUME_RUN reaches here unfiltered and must not stamp its message as typed somewhere else. */
+export function hostRun(message: any, tabId: number, sendResponse: (r: any) => void, turnOrigin?: import("../contract/contract-run").PromptOrigin, site?: SiteTurn, turnImages?: string[]): void {
     // Whatever the turn's setup throws is answered, never left unhandled with the page waiting on it. What the setup had
     // registered by then is undone inside `hostTurn`, which alone knows how far it got.
     let answered = false;
     const once = (r: any): void => { if (answered) return; answered = true; sendResponse(r); };
-    try { hostTurn(message, tabId, once, turnOrigin, site); } catch (e) { once({ error: (e as Error)?.message || String(e) }); }
+    try { hostTurn(message, tabId, once, turnOrigin, site, turnImages); } catch (e) { once({ error: (e as Error)?.message || String(e) }); }
 }
 
 /** The body of `hostRun`: one turn of one run, from its registrations to its answer. */
-function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, turnOrigin?: import("../contract/contract-run").PromptOrigin, site?: SiteTurn): void {
+function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, turnOrigin?: import("../contract/contract-run").PromptOrigin, site?: SiteTurn, turnImages?: string[]): void {
     // Design A: run an ml.agent loop HERE (extension origin), delegating each tool back to the page
     // (RUN_TOOL_IN_PAGE) and gating approval through the sidebar. Whoever built the run (the page for a console
     // ml.agent, the worker for a run the user started) registered the live builtin tools in the page under runId;
@@ -390,9 +390,10 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // again below: raising a cap STICKS. Bounded the same way the loop is, so a bad number from a page cannot
         // ask the worker for an unbounded run.
         const budget = stepBudget(rp.maxSteps);
-        // No images: the first turn's were that turn's (a page's, for a run a site started), and a resumed turn that
-        // carried them again would show the model the same pictures as this turn's, unlabelled.
-        p = { ...stored.p, task: rp.task, images: undefined, ...(budget ? { maxSteps: budget } : {}), ...(turnOrigin ? { origin: turnOrigin } : {}) };
+        // The first turn's images were that turn's (a page's, for a run a site started), and a resumed turn that carried
+        // them again would show the model the same pictures as this turn's, unlabelled. This turn's own are the
+        // worker's argument, routed for the run's vision (`routeTurnImages`), never a field a page's RESUME_RUN sets.
+        p = { ...stored.p, task: rp.task, images: turnImages?.length ? turnImages : undefined, ...(budget ? { maxSteps: budget } : {}), ...(turnOrigin ? { origin: turnOrigin } : {}) };
         capRaised = budget != null && budget !== stored.p.maxSteps;
         resumeOriginalTask = stored.p.task;
         resumeMessages = stored.messages;
@@ -1950,7 +1951,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     const items = (runInboxes.get(runId)?.queue || []).splice(0);
                     for (const it of items) if (it.id) fanEvent({ kind: "agent-say-seen", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, sayId: it.id });
                     // Each says where it was typed, so a run steered from another surface reports THAT one.
-                    return items.map(it => (it.origin ? { text: it.text, origin: it.origin } : it.text));
+                    return items.map(it => (it.origin || it.images ? { text: it.text, ...(it.origin ? { origin: it.origin } : {}), ...(it.images ? { images: it.images } : {}) } : it.text));
                 },
                 signal: abortCtl.signal,
                 // chat_metadata: the run's model FACTS from the SW's caches (the loop supplies the live

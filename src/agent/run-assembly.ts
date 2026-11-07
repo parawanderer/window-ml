@@ -32,10 +32,35 @@ export type AssemblyMl = Pick<MlApi, "domTools" | "defineTool" | "config" | "mod
  * @param driver the run's driver model
  * @returns the reader, or null
  */
-async function readerSet(ml: AssemblyMl, driver: string | null): Promise<string | null> {
+async function readerSet(ml: Pick<MlApi, "config" | "_modelVision">, driver: string | null): Promise<string | null> {
     const ocr = (await ml.config().catch(() => null))?.ocrModel || null;
     if (!ocr || ocr === driver) return null;
     return (await ml._modelVision(ocr)) === "no" ? null : ocr;
+}
+
+/**
+ * Where a turn's attached images go, decided as a run's first turn decides it: to a driver that sees them, or, for one
+ * that does not, as the reader's transcription (or a note that each was not sent) folded into the message. The run's
+ * own vision facts decide, the ones that chose native or delegated `look`.
+ * @param ml the run's `ml`
+ * @param urls the images, as data URLs
+ * @param v the run's driver, whether it sees, and its reader
+ * @returns the images to send, or the notes to append to the message
+ * @throws {ImagesRefused} the driver's vision is not known and no reader is set
+ */
+export async function routeTurnImages(ml: Pick<MlApi, "config" | "read" | "_modelVision">, urls: string[], v: { driverSees: boolean; runModel: string | null; visionModel: string | null }): Promise<{ images?: string[]; notes?: string }> {
+    const plan = v.driverSees ? planImages("yes", null, false)
+        : planImages(await ml._modelVision(v.runModel), v.visionModel || (await readerSet(ml, v.runModel)), false);
+    if (plan.route === "refused") throw new ImagesRefused(plan.message);
+    if (plan.route === "model") return { images: urls };
+    const notes: string[] = [];
+    for (let i = 0; i < urls.length; i++) {
+        if (plan.route === "named") { notes.push(namedNote(i, urls.length)); continue; }
+        let txt = "";
+        try { txt = await ml.read(urls[i], { model: plan.reader }); } catch { /* reader unavailable → the note says so */ }
+        notes.push(readerNote(i, urls.length, plan.reader, txt));
+    }
+    return { notes: notes.join("\n\n") };
 }
 
 /** The options of `ml.agent` that decide what a run CONTAINS, as opposed to how it is driven or observed. */
@@ -250,20 +275,9 @@ export async function assembleRun(ml: AssemblyMl, task: string, { tools = null, 
         try { urls = await Promise.all(images.map(im => ml._imageToDataUrl(im))); } catch { /* image conversion failed → proceed without the attachment */ }
         if (urls) {
             turnImages = urls;
-            const plan = driverSees ? planImages("yes", null, false)
-                : planImages(await ml._modelVision(runModel), runVisionModel || (await readerSet(ml, runModel)), false);
-            if (plan.route === "refused") throw new ImagesRefused(plan.message);
-            if (plan.route === "model") pendingImages = urls;
-            else {
-                const notes: string[] = [];
-                for (let i = 0; i < urls.length; i++) {
-                    if (plan.route === "named") { notes.push(namedNote(i, urls.length)); continue; }
-                    let txt = "";
-                    try { txt = await ml.read(urls[i], { model: plan.reader }); } catch { /* reader unavailable → the note says so */ }
-                    notes.push(readerNote(i, urls.length, plan.reader, txt));
-                }
-                task = task ? `${task}\n\n${notes.join("\n\n")}` : notes.join("\n\n");
-            }
+            const routed = await routeTurnImages(ml, urls, { driverSees, runModel, visionModel: runVisionModel });
+            pendingImages = routed.images;
+            if (routed.notes) task = task ? `${task}\n\n${routed.notes}` : routed.notes;
         }
     }
     // Unattended run: no human to approve, so shape the toolset for read-only autonomy. exec and

@@ -1497,7 +1497,7 @@ let composerPendingOpen = false;
 function workerFirst(payload: Record<string, unknown>, toPage: () => void): void {
     try {
         void chrome.runtime.sendMessage({ type: "USER_RUN_ACTION", payload })
-            .then((r: { data?: string | null } | undefined) => { if (!r?.data) toPage(); })
+            .then((r: { data?: string | null; refused?: string } | undefined) => { if (!r?.data && !r?.refused) toPage(); })
             .catch(toPage);
     } catch { toPage(); }
 }

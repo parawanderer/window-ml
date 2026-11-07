@@ -15,7 +15,7 @@ import {
 import { isCloudModel } from "../model";
 import { STEP_BUDGETS } from "../../agent/step-budget";
 import { toHost } from "../parent-channel";
-import { promptLine } from "../../contract/contract-run";
+import { imagesRefusal, promptLine } from "../../contract/contract-run";
 
 // The composer's model control: a chip showing the run's model (the per-call pick, else the default) that
 // opens a dropdown of the allowed models. Picking a row overrides the model FOR THIS RUN; the ★ persists it
@@ -130,6 +130,7 @@ export function ComposerCard() {
     const send = () => {
         const t = text.trim();
         if (!t && !att.imgs.length && !el) return;   // allow an image-only OR element-only task
+        if (imagesRefusal(att.imgs.length)) return;   // the strip says why
         // APPEND mode ("add to current run"): route to the open session — the page steers a running loop
         // (say) or starts a follow-up turn (run), and folds any element context into the message. No model
         // pre-flight (the run already resolved one). Optimistically flip it to working so the card morphs now.
@@ -211,7 +212,7 @@ export function ComposerCard() {
                         ))}
                     </div>
                 </div>
-                <button class="appr-btn yes" onClick={send} disabled={!text.trim() && !att.imgs.length && !el}>Send</button>
+                <button class="appr-btn yes" onClick={send} disabled={(!text.trim() && !att.imgs.length && !el) || !!imagesRefusal(att.imgs.length)}>Send</button>
             </div>
         </div>
     );

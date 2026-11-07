@@ -60,7 +60,8 @@ import { panelWaits } from "./sw/sw-badge";   // the toolbar badge: what is wait
 import { AGENT_LEVEL_TYPES, PAGE_STARTED_TYPES, PAGE_UNGATED_TYPES, RUN_CONTROL_TYPES } from "./page-relay";
 import type { SiteRunEvent } from "./contract/contract-debug";
 import { START_REFUSED } from "./agent-start";
-import { startUserRun, userRunAction, steerRun } from "./sw/sw-run-start";
+import { startUserRun, userRunAction, steerRun, noteRefusedTurn } from "./sw/sw-run-start";
+import { ImagesRefused } from "./image-gate";
 import { adoptOnTab } from "./sw/adopt-run";
 import { pageRebuild } from "./agent/run-assembly";
 import { runControlPayloadError } from "./sw/run-payload-check";
@@ -855,7 +856,12 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     if (message.type === "USER_RUN_ACTION") {
         const p = (message.payload || {}) as { hash?: unknown; action?: unknown };
         if (sender.tab?.id == null || typeof p.hash !== "string" || (p.action !== "send" && p.action !== "continue")) { sendResponse({ data: null }); return; }
-        userRunAction(p.hash, p.action, message.payload, sender.tab.id).then((outcome) => sendResponse({ data: outcome }), () => sendResponse({ data: null }));
+        userRunAction(p.hash, p.action, message.payload, sender.tab.id).then((outcome) => sendResponse({ data: outcome }), (e) => {
+            // Images the run may not be sent (vision not known, no reader): said in the run's step list, since this
+            // surface has no other place to say it, and answered as handled so the shell does not hand it to the page.
+            if (e instanceof ImagesRefused) { noteRefusedTurn(p.hash as string, e.message); sendResponse({ data: null, refused: e.message }); return; }
+            sendResponse({ data: null });
+        });
         return true;
     }
     if (message.type === "START_RUN" || message.type === "RESUME_RUN") {

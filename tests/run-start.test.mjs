@@ -287,6 +287,72 @@ test("a follow-up to a run the worker built is a turn the worker starts, only fr
     assert.ok(!JSON.stringify(chats()).includes("hijacked follow-up"));
 });
 
+const IMG = "data:image/png;base64,iVBORw0KGgoFOLLOWUP";
+const fromTab = { tab: { id: 7, url: SITE.url }, url: SITE.url };
+/** The images of the last user message of a model call, as the openai adapter writes them. */
+const userImages = (call) => JSON.stringify(call.body.messages.filter((m) => m.role === "user").at(-1)).match(/data:image\/png;base64,[A-Za-z0-9]+/g) ?? [];
+
+test("a follow-up's image reaches the model on the next turn, and the transcript shows it with the person's words", T, async () => {
+    const { bg, chats } = world();
+    const { hash } = await bg.context.__mlStartUserRunForTest(7, { task: "first", surface: "hud", vision: true });
+    await flush(20);
+    const r = await bg.send({ type: "USER_RUN_ACTION", payload: { hash, action: "send", text: "what is in this?", images: [IMG], surface: "hud" } }, fromTab);
+    assert.equal(r.data, "turn");
+    await flush(30);
+    assert.equal(chats().length, 2);
+    assert.deepEqual(userImages(chats()[1]), [IMG], "this turn's image, sent to a driver that sees");
+    assert.deepEqual(userImages(chats()[0]), [], "and not carried back into the first turn's message");
+    const say = fanned(bg, "agent-say").at(-1);
+    assert.deepEqual([say.text, [...say.images]], ["what is in this?", [IMG]]);
+});
+
+test("an image-only follow-up is a turn too", T, async () => {
+    const { bg, chats } = world();
+    const { hash } = await bg.context.__mlStartUserRunForTest(7, { task: "first", surface: "hud", vision: true });
+    await flush(20);
+    assert.equal((await bg.send({ type: "USER_RUN_ACTION", payload: { hash, action: "send", text: "", images: [IMG], surface: "hud" } }, fromTab)).data, "turn");
+    await flush(30);
+    assert.deepEqual(userImages(chats()[1]), [IMG]);
+});
+
+test("a steer with an image while the run works reaches the model at its next step, beside the words", T, async () => {
+    const w = heldWorld(["chat_metadata"]);
+    const { hash } = await w.bg.context.__mlStartUserRunForTest(7, { task: "first", surface: "hud", vision: true });
+    await w.waitCalls(1);
+    assert.equal(await w.bg.context.__mlUserRunActionForTest(hash, "send", { text: "look at this too", images: [IMG] }, HUB), "steer");
+    w.gates[0]();
+    await w.waitCalls(2);
+    const user = w.chats()[1].body.messages.filter((m) => m.role === "user").at(-1);
+    assert.match(JSON.stringify(user), /look at this too/);
+    assert.deepEqual(userImages(w.chats()[1]), [IMG]);
+    w.gates[1]();
+});
+
+test("a follow-up image the run may not send (vision not known, no reader) is refused before anything is sent, and the run says so", T, async () => {
+    const { bg, chats } = world();
+    const { hash } = await bg.context.__mlStartUserRunForTest(7, { task: "first", surface: "hud" });
+    await flush(20);
+    const r = await bg.send({ type: "USER_RUN_ACTION", payload: { hash, action: "send", text: "and this?", images: [IMG], surface: "hud" } }, fromTab);
+    assert.equal(r.data, null);
+    assert.match(r.refused, /image/i, "answered as handled, so the shell does not hand it to the page");
+    await flush(20);
+    assert.equal(chats().length, 1, "no turn went out");
+    assert.match(fanned(bg, "agent-note").at(-1).text, /^Your message was not sent: /);
+    assert.equal(fanned(bg, "agent-say").length, 0, "nothing is shown as sent");
+});
+
+test("ADVERSARIAL: a page's RESUME_RUN cannot put images into a turn: only the worker's own call carries them", T, async () => {
+    const { bg, chats } = world();
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "pagerun2", task: "go", systemPrompt: "sys", tools: [], model: "m", think: null, maxSteps: 3, autoApprovePython: false, autoApproveReadonly: false, surface: "off",
+    } }, fromTab);
+    await flush(20);
+    await bg.send({ type: "RESUME_RUN", payload: { runId: "pagerun2", task: "again", images: [IMG] } }, fromTab);
+    await flush(20);
+    assert.ok(chats().length >= 2, "the page's turn ran");
+    assert.ok(!JSON.stringify(chats()).includes("FOLLOWUP"), "no image from the page's payload reached the model");
+});
+
 test("a run a page built is not the worker's to drive: the action falls back to the page", T, async () => {
     const { bg } = world();
     const r = await bg.send({ type: "USER_RUN_ACTION", payload: { hash: "0".repeat(32), action: "continue" } }, { tab: { id: 7, url: SITE.url }, url: SITE.url });

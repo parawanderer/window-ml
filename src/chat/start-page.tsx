@@ -17,7 +17,7 @@ import { IconSend, IconWarn } from "../sidebar/icons";
 import { modelCache, SeesImagesToggle, visionUnreported } from "./sees-images";
 import { FileStrip, ThumbStrip, sentFile, useImageAttach } from "../sidebar/transcript/composer";
 import { textFiles } from "../attached-files";
-import type { SentFile } from "../contract/contract-run";
+import { imagesRefusal, type SentFile } from "../contract/contract-run";
 import { cursorTipOn } from "../sidebar/ui-kit";
 import type { ChatStore } from "./chat-store";
 import type { ChatExtras } from "./extras";
@@ -157,7 +157,7 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
     // a chat the worker hosts always streams (`chat-stream`, sw-chat.ts), so `chat.start` has no option to send.
     const streaming = kind === "agent";
     // Text, or an image or a file alone: the start commands accept any of them (session-commands.ts).
-    const ready = (!!text.trim() || att.imgs.length > 0 || att.sendable.length > 0) && !busy && rt.online && (kind === "chat" || (pick.ready && blocked.kind === "ok"));
+    const ready = (!!text.trim() || att.imgs.length > 0 || att.sendable.length > 0) && !imagesRefusal(att.imgs.length) && !busy && rt.online && (kind === "chat" || (pick.ready && blocked.kind === "ok"));
     const start = async (): Promise<void> => {
         if (!ready) return;
         setBusy(true);

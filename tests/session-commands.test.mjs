@@ -102,6 +102,24 @@ test("every session command refuses a session this runtime does not hold, or ano
     assert.equal(code(await run({ type: "nonsense" })), "unsupported");
 });
 
+// --- images on a message: one cap on every command (TURN_IMAGES_MAX) ---
+
+test("past eight images a message is refused, naming the cap and how many to remove, on chat.start, agent.start and session.send; nothing is cut", async () => {
+    const nine = Array.from({ length: 9 }, (_, i) => `data:image/png;base64,A${i}`);
+    const w = world({ hostsChat: () => true });
+    w.index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
+    for (const c of [
+        { type: "chat.start", runtime: "local", text: "see", images: nine },
+        { type: "agent.start", runtime: "local", task: "see", images: nine, target: { kind: "tab", tabId: TAB } },
+        { type: "session.send", session: sid("aaaa0001"), text: "see", images: nine },
+    ]) {
+        const r = await w.run(c);
+        assert.deepEqual([code(r), r.error?.message], ["invalid", "a message takes up to 8 images; remove 1"], c.type);
+    }
+    assert.equal(w.named("startChat").length + w.named("startAgent").length + w.named("toPage").length + w.named("steer").length, 0, "nothing was started or sent");
+    assert.equal(code(await w.run({ type: "chat.start", runtime: "local", text: "see", images: nine.slice(0, 8) })), "ok", "eight go");
+});
+
 test("session.send: a running background loop is steered directly; anything else goes to the page, which says what it did", async () => {
     const w = world({ steer: (hash, text) => { w.calls.push(["steer", hash, text]); return hash === "aaaa0001"; } });
     w.index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });

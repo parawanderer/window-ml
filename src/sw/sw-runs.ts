@@ -368,7 +368,7 @@ export const hydrationDone: Promise<void> = (typeof chrome !== "undefined" && ch
 // Per-run steering inbox (a.say() mid-run): the SW-side twin of the page loop's control.inbox. INJECT_MESSAGE
 // pushes here (only the owning tab may); the run's loop drains it at each step boundary (deps.drainInbox).
 // Present only while a run is live (set at start, deleted in finally).
-export const runInboxes = new Map<string, { tabId: number; queue: { id?: string; text: string; origin?: import("../contract/contract-run").PromptOrigin }[] }>();
+export const runInboxes = new Map<string, { tabId: number; queue: { id?: string; text: string; origin?: import("../contract/contract-run").PromptOrigin; images?: string[] }[] }>();
 defineState({
     id: "run.mailbox", scope: "run", realm: "worker", audience: "human", lostOn: ["worker-eviction", "turn-end"],
     describe: "Messages sent to the run that it has not read yet; it reads them at its next step.",

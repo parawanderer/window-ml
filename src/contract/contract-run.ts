@@ -86,13 +86,21 @@ export function bgRunResumable(snap: { version?: string; ts?: number }, currentV
     return true;
 }
 
+/** How many images one message may carry, on every surface and runtime: past it a message is refused, never cut. */
+export const TURN_IMAGES_MAX = 8;
+
+/** Why a message with `n` images cannot be sent, or null: the sentence a composer shows and a runtime answers with. */
+export function imagesRefusal(n: number): string | null {
+    return n > TURN_IMAGES_MAX ? `a message takes up to ${TURN_IMAGES_MAX} images; remove ${n - TURN_IMAGES_MAX}` : null;
+}
+
 /** Sanitize composer image attachments relayed from the sidebar app (a pasted/uploaded screenshot):
  *  keep only `data:image/*` strings, size-capped so a runaway paste can't bloat a postMessage, max 8 per
  *  turn. Returns undefined when there's nothing valid (keeps the relayed message clean). Pure; shared by
  *  the overlay shell and the DevTools panel relays so both validate identically. */
 export function cleanImages(v: unknown): string[] | undefined {
     if (!Array.isArray(v)) return undefined;
-    const out = v.filter((x): x is string => typeof x === "string" && /^data:image\//.test(x) && x.length <= 8_000_000).slice(0, 8);
+    const out = v.filter((x): x is string => typeof x === "string" && /^data:image\//.test(x) && x.length <= 8_000_000).slice(0, TURN_IMAGES_MAX);
     return out.length ? out : undefined;
 }
 

@@ -19,7 +19,7 @@
  * feed of a session something else already reports (AGENTS.md's trap, which is about recording a run twice); it is
  * the only feed of a session nothing else can see.
  */
-import { hintSession, shortHash, type AttachedFile, type AttachedPdf, type RequestHint, type SentFile } from "../contract/contract-run";
+import { TURN_IMAGES_MAX, hintSession, shortHash, type AttachedFile, type AttachedPdf, type RequestHint, type SentFile } from "../contract/contract-run";
 import { FILE_INLINE_MAX, FilesRefused, b64Bytes, frameFiles, isPdfFile, textCapRefusal, type FramedFile } from "../attached-files";
 import { ImagesRefused, namedNote, readerNote, type ImagePlan } from "../image-gate";
 import { fitPages, pageSections, planPages, wantsImage, type PageAim, type PageOutcome } from "../pdf/pdf-frame";
@@ -33,8 +33,8 @@ import { type MlDebugEvent } from "../contract/contract-debug";
  *  every run. The oldest idle chat is dropped when a new one would exceed it; a SAVED chat is only dropped from
  *  memory and comes back from storage on its next turn. */
 export const MAX_BG_CHATS = 32;
-/** Images on one turn, matching what the page path accepts from the composer. */
-export const MAX_TURN_IMAGES = 8;
+/** Images on one turn: the one cap every surface applies (`TURN_IMAGES_MAX`); a PDF's page images share it. */
+export const MAX_TURN_IMAGES = TURN_IMAGES_MAX;
 
 /** How many pages of a message's PDFs the reader model may read, past which a scan is named as not sent: each is a
  *  model call the person waits for before the answer starts. A first figure. */
