@@ -53,8 +53,9 @@ test("RED TEAM: a String-shaped object's Symbol.toStringTag getter never runs (t
     let tag = 0;
     const h = host();
     h.ml.models = async () => ({ get [Symbol.toStringTag]() { tag++; return "String"; }, valueOf() { return "cat"; } });
-    await run(`return await ml.embed(await ml.models())`, h).catch(() => {});
+    await assert.rejects(run(`return await ml.embed(await ml.models())`, h), (e) => e instanceof TypeError && /ml\.embed takes a string/.test(String(e.message)), "a String-shaped input whose tag is a getter must be refused as a non-string, by name");
     assert.equal(tag, 0, "Object.prototype.toString ran the page's Symbol.toStringTag getter from an argument read");
+    assert.equal(h.calls.length, 0, "a refused input still reached the embedding host");
 });
 
 test("RED TEAM: a Proxy over the input array cannot lie about its length or smuggle a non-string, and no trap reaches a value the page did not put there", async () => {
