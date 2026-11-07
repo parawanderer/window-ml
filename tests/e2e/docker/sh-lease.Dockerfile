@@ -17,3 +17,5 @@ RUN tar -xf /src/wml.tar && npm ci --no-audit --no-fund && npx playwright instal
 COPY --from=host /h/target/release/wmlhost /w/window-ml-host/target/release/wmlhost
 RUN useradd -m bench && chown -R bench /w && mkdir -p /home/bench/.cache && cp -r /root/.cache/ms-playwright /home/bench/.cache/ && chown -R bench /home/bench
 USER bench
+# The canary row's file (sh-lease-canary.bench.ts): one random line, made at build time, in the container's home only.
+RUN mkdir -m 700 /home/bench/.ssh && printf 'Host canary-%s\n' "$(head -c 8 /dev/urandom | od -An -tx1 | tr -d ' \n')" > /home/bench/.ssh/config && chmod 600 /home/bench/.ssh/config
