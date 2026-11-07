@@ -1570,6 +1570,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     const worldAsked = byWorker() && world !== undefined;
                     if (worldAsked && (typeof args.js !== "string" || (await execRoute(args.js, world)).where === "refused")) return null;
                     // Nor one policy isolates for what the SCRIPT names (`ml.sh`, `ml.current`, a pointer), on any setting.
+                    // A page-built run keeps its page leg for any script: its approved exec is never routed and runs in the
+                    // page's world too (`js` above, in the tool call), so the survey answers where the exec would.
                     const scriptLegOk = !byWorker() || typeof args.js !== "string" || surveyMayEnterPage(args.js);
                     let pageLegOk = !worldAsked || world === "page";
                     if (pageLegOk && !worldAsked && byWorker() && typeof args.js === "string" && defaultExecWorld((await getConfig()).execDefaultWorld) === "isolated") {
@@ -1578,9 +1580,10 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     }
                     // The WORKER first (docs/spec/SITE_ACCESS.md slice 2): a survey that reads only the run and the box is
                     // answered here, where the run's context and pointers live, and never enters the page. One that reaches
-                    // for the page comes back `needs-page` and goes there, where pointer reads are refused, so a survey that
-                    // needs both reaches the person.
-                    // `selfIntrospection` off: no `ml.current` at all (a survey naming it then goes to the page, where it refuses).
+                    // for the page comes back `needs-page` and goes there only when its page leg is open above (for a run the
+                    // worker built, a script naming none of `ml.sh`, `ml.current` or a pointer); otherwise it reaches the person.
+                    // `selfIntrospection` off: no `ml.current` at all (a survey naming it then reaches the person: its script
+                    // closes the page leg).
                     const snap = p.selfIntrospection === false ? undefined : contextByRun.get(runId);
                     const wantsLog = typeof args.js === "string" && /\bcurrent\b/.test(args.js);
                     const log = snap && wantsLog ? eventsForRun(await runLog.all(), runId) : [];

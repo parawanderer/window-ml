@@ -168,7 +168,7 @@ const OLD_CONFIG = { chatUrl: "http://host/api/chat/completions", apiKey: "sk-te
  * allowed (true) or not ("off"). Returns every exec message the page was sent, what the model read back, the routing
  * records, and how many approvals were asked for.
  */
-async function worldRun(calls, { us = true, approved = true, config = {}, autoRO = false } = {}) {
+async function worldRun(calls, { us = true, approved = true, config = {}, autoRO = false, builtBy = "worker" } = {}) {
     let n = 0, bg, approvals = 0;
     const cards = [];
     const ctx = vm.createContext({ console: { log() {}, info() {}, warn() {}, error() {}, debug() {} }, document: { title: "Site" } });
@@ -196,7 +196,15 @@ async function worldRun(calls, { us = true, approved = true, config = {}, autoRO
     });
     const panel = bg.connect("ml-devtools");
     panel.send({ type: "ml-devtools-init", tabId: 7 });
-    const { hash } = await bg.context.__mlStartUserRunForTest(7, { task: "calls", surface: "hud" });
+    let hash = "pagerun1";
+    if (builtBy === "worker") ({ hash } = await bg.context.__mlStartUserRunForTest(7, { task: "calls", surface: "hud" }));
+    else {
+        // A run the PAGE built (START_RUN): its exec is the page's own tool, run in the page's world.
+        const sender = { tab: { id: 7, url: SITE.url }, url: SITE.url, origin: new URL(SITE.url).origin, frameId: 0 };
+        const tools = [{ name: "exec", description: "exec", parameters: { type: "object", properties: { js: { type: "string" } } }, requiresApproval: true, capabilities: [] }];
+        void bg.send({ type: "START_RUN", payload: { runId: hash, task: "calls", systemPrompt: "sys", tools, model: "m", think: null, maxSteps: 20, surface: "off", autoApproveReadonly: autoRO,
+            rebuild: { toolNames: ["exec"], model: "m", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: false } } }, sender);
+    }
     for (let i = 0; i < 400 && n <= calls.length; i++) await new Promise((r) => setTimeout(r, 0));
     await flush(30);
     const execMsgs = bg.tabMessages.filter(([, m]) => m.type === "RUN_TOOL_IN_PAGE" && m.payload.name === "exec").map(([, m]) => JSON.parse(JSON.stringify(m.payload)));
@@ -362,4 +370,17 @@ test("on the default config, a survey naming ml.sh never reaches the page's leg:
     assert.deepEqual(r.roLog, [["readonly-worker", "script-isolated"]]);
     assert.deepEqual(r.log, [["exec-isolated", "sh"]]);
     assert.equal(r.approvals, 1, "it went to the gate");
+});
+
+test("a run the PAGE built keeps the survey's page leg for any script: its exec runs in the page's world, so the survey answers where the exec would", T, async () => {
+    const r = await worldRun([{ js: SCRIPTS.sh }], { autoRO: true, builtBy: "page" });
+    assert.equal(r.execMsgs.filter((p) => p.readonlyTry).length, 1, JSON.stringify(r.execMsgs));
+    assert.deepEqual(r.roLog, [["readonly-page", "reads-page"]]);
+    assert.equal(r.approvals, 0);
+    // The other half: the same run's APPROVED exec of that script runs in the page too, never routed to an isolated world.
+    const gated = await worldRun([{ js: SCRIPTS.sh }], { builtBy: "page" });
+    assert.equal(gated.approvals, 1, "positive control: it went to the gate");
+    assert.deepEqual(gated.log, [], "a page-built run's exec is never routed");
+    assert.equal(gated.ran.length, 1, "it ran in the page");
+    assert.equal(gated.isolated, 0);
 });
