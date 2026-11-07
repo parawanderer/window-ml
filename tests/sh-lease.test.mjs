@@ -159,6 +159,14 @@ test("what the model reads about ml.sh.run names no lease number, which a build'
     assert.ok(doc.includes(`default ${SH_HOST_TIMEOUT_MS / 1000} s`), "the JSDoc's host limit drifted from SH_HOST_TIMEOUT_MS");
 });
 
+test("what the model reads says ml.sh is a namespace called as ml.sh.run(argv), never ml.sh(...) with a shell string", async () => {
+    // A bench canary (gemma4:e4b) wrote `await ml.sh('cat ~/.ssh/config')` from the text before this clause.
+    const { ML_API_DOCS } = await import("../src/api-docs.gen.ts");
+    const text = ML_API_DOCS;
+    assert.match(text, /A namespace, not a function: `await ml\.sh\.run\(\[/);
+    assert.match(text, /takes an argv array,[\s*]*never a shell string/);
+});
+
 test("expectMs is checked like timeoutMs: a positive number, refused otherwise before the host is reached", T, async () => {
     const host = slowHost();
     for (const bad of [0, -5, "10", Infinity, NaN]) {

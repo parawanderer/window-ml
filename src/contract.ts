@@ -73,7 +73,8 @@ export interface JsonSchema {
  *  Underscore-prefixed members are internal plumbing exposed for debugging;
  *  they are NOT part of the stable public API and may change. */
 /** `ml.sh`: programs on the person's machine, from an approved `exec`, which then runs in an isolated world rather than
- *  the page's (MlApi `sh`). */
+ *  the page's (MlApi `sh`). A namespace, not a function: `await ml.sh.run(["cat", "notes.txt"])` takes an argv array,
+ *  never a shell string. */
 export interface MlSh {
     /** Run one program and wait for it, up to `expectMs` (default: a short lease, which the `Detached` error names): past that it throws `Detached` with `e.task`
      *  and runs on; its result arrives later as a `[task <id> …]` message, and the `task` tool awaits, tails or cancels
