@@ -232,7 +232,7 @@ export function attr(v: string): string {
  */
 export function fileBlock(f: FramedFile): string {
     if (isReadPdf(f)) {
-        const head = `<file name="${attr(f.name)}" type="${attr(f.type)}" bytes="${f.bytes}" pages="${f.pages}"${f.pointer ? ` pointer="${attr(f.pointer)}"` : ""}${f.escaped ? ` escaped="${f.escaped}"` : ""}>`;
+        const head = `<file name="${attr(f.name)}" type="${attr(f.type)}" bytes="${attr(String(f.bytes))}" pages="${attr(String(f.pages))}"${f.pointer ? ` pointer="${attr(f.pointer)}"` : ""}${f.escaped ? ` escaped="${attr(String(f.escaped))}"` : ""}>`;
         return `${head}\n${f.body}${f.body && !f.body.endsWith("\n") ? "\n" : ""}</file>`;
     }
     let n = 0;

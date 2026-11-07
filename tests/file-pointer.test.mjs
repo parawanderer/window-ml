@@ -59,7 +59,7 @@ test("a read that stopped early says how many pages were read, and the reader's 
 
 test("a hint names only pages the file holds: `pages 1` for a one-page file, at most `1-3` otherwise", () => {
     assert.deepEqual([1, 2, 3, 40].map((read) => firstPages({ read })), ["1", "1-2", "1-3", "1-3"]);
-    assert.match(fileOutline(pointer({ pages: 1, read: 1 }), doc(page(1, "x"))), /pipe "pages 1"\)/);
+    assert.match(fileOutline(pointer({ pages: 1, read: 1 }), doc(page(1, "x"))).text, /pipe "pages 1"\)/);
     assert.deepEqual([filePagesSaid({ pages: 1, read: 1 }), filePagesSaid({ pages: 900, read: 500 })], ["1 page", "500 of 900 pages read"]);
 });
 

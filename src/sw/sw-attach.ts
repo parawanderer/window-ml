@@ -22,6 +22,10 @@ export interface AttachDeps {
     shelf: FileShelf;
 }
 
+/** A count a reader reported, as the non-negative integer every reader of the pointer may take it for (0 when it is not
+ *  one): `ReadPdfFile` is a contract other producers fill, and its numbers reach model-facing text. */
+const count = (n: unknown): number => (typeof n === "number" && Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0);
+
 /** The sentence for a PDF the store could not keep. */
 function keepRefusal(name: string, e: unknown): string {
     const why = e instanceof ValueTooLarge ? `${e.message} Raise the stored table budget in Settings, or attach a smaller file` : String((e as Error)?.message ?? e);
@@ -61,7 +65,7 @@ export async function attachFiles(runId: string, files: readonly SentFile[] | un
             } catch (e) { throw new FilesRefused(keepRefusal(name, e)); }
             const { figures, scans } = pageKinds(r.doc);
             p = d.shelf.note({
-                id: fileId(runId, d.shelf.size + 1), name, type: "application/pdf", bytes: bytes.length, pages: r.doc.pageCount,
+                id: fileId(runId, d.shelf.size + 1), name, type: "application/pdf", bytes: bytes.length, pages: count(r.doc.pageCount),
                 read: r.doc.pages.length, turn, doc: doc.key, data: data.key, sha256,
                 chars: r.doc.pages.reduce((n, pg) => n + pg.text.length, 0), figures, scans,
                 ...(r.doc.truncated ? { truncated: r.doc.truncated.sentence } : {}),
