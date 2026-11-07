@@ -83,6 +83,15 @@ test("RED TEAM: `[o].join(\"\")` is a data read (the page's toString must not ru
     assert.deepEqual(ran, [], "[o].join('') ran the page's own toString");
 });
 
+test("RED TEAM: `[1, 2].join(o)` is a data read (the page's toString must not run for the SEPARATOR)", async () => {
+    // Measured on d260cbb2: the page's toString ran TWICE, once in the preflight's own `String(args[0] ?? ",")` and
+    // once inside `join`, and the answer was "1PAGE2". The other argument of the same call is a coercion too.
+    const ran = [];
+    const r = await run(`const o = await ml.models(); return [1, 2].join(o)`, pageValue(ran)).catch((e) => ({ refused: String(e) }));
+    assert.deepEqual(ran, [], `join ran the page's toString for its separator: ${JSON.stringify(ran)}`);
+    assert.ok(r.value === undefined || r.value === "1,2", `the separator became the page's answer: ${JSON.stringify(r.value ?? r.refused)}`);
+});
+
 test("RED TEAM: `[].concat(o).join(\"\")` is a data read (the page's toString must not run)", async () => {
     const ran = [];
     await run(`const o = await ml.models(); return [].concat(o).join("")`, pageValue(ran)).catch(() => {});
@@ -101,6 +110,11 @@ test("RED TEAM: `sort()` with no comparator is a data read (the page's toString 
     const ran = [];
     await run(`const o = await ml.models(); return [o, 2].sort()`, pageValue(ran)).catch(() => {});
     assert.deepEqual(ran, [], "[o, 2].sort() ran the page's own toString");
+    // The gate reads `args[0] === undefined`, which an EXPLICIT undefined also satisfies — the shape that pins it:
+    // rewritten as `args.length === 0`, this call runs the page's toString once and returns [2,{}] (measured).
+    const explicit = [];
+    await run(`const o = await ml.models(); return [o, 2].sort(undefined)`, pageValue(explicit)).catch(() => {});
+    assert.deepEqual(explicit, [], "[o, 2].sort(undefined) ran the page's own toString");
 });
 
 test("RED TEAM: a String object's split reads its data, never its own toString", { todo: OPEN }, async () => {
