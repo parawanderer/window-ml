@@ -377,13 +377,15 @@ const PAGE_OPEN = /^<page n="(\d+)"[^>]*>$/;
  * A page the value does not hold is refused, naming the pages it does: a quiet empty answer reads as "no such text".
  */
 function pages(lines: string[], argv: string[]): string[] {
-    const spec = argv.slice(1).join("").trim();
+    // A space separates like a comma (`pages 1 2`, `pages 1, 2` are pages 1 and 2), and one around a dash is dropped
+    // (`pages 3 - 5`): joining the arguments with nothing read `pages 1,2 3` as pages 1 and 23.
+    const spec = argv.slice(1).join(" ").replace(/\s*-\s*/g, "-").trim();
     if (!spec) throw new Error("`pages` needs page numbers: pages 3, pages 3-5 or pages 3,7-9.");
     const want: [number, number][] = [];
     let width = 0;
-    for (const part of spec.split(",")) {
-        const m = /^(\d{1,6})(?:-(\d{1,6}))?$/.exec(part.trim());
-        if (!m) throw new Error(`\`pages\` can't read ${JSON.stringify(part.trim())}: write pages 3, pages 3-5 or pages 3,7-9.`);
+    for (const part of spec.split(/[\s,]+/).filter(Boolean)) {
+        const m = /^(\d{1,6})(?:-(\d{1,6}))?$/.exec(part);
+        if (!m) throw new Error(`\`pages\` can't read ${JSON.stringify(part)}: write pages 3, pages 3-5 or pages 3,7-9.`);
         const a = Number(m[1]), b = m[2] ? Number(m[2]) : a;
         if (a < 1) throw new Error("`pages`: pages are numbered from 1.");
         if (b < a) throw new Error(`\`pages ${a}-${b}\` runs backwards: write pages ${b}-${a}.`);
@@ -391,13 +393,19 @@ function pages(lines: string[], argv: string[]): string[] {
         if (width > PIPE_PAGES_MAX) throw new Error(`\`pages\` selects at most ${PIPE_PAGES_MAX} pages in one stage; read them in parts.`);
         want.push([a, b]);
     }
+    // A section that is never closed ends at the next opening tag or at the end of the input, and is closed there, so
+    // an open tag is never read as another page's text and a last page whose close was lost keeps its lines.
     const held = new Map<number, string[]>();
     let cur: string[] | null = null, n = 0;
+    const keep = () => { if (cur && !held.has(n)) held.set(n, cur[cur.length - 1] === "</page>" ? cur : [...cur, "</page>"]); cur = null; };
     for (const l of lines) {
-        if (!cur) { const m = PAGE_OPEN.exec(l); if (m) { cur = [l]; n = Number(m[1]); } continue; }
+        const m = PAGE_OPEN.exec(l);
+        if (m) { keep(); cur = [l]; n = Number(m[1]); continue; }
+        if (!cur) continue;
         cur.push(l);
-        if (l === "</page>") { if (!held.has(n)) held.set(n, cur); cur = null; }
+        if (l === "</page>") keep();
     }
+    keep();
     if (!held.size) throw new Error("`pages` needs a paged value (an attached PDF, @file:…); this one has no pages.");
     const pick = new Set<number>();
     for (const [a, b] of want) for (let k = a; k <= b; k++) pick.add(k);

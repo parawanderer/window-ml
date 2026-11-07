@@ -667,6 +667,20 @@ test("the inventory lists attached files before tool outputs, with how to read o
     assert.equal(derefResult(r), `1 file attached by the person:\n  @file:${f.id} "report.pdf" PDF, 4 pages, turn 1\nRead one by pages: token "@file:${f.id}", pipe "pages 1-3".\nNo tool outputs captured yet.`);
 });
 
+test("a read stopped short says so in the read's header and the inventory, as the outline does; a one-page file's hint asks for page 1", async () => {
+    const cut = withFile({ pages: 900, read: 4 });
+    const r = await drive([call("dereference", { token: `@file:${cut.f.id}`, pipe: "pages 1" }, "a"), call("dereference", {}, "b")], () => ({ result: "" }), { tokenStore: cut.tokenStore, readText: cut.readText });
+    const [read, inv] = r.results.filter((x) => x.name === "dereference").map((x) => x.result);
+    assert.match(read, /^@file:\S+ "report\.pdf": attached by the person\. PDF, 4 of 900 pages read\.\n/);
+    assert.match(inv, /"report\.pdf" PDF, 4 of 900 pages read, turn 1\n/);
+    const one = withFile({ pages: 1, read: 1 });
+    const o = await drive([call("dereference", {})], () => ({ result: "" }), { tokenStore: one.tokenStore, readText: one.readText });
+    assert.match(derefResult(o), /PDF, 1 page, turn 1\nRead one by pages: token "@file:\S+", pipe "pages 1"\./);
+    let sink;
+    await drive([], () => ({ result: "" }), { tokenStore: one.tokenStore, readText: one.readText, tokenSink: (fn) => { sink = fn; } });
+    assert.throws(() => sink(`@file:${one.f.id}`), /pipe "pages 1"\.$/);
+});
+
 test("ml.dereference in code refuses an attached file with a sentence naming the tool that reads it", async () => {
     const { tokenStore, f, readText } = withFile();
     let sink;
