@@ -2105,6 +2105,8 @@ test("join refuses an object element, whoever built it, and no function runs", a
         `return [{ toString: () => "x" }].join("")`,
         `return [{ a: 1 }].join("")`,
         `return [new Date(0)].join("")`,
+        `const o = await ml.models(); return [o, "a"].sort()`,
+        `const o = await ml.models(); return [[o], 1].sort()`,
         `return [[1], () => 2].join("")`,
     ]) {
         await assert.rejects(run(js, world(), handed(page)), outOfDialect, js);
@@ -2131,6 +2133,8 @@ test("the controls: joining the page's own strings, numbers, nulls, holes and ne
     assert.equal((await run(`const a = await ml.models(); return a.join("+")`, world(), handed(["x", "y"]))).value, "x+y");
     assert.equal((await run(`const a = await ml.models(); return a.join("-")`, world(), handed([1, , 3]))).value, "1--3", "a real hole is empty text");
     assert.equal((await run(`const a = [1]; a.push(a); return a.join("-")`)).value, "1-", "a cycle prints empty, as join does");
+    assert.deepEqual((await run(`return [10, 9, 1, "b", "a"].sort()`)).value, [1, 10, 9, "a", "b"], "a default sort of data is unchanged");
+    assert.deepEqual((await run(`return [{ n: 2 }, { n: 1 }].sort((x, y) => x.n - y.n)`)).value, [{ n: 1 }, { n: 2 }], "a sort WITH a comparator never coerces, so objects still sort");
 });
 
 test("join's refusal is the SAME gate when the array falls out of dialect afterwards: nothing is left behind", async () => {

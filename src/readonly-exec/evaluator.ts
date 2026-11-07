@@ -322,7 +322,7 @@ export class Evaluator {
     private coerces(...vs: unknown[]): void {
         for (const v of vs) if (v !== null && typeof v === "object") { if (Array.isArray(v)) this.joinsData(v); this.expands(v); }
     }
-    /** Refuse an array that `join` (so `toString`, `+`, a template) would turn into text by COERCING an element: only a
+    /** Refuse an array that `join` (so `toString`, `+`, a template, and a `sort` with no comparator) would turn into text by COERCING an element: only a
      *  primitive, or an array of them, becomes text without running a function the page chose, since the host calls an
      *  object's own `toString`/`valueOf` for it. Elements are read as own DATA descriptors, so a getter is refused instead of
      *  run and a hole must be a real one (nothing inherited). Run BEFORE `expands`, which reads elements too. Each array is visited once, charged its length, and past MAX_EXPANDED elements it is refused. A Proxy's
@@ -372,7 +372,7 @@ export class Evaluator {
         // `new RegExp` check, so every one a call is handed, as receiver or argument, is checked here.
         for (const v of [obj, ...args]) if (isRegExp(v)) this.patternArg(String(v.source));
         if (Array.isArray(obj) && key === "join" && obj.length * String(args[0] ?? ",").length > MAX_STRING) big();
-        if (Array.isArray(obj) && ARRAY_EXPANDS.has(key)) { if (key === "join" || key === "toString") this.joinsData(obj); this.expands(obj); }
+        if (Array.isArray(obj) && ARRAY_EXPANDS.has(key)) { if (key === "join" || key === "toString" || (key === "sort" && args[0] === undefined)) this.joinsData(obj); this.expands(obj); }
         else if (Array.isArray(obj) && ARRAY_SCANS.has(key)) this.tick(Math.floor(obj.length / HOST_SCAN_ELEMENTS_PER_STEP));
         else if (Array.isArray(obj) && ARRAY_MOVES.has(key)) this.tick(Math.floor(obj.length / HOST_COPY_ELEMENTS_PER_STEP));
         // The ARGUMENTS: a host method may coerce, copy or walk any of them, so each is charged its size and an array
