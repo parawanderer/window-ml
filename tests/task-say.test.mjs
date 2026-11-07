@@ -132,8 +132,8 @@ test("a task's result is drawn both ways in the transcript, and the calm view's 
     assert.equal(line.querySelector(".task-line-raw").textContent, RESULT, "opening the line shows exactly what the model got");
     const css = readFileSync(new URL("../src/sidebar/sidebar.css", import.meta.url), "utf8");
     assert.match(css, /^\.task-say > \.task-line \{ display: none; \}$/m, "the dev view hides the line");
-    assert.match(css, /^html\[data-calm\] \.task-say > \.task-line \{ display: block; \}$/m, "the calm view shows the line");
-    assert.match(css, /^html\[data-calm\] \.task-say > \.task-dev \{ display: none; \}$/m, "the calm view hides the bubble");
+    assert.match(css, /^html\[data-calm\] \.task-say > \.task-line, html\[data-focus\] \.task-say > \.task-line \{ display: block; \}$/m, "the calm view and focus mode show the line");
+    assert.match(css, /^html\[data-calm\] \.task-say > \.task-dev, html\[data-focus\] \.task-say > \.task-dev \{ display: none; \}$/m, "the calm view and focus mode hide the bubble");
 });
 
 test("the HUD card's Show work draws a task's result as the quiet line, never as 'you asked'", async () => {
@@ -152,4 +152,10 @@ test("the HUD card's Show work draws a task's result as the quiet line, never as
     const lines = [...doc.querySelectorAll(".task-line")];
     assert.deepEqual(lines.map((l) => l.querySelector(".disc-label").textContent), ["✗ task t9f8e7d failed · 3 s"], "a failed task with no exit code");
     assert.equal([...doc.querySelectorAll(".acard-you")].length, 1, "the task's result became a 'you asked' row");
+});
+
+test("the prompt pin lists what someone sent: the task and the person's follow-up, never a task's result", async () => {
+    const { promptsOf } = await import("../src/sidebar/transcript/prompt-pin.tsx");
+    const rows = promptsOf(session());
+    assert.deepEqual(rows.map((r) => [r.key, r.text, r.who]), [["task", "build it", "you"], ["s1", "and the tests?", "you"]]);
 });
