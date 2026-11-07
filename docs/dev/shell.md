@@ -14,6 +14,7 @@ wire it speaks.
 | `src/sw/sw-shell-call.ts` | one `ml.sh` call: spawn → facts → version probe → policy or ask → judged again → start → outputs as pointers; `ml.sh.read` |
 | `src/sidebar/settings/shell-section.tsx` | the Settings section "Programs (ml.sh)" |
 | `tests/fake-native-host.mjs` | a host on the far end of the mocked `connectNative` (`loadBackground({ onNative })`) |
+| `tests/e2e/native-host.mjs` | a REAL `wmlhost` for an e2e run, registered in the test profile only (`tests/e2e/ml-sh-host.spec.mjs`) |
 
 ## How a session lives
 

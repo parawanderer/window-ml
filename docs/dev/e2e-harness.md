@@ -598,6 +598,20 @@ each turn) trips it — hence the rate-limit backoff (`docs/dev/architecture.md`
 usefully (tiny CPU models botch tool-calling), so a free hosted API is the only real-model option in
 CI; do real iteration on a local GPU box instead.
 
+### A real ml.sh host
+
+`tests/e2e/native-host.mjs` runs `ml.sh` against a REAL process host: a `wmlhost` built in a sibling
+`window-ml-host*` checkout (`cargo build --release`), or the one `E2E_WMLHOST` names; a spec skips without one, as the
+CPython ones do. `registerNativeHost(profile, extensionId, bin)` writes the native messaging manifest into the test's
+own `--user-data-dir` (`<profile>/NativeMessagingHosts/`), never the person's Chrome profile, after the launch, since
+Chromium reads it at the worker's first `connectNative`. Measured on macOS and on Linux (Chromium in Docker).
+
+- **The approver DENIES every ml.sh ask.** The host reads everything but credential stores, as the person's user, so
+  only a call the built-in default runs without asking (a read inside `tempWorkspace()`) may run unattended. A spec,
+  or the bench, that approved an ml.sh card would hand the model any file on the machine.
+- `tests/e2e/ml-sh-host.spec.mjs` is the pattern: one free read in the workspace, one outside it that asks and is
+  denied (the positive control), and the run's `routing` records.
+
 ### A scripted model driving the tools
 
 The tests that matter most for the agent are the ones where `fake-llm.mjs` plays the model and its scripted turns
