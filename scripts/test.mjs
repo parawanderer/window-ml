@@ -45,6 +45,7 @@ const GENRES = {
             "sidebar-approval.test.js", "sidebar-card.test.js", "sidebar-event-lane.test.js",
             "sidebar-export.test.js", "sidebar-output.test.js", "sidebar-resource.test.js",
             "sidebar-session.test.js", "sidebar-settings.test.js", "sidebar-vram.test.js",
+            "sidebar-asks.test.js", "sidebar-render-kinds.test.js", "sidebar-start-card.test.js",
             "output-cell.test.mjs", "pointer-gone.test.mjs", "code-tools.test.mjs", "legend.test.mjs",
             "context-container.test.mjs", "sidebar-prompt-display.test.js", "fold-badges.test.mjs", "tooltip-layer.test.mjs", "tip.test.mjs", "code-diff.test.mjs", "views.test.mjs",
             "json-tree.test.mjs", "run-state-view.test.mjs", "run-log-view.test.mjs", "chart-gestures.test.mjs", "stacked-area.test.mjs"],

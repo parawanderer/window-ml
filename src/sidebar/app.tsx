@@ -14,7 +14,7 @@ import { DEFAULT_CONFIG } from "../contract/contract-config";
 import {
     FONT_KEY, WRAP_KEY, LINES_KEY, CODE_THEME_KEY, CODE_THEME_VSCODE_KEY, CODE_THEME_UI_KEY, codeTheme, codeThemeCustom, codeThemeUi, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_PREF_KEY, RESWIN_DEFAULT, resWindowPref, VRAMH_KEY, LANE_HIDDEN_KEY, laneHidden, LANE_SCOPE_KEY, laneScoped, SECTIONS_KEY, laneEnabled, showLane, showModels, LANEH_KEY, laneH, LANE_H_DEFAULT, SNAPDOT_KEY, snapDot, PREDICT_KEY, predictView, TIMEGRID_KEY, timeGrid, FOCUS_KEY, focusMode,
     benchOpen, benchDock, benchH, benchSplit, viewReturn, markReturn, openBench, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY,
-    benchEnv, BENCH_ENV_KEY,
+    benchEnv, BENCH_ENV_KEY, prefsSnapshot, restorePrefs,
     sessionMap, rev, view, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes, config,
     vramOpen, sidebarOpen, backendError, backendLoading, surface, atBottom, resWindowS, vramH } from "./store";
 import { installTooltipLayer } from "./tooltip-layer";
@@ -546,52 +546,14 @@ function mount(): void {
     // Over parent-channel.ts like every message to the host: on a web page a plain `window.parent.postMessage` would
     // tell the PAGE where the pointer is.
     if (window.parent !== window) trackPointer(document, () => toHost({ __mlSidebarApp: "pointerIn" }));
+    // The snapshot goes out WITH the read: the callback can land after a click, and the restore must not
+    // yank that click back (store.ts, the init restore).
+    const prefsSnap = prefsSnapshot();
     chrome.storage.local.get({ [FONT_KEY]: 1, [WRAP_KEY]: true, [LINES_KEY]: false, [STATS_TOKENS_KEY]: true, [STATS_TPS_KEY]: false, [OUTMAX_KEY]: OUTMAX_DEFAULT, [OUTTS_KEY]: true, [RESWIN_KEY]: 0, [RESWIN_PREF_KEY]: RESWIN_DEFAULT, [VRAMH_KEY]: 0, [LANE_HIDDEN_KEY]: [], [LANE_SCOPE_KEY]: true, [SECTIONS_KEY]: null, [LANEH_KEY]: LANE_H_DEFAULT, [SNAPDOT_KEY]: false, [PREDICT_KEY]: false, [TIMEGRID_KEY]: false, [VRAM_PALETTE_KEY]: "", [FOCUS_KEY]: false, [BENCH_OPEN_KEY]: false, [BENCH_DOCK_KEY]: "drawer", [BENCH_H_KEY]: 280, [BENCH_SPLIT_KEY]: 0, [CODE_THEME_KEY]: DEFAULT_CODE_THEME, [CODE_THEME_VSCODE_KEY]: null, [CODE_THEME_UI_KEY]: true }, (d: any) => {
-        if (d[FONT_KEY]) fontScale.value = d[FONT_KEY]; applyFont();
-        codeWrap.value = d[WRAP_KEY] !== false; codeLineNumbers.value = !!d[LINES_KEY]; applyCodePrefs();
-        // The code colour theme: re-apply the stylesheet once it is known (initThemeStyle drew the default).
-        codeTheme.value = typeof d[CODE_THEME_KEY] === "string" ? d[CODE_THEME_KEY] : DEFAULT_CODE_THEME;
-        codeThemeCustom.value = d[CODE_THEME_VSCODE_KEY]?.text ? d[CODE_THEME_VSCODE_KEY] : null;
-        codeThemeUi.value = d[CODE_THEME_UI_KEY] !== false;
-        applyTheme();
-        showStatsTokens.value = d[STATS_TOKENS_KEY] !== false; showStatsTps.value = !!d[STATS_TPS_KEY];
-        if (typeof d[OUTMAX_KEY] === "number") outMaxH.value = d[OUTMAX_KEY];
-        // The PREFERENCE first, then the live window if one was left behind. A dragged window survives a
-        // reload (it is where you were), and with none stored the chart opens at the preference — which is
-        // what "the default when unset" means, and why the picker can always show a preset.
-        if (typeof d[RESWIN_PREF_KEY] === "number" && d[RESWIN_PREF_KEY] > 0) resWindowPref.value = d[RESWIN_PREF_KEY];
-        resWindowS.value = typeof d[RESWIN_KEY] === "number" && d[RESWIN_KEY] > 0 ? d[RESWIN_KEY] : resWindowPref.value;
-        if (Array.isArray(d[LANE_HIDDEN_KEY])) laneHidden.value = d[LANE_HIDDEN_KEY];
-        if (typeof d[LANE_SCOPE_KEY] === "boolean") laneScoped.value = d[LANE_SCOPE_KEY];
-        // An unknown palette name (a downgrade, a typo in storage) falls back rather than leaving every model
-        // colourless, which is what indexing an absent palette would do.
-        if (d[VRAM_PALETTE_KEY] && VRAM_PALETTES[d[VRAM_PALETTE_KEY]]) vramPalette.value = d[VRAM_PALETTE_KEY];
-        // Absent means never set, which is BOTH shown — not both hidden, which is what reading a missing
-        // object as falsy would give and would look like the panel had lost half of itself.
-        if (typeof d[LANEH_KEY] === "number" && d[LANEH_KEY] > 0) laneH.value = d[LANEH_KEY];
-        snapDot.value = !!d[SNAPDOT_KEY];
-        predictView.value = !!d[PREDICT_KEY];
-        timeGrid.value = !!d[TIMEGRID_KEY];
-        if (d[SECTIONS_KEY] && typeof d[SECTIONS_KEY] === "object") {
-            const sec = d[SECTIONS_KEY];
-            laneEnabled.value = sec.laneOn !== false;
-            // `lane` is the OLD single key, which meant "expanded". Read as the open state, never as the
-            // enable — a record written by collapsing the section must not come back as the lane switched off.
-            showLane.value = (sec.laneOpen ?? sec.lane) !== false;
-            showModels.value = sec.models !== false;
-        }
-        if (typeof d[VRAMH_KEY] === "number") vramH.value = d[VRAMH_KEY];
-        showOutTimes.value = d[OUTTS_KEY] !== false;
-        focusMode.value = !!d[FOCUS_KEY]; applyFocus();
-        // The bench remembers whether it was open, how it was docked and how tall it was — it is a workspace
-        // you leave set up, not a dialog you dismiss.
-        benchOpen.value = !!d[BENCH_OPEN_KEY];
-        benchDock.value = d[BENCH_DOCK_KEY] === "full" ? "full" : "drawer";
-        if (typeof d[BENCH_H_KEY] === "number" && d[BENCH_H_KEY] > 0) benchH.value = d[BENCH_H_KEY];
-        if (typeof d[BENCH_SPLIT_KEY] === "number" && d[BENCH_SPLIT_KEY] > 0) benchSplit.value = d[BENCH_SPLIT_KEY];
-        // The sandbox's version is a property of the wheels this build ships, not of this session — so it is
-        // remembered rather than re-read, which would cost a Pyodide start on every panel open.
-        if (d[BENCH_ENV_KEY]?.python) benchEnv.value = d[BENCH_ENV_KEY];
+        restorePrefs(d, prefsSnap);
+        // The DOM renders whatever value won — the restore's, or the person's mid-read change the restore
+        // skipped — so every apply* runs either way and nothing a signal holds goes undrawn.
+        applyFont(); applyCodePrefs(); applyTheme(); applyFocus();
     });
     applyTheme();
     applyCodePrefs();
