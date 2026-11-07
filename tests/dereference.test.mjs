@@ -687,3 +687,32 @@ test("ml.dereference in code refuses an attached file with a sentence naming the
     await drive([], () => ({ result: "" }), { tokenStore, readText, tokenSink: (fn) => { sink = fn; } });
     assert.throws(() => sink(`@file:${f.id}`), /cannot read an attached file yet\. Read its pages with the dereference tool/);
 });
+
+// --- an attached text file, or a long paste: `@file:` read as its text ----------------------------------------------
+
+/** A store holding one attached text file, whose stored row is the text itself. */
+function withText() {
+    const tokenStore = new TokenStore();
+    const f = tokenStore.files.note({ id: fileId("abcdef", 1), name: "server.log", type: "text/plain", bytes: 60, lines: 4, pages: 0, read: 0, turn: 2,
+        doc: "k-text", data: "k-text", sha256: "bb", chars: 60, figures: [], scans: [] });
+    const readText = async (key) => { if (key !== "k-text") throw new Error("ValueMissing: evicted"); return "boot ok\nERROR disk full\nretry\nERROR disk full\n"; };
+    return { tokenStore, f, readText };
+}
+
+test("dereference @file: of a text file reads its text through the pipe, with a header saying it is text and how many lines", async () => {
+    const { tokenStore, f, readText } = withText();
+    const r = await drive([call("dereference", { token: `@file:${f.id}`, pipe: "grep -n ERROR" }, "a"), call("dereference", { token: '@file:"server.log"', pipe: "head -n 1" }, "b")], () => ({ result: "" }), { tokenStore, readText });
+    const [grep, head] = r.results.filter((x) => x.name === "dereference").map((x) => x.result);
+    assert.equal(grep, `@file:${f.id} "server.log": attached by the person. Text, 4 lines.\n\n2:ERROR disk full\n4:ERROR disk full`);
+    assert.match(head, /Text, 4 lines\.\n\nboot ok$/);
+    assert.ok(!/<page/.test(grep + head), "a text file has no page sections");
+});
+
+test("the inventory lists a text file with its lines and how to read it; ml.dereference's refusal names a pipe that suits it", async () => {
+    const { tokenStore, f, readText } = withText();
+    const r = await drive([call("dereference", {})], () => ({ result: "" }), { tokenStore, readText });
+    assert.equal(derefResult(r), `1 file attached by the person:\n  @file:${f.id} "server.log" Text, 4 lines, turn 2\nRead one through a pipe: token "@file:${f.id}", pipe "head -n 100".\nNo tool outputs captured yet.`);
+    let sink;
+    await drive([], () => ({ result: "" }), { tokenStore, readText, tokenSink: (fn) => { sink = fn; } });
+    assert.throws(() => sink(`@file:${f.id}`), /cannot read an attached file yet\. Read it with the dereference tool: token "@file:\S+", pipe "head -n 100"\.$/);
+});

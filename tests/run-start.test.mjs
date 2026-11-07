@@ -217,10 +217,10 @@ const HUB = { surface: "chat", remote: true };
  * A worker-built run started from the HUD whose model calls are answered by `replies` in turn, each one held until
  * `next()` lets it go. Returns the worker, the calls made, and a reader for a run-state entry.
  */
-function heldWorld(replies) {
+function heldWorld(replies, more = {}) {
     const gates = [];
     const bg = loadBackground({
-        config, openTabs: [SITE],
+        config, openTabs: [SITE], ...more,
         onFetch: async (call) => {
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
             const n = gates.length;
@@ -504,6 +504,155 @@ test("a page cannot start, resume or steer a turn in a run the worker built, eve
     await flush(20);
     assert.equal(chats().length, 1, "no turn the page asked for reached the model");
     assert.ok(!JSON.stringify(chats()).includes("exfiltrate"));
+});
+
+// --- files and a long paste with a later message: this turn's pointers (FILE_ATTACHMENTS.md, "Every attachment …") ---
+
+const NOTES = { name: "notes.txt", type: "text/plain", text: "alpha\nbeta\n" };
+const PDF_TO_PAGE_RUN = "report.pdf is a PDF, and this run was built by the page, which does not read one: start a run from the panel to attach it";
+
+/** A worker with a value store and a PDF reader whose model answers "done", and helpers to wait on and read it. */
+function fileWorld(more = {}) {
+    const { IDBFactory } = require("fake-indexeddb");
+    const bg = loadBackground({
+        config, openTabs: [SITE], indexedDB: new IDBFactory(),
+        onPdfRead: () => ({ ok: true, doc: PDF_DOC }),
+        onFetch: (call) => call.url.includes("/chat/completions") ? jsonResponse({ choices: [{ message: { content: "done" } }] }) : jsonResponse({}),
+        onTabMessage: async (_t, msg) => (msg.type === "ADOPT_RUN_NOW" ? { pageInfo: "" } : msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.finish ? { result: "" } : undefined),
+        ...more,
+    });
+    const chats = () => bg.calls.filter((c) => c.url.includes("/chat/completions"));
+    const waitChats = async (n) => { for (let i = 0; i < 300 && chats().length < n; i++) await flush(4); assert.equal(chats().length, n, `model call ${n} was made`); await flush(40); };
+    const lastUser = (i) => chats()[i].body.messages.filter((m) => m.role === "user").at(-1).content;
+    const state = async (hash, id) => JSON.parse(JSON.stringify((await bg.send({ type: "DUMP_RUN_STATE", payload: { run: hash } }, EXT)).data.entries.find((e) => e.id === id)?.value ?? null));
+    const files = async (hash) => (await state(hash, "run.files")).map((f) => [f.name, f.type, f.pages ?? f.lines, f.turn]);
+    return { bg, chats, waitChats, lastUser, state, files };
+}
+
+test("a PDF and a text file sent with a later message are held as that turn's pointers: framed under them, and on the run's files with turn 2", T, async () => {
+    const w = fileWorld();
+    const { hash } = await w.bg.context.__mlStartUserRunForTest(7, { task: "first", surface: "hud" });
+    await w.waitChats(1);
+    const r = await w.bg.send({ type: "USER_RUN_ACTION", payload: { hash, action: "send", text: "read these", files: [PDF, NOTES], surface: "hud" } }, fromTab);
+    assert.equal(r.data, "turn");
+    await w.waitChats(2);
+    const said = w.lastUser(1);
+    assert.match(said, /^read these\n\n<file name="report\.pdf" type="application\/pdf" bytes="15" pages="2" pointer="@file:[^"]+">\n@file:\S+ "report\.pdf": attached by the person\. PDF, 2 pages/);
+    assert.match(said, /\n\n<file name="notes\.txt" type="text\/plain" bytes="11" pointer="@file:[^"]+">\nalpha\nbeta\n<\/file>$/);
+    assert.deepEqual(await w.files(hash), [["report.pdf", "application/pdf", 2, 2], ["notes.txt", "text/plain", 2, 2]]);
+    const rows = (await w.bg.context.__mlValues.rows()).filter((row) => row.sessions.includes(hash));
+    assert.deepEqual(rows.map((row) => [row.format, row.held]).sort(), [["bytes", true], ["paged", true], ["text", true]], "held for the session");
+    const say = fanned(w.bg, "agent-say").at(-1);
+    assert.equal(say.text, said, "the raw view is what the model got");
+    assert.deepEqual(JSON.parse(JSON.stringify(say.display)), { typed: "read these", context: [{ kind: "file", file: { name: "report.pdf", type: "application/pdf", bytes: 15, lines: 0, pages: 2 } }, { kind: "file", file: { name: "notes.txt", type: "text/plain", bytes: 11, lines: 2 } }] });
+    // The next message counts on from the stored payload.
+    await w.bg.send({ type: "USER_RUN_ACTION", payload: { hash, action: "send", text: "and", files: [{ name: "c.txt", type: "text/plain", text: "c" }], surface: "hud" } }, fromTab);
+    await w.waitChats(3);
+    assert.deepEqual((await w.files(hash)).at(-1), ["c.txt", "text/plain", 1, 3]);
+});
+
+test("a file with a steer while the run works is held as that message's pointer, framed in the text the loop reads", T, async () => {
+    const { IDBFactory } = require("fake-indexeddb");
+    const w = heldWorld(["chat_metadata"], { indexedDB: new IDBFactory() });
+    const { hash } = await w.bg.context.__mlStartUserRunForTest(7, { task: "first", surface: "hud" });
+    await w.waitCalls(1);
+    assert.equal(await w.bg.context.__mlUserRunActionForTest(hash, "send", { text: "this too", files: [NOTES] }, HUB), "steer");
+    w.gates[0]();
+    await w.waitCalls(2);
+    const user = w.chats()[1].body.messages.filter((m) => m.role === "user").at(-1).content;
+    assert.match(String(user), /this too\n\n<file name="notes\.txt" type="text\/plain" bytes="11" pointer="@file:[^"]+">\nalpha\nbeta\n<\/file>/);
+    w.gates[1]();
+    for (let i = 0; i < 50; i++) await flush(4);
+    assert.deepEqual((await w.state(hash, "run.files")).map((f) => [f.name, f.lines, f.turn]), [["notes.txt", 2, 2]], "the steer's turn, kept when the turn's payload is stored");
+});
+
+test("a run a page built is refused a PDF by name, from the panel (USER_RUN_ACTION) and DevTools (ML_SESSION_REMOTE): nothing reaches its page", T, async () => {
+    const A = "https://builder.example/";
+    const bg = loadBackground({
+        config, siteGate: true, local: { ml_site_always: ["https://builder.example"] },
+        openTabs: [{ id: 7, url: A, title: "Builder" }],
+        onFetch: (call) => call.url.includes("/chat/completions") ? jsonResponse({ choices: [{ message: { content: "ok" } }] }) : jsonResponse({}),
+        onTabMessage: async (_t, msg) => (msg.type === "ADOPT_RUN_NOW" ? { pageInfo: "" } : msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.finish ? { result: "" } : undefined),
+    });
+    const from = { tab: { id: 7, url: A }, url: A };
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "pagebuilt1", task: "first", systemPrompt: "S", tools: [], model: "m", think: null, maxSteps: 2,
+        autoApprovePython: false, autoApproveReadonly: false, surface: "off",
+        rebuild: { toolNames: [], model: "m", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: true },
+    } }, from);
+    await flush(20);
+    const calls = () => bg.calls.filter((c) => c.url.includes("/chat/completions")).length;
+    const before = calls();
+    const r = await bg.send({ type: "USER_RUN_ACTION", payload: { hash: "pagebuilt1", action: "send", text: "and this", files: [PDF] } }, from);
+    assert.deepEqual([r.data, r.refused], [null, PDF_TO_PAGE_RUN], "answered as handled, so the shell does not hand it to the page");
+    void bg.send({ type: "ML_SESSION_REMOTE", tabId: 7, action: "send", hash: "pagebuilt1", text: "and this", files: [PDF], surface: "devtools" }, EXT);
+    await flush(20);
+    assert.deepEqual(fanned(bg, "agent-note").map((n) => n.text), [`Your message was not sent: ${PDF_TO_PAGE_RUN}`, `Your message was not sent: ${PDF_TO_PAGE_RUN}`]);
+    assert.equal(bg.tabMessages.filter(([, m]) => m.type === "ML_SESSION_TO_PAGE").length, 0, "no message to the page");
+    assert.equal(calls(), before, "no turn");
+    const text = await bg.send({ type: "USER_RUN_ACTION", payload: { hash: "pagebuilt1", action: "send", text: "and this", files: [NOTES] } }, from);
+    assert.deepEqual([text.data, text.refused], [null, undefined], "a text file under the cap still goes to the page, which frames it");
+    void bg.send({ type: "ML_SESSION_REMOTE", tabId: 7, action: "send", hash: "pagebuilt1", text: "and this", files: [NOTES], surface: "devtools" }, EXT);
+    await flush(20);
+    const toPage = bg.tabMessages.map(([, m]) => m).filter((m) => m.type === "ML_SESSION_TO_PAGE");
+    assert.deepEqual(JSON.parse(JSON.stringify(toPage.map((m) => m.files))), [[NOTES]], "from DevTools too, the page gets the text file to frame");
+    const big = await bg.send({ type: "USER_RUN_ACTION", payload: { hash: "pagebuilt1", action: "send", text: "x", files: [{ name: "big.txt", type: "text/plain", text: "x".repeat(40_000) }] } }, from);
+    assert.match(big.refused, /^big\.txt is too large to send whole: 40 kB; a message takes up to 32 kB of files\. This run was built by the page/);
+});
+
+test("a PDF for a run this worker does not hold is refused, never handed to a page without it", T, async () => {
+    const { bg } = world();
+    const r = await bg.send({ type: "USER_RUN_ACTION", payload: { hash: "0".repeat(32), action: "send", text: "x", files: [PDF] } }, fromTab);
+    assert.deepEqual([r.data, r.refused], [null, PDF_TO_PAGE_RUN]);
+    assert.equal((await bg.send({ type: "USER_RUN_ACTION", payload: { hash: "0".repeat(32), action: "send", text: "x", files: [NOTES] } }, fromTab)).refused, undefined);
+});
+
+test("a long paste at a run's start is held as \"pasted text\", named in one line after it; what was typed is shown, not the line", T, async () => {
+    const w = fileWorld();
+    const short = "x".repeat(3999);
+    await w.bg.context.__mlStartUserRunForTest(7, { task: short, surface: "hud" });
+    await w.waitChats(1);
+    assert.equal(w.lastUser(0), short, "below the threshold: no pointer, no line");
+    const typed = "row\n".repeat(999) + "row!";
+    assert.equal(typed.length, 4000);
+    const { hash } = await w.bg.context.__mlStartUserRunForTest(7, { task: typed, surface: "hud" });
+    await w.waitChats(2);
+    const [f] = await w.state(hash, "run.files");
+    assert.deepEqual([f.name, f.type, f.lines, f.turn], ["pasted text", "text/plain", 1000, 1]);
+    assert.equal(w.lastUser(1), `${typed}\n\n(This message is also held as @file:${f.id} "pasted text", 1000 lines: quote from it with dereference(@file:${f.id}, pipe "grep -n …") rather than typing it out again.)`);
+    const start = fanned(w.bg, "agent").at(-1);
+    assert.deepEqual(JSON.parse(JSON.stringify(start.display)), { typed, context: [] }, "the bubble shows the person's words alone");
+    // A second long message, later: the next name, its own turn, and the display still the person's.
+    const next = "y".repeat(5000);
+    await w.bg.send({ type: "USER_RUN_ACTION", payload: { hash, action: "send", text: next, surface: "hud" } }, fromTab);
+    await w.waitChats(3);
+    assert.deepEqual((await w.files(hash)).at(-1), ["pasted text 2", "text/plain", 1, 2]);
+    assert.match(w.lastUser(2), /^y{5000}\n\n\(This message is also held as @file:\S+ "pasted text 2", 1 line: /);
+    assert.deepEqual(JSON.parse(JSON.stringify(fanned(w.bg, "agent-say").at(-1).display)), { typed: next, context: [] });
+});
+
+test("UPGRADE: a run stored before messages were counted, holding a PDF pointer with no lines, takes a later file as turn 2 beside it", T, async () => {
+    const { fileId } = await import("../src/pointers/file-pointer.ts");
+    const runId = "oldrun01";
+    // What the code before this change wrote: no `sends`, and a PDF pointer with no `lines`.
+    const OLD_PDF = { id: fileId(runId, 1), name: "old.pdf", type: "application/pdf", bytes: 15, pages: 2, read: 2, turn: 1, doc: "kdoc", data: "kdata", sha256: "ab", chars: 40, figures: [], scans: [] };
+    const snap = {
+        version: "9.9.9", ts: Date.now(), tabId: 7, messages: [{ role: "user", content: "first" }, { role: "assistant", content: "done" }],
+        p: {
+            runId, task: "first", tools: [], model: "m", think: null, maxSteps: 5, systemPrompt: "s", surface: "off",
+            autoApprovePython: false, autoApproveReadonly: false, builtBy: "worker", files: [OLD_PDF], crossPage: true,
+            rebuild: { toolNames: [], model: "m", builtBy: "worker", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: true },
+        },
+    };
+    const w = fileWorld({ local: { [`ml_bgrun_${runId}`]: snap } });
+    await w.bg.context.__mlEvictForTest();
+    const r = await w.bg.send({ type: "USER_RUN_ACTION", payload: { hash: runId, action: "send", text: "and this", files: [NOTES], surface: "hud" } }, fromTab);
+    assert.equal(r.data, "turn");
+    await w.waitChats(1);
+    assert.deepEqual(await w.files(runId), [["old.pdf", "application/pdf", 2, 1], ["notes.txt", "text/plain", 2, 2]]);
+    const ids = (await w.state(runId, "run.files")).map((f) => f.id);
+    assert.deepEqual(ids, [OLD_PDF.id, fileId(runId, 2)], "the new file takes the next id, never the stored one's");
+    assert.match(w.lastUser(0), new RegExp(`pointer="@file:${fileId(runId, 2)}"`));
 });
 
 // --- review findings on slice 0 (#374): each one shown failing first ---

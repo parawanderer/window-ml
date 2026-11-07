@@ -1,10 +1,12 @@
-// sw-attach.ts — a PDF the person attached to an agent run: read once, kept in the value store for the run's session,
-// and noted on the run's shelf as an `@file:` pointer whose outline the task carries (docs/spec/FILE_ATTACHMENTS.md,
-// slice 3).
+// sw-attach.ts — a file the person attached to an agent run the worker built, on its first message or a later one: a
+// PDF read once, a text file as it is, and a long paste, each kept in the value store for the run's session and noted
+// on the run's shelf as an `@file:` pointer the message names (docs/spec/FILE_ATTACHMENTS.md, slice 3 and "Every
+// attachment to an agent run as a pointer").
 
-import { FilesRefused, isPdfFile, type FramedFile } from "../attached-files";
+import { FilesRefused, isPdfFile, lineCount, sentWhole, type FramedFile } from "../attached-files";
 import type { SentFile } from "../contract/contract-run";
-import { cleanFileName, fileId, fileOutline, fileRef, pageKinds, type FilePointer, type FileShelf } from "../pointers/file-pointer";
+import { FETCH_PREVIEW_CHARS } from "../ml/ml-tool-factories";
+import { cleanFileName, fileId, fileOutline, fileRef, pageKinds, quoteName, textOutline, type FilePointer, type FileShelf } from "../pointers/file-pointer";
 import { ValueTooLarge, sha256Hex, type ValueFormat, type ValueRow } from "../pointers/value-store";
 import { b64ToBytes, type PdfMessage, type PdfReadReply } from "../pdf/pdf-wire";
 import { ensureOffscreen } from "./sw-offscreen";
@@ -34,21 +36,54 @@ function keepRefusal(name: string, e: unknown): string {
 }
 
 /**
- * The files of a run's message with each PDF read, stored for the run's session and noted on its shelf: a text file
- * as sent, a PDF as its outline under its pointer. The same bytes twice are one file. Refused whole, before the run
- * starts, when a PDF will not read or the store cannot keep it; rows stored by then are the caller's to release with
- * the session.
+ * Hold one text for the run: stored for its session and noted on its shelf. The same text twice is one file, the
+ * pointer already held.
+ * @param runId the run, whose session holds the row
+ * @param f the name, type and text
+ * @param turn the turn it arrives in, 1-based
+ * @param d the store and the shelf
+ * @param added where a pointer this call notes is pushed
+ * @throws {FilesRefused} the store cannot keep it
+ */
+async function holdText(runId: string, f: { name: string; type: string; text: string }, turn: number, d: AttachDeps, added: FilePointer[]): Promise<FilePointer> {
+    const blob = new Blob([f.text]);
+    const sha256 = await sha256Hex(blob);
+    const had = d.shelf.all().find((g) => g.sha256 === sha256);
+    if (had) return had;
+    const name = cleanFileName(f.name);
+    let row: ValueRow;
+    try { row = await d.store(blob, "text", name, runId); } catch (e) { throw new FilesRefused(keepRefusal(name, e)); }
+    const p = d.shelf.note({
+        id: fileId(runId, d.shelf.size + 1), name, type: f.type || "text/plain", bytes: blob.size, lines: lineCount(f.text),
+        pages: 0, read: 0, turn, doc: row.key, data: row.key, sha256, chars: f.text.length, figures: [], scans: [],
+    });
+    added.push(p);
+    return p;
+}
+
+/**
+ * The files of a run's message, each held for the run's session and noted on its shelf, framed: a text file whole
+ * while the message's text fits (`sentWhole`), past that as its outline, and a PDF read and framed as its outline, each
+ * under its pointer. The same bytes twice are one file. Refused whole, before the message is sent, when a PDF will not
+ * read or the store cannot keep a file; rows stored by then are the caller's to release with the session.
  * @param runId the run, whose session holds the rows
  * @param files the message's files, checked (`checkFilesField`)
  * @param turn the turn they arrive in, 1-based
  * @param d the reader, the store and the shelf
  * @returns the files to frame, and the pointers this call added
- * @throws {FilesRefused} a PDF would not read, or the store cannot keep it
+ * @throws {FilesRefused} a PDF would not read, or the store cannot keep a file
  */
 export async function attachFiles(runId: string, files: readonly SentFile[] | undefined, turn: number, d: AttachDeps): Promise<{ files?: FramedFile[]; added: FilePointer[] }> {
     const out: FramedFile[] = [], added: FilePointer[] = [];
-    for (const f of files ?? []) {
-        if (!isPdfFile(f)) { out.push(f); continue; }
+    const whole = sentWhole(files ?? []);
+    for (const [i, f] of (files ?? []).entries()) {
+        if (!isPdfFile(f)) {
+            const p = await holdText(runId, f, turn, d, added);
+            if (whole[i]) { out.push({ name: p.name, type: p.type, text: f.text, pointer: fileRef(p) }); continue; }
+            const outline = textOutline(p, f.text, d.shelf.firstNamed(p.name, p.id));
+            out.push({ name: p.name, type: p.type, bytes: p.bytes, lines: p.lines ?? 0, body: outline.text, escaped: outline.escaped, pointer: fileRef(p) });
+            continue;
+        }
         const r = await d.read(f.data).catch(() => null);
         if (!r) throw new FilesRefused(`${f.name} could not be read: the PDF reader did not answer`);
         if (!r.ok) throw new FilesRefused(`${f.name}: ${r.refusal}`);
@@ -78,3 +113,38 @@ export async function attachFiles(runId: string, files: readonly SentFile[] | un
     }
     return { ...(out.length ? { files: out } : {}), added };
 }
+
+/** The name of a long paste's pointer: "pasted text", then "pasted text 2", … , the first not already on the shelf. */
+export const PASTE_NAME = "pasted text";
+
+/** The first paste name `shelf` does not hold. */
+function pasteName(shelf: FileShelf): string {
+    for (let n = 1; ; n++) {
+        const name = n === 1 ? PASTE_NAME : `${PASTE_NAME} ${n}`;
+        if (!shelf.firstNamed(name)) return name;
+    }
+}
+
+/**
+ * A person's message of {@link FETCH_PREVIEW_CHARS} characters or more, held as a text pointer beside it: the message
+ * still goes to the model whole, and one line after it names the pointer, so the model quotes from it by reading
+ * rather than by typing it out again. The threshold is `fetch_url`'s preview cut, one rule for "too long to re-type".
+ * @param runId the run, whose session holds the row
+ * @param text the message as the person typed it
+ * @param turn the turn it arrives in, 1-based
+ * @param d the store and the shelf
+ * @returns the line to append and the pointers added, or null for a message shorter than the threshold, or one the
+ *   store cannot keep: the message goes whole either way, so a paste never refuses it
+ */
+export async function attachPaste(runId: string, text: string, turn: number, d: Pick<AttachDeps, "store" | "shelf">): Promise<{ line: string; added: FilePointer[] } | null> {
+    if (text.length < FETCH_PREVIEW_CHARS) return null;
+    const added: FilePointer[] = [];
+    try {
+        const p = await holdText(runId, { name: pasteName(d.shelf), type: "text/plain", text }, turn, { ...d, read: async () => null }, added);
+        return { line: pasteLine(p), added };
+    } catch { return null; }
+}
+
+/** The one line after a long message that names its pointer. */
+export const pasteLine = (p: FilePointer): string =>
+    `(This message is also held as ${fileRef(p)} ${quoteName(p.name)}, ${p.lines} line${p.lines === 1 ? "" : "s"}: quote from it with dereference(${fileRef(p)}, pipe "grep -n …") rather than typing it out again.)`;

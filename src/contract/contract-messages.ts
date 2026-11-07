@@ -140,6 +140,10 @@ export interface StartRunPayload {
     /** the files the person attached, as `@file:` pointers (file-pointer.ts): the run's shelf is put back from these
      *  after the worker is evicted. Honoured only on a run the worker built; a page's payload has it removed. */
     files?: import("../pointers/file-pointer").FilePointer[];
+    /** how many messages the person has sent the run, its first included: the turn a file sent with the next one is
+     *  attached in (sw-run-start.ts, `nextSend`). Absent on a payload written before it was counted, and read then as
+     *  the first message alone. The worker's to set, as `files` is. */
+    sends?: number;
     systemPrompt: string;
     tools: { name: string; description: string; parameters: JsonSchema; requiresApproval: boolean; capabilities: string[]; precheck?: boolean; summary?: string; remote?: RemoteToolTarget }[];
     model: string | null;

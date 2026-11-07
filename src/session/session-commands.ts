@@ -9,8 +9,8 @@ import type { NeutralMessage } from "../contract/contract-chat";
 import { MAX_CONTINUE_STEPS } from "../agent/step-budget";
 import { AGENT_START_PAGE } from "../contract/contract-config";
 import type { MlDebugEvent } from "../contract/contract-debug";
-import { imagesRefusal, type AttachedFile, type PromptOrigin, type SentFile } from "../contract/contract-run";
-import { FilesRefused, checkFilesField, textFiles, type FileTarget } from "../attached-files";
+import { imagesRefusal, type PromptOrigin, type SentFile } from "../contract/contract-run";
+import { FilesRefused, checkFilesField, type FileTarget } from "../attached-files";
 import { bytesToB64 } from "../pdf/pdf-wire";
 import { clientUiOf } from "../agent/current-client";
 import type { SessionHistory } from "./session-store";
@@ -71,7 +71,7 @@ export interface CommandDeps {
     /** one tab, or null when it is gone */
     getTab(tabId: number): Promise<TabInfo | null>;
     /** relay a session action to the page in a tab and wait for what it did; rejects when nothing listens there */
-    toPage(tabId: number, action: "send" | "cancel" | "continue", body: { hash: string; text?: string; images?: string[]; files?: AttachedFile[]; elementContext?: unknown; maxSteps?: number }, origin?: PromptOrigin): Promise<PageOutcome>;
+    toPage(tabId: number, action: "send" | "cancel" | "continue", body: { hash: string; text?: string; images?: string[]; files?: SentFile[]; elementContext?: unknown; maxSteps?: number }, origin?: PromptOrigin): Promise<PageOutcome>;
     /** bring a tab and its window to the front; false when the tab is gone */
     focusTab(tabId: number, windowId?: number): Promise<boolean>;
     /** outline an element or point on a tab's page (fire and forget) */
@@ -288,7 +288,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
     };
 
     /** Relay to the session's page; a page with nothing listening, or no answer, is unavailable. */
-    const viaPage = async (hash: string, action: "send" | "cancel" | "continue", body: { text?: string; images?: string[]; files?: AttachedFile[]; elementContext?: unknown; maxSteps?: number } = {}, origin?: PromptOrigin): Promise<PageOutcome | CommandResult<any>> => {
+    const viaPage = async (hash: string, action: "send" | "cancel" | "continue", body: { text?: string; images?: string[]; files?: SentFile[]; elementContext?: unknown; maxSteps?: number } = {}, origin?: PromptOrigin): Promise<PageOutcome | CommandResult<any>> => {
         const t = tabOf(hash);
         if (t.error) return t.error;
         try {
@@ -298,6 +298,8 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
         } catch (e) {
             // A worker-built run's turn refused its images before anything was sent (vision not known, no reader).
             if (e instanceof ImagesRefused) return fail("unsupported", e.message);
+            // Its files were refused (a PDF to a run a page built, one that would not read): said, never "unavailable".
+            if (e instanceof FilesRefused) return fail("invalid", e.message);
             return fail("unavailable", "the page this session ran on is not reachable (reloaded, or the extension cannot run there)");
         }
     };
@@ -556,7 +558,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             if (s.error) return s.error;
             const text = typeof c.text === "string" ? c.text : "";
             const images = Array.isArray(c.images) ? c.images.filter((i): i is string => typeof i === "string" && i.startsWith("data:image/")) : [];
-            const att = checkedFiles(c.files, pagelessChat(s.id.hash) ? "chat" : "agent-turn", deps.heldFile);
+            const att = checkedFiles(c.files, pagelessChat(s.id.hash) ? "chat" : "agent", deps.heldFile);
             if (att.error) return att.error;
             if (!text.trim() && !images.length && !att.files && !c.elementContext) return fail("invalid", "a message needs text, an image, a file or an element");
             const tooMany = imagesRefusal(images.length);
@@ -583,7 +585,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
                 if (text.length > STEER_TEXT_MAX) return fail("invalid", "that message is too long to steer with");
                 if (deps.steer(s.id.hash, text, commandOrigin(from, c.ui))) return ok({ mode: "steer" });
             }
-            const r = await viaPage(s.id.hash, "send", { text, ...(images.length ? { images } : {}), ...(att.files ? { files: textFiles(att.files) } : {}), ...(c.elementContext ? { elementContext: c.elementContext } : {}) }, commandOrigin(from, c.ui));
+            const r = await viaPage(s.id.hash, "send", { text, ...(images.length ? { images } : {}), ...(att.files ? { files: att.files } : {}), ...(c.elementContext ? { elementContext: c.elementContext } : {}) }, commandOrigin(from, c.ui));
             if (typeof r !== "string") return r;
             if (r === "steer" || r === "turn") return ok({ mode: r });
             return fail("not-found", "the page no longer holds this session (it was reloaded, or the session was never resumable)");
