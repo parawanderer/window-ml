@@ -72,9 +72,10 @@ export interface JsonSchema {
  *
  *  Underscore-prefixed members are internal plumbing exposed for debugging;
  *  they are NOT part of the stable public API and may change. */
-/** `ml.sh`: programs on the person's machine, from an approved `exec` (MlApi `sh`). */
+/** `ml.sh`: programs on the person's machine, from an approved `exec`, which then runs in an isolated world rather than
+ *  the page's (MlApi `sh`). */
 export interface MlSh {
-    /** Run one program and wait for it, up to `expectMs` (default 15 s): past that it throws `Detached` with `e.task`
+    /** Run one program and wait for it, up to `expectMs` (default: a short lease, which the `Detached` error names): past that it throws `Detached` with `e.task`
      *  and runs on; its result arrives later as a `[task <id> …]` message, and the `task` tool awaits, tails or cancels
      *  it. A non-zero exit is a result (`ok` false), not a throw; a refusal (`Denied`, `Refused`, `BadRequest`) throws
      *  with `e.code`. Each output comes back as its first 64 KiB of text (`text`,

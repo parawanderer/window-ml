@@ -65,6 +65,8 @@ interface Task extends Omit<TaskSpec, "exec"> {
     code: number | null;
     /** An await waiting on it now: answered instead of the inbox. */
     waiter?: (o: TaskOutcome) => void;
+    /** Its end is being recorded (the scrub is async): a second end is ignored, and it still reads as running. */
+    ending?: boolean;
     exec: TaskExecutor;
 }
 
@@ -114,21 +116,26 @@ export function detachTask(runId: string, spec: TaskSpec): string {
  * already ended is not delivered anywhere: nothing is injected into a later turn or another run.
  */
 async function finish(runId: string, t: Task, o: TaskOutcome): Promise<void> {
+    if (t.status !== "running" || t.ending) return;
+    t.ending = true;
+    const endedMs = Date.now();
+    const text = (await forModel(o.text)).text;
+    // Ended in the meantime (the turn's end cancelled it): its status is that end's.
     if (t.status !== "running") return;
+    // All at once, after the scrub: a read in between sees a running task, never an ended one with no text.
     t.status = o.status;
     t.result = o.result;
-    t.endedMs = Date.now();
+    t.endedMs = endedMs;
     t.code = o.code ?? null;
-    t.text = (await forModel(o.text)).text;
+    t.text = text;
     recordRunLog(runId, { ...(o.status === "done" ? {} : { level: "warn" as const }), subsystem: "task", kind: "ended", reason: o.status, ms: Date.now() - t.startedMs, detail: { id: t.id, tool: t.tool } });
     if (tasks.get(runId)?.get(t.id) !== t) return;
     if (t.waiter) { const w = t.waiter; t.waiter = undefined; t.delivered = true; w({ ...o, text: t.text }); return; }
     const inbox = runInboxes.get(runId);
-    if (!inbox) return;
-    const text = `[task ${t.id} ${o.status} after ${secs(Date.now() - t.startedMs)}: ${t.text}]`;
+    if (!inbox || t.delivered) return;
     // Queued only: it is delivered, and drawn, when the loop drains it (`taskDrained`). A turn that ends first drops it,
     // and nothing then shows a result the model never read.
-    inbox.queue.push({ text, task: t.id });
+    inbox.queue.push({ text: `[task ${t.id} ${o.status} after ${secs(endedMs - t.startedMs)}: ${t.text}]`, task: t.id });
 }
 
 /**
@@ -137,13 +144,15 @@ async function finish(runId: string, t: Task, o: TaskOutcome): Promise<void> {
  * @param runId the run
  * @param id the task
  * @param text the text the inbox carried
+ * @returns false when the model already read it (an await answered between the queue and the drain): drop the item
  */
-export function taskDrained(runId: string, id: string, text: string): void {
+export function taskDrained(runId: string, id: string, text: string): boolean {
     const t = tasks.get(runId)?.get(id);
-    if (!t) return;
+    if (!t || t.delivered) return false;
     t.delivered = true;
     sinks.get(runId)?.(text, id, { status: t.status, ms: (t.endedMs ?? Date.now()) - t.startedMs, code: t.code });
     recordRunLog(runId, { subsystem: "task", kind: "collected", reason: "inbox", detail: { id } });
+    return true;
 }
 
 /**

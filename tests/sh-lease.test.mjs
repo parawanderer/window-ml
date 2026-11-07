@@ -11,6 +11,7 @@ const T = { timeout: 20000 };
 // The worker's chrome, as much of it as sw-shell.ts, sw-shell-call.ts and sw-runs.ts use.
 const sync = { shellEnabled: true, shellRoots: ["/w/p0"], shellSandbox: true, shellPath: [], chatUrl: "http://host/api/chat/completions", apiKey: "sk-test" };
 let native = null;
+let syncDelayMs = 0;
 const sessionStore = {};
 globalThis.chrome = {
     runtime: {
@@ -28,7 +29,8 @@ globalThis.chrome = {
     },
     storage: {
         local: { get: async () => ({}), set: async () => {}, remove: async () => {} },
-        sync: { get: async (d) => ({ ...(d ?? {}), ...sync }), set: async () => {} },
+        // `syncDelayMs` holds the read open, as a slow storage does: the scrub (sw-scrub.ts) reads the config's secrets.
+        sync: { get: async (d) => { if (syncDelayMs) await new Promise((r) => setTimeout(r, syncDelayMs)); return { ...(d ?? {}), ...sync }; }, set: async () => {} },
         // In memory, so the execution log (sw-run-log.ts) can be read back.
         session: {
             get: async (k) => { const keys = typeof k === "string" ? [k] : Array.isArray(k) ? k : Object.keys(k ?? sessionStore); return Object.fromEntries(keys.filter((x) => x in sessionStore).map((x) => [x, sessionStore[x]])); },
@@ -147,11 +149,13 @@ test("the Detached text says which case it was: the script's own estimate, or th
     assert.ok(SH_LEASE_MS >= 1000 && SH_LEASE_MS < 60_000, "the placeholder is seconds, not minutes");
 });
 
-test("what the model reads about ml.sh.run names the lease's real default and the host's real limit", async () => {
+test("what the model reads about ml.sh.run names no lease number, which a build's __SH_LEASE_MS__ would falsify, and the host's real limit", async () => {
     const { readFile } = await import("node:fs/promises");
     const src = await readFile(new URL("../src/contract.ts", import.meta.url), "utf8");
     const doc = src.slice(src.indexOf("export interface MlSh"), src.indexOf("read(token: string"));
-    assert.ok(doc.includes(`up to \`expectMs\` (default ${SH_LEASE_MS / 1000} s)`), "the JSDoc's lease default drifted from SH_LEASE_MS");
+    // The lease a build ships is a define (build.mjs), so the docs say where it is named instead: the Detached error.
+    assert.ok(doc.includes("up to `expectMs` (default: a short lease, which the `Detached` error names)"), "the JSDoc's lease wording changed");
+    assert.doesNotMatch(doc.slice(0, doc.indexOf("@param argv")), /\b\d+ s\b/, "the JSDoc states a lease in seconds");
     assert.ok(doc.includes(`default ${SH_HOST_TIMEOUT_MS / 1000} s`), "the JSDoc's host limit drifted from SH_HOST_TIMEOUT_MS");
 });
 
@@ -191,6 +195,35 @@ test("task await answers with the result when the call ends inside its timeout, 
     assert.deepEqual(run.inbox(), [], "the awaited result was also queued for the inbox");
     assert.match(await taskAction("run-await", { op: "await", id: r.task }), /^task t[0-9a-f]{6} done: /, "a later await reads the same result");
     await endTasks("run-await");
+});
+
+test("an await that lands while a task's end is being scrubbed waits for the text, and the inbox does not carry it too", T, async () => {
+    const host = slowHost();
+    const run = liveRun("run-scrub-window");
+    const r = await shRun(ctxFor("run-scrub-window"), [["ls"], { expectMs: 30 }]);
+    syncDelayMs = 80;
+    try {
+        host.finish();
+        await new Promise((res) => setTimeout(res, 20));   // inside the scrub
+        const answer = await taskAction("run-scrub-window", { op: "await", id: r.task, timeout_ms: 5000 });
+        assert.match(answer, new RegExp(`^task ${r.task} done after \\d+ s: ml\\.sh exit 0`), `an await in the scrub read an empty stub: ${answer}`);
+        await new Promise((res) => setTimeout(res, 120));
+        assert.deepEqual(run.inbox(), [], "the awaited result was also queued for the inbox");
+    } finally { syncDelayMs = 0; }
+    await endTasks("run-scrub-window");
+});
+
+test("a result queued for the inbox and then read by an await is dropped at the drain: the model never reads it twice", T, async () => {
+    const host = slowHost();
+    const run = liveRun("run-queued-then-awaited");
+    const r = await shRun(ctxFor("run-queued-then-awaited"), [["ls"], { expectMs: 30 }]);
+    host.finish();
+    await until(() => run.inbox().length === 1);
+    assert.match(await taskAction("run-queued-then-awaited", { op: "await", id: r.task }), new RegExp(`^task ${r.task} done: `));
+    const [item] = run.inbox().splice(0);
+    assert.equal(taskDrained("run-queued-then-awaited", item.task, item.text), false, "the drain would inject a result the model already read");
+    assert.deepEqual(run.fanned, [], "a result the drain dropped was drawn");
+    await endTasks("run-queued-then-awaited");
 });
 
 test("task await that runs out says so in the model's own case and leaves the call running", T, async () => {

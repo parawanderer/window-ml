@@ -1957,10 +1957,10 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 // streaming path re-fires it on each phase change with the marks so far.
                 emitTurn: (ev) => emitTurn(ev.step, ev.phases),
                 drainInbox: () => {   // a.say() steering (INJECT_MESSAGE); draining flips the "seen" indicator
-                    const items = (runInboxes.get(runId)?.queue || []).splice(0);
+                    // A task's result is drawn as the model reads it: here, never when it was queued. One an await
+                    // already answered is dropped, so the model never reads it twice.
+                    const items = (runInboxes.get(runId)?.queue || []).splice(0).filter((it) => !it.task || taskDrained(runId, it.task, it.text));
                     for (const it of items) if (it.id) fanEvent({ kind: "agent-say-seen", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, sayId: it.id });
-                    // A task's result is drawn as the model reads it: here, never when it was queued.
-                    for (const it of items) if (it.task) taskDrained(runId, it.task, it.text);
                     // Each says where it was typed, so a run steered from another surface reports THAT one.
                     // A task's result is no one's typing: it carries its id and leaves the run's latest origin standing.
                     return items.map(it => (it.task ? { text: it.text, task: it.task } : it.origin || it.images ? { text: it.text, ...(it.origin ? { origin: it.origin } : {}), ...(it.images ? { images: it.images } : {}) } : it.text));
