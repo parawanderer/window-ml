@@ -234,7 +234,7 @@ each of which amends the text above where it says otherwise:
 - **`SH_LEASE_MS` is 15 s in `sh-call.ts`**, `// state: fixed`, marked a placeholder; the bench (arms 5, 15, 60 s over
   a fake host whose sleep outlasts the lease) runs before the PR leaves draft and its numbers go in the PR.
 - **No UI in the first PR** beyond the run log and the state panel's registry view; the chip is a later PR agreed
-  with the chat-page lane first.
+  with the chat-page lane first. RULED 2026-11-07 (the chat-page lane, on the async lane's question, upheld by the coordinator): a task result in the transcript is a NEW EVENT KIND on the agent-site-say precedent, rendered in the async lane's PR under the chat-page lane's review, so no merged state ever draws a task result as the person's bubble; this is the transcript side of the `task` origin above.
 - **The red team's rows** are the eight in the note (another run's or a guessed id; a result after settle; a task
   outliving the run; URL, key or filter in a tail or result; a forged `Detached` or `task` origin; writes to or
   foreign rows in `ml.current.tasks`; nothing new reaches an unapproved page; the detach never skips the judgement
