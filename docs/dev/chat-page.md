@@ -574,6 +574,8 @@ colour and calm water never does. One WebGL `POINTS` draw a frame; the water is 
   the page's own background (`outline-color: var(--bg)` on the canvas), not by the theme setting.
 - **The canvas is `position: fixed` over the whole window**, under the list, which draws over it frosted. Opening or
   closing the list slides over the field instead of resizing it (a resize rebuilds the grid and stills the water).
+  Every pane draws over it by z-index, not by luck of tree order: the docked panels (`.chat-dock`, z-index 1) come
+  BEFORE the start page in the tree, so at `auto` the field drew over the resource panel.
 - **A press stirs it only on open ground** (`onOpenGround`, `NOT_GROUND`): never the box, a pill, a button or the list.
   While held, nothing on the page selects.
 - **It stands still** (one frame, no clock, no water) for reduced motion, a battery at or under 20% and not charging
