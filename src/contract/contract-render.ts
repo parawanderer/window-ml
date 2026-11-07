@@ -139,7 +139,10 @@ export type RenderDescriptor = (
     // uses it to say that pointer macros were expanded, so a reader comparing this against the raw args does
     // not conclude the log is lying to them. `marks`: byte ranges in `text` a renderer may highlight, each
     // with the original it replaced (hover fodder).
-    | { type: "code"; text: string; lang?: string; format?: boolean; note?: string; marks?: { start: number; end: number; from: string }[]; revision?: CodeRevision }
+    // `rules`: a proposal of several policy rules, one entry per rule, so a renderer may draw each as its own section
+    // (effect, code, measured note). `text` and `note` still carry the whole proposal as one block — the raw view,
+    // the export and a renderer that ignores `rules` read those, and they name each rule by its own `// Rule i of n: <effect>` line.
+    | { type: "code"; text: string; lang?: string; format?: boolean; note?: string; marks?: { start: number; end: number; from: string }[]; revision?: CodeRevision; rules?: { effect: string; source: string; note: string }[] }
     // `null` is a real cell: a numeric column's blanks become null (pandas NaN) when a table is cast, and
     // RenderTable has always drawn them as empty — this type was simply narrower than both.
     // `rowCount` is the SOURCE's row count when `rows` is only a PREFIX of it (a fetched CSV caps what it

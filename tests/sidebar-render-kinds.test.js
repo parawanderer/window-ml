@@ -38,6 +38,8 @@ const CASES = [
     ["action · a page element", "click", { type: "action", verb: "click", selector: "#go", target: "Go" }],
     ["action · a plain target", "navigate", { type: "action", verb: "navigate", target: "https://example.test/next" }],
     ["code", "exec", { type: "code", text: "const a = 1;\nreturn a;", lang: "javascript" }],
+    ["code · a several-rule proposal", "propose_policy", { type: "code", text: "// Rule 1 of 2: allow\nreturn true;\n\n// Rule 2 of 2: deny\nreturn false;", lang: "javascript", note: "Rule 1 of 2. a\n\nRule 2 of 2. b",
+        rules: [{ effect: "allow", source: "return true;", note: "a" }, { effect: "deny", source: "return false;", note: "b" }] }],
     ["elements", "interactives", { type: "elements", items: [{ path: "#a", text: "A", index: 0 }] }],
     ["exec-out", "exec", { type: "exec-out", stdout: "one\ntwo\n", value: "3" }],
     ["image", "screenshot", { type: "image", src: PNG, label: "the page" }],
@@ -102,4 +104,22 @@ test("a fetch_url ladder draws every rung it was given, used and unused alike", 
     assert.equal(w.shadow.querySelectorAll(".r-lad-row").length, 4, "one row per attempt");
     assert.equal(w.shadow.querySelectorAll(".r-lad-row.r-lad-unused").length, 3, "the three never needed are dimmed");
     assert.match(w.shadow.querySelector(".r-lad-by")?.textContent ?? "", /resolved by/i);
+});
+
+// A several-rule proposal draws one section per rule, each under its own effect and its own measured note; the
+// whole-proposal text is the raw view and is not drawn a second time.
+test("a several-rule proposal draws a section per rule, each with its effect and its note", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("agP", "propose"));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    await w.dispatch(agentStep("agP", 1, { seq: 1, tool: "propose_policy", arguments: { x: 1 }, result: "ok", renderIn: CASES.find(c => c[0].startsWith("code · a several"))[2] }));
+    await w.tick();
+    for (const h of w.shadow.querySelectorAll(".astep-head")) h.click();
+    await w.tick();
+    const secs = [...w.shadow.querySelectorAll(".rule-section")];
+    assert.deepEqual(secs.map(e => e.getAttribute("data-effect")), ["allow", "deny"], "one section per rule, in order");
+    assert.match(secs[1].textContent, /Rule 2 of 2/);
+    assert.match(secs[1].querySelector(".rp-note")?.textContent ?? "", /^b$/, "each rule carries its own note");
+    assert.doesNotMatch(w.shadow.querySelector(".astep").textContent, /\/\/ Rule 1 of 2/, "the marker comment lines are the raw view, not drawn beside the sections");
 });

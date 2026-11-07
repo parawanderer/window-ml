@@ -1175,6 +1175,29 @@
                 },
                 "revision": {
                   "$ref": "#/$defs/CodeRevision"
+                },
+                "rules": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "effect": {
+                        "type": "string"
+                      },
+                      "source": {
+                        "type": "string"
+                      },
+                      "note": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "effect",
+                      "source",
+                      "note"
+                    ],
+                    "additionalProperties": true
+                  }
                 }
               },
               "required": [
@@ -1753,6 +1776,29 @@
                 },
                 "revision": {
                   "$ref": "#/$defs/CodeRevision"
+                },
+                "rules": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "effect": {
+                        "type": "string"
+                      },
+                      "source": {
+                        "type": "string"
+                      },
+                      "note": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "effect",
+                      "source",
+                      "note"
+                    ],
+                    "additionalProperties": true
+                  }
                 }
               },
               "required": [
