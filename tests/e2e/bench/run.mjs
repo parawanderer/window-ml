@@ -161,8 +161,10 @@ function parseArgv(argv) {
  * commit X" is otherwise a claim the sweep cannot support.
  */
 function buildFingerprint() {
-    const git = (args) => { try { return execFileSync("git", args, { cwd: ROOT, encoding: "utf8" }).trim(); } catch { return ""; } };
-    const head = git(["rev-parse", "HEAD"]) || "nogit";
+    const git = (args) => { try { return execFileSync("git", args, { cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch { return ""; } };
+    // A tree with no git (a container built from `git archive`) is told its commit by BENCH_SOURCE_HEAD; an archive holds
+    // no uncommitted changes, so it is never dirty. Without either, every build looks alike and the cache cannot tell them apart.
+    const head = git(["rev-parse", "HEAD"]) || process.env.BENCH_SOURCE_HEAD || "nogit";
     const diff = git(["diff", "HEAD"]);
     if (!diff) return { fingerprint: head, dirty: false };
     return { fingerprint: `${head}+${createHash("sha256").update(diff).digest("hex").slice(0, 8)}`, dirty: true };
@@ -621,7 +623,7 @@ const main = async () => {
     // Which spec this sweep ran and who started it, appended to the sweep's log; the page's Spec card, spec.md and
     // page.json show it beside the diff against the sweep before (sweeps.mjs).
     const specRel = path.relative(ROOT, path.resolve(args.specPath));
-    const provenance = specProvenance(await recordSweep(sweepDir, { specPath: specRel, onDisk: path.resolve(args.specPath), source: await readFile(args.specPath, "utf8"), fingerprint, dirty, by: defaultBy() }));
+    const provenance = specProvenance(await recordSweep(sweepDir, { specPath: specRel, onDisk: path.resolve(args.specPath), source: await readFile(args.specPath, "utf8"), fingerprint, dirty, by: defaultBy(), runsIn: process.env.BENCH_RUNS_IN || null }));
 
     // The scores log (scores.mjs): every run against a real model, one row each, for the scoreboard. Never the fake's.
     const scores = backend ? await openScores() : null;

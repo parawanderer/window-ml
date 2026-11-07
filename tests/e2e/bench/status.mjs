@@ -31,6 +31,7 @@ export function statusText(s, now = Date.now()) {
     const failed = runs.filter((r) => r.state === "done" && !r.ok).length;
     const clock = (t) => new Date(t).toISOString().slice(11, 19);
     const out = [`# ${s.name}: ${s.finished ? "finished" : "running"}`, "",
+        ...(s.spec?.runsIn ? [`Runs in ${s.spec.runsIn}.`, ""] : []),
         `${done} of ${runs.length} runs done${failed ? `, ${failed} failed` : ""}${s.memory?.paused ? "; PAUSED at the memory budget" : ""}. Written ${new Date(now).toISOString()}${s.finished ? "" : ", rewritten every few seconds while the sweep runs"}.`, ""];
     if (running.length) {
         out.push("## Running now", "");
@@ -95,9 +96,11 @@ export function statusText(s, now = Date.now()) {
     return out.join("\n");
 }
 
-/** Write status.md and status.json into `dir` now, each replaced whole (a reader never sees half a file). */
+/** Write status.md, status.json and live.json into `dir` now, each replaced whole (a reader never sees half a file).
+ *  live.json is the page's whole state, which `serve.mjs <sweep dir>` follows while the sweep runs: so a sweep in a
+ *  container, whose directory is mounted from the machine, is watched from a server on the machine. */
 export function writeStatus(dir, state, now = Date.now()) {
-    for (const [f, text] of [["status.md", statusText(state, now)], ["status.json", JSON.stringify(statusJson(state), null, 2)]]) {
+    for (const [f, text] of [["status.md", statusText(state, now)], ["status.json", JSON.stringify(statusJson(state), null, 2)], ["live.json", JSON.stringify(state)]]) {
         const p = path.join(dir, f), tmp = `${p}.${process.pid}`;
         writeFileSync(tmp, text);
         renameSync(tmp, p);

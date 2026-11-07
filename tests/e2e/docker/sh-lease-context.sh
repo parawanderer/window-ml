@@ -8,5 +8,9 @@ host=${WMLHOST_SRC:-$repo/../window-ml-host}
 mkdir -p "$out"
 git -C "$repo" archive --format=tar -o "$out/wml.tar" HEAD
 git -C "$host" archive --format=tar -o "$out/host.tar" HEAD
+wml_head=$(git -C "$repo" rev-parse HEAD) host_head=$(git -C "$host" rev-parse HEAD)
 cp "$repo/tests/e2e/docker/sh-lease.Dockerfile" "$out/Dockerfile"
-printf 'wml %s\nhost %s\n' "$(git -C "$repo" rev-parse HEAD)" "$(git -C "$host" rev-parse HEAD)" > "$out/HEADS"
+# The archive has no .git, so the image is told what it holds: the bench's build fingerprint (run.mjs) and where its
+# sweeps say they ran (the Spec card, spec.md, status.md).
+printf '\nENV BENCH_SOURCE_HEAD=%s\nENV BENCH_RUNS_IN="a Linux container (tests/e2e/docker/sh-lease.Dockerfile at %.8s; wmlhost %.8s, bwrap)"\n' "$wml_head" "$wml_head" "$host_head" >> "$out/Dockerfile"
+printf 'wml %s\nhost %s\n' "$wml_head" "$host_head" > "$out/HEADS"

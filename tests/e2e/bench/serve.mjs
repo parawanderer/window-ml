@@ -15,7 +15,7 @@
 
 import { createServer, get as httpGet } from "node:http";
 import { readFile, writeFile, rm, mkdir } from "node:fs/promises";
-import { watch as fsWatch, readFileSync } from "node:fs";
+import { watch as fsWatch, readFileSync, statSync } from "node:fs";
 import { extname, join, normalize, resolve, sep, dirname, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { COLUMNS } from "./metrics.mjs";
@@ -347,8 +347,47 @@ export async function staticPage(state) {
  */
 export const scoresPage = (board) => pageHtml(board, { script: scoresScript, title: "scoreboard", key: "__BENCH_SCORES__" });
 
+/** Whether a sweep directory holds a sweep still RUNNING: its live.json (status.mjs) newer than its page.json, or no page.json. */
+export function sweepRunning(sweepDir) {
+    const mtime = (f) => { try { return statSync(join(sweepDir, f)).mtimeMs; } catch { return 0; } };
+    return mtime("live.json") > mtime("page.json");
+}
+
+/** A sweep's page state: live.json while it runs, page.json once it has finished (sweepRunning). */
+export async function sweepState(sweepDir) {
+    return JSON.parse(await readFile(join(sweepDir, sweepRunning(sweepDir) ? "live.json" : "page.json"), "utf8"));
+}
+
 /**
- * Serve a FINISHED sweep's page from its directory, as the live page showed it at the end: page.json's state, the run
+ * Follow a RUNNING sweep: every `everyMs`, when its live.json changed (or the sweep finished and page.json landed), hand
+ * `onState` the new state; stop after the finished one. Polled, not watched: the runner may be in a container whose sweep
+ * directory is mounted from this machine, and its writes need raise no file event here. Does nothing for a finished
+ * sweep. Resolves nothing; returns the function that stops following.
+ * @param {string} sweepDir
+ * @param {(state: object) => void | Promise<void>} onState
+ */
+export function followLive(sweepDir, onState, { everyMs = 2000 } = {}) {
+    if (!sweepRunning(sweepDir)) return () => {};
+    const liveAt = () => { try { return statSync(join(sweepDir, "live.json")).mtimeMs; } catch { return 0; } };
+    let seen = liveAt(), busy = false;
+    const timer = setInterval(async () => {
+        if (busy) return;
+        const now = liveAt(), running = sweepRunning(sweepDir);
+        if (now === seen && running) return;
+        busy = true;
+        try {
+            const next = await sweepState(sweepDir).catch(() => null);
+            if (next) { seen = now; await onState(next); }
+            if (next && !running) clearInterval(timer);
+        } finally { busy = false; }
+    }, everyMs);
+    timer.unref?.();
+    return () => clearInterval(timer);
+}
+
+/**
+ * Serve a sweep's page from its directory: a RUNNING one followed through its live.json (followLive), so a sweep in a
+ * container is watched from this machine; a FINISHED one as the live page showed it at the end: page.json's state, the run
  * artifacts, /scores read afresh, and marks (POST /mark, and marks.jsonl edits from mark.mjs) checked against the
  * answers as the live sweep did. run.mjs hands its page to this in a detached process when a `--serve` sweep ends, so
  * the sweep process can exit (its caller learns it is done) while the open browser tab reconnects to the same URL.
@@ -360,7 +399,7 @@ export async function serveSweep(dir, { port = DEFAULT_PORT } = {}) {
     const { pageSources } = await import("./page/bundle.mjs");
     const { openScores, readRuns, scoreboard } = await import("./scores.mjs");
     const sweepDir = resolve(dir);
-    const state = JSON.parse(await readFile(join(sweepDir, "page.json"), "utf8"));
+    const state = await sweepState(sweepDir);
     // page.json links the saved page's scoreboard beside the log; served, the scoreboard is /scores.
     if (state.scores) state.scores = { ...state.scores, href: "/scores" };
     const db = await openScores().catch(() => null);
@@ -392,6 +431,12 @@ export async function serveSweep(dir, { port = DEFAULT_PORT } = {}) {
             await writeFile(join(sweepDir, "report.html"), await staticPage({ ...state, ...(state.scores ? { scores: { ...state.scores, href: "../scores.html" } } : {}) })).catch(() => {});
         }, 500);
     });
+    const unfollowLive = followLive(sweepDir, async (next) => {
+        for (const k of Object.keys(state)) delete state[k];
+        Object.assign(state, next);
+        if (state.scores) state.scores = { ...state.scores, href: "/scores" };
+        await recheck();
+    });
     let marksTimer = null;
     const marksWatch = (() => {
         try { return fsWatch(sweepDir, (_, f) => { if (f === "marks.jsonl") { clearTimeout(marksTimer); marksTimer = setTimeout(recheck, 100); } }); }
@@ -402,6 +447,7 @@ export async function serveSweep(dir, { port = DEFAULT_PORT } = {}) {
     await writeFile(SERVER_FILE, JSON.stringify({ pid: process.pid, port: Number(new URL(url).port), url, dir: sweepDir, at: new Date().toISOString() }));
     const stop = async () => {
         unfollow();
+        unfollowLive();
         clearTimeout(marksTimer);
         marksWatch?.close();
         await dash.stop();
@@ -413,7 +459,7 @@ export async function serveSweep(dir, { port = DEFAULT_PORT } = {}) {
     return { url, stop };
 }
 
-// node --import tsx tests/e2e/bench/serve.mjs <sweep dir> [--port N]   serve a finished sweep's page (run.mjs does this)
+// node --import tsx tests/e2e/bench/serve.mjs <sweep dir> [--port N]   serve a sweep's page, followed while it runs (run.mjs does this at the end)
 // node --import tsx tests/e2e/bench/serve.mjs --stop                    stop the one that is serving
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
     const argv = process.argv.slice(2);
