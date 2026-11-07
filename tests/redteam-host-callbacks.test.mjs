@@ -10,9 +10,11 @@
 // ran, that the survey is refused, and that the refusal names the method (the ruled shape — a caller reading the
 // refusal must know which call was the problem). Twenty rows over NINETEEN admitted names, because `collection`
 // admits one name on two host receivers (`querySelectorAll` and `getElementsByTagName`); nothing else in `BY_KIND`
-// hands an argument to the host to be called. The three shapes already refused name no method: they assert the
-// defence that exists. One control row shows a function written IN the script still works in every one of those
-// positions, so a fix that refused every callback fails here rather than passing.
+// hands an argument to the host to be called. Five more rows cover the ACQUISITION channels: the function need not
+// arrive from `ml.models()` itself, because an admitted method's return and a `for…of` binding over the page's array
+// or its `Object.values` hand it back unwrapped (an index read and a spread are inert). The three shapes already
+// refused name no method: they assert the defence that exists. One control row shows a function written IN the script
+// still works in every one of those positions, so a fix that refused every callback fails here rather than passing.
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
@@ -72,6 +74,52 @@ for (const [why, js, named] of CALLBACKS) {
         assert.match(r.refused, new RegExp(named ?? why, "i"), `${why}: the refusal does not name the method: ${r.refused}`);
     });
 }
+
+// --- the acquisition channels: the function need not come from `ml.models()` itself ---
+
+/** A page object carrying its own functions: an array of them, and two bare members (for `Object.values`). */
+function pageFunctions(ran) {
+    const f = () => { ran.push("f"); return 1; };
+    const g = () => { ran.push("g"); return 1; };
+    return { arr: [f, g], f1: f, f2: g };
+}
+
+/** A page object whose members are ONLY the functions: `Object.values` walks them, so an array first would be refused
+ *  for being uncallable and the row would never reach the channel it is about. */
+function pageFunctionMembers(ran) {
+    return { f1: () => { ran.push("f1"); return 1; }, f2: () => { ran.push("f2"); return 1; } };
+}
+
+// Measured before the fix with no stub at all: an admitted method's RETURN is not wrapped (`arr.at(i)`, `arr.find(...)`,
+// `arr.slice(n).at(m)` all hand the page's function straight back), and neither is a `for…of` binding over the page's
+// array or over `Object.values(pageObj)`. An INDEX read and a spread DO give the inert sentinel, which is why the rows
+// above — whose function comes from `ml.models()` — cannot see either channel.
+const ACQUIRED = [
+    ["an admitted method's return (at)", `const o = await ml.models(); return [1].map(o.arr.at(1))`],
+    ["an admitted method's return (find)", `const o = await ml.models(); return [1].map(o.arr.find(() => true))`],
+    ["an admitted method's return (slice(n).at(m))", `const o = await ml.models(); return [1].map(o.arr.slice(1).at(0))`],
+    ["a for…of binding over the page's array", `const o = await ml.models(); const out = []; for (const f of o.arr) out.push(...[9].map(f)); return out`],
+    ["a for…of binding over Object.values", `const o = await ml.models(); const out = []; for (const f of Object.values(o)) out.push(...[9].map(f)); return out`, pageFunctionMembers],
+];
+
+for (const [why, js, make] of ACQUIRED) {
+    test(`RED TEAM: a page function acquired through ${why} is not called by a host method`, async () => {
+        const ran = [];
+        const r = await run(js, (make ?? pageFunctions)(ran)).catch((e) => ({ refused: String(e) }));
+        assert.deepEqual(ran, [], `${why}: the page's function ran: ${JSON.stringify(ran)}`);
+        assert.ok(r.refused, `${why}: the survey answered instead of refusing: ${JSON.stringify(r.value)}`);
+        assert.match(r.refused, /map/i, `${why}: the refusal does not name the method that would have called it: ${r.refused}`);
+    });
+}
+
+test("CONTROL: a function the script wrote, acquired the same ways, still works", async () => {
+    const v = async (js) => (await run(js)).value;
+    assert.deepEqual(await v(`const arr = [(x) => x * 2]; return [1].map(arr.at(0))`), [2], "at");
+    assert.deepEqual(await v(`const arr = [(x) => x * 2]; return [1].map(arr.find(() => true))`), [2], "find");
+    assert.deepEqual(await v(`const arr = [1, (x) => x * 2]; return [1].map(arr.slice(1).at(0))`), [2], "slice(n).at(m)");
+    assert.deepEqual(await v(`const arr = [(x) => x + 1]; const out = []; for (const f of arr) out.push(...[9].map(f)); return out`), [10], "for…of array");
+    assert.deepEqual(await v(`const o = { a: (x) => x + 1 }; const out = []; for (const f of Object.values(o)) out.push(...[9].map(f)); return out`), [10], "for…of Object.values");
+});
 
 // --- what already holds: a callback that is not the script's own is refused ---
 
