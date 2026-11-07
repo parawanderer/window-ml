@@ -12,9 +12,10 @@
 // page with no tab" covers the product's own panel; the e2e watcher's page-in-a-tab is covered by "its tab's top document
 // is ours"; and our own frame inside a page — a tab whose URL is the page's — is the shape that stays refused.
 //
-// Failing-first, the node:test way: the rows a fix must turn are `{ todo: true }` until it lands (they fail on main at
-// the assertion each one carries), and the flip is MY OWN COMMIT on the fix's branch (#1369), its file only, before the
-// fix merges: the fix's own CI run then proves the defended assertions, rather than main carrying an unproven fix.
+// Failing-first, the node:test way: the six rows that a fix had to turn were `{ todo: true }` on main, failing at the
+// assertion each one carries. The flip is MY OWN COMMIT on the fix's branch (#1369), its file only, before the fix
+// merges: `{ todo }` is gone from all six, so the fix's own CI run proves the defended assertions rather than main
+// carrying an unproven fix. The comments below that name what main did are measured on main and kept as the record.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -22,7 +23,6 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { loadBackground } = require("./helpers");
 
-const TODO = "gaps (6) is open on main: the fix lands behind this row";
 const CONFIG = { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "default-model", apiFormat: "openai", ocrModel: "" };
 const RUN_TAB = 1;   // the tab whose run is live, and whose stream the buffer holds
 const SNEAK_TAB = 2; // the tab a hostile context runs in, naming RUN_TAB's id
@@ -61,12 +61,12 @@ const read = (port) => {
 
 // --- the DevTools feed's port: which senders may read a tab's stream ---
 
-test("a content script's port reads nothing of another tab's run", { todo: TODO }, async () => {
+test("a content script's port reads nothing of another tab's run", async () => {
     const bg = loadBackground({ config: CONFIG });
     await seed(bg);
     const port = openPort(bg, RUN_TAB, tabSender(SNEAK_TAB));
     await settle();
-    // Today: `[{ replay: [the run's start, its fetch of bank.test] }]` — the whole buffer, to a page's content script.
+    // On main: `[{ replay: [the run's start, its fetch of bank.test] }]` — the whole buffer, to a page's content script.
     assert.deepEqual(port.messages, [], `the replay was handed to a page's content script: ${JSON.stringify(port.messages)}`);
     await live(bg);
     await settle();
@@ -74,16 +74,16 @@ test("a content script's port reads nothing of another tab's run", { todo: TODO 
     assert.equal(port.wasDisconnected(), true, "the worker closes the port it refuses");
 });
 
-test("a port from a web URL with no tab reads nothing", { todo: TODO }, async () => {
+test("a port from a web URL with no tab reads nothing", async () => {
     const bg = loadBackground({ config: CONFIG });
     await seed(bg);
     const port = openPort(bg, RUN_TAB, { url: "https://evil.example/" });
     await settle();
-    assert.deepEqual(port.messages, [], `any url at all is served today: ${JSON.stringify(port.messages)}`);
+    assert.deepEqual(port.messages, [], `a web URL at all was served on main: ${JSON.stringify(port.messages)}`);
     assert.equal(port.wasDisconnected(), true);
 });
 
-test("an extension URL FRAMED INTO A PAGE is refused (its sender.url is ours, its tab's is the page's)", { todo: TODO }, async () => {
+test("an extension URL FRAMED INTO A PAGE is refused (its sender.url is ours, its tab's is the page's)", async () => {
     const bg = loadBackground({ config: CONFIG });
     await seed(bg);
     // The shape is reachable: our card/overlay iframe runs on any page. Only our code runs in it, so this is not a
@@ -92,15 +92,15 @@ test("an extension URL FRAMED INTO A PAGE is refused (its sender.url is ours, it
     // page has a tab, and that tab is the page's.
     const port = openPort(bg, RUN_TAB, { url: "chrome-extension://test/card.html", tab: { id: SNEAK_TAB, url: `https://page-${SNEAK_TAB}.test/` }, frameId: 0 });
     await settle();
-    assert.deepEqual(port.messages, [], `the sender is never read today: ${JSON.stringify(port.messages)}`);
+    assert.deepEqual(port.messages, [], `the sender was never read on main: ${JSON.stringify(port.messages)}`);
     assert.equal(port.wasDisconnected(), true);
 });
 
 // --- what both sides already hold: the floor, the panel's control, and the entry a refusal must leave ---
 
-test("a port whose sender names no url and no tab reads nothing", { todo: TODO }, async () => {
+test("a port whose sender names no url and no tab reads nothing", async () => {
     // The sender that exists but identifies nothing: `{}` is truthy, so a rule tempted to fall back to "the panel shape"
-    // when the sender is falsy still has to refuse it. On main nothing is read, so the buffer comes back as to any port.
+    // when the sender is falsy still has to refuse it. On main every port read the buffer, so this one did too.
     const bg = loadBackground({ config: CONFIG });
     await seed(bg);
     const port = openPort(bg, RUN_TAB, {});
@@ -109,7 +109,7 @@ test("a port whose sender names no url and no tab reads nothing", { todo: TODO }
     assert.equal(port.wasDisconnected(), true, "the worker closes the port it refuses");
 });
 
-test("a port connected with NO sender at all reads nothing", { todo: TODO }, async () => {
+test("a port connected with NO sender at all reads nothing", async () => {
     // The other side of the falsy-sender edge: #1369's helper makes a falsy sender into the panel shape, so a port that
     // brings no sender must be refused rather than served as the panel. Chrome always fills a sender in, so this is the
     // close on that helper's default, not a shape a page can reach.
@@ -134,7 +134,7 @@ test("a port that names no tab reads nothing, from any sender", async () => {
     }
 });
 
-test("an extension page as a tab's own top document reads the stream (the e2e watcher's shape)", async () => {
+test("an extension page as a tab's own top document reads the stream (the e2e watcher's shape", async () => {
     const bg = loadBackground({ config: CONFIG });
     await seed(bg);
     // harness.mjs `watchRunEvents` opens popup.html in a window of its own, so the port's sender is our page AND
@@ -151,7 +151,7 @@ test("an extension page as a tab's own top document reads the stream (the e2e wa
     assert.equal(port.wasDisconnected(), false);
 });
 
-test("the DevTools panel's own port reads the buffered replay, then each live event (the control)", async () => {
+test("the DevTools panel's own port reads the buffered replay, then each live event (the control", async () => {
     const bg = loadBackground({ config: CONFIG });
     await seed(bg);
     const port = openPort(bg, RUN_TAB, PANEL);
@@ -163,7 +163,7 @@ test("the DevTools panel's own port reads the buffered replay, then each live ev
     assert.equal(port.wasDisconnected(), false);
 });
 
-test("a refused port leaves no entry: the panel that opens next still gets the full replay", { todo: TODO }, async () => {
+test("a refused port leaves no entry: the panel that opens next still gets the full replay", async () => {
     const bg = loadBackground({ config: CONFIG });
     await seed(bg);
     const hostile = openPort(bg, RUN_TAB, tabSender(SNEAK_TAB));

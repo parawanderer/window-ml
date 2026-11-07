@@ -385,13 +385,22 @@ test("PANEL_WAITS: refused for a page sender and for a web url; the extension ge
 
 test("ml-sidepanel port (sw-debug): a page's port gets no debug feed and is dropped by the panel server", async () => {
     const bg = worker();
-    for (const sender of [{ url: "https://evil.example/p" }, { url: `${EXT}sidepanel.html`, tab: { id: 7 } }, pageSender()]) {
+    for (const sender of [{ url: "https://evil.example/p" }, { url: `${EXT}sidepanel.html`, tab: { id: 7 } }, pageSender(), {}]) {
         const port = bg.connect("ml-sidepanel", sender);
         port.send({ type: "ml-sidepanel-init", tabId: 7 });
         await flush();
         assert.equal(port.wasDisconnected(), true, JSON.stringify(sender));
         assert.deepEqual(port.messages, [], `no replay for ${JSON.stringify(sender)}`);
     }
+});
+
+test("ml-devtools port (sw-debug): a sender with no url gets no replay and is dropped", async () => {
+    const bg = worker();
+    const port = bg.connect("ml-devtools", {});
+    port.send({ type: "ml-devtools-init", tabId: 7 });
+    await flush();
+    assert.equal(port.wasDisconnected(), true);
+    assert.deepEqual(port.messages, []);
 });
 
 test("ml-sidepanel port (sw-debug): an extension page with no tab gets the replay once; a second init is ignored", async () => {

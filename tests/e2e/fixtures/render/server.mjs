@@ -20,6 +20,8 @@
 //   /frame-ok            → 200 html "frame ok from <host>"
 //   /frame-secret        → 200 html "frame secret"
 //   /script              → 200 html that sets location.href to victim.test/secret after a beat
+//   /script-attempted    → 200 text/plain "script ran" (the beacon /script sets AFTER its navigation attempt: it only
+//                          arrives if the tab is still on our page, so it says the script ran and was held)
 //   anything else        → 404 text/plain
 
 import { createServer } from "node:http";
@@ -72,7 +74,8 @@ export function startRenderSite() {
             case "/frames": return html(`<p>frames</p><iframe src="${me.replace(host, "sub.attacker.test")}/frame-ok"></iframe><iframe src="${me.replace(host, "victim.test")}/frame-secret"></iframe>`);
             case "/frame-ok": return html(`<p>frame ok from ${host}</p>`);
             case "/frame-secret": return html("<p>frame secret</p>");
-            case "/script": return html(`<p>about to move</p><script>setTimeout(() => { location.href = "${me.replace(host, "victim.test")}/secret"; }, 60);</script>`);
+            case "/script": return html(`<p>about to move</p><script>setTimeout(() => { location.href = "${me.replace(host, "victim.test")}/secret"; (new Image()).src = "/script-attempted"; }, 60);</script>`);
+            case "/script-attempted": return text("script ran");
             default: res.writeHead(404, { "content-type": "text/plain" }); res.end(`no route ${url.pathname} on ${host}`);
         }
     };

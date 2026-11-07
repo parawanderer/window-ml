@@ -38,6 +38,18 @@ background-hosted paths with no page round-trip and no approval.
   (`sed 's|http://a|X|'`, quoted, since a bare `|` separates stages). No addresses, no `-n`, no other
   commands: a model reaching for `sed -n '2p'` gets a refusal naming what the verb does accept, and `head`
   is what it wanted. It is a LINE verb, so it composes with the structural stages in either order.
+- **`pages` reads an attached file by page** (FILE_ATTACHMENTS.md, slice 3): `pages 3`, `pages 3-5`, `pages 3,7-9`
+  selects whole `<page n="k">` sections, in page order, before the line verbs run (`pages 3-5 | grep -i revenue`).
+  The request is parsed and bounded (`PIPE_PAGES_MAX`, 50 pages a stage, six digits a number) before any page is
+  gathered, so `pages 1-999999` costs nothing. An absent page is refused naming the pages held, never answered
+  empty. The sections are written by file-pointer.ts `fileSections`, which escapes `<page`, `</page` and `</file`
+  inside a page's text, so a page cannot open a section of its own and be read as another page.
+- **`@file:` is an attached file's pointer**, beside `@tool:`. The run's `TokenStore` holds files on a separate
+  `FileShelf` (file-pointer.ts): never evicted by tool outputs, and an id in its own domain (`fileId`), so a
+  `@tool:` reference never resolves to a file. Two forms, told apart by shape: a minted id, and the file's own name
+  quoted. A name two files share is REFUSED, listing both, never resolved to the latest; the same bytes attached
+  twice are one pointer. `derefLocally` reads the document from the value store on every read, so a file whose
+  rows are gone fails with the store's reason. `ml.dereference` in code refuses `@file:` with a sentence for now.
 - The pointer carries the value's **TYPE**, from the render descriptor the step already produced — so `keys`
   on a DataFrame means its COLUMNS, and two casts the line dialect can't express work: `latex`, and `img`,
   which never dumps the payload but says it IS base64 image data, how large, and what to do instead.
@@ -129,20 +141,20 @@ private one: `PIPE_CMDS` is the single source for every description of the diale
 
 **The value store (`value-store.ts`), POINTER_VALUES slice 4.** Where a pointer's value lives when it is larger than its
 preview: an IndexedDB database of its own (`ml-values`), a `Blob` per value plus a metadata ROW (`sessions`, `bytes`,
-`format`, `source`, `createdAt`, `lastReadAt`), reachable from the service worker and the offscreen document, never the page.
-Every eviction decision is `planEviction` (pure): idle values (unread for `IDLE_MS`) first, then least recently READ until
-ONE global byte budget holds the incoming write, with `protect` for a value being read at that moment. A write the budget
-cannot hold, once everything it may evict is gone, is refused (`ValueTooLarge`) and evicts nothing. A `held` row (a file
-the person attached, which cannot be fetched again) is never evicted for idleness or the budget while a session holds
-it, and the budget pass skips its blob's group whole (another row over the same bytes may still idle out, as a `shared`
-eviction that frees nothing); it goes when its last session ends, and is refused when it is stored if it does not fit
-beside the held values, the refusal naming the held bytes (FILE_ATTACHMENTS.md, "Eviction differs by producer"). Ending a session evicts what
-it alone held (`releaseSession`; a value two sessions hold stays until both end, since one tab's fetch cache hands the
-same key to both); a periodic `sweep` catches orphans, because the service worker is evicted without warning
-and an in-memory idea of ownership dies with it. Every evicted key leaves a TOMBSTONE (kept `TOMBSTONE_MS`), so a read
-fails with `ValueMissing` saying WHY (budget, idle, session end) and telling the reader to re-run the step, and never
-degrades to the preview. `onEvict` is where the caller reports to the housekeeping log (`subsystem: "value-store"`). The
-service worker's side is `sw-values.ts`:
+`format`, `source`, `createdAt`, `lastReadAt`), reachable from the service worker and the offscreen document, never the
+page. Every eviction decision is `planEviction` (pure): idle values (unread for `IDLE_MS`) first, then least recently
+READ until ONE global byte budget holds the incoming write, with `protect` for a value being read at that moment. A
+write the budget cannot hold, once everything it may evict is gone, is refused (`ValueTooLarge`) and evicts nothing. A
+`held` row (a file the person attached, which cannot be fetched again) is never evicted for idleness or the budget while
+a session holds it, and the budget pass skips its blob's group whole (another row over the same bytes may still idle
+out, as a `shared` eviction that frees nothing); it goes when its last session ends, and is refused when it is stored if
+it does not fit beside the held values, the refusal naming the held bytes (FILE_ATTACHMENTS.md, "Eviction differs by
+producer"). Ending a session evicts what it alone held (`releaseSession`; a value two sessions hold stays until both
+end, since one tab's fetch cache hands the same key to both); a periodic `sweep` catches orphans, because the service
+worker is evicted without warning and an in-memory idea of ownership dies with it. Every evicted key leaves a TOMBSTONE
+(kept `TOMBSTONE_MS`), so a read fails with `ValueMissing` saying WHY (budget, idle, session end) and telling the reader
+to re-run the step, and never degrades to the preview. `onEvict` is where the caller reports to the housekeeping log
+(`subsystem: "value-store"`). The service worker's side is `sw-values.ts`:
 
 - **Capture.** `fetchUrlContent` hands the whole body to a `keep` callback when the table it returns is a preview: Parquet
   or Arrow past `MAX_TABLE_ROWS` (the bytes as fetched, `arrow-file` or `arrow-stream`), or delimited text with more lines

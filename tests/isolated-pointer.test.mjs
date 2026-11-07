@@ -33,6 +33,8 @@ const probe = (entries, { pre = "", v = '@tool:"orders"' } = {}) => (id) => [
 const STAGE = {
     grep: "grep -c 7", sed: "sed s/1/X/g | head -n 2", head: "head -n 3", tail: "tail -n 2", wc: "wc -l", count: "count",
     sort: "sort -n -r | head -n 2", uniq: "sort | uniq -c | head -n 2", keys: "keys", values: "values | head -n 2", schema: "schema", type: "type",
+    // A table has no pages, so every path answers the same refusal.
+    pages: "pages 1",
 };
 /** Every stage, the array form, and a stage the dialect refuses. */
 const PIPES = [...Object.values(STAGE), ["grep -E 99|98", "head -n 2"], "nosuchverb x"];
