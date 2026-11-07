@@ -11,8 +11,10 @@
 //                     # refusal. It still blocks: a marker is text anyone can write, so it can only block, never allow.
 //   … --read <id>     # a post you have read that asks nothing further (repeatable): it stops blocking, and the refusal
 //                     # prints the ids to name. The tool never parses a body: YOU are saying it asks nothing.
-//   … --await-review  # with --wait: a PR that NAMED a reviewer is not merged before anyone else has posted; it keeps
-//                     # polling until a post by someone other than --session's exists, then the unread rule applies.
+//   … --await-review  # with --wait: a PR that NAMED a reviewer is not merged before anyone else has posted ON THIS
+//                     # HEAD; it keeps polling until a post by someone other than --session's created after the head
+//                     # commit exists, then the unread rule applies. A post older than the head commit is a review of
+//                     # an older head and does not release it: a re-check of a pushed head must post again.
 //                     # Without it a green PR with no posts merges at once, which is how a named review was skipped (#973).
 //   … --keep-bench    # first move a worktree's bench results into the main clone (see below)
 //   … --discard       # merge even though a worktree holds work in no commit: it stays there, and goes with the worktree
@@ -123,7 +125,8 @@ export function postKey(id) {
 /**
  * The posts a merge still has to wait for: everything that is not the conflicts workflow's notice (`<!-- pr-conflicts -->`, about CI, which the run settles), and not one `--read`
  * named as read and asking nothing further. A post answers to its numeric id and its GraphQL node id alike. Returns
- * `{ kind, id, author, preview, own }` for each, in review, comment, inline order. Pure, so the rule is testable. The tool
+ * `{ kind, id, author, preview, own, at }` for each, in review, comment, inline order (`at` is when GitHub says it was
+ * created, a review's `submitted_at` or a comment's `created_at`). Pure, so the rule is testable. The tool
  * never parses a body to decide whether it asks: only `--read` does that, and only for what it names. `own` says the
  * post's marker names `session`; it only labels the refusal, since anyone can write a marker, so text can block a merge
  * but never let one through.
@@ -145,6 +148,7 @@ export function pickUnread({ reviews = [], comments = [], inline = [] }, { sessi
                 id: String(x.id ?? x.node_id ?? "?"),
                 author: who(x),
                 own: isOwnPost(body, session),
+                at: x.submitted_at ?? x.created_at ?? null,
                 preview: body.replace(/\s+/g, " ").trim().slice(0, 60) || "(no body)",
             });
         }
@@ -244,6 +248,18 @@ export function touchesTool(changed, tool) {
     return changed.filter((p) => t.has(p));
 }
 
+/**
+ * The posts `--await-review` waits for, as a count: those {@link pickUnread} returns that are not the session's own
+ * (`own` never releases an await: a marker is text anyone can write) and were created after the head commit
+ * (`headAt`, its committer date). A review of an older head is not a review of this one, so a re-check of a pushed
+ * head waits for a new post; a post with no date, or one at the commit's own moment, does not release it. Read or
+ * not, as before: this is about WHICH head a post covers, and `--read` is about what still blocks.
+ */
+export function postedByOthersAfter(unread, headAt) {
+    const t = Date.parse(headAt);
+    return unread.filter((u) => !u.own && Date.parse(u.at ?? "") > t).length;
+}
+
 /** The verdict from the facts gathered about a PR: `{ ok, pending, reason }`. Pure, so the rule is testable. */
 export function judge(f) {
     // First, and never pending: no amount of waiting lets the tool judge a change to itself.
@@ -253,8 +269,8 @@ export function judge(f) {
     if (f.badJobs.length) return { ok: false, reason: `not green: ${f.badJobs.join(" ")} (a cancelled job prints as failed: check before blaming the change)` };
     if (f.deletedTestFiles) return { ok: false, reason: "deletes a test file" };
     if (f.tests.removed > f.tests.added) return { ok: false, reason: `removes tests (${f.tests.removed} removed, ${f.tests.added} added lines)` };
-    // A named reviewer who has not posted yet: wait for the post, then it blocks like any other until --read.
-    if (f.awaitReview && !f.postedByOthers) return { ok: false, pending: true, reason: "no review posted yet (--await-review): waiting for one" };
+    // A named reviewer who has not posted on this head yet: wait for the post, then it blocks like any other until --read.
+    if (f.awaitReview && !f.postedByOthers) return { ok: false, pending: true, reason: `no review posted after ${f.sha.slice(0, 8)}'s commit yet (--await-review): waiting for one (a post older than the head does not count)` };
     if (f.reviews || f.inlineComments) {
         // The ids to name once they have been read and found to ask nothing: `--read` is the only way past one.
         const flags = (f.unread || []).map((u) => `--read ${u.id}`).join(" ");
@@ -322,8 +338,10 @@ function facts(pr, session, read = [], awaitReview = false) {
         inline: restList(`repos/${REPO}/pulls/${pr}/comments`),
     };
     const unread = pickUnread(posts, { session, read });
-    // What --await-review waits for: a post by anyone but this session, read or not (the conflicts notice excluded).
-    const postedByOthers = pickUnread(posts, { session, read: [] }).filter((u) => !u.own).length;
+    // What --await-review waits for: a post by anyone but this session created AFTER the head commit, read or not
+    // (the conflicts notice excluded). An older post is a review of an older head; a re-check of a pushed head waits.
+    const headAt = git("show", "-s", "--format=%cI", sha);
+    const postedByOthers = postedByOthersAfter(pickUnread(posts, { session, read: [] }), headAt);
     // This copy's own files: main's, since the trampoline always hands over.
     const own = path.resolve(import.meta.dirname, "..");
     const readOwn = (p) => { try { return readFileSync(path.join(own, p), "utf8"); } catch { return null; } };
