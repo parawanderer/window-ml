@@ -587,8 +587,8 @@ await asyncio.sleep(0)
 // compiled in the wrapper's globals, so a cancel read from there could be rebound by the cell. The spend has one budget
 // (1 s) for all its rounds, enforced by one sys.monitoring tool on every start, line and backward jump a task runs and on
 // every call that would take the hook down. A loop inside a C function is beyond it; only the worker's 15 s kill ends that, named
-// (python-reap.test.mjs). The adversarial half (aliases, Task.cancel, call_soon, __del__, a rebind from a task during
-// the spend) is the red team's, after the merge.
+// (python-reap.test.mjs). The adversarial half (aliases, Task.cancel, call_soon, __del__, a hook removal made
+// during the spend) is the red team's, after the merge.
 
 /** A cell that leaves a task named "leftover" whose cancel handler is `handler`; timed. */
 async function leftover(handler, opts) {
@@ -1172,27 +1172,43 @@ test("P2-noyield (pin 12): writing asyncio.Task.cancel is refused by CPython's i
         ["Task.cancel", "Future.cancel"], "and the classes the cancel dispatches through are untouched for the next cell");
 });
 
-test("P2-noyield (pin 12): a task that takes the hook down DURING the spend is named, and the spinner beside it is still stopped", { skip, timeout: 120000 }, async (t) => {
+test("P2-noyield (pin 12): taking the hook down DURING the spend does not disarm it, and the spinner beside it is still stopped", { skip, timeout: 120000 }, async (t) => {
     if (!onFork(t)) return;
-    // The rebind made from a task of the cell's own, running while the spend is turning — not from the cell's body, which
-    // is P2-bound's alias rows. What is asserted is the property, not the saboteur's fate: whether its timer gets a turn
-    // depends on the loop turning during the spend's rounds, and it is measured both ways (named as "so saboteur … never
-    // took its cancel" in one run, never reached in two), so a row asserting the naming would be a race, not a pin.
-    const r = await cell(`
-import asyncio, sys
+    // The rebind is made while the spend is turning, not from the cell's body (P2-bound's alias rows) and not before the
+    // spend starts. The first shape tried, a task of the cell's own that sleeps 20 ms and then rebinds, could not be
+    // measured here: the spend cancels a pending task before its next turn, so the rebind never landed (its line
+    // reached 0 in three of three runs, and a `sleep(0)` variant in three more — janitor-2's measurement and mine).
+    // A loop callback the cell scheduled does land: measured 1 ms after the cell returns, inside the spend's own
+    // awaits, and the marker reads 1 in six of six runs. The row asserts that reach FIRST, so a core where the callback
+    // stops landing reds here instead of passing on a bare spinner, which P2-bound already pins.
+    const run = async (handler) => {
+        const t0 = Date.now();
+        const r = await cell(`
+import asyncio, sys, builtins
+builtins._sab_ran = 0
+def _bump():
+    builtins._sab_ran = builtins._sab_ran + 1
 async def _left():
     try:
         await asyncio.sleep(10)
     except BaseException:
-        while True: pass
-async def _sab():
-    await asyncio.sleep(0.02)
-    sys.settrace(None)
+${handler}
 asyncio.ensure_future(_left()).set_name("leftover")
-asyncio.ensure_future(_sab()).set_name("saboteur")
+asyncio.get_running_loop().call_later(0.001, lambda: (_bump(), sys.settrace(None)))
 await asyncio.sleep(0)
 "x"`);
-    assert.match(String(r.error), STOPPED, `a rebind from a task during the spend must not disarm the bound: ${JSON.stringify(r)}`);
+        const reach = (await cell(`import builtins\ngetattr(builtins, "_sab_ran", "ABSENT")`)).value;
+        return { ...r, reach, ms: Date.now() - t0 };
+    };
+    // Control: the same callback beside a handler that stops is spent, and the cell's value comes back — so a refusal
+    // below is the spinner's, never the rebind's.
+    const control = await run("        pass");
+    assert.equal(control.reach, 1, `the rebind landed during the spend (the reach): ${JSON.stringify(control)}`);
+    assert.equal(control.value, "x", `control: a handler that stops is spent and the cell returns its value: ${JSON.stringify(control)}`);
+    const r = await run("        while True: pass");
+    assert.equal(r.reach, 1, `the rebind landed during the spend (the reach): ${JSON.stringify(r)}`);
+    assert.match(String(r.error), STOPPED, `taking the hook down during the spend must not disarm the bound: ${JSON.stringify(r)}`);
+    assert.ok(r.ms < 6000, `stopped by the spend's bound, not the kill: ${r.ms} ms`);
     assert.equal(r.value, null, "a refused cell returns no value");
     assert.deepEqual((await cell("import sys\n[sys.gettrace(), sys.getprofile()]")).value, [null, null], "no hook left behind");
 });
