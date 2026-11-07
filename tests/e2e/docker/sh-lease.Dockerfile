@@ -1,7 +1,9 @@
 # sh-lease.Dockerfile — the ml.sh lease bench in one Linux container: Chromium, the built extension, a real wmlhost and
 # the task scripts, so every ml.sh call reads the container's files and never the person's home. Only model calls leave.
 # Context: `tests/e2e/docker/sh-lease-context.sh <dir>` (git archives of this repo's HEAD and the host's, never a .env).
-# bwrap needs user namespaces: run with `--security-opt seccomp=unconfined --security-opt apparmor=unconfined`.
+# bwrap needs user namespaces and a fresh /proc in its PID namespace, so run with `--security-opt seccomp=unconfined
+# --security-opt apparmor=unconfined --security-opt systempaths=unconfined` (without the last, the host's probe fails with
+# "Can't mount proc on /newroot/proc" and every call runs host-plain).
 
 FROM rust:1-bookworm AS host
 COPY host.tar /src/host.tar
