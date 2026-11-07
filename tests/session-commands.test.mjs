@@ -1130,15 +1130,23 @@ test("a hash this runtime does not hold, or holds at another size, is refused as
     }
 });
 
-test("ADVERSARIAL: a reference meets the same rules as the inline PDF it stands for: typed as a PDF, at a run's start and on a later message", async () => {
-    const w = world({ heldFile: () => PDF_BYTES });
-    const r = await w.run({ type: "agent.start", runtime: "local", task: "read", files: [{ ...PDF_REF, type: "text/plain" }], target: { kind: "tab", tabId: TAB } });
+test("ADVERSARIAL: a reference is put back by its type: a PDF only for application/pdf, text for any other, and bytes that are not text are refused, never a PDF", async () => {
+    const BIN = Uint8Array.of(0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x0a, 0x00, 0xff, 0xfe);   // "%PDF-1\n", a NUL, then no UTF-8
+    const TEXT = new TextEncoder().encode("line one\nline two\n");
+    const held = { ["a".repeat(64)]: BIN, ["b".repeat(64)]: TEXT, [PDF_REF.sha256]: PDF_BYTES };
+    const w = world({ heldFile: (sha) => held[sha] ?? null });
+    const r = await w.run({ type: "agent.start", runtime: "local", task: "read", files: [PDF_REF], target: { kind: "tab", tabId: TAB } });
     assert.equal(code(r), "ok");
     assert.deepEqual(w.named("startAgent")[0][2].files, [{ name: "paper.pdf", type: "application/pdf", data: PDF_FILE.data }]);
     w.index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
-    const later = await w.run({ type: "session.send", session: sid("aaaa0001"), text: "x", files: [{ ...PDF_REF, type: "text/plain" }] });
-    assert.equal(code(later), "ok");
-    assert.deepEqual(w.named("toPage")[0][3].files, [{ name: "paper.pdf", type: "application/pdf", data: PDF_FILE.data }], "put back as a PDF whatever the client claimed, so the page fallback's PDF check sees one");
+    const text = await w.run({ type: "session.send", session: sid("aaaa0001"), text: "x", files: [{ name: "notes.log", type: "text/x-log", sha256: "b".repeat(64), bytes: TEXT.length }] });
+    assert.equal(code(text), "ok");
+    assert.deepEqual(w.named("toPage")[0][3].files, [{ name: "notes.log", type: "text/x-log", text: "line one\nline two\n" }], "text, under the type it was sent with");
+    const forged = await w.run({ type: "session.send", session: sid("aaaa0001"), text: "x", files: [{ name: "paper.pdf", type: "text/plain", sha256: "a".repeat(64), bytes: BIN.length }] });
+    assert.deepEqual([code(forged), forged.error.message], ["invalid", "paper.pdf was sent as text/plain but is not text: send it again"], "a text type over bytes that are not text is neither a PDF nor bytes");
+    const untyped = await w.run({ type: "session.send", session: sid("aaaa0001"), text: "x", files: [{ name: "n", sha256: "b".repeat(64), bytes: TEXT.length }] });
+    assert.deepEqual([code(untyped), untyped.error.message], ["invalid", "n: a file named by its sha256 says its type"]);
+    assert.equal(w.named("toPage").length, 1, "only the text reached the run");
     const both = await w.run({ type: "chat.start", runtime: "local", text: "x", files: [{ ...PDF_REF, data: PDF_FILE.data }] });
     assert.deepEqual([code(both), both.error.message], ["invalid", "paper.pdf: a file is sent inline or named by its sha256, not both"], "a hash beside inline bytes is neither shape");
     const odd = await w.run({ type: "chat.start", runtime: "local", text: "x", files: [{ ...PDF_REF, sha256: 5 }] });

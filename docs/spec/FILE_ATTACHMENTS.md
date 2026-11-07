@@ -156,7 +156,14 @@ announced in `Welcome.limits`; a frame over it closes the sender's connection, s
 stays). The client sends the file as `file.put { sha256, index, count }` commands, a `KIND_COMMAND` with a `file.put`
 scope, the chunk as RAW bytes beside the JSON (base64 would spend a third more of the account's rate budget and a third
 more chunks), each sized to the payload limit less the seal's overhead. The send then names the file by
-`{ name, type, sha256, bytes }`. No hub change.
+`{ name, type, sha256, bytes }`. No hub change: the hub relays sealed bytes and reads none of these fields.
+
+A text file that will not go whole (`sentWhole`, the runtime's own rule) goes ahead the same way (2026-11-07, piece
+(b)): its UTF-8 bytes in chunks, the reference carrying its own type. The runtime puts a reference back as a PDF only
+for `application/pdf`, and for any other type as text (a `fatal` UTF-8 decode, no NUL); bytes that are not text are
+refused naming the file, never taken for a PDF or kept as bytes. `chat.start`, `agent.start` and `session.send` all
+send files ahead. An older runtime that takes no chunks gets the files inline, and a text file past what one sealed
+message carries is refused on the client, naming the limit, rather than sent to fail at the seal.
 
 - **At most 4 chunks unacknowledged**; the runtime answers each with a `COMMAND_RESULT`. A runtime's outbound queue on
   the hub is 16 MiB, and a frame that does not fit closes the RUNTIME's connection, every session it serves with it, so

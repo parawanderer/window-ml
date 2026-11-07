@@ -19,7 +19,8 @@ import { pageRaster, workerRaster, type Raster } from "../raster";
 import { fitImages } from "./fit-images";
 import { Role } from "../hub/wire";
 import { COMMAND_SCOPE, type AttachedFileRef, type Command, type CommandResult, type CommandType, type WireFile } from "../session/session-host";
-import { PDF_ATTACH_MAX } from "../attached-files";
+import type { SentFile } from "../contract/contract-run";
+import { PDF_ATTACH_MAX, sentWhole, utf8Length } from "../attached-files";
 import { b64ToBytes } from "../pdf/pdf-wire";
 import { FILE_PUT_WINDOW, chunkSize, fileCap, frameChunk, sha256Hex } from "../hub/file-frame";
 
@@ -162,7 +163,8 @@ export class HubConnection {
         const scope = COMMAND_SCOPE[command.type];
         if (!this.scopes.has(scope)) return fail("forbidden", `this device does not hold \`${scope}\` on this account`);
 
-        // A PDF goes ahead in `file.put` chunks and the command names it by hash: inline it is usually past the limit.
+        // A PDF, and a text file too long to go whole, go ahead in `file.put` chunks and the command names each by hash:
+        // inline they are usually past the limit.
         const ahead = await this.filesAhead(command, peer, runtime, opts);
         if ("ok" in ahead) return ahead;
         return await this.deliver(ahead, peer, scope, null, opts);
@@ -223,38 +225,63 @@ export class HubConnection {
     }
 
     /**
-     * The command with each inline PDF sent ahead in `file.put` chunks and named by hash in its place, or the command
-     * as it is when it carries none or the runtime does not take chunks (an older one answers `file.have` with
-     * `unsupported`, and the PDF goes inline, which fits only when it is small). A failure of any chunk is the answer.
+     * The command with each inline PDF, and each text file that will not go whole (`sentWhole`, the runtime's own rule),
+     * sent ahead in `file.put` chunks and named by hash in its place, or the command as it is when it carries none or the
+     * runtime does not take chunks (an older one answers `file.have` with `unsupported`, and the files go inline, which
+     * fits only when they are small; a text file past what one sealed message takes is refused here, naming it). A
+     * failure of any chunk is the answer.
      */
     private async filesAhead<C extends Command>(command: C, peer: HubPeer, runtime: string, opts?: { signal?: AbortSignal; timeoutMs?: number }): Promise<C | CommandResult<C["type"]>> {
-        if (command.type !== "chat.start" && command.type !== "session.send") return command;
+        if (command.type !== "chat.start" && command.type !== "session.send" && command.type !== "agent.start") return command;
         const files = (command as { files?: WireFile[] }).files ?? [];
-        if (!files.some((f) => typeof (f as { data?: unknown }).data === "string")) return command;
+        const sent = files.filter((f): f is SentFile => typeof (f as { sha256?: unknown }).sha256 !== "string");
+        const goesWhole = sentWhole(sent);
+        const whole = new Map(sent.map((f, i) => [f, goesWhole[i]]));
+        /** The bytes and type a file goes ahead as, or null when it goes inline. */
+        const ahead = (f: WireFile): { data: Uint8Array | null; type: string } | null => {
+            if (typeof (f as { data?: unknown }).data === "string") return { data: b64ToBytes((f as { data: string }).data), type: "application/pdf" };
+            const t = f as { text?: unknown; type?: unknown };
+            if (typeof t.text === "string" && whole.get(f as SentFile) === false) return { data: new TextEncoder().encode(t.text), type: typeof t.type === "string" && t.type ? t.type : "text/plain" };
+            return null;
+        };
+        if (!files.some((f) => ahead(f))) return command;
         const out: WireFile[] = [];
         for (const f of files) {
-            const data = typeof (f as { data?: unknown }).data === "string" ? (f as { data: string }).data : null;
-            if (data === null) { out.push(f); continue; }
-            const r = await this.putFile(runtime, peer, f.name, data, opts);
-            if (r === "inline") return command;
+            const a = ahead(f);
+            if (!a) { out.push(f); continue; }
+            if (!a.data) return fail("invalid", `${f.name} is not valid base64`);
+            const r = await this.putFile(runtime, peer, f.name, a.type, a.data, opts);
+            if (r === "inline") return this.inlineOrRefuse(command, files);
             if ("ok" in r) return r as CommandResult<C["type"]>;
             out.push(r);
         }
         return { ...command, files: out };
     }
 
+    /** The command with its files inline, for a runtime that does not take chunks, or the refusal of the first text file
+     *  past what one sealed message can carry: sent, it would only fail at the seal. */
+    private inlineOrRefuse<C extends Command>(command: C, files: readonly WireFile[]): C | CommandResult<C["type"]> {
+        const limit = this.client.limits.maxPayloadBytes > 0 ? this.client.limits.maxPayloadBytes : HUB_PAYLOAD_DEFAULT;
+        for (const f of files) {
+            const text = (f as { text?: unknown }).text;
+            if (typeof text !== "string") continue;
+            const size = utf8Length(text);
+            if (size >= limit) return fail("invalid", `${f.name} is too large to send through the hub to this runtime: ${mb(size)}; it takes up to ${mb(limit)} in one message, and a newer version of it takes larger files in chunks`);
+        }
+        return command;
+    }
+
     /**
-     * Send one file in chunks of what the hub takes, at most {@link FILE_PUT_WINDOW} unanswered, after asking which the
+     * Send one file (a PDF's bytes, or a text file's UTF-8) in chunks of what the hub takes, at most {@link FILE_PUT_WINDOW} unanswered, after asking which the
      * runtime already holds; done is the runtime's word (`complete`), never "all sent".
      * @returns the reference to send in the file's place, `inline` when the runtime does not take chunks, or the failure
      */
-    private async putFile(runtime: string, peer: HubPeer, name: string, b64: string, opts?: { signal?: AbortSignal; timeoutMs?: number }): Promise<AttachedFileRef | "inline" | CommandResult<CommandType>> {
-        const data = b64ToBytes(b64);
-        if (!data) return fail("invalid", `${name} is not valid base64`);
+    private async putFile(runtime: string, peer: HubPeer, name: string, type: string, data: Uint8Array, opts?: { signal?: AbortSignal; timeoutMs?: number }): Promise<AttachedFileRef | "inline" | CommandResult<CommandType>> {
         const cap = fileCap(PDF_ATTACH_MAX, this.client.limits.accountBurstBytes);
         if (data.length > cap) return fail("invalid", `${name} is too large to send through this hub: ${mb(data.length)}; it takes files up to ${mb(cap)}`);
         const sha256 = await sha256Hex(data);
-        const ref: AttachedFileRef = { name, type: "application/pdf", sha256, bytes: data.length };
+        // The file's own type: the runtime puts it back as a PDF only for `application/pdf`, as text otherwise.
+        const ref: AttachedFileRef = { name, type, sha256, bytes: data.length };
         const scope = COMMAND_SCOPE["file.put"];
         const have = await this.deliver({ type: "file.have", runtime, sha256 }, peer, scope, null, opts);
         if (!have.ok) return have.error.code === "unsupported" ? "inline" : have;

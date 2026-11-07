@@ -168,7 +168,9 @@ export function checkedFiles(raw: unknown, target: FileTarget, held?: (sha256: s
 
 /**
  * `files` with each file named by hash (`{ name, type, sha256, bytes }`, sent ahead in `file.put` chunks) put back as
- * the PDF it names, so the one rule (`checkFilesField`) checks what arrived inline and what arrived in chunks alike.
+ * the file it names, so the one rule (`checkFilesField`) checks what arrived inline and what arrived in chunks alike:
+ * a PDF for the type `application/pdf`, and for any other type the text its bytes decode to (UTF-8, `fatal`, no NUL),
+ * never a PDF or raw bytes. A reference whose bytes are not text is refused naming the file.
  * @returns the list to check (as it came, when it is not a list), or why a reference cannot be put back
  */
 function resolveFileRefs(raw: unknown, held?: (sha256: string) => Uint8Array | null): { files: unknown } | { refused: string } {
@@ -183,9 +185,20 @@ function resolveFileRefs(raw: unknown, held?: (sha256: string) => Uint8Array | n
         const bytes = held?.(r.sha256 as string) ?? null;
         if (!bytes) return { refused: `${name} is not on this runtime: send it again` };
         if (typeof r.bytes === "number" && r.bytes !== bytes.length) return { refused: `${name} is ${bytes.length} bytes here, not ${r.bytes}: send it again` };
-        out.push({ name: r.name, type: "application/pdf", data: bytesToB64(bytes) });
+        if (typeof r.type !== "string") return { refused: `${name}: a file named by its sha256 says its type` };
+        if (r.type === "application/pdf") { out.push({ name: r.name, type: "application/pdf", data: bytesToB64(bytes) }); continue; }
+        const text = refText(bytes);
+        if (text === null) return { refused: `${name} was sent as ${r.type} but is not text: send it again` };
+        out.push({ name: r.name, type: r.type, text });
     }
     return { files: out };
+}
+
+/** A referenced file's bytes as text, or null when they are not: the test a picked file meets (attached-files.ts
+ *  `decodeTextFile`), UTF-8 that decodes with `fatal` and holds no NUL byte. */
+function refText(bytes: Uint8Array): string | null {
+    if (bytes.includes(0)) return null;
+    try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch { return null; }
 }
 
 /** One message's text, on a chat this worker hosts. Long enough for a pasted document, short of a denial of service. */
