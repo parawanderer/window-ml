@@ -19,7 +19,7 @@ import assert from "node:assert";
 import { JSDOM } from "jsdom";
 import { evalReadonly } from "../src/readonly-exec.ts";
 
-const doc = () => new JSDOM("<!doctype html><body><p class=\"x\">hi</p><div id=\"d\">x</div></body>").window.document;
+const doc = () => new JSDOM("<!doctype html><body><p class=\"x\">hi</p><div id=\"d\" name=\"n\">x</div></body>").window.document;
 
 /** A page's own object: `toString` answers "2", `valueOf` answers 2, and each records that it ran. */
 function pageValue(ran) {
@@ -70,6 +70,7 @@ const COERCING = [
     // The SECOND argument is converted too (toString, then valueOf): every argument goes through the same check.
     ["includes' second argument", "includes", O + `return "abc".includes(o, o)`, `return "abc".includes("b", 1)`, true],
     // --- Array, numeric conversion ---
+    ["array flat (depth)", "flat", O + `return [1, [2]].flat(o)`, `return [1, [2]].flat(1)`, [1, 2]],
     ["array slice", "slice", O + `return [1, 2].slice(o)`, `return [1, 2].slice(1)`, [2]],
     ["array at", "at", O + `return [1, 2].at(o)`, `return [1, 2].at(1)`, 2],
     ["array splice", "splice", O + `return [1, 2].splice(o)`, `return [1, 2].splice(1)`, [2]],
@@ -81,12 +82,21 @@ const COERCING = [
     // --- DOM: a selector, a name or a property key is a string converted by the host ---
     ["document.querySelector", "querySelector", O + `return document.querySelector(o)?.tagName`, `return document.querySelector("p")?.tagName`, "P"],
     ["document.getElementById", "getElementById", O + `return document.getElementById(o)?.tagName`, `return document.getElementById("d")?.tagName`, "DIV"],
+    // Measured on main: every one of the four converts its argument with ToString. `querySelectorAll` then throws
+    // "Invalid selector 2" (the page's `toString` answered "2"); the other three answer an empty collection.
+    ["document.querySelectorAll", "querySelectorAll", O + `return document.querySelectorAll(o).length`, `return document.querySelectorAll("p").length`, 1],
+    ["document.getElementsByTagName", "getElementsByTagName", O + `return document.getElementsByTagName(o).length`, `return document.getElementsByTagName("p").length`, 1],
+    ["document.getElementsByClassName", "getElementsByClassName", O + `return document.getElementsByClassName(o).length`, `return document.getElementsByClassName("x").length`, 1],
+    ["document.getElementsByName", "getElementsByName", O + `return document.getElementsByName(o).length`, `return document.getElementsByName("n").length`, 1],
     ["element.getAttribute", "getAttribute", `const el = await ml.models(); const o = await ml.models(); return el.getAttribute(o)`, `const el = await ml.models(); return el.getAttribute("class")`, "x", (d) => d.querySelector("p")],
     ["element.matches", "matches", `const el = await ml.models(); const o = await ml.models(); return el.matches(o)`, `const el = await ml.models(); return el.matches("p")`, true, (d) => d.querySelector("p")],
+    ["element.closest", "closest", `const el = await ml.models(); const o = await ml.models(); return el.closest(o)?.tagName`, `const el = await ml.models(); return el.closest("body")?.tagName`, "BODY", (d) => d.querySelector("p")],
+    ["element.hasAttribute", "hasAttribute", `const el = await ml.models(); const o = await ml.models(); return el.hasAttribute(o)`, `const el = await ml.models(); return el.hasAttribute("class")`, true, (d) => d.querySelector("p")],
     ["style.getPropertyValue", "getPropertyValue", `const s = await ml.models(); const o = await ml.models(); return s.getPropertyValue(o)`, `const s = await ml.models(); return s.getPropertyValue("color")`, "", (d) => d.body.style],
     ["collection.item", "item", `const c = await ml.models(); const o = await ml.models(); return c.item(o)?.tagName`, `const c = await ml.models(); return c.item(0)?.tagName`, "P", (d) => d.getElementsByTagName("p")],
     // --- a Number receiver converts the argument too ---
     ["number toFixed", "toFixed", O + `return (5.1).toFixed(o)`, `return (5.1).toFixed(2)`, "5.10"],
+    ["number toPrecision", "toPrecision", O + `return (5.1).toPrecision(o)`, `return (5.1).toPrecision(2)`, "5.1"],
     ["number toString (radix)", "toString", O + `return (5).toString(o)`, `return (5).toString(2)`, "101"],
 ];
 
@@ -96,8 +106,9 @@ const COERCING = [
 //  · `"abc".search/match/matchAll(o)` and `re.test/exec(o)` already refuse, with "a regex pattern that is not a
 //    string or a regex" and "a regex search over a value that is not a string or a" — the wording a fix copies.
 //  · `el.contains(o)` takes a Node: a TypeError, never a conversion.
-//  · `(5).toLocaleString(o)` answers "5" with no call; `collection.at(item)` on a NodeList refuses before any
-//    conversion ("... is not a function on this value"). `collection.item` on an HTMLCollection does convert (a row).
+//  · `(5).toLocaleString(o)` answers "5" with no call; `el.querySelectorAll(o)` refuses before any conversion
+//    ("querySelectorAll is not a function on this value"), so only `document`'s four are positions;
+//    `collection.at(item)` on a NodeList refuses the same way. `collection.item` on an HTMLCollection does convert.
 //  · `replace`/`replaceAll`'s pattern and `join`'s separator already have rows in redteam-coercion.test.mjs (#1454).
 // The rest of Math (max, min, ceil, round, abs, pow, sqrt, sign, trunc) convert exactly as `Math.floor` does;
 // `Number.parseFloat` as `Number.parseInt`; `"abc".toUpperCase`-style readers take no argument at all.
