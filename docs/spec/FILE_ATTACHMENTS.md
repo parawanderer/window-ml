@@ -1,9 +1,10 @@
 # Spec (WIP): attaching files to a message
 
-**Status: slice 1 built (2026-10-28, `feat/attach-text-files`); slices 2 and 3 designed, not started (Shane and the
-calm-chat-motion session).** The order is three slices, each landing on its own: text files, then PDFs, then documents
-as `@file:` pointers in agent runs. Slice 3's contact
-points with the python, shell and policies lanes were ruled on by their coordinator (2026-10-28, "Rulings" below).
+**Status: slices 1 and 2 built (2026-10-28/29); slice 3 under way: the held rows, the `@file:` pointer and the `pages`
+verb are built, attaching a PDF to an agent run is next (Shane and the calm-chat-motion session).** The order is
+three slices, each landing on its own: text files, then PDFs, then documents as `@file:` pointers in agent runs. Slice
+3's contact points with the python, shell and policies lanes were ruled on by their coordinator (2026-10-28,
+"Rulings" below).
 
 ## What it is for
 
@@ -274,6 +275,12 @@ revenue" })`. Both reads take `@file:`: the `dereference` tool, which the run lo
 file is one page per N lines (open: N), so the same verb pages a long log. Extending the dialect
 requires the adversarial tests in readonly-exec.md ("The rule for extending the dialect"); `pages` gets its own bound
 (how many pages one pipe may select) with adversarial rows of its own.
+
+**Built (2026-10-30, the reading side).** file-pointer.ts: the pointer, `cleanFileName`, the outline, the sections and
+the `FileShelf` a run's `TokenStore` holds files on; the `pages` verb (`PIPE_PAGES_MAX`, 50 a stage); `derefLocally`'s
+`@file:` branch and the inventory's files. The outline says `Read with dereference(@file:…, pipe "pages 1-3")` only:
+`look` with a document target is not built. Nothing notes a file on the shelf yet: attaching a PDF to an agent run,
+which mints the pointer and stores its rows, is the next change. `ml.dereference` refuses `@file:` with a sentence.
 
 **Looking at pages.** `look` takes a document target: `look({ doc: "@file:3fa91c2", pages: "4", question })`. The
 pages are rendered from the stored bytes by pdf.js in the offscreen document, then go down the existing vision path

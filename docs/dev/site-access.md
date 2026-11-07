@@ -343,8 +343,10 @@ highlight on a waiting click's target, so the card, the transcript and the start
 - **The overlay never mounts on a hidden page**, a run there included: with `debugMode: "overlay"` the shell mounts it
   only once the worker has said the origin is visible (`whenVisible`, page-gate.ts: the `CONTENT_READY` reply's
   `open`, or `PRESENCE_OPEN`). An open gate does not say that, since a run's page script opens a hidden page's gate too.
-- **Not yet closed:** the DevTools panel's `ml-devtools` port takes any extension sender's `tabId`. It is pre-existing
-  and ruled for the security lane's follow-up (SITE_PRESENCE.md step 4).
+- **A run's feed goes only to a sender that is all ours.** `ml-devtools` and `ml-sidepanel` are served to an extension
+  page that is in no tab, or in a tab whose own top document is ours (the e2e watcher's shape); `ml-sidepanel` also
+  needs no tab. Any other port, a content script's or one framed into a page included, is disconnected unread and
+  registers nothing, so the panel that opens next still gets the full replay (`ownSender`, sw-debug.ts).
 
 ## Starting agents
 

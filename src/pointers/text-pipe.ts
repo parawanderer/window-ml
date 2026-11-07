@@ -14,12 +14,15 @@ import { jsonShape } from "../dom/dom";
 import { riskyRegex, MAX_STRING } from "../readonly-exec/limits";
 import { replaceSize, replaceWorstCase } from "../readonly-exec/replace-size";
 import { regexSteps, UNCHARGED_SEARCH_STEPS } from "../readonly-exec/regex-cost";
+import { pageRanges } from "../pdf/pdf-frame";
 
 /** Every verb the dialect implements — the SINGLE SOURCE for the refusal message AND for the system prompt's
  *  "here is what you can pipe" list. A prompt that advertises a verb the dialect lacks costs the model a whole
  *  turn to discover, which has happened once already; deriving both from this makes that drift impossible. */
-export const PIPE_CMDS = ["grep", "sed", "head", "tail", "wc", "count", "sort", "uniq", "keys", "values", "schema", "type"] as const;
+export const PIPE_CMDS = ["grep", "sed", "head", "tail", "wc", "count", "sort", "uniq", "keys", "values", "schema", "type", "pages"] as const;
 const CMDS = `${PIPE_CMDS.join(" · ")} · a .path`;
+/** Pages one `pages` stage may select: a bound on what one read of an attached file can pull into a result. */
+export const PIPE_PAGES_MAX = 50;
 
 /** What each verb ACCEPTS, in the model's words — the flags and the one-line semantics. Typed as a total
  *  Record over {@link PIPE_CMDS}, so adding a verb without describing it is a COMPILE error, not a doc that
@@ -37,6 +40,7 @@ const PIPE_USAGE: Record<(typeof PIPE_CMDS)[number], string> = {
     values: "values (an object's values)",
     schema: "schema (the SHAPE of a JSON value, not the data — the cheapest read of something big)",
     type: "type (what the value actually is)",
+    pages: `pages N, N-M or a list (3,7-9): whole pages of an attached file, at most ${PIPE_PAGES_MAX} per stage`,
 };
 
 /** The one-line hint every pipe ERROR path shows the model. Derived from {@link PIPE_CMDS} so a failed pipe
@@ -363,6 +367,48 @@ function sed(lines: string[], argv: string[], limits?: PipeLimits): string[] {
     return out;
 }
 
+/** A section's first line, as file-pointer.ts `fileSections` writes it; a page's own text cannot produce one, since
+ *  `<page` inside it is escaped. */
+const PAGE_OPEN = /^<page n="(\d+)"[^>]*>$/;
+
+/**
+ * `pages 3`, `pages 3-5`, `pages 3,7-9`: the whole `<page>` sections a paged value (an attached PDF) holds for those
+ * numbers, in page order. The request is read and bounded before any page is gathered, so a wide range costs nothing.
+ * A page the value does not hold is refused, naming the pages it does: a quiet empty answer reads as "no such text".
+ */
+function pages(lines: string[], argv: string[]): string[] {
+    const spec = argv.slice(1).join("").trim();
+    if (!spec) throw new Error("`pages` needs page numbers: pages 3, pages 3-5 or pages 3,7-9.");
+    const want: [number, number][] = [];
+    let width = 0;
+    for (const part of spec.split(",")) {
+        const m = /^(\d{1,6})(?:-(\d{1,6}))?$/.exec(part.trim());
+        if (!m) throw new Error(`\`pages\` can't read ${JSON.stringify(part.trim())}: write pages 3, pages 3-5 or pages 3,7-9.`);
+        const a = Number(m[1]), b = m[2] ? Number(m[2]) : a;
+        if (a < 1) throw new Error("`pages`: pages are numbered from 1.");
+        if (b < a) throw new Error(`\`pages ${a}-${b}\` runs backwards: write pages ${b}-${a}.`);
+        width += b - a + 1;
+        if (width > PIPE_PAGES_MAX) throw new Error(`\`pages\` selects at most ${PIPE_PAGES_MAX} pages in one stage; read them in parts.`);
+        want.push([a, b]);
+    }
+    const held = new Map<number, string[]>();
+    let cur: string[] | null = null, n = 0;
+    for (const l of lines) {
+        if (!cur) { const m = PAGE_OPEN.exec(l); if (m) { cur = [l]; n = Number(m[1]); } continue; }
+        cur.push(l);
+        if (l === "</page>") { if (!held.has(n)) held.set(n, cur); cur = null; }
+    }
+    if (!held.size) throw new Error("`pages` needs a paged value (an attached PDF, @file:…); this one has no pages.");
+    const pick = new Set<number>();
+    for (const [a, b] of want) for (let k = a; k <= b; k++) pick.add(k);
+    const missing = [...pick].filter((k) => !held.has(k)).sort((x, y) => x - y);
+    if (missing.length) {
+        const have = [...held.keys()].sort((x, y) => x - y);
+        throw new Error(`\`pages\`: this file holds pages ${pageRanges(have)}; it has no page ${pageRanges(missing)}.`);
+    }
+    return [...pick].sort((x, y) => x - y).flatMap((k) => held.get(k)!);
+}
+
 function uniq(lines: string[], argv: string[]): string[] {
     const { flags } = parseArgs("uniq", argv, "ci", "");
     const ci = flags.has("i"), showCount = flags.has("c");
@@ -522,6 +568,7 @@ export function runPipe(text: string, pipe: string | string[], limits?: PipeLimi
             case "sort": lines = sortLines(lines, argv); break;
             case "uniq": lines = uniq(lines, argv); break;
             case "sed": lines = sed(lines, argv, limits); break;
+            case "pages": lines = pages(lines, argv); break;
             case "cat": break;   // a harmless no-op if the model prefixes `cat |` out of habit
             // `count` is the STRUCTURE-AWARE size: elements of an array, rows of a table, keys of an object,
             // lines of text. `wc -l` counts LINES, which after a path stage means the lines of pretty-printed
