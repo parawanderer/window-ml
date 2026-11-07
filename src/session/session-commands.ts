@@ -129,7 +129,7 @@ export interface CommandDeps {
     archivedPolicyLoss?(hash: string): { at: number; labels: string[] } | undefined;
     /** note in the session's own transcript that it has been picked up on another page */
     noteResumed(hash: string, tabId: number, note: { id: string; url: string; fromUrl?: string; afterMs: number; dropped: string[]; kept?: string[] }): void;
-    /** start a run on a tab, through that page's own start path; resolves with what the page reported */
+    /** start a run on a tab, assembled in the worker (`startUserRun`), never by the page it acts on; resolves with how it started */
     /** `error`: why nothing started, in words the person can act on */
     startAgent(tabId: number, opts: { task: string; images?: string[]; files?: SentFile[]; model?: string; maxSteps?: number; vision?: true; stream?: true }, origin?: PromptOrigin): Promise<{ outcome: PageOutcome | "started"; hash?: string; error?: string }>;
     /** open a new tab at a URL and wait until the extension can talk to it; rejects when it never answers */

@@ -68,7 +68,8 @@ export async function attachFiles(runId: string, files: readonly SentFile[] | un
             });
             added.push(p);
         }
-        out.push({ name: p.name, type: p.type, bytes: p.bytes, pages: p.pages, body: fileOutline(p, r.doc, d.shelf.firstNamed(p.name, p.id)), escaped: 0, pointer: fileRef(p) });
+        const outline = fileOutline(p, r.doc, d.shelf.firstNamed(p.name, p.id));
+        out.push({ name: p.name, type: p.type, bytes: p.bytes, pages: p.pages, body: outline.text, escaped: outline.escaped, pointer: fileRef(p) });
     }
     return { ...(out.length ? { files: out } : {}), added };
 }
