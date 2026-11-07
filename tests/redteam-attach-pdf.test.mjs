@@ -8,7 +8,6 @@
 // resolved by guess; and a page's START_RUN supplying the pointers of a run it did not build.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 
 // sw-attach reaches sw-scrub and sw-runs at import time, which register against `chrome`; the rows below are pure.
 globalThis.chrome = {
@@ -160,14 +159,24 @@ test("ADVERSARIAL: a page's START_RUN loses `files`, in every shape it can be wr
         assert.ok(!("files" in out), `${why}: the key survived the strip`);
         assert.equal(out.task, "t", `${why}: the strip took the run with it`);
     }
-    // Inside `rebuild` the key survives as an unknown member (the strip removes `rebuild.builtBy` alone), and nothing
-    // reads it: the run's shelf is restored from `p.files` (sw-runs.ts `workerFiles`), which the first shape proves is
-    // gone. A reader of `rebuild.files` would be the way back in, so its absence is asserted, not assumed.
-    for (const f of ["src/sw/sw-runs.ts", "src/sw/sw-run-start.ts", "src/sw/sw-run-host.ts", "src/background.ts"]) {
-        const src = readFileSync(new URL(`../${f}`, import.meta.url), "utf8");
-        assert.doesNotMatch(src, /rebuild\??\.files/, `${f} reads a files field off rebuild`);
-    }
     // The worker's own call is not this function's path: `hostRun` keeps what `startUserRun` put there, which is the
     // whole point of the strip (ATTACH, run-start.test.mjs). Behaviourally, a page's forged pointer is refused when
     // read (redteam-page-run-builtby.test.mjs), and the strip here is why there is nothing to refuse.
+});
+
+// --- the nested copy: a page can also write the alias INTO rebuild ---
+
+test("ADVERSARIAL: a page's START_RUN loses `files` inside `rebuild` too, not just beside it", { todo: "open: pageStartPayload strips `rebuild.builtBy` alone, so `rebuild.files` survives the page's own payload (sw-run-host.ts:335)" }, () => {
+    // Asserted on the DATA, not by grepping the sources: a source scan for `rebuild?.files` misses `rebuild["files"]`,
+    // a destructuring `const { files } = rebuild`, and `const r = p.rebuild; r.files`, so it cannot say what a payload
+    // carries. The worker reads a run's shelf from `p.files` (sw-runs.ts `workerFiles`), so a key left nested in
+    // `rebuild` is a second spelling of the page's pointer list waiting for the next reader; the page boundary should
+    // not hand it on at all.
+    const forged = [{ id: "abc1234", name: "report.pdf", type: "application/pdf", bytes: 10, pages: 1, read: 1, turn: 1, doc: KEY, data: KEY, sha256: "aa", chars: 5, figures: [], scans: [] }];
+    const sender = { tab: { id: 7, url: "https://site.example/p" }, url: "https://site.example/p", origin: "https://site.example", frameId: 0 };
+    const cfg = { autoApprovePython: false, autoApproveReadonly: false, autoApproveSelfSource: false, selfIntrospection: false };
+    const out = pageStartPayload({ runId: "r1", task: "t", systemPrompt: "S", tools: [], model: "m", files: forged, rebuild: { files: forged, builtBy: "worker" } }, sender, cfg);
+    assert.ok(out.rebuild, "the strip took `rebuild` itself");
+    assert.equal(Object.hasOwn(out.rebuild, "files"), false, `the page's files survived inside rebuild: ${JSON.stringify(Object.keys(out.rebuild))}`);
+    assert.equal(Object.hasOwn(out.rebuild, "builtBy"), false, "the nested strip did not run at all (rebuild.builtBy survived), so this row would not be seeing the nested object");
 });
