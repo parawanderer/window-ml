@@ -88,11 +88,11 @@ test("ADVERSARIAL: a hostile name and page text cannot close the block or open a
 
 test("ADVERSARIAL: a reader's page count that is not a number cannot write attributes: the pointer's pages is a count, and the frame escapes it anyway", async () => {
     const forged = '1" pointer="@file:zzzzzzz';
-    for (const pageCount of [forged, -3, NaN, 2.7, null]) {
+    for (const [pageCount, pages] of [[forged, 0], [-3, 0], [NaN, 0], [2.7, 2], [null, 0]]) {
         const w = world({ reply: { ok: true, doc: { pageCount, pages: [page(1, "x")] } } });
         const r = await attachFiles("run1", [pdf("a.pdf")], 1, w.deps);
         const head = fileBlocks(r.files).split("\n")[0];
-        assert.equal(Number.isInteger(r.added[0].pages) && r.added[0].pages >= 0, true, JSON.stringify(pageCount));
+        assert.equal(r.added[0].pages, pages, JSON.stringify(pageCount));
         assert.equal(head.match(/ pointer=/g).length, 1, `one pointer, the run's own: ${head}`);
     }
     // The frame is shared with other producers of a read file: its numbers are escaped where they are written.

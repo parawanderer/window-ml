@@ -22,8 +22,9 @@ export interface AttachDeps {
     shelf: FileShelf;
 }
 
-/** A count a reader reported, as the non-negative integer every reader of the pointer may take it for (0 when it is not
- *  one): `ReadPdfFile` is a contract other producers fill, and its numbers reach model-facing text. */
+/** A count a reader reported, floored to the non-negative integer every reader of the pointer may take it for (0 when it
+ *  is not a finite non-negative number): `ReadPdfFile` is a contract other producers fill, and its numbers reach
+ *  model-facing text. */
 const count = (n: unknown): number => (typeof n === "number" && Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0);
 
 /** The sentence for a PDF the store could not keep. */
