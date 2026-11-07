@@ -253,6 +253,25 @@ ml.pipe(r.stdout, "grep -c '^ '");         // stdout and stderr are pointers, he
   an earlier result cannot be shown before it exists, and with policies covering the free tier a chain of read-only
   calls asks nothing today. Build it only once a measured case shows the per-call asks are the annoying part.
 
+RULED 2026-11-07 (the bench lane's proposal, `20261107-1357Z-bench-to-repl-specs-sh-tilde-proposal.md`; Shane's
+agreement reached the coordinator relayed, "it saves tokens", recorded as relayed until he confirms): the HOST
+expands a leading `~` in an `ml.sh.run` argument. Today argv is passed as written with no shell, so
+`["cat", "~/.ssh/config"]` names `<cwd>/~/.ssh/config`, reads free inside the workspace and finds nothing; in the
+bench's canary gemma4:31b spent a step on that and fell back to `sh -c`, which always asks. The rule: the host
+expands at resolve time, in the facts pass that already resolves path arguments, from the `HOME` it already passes
+through, so the facts, the judging, the card and the spawn see one path; the judge never sees an unexpanded `~`,
+because an expansion after judging would let `~/.ssh/config` pass as an in-root relative path. POSIX tilde-prefix
+cut down: a whole argument that is `~` or starts with `~/`, in `argv[0]`, every operand and `cwd` alike; never
+`~user`, never after `=`, never inside an argument; no globs, `$VAR` or pipes. Shown, not silent: the facts record
+`{ index, from, to }` per expanded argument, the card and the unasked line show `~/x → /real/x`, the result's argv
+echo carries the expanded form. No `HOME`: the argument stays literal and the facts say why, never `""` or `/`. A
+host that cannot expand is told apart by its version; against it the worker keeps today's literal behaviour and the
+JSDoc clause ("a leading `~` or `~/` in an argument is your home directory; nothing else is expanded") does not
+appear. It is a host protocol change (resolve plus a facts field, PROTOCOL.md) and then a window-ml PR; the host
+owner waits on Shane naming one (recommended: the async lane after `peek`); the window-ml tests and the `~`-spelled
+canary row (must ASK and show the expanded path, never read free as a workspace path) are the bench lane's, finder's
+own file. Independent of the lease bench.
+
 ## The API's shape: borrowed, not invented
 
 The calls above are illustrative. The SHAPE should be one models already know, executed differently underneath: the
