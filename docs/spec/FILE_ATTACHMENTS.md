@@ -537,9 +537,9 @@ or a message"). What a hostile page must not get, as tests that fail first:
 
 ## Every attachment to an agent run as a pointer, and a long paste (ruled 2026-11-07)
 
-The chat-page lane's piece (b), RELAYED as Shane's direction of 2026-11-07 ("allow mid-run files in general in all UI
+The chat-page lane's piece (b), Shane's direction of 2026-11-07 ("allow mid-run files in general in all UI
 surfaces"; "all the files a user uploads should be @file: pointers"; a pasted wall of text reachable without re-emitting
-it) and recorded as relayed until Shane confirms in the coordinator's session; the lane builds on its own user's word.
+it"), relayed by the lane and CONFIRMED by Shane in the coordinator's session the same day.
 Its design note is session-mail `20261107-1116Z-calm-chat-motion-to-repl-specs-every-attachment-a-pointer.md`; the
 rulings, in `20261107-1140Z-repl-specs-to-calm-chat-motion-every-attachment-a-pointer-rulings.md`, are these.
 
