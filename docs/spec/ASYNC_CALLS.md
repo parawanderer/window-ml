@@ -186,6 +186,90 @@ subscribe(on, times, ttl) ──────────────────
    except an overrun wake, which it may only defer
 ```
 
+### Rulings on the async lane's mode 1 design note (coordinator, 2026-11-07)
+
+The lane's note (session-mail `20261107-1204Z-async-to-repl-specs-mode1-design.md`) is accepted with these rulings,
+each of which amends the text above where it says otherwise:
+
+- **`ml.sh` is a member, not a tool, so its lease sits on the call** (`shRun`'s await of `done`), and on overrun the
+  member THROWS a `Detached` error carrying `{ id, elapsed_ms, lease_ms, expect_ms, tail }` in exec and as the same
+  exception on the Python wire. Mode 1's "the tool call resolves with `{ status: "detached" }`" is the shape for a
+  TOOL (python_exec, exec, a fetch); a member resolving with a value would hand a script `r.stdout === undefined`
+  with no error, the plausible-wrong-answer shape this codebase designs out.
+- **One deadline, one wake.** `expect_ms ?? SH_LEASE_MS` is the lease; the detach at that deadline IS rule 2's wake,
+  carrying one of its two phrasings. After the detach no clock runs unless the model sets one (`task await
+  timeout_ms`, itself leased, detaching again when it runs out). The finished result's inbox return is the other
+  wake. No second wake at a multiple of the expectation.
+- **One builtin tool, `task({ op, id, ... })`** with `await`, `cancel`, `tail`, and later `join` with `ids`, declared
+  in the tool registry, dispatched in the worker with the run id from the loop, never from its arguments; a foreign
+  or unknown id reads `UnknownTask`, indistinguishably.
+- **One task table for every executor** (`sw-tasks.ts`, `defineState` `run.tasks`, scope run, lost on worker
+  eviction and turn end), holding the executors' callbacks and never the script's word. Statuses: `running`,
+  `done`, `failed`, `cancelled`, `orphaned` (`expired` joins with mode 2's subscriptions); a row exists only once a
+  call has detached or was started in the background, so `detached` is not a status.
+- **The inbox item is `{ text, origin: "task" }`**, injected as a user-role message at the step boundary as a steer
+  is, kept apart from a person's steer by its origin in the transcript and both exports (the export rule: what the
+  model saw, labelled). Only `sw-tasks.ts` sets that origin; a steer cannot claim it.
+- **The run's end is the turn's end** (`settle`), as rule 4 says and as the keep does: a model that answers while a
+  build is detached ends the build, and the `Detached` text says so in one line. A session continue does not keep a
+  task.
+- **`ml.current.tasks` is computed at the snapshot's instant** (`withTasks` beside `withPolicies`, at both assembly
+  sites), `elapsed_ms` from the snapshot's clock, the tail read through the row's bounded, scrubbed `tail()`; no row
+  is kept live. RE-RULED the same hour on the lane's correction: a Python cell has no `ml.current` today (the
+  Python facade exposes the server's wire members only; every `withPolicies`/`withRuntime` site is the exec isolated
+  world or the dialect survey), so `ml.current.tasks` ships for JavaScript in the first PR; Python's parity there is
+  the `Detached` exception on `sh.run` (an `MlError` carrying the task id), the same inbox return and the same `task`
+  tool, which is the loop's and does not care which world started the call. "`ml.current` in Python" is an OPEN item
+  below, its own piece of work.
+- **Live `tail` on `ml.sh` has nothing to read today** (the host reports output only with `done`): the row's `tail`
+  is null with the sentence saying so, never a fake empty string, until a host `peek` op exists. The host op is a
+  window-ml-host PR; no lane owns that repo today, so WHO WRITES IT IS A CALL FOR SHANE (recommended: the async
+  lane, as a second slice after mode 1 merges, since it knows the shape it needs). DECIDED 2026-11-07 (Shane): the async lane writes it as its second slice after mode 1 merges: `peek { id, stream, offset, length }` reads the growing held file before `done`, with `read`'s 512 KiB range cap and `{ "$bytes" }` form, a paragraph in the host's `PROTOCOL.md` and a test in the host repo, from the lane's own clone of window-ml-host; the window-ml PR that consumes it names the host version it needs; the shape comes to the coordinator as a short note before the host PR, since it is a protocol change.
+- **The host's 2-minute default stays the script's business**: the worker sends no `timeoutMs` the script did not
+  give; the `Detached` text names the limit the call runs under.
+- **Page-hosted runs do not arise for `ml.sh`** (it runs only in a worker-built run's isolated world); the
+  navigation question is deferred to the exec executor, recorded here.
+- **An extension-internal shell call never detaches**: `lease: false` on `ShCallContext`, settable only by worker
+  code (`sw-library-proposal.ts`'s read), out of any script's reach.
+- **`SH_LEASE_MS` is 15 s in `sh-call.ts`**, `// state: fixed`, marked a placeholder; the bench (arms 5, 15, 60 s over
+  a fake host whose sleep outlasts the lease) runs before the PR leaves draft and its numbers go in the PR.
+- **No UI in the first PR** beyond the run log and the state panel's registry view; the chip is a later PR agreed
+  with the chat-page lane first. RULED 2026-11-07 (the chat-page lane, on the async lane's question, upheld by the coordinator): a task result in the transcript is a NEW EVENT KIND on the agent-site-say precedent, rendered in the async lane's PR under the chat-page lane's review, so no merged state ever draws a task result as the person's bubble; this is the transcript side of the `task` origin above. BUILT 2026-11-07 (the async lane): mode 1 on `ml.sh` is PR #1437, branch `async/mode1-shell-lease`, head 461b5821 (verified open as a DRAFT, labels @agent @exec @security @docs @python @ui, no review yet); it stays a draft only for the `SH_LEASE_MS` bench, whose matrix and cost the lane sends before any real-model run (a bench result changes one constant and the body). The event kind is named `agent-task-say`, worker-only, drawn in this PR (reducer, bubble, prompt pin, HUD label, both exports) under the chat-page lane's review, the body naming who built which part. Two facts the lane named: `sw-scrub.ts`'s import-time `chrome.storage` listener is now guarded with `typeof chrome`, because importing `sw-tasks.ts` pulled it into eleven worker tests that load without `chrome`; deferred and named in the body are the one-line task count in the prompt ("the prompt pays one line" above) and the panel check of the Detached wording. flaky-ci reviews the code; e3 red-teams the surface (routed 2026-11-07; the lane's eight rows are its list). UNDER MEASUREMENT 2026-11-07 (Shane's ask, confirmed in the coordinator's session: an interrupt that keeps the namespace is part of what the tool is for to him): whether the kill is really the only interrupt of a running cell. Pyodide's `setInterruptBuffer` raises `KeyboardInterrupt` in the running frame between bytecodes (Jupyter's "Interrupt kernel"; the namespace survives, a call inside C waits for its return), which needs a `SharedArrayBuffer` and so a cross-origin-isolated offscreen document; and an exec run through CDP can be stopped by `Runtime.terminateExecution` with the page's state kept. Three measurements, nothing merged: the restricted core keeps the interrupt check (Node first); what cross-origin isolation of the offscreen document breaks (pdf.js, the archive worker); what `terminateExecution` returns and whether window state survives. If they hold, the python_exec slice's cancel becomes KeyboardInterrupt first and the kill only when it does not land within N ms, and exec's becomes terminate when it ran through CDP; the correction lands here as a spec PR from the lane's note, before the python_exec design note. e3's red-team pass on #1437 STARTED 2026-11-07 against 461b5821: node:test rows with mocks for `ml.current.tasks` and the exec-side `Detached` handle, e2e rows for a page's reach of the task tool and the presence invariant; its test-only PR lands after #1437 merges (the surface is not on main), its flips as its own commit on the lane's branch before that merge.
+- **The red team's rows** are the eight in the note (another run's or a guessed id; a result after settle; a task
+  outliving the run; URL, key or filter in a tail or result; a forged `Detached` or `task` origin; writes to or
+  foreign rows in `ml.current.tasks`; nothing new reaches an unapproved page; the detach never skips the judgement
+  or the ask), written by e3 in its own file as a PR after the lane's.
+
+## `ml.current.tasks`: the model's own view of its async work (Shane, 2026-11-07)
+
+The model gets its async work the way it gets everything else about its run: as a member of `ml.current`, read from
+the dialect, never from a tool that dumps (`CURRENT_CONTEXT.md`, rules 1 and 5). `ml.current.tasks` is one
+`TableLike`, resolved up front with the rest of the facade, one row per detached call, subscription and join of THIS
+run: `id`, `kind` (`call`, `subscription`, `join`), `tool`, `status` (`running`, `detached`, `done`, `cancelled`,
+`orphan`, `expired`), `started`, `elapsed_ms`, `lease_ms`, `expect_ms` (null when the model gave none), `tail` (the
+scrubbed, capped tail rule 6 allows and nothing more), `times` and `ttl` for a subscription, and `result` (an
+`@tool:` pointer once the call is done, null before). Writing to it throws, as writing to `messages` does.
+
+What this buys, and why it is a ruling rather than a convenience:
+
+- **Mode 2's predicate is free.** Watches already evaluate a read-only expression over `ml.current`; "when task 7 is
+  done" is `ml.current.tasks` in that evaluator, no second one.
+- **The actions stay tool calls.** `await`, `cancel`, `tail` and `join` are effects on the handle, so they are tools
+  with the handle's sender checks (rule 5), never methods on the facade: `ml.current` has no effects, and a row's
+  `id` is what the model passes to them.
+- **The inbox pull sits beside it** (recommended, not yet Shane's word): rule 7's "pull is a read of the inbox as a
+  `TableLike`" is `ml.current.inbox`, the events collected and not yet injected, so a muted policy is read from the
+  same place.
+- **Python parity by construction** (`CURRENT_CONTEXT.md`, "Python parity"): the same object in a cell, so a
+  detached cell can read its sibling calls.
+- **The prompt pays one line.** The table is never printed into the prompt; when it is non-empty the turn carries a
+  count ("2 detached calls; `ml.current.tasks`"), per `PROMPT_BUDGET.md`.
+
+What it must never carry: another run's rows (rule 5; the red-team row is a page reading `ml.current.tasks` of a run
+it did not build), an unscrubbed or uncapped `tail`, a result value that the output cap would have handed to the
+model as a pointer. It lands in mode 1's first PR with `ml.sh`, since the handle's state is what it reads; the async
+lane's design note names the facade's module and how a row is kept current while the facade stays synchronous.
+
 ## What this changes for the people writing the pieces
 
 - A new tool, `ml.*` member or page-started message type gets a RED-TEAM PASS before it lands (`AGENTS.md`): the
@@ -209,6 +293,8 @@ the first PR, as every REPL lane does.
 
 ## Open questions
 
+- `ml.current` in a Python cell: the facade has no `current` members today, so `ml.current.tasks` (and the rest of
+  the facade) reaches Python only when that is built, a separate piece from mode 1 (recorded 2026-11-07).
 - The lease's default per tool: a bench, as rule 1 says. The placeholder is seconds, not minutes.
 - Whether the HUD and the sidebar show a detached call as a chip with its cancel, and whether the Run state panel's
   inbox view is the person's way to pull what a muted policy collected.
