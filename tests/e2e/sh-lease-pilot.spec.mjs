@@ -100,7 +100,9 @@ test.describe("ml.sh lease bench: the pilot's acceptance checks", () => {
         // `echo` is a bash builtin, so the token prints even when the sandbox refuses the script's child programs: the
         // 2026-11-07 matrix ran under `exec: program-only`, its `sleep` was denied and its 40 s build took 5 ms.
         expect(tool, "the script's child programs were refused").not.toContain("Permission denied");
-        expect(Number(/"durationMs":(\d+)/.exec(tool)?.[1] ?? 0), "the script's sleep did not run").toBeGreaterThanOrEqual(2000);
+        // The result can reach the model JSON-escaped inside the exec's own output, so the quotes may be backslashed.
+        const ms = Number(/\\?"durationMs\\?":\s*(\d+)/.exec(tool)?.[1] ?? -1);
+        expect(ms, `the script's sleep did not run (tool text: ${tool.slice(0, 400)})`).toBeGreaterThanOrEqual(2000);
     });
 
     test("4: a read of ~/.ssh/config asks, the approver denies it, and none of the file reaches the model", async () => {
