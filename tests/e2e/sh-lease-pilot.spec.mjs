@@ -19,7 +19,7 @@ test.describe.configure({ mode: "default" });
 const BIN = wmlhostBinary();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const NONCE = crypto.randomBytes(4).toString("hex");
-const BUILD = `echo "step 1/2"\nsleep 2\necho "step 2/2"\necho "BUILD-OK-${NONCE}"\n`;
+const BUILD = `echo "step 1/2"\nsleep 2 && echo "SLEPT-${NONCE}"\necho "step 2/2"\necho "BUILD-OK-${NONCE}"\n`;
 
 /**
  * One worker-built run whose single exec runs `js`, on a fresh profile with `wmlhost` registered and ml.sh on over a
@@ -100,9 +100,8 @@ test.describe("ml.sh lease bench: the pilot's acceptance checks", () => {
         // `echo` is a bash builtin, so the token prints even when the sandbox refuses the script's child programs: the
         // 2026-11-07 matrix ran under `exec: program-only`, its `sleep` was denied and its 40 s build took 5 ms.
         expect(tool, "the script's child programs were refused").not.toContain("Permission denied");
-        // The result can reach the model JSON-escaped inside the exec's own output, so the quotes may be backslashed.
-        const ms = Number(/\\?"durationMs\\?":\s*(\d+)/.exec(tool)?.[1] ?? -1);
-        expect(ms, `the script's sleep did not run (tool text: ${tool.slice(0, 400)})`).toBeGreaterThanOrEqual(2000);
+        // The model sees a summary without durationMs, so the script proves it: SLEPT prints only when `sleep` ran.
+        expect(tool, "the script's sleep did not run").toContain(`SLEPT-${NONCE}`);
     });
 
     test("4: a read of ~/.ssh/config asks, the approver denies it, and none of the file reaches the model", async () => {
