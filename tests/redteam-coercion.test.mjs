@@ -41,6 +41,7 @@ test("RED TEAM: control — a join, a split and a replace on the page's own data
     assert.equal((await run(`const o = await ml.models(); return o.join("-")`, ["a", "b"])).value, "a-b", "an array of the page's strings joins");
     assert.deepEqual((await run(`const o = await ml.models(); return o.split(",")`, "a,b")).value, ["a", "b"], "a string splits");
     assert.equal((await run(`const o = await ml.models(); return o.replace("a", "z")`, "a,b")).value, "z,b", "a string replaces");
+    assert.deepEqual((await run(`const o = await ml.models(); return o.sort()`, ["b", "a"])).value, ["a", "b"], "an array of the page's strings sorts, with no comparator");
     // Measured on main: `+` on a real String object whose own `toString` answers "PAGE" still answers the data, because
     // the intrinsic `valueOf` is what the number hint reaches — so the instrument every hole row uses does report
     // "did not run" on a read that is safe, and a hole row's non-empty `ran` is the page's function, not the probe's.
@@ -76,22 +77,30 @@ test("RED TEAM: `o + \"\"` on a page value is a data read (the page's valueOf mu
     assert.deepEqual(ran, [], "o + '' ran the page's own valueOf");
 });
 
-test("RED TEAM: `[o].join(\"\")` is a data read (the page's toString must not run)", { todo: OPEN }, async () => {
+test("RED TEAM: `[o].join(\"\")` is a data read (the page's toString must not run)", async () => {
     const ran = [];
     await run(`const o = await ml.models(); return [o].join("")`, pageValue(ran)).catch(() => {});
     assert.deepEqual(ran, [], "[o].join('') ran the page's own toString");
 });
 
-test("RED TEAM: `[].concat(o).join(\"\")` is a data read (the page's toString must not run)", { todo: OPEN }, async () => {
+test("RED TEAM: `[].concat(o).join(\"\")` is a data read (the page's toString must not run)", async () => {
     const ran = [];
     await run(`const o = await ml.models(); return [].concat(o).join("")`, pageValue(ran)).catch(() => {});
     assert.deepEqual(ran, [], "concat(o).join('') ran the page's own toString");
 });
 
-test("RED TEAM: `[o].toString()` is a data read (the page's toString must not run)", { todo: OPEN }, async () => {
+test("RED TEAM: `[o].toString()` is a data read (the page's toString must not run)", async () => {
     const ran = [];
     await run(`const o = await ml.models(); return [o].toString()`, pageValue(ran)).catch(() => {});
     assert.deepEqual(ran, [], "[o].toString() ran the page's own toString");
+});
+
+test("RED TEAM: `sort()` with no comparator is a data read (the page's toString must not run)", async () => {
+    // The default comparator is ToString, so a sort of two elements coerces the object one: measured on main, the page's
+    // own toString ran and the host sorted by its answer. An array of data still sorts (the control above).
+    const ran = [];
+    await run(`const o = await ml.models(); return [o, 2].sort()`, pageValue(ran)).catch(() => {});
+    assert.deepEqual(ran, [], "[o, 2].sort() ran the page's own toString");
 });
 
 test("RED TEAM: a String object's split reads its data, never its own toString", { todo: OPEN }, async () => {
