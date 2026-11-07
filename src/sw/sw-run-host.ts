@@ -1698,7 +1698,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                             renderIn = proposal.length === 1
                                 ? { type: "code", text: proposal[0].source, lang: "javascript", format: true, note: notes[0] }
                                 : { type: "code", text: proposal.map((q, i) => `// Rule ${i + 1} of ${proposal!.length}: ${q.effect}\n${q.source}`).join("\n\n"), lang: "javascript",
-                                    note: proposal.map((_, i) => `Rule ${i + 1} of ${proposal!.length}. ${notes[i]}`).join("\n\n") };
+                                    note: proposal.map((_, i) => `Rule ${i + 1} of ${proposal!.length}. ${notes[i]}`).join("\n\n"),
+                                    rules: proposal.map((q, i) => ({ effect: q.effect, source: q.source, note: notes[i] })) };
                         } else renderIn = { type: "code", text: "", lang: "javascript", note: "This proposal cannot be added: the run does not offer propose_policy, or it does not run." };
                     }
                     // propose_manifest's card is the worker's too: the draft pinned to what the host resolved, led by how it
