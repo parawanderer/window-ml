@@ -186,6 +186,36 @@ subscribe(on, times, ttl) ──────────────────
    except an overrun wake, which it may only defer
 ```
 
+## `ml.current.tasks`: the model's own view of its async work (Shane, 2026-11-07)
+
+The model gets its async work the way it gets everything else about its run: as a member of `ml.current`, read from
+the dialect, never from a tool that dumps (`CURRENT_CONTEXT.md`, rules 1 and 5). `ml.current.tasks` is one
+`TableLike`, resolved up front with the rest of the facade, one row per detached call, subscription and join of THIS
+run: `id`, `kind` (`call`, `subscription`, `join`), `tool`, `status` (`running`, `detached`, `done`, `cancelled`,
+`orphan`, `expired`), `started`, `elapsed_ms`, `lease_ms`, `expect_ms` (null when the model gave none), `tail` (the
+scrubbed, capped tail rule 6 allows and nothing more), `times` and `ttl` for a subscription, and `result` (an
+`@tool:` pointer once the call is done, null before). Writing to it throws, as writing to `messages` does.
+
+What this buys, and why it is a ruling rather than a convenience:
+
+- **Mode 2's predicate is free.** Watches already evaluate a read-only expression over `ml.current`; "when task 7 is
+  done" is `ml.current.tasks` in that evaluator, no second one.
+- **The actions stay tool calls.** `await`, `cancel`, `tail` and `join` are effects on the handle, so they are tools
+  with the handle's sender checks (rule 5), never methods on the facade: `ml.current` has no effects, and a row's
+  `id` is what the model passes to them.
+- **The inbox pull sits beside it** (recommended, not yet Shane's word): rule 7's "pull is a read of the inbox as a
+  `TableLike`" is `ml.current.inbox`, the events collected and not yet injected, so a muted policy is read from the
+  same place.
+- **Python parity by construction** (`CURRENT_CONTEXT.md`, "Python parity"): the same object in a cell, so a
+  detached cell can read its sibling calls.
+- **The prompt pays one line.** The table is never printed into the prompt; when it is non-empty the turn carries a
+  count ("2 detached calls; `ml.current.tasks`"), per `PROMPT_BUDGET.md`.
+
+What it must never carry: another run's rows (rule 5; the red-team row is a page reading `ml.current.tasks` of a run
+it did not build), an unscrubbed or uncapped `tail`, a result value that the output cap would have handed to the
+model as a pointer. It lands in mode 1's first PR with `ml.sh`, since the handle's state is what it reads; the async
+lane's design note names the facade's module and how a row is kept current while the facade stays synchronous.
+
 ## What this changes for the people writing the pieces
 
 - A new tool, `ml.*` member or page-started message type gets a RED-TEAM PASS before it lands (`AGENTS.md`): the
