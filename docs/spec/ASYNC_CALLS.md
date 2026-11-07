@@ -186,6 +186,56 @@ subscribe(on, times, ttl) ──────────────────
    except an overrun wake, which it may only defer
 ```
 
+### Rulings on the async lane's mode 1 design note (coordinator, 2026-11-07)
+
+The lane's note (session-mail `20261107-1204Z-async-to-repl-specs-mode1-design.md`) is accepted with these rulings,
+each of which amends the text above where it says otherwise:
+
+- **`ml.sh` is a member, not a tool, so its lease sits on the call** (`shRun`'s await of `done`), and on overrun the
+  member THROWS a `Detached` error carrying `{ id, elapsed_ms, lease_ms, expect_ms, tail }` in exec and as the same
+  exception on the Python wire. Mode 1's "the tool call resolves with `{ status: "detached" }`" is the shape for a
+  TOOL (python_exec, exec, a fetch); a member resolving with a value would hand a script `r.stdout === undefined`
+  with no error, the plausible-wrong-answer shape this codebase designs out.
+- **One deadline, one wake.** `expect_ms ?? SH_LEASE_MS` is the lease; the detach at that deadline IS rule 2's wake,
+  carrying one of its two phrasings. After the detach no clock runs unless the model sets one (`task await
+  timeout_ms`, itself leased, detaching again when it runs out). The finished result's inbox return is the other
+  wake. No second wake at a multiple of the expectation.
+- **One builtin tool, `task({ op, id, ... })`** with `await`, `cancel`, `tail`, and later `join` with `ids`, declared
+  in the tool registry, dispatched in the worker with the run id from the loop, never from its arguments; a foreign
+  or unknown id reads `UnknownTask`, indistinguishably.
+- **One task table for every executor** (`sw-tasks.ts`, `defineState` `run.tasks`, scope run, lost on worker
+  eviction and turn end), holding the executors' callbacks and never the script's word. Statuses: `running`,
+  `done`, `failed`, `cancelled`, `orphaned` (`expired` joins with mode 2's subscriptions); a row exists only once a
+  call has detached or was started in the background, so `detached` is not a status.
+- **The inbox item is `{ text, origin: "task" }`**, injected as a user-role message at the step boundary as a steer
+  is, kept apart from a person's steer by its origin in the transcript and both exports (the export rule: what the
+  model saw, labelled). Only `sw-tasks.ts` sets that origin; a steer cannot claim it.
+- **The run's end is the turn's end** (`settle`), as rule 4 says and as the keep does: a model that answers while a
+  build is detached ends the build, and the `Detached` text says so in one line. A session continue does not keep a
+  task.
+- **`ml.current.tasks` is computed at the snapshot's instant** (`withTasks` beside `withPolicies`, at both assembly
+  sites), `elapsed_ms` from the snapshot's clock, the tail read through the row's bounded, scrubbed `tail()`; no row
+  is kept live. The Python cell reads the same snapshot, so Python parity is in the first PR's scope, the wire
+  exception included.
+- **Live `tail` on `ml.sh` has nothing to read today** (the host reports output only with `done`): the row's `tail`
+  is null with the sentence saying so, never a fake empty string, until a host `peek` op exists. The host op is a
+  window-ml-host PR; no lane owns that repo today, so WHO WRITES IT IS A CALL FOR SHANE (recommended: the async
+  lane, as a second slice after mode 1 merges, since it knows the shape it needs).
+- **The host's 2-minute default stays the script's business**: the worker sends no `timeoutMs` the script did not
+  give; the `Detached` text names the limit the call runs under.
+- **Page-hosted runs do not arise for `ml.sh`** (it runs only in a worker-built run's isolated world); the
+  navigation question is deferred to the exec executor, recorded here.
+- **An extension-internal shell call never detaches**: `lease: false` on `ShCallContext`, settable only by worker
+  code (`sw-library-proposal.ts`'s read), out of any script's reach.
+- **`SH_LEASE_MS` is 15 s in `sh-call.ts`**, `// state: fixed`, marked a placeholder; the bench (arms 5, 15, 60 s over
+  a fake host whose sleep outlasts the lease) runs before the PR leaves draft and its numbers go in the PR.
+- **No UI in the first PR** beyond the run log and the state panel's registry view; the chip is a later PR agreed
+  with the chat-page lane first.
+- **The red team's rows** are the eight in the note (another run's or a guessed id; a result after settle; a task
+  outliving the run; URL, key or filter in a tail or result; a forged `Detached` or `task` origin; writes to or
+  foreign rows in `ml.current.tasks`; nothing new reaches an unapproved page; the detach never skips the judgement
+  or the ask), written by e3 in its own file as a PR after the lane's.
+
 ## `ml.current.tasks`: the model's own view of its async work (Shane, 2026-11-07)
 
 The model gets its async work the way it gets everything else about its run: as a member of `ml.current`, read from
