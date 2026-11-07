@@ -3,14 +3,15 @@
 // docs/dev/readonly-exec.md, "The mediated evaluator"). Found while probing `ml.embed`'s string read (#1336); the flaw
 // is in the dialect's central kind check, so it applies to main too, and this file imports nothing of that PR's.
 //
-// `kindOf` reads `Object.prototype.toString.call(o)` for the String and RegExp kinds. A page object can answer that tag
-// through a Symbol.toStringTag getter, so it decides its own kind, and the member dispatch then takes the string (or
-// regexp) path — which looks the member up on the object ITSELF — so the page's own function runs where a plain object
-// is refused. Measured on main: a tagged object's `o.toUpperCase()` runs its own `toUpperCase` and returns its value,
-// while the same object with any other tag is `NotInDialect method 'toUpperCase' not allowed on this value`.
-// The Date branch directly below the broken ones already refuses to rely on the tag, and says why:
-// "a page object can claim Symbol.toStringTag = 'Date', and since a date now has methods, a claimed one would have its
-// OWN getTime called" — the borrowed getter throws on an object without the internal slot. That is the shape of the fix.
+// Before #1393, `kindOf` read `Object.prototype.toString.call(o)` for the String and RegExp kinds. A page object could
+// answer that tag through a Symbol.toStringTag getter, so it decided its own kind, the member dispatch then took the
+// string (or regexp) path — which looks the member up on the object ITSELF — and the page's own function ran where a
+// plain object is refused. Measured on main: a tagged object's `o.toUpperCase()` ran its own `toUpperCase` and returned
+// its value, while the same object with any other tag was `NotInDialect method 'toUpperCase' not allowed on this value`.
+// #1393 decides both kinds by brand instead (`isStringObject`, `isRegExpObject`), so the tag is not read at all. The
+// Date branch had already refused to rely on it, and said why: "a page object can claim Symbol.toStringTag = 'Date', and
+// since a date now has methods, a claimed one would have its OWN getTime called" — the borrowed getter throws on an
+// object without the internal slot. That shape is now the rule for every kind.
 //
 // The two hole rows landed as `{ todo }` on main, each failing at the assertion it carries, and are flipped here — the
 // rule-10 flip, this file only — now that the dialect decides kinds by brand (#1393). The controls beside them pin what
@@ -38,7 +39,7 @@ async function withValue(o, js) {
     return evalReadonly(js, doc(), ml, undefined, {});
 }
 
-// --- the hole: a claimed tag decides the member set ---
+// --- a claimed tag does not decide the member set (the rows the hole became) ---
 
 test("RED TEAM: Symbol.toStringTag = 'String' does not grant the string member set (the page's own method must not run)", async () => {
     const { o, ran } = pageObject("String", { toUpperCase: () => "PAGE" });
