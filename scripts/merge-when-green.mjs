@@ -260,6 +260,30 @@ export function postedByOthersAfter(unread, headAt) {
     return unread.filter((u) => !u.own && Date.parse(u.at ?? "") > t).length;
 }
 
+/**
+ * The posts `--await-review` waits for, as a count, over everything on the PR: {@link postedByOthersAfter} of every post
+ * {@link pickUnread} finds with nothing read (`--read` says what still blocks; an await is about WHICH head a post
+ * covers, so reading one never releases the arm). The one expression the arm's rule is, so a test pins what the call
+ * site in `facts` runs.
+ */
+export function awaitCount(posts, { session = null, headAt }) {
+    return postedByOthersAfter(pickUnread(posts, { session, read: [] }), headAt);
+}
+
+/** A GitHub time or a git committer date as one stamp (`1970-01-01T00:00:00.000Z`), or `undated` when it parses to none. */
+function at(s) {
+    const t = Date.parse(s ?? "");
+    return Number.isFinite(t) ? new Date(t).toISOString() : "undated";
+}
+
+/**
+ * One printed unread line: the post and WHEN it was created, beside the head commit's own time, so a post that predates
+ * the head is visibly not a review of it (a post at 12:02:47Z beside a head committed 12:03:15Z reads as what it is).
+ */
+export function unreadLine(u, headAt) {
+    return `${u.kind} ${u.id} ${u.author}${u.own ? " (marked yours: still --read it)" : ""} at ${at(u.at)} (head ${at(headAt)}): ${u.preview}`;
+}
+
 /** The verdict from the facts gathered about a PR: `{ ok, pending, reason }`. Pure, so the rule is testable. */
 export function judge(f) {
     // First, and never pending: no amount of waiting lets the tool judge a change to itself.
@@ -270,7 +294,11 @@ export function judge(f) {
     if (f.deletedTestFiles) return { ok: false, reason: "deletes a test file" };
     if (f.tests.removed > f.tests.added) return { ok: false, reason: `removes tests (${f.tests.removed} removed, ${f.tests.added} added lines)` };
     // A named reviewer who has not posted on this head yet: wait for the post, then it blocks like any other until --read.
-    if (f.awaitReview && !f.postedByOthers) return { ok: false, pending: true, reason: `no review posted after ${f.sha.slice(0, 8)}'s commit yet (--await-review): waiting for one (a post older than the head does not count)` };
+    if (f.awaitReview && !f.postedByOthers) {
+        // Both times on the line: a post predating the head must read as one, not as "nobody posted" (the #1425 shape).
+        const said = (f.awaitPosts ?? []).map((u) => `${u.author} at ${at(u.at)}`);
+        return { ok: false, pending: true, reason: `no review posted after ${f.sha.slice(0, 8)}'s commit at ${at(f.headAt)} yet (--await-review): waiting for one (${said.length ? `${said.length} post${said.length === 1 ? "" : "s"} on file: ${said.join(", ")}, none after the head` : "no post on file"})` };
+    }
     if (f.reviews || f.inlineComments) {
         // The ids to name once they have been read and found to ask nothing: `--read` is the only way past one.
         const flags = (f.unread || []).map((u) => `--read ${u.id}`).join(" ");
@@ -341,7 +369,9 @@ function facts(pr, session, read = [], awaitReview = false) {
     // What --await-review waits for: a post by anyone but this session created AFTER the head commit, read or not
     // (the conflicts notice excluded). An older post is a review of an older head; a re-check of a pushed head waits.
     const headAt = git("show", "-s", "--format=%cI", sha);
-    const postedByOthers = postedByOthersAfter(pickUnread(posts, { session, read: [] }), headAt);
+    const postedByOthers = awaitCount(posts, { session, headAt });
+    // The same posts awaitCount counted over, unfiltered by time: the pending reason names who is on file and when.
+    const awaitPosts = pickUnread(posts, { session, read: [] });
     // This copy's own files: main's, since the trampoline always hands over.
     const own = path.resolve(import.meta.dirname, "..");
     const readOwn = (p) => { try { return readFileSync(path.join(own, p), "utf8"); } catch { return null; } };
@@ -355,7 +385,7 @@ function facts(pr, session, read = [], awaitReview = false) {
         reviews: unread.filter((u) => u.kind !== "inline").length,
         inlineComments: unread.filter((u) => u.kind === "inline").length,
         unread,
-        awaitReview, postedByOthers,
+        awaitReview, postedByOthers, awaitPosts, headAt,
         stacked: Number(gh("pr", "list", "--base", head, "--json", "number", "-q", "length")) || 0,
         mergeable: view.mergeable,
     };
@@ -558,7 +588,7 @@ async function main() {
     }
     const { blocked, held, servers, heldRuns } = await leftovers(f.head, { keep, discard });
     console.log(`${pr}: ${v.reason}`);
-    for (const u of f.unread || []) console.log(`  ${u.kind} ${u.id} ${u.author}${u.own ? " (marked yours: still --read it)" : ""}: ${u.preview}`);
+    for (const u of f.unread || []) console.log(`  ${unreadLine(u, f.headAt)}`);
     if (!v.ok) process.exit(1);
     if (blocked) { console.log(`${pr}: ${merge ? "NOT MERGED" : "would not merge"}: a worktree holds work that is in no commit (above)`); process.exit(1); }
     if (!merge) return;
