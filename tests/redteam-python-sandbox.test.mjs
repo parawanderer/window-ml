@@ -1179,8 +1179,10 @@ test("P2-noyield (pin 12): taking the hook down DURING the spend does not disarm
     // measured here: the spend cancels a pending task before its next turn, so the rebind never landed (its line
     // reached 0 in three of three runs, and a `sleep(0)` variant in three more — janitor-2's measurement and mine).
     // A loop callback the cell scheduled does land: measured 1 ms after the cell returns, inside the spend's own
-    // awaits, and the marker reads 1 in six of six runs. The row asserts that reach FIRST, so a core where the callback
-    // stops landing reds here instead of passing on a bare spinner, which P2-bound already pins.
+    // awaits, and the marker reads 1 in six of six runs. The marker is bumped AFTER `sys.settrace(None)` in that
+    // callback, so `reach === 1` says the removal was executed, not merely that the callback arrived. The row asserts
+    // that reach FIRST, so a core where the callback stops landing reds here instead of passing on a bare spinner,
+    // which P2-bound already pins.
     const run = async (handler) => {
         const t0 = Date.now();
         const r = await cell(`
@@ -1194,7 +1196,7 @@ async def _left():
     except BaseException:
 ${handler}
 asyncio.ensure_future(_left()).set_name("leftover")
-asyncio.get_running_loop().call_later(0.001, lambda: (_bump(), sys.settrace(None)))
+asyncio.get_running_loop().call_later(0.001, lambda: (sys.settrace(None), _bump()))
 await asyncio.sleep(0)
 "x"`);
         const reach = (await cell(`import builtins\ngetattr(builtins, "_sab_ran", "ABSENT")`)).value;
