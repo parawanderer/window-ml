@@ -65,7 +65,8 @@ async function holdText(runId: string, f: { name: string; type: string; text: st
  * The files of a run's message, each held for the run's session and noted on its shelf, framed: a text file whole
  * while the message's text fits (`sentWhole`), past that as its outline, and a PDF read and framed as its outline, each
  * under its pointer. The same bytes twice are one file. Refused whole, before the message is sent, when a PDF will not
- * read or the store cannot keep a file; rows stored by then are the caller's to release with the session.
+ * read or the store cannot keep a file: the pointers noted by then are taken back off the shelf, and rows stored by
+ * then are the caller's to release with the session.
  * @param runId the run, whose session holds the rows
  * @param files the message's files, checked (`checkFilesField`)
  * @param turn the turn they arrive in, 1-based
@@ -75,8 +76,19 @@ async function holdText(runId: string, f: { name: string; type: string; text: st
  */
 export async function attachFiles(runId: string, files: readonly SentFile[] | undefined, turn: number, d: AttachDeps): Promise<{ files?: FramedFile[]; added: FilePointer[] }> {
     const out: FramedFile[] = [], added: FilePointer[] = [];
-    const whole = sentWhole(files ?? []);
-    for (const [i, f] of (files ?? []).entries()) {
+    try {
+        await attachEach(runId, files ?? [], turn, d, out, added);
+    } catch (e) {
+        d.shelf.drop(added.map((p) => p.id));
+        throw e;
+    }
+    return { ...(out.length ? { files: out } : {}), added };
+}
+
+/** {@link attachFiles}' loop: each file held and framed into `out`, each pointer it notes pushed to `added`. */
+async function attachEach(runId: string, files: readonly SentFile[], turn: number, d: AttachDeps, out: FramedFile[], added: FilePointer[]): Promise<void> {
+    const whole = sentWhole(files);
+    for (const [i, f] of files.entries()) {
         if (!isPdfFile(f)) {
             const p = await holdText(runId, f, turn, d, added);
             if (whole[i]) { out.push({ name: p.name, type: p.type, text: f.text, pointer: fileRef(p) }); continue; }
@@ -111,7 +123,6 @@ export async function attachFiles(runId: string, files: readonly SentFile[] | un
         const outline = fileOutline(p, r.doc, d.shelf.firstNamed(p.name, p.id));
         out.push({ name: p.name, type: p.type, bytes: p.bytes, pages: p.pages, body: outline.text, escaped: outline.escaped, pointer: fileRef(p) });
     }
-    return { ...(out.length ? { files: out } : {}), added };
 }
 
 /** The name of a long paste's pointer: "pasted text", then "pasted text 2", … , the first not already on the shelf. */

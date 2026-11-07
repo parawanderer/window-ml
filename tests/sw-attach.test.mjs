@@ -190,6 +190,14 @@ test("a text the store cannot keep refuses the message with the store's reason; 
     assert.equal(w.shelf.size, 0);
 });
 
+test("a message refused partway takes back the pointers it noted, and leaves one the same bytes resolved to from before", async () => {
+    const w = world({ reply: (data) => (Buffer.from(data, "base64").toString().includes("bad") ? { ok: false, refusal: "This PDF is encrypted." } : { ok: true, doc: READ }) });
+    const before = await attachFiles("run1", [{ name: "kept.txt", type: "text/plain", text: "kept" }], 1, w.deps);
+    await assert.rejects(attachFiles("run1", [{ name: "kept.txt", type: "text/plain", text: "kept" }, { name: "a.txt", type: "text/plain", text: "a" }, pdf("x.pdf", "%PDF-1.7 bad")], 2, w.deps), FilesRefused);
+    assert.deepEqual(w.shelf.all().map((f) => [f.name, f.turn]), [["kept.txt", 1]], "a.txt is taken back; kept.txt, already held, stays");
+    assert.equal(w.shelf.all()[0], before.added[0]);
+});
+
 // --- a long paste ---
 
 test("a message shorter than fetch_url's preview cut is not held; one of that length is, beside the message, under a numbered name", async () => {

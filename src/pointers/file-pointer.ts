@@ -198,6 +198,12 @@ export class FileShelf {
         return f;
     }
 
+    /** Take back files this caller noted, by id: a message that was not delivered. Only ids the caller itself added
+     *  (`attachFiles`' `added`), never a pointer the same bytes resolved to from before, which stays. */
+    drop(ids: readonly string[]): void {
+        for (const id of ids) this.byId.delete(id);
+    }
+
     /** The earliest other file held under `name`, for a second file's outline. */
     firstNamed(name: string, except?: string): FilePointer | undefined {
         return this.all().find((g) => g.id !== except && nameKey(g.name) === nameKey(name));

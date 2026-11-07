@@ -566,6 +566,48 @@ test("a file with a steer while the run works is held as that message's pointer,
     assert.deepEqual((await w.state(hash, "run.files")).map((f) => [f.name, f.lines, f.turn]), [["notes.txt", 2, 2]], "the steer's turn, kept when the turn's payload is stored");
 });
 
+test("a message that is not delivered (a busy steer, a resume that cannot start) takes back what it attached; a resend lands with the next turn", T, async () => {
+    const OLD = { name: "old.txt", type: "text/plain", text: "old\n" };
+    const NEW = { name: "new.txt", type: "text/plain", text: "new\n" };
+    const LATE = { name: "late.txt", type: "text/plain", text: "late\n" };
+    let busy, release, failAdopt = false;
+    const held = new Promise((r) => { release = r; });
+    const w = fileWorld({
+        onTabMessage: async (_t, msg) => {
+            if (msg.type === "ADOPT_RUN_NOW") return failAdopt ? { error: "the page went away" } : { pageInfo: "" };
+            if (msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.finish) {
+                // At the turn's end its inbox is closed: a message now reads as busy, carrying a file the run already holds.
+                if (busy === undefined) { busy = await w.bg.send({ type: "USER_RUN_ACTION", payload: { hash: msg.payload.runId, action: "send", text: "one more", files: [OLD, NEW] } }, fromTab); await held; }
+                return { result: "" };
+            }
+            return undefined;
+        },
+    });
+    const { hash } = await w.bg.context.__mlStartUserRunForTest(7, { task: "first", files: [OLD], surface: "hud" });
+    for (let i = 0; i < 200 && busy === undefined; i++) await flush(4);
+    release();
+    await w.waitChats(1);
+    assert.equal(busy?.data, "busy");
+    const oldId = (await w.state(hash, "run.files"))[0].id;
+    const rowsAt = async () => (await w.bg.context.__mlValues.rows()).filter((r) => r.sessions.includes(hash)).length;
+    assert.equal(await rowsAt(), 1, "nothing stored for a message with nowhere to go");
+    assert.deepEqual(await w.files(hash), [["old.txt", "text/plain", 1, 1]], "the busy message added nothing, and the file it shared kept its pointer");
+    // A resume that cannot start (the page will not take the run) is not delivered either: the file it shares with the
+    // shelf keeps its pointer, the one it added is taken back. Its row stays held until the session is released.
+    failAdopt = true;
+    assert.equal((await w.bg.send({ type: "USER_RUN_ACTION", payload: { hash, action: "send", text: "late", files: [OLD, LATE], surface: "hud" } }, fromTab)).data, "none");
+    assert.deepEqual(await w.files(hash), [["old.txt", "text/plain", 1, 1]]);
+    failAdopt = false;
+    // The resend is the second message the model gets: turn 2, its files new pointers, the shared one the same.
+    assert.equal((await w.bg.send({ type: "USER_RUN_ACTION", payload: { hash, action: "send", text: "again", files: [OLD, NEW, LATE], surface: "hud" } }, fromTab)).data, "turn");
+    await w.waitChats(2);
+    assert.deepEqual(await w.files(hash), [["old.txt", "text/plain", 1, 1], ["new.txt", "text/plain", 1, 2], ["late.txt", "text/plain", 1, 2]]);
+    const ids = (await w.state(hash, "run.files")).map((f) => f.id);
+    assert.equal(ids[0], oldId);
+    assert.equal(new Set(ids).size, 3);
+    assert.match(w.lastUser(1), new RegExp(`<file name="old\\.txt" type="text/plain" bytes="4" pointer="@file:${oldId}">`));
+});
+
 test("a run a page built is refused a PDF by name, from the panel (USER_RUN_ACTION) and DevTools (ML_SESSION_REMOTE): nothing reaches its page", T, async () => {
     const A = "https://builder.example/";
     const bg = loadBackground({
