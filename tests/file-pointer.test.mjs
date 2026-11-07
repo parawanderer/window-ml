@@ -4,7 +4,7 @@
 // bounds and refusals.
 import { test } from "node:test";
 import assert from "node:assert";
-import { FileShelf, cleanFileName, fileId, fileOutline, fileSections, quoteName, escapeSectionText, FILE_NAME_MAX } from "../src/pointers/file-pointer.ts";
+import { FileShelf, cleanFileName, fileId, fileOutline, fileSections, firstPages, filePagesSaid, quoteName, escapeSectionText, FILE_NAME_MAX } from "../src/pointers/file-pointer.ts";
 import { runPipe, PIPE_PAGES_MAX, PIPE_CMDS } from "../src/pointers/text-pipe.ts";
 import { isTokenShape } from "../src/pointers/token-id.ts";
 import { toolToken } from "../src/util.ts";
@@ -55,6 +55,12 @@ test("a read that stopped early says how many pages were read, and the reader's 
     const out = fileOutline(pointer({ pages: 900, read: 500, truncated: "Only the first 500 pages were read." }), doc(page(1, "x")));
     assert.match(out, /PDF, 500 of 900 pages read/);
     assert.match(out, /Only the first 500 pages were read\.$/);
+});
+
+test("a hint names only pages the file holds: `pages 1` for a one-page file, at most `1-3` otherwise", () => {
+    assert.deepEqual([1, 2, 3, 40].map((read) => firstPages({ read })), ["1", "1-2", "1-3", "1-3"]);
+    assert.match(fileOutline(pointer({ pages: 1, read: 1 }), doc(page(1, "x"))), /pipe "pages 1"\)/);
+    assert.deepEqual([filePagesSaid({ pages: 1, read: 1 }), filePagesSaid({ pages: 900, read: 500 })], ["1 page", "500 of 900 pages read"]);
 });
 
 test("a file with no text layer says so, and has no preview line", () => {
@@ -169,7 +175,17 @@ test("ADVERSARIAL: `pages` is bounded, and a wide or huge request is refused bef
     assert.ok(performance.now() - t0 < 500, "refusals allocate nothing per page");
 });
 
-test("ADVERSARIAL: a section that never closes is not a page, and a stray close is ignored", () => {
-    assert.throws(() => runPipe('<page n="1">\nnever closed', "pages 1"), /needs a paged value/);
+test("ADVERSARIAL: a section that never closes ends at the next opening tag or the end, keeping its lines; a stray close is ignored", () => {
+    assert.equal(runPipe('<page n="1">\nlast lines\nkept', "pages 1"), '<page n="1">\nlast lines\nkept\n</page>', "a last page whose close was lost keeps its lines");
+    const open = '<page n="1">\nfirst\n<page n="2">\nsecond\n</page>';
+    assert.equal(runPipe(open, "pages 2"), '<page n="2">\nsecond\n</page>', "the next open tag starts page 2, never body text of page 1");
+    assert.equal(runPipe(open, "pages 1"), '<page n="1">\nfirst\n</page>', "and page 1 ends where page 2 opens");
     assert.equal(runPipe('</page>\n<page n="1">\nx\n</page>', "pages 1"), '<page n="1">\nx\n</page>');
+});
+
+test("`pages` reads a space as a comma: `pages 1,2 3` is pages 1-3, never page 23, and `pages 1 2 3` never page 123", () => {
+    assert.equal(runPipe(BOOK, "pages 1,2 3 | grep revenue"), "revenue 1\nrevenue 2\nrevenue 3");
+    assert.equal(runPipe(BOOK, "pages 1 2 3 | grep -c revenue"), "3");
+    assert.equal(runPipe(BOOK, "pages 2 - 4, 9 | grep -c revenue"), "4", "a spaced dash is still a range");
+    assert.throws(() => runPipe(BOOK, "pages 1 - - 3"), /can't read/);
 });

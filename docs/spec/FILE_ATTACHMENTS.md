@@ -535,6 +535,46 @@ or a message"). What a hostile page must not get, as tests that fail first:
 5. Nothing in flight collides. `navigate` on a PDF is a new red-team pass; `pages` joins `PIPE_CMDS` with its own bound
    and adversarial rows.
 
+## Every attachment to an agent run as a pointer, and a long paste (ruled 2026-11-07)
+
+The chat-page lane's piece (b), RELAYED as Shane's direction of 2026-11-07 ("allow mid-run files in general in all UI
+surfaces"; "all the files a user uploads should be @file: pointers"; a pasted wall of text reachable without re-emitting
+it) and recorded as relayed until Shane confirms in the coordinator's session; the lane builds on its own user's word.
+Its design note is session-mail `20261107-1116Z-calm-chat-motion-to-repl-specs-every-attachment-a-pointer.md`; the
+rulings, in `20261107-1140Z-repl-specs-to-calm-chat-motion-every-attachment-a-pointer-rulings.md`, are these.
+
+- **What changes.** Every file attached to an AGENT run, on its first message or any later one, is noted on the run's
+  shelf as `@file:` with its rows held for the session: text (inline while it fits `FILE_INLINE_MAX`, the outline and
+  pointer past that in place of today's refusal) and PDF (its outline, as #1413). The `<file>` block carries
+  `pointer="@file:…"`. The "agent-turn" refusal (#1413's "an agent run takes a PDF only when it starts") goes: a later
+  file is attached with the message's turn and its pointers appended to the run's `files` so rehydration keeps them.
+  Plain `ml.chat` is unchanged, no pointers.
+- **Boundary (ruled yes).** Pointers are created only by worker code at two entry points, `startUserRun` and
+  `userRunAction` (both applying the `files` check); `USER_START_RUN` and `USER_RUN_ACTION` are sent only by the shell
+  and are not in `HANDLE_MAP`; `START_RUN`'s `files` is stripped (#1413's row), `RESUME_RUN` reads no files field,
+  `INJECT_MESSAGE` is text only. A run a PAGE built keeps today's behaviour (text inline through the page; a PDF, an
+  over-cap text or a long paste gets no pointer; a PDF refused with its reason), and the shell never forwards a PDF's
+  bytes to a page: the worker-first fallback to the page carries text files only. CONDITION, from the
+  enumerate-not-sample rule: the lane's inferred claim that every DevTools and side-panel send converges on
+  `userRunAction` becomes a test before the PR opens, enumerating `HANDLE_MAP`'s page-started types and asserting none
+  reaches either entry point with a `files` field, and that the DevTools and side-panel paths land on `userRunAction`.
+  A builder's regression row, not a red-team row.
+- **A long paste (ruled: 4,000 characters).** A person's typed message of 4,000 characters or more still goes to the
+  model whole; it ALSO gets `@file:"pasted text"` (numbered per session: "pasted text 2"), named in one line after the
+  message with its line count and how to read it. The figure is the SAME exported constant as `fetch_url`'s preview
+  cut (POINTER_VALUES slice 9), imported, never a second copy, so the model has one rule for "too long to re-type";
+  the label follows the `@tool:"label"` ambiguity rule already ruled for `@file:`.
+- **Order (ruled).** Text and PDF pointers now, mid-run, in one PR; IMAGES WAIT for whichever lands first of Python's
+  `files` param or a `look` with a document target, a pointer nobody can read past its header being noise on the
+  shelf. OPEN with that trigger.
+- **The red team (ruled).** e3's pass runs against #1413 as merged, now, in its own file: the `START_RUN` strip and
+  the PDF outline as model-facing text. (b) gets a SECOND pass after it merges: `userRunAction` as an entry point, the
+  paste's naming line, and the no-PDF-bytes-to-a-page rule. A surface on main is not held for one not yet built.
+- **The PR.** One, from #1413's branch after #1413 merges, rebased so the diff is (b) alone; `@agent @chat-page @ui
+  @security @docs`; the first janitor reviews; armed with `--await-review`; this spec's built paragraph and
+  `SESSION_CONTRACT.md`'s `session.send` row rewritten in it (a mid-run PDF accepted on a worker-built run, refused on a
+  page-built one). The lane acked all four rulings the same hour and is on (a) meanwhile.
+
 ## Open
 
 - `FILE_INLINE_MAX` is 32,000 characters as a first figure (slice 1); still open: measuring it against the prompt
