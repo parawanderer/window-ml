@@ -141,20 +141,20 @@ private one: `PIPE_CMDS` is the single source for every description of the diale
 
 **The value store (`value-store.ts`), POINTER_VALUES slice 4.** Where a pointer's value lives when it is larger than its
 preview: an IndexedDB database of its own (`ml-values`), a `Blob` per value plus a metadata ROW (`sessions`, `bytes`,
-`format`, `source`, `createdAt`, `lastReadAt`), reachable from the service worker and the offscreen document, never the page.
-Every eviction decision is `planEviction` (pure): idle values (unread for `IDLE_MS`) first, then least recently READ until
-ONE global byte budget holds the incoming write, with `protect` for a value being read at that moment. A write the budget
-cannot hold, once everything it may evict is gone, is refused (`ValueTooLarge`) and evicts nothing. A `held` row (a file
-the person attached, which cannot be fetched again) is never evicted for idleness or the budget while a session holds
-it, and the budget pass skips its blob's group whole (another row over the same bytes may still idle out, as a `shared`
-eviction that frees nothing); it goes when its last session ends, and is refused when it is stored if it does not fit
-beside the held values, the refusal naming the held bytes (FILE_ATTACHMENTS.md, "Eviction differs by producer"). Ending a session evicts what
-it alone held (`releaseSession`; a value two sessions hold stays until both end, since one tab's fetch cache hands the
-same key to both); a periodic `sweep` catches orphans, because the service worker is evicted without warning
-and an in-memory idea of ownership dies with it. Every evicted key leaves a TOMBSTONE (kept `TOMBSTONE_MS`), so a read
-fails with `ValueMissing` saying WHY (budget, idle, session end) and telling the reader to re-run the step, and never
-degrades to the preview. `onEvict` is where the caller reports to the housekeeping log (`subsystem: "value-store"`). The
-service worker's side is `sw-values.ts`:
+`format`, `source`, `createdAt`, `lastReadAt`), reachable from the service worker and the offscreen document, never the
+page. Every eviction decision is `planEviction` (pure): idle values (unread for `IDLE_MS`) first, then least recently
+READ until ONE global byte budget holds the incoming write, with `protect` for a value being read at that moment. A
+write the budget cannot hold, once everything it may evict is gone, is refused (`ValueTooLarge`) and evicts nothing. A
+`held` row (a file the person attached, which cannot be fetched again) is never evicted for idleness or the budget while
+a session holds it, and the budget pass skips its blob's group whole (another row over the same bytes may still idle
+out, as a `shared` eviction that frees nothing); it goes when its last session ends, and is refused when it is stored if
+it does not fit beside the held values, the refusal naming the held bytes (FILE_ATTACHMENTS.md, "Eviction differs by
+producer"). Ending a session evicts what it alone held (`releaseSession`; a value two sessions hold stays until both
+end, since one tab's fetch cache hands the same key to both); a periodic `sweep` catches orphans, because the service
+worker is evicted without warning and an in-memory idea of ownership dies with it. Every evicted key leaves a TOMBSTONE
+(kept `TOMBSTONE_MS`), so a read fails with `ValueMissing` saying WHY (budget, idle, session end) and telling the reader
+to re-run the step, and never degrades to the preview. `onEvict` is where the caller reports to the housekeeping log
+(`subsystem: "value-store"`). The service worker's side is `sw-values.ts`:
 
 - **Capture.** `fetchUrlContent` hands the whole body to a `keep` callback when the table it returns is a preview: Parquet
   or Arrow past `MAX_TABLE_ROWS` (the bytes as fetched, `arrow-file` or `arrow-stream`), or delimited text with more lines
