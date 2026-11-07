@@ -1582,8 +1582,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // answered here, where the run's context and pointers live, and never enters the page. One that reaches
                     // for the page comes back `needs-page` and goes there only when its page leg is open above (for a run the
                     // worker built, a script naming none of `ml.sh`, `ml.current` or a pointer); otherwise it reaches the person.
-                    // `selfIntrospection` off: no `ml.current` at all (a survey naming it then reaches the person: its script
-                    // closes the page leg).
+                    // `selfIntrospection` off: no `ml.current` at all (a survey naming it then reaches the person: for a run
+                    // the worker built its script closes the page leg).
                     const snap = p.selfIntrospection === false ? undefined : contextByRun.get(runId);
                     const wantsLog = typeof args.js === "string" && /\bcurrent\b/.test(args.js);
                     const log = snap && wantsLog ? eventsForRun(await runLog.all(), runId) : [];
