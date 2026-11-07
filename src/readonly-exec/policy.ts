@@ -252,6 +252,12 @@ export function methodAllowed(obj: unknown, key: string): boolean {
 // stay reachable as member calls regardless.
 export const CALLABLE_ROOTS = new Set(["String", "Number", "Boolean", "Array", "parseInt", "parseFloat", "isNaN", "isFinite", "getComputedStyle"]);
 
+/** The engine's OWN functions a script may hand a host method as its callback by bare name (`.map(Number)`, `.filter(Boolean)`):
+ *  this module's intrinsics, matched by identity, so a function a page handed back as data is never one of them. A member
+ *  reference (`Math.abs`) is the inert `METHOD_REF`, not a function, and `getComputedStyle` is the page's own: wrap either in
+ *  an arrow. */
+export const INTRINSIC_CALLBACKS: ReadonlySet<unknown> = new Set([String, Number, Boolean, Array, parseInt, parseFloat, isNaN, isFinite]);
+
 // A target a member WRITE may land on: a SCRIPT-LOCAL computation container only — a plain object (`{}` /
 // `Object.create(null)` / a JSON.parse result / an `ml.config()` value) or an Array. A DOM node (proto is
 // HTMLElement.prototype), a NodeList, a Set/Map, `window`, the interpreter's scope — anything with a

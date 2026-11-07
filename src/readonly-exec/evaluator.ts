@@ -7,7 +7,7 @@ import { NotInDialect, Stopped, MAX_STRING, MAX_COLLECTION, Denied, riskyRegex, 
 import { Node } from "./parser";
 import { regexSteps } from "./regex-cost";
 import { replaceSize, replaceWorstCase } from "./replace-size";
-import { isSet, isMap, isStringObject, isRegExpObject, drainIterator, isWritableTarget, ReadonlyRealm, DENIED_PROPS, isDomCollection, SAFE_CONSTRUCTORS, ANSWER_METHODS, methodAllowed, kindOf, MUTATING_METHODS, CALLABLE_ROOTS, argWrites } from "./policy";
+import { isSet, isMap, isStringObject, isRegExpObject, drainIterator, isWritableTarget, ReadonlyRealm, DENIED_PROPS, isDomCollection, SAFE_CONSTRUCTORS, ANSWER_METHODS, methodAllowed, kindOf, MUTATING_METHODS, CALLABLE_ROOTS, INTRINSIC_CALLBACKS, argWrites } from "./policy";
 import { PrintSwap, abridgeRow, diffSwap, jsonPathKey } from "./print";
 
 /** Per-frame set of names declared `const`, kept off the frame's own enumerable keys. */
@@ -321,6 +321,15 @@ export class Evaluator {
      *  `toString`, which for an array is `join`, so it is walked first. Two strings compared cost their shorter one. */
     private coerces(...vs: unknown[]): void {
         for (const v of vs) if (v !== null && typeof v === "object") { if (Array.isArray(v)) this.joinsData(v, "this coercion"); this.expands(v); }
+    }
+    /** A host method is handed a FUNCTION only if the script wrote it: the host calls its callbacks itself (`map`, `sort`,
+     *  `Array.from`'s mapper, `JSON.parse`'s reviver, `forEach` of a Set, a Map or a DOM collection, ...), outside the
+     *  interpreter, so a function a page handed back as data (`ml.models()` can) would run page code in the middle of a
+     *  survey. One predicate at the call site, not a list of methods: a method added to the whitelist later is covered. */
+    private onlyOurFunctions(key: string, args: unknown[]): void {
+        for (const a of args)
+            if (typeof a === "function" && !this.ourFns.has(a) && !INTRINSIC_CALLBACKS.has(a))
+                throw new NotInDialect(`${key} was given a function that is not an arrow written in the script, which would run page code during a survey`);
     }
     /** Refuse an array that `join` (so `toString`, `+`, a template, and a `sort` with no comparator) would turn into text by COERCING an element: only a
      *  primitive, or an array of them, becomes text without running a function the page chose, since the host calls an
@@ -1088,6 +1097,7 @@ export class Evaluator {
             // while genuine denials (Denied / method-not-allowed NotInDialect) still bypass catch.
             if (typeof fn !== "function") throw new TypeError(`${obj == null ? String(obj) : "value"} has no callable '${key}'`);
             const args = yield* this.evalArgs(node.args, scope);
+            this.onlyOurFunctions(key, args);
             // An argument the call WRITES (ARG_WRITERS: `Object.assign`'s target) meets the same rule as `o[k] = v`: a
             // plain object or array the script built, not one being iterated. Without it, a survey assigned into the
             // page (`Object.assign(document.body, { innerHTML })`) and into the host's own builtins (`Math`, `JSON`,

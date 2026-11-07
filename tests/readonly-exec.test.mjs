@@ -2194,3 +2194,67 @@ test("the guard's remaining branches: an expanding coercion is still refused, an
     const lying = new Proxy([], { getOwnPropertyDescriptor(t, k) { return k === "length" ? { value: "2", writable: true, enumerable: false, configurable: false } : Reflect.getOwnPropertyDescriptor(t, k); } });
     await assert.rejects(run(`const a = await ml.models(); return a.join(",")`, world(), handed(lying)), (e) => outOfDialect(e) && /length is not plain data/.test(e.message));
 });
+
+// --- ADVERSARIAL: a host method is handed a FUNCTION only if the script wrote it (or it is one of the engine's own roots) ----
+// The host calls its callbacks itself, outside the interpreter, so a function a page handed back as data would run page code
+// mid-survey. One predicate at the host-call site (`onlyOurFunctions`); the per-method rows are the red team's.
+
+test("a page function is refused as a callback wherever it sits, whatever it is dressed as, and never runs", async () => {
+    const ran = [];
+    const mk = {
+        plain: () => function (...a) { ran.push("plain"); return 1; },
+        // A function that CLAIMS to be an intrinsic by name, and one that wraps one.
+        named: () => Object.defineProperty(function (...a) { ran.push("named"); return 1; }, "name", { value: "Number" }),
+        bound: () => (function (...a) { ran.push("bound"); return 1; }).bind(null),
+        async: () => async function () { ran.push("async"); return 1; },
+        proxied: () => new Proxy(function () { ran.push("proxied"); return 1; }, {}),
+        arrowOfPage: () => (...a) => { ran.push("arrow"); return 1; },
+    };
+    for (const [name, make] of Object.entries(mk)) {
+        for (const js of [
+            `const f = await ml.models(); return [1, 2].map(f)`,
+            `const f = await ml.models(); return [2, 1].sort(f)`,
+            `const f = await ml.models(); return Array.from([1], f)`,
+            `const f = await ml.models(); return [1, 2].reduce((a, b) => a, f)`.replace("(a, b) => a, f", "f"),
+            `const f = await ml.models(); return JSON.parse("[1]", f)`,
+        ]) {
+            await assert.rejects(run(js, world(), handed(make())), (e) => outOfDialect(e) && /function that is not an arrow written in the script/.test(e.message), `${name}: ${js}`);
+        }
+    }
+    assert.deepEqual(ran, [], `page code ran: ${JSON.stringify(ran)}`);
+});
+
+test("rebinding a root to a page function does not smuggle it: the bare name is judged by IDENTITY, not by what it is called", async () => {
+    const ran = [];
+    const f = function () { ran.push("f"); return 1; };
+    await assert.rejects(run(`const Number = await ml.models(); return [1, 2].map(Number)`, world(), handed(f)), outOfDialect);
+    await assert.rejects(run(`const parseInt = await ml.models(); return ["1"].map(parseInt)`, world(), handed(f)), outOfDialect);
+    // A root of ANOTHER realm is not this one's.
+    const foreignNumber = new (await import("node:vm")).Script("Number").runInNewContext();
+    await assert.rejects(run(`const n = await ml.models(); return [1].map(n)`, world(), handed(foreignNumber)), outOfDialect);
+    assert.deepEqual(ran, []);
+});
+
+test("the controls: the engine's own roots and the script's own arrows are still callbacks", async () => {
+    assert.deepEqual((await run(`return ["1", "2", "x"].map(Number)`)).value, [1, 2, NaN]);
+    assert.deepEqual((await run(`return [0, 1, "", "a"].filter(Boolean)`)).value, [1, "a"]);
+    assert.deepEqual((await run(`return [1, 2].map(String)`)).value, ["1", "2"]);
+    assert.deepEqual((await run(`return ["7", "8"].map(parseFloat)`)).value, [7, 8]);
+    assert.deepEqual((await run(`return [3, 1, 2].sort((a, b) => a - b)`)).value, [1, 2, 3]);
+    assert.deepEqual((await run(`return Array.from({ length: 3 }, (_, i) => i * 2)`)).value, [0, 2, 4]);
+    assert.deepEqual((await run(`return JSON.parse('{"a":1}', (k, v) => v)`)).value, { a: 1 });
+    assert.deepEqual((await run(`const m = new Map([["a", 1]]); const out = []; m.forEach((v, k) => out.push(k + v)); return out`)).value, ["a1"]);
+});
+
+test("a bare getComputedStyle or a member reference is not a callback; wrapped in an arrow it is", async () => {
+    await assert.rejects(run(`return [document.body].map(getComputedStyle)`), outOfDialect);
+    await assert.rejects(run(`return [1, -2].map(Math.abs)`), outOfDialect);
+    assert.deepEqual((await run(`return [1, -2].map((n) => Math.abs(n))`)).value, [1, 2]);
+});
+
+test("a refused callback leaves nothing behind when the survey falls out of dialect", async () => {
+    const doc = world();
+    const before = doc.body.innerHTML;
+    await assert.rejects(run(`const f = await ml.models(); document.body.setAttribute("x", "1"); return [1].map(f)`, doc, handed(() => 1)), outOfDialect);
+    assert.equal(doc.body.innerHTML, before);
+});
