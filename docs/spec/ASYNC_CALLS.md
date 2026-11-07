@@ -215,8 +215,12 @@ each of which amends the text above where it says otherwise:
   task.
 - **`ml.current.tasks` is computed at the snapshot's instant** (`withTasks` beside `withPolicies`, at both assembly
   sites), `elapsed_ms` from the snapshot's clock, the tail read through the row's bounded, scrubbed `tail()`; no row
-  is kept live. The Python cell reads the same snapshot, so Python parity is in the first PR's scope, the wire
-  exception included.
+  is kept live. RE-RULED the same hour on the lane's correction: a Python cell has no `ml.current` today (the
+  Python facade exposes the server's wire members only; every `withPolicies`/`withRuntime` site is the exec isolated
+  world or the dialect survey), so `ml.current.tasks` ships for JavaScript in the first PR; Python's parity there is
+  the `Detached` exception on `sh.run` (an `MlError` carrying the task id), the same inbox return and the same `task`
+  tool, which is the loop's and does not care which world started the call. "`ml.current` in Python" is an OPEN item
+  below, its own piece of work.
 - **Live `tail` on `ml.sh` has nothing to read today** (the host reports output only with `done`): the row's `tail`
   is null with the sentence saying so, never a fake empty string, until a host `peek` op exists. The host op is a
   window-ml-host PR; no lane owns that repo today, so WHO WRITES IT IS A CALL FOR SHANE (recommended: the async
@@ -289,6 +293,8 @@ the first PR, as every REPL lane does.
 
 ## Open questions
 
+- `ml.current` in a Python cell: the facade has no `current` members today, so `ml.current.tasks` (and the rest of
+  the facade) reaches Python only when that is built, a separate piece from mode 1 (recorded 2026-11-07).
 - The lease's default per tool: a bench, as rule 1 says. The placeholder is seconds, not minutes.
 - Whether the HUD and the sidebar show a detached call as a chip with its cancel, and whether the Run state panel's
   inbox view is the person's way to pull what a muted policy collected.
