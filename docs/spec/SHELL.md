@@ -254,7 +254,8 @@ ml.pipe(r.stdout, "grep -c '^ '");         // stdout and stderr are pointers, he
   calls asks nothing today. Build it only once a measured case shows the per-call asks are the annoying part.
 
 RULED 2026-11-07 (the bench lane's proposal, `20261107-1357Z-bench-to-repl-specs-sh-tilde-proposal.md`; Shane's
-agreement reached the coordinator relayed, "it saves tokens", recorded as relayed until he confirms): the HOST
+agreement reached the coordinator relayed, "it saves tokens", and he CONFIRMED it in the coordinator's session the
+same day, leaving the allocation to the coordinator): the HOST
 expands a leading `~` in an `ml.sh.run` argument. Today argv is passed as written with no shell, so
 `["cat", "~/notes.txt"]` names `<cwd>/~/notes.txt`, reads free inside the workspace and finds nothing (CORRECTED
 2026-11-07 by the bench lane: a literal `~/.ssh/config` does NOT read free, since the credential-store segment match
@@ -270,7 +271,8 @@ echo carries the expanded form. No `HOME`: the argument stays literal and the fa
 host that cannot expand is told apart by its version; against it the worker keeps today's literal behaviour and the
 JSDoc clause ("a leading `~` or `~/` in an argument is your home directory; nothing else is expanded") does not
 appear. It is a host protocol change (resolve plus a facts field, PROTOCOL.md) and then a window-ml PR; the host
-owner waits on Shane naming one (recommended: the async lane after `peek`); the window-ml tests and the `~`-spelled
+owner is the ASYNC LANE, as a third host slice after `peek` (allocated 2026-11-07, both in the host's resolve path),
+starting only once `peek`, #1437, #1451 and #1453 are through; the window-ml tests and the `~`-spelled
 canary row (must ASK and show the expanded path, never read free as a workspace path) are the bench lane's, finder's
 own file. Independent of the lease bench.
 
