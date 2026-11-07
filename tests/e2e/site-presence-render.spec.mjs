@@ -179,6 +179,13 @@ test("@security SITE_PRESENCE step 5 (render): R3: a script navigation to anothe
             await expect.poll(() => pathsTo(h.site, "victim.test"), { timeout: 30_000, message: "the script's target to be requested (today's leak, read from the log)" }).toContain("/secret");
         } else {
             expect(h.site.requestsTo("victim.test"), "the script's target was never requested").toEqual([]);
+            // The anchor on the DEFENDED side: the fixture's beacon is the statement AFTER the navigation attempt in
+            // the same timer, so it arrives only if the page's script ran and control came back to a tab still on our
+            // page. Measured: with the timer removed this reds (`["/script"]`); with only the assignment removed the
+            // beacon still arrives and the row passes, which is as far as a fixture can see — a navigation the render
+            // refused leaves no trace at the fixture.
+            await expect.poll(() => pathsTo(h.site, "attacker.test"), { timeout: 30_000, message: "the page's script attempted the navigation and the tab stayed on our page (the anchor, defended side)" }).toContain("/script-attempted");
+            expect(h.site.requestsTo("victim.test"), "the script's target was never requested, before or after the anchor").toEqual([]);
         }
         expect(joined(results), "the model is told, and not handed the navigated-to page").not.toContain("top secret");
     } finally {
