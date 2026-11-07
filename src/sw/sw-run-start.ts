@@ -9,7 +9,8 @@
 
 import type { ElementContext } from "../contract";
 import type { StartRunPayload } from "../contract/contract-messages";
-import { shortHash, type AttachedFile, type PromptDisplay, type PromptOrigin } from "../contract/contract-run";
+import { imagesRefusal, shortHash, type AttachedFile, type PromptDisplay, type PromptOrigin } from "../contract/contract-run";
+import { ImagesRefused } from "../image-gate";
 import { framePrompt } from "../agent/prompts";
 import { promptSurfaceOf } from "../agent/prompt-surface";
 import { stepBudget } from "../agent/step-budget";
@@ -57,6 +58,9 @@ export async function startUserRun(tabId: number, req: UserRunRequest, opts: { k
     const tab = await chrome.tabs.get(tabId);
     const url = tab.url || "";
     if (!/^https?:/i.test(url)) throw new Error("An agent run can only start on an ordinary web page (http or https).");
+    // Past the cap a start is refused, never cut: the composers say so first, and this is the half no surface can skip.
+    const tooMany = imagesRefusal(req.images?.length ?? 0);
+    if (tooMany) throw new ImagesRefused(tooMany);
     const ml = workerMl(url);
     const recipe = userRunOptions(ml, req, opts.sender);
     if (!recipe.task && !(req.images && req.images.length)) throw new Error("Nothing to do: the run has no task and no image.");
@@ -189,6 +193,9 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
     const live = runInboxes.get(hash);
     const tabId = stored?.tabId ?? live?.tabId;
     if (tabId == null || (fromTabId != null && fromTabId !== tabId)) return null;
+    // Past the cap the message is refused, never cut, whoever built the run.
+    const tooMany = action === "send" ? imagesRefusal(body.images?.length ?? 0) : null;
+    if (tooMany) throw new ImagesRefused(tooMany);
     // A run a PAGE built is the page's to drive while that page may: its handle keeps the history in step. Once the
     // tab is on a site that may not use window.ml (the run navigated off its builder's origin), the page's RESUME_RUN
     // would be refused, and nothing page-side owns the run any more: it is handed to the worker.

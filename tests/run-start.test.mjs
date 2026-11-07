@@ -353,6 +353,38 @@ test("from the DevTools or side panel (ML_SESSION_REMOTE), a refused follow-up i
     assert.equal(bg.tabMessages.filter(([, m]) => m.type === "ML_SESSION_TO_PAGE").length, before);
 });
 
+const NINE = Array.from({ length: 9 }, (_, i) => `data:image/png;base64,iVBORw0KGgoNINE${i}`);
+const CAP = "a message takes up to 8 images; remove 1";
+
+test("past the cap a follow-up is refused at the worker, never cut, on a run that sees: USER_RUN_ACTION and ML_SESSION_REMOTE", T, async () => {
+    const { bg, chats } = world();
+    const { hash } = await bg.context.__mlStartUserRunForTest(7, { task: "first", surface: "hud", vision: true });
+    await flush(20);
+    const r = await bg.send({ type: "USER_RUN_ACTION", payload: { hash, action: "send", text: "and these?", images: NINE, surface: "hud" } }, fromTab);
+    assert.equal(r.data, null);
+    assert.equal(r.refused, CAP);
+    void bg.send({ type: "ML_SESSION_REMOTE", tabId: 7, action: "send", hash, text: "and these?", images: NINE, surface: "devtools" }, EXT);
+    await flush(20);
+    assert.equal(chats().length, 1, "no turn went out");
+    assert.deepEqual(fanned(bg, "agent-note").map((n) => n.text), [`Your message was not sent: ${CAP}`, `Your message was not sent: ${CAP}`], "both refusals are said in the step list");
+    assert.equal(fanned(bg, "agent-say").length, 0, "nothing is shown as sent");
+    assert.ok(!JSON.stringify(chats()).includes("NINE"), "no image reached the model");
+});
+
+test("past the cap a start is refused at the worker (USER_START_RUN): no run, no model call", T, async () => {
+    const { bg, chats } = world();
+    const r = await bg.send({ type: "USER_START_RUN", payload: { task: "what are these?", images: NINE, surface: "hud", vision: true } }, fromTab);
+    assert.equal(r.error, CAP);
+    await flush(20);
+    assert.equal(chats().length, 0);
+});
+
+test("the relays pass every image through: the worker's refusal, not a silent cut, decides", async () => {
+    const { cleanImages } = await import("../src/contract/contract-run.ts");
+    assert.equal(cleanImages(NINE).length, 9);
+    assert.deepEqual(cleanImages(["not an image", NINE[0]]), [NINE[0]]);
+});
+
 test("ADVERSARIAL: a page's RESUME_RUN cannot put images into a turn: only the worker's own call carries them", T, async () => {
     const { bg, chats } = world();
     await bg.send({ type: "START_RUN", payload: {

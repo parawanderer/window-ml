@@ -19,7 +19,7 @@
  * feed of a session something else already reports (AGENTS.md's trap, which is about recording a run twice); it is
  * the only feed of a session nothing else can see.
  */
-import { TURN_IMAGES_MAX, hintSession, shortHash, type AttachedFile, type AttachedPdf, type RequestHint, type SentFile } from "../contract/contract-run";
+import { TURN_IMAGES_MAX, hintSession, imagesRefusal, shortHash, type AttachedFile, type AttachedPdf, type RequestHint, type SentFile } from "../contract/contract-run";
 import { FILE_INLINE_MAX, FilesRefused, b64Bytes, frameFiles, isPdfFile, textCapRefusal, type FramedFile } from "../attached-files";
 import { ImagesRefused, namedNote, readerNote, type ImagePlan } from "../image-gate";
 import { fitPages, pageSections, planPages, wantsImage, type PageAim, type PageOutcome } from "../pdf/pdf-frame";
@@ -211,9 +211,12 @@ export async function sendBackgroundChat(hash: string, text: string, images?: st
  * asked only when something would send an image: a pasted one, a scanned page, or a page with a figure.
  * @throws {FilesRefused} a PDF would not read, or the text files hold more text than a message takes (a PDF's pages
  *   past what is left are named, not refused)
- * @throws {ImagesRefused} an image would be sent, the model's vision is not known and no reader is set
+ * @throws {ImagesRefused} more images than a message takes, or an image would be sent, the model's vision is not known
+ *   and no reader is set
  */
 async function prepare(d: ChatDeps, model: string | null, images: string[] | undefined, files: SentFile[] | undefined, forced: boolean): Promise<Prepared> {
+    const tooMany = imagesRefusal(images?.length ?? 0);
+    if (tooMany) throw new ImagesRefused(tooMany);
     const read: ReadFile[] = [];
     for (const f of files ?? []) {
         if (!isPdfFile(f)) { read.push(f); continue; }
@@ -296,7 +299,7 @@ async function turn(chat: BgChat, text: string, images: string[] | undefined, pr
     chat.lastTs = d.now();
     // Images go to the model only when it sees (or the person said it does); otherwise each is replaced by a note the
     // model reads, the reader's transcription or a line naming it as not sent (image-gate.ts).
-    const shown = (images ?? []).slice(0, MAX_TURN_IMAGES);
+    const shown = images ?? [];
     const pictures = plan.route === "model" ? [...shown] : [];
     const notes: string[] = [];
     if (plan.route === "reader") {

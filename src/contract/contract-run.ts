@@ -95,12 +95,13 @@ export function imagesRefusal(n: number): string | null {
 }
 
 /** Sanitize composer image attachments relayed from the sidebar app (a pasted/uploaded screenshot):
- *  keep only `data:image/*` strings, size-capped so a runaway paste can't bloat a postMessage, max 8 per
- *  turn. Returns undefined when there's nothing valid (keeps the relayed message clean). Pure; shared by
- *  the overlay shell and the DevTools panel relays so both validate identically. */
+ *  keep only `data:image/*` strings, size-capped so a runaway paste can't bloat a postMessage. The count is
+ *  NOT cut: past `TURN_IMAGES_MAX` the worker refuses the message (`imagesRefusal`). Returns undefined when
+ *  there's nothing valid (keeps the relayed message clean). Pure; shared by the overlay shell and the
+ *  DevTools panel relays so both validate identically. */
 export function cleanImages(v: unknown): string[] | undefined {
     if (!Array.isArray(v)) return undefined;
-    const out = v.filter((x): x is string => typeof x === "string" && /^data:image\//.test(x) && x.length <= 8_000_000).slice(0, TURN_IMAGES_MAX);
+    const out = v.filter((x): x is string => typeof x === "string" && /^data:image\//.test(x) && x.length <= 8_000_000);
     return out.length ? out : undefined;
 }
 
