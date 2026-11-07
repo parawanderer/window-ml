@@ -294,7 +294,10 @@ test("a runtime that reads PDFs takes one as its bytes on a chat, offers .pdf in
 
     const agent = await mount("agent", PDF_CAN);
     await pasteFiles(agent, pdf());
-    assert.equal(why(pills(agent)[0]), "paper.pdf is a PDF; an agent run will read PDFs in a later change");
+    assert.deepEqual(pills(agent).map(why), [null], "a run takes a PDF when it starts");
+    send(agent).click();
+    await flush();
+    assert.deepEqual(startCommands().at(-1).files, [{ name: "paper.pdf", type: "application/pdf", data: "JVBERi0xLjcK" }], "agent.start carries the PDF, not only the text files");
 });
 
 test("a file over the cap says its size and the limit, with the chat wording on a chat and the agent wording on a run", async () => {

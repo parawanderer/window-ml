@@ -30,8 +30,9 @@ export const TEXT_FILE_ACCEPT = "text/*,.txt,.md,.log,.csv,.tsv,.json,.jsonl,.ya
 /** The picker's `accept` entries for a PDF, added when the runtime reads them. */
 export const PDF_FILE_ACCEPT = "application/pdf,.pdf";
 
-/** A PDF a runtime has read, ready to frame: its `<page>` sections (pdf-frame.ts) and what the block states. */
-export interface ReadPdfFile { name: string; type: string; bytes: number; pages: number; body: string; escaped: number }
+/** A PDF a runtime has read, ready to frame: its `<page>` sections (pdf-frame.ts) and what the block states. For an
+ *  agent run, `pointer` is its `@file:` pointer and `body` the outline (file-pointer.ts) in place of the pages. */
+export interface ReadPdfFile { name: string; type: string; bytes: number; pages: number; body: string; escaped: number; pointer?: string }
 
 /** A file as the model's message frames it: a text file, or a PDF the runtime read. */
 export type FramedFile = AttachedFile | ReadPdfFile;
@@ -48,7 +49,7 @@ export function b64Bytes(b64: string): number {
 }
 
 /** The text files of `fs`: what a path that does not read PDFs takes (`filesRefusal` refuses a PDF to an agent run
- *  first, and a page's composer does not offer one). */
+ *  under way first, and a page's composer does not offer one). */
 export function textFiles(fs?: readonly SentFile[] | null): AttachedFile[] | undefined {
     const out = (fs ?? []).filter((f): f is AttachedFile => !isPdfFile(f));
     return out.length ? out : undefined;
@@ -60,8 +61,9 @@ export class FilesRefused extends Error {
     constructor(message: string) { super(message); this.name = "FilesRefused"; }
 }
 
-/** Is the message going to a chat or to an agent run? Only the refusal's wording differs. */
-export type FileTarget = "chat" | "agent";
+/** Is the message going to a chat, starting an agent run, or going to a run already under way? A run takes a PDF only
+ *  when it starts (sw-attach.ts); otherwise only the refusal's wording differs. */
+export type FileTarget = "chat" | "agent" | "agent-turn";
 
 /** "412 B", "18 kB", "210 kB": decimal, one figure, for a refusal a person reads. */
 export function sizeLabel(chars: number): string {
@@ -160,7 +162,7 @@ export function decodeTextFile(name: string, type: string, bytes: Uint8Array): {
  */
 export function tooLarge(name: string, size: number, together: boolean, target: FileTarget): string {
     return `${name} is too large to send whole${together ? " together with the other files" : ""}: ${sizeLabel(size)}; a message takes up to ${sizeLabel(FILE_INLINE_MAX)} of files`
-        + (target === "agent" ? ". An agent run will read large files on demand in a later change" : "");
+        + (target !== "chat" ? ". An agent run will read large files on demand in a later change" : "");
 }
 
 /** A file this many bytes or more cannot fit whatever it holds (UTF-8 is at most four bytes a character), so a picker
@@ -171,7 +173,8 @@ export const FILE_READ_MAX_BYTES = FILE_INLINE_MAX * 4;
  * Why `files` cannot be sent in one message, or null. The client calls it to refuse before sending; the runtime calls
  * it as the rule. The wording names the file that tips the total, with its own size.
  * @param files the files of ONE message, in attach order
- * @param target where the message goes: an agent run says that reading on demand is a later change
+ * @param target where the message goes: a run under way refuses a PDF, and an agent run says that reading on demand is
+ *   a later change
  */
 export function filesRefusal(files: readonly SentFile[], target: FileTarget): string | null {
     if (files.length > FILES_MAX_COUNT) return `a message takes up to ${FILES_MAX_COUNT} files`;
@@ -179,8 +182,9 @@ export function filesRefusal(files: readonly SentFile[], target: FileTarget): st
     for (const f of files) {
         if (f.name.length > FILE_NAME_MAX) return `a file name takes up to ${FILE_NAME_MAX} characters`;
         if (isPdfFile(f)) {
+            // A run under way never gets one: the page's path would drop it, so it is refused, never lost.
+            if (target === "agent-turn") return `${f.name} is a PDF; an agent run takes a PDF only when it starts, so start a new run with it`;
             // A PDF's text is counted by the runtime once it has read the pages (textCapRefusal); here, its bytes.
-            if (target === "agent") return `${f.name} is a PDF; an agent run will read PDFs in a later change`;
             pdfBytes += b64Bytes(f.data);
             if (pdfBytes > PDF_ATTACH_MAX) return tooLargePdf(f.name, b64Bytes(f.data));
             continue;
@@ -228,7 +232,7 @@ export function attr(v: string): string {
  */
 export function fileBlock(f: FramedFile): string {
     if (isReadPdf(f)) {
-        const head = `<file name="${attr(f.name)}" type="${attr(f.type)}" bytes="${f.bytes}" pages="${f.pages}"${f.escaped ? ` escaped="${f.escaped}"` : ""}>`;
+        const head = `<file name="${attr(f.name)}" type="${attr(f.type)}" bytes="${f.bytes}" pages="${f.pages}"${f.pointer ? ` pointer="${attr(f.pointer)}"` : ""}${f.escaped ? ` escaped="${f.escaped}"` : ""}>`;
         return `${head}\n${f.body}${f.body && !f.body.endsWith("\n") ? "\n" : ""}</file>`;
     }
     let n = 0;

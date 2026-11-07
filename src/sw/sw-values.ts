@@ -6,7 +6,7 @@
 // log; a background run claims the values its pointers name and releases them when its session is dropped; and the idle
 // sweep runs when the worker starts and on an alarm, because nothing else is awake to run it.
 
-import { ValueStore, ValueTooLarge, ValueMissing } from "../pointers/value-store";
+import { ValueStore, ValueTooLarge, ValueMissing, type ValueFormat, type ValueRow } from "../pointers/value-store";
 import { storedColumns } from "../table/table-data";
 import type { FetchedBody } from "./sw-fetch";
 import { recordHousekeeping } from "./sw-housekeeping";
@@ -159,9 +159,24 @@ export async function readStoredColumns(key: string, names: string[], opts: { de
     return storedColumns(await blob.arrayBuffer(), row.format, names, opts);
 }
 
-/** A session is gone: release what it held. */
-export function releaseSessionValues(session: string): void {
-    void values()?.releaseSession(session).catch(() => {});
+/** A session is gone: release what it held, except the rows named in `keep`. */
+export function releaseSessionValues(session: string, keep?: readonly string[]): void {
+    void values()?.releaseSession(session, keep).catch(() => {});
+}
+
+/**
+ * Keep a file the person attached to a run, held for that run's session: exempt from idle and budget eviction, and
+ * charged to the budget now, so a file the store cannot hold is refused here rather than lost later.
+ * @param blob the bytes, or the read document as JSON
+ * @param format `bytes` for the file, `paged` for the document
+ * @param source the file's name, for the housekeeping log
+ * @param session the run that holds it
+ * @throws {ValueTooLarge} the store cannot hold it beside what it already keeps; an Error where there is no store
+ */
+export async function storeHeld(blob: Blob, format: ValueFormat, source: string, session: string): Promise<ValueRow> {
+    const s = values();
+    if (!s) throw new Error("there is no value store in this context");
+    return await s.put(blob, { format, source, session, held: true });
 }
 
 /**

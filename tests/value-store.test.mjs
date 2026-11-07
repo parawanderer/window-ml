@@ -120,6 +120,15 @@ test("store: ending a session releases exactly the values nobody else holds", as
     assert.deepEqual((await store.releaseSession("other")).map((e) => e.key).sort(), [other.key, shared.key].sort(), "…until its last holder ends");
 });
 
+test("store: a release with `keep` leaves those rows held and releases the rest (a pushed-out pointer store, an attached file)", async () => {
+    const { store } = makeStore({ budget: 10_000 });
+    const out = await store.put(blob(10), { format: "text", session: "run1" });
+    const file = await store.put(blob(10), { format: "bytes", session: "run1", held: true });
+    assert.deepEqual((await store.releaseSession("run1", [file.key])).map((e) => e.key), [out.key]);
+    assert.deepEqual((await store.get(file.key)).row.sessions, ["run1"], "still held by its session");
+    assert.deepEqual((await store.releaseSession("run1")).map((e) => e.key), [file.key], "the session's end takes it");
+});
+
 test("store: a claim with a `may` is taken only when it allows the holders as they are, or the session holds it already", async () => {
     const { store } = makeStore({ budget: 10_000 });
     const loose = await store.put(blob(10), { format: "csv" });

@@ -9,7 +9,8 @@
 
 import type { ElementContext } from "../contract";
 import type { StartRunPayload } from "../contract/contract-messages";
-import { shortHash, type AttachedFile, type PromptDisplay, type PromptOrigin } from "../contract/contract-run";
+import { shortHash, type AttachedFile, type PromptDisplay, type PromptOrigin, type SentFile } from "../contract/contract-run";
+import { checkFilesField } from "../attached-files";
 import { framePrompt } from "../agent/prompts";
 import { promptSurfaceOf } from "../agent/prompt-surface";
 import { stepBudget } from "../agent/step-budget";
@@ -20,7 +21,9 @@ import { dropLocalTools, registerLocalTools } from "./sw-local-tools";
 import { buildWorkerTools } from "./worker-tools";
 import { pyMediaFor } from "./worker-media";
 import { hostRun } from "./sw-run-host";
-import { bgRuns, bufferReplay, isWorkerRun, makeWorkerRun, runControllers, runInboxes, tabPageUrl, workerRunsStarting, beginStart, endStart } from "./sw-runs";
+import { bgRuns, bufferReplay, isWorkerRun, makeWorkerRun, runControllers, runInboxes, tabPageUrl, workerRunsStarting, beginStart, endStart, sessionTokens, releaseSessionTokens } from "./sw-runs";
+import { attachFiles, readPdfOffscreen } from "./sw-attach";
+import { storeHeld } from "./sw-values";
 import { originOf } from "../site-access";
 import { siteDecision } from "./sw-site-access";
 import { ingestSessionEvent, keepSession } from "./sw-sessions";
@@ -57,15 +60,32 @@ export async function startUserRun(tabId: number, req: UserRunRequest, opts: { k
     const tab = await chrome.tabs.get(tabId);
     const url = tab.url || "";
     if (!/^https?:/i.test(url)) throw new Error("An agent run can only start on an ordinary web page (http or https).");
+    // The one rule for a message's files, whichever surface sent them (a tab's USER_START_RUN included).
+    const checked = checkFilesField(req.files, "agent");
+    if (checked.reason) throw new Error(checked.reason);
     const ml = workerMl(url);
-    const recipe = userRunOptions(ml, req, opts.sender);
+    // Minted before the task is framed: an attached PDF is held for this session, and its outline names its pointer.
+    const runId = shortHash();
+    try {
+        return await startMinted(tabId, tab, url, ml, runId, req, checked.files, opts);
+    } catch (e) {
+        // Nothing hosts the run: what it stored (an attached PDF's rows) and its shelf go with it.
+        if (!runControllers.has(runId) && !bgRuns.has(runId)) releaseSessionTokens(runId);
+        throw e;
+    }
+}
+
+/** {@link startUserRun} once the run has its id: attach the files, assemble, adopt, host. */
+async function startMinted(tabId: number, tab: chrome.tabs.Tab, url: string, ml: ReturnType<typeof workerMl>, runId: string, req: UserRunRequest, files: SentFile[] | undefined, opts: { keep?: boolean; approvalRouting?: "both"; answer?: true; sender?: Omit<PromptOrigin, "surface"> }): Promise<{ hash: string }> {
+    const shelf = sessionTokens(runId).files;
+    const attached = await attachFiles(runId, files, 1, { read: readPdfOffscreen, store: storeHeld, shelf });
+    const recipe = userRunOptions(ml, { ...req, files: attached.files }, opts.sender);
     if (!recipe.task && !(req.images && req.images.length)) throw new Error("Nothing to do: the run has no task and no image.");
     // propose_policy only here: a run the worker builds for the person may ask them for a policy; no page's run can. And
     // propose_manifest when the settings turn ml.sh on, which the run's scripts then reach.
     const shellOn = await getConfig().then(shellTurnedOn, () => false);
     const extraTools = [...(recipe.options.extraTools ?? []), proposePolicyTool(defineTool), ...(shellOn ? [proposeManifestTool(defineTool)] : [])];
     const asm = await assembleRun(ml, recipe.task, { ...recipe.options, extraTools, ...(opts.answer ? { answer: true } : {}) });
-    const runId = shortHash();
     const rebuild = rebuildFor(asm, true, "worker");
     noteWorkerVision(runId);   // its vision facts are the worker's own (run-vision.ts)
     // Remote tools, and the builtins that never read the page, run HERE (sw-local-tools.ts, worker-tools.ts); everything
@@ -104,6 +124,7 @@ export async function startUserRun(tabId: number, req: UserRunRequest, opts: { k
             builtBy: "worker",
         }),
         ...(recipe.display ? { display: recipe.display } : {}),
+        ...(shelf.size ? { files: shelf.all() } : {}),
     };
     if (opts.keep) keepSession(runId);
     // The run's result reaches every surface through its own lifecycle events (`builtBy: "worker"`), so nobody

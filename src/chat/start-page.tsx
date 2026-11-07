@@ -16,7 +16,6 @@ import { loadDraft, loadDraftFiles, loadDraftImages, saveDraft, saveDraftFiles, 
 import { IconSend, IconWarn } from "../sidebar/icons";
 import { modelCache, SeesImagesToggle, visionUnreported } from "./sees-images";
 import { FileStrip, ThumbStrip, sentFile, useImageAttach } from "../sidebar/transcript/composer";
-import { textFiles } from "../attached-files";
 import type { SentFile } from "../contract/contract-run";
 import { cursorTipOn } from "../sidebar/ui-kit";
 import type { ChatStore } from "./chat-store";
@@ -165,7 +164,7 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
         try {
             const r = kind === "chat"
                 ? await store.send({ type: "chat.start", runtime: rt.id, text: text.trim(), ...(images.length ? { images } : {}), ...(files.length ? { files } : {}), ...(model ? { model } : {}), ...(vision && unreported ? { vision: true as const } : {}) })
-                : await store.send({ type: "agent.start", runtime: rt.id, task: text.trim(), ...(images.length ? { images } : {}), ...(files.length ? { files: textFiles(files) } : {}), target: pick.target(), ...(model ? { model } : {}), ...(vision && unreported ? { vision: true as const } : {}), ...(streaming ? { stream: true as const } : {}) });
+                : await store.send({ type: "agent.start", runtime: rt.id, task: text.trim(), ...(images.length ? { images } : {}), ...(files.length ? { files } : {}), target: pick.target(), ...(model ? { model } : {}), ...(vision && unreported ? { vision: true as const } : {}), ...(streaming ? { stream: true as const } : {}) });
             // A refusal is already a notice; what was typed stays, to be changed and tried again.
             if (r.ok) { saveDraft("start", ""); saveDraftImages("start", []); saveDraftFiles("start", []); att.clear(); onStarted(`${r.data.session.runtime}:${r.data.session.hash}`); }
         } finally { setBusy(false); }

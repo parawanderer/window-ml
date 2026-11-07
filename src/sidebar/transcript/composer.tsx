@@ -227,7 +227,7 @@ export function Composer({ s, multiline, tools, keys }: { s: Session; multiline?
     const key = s.hash;
     const [text, setText] = useState(() => loadDraft(key));
     const att = useImageAttach(() => loadDraftImages(key), {
-        files: { target: () => (s.kind === "agent" ? "agent" : "chat"), accepts: () => services().acceptsFiles(key), acceptsPdf: () => services().acceptsPdf(key), initial: () => loadDraftFiles(key) },
+        files: { target: () => (s.kind === "agent" ? "agent-turn" : "chat"), accepts: () => services().acceptsFiles(key), acceptsPdf: () => services().acceptsPdf(key), initial: () => loadDraftFiles(key) },
     });
     const type = (t: string) => { setText(t); saveDraft(key, t); };
     // Another session in the same box: its own draft. Not on mount, which `useState` already read: an effect runs after

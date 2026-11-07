@@ -50,6 +50,12 @@ background-hosted paths with no page round-trip and no approval.
   quoted. A name two files share is REFUSED, listing both, never resolved to the latest; the same bytes attached
   twice are one pointer. `derefLocally` reads the document from the value store on every read, so a file whose
   rows are gone fails with the store's reason. `ml.dereference` in code refuses `@file:` with a sentence for now.
+  A PDF reaches the shelf when it is attached to an agent run's FIRST message (sw-attach.ts `attachFiles`): read
+  once, its bytes and its read document stored as held rows of the run's session, its pointer noted, and the task
+  given its outline under `pointer="@file:…"` in place of the pages. The pointers ride the run's payload
+  (`StartRunPayload.files`, worker-built runs only), so a store made after a worker eviction, or after newer
+  sessions pushed the run's store out (which then keeps the file's rows), puts them back. A run under way is
+  refused a PDF (`FileTarget` "agent-turn"): the page's path would drop it.
 - The pointer carries the value's **TYPE**, from the render descriptor the step already produced — so `keys`
   on a DataFrame means its COLUMNS, and two casts the line dialect can't express work: `latex`, and `img`,
   which never dumps the payload but says it IS base64 image data, how large, and what to do instead.

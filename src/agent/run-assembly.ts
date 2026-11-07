@@ -11,7 +11,8 @@
 import { CITABLE_TOOLS, citeParam, withCallTitle } from "../tools/tool-params";
 import { buildServerTools } from "../tools/builtin-tools";
 import { type MlApi, type MlTool, type MlPublicConfig, DEFAULT_GROUNDING_RANGE, type VisionMemory, detectGroundingModel, type LexicalMetric, type ElementContext } from "../contract";
-import type { AttachedFile, PromptDisplay, PromptOrigin } from "../contract/contract-run";
+import type { PromptDisplay, PromptOrigin, SentFile } from "../contract/contract-run";
+import type { FramedFile } from "../attached-files";
 import type { StartRunPayload, RebuildConfig } from "../contract/contract-messages";
 import { promptSurfaceClause, promptSurfaceOf } from "./prompt-surface";
 import { stepBudget } from "./step-budget";
@@ -413,8 +414,8 @@ export interface UserRunRequest {
     task: string;
     /** composer attachments, already data URLs */
     images?: string[];
-    /** text files attached to the task, appended to it as `<file>` blocks (attached-files.ts) */
-    files?: AttachedFile[];
+    /** files attached to the task as sent: text, or a PDF's bytes, which the worker reads and holds (sw-attach.ts) */
+    files?: SentFile[];
     /** a right-clicked element, resolved by the shell; the task is framed around it */
     elementContext?: ElementContext;
     /** the composer's step budget */
@@ -446,7 +447,7 @@ type KitMl = Pick<MlApi, "clickTool" | "typeTool" | "pythonTool" | "chatMetaTool
  * @returns the task (framed around a right-clicked element when there is one) and how to show it, the run's
  *   provenance, and the options to assemble it with
  */
-export function userRunOptions(ml: KitMl, req: UserRunRequest, sender: Omit<PromptOrigin, "surface"> = {}): { task: string; display?: PromptDisplay; origin: PromptOrigin; maxSteps?: number; stream: boolean; options: AssemblyOptions } {
+export function userRunOptions(ml: KitMl, req: Omit<UserRunRequest, "files"> & { files?: readonly FramedFile[] }, sender: Omit<PromptOrigin, "surface"> = {}): { task: string; display?: PromptDisplay; origin: PromptOrigin; maxSteps?: number; stream: boolean; options: AssemblyOptions } {
     const { text: task, display } = framePrompt(String(req.task || "").trim(), req.elementContext, req.files);
     const { remote, scopes, ui } = sender;
     const origin: PromptOrigin = { surface: promptSurfaceOf(req.surface) ?? "hud", ...(remote ? { remote: true } : {}), ...(scopes ? { scopes } : {}), ...(ui ? { ui } : {}) };

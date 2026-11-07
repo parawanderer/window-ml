@@ -141,7 +141,8 @@ The questions for persisting per run are in the spec's "Python state persists pe
   `SessionSummary.pendingApprovals`, which diverge after a worker eviction.
 - **Page:** `tabPageUrl` against `p.pageUrl` against `SessionSummary.page`.
 - **Value claims:** a `ml-values` row's `sessions` (persistent) against `tokensByRun` (memory): after an eviction a row
-  stays claimed by a session whose pointers are gone, until release or the idle sweep.
+  stays claimed by a session whose pointers are gone, until release or the idle sweep. An attached file's rows are
+  the exception: its pointer is in the run's payload (`run.files`), so a new store puts it back.
 - **The title**: one owner now, but the sidebar keeps the copy it was handed and hears of no rename.
 
 ## Lost on a worker eviction
@@ -162,7 +163,7 @@ hold live network handles: neither shown nor evaluated).
 
 Each realm's bundle has its own registry (`src/state-registry.ts`); a snapshot asks the realm that holds the run.
 Declared so far, in the worker: `run.init`, `run.sub`, `run.model`, `run.interrupted`, `run.mailbox`, `run.pointers`,
-`run.page`, `run.messages`, `run.input`, `grants.turn` (`sw-runs.ts`), `run.values` (`sw-values.ts`), `run.approvals`, `grants.call`, `grants.fetch`, `grants.credentialedFetch` (`sw-consent.ts`),
+`run.page`, `run.messages`, `run.input`, `run.files`, `grants.turn` (`sw-runs.ts`), `run.values` (`sw-values.ts`), `run.approvals`, `grants.call`, `grants.fetch`, `grants.credentialedFetch` (`sw-consent.ts`),
 `run.log` (`sw-run-log.ts`), `session.title` (`sw-sessions.ts`), `site.levels` (`sw-site-access.ts`: the site in the run's tab, its three levels, read for a `tabId`), `run.startAsk`, `run.startApproval`, `run.personTurn`, `site.startDenials`, `site.agentOpened`, `site.notStarted` (`sw-start-approval.ts`), `run.meta` and `run.current` (`sw-runs.ts`), `policies.global` and `policies.run` (`sw-policies.ts`), `manifests.global` and `manifests.workspace` (`sw-manifests.ts`), `libraries.global` (`sw-libraries.ts`). In the worker also `run.answer` (`worker-answer.ts`) for a run it built, declared `heldOnly` so the panel lists it only for a run whose set it holds, and a page-built run's row is the page's. In the page: `run.answer` (`run-delegation.ts`),
 `page.points`, `page.boxes` (`util.ts`), and for a page-hosted run `run.messages`, `run.pointers`, `run.mailbox`
 (`page-run-state.ts`), asked of the run's tab with `RUN_STATE_IN_PAGE` (`sw-run-state.ts`). An id is unique per realm,
