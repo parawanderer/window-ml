@@ -14,6 +14,7 @@
 // can't leave it un-live.
 import { SB_ROOT, SB_HOST, SB_TAB, SB_FRAME, SB_LIGHTBOX, SB_LIGHTBOX_X, SB_HIGHLIGHT, SB_CARD, SB_STYLE, anonymousTag } from "../ids";
 import { cleanImages } from "../contract/contract-run";
+import { cleanFiles, textFiles } from "../attached-files";
 import { onSessionDone, relaySessionToPage } from "./shell-session-relay";
 import { stepBudget } from "../agent/step-budget";
 import { resolveContextContainer, domToContext, queryAll, viewportRect, setClosedRootReader } from "../dom/dom";   // the content script sees the page DOM
@@ -1084,10 +1085,13 @@ function fromApp(d: any): void {
         // An `elementContext` (from the right-click "Add to current run") lets an image-less/text-less send
         // through — the element reference IS the payload; the page folds it into the appended message.
         const elementContext = (d.elementContext && typeof d.elementContext.selector === "string") ? d.elementContext : undefined;
-        if (d.text.trim() || cleanImages(d.images) || elementContext) {
+        const files = cleanFiles(d.files);
+        if (d.text.trim() || cleanImages(d.images) || elementContext || files) {
             const body = { hash: d.hash, text: d.text, images: cleanImages(d.images), elementContext, surface: promptSurface() };
-            // The worker drives a run it built; anything else (a run or chat this page built) is the page's.
-            workerFirst({ ...body, action: "send" }, () => whenOpen(() => toPage({ __mlSessionSend: body })));
+            // The worker drives a run it built; anything else (a run or chat this page built) is the page's, which gets
+            // text files only: the worker refuses a PDF for a run it does not hold before this falls back.
+            const pageFiles = textFiles(files);
+            workerFirst({ ...body, ...(files ? { files } : {}), action: "send" }, () => whenOpen(() => toPage({ __mlSessionSend: { ...body, ...(pageFiles ? { files: pageFiles } : {}) } })));
         }
         return;
     }

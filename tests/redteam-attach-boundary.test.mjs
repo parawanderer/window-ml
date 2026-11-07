@@ -112,3 +112,29 @@ test("ML_SESSION_REMOTE for a run the worker built is a turn in the worker, and 
     assert.equal(w.chats().at(-1).body.messages.at(-1).content, "and the first half?");
     assert.ok(!w.bg.tabMessages.some(([, m]) => m?.type === "ML_SESSION_TO_PAGE"), "the page never carried the message");
 });
+
+// --- the extension's own surfaces carry a message's files to the worker ---
+
+test("a session send with files from either panel carries them on ML_SESSION_REMOTE; a files-only send relays, a malformed list does not ride", async () => {
+    const sent = [];
+    globalThis.chrome = { runtime: { sendMessage: async (m) => { sent.push(m); } } };
+    try {
+        const { relayAppToWorker } = await import("../src/sidebar/app-host.ts");
+        const notes = { name: "notes.txt", type: "text/plain", text: "alpha" };
+        assert.equal(relayAppToWorker({ __mlSidebarApp: "sessionSend", hash: "run1", text: "", files: [notes, PDF] }, 7, "devtools", () => {}), true);
+        assert.deepEqual(JSON.parse(JSON.stringify(sent.at(-1))), { type: "ML_SESSION_REMOTE", tabId: 7, action: "send", hash: "run1", text: "", files: [notes, PDF], surface: "devtools" });
+        relayAppToWorker({ __mlSidebarApp: "sessionSend", hash: "run1", text: "x", files: [{ name: "a" }] }, 7, "devtools", () => {});
+        assert.equal("files" in sent.at(-1), false, "a list the one shape check refuses is not forwarded");
+    } finally { delete globalThis.chrome; }
+});
+
+test("ML_SESSION_REMOTE with a PDF for a run the worker built holds it as that turn's pointer, and nothing goes to the page", T, async () => {
+    const w = await world();
+    const before = w.chats().length;
+    await sendSoon(w.bg, { type: "ML_SESSION_REMOTE", tabId: 7, action: "send", hash: w.hash, text: "and this one", files: [pdf("q3.pdf", "%PDF-1.7 q3")], surface: "devtools" }, EXT);
+    for (let i = 0; i < 100 && w.chats().length <= before; i++) await flush(4);
+    await flush(40);
+    assert.match(w.chats().at(-1).body.messages.at(-1).content, /^and this one\n\n<file name="q3\.pdf" type="application\/pdf" bytes="11" pages="1" pointer="@file:/);
+    assert.deepEqual((await w.files(w.hash)).map((f) => [f.name, f.turn]), [["report.pdf", 1], ["q3.pdf", 2]]);
+    assert.ok(!w.bg.tabMessages.some(([, m]) => m?.type === "ML_SESSION_TO_PAGE"), "the page never carried the message");
+});

@@ -4,7 +4,7 @@
 // content-script shell, or panel.ts) over `postMessage`. The parent can prove a message came from this extension
 // iframe, which is what makes an approval posted this way unforgeable by the page.
 import { hintSession } from "../contract/contract-run";
-import { config, view } from "./store";
+import { config, sessionMap, view } from "./store";
 import { bareHash, type SidebarServices, type SideCallRequest, type SideCallResult } from "./services";
 import { residentNow } from "./resource/panel-facts";
 import { downloadBlob } from "./export/download";
@@ -61,10 +61,12 @@ export const extensionServices: SidebarServices = {
     // The shell, or the DevTools panel, forwards it as SET_START_APPROVAL, having checked it came from this frame.
     answerStart: (requestId, decision) => toHost({ __mlSidebarApp: "startDecision", requestId, decision }),
     // A post to the page, which answers nothing: what goes wrong from there shows in the run itself.
-    // The overlay and DevTools composers do not attach files in this slice (docs/spec/FILE_ATTACHMENTS.md): only the chat page's.
-    acceptsFiles: () => false,
-    acceptsPdf: () => false,
-    sendToSession: async (hash, text, images) => { toHost({ __mlSidebarApp: "sessionSend", hash, text, images }); return { ok: true }; },
+    // An agent run takes files with any message: one the worker built holds each as an `@file:` pointer, and one a page
+    // built takes text files whole, its refusal of a PDF said in the run's step list (sw-run-start.ts). A chat here is
+    // a page's, which frames no file.
+    acceptsFiles: (hash) => sessionMap.get(hash)?.kind === "agent",
+    acceptsPdf: (hash) => sessionMap.get(hash)?.kind === "agent",
+    sendToSession: async (hash, text, images, files) => { toHost({ __mlSidebarApp: "sessionSend", hash, text, images, ...(files?.length ? { files } : {}) }); return { ok: true }; },
     cancelSession: (hash) => toHost({ __mlSidebarApp: "sessionCancel", hash }),
     continueSession: (hash, maxSteps) => toHost({ __mlSidebarApp: "continueRun", hash, ...(maxSteps ? { maxSteps } : {}) }),
     // This frame is attached to the tab the run is in: if it were gone, so would this panel be.
