@@ -165,8 +165,9 @@ const OLD_CONFIG = { chatUrl: "http://host/api/chat/completions", apiKey: "sk-te
 
 /**
  * A worker-built run on SITE whose model sends each call in `calls` (`{ js, world? }`) to exec. `us`: user scripts
- * allowed (true) or not ("off"). Returns every exec message the page was sent, what the model read back, the routing
- * records, and how many approvals were asked for.
+ * allowed (true) or not ("off"). `builtBy: "page"` starts the run the way a page does (START_RUN from the site, the
+ * page's own exec tool), so its exec has no world but the page's. Returns every exec message the page was sent, what
+ * the model read back, the routing records, and how many approvals were asked for.
  */
 async function worldRun(calls, { us = true, approved = true, config = {}, autoRO = false, builtBy = "worker" } = {}) {
     let n = 0, bg, approvals = 0;
@@ -280,6 +281,20 @@ test("a read-only survey with world: \"isolated\" never runs in the page's world
     const tries = page.execMsgs.filter((p) => p.readonlyTry);
     assert.equal(tries.length, 1);
     assert.ok(!("world" in tries[0].args), "the page's read-only try is not told the world");
+});
+
+test("a PAGE-built run's read-only exec naming world: \"isolated\" is refused, never surveyed in the worker or the page", T, async () => {
+    const r = await worldRun([{ js: "return document.title", world: "isolated" }], { autoRO: true, builtBy: "page" });
+    assert.match(r.results[0], /^Error: world "isolated" is not available in this run, so this exec did not run\./, JSON.stringify(r.results));
+    assert.deepEqual(r.roLog, [], "no survey answered, in the worker or the page");
+    assert.equal(r.execMsgs.filter((p) => p.readonlyTry).length, 0);
+    assert.equal(r.ran.length, 0, "and nothing ran");
+});
+
+test("control: the same read-only exec and world in a WORKER-built run is routed isolated, not refused", T, async () => {
+    const r = await worldRun([{ js: "return document.title", world: "isolated" }], { autoRO: true });
+    assert.doesNotMatch(r.results[0], /is not available in this run/);
+    assert.deepEqual(r.log, [["exec-isolated", "requested"]]);
 });
 
 // --- review of #664: the card, the schema, null, a non-string js, and the survey on the default build ---
