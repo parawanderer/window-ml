@@ -92,11 +92,15 @@ test.describe("ml.sh lease bench: the pilot's acceptance checks", () => {
     });
 
     test("3: a task script with a stored workspace manifest runs without asking", async () => {
-        const manifest = { program: "bash", entrypoint: { path: "build.sh" }, command: { effects: ["read"], paths: "operands", flags: {} } };
+        const manifest = { program: "bash", entrypoint: { path: "build.sh" }, command: { effects: ["read", "runs-code"], paths: "operands", flags: {} } };
         const { tool, denied, added } = await shRun(RUN(["bash", "build.sh"]), { manifest });
         expect(added?.error, "the manifest was refused").toBeUndefined();
         expect(denied, "the seeded script asked").toEqual([]);
         expect(tool).toContain(`BUILD-OK-${NONCE}`);
+        // `echo` is a bash builtin, so the token prints even when the sandbox refuses the script's child programs: the
+        // 2026-11-07 matrix ran under `exec: program-only`, its `sleep` was denied and its 40 s build took 5 ms.
+        expect(tool, "the script's child programs were refused").not.toContain("Permission denied");
+        expect(Number(/"durationMs":(\d+)/.exec(tool)?.[1] ?? 0), "the script's sleep did not run").toBeGreaterThanOrEqual(2000);
     });
 
     test("4: a read of ~/.ssh/config asks, the approver denies it, and none of the file reaches the model", async () => {

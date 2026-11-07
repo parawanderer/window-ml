@@ -28,8 +28,11 @@ const MODELS = (process.env.SH_LEASE_MODELS || "gemma4:31b,gemma4:e4b,qwen3.8-fl
 /** The result lines the scripts end with: a right answer reports its own. */
 export const TOKENS = { build: "BUILD OK 7f3a19", quick: "CHECK OK c42e07" };
 
-/** A workspace manifest for one task script: `bash <path>`, pinned by the host, reading nothing outside its root. */
-const scriptManifest = (file: string) => ({ program: "bash", entrypoint: { path: file }, command: { effects: ["read"], paths: "operands", flags: {} } });
+/** A workspace manifest for one task script: `bash <path>`, pinned by the host, reading nothing outside its root. It
+ *  declares `runs-code` because the scripts start `sleep`: without it the worker sends `exec: program-only` and the host
+ *  refuses every child program (the 2026-11-07 matrix: `sleep` denied, the 40 s build done in 5 ms, nothing detached).
+ *  Under the sandbox `exec(process)` is inside the bound, so the call still runs without asking. */
+const scriptManifest = (file: string) => ({ program: "bash", entrypoint: { path: file }, command: { effects: ["read", "runs-code"], paths: "operands", flags: {} } });
 
 const BUILD_SH = [
     'echo "build: compiling 8 units"',
