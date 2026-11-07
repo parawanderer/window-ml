@@ -418,14 +418,19 @@ export interface DebugAgentSiteSay extends DebugBase { kind: "agent-site-say"; t
 
 /** A detached call's result, as the run inbox carried it to the model (docs/spec/ASYNC_CALLS.md, mode 1): a user-role
  *  message no one typed, drawn as the task's and never as the person's. Worker-only: a page may never write it. */
-export interface DebugAgentTaskSay extends DebugBase { kind: "agent-task-say"; text: string; task: string; }
+export interface DebugAgentTaskSay extends DebugBase {
+    kind: "agent-task-say"; text: string; task: string;
+    /** How it ended, how long it ran (ms) and its exit code (null when not known), for the calm view's short line. */
+    status: "running" | "done" | "failed" | "cancelled" | "orphaned"; ms: number; code: number | null;
+}
 
 /** One quiet line in a run's step list, written by the worker: a start a page this run opened asked for (Q17). */
 export interface DebugAgentNote extends DebugBase { kind: "agent-note"; text: string; site?: string; }
 
-/** The events only the worker writes about a site's agent. Kept out of `MlDebugEvent`: they are live notices for the
- *  surfaces that show the run (the HUD card, the overlay, the DevTools panel), never kept in the session index or an
- *  export. */
+/** The events only the worker writes about a run: a site's agent (its start card, outcome, mark, turns, wait and notes)
+ *  and a detached call's result. Kept out of `MlDebugEvent`, since a page may never write one (event-admission.ts). The
+ *  session index keeps `agent-site`, `agent-site-say` and `agent-task-say`, and the exports carry the two says; the
+ *  rest are live notices for the surfaces that show the run. */
 export type SiteRunEvent = DebugStartAsk | DebugStartDecided | DebugAgentSite | DebugAgentPerson | DebugAgentWait | DebugAgentSiteSay | DebugAgentTaskSay | DebugAgentNote;
 
 /** Window-bus envelopes between the core (main world) and the sidebar. */

@@ -39,7 +39,7 @@ globalThis.chrome = {
 };
 const { shRun, detachedText, SH_TAIL_ABSENT } = await import("../src/sw/sw-shell-call.ts");
 const { SH_LEASE_MS, SH_HOST_TIMEOUT_MS } = await import("../src/shell/sh-call.ts");
-const { taskAction, endTasks, withTasks, openTasks } = await import("../src/sw/sw-tasks.ts");
+const { taskAction, endTasks, withTasks, openTasks, taskDrained } = await import("../src/sw/sw-tasks.ts");
 const { runInboxes } = await import("../src/sw/sw-runs.ts");
 const { TokenStore } = await import("../src/pointers/token-pipe.ts");
 const { builtinTool } = await import("../src/tools/tool-registry.ts");
@@ -119,8 +119,22 @@ test("a call past its expectMs detaches: the script's await answers Detached wit
     assert.equal(item.task, r.task, "the inbox item names its task, which only sw-tasks sets");
     assert.equal(item.origin, undefined, "a task's result claims no person's surface");
     assert.match(item.text, new RegExp(`^\\[task ${r.task} done after \\d+ s: ml\\.sh exit 0, ok; stdout @tool:[0-9a-f]{7} \\(4 B\\): "out\\\\n"; stderr empty\\]$`));
-    assert.deepEqual(run.fanned.map((f) => f.task), [r.task], "the surfaces are told, as the task's");
+    assert.deepEqual(run.fanned, [], "a queued result was drawn before the model read it");
+    taskDrained("run-slow", item.task, item.text);   // the loop drains it at its next step (sw-run-host.ts drainInbox)
+    assert.deepEqual(run.fanned.map((f) => [f.task, f.text]), [[r.task, item.text]], "the surfaces are told, as the task's, once the model reads it");
     await endTasks("run-slow");
+});
+
+test("a result that settles during the turn's last model call is never drawn: the loop never drained it, and the turn's end drops it", T, async () => {
+    const host = slowHost();
+    const run = liveRun("run-last-call");
+    const r = await shRun(ctxFor("run-last-call"), [["ls"], { expectMs: 30 }]);
+    host.finish();   // settles while the model writes its answer: no step boundary follows
+    await until(() => run.inbox().length > 0);
+    assert.equal(run.inbox()[0].task, r.task, "positive control: it was queued");
+    runInboxes.delete("run-last-call");   // the turn ends: the run host closes the inbox, then settles
+    await endTasks("run-last-call");
+    assert.deepEqual(run.fanned, [], "the transcript would show a result the model never read");
 });
 
 test("the Detached text says which case it was: the script's own estimate, or the default, and the host's time limit", () => {

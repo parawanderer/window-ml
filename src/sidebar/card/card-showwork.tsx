@@ -1,6 +1,7 @@
 // The off-mode card's "Show work" trace: the collapsible step trace (ShowWork), a scannable ask/answer
 // disclosure (CardTraceMsg), and — for a multi-task run — per-task blocks (RunTaskBlockView). Extracted
 // from hud-card.tsx; reuses the run-render layer (AgentTurn / AnswerBody) so the card matches the sidebar.
+import { TaskResultLine } from "../transcript/task-line";
 import { useState, useEffect, useRef } from "preact/hooks";
 import type { Session, AgentStep } from "../store";
 import { rev, cardShowWorkHash, revealSeq } from "../store";
@@ -42,7 +43,10 @@ export function ShowWork({ run }: { run: Session }) {
     // why a fixed answer-before-say fraction mis-orders a chat-style turn that ran no tool steps.
     const traceItems: { pos: number; ts: number; el: preact.JSX.Element }[] = [
         ...(run.task || run.taskImages?.length ? [{ pos: -1, ts: run.createdTs || 0, el: <CardTraceMsg key="task" label="you asked" text={run.task || ""} cls="acard-you" images={run.taskImages} display={run.taskDisplay} /> }] : []),
-        ...(run.says || []).map((s, i) => ({ pos: s.atStep + 0.5, ts: s.ts, el: <CardTraceMsg key={`say${i}`} label={s.task ? `task ${s.task}` : "you asked"} text={s.text} cls="acard-you" images={s.images} steer={s.id ? { seen: s.seen } : undefined} display={s.display} /> })),
+        ...(run.says || []).map((s, i) => ({ pos: s.atStep + 0.5, ts: s.ts, el: s.task
+            // A task's result is no one's prompt: the HUD card is a calm surface, so it gets the quiet line (task-line.tsx).
+            ? <TaskResultLine key={`say${i}`} task={s.task} text={s.text} end={s.taskEnd} />
+            : <CardTraceMsg key={`say${i}`} label="you asked" text={s.text} cls="acard-you" images={s.images} steer={s.id ? { seen: s.seen } : undefined} display={s.display} /> })),
         ...pastAnswers.map((a, i) => ({ pos: a.atStep + 0.5, ts: a.ts, el: <CardTraceMsg key={`ans${i}`} label={a.cancelled ? "cancelled" : a.hitCap ? "stopped early" : "answered"} text={a.text || "(no reply)"} cls="acard-ans" /> })),
         ...turns.map(t => ({ pos: t.step, ts: 0, el: <AgentTurn key={`t${t.step}`} turn={t} max={run.maxSteps} hash={run.hash} /> })),
     ].sort((a, b) => a.pos - b.pos || a.ts - b.ts);

@@ -47,7 +47,7 @@ import { lookPreviewArgs, workerLook } from "./worker-look";
 import { workerLocate } from "./worker-locate";
 import { runVision, workerWroteVision, type RunVision } from "./run-vision";
 import { withUserWatches } from "./sw-shared-watches";
-import { endTasks, openTasks, withTasks } from "./sw-tasks";
+import { endTasks, openTasks, taskDrained, withTasks } from "./sw-tasks";
 import { routeExec, execNames, surveyMayEnterPage, withoutWorld, worldCardNote, type ExecRoute } from "./exec-routing";
 import { defaultExecWorld } from "../contract/contract-config";
 import { outputCapPrecheck } from "../contract/contract-pointers";
@@ -802,7 +802,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             if (p.crossPage !== false) bufferReplay(tabId, event);
         };
         // A detached call's result, once the inbox carries it: drawn as the task's, never as the person's words.
-        openTasks(runId, (text, task) => fanEvent({ kind: "agent-task-say", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, text, task }));
+        openTasks(runId, (text, task, end) => fanEvent({ kind: "agent-task-say", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, text, task, ...end }));
         // The run's steps may now raise nested asks: a call made from inside a running step that needs the person.
         unhostAsks = hostAsks({
             runId, unattended: !!p.unattended, routing: p.approvalRouting || "ui", signal: abortCtl.signal,
@@ -1959,6 +1959,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 drainInbox: () => {   // a.say() steering (INJECT_MESSAGE); draining flips the "seen" indicator
                     const items = (runInboxes.get(runId)?.queue || []).splice(0);
                     for (const it of items) if (it.id) fanEvent({ kind: "agent-say-seen", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, sayId: it.id });
+                    // A task's result is drawn as the model reads it: here, never when it was queued.
+                    for (const it of items) if (it.task) taskDrained(runId, it.task, it.text);
                     // Each says where it was typed, so a run steered from another surface reports THAT one.
                     // A task's result is no one's typing: it carries its id and leaves the run's latest origin standing.
                     return items.map(it => (it.task ? { text: it.text, task: it.task } : it.origin || it.images ? { text: it.text, ...(it.origin ? { origin: it.origin } : {}), ...(it.images ? { images: it.images } : {}) } : it.text));

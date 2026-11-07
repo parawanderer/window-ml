@@ -13,12 +13,13 @@ const { serializeSession } = await import("../src/sidebar/export/export.ts");
 const { sessionToJson } = await import("../src/sidebar/export/export-json.ts");
 const require = createRequire(import.meta.url);
 const { closeSidebarWorlds, loadSidebarWorld } = require("./helpers");
-const { agentStart } = require("./sidebar-helpers");
+const { agentStart, agentStep, agentResult } = require("./sidebar-helpers");
+import { readFileSync } from "node:fs";
 
 after(closeSidebarWorlds);
 
 const RESULT = "[task t1a2b3c done after 47 s: ml.sh exit 0, ok; stdout empty; stderr empty]";
-const taskSay = (hash, over = {}) => ({ kind: "agent-task-say", id: hash, ts: Date.now() + 1, save: false, session: { hash, turn: 0 }, text: RESULT, task: "t1a2b3c", ...over });
+const taskSay = (hash, over = {}) => ({ kind: "agent-task-say", id: hash, ts: Date.now() + 1, save: false, session: { hash, turn: 0 }, text: RESULT, task: "t1a2b3c", status: "done", ms: 47000, code: 0, ...over });
 
 // --- the loop: a task's result is a user-role message no one typed ---
 
@@ -105,4 +106,50 @@ test("the sidebar draws a task's result with the task as its speaker, never 'you
     assert.deepEqual(whos, ["you", "task t1a2b3c"], JSON.stringify(whos));
     assert.ok(bubbles[1].classList.contains("from-task"));
     assert.ok(bubbles[1].textContent.includes("ml.sh exit 0"), "the bubble shows what the model read");
+    const labels = (b) => [...b.querySelectorAll("[aria-label], button")].map((e) => e.getAttribute("aria-label") || e.textContent.trim());
+    assert.deepEqual(labels(bubbles[0]), ["Copy this message", "Edit this message"], "positive control: the person's message offers Edit");
+    assert.deepEqual(labels(bubbles[1]), ["Copy this message"], "a task's result offers an Edit it can never have");
+});
+
+// --- the calm surfaces: one quiet line, never a bubble on the person's side ---
+
+test("a task's result is drawn both ways in the transcript, and the calm view's stylesheet shows only the quiet line", async () => {
+    const s = await loadSidebarWorld({});
+    const h = "taskrun2";
+    await s.dispatch(agentStart(h, "build it", "m"));
+    await s.dispatch(taskSay(h));
+    await s.flush();
+    s.shadow.querySelector(".row").click();
+    await s.flush();
+    const say = s.window.document.querySelector(".task-say");
+    assert.ok(say, "no task say in the transcript");
+    const line = say.querySelector(":scope > .task-line");
+    assert.equal(line.querySelector(".disc-label").textContent, "✓ task t1a2b3c finished · 47 s · exit 0", "the line reads the event's facts, not the text");
+    assert.ok(say.querySelector(":scope > .task-dev .msg.user.from-task"), "the dev view's labelled bubble");
+    assert.equal(line.querySelector(".msg.user, .umsg-acts"), null, "the calm line carries a bubble or its Copy/Edit");
+    line.querySelector(".disc-head").click();
+    await s.flush();
+    assert.equal(line.querySelector(".task-line-raw").textContent, RESULT, "opening the line shows exactly what the model got");
+    const css = readFileSync(new URL("../src/sidebar/sidebar.css", import.meta.url), "utf8");
+    assert.match(css, /^\.task-say > \.task-line \{ display: none; \}$/m, "the dev view hides the line");
+    assert.match(css, /^html\[data-calm\] \.task-say > \.task-line \{ display: block; \}$/m, "the calm view shows the line");
+    assert.match(css, /^html\[data-calm\] \.task-say > \.task-dev \{ display: none; \}$/m, "the calm view hides the bubble");
+});
+
+test("the HUD card's Show work draws a task's result as the quiet line, never as 'you asked'", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+    const h = "taskcard1";
+    await w.dispatch(agentStart(h, "build it", "m"));
+    await w.dispatch(agentStep(h, 1, { seq: 1, tool: "exec", arguments: { js: "1" }, result: "ok" }));
+    await w.dispatch(taskSay(h, { status: "failed", ms: 3000, code: null, task: "t9f8e7d" }));
+    await w.dispatch(agentResult(h, "done", 1));
+    await w.flush();
+    const doc = w.window.document;
+    doc.querySelector(".card-work-toggle").click();
+    await w.tick();
+    const lines = [...doc.querySelectorAll(".task-line")];
+    assert.deepEqual(lines.map((l) => l.querySelector(".disc-label").textContent), ["✗ task t9f8e7d failed · 3 s"], "a failed task with no exit code");
+    assert.equal([...doc.querySelectorAll(".acard-you")].length, 1, "the task's result became a 'you asked' row");
 });

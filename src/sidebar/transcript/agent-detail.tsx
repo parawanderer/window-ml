@@ -15,6 +15,7 @@ import { resolveOutputCap } from "../../contract/contract-pointers";
 import { jsBridgeLine } from "../../python/bridge-names";
 import { runStats, fmtTokPerSec, runStatsProvenance } from "../../contract/contract-chat";
 import { externalSheetIds } from "../../dom/dom";
+import { TaskResultLine } from "./task-line";
 import { surface, view, rev, sessionMap, turnsRun, atBottom, showStatsTokens, showStatsTps, laneLitSeqs, focusMode, groupAllTools } from "../store";
 import type { Session, AgentStep, Status } from "../store";
 import { pretty, truncate, markdown, collapsedPreview, toolFailed } from "../format";
@@ -824,7 +825,7 @@ export function UserBubble({ text, ts, images, steer, display, site, task, pin }
         <ArrivingMsg ts={ts}>
             <div class={`msg user${shown || display ? "" : " no-text"}${site ? " from-site" : ""}${task ? " from-task" : ""}`} data-prompt={pin}>
                 {/* A message a SITE sent carries its name, never "you" (docs/spec/SITE_ACCESS_SLICE3.md, Q2a). */}
-                <div class="mrow"><span class="who">{task ? `task ${task}` : site ? hostOf(site) : "you"}</span>{steer ? <SteerSeen seen={!!steer.seen} /> : null}{display ? <RawToggle raw={raw} onRaw={setRaw} tips={PROMPT_RAW_TIPS} /> : null}<span class="sp" />{shown ? <UserActions text={shown} /> : null}<Stamp ts={ts} /></div>
+                <div class="mrow"><span class="who">{task ? `task ${task}` : site ? hostOf(site) : "you"}</span>{steer ? <SteerSeen seen={!!steer.seen} /> : null}{display ? <RawToggle raw={raw} onRaw={setRaw} tips={PROMPT_RAW_TIPS} /> : null}<span class="sp" />{shown ? <UserActions text={shown} editable={!task} /> : null}<Stamp ts={ts} /></div>
                 {shown ? <UserText text={shown} /> : null}
             </div>
             <SentImages images={images} />
@@ -1061,7 +1062,10 @@ export function AgentRunView({ s }: { s: Session }) {
             el: <ResumeDivider key={`r${i}-${r.id}`} r={r} />,
         })),
         ...(s.answers || []).map((a, i) => ({ pos: a.atStep + 0.5, ts: a.ts, el: answer(a, `a${i}`, i) })),
-        ...(s.says || []).map((sy, i) => ({ pos: sy.atStep + 0.5, ts: sy.ts, el: <UserBubble key={`s${i}`} pin={`s${i}`} text={sy.text} ts={sy.ts} images={sy.images} steer={sy.id ? { seen: sy.seen } : undefined} display={sy.display} site={sy.site} task={sy.task} /> })),
+        // A task's result is drawn twice and CSS shows one: the calm line, or the dev view's labelled bubble (task-line.tsx).
+        ...(s.says || []).map((sy, i) => ({ pos: sy.atStep + 0.5, ts: sy.ts, el: sy.task
+            ? <div key={`s${i}`} class="task-say"><TaskResultLine task={sy.task} text={sy.text} end={sy.taskEnd} /><div class="task-dev"><UserBubble pin={`s${i}`} text={sy.text} ts={sy.ts} task={sy.task} /></div></div>
+            : <UserBubble key={`s${i}`} pin={`s${i}`} text={sy.text} ts={sy.ts} images={sy.images} steer={sy.id ? { seen: sy.seen } : undefined} display={sy.display} site={sy.site} /> })),
         // The worker's quiet lines (a start a page this run opened asked for, Q17).
         ...(s.notes || []).map((n, i) => ({ pos: n.atStep + 0.5, ts: n.ts, el: <div key={`n${i}`} class="arun-note">{n.text}</div> })),
     ].sort((a, b) => a.pos - b.pos || a.ts - b.ts);

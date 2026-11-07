@@ -248,7 +248,7 @@ export function taskOutcomeOf(a: ShAnswer): TaskOutcome {
     const stream = (name: string, o: ShOut) => o.size === 0 && !o.error ? `${name} empty`
         : `${name} ${o.token ?? "(not kept)"} (${o.size} B)${o.error ? ` ${o.error}` : ""}: ${JSON.stringify(o.text.length > cap ? `${o.text.slice(0, cap)}…` : o.text)}`;
     const how = [`exit ${res.code ?? res.signal ?? "?"}`, res.ok ? "ok" : "not ok", ...(res.timedOut ? ["timed out"] : []), ...(res.killed ? [`killed (${res.killed})`] : []), ...(res.error ? [res.error] : [])].join(", ");
-    return { status: res.cancelled ? "cancelled" : "done", text: `ml.sh ${how}; ${stream("stdout", res.stdout)}; ${stream("stderr", res.stderr)}`, result: res.stdout.token };
+    return { status: res.cancelled ? "cancelled" : "done", text: `ml.sh ${how}; ${stream("stdout", res.stdout)}; ${stream("stderr", res.stderr)}`, result: res.stdout.token, code: res.code };
 }
 
 /**

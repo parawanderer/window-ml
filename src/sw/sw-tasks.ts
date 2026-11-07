@@ -24,7 +24,12 @@ export interface TaskOutcome {
     text: string;
     /** An `@tool:` pointer to the full result, when there is one. */
     result: string | null;
+    /** The program's exit code, when the executor has one; null when it is not known (killed, failed to run). */
+    code?: number | null;
 }
+
+/** How a finished task is announced to the run's surfaces beside its text, so a short line never parses the text. */
+export interface TaskEnd { status: TaskStatus; ms: number; code: number | null }
 
 /** What only the executor can do for a task it registered. */
 export interface TaskExecutor {
@@ -55,6 +60,9 @@ interface Task extends Omit<TaskSpec, "exec"> {
     text: string | null;
     /** The result reached the model (an await answered with it, or the inbox carried it). */
     delivered: boolean;
+    /** When it ended and its exit code, for the surfaces' short line. */
+    endedMs?: number;
+    code: number | null;
     /** An await waiting on it now: answered instead of the inbox. */
     waiter?: (o: TaskOutcome) => void;
     exec: TaskExecutor;
@@ -67,7 +75,7 @@ export const TASK_TAIL_MAX_LINES = 200;
 
 const tasks = new Map<string, Map<string, Task>>();
 /** Where a run's finished task is announced to its surfaces (the run host's fan), set while the run's turn is live. */
-const sinks = new Map<string, (text: string, id: string) => void>();   // state: plumbing — the run host's fan, for the turn
+const sinks = new Map<string, (text: string, id: string, end: TaskEnd) => void>();   // state: plumbing — the run host's fan, for the turn
 defineState({
     id: "run.tasks", scope: "run", realm: "worker", audience: "model", lostOn: ["worker-eviction", "turn-end"],
     exposedAs: "ml.current.tasks",
@@ -80,7 +88,7 @@ defineState({
  * @param runId the run
  * @param fan the run host's announcement to its surfaces
  */
-export function openTasks(runId: string, fan: (text: string, id: string) => void): void {
+export function openTasks(runId: string, fan: (text: string, id: string, end: TaskEnd) => void): void {
     sinks.set(runId, fan);
 }
 
@@ -93,7 +101,7 @@ export function openTasks(runId: string, fan: (text: string, id: string) => void
  */
 export function detachTask(runId: string, spec: TaskSpec): string {
     const id = `t${crypto.randomUUID().replace(/-/g, "").slice(0, 6)}`;
-    const t: Task = { ...spec, id, status: "running", result: null, text: null, delivered: false };
+    const t: Task = { ...spec, id, status: "running", result: null, text: null, delivered: false, code: null };
     let mine = tasks.get(runId);
     if (!mine) tasks.set(runId, (mine = new Map()));
     mine.set(id, t);
@@ -109,6 +117,8 @@ async function finish(runId: string, t: Task, o: TaskOutcome): Promise<void> {
     if (t.status !== "running") return;
     t.status = o.status;
     t.result = o.result;
+    t.endedMs = Date.now();
+    t.code = o.code ?? null;
     t.text = (await forModel(o.text)).text;
     recordRunLog(runId, { ...(o.status === "done" ? {} : { level: "warn" as const }), subsystem: "task", kind: "ended", reason: o.status, ms: Date.now() - t.startedMs, detail: { id: t.id, tool: t.tool } });
     if (tasks.get(runId)?.get(t.id) !== t) return;
@@ -116,10 +126,24 @@ async function finish(runId: string, t: Task, o: TaskOutcome): Promise<void> {
     const inbox = runInboxes.get(runId);
     if (!inbox) return;
     const text = `[task ${t.id} ${o.status} after ${secs(Date.now() - t.startedMs)}: ${t.text}]`;
+    // Queued only: it is delivered, and drawn, when the loop drains it (`taskDrained`). A turn that ends first drops it,
+    // and nothing then shows a result the model never read.
     inbox.queue.push({ text, task: t.id });
+}
+
+/**
+ * The loop has drained a task's result from the inbox: the model reads it now. Only here is it delivered, recorded and
+ * drawn on the run's surfaces, so the transcript and the exports carry exactly what reached the model.
+ * @param runId the run
+ * @param id the task
+ * @param text the text the inbox carried
+ */
+export function taskDrained(runId: string, id: string, text: string): void {
+    const t = tasks.get(runId)?.get(id);
+    if (!t) return;
     t.delivered = true;
-    sinks.get(runId)?.(text, t.id);
-    recordRunLog(runId, { subsystem: "task", kind: "collected", reason: "inbox", detail: { id: t.id } });
+    sinks.get(runId)?.(text, id, { status: t.status, ms: (t.endedMs ?? Date.now()) - t.startedMs, code: t.code });
+    recordRunLog(runId, { subsystem: "task", kind: "collected", reason: "inbox", detail: { id } });
 }
 
 /**

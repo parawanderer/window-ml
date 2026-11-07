@@ -173,7 +173,7 @@ function onSiteRunEvent(ev: SiteRunEvent, key: string, runtime?: string): void {
     } else if (ev.kind === "agent-task-say") {
         // A detached call's result, as the model read it: on the turn's list of says so it is drawn in order, as the
         // task's. It starts nothing: the run was already running when the inbox carried it.
-        s.says = [...(s.says || []), { text: ev.text, ts: ev.ts, atStep: maxSessionStep(s), seen: true, task: ev.task }];
+        s.says = [...(s.says || []), { text: ev.text, ts: ev.ts, atStep: maxSessionStep(s), seen: true, task: ev.task, taskEnd: { status: ev.status, ms: ev.ms, code: ev.code ?? null } }];
     } else if (ev.kind === "agent-wait") s.siteWait = { prompt: ev.prompt, site: ev.site, ts: ev.ts };
     else if (ev.kind === "agent-note") s.notes = [...(s.notes || []), { text: ev.text, ts: ev.ts, atStep: maxSessionStep(s) }];
     s.lastTs = Math.max(s.lastTs, ev.ts); rev.value++;
