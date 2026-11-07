@@ -291,6 +291,13 @@ test("a PAGE-built run's read-only exec naming world: \"isolated\" is refused, n
     assert.equal(r.ran.length, 0, "and nothing ran");
 });
 
+test("a PAGE-built run's exec naming world: \"isolated\" is refused at the precheck, before the person is asked", T, async () => {
+    const r = await worldRun([{ js: PLAIN, world: "isolated" }], { builtBy: "page" });
+    assert.match(r.results[0], /^Error: world "isolated" is not available in this run, so this exec did not run\./, JSON.stringify(r.results));
+    assert.equal(r.approvals, 0, "refused before any card: the person is never asked");
+    assert.equal(r.ran.length, 0, "and nothing ran");
+});
+
 test("control: the same read-only exec and world in a WORKER-built run is routed isolated, not refused", T, async () => {
     const r = await worldRun([{ js: "return document.title", world: "isolated" }], { autoRO: true });
     assert.doesNotMatch(r.results[0], /is not available in this run/);
