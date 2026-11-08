@@ -7,8 +7,8 @@
 // origin (`stored.p.pageOrigin`, stamped by the browser at the start) is the one that matters:
 //
 //   - FILES: a text file goes to the page whole, so its body reaches a site that never built the run. Refused by name
-//     (`pageRunMoved`, src/attached-files.ts) by #1520; its rows here are `{ todo }` until this file is on that branch,
-//     where my own commit flips them. The family has a THIRD shape with no navigation at all: the message is sent with
+//     (`pageRunMoved`, src/attached-files.ts) by #1520, which this branch carries: the two rows below are live (their
+//     `{ todo }` flipped with the fix). The family has a THIRD shape with no navigation at all: the message is sent with
 //     ANOTHER tab's id, the early-out refuses only a PDF (`fromTabId !== tabId`, src/sw/sw-run-start.ts), and both
 //     callers then forward the files to the SENDING tab's page that built nothing (flaky-ci, review 6719096527). Its
 //     text-only sibling still falls back to that page by ruling, since a page-built chat lives there and is in none of
@@ -138,10 +138,9 @@ test("CONTROL: a subframe cannot build a run, so a page-built run's builder orig
     assert.match(String(r.error), /top frame/i, `a subframe's run was accepted: ${JSON.stringify(r)}`);
 });
 
-// --- the files half: a file never goes to a page that did not build the run (flips on #1520's branch) ---
+// --- the files half: a file never goes to a page that did not build the run ---
 
-
-test("RED TEAM: a run a page built, its tab now on ANOTHER approved site, sends no file to that page and refuses it by name", { todo: "open: the relay target is the tab's CURRENT origin (`siteDecision(here)`), and the file is forwarded to it; #1520 at 4b1cf206 refuses it with `pageRunMoved` (src/sw/sw-run-start.ts:276)" }, T, async () => {
+test("RED TEAM: a run a page built, its tab now on ANOTHER approved site, sends no file to that page and refuses it by name", T, async () => {
     const { bg, tab } = world();
     await pageBuild(bg, "pagebuilt3");
     assert.equal(bg.tabMessages.filter(([, m]) => m.type === "ML_SESSION_TO_PAGE").length, 0, "the page's own start already relayed something");
@@ -162,7 +161,7 @@ test("RED TEAM: a run a page built, its tab now on ANOTHER approved site, sends 
     assert.equal(notes.at(-1), `Your message was not sent: ${moved("notes.txt", "https://other.example")}`, `the step list does not name the file and where it would have gone: ${notes.at(-1)}`);
 });
 
-test("RED TEAM: a run's hash sent with ANOTHER tab's id sends no file to that tab's page", { todo: "open: a hash on another tab takes the early-out (`fromTabId !== tabId`, src/sw/sw-run-start.ts:261-266) that refuses only a PDF, and both callers then forward the person's files to the SENDING tab's page; #1520 refuses them with `pageRunMoved`, measured by flaky-ci in review 6719096527" }, T, async () => {
+test("RED TEAM: a run's hash sent with ANOTHER tab's id sends no file to that tab's page", T, async () => {
     // The same defect with no navigation at all: the run's tab is untouched, and the message is AIMED at a tab that
     // built nothing. The text-only sibling still falls back to that page by ruling (page-built chats live there and
     // are not in `bgRuns`), so this row is the files only.
