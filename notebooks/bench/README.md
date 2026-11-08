@@ -14,3 +14,6 @@ Each notebook has a generator beside it (`make-<name>.py`, the file to edit) and
 - [spend-to-date.ipynb](spend-to-date.ipynb): the bench panel's size and its cloud calls' cost, each call priced at the
   snapshot it ran under by the bench's own pricer (`price-calls.mjs`), and the calls no snapshot prices. Generator:
   `make-spend-to-date.py`.
+- [tools-into-js.ipynb](tools-into-js.ipynb): `fetch_url` as a tool against `ml.fetch` inside exec (and both), over a CSV
+  total and a one-fact read: correctness, steps, tokens and time per arm, which reader each run used first, where
+  `ml.fetch` appears in the exec arm, and switching in the both arm. Generator: `make-tools-into-js.py`.
