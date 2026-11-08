@@ -4533,6 +4533,46 @@ test("PYTHON_EXEC: the bench's keep-state run, reset and completion all reach th
     assert.equal(runs[3].complete.bench, "readonly", "an unknown namespace name is dropped, never forwarded");
 });
 
+// --- the bench's Stop: PYTHON_INTERRUPT, for extension pages only ---
+
+test("SECURITY (PYTHON_INTERRUPT): a content script is refused and the offscreen document is never asked", async () => {
+    const bg = loadBackground({ config: baseConfig() });
+    const sent = [];
+    const send = bg.context.chrome.runtime.sendMessage;
+    bg.context.chrome.runtime.sendMessage = (m) => { sent.push(m); return send(m); };
+    const res = await bg.send({ type: "PYTHON_INTERRUPT" }, { tab: { id: 9, url: "https://evil.example/x" }, url: "https://evil.example/x" });
+    assert.deepEqual(res, { error: "refused" });
+    assert.equal(sent.filter((m) => m?.type === "PY_INTERRUPT").length, 0, "nothing reached the offscreen document");
+    // Positive control: the same wrapper sees the forward from an extension page (next test), so the empty list means something.
+    await bg.send({ type: "PYTHON_INTERRUPT" }, { url: "chrome-extension://test/sidebar.html" });
+    assert.equal(sent.filter((m) => m?.type === "PY_INTERRUPT").length, 1);
+});
+
+test("PYTHON_INTERRUPT: an extension page's Stop is forwarded to the offscreen document and its answer relayed", async () => {
+    for (const [offscreen, expected] of [[{ interrupted: true }, { interrupted: true }], [{ running: false }, { running: false }], [undefined, { running: false }]]) {
+        const bg = loadBackground({ config: baseConfig() });
+        const sent = [];
+        bg.context.chrome.runtime.sendMessage = async (m) => { sent.push(m); return offscreen; };
+        // A tab too: the overlay bench is an extension iframe inside a tab, and the sender's url is what counts.
+        const res = await bg.send({ type: "PYTHON_INTERRUPT" }, { tab: { id: 9 }, url: "chrome-extension://test/sidebar.html" });
+        assert.deepEqual(res, { data: expected });
+        assert.deepEqual(sent.filter((m) => m?.type === "PY_INTERRUPT"), [{ type: "PY_INTERRUPT" }], "forwarded with no payload: it names no request");
+    }
+});
+
+test("PYTHON_INTERRUPT: a failed send to the offscreen document answers running: false", async () => {
+    const bg = loadBackground({ config: baseConfig() });
+    bg.context.chrome.runtime.sendMessage = () => Promise.reject(new Error("Could not establish connection"));
+    assert.deepEqual(await bg.send({ type: "PYTHON_INTERRUPT" }, { url: "chrome-extension://test/sidebar.html" }), { data: { running: false } });
+});
+
+test("SECURITY (PYTHON_INTERRUPT): it is not in the page relay's HANDLE_MAP, as a request or a response type", () => {
+    const { HANDLE_MAP } = require("../src/page-relay.ts");
+    const named = Object.entries(HANDLE_MAP).flatMap(([k, v]) => [k, v.type, v.responseType]);
+    assert.ok(named.length > 10, "positive control: the map is read");
+    assert.ok(!named.some((n) => /INTERRUPT/.test(String(n))), "no page can start a bench Stop");
+});
+
 // ---- Request hints (RequestHint → `hint` on the wire; a patched ollama records it on gen.end) ----
 test("FETCH_LLM carries the request's hint: trimmed to the server's limits, utility by profile, synthetic from storage", async () => {
     const bodies = [];

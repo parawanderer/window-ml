@@ -388,7 +388,7 @@ const runInBench = async (frame, code) => {
     for (let i = 0; i < 30 && !(await frame.locator(".bench-outpane").count()); i++) await sleep(100);
     for (let i = 0; i < 100; i++) {
         if (!(await frame.locator(".bench-outpane .r-ranfor.live").count())
-            && await frame.locator(".bench-play:not([disabled])").count()) return;
+            && await frame.locator('.bench-play[aria-label="Run"]:not([disabled])').count()) return;
         await sleep(400);
     }
     throw new Error("the bench never produced a result");
@@ -603,15 +603,15 @@ test("the bench streams stdout as the script runs, and the value supersedes it a
 
         // MID-RUN: the first line is on screen while the script is still sleeping, and the run is visibly
         // alive. If this only arrived at the end the assertion below would still pass, so liveness is asserted
-        // separately — off the HEADER's spinner, which is where the bench says it is working (the pane carries
+        // separately — off the HEADER's Stop, which is where the bench says it is working (the pane carries
         // no timing row of its own: a footer that arrived and left on every run is a row the layout jumps by).
         await expect(frame.locator(".bench-outbody")).toContainText("FIRST", { timeout: 8000 });
         await expect(frame.locator(".bench-outbody"), "…and the rest has not happened yet").not.toContainText("SECOND");
-        await expect(frame.locator(".bench-play-spin"), "and it says it is still running").toBeVisible();
+        await expect(frame.locator('.bench-play[aria-label="Stop"]'), "and it says it is still running").toBeVisible();
 
         // SETTLED: the real result supersedes the live stdout, and the value is what you land on — the
         // streaming pass must not leave you pinned to stdout, since you never chose it.
-        await expect(frame.locator(".bench-play-spin")).toHaveCount(0, { timeout: 20000 });
+        await expect(frame.locator('.bench-play[aria-label="Run"]')).toBeVisible({ timeout: 20000 });
         expect(await frame.locator(".bench-tab").allTextContents()).toEqual(["stdout", "value"]);
         await expect(frame.locator(".bench-tab.on"), "an auto-pick never sticks — only a click does").toHaveText("value");
         await expect(frame.locator(".bench-outbody")).toContainText("42");
@@ -624,6 +624,27 @@ test("the bench streams stdout as the script runs, and the value supersedes it a
 // A PLACEHOLDER THAT SAYS SO. Handing a script you just got working to the model is the obvious next move
 // and it is not built; drawn rather than omitted so the row's shape is settled, DISABLED rather than
 // live-but-inert, because an affordance that silently does nothing cannot be told from a bug.
+// STOP (docs/dev/python-sandbox.md, "Stopping a bench script"). The real offscreen document and the real core: what
+// only a browser can show is that an extension page HAS a SharedArrayBuffer for the interrupt, without COOP/COEP.
+test("Stop interrupts a running bench script, and its kept variables survive", async () => {
+    const { fake, ext, frame } = await setup();
+    try {
+        await frame.locator('[aria-label="Python bench"]').click();
+        await runInBench(frame, "kept_before = 41\nprint('SET')");
+        await frame.locator(".bench-code .cm-content").fill("print('LOOPING')\nwhile True:\n    pass");
+        await frame.locator(".bench-play").click();
+        const stop = frame.locator('.bench-play[aria-label="Stop"]');
+        await expect(stop, "the running script's button is Stop").toBeVisible({ timeout: 20000 });
+        await expect(frame.locator(".bench-outbody")).toContainText("LOOPING", { timeout: 20000 });
+        await stop.click();
+        await expect(frame.locator('.bench-play[aria-label="Run"]'), "the interrupt ended it well inside the 15s cap").toBeVisible({ timeout: 5000 });
+        await expect(frame.locator(".bench-lost", { hasText: "Stopped" })).toBeVisible();
+        await expect(frame.locator(".bench-lost", { hasText: "restarted" }), "it answered the interrupt, so nothing was restarted").toHaveCount(0);
+        await runInBench(frame, "print(kept_before + 1)");
+        await expect(frame.locator(".bench-outbody")).toContainText("42");
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
 test("the send-to-model button is present and disabled, and says it is unbuilt", async () => {
     const { fake, ext, frame } = await setup();
     try {

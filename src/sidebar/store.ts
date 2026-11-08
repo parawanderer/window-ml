@@ -412,6 +412,9 @@ export interface BenchRun {
     /** The script as it was when it RAN. A traceback's line numbers are about this text, and the editor may
      *  have moved on since; the bench maps between the two rather than trusting them to agree. */
     code?: string;
+    /** How a Stop ended this run: `interrupted` (the script answered with a KeyboardInterrupt, its variables kept) or
+     *  `restarted` (it did not answer, the sandbox was restarted and its variables are gone). */
+    stopped?: "interrupted" | "restarted";
 }
 
 // THE BENCH'S WORKING STATE, HOISTED OUT OF THE COMPONENT. The drawer and the full page are two different

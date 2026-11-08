@@ -18,7 +18,7 @@ import { deepestUserLine } from "../python/py-format";
 import { pyValueParts } from "../python/py-render";
 import { CodeEditor } from "./code/code-editor";
 import type { RemoteCompletion, CodeEditorHandle } from "./code/code-editor-api";
-import { IconExpand, IconClose, IconChevron, IconTimer, IconPlay, IconSendToModel } from "./icons";
+import { IconExpand, IconClose, IconChevron, IconTimer, IconPlay, IconStop, IconSendToModel } from "./icons";
 import { type BenchJumpDetail, BENCH_JUMP_EVENT, PyBenchOut } from "./transcript/render-panel";
 import { benchH, BENCH_H_KEY, benchDock, BENCH_DOCK_KEY, view, viewReturn, benchOpen, BENCH_OPEN_KEY, benchEnv, benchKept, noteBenchEnv, benchLost, benchCode, lsSet, BENCH_CODE_KEY, benchRunning, benchResult, type BenchRun, benchLive, benchTimeout, noteBenchKept, benchSplit, BENCH_SPLIT_KEY, codeLineNumbers } from "./store";
 import { cursorTipOn, TipText } from "./ui-kit";
@@ -35,6 +35,9 @@ export function pyBenchDescriptor(r: { ok: boolean; value?: unknown; stdout: str
     return { type: "python-out", stdout, ...pyValueParts(r.value, { render: r.render, table: r.table },
         (v) => (v == null ? undefined : typeof v === "string" ? v : JSON.stringify(v, null, 2))) };
 }
+
+/** A Stop was clicked for the run now in flight, and its answer has not come back: a second click sends nothing more. */
+const benchStopping = signal(false);   // state: ui
 
 /** The bench as a bottom DRAWER — the default. It used to REPLACE the session view, so trying a snippet cost
  *  you your place in the run you opened it from, which is exactly the trip you would be making: copy this
@@ -301,7 +304,7 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
         const started = Date.now();
         // The id the SW keys this run's stdout by, and the id the listener below filters on.
         const requestId = `bench-${started.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-        setRunning(true); setResult(null); setLive(null); benchLost.value = false;
+        setRunning(true); setResult(null); setLive(null); benchLost.value = false; benchStopping.value = false;
         // Each chunk carries the instant the WORKER produced it — Pyodide stamps it there, because anything
         // downstream would be measuring the message bus. `marks` is [offset in the accumulated text, epoch].
         const onChunk = (msg: { type?: string; requestId?: string; chunk?: string; ts?: number }) => {
@@ -325,7 +328,14 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
                     stop();
                     // The background wraps the offscreen result: { data: PyResult } | { error }.
                     const r = resp?.data ?? (resp?.error ? { ok: false, stdout: "", error: resp.error } : null);
-                    setResult({ ...(r || { ok: false, stdout: "", error: "No response from the sandbox." }), code });
+                    const res: BenchRun = { ...(r || { ok: false, stdout: "", error: "No response from the sandbox." }), code };
+                    // HOW A STOP ENDED. A restart is said by the worker (`stopped: "restarted"`): the kept variables
+                    // are gone, so the existing notice shows. An interrupt is only a Stop when one was asked for in
+                    // THIS run: the same KeyboardInterrupt from the script's own code is just its error.
+                    if (r?.stopped === "restarted") { res.stopped = "restarted"; benchLost.value = true; }
+                    else if (benchStopping.value && !res.ok && /KeyboardInterrupt/.test(res.error || "")) res.stopped = "interrupted";
+                    benchStopping.value = false;
+                    setResult(res);
                     setRunning(false);
                     if (r?.bench) noteBenchKept(r.bench);
                     // The sandbox is up NOW, so the version chip is free. Doing this on mount instead would
@@ -333,6 +343,13 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
                     loadBenchEnv();
                 });
         } catch (e) { stop(); setResult({ ok: false, stdout: "", error: String(e), code }); setRunning(false); }
+    };
+    /** STOP the running script: one interrupt per run, whatever the number of clicks. The run's own response says
+     *  how it ended (interrupted, or the sandbox restarted), so nothing is decided here beyond "asked". */
+    const stopRun = () => {
+        if (!running || benchStopping.value) return;
+        benchStopping.value = true;
+        try { chrome.runtime.sendMessage({ type: "PYTHON_INTERRUPT" }, () => { void chrome.runtime.lastError; }); } catch { /* no live channel */ }
     };
     // ⌘/Ctrl+Enter runs, from ANYWHERE in the bench — not just the textarea. It used to be bound to the
     // field alone, so clicking the mode picker or the environment list silently disarmed the only shortcut
@@ -437,10 +454,10 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
                         ? "A run is stopped after **15s**. Click to let it run as long as it needs — for a script you know is slow. The model's own `python_exec` keeps the limit either way."
                         : "**No time limit** on runs here. A script that never finishes holds the sandbox until you close the bench, so put it back when you are done. The model's own `python_exec` is unaffected."} /></span>
                 </button>
-                <button class="tt bench-play" disabled={running || !code.trim()} onClick={run} aria-label="Run">
-                    {running ? <span class="bench-play-spin" aria-hidden="true" /> : <IconPlay />}
+                <button class={`tt bench-play${running ? " is-stop" : ""}`} disabled={!running && !code.trim()} onClick={running ? stopRun : run} aria-label={running ? "Stop" : "Run"}>
+                    {running ? <IconStop /> : <IconPlay />}
                     <span class="tt-pop wrap left" role="tooltip"><TipText md={running
-                        ? "Running in the sandbox…"
+                        ? "Stop the running script. It is interrupted; if it does not answer within a second the sandbox restarts and its variables are gone."
                         : "Run this script in the Pyodide sandbox. `⌘/Ctrl+↵` does the same, from anywhere in the bench."} /></span>
                 </button>
                 {/* PLACEHOLDER, and DISABLED so it says so. The bench is where you work a script out; handing
@@ -457,6 +474,8 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
                 {shape}
             </div></PanelHead>
             <BenchEnv />
+            {/* A STOP THE SCRIPT ANSWERED: its variables are kept, and the traceback stays in the output. */}
+            {result?.stopped === "interrupted" ? <div class="bench-lost" role="status">Stopped</div> : null}
             {/* THE SANDBOX RESTARTED UNDER YOU — said where you are looking, once, instead of surfacing as a
                 NameError on a variable you defined three runs ago. A runaway run being stopped is the usual
                 cause (the watchdog kills the worker, and the kept namespace with it). */}
