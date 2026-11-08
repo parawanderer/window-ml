@@ -225,13 +225,18 @@ test("RED TEAM: ml.current.tasks reads this run's rows; a script's write changes
 test("RED TEAM: only sw-tasks.ts sets the inbox's task mark, and a page cannot write a task line's event", async () => {
     // An inbox item's `task` field is what the transcript and the export draw as a task's, so the one writer is the
     // property: a page's steer (background.ts) and a page turn (sw-page-turn.ts) carry id/text/origin and never it.
-    // Enumerated over EVERY source file, not a list of the ones known today: an inbox push is a line calling
-    // `queue.push(` on something named `inbox`, and the only file whose push sets a mark must be sw-tasks.ts — both
+    // Enumerated over EVERY source file, not a list of the ones known today: an inbox push is a line that names an
+    // inbox and pushes onto its queue, and the only file whose push sets a mark must be sw-tasks.ts — both
     // directions, so a new writer reds this and sw-tasks losing the mark reds it instead of making it vacuous.
+    // The push is matched in every spelling today's code reaches — `queue.push(`, `queue!.push(` and the
+    // optional-chained `queue?.push(` — behind either an `inbox` variable or a `runInboxes.get(id)` lookup. A line
+    // test that knows only `inbox!.queue.push(` would stay green while such a writer escapes the claim this row is.
     const root = new URL("../src/", import.meta.url);
+    const INBOX = /inbox/i;
+    const PUSH = /queue\s*\??\s*(?:!\s*)?\.?\s*push\s*\(/;
     const pushes = [];
     for (const f of readdirSync(root, { recursive: true }).filter((x) => /\.(ts|tsx|js|mjs)$/.test(String(x)))) {
-        for (const line of readFileSync(new URL(String(f), root), "utf8").split("\n")) if (/inbox!?\.queue\.push\(/.test(line)) pushes.push([String(f), line]);
+        for (const line of readFileSync(new URL(String(f), root), "utf8").split("\n")) if (INBOX.test(line) && PUSH.test(line)) pushes.push([String(f), line]);
     }
     assert.ok(pushes.length >= 4, `no inbox writer found (${pushes.length}), so this row checks nothing`);
     assert.deepEqual([...new Set(pushes.filter(([, l]) => /\btask\s*:/.test(l)).map(([f]) => f))], ["sw/sw-tasks.ts"], `the inbox's task mark is not sw-tasks' alone: ${JSON.stringify(pushes.map(([f, l]) => `${f}: ${l.trim()}`))}`);
