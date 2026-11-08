@@ -196,7 +196,7 @@ async function runBench(frame) {
     for (let i = 0; i < 30 && !(await frame.locator(".bench-outpane").count()); i++) await sleep(100);
     for (let i = 0; i < 150; i++) {
         if (!(await frame.locator(".bench-outpane .r-ranfor.live").count())
-            && await frame.locator(".bench-play:not([disabled])").count()) return;
+            && await frame.locator('.bench-play[aria-label="Run"]:not([disabled])').count()) return;
         await sleep(400);
     }
     throw new Error("the bench never produced a result");
