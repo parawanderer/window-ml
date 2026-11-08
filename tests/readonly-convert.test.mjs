@@ -8,7 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
 import { evalReadonly } from "../src/readonly-exec.ts";
-import { METHODS_BY_KIND, CONVERTS, NO_CONVERSION } from "../src/readonly-exec/policy.ts";
+import { METHODS_BY_KIND, CONVERTS, NO_CONVERSION, SAFE_CONSTRUCTORS, CTOR_CONVERTS, CTOR_ITERABLES, NO_CTOR_CONVERSION } from "../src/readonly-exec/policy.ts";
 
 const doc = () => new JSDOM("<!doctype html><body><p class=\"x\">hi</p></body>").window.document;
 const handed = (...vs) => { const q = [...vs]; return { models: async () => q.shift() }; };
@@ -167,4 +167,36 @@ test("a constructor that converts its argument judges it: new Date, new String, 
     assert.equal((await run(`return new Date(5).getTime() + new Number("3") + new String("x").length`)).value, 9);
     assert.equal((await run(`return new RegExp("a+", "g").test("caab")`)).value, true);
     assert.equal((await run(`return new RegExp(/b/).test("abc")`)).value, true);
+});
+
+test("every safe constructor is decided: converts, walks an iterable, or neither with a reason", () => {
+    const undecided = [], twice = [];
+    for (const name of Object.keys(SAFE_CONSTRUCTORS)) {
+        const n = [Object.hasOwn(CTOR_CONVERTS, name), CTOR_ITERABLES.has(name), Object.hasOwn(NO_CTOR_CONVERSION, name)].filter(Boolean).length;
+        if (n === 0) undecided.push(name);
+        if (n > 1) twice.push(name);
+    }
+    assert.deepEqual(undecided, [], "a constructor added to SAFE_CONSTRUCTORS needs a decision in policy.ts");
+    assert.deepEqual(twice, []);
+    const stray = [...Object.keys(CTOR_CONVERTS), ...CTOR_ITERABLES, ...Object.keys(NO_CTOR_CONVERSION)].filter((n) => !Object.hasOwn(SAFE_CONSTRUCTORS, n));
+    assert.deepEqual(stray, []);
+});
+
+test("a collection constructor walks only an iterable without an iterator of its own", async () => {
+    const ran = [];
+    const iterable = { [Symbol.iterator]() { ran.push("iterator"); return { next() { ran.push("next"); return { done: true }; } }; } };
+    const arr = [1, 2];
+    arr[Symbol.iterator] = function () { ran.push("array iterator"); return [][Symbol.iterator](); };
+    for (const ctor of ["Set", "Map", "WeakSet", "WeakMap"]) {
+        await assert.rejects(run(`const o = await ml.models(); return new ${ctor}(o)`, iterable), (e) => refused(e) && new RegExp(`new ${ctor}`).test(e.message), ctor);
+        await assert.rejects(run(`const o = await ml.models(); return new ${ctor}(o)`, arr), (e) => refused(e) && new RegExp(`new ${ctor}`).test(e.message), `${ctor} array`);
+    }
+    assert.deepEqual(ran, []);
+    assert.equal((await run(`return new Set([1, 2, 2]).size + new Set("abc").size + new Set(new Set([1])).size + new Map([[1, 2]]).size`)).value, 7);
+    assert.equal((await run(`return new Set(new String("ab")).size`)).value, 2);
+});
+
+test("a String object operand is charged its length, so a loop over a huge one is stopped", async () => {
+    const s = new String("x".repeat(2_000_000));
+    await assert.rejects(run(`const s = await ml.models(); let n = 0; for (const i of Array.from({ length: 100000 }, (_, k) => k)) n += (s + "").length; return n`, s), (e) => /steps|too large|budget/i.test(String(e?.message)));
 });

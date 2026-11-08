@@ -8,7 +8,7 @@ import { NotInDialect, Stopped, MAX_STRING, MAX_COLLECTION, Denied, riskyRegex, 
 import { Node } from "./parser";
 import { regexSteps } from "./regex-cost";
 import { replaceSize, replaceWorstCase } from "./replace-size";
-import { isSet, isMap, isStringObject, isRegExpObject, drainIterator, isWritableTarget, ReadonlyRealm, DENIED_PROPS, isDomCollection, SAFE_CONSTRUCTORS, ANSWER_METHODS, methodAllowed, kindOf, MUTATING_METHODS, CALLABLE_ROOTS, convertingArgs, ROOT_CONVERTS, CTOR_CONVERTS, convertsByIntrinsics, argWrites } from "./policy";
+import { isSet, isMap, isStringObject, isRegExpObject, drainIterator, isWritableTarget, ReadonlyRealm, DENIED_PROPS, isDomCollection, SAFE_CONSTRUCTORS, ANSWER_METHODS, methodAllowed, kindOf, MUTATING_METHODS, CALLABLE_ROOTS, convertingArgs, ROOT_CONVERTS, CTOR_CONVERTS, CTOR_ITERABLES, convertsByIntrinsics, argWrites } from "./policy";
 import { PrintSwap, abridgeRow, diffSwap, jsonPathKey } from "./print";
 
 /** Per-frame set of names declared `const`, kept off the frame's own enumerable keys. */
@@ -324,7 +324,7 @@ export class Evaluator {
     private coerces(via: string, ...vs: unknown[]): unknown[] {
         return vs.map((v) => {
             const u = this.converts(via, v);
-            if (u !== null && typeof u === "object") this.expands(u);
+            if (v !== null && typeof v === "object") this.expands(v);   // the ORIGINAL: a String object is charged its length before it is unboxed
             return u;
         });
     }
@@ -347,6 +347,16 @@ export class Evaluator {
         if (pattern && isRegExpObject(v)) return v;
         if (this.owned.has(v) && convertsByIntrinsics(v, (f) => this.ourFns.has(f as Function))) return v;
         throw new NotInDialect(`${via} was given an object the script did not build, which converting would run its own toString or valueOf`);
+    }
+    /** The iterable a collection constructor walks (`new Set(o)`): the host calls its `Symbol.iterator` and `next`, so only a string, an array, a Set or a
+     *  Map with no iterator of its own is data. Anything else, a page's iterable included, is `NotInDialect`. Answers the value to use. */
+    private iterates(via: string, v: unknown): unknown {
+        if (v == null || typeof v === "string") return v;
+        if (typeof v === "object") {
+            if (isStringObject(v)) return String.prototype.valueOf.call(v);
+            if ((Array.isArray(v) || isSet(v) || isMap(v)) && !Object.hasOwn(v, Symbol.iterator)) return v;
+        }
+        throw new NotInDialect(`${via} was given an iterable the script did not build, which would run its own Symbol.iterator`);
     }
     /** Every converting argument of a host call (`CONVERTS`) judged by {@link converts} and replaced by the value to use (a String
      *  object by its primitive), in place. */
@@ -918,6 +928,7 @@ export class Evaluator {
                 // A constructor that converts its argument (`new Date(o)`, `new RegExp(o)`) judges it like any other conversion.
                 const at = Object.hasOwn(CTOR_CONVERTS, node.ctor) ? CTOR_CONVERTS[node.ctor] : undefined;
                 if (at !== undefined) args.forEach((a, i) => { if (at === "all" || at.includes(i)) args[i] = this.converts(`new ${node.ctor}`, a, node.ctor === "RegExp" && i === 0); });
+                if (CTOR_ITERABLES.has(node.ctor) && args.length) args[0] = this.iterates(`new ${node.ctor}`, args[0]);
                 if (node.ctor === "RegExp") this.patternArg(isRegExp(args[0]) ? String(args[0].source) : args[0]);
                 for (const a of args) if (ONE_LEVEL_CTORS.has(node.ctor)) this.shallow(a); else this.expands(a);
                 const inst = new ctor(...args);

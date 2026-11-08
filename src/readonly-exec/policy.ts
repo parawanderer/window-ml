@@ -202,8 +202,20 @@ export function convertingArgs(kind: string | null, key: string, count: number):
     return at === "all" ? Array.from({ length: count }, (_, i) => i) : at.filter((i) => i < count);
 }
 
-/** The constructors (`SAFE_CONSTRUCTORS`) that convert their arguments, with the positions: `new Date(o)`, `new String(o)`, `new RegExp(o, flags)`. The rest take data (a Set's iterable, an Array's length). */
+/** The constructors (`SAFE_CONSTRUCTORS`) that convert their arguments, with the positions: `new Date(o)`, `new String(o)`, `new RegExp(o, flags)`. A collection's iterable is `CTOR_ITERABLES`; the rest are `NO_CTOR_CONVERSION`. */
 export const CTOR_CONVERTS: Readonly<Record<string, Positions>> = { Date: "all", RegExp: [0, 1], Number: "all", String: "all", Error: [0] };
+
+/** The constructors whose first argument is an ITERABLE the host walks by calling its `Symbol.iterator` and `next` (`new Set(o)`): a page's own
+ *  iterator is page code, so the argument must be a string, an array, a Set or a Map without an own iterator (judged in `iterates`). */
+export const CTOR_ITERABLES: ReadonlySet<string> = new Set(["Set", "Map", "WeakSet", "WeakMap"]);
+
+/** The `SAFE_CONSTRUCTORS` that neither convert an argument nor walk an iterable, each with the reason; a test enumerates the whitelist against
+ *  this and `CTOR_CONVERTS` and `CTOR_ITERABLES`, so a constructor added later has to be decided. */
+export const NO_CTOR_CONVERSION: Readonly<Record<string, string>> = {
+    Array: "a length (a number) or the elements themselves, stored as data",
+    Object: "wraps its argument as it is",
+    Boolean: "truthiness, never a conversion that calls a method",
+};
 
 /** The bare roots that convert their arguments (`String(o)`, `parseInt(o)`), with the positions: `getComputedStyle`'s pseudo-element
  *  is the one converting argument of a function whose first is an element. */
