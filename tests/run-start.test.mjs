@@ -1263,13 +1263,13 @@ const RUN_TAB = { tab: { id: 7, url: SITE.url }, url: SITE.url, origin: "https:/
  * tab 7 is hostile: `atApproval(bg)` runs the instant the person's approval is sent, and `inPage(bg, msg)` whenever the
  * run sends a tool to the page. `siteGate` applies the real origin gate, so site.example is NOT approved.
  */
-async function attackRun(args, { then = [], siteGate = true, atApproval, inPage, evictAtFirstGate = false, local = {}, first, persist = false, atGate } = {}) {
+async function attackRun(args, { then = [], siteGate = true, atApproval, inPage, evictAtFirstGate = false, local = {}, first, persist = false, atGate, tab = SITE } = {}) {
     let turns = 0, bg, evicted = false;
     const calls = [first ?? { name: "fetch_url", args }, ...then];
     const gates = [];
     const seenByModel = [];
     bg = loadBackground({
-        config: { ...config, autoApproveReadonly: true }, openTabs: [SITE], siteGate, local,
+        config: { ...config, autoApproveReadonly: true }, openTabs: [tab], siteGate, local,
         onFetch: (call) => {
             if (call.url.startsWith("https://other.example/")) return { ok: true, status: 200, url: call.url, headers: { get: (h) => (/content-type/i.test(h) ? "text/html; charset=utf-8" : null) }, text: async () => SECRET, arrayBuffer: async () => new TextEncoder().encode(SECRET).buffer, body: null };
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
@@ -1347,6 +1347,97 @@ test("ACCEPTANCE: a worker-hosted run's fetch_url gate honours a run policy that
     assert.deepEqual(JSON.parse(JSON.stringify(fetchStep?.reused)), [{ kind: "policy", detail: `fetch ${OTHER}` }], "the row says which policy allowed it");
     assert.match(toolResults.at(-1) ?? "", /SECRET OTHER SITE/, "and the fetch ran, in the worker, and the model read it");
     assert.equal(fetched.length, 1);
+});
+
+// --- a RELATIVE fetch URL: approvals are keyed by the URL the fetch is judged as, not by how the call spelled it ---
+
+/** Scheme-relative: resolved against site.example/page it is OTHER (cross-origin, so it needs an approval a path-relative one would not). */
+const OTHER_REL = "//other.example/private";
+
+test("an approved relative fetch_url succeeds, and its repeat is answered with no card and no refusal", T, async () => {
+    const { gates, toolResults, fetched } = await attackRun({ url: OTHER_REL }, { local: SITE_APPROVED, then: [{ name: "fetch_url", args: { url: OTHER_REL } }] });
+    assert.deepEqual(gates, ["fetch_url"], `one card, for the first call only. Gates: ${JSON.stringify(gates)}`);
+    assert.equal(toolResults.length, 2);
+    for (const r of toolResults) assert.match(r, /SECRET OTHER SITE/, `both calls read it; got ${r.slice(0, 200)}`);
+    assert.equal(fetched.length, 2, "the repeat fetched too");
+});
+
+test("an approved exec whose ml.fetch literal is scheme-relative may fetch it, as its absolute form may", T, async () => {
+    let literal;
+    const { gates, fetched } = await attackRun({}, {
+        local: SITE_APPROVED,
+        first: { name: "exec", args: { js: `return (await ml.fetch(${JSON.stringify(OTHER_REL)})).status` } },
+        inPage: async (bg, msg) => {
+            if (msg.payload.name !== "exec" || msg.payload.renderOnly || msg.payload.readonlyTry || msg.payload.precheck) return undefined;
+            // What the approved script's own ml.fetch sends: the literal as written.
+            literal = await bg.send({ type: "FETCH_URL", payload: { url: OTHER_REL } }, RUN_TAB);
+            return undefined;
+        },
+    });
+    assert.deepEqual(gates, ["exec"]);
+    assert.equal(literal?.data?.status, 200, `the literal URL was fetched: ${JSON.stringify(literal).slice(0, 160)}`);
+    assert.equal(fetched.length, 1);
+});
+
+test("'Approve + remember' on an exec with a relative literal remembers the URL the fetch is judged as", T, async () => {
+    const { gates, toolResults, steps, fetched } = await attackRun({}, {
+        local: SITE_APPROVED, persist: true,
+        first: { name: "exec", args: { js: `return (await ml.fetch(${JSON.stringify(OTHER_REL)})).status` } },
+        then: [{ name: "fetch_url", args: { url: OTHER } }],
+    });
+    assert.deepEqual(gates, ["exec"], `one card; the fetch_url of the resolved URL asked nothing. Gates: ${JSON.stringify(gates)}`);
+    const step = steps.find((e) => e.tool === "fetch_url");
+    assert.equal(step?.approval, "consented");
+    assert.deepEqual(JSON.parse(JSON.stringify(step?.reused)), [{ kind: "policy", detail: `fetch ${OTHER}` }]);
+    assert.match(toolResults.at(-1) ?? "", /SECRET OTHER SITE/);
+    assert.equal(fetched.length, 1);
+});
+
+test("on an http page, a scheme-relative fetch_url to an http origin the run consented to takes the page's scheme and asks nothing", T, async () => {
+    // An approved navigate to http://other.example consents to that http origin; the run then goes back to its page.
+    // "//other.example/x" resolves against the http page to the consented origin, as the FETCH_URL choke point judges it.
+    // The gate once forced "https:" onto it and asked for https://other.example, which the run never consented to. Not
+    // the page's own host: the current-page check answers that one before the gate's same-origin rule is read.
+    const tab = { ...SITE, url: "http://site.example/page" };
+    let docN = 1;
+    const sender = () => ({ tab: { id: tab.id, url: tab.url }, url: tab.url, origin: new URL(tab.url).origin, frameId: 0, documentId: `doc-nav-${docN}` });
+    const { gates } = await attackRun({}, {
+        tab, local: { ml_site_always: ["http://site.example"] },
+        first: { name: "navigate", args: { url: "http://other.example/page" } },
+        then: [{ name: "navigate", args: { url: tab.url } }, { name: "fetch_url", args: { url: "//other.example/x" } }],
+        inPage: async (bg, msg) => {
+            const p = msg.payload;
+            if (p.name !== "navigate" || p.precheck || p.renderOnly || p.readonlyTry) return undefined;
+            const to = p.args.url;
+            tab.url = to; docN++;
+            bg.commit(tab.id, { documentId: `doc-nav-${docN}`, url: to });
+            setTimeout(async () => {
+                const ready = JSON.parse(JSON.stringify(await bg.send({ type: "CONTENT_READY" }, sender()) ?? {}));
+                for (const a of ready.adopt ?? []) void bg.send({ type: "RUN_READOPTED", payload: { runId: a.runId, pageInfo: `You are on ${to}` } }, sender());
+            }, 5);
+            return { result: `Navigating to ${to}` };
+        },
+    });
+    assert.deepEqual(gates, ["navigate"], `the navigate out asks; the way back and the fetch of its origin do not. Gates: ${JSON.stringify(gates)}`);
+});
+
+test("RED TEAM: approving a relative fetch_url grants the resolved origin only, and a literal resolved on one page grants nothing on another origin", T, async () => {
+    // Approving "//other.example/private" does not cover a different host, or the same path on another origin.
+    const a = await attackRun({ url: OTHER_REL }, { local: SITE_APPROVED, then: [{ name: "fetch_url", args: { url: "//third.example/private" } }] });
+    assert.deepEqual(a.gates, ["fetch_url", "fetch_url"], "the second origin asked again");
+    // An exec literal "/private" resolves to site.example/private; it must not let the page fetch other.example/private meanwhile.
+    let page;
+    const b = await attackRun({}, {
+        local: SITE_APPROVED,
+        first: { name: "exec", args: { js: `const r = await ml.fetch("/private"); return r.status;` } },
+        inPage: async (bg, msg) => {
+            if (msg.payload.name !== "exec" || msg.payload.renderOnly || msg.payload.readonlyTry || msg.payload.precheck) return undefined;
+            page = await bg.send({ type: "FETCH_URL", payload: { url: OTHER } }, RUN_TAB);
+            return undefined;
+        },
+    });
+    assert.equal(b.fetched.length, 0, `nothing reached other.example; got ${JSON.stringify(b.fetched)}`);
+    assert.ok(page === undefined || !JSON.stringify(page).includes("SECRET OTHER SITE"), `the page read it: ${JSON.stringify(page)}`);
 });
 
 test("a global DENY policy refuses a fetch_url with no card, and the model reads which policy refused it", T, async () => {

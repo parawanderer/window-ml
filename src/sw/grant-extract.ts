@@ -137,9 +137,9 @@ export interface TabCallGrants { fetchUrls?: string[]; serverTools: string[]; sh
  * @param c the call: its tool, its args, whether the worker built the run, whether its python_exec runs in the worker,
  *   and a server tool's call key
  */
-export function tabGrantsForCall(c: { name: string; args: Record<string, unknown>; builtByWorker: boolean; pyInWorker: boolean; remoteKey?: string }): TabCallGrants {
+export function tabGrantsForCall(c: { name: string; args: Record<string, unknown>; builtByWorker: boolean; pyInWorker: boolean; remoteKey?: string; fetchJudgedAs?: (url: string) => string }): TabCallGrants {
     const out: TabCallGrants = { serverTools: [], sheets: [], pyCode: [] };
-    if (c.name === "exec") out.fetchUrls = fetchUrlLiterals(String(c.args.js ?? ""));
+    if (c.name === "exec") out.fetchUrls = fetchUrlLiterals(String(c.args.js ?? "")).map(c.fetchJudgedAs ?? ((u) => u));
     if (c.remoteKey) out.serverTools.push(c.remoteKey);
     if (c.name === "python_exec" && !c.pyInWorker) {
         if (!c.builtByWorker) out.sheets.push(...externalSheetIds(c.args));

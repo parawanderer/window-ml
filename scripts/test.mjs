@@ -101,6 +101,12 @@ const GENRES = {
         about: "the resource panel's pure model: bands, events, ownership, and thinning a run to the plot's width",
         files: ["resource-model.test.mjs", "resource-events.test.mjs", "resource-ownership.test.mjs", "resource-decimate.test.mjs"],
     },
+    // ml.fetch's pure parts: the page's budgeted fetch cache, the ladder's presentation that the sidebar and both exports
+    // share, and how a relative URL resolves against its page. fetch-hub-asset is the CI download script's, so it stays in core.
+    fetch: {
+        about: "ml.fetch's pure parts: the page's fetch cache, the ladder's presentation, a relative URL resolved against its page",
+        files: ["fetch-cache.test.mjs", "fetch-ladder.test.mjs", "fetch-target.test.mjs"],
+    },
     ext: {
         about: "the extension's own worlds — background, relay, CDP, the page loop",
         files: ["background.test.js", "relay.test.js", "agent.test.js", "cdp-stream.test.mjs",

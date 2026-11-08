@@ -39,6 +39,23 @@ function withdrawn(tabId: number, url: string, rendered: boolean): boolean {
     return runs.some((r) => { const d = judgeCall(r, "fetch", facts).decision; return d === "ask" || d === "deny"; });
 }
 
+/**
+ * The absolute URL an `ml.fetch` asks for: `url` as given when it is absolute, else resolved against `base`, the URL of
+ * the page the call is for. The result goes through the whole gate as an absolute URL would, so a relative one that
+ * lands on another origin, or on a local file, is judged as that URL. With no page there is nothing to resolve against.
+ * @param url what the call passed
+ * @param base the caller's frame URL, else its tab's; absent for a call with no page
+ * @returns the URL to judge and fetch, or the refusal
+ */
+export function fetchTarget(url: string, base: string | undefined): { url: string } | { error: string } {
+    // An empty or blank URL names nothing, though resolving it would give the page itself.
+    if (!url.trim()) return { error: `Refused: "${url}" is not a valid URL.` };
+    // An absolute URL is passed on as written: approvals are keyed by the string the call spelled out.
+    try { new URL(url); return { url }; } catch { /* relative, or not a URL */ }
+    if (!base) return { error: `Refused: "${url}" is a relative URL, and this call has no page to resolve it against. Give the full URL, starting with https://.` };
+    try { return { url: new URL(url, base).href }; } catch { return { error: `Refused: "${url}" is not a valid URL.` }; }
+}
+
 /** A fetch through the page relay, as the router hands it over. */
 export async function pageFetchCaller(sender: chrome.runtime.MessageSender): Promise<FetchCaller> {
     return { tabId: sender.tab?.id, frameUrl: sender.url, tabUrl: sender.tab?.url, untrusted: await senderTrust(sender) === "untrusted", disclose: true };
@@ -53,7 +70,10 @@ export async function pageFetchCaller(sender: chrome.runtime.MessageSender): Pro
 export async function fetchUrlFor(payload: unknown, caller: FetchCaller): Promise<{ data?: FetchResult; error?: string }> {
     const message = { payload };
     {
-        const url = String((message.payload as { url?: unknown; })?.url || "");
+        const asked = String((message.payload as { url?: unknown; })?.url || "");
+        const target = fetchTarget(asked, caller.frameUrl ?? caller.tabUrl);
+        if ("error" in target) return target;
+        const url = target.url;
         const credentials = !!(message.payload as { credentials?: unknown; })?.credentials;
         const rendered = !!(message.payload as { rendered?: unknown; })?.rendered;
         // Only "html" opts OUT of the Markdown ladder; anything else (absent, junk) takes the default.

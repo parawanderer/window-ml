@@ -58,6 +58,7 @@ import { withEnv } from "./sw-current-env";
 import { withRuntime } from "./sw-current-runtime";
 import { isolationAvailable, pageApproved, runIsolatedExec } from "./sw-isolated-exec";
 import { handOverSettled } from "./nav-handover";
+import { fetchTarget } from "./sw-fetch-url";
 import { grantRunFetch, grantRunOrigin, runOriginGranted, runOrigins, runFetchConsented, grantRunPython, takePyRefusal, pythonDialectReady } from "./worker-tools";
 import { autoApprovePython } from "../agent/auto-approve";
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
@@ -513,6 +514,10 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     const storedP = (): StartRunPayload => (p.builtBy !== "worker" && isWorkerRun(runId)
         ? { ...p, builtBy: "worker", tools: withoutProposals(p.tools), ...(p.rebuild ? { rebuild: { ...p.rebuild, builtBy: "worker" } } : {}) } : p);
     const tabUrlNow = (): string => tabPageUrl.get(tabId) || p.pageUrl || "";
+    /** A fetch URL as the fetch is judged: a relative one resolved against the page the run is on (`fetchTarget`), since the
+     *  choke point's consents, policies and exec literals are all keyed by the resolved URL. One that cannot resolve stays as
+     *  spelled, since the call is refused anyway. */
+    const fetchJudgedAs = (spelled: string): string => { const t = fetchTarget(spelled, tabUrlNow()); return "url" in t ? t.url : spelled; };
     /** The page's precheck answer for a click or a type, from `actPolicy` to the precheck that follows it in the same call. */
     const precheckOnce = new Map<string, Partial<import("../contract").PageToolEnvelope> | null>();   // state: plumbing — one call's precheck, between the two steps that read it
     const actKey = (tool: string, a: unknown): string => `${tool}\0${JSON.stringify(a)}`;
@@ -1239,7 +1244,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // What this call puts on the TAB for its own sub-ops (tabGrantsForCall, grant-extract.ts): an exec's literal
                     // fetch URLs, a server tool's exact call, and a page-built run's python_exec's outside-the-dialect code and sheets.
                     // Minted only when there is something to mint, so a call with none holds no entry.
-                    const minted = tabGrantsForCall({ name, args: args as Record<string, unknown>, builtByWorker: byWorker(), pyInWorker,
+                    const minted = tabGrantsForCall({ name, args: args as Record<string, unknown>, builtByWorker: byWorker(), pyInWorker, fetchJudgedAs,
                         ...(remote ? { remoteKey: serverToolKey(remote.toolId, remote.fn, args as Record<string, unknown>) } : {}) });
                     if (minted.fetchUrls) grantsFor(tabId, callKey).fetchUrls = new Set(minted.fetchUrls);
                     if (minted.serverTools.length || minted.sheets.length || minted.pyCode.length) {
@@ -1754,7 +1759,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // A call an `ask` policy raised offers nothing to remember, and an exec's fetch literals an `ask` policy
                     // matches are not offered: the only result of remembering them would be an `allow` the `ask` overrides.
                     const byAsk = askedByPolicy(gateWhy);
-                    const offered = byAsk ? { grants: [] } : withoutAsked(runId, extractGrants(tool, args));
+                    const offered = byAsk ? { grants: [] } : withoutAsked(runId, extractGrants(tool, args), fetchJudgedAs);
                     const grants = offered.grants;
                     let askWhy = gateWhy ?? offered.why;
                     // A cell outside the dialect in a run whose earlier cell ran with the bridges lifted: its card says what that
@@ -1788,7 +1793,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                                     // INCOGNITO rendered load — no session, lower risk) consents to that EXACT url for
                                     // the session (repeat fetches auto-approve — the rememberable path).
                                     if (ok && tool === "fetch_url") {
-                                        const u = String((args as { url?: unknown }).url ?? "");
+                                        // Keyed by the URL the fetch will be judged as, so a relative one's grant is the one the worker looks up.
+                                        const u = fetchJudgedAs(String((args as { url?: unknown }).url ?? ""));
                                         const cred = !!(args as { credentials?: unknown }).credentials;
                                         // A worker-built run's fetch_url runs in the worker: its approval is the RUN's, so no
                                         // script on the tab can use it (worker-tools.ts `grantRunFetch`), and it is NEVER minted
@@ -1802,7 +1808,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                                     // policies (sw-policies.ts), one per URL the person saw: kept with the session, and
                                     // never lent to the tab, so the page's own FETCH_URL does not get them.
                                     if (ok && typeof decision === "object" && decision.persist)
-                                        for (const g of grants) if (g.kind === "fetch-url") rememberFetchUrls(runId, g.urls);
+                                        for (const g of grants) if (g.kind === "fetch-url") rememberFetchUrls(runId, g.urls.map(fetchJudgedAs));
                                     // A proposed policy is added HERE, from the person's answer, and only the proposal the card
                                     // showed; the tool's own run only reports whether it is there.
                                     // A proposed manifest is stored HERE, from the person's answer, and only the one the card showed;
@@ -1882,7 +1888,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     recordRunLog(runId, { subsystem: "policy", kind: j.decision, reason: j.by.label, detail: { policy: j.by.id, scope: j.by.scope, tool: "navigate", url: dest.href } });
                     return { decision: j.decision, label: j.by.label };
                 },
-                fetchNeedsConsent: (url) => !(runFetchConsented(runId, url) ?? fetchConsent.get(tabId)?.has(url)),   // a NEW url → gate; an already-approved one → auto
+                fetchNeedsConsent: (spelled) => { const url = fetchJudgedAs(spelled); return !(runFetchConsented(runId, url) ?? fetchConsent.get(tabId)?.has(url)); },   // a NEW url → gate; an already-approved one → auto
                 // The person's policies (sw-policies.ts), judged here in the worker over facts the worker resolved. A `deny`
                 // refuses any run's fetch; an `allow` answers only a fetch the worker itself runs, since only there does
                 // the fetch's own choke point (worker-tools.ts `consented`) consult the same policies.
@@ -1896,7 +1902,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         return j?.decision === "ask" ? askWhyOf(j) : undefined;
                     }
                     if (name !== "fetch_url") return undefined;
-                    const j = judgeCall(runId, "fetch", fetchFacts(String(a.url ?? ""), { credentials: !!a.credentials, rendered: !!a.rendered }));
+                    const j = judgeCall(runId, "fetch", fetchFacts(fetchJudgedAs(String(a.url ?? "")), { credentials: !!a.credentials, rendered: !!a.rendered }));
                     // An `ask` policy is named for any fetch_url the loop gates; a policy that is GONE only for an uncredentialed
                     // fetch the worker runs, the only kind an `allow` ever covered.
                     if (j.decision === "ask") return askWhyOf(j);
@@ -1908,7 +1914,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // The origin the run started on, once the tab has left it: the gate no longer counts it (fetchSameOrigin).
                     return o && !a.credentials && o === p.pageOrigin && !startOriginRead(String(a.url ?? "")) ? startLeftWhy(o) : undefined;
                 },
-                fetchPolicy: (url, o) => {
+                fetchPolicy: (spelled, o) => {
+                    const url = fetchJudgedAs(spelled);
                     const j = judgeCall(runId, "fetch", fetchFacts(url, o));
                     if (j.decision === "ask" && !j.by) return "unknown";   // not loaded yet: the call asks, free tiers included
                     for (const b of j.broken) recordRunLog(runId, { level: "warn", subsystem: "policy", kind: "broken", reason: b.reason, detail: { policy: b.policy.id, tool: "fetch_url" } });
@@ -1934,7 +1941,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 fetchSameOrigin: (url: string): boolean => {
                     try {
                         if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !url.startsWith("//")) return true;   // relative → the page's own origin
-                        const o = new URL(url.startsWith("//") ? "https:" + url : url).origin;
+                        // A scheme-relative URL takes the page's scheme, as the FETCH_URL choke point resolves it.
+                        const here = tabPageUrl.get(tabId) ?? p.pageUrl;
+                        const o = new URL(url.startsWith("//") && !here ? "https:" + url : url, here ?? undefined).origin;
                         // The start origin is consented for navigation, and read free while the tab is on it. Once the tab
                         // has left, the FETCH_URL choke point no longer counts it (it judges the sender's frame), so the gate
                         // does not either and the read cards (POLICIES.md, "Ruled 2026-10-27"). A later approved navigate or
