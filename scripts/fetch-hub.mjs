@@ -26,12 +26,12 @@ const run = promisify(execFile);
 async function pinnedTag() {
     const harness = new URL("../tests/fixtures/hub-harness.mjs", import.meta.url);
     const m = /HUB_TAG\s*=\s*"([^"]+)"/.exec(await readFile(harness, "utf8"));
-    if (!m) throw new Error("noHUB_TAG in tests/fixtures/hub-harness.mjs: it moved, and this reads it by name");
+    if (!m) throw new Error("no HUB_TAG in tests/fixtures/hub-harness.mjs: it moved, and this reads it by name");
     return m[1];
 }
 const REPO = "parawanderer/window-ml-hub";
 
-/**The release archive for THIS machine. A platform with no published build says so rather than downloading a 404. */
+/** The release archive for THIS machine. A platform with no published build says so rather than downloading a 404. */
 function target() {
     const key = `${process.platform}-${process.arch}`;
     const known = { "linux-x64": "x86_64-unknown-linux-gnu", "darwin-arm64": "aarch64-apple-darwin" };
@@ -41,7 +41,7 @@ function target() {
     return known[key];
 }
 
-/**Between attempts: the CDN's 504 window is measured in tens of seconds, not milliseconds. */
+/** Between attempts: the CDN's 504 window is measured in tens of seconds, not milliseconds. */
 const backoff = (attempt) => new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
 
 /**
@@ -54,9 +54,10 @@ const backoff = (attempt) => new Promise((r) => setTimeout(r, 1500 * (attempt + 
  * `digest`, but it serves them from the same CDN and 504s in the same window (#1535's e2e 2/3 at
  * 10:40Z found asset 610193376 and then 504'd on it). So EACH path gets three attempts with the same
  * short backoff, and only after both are spent does this throw. The sha256 check in `main` below is
- * what makes a wrong body safe either way.
+ * what makes a wrong body safe either way. `sleep(attempt)` is the wait between two attempts: a
+ * parameter so the tests run in milliseconds, `backoff` (the real wait) unless they say otherwise.
  */
-export async function releaseAsset(tag, name) {
+export async function releaseAsset(tag, name, sleep = backoff) {
     const base = `https://github.com/${REPO}/releases/download/${tag}`;
     for (let attempt = 0; attempt < 3; attempt++) {
         const direct = await Promise.all([
@@ -64,24 +65,29 @@ export async function releaseAsset(tag, name) {
             fetch(`${base}/${name}.sha256`),
         ]).catch(() => null);
         if (direct?.[0]?.ok && direct[1]?.ok) {
-            return { archive: new Uint8Array(await direct[0].arrayBuffer()), sums: new Uint8Array(await direct[1].arrayBuffer()) };
+            // A body that dies mid-read is the same transport window as a fetch that dies before the
+            // response (e3's `fetch failed`): it takes the retry too, or the run dies unretried one layer down.
+            const pair = await Promise.all([direct[0].arrayBuffer(), direct[1].arrayBuffer()]).catch(() => null);
+            if (pair) return { archive: new Uint8Array(pair[0]), sums: new Uint8Array(pair[1]) };
         }
-        if (attempt < 2) await backoff(attempt);
+        if (attempt < 2) await sleep(attempt);
     }
     // Both 5xx'd: take the release API's asset endpoint, retried the same way — its bytes come down the
     // same CDN, so one shot at it is one shot at the window that just refused the download route.
     for (let attempt = 0; attempt < 3; attempt++) {
         const meta = await fetch(`https://api.github.com/repos/${REPO}/releases/tags/${tag}`).catch(() => null);
-        if (meta?.ok) {
-            const asset = ((await meta.json()).assets ?? []).find((a) => a.name === name);
+        const parsed = meta?.ok ? await meta.json().catch(() => null) : null;
+        if (parsed) {
+            const asset = (parsed.assets ?? []).find((a) => a.name === name);
             if (!asset?.id) throw new Error(`no asset named ${name} on ${tag}`);
             const bytes = await fetch(`https://api.github.com/repos/${REPO}/releases/assets/${asset.id}`, { headers: { Accept: "application/octet-stream" } }).catch(() => null);
-            if (bytes?.ok) {
+            const body = bytes?.ok ? await bytes.arrayBuffer().catch(() => null) : null;
+            if (body) {
                 const digest = String(asset.digest || "").replace(/^sha256:/, "");
-                return { archive: new Uint8Array(await bytes.arrayBuffer()), sums: new TextEncoder().encode(`${digest}  ${name}\n`) };
+                return { archive: new Uint8Array(body), sums: new TextEncoder().encode(`${digest}  ${name}\n`) };
             }
         }
-        if (attempt < 2) await backoff(attempt);
+        if (attempt < 2) await sleep(attempt);
     }
     throw new Error(`neither the download route nor the release API served ${name} on ${tag}`);
 }
