@@ -132,11 +132,15 @@ test("tools-into-js/find-out accepts 2.4.0 with no navigate, and rejects an olde
     assert.equal(run("It is 2.4.0.", [{ tool: "navigate" }]), false);
 });
 
-test("tools-into-js's arms are fetch_url, exec and both, each with answer, and a cell's tools are its arm's", async () => {
+test("tools-into-js's arms are fetch_url, exec and both, each with answer and no navigate, and a cell's tools are its arm's", async () => {
     const spec = await load("tools-into-js");
     const { ARMS } = await import("../tests/e2e/bench/specs/tools-into-js.bench.ts");
     assert.deepEqual(spec.dimensions.arm, ["tool", "exec", "both"]);
     assert.deepEqual(ARMS, { tool: ["fetch_url", "answer"], exec: ["exec", "answer"], both: ["fetch_url", "exec", "answer"] });
-    for (const arm of spec.dimensions.arm) assert.deepEqual(spec.apply({ model: "m", arm }).tools, ARMS[arm]);
+    for (const arm of spec.dimensions.arm) {
+        const e = spec.apply({ model: "m", arm });
+        assert.deepEqual(e.tools, ARMS[arm]);
+        assert.equal(e.agentOptions.navigate, false, `${arm}: no navigate, which every run gets unless it is turned off`);
+    }
     for (const t of spec.tasks) assert.equal(t.regression.included, false, `${t.id} measures a reduced toolset`);
 });

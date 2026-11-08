@@ -13,6 +13,9 @@
 // tool's ground). The fixture is same-origin, so a page-world `fetch(` in exec works too: the notebook records which
 // reader each run used, and that third path is an answer, not a confound.
 //
+// Not removed: `agent_api_docs` joins any run with exec (run-assembly.ts), so the exec and both arms have it as shipped;
+// the notebook records whether a run read it before its first ml.fetch.
+//
 // Every gate is approved (`approve: "auto"`); both tasks read only the local fixture. Local models only (the box)
 // unless Shane says otherwise.
 
@@ -50,7 +53,8 @@ export default defineBench({
         arm: Object.keys(ARMS),
     },
 
-    apply: (combo) => ({ backend: { model: combo.model }, tools: ARMS[combo.arm] }),
+    // navigate is wired into every run unless turned off, whatever the subset says; off, so no arm has a third reader.
+    apply: (combo) => ({ backend: { model: combo.model }, tools: ARMS[combo.arm], agentOptions: { navigate: false } }),
 
     tasks: [
         {

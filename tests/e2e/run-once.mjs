@@ -601,6 +601,10 @@ export async function runOnce(cfg = {}) {
             // free tier fits). vision:false stops look/locate from auto-wiring back in.
             if (toolNames && toolNames.length) {
                 opts.tools = (window.ml.domTools || []).filter((t) => toolNames.includes(t.name));
+                // The tools a factory makes are not in domTools: a subset naming one gets it from the factory, or
+                // the name would drop out silently (tools-into-js's `fetch_url` arm ran with no fetch_url).
+                for (const [name, make] of [["fetch_url", "fetchTool"], ["click", "clickTool"], ["type", "typeTool"]])
+                    if (toolNames.includes(name) && !opts.tools.some((t) => t.name === name) && typeof window.ml[make] === "function") opts.tools.push(window.ml[make]());
                 opts.vision = false;
             }
             // python_exec is an extraTool, so it survives the tools subset filter above.

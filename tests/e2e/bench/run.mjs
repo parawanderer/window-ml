@@ -93,7 +93,7 @@ import { pastRuns, predictCells, forecast, forecastText, estimateCheck, latestPr
 import { estimateLine } from "./estimate-line.mjs";
 import { headerHelp } from "./cli-help.mjs";
 import { statusWriter } from "./status.mjs";
-import { startBudget, tooSmall, limitWhence, fmtBytes, parseSize, register, update, unregister, openFootprints, logFootprint, ledger, PAUSED_EXIT } from "./memory-budget.mjs";
+import { startBudget, tooSmall, limitWhence, fmtBytes, parseSize, register, update, unregister, openFootprints, logFootprint, ledger, PAUSED_EXIT, pausesAt } from "./memory-budget.mjs";
 import { failureShape, menuText, groupHeld, groupCommands, freeingCommands, duplicatesToRelease, shellLine, inDir, HOLD_HINTS } from "./hold-menu.mjs";
 import { fitRasch } from "./rasch.mjs";
 import { watch as watchFs } from "node:fs";
@@ -448,7 +448,7 @@ const driverModel = (cell, ctx) => cell.effects.backend?.model ?? ctx.backend?.m
 /**
  * Whether a cell may start under the memory budget: false once the sweep paused at it. At the limit, `pause` pauses the
  * sweep (no more cells; it exits PAUSED_EXIT once the running ones end); `stop-holding` waits for room, which a held run
- * released or an app closed gives back.
+ * released or an app closed gives back. A refusal only for promised memory (admits' `promised`) waits under every mode.
  */
 async function memoryLets(cell, ctx) {
     if (ctx.paused) return false;
@@ -457,7 +457,9 @@ async function memoryLets(cell, ctx) {
     for (;;) {
         const a = ctx.budget.canStart(cell.task.id);
         if (a.ok) { if (ctx.waiting) { ctx.waiting = null; ctx.changed?.(); } return true; }
-        if (ctx.budget.whenFull === "pause") { ctx.pause(a.why); return false; }
+        // A refusal only for memory promised and not yet resident (a test suite just granted, browsers starting) clears
+        // on its own: the cell waits for it under every mode, and `pause` is kept for a budget nobody frees but a person.
+        if (pausesAt(ctx.budget.whenFull, a)) { ctx.pause(a.why); return false; }
         // release-duplicates: this sweep's own held duplicates go first (each group keeps the one its attach line names);
         // the cell then waits for the budget's next measurement to see the memory come back.
         if (ctx.budget.whenFull === "release-duplicates" && ctx.releaseDuplicates?.(cellPath(cell), a.why)) {

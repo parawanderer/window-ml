@@ -304,13 +304,20 @@ export function notYetResident(entries, now = Date.now()) {
     return n;
 }
 
-/** Whether `need` more bytes fit: `{ ok, why }`, `why` saying which bound it hits, in words a person reads. */
+/** Whether `need` more bytes fit: `{ ok, why, promised }`, `why` saying which bound it hits, in words a person reads.
+ *  `promised` is true when it is refused only for memory promised and not yet resident (notYetResident): it would fit
+ *  with nothing promised, so the refusal clears on its own as browsers start or a test suite ends, with nobody acting. */
 export function admits(state, need) {
     const benchComing = state.benchComing ?? 0, coming = state.coming ?? 0;
-    if (state.used + benchComing + need > state.limit) return { ok: false, why: `the memory limit: the bench holds ${fmtBytes(state.used)}${benchComing ? ` (and ${fmtBytes(benchComing)} more starting up)` : ""} of ${fmtBytes(state.limit)}, and one more browser takes about ${fmtBytes(need)}` };
-    if (state.available - coming - need < state.reserve) return { ok: false, why: `free memory: ${fmtBytes(state.available)} available${coming ? ` (${fmtBytes(coming)} of it already promised to runs starting up)` : ""}, and ${fmtBytes(state.reserve)} (${Math.round((state.reserve / state.total) * 100)}% of RAM) stays free` };
-    return { ok: true, why: null };
+    const refused = (why) => ({ ok: false, why, promised: (benchComing > 0 || coming > 0) && admits({ ...state, benchComing: 0, coming: 0 }, need).ok });
+    if (state.used + benchComing + need > state.limit) return refused(`the memory limit: the bench holds ${fmtBytes(state.used)}${benchComing ? ` (and ${fmtBytes(benchComing)} more starting up)` : ""} of ${fmtBytes(state.limit)}, and one more browser takes about ${fmtBytes(need)}`);
+    if (state.available - coming - need < state.reserve) return refused(`free memory: ${fmtBytes(state.available)} available${coming ? ` (${fmtBytes(coming)} of it already promised to runs starting up)` : ""}, and ${fmtBytes(state.reserve)} (${Math.round((state.reserve / state.total) * 100)}% of RAM) stays free`);
+    return { ok: true, why: null, promised: false };
 }
+
+/** Whether a sweep pauses at this refusal: under `pause`, and only for a budget nobody frees but a person; a refusal
+ *  only for promised memory (admits' `promised`) clears on its own, so the cell waits for it instead. */
+export const pausesAt = (whenFull, a) => !a.ok && whenFull === "pause" && !a.promised;
 
 /** The 90th percentile (nearest rank) of `values`, or null for none. */
 export function p90(values) {
