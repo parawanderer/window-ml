@@ -266,6 +266,31 @@ test("a script that does not name ml.sh, isolated for another reason, cannot rea
     assert.deepEqual(host.calls.filter((c) => c.call === "spawn"), [], "the hand-posted sh op reached the host");
 });
 
+test("a script that calls ml.sh.put never runs in the page's world, and the host never sees put, write or commit", T, async () => {
+    const exec = (args) => [{ name: "exec", args }];
+    const js = '(async () => { try { return JSON.stringify(await ml.sh.put("@file:aaaaaaa", "inbox/x.pdf")); } catch (e) { return "threw: " + e.message; } })()';
+    const hostPut = (host) => host.calls.filter((c) => ["put", "write", "commit"].includes(c.call));
+    const cases = [
+        ["world page, isolation available", exec({ js, world: "page" }), {}],
+        ["no isolation, no world", exec({ js }), { userScripts: false }],
+        ["no isolation, world page", exec({ js, world: "page" }), { userScripts: false }],
+        ["unapproved page, no isolation", exec({ js }), { userScripts: false, approved: false }],
+        ["unapproved page, world page", exec({ js, world: "page" }), { approved: false }],
+    ];
+    for (const [label, steps, o] of cases) {
+        const host = fakeNativeHost();
+        const { results, pageExecs } = await drive(steps, { onNative: host.onNative, configExtra: ON, ...o });
+        assert.equal(pageExecs.length, 0, `${label}: the page's world was sent the script`);
+        assert.match(results[0] ?? "", /^Error:/, `${label}: refused: ${results[0]?.slice(0, 200)}`);
+        assert.deepEqual(hostPut(host), [], `${label}: the host was sent a put`);
+    }
+    // Positive control: isolated, the call is served by the worker (it answers that this run holds no such file) and still sends the host nothing.
+    const host = fakeNativeHost();
+    const ok = await drive(exec({ js }), { onNative: host.onNative, configExtra: ON });
+    assert.match(ok.results[0], /ValueMissing/, `positive control: the worker answered the isolated call: ${ok.results[0].slice(0, 300)}`);
+    assert.deepEqual(hostPut(host), [], "a handle this run does not hold reached the host");
+});
+
 // --- 3. the isolated channel's sh op from anyone but the call's own world ---
 
 test("an ISO_EXEC_ASK with op sh from the page's tab (runtime message, forged or guessed nonce, another frame, document or world, or after the exec ended) reaches no host call", T, async () => {
@@ -310,6 +335,29 @@ test("an ISO_EXEC_ASK with op sh from the page's tab (runtime message, forged or
     // After the run's turn is over, the same: nothing is served.
     const late = await within(bg.emitUserScriptMessage({ type: "ISO_EXEC_ASK", nonce: first.nonce, req: sh }, first.own));
     assert.equal(late, "NO ANSWER");
+});
+
+test("an ISO_EXEC_ASK with op sh and call put from the page's tab (live nonce, another tab, frame or document) is not answered and reaches no host call", T, async () => {
+    const host = fakeNativeHost();
+    const got = {};
+    const put = { op: "sh", call: "put", args: ["@file:aaaaaaa", "inbox/x.pdf"] };
+    const putJs = () => '(async () => { try { return JSON.stringify(await ml.sh.put("@file:aaaaaaa", "inbox/x.pdf")); } catch (e) { return "threw: " + e.message; } })()';
+    await runOn("userScripts", [putJs], {
+        ...NO_FETCH, onNative: host.onNative, configExtra: ON,
+        onExecute: async (bg, inj) => {
+            const nonce = nonceOf(inj.js[0].code);
+            if (!nonce) return;
+            const own = { tab: { id: 7 }, frameId: 0, documentId: "doc-1", userScriptWorldId: inj.worldId };
+            got["runtime.onMessage, run's tab"] = await within(bg.send({ type: "ISO_EXEC_ASK", nonce, req: put }, { ...fromTab, documentId: "doc-1" }));
+            for (const [k, s] of Object.entries({ "another tab": { ...own, tab: { id: 9 } }, "a sub-frame": { ...own, frameId: 3 }, "another document": { ...own, documentId: "doc-0" } }))
+                got[k] = await within(bg.emitUserScriptMessage({ type: "ISO_EXEC_ASK", nonce, req: put }, s));
+            // Positive control: the call's own world is served (the worker refuses a handle this run does not hold).
+            got.own = await within(bg.emitUserScriptMessage({ type: "ISO_EXEC_ASK", nonce, req: put }, own), 3000);
+        },
+    });
+    assert.match(JSON.stringify(got.own), /ValueMissing/, `positive control: the call's own world is answered: ${JSON.stringify(got.own)?.slice(0, 200)}`);
+    for (const [k, v] of Object.entries(got)) if (k !== "own") assert.equal(v, "NO ANSWER", k);
+    assert.deepEqual(host.calls.filter((c) => ["put", "write", "commit"].includes(c.call)), [], "a forged put reached the host");
 });
 
 // --- 4. the nested ask is answered only by the person, about the host's facts ---
@@ -581,4 +629,249 @@ test("ml.sh.read returns only output the host holds for THIS run: not another ru
     r0 = reads();
     assert.equal((await shRead(a, [tok2])).code, "Refused", "read after the port closed");
     assert.equal(reads(), r0, "a stale read reached a host");
+});
+
+// --- 9. ml.sh.put: what it writes, and what it asks first (the module itself, with a host that takes files) ---
+
+const { shPut } = await import("../src/sw/sw-shell-call.ts");
+const { hostAsks, stepAsks } = await import("../src/sw/sw-asks.ts");
+const { pendingApprovals, resolveApproval } = await import("../src/sw/sw-consent.ts");
+const { claimValue, storeFetchedBody, valueHolders } = await import("../src/sw/sw-values.ts");
+const { IDBFactory, IDBKeyRange } = await import("fake-indexeddb");
+const { createHash } = await import("node:crypto");
+const PUT_SEQ = 3;
+const PUT_CAP = 1 << 20;
+
+/**
+ * A host that takes files: the base fake, with `hello.put` and the `put`/`write`/`commit` calls answered. Every call it
+ * is sent is in `all`; the bytes of each write in `written`. `exists` makes every put report a file already there;
+ * `onWrite(n)` runs on each write; `commitError` answers `commit` with that host error code.
+ */
+function putHost({ exists = false, cap = { max: PUT_CAP }, commitError, onWrite } = {}) {
+    const base = fakeNativeHost();
+    const all = [], written = [];
+    const host = {
+        all, written, calls: base.calls,
+        names: () => all.map((c) => c.call),
+        exit: base.exit,
+        onNative: (name, e) => {
+            const inner = base.onNative(name, { close: e.close, send: (m) => e.send(m?.value?.protocol !== undefined ? { ...m, value: { ...m.value, put: cap } } : m) });
+            if (!inner) return inner;
+            let n = 0;
+            return (msg) => {
+                all.push(msg);
+                const { seq, call, args = {} } = msg;
+                const ok = (value) => e.send({ seq, value }), err = (code) => e.send({ seq, error: { code, message: `${call} refused` } });
+                if (call === "put") {
+                    const id = `put${++n}`;
+                    return ok({ id, path: `${args.cwd}/${args.path}`, root: args.cwd, rel: args.path, exists, existingSize: exists ? 5 : null, size: args.size, tilde: [] });
+                }
+                if (call === "write") { written.push(Buffer.from(args.bytes.$bytes, "base64")); onWrite?.(written.length); return ok({ id: args.id, received: args.offset + written.at(-1).length }); }
+                if (call === "commit") {
+                    if (commitError) return err(commitError);
+                    const all_ = Buffer.concat(written);
+                    return ok({ id: args.id, path: "x", root: "x", rel: msg.rel ?? "x", size: all_.length, sha256: createHash("sha256").update(all_).digest("hex") });
+                }
+                inner(msg);
+            };
+        },
+    };
+    return host;
+}
+const putCalls = (host) => host.all.filter((c) => ["put", "write", "commit", "discard"].includes(c.call));
+
+let putRun = 0;
+/**
+ * A run with one attached file of `bytes`, the value store seeded, asks hosted (so a card can be raised and answered),
+ * and a ShCallContext for it. `origin` is what the run reports; `ctl` aborts it.
+ */
+async function putCtx(bytes, { origin = () => ({}), name = "r.pdf", id = "aaaaaaa" } = {}) {
+    // One factory for the module: sw-values keeps the first store it makes.
+    globalThis.indexedDB ??= new IDBFactory();
+    globalThis.IDBKeyRange ??= IDBKeyRange;
+    const runId = `put-run-${++putRun}`;
+    const ctl = new AbortController();
+    const key = await storeFetchedBody({ bytes, format: "text" }, `file ${runId}`);
+    assert.ok(key, "the test's value store took the file");
+    claimValue(key, runId);
+    for (let i = 0; i < 100 && !(await valueHolders(key))?.includes(runId); i++) await tick(5);
+    const ctx = ctxFor(runId, ctl.signal);
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const file = ctx.tokens.files.note({ id, name, type: "application/pdf", bytes: bytes.length, pages: 1, read: 1, turn: 1, doc: key, data: key, sha256, chars: 0 });
+    const unhost = hostAsks({ runId, unattended: false, routing: "ui", signal: ctl.signal, emit: () => {}, stepOf: () => 1, running: () => true, waitMs: 5000 });
+    return { ctx: { ...ctx, seq: PUT_SEQ, origin }, ctl, runId, ref: `@file:${file.id}`, sha256, unhost };
+}
+const askKeys = (runId) => [...pendingApprovals.keys()].filter((k) => k.startsWith(`${runId}:`));
+/** Answer the next card this run raises. */
+async function answer(runId, decision) {
+    for (let i = 0; i < 400; i++) { const [k] = askKeys(runId); if (k) return resolveApproval(k, decision); await tick(5); }
+    throw new Error("no ask was raised");
+}
+const asksOf = (runId) => stepAsks(runId, PUT_SEQ) ?? [];
+const bytesOfLen = (n) => Uint8Array.from({ length: n }, (_, i) => (i * 31 + 7) & 255);
+
+test("ml.sh.put: a new file in a folder is written with no card (the built-in default frees it), whole and replaced: false", T, async () => {
+    releasePolicies();
+    const host = useHost(putHost());
+    const bytes = bytesOfLen(1000);
+    const { ctx, ref, sha256, runId, unhost } = await putCtx(bytes);
+    try {
+        const r = await shPut(ctx, [ref, "inbox/r.pdf"]);
+        assert.equal(r.ok?.replaced, false, JSON.stringify(r));
+        assert.equal(r.ok.size, 1000);
+        assert.equal(r.ok.sha256, sha256);
+        assert.deepEqual(asksOf(runId), [], "a card was raised for a new nested file");
+        assert.deepEqual(Buffer.concat(host.written), Buffer.from(bytes), "the host got the original bytes");
+        assert.deepEqual(host.all.filter((c) => c.call === "commit").map((c) => c.args.replace), [false]);
+        assert.equal(host.all.find((c) => c.call === "put").args.path, "inbox/r.pdf");
+    } finally { unhost(); }
+});
+
+test("ml.sh.put: a new top-level name asks; allowed it is written, declined nothing is written and the host discards", T, async () => {
+    releasePolicies();
+    for (const approve of [true, false]) {
+        const host = useHost(putHost());
+        const { ctx, ref, runId, unhost } = await putCtx(bytesOfLen(50));
+        try {
+            const p = shPut(ctx, [ref, "r.pdf"]);
+            await answer(runId, { approved: approve, ...(approve ? {} : { feedback: "no thanks" }), source: "user" });
+            const r = await p;
+            assert.equal(asksOf(runId).length, 1, "positive control: exactly one card");
+            assert.equal(asksOf(runId)[0].kind, "put");
+            if (approve) {
+                assert.equal(r.ok?.replaced, false, JSON.stringify(r));
+                assert.deepEqual(host.all.filter((c) => c.call === "commit").map((c) => c.args.replace), [false], "a new file is never committed as a replacement");
+            } else {
+                assert.equal(r.code, "Denied", JSON.stringify(r));
+                assert.match(r.error, /declined.*no thanks/);
+                assert.deepEqual(host.all.filter((c) => ["write", "commit"].includes(c.call)), [], "bytes were sent for a declined put");
+                assert.ok(host.names().includes("discard"), "the declined put was not discarded");
+            }
+        } finally { unhost(); }
+    }
+});
+
+test("ml.sh.put: a stored deny policy for sh holds: Denied, the host discards, no write", T, async () => {
+    releasePolicies();
+    const P = await import("../src/sw/sw-policies.ts");
+    const host = useHost(putHost());
+    const { ctx, ref, runId, unhost } = await putCtx(bytesOfLen(50));
+    const deny = P.addGlobalPolicy({ consumer: "sh", effect: "deny", source: "(c) => true", label: "deny all sh" });
+    try {
+        const r = await shPut(ctx, [ref, "inbox/r.pdf"]);
+        assert.equal(r.code, "Denied", JSON.stringify(r));
+        assert.deepEqual(host.all.filter((c) => ["write", "commit"].includes(c.call)), [], "bytes were sent under a deny");
+        assert.ok(host.names().includes("discard"), "the denied put was not discarded");
+        assert.deepEqual(asksOf(runId), [], "a deny does not ask");
+    } finally { P.removePolicy(deny.id); unhost(); }
+    // Positive control: with the policy gone, the same call writes.
+    const again = await putCtx(bytesOfLen(50));
+    try { assert.equal((await shPut(again.ctx, [again.ref, "inbox/r.pdf"])).ok?.replaced, false); } finally { again.unhost(); }
+});
+
+test("ml.sh.put: an existing file asks even under an allow policy; approved it commits with replace true, declined it writes nothing and discards", T, async () => {
+    releasePolicies();
+    const P = await import("../src/sw/sw-policies.ts");
+    const allow = P.addGlobalPolicy({ consumer: "sh", effect: "allow", source: "(c) => true", label: "allow all sh" });
+    try {
+        // Positive control: the same allow frees a NEW top-level name with no card.
+        const fresh = useHost(putHost());
+        const f = await putCtx(bytesOfLen(20));
+        try {
+            const r = await shPut(f.ctx, [f.ref, "r.pdf"]);
+            assert.equal(r.ok?.replaced, false, `positive control: the allow policy frees a new file: ${JSON.stringify(r)}`);
+            assert.deepEqual(asksOf(f.runId), []);
+        } finally { f.unhost(); }
+        for (const approve of [true, false]) {
+            const host = useHost(putHost({ exists: true }));
+            const { ctx, ref, runId, unhost } = await putCtx(bytesOfLen(20));
+            try {
+                const p = shPut(ctx, [ref, "inbox/r.pdf"]);
+                await answer(runId, { approved: approve, source: "user" });
+                const r = await p;
+                assert.equal(asksOf(runId).length, 1, "an existing file was not asked about");
+                if (approve) {
+                    assert.equal(r.ok?.replaced, true, JSON.stringify(r));
+                    assert.deepEqual(host.all.filter((c) => c.call === "commit").map((c) => c.args.replace), [true]);
+                } else {
+                    assert.equal(r.code, "Denied", JSON.stringify(r));
+                    assert.deepEqual(host.all.filter((c) => ["write", "commit"].includes(c.call)), [], "bytes were sent for a declined replacement");
+                    assert.ok(host.names().includes("discard"));
+                }
+            } finally { unhost(); }
+        }
+    } finally { P.removePolicy(allow.id); }
+});
+
+test("ml.sh.put: cancelling the run after the first chunk of a large file never commits, and the host discards", T, async () => {
+    releasePolicies();
+    const bytes = bytesOfLen(512 * 1024 * 2 + 10);
+    let ctl;
+    const host = useHost(putHost({ cap: { max: 4 << 20 }, onWrite: (n) => { if (n === 1) ctl.abort(); } }));
+    const run = await putCtx(bytes);
+    ctl = run.ctl;
+    try {
+        const r = await shPut(run.ctx, [run.ref, "inbox/big.bin"]);
+        assert.equal(r.code, "Denied", JSON.stringify(r));
+        assert.equal(host.written.length, 1, "chunks were sent after the cancel");
+        assert.equal(host.written[0].length, 512 * 1024, "positive control: the first chunk was a whole READ_CHUNK");
+        assert.ok(!host.names().includes("commit"), "a cancelled put was committed");
+        assert.ok(host.names().includes("discard"), "a cancelled put was not discarded");
+    } finally { run.unhost(); }
+});
+
+test("ml.sh.put: a commit the host answers with Exists says Exists and replaces nothing", T, async () => {
+    releasePolicies();
+    const host = useHost(putHost({ commitError: "Exists" }));
+    const { ctx, ref, unhost } = await putCtx(bytesOfLen(30));
+    try {
+        const r = await shPut(ctx, [ref, "inbox/r.pdf"]);
+        assert.equal(r.code, "Refused", JSON.stringify(r));
+        assert.match(r.error, /Exists/);
+        assert.deepEqual(host.all.filter((c) => c.call === "commit").map((c) => c.args.replace), [false], "positive control: it reached commit, asking for no replacement");
+    } finally { unhost(); }
+});
+
+test("ml.sh.put: a run that cannot say where it was started, or was started on another device, is refused before the host is reached", T, async () => {
+    releasePolicies();
+    const { PUT_REMOTE } = await import("../src/sw/sw-shell-call.ts");
+    const host = useHost(putHost());
+    for (const [label, origin] of [["origin absent", undefined], ["origin null", () => null], ["origin undefined", () => undefined], ["remote", () => ({ remote: true })]]) {
+        const { ctx, ref, unhost } = await putCtx(bytesOfLen(10));
+        try {
+            const r = await shPut({ ...ctx, origin }, [ref, "inbox/r.pdf"]);
+            assert.equal(r.code, "Refused", `${label}: ${JSON.stringify(r)}`);
+            if (label === "remote") assert.equal(r.error, PUT_REMOTE);
+        } finally { unhost(); }
+    }
+    assert.deepEqual(putCalls(host), [], "the host was reached");
+    assert.deepEqual(host.names().filter((n) => n !== "hello" && n !== "configure"), [], "any host call was made");
+    // Positive control: a local origin reaches the host.
+    const { ctx, ref, unhost } = await putCtx(bytesOfLen(10));
+    try { assert.equal((await shPut(ctx, [ref, "inbox/r.pdf"])).ok?.replaced, false); } finally { unhost(); }
+    assert.ok(host.names().includes("put"), "positive control: a local run reached the host");
+});
+
+test("ml.sh.put: another run's handle, a host that cannot take a file, and a file over the host's cap reach no write", T, async () => {
+    releasePolicies();
+    // Another run's shelf: this run holds no such file, and the refusal names nothing of the other's.
+    const other = await putCtx(bytesOfLen(10), { name: "secret-plans.pdf", id: "ccccccc" });
+    const mine = await putCtx(bytesOfLen(10));
+    const host = useHost(putHost());
+    try {
+        const r = await shPut(mine.ctx, [other.ref, "inbox/r.pdf"]);
+        assert.equal(r.code, "Refused", JSON.stringify(r));
+        assert.match(r.error, /ValueMissing/);
+        assert.doesNotMatch(r.error, /secret-plans/);
+        assert.deepEqual(putCalls(host), []);
+    } finally { other.unhost(); mine.unhost(); }
+    for (const [label, hostOpts, re] of [["no put capability", { cap: null }, /cannot take a file/], ["over the cap", { cap: { max: 5 } }, /TooLarge/]]) {
+        const h = useHost(putHost(hostOpts));
+        const { ctx, ref, unhost } = await putCtx(bytesOfLen(10));
+        try {
+            const r = await shPut(ctx, [ref, "inbox/r.pdf"]);
+            assert.match(r.error ?? "", re, `${label}: ${JSON.stringify(r)}`);
+            assert.deepEqual(putCalls(h), [], `${label}: the host was sent a put`);
+        } finally { unhost(); }
+    }
 });
