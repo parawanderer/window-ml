@@ -18,3 +18,6 @@ Each notebook has a generator beside it (`make-<name>.py`, the file to edit) and
   estimates given before the first `Detached`, wake turns, stalls noticed before the host's kill, and wall and GPU
   time. The first, invalid matrix (whose scripts' `sleep` the sandbox refused) is kept as the negative result.
   Generator: `make-sh-lease.py`; the recommendation prose is `data/sh-lease/RECOMMENDATION.md`.
+- [tools-into-js.ipynb](tools-into-js.ipynb): `fetch_url` as a tool against `ml.fetch` inside exec (and both), over a CSV
+  total and a one-fact read: correctness, steps, tokens and time per arm, which reader each run used first, where
+  `ml.fetch` appears in the exec arm, and switching in the both arm. Generator: `make-tools-into-js.py`; the recommendation prose is `data/tools-into-js/RECOMMENDATION.md`.
