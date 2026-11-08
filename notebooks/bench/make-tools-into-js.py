@@ -130,7 +130,12 @@ def read_runs():
             "relative_mlfetch": sum(len([u for u in REL_JS.findall(str((s.get("arguments") or {}).get("js", ""))) if not u.startswith(("http://", "https://"))]) for s in steps if s["tool"] == "exec"),
             "relative_refused": sum("not a valid URL" in str(s.get("result")) for s in steps if s["tool"] == "exec"),
         })
-    return {"rows": rows, "excluded": excluded, "latest_spec": latest, "since": since}
+    # Spend of the sweep's last invocation (the cloud pair; local calls cost nothing): `computed` is tokens times the
+    # price snapshot, `reported` what the provider's response said it cost (DeepSeek reports none).
+    sp = json.loads((root / "status.json").read_text()).get("spend") or {}
+    keep = ("calls", "computed", "computedCalls", "reported", "reportedCalls")
+    spend = {k: {f: v.get(f) for f in keep} for k, v in {**sp.get("models", {}), "total": sp.get("total", {})}.items()}
+    return {"rows": rows, "excluded": excluded, "latest_spec": latest, "since": since, "spend": spend, "currency": sp.get("currency")}
 
 
 data = wmlnb.extract(EXTRACT, read_runs, source={"sweep": SWEEP, "sweep_root": "tests/e2e/artifacts/bench/tools-into-js"})
@@ -323,6 +328,20 @@ display(cb.groupby(["model", "task"]).agg(used_exec=("used_exec", "sum"), correc
 ce = c[c.arm == "exec"]
 display(ce.assign(first_reader=ce.first_reader.fillna("none")).groupby(["model", "task", "first_reader"]).size().rename("runs"))
 print("cloud exec runs reading agent_api_docs before ml.fetch:", int(ce.docs_before_mlfetch.fillna(False).astype(bool).sum()), "of", len(ce))
+""")
+
+md("""
+### Spend of the cloud pair
+
+Two figures per model. `computed` is each call's tokens times the price snapshot, over every call; `reported` is what
+the provider's response said the call cost, over only the calls that said (DeepSeek's say nothing). RECOMMENDATION.md
+quotes the computed total.
+""")
+
+code("""
+spend = pd.DataFrame(data["spend"]).T[["calls", "computed", "computedCalls", "reported", "reportedCalls"]]
+print("currency:", data["currency"])
+spend.assign(computed=spend.computed.astype(float).round(4), reported=spend.reported.astype(float).round(4))
 """)
 
 nb = nbf.v4.new_notebook(cells=cells)

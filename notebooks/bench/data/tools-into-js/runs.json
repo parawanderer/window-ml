@@ -1,7 +1,8 @@
 {
-  "commit": "6a63e4abb4e70545ebaf4f12663fb3f6b176fcb0",
-  "extracted_at": "2026-11-08T15:19:36+00:00",
+  "commit": "a8cb00067d2070e177d4cad870a52b8077b07601",
+  "extracted_at": "2026-11-08T16:26:28+00:00",
   "rows": {
+    "currency": "USD",
     "excluded": [
       {
         "cell": "history/sales-total/model-gemma4-12b_arm-tool/r0/2026-11-08T09-30-11-344Z-02487805/cell.json",
@@ -4661,7 +4662,30 @@
         "used_exec": false
       }
     ],
-    "since": "2026-11-08T09:37:16.352Z"
+    "since": "2026-11-08T09:37:16.352Z",
+    "spend": {
+      "deepseek.deepseek-flash": {
+        "calls": 182,
+        "computed": 0.14415199199999995,
+        "computedCalls": 182,
+        "reported": 0,
+        "reportedCalls": 0
+      },
+      "openrouter.openai/gpt-6-luna": {
+        "calls": 145,
+        "computed": 0.03866632000000001,
+        "computedCalls": 145,
+        "reported": 0.04268169500000002,
+        "reportedCalls": 145
+      },
+      "total": {
+        "calls": 327,
+        "computed": 0.18281831199999998,
+        "computedCalls": 327,
+        "reported": 0.04268169500000002,
+        "reportedCalls": 145
+      }
+    }
   },
   "source": {
     "sweep": "tools-into-js",

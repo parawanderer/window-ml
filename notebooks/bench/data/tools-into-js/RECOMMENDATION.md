@@ -7,8 +7,9 @@ qwen3.8-flash-next:vision; 5 repeats; same-origin fixture):
   all 15 used exec (14 of them after opening with fetch_url), and 13 of 15 were correct; on `find-out` 2 of 15 used
   exec, and all 15 were correct.
 
-**The cloud pair agrees.** deepseek.deepseek-flash and openrouter.openai/gpt-6-luna (60 runs, 0.18 USD; gpt-6-luna in
-place of Sonnet 5.5, Shane's choice) repeat every line above. `find-out`: tool 10/10 in 2.7 steps and 7.8 s, exec 9/10
+**The cloud pair agrees.** deepseek.deepseek-flash and openrouter.openai/gpt-6-luna (60 runs, 0.18 USD computed from token
+prices, of which the providers reported 0.043 USD for gpt-6-luna's calls and nothing for DeepSeek's: the notebook's
+spend cell; gpt-6-luna in place of Sonnet 5.5, Shane's choice) repeat every line above. `find-out`: tool 10/10 in 2.7 steps and 7.8 s, exec 9/10
 in 6.0 steps and 15.5 s. `sales-total`: tool 0/10, exec 10/10. Both arms: 20/20 correct, fetch_url first in 19 of 20,
 every `sales-total` run went on to exec. With fetch_url alone on `sales-total`, no cloud run hit the 300 s cap: 4 said
 they could not compute an exact total, 3 stopped at the 10-step cap, and 3 (all gpt-6-luna) gave a wrong number as the
