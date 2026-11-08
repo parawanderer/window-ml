@@ -14,7 +14,7 @@ import { readCapped, decodeCapped, binaryKind } from "./body-read";
 import { ensureDebuggerAttached, releaseDebugger } from "./sw-cdp";
 import { incognitoEnableSteps } from "../util";
 import { noteAgentTab } from "./sw-start-approval";
-import { judgedFetch, RedirectRefused, type HopJudge } from "./sw-redirects";
+import { judgedFetch, prepareRenderGuard, MAX_HOPS, RedirectRefused, type HopJudge, type RenderGuard } from "./sw-redirects";
 
 // ---- Google Sheets CSV fetch (python_exec `sheet`) ----
 // Fetch the sheet's CSV export with the user's own cookies (credentials:"include"), so a
@@ -573,34 +573,50 @@ function isIncognitoAllowed(): Promise<boolean> {
  *   · incognito=FALSE → a normal background tab: carries the user's session (cookies). Credentialed-weight
  *                       (one-time grant, always-prompt). The snapshot HTML flows through the same
  *                       classify + HTML→Markdown path as a raw fetch either way. */
-export async function fetchRenderedContent(url: string, incognito: boolean, cdp: boolean): Promise<FetchResult> {
+export async function fetchRenderedContent(url: string, incognito: boolean, cdp: boolean, judge?: HopJudge): Promise<FetchResult> {
+    if (incognito && !(await isIncognitoAllowed())) {
+        throw new Error(`A private (no-session) rendered fetch needs the extension allowed in Incognito, which is off. Retry with credentials:true to render in the user's own session instead (it asks them once). If they would rather keep it private, tell them how to allow it: ${incognitoEnableSteps(undefined, chrome.runtime.id)}`);
+    }
+    // With a judge, the tab is held to the judged set from its first request: the rule goes in before the tab exists.
+    const pending = judge ? await prepareRenderGuard(url) : undefined;
+    let guard: RenderGuard | undefined;
     let tabId: number | undefined;
     let windowId: number | undefined;   // set on the incognito path — we remove the whole (minimized) window
     let emulated = false;               // did we attach the debugger for focus/visibility emulation?
     if (incognito) {
-        if (!(await isIncognitoAllowed())) {
-            throw new Error(`A private (no-session) rendered fetch needs the extension allowed in Incognito, which is off. Retry with credentials:true to render in the user's own session instead (it asks them once). If they would rather keep it private, tell them how to allow it: ${incognitoEnableSteps(undefined, chrome.runtime.id)}`);
-        }
         let win: chrome.windows.Window | undefined;
         try { win = await chrome.windows.create({ url, incognito: true, focused: false, state: "minimized" }); }
-        catch (e) { throw new Error(`Couldn't open a private window to render "${url}" (${(e as Error)?.message || e}). Incognito may be disabled by policy.`); }
+        catch (e) { await pending?.dispose(); throw new Error(`Couldn't open a private window to render "${url}" (${(e as Error)?.message || e}). Incognito may be disabled by policy.`); }
         windowId = win?.id;
         tabId = win?.tabs?.[0]?.id;
     } else {
         let tab: chrome.tabs.Tab;
         try { tab = await chrome.tabs.create({ url, active: false }); }
-        catch (e) { throw new Error(`Couldn't open a background tab to render "${url}" (${(e as Error)?.message || e}).`); }
+        catch (e) { await pending?.dispose(); throw new Error(`Couldn't open a background tab to render "${url}" (${(e as Error)?.message || e}).`); }
         tabId = tab.id;
     }
-    if (tabId == null) throw new Error(`Couldn't open a ${incognito ? "private " : ""}tab to render "${url}".`);
-    // A tab the extension opened to read a page: nothing in it starts an agent (SITE_ACCESS_SLICE3.md, Q17).
-    noteAgentTab(tabId, "");
+    if (tabId == null) { await pending?.dispose(); throw new Error(`Couldn't open a ${incognito ? "private " : ""}tab to render "${url}".`); }
     try {
+        // A tab the extension opened to read a page: nothing in it starts an agent (SITE_ACCESS_SLICE3.md, Q17). Inside the
+        // try, so a throw here still closes the tab and releases the guard's lock.
+        noteAgentTab(tabId, "");
+        guard = await pending?.bind(tabId);
         // Before the deferred/lazy widgets fire, make the (backgrounded/minimized) tab believe it's foregrounded
         // so focus/visibility-gated loads run — only when the user enabled CDP (it attaches the debugger).
         if (cdp) { try { emulated = await emulateForeground(tabId); } catch { /* best-effort */ } }
-        await waitForTabComplete(tabId, RENDER_LOAD_TIMEOUT_MS);
-        await settleRender(tabId);   // scroll pass + wait for the DOM to go quiet (network-idle proxy)
+        for (let hops = 0; ; hops++) {
+            await waitForTabComplete(tabId, RENDER_LOAD_TIMEOUT_MS);
+            await settleRender(tabId);   // scroll pass + wait for the DOM to go quiet (network-idle proxy)
+            const hit = guard?.blocked();
+            if (!hit) break;
+            // A navigation the rule stopped, its request never sent: judged like a fetch's hop. A followed one widens the
+            // rule and loads the URL again from the start, so every hop before it runs as a person's browser would.
+            if (!judge!(hit)) throw new RedirectRefused(hit);
+            if (hops >= MAX_HOPS) throw new Error("too many redirects");
+            await guard!.widen(hit.to);
+            guard!.clear();
+            await chrome.tabs.update(tabId, { url });
+        }
         let injected: chrome.scripting.InjectionResult[] | undefined;
         try {
             injected = await chrome.scripting.executeScript({ target: { tabId }, func: renderSnapshot });
@@ -621,6 +637,7 @@ export async function fetchRenderedContent(url: string, incognito: boolean, cdp:
         };
     } finally {
         if (emulated && tabId != null) releaseDebugger(tabId);   // detach the render-tab debugger before we close it
+        await (guard ?? pending)?.dispose();
         if (windowId != null) { try { await chrome.windows.remove(windowId); } catch { /* already closed */ } }
         else if (tabId != null) { try { await chrome.tabs.remove(tabId); } catch { /* already closed */ } }
     }

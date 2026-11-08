@@ -12,12 +12,26 @@ import assert from "node:assert";
 import { createRequire } from "node:module";
 
 const listeners = [];
+/** A webRequest event a render guard listens to: its listeners, and `fire(details)`. */
+const navEvent = () => { const fns = new Set(); return { fns, addListener: (fn) => fns.add(fn), removeListener: (fn) => fns.delete(fn), fire: (d) => { for (const fn of fns) fn(d); } }; };
+/** The session rules, by id, and the tabs open now, for the render guard's tests. */
+const dnr = { rules: new Map(), fail: false };
+let openTabs = [];
 globalThis.chrome = {
-    debugger: {}, tabs: {}, windows: {}, scripting: {}, extension: {}, permissions: { contains: async () => true }, action: {},
+    debugger: {}, windows: {}, scripting: {}, extension: {}, permissions: { contains: async () => true }, action: {},
+    tabs: { query: async () => openTabs.map((id) => ({ id })) },
     runtime: { getURL: (p = "") => `chrome-extension://test/${p}` },
-    webRequest: { onHeadersReceived: { addListener: (fn) => listeners.push(fn) } },
+    webRequest: { onHeadersReceived: { addListener: (fn) => listeners.push(fn) }, onBeforeRedirect: navEvent(), onCompleted: navEvent(), onErrorOccurred: navEvent() },
+    declarativeNetRequest: {
+        getSessionRules: async () => [...dnr.rules.values()],
+        updateSessionRules: async ({ removeRuleIds = [], addRules = [] }) => {
+            if (dnr.fail) throw new Error("rule refused");
+            for (const id of removeRuleIds) dnr.rules.delete(id);
+            for (const r of addRules) dnr.rules.set(r.id, structuredClone(r));
+        },
+    },
 };
-const { judgedFetch, hopIsOwn, watchRedirects, MAX_HOPS, HOP_EVENT_WAIT_MS, RedirectRefused } = await import("../src/sw/sw-redirects.ts");
+const { judgedFetch, hopIsOwn, watchRedirects, prepareRenderGuard, RENDER_RULE_BASE, MAX_HOPS, HOP_EVENT_WAIT_MS, RedirectRefused } = await import("../src/sw/sw-redirects.ts");
 const { sheetHop, fetchSheetCsv } = await import("../src/sw/sw-fetch.ts");
 watchRedirects();
 watchRedirects();   // once
@@ -397,4 +411,76 @@ test("a redirect whose Location cannot be read is IMAGE_FAILED", async () => {
     bg = loadBackground({ config: baseConfig(), onFetch: (call) => (bg.headersReceived(call.url, 302, null), { type: "opaqueredirect", ok: false, status: 0, url: "", body: null }) });
     const res = await bg.send({ type: "FETCH_IMAGE_B64", payload: { url: "https://img.example/a.png" } }, PAGE);
     assert.deepEqual(res, { error: "Could not read that URL as an image." });
+});
+
+// --- prepareRenderGuard: a render tab is held to its site from its first request ---
+
+const nav = chrome.webRequest;
+const blockedNav = (tabId, url) => nav.onErrorOccurred.fire({ tabId, url, error: "net::ERR_BLOCKED_BY_CLIENT" });
+const onlyRule = () => { assert.equal(dnr.rules.size, 1, "one render rule"); return [...dnr.rules.values()][0]; };
+
+test("the rule goes in before the tab exists, covering every tab but the open ones, and bind narrows it to the new tab", async () => {
+    openTabs = [3, 7];
+    const pending = await prepareRenderGuard("https://www.site.example/start");
+    const before = onlyRule();
+    assert.ok(before.id >= RENDER_RULE_BASE);
+    assert.deepEqual(before.action, { type: "block" });
+    assert.deepEqual(before.condition, { excludedTabIds: [3, 7], resourceTypes: ["main_frame", "sub_frame"], excludedRequestDomains: ["site.example"] });
+    const guard = await pending.bind(11);
+    assert.deepEqual(onlyRule().condition, { tabIds: [11], resourceTypes: ["main_frame", "sub_frame"], excludedRequestDomains: ["site.example"] });
+    await guard.widen("https://partner.example/x");
+    assert.deepEqual(onlyRule().condition.excludedRequestDomains, ["site.example", "partner.example"]);
+    await guard.dispose();
+    assert.equal(dnr.rules.size, 0, "dispose removes the rule");
+    assert.equal(nav.onErrorOccurred.fns.size + nav.onBeforeRedirect.fns.size + nav.onCompleted.fns.size, 0, "and the listeners");
+});
+
+test("a hop blocked before bind is kept for the new tab; another tab's events are not its", async () => {
+    openTabs = [];
+    const pending = await prepareRenderGuard("https://a.site.example/r");
+    nav.onBeforeRedirect.fire({ tabId: 20, url: "https://a.site.example/r", redirectUrl: "https://evil.example/x" });
+    blockedNav(20, "https://evil.example/x");
+    blockedNav(21, "https://other.example/y");
+    const guard = await pending.bind(20);
+    assert.deepEqual(guard.blocked(), { from: "https://a.site.example/r", to: "https://evil.example/x" });
+    blockedNav(21, "https://other.example/z");
+    guard.clear();
+    assert.equal(guard.blocked(), null, "clear forgets it, and the other tab's later block is not this tab's");
+    nav.onCompleted.fire({ tabId: 20, url: "https://a.site.example/landed" });
+    blockedNav(20, "https://evil.example/js");
+    assert.deepEqual(guard.blocked(), { from: "https://a.site.example/landed", to: "https://evil.example/js" }, "a script navigation comes from the page the tab loaded");
+    await guard.dispose();
+});
+
+test("renders prepare one at a time: the next waits until the last binds or is disposed", async () => {
+    openTabs = [];
+    const first = await prepareRenderGuard("https://one.example/");
+    let second = null;
+    const waiting = prepareRenderGuard("https://two.example/").then((p) => (second = p));
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(second, null, "the second waits while the first's broad rule is in");
+    const g1 = await first.bind(30);
+    await waiting;
+    assert.ok(second, "it goes once the first is narrowed");
+    let third = null;
+    const waiting3 = prepareRenderGuard("https://three.example/").then((p) => (third = p));
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(third, null);
+    await second.dispose();   // a tab that failed to open
+    await waiting3;
+    assert.ok(third, "a disposed guard lets the next one go");
+    await third.dispose();
+    await g1.dispose();
+    assert.equal(dnr.rules.size, 0);
+});
+
+test("a rule the browser refuses fails the prepare, leaves nothing behind, and does not wedge the next render", async () => {
+    openTabs = [];
+    dnr.fail = true;
+    await assert.rejects(prepareRenderGuard("https://refused.example/"), /rule refused/);
+    dnr.fail = false;
+    assert.equal(nav.onErrorOccurred.fns.size, 0, "no listener left");
+    const next = await prepareRenderGuard("https://after.example/");
+    await next.dispose();
+    assert.equal(dnr.rules.size, 0);
 });

@@ -174,6 +174,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     const userScriptListeners = [];
     let permsHeld = new Set(debuggerPermission ? ["debugger"] : []);
     const permAddedListeners = [];
+    const sessionRules = new Map();  // chrome.declarativeNetRequest session rules, by id
     const headersListeners = [];     // chrome.webRequest.onHeadersReceived listeners; fired by bg.headersReceived(…)
     const committedListeners = [];   // chrome.webNavigation.onCommitted listeners; fired by bg.commit(tabId, …)
     const targetListeners = [];      // chrome.webNavigation.onCreatedNavigationTarget listeners; fired by bg.openedFrom(…)
@@ -287,7 +288,20 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
             // Only what the worker reads to know which document a tab holds: a commit is fired by bg.commit, never by
             // the harness on its own, so a test that never commits sees no document at all.
             // The worker's own requests' response headers (sw-redirects.ts reads a 3xx's Location here); fired by bg.headersReceived.
-            webRequest: { onHeadersReceived: { addListener: (fn) => headersListeners.push(fn) } },
+            // A render tab's guard listens to its main-frame events (never fired here) and holds it with a session rule.
+            webRequest: {
+                onHeadersReceived: { addListener: (fn) => headersListeners.push(fn) },
+                onBeforeRedirect: { addListener: () => {}, removeListener: () => {} },
+                onCompleted: { addListener: () => {}, removeListener: () => {} },
+                onErrorOccurred: { addListener: () => {}, removeListener: () => {} },
+            },
+            declarativeNetRequest: {
+                getSessionRules: async () => [...sessionRules.values()],
+                updateSessionRules: async ({ removeRuleIds = [], addRules = [] }) => {
+                    for (const id of removeRuleIds) sessionRules.delete(id);
+                    for (const r of addRules) sessionRules.set(r.id, r);
+                },
+            },
             webNavigation: {
                 onCommitted: { addListener: (fn) => committedListeners.push(fn), removeListener: (fn) => { const i = committedListeners.indexOf(fn); if (i >= 0) committedListeners.splice(i, 1); } },
                 onCreatedNavigationTarget: { addListener: (fn) => targetListeners.push(fn) },
