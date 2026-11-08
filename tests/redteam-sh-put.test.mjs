@@ -170,7 +170,12 @@ async function runPut({ host, files = [PDF], script, localExtra = {}, configExtr
                 asks.push(...(msg.event.asks ?? []));
                 await onStep?.(bg, msg.event, asks, state);
             }
-            if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval && autoApprove) {
+            // The exec step's OWN gate is answered unless the row said `autoApprove: false`: that flag is about the asks a
+            // CALL raises, and a row that wants to answer one still needs its script to run at all. A gate that carries
+            // the run's asks is the row's to answer (measured: with the outer gate unanswered, the protected-name and
+            // existing-file rows ran to their tick cap with no result).
+            const nested = (msg.event?.asks ?? []).length > 0;
+            if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval && (autoApprove || !nested)) {
                 void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
             }
             if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
@@ -249,9 +254,13 @@ test("RED TEAM: a `~`-spelled path is the HOST's to resolve: `~/…` lands on th
     const home = putHost();
     const r1 = await runPut({ host: home, script: ({ ptr }) => put(ptr, "~/proj/inbox/report.pdf") });
     assert.equal(puts(home).length, 1, `the put never reached the host that resolves the tilde: ${r1.results[0]?.slice(0, 300)}`);
-    const committed = commits(home).map((c) => String(c.args?.path ?? ""));
-    assert.ok(committed.length > 0, `the tilde path was not committed: ${r1.results[0]?.slice(0, 300)}`);
-    assert.ok(committed.every((p) => !p.startsWith("~") && p.startsWith("/")), `a literal ~ was committed: ${JSON.stringify(committed)}`);
+    // The worker sends the path as the model wrote it and the HOST resolves it: the facts answer carries the absolute
+    // path and the root, and the result the model reads carries `path` (relative to that root) and `root`. `commit`
+    // takes `{ id, replace }` only, so the resolved path is nowhere else.
+    assert.equal(puts(home)[0]?.args?.path, "~/proj/inbox/report.pdf", "the worker resolved the tilde instead of the host");
+    const a1 = answer(r1.results[0]);
+    assert.ok(!String(a1.path ?? "~").startsWith("~"), `the model was answered a literal ~: ${r1.results[0]?.slice(0, 300)}`);
+    assert.ok(String(a1.root ?? "").startsWith("/"), `the answer names no absolute root, so nothing resolved the ~: ${r1.results[0]?.slice(0, 300)}`);
     const other = putHost({ put: "outside-roots" });
     const r2 = await runPut({ host: other, script: ({ ptr }) => put(ptr, "~someone/report.pdf") });
     assert.deepEqual(writes(other), [], "another user's home was written to");
@@ -323,23 +332,27 @@ test("RED TEAM: an existing file asks the person, and no allow policy commits ov
 
 // --- 4. the surfaces that must never get it ---
 
-test("RED TEAM: `put` hand-posted on the call's own channel is refused by the allowlist, while the same channel still answers `run`", T, async () => {
+test("RED TEAM: a hand-posted `put` is refused by its OWN arity of exactly two, and `run` keeps its two-argument bound", { ...T, todo: "open: `put` joins iso-channel's allowlist by NAME with an arity of exactly two (handle and path), never a relaxed length guard, so a 1- or 3-argument put is `malformed` and reaches no host while a 2-argument one is answered like `ml.sh.put`; `run` and `read` keep `args.length <= 2`, so a third argument is malformed there too. The two-argument put is the row's positive control, because today the NAME is what is refused and the arity rows would pass for its doing" }, async () => {
     const host = putHost();
-    // The script names ml.sh, so the call HAS a channel: the hand-posted `run` beside it proves the channel was live when
-    // `put` was refused, which is what makes the refusal the allowlist's (iso-channel.ts names run|read) and not a dead one.
+    // The script names ml.sh, so the call HAS a channel, and the hand-posted calls beside it prove it was live.
     const script = ({ ptr }) => `(async () => {
         const own = await ml.sh.run(["ls"]);
         const post = (call, args) => chrome.runtime.sendMessage({ type: "ISO_EXEC_ASK", nonce: globalThis.__mlIsoStarted, req: { op: "sh", call, args } });
-        const run = await post("run", [["ls"]]);
-        const put = await post("put", [${JSON.stringify(ptr)}, "inbox/report.pdf"]);
-        return JSON.stringify({ own: own?.ok, run, put });
+        const two = await post("put", [${JSON.stringify(ptr)}, "inbox/report.pdf"]);
+        const one = await post("put", [${JSON.stringify(ptr)}]);
+        const three = await post("put", [${JSON.stringify(ptr)}, "inbox/report.pdf", "extra"]);
+        const run3 = await post("run", [["ls"], {}, "extra"]);
+        return JSON.stringify({ own: own?.ok, two, one, three, run3 });
     })()`;
     const { results } = await runPut({ host, script });
     const a = answer(results[0]);
     assert.equal(a.own, true, `positive control: the run's own ml.sh call did not work: ${results[0]?.slice(0, 300)}`);
-    assert.ok(!a.run?.error, `positive control: the hand-posted run was refused, so the channel was not the thing judging: ${JSON.stringify(a.run)}`);
-    assert.ok(a.put?.error, `the hand-posted put was answered instead of refused: ${JSON.stringify(a.put)}`);
-    assert.deepEqual(puts(host), [], "the hand-posted put reached the host");
+    assert.ok(!a.two?.error, `positive control: the two-argument put was refused, so the arity rows below prove nothing about arity: ${JSON.stringify(a.two)}`);
+    assert.ok(a.one?.error, `a one-argument put was answered instead of refused: ${JSON.stringify(a.one)}`);
+    assert.ok(a.three?.error, `a three-argument put was answered instead of refused: ${JSON.stringify(a.three)}`);
+    assert.ok(a.run3?.error, `run accepted a third argument: ${JSON.stringify(a.run3)}`);
+    // Exactly one well-formed put reached the host: neither malformed shape was forwarded.
+    assert.equal(puts(host).length, 1, `the host saw ${puts(host).length} put call(s), not the one well-formed one`);
 });
 
 test("RED TEAM: a run started over the hub is refused at the worker, and the run really is marked remote", { ...T, todo: "open: refused on both sides — the worker reads the RUN's `origin.remote` (not the option a test passes) and says the file would land on a machine the person is not at; the host's half (async/put in window-ml-host) answers Refused/scope to put, write and commit before reading an argument, and is covered there" }, async () => {
