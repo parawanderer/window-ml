@@ -19,8 +19,8 @@
 import { defineBench } from "../spec";
 import { SALES_TOTAL } from "../../../../examples/cross-page/sales.mjs";
 
-/** The local models, overridden by TOOLS_JS_MODELS (comma-separated): sh-lease's three. */
-const MODELS = (process.env.TOOLS_JS_MODELS || "gemma4:31b,gemma4:e4b,qwen3.8-flash-next:vision").split(",").map((s) => s.trim()).filter(Boolean);
+/** The local models, overridden by TOOLS_JS_MODELS (comma-separated): sh-lease's two larger ones and gemma4:12b, a mid-size step below gemma4:31b in its family (Shane, 2026-11-08: smaller than the 30B ones, not tiny). */
+const MODELS = (process.env.TOOLS_JS_MODELS || "gemma4:31b,gemma4:12b,qwen3.8-flash-next:vision").split(",").map((s) => s.trim()).filter(Boolean);
 
 /** Each arm's toolset. */
 export const ARMS: Record<string, string[]> = {
