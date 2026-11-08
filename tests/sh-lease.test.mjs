@@ -338,7 +338,9 @@ test("ml.current.tasks is absent with no task, and one row per task with the rul
     const [row] = tasks.rows;
     const col = (c) => row[tasks.columns.indexOf(c)];
     assert.deepEqual([col("id"), col("kind"), col("tool"), col("status"), col("lease_ms"), col("expect_ms"), col("tail"), col("result")], [r.task, "call", "ml.sh", "running", 40, 40, null, null]);
-    assert.ok(col("started") >= t0 && col("elapsed_ms") >= 40, JSON.stringify(row));
+    // A timer may fire a millisecond before Date.now() reaches its delay (CI read 39 for a 40 ms lease): about the
+    // lease, never exactly at least it.
+    assert.ok(col("started") >= t0 && col("elapsed_ms") >= 35, JSON.stringify(row));
     host.finish();
     await until(() => runInboxes.get("run-rows").queue.length > 0);
     const done = (await withTasks(snap(), "run-rows")).tasks.rows[0];
