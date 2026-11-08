@@ -82,7 +82,7 @@ const releaseDestination = (dest) => dest === "allowed" ? revokeOrigin(ext.sw, s
  * @param {string} why the named assertion, kept as the poll's failure
  */
 async function overlayFrame(page, why) {
-    await expect.poll(() => !!page.frames().find((f) => f.url().includes("sidebar.html")), { timeout: 15000 }).toBe(true);
+    await expect.poll(() => !!page.frames().find((f) => f.url().includes("sidebar.html")), { timeout: 15000, message: why }).toBe(true);
     const sb = page.frames().find((f) => f.url().includes("sidebar.html"));
     expect(sb, why).toBeTruthy();
     return sb;
