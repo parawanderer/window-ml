@@ -4,7 +4,7 @@
 - **5 s costs turns:** it spent 2.0 task turns per detached 40 s build, against 1.5 at 15 s, and 3.2 per hang against
   2.4.
 - **60 s catches nothing more:** it left a stall silent four times as long, and models noticed fewer stalls before the
-  host's 120 s kill (9, 8 and 6 of 15 at 5, 15 and 60 s).
+  host's 120 s kill: 8 of 10, 8 of 9 and 5 of 7 hang runs that reached the host, at 5, 15 and 60 s.
 
 **Time.**
 - **Measured:** 1.9 h of wall time and 0.6 h of GPU time (the sum of `genMs`), against the 4.5–7.5 h estimate.
@@ -14,8 +14,9 @@
 
 **Findings beyond the default.**
 - **Unprompted estimates undershoot.** Only qwen3.8 often gave `expectMs` before a `Detached`.
-  - Every estimate any model gave a 40 s build before its first `Detached` was 20–45 s, and every one of those calls
-    outlived it.
+  - 13 runs of the 40 s build gave `expectMs` before their first `Detached`. The first estimate ranged from 1 s to
+    60 s, with a median of 20 s. In 12 of the 13, a call or an `await` ran past an estimate the model gave. The
+    exception (qwen3.8, 5 s lease, repeat 4) did not detach.
   - Because the one deadline is `expectMs ?? SH_LEASE_MS`, a model's short estimate replaces the lease. That is why
     the 40 s build still detached in 44% of runs under the 60 s lease.
   - So the lease protects only calls with no estimate. The `Detached` message, not the default, is what has to carry

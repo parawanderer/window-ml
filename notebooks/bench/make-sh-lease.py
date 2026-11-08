@@ -134,7 +134,9 @@ def read_run(cell_path, sweep, meta):
         if tool == "exec" and re.search(r"\bml\.sh\b", js):
             det = "Detached:" in r
             outlived_call = det and "you expected ~" in r
+            est = re.search(r"expectMs\s*:\s*(\d[\d_]*)", js)
             calls.append({"expect": bool(re.search(r"expectMs\s*:", js)), "before_det": first_det_at is None,
+                          "expect_ms": int(est.group(1).replace("_", "")) if est else None,
                           "detached": det, "not_fn": "ml.sh is not a function" in r,
                           "reached": det or "host-sandbox" in r or "host-plain" in r, "outlived": outlived_call})
             if calls[-1]["reached"] and first_call_at is None:
@@ -169,6 +171,8 @@ def read_run(cell_path, sweep, meta):
         "reached_host": any(x["reached"] for x in calls), "detached": first_det_at is not None,
         "expect_before_det": any(x["expect"] and x["before_det"] for x in calls if x["reached"]),
         "expect_any": any(x["expect"] for x in calls if x["reached"]),
+        # The first estimate a reached call gave before any Detached, in ms (None: no estimate, or not a literal).
+        "expect_ms_before_det": next((x["expect_ms"] for x in calls if x["reached"] and x["before_det"] and x["expect_ms"] is not None), None),
         "outlived_estimate": outlived, "task_ops": sum(ops[k] for k in ("await", "tail", "cancel")),
         **{f"op_{k}": v for k, v in ops.items()},
         "result_via_task": got_result, "host_killed": host_killed,
@@ -311,6 +315,17 @@ reached.groupby(["model", "task", "lease_s"]).apply(behaviour)[["runs", "expectM
 """)
 
 md("""
+The build's estimates: every run of the 40 s build that gave `expectMs` before its first `Detached`, with the first
+such estimate and whether a call or an `await` then ran past it.
+""")
+
+code("""
+est = reached[(reached.task == "build") & reached.expect_before_det]
+print(est.expect_ms_before_det.describe()[["count", "min", "50%", "max"]].to_string())
+est[["model", "lease_s", "repeat", "expect_ms_before_det", "detached", "outlived_estimate", "correct"]].sort_values(["model", "lease_s", "repeat"])
+""")
+
+md("""
 ## The hang: a stall noticed before the host's 120 s kill
 
 The time from the first call reaching the host to the final answer. A stall the model **noticed** gives an answer that
@@ -326,6 +341,10 @@ hang.groupby(["model", "lease_s"]).agg(
     cancelled=("op_cancel", lambda s: int((s > 0).sum())), host_killed=("host_killed", "sum"),
     answer_s_median=("answer_after_call_s", "median"),
 ).round(0)
+""")
+
+code("""
+hang.groupby("lease_s").agg(runs=("repeat", "size"), noticed_before_kill=("noticed before kill", "sum"), correct=("correct", "sum"))
 """)
 
 md("""

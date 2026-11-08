@@ -73,7 +73,7 @@ import { measureRun, aggregate, isRateLimit } from "./metrics.mjs";
 import { expandCells, cellKey, cellPath, comboLabel, buildGroups, parseSelector, slug, cellStream, runConfig } from "./cells.mjs";
 import { holdMode, loadSpec, startHeld, heldWindow, HOLD_IDLE_MIN } from "./hold.mjs";
 import { writeReport, mdSink, terminalSink, doneSummary, doneLine } from "./sinks.mjs";
-import { startDashboard, staticPage, servedSweep, handOffPage } from "./serve.mjs";
+import { startDashboard, staticPage, servedSweep, handOffPage, finishSweepFiles } from "./serve.mjs";
 import { pageSources } from "./page/bundle.mjs";
 import { addMark, readMarks, defaultBy } from "./mark.mjs";
 import { recordSweep, specProvenance, specText, keepEarlierRun, cellsOnDisk, sortOnDisk } from "./sweeps.mjs";
@@ -988,8 +988,7 @@ const main = async () => {
     // the page is already an index of the runs, so archiving it is what makes the sweep directory
     // navigable on its own. Links are relative, so it works from disk with no server.
     await writeFile(path.join(sweepDir, "report.html"), await staticPage(pageState));
-    await writeFile(path.join(sweepDir, "page.json"), JSON.stringify(pageState, null, 2));
-    status.flush(pageState);
+    await finishSweepFiles(sweepDir, status, pageState);
     const nameOf = (i) => [runs[i].taskId, ...Object.keys(spec.dimensions || {}).map((d) => runs[i].combo[d]), `r${runs[i].repeat}`].join(" · ");
     await writeFile(path.join(sweepDir, "timeline.md"), timelineText(pageState.timeline, nameOf, { cached: runs.filter((r) => r.cached).length }));
     await writeFile(path.join(sweepDir, "spec.md"), specText(provenance));

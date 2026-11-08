@@ -353,6 +353,13 @@ export function sweepRunning(sweepDir) {
     return mtime("live.json") > mtime("page.json");
 }
 
+/** End a sweep's files in the order sweepRunning reads: the status writer's last live.json, THEN page.json, so the
+ *  finished sweep reads as finished and a follower (followLive) stops. */
+export async function finishSweepFiles(sweepDir, status, pageState) {
+    status.flush(pageState);
+    await writeFile(join(sweepDir, "page.json"), JSON.stringify(pageState, null, 2));
+}
+
 /** A sweep's page state: live.json while it runs, page.json once it has finished (sweepRunning). */
 export async function sweepState(sweepDir) {
     return JSON.parse(await readFile(join(sweepDir, sweepRunning(sweepDir) ? "live.json" : "page.json"), "utf8"));

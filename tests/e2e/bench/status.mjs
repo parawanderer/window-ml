@@ -107,11 +107,12 @@ export function writeStatus(dir, state, now = Date.now()) {
     }
 }
 
-/** A writer that writes at most every `everyMs`, the latest state always landing (a trailing write), and `flush()` now.
+/** A writer that writes at most every `everyMs`, the latest state always landing (a trailing write), and `flush()` now
+ *  and for the last time: an update after it is dropped, so no live.json lands after the sweep's page.json (sweepRunning).
  *  `update` takes the state or a function that builds it, called only when a write happens, so a sweep with nobody
  *  reading pays for one build every `everyMs`, not one per event. */
 export function statusWriter(dir, { everyMs = 2000, write = writeStatus } = {}) {
-    let last = 0, timer = null, pending = null;
+    let last = 0, timer = null, pending = null, done = false;
     const go = () => {
         timer = null; last = Date.now();
         const s = pending; pending = null;
@@ -119,12 +120,13 @@ export function statusWriter(dir, { everyMs = 2000, write = writeStatus } = {}) 
     };
     return {
         update(state) {
+            if (done) return;
             pending = state;
             if (timer) return;
             const wait = Math.max(0, last + everyMs - Date.now());
             timer = setTimeout(go, wait);
             timer.unref?.();
         },
-        flush(state) { if (timer) clearTimeout(timer); timer = null; pending = state ?? pending; if (pending) go(); },
+        flush(state) { if (timer) clearTimeout(timer); timer = null; done = true; pending = state ?? pending; if (pending) go(); },
     };
 }

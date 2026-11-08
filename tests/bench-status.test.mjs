@@ -137,6 +137,22 @@ test("a sweep whose live.json is newer than its page.json is running, and its st
     assert.equal((await sweepState(dir)).name, "final");
 });
 
+test("the runner's own order: the last live.json, then page.json, reads as finished with no clock moved, and a later update writes nothing", async () => {
+    const { sweepRunning, sweepState, finishSweepFiles } = await import("../tests/e2e/bench/serve.mjs");
+    const dir = mkdtempSync(path.join(os.tmpdir(), "bench-follow-"));
+    const status = statusWriter(dir, { everyMs: 0 });
+    status.update(() => ({ ...STATE, name: "live" }));
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(sweepRunning(dir), true, "running while only live.json exists");
+    await finishSweepFiles(dir, status, { ...STATE, name: "final", finished: T0 });
+    assert.equal(sweepRunning(dir), false, "finished once the runner has written its last files");
+    assert.equal((await sweepState(dir)).name, "final");
+    status.update(() => ({ ...STATE, name: "straggler" }));
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(sweepRunning(dir), false, "an update after the flush writes no live.json");
+    assert.equal(JSON.parse(readFileSync(path.join(dir, "live.json"), "utf8")).name, "final");
+});
+
 test("following hands over each new live state, then the finished one, and stops; a finished sweep is not followed", async () => {
     const { followLive } = await import("../tests/e2e/bench/serve.mjs");
     const dir = mkdtempSync(path.join(os.tmpdir(), "bench-follow-"));
