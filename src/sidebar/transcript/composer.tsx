@@ -11,7 +11,7 @@ import type { Session } from "../store";
 import { IconSend, IconStop } from "../icons";
 import { ClickableImg } from "../ui-kit";
 import { FilePill } from "./user-text";
-import { FILE_READ_MAX_BYTES, PDF_ATTACH_MAX, b64Bytes, PDF_FILE_ACCEPT, TEXT_FILE_ACCEPT, decodeTextFile, encodePdfFile, fileInfo, fileSummary, looksPdf, pendingRefusals, sizeLabel, tooLarge, tooLargePdf, type FileTarget } from "../../attached-files";
+import { PDF_ATTACH_MAX, readMaxBytes, tooLargeHeld, b64Bytes, PDF_FILE_ACCEPT, TEXT_FILE_ACCEPT, decodeTextFile, encodePdfFile, fileInfo, fileSummary, looksPdf, pendingRefusals, sizeLabel, tooLarge, tooLargePdf, type FileTarget } from "../../attached-files";
 import { TURN_IMAGES_MAX, imagesRefusal, type SentFile } from "../../contract/contract-run";
 import { UsageBar } from "./usage";
 import { SpendChip } from "./spend";
@@ -53,7 +53,7 @@ export function useImageAttach(initial?: () => string[], opts?: { files: FileAtt
         const pdf = !!fileOpts.acceptsPdf?.();
         const named = looksPdf(f.name, f.type, new Uint8Array());
         if (pdf && named && f.size > PDF_ATTACH_MAX) { setDocs(a => [...a, { name: f.name, type: f.type, tooBig: f.size, pdf: true }]); return; }
-        if (!(pdf && named) && f.size >= FILE_READ_MAX_BYTES) { setDocs(a => [...a, { name: f.name, type: f.type, tooBig: f.size }]); return; }
+        if (!(pdf && named) && f.size >= readMaxBytes(fileOpts.target())) { setDocs(a => [...a, { name: f.name, type: f.type, tooBig: f.size }]); return; }
         try {
             const bytes = new Uint8Array(await f.arrayBuffer());
             if (pdf && looksPdf(f.name, f.type, bytes)) {
@@ -100,7 +100,7 @@ export function useImageAttach(initial?: () => string[], opts?: { files: FileAtt
     const target = fileOpts?.target() ?? "chat";
     const fits = pendingRefusals(docs.map(sentFile).filter((f): f is SentFile => !!f), target);
     let k = 0;
-    const reasons = docs.map((d): string | null => d.why ?? (d.tooBig != null ? (d.pdf ? tooLargePdf(d.name, d.tooBig) : tooLarge(d.name, d.tooBig, false, target)) : fits[k++] ?? null));
+    const reasons = docs.map((d): string | null => d.why ?? (d.tooBig != null ? (d.pdf ? tooLargePdf(d.name, d.tooBig) : target === "agent" ? tooLargeHeld(d.name, d.tooBig, false) : tooLarge(d.name, d.tooBig, false, target)) : fits[k++] ?? null));
     const sendable: SentFile[] = docs.map((d, i) => (reasons[i] ? null : sentFile(d))).filter((f): f is SentFile => !!f);
     return {
         imgs, setImgs, loading, addFiles, onPaste, onDragOver, onDrop, fileRef,
@@ -231,7 +231,7 @@ export function Composer({ s, multiline, tools, keys }: { s: Session; multiline?
     const key = s.hash;
     const [text, setText] = useState(() => loadDraft(key));
     const att = useImageAttach(() => loadDraftImages(key), {
-        files: { target: () => (s.kind === "agent" ? "agent-turn" : "chat"), accepts: () => services().acceptsFiles(key), acceptsPdf: () => services().acceptsPdf(key), initial: () => loadDraftFiles(key) },
+        files: { target: () => (s.kind === "agent" ? "agent" : "chat"), accepts: () => services().acceptsFiles(key), acceptsPdf: () => services().acceptsPdf(key), initial: () => loadDraftFiles(key) },
     });
     const type = (t: string) => { setText(t); saveDraft(key, t); };
     // Another session in the same box: its own draft. Not on mount, which `useState` already read: an effect runs after

@@ -266,6 +266,9 @@ test("agent_api_docs reports the free read-only ml calls ONLY when autoApproveRe
     const on = await docsWith({ model: "m", ocrModel: "", autoApproveReadonly: true });
     assert.match(on, /no approval needed/i);
     assert.ok(on.includes("ml.getModel()") && on.includes("ml.serverTools()"), "lists the free set");
+    assert.match(on, /`ml\.embed\(\[\.\.\.texts\]\)` runs the configured embedding model free, up to 500,000 characters and 32 calls a survey/, "and the one member with a live call, with its caps");
+    const para = on.split("\n").find((l) => l.includes("ml.embed([...texts])"));
+    assert.ok(!/  /.test(para), "no padded runs in model-facing text");
     const off = await docsWith({ model: "m", ocrModel: "", autoApproveReadonly: false });
     assert.ok(!/no approval needed/i.test(off), "flag off → the section is omitted entirely");
 });

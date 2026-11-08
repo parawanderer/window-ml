@@ -5,7 +5,7 @@
 // landing, builds the state only when it writes, and flushes at the end.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync, utimesSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { statusText, statusJson, writeStatus, statusWriter } from "../tests/e2e/bench/status.mjs";
@@ -84,12 +84,19 @@ test("status.md: a run waiting for memory, since when, and what would free some;
 
 // --- the writer ---
 
-test("both files are written whole, with no temporary file left behind", () => {
+test("all three files are written whole, with no temporary file left behind, and live.json is the page's whole state", () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "bench-status-"));
     writeStatus(dir, STATE, T0);
-    assert.deepEqual(readdirSync(dir).sort(), ["status.json", "status.md"]);
+    assert.deepEqual(readdirSync(dir).sort(), ["live.json", "status.json", "status.md"]);
     assert.equal(JSON.parse(readFileSync(path.join(dir, "status.json"), "utf8")).name, "cuts2");
     assert.match(readFileSync(path.join(dir, "status.md"), "utf8"), /^# cuts2/);
+    assert.deepEqual(JSON.parse(readFileSync(path.join(dir, "live.json"), "utf8")), JSON.parse(JSON.stringify(STATE)), "the page's state verbatim, for serve.mjs to follow");
+});
+
+test("status.md says where the sweep runs when it is not on the machine itself, and says nothing when it is", () => {
+    const inBox = statusText({ ...STATE, spec: { ...(STATE.spec ?? {}), runsIn: "a Linux container (x)" } }, T0);
+    assert.match(inBox, /^# cuts2: running\n\nRuns in a Linux container \(x\)\.\n\n\d+ of /);
+    assert.ok(!/Runs in/.test(statusText({ ...STATE, spec: { ...(STATE.spec ?? {}), runsIn: null } }, T0)));
 });
 
 test("the writer writes at most every so often, the latest state lands, it builds the state only to write it, and flush writes now", async () => {
@@ -112,3 +119,61 @@ test("the writer writes at most every so often, the latest state lands, it build
     await new Promise((r) => setTimeout(r, 450));
     assert.equal(wrote.length, 3, "and the pending one does not land after it");
 });
+
+// --- following a running sweep from another process (a container's, through a mounted directory) ---
+
+test("a sweep whose live.json is newer than its page.json is running, and its state is live.json's; once page.json lands it is page.json's", async () => {
+    const { sweepRunning, sweepState } = await import("../tests/e2e/bench/serve.mjs");
+    const dir = mkdtempSync(path.join(os.tmpdir(), "bench-follow-"));
+    assert.equal(sweepRunning(dir), false, "an empty directory is not a running sweep");
+    writeFileSync(path.join(dir, "page.json"), JSON.stringify({ name: "old", runs: [] }));
+    utimesSync(path.join(dir, "page.json"), new Date(T0 - 60_000), new Date(T0 - 60_000));
+    writeStatus(dir, { ...STATE, name: "now" }, T0);
+    assert.equal(sweepRunning(dir), true, "an older sweep's page.json is not this one's");
+    assert.equal((await sweepState(dir)).name, "now");
+    writeFileSync(path.join(dir, "page.json"), JSON.stringify({ name: "final", runs: [] }));
+    utimesSync(path.join(dir, "page.json"), new Date(Date.now() + 5_000), new Date(Date.now() + 5_000));
+    assert.equal(sweepRunning(dir), false);
+    assert.equal((await sweepState(dir)).name, "final");
+});
+
+test("the runner's own order: the last live.json, then page.json, reads as finished with no clock moved, and a later update writes nothing", async () => {
+    const { sweepRunning, sweepState, finishSweepFiles } = await import("../tests/e2e/bench/serve.mjs");
+    const dir = mkdtempSync(path.join(os.tmpdir(), "bench-follow-"));
+    const status = statusWriter(dir, { everyMs: 0 });
+    status.update(() => ({ ...STATE, name: "live" }));
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(sweepRunning(dir), true, "running while only live.json exists");
+    await finishSweepFiles(dir, status, { ...STATE, name: "final", finished: T0 });
+    assert.equal(sweepRunning(dir), false, "finished once the runner has written its last files");
+    assert.equal((await sweepState(dir)).name, "final");
+    status.update(() => ({ ...STATE, name: "straggler" }));
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(sweepRunning(dir), false, "an update after the flush writes no live.json");
+    assert.equal(JSON.parse(readFileSync(path.join(dir, "live.json"), "utf8")).name, "final");
+});
+
+test("following hands over each new live state, then the finished one, and stops; a finished sweep is not followed", async () => {
+    const { followLive } = await import("../tests/e2e/bench/serve.mjs");
+    const dir = mkdtempSync(path.join(os.tmpdir(), "bench-follow-"));
+    const live = path.join(dir, "live.json");
+    const at = (f, ms) => utimesSync(path.join(dir, f), new Date(ms), new Date(ms));
+    writeStatus(dir, { ...STATE, name: "a" }, T0);
+    at("live.json", T0);
+    const got = [];
+    const stop = followLive(dir, (s) => { got.push(s.name); }, { everyMs: 20 });
+    const tick = () => new Promise((r) => setTimeout(r, 80));
+    await tick();
+    assert.deepEqual(got, [], "nothing new yet");
+    writeFileSync(live, JSON.stringify({ ...STATE, name: "b" })); at("live.json", T0 + 2_000);
+    await tick();
+    assert.deepEqual(got, ["b"]);
+    writeFileSync(path.join(dir, "page.json"), JSON.stringify({ name: "final", runs: [] })); at("page.json", T0 + 4_000);
+    await tick();
+    writeFileSync(live, JSON.stringify({ ...STATE, name: "c" })); at("live.json", T0 + 3_000);   // a straggler, older than page.json
+    await tick();
+    assert.deepEqual(got, ["b", "final"], "the finished state, then nothing more");
+    stop();
+    assert.deepEqual((() => { const g = []; followLive(dir, (s) => g.push(s))(); return g; })(), [], "a finished sweep: nothing followed");
+});
+

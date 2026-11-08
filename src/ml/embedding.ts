@@ -11,11 +11,21 @@
  *  which means the model failed rather than that the text was meaningless. */
 const MIN_NORM = 1e-8;
 
+/** Every Embedding this realm built, so the read-only dialect can tell a real one from a page object shaped like one
+ *  (a property or a well-known symbol could be claimed; membership here cannot). */
+const BUILT = new WeakSet<object>();
+
+/** Is `x` an {@link Embedding} built by {@link Embedding.from} in this realm? By identity, never by shape. */
+export function isEmbedding(x: unknown): x is Embedding {
+    return x !== null && typeof x === "object" && BUILT.has(x);
+}
+
 export class Embedding {
-    /** Unit-length, always: `dot` is cosine BY CONSTRUCTION rather than by assumption. */
+    /** Unit-length, always: `dot` is cosine BY CONSTRUCTION rather than by assumption. Frozen, so nothing that holds
+     *  the vector can break that. */
     readonly values: readonly number[];
 
-    private constructor(values: readonly number[]) { this.values = values; }
+    private constructor(values: readonly number[]) { this.values = Object.freeze(values); BUILT.add(this); }
 
     /** Wrap a raw vector, normalising it. Throws on input that cannot be a direction — an empty vector, a
      *  NaN or Infinity (which would silently poison every later comparison), or an all-zero vector. */

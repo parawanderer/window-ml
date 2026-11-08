@@ -34,13 +34,23 @@ export const PDF_FILE_ACCEPT = "application/pdf,.pdf";
  *  agent run, `pointer` is its `@file:` pointer and `body` the outline (file-pointer.ts) in place of the pages. */
 export interface ReadPdfFile { name: string; type: string; bytes: number; pages: number; body: string; escaped: number; pointer?: string }
 
-/** A file as the model's message frames it: a text file, or a PDF the runtime read. */
-export type FramedFile = AttachedFile | ReadPdfFile;
+/** A text file an agent run holds because it is too long to send whole (sw-attach.ts): framed as its outline (`body`,
+ *  file-pointer.ts `textOutline`) under its `@file:` pointer. */
+export interface HeldTextFile { name: string; type: string; bytes: number; lines: number; body: string; escaped: number; pointer: string }
+
+/** A text file sent whole; on an agent run the worker built, with its `@file:` pointer too. */
+export type WholeTextFile = AttachedFile & { pointer?: string };
+
+/** A file as the model's message frames it: a text file sent whole, one held as its outline, or a PDF the runtime read. */
+export type FramedFile = WholeTextFile | HeldTextFile | ReadPdfFile;
 
 /** Is `f` a PDF's bytes, as a command carries them? */
 export const isPdfFile = (f: SentFile): f is AttachedPdf => typeof (f as AttachedPdf).data === "string";
-/** Is `f` a PDF the runtime has read? */
-export const isReadPdf = (f: FramedFile): f is ReadPdfFile => typeof (f as ReadPdfFile).body === "string";
+/** Is `f` a text file held as its outline? */
+export const isHeldText = (f: FramedFile): f is HeldTextFile => typeof (f as HeldTextFile).body === "string" && typeof (f as HeldTextFile).lines === "number";
+/** Is `f` a PDF the runtime has read? Told apart from a held text by its missing `lines`, never by its `pages`, which
+ *  another producer of a read file may fill with anything (the frame escapes it). */
+export const isReadPdf = (f: FramedFile): f is ReadPdfFile => typeof (f as ReadPdfFile).body === "string" && !isHeldText(f);
 
 /** How many bytes a base64 string holds, without decoding it. */
 export function b64Bytes(b64: string): number {
@@ -48,8 +58,8 @@ export function b64Bytes(b64: string): number {
     return Math.max(0, Math.floor(b64.length / 4) * 3 - pad);
 }
 
-/** The text files of `fs`: what a path that does not read PDFs takes (`filesRefusal` refuses a PDF to an agent run
- *  under way first, and a page's composer does not offer one). */
+/** The text files of `fs`: what a path that does not read PDFs takes (`filesRefusal` refuses a PDF to a run a page
+ *  built first, and the shell never hands a PDF's bytes to a page). */
 export function textFiles(fs?: readonly SentFile[] | null): AttachedFile[] | undefined {
     const out = (fs ?? []).filter((f): f is AttachedFile => !isPdfFile(f));
     return out.length ? out : undefined;
@@ -61,9 +71,10 @@ export class FilesRefused extends Error {
     constructor(message: string) { super(message); this.name = "FilesRefused"; }
 }
 
-/** Is the message going to a chat, starting an agent run, or going to a run already under way? A run takes a PDF only
- *  when it starts (sw-attach.ts); otherwise only the refusal's wording differs. */
-export type FileTarget = "chat" | "agent" | "agent-turn";
+/** Where the message goes: a chat; an agent run the WORKER built, at its start or any later message, which holds every
+ *  file as an `@file:` pointer (sw-attach.ts) and so takes a PDF and a text file past {@link FILE_INLINE_MAX}; or a
+ *  run a PAGE built, whose page frames the message and takes text files whole only. */
+export type FileTarget = "chat" | "agent" | "page-run";
 
 /** "412 B", "18 kB", "210 kB": decimal, one figure, for a refusal a person reads. */
 export function sizeLabel(chars: number): string {
@@ -95,6 +106,7 @@ export function lineCount(text: string): number {
 /** A file's descriptor, as a transcript keeps it. */
 export function fileInfo(f: FramedFile): AttachedFileInfo {
     if (isReadPdf(f)) return { name: f.name, type: f.type, bytes: f.bytes, lines: 0, pages: f.pages };
+    if (isHeldText(f)) return { name: f.name, type: f.type, bytes: f.bytes, lines: f.lines };
     return { name: f.name, type: f.type, bytes: utf8Length(f.text), lines: lineCount(f.text) };
 }
 
@@ -153,8 +165,8 @@ export function decodeTextFile(name: string, type: string, bytes: Uint8Array): {
 }
 
 /**
- * The sentence for a file that does not fit: its size, the limit, and, for an agent run, that reading on demand is
- * a later change.
+ * The sentence for a file that does not fit: its size, the limit, and, for a run a page built, where a large file can
+ * go instead.
  * @param name the file
  * @param size its size (characters of text, or bytes where the text was not read)
  * @param together true when it fits alone and the other files take its room
@@ -162,7 +174,36 @@ export function decodeTextFile(name: string, type: string, bytes: Uint8Array): {
  */
 export function tooLarge(name: string, size: number, together: boolean, target: FileTarget): string {
     return `${name} is too large to send whole${together ? " together with the other files" : ""}: ${sizeLabel(size)}; a message takes up to ${sizeLabel(FILE_INLINE_MAX)} of files`
-        + (target !== "chat" ? ". An agent run will read large files on demand in a later change" : "");
+        + (target === "page-run" ? ". This run was built by the page, which takes a file only whole; a run started from the panel holds a large file and reads it on demand" : "");
+}
+
+/** The sentence for a file past what an agent run holds for one message: {@link PDF_ATTACH_MAX} of PDFs and of text
+ *  past what is sent whole, together. */
+export function tooLargeHeld(name: string, bytes: number, together: boolean): string {
+    return `${name} is too large to attach${together ? " together with the other files" : ""}: ${sizeLabel(bytes)}; a message holds up to ${PDF_ATTACH_MAX / 1024 / 1024} MB of PDFs and long text files`;
+}
+
+/** The sentence for a PDF sent to a run a page built: the page frames the message, and it never gets a PDF's bytes. */
+export const pdfToPageRun = (name: string): string =>
+    `${name} is a PDF, and this run was built by the page, which does not read one: start a run from the panel to attach it`;
+
+/** The largest file a picker reads for `target`: a text file can fit only {@link FILE_READ_MAX_BYTES} whole, and an
+ *  agent run the worker built holds one up to {@link PDF_ATTACH_MAX}. */
+export const readMaxBytes = (target: FileTarget): number => (target === "agent" ? PDF_ATTACH_MAX + 1 : FILE_READ_MAX_BYTES);
+
+/**
+ * Which of a message's files an agent run sends whole: in attach order, a text file while the text sent whole so far
+ * and its own fit {@link FILE_INLINE_MAX}; the rest of the text files are held and sent as their outline (sw-attach.ts).
+ * A PDF is never sent whole (false). The ONE rule `filesRefusal` and the runtime's framing both read.
+ * @param files the files of ONE message, in attach order
+ */
+export function sentWhole(files: readonly SentFile[]): boolean[] {
+    let total = 0;
+    return files.map((f) => {
+        if (isPdfFile(f) || total + f.text.length > FILE_INLINE_MAX) return false;
+        total += f.text.length;
+        return true;
+    });
 }
 
 /** A file this many bytes or more cannot fit whatever it holds (UTF-8 is at most four bytes a character), so a picker
@@ -173,20 +214,28 @@ export const FILE_READ_MAX_BYTES = FILE_INLINE_MAX * 4;
  * Why `files` cannot be sent in one message, or null. The client calls it to refuse before sending; the runtime calls
  * it as the rule. The wording names the file that tips the total, with its own size.
  * @param files the files of ONE message, in attach order
- * @param target where the message goes: a run under way refuses a PDF, and an agent run says that reading on demand is
- *   a later change
+ * @param target where the message goes: an agent run the worker built holds what is not sent whole, and a run a page
+ *   built refuses a PDF
  */
 export function filesRefusal(files: readonly SentFile[], target: FileTarget): string | null {
     if (files.length > FILES_MAX_COUNT) return `a message takes up to ${FILES_MAX_COUNT} files`;
-    let total = 0, pdfBytes = 0;
-    for (const f of files) {
+    const whole = target === "agent" ? sentWhole(files) : [];
+    let total = 0, held = 0;
+    for (const [i, f] of files.entries()) {
         if (f.name.length > FILE_NAME_MAX) return `a file name takes up to ${FILE_NAME_MAX} characters`;
         if (isPdfFile(f)) {
-            // A run under way never gets one: the page's path would drop it, so it is refused, never lost.
-            if (target === "agent-turn") return `${f.name} is a PDF; an agent run takes a PDF only when it starts, so start a new run with it`;
+            // A page's path would drop it, so it is refused, never lost.
+            if (target === "page-run") return pdfToPageRun(f.name);
             // A PDF's text is counted by the runtime once it has read the pages (textCapRefusal); here, its bytes.
-            pdfBytes += b64Bytes(f.data);
-            if (pdfBytes > PDF_ATTACH_MAX) return tooLargePdf(f.name, b64Bytes(f.data));
+            held += b64Bytes(f.data);
+            if (held > PDF_ATTACH_MAX) return tooLargePdf(f.name, b64Bytes(f.data));
+            continue;
+        }
+        if (target === "agent") {
+            if (whole[i]) continue;
+            const bytes = utf8Length(f.text);
+            held += bytes;
+            if (held > PDF_ATTACH_MAX) return tooLargeHeld(f.name, bytes, bytes <= PDF_ATTACH_MAX);
             continue;
         }
         total += f.text.length;
@@ -235,9 +284,13 @@ export function fileBlock(f: FramedFile): string {
         const head = `<file name="${attr(f.name)}" type="${attr(f.type)}" bytes="${attr(String(f.bytes))}" pages="${attr(String(f.pages))}"${f.pointer ? ` pointer="${attr(f.pointer)}"` : ""}${f.escaped ? ` escaped="${attr(String(f.escaped))}"` : ""}>`;
         return `${head}\n${f.body}${f.body && !f.body.endsWith("\n") ? "\n" : ""}</file>`;
     }
+    if (isHeldText(f)) {
+        const head = `<file name="${attr(f.name)}" type="${attr(f.type)}" bytes="${attr(String(f.bytes))}" lines="${attr(String(f.lines))}" pointer="${attr(f.pointer)}"${f.escaped ? ` escaped="${attr(String(f.escaped))}"` : ""}>`;
+        return `${head}\n${f.body}${f.body && !f.body.endsWith("\n") ? "\n" : ""}</file>`;
+    }
     let n = 0;
     const text = f.text.replace(/<\/file/gi, () => { n++; return "<\\/file"; });
-    const head = `<file name="${attr(f.name)}" type="${attr(f.type)}" bytes="${utf8Length(f.text)}"${n ? ` escaped="${n}"` : ""}>`;
+    const head = `<file name="${attr(f.name)}" type="${attr(f.type)}" bytes="${utf8Length(f.text)}"${f.pointer ? ` pointer="${attr(f.pointer)}"` : ""}${n ? ` escaped="${n}"` : ""}>`;
     return `${head}\n${text}${text.endsWith("\n") ? "" : "\n"}</file>`;
 }
 
@@ -294,7 +347,7 @@ export function cleanFiles(v: unknown): SentFile[] | undefined {
  * the limits is refused with the reason, never trimmed, so a message never goes out with fewer files than the person
  * attached.
  * @param raw the command's `files` as it arrived
- * @param target where the message goes (only the wording of a size refusal differs)
+ * @param target where the message goes
  * @returns the files (absent for none), or the reason to answer `invalid` with
  */
 export function checkFilesField(raw: unknown, target: FileTarget): { files?: SentFile[]; reason?: string } {

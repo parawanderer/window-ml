@@ -104,8 +104,10 @@ Under rules of their own:
 - `ml.fetch` reads the page's own origin freely, with or without cookies and rendered, and, without cookies and not
   rendered, the extension's own published source (a setting, on by default). Without cookies, any other URL needs the person's approval for this
   tab in a run, or to be spelled out in a script the person approved. With cookies, any other URL needs a per-URL
-  approval of `fetch_url` in a run; an approved script cannot supply it. A response that was redirected to another
-  origin the person has not approved is withheld, except in an approved script, whose own redirects are trusted. Only
+  approval of `fetch_url` in a run; an approved script cannot supply it. A redirect is followed one hop at a time, and
+  only to the same site, from http to https on the same host, or to a URL the person already approved; any other hop
+  is refused before its target is requested, and the page is told only that it led to another site. An approved
+  script's own redirects are trusted. Only
   `http(s)` URLs, never a local file. A site that approves its own actions is refused none of this.
 - `ml.agent`, `ml.createAgent` and `ml.resumeAgent` need the site's agent level. At Ask each time the person sees a
   card with the site's task in its own words, and nothing runs until they allow it; the model reads every turn the site

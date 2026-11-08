@@ -15,6 +15,7 @@ import { BUILD_INFO } from "../build-info.gen";
 // surface, so the doc the model reads can never drift from the interface it describes.
 import { ML_API_PARTS } from "../api-docs.gen";
 import { ML_READONLY_METHODS } from "../readonly-exec";
+import { EMBED_SURVEY_CHARS, EMBED_SURVEY_CALLS } from "../readonly-exec/limits";
 import { browserInfo } from "../util";
 import { errText } from "../dom/dom";
 import { runPipe, pipeHint, PIPE_REF } from "../pointers/text-pipe";
@@ -114,6 +115,7 @@ const selfIntrospectionSection = async (src: DocsSource): Promise<string> => {
         `\`${ML_READONLY_METHODS.map(m => `ml.${m}()`).join("`, `")}\` are read-only, so calling them ` +
         "from `exec` runs with NO approval prompt — that's how to answer \"which model am I?\" and the like. " +
         "`ml.pipe(text, stages)` and `ml.jsonPath(data, \"$..id\")` are free too, unless a pattern (`grep`/`sed`, `match()`/`search()`) could backtrack. " +
+        `\`ml.embed([...texts])\` runs the configured embedding model free, up to ${EMBED_SURVEY_CHARS.toLocaleString("en-US")} characters and ${EMBED_SURVEY_CALLS} calls a survey: batch many strings into one call, then \`q.rank(vectors.map((embedding, key) => ({ key, embedding })))\`. ` +
         "Every other `ml` method still asks the user first."].join("\n");
 };
 

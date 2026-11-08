@@ -103,17 +103,20 @@ takes up to 1.0 MB per message", and the connection stays up. Only the hub path 
 they are. The shrunk copy fits to a budget with a 512-byte margin (the seal's measured overhead, the rest of the
 command, 3 bytes of JSON per image), and the exact check on the real seal has the last word.
 
-**A PDF goes ahead in chunks** (`filesAhead`/`putFile`, `file-frame.ts`; FILE_ATTACHMENTS.md, "Over the hub: chunks
-in an acknowledged window"). A `chat.start` or `session.send` carrying a PDF's base64 first asks `file.have` for its
-SHA-256: an older runtime answers `unsupported` and the command goes inline as before (which fits only when the PDF is
-small); one that holds the file whole is sent nothing; one that holds part is sent the rest. Each `file.put` is the
+**A PDF, or a text file that will not go whole, goes ahead in chunks** (`filesAhead`/`putFile`, `file-frame.ts`;
+FILE_ATTACHMENTS.md, "Over the hub: chunks in an acknowledged window"). A `chat.start`, `agent.start` or `session.send`
+carrying a PDF's base64, or a text file `sentWhole` does not send whole (its UTF-8 bytes), first asks `file.have` for
+its SHA-256: an older runtime answers `unsupported` and the command goes inline as before (which fits only when the
+files are small; a text file past one sealed message is refused here, `inlineOrRefuse`); one that holds the file whole
+is sent nothing; one that holds part is sent the rest. The reference carries the file's own type, which is how the
+runtime puts it back (`resolveFileRefs`: a PDF only for `application/pdf`, text otherwise). Each `file.put` is the
 command's JSON, a zero byte, then the chunk RAW: JSON never holds a zero byte, the sealed body is opaque to the hub, and
 base64 would spend a third more of the account's rate. A chunk is the hub's limit less the measured seal, the widest
-header this file's chunks can carry and `SIZE_MARGIN`. Four lanes send at most `FILE_PUT_WINDOW` (4) unanswered; done
-is the runtime's `complete`, never "all sent", and with every chunk answered and none complete the client asks
-`file.have` again rather than assume. Then the command is sealed with `{ name, type, sha256, bytes }` in the file's
-place. A PDF past `fileCap` (the runtime's 20 MiB, or 0.6 of the account's `accountBurstBytes` when that is less; the
-default 32 MiB burst gives 19.2) is refused before a chunk is sent. Tested end to end against the real hub
+header this file's chunks can carry and `SIZE_MARGIN`. Four lanes send at most `FILE_PUT_WINDOW` (4) unanswered; done is
+the runtime's `complete`, never "all sent", and with every chunk answered and none complete the client asks `file.have`
+again rather than assume. Then the command is sealed with `{ name, type, sha256, bytes }` in the file's place. A PDF
+past `fileCap` (the runtime's 20 MiB, or 0.6 of the account's `accountBurstBytes` when that is less; the default 32 MiB
+burst gives 19.2) is refused before a chunk is sent. Tested end to end against the real hub
 (`tests/hub-file-put.test.mjs`): the window holding at four, resume, the inline fallback, and a runtime going away.
 
 **Nothing waits out the timeout for a runtime that is gone.** Two routes, both needed. The hub answers a command to an

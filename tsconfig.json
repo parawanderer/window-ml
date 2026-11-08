@@ -41,5 +41,8 @@
     // mobile/ is the React Native shell, with its own tsconfig (React, not Preact); it imports src/ types, never the
     // reverse. Checked by `npx tsc --noEmit -p mobile`. tmp/ is scratch, and the Pyodide core build's default workspace
     // (tools/build-pyodide-restricted.mjs): CMake writes `compiler_depend.ts` files there that are not TypeScript.
-    "exclude": ["node_modules", "dist", "mobile", "tmp"]
+    // Build and test OUTPUT is excluded too (all gitignored, none source): every bundle directory, the staging directories a
+    // build writes into, Playwright's reports and artifacts, coverage, and the Pyodide core and wheels. The
+    // language service otherwise indexes them and VS Code asks to exclude large folders. tests/*.test.mjs stay included.
+    "exclude": ["node_modules", "dist", "dist-*", "dist*.stage", "mobile", "tmp", "coverage", "playwright-report", "test-results", "tests/e2e/artifacts", "pyodide-core", "pyodide-wheels"]
 }

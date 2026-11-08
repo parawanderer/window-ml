@@ -1,8 +1,9 @@
 # Spec (WIP): attaching files to a message
 
 **Status: slices 1 and 2 built (2026-10-28/29); slice 3 under way: the held rows, the `@file:` pointer, the `pages`
-verb and attaching a PDF to an agent run are built; `ml.dereference` of `@file:`, `look` at a document, Python's
-`files`, the files panel and upload progress are next (Shane and the calm-chat-motion session).** The order is
+verb, attaching a PDF to an agent run, and every attachment to a worker-built run (any message) and a long paste as
+pointers are built; `ml.dereference` of `@file:`, `look` at a document, Python's `files`, the files panel and upload
+progress are next (Shane and the calm-chat-motion session).** The order is
 three slices, each landing on its own: text files, then PDFs, then documents as `@file:` pointers in agent runs. Slice
 3's contact points with the python, shell and policies lanes were ruled on by their coordinator (2026-10-28,
 "Rulings" below).
@@ -155,7 +156,14 @@ announced in `Welcome.limits`; a frame over it closes the sender's connection, s
 stays). The client sends the file as `file.put { sha256, index, count }` commands, a `KIND_COMMAND` with a `file.put`
 scope, the chunk as RAW bytes beside the JSON (base64 would spend a third more of the account's rate budget and a third
 more chunks), each sized to the payload limit less the seal's overhead. The send then names the file by
-`{ name, type, sha256, bytes }`. No hub change.
+`{ name, type, sha256, bytes }`. No hub change: the hub relays sealed bytes and reads none of these fields.
+
+A text file that will not go whole (`sentWhole`, the runtime's own rule) goes ahead the same way (2026-11-07, piece
+(b)): its UTF-8 bytes in chunks, the reference carrying its own type. The runtime puts a reference back as a PDF only
+for `application/pdf`, and for any other type as text (a `fatal` UTF-8 decode, no NUL); bytes that are not text are
+refused naming the file, never taken for a PDF or kept as bytes. `chat.start`, `agent.start` and `session.send` all
+send files ahead. An older runtime that takes no chunks gets the files inline, and a text file past what one sealed
+message carries is refused on the client, naming the limit, rather than sent to fail at the seal.
 
 - **At most 4 chunks unacknowledged**; the runtime answers each with a `COMMAND_RESULT`. A runtime's outbound queue on
   the hub is 16 MiB, and a frame that does not fit closes the RUNTIME's connection, every session it serves with it, so
@@ -290,8 +298,7 @@ pages: `<file name="report.pdf" type="application/pdf" bytes="…" pages="48" po
 outline as its body. A PDF that will not read, or that the store cannot keep beside what it holds, refuses the start
 with the reason, and what was stored by then is released. The pointers ride `StartRunPayload.files` (stripped from a
 page's own payload, honoured only on a worker-built run), so the shelf comes back after a worker eviction. A message
-to a run under way is refused a PDF ("an agent run takes a PDF only when it starts"), never sent without it; adding
-a file mid-run is open.
+to a run under way was refused a PDF then; "Every attachment to an agent run as a pointer" below lifted that.
 
 **Looking at pages.** `look` takes a document target: `look({ doc: "@file:3fa91c2", pages: "4", question })`. The
 pages are rendered from the stored bytes by pdf.js in the offscreen document, then go down the existing vision path
@@ -540,8 +547,17 @@ or a message"). What a hostile page must not get, as tests that fail first:
 1. Python takes an attachment as an injected value (`files:`, and `@file:` in `tables`), never a path; above.
 2. Rows over blobs is fine: the key is the only handle, claims and tombstones per row, the budget charges a blob once,
    the hold is the `protect` list, hash before the budget check.
-3. `@file:` is this spec's; nothing on the shell side uses it. The argv refusal is the shell call's rule for every
-   prefix.
+3. `@file:` is this spec's. The argv refusal is the shell call's rule for every prefix, and it stays: a handle in argv is
+   a held value, not a path. AMENDED 2026-11-08 (Shane confirmed): one explicit shell member uses a handle, `ml.sh.put(handle, path)`,
+   which writes the attachment's ORIGINAL bytes (the value store's blob, found by the run's own row; another session's handle is
+   `ValueMissing`) to the host's disk and returns the path written relative to its root. It is judged as an in-root write today, no
+   new tier; an existing file ALWAYS asks (never a policy allow); the parent must exist and resolve inside a root through the tilde
+   realpath path; a symlink target or a parent that leaves the roots through a link is refused; protected names and secret-looking
+   targets are refused outright with no tier that can allow them; the whole-file cap is the host's, advertised in hello; it never
+   detaches; a run whose `origin.remote` is set is refused with one sentence (the file would land on a machine the person is not at),
+   and the host refuses the hub transport too. Page-started runs never reach `ml.sh`, so nothing here is reachable from a page; one row
+   asserts it. The host half is the fourth slice of SHELL.md's resolve path (`put`/`write`/`commit`); the chat-page lane writes this
+   spec's paragraph and UPGRADE row once the window-ml half merges.
 4. Reading an attachment is free (effects algebra); no policy line.
 5. Nothing in flight collides. `navigate` on a PDF is a new red-team pass; `pages` joins `PIPE_CMDS` with its own bound
    and adversarial rows.
@@ -585,6 +601,26 @@ rulings, in `20261107-1140Z-repl-specs-to-calm-chat-motion-every-attachment-a-po
   @security @docs`; the first janitor reviews; armed with `--await-review`; this spec's built paragraph and
   `SESSION_CONTRACT.md`'s `session.send` row rewritten in it (a mid-run PDF accepted on a worker-built run, refused on a
   page-built one). The lane acked all four rulings the same hour and is on (a) meanwhile.
+
+**Built (2026-11-07, piece (b)).** Every file sent to an agent run the WORKER built, with its first message or any
+later one, is held for the run's session and noted on its shelf (sw-attach.ts `attachFiles`): a PDF as before, a text
+file as a `text` row. `FileTarget` is `chat`, `agent` (such a run) or `page-run` (a run a page built). On `agent`,
+text files go whole in attach order while they fit `FILE_INLINE_MAX` (`sentWhole`, the one rule the check and the
+framing read), with `pointer="@file:…"` on the block; the rest go as their outline (`textOutline`: the pointer, the
+name, "Text, N lines, about T tokens", `Read with dereference(@file:…, pipe "head -n 100"); grep -n finds a line.`,
+and the opening, escaped) under a block with `lines` and `pointer`. Held text and PDF bytes share the
+`PDF_ATTACH_MAX` budget per message (`tooLargeHeld`). A later message's files carry its turn: `StartRunPayload.sends`
+counts the person's messages (absent on an older payload, read as 1), and `userRunAction` appends the new pointers to
+the live turn's payload and the stored one, so the next turn and a worker restart put them back. A steer carries the
+framed text too. A typed message of `FETCH_PREVIEW_CHARS` (4,000, imported from ml-tool-factories.ts) or more still
+goes whole and is also held as `@file:"pasted text"` ("pasted text 2", …, the first name the shelf does not hold),
+named in one line after the message; the display keeps what was typed, and a paste the store cannot keep is sent
+without its pointer. A run a PAGE built is unchanged: text whole through the page, and a PDF or over-cap text refused
+with the reason before the page hears of it (`pdfToPageRun`); no route hands a page a PDF's bytes (the worker
+refuses a PDF for a run it does not hold, the session commands' page fallback and DevTools' `ML_SESSION_REMOTE`
+forward text files only). The extension's composers (sidebar, DevTools) take files for an agent session. The
+`dereference` tool reads a text pointer as its text through the pipe ("Text, N lines" in the header); the inventory,
+the shelf's refusals and the `run.files` state row say lines for text and pages for a PDF. Images wait, as ruled.
 
 ## Open
 

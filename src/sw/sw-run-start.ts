@@ -10,7 +10,7 @@
 import type { ElementContext } from "../contract";
 import type { StartRunPayload } from "../contract/contract-messages";
 import { imagesRefusal, shortHash, type AttachedFile, type PromptDisplay, type PromptOrigin, type SentFile } from "../contract/contract-run";
-import { checkFilesField } from "../attached-files";
+import { FilesRefused, checkFilesField, cleanFiles, isPdfFile, pdfToPageRun } from "../attached-files";
 import { ImagesRefused } from "../image-gate";
 import { framePrompt } from "../agent/prompts";
 import { promptSurfaceOf } from "../agent/prompt-surface";
@@ -22,8 +22,9 @@ import { dropLocalTools, registerLocalTools } from "./sw-local-tools";
 import { buildWorkerTools } from "./worker-tools";
 import { pyMediaFor } from "./worker-media";
 import { hostRun } from "./sw-run-host";
-import { bgRuns, bufferReplay, isWorkerRun, makeWorkerRun, runControllers, runInboxes, runModelFor, runRebuilds, tabPageUrl, workerRunsStarting, beginStart, endStart, sessionTokens, releaseSessionTokens } from "./sw-runs";
-import { attachFiles, readPdfOffscreen } from "./sw-attach";
+import { bgRuns, bufferReplay, isWorkerRun, makeWorkerRun, runControllers, runInboxes, runModelFor, runRebuilds, tabPageUrl, workerRunsStarting, beginStart, endStart, sessionTokens, releaseSessionTokens, turnByRun } from "./sw-runs";
+import { attachFiles, attachPaste, readPdfOffscreen } from "./sw-attach";
+import type { FilePointer } from "../pointers/file-pointer";
 import { storeHeld } from "./sw-values";
 import { originOf } from "../site-access";
 import { siteDecision } from "./sw-site-access";
@@ -86,6 +87,9 @@ async function startMinted(tabId: number, tab: chrome.tabs.Tab, url: string, ml:
     const attached = await attachFiles(runId, files, 1, { read: readPdfOffscreen, store: storeHeld, shelf });
     const recipe = userRunOptions(ml, { ...req, files: attached.files }, opts.sender);
     if (!recipe.task && !(req.images && req.images.length)) throw new Error("Nothing to do: the run has no task and no image.");
+    const typed = String(req.task || "").trim();
+    const paste = await attachPaste(runId, typed, 1, { store: storeHeld, shelf });
+    if (paste) Object.assign(recipe, withPasteLine(recipe, typed, paste.line));
     // propose_policy only here: a run the worker builds for the person may ask them for a policy; no page's run can. And
     // propose_manifest when the settings turn ml.sh on, which the run's scripts then reach.
     const shellOn = await getConfig().then(shellTurnedOn, () => false);
@@ -180,6 +184,36 @@ export function steerRun(hash: string, text: string, origin?: PromptOrigin, disp
     return true;
 }
 
+/** A message's framing with a long paste's naming line after it: the model reads the line, and the display keeps
+ *  what the person typed, so the line is never shown as theirs. */
+function withPasteLine(framed: { task: string; display?: PromptDisplay }, typed: string, line: string): { task: string; display: PromptDisplay } {
+    return { task: framed.task ? `${framed.task}\n\n${line}` : line, display: framed.display ?? { typed, context: [] } };
+}
+
+/** The payloads a run's next message is recorded on: the live turn's (written back when the turn ends) and the stored
+ *  one a later turn starts from. Either may be absent. */
+const runPayloads = (hash: string): StartRunPayload[] =>
+    [turnByRun.get(hash)?.().payload, bgRuns.get(hash)?.p].filter((p): p is StartRunPayload => !!p);
+
+/** The turn the person's next message to a run arrives in, 1-based: one past the messages already sent. A payload with
+ *  no count was written before messages were counted, and holds the first message alone. */
+const nextSend = (hash: string): number => Math.max(1, ...runPayloads(hash).map((p) => p.sends ?? 1)) + 1;
+
+/**
+ * Record a message the person sent a run the worker built: its turn, and the files it attached, on every payload the
+ * run is carried on, so a later turn's shelf and a worker restart's (`sessionTokens`) hold them.
+ * @param hash the run
+ * @param turn the message's turn ({@link nextSend})
+ * @param added the pointers it added
+ */
+function noteSend(hash: string, turn: number, added: readonly FilePointer[]): void {
+    for (const p of runPayloads(hash)) {
+        p.sends = Math.max(p.sends ?? 1, turn);
+        const fresh = added.filter((a) => !(p.files ?? []).some((g) => g.id === a.id));
+        if (fresh.length) p.files = [...(p.files ?? []), ...fresh];
+    }
+}
+
 /**
  * Say in a run's step list that a message was not sent, and why: for a surface whose send has no answer to carry it.
  * @param hash the run
@@ -202,6 +236,9 @@ function turnVision(hash: string): { driverSees: boolean; runModel: string | nul
  * A person's message or "Continue" on a run the WORKER built: steer it when it is running, or start its next turn
  * when it has settled, from the worker, so the page never carries the message. Null when the hash is not such a run
  * (or not on `fromTabId`), so the caller can fall back to the page, which still owns the runs and chats it built.
+ * The message's files and a long paste become the run's pointers only when it is delivered ("steer" or "turn"): on
+ * any other outcome, or a throw, the pointers this call added are taken back and the run's message count is left;
+ * their value-store rows stay held until the session is released.
  * @param hash the run
  * @param action "send" a message, or "continue" a capped run with no message
  * @param body the message (text, images, a right-clicked element), a Continue budget, and where it was typed
@@ -209,12 +246,19 @@ function turnVision(hash: string): { driverSees: boolean; runModel: string | nul
  * @param sentFrom where the message was typed, as the channel it came over knows it (a hub command's sender); wins over
  *   the body's `surface`
  * @returns what happened, or null when this is not the worker's run to drive
+ * @throws {FilesRefused} the files break the rule, a PDF will not read, or one would go to a page
+ * @throws {ImagesRefused} the images may not be sent
  */
-export async function userRunAction(hash: string, action: "send" | "continue", body: { text?: string; images?: string[]; files?: AttachedFile[]; elementContext?: ElementContext; maxSteps?: number; surface?: string }, fromTabId?: number, sentFrom?: PromptOrigin): Promise<"steer" | "turn" | "continued" | "busy" | "none" | null> {
+export async function userRunAction(hash: string, action: "send" | "continue", body: { text?: string; images?: string[]; files?: SentFile[]; elementContext?: ElementContext; maxSteps?: number; surface?: string }, fromTabId?: number, sentFrom?: PromptOrigin): Promise<"steer" | "turn" | "continued" | "busy" | "none" | null> {
     const stored = bgRuns.get(hash);
     const live = runInboxes.get(hash);
     const tabId = stored?.tabId ?? live?.tabId;
-    if (tabId == null || (fromTabId != null && fromTabId !== tabId)) return null;
+    if (tabId == null || (fromTabId != null && fromTabId !== tabId)) {
+        // Not this worker's to drive, so the message falls back to a page, which never gets a PDF's bytes: refused here.
+        const pdf = action === "send" ? (cleanFiles(body.files) ?? []).find(isPdfFile) : undefined;
+        if (pdf) throw new FilesRefused(pdfToPageRun(pdf.name));
+        return null;
+    }
     // Past the cap the message is refused, never cut, whoever built the run.
     const tooMany = action === "send" ? imagesRefusal(body.images?.length ?? 0) : null;
     if (tooMany) throw new ImagesRefused(tooMany);
@@ -225,45 +269,90 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
         const here = originOf(await chrome.tabs.get(tabId).then((t) => t.url, () => undefined));
         const decision = here ? await siteDecision(here) : "unknown";
         if (decision === "always" || decision === "session") {
+            // The page frames the message, so it takes text files whole only: a PDF, or text past what is sent whole,
+            // is refused here with its reason, before the page is told anything, never dropped on the way.
+            const pageFiles = action === "send" ? checkFilesField(body.files, "page-run") : {};
+            if (pageFiles.reason) throw new FilesRefused(pageFiles.reason);
             // The page relays it, as the run's handle lives there: its copy of exactly this text is the person's turn,
             // not one of the site's (docs/spec/SITE_ACCESS_SLICE3.md, Q2). Framed as the page frames it (injected.ts).
-            await notePersonTurn(hash, action === "send" ? framePrompt(String(body.text || ""), body.elementContext, body.files).text : "", action === "send" ? body.images : [], stepBudget(body.maxSteps));
+            await notePersonTurn(hash, action === "send" ? framePrompt(String(body.text || ""), body.elementContext, pageFiles.files as AttachedFile[] | undefined).text : "", action === "send" ? body.images : [], stepBudget(body.maxSteps));
             return null;
         }
         makeWorkerRun(hash);
     }
     const surface = promptSurfaceOf(body.surface);
     const origin: PromptOrigin | undefined = sentFrom ?? (surface ? { surface } : undefined);
-    const framed = action === "send" ? framePrompt(String(body.text || ""), body.elementContext, body.files) : { text: "", display: undefined };
-    const { display } = framed;
+    // The one rule for a message's files, whichever surface sent them: this run holds each one as a pointer.
+    const checked = action === "send" ? checkFilesField(body.files, "agent") : {};
+    if (checked.reason) throw new FilesRefused(checked.reason);
+    const typed = String(body.text || "");
     const attached = action === "send" ? (body.images ?? []).filter((i) => typeof i === "string" && i.startsWith("data:image/")) : [];
-    if (action === "send" && !framed.text && !attached.length) return "none";
+    if (action === "send" && !typed.trim() && !attached.length && !checked.files && !body.elementContext) return "none";
     // The images go where the run's first turn's went: to a driver that sees, or as the reader's notes. Decided before
-    // anything is announced, so a refusal (vision not known, no reader) reaches the sender and nothing is sent.
+    // anything is announced or held, so a refusal (vision not known, no reader) reaches the sender and nothing is sent.
     const routed = attached.length ? await routeTurnImages(workerMl(tabPageUrl.get(tabId) || ""), attached, turnVision(hash)) : {};
-    const text = routed.notes ? (framed.text ? `${framed.text}\n\n${routed.notes}` : routed.notes) : framed.text;
-    const shown = attached.length ? { images: attached } : {};
-    if (runControllers.has(hash)) {
-        if (action === "continue") return "busy";
-        return steerRun(hash, text, origin, display, routed.images, attached) ? "steer" : "busy";
-    }
-    if (!stored) return "none";
-    // Re-register the builtin toolset in the page first: the document may not be the one the last turn ran on.
-    // Registered as a start for that await: a CANCEL_ALL_RUNS there must stop this resume, not find nothing live.
-    // Not on a page the run is still held on (nav-arrival.ts): the turn judges it again, and the person answers first.
-    const starting = beginStart(hash, tabId);
-    try {
-        if (!stored.p.rebuild || (!await holdStands(tabId, hash) && (await adoptOnTab(tabId, hash, stored.p.rebuild)).error)) { endStart(hash, starting); return "none"; }
-        if (starting.signal.aborted) { endStart(hash, starting); return "none"; }
-    } catch (e) {
+    // The files, and a long paste, held as this message's pointers before anything is announced: a PDF that will not
+    // read refuses the message whole. They are this message's only once it is delivered (a steer or a turn): on any
+    // other outcome the pointers this call added are taken back off the shelf, and the run's count and payload are left
+    // as they were. The value-store rows stay held until the session is released (`releaseSessionTokens`).
+    let framed: { text: string; display?: PromptDisplay } = { text: "" };
+    const turn = nextSend(hash);
+    const added: FilePointer[] = [];
+    const shelf = sessionTokens(hash).files;
+    const takeBack = <T>(outcome: T): T => { shelf.drop(added.map((f) => f.id)); return outcome; };
+    const deliver = async (): Promise<"steer" | "turn" | "continued" | "busy" | "none"> => {
+        // A message with nowhere to go holds nothing: a run at the end of its turn (its inbox closed) is busy, and one
+        // neither running nor stored is gone. Checked again after the awaits below, which a turn can end during.
+        if (runControllers.has(hash) ? action === "continue" || !runInboxes.has(hash) : !stored) return runControllers.has(hash) ? "busy" : "none";
+        if (action === "send") {
+            const deps = { read: readPdfOffscreen, store: storeHeld, shelf };
+            const files = await attachFiles(hash, checked.files, turn, deps);
+            added.push(...files.added);
+            framed = framePrompt(typed, body.elementContext, files.files);
+            const paste = await attachPaste(hash, typed.trim(), turn, deps);
+            if (paste) {
+                added.push(...paste.added);
+                const lined = withPasteLine({ task: framed.text, display: framed.display }, typed.trim(), paste.line);
+                framed = { text: lined.task, display: lined.display };
+            }
+        }
+        const { display } = framed;
+        if (action === "send" && !framed.text && !attached.length) return takeBack("none");
+        const text = routed.notes ? (framed.text ? `${framed.text}\n\n${routed.notes}` : routed.notes) : framed.text;
+        const shown = attached.length ? { images: attached } : {};
+        if (runControllers.has(hash)) {
+            if (action === "continue") return "busy";
+            // A run with an inbox takes the steer (steerRun): only then is the message, and what it attached, the run's.
+            if (!runInboxes.has(hash)) return takeBack("busy");
+            noteSend(hash, turn, added);
+            return steerRun(hash, text, origin, display, routed.images, attached) ? "steer" : "busy";
+        }
+        if (!stored) return takeBack("none");
+        // Re-register the builtin toolset in the page first: the document may not be the one the last turn ran on.
+        // Registered as a start for that await: a CANCEL_ALL_RUNS there must stop this resume, not find nothing live.
+        // Not on a page the run is still held on (nav-arrival.ts): the turn judges it again, and the person answers first.
+        const starting = beginStart(hash, tabId);
+        try {
+            if (!stored.p.rebuild || (!await holdStands(tabId, hash) && (await adoptOnTab(tabId, hash, stored.p.rebuild)).error)) { endStart(hash, starting); return takeBack("none"); }
+            if (starting.signal.aborted) { endStart(hash, starting); return takeBack("none"); }
+        } catch (e) {
+            endStart(hash, starting);
+            throw e;
+        }
+        if (starting.signal.aborted) { endStart(hash, starting); return takeBack("none"); }
+        // Delivered from here on, with no await before the turn is hosted: recorded BEFORE `hostRun` copies the stored
+        // payload into the turn's, so the turn and what it stores at its end carry them.
+        if (action === "send") noteSend(hash, turn, added);
+        if (text || attached.length) announce(tabId, { kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text, ...(display ? { display } : {}), ...shown });
+        const steps = stepBudget(body.maxSteps);
         endStart(hash, starting);
-        throw e;
+        hostRun({ type: "RESUME_RUN", payload: { runId: hash, task: text, ...(steps ? { maxSteps: steps } : {}) } },
+            tabId, () => { /* reported through the session's events */ }, action === "send" ? origin : undefined, undefined, routed.images);
+        return action === "continue" ? "continued" : "turn";
+    };
+    try {
+        return await deliver();
+    } catch (e) {
+        throw takeBack(e);
     }
-    if (text || attached.length) announce(tabId, { kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text, ...(display ? { display } : {}), ...shown });
-    const steps = stepBudget(body.maxSteps);
-    if (starting.signal.aborted) { endStart(hash, starting); return "none"; }
-    endStart(hash, starting);
-    hostRun({ type: "RESUME_RUN", payload: { runId: hash, task: text, ...(steps ? { maxSteps: steps } : {}) } },
-        tabId, () => { /* reported through the session's events */ }, action === "send" ? origin : undefined, undefined, routed.images);
-    return action === "continue" ? "continued" : "turn";
 }

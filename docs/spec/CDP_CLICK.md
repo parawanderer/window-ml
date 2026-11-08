@@ -35,6 +35,15 @@ W3C/hardware sequence at viewport `(x, y)`: `mouseMoved` (establishes the prior 
 and Playwright's baseline produce (`src/input-dispatch.ts`, `cdpClickPlan`). The browser routes the
 real input to whatever's at `(x, y)` and fills client/page/screen coordinates.
 
+Before the first event the worker hides the extension's own UI in the tab (SITE_PRESENCE gap 8): it sends
+the top frame's shell `CLICK_HIDE` with an id for this click, and the shell hides every host
+`!important` and acks at once (the hit-test reads the style, not a painted frame). With the ack, the
+three events go and the same id's show follows. With no shell in the tab (no receiver, or nothing
+answers), the click goes as before. With no ack within 500 ms (`CLICK_HIDE_ACK_MS`), the click is
+REFUSED with an error: a shell that is there and silent may leave our UI over the point, and the act
+judge resolved the element beneath it. Each click's hide is its own hold, lifted by its own show or
+after 2 s, so the point is whatever the PAGE has there, the element the judge saw.
+
 ## Attach lifecycle — DECIDED: per-**reserved-click** only
 
 CDP (and its banner) fires **only** when the click target is a **reserved element** — one

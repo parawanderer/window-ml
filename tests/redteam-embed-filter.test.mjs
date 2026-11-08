@@ -14,9 +14,10 @@
 // from both sides (on sends -1, off sends no keep_alive at all) and hold the boundary that IS a rule: a page cannot
 // choose the pin, the placement or the model on the wire — its payload fields are dropped and config decides.
 //
-// The hole rows land as `{ todo }` while the hole is open: each fails on main at the assertion it carries (measured:
-// a request left for `embedbox.example/ollama/api/embed` with `modelFilter: "^qwen"`), and each is flipped plain by
-// the commit that turns it.
+// The two hole rows were `{ todo }` while the hole was open and are flipped plain by the commit that turns them
+// (de5a412b): on main each failed at the assertion it carries (a request left for `embedbox.example/ollama/api/embed`
+// with `modelFilter: "^qwen"`); here they assert the defended outcome. Every refusal also asserts what the caller is
+// TOLD: the resolved model and that the filter excluded it, never the filter's own regex (the scrub invariant).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { jsonResponse, loadBackground } from "./helpers.js";
@@ -35,40 +36,65 @@ function calls() {
     const made = [];
     return { made, onFetch: (c) => { made.push({ url: c.url, body: c.body }); return /\/api\/embed$/.test(c.url) ? jsonResponse({ embeddings: [[1, 0]] }) : jsonResponse({}, 404); } };
 }
-/** The one assertion every refusal shares: nothing left the worker, and the answer says the filter is why, scrubbed. */
-function refused(c, r) {
+/**
+ * The one assertion every refusal shares: nothing left the worker, and the answer says the filter is why, scrubbed of
+ * everything but the model — not the server, not the key, and not the filter's own regex (every literal piece of
+ * `filter` is a piece of the person's setting, so none of it may reach the page). On a page's call `sw-scrub.ts` is
+ * what replaces the filter with `[model filter]`, measured; the assertion is also what holds the caller with no sender
+ * — a run's own call, which nothing scrubs — to the same wording.
+ * @param c the fetch spy
+ * @param r the worker's answer
+ * @param filter the `modelFilter` the config carried
+ */
+function refused(c, r, filter) {
     assert.equal(c.made.length, 0, `a request left the worker for an excluded model: ${JSON.stringify(c.made.map((x) => x.url))}`);
     assert.ok(r.error, `the caller was answered instead of refused: ${JSON.stringify(r)}`);
     assert.match(r.error, /filter/i, `the refusal does not say the filter is why: ${r.error}`);
     assert.ok(!r.error.includes(HOST) && !r.error.includes(KEY), `the refusal names the server or the key: ${r.error}`);
+    for (const piece of filter.match(/[A-Za-z0-9_.:-]{3,}/g) ?? []) {
+        assert.ok(!r.error.includes(piece), `the refusal carries the filter's own ${JSON.stringify(piece)}: ${r.error}`);
+    }
 }
-
-const OPEN = "open: the EMBED branch filters only an ASKED model (background.ts:1148), so the resolved one is unfiltered";
 
 // --- the filter decides which models may be reached, whatever the caller asks ---
 
-test("RED TEAM: a page's embed with no model cannot reach an embedding model the filter excludes", { todo: OPEN }, async () => {
+test("RED TEAM: a page's embed with no model cannot reach an embedding model the filter excludes", async () => {
     const c = calls();
     const r = await loadBackground({ config: config({ modelFilter: "^qwen" }), onFetch: c.onFetch })
         .send({ type: "EMBED", payload: { inputs: ["page text the filter's owner never sent to this model"] } }, PAGE);
-    refused(c, r);
+    refused(c, r, "^qwen");
 });
 
-test("RED TEAM: a worker-built run's unasked embed is filtered too, so a gate on sender.tab is not the fix", { todo: OPEN }, async () => {
+test("RED TEAM: a worker-built run's unasked embed is filtered too, so a gate on sender.tab is not the fix", async () => {
     // No sender at all is the shape a call the worker builds for itself has; the invariant is on the RESOLVED model,
     // so this must refuse exactly as the page's call does. A fix written as `if (sender.tab && …)` passes the row
     // above and fails this one.
     const c = calls();
     const r = await loadBackground({ config: config({ modelFilter: "^qwen" }), onFetch: c.onFetch })
         .send({ type: "EMBED", payload: { inputs: ["a run's own text"] } });
-    refused(c, r);
+    refused(c, r, "^qwen");
 });
 
-test("RED TEAM: an ASKED model is filtered today, and the fix must keep that gate", async () => {
+test("RED TEAM: an ASKED model is filtered too, and the fix must keep that gate", async () => {
     const c = calls();
-    const r = await loadBackground({ config: config({ modelFilter: "^qwen" }), onFetch: c.onFetch })
+    const r = await loadBackground({ config: config({ modelFilter: "^qwen|^nomic" }), onFetch: c.onFetch })
         .send({ type: "EMBED", payload: { inputs: ["a"], model: "llama3:8b" } }, PAGE);
-    refused(c, r);
+    refused(c, r, "^qwen|^nomic");
+});
+
+test("CONTROL: no embedding model configured keeps its own error, asked or not, and asks nothing", async () => {
+    // The fix's boundary: with nothing to resolve, the filter has no say, and the person is told to set a model —
+    // not that one was filtered. An ASKED model still needs no configured default.
+    const c = calls();
+    const r = await loadBackground({ config: config({ embeddingModel: "", modelFilter: "^qwen" }), onFetch: c.onFetch })
+        .send({ type: "EMBED", payload: { inputs: ["a"] } }, PAGE);
+    assert.equal(c.made.length, 0, "an embed went out with no model configured");
+    assert.match(String(r.error), /No embedding model configured/, `the empty model's error changed: ${r.error}`);
+    assert.doesNotMatch(String(r.error), /filter/i, `the empty model's error blames the filter: ${r.error}`);
+    const asked = await loadBackground({ config: config({ embeddingModel: "" }), onFetch: c.onFetch })
+        .send({ type: "EMBED", payload: { inputs: ["a"], model: "nomic-embed-text" } }, PAGE);
+    assert.equal(c.made.length, 1, "an asked model was not sent for want of a configured default");
+    assert.equal(asked.data?.model, "nomic-embed-text", "an asked model was refused for want of a configured default");
 });
 
 // --- the controls: the same call goes through when the filter allows it ---

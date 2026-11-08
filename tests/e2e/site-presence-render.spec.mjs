@@ -11,15 +11,17 @@
 //
 // The landing form is tests/e2e/site-access.spec.mjs's: while the slice is `OPEN` a row asserts the leak SUCCEEDED,
 // positively (a fixture that never redirects cannot pass it), and flipping the entry asserts the defended outcome.
-// The flip is a commit of mine on the fix's branch before it merges (the rule-10 amendment, #1307).
+// The flip is a commit of mine on the fix's branch before it merges (the rule-10 amendment, #1307). `renderGuard` IS
+// flipped: it landed at 77c60344, so the rows now assert the defended outcome — the hop's target is never requested —
+// and no row changed with the flip.
 
 import { test, expect } from "@playwright/test";
 import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startRenderSite, renderResolverArgs, renderSecureArgs } from "./fixtures/render/server.mjs";
 
-/** The slices of step 5's render half that have NOT landed. */
-const OPEN = { renderGuard: true };
+/** The slices of step 5's render half that have NOT landed: none — `renderGuard` is flipped (below). */
+const OPEN = { renderGuard: false };
 
 /** Whether `slice` is still open, recording it on the test so the report says which holes this run demonstrated. */
 function holeOpen(slice, what) {

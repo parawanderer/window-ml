@@ -313,15 +313,18 @@ test("a runtime that reads PDFs takes one as its bytes on a chat, offers .pdf in
     assert.deepEqual(startCommands().at(-1).files, [{ name: "paper.pdf", type: "application/pdf", data: "JVBERi0xLjcK" }], "agent.start carries the PDF, not only the text files");
 });
 
-test("a file over the cap says its size and the limit, with the chat wording on a chat and the agent wording on a run", async () => {
+test("a file over the cap is refused on a chat with its size and the limit, and goes to an agent run, which holds it", async () => {
     const big = "x".repeat(210_000);
     const chat = await mount("chat", CAN);
     await pasteFiles(chat, textFile("server.log", big));
     assert.equal(why(pills(chat)[0]), "server.log is too large to send whole: 210 kB; a message takes up to 32 kB of files");
+    assert.equal(send(chat).disabled, true, "a refused file alone is not a message");
     const agent = await mount("agent", CAN);
     await pasteFiles(agent, textFile("server.log", big));
-    assert.match(why(pills(agent)[0]), /^server\.log is too large to send whole: 210 kB; a message takes up to 32 kB of files\. An agent run will read large files on demand in a later change$/);
-    assert.equal(send(agent).disabled, true, "a refused file alone is not a message");
+    assert.equal(why(pills(agent)[0]), null, "held as a pointer and sent as its outline (sw-attach.ts)");
+    send(agent).click();
+    await flush();
+    assert.deepEqual(startCommands().at(-1).files, [{ name: "server.log", type: "text/plain", text: big }]);
 });
 
 test("two files that fit alone but not together: the second is refused, and removing the first frees it", async () => {

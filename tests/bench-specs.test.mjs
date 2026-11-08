@@ -112,3 +112,35 @@ test("smoke/read-code accepts only a real page code", async () => {
     assert.ok(scores(t, "The code is CROSSPAGE-9471."));
     assert.equal(scores(t, "I could not find a code."), false);
 });
+
+// --- tools-into-js: the reduced toolsets score the shapes each arm plausibly writes ---
+
+test("tools-into-js/sales-total accepts the exact total however it is grouped, float noise included, and rejects a rounded one", async () => {
+    const t = task(await load("tools-into-js"), "sales-total");
+    for (const a of ["The total is 2562507.54.", "$2,562,507.54", "2 562 507.54", "Sum of amount: 2562507.5400000005 (≈ 2,562,507.54)"])
+        assert.ok(scores(t, a), a);
+    for (const a of ["About $2.56 million.", "2562507.5", "2,562,508", "I can only see a preview of the first rows; their total is 41,233.10."])
+        assert.equal(scores(t, a), false, a);
+});
+
+test("tools-into-js/find-out accepts 2.4.0 with no navigate, and rejects an older version or a navigated run", async () => {
+    const t = task(await load("tools-into-js"), "find-out");
+    const run = (answer, steps = []) => t.succeeded({ answer, steps, events: [], result: null });
+    assert.ok(run("The newest version in the changelog is 2.4.0."));
+    assert.ok(run("2.4.0", [{ tool: "exec" }]), "the exec arm's run, which cannot navigate");
+    assert.equal(run("The newest version is 2.3.1."), false);
+    assert.equal(run("It is 2.4.0.", [{ tool: "navigate" }]), false);
+});
+
+test("tools-into-js's arms are fetch_url, exec and both, each with answer and no navigate, and a cell's tools are its arm's", async () => {
+    const spec = await load("tools-into-js");
+    const { ARMS } = await import("../tests/e2e/bench/specs/tools-into-js.bench.ts");
+    assert.deepEqual(spec.dimensions.arm, ["tool", "exec", "both"]);
+    assert.deepEqual(ARMS, { tool: ["fetch_url", "answer"], exec: ["exec", "answer"], both: ["fetch_url", "exec", "answer"] });
+    for (const arm of spec.dimensions.arm) {
+        const e = spec.apply({ model: "m", arm });
+        assert.deepEqual(e.tools, ARMS[arm]);
+        assert.equal(e.agentOptions.navigate, false, `${arm}: no navigate, which every run gets unless it is turned off`);
+    }
+    for (const t of spec.tasks) assert.equal(t.regression.included, false, `${t.id} measures a reduced toolset`);
+});

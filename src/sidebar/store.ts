@@ -12,6 +12,9 @@ import type { DebugSessionConfig, DebugAgentConfig, SubcallUsage } from "../cont
 import { DEFAULT_CONFIG } from "../contract/contract-config";
 import { backendStateFrom } from "../contract/contract-server";
 import { services } from "./services";
+import { PREDICT_KEY } from "../resource/load-records";
+import { DEFAULT_CODE_THEME } from "../code-themes";
+import { VRAM_PALETTE_KEY, VRAM_PALETTES, vramPalette } from "./palette";
 
 export const FONT_KEY = "ml_debug_fontscale";   // storage.local: the panel's font scale
 export const BASE_FS = 12, MIN_FS = 0.8, MAX_FS = 1.6;   // font-scale bounds (× BASE_FS px)
@@ -412,6 +415,9 @@ export interface BenchRun {
     /** The script as it was when it RAN. A traceback's line numbers are about this text, and the editor may
      *  have moved on since; the bench maps between the two rather than trusting them to agree. */
     code?: string;
+    /** How a Stop ended this run: `interrupted` (the script answered with a KeyboardInterrupt, its variables kept) or
+     *  `restarted` (it did not answer, the sandbox was restarted and its variables are gone). */
+    stopped?: "interrupted" | "restarted";
 }
 
 // THE BENCH'S WORKING STATE, HOISTED OUT OF THE COMPONENT. The drawer and the full page are two different
@@ -477,3 +483,89 @@ export const openBench = (code?: string): void => {
     // Two draggable strips on the same bottom edge is not a layout — opening one puts the other away.
     vramOpen.value = false;
 };
+
+// --- the init restore: the remembered prefs coming back from storage --------------------------------
+// The stored prefs land on a `chrome.storage.local.get` CALLBACK, which a first wave of panel opens can
+// stretch past a click the person made in between. A restore that blindly rewrote the signals yanked that
+// click back in the same frame — the bench button opened the drawer and the unrelated callback closed it
+// again, and `.bench` never painted. So the restore takes a SNAPSHOT when the read goes out and writes a key
+// only while its signal still holds that snapshot: a change made during the read wins over the remembered
+// value, and a key nobody touched still restores.
+
+/** What the restore's signals held when the stored-prefs read was issued — one field per signal
+ *  {@link restorePrefs} writes. A pure read: the restore compares against this rather than tracking writes,
+ *  so a change arriving through ANY path (a button, a Settings toggle, a direct chrome write) counts. */
+export function prefsSnapshot() {
+    return {
+        fontScale: fontScale.value, codeWrap: codeWrap.value, codeLineNumbers: codeLineNumbers.value,
+        codeTheme: codeTheme.value, codeThemeCustom: codeThemeCustom.value, codeThemeUi: codeThemeUi.value,
+        showStatsTokens: showStatsTokens.value, showStatsTps: showStatsTps.value,
+        showOutTimes: showOutTimes.value, outMaxH: outMaxH.value,
+        resWindowPref: resWindowPref.value, resWindowS: resWindowS.value,
+        laneHidden: laneHidden.value, laneScoped: laneScoped.value,
+        vramPalette: vramPalette.value, laneH: laneH.value,
+        snapDot: snapDot.value, predictView: predictView.value, timeGrid: timeGrid.value,
+        laneEnabled: laneEnabled.value, showLane: showLane.value, showModels: showModels.value,
+        vramH: vramH.value, focusMode: focusMode.value,
+        benchOpen: benchOpen.value, benchDock: benchDock.value, benchH: benchH.value,
+        benchSplit: benchSplit.value, benchEnv: benchEnv.value,
+    };
+}
+
+/** Write `v` into `sig` only while `sig` still holds `snap`: the person's own change during the read wins
+ *  over the remembered value. */
+function ifUntouched<T>(sig: { value: T }, snap: T, v: T): void {
+    if (sig.value === snap) sig.value = v;
+}
+
+/** Restore the remembered prefs from a `chrome.storage.local.get` record `d` into the signals, skipping any
+ *  key the person changed since `prefsSnapshot` was taken. The DOM side effects (applyFont and friends) stay
+ *  at the call site: they render whatever value won, so nothing a signal holds goes undrawn either way. */
+export function restorePrefs(d: any, snap: ReturnType<typeof prefsSnapshot>): void {
+    if (d[FONT_KEY]) ifUntouched(fontScale, snap.fontScale, d[FONT_KEY]);
+    ifUntouched(codeWrap, snap.codeWrap, d[WRAP_KEY] !== false);
+    ifUntouched(codeLineNumbers, snap.codeLineNumbers, !!d[LINES_KEY]);
+    // The code colour theme: re-apply the stylesheet once it is known (initThemeStyle drew the default).
+    ifUntouched(codeTheme, snap.codeTheme, typeof d[CODE_THEME_KEY] === "string" ? d[CODE_THEME_KEY] : DEFAULT_CODE_THEME);
+    ifUntouched(codeThemeCustom, snap.codeThemeCustom, d[CODE_THEME_VSCODE_KEY]?.text ? d[CODE_THEME_VSCODE_KEY] : null);
+    ifUntouched(codeThemeUi, snap.codeThemeUi, d[CODE_THEME_UI_KEY] !== false);
+    ifUntouched(showStatsTokens, snap.showStatsTokens, d[STATS_TOKENS_KEY] !== false);
+    ifUntouched(showStatsTps, snap.showStatsTps, !!d[STATS_TPS_KEY]);
+    if (typeof d[OUTMAX_KEY] === "number") ifUntouched(outMaxH, snap.outMaxH, d[OUTMAX_KEY]);
+    // The PREFERENCE first, then the live window if one was left behind. A dragged window survives a
+    // reload (it is where you were), and with none stored the chart opens at the preference — which is
+    // what "the default when unset" means, and why the picker can always show a preset.
+    if (typeof d[RESWIN_PREF_KEY] === "number" && d[RESWIN_PREF_KEY] > 0) ifUntouched(resWindowPref, snap.resWindowPref, d[RESWIN_PREF_KEY]);
+    ifUntouched(resWindowS, snap.resWindowS, typeof d[RESWIN_KEY] === "number" && d[RESWIN_KEY] > 0 ? d[RESWIN_KEY] : resWindowPref.value);
+    if (Array.isArray(d[LANE_HIDDEN_KEY])) ifUntouched(laneHidden, snap.laneHidden, d[LANE_HIDDEN_KEY]);
+    if (typeof d[LANE_SCOPE_KEY] === "boolean") ifUntouched(laneScoped, snap.laneScoped, d[LANE_SCOPE_KEY]);
+    // An unknown palette name (a downgrade, a typo in storage) falls back rather than leaving every model
+    // colourless, which is what indexing an absent palette would do.
+    if (d[VRAM_PALETTE_KEY] && VRAM_PALETTES[d[VRAM_PALETTE_KEY]]) ifUntouched(vramPalette, snap.vramPalette, d[VRAM_PALETTE_KEY]);
+    // Absent means never set, which is BOTH shown — not both hidden, which is what reading a missing
+    // object as falsy would give and would look like the panel had lost half of itself.
+    if (typeof d[LANEH_KEY] === "number" && d[LANEH_KEY] > 0) ifUntouched(laneH, snap.laneH, d[LANEH_KEY]);
+    ifUntouched(snapDot, snap.snapDot, !!d[SNAPDOT_KEY]);
+    ifUntouched(predictView, snap.predictView, !!d[PREDICT_KEY]);
+    ifUntouched(timeGrid, snap.timeGrid, !!d[TIMEGRID_KEY]);
+    if (d[SECTIONS_KEY] && typeof d[SECTIONS_KEY] === "object") {
+        const sec = d[SECTIONS_KEY];
+        ifUntouched(laneEnabled, snap.laneEnabled, sec.laneOn !== false);
+        // `lane` is the OLD single key, which meant "expanded". Read as the open state, never as the
+        // enable — a record written by collapsing the section must not come back as the lane switched off.
+        ifUntouched(showLane, snap.showLane, (sec.laneOpen ?? sec.lane) !== false);
+        ifUntouched(showModels, snap.showModels, sec.models !== false);
+    }
+    if (typeof d[VRAMH_KEY] === "number") ifUntouched(vramH, snap.vramH, d[VRAMH_KEY]);
+    ifUntouched(showOutTimes, snap.showOutTimes, d[OUTTS_KEY] !== false);
+    ifUntouched(focusMode, snap.focusMode, !!d[FOCUS_KEY]);
+    // The bench remembers whether it was open, how it was docked and how tall it was — it is a workspace
+    // you leave set up, not a dialog you dismiss.
+    ifUntouched(benchOpen, snap.benchOpen, !!d[BENCH_OPEN_KEY]);
+    ifUntouched(benchDock, snap.benchDock, d[BENCH_DOCK_KEY] === "full" ? "full" : "drawer");
+    if (typeof d[BENCH_H_KEY] === "number" && d[BENCH_H_KEY] > 0) ifUntouched(benchH, snap.benchH, d[BENCH_H_KEY]);
+    if (typeof d[BENCH_SPLIT_KEY] === "number" && d[BENCH_SPLIT_KEY] > 0) ifUntouched(benchSplit, snap.benchSplit, d[BENCH_SPLIT_KEY]);
+    // The sandbox's version is a property of the wheels this build ships, not of this session — so it is
+    // remembered rather than re-read, which would cost a Pyodide start on every panel open.
+    if (d[BENCH_ENV_KEY]?.python) ifUntouched(benchEnv, snap.benchEnv, d[BENCH_ENV_KEY]);
+}

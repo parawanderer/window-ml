@@ -503,6 +503,24 @@ test("composer usage gauge: absent until the server reports token counts", async
     assert.ok(w.shadow.querySelector(".csend").disabled, "the send button is disabled while the box is empty");
 });
 
+// --- the composer's files, in the extension (FILE_ATTACHMENTS.md, "Every attachment to an agent run as a pointer") ---
+
+test("composer: an agent session's box takes text files and PDFs; a chat's (a page's) takes images only", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("arun", "read the page"));
+    await w.dispatch(agentResult("arun", "done", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const accept = w.shadow.querySelector('input[type="file"]').getAttribute("accept");
+    assert.match(accept, /^image\/\*,text\/\*,.*application\/pdf,\.pdf$/, accept);
+    const c = await loadSidebarWorld();
+    await c.dispatch(chatStart("chat1", 0, "hi"));
+    await c.dispatch(chatResult("chat1", 0, "hello"));
+    c.shadow.querySelector(".row").click();
+    await c.tick();
+    assert.equal(c.shadow.querySelector('input[type="file"]').getAttribute("accept"), "image/*");
+});
+
 // --- the composer's spend chip ----------------------------------------------------------------------------
 
 /** A worker that prices calls the way sw-prices.ts answers: a reported cost as given, a local model as local. */
