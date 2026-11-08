@@ -1,7 +1,9 @@
 // redteam-host-callbacks.test.mjs — what a page FUNCTION must not get from a read-only survey: the host CALLING it.
 //
-// The dialect admits host methods that take a callback, and the page can hand one back as data (`ml.models()` is a
-// read, and a function is an object). Nothing in the whitelist stops the host from calling that function: measured on
+// The dialect admits host methods that take a callback, and a page can hand one back as a value the dialect cannot tell
+// from data: through an admitted method's own return, or a `for…of` over the page's array (both measured below), and in
+// a test through a stubbed read — `ml.models()` itself is `Promise<string[]>` of model ids and hands back no function.
+// Nothing in the whitelist stops the host from calling that function: measured on
 // main, `[1,2].map(o)` runs the page's function per element and `[2,1].sort(o)` runs it as a comparator, inside the
 // worker's mediated interpreter, whose whole promise is that page code does not run (src/readonly-exec/evaluator.ts;
 // docs/dev/readonly-exec.md).
@@ -16,11 +18,11 @@
 // refused name no method: they assert the defence that exists. One control row shows a function written IN the script
 // still works in every one of those positions, so a fix that refused every callback fails here rather than passing.
 //
-// The fix's OWN admissions get the same treatment, because each admits a VALUE the script can supply: a bare
-// `getComputedStyle` is judged against `scope.getComputedStyle`, and `scope` is the script's frame, so binding that
-// name to a page function buys the admission (a name is not a value — the one row still `{ todo }`); a coercing
-// intrinsic (`Number`, `String`, `parseInt`, ...) as a callback runs an element's `valueOf`/`toString` unless the
-// elements are data; and a member reference stays the inert sentinel that throws, never the method.
+// The fix's OWN admissions get the same treatment, because each admits a VALUE the script can supply. A bare
+// `getComputedStyle` is admitted by IDENTITY against the host's root, never by the name a script writes — the row that
+// bound that name to a page function was `{ todo }` under the earlier scope-name mechanism and is the guard now; a
+// coercing intrinsic (`Number`, `String`, `parseInt`, ...) as a callback runs an element's `valueOf`/`toString` unless
+// the elements are data; and a member reference stays the inert sentinel that throws, never the method.
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
@@ -173,10 +175,11 @@ function pageCoercer(ran) {
     return { valueOf() { ran.push("valueOf"); return 1; }, toString() { ran.push("toString"); return "1"; } };
 }
 
-test("RED TEAM: a page function bound to the name `getComputedStyle` is not admitted as a callback", { todo: "open: the admission compares the argument with `scope.getComputedStyle`, and `scope` is the script's own frame, so `const getComputedStyle = <page fn>` buys it (evaluator.ts:334)" }, async () => {
-    // The fix admits a bare `getComputedStyle` as a callback by identity against the SCOPE. The scope is the script's
-    // frame over the host's root, and shadowing a root name is a script's ordinary move (`const document = …` writes to
-    // the child), so the comparison reads whatever the script bound there: the name buys the admission, not the value.
+test("RED TEAM: a page function bound to the name `getComputedStyle` is not admitted as a callback", async () => {
+    // The admission this row was written against compared the argument with `scope.getComputedStyle`, and `scope` is the
+    // script's frame over the host's root — so shadowing the root name (`const document = …` writes to the child) bought
+    // the admission with whatever the script had bound there, name and not value. The identity commit judges the value
+    // against the host's root, which is why this row is a guard now rather than `{ todo }`.
     const POSITIONS = [
         ["map", "[1].map(getComputedStyle)"],
         ["filter", "[1].filter(getComputedStyle)"],
