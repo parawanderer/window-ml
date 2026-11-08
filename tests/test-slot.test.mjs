@@ -11,6 +11,9 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SLOT = path.join(ROOT, "scripts", "test-slot.mjs");
+// The bench's ledger, which a granted job joins: this file's own, set before the import reads it.
+process.env.BENCH_LEDGER_FILE = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "test-slot-ledger-")), "ledger.json");
+const { ledger, register, unregister } = await import("../tests/e2e/bench/memory-budget.mjs");
 const { jobsFor, capFor, skipReason, submit, finish, look, cancel, waitFor, acquire, waitingLine, jobEnv, procLive, startTime, perWorkerFor } = await import(SLOT);
 
 process.env.TEST_SLOT_POLL_MS = "50";
@@ -91,11 +94,11 @@ test("jobEnv: a detached job gets the named variables and none named like a secr
 
 // --- reclaiming a dead holder ---
 
-test("a holder whose process has died is reclaimed and the next run is granted at once", async () => {
+test("a holder whose process has died is reclaimed and the next run is granted at once", { timeout: 10_000 }, async (t) => {
     const dir = tmpDir(), dead = deadPid(), said = [];
     assert.equal(procLive(dead, null), false);
     writeQueue(dir, [holder(dead, "Sat Nov  7 00:00:00 2026")]);
-    const r = await acquire({ cmd: ["me"], env: { TEST_SLOT_DIR: dir }, log: (s) => said.push(s) });
+    const r = await acquire({ cmd: ["me"], env: { TEST_SLOT_DIR: dir }, log: (s) => said.push(s), signal: t.signal });
     assert.equal(typeof r.ticket, "string");
     assert.ok(said.some((s) => s.includes(`reclaimed the slot from pid ${dead}`)), said.join("\n"));
     const q = look(r.ticket, { dir });
@@ -201,12 +204,12 @@ test("cancel: a queued job is taken out, a running one's process group is stoppe
     assert.deepEqual([(await waitFor(c.ticket, { dir, log: () => {} })).exit], [0]);
 });
 
-test("a running job killed from outside: a waiter's poll reclaims the slot and starts the next job", async () => {
+test("a running job killed from outside: a waiter's poll reclaims the slot and starts the next job", { timeout: 10_000 }, async (t) => {
     const dir = tmpDir(), never = path.join(dir, "never");
     const a = submit({ cmd: waitsFor(never), cwd: ROOT, dir });
     const b = submit({ cmd: quick(0), cwd: ROOT, dir });
     await until(() => look(a.ticket, { dir }).job.pid, 5000, "a to start");
-    const waiting = waitFor(b.ticket, { dir, log: () => {} });
+    const waiting = waitFor(b.ticket, { dir, log: () => {}, signal: t.signal });
     process.kill(-look(a.ticket, { dir }).job.pid, "SIGKILL");
     const jb = await waiting;
     assert.deepEqual([jb.state, jb.exit], ["done", 0]);
@@ -222,4 +225,35 @@ test("test.mjs inside a granted run is not queued behind it", async () => {
     assert.equal(r.code, 1, r.err);
     assert.match(r.err, /no such test file\(s\): no-such\.test\.mjs/);
     assert.equal(r.err.match(/test-slot: \d+ workers?/g)?.length, 1, "one grant, the outer run's");
+});
+
+// --- sharing memory with the bench ---
+
+test("a grant subtracts the browsers a sweep just admitted, joins the bench's ledger as `tests`, and leaves it when done", { timeout: 10_000 }, async (t) => {
+    const dir = tmpDir(), said = [];
+    // A sweep (another live process) that admitted 3 GB of browsers its tree does not hold yet.
+    const sweep = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore" });
+    try {
+        register({ kind: "runner", pid: sweep.pid, pending: [{ bytes: 3 * GB, until: Date.now() + 60_000 }, { bytes: 9 * GB, until: Date.now() - 1 }] });
+        const r = await acquire({ cmd: ["me"], env: { TEST_SLOT_DIR: dir }, log: (s) => said.push(s), signal: t.signal });
+        const job = look(r.ticket, { dir }).job;
+        assert.equal(job.sizing.coming, 3 * GB, "the expired admission is not counted");
+        assert.equal(job.jobs, jobsFor({ ...job.sizing, available: job.sizing.available - 3 * GB, cap: capFor("unit") }));
+        assert.ok(said.some((l) => l.includes("3.0 GB of it promised to bench browsers starting up")), said.join("\n"));
+        const mine = ledger().find((e) => e.kind === "tests");
+        assert.deepEqual([mine.pid, mine.ticket, mine.planned], [process.pid, r.ticket, job.jobs * job.sizing.perWorker]);
+        finish(r.ticket, 0, { dir });
+        assert.equal(ledger().some((e) => e.kind === "tests"), false, "a finished run leaves the ledger");
+    } finally {
+        unregister(sweep.pid); sweep.kill();
+        delete process.env.TEST_SLOT_TICKET; delete process.env.TEST_SLOT_JOBS;
+    }
+});
+
+test("a cancelled running job leaves the bench's ledger", () => {
+    const dir = tmpDir(), deps = { memory, startTime: () => startTime(process.pid) };
+    const a = submit({ cmd: ["a"], mode: "attached", dir, deps, tree: tree() });
+    assert.equal(ledger().find((e) => e.kind === "tests")?.ticket, a.ticket);
+    assert.equal(cancel(a.ticket, { dir, deps: { ...deps, probe: { alive: () => false, startTime } } }), "running");
+    assert.equal(ledger().some((e) => e.kind === "tests"), false);
 });

@@ -29,7 +29,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { alive, availableMemory, fmtBytes, p90, processTable, RESERVE_FRAC, treePids, treeRss, withFileLock } from "../tests/e2e/bench/memory-budget.mjs";
+import { alive, availableMemory, fmtBytes, ledger, notYetResident, p90, processTable, register, RESERVE_FRAC, treePids, treeRss, unregister, withFileLock } from "../tests/e2e/bench/memory-budget.mjs";
 
 const SELF = fileURLToPath(import.meta.url);
 const GB = 1024 ** 3;
@@ -85,11 +85,24 @@ export function perWorkerFor(kind, dir = slotDir()) {
     return { bytes: v ?? PER_WORKER_DEFAULT, measured: mine.length };
 }
 
-/** The memory reading a grant is made from, and the workers it gives (injected in tests). */
-function sizeJob(kind, dir, memory) {
-    const m = memory ? memory(kind) : { available: availableMemory(), total: os.totalmem(), perWorker: perWorkerFor(kind, dir).bytes, cap: capFor(kind) };
-    return { ...m, jobs: jobsFor(m) };
+/** What the bench's ledger says is on its way but not yet in free memory: browsers a sweep just admitted. Never throws. */
+function benchComing() {
+    try { return notYetResident(ledger()); } catch { return 0; }
 }
+
+/** The memory reading a grant is made from, and the workers it gives (injected in tests). Free memory is taken less
+ *  what the bench has admitted and not yet started, so a sweep and a run starting together do not count the same room. */
+function sizeJob(kind, dir, memory) {
+    const m = memory ? memory(kind) : { available: availableMemory(), coming: benchComing(), total: os.totalmem(), perWorker: perWorkerFor(kind, dir).bytes, cap: capFor(kind) };
+    return { ...m, jobs: jobsFor({ ...m, available: m.available - (m.coming ?? 0) }) };
+}
+
+/** Put a granted job in the bench's ledger as kind `tests`, with the memory its workers will take, so a sweep counts
+ *  it before its workers are up (memory-budget.mjs's notYetResident). Dropped once its process is gone. Never throws. */
+function joinBench(job) {
+    try { register({ kind: "tests", pid: job.pid, ticket: job.ticket, repo: job.clone, cmd: cmdText(job.cmd), planned: job.jobs * job.sizing.perWorker }); } catch { /* the bench sees it through free memory */ }
+}
+const leaveBench = (job) => { try { if (job.pid) unregister(job.pid); } catch { /* dropped when the pid dies */ } };
 
 /** The clone, head and working-tree hash a job runs at; `dirty` is null for a clean tree. Never throws. */
 export function treeState(cwd) {
@@ -157,12 +170,13 @@ export function startNext(state, dir, deps = {}) {
     const head = state.jobs.find((j) => j.state === "queued");
     if (!head) return null;
     const size = sizeJob(head.kind, dir, deps.memory);
-    Object.assign(head, { state: "running", grantedAt: new Date().toISOString(), jobs: size.jobs, sizing: { available: size.available, total: size.total, perWorker: size.perWorker } });
+    Object.assign(head, { state: "running", grantedAt: new Date().toISOString(), jobs: size.jobs, sizing: { available: size.available, coming: size.coming ?? 0, total: size.total, perWorker: size.perWorker } });
     if (head.mode === "attached") Object.assign(head, { pid: head.by.pid, started: head.by.started });
     else {
         const { pid, started } = (deps.spawnJob ?? spawnJob)(head, dir);
         Object.assign(head, { pid, started });
     }
+    (deps.joinBench ?? joinBench)(head);
     return head;
 }
 
@@ -204,6 +218,7 @@ export function finish(ticket, exit, { dir = slotDir(), deps = {}, peak = null }
         Object.assign(j, { state: "done", exit, endedAt: endedAt.toISOString(), durationMs: endedAt - new Date(j.grantedAt), ...(peak ? { peakRss: peak } : {}) });
         rec = j;
     }, deps);
+    if (rec) (deps.leaveBench ?? leaveBench)(rec);
     if (rec?.peakRss && rec.durationMs >= MEASURE_MIN_MS && rec.jobs) {
         try { fs.appendFileSync(path.join(dir, "footprints.jsonl"), `${JSON.stringify({ at: rec.endedAt, kind: rec.kind, jobs: rec.jobs, peakRss: rec.peakRss, perWorker: Math.round(rec.peakRss / rec.jobs), ticket })}\n`); } catch { /* unmeasured */ }
     }
@@ -230,7 +245,7 @@ export function waitingLine({ running, ahead }, now = Date.now()) {
 }
 
 /** The line a granted run prints: its workers and the reading they came from. */
-export const grantLine = (job) => `test-slot: ${job.jobs} worker${job.jobs === 1 ? "" : "s"} (${fmtBytes(job.sizing.available)} available, ${fmtBytes(RESERVE_FRAC * job.sizing.total)} reserved, ~${fmtBytes(job.sizing.perWorker)} per worker)`;
+export const grantLine = (job) => `test-slot: ${job.jobs} worker${job.jobs === 1 ? "" : "s"} (${fmtBytes(job.sizing.available)} available${job.sizing.coming ? `, ${fmtBytes(job.sizing.coming)} of it promised to bench browsers starting up` : ""}, ${fmtBytes(RESERVE_FRAC * job.sizing.total)} reserved, ~${fmtBytes(job.sizing.perWorker)} per worker)`;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -248,9 +263,10 @@ function samplePeak(pid = process.pid) {
  * Wait in THIS process for the slot, then hold it until the process exits: what test.mjs, Playwright's config and
  * `run` call. Resolves `{ jobs, ticket }`, or `{ jobs: null, skipped }` when this process does not queue (CI, `TEST_SLOT=off`,
  * inside a job, where `TEST_SLOT_JOBS` is the job's workers). Prints the waiting line at the start and every 30 s.
- * @param {{ cmd: string[], cwd?: string, kind?: "unit" | "e2e", log?: (s: string) => void, env?: object }} o
+ * `signal` gives up the wait (a test's deadline): the ticket is cancelled and the abort reason thrown.
+ * @param {{ cmd: string[], cwd?: string, kind?: "unit" | "e2e", log?: (s: string) => void, env?: object, signal?: AbortSignal }} o
  */
-export async function acquire({ cmd, cwd = process.cwd(), kind = "unit", log = (s) => console.error(s), env = process.env }) {
+export async function acquire({ cmd, cwd = process.cwd(), kind = "unit", log = (s) => console.error(s), env = process.env, signal = null }) {
     const skipped = skipReason(env);
     if (skipped) {
         if (skipped === "off") log("test-slot: TEST_SLOT=off, not queueing: other runs on this machine are not waited for");
@@ -284,6 +300,7 @@ export async function acquire({ cmd, cwd = process.cwd(), kind = "unit", log = (
             return { jobs: q.job.jobs, ticket };
         }
         if (!q.job || q.job.state !== "queued") throw new Error(`test-slot: ticket ${ticket} was ${q.job?.state ?? "removed"} before it ran`);
+        if (signal?.aborted) { cancel(ticket, { dir }); throw signal.reason; }
         if (Date.now() - lastSaid >= 30_000) { log(waitingLine(q)); lastSaid = Date.now(); }
         await sleep(pollMs(env));
     }
@@ -299,14 +316,15 @@ export function cancel(ticket, { dir = slotDir(), deps = {} } = {}) {
         if (j.state === "running" && procLive(j.pid, j.started, deps.probe)) {
             try { process.kill(j.mode === "detached" ? -j.pid : j.pid, "SIGTERM"); } catch { /* gone */ }
         }
+        if (j.state === "running") (deps.leaveBench ?? leaveBench)(j);
         Object.assign(j, { state: "cancelled", endedAt: new Date().toISOString(), exit: null });
     }, deps);
     return was;
 }
 
 /** Block until a job ends, starting the queue's head whenever it finds the slot free; prints the waiting line, then
- *  the log's last lines. Resolves the job's record. */
-export async function waitFor(ticket, { dir = slotDir(), log = (s) => console.error(s), tail = 40, deps = {} } = {}) {
+ *  the log's last lines. Resolves the job's record; `signal` gives up the wait (the job is left as it is). */
+export async function waitFor(ticket, { dir = slotDir(), log = (s) => console.error(s), tail = 40, deps = {}, signal = null } = {}) {
     let lastSaid = 0;
     for (;;) {
         const q = look(ticket, { dir, deps });
@@ -315,6 +333,7 @@ export async function waitFor(ticket, { dir = slotDir(), log = (s) => console.er
             if (tail && q.job.log) { try { log(fs.readFileSync(q.job.log, "utf8").split("\n").slice(-tail).join("\n")); } catch { /* no log */ } }
             return q.job;
         }
+        if (signal?.aborted) throw signal.reason;
         if (q.job.state === "queued" && Date.now() - lastSaid >= 30_000) { log(waitingLine(q)); lastSaid = Date.now(); }
         await sleep(pollMs());
     }

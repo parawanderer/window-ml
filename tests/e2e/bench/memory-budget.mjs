@@ -274,18 +274,41 @@ export function measureLedger({ file = LEDGER_FILE, table = processTable() } = {
  * The budget as it stands: the ceiling, what the ledger's entries use (by kind), what the machine has available, the
  * share kept free, and the ROOM left (whichever runs out first). Every figure in bytes.
  */
-export function budgetState({ limit, entries, available, total = os.totalmem(), reserveFrac = RESERVE_FRAC }) {
+export function budgetState({ limit, entries, available, total = os.totalmem(), reserveFrac = RESERVE_FRAC, now = Date.now() }) {
     const byKind = {};
     for (const e of entries) byKind[e.kind] = (byKind[e.kind] ?? 0) + (e.rss ?? 0);
-    const used = Object.values(byKind).reduce((a, b) => a + b, 0);
+    // A test run (scripts/test-slot.mjs) is in the ledger so the bench sees it coming, not as part of the bench: its
+    // memory is held against free memory only, never against the bench's limit.
+    const used = Object.entries(byKind).reduce((a, [k, b]) => a + (k === "tests" ? 0 : b), 0);
     const reserve = Math.round(total * reserveFrac);
-    return { limit, used, byKind, available, total, reserve, room: Math.max(0, Math.min(limit - used, available - reserve)) };
+    // What is on its way: all of it against free memory, the bench's own admitted browsers against the limit as well.
+    const coming = notYetResident(entries, now), benchComing = notYetResident(entries.filter((e) => e.kind !== "tests"), now);
+    return { limit, used, byKind, available, coming, benchComing, total, reserve, room: Math.max(0, Math.min(limit - used - benchComing, available - coming - reserve)) };
+}
+
+/** How long an admitted browser is counted as on its way before its process tree is taken to hold it. */
+export const PENDING_MS = 30_000;
+
+/**
+ * Memory the ledger's entries are about to take that free memory does not show yet: browsers a sweep admitted in the
+ * last PENDING_MS (each entry's `pending`, `[{ bytes, until }]`), and what a test run's workers will hold beyond what
+ * its tree holds now (`planned` less `rss`). What the bench's budget and the test queue both subtract from free memory,
+ * so two of them starting at once do not each count the same room.
+ */
+export function notYetResident(entries, now = Date.now()) {
+    let n = 0;
+    for (const e of entries) {
+        for (const p of e.pending ?? []) if (p.until > now) n += p.bytes;
+        if (e.kind === "tests" && e.planned) n += Math.max(0, e.planned - (e.rss ?? 0));
+    }
+    return n;
 }
 
 /** Whether `need` more bytes fit: `{ ok, why }`, `why` saying which bound it hits, in words a person reads. */
 export function admits(state, need) {
-    if (state.used + need > state.limit) return { ok: false, why: `the memory limit: the bench holds ${fmtBytes(state.used)} of ${fmtBytes(state.limit)}, and one more browser takes about ${fmtBytes(need)}` };
-    if (state.available - need < state.reserve) return { ok: false, why: `free memory: ${fmtBytes(state.available)} available, and ${fmtBytes(state.reserve)} (${Math.round((state.reserve / state.total) * 100)}% of RAM) stays free` };
+    const benchComing = state.benchComing ?? 0, coming = state.coming ?? 0;
+    if (state.used + benchComing + need > state.limit) return { ok: false, why: `the memory limit: the bench holds ${fmtBytes(state.used)}${benchComing ? ` (and ${fmtBytes(benchComing)} more starting up)` : ""} of ${fmtBytes(state.limit)}, and one more browser takes about ${fmtBytes(need)}` };
+    if (state.available - coming - need < state.reserve) return { ok: false, why: `free memory: ${fmtBytes(state.available)} available${coming ? ` (${fmtBytes(coming)} of it already promised to runs starting up)` : ""}, and ${fmtBytes(state.reserve)} (${Math.round((state.reserve / state.total) * 100)}% of RAM) stays free` };
     return { ok: true, why: null };
 }
 
@@ -366,7 +389,8 @@ export const limitWhence = (l) => (l.source === "flag" ? "this sweep's --memory-
 /**
  * One sweep's budget: registers the runner in the ledger (its tree holds every browser it runs in-process; held runs'
  * browsers are their own entries), re-measures every `everyMs`, and answers the two questions a sweep asks. `canStart`:
- * may a cell of this task start, its predicted browser and all. `canKeep`: may a finished run stay open; its browser is
+ * may a cell of this task start, its predicted browser and all (a yes counts that browser as on its way for PENDING_MS,
+ * here and in the ledger). `canKeep`: may a finished run stay open; its browser is
  * already counted, so the question is whether one more cell would still fit after it. `active` false (a fake-model sweep
  * that holds nothing) registers and measures, but never says no.
  */
@@ -402,12 +426,29 @@ export function startBudget({ limit = null, reserveFrac = null, onLimit = () => 
         record(st);
         return st;
     };
-    const state = () => ({ ...budgetState({ limit: cur.bytes, entries, available, total, reserveFrac: reserveOf() }), limitSource: cur.source, limitBy: cur.by ?? null, limitAt: cur.at ?? null });
+    // The browsers this sweep admitted that its tree may not hold yet, kept here and written to its ledger entry, so
+    // the next cell and every other process on the machine (another sweep, the test queue) count them.
+    let mine = [];
+    const withMine = () => {
+        mine = mine.filter((p) => p.until > Date.now());
+        if (!mine.length) return entries;
+        const own = entries.some((e) => e.pid === process.pid);
+        return own ? entries.map((e) => (e.pid === process.pid ? { ...e, pending: mine } : e)) : [...entries, { kind: "runner", pid: process.pid, rss: 0, pending: mine }];
+    };
+    const state = () => ({ ...budgetState({ limit: cur.bytes, entries: withMine(), available, total, reserveFrac: reserveOf() }), limitSource: cur.source, limitBy: cur.by ?? null, limitAt: cur.at ?? null });
     record(state());
     const timer = setInterval(refresh, everyMs);
     timer.unref?.();
     const predict = (task) => predictBrowser(db, task);
     const ask = (task) => (active ? admits(refresh(), predict(task).bytes) : { ok: true, why: null });
+    const start = (task) => {
+        const a = ask(task);
+        if (a.ok && active) {
+            mine.push({ bytes: predict(task).bytes, until: Date.now() + PENDING_MS });
+            try { update(process.pid, { pending: mine }, file); } catch { /* counted here, if not by the others */ }
+        }
+        return a;
+    };
     return {
         whenFull, active, state, refresh, predict,
         /** The limit in force now: `{ bytes, source, handSet, by?, at? }` (resolveLimit). */
@@ -415,7 +456,7 @@ export function startBudget({ limit = null, reserveFrac = null, onLimit = () => 
         entries: () => entries,
         /** The readings so far, oldest first: `{ t, values: { <kind>: bytes }, room, pressure: { machine, swap, out } }` (a pressure figure null when unknown). */
         history: () => history,
-        canStart: ask,
+        canStart: start,
         canKeep: ask,
         /** The peak measured for `pid`'s tree, re-measured now. */
         peakOf(pid) { refresh(); return entries.find((e) => e.pid === pid)?.peak ?? null; },

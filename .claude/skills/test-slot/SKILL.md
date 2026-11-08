@@ -40,7 +40,14 @@ start and every 30 s. When its turn comes it prints the grant line:
 
 State lives in `~/.cache/window-ml/test-queue/` (`TEST_SLOT_DIR` overrides): `queue.json`, `<ticket>.log` per job,
 `footprints.jsonl`. The per-worker figure is measured: the p90 of the last 20 measured runs of that kind (runs of 10 s or
-more only), 1 GB before any. A holder whose process has died is reclaimed on every read, so the queue does not stall
+more only), 1 GB before any. Free memory is taken less what a bench sweep admitted in the last 30 s and has not started
+yet (its ledger, the `bench` skill), which the grant line names ("… of it promised to bench browsers starting up").
+
+**With the bench.** A granted run joins the bench's ledger (`~/.cache/window-ml-bench/ledger.json`) as kind `tests`, its
+planned memory (workers × per-worker) beside it, and leaves when it ends; `hold.mjs --ledger` lists it. A sweep counts the
+part of that plan its workers do not hold yet against free memory, never against the bench's own limit. Bench sweeps do
+not queue here: they size themselves cell by cell, so a sweep backs off while a suite runs, and a suite sized while a
+sweep runs gets fewer workers. A suite's workers are fixed once granted. A holder whose process has died is reclaimed on every read, so the queue does not stall
 behind a crashed run. There is no daemon: whoever finds the slot free starts the head of the queue.
 
 A DETACHED job runs in its own process, in the ticket's cwd, with a RECORDED subset of the environment (`PATH`, `HOME`,
@@ -49,5 +56,5 @@ A DETACHED job runs in its own process, in the ticket's cwd, with a RECORDED sub
 
 ## The limit
 
-It covers only clones that have pulled it. Until every lane has, a runner in an older clone ignores the queue: before a
-full suite, check `pgrep -f 'node --import tsx --test'` and wait if another run is going.
+It covers only the runners above, in clones that have pulled it. A direct `node --import tsx --test <file>` does not
+queue, and a runner in an older clone ignores the queue: before either, check `pgrep -f 'node --import tsx --test'` and wait if another run is going.

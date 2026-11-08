@@ -230,7 +230,7 @@ reply:** `notebooks/<topic>/`, run with `node scripts/nb.mjs`. `docs/dev/noteboo
 - **A FAILED build leaves `dist/` alone** (it builds into `dist.stage/`): never discard its stderr. A STALE bundle is
   CHECKED (`scripts/check-dist-fresh.mjs`); `npm run build:all` builds every bundle.
 - **Iterating? Run a GENRE: `npm run test:core`** (the `test-genres` skill); run the full `npm test` before you commit.
-- **Every local test run queues machine-wide through `scripts/test-slot.mjs`** (one at a time, workers from free memory; `submit`/`wait` to not block; the `test-slot` skill). It covers only clones that have pulled it: until every lane has, check `pgrep -f 'node --import tsx --test'` before a full suite.
+- **Every `npm test`, genre, `npm run coverage` and `npm run test:e2e` run queues machine-wide through `scripts/test-slot.mjs`** (one at a time, workers from free memory; `submit`/`wait` to not block; the `test-slot` skill). A direct `node --test`, and any run in a clone that has not pulled it, does not: check `pgrep -f 'node --import tsx --test'` before starting one of those.
 - **Tests: `npm test`** (`node:test`, real files in `node:vm` with mocked `chrome`). A new primitive gets a test in
   `tests/background.test.js` and `tests/relay.test.js`.
 - **RULE — scratch output (a saved diff, a probe, a detached run's log, a review draft, a CI artifact) goes in YOUR

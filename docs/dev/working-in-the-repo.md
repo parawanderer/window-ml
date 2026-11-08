@@ -443,8 +443,11 @@ and a 40 s suite took ten minutes. A rule each lane had to remember did not hold
 `npm run coverage` goes through: one run at a time, its workers sized from the memory free when its turn comes (a
 per-worker figure measured from past runs). `--jobs N` still fixes the workers; CI, `TEST_SLOT=off` and a runner
 nested in a job skip it. `submit` and `wait` start a run without blocking the session. Commands, the opt-outs, where
-the state lives and the environment a detached job gets: the `test-slot` skill. The limit: it covers only clones that
-have pulled it, so until every lane has, check `pgrep -f 'node --import tsx --test'` before a full suite.
+the state lives and the environment a detached job gets: the `test-slot` skill. A granted run joins the bench's memory
+ledger as kind `tests`, and each sizes itself from free memory less what the other has admitted and not yet started, so a
+sweep and a suite starting together do not count the same room. The limit: it covers only those runners, in clones that
+have pulled it, so before a direct `node --test` or a full suite in an older clone, check
+`pgrep -f 'node --import tsx --test'`.
 
 ## Scratch files go in your session's scratchpad, never in `/tmp`
 
