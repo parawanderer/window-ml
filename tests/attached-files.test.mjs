@@ -6,6 +6,7 @@ import {
     FILE_INLINE_MAX, FILES_MAX_COUNT, FILE_NAME_MAX, checkFilesField, cleanFiles, decodeTextFile, fileBlock, fileBlocks,
     filesRefusal, frameFiles, lineCount, pendingRefusals, sizeLabel, withFileBlocks,
     PDF_ATTACH_MAX, b64Bytes, encodePdfFile, fileInfo, fileSentTip, fileSummary, textCapRefusal, textFiles, FILE_SENT_TIP, PDF_SENT_TIP,
+    readMaxBytes, sentWhole,
 } from "../src/attached-files.ts";
 import { framePrompt } from "../src/agent/prompts.ts";
 import { promptLine } from "../src/contract/contract-run.ts";
@@ -46,11 +47,12 @@ test("FILE_INLINE_MAX is 32,000 characters across all of a message's files", () 
     assert.equal(filesRefusal([file("a", "x".repeat(20_000)), file("b", "y".repeat(12_000))], "chat"), null, "the total, not each");
 });
 
-test("a file over the cap is refused with its size and the limit, and an agent run is told reading comes later", () => {
+test("a file over the cap is refused with its size and the limit; a run a page built says where it can go, and one the worker built holds it", () => {
     const big = file("server.log", "x".repeat(210_000));
     assert.equal(filesRefusal([big], "chat"), "server.log is too large to send whole: 210 kB; a message takes up to 32 kB of files");
-    assert.equal(filesRefusal([big], "agent"),
-        "server.log is too large to send whole: 210 kB; a message takes up to 32 kB of files. An agent run will read large files on demand in a later change");
+    assert.equal(filesRefusal([big], "page-run"),
+        "server.log is too large to send whole: 210 kB; a message takes up to 32 kB of files. This run was built by the page, which takes a file only whole; a run started from the panel holds a large file and reads it on demand");
+    assert.equal(filesRefusal([big], "agent"), null, "held as a pointer and sent as its outline");
 });
 
 test("the file that tips the total names itself, and says the others take its room", () => {
@@ -92,7 +94,8 @@ test("checkFilesField: absent or empty is no files; bad shape or over the rule i
     assert.deepEqual(checkFilesField([], "chat"), {});
     assert.match(checkFilesField("nope", "chat").reason, /list of \{ name, type, text \}/);
     assert.match(checkFilesField([{ name: "a", text: "x" }, 7], "chat").reason, /list of/);
-    assert.match(checkFilesField([file("a", "x".repeat(40_000))], "agent").reason, /on demand in a later change/);
+    assert.match(checkFilesField([file("a", "x".repeat(40_000))], "page-run").reason, /reads it on demand$/);
+    assert.deepEqual(checkFilesField([file("a", "x".repeat(40_000))], "agent").files, [file("a", "x".repeat(40_000))], "an agent run holds it");
     assert.deepEqual(checkFilesField([file("a", "hi")], "chat").files, [file("a", "hi")]);
 });
 
@@ -218,16 +221,54 @@ test("off the wire: a PDF's data must be base64, and its type is a PDF whatever 
     assert.equal(cleanFiles([{ name: "a.pdf", type: "", data: "JVBERg==", text: "both" }]), undefined, "text and data together is neither");
 });
 
-test("a PDF may start an agent run and is refused by name to a run under way; to a chat it counts its bytes, not text", () => {
+test("a PDF goes to an agent run at any message and is refused by name to a run a page built; to a chat it counts its bytes, not text", () => {
     const pdf = { name: "p.pdf", type: "application/pdf", data: "JVBERg==" };
     assert.equal(filesRefusal([pdf], "agent"), null);
-    assert.equal(filesRefusal([pdf], "agent-turn"), "p.pdf is a PDF; an agent run takes a PDF only when it starts, so start a new run with it");
-    assert.match(filesRefusal([file("big.txt", "x".repeat(FILE_INLINE_MAX + 1))], "agent-turn"), /on demand in a later change$/, "a run under way has the agent wording");
+    assert.equal(filesRefusal([pdf], "page-run"), "p.pdf is a PDF, and this run was built by the page, which does not read one: start a run from the panel to attach it");
     assert.equal(filesRefusal([pdf, file("big.txt", "x".repeat(FILE_INLINE_MAX))], "chat"), null);
     const huge = { ...pdf, data: "A".repeat(Math.ceil((PDF_ATTACH_MAX + 3) / 3) * 4) };
     assert.match(filesRefusal([huge], "chat"), /too large to send/);
     assert.deepEqual(textFiles([pdf, file("a.txt", "a")]), [file("a.txt", "a")]);
     assert.equal(textFiles([pdf]), undefined);
+});
+
+// --- where the message goes: every target against every kind of file ---
+
+test("ENUMERATED: each target against a text under the cap, a text over it, a PDF, and files past what a message holds", () => {
+    const pdf = { name: "p.pdf", type: "application/pdf", data: "JVBERg==" };
+    const under = file("small.txt", "x".repeat(FILE_INLINE_MAX));
+    const over = file("big.txt", "x".repeat(FILE_INLINE_MAX + 1));
+    // Past PDF_ATTACH_MAX of held text: two long texts that each fit alone.
+    const half = file("half.txt", "x".repeat(PDF_ATTACH_MAX / 2 + 1));
+    const half2 = file("half2.txt", "y".repeat(PDF_ATTACH_MAX / 2 + 1));
+    const hugePdf = { ...pdf, name: "huge.pdf", data: "A".repeat(Math.ceil((PDF_ATTACH_MAX + 3) / 3) * 4) };
+    const want = {
+        chat: { under: null, over: /^big\.txt is too large to send whole: 32 kB; a message takes up to 32 kB of files$/, pdf: null, held: /^half\.txt is too large to send whole: /, hugePdf: /^huge\.pdf is too large to send/ },
+        agent: { under: null, over: null, pdf: null, held: /^half2\.txt is too large to attach together with the other files: 10486 kB; a message holds up to 20 MB of PDFs and long text files$/, hugePdf: /^huge\.pdf is too large to send/ },
+        "page-run": { under: null, over: /reads it on demand$/, pdf: /^p\.pdf is a PDF, and this run was built by the page/, held: /^half\.txt is too large to send whole/, hugePdf: /^huge\.pdf is a PDF, and this run was built by the page/ },
+    };
+    const cases = { under: [under], over: [over], pdf: [pdf], held: [half, half2], hugePdf: [hugePdf] };
+    for (const [target, rows] of Object.entries(want)) {
+        for (const [k, files] of Object.entries(cases)) {
+            const got = filesRefusal(files, target);
+            if (rows[k] === null) assert.equal(got, null, `${target} × ${k}`);
+            else assert.match(String(got), rows[k], `${target} × ${k}`);
+        }
+    }
+});
+
+test("sentWhole: text goes whole in attach order while it fits, a later small file still fits, and a PDF never goes whole", () => {
+    const pdf = { name: "p.pdf", type: "application/pdf", data: "JVBERg==" };
+    const a = file("a", "x".repeat(20_000)), b = file("b", "y".repeat(20_000)), c = file("c", "z".repeat(12_000));
+    assert.deepEqual(sentWhole([a, b, c, pdf]), [true, false, true, false]);
+    assert.deepEqual(sentWhole([file("e", "x".repeat(FILE_INLINE_MAX))]), [true], "exactly the cap goes whole");
+    assert.deepEqual(sentWhole([file("e", "x".repeat(FILE_INLINE_MAX + 1))]), [false]);
+});
+
+test("a picker reads a text file for an agent run up to what one message holds, and for anything else up to what fits whole", () => {
+    assert.equal(readMaxBytes("agent"), PDF_ATTACH_MAX + 1);
+    assert.equal(readMaxBytes("chat"), FILE_INLINE_MAX * 4);
+    assert.equal(readMaxBytes("page-run"), FILE_INLINE_MAX * 4);
 });
 
 test("the text cap applies to what the pages hold, naming the file that tips it", () => {

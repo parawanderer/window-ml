@@ -978,16 +978,25 @@ test("the runtime re-checks files: a bad shape, too many, a long name and a tota
     const big = [{ name: "a.txt", type: "text/plain", text: "x".repeat(20_000) }, { name: "b.txt", type: "text/plain", text: "y".repeat(20_000) }];
     const [chat, agent, send] = await refused(big);
     assert.equal(chat.error.message, "b.txt is too large to send whole together with the other files: 20 kB; a message takes up to 32 kB of files");
-    assert.match(agent.error.message, /on demand in a later change/, "the agent wording");
+    assert.equal(code(agent), "ok", "an agent run holds what is not sent whole, as a pointer (sw-attach.ts)");
+    assert.deepEqual(w.named("startAgent")[0][2].files, big);
     assert.doesNotMatch(send.error.message, /on demand/, "a message to a chat has the chat wording");
-    assert.equal(w.named("startChat").length + w.named("startAgent").length + w.named("sendChat").length + w.named("toPage").length, 0, "nothing was started or sent");
+    assert.equal(w.named("startChat").length + w.named("sendChat").length + w.named("toPage").length, 0, "nothing else was started or sent");
 });
 
-test("a message to a run with an oversized file gets the agent wording", async () => {
+test("a message to a run with a file past the inline cap reaches the worker whole; a run a page built refuses it with the page's wording", async () => {
+    const huge = { name: "server.log", type: "text/plain", text: "x".repeat(210_000) };
     const w = world();
     w.index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
-    const r = await w.run({ type: "session.send", session: sid("aaaa0001"), text: "x", files: [{ name: "server.log", type: "text/plain", text: "x".repeat(210_000) }] });
-    assert.match(r.error.message, /^server\.log is too large to send whole: 210 kB; a message takes up to 32 kB of files\. An agent run will read large files on demand/);
+    assert.equal(code(await w.run({ type: "session.send", session: sid("aaaa0001"), text: "x", files: [huge] })), "ok");
+    assert.deepEqual(w.named("toPage")[0][3].files, [huge], "the worker holds it (userRunAction); nothing is cut on the way");
+    const { FilesRefused, checkFilesField } = await import("../src/attached-files.ts");
+    const why = checkFilesField([huge], "page-run").reason;
+    const p = world({ toPage: async () => { throw new FilesRefused(why); } });
+    p.index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
+    const r = await p.run({ type: "session.send", session: sid("aaaa0001"), text: "x", files: [huge] });
+    assert.deepEqual([code(r), r.error.message], ["invalid", why], "said with its reason, never as an unreachable page");
+    assert.match(why, /^server\.log is too large to send whole: 210 kB; a message takes up to 32 kB of files\. This run was built by the page/);
 });
 
 test("a command without files is unchanged: the paths see no files key (the upgrade of every existing client)", async () => {
@@ -1055,15 +1064,21 @@ test("a PDF reaches a chat as its bytes, typed as a PDF, on chat.start and on se
     assert.deepEqual(w.named("sendChat")[0][4], [PDF_FILE]);
 });
 
-test("a PDF starts an agent run as its bytes, typed as a PDF; a run under way is refused one, naming the file, and nothing reaches its page", async () => {
+test("a PDF reaches an agent run as its bytes, typed as a PDF, at its start and with a later message; a run a page built refuses it by name", async () => {
     const w = world();
     const r = await w.run({ type: "agent.start", runtime: "local", task: "read", files: [{ ...PDF_FILE, type: "text/html" }], target: { kind: "tab", tabId: TAB } });
     assert.equal(code(r), "ok");
     assert.deepEqual(w.named("startAgent")[0][2].files, [PDF_FILE], "the worker reads and holds it (sw-attach.ts); the type is the runtime's");
     w.index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
     const later = await w.run({ type: "session.send", session: sid("aaaa0001"), text: "and this", files: [PDF_FILE] });
-    assert.deepEqual([code(later), later.error.message], ["invalid", "paper.pdf is a PDF; an agent run takes a PDF only when it starts, so start a new run with it"]);
-    assert.equal(w.named("toPage").length + w.named("steer").length, 0, "the page's path would drop the PDF, so the message is not sent without it");
+    assert.equal(code(later), "ok");
+    assert.deepEqual(w.named("toPage")[0][3].files, [PDF_FILE], "to the worker, which holds it for a run it built (userRunAction)");
+    assert.equal(w.named("steer").length, 0, "a steer carries text only: it would lose the file");
+    const { FilesRefused, pdfToPageRun } = await import("../src/attached-files.ts");
+    const p = world({ toPage: async () => { throw new FilesRefused(pdfToPageRun("paper.pdf")); } });
+    p.index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
+    const refused = await p.run({ type: "session.send", session: sid("aaaa0001"), text: "and this", files: [PDF_FILE] });
+    assert.deepEqual([code(refused), refused.error.message], ["invalid", "paper.pdf is a PDF, and this run was built by the page, which does not read one: start a run from the panel to attach it"]);
 });
 
 test("data that is not base64 is a malformed files field", async () => {
@@ -1115,14 +1130,23 @@ test("a hash this runtime does not hold, or holds at another size, is refused as
     }
 });
 
-test("ADVERSARIAL: a reference meets the same rules as the inline PDF it stands for: typed as a PDF, refused to a run under way", async () => {
-    const w = world({ heldFile: () => PDF_BYTES });
-    const r = await w.run({ type: "agent.start", runtime: "local", task: "read", files: [{ ...PDF_REF, type: "text/plain" }], target: { kind: "tab", tabId: TAB } });
+test("ADVERSARIAL: a reference is put back by its type: a PDF only for application/pdf, text for any other, and bytes that are not text are refused, never a PDF", async () => {
+    const BIN = Uint8Array.of(0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x0a, 0x00, 0xff, 0xfe);   // "%PDF-1\n", a NUL, then no UTF-8
+    const TEXT = new TextEncoder().encode("line one\nline two\n");
+    const held = { ["a".repeat(64)]: BIN, ["b".repeat(64)]: TEXT, [PDF_REF.sha256]: PDF_BYTES };
+    const w = world({ heldFile: (sha) => held[sha] ?? null });
+    const r = await w.run({ type: "agent.start", runtime: "local", task: "read", files: [PDF_REF], target: { kind: "tab", tabId: TAB } });
     assert.equal(code(r), "ok");
     assert.deepEqual(w.named("startAgent")[0][2].files, [{ name: "paper.pdf", type: "application/pdf", data: PDF_FILE.data }]);
     w.index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
-    const later = await w.run({ type: "session.send", session: sid("aaaa0001"), text: "x", files: [PDF_REF] });
-    assert.deepEqual([code(later), later.error.message], ["invalid", "paper.pdf is a PDF; an agent run takes a PDF only when it starts, so start a new run with it"]);
+    const text = await w.run({ type: "session.send", session: sid("aaaa0001"), text: "x", files: [{ name: "notes.log", type: "text/x-log", sha256: "b".repeat(64), bytes: TEXT.length }] });
+    assert.equal(code(text), "ok");
+    assert.deepEqual(w.named("toPage")[0][3].files, [{ name: "notes.log", type: "text/x-log", text: "line one\nline two\n" }], "text, under the type it was sent with");
+    const forged = await w.run({ type: "session.send", session: sid("aaaa0001"), text: "x", files: [{ name: "paper.pdf", type: "text/plain", sha256: "a".repeat(64), bytes: BIN.length }] });
+    assert.deepEqual([code(forged), forged.error.message], ["invalid", "paper.pdf was sent as text/plain but is not text: send it again"], "a text type over bytes that are not text is neither a PDF nor bytes");
+    const untyped = await w.run({ type: "session.send", session: sid("aaaa0001"), text: "x", files: [{ name: "n", sha256: "b".repeat(64), bytes: TEXT.length }] });
+    assert.deepEqual([code(untyped), untyped.error.message], ["invalid", "n: a file named by its sha256 says its type"]);
+    assert.equal(w.named("toPage").length, 1, "only the text reached the run");
     const both = await w.run({ type: "chat.start", runtime: "local", text: "x", files: [{ ...PDF_REF, data: PDF_FILE.data }] });
     assert.deepEqual([code(both), both.error.message], ["invalid", "paper.pdf: a file is sent inline or named by its sha256, not both"], "a hash beside inline bytes is neither shape");
     const odd = await w.run({ type: "chat.start", runtime: "local", text: "x", files: [{ ...PDF_REF, sha256: 5 }] });

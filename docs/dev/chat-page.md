@@ -531,9 +531,11 @@ The `＋`, a drop on the box and a paste take TEXT FILES as well as images (`use
 
 - **A file is text if it decodes as UTF-8 with `fatal: true` and holds no NUL byte**, whatever its name or type; the
   picker's `accept` only offers the common ones. A PDF is refused with its own sentence ("PDFs come in a later change").
-- **Sent whole, up to `FILE_INLINE_MAX` (32,000 characters per message, across its files).** Over it, the file is
-  refused with its size, never cut ("server.log is too large to send whole: 210 kB; a message takes up to 32 kB of
-  files"; an agent run's refusal adds that large files are read on demand later). The composer refuses before
+- **Sent whole, up to `FILE_INLINE_MAX` (32,000 characters per message, across its files).** Over it, a chat's file
+  is refused with its size, never cut ("server.log is too large to send whole: 210 kB; a message takes up to 32 kB of
+  files"; a run a page built adds where a large file can go). An agent run the worker built holds it as an `@file:`
+  pointer and sends its outline instead, up to 20 MB with the message's PDFs (FILE_ATTACHMENTS.md, "Every attachment
+  to an agent run as a pointer"). The composer refuses before
   sending, derived on every render (`pendingRefusals`), so switching the start page from a chat to a run changes the
   wording and removing a file frees the room it took. A refused file stays in the box as a pill with its reason, and
   is not sent. The RUNTIME checks again (`checkFilesField` in `session-commands.ts`): the client's check is a

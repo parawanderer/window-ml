@@ -9,8 +9,8 @@ import type { NeutralMessage } from "../contract/contract-chat";
 import { MAX_CONTINUE_STEPS } from "../agent/step-budget";
 import { AGENT_START_PAGE } from "../contract/contract-config";
 import type { MlDebugEvent } from "../contract/contract-debug";
-import { imagesRefusal, type AttachedFile, type PromptOrigin, type SentFile } from "../contract/contract-run";
-import { FilesRefused, checkFilesField, textFiles, type FileTarget } from "../attached-files";
+import { imagesRefusal, type PromptOrigin, type SentFile } from "../contract/contract-run";
+import { FilesRefused, checkFilesField, type FileTarget } from "../attached-files";
 import { bytesToB64 } from "../pdf/pdf-wire";
 import { clientUiOf } from "../agent/current-client";
 import type { SessionHistory } from "./session-store";
@@ -71,7 +71,7 @@ export interface CommandDeps {
     /** one tab, or null when it is gone */
     getTab(tabId: number): Promise<TabInfo | null>;
     /** relay a session action to the page in a tab and wait for what it did; rejects when nothing listens there */
-    toPage(tabId: number, action: "send" | "cancel" | "continue", body: { hash: string; text?: string; images?: string[]; files?: AttachedFile[]; elementContext?: unknown; maxSteps?: number }, origin?: PromptOrigin): Promise<PageOutcome>;
+    toPage(tabId: number, action: "send" | "cancel" | "continue", body: { hash: string; text?: string; images?: string[]; files?: SentFile[]; elementContext?: unknown; maxSteps?: number }, origin?: PromptOrigin): Promise<PageOutcome>;
     /** bring a tab and its window to the front; false when the tab is gone */
     focusTab(tabId: number, windowId?: number): Promise<boolean>;
     /** outline an element or point on a tab's page (fire and forget) */
@@ -168,7 +168,9 @@ export function checkedFiles(raw: unknown, target: FileTarget, held?: (sha256: s
 
 /**
  * `files` with each file named by hash (`{ name, type, sha256, bytes }`, sent ahead in `file.put` chunks) put back as
- * the PDF it names, so the one rule (`checkFilesField`) checks what arrived inline and what arrived in chunks alike.
+ * the file it names, so the one rule (`checkFilesField`) checks what arrived inline and what arrived in chunks alike:
+ * a PDF for the type `application/pdf`, and for any other type the text its bytes decode to (UTF-8, `fatal`, no NUL),
+ * never a PDF or raw bytes. A reference whose bytes are not text is refused naming the file.
  * @returns the list to check (as it came, when it is not a list), or why a reference cannot be put back
  */
 function resolveFileRefs(raw: unknown, held?: (sha256: string) => Uint8Array | null): { files: unknown } | { refused: string } {
@@ -183,9 +185,20 @@ function resolveFileRefs(raw: unknown, held?: (sha256: string) => Uint8Array | n
         const bytes = held?.(r.sha256 as string) ?? null;
         if (!bytes) return { refused: `${name} is not on this runtime: send it again` };
         if (typeof r.bytes === "number" && r.bytes !== bytes.length) return { refused: `${name} is ${bytes.length} bytes here, not ${r.bytes}: send it again` };
-        out.push({ name: r.name, type: "application/pdf", data: bytesToB64(bytes) });
+        if (typeof r.type !== "string") return { refused: `${name}: a file named by its sha256 says its type` };
+        if (r.type === "application/pdf") { out.push({ name: r.name, type: "application/pdf", data: bytesToB64(bytes) }); continue; }
+        const text = refText(bytes);
+        if (text === null) return { refused: `${name} was sent as ${r.type} but is not text: send it again` };
+        out.push({ name: r.name, type: r.type, text });
     }
     return { files: out };
+}
+
+/** A referenced file's bytes as text, or null when they are not: the test a picked file meets (attached-files.ts
+ *  `decodeTextFile`), UTF-8 that decodes with `fatal` and holds no NUL byte. */
+function refText(bytes: Uint8Array): string | null {
+    if (bytes.includes(0)) return null;
+    try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch { return null; }
 }
 
 /** One message's text, on a chat this worker hosts. Long enough for a pasted document, short of a denial of service. */
@@ -288,7 +301,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
     };
 
     /** Relay to the session's page; a page with nothing listening, or no answer, is unavailable. */
-    const viaPage = async (hash: string, action: "send" | "cancel" | "continue", body: { text?: string; images?: string[]; files?: AttachedFile[]; elementContext?: unknown; maxSteps?: number } = {}, origin?: PromptOrigin): Promise<PageOutcome | CommandResult<any>> => {
+    const viaPage = async (hash: string, action: "send" | "cancel" | "continue", body: { text?: string; images?: string[]; files?: SentFile[]; elementContext?: unknown; maxSteps?: number } = {}, origin?: PromptOrigin): Promise<PageOutcome | CommandResult<any>> => {
         const t = tabOf(hash);
         if (t.error) return t.error;
         try {
@@ -298,6 +311,8 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
         } catch (e) {
             // A worker-built run's turn refused its images before anything was sent (vision not known, no reader).
             if (e instanceof ImagesRefused) return fail("unsupported", e.message);
+            // Its files were refused (a PDF to a run a page built, one that would not read): said, never "unavailable".
+            if (e instanceof FilesRefused) return fail("invalid", e.message);
             return fail("unavailable", "the page this session ran on is not reachable (reloaded, or the extension cannot run there)");
         }
     };
@@ -556,7 +571,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             if (s.error) return s.error;
             const text = typeof c.text === "string" ? c.text : "";
             const images = Array.isArray(c.images) ? c.images.filter((i): i is string => typeof i === "string" && i.startsWith("data:image/")) : [];
-            const att = checkedFiles(c.files, pagelessChat(s.id.hash) ? "chat" : "agent-turn", deps.heldFile);
+            const att = checkedFiles(c.files, pagelessChat(s.id.hash) ? "chat" : "agent", deps.heldFile);
             if (att.error) return att.error;
             if (!text.trim() && !images.length && !att.files && !c.elementContext) return fail("invalid", "a message needs text, an image, a file or an element");
             const tooMany = imagesRefusal(images.length);
@@ -583,7 +598,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
                 if (text.length > STEER_TEXT_MAX) return fail("invalid", "that message is too long to steer with");
                 if (deps.steer(s.id.hash, text, commandOrigin(from, c.ui))) return ok({ mode: "steer" });
             }
-            const r = await viaPage(s.id.hash, "send", { text, ...(images.length ? { images } : {}), ...(att.files ? { files: textFiles(att.files) } : {}), ...(c.elementContext ? { elementContext: c.elementContext } : {}) }, commandOrigin(from, c.ui));
+            const r = await viaPage(s.id.hash, "send", { text, ...(images.length ? { images } : {}), ...(att.files ? { files: att.files } : {}), ...(c.elementContext ? { elementContext: c.elementContext } : {}) }, commandOrigin(from, c.ui));
             if (typeof r !== "string") return r;
             if (r === "steer" || r === "turn") return ok({ mode: r });
             return fail("not-found", "the page no longer holds this session (it was reloaded, or the session was never resumable)");

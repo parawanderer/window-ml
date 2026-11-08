@@ -4,7 +4,8 @@
 // (docs/dev/chat-page.md §The local index).
 import { restoreChatRecord } from "../session/chat-record";
 import { forgetRunPolicies, runPolicies, archivedPolicyLoss } from "./sw-policies";
-import { hintSession } from "../contract/contract-run";
+import { hintSession, type SentFile } from "../contract/contract-run";
+import { FilesRefused, isPdfFile, pdfToPageRun, textFiles } from "../attached-files";
 import { type MlDebugEvent } from "../contract/contract-debug";
 import { createCommandHandler, THIS_BROWSER, type CommandDeps, type PageOutcome } from "../session/session-commands";
 import { cancelBackgroundChat, configureBackgroundChats, forgetBackgroundChat, isBackgroundChat, sendBackgroundChat, setBackgroundChatModel, startBackgroundChat } from "./sw-chat";
@@ -361,8 +362,14 @@ export function configureSessionCommands(run: RunDeps): void {
                 const mine = await run.userRunAction(String((body as { hash?: unknown }).hash ?? ""), action, body as Record<string, unknown>, tabId, origin);
                 if (mine) return mine;
             }
+            // A page frames text files only: a PDF's bytes never go to one, and a message carrying one is refused, not
+            // sent without it.
+            const sent = (body as { files?: SentFile[] }).files;
+            const pdf = (sent ?? []).find(isPdfFile);
+            if (pdf) throw new FilesRefused(pdfToPageRun(pdf.name));
+            const files = textFiles(sent);
             const reqId = Math.random().toString(36).slice(2, 12);
-            const reply = await askPage(tabId, { type: "ML_SESSION_TO_PAGE", action, ...body, reqId }) as { outcome?: PageOutcome } | undefined;
+            const reply = await askPage(tabId, { type: "ML_SESSION_TO_PAGE", action, ...body, ...(files ? { files } : { files: undefined }), reqId }) as { outcome?: PageOutcome } | undefined;
             return reply?.outcome ?? "no-answer";
         },
         highlight: (tabId, ref) => { chrome.tabs.sendMessage(tabId, { type: "ML_HL_REMOTE", ref, anyMode: true }).catch(() => { /* tab gone */ }); },

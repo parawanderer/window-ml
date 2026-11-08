@@ -1,4 +1,4 @@
-// hub-file-put.test.mjs — a PDF sent from a phone to a runtime through a REAL hub (docs/spec/FILE_ATTACHMENTS.md,
+// hub-file-put.test.mjs — a PDF, or a text file too long to go whole, sent from a phone to a runtime through a REAL hub (docs/spec/FILE_ATTACHMENTS.md,
 // "Over the hub: chunks in an acknowledged window"): the chat page's client (HubConnection) sends it ahead in
 // `file.put` chunks, at most four unanswered, and the command names it by hash; the runtime (HubRuntime with a
 // FileChunks store) puts it back together, and its handler gets the bytes back by the reference. Done is the runtime's
@@ -32,7 +32,7 @@ function pdf(n, seed = 7) {
  * (checkedFiles with the store), and records what it got. `files: null` is an older runtime that takes no chunks;
  * `gate` holds every `file.put` until released.
  */
-async function world({ files = new FileChunks({ maxFileBytes: 20 * 1048576, maxTotalBytes: 60 * 1048576, ttlMs: 60_000 }), gate = null } = {}) {
+async function world({ files = new FileChunks({ maxFileBytes: 20 * 1048576, maxTotalBytes: 60 * 1048576, ttlMs: 60_000 }), gate = null, target = "chat" } = {}) {
     const hub = await startHub();
     const root = await generateIdentity();
     const runtime = await device(root, Role.ROLE_RUNTIME, [], "Work laptop");
@@ -51,7 +51,7 @@ async function world({ files = new FileChunks({ maxFileBytes: 20 * 1048576, maxT
         watch: () => () => {},
         async command(c) {
             if (c.type !== "chat.start") return { ok: false, error: { code: "unsupported", message: c.type } };
-            const att = checkedFiles(c.files, "chat", files ? (sha) => files.get(sha) : undefined);
+            const att = checkedFiles(c.files, target, files ? (sha) => files.get(sha) : undefined);
             got.push({ wire: c.files, att });
             return att.error ?? { ok: true, data: { session: { runtime: "local", hash: "c0ffee01" } } };
         },
@@ -168,6 +168,42 @@ test("a PDF past what this hub takes is refused before a chunk is sent", LIVE, a
         assert.equal(r.ok, false);
         assert.match(r.error.message, /^huge\.pdf is too large to send through this hub: 21\.0 MB; it takes files up to /);
         assert.equal(w.sealed.length, 0);
+    } finally { await w.close(); }
+});
+
+// --- a text file too long to go whole: ahead in chunks, put back as text ---
+
+/** A text of `n` characters, in lines, that a compressor would not shrink to nothing. */
+const longText = (n) => Array.from({ length: Math.ceil(n / 40) }, (_, i) => `line ${i} ${(i * 2654435761 >>> 0).toString(36)}`.padEnd(39, ".")).join("\n").slice(0, n);
+
+test("a text file that will not go whole goes ahead in chunks under its own type, and the handler gets the text back; one that fits stays inline", LIVE, async () => {
+    const w = await world({ target: "agent" });
+    try {
+        const text = longText(1_500_000);
+        const short = { name: "note.txt", type: "text/plain", text: "short" };
+        const r = await start(w, [short, { name: "server.log", type: "text/x-log", text }]);
+        assert.equal(r.ok, true, JSON.stringify(r));
+        assert.ok(w.puts.length >= 2, `${w.puts.length} chunks`);
+        const [{ wire, att }] = w.got;
+        const bytes = new TextEncoder().encode(text);
+        assert.deepEqual(wire, [short, { name: "server.log", type: "text/x-log", sha256: await sha256Hex(bytes), bytes: bytes.length }], "the long one by reference, with its own type; the short one inline");
+        assert.deepEqual(att.files, [short, { name: "server.log", type: "text/x-log", text }], "put back as text, never as a PDF");
+    } finally { await w.close(); }
+});
+
+test("a runtime that does not take chunks gets a long text inline while one message carries it, and is not sent one past that", LIVE, async () => {
+    const w = await world({ files: null, target: "agent" });
+    try {
+        const fits = longText(40_000);
+        assert.equal((await start(w, [{ name: "a.log", type: "text/plain", text: fits }])).ok, true);
+        assert.equal(w.got[0].wire[0].text, fits, "inline, as before");
+        const starts = () => w.sealed.filter((x) => x.includes('"chat.start"')).length;
+        const before = starts();
+        const r = await start(w, [{ name: "huge.log", type: "text/plain", text: longText(2_000_000) }]);
+        assert.equal(r.ok, false);
+        assert.match(r.error.message, /^huge\.log is too large to send through the hub to this runtime: 1\.9 MB; it takes up to 1\.0 MB in one message, and a newer version of it takes larger files in chunks$/);
+        assert.equal(starts(), before, "the command was never sealed");
+        assert.equal(w.got.length, 1);
     } finally { await w.close(); }
 });
 

@@ -1,6 +1,6 @@
 // file-pointer.ts — a file the person attached, as an `@file:` pointer: its record, the outline the model is given up
-// front, its pages as the `<page>` sections the `pages` verb selects, and the shelf a run's files sit on
-// (docs/spec/FILE_ATTACHMENTS.md, slice 3).
+// front, a PDF's pages as the `<page>` sections the `pages` verb selects, and the shelf a run's files sit on
+// (docs/spec/FILE_ATTACHMENTS.md, slice 3). A text file, and a long paste, are pointers too: read as their text.
 //
 // Pure: no chrome, no I/O. The bytes and the read document live in the value store; a pointer holds their keys.
 
@@ -13,7 +13,7 @@ import { isTokenShape } from "./token-id";
 export const FILE_PREFIX = "@file:";
 /** Characters of a file's name kept: the name is untrusted text and travels in every outline and refusal. */
 export const FILE_NAME_MAX = 120;
-/** Characters of the first page's text the outline previews. */
+/** Characters of the first page's text (a text file's opening) the outline previews. */
 export const FILE_PREVIEW_CHARS = 800;
 
 /** An attached file as a run holds it. The bytes and the read document are value-store rows (held for the run's
@@ -25,18 +25,20 @@ export interface FilePointer {
     name: string;
     type: string;
     bytes: number;
-    /** What the file says it has. */
+    /** A text file's lines; absent for a PDF ({@link isTextFile}). */
+    lines?: number;
+    /** What the file says it has (0 for a text file). */
     pages: number;
     /** How many were read: fewer when the read stopped (`truncated`). */
     read: number;
     /** The turn it was attached in, 1-based. */
     turn: number;
-    /** The value-store key of the read document (a JSON {@link PdfDoc}). */
+    /** The value-store key of the read document (a JSON {@link PdfDoc}); a text file's text. */
     doc: string;
     /** The value-store key of the file's bytes. */
     data: string;
     sha256: string;
-    /** Characters of page text across the pages read. */
+    /** Characters of page text across the pages read (of a text file, its text). */
     chars: number;
     /** Pages with a figure, and scanned pages, by number. */
     figures: number[];
@@ -94,6 +96,21 @@ export function filePagesSaid(f: Pick<FilePointer, "pages" | "read">): string {
     return f.read < f.pages ? `${f.read} of ${f.pages} pages read` : `${f.pages} page${f.pages === 1 ? "" : "s"}`;
 }
 
+/** Is `f` a text file (or a long paste), read as its text rather than by pages? A pointer written before text files
+ *  were held has no `lines`, and is a PDF. */
+export const isTextFile = (f: Pick<FilePointer, "lines">): boolean => typeof f.lines === "number";
+
+/** "12 pages" for a PDF ({@link filePagesSaid}), "40 lines" for a text file: a file's size in every line about it. */
+export function fileSizeSaid(f: Pick<FilePointer, "pages" | "read" | "lines">): string {
+    return isTextFile(f) ? `${f.lines} line${f.lines === 1 ? "" : "s"}` : filePagesSaid(f);
+}
+
+/** "PDF, 12 pages" / "Text, 40 lines": what a file is, as the inventory and a read's header say it. */
+export const fileKindSaid = (f: Pick<FilePointer, "pages" | "read" | "lines">): string => `${isTextFile(f) ? "Text" : "PDF"}, ${fileSizeSaid(f)}`;
+
+/** The pipe a hint suggests for reading `f`: its first pages, or a text file's opening lines. */
+export const firstRead = (f: Pick<FilePointer, "read" | "lines">): string => (isTextFile(f) ? "head -n 100" : `pages ${firstPages(f)}`);
+
 /** The `pages` argument a hint suggests: the first three pages read, or "1" for a one-page file, so it never names a
  *  page the file does not hold. */
 export const firstPages = (f: Pick<FilePointer, "read">): string => (f.read > 1 ? `1-${Math.min(f.read, 3)}` : "1");
@@ -107,9 +124,7 @@ export const firstPages = (f: Pick<FilePointer, "read">): string => (f.read > 1 
  * @returns the outline, escaped, and how many escapes it took (the block's `escaped`)
  */
 export function fileOutline(f: FilePointer, doc: PdfDoc, first?: FilePointer): { text: string; escaped: number } {
-    const who = first
-        ? `a second file by this name; the first is ${fileRef(first)}, attached in turn ${first.turn}. Attached by the person`
-        : "attached by the person";
+    const who = attachedBy(first);
     const size = filePagesSaid(f);
     const text = f.chars ? `about ${tokensOf(f.chars)} tokens of text` : "no text layer";
     const lines = [`${fileRef(f)} ${quoteName(f.name)}: ${who}. PDF, ${size}, ${text}.`];
@@ -126,6 +141,31 @@ export function fileOutline(f: FilePointer, doc: PdfDoc, first?: FilePointer): {
     }
     if (f.truncated) lines.push(f.truncated);
     // Escaped whole: the name and the preview are the file's text, and the outline sits inside the message's `<file>`.
+    return escapeSectionText(lines.join("\n"));
+}
+
+/** Who attached `f`, as an outline's first line says it: the person, and the earlier file by its name when there is one. */
+function attachedBy(first?: FilePointer): string {
+    return first
+        ? `a second file by this name; the first is ${fileRef(first)}, attached in turn ${first.turn}. Attached by the person`
+        : "attached by the person";
+}
+
+/**
+ * What the model is given up front for a held text file (or a long paste), in place of its text: the pointer, the
+ * name, who it came from, its size, how to read it, and its opening.
+ * @param f the file
+ * @param text its text, for the preview
+ * @param first the earlier file by the same name, when there is one
+ * @returns the outline, escaped, and how many escapes it took (the block's `escaped`)
+ */
+export function textOutline(f: FilePointer, text: string, first?: FilePointer): { text: string; escaped: number } {
+    const lines = [
+        `${fileRef(f)} ${quoteName(f.name)}: ${attachedBy(first)}. ${fileKindSaid(f)}, about ${tokensOf(f.chars)} tokens.`,
+        `Read with dereference(${fileRef(f)}, pipe "${firstRead(f)}"); grep -n finds a line.`,
+    ];
+    const open = text.length > FILE_PREVIEW_CHARS ? `${text.slice(0, FILE_PREVIEW_CHARS)}…` : text;
+    if (open.trim()) lines.push(`Opening:\n${open}`);
     return escapeSectionText(lines.join("\n"));
 }
 
@@ -158,6 +198,12 @@ export class FileShelf {
         return f;
     }
 
+    /** Take back files this caller noted, by id: a message that was not delivered. Only ids the caller itself added
+     *  (`attachFiles`' `added`), never a pointer the same bytes resolved to from before, which stays. */
+    drop(ids: readonly string[]): void {
+        for (const id of ids) this.byId.delete(id);
+    }
+
     /** The earliest other file held under `name`, for a second file's outline. */
     firstNamed(name: string, except?: string): FilePointer | undefined {
         return this.all().find((g) => g.id !== except && nameKey(g.name) === nameKey(name));
@@ -181,7 +227,7 @@ export class FileShelf {
             const hits = this.all().filter((g) => nameKey(g.name) === want);
             if (hits.length === 1) return { file: hits[0] };
             if (hits.length > 1) {
-                const list = hits.map((g) => `  - ${fileRef(g)} (${g.pages} pages, attached in turn ${g.turn})`).join("\n");
+                const list = hits.map((g) => `  - ${fileRef(g)} (${fileSizeSaid(g)}, attached in turn ${g.turn})`).join("\n");
                 return { error: `${hits.length} attached files are named ${quoteName(hits[0].name)}:\n${list}\nRead one by its id, or ask the person which one they meant.` };
             }
             return { error: this.fault(bare) };
@@ -197,7 +243,7 @@ export class FileShelf {
     private fault(bare: string): string {
         const head = `MemoryFault: '${FILE_PREFIX}${bare}' is not a file attached to this session.`;
         if (!this.byId.size) return `${head}\nThe person has attached no file here.`;
-        const list = this.all().map((g) => `  - ${fileRef(g)} ${quoteName(g.name)} (${g.pages} pages, turn ${g.turn})`).join("\n");
+        const list = this.all().map((g) => `  - ${fileRef(g)} ${quoteName(g.name)} (${fileSizeSaid(g)}, turn ${g.turn})`).join("\n");
         return `${head}\nAttached files:\n${list}`;
     }
 }

@@ -62,6 +62,7 @@ import type { SiteRunEvent } from "./contract/contract-debug";
 import { START_REFUSED } from "./agent-start";
 import { startUserRun, userRunAction, steerRun, noteRefusedTurn } from "./sw/sw-run-start";
 import { ImagesRefused } from "./image-gate";
+import { FilesRefused, cleanFiles, isPdfFile, pdfToPageRun, textFiles } from "./attached-files";
 import { adoptOnTab } from "./sw/adopt-run";
 import { pageRebuild } from "./agent/run-assembly";
 import { runControlPayloadError } from "./sw/run-payload-check";
@@ -393,14 +394,20 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             // A run the worker holds is never a page's to drive, and the person's message for it goes to no page: not to
             // the panel's tab when the run is on another (userRunAction answers null there), and not when that failed.
             if (typeof message.hash === "string" && isWorkerRun(message.hash)) return;
-            try { void chrome.tabs.sendMessage(message.tabId, { type: "ML_SESSION_TO_PAGE", action: message.action, hash: message.hash, text: message.text, images: message.images, ...(message.surface ? { surface: message.surface } : {}), ...(typeof message.maxSteps === "number" ? { maxSteps: message.maxSteps } : {}) }).catch(() => {}); } catch { /* tab gone */ }
+            // A page frames text files only: a PDF's bytes never go to one, and a message carrying one is refused, not
+            // sent without it.
+            const pdf = (sentFiles ?? []).find(isPdfFile);
+            if (pdf) { if (typeof message.hash === "string") noteRefusedTurn(message.hash, pdfToPageRun(pdf.name)); return; }
+            const files = textFiles(sentFiles);
+            try { void chrome.tabs.sendMessage(message.tabId, { type: "ML_SESSION_TO_PAGE", action: message.action, hash: message.hash, text: message.text, images: message.images, ...(files ? { files } : {}), ...(message.surface ? { surface: message.surface } : {}), ...(typeof message.maxSteps === "number" ? { maxSteps: message.maxSteps } : {}) }).catch(() => {}); } catch { /* tab gone */ }
         };
+        const sentFiles = cleanFiles(message.files);
         // A run the worker built is driven from here: the page never carries the person's message (sw-run-start.ts).
         if ((message.action === "send" || message.action === "continue") && typeof message.hash === "string") {
-            void userRunAction(message.hash, message.action, { text: message.text, images: message.images, surface: message.surface, maxSteps: message.maxSteps }, message.tabId)
+            void userRunAction(message.hash, message.action, { text: message.text, images: message.images, ...(message.files != null ? { files: message.files } : {}), surface: message.surface, maxSteps: message.maxSteps }, message.tabId)
                 .then((mine) => { if (!mine) toPage(); }, (e) => {
                     // As on USER_RUN_ACTION: a refused turn is said in the run's step list, never handed to the page.
-                    if (e instanceof ImagesRefused) { noteRefusedTurn(message.hash as string, e.message); return; }
+                    if (e instanceof ImagesRefused || e instanceof FilesRefused) { noteRefusedTurn(message.hash as string, e.message); return; }
                     toPage();
                 });
             return;
@@ -863,7 +870,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         userRunAction(p.hash, p.action, message.payload, sender.tab.id).then((outcome) => sendResponse({ data: outcome }), (e) => {
             // Images the run may not be sent (vision not known, no reader): said in the run's step list, since this
             // surface has no other place to say it, and answered as handled so the shell does not hand it to the page.
-            if (e instanceof ImagesRefused) { noteRefusedTurn(p.hash as string, e.message); sendResponse({ data: null, refused: e.message }); return; }
+            if (e instanceof ImagesRefused || e instanceof FilesRefused) { noteRefusedTurn(p.hash as string, e.message); sendResponse({ data: null, refused: e.message }); return; }
             sendResponse({ data: null });
         });
         return true;
