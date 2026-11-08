@@ -267,7 +267,7 @@ test("a DevTools composer message for a run the worker holds, sent from the pane
     // userRunAction refuses a run driven from a tab that is not its own (null), and the router then relayed the
     // person's message to the panel's tab as ML_SESSION_TO_PAGE, which the shell posts on that page's window.
     const model = scripted([{ calls: [], answer: SECRET.summary }]);
-    const w = tabWorld({ url: SITE, local: {}, model });
+    const w = tabWorld({ url: SITE, local: { ml_site_always: ["https://site.example"] }, model });
     const { hash } = await w.bg.context.__mlStartUserRunForTest(7, { task: SECRET.task, surface: "hud" }, { approvalRouting: "both" });
     await until(w, () => result(w, hash, 0));
     for (const action of ["send", "continue"]) w.bg.send({ type: "ML_SESSION_REMOTE", tabId: 9, hash, action, text: SECRET.follow });
@@ -275,8 +275,12 @@ test("a DevTools composer message for a run the worker holds, sent from the pane
     const toPage = w.bg.tabMessages.filter(([, m]) => m.type === "ML_SESSION_TO_PAGE").map(([t, m]) => [t, plain(m)]);
     assert.deepEqual(toPage, [], "the person's message went to no page");
     assert.ok(!JSON.stringify(model.bodies).includes(SECRET.follow), "nor did it drive the run from another tab");
-    // Control: a run the worker does not hold (a page's own) is still relayed to the panel's tab.
+    // Control: a session the page on tab 7 built (its builder recorded, page-route.ts) is still relayed to its tab, and
+    // only to it: the same hash from the panel of tab 9 is not.
+    w.bg.sessionStore.ml_pagebuilt = { "page-owned-run": { tabId: 7, origin: "https://site.example", kind: "chat", ts: 1 } };
     w.bg.send({ type: "ML_SESSION_REMOTE", tabId: 9, hash: "page-owned-run", action: "send", text: "for the page" });
+    w.bg.send({ type: "ML_SESSION_REMOTE", tabId: 7, hash: "page-owned-run", action: "send", text: "for the page" });
     await sleep(50);
-    assert.equal(w.bg.tabMessages.filter(([t, m]) => t === 9 && m.type === "ML_SESSION_TO_PAGE" && m.hash === "page-owned-run").length, 1);
+    const relayed = w.bg.tabMessages.filter(([, m]) => m.type === "ML_SESSION_TO_PAGE" && m.hash === "page-owned-run").map(([t]) => t);
+    assert.deepEqual(relayed, [7]);
 });
