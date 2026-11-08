@@ -857,6 +857,9 @@ for whether it can bind a live method or reach a denied prop; a new allowed meth
 return leaks the realm. The invariant is unchanged: gaps degrade to "asks the human," never to "runs
 unsafely" — new tests prove the new surface keeps that.
 
+  **A new allowed method is decided in `policy.ts` `CONVERTS` (which arguments the host converts to a primitive) or `NO_CONVERSION` (with a reason).**
+  `tests/readonly-convert.test.mjs` fails for a method in neither.
+
   **The escape tests are not enough on their own: re-check the whole CONTRACT, not just the new surface.** An
   extension can break an argument made for an EARLIER one, and nothing notices: `for…of` was argued terminating
   because nothing could grow an iterable, and the next day's owned `Set`/`Map` mutators made
@@ -879,6 +882,18 @@ unsafely" — new tests prove the new surface keeps that.
   array of them passes; any other element (a page object, a script-built one with a `toString` arrow, a Date, a function) is
   `NotInDialect`, as is an object or function SEPARATOR (judged by `typeof`, before anything stringifies it), a getter or an inherited index (own data descriptors are read, never run). A Proxy array's traps are page
   code by design and are not made worse.
-  **Open** (a coercion that runs the object's own `toString`, with or without a tag): a pattern
-  object coerced by native `replaceAll`/`replace` (`ToString(searchValue)`, which also reads the tag), and `String(obj).length`
-  (`evaluator.ts` `replace`/`replaceAll` charge) on a real String object carrying its own `toString`.
+- **Whatever a host call or an operator CONVERTS is judged once, by provenance** (`evaluator.ts` `converts`). A host method converts an
+  object argument with ToString or ToNumber, which runs the object's own `toString`/`valueOf`, so each converting position
+  (`CONVERTS` in `policy.ts`, by receiver kind and method: the string, array-index, number, Math, `Number.parse*`, `Date.parse`/`UTC`,
+  `JSON.parse`, DOM finder, `getAttribute`/`matches`/`closest`, `getPropertyValue`/`item` and locale-options positions), the converting
+  bare roots (`String`, `Number`, `parseInt`, `parseFloat`, `isNaN`, `isFinite`, `getComputedStyle`'s pseudo-element), and every operand
+  of an operator, a template and a computed key goes through it. It answers the value to USE: a primitive is itself; a String object is
+  its primitive, read by the intrinsic's slot, so its own `toString`/`valueOf`/`split` and a Proxy around it are never looked up (a
+  String object receiver is called as its primitive); an array passes `joinsData`; a RegExp passes where a pattern is taken; an object the
+  SCRIPT built (`owned`) passes only if its own `toString`/`valueOf`/`Symbol.toPrimitive` are arrows the script wrote and it has no own
+  `Symbol.toStringTag` and only intrinsic prototypes (`convertsByIntrinsics`); anything else, a page's object included, is
+  `NotInDialect` naming the method or operator and never the value (the survey asks). Never decided by inspecting a page's object, since
+  inspection can itself run its traps. A function is not judged here (a callback is `onlyOurFunctions`'s). **Every admitted method is in
+  `CONVERTS` or `NO_CONVERSION`** (with a reason); `tests/readonly-convert.test.mjs` walks `METHODS_BY_KIND` and fails for a method in
+  neither, so a method added to the whitelist is decided. A page's `Date` or element used as an operand now asks (a `new Date` the script made
+  passes). `tests/redteam-coerce-args.test.mjs` is the measured list of 35 positions.
