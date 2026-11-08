@@ -48,7 +48,8 @@ result reaches the model through the run inbox at the next step boundary, or thr
 - **One task table for every executor** (`sw-tasks.ts`, state `run.tasks`), with statuses `running`, `done`, `failed`,
   `cancelled` and `orphaned`. An executor gives `cancel`, `tail` and a `settled` promise. `ml.sh`'s `tail` is null
   with a sentence saying why: the host reports a call's output only at `done`, until the host `peek` op lands.
-- **The result goes one way, once.** If a `task await` is waiting, it gets the result. Otherwise the result is queued
+- **The result goes one way, once.** `taskOutcomeOf` (`sw-shell-call.ts`) cuts each stream's text to exec's output cap, with its pointer. If
+  a `task await` is waiting, it gets the result. Otherwise the result is queued
   in `runInboxes` as `{ text, task }` (only `sw-tasks.ts` sets `task`). It is DELIVERED only when the loop drains it
   (`taskDrained`, called from the run host's `drainInbox`): only then is it fanned as `agent-task-say` (worker-only,
   `event-admission.ts`), logged `task`/`collected`, and drawn and exported under the task's id, never as the person's
