@@ -124,3 +124,20 @@ test("a refused conversion leaves nothing behind when the survey falls out of di
     await assert.rejects(evalReadonly(`const o = await ml.models(); document.body.setAttribute("x", "1"); return "abc".slice(o)`, d, handed({ toString: () => "1" }), undefined, {}), refused);
     assert.equal(d.body.innerHTML, before);
 });
+
+test("a String object of another realm unboxes as a script-built one does; a Proxy around a String does not", async () => {
+    const ran = [];
+    const foreign = new (new JSDOM("").window.String)("a,b");
+    foreign.toString = () => { ran.push("toString"); return "PAGE"; };
+    foreign.valueOf = () => { ran.push("valueOf"); return "PAGE"; };
+    assert.equal((await run(`const s = await ml.models(); return s + "!"`, foreign)).value, "a,b!");
+    assert.deepEqual((await run(`const s = await ml.models(); return s.split(",")`, foreign)).value, ["a", "b"]);
+    assert.equal((await run(`const s = await ml.models(); return "xa,bx".includes(s)`, foreign)).value, true);
+    assert.deepEqual(ran, [], "the foreign String's own conversions ran");
+
+    const trapped = [];
+    const wrapped = new Proxy(new String("a,b"), { get(t, k, r) { trapped.push(String(k)); return Reflect.get(t, k, r); } });
+    for (const js of [`const s = await ml.models(); return s + "!"`, `const s = await ml.models(); return "abc".includes(s)`, `const s = await ml.models(); return s.split(",")`])
+        await assert.rejects(run(js, wrapped), (e) => refused(e) && /(operator \+|includes|split)/.test(e.message), js);
+    assert.ok(!trapped.some((k) => k === "valueOf" || k === "toString" || String(k).startsWith("Symbol(Symbol.toPrimitive")), `a Proxy trap saw a conversion: ${trapped}`);
+});
