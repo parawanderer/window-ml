@@ -364,6 +364,10 @@ export function decideApproval(policy, gate) {
 /** The scripted fake LLM's model name: every model call of a fake run, and the seed turn of a seeded one. */
 export const FAKE_MODEL = "fake-model";
 
+/** The tools a factory on `ml` makes, which `ml.domTools` does not hold: a tools subset naming one gets it from its
+ *  factory (tool name → `ml` member; src/ml/ml-tool-factories.ts). tests/bench-run-once.test.mjs pins each pair. */
+export const FACTORY_TOOLS = [["fetch_url", "fetchTool"], ["click", "clickTool"], ["type", "typeTool"]];
+
 /**
  * Drive one agent run end to end and return everything it produced.
  *
@@ -625,7 +629,7 @@ export async function runOnce(cfg = {}) {
         let uiHash = null;
         /** Start a console run in the page: an `ml.createAgent` handle for a multi-turn run, else one `ml.agent` call.
          *  Self-contained (it runs in the page), so the same function can rebuild the handle in a new document. */
-        const launchInPage = ({ task, needsHandle, toolNames, toolTokens, python, extra, stream, resume }) => {
+        const launchInPage = ({ task, needsHandle, toolNames, toolTokens, python, extra, stream, resume, factoryTools }) => {
             const opts = {
                 toolTokens,
                 approvalRouting: "both",   // gates show in the UI AND are resolvable via the __mlApprovals channel
@@ -640,6 +644,14 @@ export async function runOnce(cfg = {}) {
             // free tier fits). vision:false stops look/locate from auto-wiring back in.
             if (toolNames && toolNames.length) {
                 opts.tools = (window.ml.domTools || []).filter((t) => toolNames.includes(t.name));
+                // The tools a factory makes are not in domTools: a subset naming one gets it from the factory, or
+                // the name would drop out silently (tools-into-js's `fetch_url` arm ran with no fetch_url).
+                // A missing factory throws: a silent skip is the failure this repairs.
+                for (const [name, make] of factoryTools) {
+                    if (!toolNames.includes(name) || opts.tools.some((t) => t.name === name)) continue;
+                    if (typeof window.ml[make] !== "function") throw new Error(`run-once: the subset names ${name}, and ml.${make} is not a function`);
+                    opts.tools.push(window.ml[make]());
+                }
                 opts.vision = false;
             }
             // python_exec is an extraTool, so it survives the tools subset filter above.
@@ -660,7 +672,7 @@ export async function runOnce(cfg = {}) {
             }
             return null;
         };
-        const launchArgs = { task, needsHandle, toolNames: tools, toolTokens, python, extra: agentOptions, stream };
+        const launchArgs = { task, needsHandle, toolNames: tools, toolTokens, python, extra: agentOptions, stream, factoryTools: FACTORY_TOOLS };
         if (!surface) try {
             await page.evaluate(launchInPage, launchArgs);
         } catch (e) { error = String(e); }

@@ -421,6 +421,27 @@ every glance at the bench cost a cold start. Installing a package and choosing w
 are **stated in words, not drawn as controls that no-op**: an affordance that silently does nothing cannot be
 told from a bug, so you try it twice.
 
+**Stopping a bench script.** While a bench script runs, the header's ▶ is a Stop button (the composer's `IconStop`). Stop INTERRUPTS, as Jupyter's
+Interrupt does: the script ends with `KeyboardInterrupt` in its output and the kept variables survive. A Python loop
+answers in a few milliseconds; C code (one `sum(range(…))`, a numpy call) not until it returns, which may be minutes. So
+if the interrupt has not ended the run within `BENCH_STOP_KILL_MS` (1 s, a stated guess under the same bench rule as
+`SH_LEASE_MS`: no bound between 3 ms and minutes helps), the worker is killed as the 15 s cap kills it, and the result
+says the variables are gone ("Stopped by restarting the sandbox …", the kill's reason `stopped`). Reset now works after
+a Stop; before, it queued behind a runaway run on the worker's chain.
+
+- **The buffer.** `ensureWorker` (offscreen.ts) posts each Python worker an `Int32Array` over a `SharedArrayBuffer` before
+  anything else, and the worker installs it at boot (`py.setInterruptBuffer`). Writing 2 raises `KeyboardInterrupt` at the
+  next bytecode. An extension page has `SharedArrayBuffer` without COOP/COEP; that is Chrome's policy for extension
+  origins, not something the manifest asks for, and if Chrome ever withdrew it the buffer is simply absent: Stop answers
+  that nothing runs, and the only stop left is closing the bench or the 15 s cap.
+- **Clear before every run.** A stop written while C code ran, after the script's last bytecode, stays PENDING and fires
+  on the next bytecode the worker runs: the next script's (measured). `clearInterrupt` runs before a run touches the
+  interpreter and again when it ends (`tests/python-bench-stop.test.mjs`, red without it).
+- **Who may stop what.** `PYTHON_INTERRUPT` is answered for extension pages only (`isExtensionSender`), is not in
+  `HANDLE_MAP`, and names no request: the offscreen document interrupts only the started bench run (`persist`) of the
+  `own` principal (`interruptBench`). No message can reach another namespace, a model's `python_exec` cell included;
+  stopping a model's cell is ASYNC_CALLS.md mode 1's `python_exec` slice, which will use this same buffer.
+
 **The bench editor's COMPLETION is Jedi, in the sandbox (`COMPLETE_HELPER`/`completeIn`, python-runtime.ts).**
 Static analysis of the script being typed — it is never RUN — so a sandbox that holds no state is no limit for
 anything reached through an import or written in the script: module attributes (`np.ara`), pandas frames

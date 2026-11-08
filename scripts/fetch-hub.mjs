@@ -13,6 +13,7 @@ import { existsSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
@@ -40,11 +41,56 @@ function target() {
     return known[key];
 }
 
-const get = async (url) => {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`${res.status} ${res.statusText} for ${url}`);
-    return new Uint8Array(await res.arrayBuffer());
-};
+/** Between attempts: the CDN's 504 window is measured in tens of seconds, not milliseconds. */
+const backoff = (attempt) => new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+
+/**
+ * The release archive and its shasum line. `name` is the asset's OWN name — the `.tar.gz` file on the
+ * release, `wmlhub-<tag>-<target>.tar.gz` — the same string the download URL and the API's `asset.name`
+ * carry. The `releases/download/` CDN has answered 504 for window-ml-hub specifically (e3, 2026-11-08:
+ * three CI reruns in the same window 504'd there while `github.com` itself was still 302, and a fourth
+ * run's setup steps hit `Unexpected HTTP response: 504` on other github.com URLs too). The release API's
+ * asset endpoint (`Accept: application/octet-stream`) is a second route to the same bytes and their
+ * `digest`, but it serves them from the same CDN and 504s in the same window (#1535's e2e 2/3 at
+ * 10:40Z found asset 610193376 and then 504'd on it). So EACH path gets three attempts with the same
+ * short backoff, and only after both are spent does this throw. The sha256 check in `main` below is
+ * what makes a wrong body safe either way. `sleep(attempt)` is the wait between two attempts: a
+ * parameter so the tests run in milliseconds, `backoff` (the real wait) unless they say otherwise.
+ */
+export async function releaseAsset(tag, name, sleep = backoff) {
+    const base = `https://github.com/${REPO}/releases/download/${tag}`;
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const direct = await Promise.all([
+            fetch(`${base}/${name}`),
+            fetch(`${base}/${name}.sha256`),
+        ]).catch(() => null);
+        if (direct?.[0]?.ok && direct[1]?.ok) {
+            // A body that dies mid-read is the same transport window as a fetch that dies before the
+            // response (e3's `fetch failed`): it takes the retry too, or the run dies unretried one layer down.
+            const pair = await Promise.all([direct[0].arrayBuffer(), direct[1].arrayBuffer()]).catch(() => null);
+            if (pair) return { archive: new Uint8Array(pair[0]), sums: new Uint8Array(pair[1]) };
+        }
+        if (attempt < 2) await sleep(attempt);
+    }
+    // Both 5xx'd: take the release API's asset endpoint, retried the same way — its bytes come down the
+    // same CDN, so one shot at it is one shot at the window that just refused the download route.
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const meta = await fetch(`https://api.github.com/repos/${REPO}/releases/tags/${tag}`).catch(() => null);
+        const parsed = meta?.ok ? await meta.json().catch(() => null) : null;
+        if (parsed) {
+            const asset = (parsed.assets ?? []).find((a) => a.name === name);
+            if (!asset?.id) throw new Error(`no asset named ${name} on ${tag}`);
+            const bytes = await fetch(`https://api.github.com/repos/${REPO}/releases/assets/${asset.id}`, { headers: { Accept: "application/octet-stream" } }).catch(() => null);
+            const body = bytes?.ok ? await bytes.arrayBuffer().catch(() => null) : null;
+            if (body) {
+                const digest = String(asset.digest || "").replace(/^sha256:/, "");
+                return { archive: new Uint8Array(body), sums: new TextEncoder().encode(`${digest}  ${name}\n`) };
+            }
+        }
+        if (attempt < 2) await sleep(attempt);
+    }
+    throw new Error(`neither the download route nor the release API served ${name} on ${tag}`);
+}
 
 async function main() {
     const tag = await pinnedTag();
@@ -53,19 +99,19 @@ async function main() {
         console.log(`wmlhub ${tag} is already in ${dir} (--force to replace it)`);
         return;
     }
-    const name = `wmlhub-${tag}-${target()}`;
-    const base = `https://github.com/${REPO}/releases/download/${tag}`;
-    console.log(`fetching ${name}.tar.gz`);
-    const [archive, sums] = await Promise.all([get(`${base}/${name}.tar.gz`), get(`${base}/${name}.tar.gz.sha256`)]);
+    const asset = `wmlhub-${tag}-${target()}.tar.gz`;   // the release asset's own name
+    const unpacked = asset.slice(0, -".tar.gz".length); // the tar's top directory, no suffix
+    console.log(`fetching ${asset}`);
+    const { archive, sums } = await releaseAsset(tag, asset);
 
     // CHECKED BEFORE IT IS UNPACKED, let alone run: this ends in a binary that a test suite executes, and a download
     // nobody verifies is a supply chain with no links in it. The file is `<sha>  <name>`, as shasum writes it.
     const want = new TextDecoder().decode(sums).trim().split(/\s+/)[0];
     const got = createHash("sha256").update(archive).digest("hex");
     if (!/^[0-9a-f]{64}$/.test(want)) throw new Error(`the published checksum is not one: ${want.slice(0, 80)}`);
-    if (got !== want) throw new Error(`checksum mismatch for ${name}.tar.gz\n  published ${want}\n  downloaded ${got}`);
+    if (got !== want) throw new Error(`checksum mismatch for ${asset}\n  published ${want}\n  downloaded ${got}`);
 
-    const tmp = join(tmpdir(), `${name}-${process.pid}`);
+    const tmp = join(tmpdir(), `${unpacked}-${process.pid}`);
     await mkdir(tmp, { recursive: true });
     await mkdir(dir, { recursive: true });
     try {
@@ -73,7 +119,7 @@ async function main() {
         await writeFile(tar, archive);
         await run("tar", ["-xzf", tar, "-C", tmp]);
         for (const bin of ["wmlhub", "wmlbox"]) {
-            await writeFile(join(dir, bin), await readFile(join(tmp, name, bin)));
+            await writeFile(join(dir, bin), await readFile(join(tmp, unpacked, bin)));
             await chmod(join(dir, bin), 0o755);
         }
     } finally {
@@ -84,4 +130,6 @@ async function main() {
     console.log(`${stdout.trim()} → ${dir}`);
 }
 
-main().catch((e) => { console.error(`fetch-hub: ${e?.message ?? e}`); process.exit(1); });
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+    main().catch((e) => { console.error(`fetch-hub: ${e?.message ?? e}`); process.exit(1); });
+}

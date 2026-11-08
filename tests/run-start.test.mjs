@@ -642,6 +642,37 @@ test("a run a page built is refused a PDF by name, from the panel (USER_RUN_ACTI
     assert.match(big.refused, /^big\.txt is too large to send whole: 40 kB; a message takes up to 32 kB of files\. This run was built by the page/);
 });
 
+test("ADVERSARIAL: files from the HUD card's sessionSend for a run a PAGE built still meet userRunAction's guards: its tab on ANOTHER site, or another tab's id, is refused and nothing reaches a page", { ...T, todo: "needs #1520 (pageRunMoved)" }, async () => {
+    // The card's sessionSend reaches the worker as USER_RUN_ACTION from the shell's tab (shell.ts, `workerFirst`), so the
+    // guards are the ones the two rows of #1520 pin; this row is the card's route through them with a file the card now sends.
+    const A = "https://builder.example/", B = "https://other.example/";
+    const tabs = [{ id: 7, url: A, title: "Builder" }, { id: 8, url: B, title: "Other" }];
+    const bg = loadBackground({
+        config, siteGate: true, local: { ml_site_always: ["https://builder.example", "https://other.example"] },
+        openTabs: tabs,
+        onFetch: (call) => call.url.includes("/chat/completions") ? jsonResponse({ choices: [{ message: { content: "ok" } }] }) : jsonResponse({}),
+        onTabMessage: async (_t, msg) => (msg.type === "ADOPT_RUN_NOW" ? { pageInfo: "" } : msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.finish ? { result: "" } : undefined),
+    });
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "pagebuilt4", task: "first", systemPrompt: "S", tools: [], model: "m", think: null, maxSteps: 2,
+        autoApprovePython: false, autoApproveReadonly: false, surface: "off",
+        rebuild: { toolNames: [], model: "m", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: true },
+    } }, { tab: { id: 7, url: A }, url: A });
+    await flush(20);
+    const toPage = () => bg.tabMessages.filter(([, m]) => m.type === "ML_SESSION_TO_PAGE" && m.files).length;
+    // The tab now shows another approved site.
+    tabs[0].url = B;
+    const moved = await bg.send({ type: "USER_RUN_ACTION", payload: { hash: "pagebuilt4", action: "send", text: "and this", files: [NOTES], surface: "hud" } }, { tab: { id: 7, url: B }, url: B });
+    assert.deepEqual([moved.data, typeof moved.refused], [null, "string"], "refused with a reason, answered as handled, so the shell hands the page nothing");
+    assert.match(moved.refused, /notes\.txt/);
+    // Another tab's id.
+    tabs[0].url = A;
+    const other = await bg.send({ type: "USER_RUN_ACTION", payload: { hash: "pagebuilt4", action: "send", text: "and this", files: [NOTES], surface: "hud" } }, { tab: { id: 8, url: B }, url: B });
+    assert.deepEqual([other.data, typeof other.refused], [null, "string"]);
+    await flush(20);
+    assert.equal(toPage(), 0, "no ML_SESSION_TO_PAGE carried the file");
+});
+
 test("a PDF for a run this worker does not hold is refused, never handed to a page without it", T, async () => {
     const { bg } = world();
     const r = await bg.send({ type: "USER_RUN_ACTION", payload: { hash: "0".repeat(32), action: "send", text: "x", files: [PDF] } }, fromTab);
