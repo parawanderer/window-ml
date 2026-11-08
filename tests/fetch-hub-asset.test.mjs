@@ -52,6 +52,67 @@ test("three 5xxs on the download fall back to the release API asset endpoint", a
     }
 });
 
+// --- the API's bytes come down the same CDN and 504 in the same window (#1535's e2e 2/3, 2026-11-08 10:40Z) ---
+
+test("the API's own bytes 504 twice and the third try lands: the fallback is retried, not one shot", async () => {
+    const digest = "cd".repeat(32);
+    const body = new TextEncoder().encode("third time\n");
+    let downloadHits = 0, bytesHits = 0;
+    const real = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+        const u = String(url);
+        if (u.includes("/releases/download/")) {
+            if (!u.endsWith(".sha256")) downloadHits++;
+            return { ok: false, status: 504, statusText: "", arrayBuffer: async () => new Uint8Array() };
+        }
+        if (u.includes("/releases/tags/")) {
+            return { ok: true, status: 200, json: async () => ({ assets: [{ id: 4242, name: "wmlhub-x86_64-unknown-linux-gnu.tar.gz", digest: "sha256:" + digest }] }) };
+        }
+        if (u.includes("/releases/assets/")) {
+            bytesHits++;
+            const ok = bytesHits > 2;
+            return { ok, status: ok ? 200 : 504, statusText: "", arrayBuffer: async () => body };
+        }
+        throw new Error(`unexpected URL: ${u}`);
+    };
+    try {
+        const got = await releaseAsset("v0.4.3", "wmlhub-x86_64-unknown-linux-gnu.tar.gz");
+        assert.equal(Buffer.from(got.archive).toString("utf8"), "third time\n");
+        assert.equal(downloadHits, 3, "the download route was spent first");
+        assert.equal(bytesHits, 3, "the API's bytes were asked three times");
+    } finally {
+        globalThis.fetch = real;
+    }
+});
+
+test("both routes 5xx through every attempt: one error naming both, no body", async () => {
+    // The shape of the CI failure: the download route 504s, the API metadata answers and names the asset,
+    // and the asset's own bytes 504 too (they come down the same CDN).
+    const real = globalThis.fetch;
+    const asked = [];
+    globalThis.fetch = async (url) => {
+        const u = String(url);
+        asked.push(u);
+        if (u.includes("/releases/tags/")) {
+            return { ok: true, status: 200, json: async () => ({ assets: [{ id: 4242, name: "wmlhub-x86_64-unknown-linux-gnu.tar.gz", digest: "sha256:" + "ab".repeat(32) }] }) };
+        }
+        return { ok: false, status: 504, statusText: "", arrayBuffer: async () => new Uint8Array() };
+    };
+    try {
+        const err = await releaseAsset("v0.4.3", "wmlhub-x86_64-unknown-linux-gnu.tar.gz").then(() => null, (e) => e);
+        assert.ok(err, "it throws");
+        assert.equal(err.message, "neither the download route nor the release API served wmlhub-x86_64-unknown-linux-gnu.tar.gz on v0.4.3", "one error naming both routes and the asset");
+        const downloads = asked.filter((u) => u.includes("/releases/download/") && !u.endsWith(".sha256")).length;
+        const meta = asked.filter((u) => u.includes("/releases/tags/")).length;
+        const bytes = asked.filter((u) => u.includes("/releases/assets/")).length;
+        assert.equal(downloads, 3, "three download attempts");
+        assert.equal(meta, 3, "three API metadata attempts");
+        assert.equal(bytes, 3, "three API byte attempts — the bytes fetch is what 504'd in CI");
+    } finally {
+        globalThis.fetch = real;
+    }
+});
+
 test("an intermittent 504 is survived by the retry, with no API call", async () => {
     const digest = "cd".repeat(32);
     const archive = new TextEncoder().encode("straight from the cdn\n");

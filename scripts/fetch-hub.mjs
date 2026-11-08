@@ -41,15 +41,20 @@ function target() {
     return known[key];
 }
 
+/**Between attempts: the CDN's 504 window is measured in tens of seconds, not milliseconds. */
+const backoff = (attempt) => new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+
 /**
  * The release archive and its shasum line. `name` is the asset's OWN name — the `.tar.gz` file on the
  * release, `wmlhub-<tag>-<target>.tar.gz` — the same string the download URL and the API's `asset.name`
  * carry. The `releases/download/` CDN has answered 504 for window-ml-hub specifically (e3, 2026-11-08:
  * three CI reruns in the same window 504'd there while `github.com` itself was still 302, and a fourth
- * run's setup steps hit `Unexpected HTTP response: 504` on other github.com URLs too). Three attempts
- * with a short backoff on the download; only then does this fall back to the release API's asset endpoint
- * (`Accept: application/octet-stream`), a genuine second path that serves the same bytes and its `digest`
- * with no token. The sha256 check in `main` below is what makes a wrong body safe either way.
+ * run's setup steps hit `Unexpected HTTP response: 504` on other github.com URLs too). The release API's
+ * asset endpoint (`Accept: application/octet-stream`) is a second route to the same bytes and their
+ * `digest`, but it serves them from the same CDN and 504s in the same window (#1535's e2e 2/3 at
+ * 10:40Z found asset 610193376 and then 504'd on it). So EACH path gets three attempts with the same
+ * short backoff, and only after both are spent does this throw. The sha256 check in `main` below is
+ * what makes a wrong body safe either way.
  */
 export async function releaseAsset(tag, name) {
     const base = `https://github.com/${REPO}/releases/download/${tag}`;
@@ -61,17 +66,24 @@ export async function releaseAsset(tag, name) {
         if (direct?.[0]?.ok && direct[1]?.ok) {
             return { archive: new Uint8Array(await direct[0].arrayBuffer()), sums: new Uint8Array(await direct[1].arrayBuffer()) };
         }
-        if (attempt < 2) await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+        if (attempt < 2) await backoff(attempt);
     }
-    // Three 5xxs and still nothing: take the API asset endpoint, which is the genuine second path.
-    const meta = await fetch(`https://api.github.com/repos/${REPO}/releases/tags/${tag}`);
-    if (!meta.ok) throw new Error(`${meta.status} ${meta.statusText} for the release ${tag}`);
-    const asset = ((await meta.json()).assets ?? []).find((a) => a.name === name);
-    if (!asset?.id) throw new Error(`no asset named ${name} on ${tag}`);
-    const bytes = await fetch(`https://api.github.com/repos/${REPO}/releases/assets/${asset.id}`, { headers: { Accept: "application/octet-stream" } });
-    if (!bytes.ok) throw new Error(`${bytes.status} ${bytes.statusText} for asset ${asset.id}`);
-    const digest = String(asset.digest || "").replace(/^sha256:/, "");
-    return { archive: new Uint8Array(await bytes.arrayBuffer()), sums: new TextEncoder().encode(`${digest}  ${name}\n`) };
+    // Both 5xx'd: take the release API's asset endpoint, retried the same way — its bytes come down the
+    // same CDN, so one shot at it is one shot at the window that just refused the download route.
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const meta = await fetch(`https://api.github.com/repos/${REPO}/releases/tags/${tag}`).catch(() => null);
+        if (meta?.ok) {
+            const asset = ((await meta.json()).assets ?? []).find((a) => a.name === name);
+            if (!asset?.id) throw new Error(`no asset named ${name} on ${tag}`);
+            const bytes = await fetch(`https://api.github.com/repos/${REPO}/releases/assets/${asset.id}`, { headers: { Accept: "application/octet-stream" } }).catch(() => null);
+            if (bytes?.ok) {
+                const digest = String(asset.digest || "").replace(/^sha256:/, "");
+                return { archive: new Uint8Array(await bytes.arrayBuffer()), sums: new TextEncoder().encode(`${digest}  ${name}\n`) };
+            }
+        }
+        if (attempt < 2) await backoff(attempt);
+    }
+    throw new Error(`neither the download route nor the release API served ${name} on ${tag}`);
 }
 
 async function main() {
