@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { parseShPut, putFacts, putCardLines, putSubject, putRefusalText, putTooLargeText, base64Of, PUT_PATH_MAX } from "../src/shell/sh-put.ts";
 import { ShRefused } from "../src/shell/sh-call.ts";
 import { free, boundFor } from "../src/effects.ts";
+import { evalPolicy } from "../src/readonly-exec/policy-realm.ts";
 
 const refused = (args, re) => assert.throws(() => parseShPut(args), (e) => e instanceof ShRefused && e.code === "BadRequest" && re.test(e.message), `${JSON.stringify(args)}`);
 const hostFacts = (rel, over = {}) => ({ id: "p1", path: `/w/${rel}`, root: "/w", rel, exists: false, existingSize: null, size: 10, tilde: [], ...over });
@@ -57,6 +58,36 @@ test("the sh-call keys are present, so a policy written for ml.sh.run reads them
     assert.equal(f.put.sha256, FILE.sha256);
     assert.equal((c => c.program.path.startsWith("/usr"))(f), false);
     assert.equal((c => c.argv[0] === "git")(f), false);
+});
+
+// --- a policy written for programs never frees a put (the coordinator's condition, 2026-11-08) ---
+
+/** Allow policies a person writes for named programs, each freeing a real call of that program (the control below). */
+const PROGRAM_POLICIES = [
+    "(c) => c.program.path === \"/usr/bin/git\"",
+    "(c) => c.argv[0] === \"git\"",
+    "(c) => c.argv.length > 0 && c.argv[0] === \"ls\"",
+    "(c) => c.program.path.endsWith(\"/rg\") && c.cwd.inRoot",
+    "(c) => c.placement === \"host-sandbox\" && c.argv.includes(\"status\")",
+    "(c) => c.program.inRoot === false && c.program.path.startsWith(\"/usr/\")",
+];
+
+test("a policy that frees a named program, evaluated on a put's facts, neither allows nor breaks, at either placement", () => {
+    const program = (path, argv) => ({ argv, program: { path, inRoot: false, version: null }, cwd: { path: "/w", inRoot: true }, placement: "host-sandbox" });
+    const controls = [program("/usr/bin/git", ["git", "status"]), program("/usr/bin/git", ["git", "status"]), program("/bin/ls", ["ls"]), program("/usr/bin/rg", ["rg", "x"]), program("/usr/bin/git", ["git", "status"]), program("/usr/bin/git", ["git", "status"])];
+    for (const [i, source] of PROGRAM_POLICIES.entries()) {
+        assert.equal(evalPolicy(source, controls[i], "allow").decision, "allow", `control: ${source} does not free its own program, so this row proves nothing`);
+        for (const rel of ["r.pdf", "inbox/r.pdf"]) for (const exists of [false, true]) {
+            const f = putFacts(hostFacts(rel, { exists }), FILE);
+            for (const placement of ["host-sandbox", "host-plain"]) {
+                const r = evalPolicy(source, { ...f, placement }, "allow");
+                assert.notEqual(r.decision, "allow", `${source} freed a put of ${rel} (exists ${exists}) at ${placement}`);
+                assert.equal(r.broken, undefined, `${source} broke on a put's facts at ${placement}: ${r.broken}`);
+            }
+        }
+    }
+    const f = putFacts(hostFacts("r.pdf"), FILE);
+    assert.deepEqual([f.argv, f.program.path], [[], ""], "a put names no program: its argv is empty and its program path is the empty string");
 });
 
 // --- the built-in judgement over the effects ---

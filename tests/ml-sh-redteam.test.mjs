@@ -769,6 +769,25 @@ test("ml.sh.put: a stored deny policy for sh holds: Denied, the host discards, n
     try { assert.equal((await shPut(again.ctx, [again.ref, "inbox/r.pdf"])).ok?.replaced, false); } finally { again.unhost(); }
 });
 
+test("ml.sh.put: an allow policy that frees a named program does not free a put: a new top-level name still asks, and the policy is not marked broken", T, async () => {
+    releasePolicies();
+    const P = await import("../src/sw/sw-policies.ts");
+    for (const source of ["(c) => c.program.path === \"/usr/bin/git\"", "(c) => c.argv[0] === \"git\"", "(c) => c.program.path.endsWith(\"/rg\") && c.cwd.inRoot"]) {
+        const allow = P.addGlobalPolicy({ consumer: "sh", effect: "allow", source, label: `allow ${source}` });
+        const host = useHost(putHost());
+        const { ctx, ref, runId, unhost } = await putCtx(bytesOfLen(20));
+        try {
+            const p = shPut(ctx, [ref, "r.pdf"]);
+            await answer(runId, { approved: false, source: "user" });
+            const r = await p;
+            assert.equal(asksOf(runId).length, 1, `${source} freed a put of a new top-level name`);
+            assert.equal(r.code, "Denied", JSON.stringify(r));
+            assert.deepEqual(host.all.filter((c) => ["write", "commit"].includes(c.call)), [], `${source}: bytes were sent`);
+            assert.equal(P.judgeCall(runId, "sh", { argv: [], program: { path: "", inRoot: false, version: null }, cwd: { path: "/w", inRoot: true }, effects: "unknown" }, "host-sandbox").broken.length, 0, `${source} broke on a put's facts`);
+        } finally { P.removePolicy(allow.id); unhost(); }
+    }
+});
+
 test("ml.sh.put: an existing file asks even under an allow policy; approved it commits with replace true, declined it writes nothing and discards", T, async () => {
     releasePolicies();
     const P = await import("../src/sw/sw-policies.ts");
