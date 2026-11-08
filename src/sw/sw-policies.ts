@@ -487,16 +487,17 @@ export function askWhyOf(j: PolicyJudgement): AskWhy | undefined {
  * overrides, so offering it would promise a free pass the next call does not get. The card says which policy that is.
  * @param runId the run
  * @param grants what the call's arguments would have the person remember
+ * @param judgedAs the URL a literal is judged as when the fetch runs (a relative one resolved against the run's page)
  * @returns the grants still offered (a grant left with no URL is dropped), and why any URL was left out
  */
-export function withoutAsked(runId: string, grants: PersistGrant[]): { grants: PersistGrant[]; why?: AskWhy } {
+export function withoutAsked(runId: string, grants: PersistGrant[], judgedAs: (url: string) => string = (u) => u): { grants: PersistGrant[]; why?: AskWhy } {
     let why: AskWhy | undefined;
     const kept: PersistGrant[] = [];
     for (const g of grants) {
         if (g.kind !== "fetch-url") { kept.push(g); continue; }
         const urls = g.urls.filter((u) => {
             // A grant carries no options, so an `ask` about a rendered fetch counts as well as one about a plain fetch.
-            const w = [false, true].map((rendered) => judgeCall(runId, "fetch", fetchFacts(u, { credentials: false, rendered })))
+            const w = [false, true].map((rendered) => judgeCall(runId, "fetch", fetchFacts(judgedAs(u), { credentials: false, rendered })))
                 .map((j) => (j.decision === "ask" ? askWhyOf(j) : undefined)).find(Boolean);
             if (w) why ??= w;
             return !w;

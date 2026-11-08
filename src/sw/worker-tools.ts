@@ -301,7 +301,7 @@ function runMl(ctx: RunCtx): MlApi {
             const md = data.type === "html" && typeof data.text === "string" && data.markdown === undefined ? await htmlToMarkdownOffscreen(data.text) : undefined;
             derivedFetchFields(data, { markdown: () => md, python: ctx.python });
             // The page's cache rule, the same function.
-            if (fetchIsCacheable(data, { credentials, rendered, format })) ctx.cache.set(String(url), cacheCopy(data));
+            if (fetchIsCacheable(data, { credentials, rendered, format })) ctx.cache.set("url" in target ? target.url : String(url), cacheCopy(data));   // keyed as the fetch was judged, so `tables:` finds it by the absolute URL
             return data;
         },
         // No page here: python_exec's selector warning finds nothing (a send naming a selector goes to the page).
