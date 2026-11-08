@@ -45,6 +45,8 @@ made and the script holding a handle to it.
   same size rules as any pointer read. Nothing crosses because a variable was touched. RULED 2026-10-28 (for
   `FILE_ATTACHMENTS.md`): a pointer token of any prefix (`@tool:`, `@file:`) given as an argv item is refused by the shell
   call itself (`describeCall`, one rule), with a sentence saying it is a held value, not a path; a manifest never repeats it.
+  BUILT 2026-11-08 in `parseShRun` (`heldValueRefusal`), the check every argv passes before the host sees it, whatever
+  its manifest: an item that IS a token is refused; one that only contains a token is the program's text.
 - **Placement is unobservable.** The rule the rest depends on: where a script or a call runs may change its latency and
   nothing else. The same script gives the same result wherever the runtime places it. This is what lets placement be
   improved later without the model, or any script it wrote, noticing.

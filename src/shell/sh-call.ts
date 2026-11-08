@@ -11,6 +11,8 @@ import { describeCall, hardenArgv } from "./program-manifest";
 import { claimsTopLevelName, type EffectsData, type Resource } from "../effects";
 import type { HostDone, HostDoneEnvelope, HostEnvelope, HostFacts, HostPathArg, HostPlacement, HostProtectedChange, HostSpawn, HostStream } from "./host-protocol";
 import { binaryKind } from "../sw/body-read";
+import { TOOL_TOKEN_PREFIX } from "../pointers/answer-set";
+import { FILE_PREFIX } from "../pointers/file-pointer";
 import { applicable, storedMisses, type StoredManifest } from "./stored-manifests";
 import cat from "./manifests/cat.json";
 import find from "./manifests/find.json";
@@ -137,6 +139,26 @@ export const SH_LEASE_MS = typeof __SH_LEASE_MS__ === "number" ? __SH_LEASE_MS__
  *  call is told it still runs under. */
 export const SH_HOST_TIMEOUT_MS = 120_000;   // state: fixed
 
+/** The prefixes of a pointer token: a value window.ml holds, never a name on the host's disk. */
+const POINTER_PREFIXES = [TOOL_TOKEN_PREFIX, FILE_PREFIX] as const;
+
+/**
+ * Why one argv item that is a pointer token is refused (SHELL.md, RULED 2026-10-28: one rule for every prefix, so a
+ * manifest never repeats it). The program would be handed the token's characters as a path and open nothing, or a
+ * file that happens to carry that name. An item that merely CONTAINS a token (`--in=@file:x`) is the program's text.
+ * @param a the argument
+ * @param i its index
+ * @returns the sentence, or null when the item is not a pointer token
+ */
+export function heldValueRefusal(a: string, i: number): string | null {
+    const prefix = POINTER_PREFIXES.find((p) => a.startsWith(p));
+    if (!prefix) return null;
+    const how = prefix === FILE_PREFIX
+        ? "an attachment is not on the host's disk, so no program can open it by that name"
+        : "read it with ml.dereference, or reduce it with ml.pipe, and pass the text";
+    return `argv[${i}] is ${JSON.stringify(a.slice(0, 80))}, a held value, not a path: ${how}. A file that really has this name is ./${a.slice(0, 80)}`;
+}
+
 /** One `ml.sh.run(argv, opts)` as checked: the argv, and what the call adds to the session's defaults. `expectMs` is
  *  the script's own estimate of how long the call takes: its lease, past which it detaches. */
 export interface ShRunRequest { argv: string[]; cwd?: string; env: Record<string, string>; timeoutMs?: number; expectMs?: number }
@@ -158,6 +180,8 @@ export function parseShRun(args: readonly unknown[]): ShRunRequest {
         if (typeof a !== "string") throw new ShRefused("BadRequest", `argv[${i}] is a ${a === null ? "null" : typeof a}; every argument is a string (write String(x) for a number)`);
         if (a.includes("\0")) throw new ShRefused("BadRequest", `argv[${i}] contains a NUL character, which no program can receive`);
         if (a.length > SH_LIMITS.argChars) throw new ShRefused("BadRequest", `argv[${i}] is longer than one argument may be (${SH_LIMITS.argChars} characters)`);
+        const held = heldValueRefusal(a, i);
+        if (held) throw new ShRefused("BadRequest", held);
         total += a.length;
     }
     if (total > SH_LIMITS.totalChars) throw new ShRefused("BadRequest", `the argv is longer than one call may carry (${SH_LIMITS.totalChars} characters)`);

@@ -28,6 +28,19 @@ test("argv is an array of strings with the program first; anything else is refus
     assert.deepEqual(parseShRun([["ls"], null]), { argv: ["ls"], env: {} }, "null options are no options");
 });
 
+test("a pointer token as an argv item is refused as a held value at every position, for every prefix; an item that only contains one passes", () => {
+    for (const tok of ["@file:3fa91c2", "@tool:ab12cd3", "@tool:read_page", "@tool:"]) {
+        for (const argv of [[tok, "x"], ["cat", tok], ["cat", "a", tok]]) {
+            const i = argv.indexOf(tok);
+            refused([argv], "BadRequest", new RegExp(`^argv\\[${i}\\] is "${tok}", a held value, not a path: .*A file that really has this name is \\./${tok}$`));
+        }
+    }
+    refused([["cat", "@file:3fa91c2"]], "BadRequest", /an attachment is not on the host's disk/);
+    refused([["cat", "@tool:ab12cd3"]], "BadRequest", /read it with ml\.dereference, or reduce it with ml\.pipe/);
+    for (const literal of ["./@file:3fa91c2", "--in=@file:3fa91c2", " @file:3fa91c2", "@FILE:3fa91c2", "@files:x", "@file", "@tool", "a@tool:ab12cd3", "@"])
+        assert.deepEqual(parseShRun([["cat", literal]]).argv, ["cat", literal], `${JSON.stringify(literal)} is the program's text`);
+});
+
 test("the options are cwd, env, timeoutMs and expectMs, each checked; an unknown one is refused by name, and shell says there is none", () => {
     refused([["ls"], { shell: true }], "BadRequest", /no option "shell"; its options are cwd, env, timeoutMs, expectMs\. There is no shell: pass the argv/);
     refused([["ls"], { expectMs: 0 }], "BadRequest", /expectMs is a positive number/);
