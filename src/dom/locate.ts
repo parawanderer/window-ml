@@ -10,6 +10,7 @@
 import { clickSelector } from "./dom";
 import { styleHidden, roleOf, accessibleName } from "./a11y";
 import { SB_ROOT, SB_CARD } from "../ids";
+import { setHostHidden } from "./host-hide";
 import { pageRaster, withDecoded, type Raster, type Raster2D } from "../raster";
 
 export type MarkFilter = "clickables" | "inputs" | "images" | "all";
@@ -92,10 +93,12 @@ export function withHiddenSidebar<T>(fn: () => T): T {
     const doc = typeof document !== "undefined" ? document : null;
     const hosts = doc ? [doc.getElementById(SB_ROOT), doc.getElementById(SB_CARD)].filter(Boolean) as HTMLElement[] : [];
     if (!hosts.length) return fn();
-    const prev = hosts.map(h => h.style.visibility);
-    for (const h of hosts) h.style.visibility = "hidden";
+    // `!important` (setHostHidden): a plain visibility loses to the host's own `all: initial !important` and the
+    // hit-test returns the host. A host a shot already hid stays hidden after.
+    const already = hosts.map(h => h.style.getPropertyValue("visibility") === "hidden" && h.style.getPropertyPriority("visibility") === "important");
+    for (const h of hosts) setHostHidden(h, true);
     try { return fn(); }
-    finally { hosts.forEach((h, i) => (h.style.visibility = prev[i])); }
+    finally { hosts.forEach((h, i) => { if (!already[i]) setHostHidden(h, false); }); }
 }
 
 /**
