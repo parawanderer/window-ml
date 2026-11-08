@@ -208,3 +208,11 @@ test("in the worker ml.embed is absent whatever the host has, so the survey defe
     await assert.rejects(run(`ml.embed("cat")`, h.ml, { realm: "worker" }), NeedsPage);
     assert.equal(h.calls.length, 0);
 });
+
+test("ADVERSARIAL: a page facade built with no meter has no ml.embed, so nothing uncharged reaches the server", async () => {
+    const { mlFacade } = await import("../src/readonly-exec/policy.ts");
+    const h = host();
+    assert.equal("embed" in mlFacade(h.ml, undefined, undefined, undefined, "page"), false);
+    assert.equal(typeof mlFacade(h.ml, undefined, undefined, { charge() {} }, "page").embed, "function");
+    assert.equal(h.calls.length, 0);
+});

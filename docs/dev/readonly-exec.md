@@ -261,8 +261,10 @@ an auto-approved survey could assign into `document.body` (`innerHTML`) or into 
 
 **The `ml` facade.** A null-prototype object holding only `ML_READONLY_METHODS` (`getModel`, `config`, `models`,
 `capabilities`, `ps`, `serverTools`, `queryAll`, `range`, `a11y`, `dereference`, `info`, `schema`) bound to the real
-API, plus two special members. `ml.fetch` answers only from the cache of URLs a human already approved and throws on
-a miss, so a new URL goes to approval. `ml.answer` curates the run's answer set.
+API, plus four special members. `ml.fetch` answers only from the cache of URLs a human already approved and throws on
+a miss, so a new URL goes to approval. `ml.jsonPath` runs an RFC 9535 JSONPath over JSON data with its own parser,
+never eval. `ml.answer` curates the run's answer set. `ml.embed` is the one live call, to the configured embedding
+model, capped per survey (below, "ml.embed: the one live call").
 
 **A member a run does not have.** `ml.answer` belongs to the `answer` tool, which is opt-in (`ml.agent({ answer:
 true })`). `ML_MEMBER_TOOL` (`src/ml/ml-member-tools.ts`) maps each such member to its tool, and a run without the tool
@@ -415,9 +417,9 @@ from these"). Everything else in the dialect reads what is already there. This c
   members are own data properties, checked before the host reads them, and both are charged their dimensions. `values`
   is frozen.
 - **A page member.** In the worker it is absent whatever the host has, so a worker survey defers to the page, and the
-  Python wire's facade (sw-ml-wire.ts), which has no meter, never gets it.
+  Python wire's facade (sw-ml-wire.ts), which has no meter, never gets it: a facade with no meter has no `embed`.
 
-Tests: `tests/readonly-embed.test.mjs`.
+Tests: `tests/readonly-embed.test.mjs`; the red team's pass, `tests/redteam-embed.test.mjs`.
 
 ## Working on fetched tables
 

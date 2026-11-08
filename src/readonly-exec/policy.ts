@@ -463,9 +463,9 @@ export function mlFacade(ml: unknown, reused?: string[], answerFacade?: unknown,
     // A survey that embeds and then falls out of dialect has spent that time, but changed nothing anyone else reads:
     // the vectors were the survey's own, and the approved run that replaces it embeds again.
     // A PAGE member: in the worker it is absent whatever the host has, so a worker survey defers to the page, and a
-    // facade built with no meter (the Python wire's, sw-ml-wire.ts) never makes a live call.
+    // facade built with no meter (the Python wire's, sw-ml-wire.ts) never makes a live call, since nothing would charge it.
     const hostEmbed = (ml as Record<string, unknown>)["embed"];
-    if (typeof hostEmbed === "function" && !worker) {
+    if (typeof hostEmbed === "function" && !worker && meter) {
         let chars = 0, calls = 0;
         // A String OBJECT is told by BRAND (`isStringObject`), never by the tag: reading it runs the getter a page can set.
         const textOf = (x: unknown): string | null =>
