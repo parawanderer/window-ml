@@ -65,7 +65,7 @@ import { PROPOSAL_TOOLS, withoutProposals, hydrationDone, isWorkerRun, runRebuil
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { claimValue, runMayClaim, valueHolders, readStoredColumns, readStoredText, withHeldValuesOnly } from "./sw-values";
 import { isoServer, type IsoDeps } from "./iso-channel";
-import { shRead, shRun, takeShSpans } from "./sw-shell-call";
+import { shPut, shRead, shRun, takeShSpans } from "./sw-shell-call";
 import { focusLineFor } from "./sw-focus";
 import { delegateSend } from "./delegate-send";
 import { GATED_BUILTINS } from "../tools/tool-registry";
@@ -1180,10 +1180,10 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                             const reads = await preReadsFor(runId, js, true);
                             // ml.sh, for a script that names it: bound to THIS run and the step it runs in, never to anything the
                             // script says. Each call is judged by a policy or asked of the person inside the step (sw-shell-call.ts).
-                            const shCtx = execNames(js).sh && call ? { runId, seq: seqBase + call.seq, local: call, signal: abortCtl.signal, tokens: sessionTokens(runId) } : undefined;
+                            const shCtx = execNames(js).sh && call ? { runId, seq: seqBase + call.seq, local: call, signal: abortCtl.signal, tokens: sessionTokens(runId), origin: () => turnByRun.get(runId)?.()?.origin } : undefined;
                             let shWaited = 0;
-                            const sh = shCtx ? async (c: "run" | "read", a: unknown[]) => {
-                                const r = c === "run" ? await shRun(shCtx, a) : await shRead(shCtx, a);
+                            const sh = shCtx ? async (c: "run" | "read" | "put", a: unknown[]) => {
+                                const r = c === "run" ? await shRun(shCtx, a) : c === "put" ? await shPut(shCtx, a) : await shRead(shCtx, a);
                                 // The script's world shares the page's DOM: an error's text crosses scrubbed, as a page's would.
                                 if ("error" in r) return { ...r, error: (await forPage({ error: r.error })).error };
                                 const w = "ok" in r ? (r.ok as { waitedMs?: unknown } | null)?.waitedMs : undefined;

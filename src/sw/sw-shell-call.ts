@@ -13,7 +13,7 @@
 import type { EffectsData } from "../effects";
 import type { ShCallSpan, ShUnasked } from "../contract";
 import type { TokenStore } from "../pointers/token-pipe";
-import { bytesOf, HostError, hostTakesEnvelope, READ_CHUNK, type HostClient, type HostEnvelope, type HostFacts, type HostStream } from "../shell/host-protocol";
+import { bytesOf, HostError, hostTakesEnvelope, READ_CHUNK, type HostClient, type HostPutFacts, type HostEnvelope, type HostFacts, type HostStream } from "../shell/host-protocol";
 import { envelopeFor, envelopeMismatch, envelopeText, manifestFor, manifestsFor, parseShRun, planSpawn, protectedChangesText, shFacts, shOut, shOutcome, shResult, wireCodeOf, ShRefused, SH_HEAD_BYTES, SH_HOST_TIMEOUT_MS, SH_LEASE_MS, type ShFacts, type ShOut, type ShResult, type ShRunRequest } from "../shell/sh-call";
 import { OUTPUT_CAP } from "../contract/contract-pointers";
 import { detachTask, type TaskOutcome } from "./sw-tasks";
@@ -21,6 +21,8 @@ import { toolToken } from "../util";
 import { defineState } from "../state-registry";
 import { binaryKind } from "./body-read";
 import { judgeCall, askWhyOf, askedByPolicy } from "./sw-policies";
+import { base64Of, parseShPut, putFacts, putRefusalText, putTooLargeText, type PutFacts } from "../shell/sh-put";
+import { readStoredBytes } from "./sw-values";
 import { noteAskOutcome, raiseAsk } from "./sw-asks";
 import { recordRunLog } from "./sw-run-log";
 import { MAX_DETAIL_STRING } from "../log/housekeeping";
@@ -42,6 +44,9 @@ export interface ShCallContext {
     tokens: TokenStore;
     /** `false`: the call never detaches (the extension's own read, which nothing awaits as a task). Set by worker code only. */
     lease?: false;
+    /** Where the run's turn was started, read when a call needs it (`ml.sh.put` refuses a remote one); absent or null
+     *  means unknown, which `put` refuses too. */
+    origin?: () => { remote?: boolean } | null | undefined;
 }
 
 /** What a call answers the script: its value, or the error it throws, with the `ml` wire's code. */
@@ -529,4 +534,96 @@ export async function shRead(ctx: ShCallContext, args: readonly unknown[]): Prom
         const base = { offset: r.offset, length: bytes.length, size: r.size, eof: r.eof };
         return { ok: binaryKind(bytes) ? { ...base, bytes: r.data } : { ...base, text: new TextDecoder("utf-8", { fatal: false }).decode(bytes) } };
     } catch (e) { return failure(e); }
+}
+
+/** The sentence for a put from a run started on another device: the file would land on this machine, where the person is not. */
+export const PUT_REMOTE = "ml.sh.put: this run was started from another device, and the file would land on this machine, where the person is not; nothing was written";
+
+/**
+ * `ml.sh.put(file, path)`: write an attached file's ORIGINAL bytes to the host's disk (FILE_ATTACHMENTS.md ruling 3, as
+ * amended 2026-11-08). The handle resolves on THIS run's shelf only; the host resolves the target (`put`, which writes
+ * nothing), the call is judged as an in-root write ({@link putFacts}), and an existing file always asks the person,
+ * whatever a policy allows. Then the bytes go in chunks of the host's read cap and `commit` renames them into place,
+ * replacing only what the person approved replacing. Never detaches.
+ * @param ctx the step
+ * @param args the script's arguments: the `@file:` handle and the path
+ * @returns `{ path, root, size, sha256, replaced }`, `path` relative to its root, or why not
+ */
+export async function shPut(ctx: ShCallContext, args: readonly unknown[]): Promise<ShAnswer> {
+    let req: { ref: string; path: string };
+    try { req = parseShPut(args); } catch (e) { return failure(e); }
+    // Another run's handle reads as one that does not exist: the refusal names nothing of that run's file.
+    const file = ctx.tokens.files.resolve(req.ref).file;
+    if (!file) return refuse("Refused", `ml.sh.put: ValueMissing: ${req.ref} is not a file this run holds`);
+    const origin = ctx.origin?.();
+    if (!origin) return refuse("Refused", "ml.sh.put: where this run was started cannot be told, so the file is not written");
+    if (origin.remote) return refuse("Refused", PUT_REMOTE);
+    try {
+        return await withShell(async (h) => {
+            const cap = h.hello.put;
+            if (!cap || typeof cap.max !== "number") return refuse("Refused", "ml.sh.put: the process host cannot take a file (it is older than put, or reached over the hub); nothing was sent");
+            if (file.bytes > cap.max) return refuse("TooLarge", putTooLargeText(file.bytes, cap.max));
+            const cwd = h.configured.roots[0]?.path;
+            if (!cwd) return refuse("Refused", "No workspace folder is configured for ml.sh.");
+            let bytes: Uint8Array;
+            try { bytes = await readStoredBytes(file.data, ctx.runId); }
+            catch { return refuse("Refused", `ml.sh.put: ValueMissing: ${req.ref} is no longer held for this run`); }
+            if (bytes.length > cap.max) return refuse("TooLarge", putTooLargeText(bytes.length, cap.max));
+            let facts: HostPutFacts;
+            try { facts = await h.client.put({ path: req.path, cwd, size: bytes.length }); }
+            catch (e) { return e instanceof HostError ? refuse(e.code === "TooLarge" ? "TooLarge" : "Refused", putRefusalText(e.code, e.message, req.path)) : failure(e); }
+            const discard = () => h.client.discard(facts.id).catch(() => { /* expired or gone */ });
+            const f = putFacts(facts, { name: file.name, type: file.type, bytes: bytes.length, sha256: file.sha256 });
+            const v = await decidePut(ctx, f);
+            if ("refused" in v) { await discard(); return refuse("Denied", v.refused); }
+            const startedMs = Date.now();
+            try {
+                for (let at = 0; at < bytes.length; at += READ_CHUNK) {
+                    if (ctx.signal.aborted) { await discard(); return refuse("Denied", "ml.sh.put: the run was cancelled; nothing was written"); }
+                    await h.client.write(facts.id, at, { $bytes: base64Of(bytes.subarray(at, at + READ_CHUNK)) });
+                }
+                if (ctx.signal.aborted) { await discard(); return refuse("Denied", "ml.sh.put: the run was cancelled; nothing was written"); }
+            } catch (e) { await discard(); return failure(e); }
+            let done;
+            // A commit consumes the put whatever its outcome: nothing to discard after it.
+            try { done = await h.client.commit(facts.id, facts.exists && v.by === "person"); }
+            catch (e) { return e instanceof HostError ? refuse("Refused", putRefusalText(e.code, e.message, facts.rel)) : failure(e); }
+            const replaced = facts.exists;
+            recordRunLog(ctx.runId, { subsystem: "shell", kind: "put", reason: v.by === "person" ? "person" : v.by === "builtin" ? "builtin" : "policy",
+                ms: Date.now() - startedMs, detail: { seq: ctx.seq, path: done.rel, size: done.size, ...(replaced ? { replaced: true } : {}) } });
+            if (v.askId) noteAskOutcome(ctx.runId, ctx.seq, v.askId, { put: { path: done.rel, size: done.size, sha256: done.sha256 } });
+            if (v.by !== "person") {
+                const k = `${ctx.runId}:${ctx.seq}`;
+                const unasked: ShUnasked = { by: v.policy !== undefined ? "policy" : "default", ...(v.policy !== undefined ? { policy: v.policy } : {}),
+                    argv: ["ml.sh.put", req.ref, done.rel], outcome: { put: { path: done.rel, size: done.size, sha256: done.sha256 } } };
+                spansByStep.set(k, [...(spansByStep.get(k) ?? []), shSpanOf("ml.sh.put", { durationMs: Date.now() - startedMs }, unasked)]);
+                if (spansByStep.size > SPAN_STEPS_MAX) spansByStep.delete(spansByStep.keys().next().value!);
+            }
+            return { ok: { path: done.rel, root: facts.root, size: done.size, sha256: done.sha256, replaced } };
+        });
+    } catch (e) { return failure(e); }
+}
+
+/**
+ * Whether a put may write: a deny always holds; a NEW file is judged like any in-root write (a policy, or the built-in
+ * default over {@link putFacts}' effects); an EXISTING file always asks the person, and no policy's allow answers it.
+ * @param ctx the step
+ * @param f the put's facts
+ */
+async function decidePut(ctx: ShCallContext, f: PutFacts): Promise<{ by: string; policy?: string; askId?: string } | { refused: string }> {
+    const c = f as unknown as Record<string, unknown> & { effects: EffectsData };
+    const j = judgeCall(ctx.runId, "sh", c, f.placement);
+    if (j.decision === "deny") return { refused: `ml.sh.put: ${denyText(j.by)}; nothing was written` };
+    if (j.decision === "allow" && !f.put.exists) {
+        if (j.by === "builtin") return { by: "builtin" };
+        const policy = (j.by as { label?: string } | undefined)?.label ?? "?";
+        return { by: `policy "${policy}"`, policy };
+    }
+    const why = askWhyOf(j);
+    const o = await raiseAsk(ctx.runId, ctx.seq, { kind: "put", consumer: "sh", facts: c, placement: f.placement, ...(why ? { why } : {}) });
+    if (!o.allowed) return { refused: `ml.sh.put: ${o.state === "denied" ? "the person declined" : o.note || o.state}${o.state === "denied" && o.note ? ` (${o.note})` : ""}; nothing was written` };
+    // Judged again: a deny saved while the card waited still holds.
+    const again = judgeCall(ctx.runId, "sh", c, f.placement);
+    if (again.decision === "deny") return { refused: `ml.sh.put: ${denyText(again.by)}; nothing was written` };
+    return { by: "person", ...(o.askId ? { askId: o.askId } : {}) };
 }

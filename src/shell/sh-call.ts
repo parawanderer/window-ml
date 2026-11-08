@@ -696,8 +696,15 @@ export function wireCodeOf(hostCode: string): "Refused" | "BadRequest" | "TooLar
  * @returns the lines
  */
 export function askOutcomeLines(a: StepAsk): ShCardLine[] {
+    if (a.kind === "put" && a.state === "allowed") { const w = putWrote(a.outcome); return w ? [w] : []; }
     if (a.kind !== "sh" || a.state !== "allowed" || !a.outcome) return [];
     try { return shOutcomeLines(a.outcome as unknown as ShOutcome); } catch { return []; }
+}
+
+/** The line for what an `ml.sh.put` wrote (its outcome's `put`), or undefined for an outcome of another call. */
+function putWrote(o: unknown): ShCardLine | undefined {
+    const p = (o as { put?: { path?: unknown; size?: unknown } } | undefined)?.put;
+    return p && typeof p.path === "string" ? { label: "Wrote", value: `${p.path} (${Number(p.size) || 0} bytes)` } : undefined;
 }
 
 /**
@@ -708,6 +715,8 @@ export function askOutcomeLines(a: StepAsk): ShCardLine[] {
  */
 export function unaskedLines(u: ShUnasked): ShCardLine[] {
     const lines: ShCardLine[] = [{ label: "Allowed by", value: u.by !== "policy" ? "the built-in default" : u.policy ? `the policy "${u.policy}"` : "a policy (no label recorded)" }];
+    const put = putWrote(u.outcome);
+    if (put) return [...lines, put];
     try { lines.push(...shOutcomeLines(u.outcome as unknown as ShOutcome)); } catch { /* an outcome of another shape: the line says who allowed it */ }
     return lines;
 }
