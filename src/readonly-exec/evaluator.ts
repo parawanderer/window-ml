@@ -352,11 +352,15 @@ export class Evaluator {
     }
     /** The iterable a collection constructor walks (`new Set(o)`): the host calls its `Symbol.iterator` and `next`, so only a string, an array, a Set or a
      *  Map with no iterator of its own is data. Anything else, a page's iterable included, is `NotInDialect`. Answers the value to use. */
-    private iterates(via: string, v: unknown): unknown {
+    private iterates(via: string, v: unknown, arrayLike = false): unknown {
         if (v == null || typeof v === "string") return v;
         if (typeof v === "object") {
             if (isStringObject(v)) return String.prototype.valueOf.call(v);
             if ((Array.isArray(v) || isSet(v) || isMap(v)) && !Object.hasOwn(v, Symbol.iterator)) return v;
+            // `Array.from` also reads an array-like (`{ length: 3 }`): one the script built, whose length converts by its own arrows, and which has no iterator of its own.
+            // The realm's own DOM collections are iterated by the host, not by the page.
+            if (arrayLike && isDomCollection(v)) return v;
+            if (arrayLike && this.owned.has(v) && !Object.hasOwn(v, Symbol.iterator) && convertsByIntrinsics(v, (f) => this.ourFns.has(f as Function))) return v;
         }
         throw new NotInDialect(`${via} was given an iterable the script did not build, which would run its own Symbol.iterator`);
     }
@@ -365,6 +369,7 @@ export class Evaluator {
     private convertingArgsAreData(kind: ReturnType<typeof kindOf>, key: string, args: unknown[]): void {
         const pattern = kind === "string" && (key === "split" || key === "replace" || key === "replaceAll");
         for (const i of convertingArgs(kind, key, args.length)) args[i] = this.converts(key, args[i], pattern && i === 0);
+        if (kind === "ArrayCtor" && key === "from" && args.length) args[0] = this.iterates("Array.from", args[0], true);
     }
     /** A host method is handed a FUNCTION only if the script wrote it: the host calls its callbacks itself (`map`, `sort`,
      *  `Array.from`'s mapper, `JSON.parse`'s reviver, `forEach` of a Set, a Map or a DOM collection, ...), outside the

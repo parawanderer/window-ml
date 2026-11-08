@@ -200,3 +200,35 @@ test("a String object operand is charged its length, so a loop over a huge one i
     const s = new String("x".repeat(2_000_000));
     await assert.rejects(run(`const s = await ml.models(); let n = 0; for (const i of Array.from({ length: 100000 }, (_, k) => k)) n += (s + "").length; return n`, s), (e) => /steps|too large|budget/i.test(String(e?.message)));
 });
+
+// --- Array.from's source and JSON.stringify's space (janitor-2, 6724120604) ---
+
+test("Array.from refuses a page iterable, with an iterator of its own or an array carrying one, without running it", async () => {
+    const ran = [];
+    const iterable = { [Symbol.iterator]() { ran.push("iterator"); return { next() { ran.push("next"); return { done: true }; } }; } };
+    const ownIter = Object.assign([1], { [Symbol.iterator]() { ran.push("own"); return [][Symbol.iterator](); } });
+    for (const [v, js] of [[iterable, "Array.from(o)"], [iterable, "Array.from(o, (x) => x)"], [ownIter, "Array.from(o)"]]) {
+        await assert.rejects(run(`const o = await ml.models(); return ${js}`, v), refused, js);
+    }
+    assert.deepEqual(ran, [], "no page code ran");
+});
+
+test("Array.from still takes the data forms: string, array, Set, Map, a DOM collection, a script-built array-like", async () => {
+    assert.deepEqual((await run(`return Array.from("ab")`)).value, ["a", "b"]);
+    assert.deepEqual((await run(`return Array.from([1, 2], (x) => x * 2)`)).value, [2, 4]);
+    assert.deepEqual((await run(`return Array.from(new Set([1, 1, 2]))`)).value, [1, 2]);
+    assert.deepEqual((await run(`return Array.from(new Map([[1, 2]]))`)).value, [[1, 2]]);
+    assert.deepEqual((await run(`return Array.from({ length: 3 }, (_, i) => i)`)).value, [0, 1, 2]);
+    assert.equal((await run(`return Array.from(document.querySelectorAll("div")).length`)).value >= 0, true);
+});
+
+test("JSON.stringify's space argument does not run a page's Number or String object conversion", async () => {
+    const ran = [];
+    const n = new Number(2); n.valueOf = () => { ran.push("valueOf"); return 2; };
+    const s = new String("  "); s.toString = () => { ran.push("toString"); return " "; };
+    for (const v of [n, page(ran)]) await assert.rejects(run(`const o = await ml.models(); return JSON.stringify([1], null, o)`, v), refused);
+    // a String object is read by its slot, so its own toString never runs and the space is the string it holds
+    assert.equal((await run(`const o = await ml.models(); return JSON.stringify([1], null, o)`, s)).value, "[\n  1\n]");
+    assert.deepEqual(ran, []);
+    assert.equal((await run(`return JSON.stringify([1], null, 2)`)).value, "[\n  1\n]");
+});
