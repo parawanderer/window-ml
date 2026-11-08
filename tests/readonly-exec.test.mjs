@@ -2270,6 +2270,29 @@ test("a COERCING intrinsic as a callback is judged like any coercion: data eleme
     assert.deepEqual((await run(`const o = await ml.models(); return [o].filter(Boolean).length`, world(), handed(o))).value, 1);
 });
 
+test("a root name rebound to a page function is a VALUE, not the root: neither called by name nor passed as a callback", async () => {
+    const ran = [];
+    const f = function () { ran.push("f"); return 3; };
+    const names = ["String", "Number", "Boolean", "Array", "parseInt", "parseFloat", "isNaN", "isFinite", "getComputedStyle"];
+    for (const name of names) {
+        for (const decl of ["const", "let", "var"]) {
+            await assert.rejects(run(`${decl} ${name} = await ml.models(); return ${name}(1)`, world(), handed(f)), outOfDialect, `${decl} ${name} call`);
+            await assert.rejects(run(`${decl} ${name} = await ml.models(); return [1].map(${name})`, world(), handed(f)), outOfDialect, `${decl} ${name} callback`);
+        }
+        await assert.rejects(run(`const o = await ml.models(); return ((${name}) => ${name}(1))(o)`, world(), handed(f)), outOfDialect, `${name} parameter`);
+        await assert.rejects(run(`const o = await ml.models(); { const ${name} = o; return ${name}(1) }`, world(), handed(f)), outOfDialect, `${name} block`);
+    }
+    // One root under another's name is no root either.
+    await assert.rejects(run(`const Number = String; return Number(1)`), outOfDialect);
+    assert.deepEqual(ran, []);
+});
+
+test("a root name rebound to the script's OWN arrow is that arrow", async () => {
+    assert.equal((await run(`const Number = (x) => x * 2; return Number(21)`)).value, 42);
+    assert.deepEqual((await run(`const parseInt = (x) => 7; return ["1"].map(parseInt)`)).value, [7]);
+    assert.equal((await run(`return Number("5") + parseInt("6")`)).value, 11);
+});
+
 test("a refused callback leaves nothing behind when the survey falls out of dialect", async () => {
     const doc = world();
     const before = doc.body.innerHTML;

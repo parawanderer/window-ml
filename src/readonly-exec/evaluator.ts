@@ -7,7 +7,7 @@ import { NotInDialect, Stopped, MAX_STRING, MAX_COLLECTION, Denied, riskyRegex, 
 import { Node } from "./parser";
 import { regexSteps } from "./regex-cost";
 import { replaceSize, replaceWorstCase } from "./replace-size";
-import { isSet, isMap, isStringObject, isRegExpObject, drainIterator, isWritableTarget, ReadonlyRealm, DENIED_PROPS, isDomCollection, SAFE_CONSTRUCTORS, ANSWER_METHODS, methodAllowed, kindOf, MUTATING_METHODS, CALLABLE_ROOTS, INTRINSIC_CALLBACKS, COERCING_CALLBACKS, argWrites } from "./policy";
+import { isSet, isMap, isStringObject, isRegExpObject, drainIterator, isWritableTarget, ReadonlyRealm, DENIED_PROPS, isDomCollection, SAFE_CONSTRUCTORS, ANSWER_METHODS, methodAllowed, kindOf, MUTATING_METHODS, CALLABLE_ROOTS, INTRINSIC_CALLBACKS, INTRINSIC_ROOTS, COERCING_CALLBACKS, argWrites } from "./policy";
 import { PrintSwap, abridgeRow, diffSwap, jsonPathKey } from "./print";
 
 /** Per-frame set of names declared `const`, kept off the frame's own enumerable keys. */
@@ -104,6 +104,8 @@ const SPECIAL_CURRENT_FIELDS = new Set(["run", "messages", "meta", "log", "debug
 const OWNED_COPY_NODES = 10_000;
 
 export class Evaluator {
+    /** The realm's own bound `getComputedStyle` (set by the entry point; absent in the worker), the one bare callback besides the intrinsics. */
+    ownGetComputedStyle: Function | undefined;
     // Arrows we created — the only functions we'll invoke directly. Keyed to their node+scope so a
     // DIRECT call (an IIFE) can be driven by the CALLER's driver (an await inside it still works),
     // while the bare wrapper a host method receives stays synchronous.
@@ -326,12 +328,18 @@ export class Evaluator {
      *  `Array.from`'s mapper, `JSON.parse`'s reviver, `forEach` of a Set, a Map or a DOM collection, ...), outside the
      *  interpreter, so a function a page handed back as data (`ml.models()` can) would run page code in the middle of a
      *  survey. One predicate at the call site, not a list of methods: a method added to the whitelist later is covered. */
-    private onlyOurFunctions(key: string, obj: unknown, args: unknown[], scope: Record<string, unknown>): void {
+    /** Is `v` the realm's own function for the root `name` (`Number`, `parseInt`, ..., `getComputedStyle`)? Identity, never the name:
+     *  a script's frame can shadow any root. */
+    private isOwnRoot(name: string, v: unknown): boolean {
+        return name === "getComputedStyle" ? v !== undefined && v === this.ownGetComputedStyle : v === INTRINSIC_ROOTS[name];
+    }
+    private onlyOurFunctions(key: string, obj: unknown, args: unknown[]): void {
         for (const a of args) {
             if (typeof a !== "function" || a === METHOD_REF || this.ourFns.has(a)) continue;
             if (!INTRINSIC_CALLBACKS.has(a)) {
-                // Our own bare root, admitted as `getComputedStyle(el)` is. Read last: in the worker the read defers to the page.
-                if (a === scope.getComputedStyle) continue;
+                // The realm's own bound getComputedStyle, admitted as `getComputedStyle(el)` is: by IDENTITY against the function
+                // the realm made, never against the name in the script's frame (a script can shadow the name). None in the worker.
+                if (a === this.ownGetComputedStyle) continue;
                 throw new NotInDialect(`${key} was given a function that is not an arrow written in the script, which would run page code during a survey`);
             }
             // `Number`, `String`, `parseInt`, ... coerce what the host hands them, so an object element would run its own
@@ -1110,7 +1118,7 @@ export class Evaluator {
             // while genuine denials (Denied / method-not-allowed NotInDialect) still bypass catch.
             if (typeof fn !== "function") throw new TypeError(`${obj == null ? String(obj) : "value"} has no callable '${key}'`);
             const args = yield* this.evalArgs(node.args, scope);
-            this.onlyOurFunctions(key, obj, args, scope);
+            this.onlyOurFunctions(key, obj, args);
             // An argument the call WRITES (ARG_WRITERS: `Object.assign`'s target) meets the same rule as `o[k] = v`: a
             // plain object or array the script built, not one being iterated. Without it, a survey assigned into the
             // page (`Object.assign(document.body, { innerHTML })`) and into the host's own builtins (`Math`, `JSON`,
@@ -1164,7 +1172,9 @@ export class Evaluator {
             return this.own(this.sized(isDomCollection(out) ? Array.from(out as ArrayLike<unknown>) : out));
         }
         // Ident(args) — only whitelisted coercion/parse builtins.
-        if (callee.type === "Ident" && CALLABLE_ROOTS.has(callee.name) && callee.name in scope) {
+        // Judged by VALUE: the root's own function, by identity. A script that rebinds the name (`const Number = …`) has an ordinary
+        // value, which falls through to the arrow path below and is refused there unless the script wrote it.
+        if (callee.type === "Ident" && CALLABLE_ROOTS.has(callee.name) && callee.name in scope && this.isOwnRoot(callee.name, scope[callee.name])) {
             const fn = scope[callee.name] as Function;
             const args = yield* this.evalArgs(node.args, scope);
             this.allocation(callee.name, args);

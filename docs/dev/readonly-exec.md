@@ -849,8 +849,8 @@ unsafely" — new tests prove the new surface keeps that.
   realm's `Number` is refused) is `NotInDialect`, the message naming the method. One predicate for every method, not a
   list: `map`/`sort`/`Array.from`/`JSON.parse`'s reviver/`forEach` of a Set, a Map or a DOM collection all take the same
   path, and a method added to the whitelist later is covered. A function a page handed back as data (`ml.models()` can)
-  therefore never runs during a survey. Three admissions beyond the script's arrows: our own bare `getComputedStyle` (judged by identity against the
-  scope's root, as `getComputedStyle(el)` is admitted); a member reference such as `Math.abs`, which is the inert `METHOD_REF` and
+  therefore never runs during a survey. Three admissions beyond the script's arrows: the realm's own bound `getComputedStyle` (`Evaluator.ownGetComputedStyle`, compared by identity, never by the name in the script's frame, which a
+  script can shadow; the worker has none, so a bare one there stays refused); a member reference such as `Math.abs`, which is the inert `METHOD_REF` and
   throws its own refusal if the host calls it; and the intrinsics above. Six of those intrinsics COERCE (`COERCING_CALLBACKS`: all
   but `Boolean` and `Array`), so the host would run an element's own `valueOf`/`toString`: as a callback they are admitted only over an
   array whose elements pass `joinsData` (data, no getters, no objects), for `map`/`filter`/... and `Array.from(arr, Number)`; over a

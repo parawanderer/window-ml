@@ -258,6 +258,10 @@ export const CALLABLE_ROOTS = new Set(["String", "Number", "Boolean", "Array", "
  *  is admitted by the evaluator against its own root, not here. */
 export const INTRINSIC_CALLBACKS: ReadonlySet<unknown> = new Set([String, Number, Boolean, Array, parseInt, parseFloat, isNaN, isFinite]);
 
+/** The engine's own function for each bare root a script may call by name (all of `CALLABLE_ROOTS` but `getComputedStyle`, which is per realm):
+ *  a call is allowed only when the name still holds THIS function, by identity. */
+export const INTRINSIC_ROOTS: Readonly<Record<string, unknown>> = { String, Number, Boolean, Array, parseInt, parseFloat, isNaN, isFinite };
+
 /** The intrinsics in `INTRINSIC_CALLBACKS` that COERCE their argument (all but `Boolean` and `Array`): as a callback they
  *  run an element's own `valueOf`/`toString`, so the elements they are handed must be data. */
 export const COERCING_CALLBACKS: ReadonlySet<unknown> = new Set([String, Number, parseInt, parseFloat, isNaN, isFinite]);
