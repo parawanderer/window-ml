@@ -117,7 +117,7 @@ const GENRES = {
             "redteam-exec-shared-world.test.mjs", "redteam-exec-world.test.mjs", "redteam-geometry.test.mjs",
             "redteam-host-callbacks.test.mjs",
             "redteam-image-fetch.test.mjs", "redteam-isolated-channel.test.mjs", "redteam-mermaid.test.mjs", "redteam-isolated.test.mjs", "redteam-presence.test.mjs", "redteam-presence-race.test.mjs",
-            "redteam-ml-wire.test.mjs", "redteam-operand-check.test.mjs", "redteam-page-run-builtby.test.mjs", "redteam-propose-manifest.test.mjs", "redteam-render-values.test.mjs",
+            "redteam-ml-wire.test.mjs", "redteam-operand-check.test.mjs", "redteam-page-run-builtby.test.mjs", "redteam-page-run-moved.test.mjs", "redteam-propose-manifest.test.mjs", "redteam-render-values.test.mjs",
             "redteam-run-payload.test.mjs", "redteam-text-captures.test.mjs", "redteam-tool-throw.test.mjs",
             "redteam-worker-shot.test.mjs", "redteam-hard-python-cancel.test.mjs", "redteam-policy-ask-free-tiers.test.mjs",
             "redteam-presence-ask.test.mjs", "redteam-brand-tag.test.mjs", "redteam-task.test.mjs", "redteam-act-consumer.test.mjs", "redteam-person-word.test.mjs", "redteam-coercion.test.mjs", "redteam-embed.test.mjs"],
@@ -159,7 +159,7 @@ const GENRES = {
         about: "propose_policy and propose_manifest (a program manifest or a tier 3 library): the drafts, their cards, what is stored on approval",
         files: ["propose-library.test.mjs", "propose-library-redteam.test.mjs", "propose-manifest.test.mjs", "propose-policy-redteam.test.mjs", "propose-policy.test.mjs"],
     },
-    nav: { about: "a run's tab moving: the navigation barrier, the hand-over off an approved site, and the arrival judgement on every commit", files: ["nav-barrier.test.mjs", "nav-handover.test.mjs", "nav-arrival.test.mjs", "nav-arrival-host.test.mjs", "nav-navigate-redteam.test.mjs"] },
+    nav: { about: "a run's tab moving: the navigation barrier, the hand-over off an approved site, and the arrival judgement on every commit", files: ["nav-barrier.test.mjs", "nav-handover.test.mjs", "nav-arrival.test.mjs", "nav-arrival-host.test.mjs", "nav-navigate-redteam.test.mjs", "redteam-page-run-moved.test.mjs"] },
     bench: {
         about: "the benchmark harness (tests/e2e/bench/): its spec matrix, metrics, viewer, server, page, sweep log, scoreboard, memory readings, the box's event stream and the held runs' screens",
         files: ["bench-descriptor.test.mjs", "bench-metrics.test.mjs", "bench-serve.test.mjs",
