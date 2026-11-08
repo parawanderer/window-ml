@@ -5,11 +5,11 @@ import assert from "node:assert";
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { judge, testLineCounts, deletedTests, diskOnly, keepBench, agentMarker, isOwnPost, postKey, pickUnread, postedByOthersAfter, localImports, pinPlan, PIN_SUPPORT, touchesTool, diffPaths } from "../scripts/merge-when-green.mjs";
+import { judge, testLineCounts, deletedTests, diskOnly, keepBench, agentMarker, isOwnPost, postKey, pickUnread, postedByOthersAfter, awaitCount, unreadLine, localImports, pinPlan, PIN_SUPPORT, touchesTool, diffPaths } from "../scripts/merge-when-green.mjs";
 
 // --- the rule: green pipeline, no test removed, nothing unread ---
 
-const green = { sha: "abcdef0123", runId: "1", runStatus: "completed", badJobs: [], deletedTestFiles: 0, tests: { removed: 0, added: 2 }, reviews: 0, inlineComments: 0, stacked: 0, mergeable: "MERGEABLE" };
+const green = { sha: "abcdef0123", runId: "1", runStatus: "completed", badJobs: [], deletedTestFiles: 0, tests: { removed: 0, added: 2 }, reviews: 0, inlineComments: 0, stacked: 0, mergeable: "MERGEABLE", headAt: "2026-11-07T12:03:15Z" };
 
 test("a green PR that adds tests and has no reviews is OK", () => {
     const v = judge(green);
@@ -42,7 +42,7 @@ test("--await-review: a green PR with no post by anyone else is pending, not OK;
     const waiting = judge({ ...green, awaitReview: true, postedByOthers: 0 });
     assert.equal(waiting.ok, false);
     assert.equal(waiting.pending, true);
-    assert.match(waiting.reason, /no review posted after abcdef01's commit yet \(--await-review\)/);
+    assert.match(waiting.reason, /no review posted after abcdef01's commit at 2026-11-07T12:03:15\.000Z yet \(--await-review\): waiting for one \(no post on file\)/);
     const posted = judge({ ...green, awaitReview: true, postedByOthers: 1, reviews: 1 });
     assert.equal(posted.ok, false);
     assert.equal(!!posted.pending, false);
@@ -183,6 +183,42 @@ test("a post marked as the merging session's still blocks until --read names it:
     assert.deepEqual(pickUnread(forged, { session: SESSION }).map((u) => u.id), ["6"]);
     // Without --session nothing is labelled own.
     assert.equal(pickUnread(mine, {})[0].own, false);
+});
+
+// --- --await-review's count: awaitCount over everything on file, and the dates both printed surfaces carry ---
+
+test("awaitCount over everything on file: the #1425 shape, a post predating the head, is not a review of it", () => {
+    const headAt = "2026-11-07T12:03:15Z";
+    const at = (created_at) => ({ reviews: [], comments: [{ id: 9, body: "LGTM", user: { login: "bob" }, created_at }], inline: [] });
+    // #1425's shape: the post lands 28 seconds before the head commit, so it reviews an older head and holds the arm.
+    assert.equal(awaitCount(at("2026-11-07T12:02:47Z"), { session: SESSION, headAt }), 0);
+    assert.equal(awaitCount(at("2026-11-07T12:04:00Z"), { session: SESSION, headAt }), 1);
+    // The session's own post never releases the arm, nor one with no date GitHub sent, nor one at the commit's own
+    // moment: only strictly after counts, and --read has no say (the signature carries no read list).
+    const own = { reviews: [], comments: [{ id: 9, body: post(SESSION), user: { login: "parawanderer" }, created_at: "2026-11-07T13:00:00Z" }], inline: [] };
+    const undated = { reviews: [], comments: [{ id: 9, body: "LGTM", user: { login: "bob" } }], inline: [] };
+    for (const none of [own, undated, at("2026-11-07T12:03:15Z")]) assert.equal(awaitCount(none, { session: SESSION, headAt }), 0, JSON.stringify(none));
+    // The conflicts notice is not a post at all.
+    assert.equal(awaitCount({ reviews: [], comments: [{ id: 9, body: "CI looks red\n<!-- pr-conflicts -->", user: { login: "dave" }, created_at: "2026-11-07T13:00:00Z" }], inline: [] }, { session: SESSION, headAt }), 0);
+});
+
+test("the pending reason and the printed unread line carry both times, so a post predating the head reads as one", () => {
+    const headAt = "2026-11-07T12:03:15Z";
+    const older = { kind: "comment", id: "111", author: "bob", own: false, at: "2026-11-07T12:02:47Z", preview: "LGTM on the old head" };
+    const v = judge({ ...green, awaitReview: true, postedByOthers: 0, awaitPosts: [older], headAt });
+    assert.match(v.reason, /no review posted after abcdef01's commit at 2026-11-07T12:03:15\.000Z yet \(--await-review\)/);
+    assert.match(v.reason, /1 post on file: bob at 2026-11-07T12:02:47\.000Z, none after the head/);
+    assert.match(unreadLine(older, headAt), /^comment 111 bob at 2026-11-07T12:02:47\.000Z \(head 2026-11-07T12:03:15\.000Z\): LGTM on the old head$/);
+    // Two posts name both; an own line is labelled where its time sits; a post with no date says so, never inventing one.
+    assert.match(judge({ ...green, awaitReview: true, postedByOthers: 0, awaitPosts: [older, { ...older, id: "112", author: "carol" }], headAt }).reason, /2 posts on file: bob at 2026-11-07T12:02:47\.000Z, carol at 2026-11-07T12:02:47\.000Z/);
+    assert.match(unreadLine({ ...older, own: true }, headAt), /bob \(marked yours: still --read it\) at 2026-11-07T12:02:47\.000Z/);
+    assert.match(unreadLine({ ...older, at: null }, headAt), /at undated \(head 2026-11-07T12:03:15\.000Z\)/);
+});
+
+test("facts counts through awaitCount: the call site is the one expression the arm's rule is, not a second copy", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const src = await readFile(new URL("../scripts/merge-when-green.mjs", import.meta.url), "utf8");
+    assert.match(src, /const postedByOthers = awaitCount\(/);
 });
 
 test("the refusal points an own post at --read like any other", () => {

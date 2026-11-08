@@ -102,7 +102,9 @@ export interface MlWireRequest {
  *  secret, which is never resolved to a value here. `Denied`: the call's gate or the person said no. `TooLarge`: the
  *  answer cannot cross and has no pointer to stay home under. `OverBudget`: the call would take the client past its step
  *  budget, shared by every call its code makes, or a pipe stage would build more than one call may. `BadRequest`: malformed. `Failed`: the member threw. */
-export type MlWireErrorCode = "Absent" | "Refused" | "SecretHandle" | "Denied" | "TooLarge" | "OverBudget" | "BadRequest" | "Failed";
+export type MlWireErrorCode = "Absent" | "Refused" | "SecretHandle" | "Denied" | "TooLarge" | "OverBudget" | "BadRequest" | "Failed"
+    /** The call outran its lease and runs on as a task (`error.task`); its result arrives later (docs/spec/ASYNC_CALLS.md). */
+    | "Detached";
 
 /** A value too big to cross: it stays in the run's store under `token`, and a narrower read (a pipe) fetches part of it. */
 export interface MlWirePointer { token: string; label: string; size: number }
@@ -113,7 +115,7 @@ export interface MlWirePointer { token: string; label: string; size: number }
 export type MlWireAnswer =
     | { seq: number; value: unknown }
     | { seq: number; pointer: MlWirePointer }
-    | { seq: number; error: { code: MlWireErrorCode; message: string } }
+    | { seq: number; error: { code: MlWireErrorCode; message: string; task?: string } }
     | { seq: number; ask: { card: string } };
 
 /** Message types the CONTENT SCRIPT handles INBOUND from the background — the reverse of the

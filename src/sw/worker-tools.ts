@@ -9,6 +9,8 @@ import { judgeCall, fetchFacts, runPolicies } from "./sw-policies";
 import { checkProposals } from "./policy-proposal";
 import { proposePolicyTool } from "../tools/propose-policy-tool";
 import { proposeManifestTool } from "../tools/propose-manifest-tool";
+import { taskTool } from "../tools/task-tool";
+import { taskAction } from "./sw-tasks";
 import { proposalOutcome } from "./sw-manifest-proposal";
 import { isLibraryDraft, libraryOutcome } from "./sw-library-proposal";
 import type { FetchLlmPayload, FetchResult, MlApi, MlTool, ShotBox, SubcallUsage, TokenUsage } from "../contract";
@@ -428,6 +430,7 @@ export function buildWorkerTools(runId: string, tabId: number, tabUrl: () => str
     // `look` and `locate` are none of these: the run host builds them for each call (worker-look.ts, worker-locate.ts).
     return wanted.map((n) => (n === "fetch_url" ? fetchTool.call(ml) : n === "python_exec" ? pythonTool.call(ml) : n === "agent_api_docs" ? apiDocsTool(defineTool, docs) : n === "answer" ? workerAnswerTool(runId, pageAnswer())
         : n === "propose_policy" ? proposePolicyTool(defineTool, { check: checkProposals, added: (q) => runPolicies(runId).find((r) => r.consumer === q.consumer && r.source === q.source && r.effect === q.effect)?.label })
+        : n === "task" ? taskTool(defineTool, { act: (a) => taskAction(runId, a) })
         : n === "propose_manifest" ? proposeManifestTool(defineTool, { outcome: (a) => isLibraryDraft(a) ? libraryOutcome(runId, a) : proposalOutcome(runId, a) })
         : null)).filter((t): t is MlTool => !!t);
 }

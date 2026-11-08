@@ -55,13 +55,14 @@ export interface SessionIndexOptions {
     maxSessions?: number;
 }
 
-const KNOWN_KINDS = new Set(["chat", "chat-result", "chat-error", "chat-stream", "agent", "agent-step", "agent-result", "agent-cap", "agent-config", "agent-say", "agent-say-seen", "agent-stream", "agent-turn", "session-resumed", "agent-site", "agent-site-say"]);
+const KNOWN_KINDS = new Set(["chat", "chat-result", "chat-error", "chat-stream", "agent", "agent-step", "agent-result", "agent-cap", "agent-config", "agent-say", "agent-say-seen", "agent-stream", "agent-turn", "session-resumed", "agent-site", "agent-site-say", "agent-task-say"]);
 /** The worker's marks of a run a SITE started (contract-debug.ts `SiteRunEvent`) the index keeps, so every transcript,
  *  the chat page's included, names the site on its turns (Q2a). Only the worker's own source may write them. */
 const WORKER_KINDS = new Set(["agent-site", "agent-site-say"]);
 /** Kinds only the worker's own source may write, with no `site` to check: `agent-config` is its record of the prompt and
- *  tools it sent the model, and a page that could write one would put its own texts back over the wire's. */
-const WORKER_ONLY_KINDS = new Set(["agent-config"]);
+ *  tools it sent the model, and a page that could write one would put its own texts back over the wire's;
+ *  `agent-task-say` is a detached call's result, and a page that could write one would put words in a task's mouth. */
+const WORKER_ONLY_KINDS = new Set(["agent-config", "agent-task-say"]);
 /** Kinds that describe a SESSION rather than a chat or a run. They never create one: a note about a session this
  *  index does not hold is not a session, and the kind-from-prefix rule below would have to guess what it was. */
 const SESSION_KINDS = new Set(["session-resumed"]);
@@ -264,6 +265,11 @@ export class SessionIndex {
     private isDuplicate(s: Indexed, ev: MlDebugEvent): boolean {
         // A site's mark repeats on every turn: one is enough.
         if ((ev as { kind: string }).kind === "agent-site") return s.ring.some((e) => (e.event as { kind: string }).kind === "agent-site");
+        // A task's result is written once per task: a replay of it (a cross-page run's buffer) is the same message.
+        if ((ev as { kind: string }).kind === "agent-task-say") {
+            const task = (ev as { task?: unknown }).task;
+            return s.ring.some((e) => (e.event as { kind: string; task?: unknown }).kind === "agent-task-say" && (e.event as { task?: unknown }).task === task);
+        }
         switch (ev.kind) {
             case "agent":
                 // A resurrected run re-announces on purpose (`resumed`); any other second start is the other copy.

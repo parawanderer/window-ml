@@ -115,6 +115,12 @@ const EXEC_WORLDS = [JSON.stringify("page"), JSON.stringify("isolated")];
 DEFINES.__EXEC_DEFAULT_WORLD__ ??= JSON.stringify("page");
 if (!EXEC_WORLDS.includes(DEFINES.__EXEC_DEFAULT_WORLD__))
     throw new Error(`__EXEC_DEFAULT_WORLD__ must be one of ${EXEC_WORLDS.join(", ")}, got ${DEFINES.__EXEC_DEFAULT_WORLD__}`);
+// The lease an ml.sh call runs under before it detaches (src/shell/sh-call.ts `SH_LEASE_MS`), in ms: the shipped 15000
+// unless a bench cell says `--define __SH_LEASE_MS__=5000`. Anything but a positive integer would build the placeholder
+// silently, so it fails the build.
+DEFINES.__SH_LEASE_MS__ ??= "15000";
+if (!/^[1-9][0-9]*$/.test(DEFINES.__SH_LEASE_MS__))
+    throw new Error(`__SH_LEASE_MS__ must be a positive integer of milliseconds, got ${DEFINES.__SH_LEASE_MS__}`);
 
 // Core (injected/content/background/popup/sidebar-shell) is left UNminified so
 // injected.js stays readable when inspected in devtools. The sidebar app is a

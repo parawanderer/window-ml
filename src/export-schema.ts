@@ -285,6 +285,9 @@ export interface ExportMessage {
     /** User only: how `text` was SHOWN, when that is not what the person typed: their words and what they attached
      *  (a right-clicked element, whose content `text` has folded in). `text` stays what the model got. */
     display?: PromptDisplay;
+    /** User role only: this message is a detached call's result (its task id, docs/spec/ASYNC_CALLS.md), which the run
+     *  inbox carried to the model. No person typed it. */
+    task?: string;
     /** Assistant only: the model that actually produced this, after server-side
      *  resolution. May differ from {@link ExportSession.model}. */
     model?: string;

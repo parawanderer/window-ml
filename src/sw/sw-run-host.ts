@@ -47,7 +47,8 @@ import { lookPreviewArgs, workerLook } from "./worker-look";
 import { workerLocate } from "./worker-locate";
 import { runVision, workerWroteVision, type RunVision } from "./run-vision";
 import { withUserWatches } from "./sw-shared-watches";
-import { routeExec, execNames, withoutWorld, worldCardNote, type ExecRoute } from "./exec-routing";
+import { endTasks, openTasks, taskDrained, withTasks } from "./sw-tasks";
+import { routeExec, execNames, surveyMayEnterPage, withoutWorld, worldCardNote, type ExecRoute } from "./exec-routing";
 import { defaultExecWorld } from "../contract/contract-config";
 import { outputCapPrecheck } from "../contract/contract-pointers";
 import { pageWorldRefusal, withExecWorld } from "../tools/tool-details";
@@ -664,7 +665,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     // Undoes what this turn registered: run when the turn settles, and when its setup throws before the loop starts.
     let unhostAsks: (() => void) | undefined;   // set once the run's steps may raise nested asks (sw-asks.ts)
     let unwatchArrivals: (() => void) | undefined;   // set once the run judges its tab's arrivals (nav-arrival.ts)
-    const settle = (): void => { unhostAsks?.(); unwatchArrivals?.(); if (unwatchArrivals) watchBetweenTurns(tabId, runId); cancelReasons.delete(runId); noteRunEnd(runId); dropActs(runId); runControllers.delete(runId); runInboxes.delete(runId); untrackRun(tabId, runId); deleteRun(runId); deletePythonRun(runId); releaseDebugger(tabId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); ROOT C: drop its kept Python namespace
+    const settle = (): void => { unhostAsks?.(); unwatchArrivals?.(); if (unwatchArrivals) watchBetweenTurns(tabId, runId); cancelReasons.delete(runId); noteRunEnd(runId); dropActs(runId); runControllers.delete(runId); runInboxes.delete(runId); void endTasks(runId); untrackRun(tabId, runId); deleteRun(runId); deletePythonRun(runId); releaseDebugger(tabId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); ROOT C: drop its kept Python namespace
     /** Ends the run's session on every surface when the setup throws after its start event went out; set once the fan exists. */
     let endSession: ((error: string) => void) | undefined;
     try {
@@ -800,6 +801,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             ingestSessionEvent(event, { tabId, trusted: true, hosts: byWorker() });
             if (p.crossPage !== false) bufferReplay(tabId, event);
         };
+        // A detached call's result, once the inbox carries it: drawn as the task's, never as the person's words.
+        openTasks(runId, (text, task, end) => fanEvent({ kind: "agent-task-say", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, text, task, ...end }));
         // The run's steps may now raise nested asks: a call made from inside a running step that needs the person.
         unhostAsks = hostAsks({
             runId, unattended: !!p.unattended, routing: p.approvalRouting || "ui", signal: abortCtl.signal,
@@ -1159,7 +1162,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // The route is decided here, so the page is not told which world was asked for: it sees the call only when
                     // the call runs in its world, where that is no news.
                     const pageArgs = name === "exec" ? withoutWorld(args as Record<string, unknown>) : args;
-                    // A page-built run's exec runs in its page's world or not at all (an approval's edit could have added one).
+                    // A page-built run's exec runs in its page's world or not at all. Unpinned on purpose: it stands in front of an
+                    // approval's edited `arguments` (`args = d.arguments` in agent-loop.ts), which no resolve path produces today.
                     if (name === "exec" && !byWorker()) { const refused = pageWorldRefusal((args as { world?: unknown }).world); if (refused) return { result: refused }; }
                     if (js !== undefined) {
                         // The document FIRST, then its URL: the call is pinned to that document, so a navigation after this
@@ -1191,7 +1195,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                                 // What the world may ask for while it runs: re-pipes of what it was sent, those stored tables, and ml.sh.
                                 serve: isoServer(runId, reads, { deref: wholeDerefFor(runId), holders: valueHolders, columns: readStoredColumns, ...(sh ? { sh } : {}) }),
                                 // Made only for a script that names it, as a survey's is (tryReadonly below).
-                                ...(snap && execNames(js).current ? { current: async () => withPolicies(withRuntime(await withEnv(await withUserWatches(snap({ model: modelNow(), log: eventsForRun(await runLog.all(), runId) })), tabId, !!p.autoApproveReadonly, !byWorker())), runId) } : {}),
+                                ...(snap && execNames(js).current ? { current: async () => withTasks(withPolicies(withRuntime(await withEnv(await withUserWatches(snap({ model: modelNow(), log: eventsForRun(await runLog.all(), runId) })), tabId, !!p.autoApproveReadonly, !byWorker())), runId), runId) } : {}),
                             });
                             // A reading taken after a wait for the person is not simultaneous with one taken before: say so.
                             return shWaited >= 1000 ? { ...out, result: `${out.result}\n(ml.sh waited ${Math.round(shWaited / 1000)} s for the person to approve.)` } : out;
@@ -1570,6 +1574,10 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     if (!byWorker() && pageWorldRefusal(world)) return null;
                     const worldAsked = byWorker() && world !== undefined;
                     if (worldAsked && (typeof args.js !== "string" || (await execRoute(args.js, world)).where === "refused")) return null;
+                    // Nor one policy isolates for what the SCRIPT names (`ml.sh`, `ml.current`, a pointer), on any setting.
+                    // A page-built run keeps its page leg for any script: its approved exec is never routed and runs in the
+                    // page's world too (`js` above, in the tool call), so the survey answers where the exec would.
+                    const scriptLegOk = !byWorker() || typeof args.js !== "string" || surveyMayEnterPage(args.js);
                     let pageLegOk = !worldAsked || world === "page";
                     if (pageLegOk && !worldAsked && byWorker() && typeof args.js === "string" && defaultExecWorld((await getConfig()).execDefaultWorld) === "isolated") {
                         const r = await execRoute(args.js, undefined);
@@ -1577,9 +1585,10 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     }
                     // The WORKER first (docs/spec/SITE_ACCESS.md slice 2): a survey that reads only the run and the box is
                     // answered here, where the run's context and pointers live, and never enters the page. One that reaches
-                    // for the page comes back `needs-page` and goes there, where pointer reads are refused, so a survey that
-                    // needs both reaches the person.
-                    // `selfIntrospection` off: no `ml.current` at all (a survey naming it then goes to the page, where it refuses).
+                    // for the page comes back `needs-page` and goes there only when its page leg is open above (for a run the
+                    // worker built, a script naming none of `ml.sh`, `ml.current` or a pointer); otherwise it reaches the person.
+                    // `selfIntrospection` off: no `ml.current` at all (a survey naming it then reaches the person: for a run
+                    // the worker built its script closes the page leg).
                     const snap = p.selfIntrospection === false ? undefined : contextByRun.get(runId);
                     const wantsLog = typeof args.js === "string" && /\bcurrent\b/.test(args.js);
                     const log = snap && wantsLog ? eventsForRun(await runLog.all(), runId) : [];
@@ -1587,7 +1596,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // into it (sw-shared-watches.ts), which is async, and the evaluator asks for the snapshot synchronously.
                     // A snapshot that cannot be made is not the run's end: the survey falls through to the person.
                     let current: import("../agent/current-context").CurrentSnapshot | undefined;
-                    try { current = snap && wantsLog ? withPolicies(withRuntime(await withEnv(await withUserWatches(snap({ model: modelNow(), log })), tabId, !!p.autoApproveReadonly, !byWorker())), runId) : undefined; } catch (e) {
+                    try { current = snap && wantsLog ? await withTasks(withPolicies(withRuntime(await withEnv(await withUserWatches(snap({ model: modelNow(), log })), tabId, !!p.autoApproveReadonly, !byWorker())), runId), runId) : undefined; } catch (e) {
                         recordRunLog(runId, { level: "warn", subsystem: "routing", kind: "current-failed", reason: e instanceof Error ? e.message || e.name : String(e), detail: { tool: name } });
                         return null;
                     }
@@ -1601,8 +1610,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         recordRunLog(runId, { subsystem: "routing", kind: "readonly-worker", reason: w.kind === "answered" ? "no-page-reads" : "out-of-dialect", detail: { tool: name } });
                         return w.kind === "answered" ? { result: w.result, renderIn: w.renderIn, renderOut: w.renderOut } : null;
                     }
-                    if (!pageLegOk) {
-                        recordRunLog(runId, { subsystem: "routing", kind: "readonly-worker", reason: "world-isolated", detail: { tool: name } });
+                    if (!scriptLegOk || !pageLegOk) {
+                        recordRunLog(runId, { subsystem: "routing", kind: "readonly-worker", reason: scriptLegOk ? "world-isolated" : "script-isolated", detail: { tool: name } });
                         return null;
                     }
                     // Live console lines reach the loop's fan the way a delegated tool's do (delegateStreams). Dropped
@@ -1949,10 +1958,13 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 // streaming path re-fires it on each phase change with the marks so far.
                 emitTurn: (ev) => emitTurn(ev.step, ev.phases),
                 drainInbox: () => {   // a.say() steering (INJECT_MESSAGE); draining flips the "seen" indicator
-                    const items = (runInboxes.get(runId)?.queue || []).splice(0);
+                    // A task's result is drawn as the model reads it: here, never when it was queued. One an await
+                    // already answered is dropped, so the model never reads it twice.
+                    const items = (runInboxes.get(runId)?.queue || []).splice(0).filter((it) => !it.task || taskDrained(runId, it.task, it.text));
                     for (const it of items) if (it.id) fanEvent({ kind: "agent-say-seen", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, sayId: it.id });
                     // Each says where it was typed, so a run steered from another surface reports THAT one.
-                    return items.map(it => (it.origin || it.images ? { text: it.text, ...(it.origin ? { origin: it.origin } : {}), ...(it.images ? { images: it.images } : {}) } : it.text));
+                    // A task's result is no one's typing: it carries its id and leaves the run's latest origin standing.
+                    return items.map(it => (it.task ? { text: it.text, task: it.task } : it.origin || it.images ? { text: it.text, ...(it.origin ? { origin: it.origin } : {}), ...(it.images ? { images: it.images } : {}) } : it.text));
                 },
                 signal: abortCtl.signal,
                 // chat_metadata: the run's model FACTS from the SW's caches (the loop supplies the live
