@@ -80,7 +80,7 @@ function shContextFor(client: WireClient): ShCallContext | undefined {
  */
 async function shMember(fn: (c: ShCallContext, a: readonly unknown[]) => Promise<ShAnswer>, ctx: ShCallContext, args: unknown[]): Promise<unknown> {
     const r = await fn(ctx, args);
-    if ("error" in r) throw new WireError(r.code, r.error);
+    if ("error" in r) throw new WireError(r.code, r.error, "task" in r ? r.task : undefined);
     return r.ok;
 }
 

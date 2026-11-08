@@ -11,6 +11,11 @@ write every ruling into the spec it changes within the hour, and keep the plan's
   version, since a lane may be busy and read only one of them.
 - Direct session messages (`ListAgents` names them `[window-ml repl LANE_n_…]`). The red-team session is
   `window-ml-redteam-29`; the site-access session is `window-ml-69`.
+- Two janitors review, both free models, neither posting on the other's PRs (Shane, 2026-10-30): `window-ml-flaky-ci`
+  (`openrouter.xiaomi/mimo-v2.6-pro`) keeps every CODE PR; `window-ml-janitor-2` (`deepseek.deepseek-flash`, clone
+  `~/git/window-ml-janitor-2`, session `7cf7e86b`) reviews the red team's TEST-ONLY PRs. Its brief is session-mail
+  `20261030-0743Z-repl-specs-to-janitor-2-review-brief.md`; its findings go to the row's owner through you, the same
+  day. A lane arms merge-when-green only after the review comment is posted, or runs `--await-review`.
 - A lane never blocks on you: it states its assumption and continues. So an answer that arrives late must say whether
   the assumption held, and if it did not, what to undo.
 

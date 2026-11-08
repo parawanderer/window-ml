@@ -29,9 +29,12 @@ export function execNames(js: string): ExecNames {
 /** The mechanisms this browser offers for running a script in a world of its own, in order of preference. */
 export interface Isolation { userScripts: boolean; cdp: boolean }
 
+/** Every reason a route can give, as a runtime list, so a test can place each one (`surveyMayEnterPage`). */
+export const EXEC_REASONS = ["plain", "current", "sh", "pointer", "unapproved-page", "requested", "default"] as const;
+
 /** Why a route was taken, for the execution log and the note the model is given. `requested`: the call's `world`;
  *  `default`: the default world, isolated. */
-export type ExecReason = "plain" | "current" | "sh" | "pointer" | "unapproved-page" | "requested" | "default";
+export type ExecReason = typeof EXEC_REASONS[number];
 
 /** Where one approved exec runs. `main` with a `note` is the approved-page fallback when no isolation is available. */
 export type ExecRoute =
@@ -103,6 +106,21 @@ export function routeExec(js: string, approvedPage: boolean, iso: Isolation, ask
     if (world === "isolated") return isolated("requested") ?? unavailable("requested");
     if (defaultWorld === "isolated") return isolated("default") ?? { where: "main", reason: "plain" };
     return { where: "main", reason: "plain" };
+}
+
+/** Isolation as if every mechanism were available, for a decision made on the script alone. */
+const ANY_ISOLATION: Isolation = { userScripts: true, cdp: true };
+
+/**
+ * Whether a read-only survey of a worker-built run's exec may be handed to the page to evaluate, decided on the SCRIPT
+ * alone: only one whose route reason is `plain`. The page's mediated interpreter lives in its main world, so a script
+ * naming `ml.sh`, `ml.current` or a pointer never goes there, whatever the setting or the browser offers; nor one a
+ * reason added later reads off the script. The page's approval is not consulted: on an unapproved page the person's own
+ * run keeps its survey (the site, not the script, is what is unapproved), and the exec itself is routed by `routeExec`.
+ * @param js the exec's source
+ */
+export function surveyMayEnterPage(js: string): boolean {
+    return routeExec(js, true, ANY_ISOLATION).reason === "plain";
 }
 
 /** The one line an isolated exec's failure adds when the page's world was open to it: what it read is likely a global

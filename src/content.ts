@@ -5,7 +5,7 @@
 // says nothing to the page and answers nothing it posts (page-gate.ts, docs/spec/SITE_PRESENCE.md step 2).
 import type { PageRequestType, BackgroundMessageType } from "./contract/contract-messages";
 import { HANDLE_MAP } from "./page-relay";
-import { gateOpen, gateState, setGate, setAsk, gateAsks, whenOpen, whenDecided, markAlive, pageAlive } from "./page-gate";
+import { gateOpen, gateState, setGate, setAsk, gateAsks, whenOpen, whenDecided, markAlive, pageAlive, setVisible } from "./page-gate";
 import { listenForPage, toPage, onPage, offPage, rearmForPage, type ChannelMessage } from "./page-channel";
 import { watchGestures, hasPageGesture } from "./page-gesture";
 
@@ -133,7 +133,7 @@ function onWorkerMessage(message: PageMessage & { event?: unknown }, _sender: ch
     // The worker is about to put injected.js in (sw-presence.ts injectPageScripts): a port the page handed over before
     // is dropped, and the next one taken (page-channel.ts).
     if (message && message.type === "PAGE_PORT_ARM") { rearmForPage(); sendResponse(true); return undefined; }
-    if (message && message.type === "PRESENCE_OPEN") { setGate(true); sendResponse(true); return undefined; }
+    if (message && message.type === "PRESENCE_OPEN") { setVisible(); setGate(true); sendResponse(true); return undefined; }
     // A debug event from a background-hosted run is the SHELL's (sidebar/shell.ts receives ML_DEBUG_TO_PAGE itself). It
     // is not re-posted on the page window: this used to, and the page read every step of every run that reached the
     // tab, and posted its own as the worker's (docs/spec/SITE_ACCESS.md, attack 15).
@@ -202,7 +202,7 @@ function onWorkerMessage(message: PageMessage & { event?: unknown }, _sender: ch
         return undefined;
     }
     if (!message || message.type !== "RUN_TOOL_IN_PAGE") return undefined;
-    const { runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, verifyInWorker, stream, finish: finishTurn, reads, answerShape, answerSelect, geometry, pageRead } = (message.payload || {}) as { pageRead?: unknown; verifyInWorker?: boolean; runId: string; name: string; args: unknown; reads?: unknown[]; answerShape?: unknown[]; answerSelect?: unknown; geometry?: unknown; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; stream?: boolean; finish?: boolean };
+    const { runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, verifyInWorker, stream, finish: finishTurn, reads, answerShape, answerSelect, geometry, pageRead, crossOriginWord } = (message.payload || {}) as { crossOriginWord?: boolean; pageRead?: unknown; verifyInWorker?: boolean; runId: string; name: string; args: unknown; reads?: unknown[]; answerShape?: unknown[]; answerSelect?: unknown; geometry?: unknown; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; stream?: boolean; finish?: boolean };
     // Nothing of ours is in this page, so nothing will ever answer. Fail fast, and post nothing to it.
     if (!gateOpen()) { sendResponse({ result: SHUT_MSG }); return true; }
     const callId = Math.random().toString(36).slice(2);
@@ -235,7 +235,7 @@ function onWorkerMessage(message: PageMessage & { event?: unknown }, _sender: ch
         finish({ result: `Error: the page didn't respond while running "${name}" (timed out). It may be mid-navigation. Re-check the page (look / pageInfo) and retry, or navigate to a different page.` }, false);
     }, TOOL_RELAY_TIMEOUT_MS);
     onPage(onResult);
-    toPage({ type: "PAGE_TOOL_RUN", callId, runId, name, args, reads, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, verifyInWorker, stream, finish: finishTurn, answerShape, answerSelect, geometry, pageRead });
+    toPage({ type: "PAGE_TOOL_RUN", callId, runId, name, args, reads, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, verifyInWorker, stream, finish: finishTurn, answerShape, answerSelect, geometry, pageRead, crossOriginWord: crossOriginWord === true });
     return true;   // async sendResponse (the window round-trip completes later)
 }
 
@@ -375,6 +375,7 @@ function contentReady(tries = 4): void {
         void chrome.runtime.lastError;
         if (!resp) { if (tries > 1) setTimeout(() => contentReady(tries - 1), 500); return; }
         setAsk(resp.ask === true);
+        if (resp.open === true) setVisible();
         setGate(resp.open === true);
         // Open with no page script (SITE_PRESENCE.md step 2, the race the janitor found): the origin turned visible while this
         // document loaded, before the registration covered it. Said once; the worker decides from the sender's own origin.

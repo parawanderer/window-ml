@@ -9,18 +9,22 @@
 
 import type { ElementContext } from "../contract";
 import type { StartRunPayload } from "../contract/contract-messages";
-import { shortHash, type AttachedFile, type PromptDisplay, type PromptOrigin } from "../contract/contract-run";
+import { imagesRefusal, shortHash, type AttachedFile, type PromptDisplay, type PromptOrigin, type SentFile } from "../contract/contract-run";
+import { checkFilesField } from "../attached-files";
+import { ImagesRefused } from "../image-gate";
 import { framePrompt } from "../agent/prompts";
 import { promptSurfaceOf } from "../agent/prompt-surface";
 import { stepBudget } from "../agent/step-budget";
-import { assembleRun, rebuildFor, startPayload, userRunOptions, withPageContext, type UserRunRequest } from "../agent/run-assembly";
+import { assembleRun, rebuildFor, routeTurnImages, startPayload, userRunOptions, withPageContext, type UserRunRequest } from "../agent/run-assembly";
 import { relayDebugEvent } from "./sw-debug";
 import { getConfig } from "./sw-llm";
 import { dropLocalTools, registerLocalTools } from "./sw-local-tools";
 import { buildWorkerTools } from "./worker-tools";
 import { pyMediaFor } from "./worker-media";
 import { hostRun } from "./sw-run-host";
-import { bgRuns, bufferReplay, isWorkerRun, makeWorkerRun, runControllers, runInboxes, tabPageUrl, workerRunsStarting, beginStart, endStart } from "./sw-runs";
+import { bgRuns, bufferReplay, isWorkerRun, makeWorkerRun, runControllers, runInboxes, runModelFor, runRebuilds, tabPageUrl, workerRunsStarting, beginStart, endStart, sessionTokens, releaseSessionTokens } from "./sw-runs";
+import { attachFiles, readPdfOffscreen } from "./sw-attach";
+import { storeHeld } from "./sw-values";
 import { originOf } from "../site-access";
 import { siteDecision } from "./sw-site-access";
 import { ingestSessionEvent, keepSession } from "./sw-sessions";
@@ -29,6 +33,7 @@ import { noteWorkerVision } from "./run-vision";
 import { capPageContext } from "./page-answer-caps";
 import { proposePolicyTool } from "../tools/propose-policy-tool";
 import { proposeManifestTool } from "../tools/propose-manifest-tool";
+import { taskTool } from "../tools/task-tool";
 import { shellTurnedOn } from "./sw-shell";
 import { defineTool } from "../ml/ml-tool-factories";
 import { notePersonTurn } from "./sw-start-approval";
@@ -57,15 +62,35 @@ export async function startUserRun(tabId: number, req: UserRunRequest, opts: { k
     const tab = await chrome.tabs.get(tabId);
     const url = tab.url || "";
     if (!/^https?:/i.test(url)) throw new Error("An agent run can only start on an ordinary web page (http or https).");
+    // Past the cap a start is refused, never cut: the composers say so first, and this is the half no surface can skip.
+    const tooMany = imagesRefusal(req.images?.length ?? 0);
+    if (tooMany) throw new ImagesRefused(tooMany);
+    // The one rule for a message's files, whichever surface sent them (a tab's USER_START_RUN included).
+    const checked = checkFilesField(req.files, "agent");
+    if (checked.reason) throw new Error(checked.reason);
     const ml = workerMl(url);
-    const recipe = userRunOptions(ml, req, opts.sender);
+    // Minted before the task is framed: an attached PDF is held for this session, and its outline names its pointer.
+    const runId = shortHash();
+    try {
+        return await startMinted(tabId, tab, url, ml, runId, req, checked.files, opts);
+    } catch (e) {
+        // Nothing hosts the run: what it stored (an attached PDF's rows) and its shelf go with it.
+        if (!runControllers.has(runId) && !bgRuns.has(runId)) releaseSessionTokens(runId);
+        throw e;
+    }
+}
+
+/** {@link startUserRun} once the run has its id: attach the files, assemble, adopt, host. */
+async function startMinted(tabId: number, tab: chrome.tabs.Tab, url: string, ml: ReturnType<typeof workerMl>, runId: string, req: UserRunRequest, files: SentFile[] | undefined, opts: { keep?: boolean; approvalRouting?: "both"; answer?: true; sender?: Omit<PromptOrigin, "surface"> }): Promise<{ hash: string }> {
+    const shelf = sessionTokens(runId).files;
+    const attached = await attachFiles(runId, files, 1, { read: readPdfOffscreen, store: storeHeld, shelf });
+    const recipe = userRunOptions(ml, { ...req, files: attached.files }, opts.sender);
     if (!recipe.task && !(req.images && req.images.length)) throw new Error("Nothing to do: the run has no task and no image.");
     // propose_policy only here: a run the worker builds for the person may ask them for a policy; no page's run can. And
     // propose_manifest when the settings turn ml.sh on, which the run's scripts then reach.
     const shellOn = await getConfig().then(shellTurnedOn, () => false);
-    const extraTools = [...(recipe.options.extraTools ?? []), proposePolicyTool(defineTool), ...(shellOn ? [proposeManifestTool(defineTool)] : [])];
+    const extraTools = [...(recipe.options.extraTools ?? []), proposePolicyTool(defineTool), ...(shellOn ? [proposeManifestTool(defineTool), taskTool(defineTool)] : [])];
     const asm = await assembleRun(ml, recipe.task, { ...recipe.options, extraTools, ...(opts.answer ? { answer: true } : {}) });
-    const runId = shortHash();
     const rebuild = rebuildFor(asm, true, "worker");
     noteWorkerVision(runId);   // its vision facts are the worker's own (run-vision.ts)
     // Remote tools, and the builtins that never read the page, run HERE (sw-local-tools.ts, worker-tools.ts); everything
@@ -104,6 +129,7 @@ export async function startUserRun(tabId: number, req: UserRunRequest, opts: { k
             builtBy: "worker",
         }),
         ...(recipe.display ? { display: recipe.display } : {}),
+        ...(shelf.size ? { files: shelf.all() } : {}),
     };
     if (opts.keep) keepSession(runId);
     // The run's result reaches every surface through its own lifecycle events (`builtBy: "worker"`), so nobody
@@ -145,13 +171,31 @@ export function announce(tabId: number, event: Record<string, unknown>): void {
  * @param display how to show it, when `text` is not what the person typed
  * @returns false when the run is not live in this worker
  */
-export function steerRun(hash: string, text: string, origin?: PromptOrigin, display?: PromptDisplay): boolean {
+export function steerRun(hash: string, text: string, origin?: PromptOrigin, display?: PromptDisplay, images?: string[], shown?: string[]): boolean {
     const inbox = runInboxes.get(hash);
     if (!inbox) return false;
     const sayId = `sc_${Date.now().toString(36)}_${++steerSeq}`;
-    inbox.queue.push({ id: sayId, text, ...(origin ? { origin } : {}) });
-    announce(inbox.tabId, { kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text, sayId, ...(display ? { display } : {}) });
+    inbox.queue.push({ id: sayId, text, ...(origin ? { origin } : {}), ...(images?.length ? { images } : {}) });
+    announce(inbox.tabId, { kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text, sayId, ...(display ? { display } : {}), ...(shown?.length ? { images: shown } : {}) });
     return true;
+}
+
+/**
+ * Say in a run's step list that a message was not sent, and why: for a surface whose send has no answer to carry it.
+ * @param hash the run
+ * @param why the refusal's sentence
+ */
+export function noteRefusedTurn(hash: string, why: string): void {
+    const tabId = bgRuns.get(hash)?.tabId ?? runInboxes.get(hash)?.tabId;
+    if (tabId != null) announce(tabId, { kind: "agent-note", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text: `Your message was not sent: ${why}` });
+}
+
+/** A worker-built run's vision facts, for routing a later turn's images: the model it is on now, and what its build
+ *  decided about seeing (`rebuild.driverSees`, `rebuild.visionModel`), and the model it was built on. */
+function turnVision(hash: string): { driverSees: boolean; runModel: string | null; visionModel: string | null } {
+    // The live turn's rebuild while it runs (the first turn is not in `bgRuns` until it ends), the stored one after.
+    const rb = runRebuilds.get(hash) ?? bgRuns.get(hash)?.p.rebuild;
+    return { driverSees: rb?.driverSees === true, runModel: runModelFor(hash) ?? bgRuns.get(hash)?.p.model ?? rb?.model ?? null, visionModel: rb?.visionModel ?? null };
 }
 
 /**
@@ -171,6 +215,9 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
     const live = runInboxes.get(hash);
     const tabId = stored?.tabId ?? live?.tabId;
     if (tabId == null || (fromTabId != null && fromTabId !== tabId)) return null;
+    // Past the cap the message is refused, never cut, whoever built the run.
+    const tooMany = action === "send" ? imagesRefusal(body.images?.length ?? 0) : null;
+    if (tooMany) throw new ImagesRefused(tooMany);
     // A run a PAGE built is the page's to drive while that page may: its handle keeps the history in step. Once the
     // tab is on a site that may not use window.ml (the run navigated off its builder's origin), the page's RESUME_RUN
     // would be refused, and nothing page-side owns the run any more: it is handed to the worker.
@@ -187,11 +234,18 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
     }
     const surface = promptSurfaceOf(body.surface);
     const origin: PromptOrigin | undefined = sentFrom ?? (surface ? { surface } : undefined);
-    const { text, display } = action === "send" ? framePrompt(String(body.text || ""), body.elementContext, body.files) : { text: "", display: undefined };
-    if (action === "send" && !text && !(body.images && body.images.length)) return "none";
+    const framed = action === "send" ? framePrompt(String(body.text || ""), body.elementContext, body.files) : { text: "", display: undefined };
+    const { display } = framed;
+    const attached = action === "send" ? (body.images ?? []).filter((i) => typeof i === "string" && i.startsWith("data:image/")) : [];
+    if (action === "send" && !framed.text && !attached.length) return "none";
+    // The images go where the run's first turn's went: to a driver that sees, or as the reader's notes. Decided before
+    // anything is announced, so a refusal (vision not known, no reader) reaches the sender and nothing is sent.
+    const routed = attached.length ? await routeTurnImages(workerMl(tabPageUrl.get(tabId) || ""), attached, turnVision(hash)) : {};
+    const text = routed.notes ? (framed.text ? `${framed.text}\n\n${routed.notes}` : routed.notes) : framed.text;
+    const shown = attached.length ? { images: attached } : {};
     if (runControllers.has(hash)) {
         if (action === "continue") return "busy";
-        return steerRun(hash, text, origin, display) ? "steer" : "busy";
+        return steerRun(hash, text, origin, display, routed.images, attached) ? "steer" : "busy";
     }
     if (!stored) return "none";
     // Re-register the builtin toolset in the page first: the document may not be the one the last turn ran on.
@@ -205,11 +259,11 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
         endStart(hash, starting);
         throw e;
     }
-    if (text) announce(tabId, { kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text, ...(display ? { display } : {}) });
+    if (text || attached.length) announce(tabId, { kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text, ...(display ? { display } : {}), ...shown });
     const steps = stepBudget(body.maxSteps);
     if (starting.signal.aborted) { endStart(hash, starting); return "none"; }
     endStart(hash, starting);
     hostRun({ type: "RESUME_RUN", payload: { runId: hash, task: text, ...(steps ? { maxSteps: steps } : {}) } },
-        tabId, () => { /* reported through the session's events */ }, action === "send" ? origin : undefined);
+        tabId, () => { /* reported through the session's events */ }, action === "send" ? origin : undefined, undefined, routed.images);
     return action === "continue" ? "continued" : "turn";
 }

@@ -152,6 +152,19 @@ test("the × on a thumbnail removes that image", async () => {
     assert.deepEqual(loadDraftImages("start"), [IMG2]);
 });
 
+test("past eight images the strip says so and marks the ones over, the start waits, and removing one lets it go", async () => {
+    saveDraftImages("start", Array.from({ length: 9 }, (_, i) => (i % 2 ? IMG2 : IMG)));
+    const host = await mount("agent");
+    await type(host, "compare these");
+    assert.equal(host.querySelector(".cthumbs-why")?.textContent, "a message takes up to 8 images; remove 1");
+    assert.deepEqual([...host.querySelectorAll(".cthumb")].map((t) => t.classList.contains("over")), [false, false, false, false, false, false, false, false, true]);
+    assert.equal(send(host).disabled, true, "nothing goes with fewer images than were attached");
+    host.querySelectorAll(".cthumb-x")[8].click();
+    await flush();
+    assert.equal(host.querySelector(".cthumbs-why"), null);
+    assert.equal(send(host).disabled, false);
+});
+
 test("images held for the start draft are back when the page is mounted again", async () => {
     saveDraftImages("start", [IMG]);
     const host = await mount("agent");
@@ -294,7 +307,10 @@ test("a runtime that reads PDFs takes one as its bytes on a chat, offers .pdf in
 
     const agent = await mount("agent", PDF_CAN);
     await pasteFiles(agent, pdf());
-    assert.equal(why(pills(agent)[0]), "paper.pdf is a PDF; an agent run will read PDFs in a later change");
+    assert.deepEqual(pills(agent).map(why), [null], "a run takes a PDF when it starts");
+    send(agent).click();
+    await flush();
+    assert.deepEqual(startCommands().at(-1).files, [{ name: "paper.pdf", type: "application/pdf", data: "JVBERi0xLjcK" }], "agent.start carries the PDF, not only the text files");
 });
 
 test("a file over the cap says its size and the limit, with the chat wording on a chat and the agent wording on a run", async () => {

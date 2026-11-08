@@ -340,9 +340,13 @@ highlight on a waiting click's target, so the card, the transcript and the start
   it drew with `ML_HL_POS`: the worker takes one of the nine labels (`HL_POSITIONS`) from a top frame and hands it to that
   tab's OPEN panel, never queued.
 - **A run's end leaves the panel enabled**, showing the run as finished; it is empty after the next navigation.
-- **Not yet closed:** the DevTools panel's `ml-devtools` port takes any extension sender's `tabId`, and `debugMode:
-  "overlay"` mounts `#ml-sb-root` on a hidden page. Both are pre-existing and ruled for the security lane's follow-ups
-  (SITE_PRESENCE.md step 4).
+- **The overlay never mounts on a hidden page**, a run there included: with `debugMode: "overlay"` the shell mounts it
+  only once the worker has said the origin is visible (`whenVisible`, page-gate.ts: the `CONTENT_READY` reply's
+  `open`, or `PRESENCE_OPEN`). An open gate does not say that, since a run's page script opens a hidden page's gate too.
+- **A run's feed goes only to a sender that is all ours.** `ml-devtools` and `ml-sidepanel` are served to an extension
+  page that is in no tab, or in a tab whose own top document is ours (the e2e watcher's shape); `ml-sidepanel` also
+  needs no tab. Any other port, a content script's or one framed into a page included, is disconnected unread and
+  registers nothing, so the panel that opens next still gets the full replay (`ownSender`, sw-debug.ts).
 
 ## Starting agents
 
@@ -573,7 +577,12 @@ rule is pure, and its tests enumerate every input (`tests/isolated-exec.test.mjs
 - What the page is sent of it: nothing for a run the worker drives. `sendTool` drops `world` from every exec message to
   the tab (`withoutWorld`), exec's In is drawn in the worker, and its precheck runs there too (it used to be sent to the
   page, script and all; a `js` that is no string is refused there). A read-only survey whose exec would run isolated
-  (asked, or by the default) skips the page's leg: it is answered in the worker or goes to the gate. A page-built run
+  (asked, or by the default) skips the page's leg: it is answered in the worker or goes to the gate. So does one whose
+  SCRIPT names `ml.sh`, `ml.current` or a pointer, on any setting (`surveyMayEnterPage`): the page leg is decided on
+  the script alone, and only a `plain` reason keeps it. Each reason in `EXEC_REASONS` is either read off the script
+  (`sh`, `current`, `pointer`: no page leg) or derived from the page or the call (`unapproved-page`, `requested`,
+  `default`: never the script's, so the person's own run on an unapproved page keeps its survey); a new reason fails
+  the classification row in `tests/exec-world.test.mjs` until it is placed. A page-built run
   refuses `"isolated"` in the worker's precheck, at the call, and on the page (`pageWorldRefusal`), and its survey is
   not tried. `ml.current.env.exec` answers for an exec without `world` under the default; for a page-built run it uses
   the page's world, so the page never learns the stored default.

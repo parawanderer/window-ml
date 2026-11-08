@@ -130,8 +130,9 @@ export async function fetchUrlFor(payload: unknown, caller: FetchCaller): Promis
             }
         }
         const execOpen = tabId != null && !!tabGrants(tabId)?.fetchUrls?.has(url);
-        // Whether a URL a redirect reached was approved for this caller, as the first URL was above.
-        const approved = (u: string): boolean => caller.consented ? caller.consented(u) : tabId != null && !!fetchConsent.get(tabId)?.has(u);
+        // Whether a URL a redirect reached was approved for this caller, as the first URL was above: a consent the tab
+        // remembers counts only while no `ask` or `deny` withdraws it, or a redirect would reach what a direct fetch is refused.
+        const approved = (u: string): boolean => caller.consented ? caller.consented(u) : tabId != null && !!fetchConsent.get(tabId)?.has(u) && !withdrawn(tabId, u, rendered);
         // Every hop of an untrusted caller's fetch is judged before its target is requested: the same site, an http to
         // https upgrade of the host, or a URL already approved (docs/spec/SITE_PRESENCE.md, "Redirects on auto-approved
         // fetches"). An approved exec's literal URLs keep following, as a trusted surface's do.

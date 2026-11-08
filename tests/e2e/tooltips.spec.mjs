@@ -7,7 +7,7 @@
 // What is pinned here: the tooltip is always FULLY ON SCREEN, never CLIPPED by the scrolling panel it was
 // triggered from, and never sitting UNDER the pointer.
 import { test, expect } from "@playwright/test";
-import { launchExtension, configureExtension, onChannel, waitForMl, inShell, waitInShell } from "./harness.mjs";
+import { launchExtension, configureExtension, onChannel, waitForMl, inShell, waitInShell, approveOrigin } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -40,6 +40,8 @@ test("tooltips: always fully on screen, never clipped, never under the cursor", 
 
         const page = await ext.context.newPage();
         await page.setViewportSize({ width: 1100, height: 800 });
+        // the overlay mounts only on a page that may use window.ml, so approve the fake server's origin first
+        await approveOrigin(ext.sw, new URL(fake.url).origin);
         await page.goto(`${fake.url}/api/version`);
         await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
         // Deliberately NARROW and hard against the right edge: that is where a tooltip runs off screen.
@@ -179,6 +181,8 @@ test("cursor tooltips: one at a time, never under the pointer, never clipped", a
 
         const page = await ext.context.newPage();
         await page.setViewportSize({ width: 1100, height: 800 });
+        // the overlay mounts only on a page that may use window.ml, so approve the fake server's origin first
+        await approveOrigin(ext.sw, new URL(fake.url).origin);
         await page.goto(`${fake.url}/api/version`);
         await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
         await inShell(page, (roots) => {
@@ -275,6 +279,8 @@ for (const width of [360, 900]) {
 
             const page = await ext.context.newPage();
             await page.setViewportSize({ width: 1100, height: 760 });
+            // the overlay mounts only on a page that may use window.ml, so approve the fake server's origin first
+            await approveOrigin(ext.sw, new URL(fake.url).origin);
             await page.goto(`${fake.url}/api/version`);
             await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
             await inShell(page, (roots, w) => {
@@ -567,6 +573,8 @@ test("tooltips: a dashed event rule answers alone, not under the plot's own read
 
         const page = await ext.context.newPage();
         await page.setViewportSize({ width: 1280, height: 900 });
+        // the overlay mounts only on a page that may use window.ml, so approve the fake server's origin first
+        await approveOrigin(ext.sw, new URL(fake.url).origin);
         await page.goto(`${fake.url}/api/version`);
         await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
         await inShell(page, (roots) => {
@@ -634,6 +642,8 @@ test("tooltips: a tip whose trigger disappears under a still pointer disappears 
         });
         const page = await ext.context.newPage();
         await page.setViewportSize({ width: 1280, height: 900 });
+        // the overlay mounts only on a page that may use window.ml, so approve the fake server's origin first
+        await approveOrigin(ext.sw, new URL(fake.url).origin);
         await page.goto(`${fake.url}/api/version`);
         await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
         await inShell(page, (roots) => {
@@ -697,6 +707,8 @@ test("tooltips: moving straight off the panel onto the page takes every kind of 
         await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_sections: { lane: true, models: true } }));
         const page = await ext.context.newPage();
         await page.setViewportSize({ width: 1100, height: 800 });
+        // the overlay mounts only on a page that may use window.ml, so approve the fake server's origin first
+        await approveOrigin(ext.sw, new URL(fake.url).origin);
         await page.goto(`${fake.url}/api/version`);
         await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
         await inShell(page, (roots) => {

@@ -225,6 +225,23 @@ ml.pipe(r.stdout, "grep -c '^ '");         // stdout and stderr are pointers, he
   have their own whitelist, since `PAGER`, `GIT_EXTERNAL_DIFF`, `LD_PRELOAD` or `GIT_SSH_COMMAND` turn a read into
   running code. A call's `env` ADDS to the session's; in the Python shim, `env={**os.environ, …}` would carry the
   sandbox's environment to the host, so it is refused with a steer. Restoring them is free; files a command wrote are NOT rolled back (only a container snapshot does that).
+- **A session is a VALUE, held by the script, never by the host** (ruled 2026-10-30, Shane's question: a model
+  should write `sh = ml.sh.session()` and `sh.cd("repo")` in one cell and `sh.cat("file.txt")` in the next, with the
+  cwd kept). `ml.sh.session()` returns an object holding `cwd`, the `env` additions and options (`check`); every call
+  it makes sends `{ argv, cwd, env }` explicitly, exactly as the plain form does, and the host keeps no per-session
+  state. Persistence across cells then costs nothing new: a worker-hosted run keeps one Python namespace across its
+  cells (`docs/dev/python-sandbox.md`, "A run's namespace"), so `sh` survives as any variable does, and in JavaScript
+  from the console it lives in the page heap; one rule in both languages, no new lifetime. Loss is already specified:
+  a reap, a kill or an evicted worker loses `sh` with the rest of the namespace and the next cell is told
+  `namespace reset`, so nothing dangles at the host, nothing joins the owner table, and a resumed run has nothing to
+  "find". The card is unchanged, since it already shows the cwd on every call, so a stale `cd` can hide nothing. The
+  `with ml.sh.session() as sh:` form is the same object with nothing to tear down, documented as optional sugar; the
+  bare form is the primary one, being what a model writes in a REPL. `sh.cd(path)` and `sh.env(name, value)` mutate
+  the value, under the same root check and env whitelist as a call's own `cwd`/`env`. A shell metacharacter in an
+  argv item (`sh.echo("foo", ">>", "bar.txt")`) stays refused with the steer to the explicit form, above; the cwd
+  persistence does not change that. A host-held session with an id appears only when there is host state to own, a
+  slice-1 container ("a session's container can be thrown away or kept"), and the cwd is never the reason to
+  create one early. This closes the "Session state across turns" open question below.
 - **`&&` is the calling language's control flow** (ruled 2026-10-20, Shane's question): a chain of calls is judged one
   call at a time as each arrives, suspending on an ask, and nothing new is needed to express it. In Python a result's
   truth value IS `ok` (`okCodes` applied, never `code == 0`, or grep's 1 breaks the chain), so
@@ -235,6 +252,35 @@ ml.pipe(r.stdout, "grep -c '^ '");         // stdout and stderr are pointers, he
   first spawn, the pipe's card without the pipe, is a possible later sugar, not planned: a later argv that depends on
   an earlier result cannot be shown before it exists, and with policies covering the free tier a chain of read-only
   calls asks nothing today. Build it only once a measured case shows the per-call asks are the annoying part.
+
+RULED 2026-11-07 (the bench lane's proposal, `20261107-1357Z-bench-to-repl-specs-sh-tilde-proposal.md`; Shane's
+agreement reached the coordinator relayed, "it saves tokens", and he CONFIRMED it in the coordinator's session the
+same day, leaving the allocation to the coordinator): the HOST
+expands a leading `~` in an `ml.sh.run` argument. Today argv is passed as written with no shell, so
+`["cat", "~/notes.txt"]` names `<cwd>/~/notes.txt`, reads free inside the workspace and finds nothing (CORRECTED
+2026-11-07 by the bench lane: a literal `~/.ssh/config` does NOT read free, since the credential-store segment match
+applies anywhere in the path, so it asks, as qwen's canary run showed); in the bench's canary gemma4:31b spent a step
+on `~` and fell back to `sh -c`, which always asks. The rule: the host
+expands at resolve time, in the facts pass that already resolves path arguments, from the `HOME` it already passes
+through, so the facts, the judging, the card and the spawn see one path; the judge never sees an unexpanded `~`,
+because an expansion after judging would let `~/.ssh/config` pass as an in-root relative path. POSIX tilde-prefix
+cut down: a whole argument that is `~` or starts with `~/`, in `argv[0]`, every operand and `cwd` alike; never
+`~user`, never after `=`, never inside an argument; no globs, `$VAR` or pipes. Shown, not silent: the facts record
+`{ index, from, to }` per expanded argument, the card and the unasked line show `~/x → /real/x`, the result's argv
+echo carries the expanded form. No `HOME`: the argument stays literal and the facts say why, never `""` or `/`. A
+host that cannot expand is told apart by its version; against it the worker keeps today's literal behaviour and the
+JSDoc clause ("a leading `~` or `~/` in an argument is your home directory; nothing else is expanded") does not
+appear. It is a host protocol change (resolve plus a facts field, PROTOCOL.md) and then a window-ml PR; the host
+owner is the ASYNC LANE, as a third host slice after `peek` (allocated 2026-11-07, both in the host's resolve path),
+starting only once `peek`, #1437, #1451 and #1453 are through; the window-ml tests and the `~`-spelled
+canary row (must ASK and show the expanded path, never read free as a workspace path) are the bench lane's, finder's
+own file. Independent of the lease bench.
+
+TRAP (the bench lane, 2026-11-07, measured): a stored WORKSPACE manifest for a script that calls other programs must
+declare `runs-code`; with `effects: ["read"]` alone, `envelopeFor` sends `{write: "none", exec: "program-only"}` and
+the host refuses every child of `bash` (`/usr/bin/sleep: Permission denied`) while the call still reports `ok: true`,
+because builtins such as `echo` run. The lease bench's first matrix was invalid for this reason. The Settings
+manifest editor should warn when an entrypoint script's manifest lacks `runs-code` (open item for the shell UI).
 
 ## The API's shape: borrowed, not invented
 
@@ -646,7 +692,8 @@ sandbox; Anthropic's `sandbox-runtime` is the reference for the profiles, not a 
 
 - **Containers on macOS**: Docker or Podman (a VM either way) or Apple's own `container`; what the person has to
   install before slice 1 works.
-- **Session state across turns**: whether `cwd`/`env` live per run or per session, and what a resumed session finds.
+- **Session state across turns**: RULED 2026-10-30, see "A session is a VALUE" above: `cwd`/`env` live in the
+  session value in the run's namespace, lost with it, and a resumed run finds nothing at the host.
 - **Resolve, then run**: the host resolves paths for the decision and then spawns; a symlink swapped between the two is
   a race for the CHILD'S opens, which reopen by name. The host's own reads open by descriptor without following links
   ("Workspace roots"); the child's are bounded by the OS sandbox in host mode and by construction in a container, and

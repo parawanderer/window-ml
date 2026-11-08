@@ -32,7 +32,9 @@ export function wirePointer(p: MlWirePointer): unknown {
 /** Thrown by a member to answer with a specific error code rather than `Failed`. */
 export class WireError extends Error {
     readonly code: MlWireErrorCode;
-    constructor(code: MlWireErrorCode, message: string) { super(message); this.code = code; }
+    /** For `Detached`: the task the call runs on as (sw-tasks.ts), which the cell's `MlError.task` carries. */
+    readonly task?: string;
+    constructor(code: MlWireErrorCode, message: string, task?: string) { super(message); this.code = code; if (task !== undefined) this.task = task; }
 }
 
 /** How long a call waits on the person before it fails: the dialect's step budget does not run while it waits, so this
@@ -170,8 +172,8 @@ function handlesIn(v: unknown, inWrap = false, out: Record<string, unknown>[] = 
 }
 
 /** An error answer, with its text through `scrub` (the server URL, the key and the model filter never cross). */
-async function fail(seq: number, code: MlWireErrorCode, message: string, scrub: (s: string) => Promise<string>): Promise<MlWireAnswer> {
-    return { seq, error: { code, message: await scrub(message) } };
+async function fail(seq: number, code: MlWireErrorCode, message: string, scrub: (s: string) => Promise<string>, task?: string): Promise<MlWireAnswer> {
+    return { seq, error: { code, message: await scrub(message), ...(task !== undefined ? { task } : {}) } };
 }
 
 /** Run a member and turn its result, or its throw, into the answer. */
@@ -180,7 +182,7 @@ async function answerOf(seq: number, name: string, member: WireMember, args: unk
     try {
         result = await member.run(...args);
     } catch (e) {
-        if (e instanceof WireError) return fail(seq, e.code, e.message, scrub);
+        if (e instanceof WireError) return fail(seq, e.code, e.message, scrub, e.task);
         return fail(seq, "Failed", `ml.${name}: ${(e as Error)?.message || String(e)}`, scrub);
     }
     const p = result && typeof result === "object" ? (result as { [POINTER]?: MlWirePointer })[POINTER] : undefined;

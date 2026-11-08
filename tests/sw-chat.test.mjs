@@ -316,6 +316,20 @@ test("a later message refused for its images leaves the chat idle and its histor
     assert.equal(await sendBackgroundChat(hash, "plain words"), "turn", "the chat is not left busy");
 });
 
+test("past the cap a chat's message is refused, never cut: nine images on start or on send send nothing", T, async () => {
+    let calls = 0;
+    const w = world({ answer: async () => { calls++; return { content: "x" }; } });
+    const nine = Array.from({ length: 9 }, () => PNG);
+    await assert.rejects(startBackgroundChat({ text: "look", images: nine }), { name: "ImagesRefused", message: "a message takes up to 8 images; remove 1" });
+    assert.deepEqual(backgroundChats(), []);
+    const hash = await startBackgroundChat({ text: "hi", images: nine.slice(1) });
+    await until(() => w.of("chat-result").length === 1, "turn 1");
+    await assert.rejects(sendBackgroundChat(hash, "and these?", nine), { name: "ImagesRefused", message: "a message takes up to 8 images; remove 1" });
+    assert.equal(w.of("chat").length, 1, "no second turn was started");
+    assert.equal(calls, 1, "eight on start went out; nine on send did not");
+    assert.deepEqual(w.asked.length, 1, "the refusal comes before the vision question");
+});
+
 test("vision: true is passed to the question as the person's word, on start and on send", T, async () => {
     const w = world();
     const hash = await startBackgroundChat({ text: "look", images: [PNG], vision: true });

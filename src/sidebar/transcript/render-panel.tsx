@@ -739,6 +739,11 @@ const FOLLOW_SLACK = 24;
 /** Is this scroller parked at (or within a hair of) the bottom? Pure arithmetic, so it unit-tests directly. */
 export const atBottomOf = (el: { scrollHeight: number; scrollTop: number; clientHeight: number }): boolean =>
     el.scrollHeight - el.scrollTop - el.clientHeight <= FOLLOW_SLACK;
+/** What a scroll event means for tail-follow: only a scroll the READER made re-arms it. `ownWrite` is the `scrollTop`
+ *  a find reveal wrote; the event that write causes (it clamps at the tail, so the cell looks parked at the bottom)
+ *  keeps `follow` as it was. The record is spent by the first event after it, so the reader's next scroll is judged. */
+export const judgeScroll = (el: { scrollHeight: number; scrollTop: number; clientHeight: number }, ownWrite: number | null, follow: boolean): { follow: boolean; ownWrite: null } =>
+    ({ follow: ownWrite !== null && el.scrollTop === ownWrite ? follow : atBottomOf(el), ownWrite: null });
 
 /** Captured output, with the tail the MODEL NEVER RECEIVED marked. A tool clips its model-facing result to a
  *  context budget, but the UI keeps far more (UI_OUT_CAP) — so without this you'd read the surplus as "what the
@@ -944,6 +949,7 @@ function clearFindPaint(): void {
 export function OutputCell({ children, text, corner, fill }: { children: ComponentChildren; text?: boolean; corner?: ComponentChildren; fill?: boolean }) {
     const box = useRef<HTMLDivElement>(null);
     const follow = useRef(true);                       // tail-follow armed? (parked at the bottom)
+    const ownWrite = useRef<number | null>(null);      // the scrollTop a find reveal wrote; its scroll event is not the reader's
     const [dragH, setDragH] = useState<number | null>(null);   // a drag pins THIS cell; null → the configured cap
     // `fill` gives up the cap and takes the height of whatever contains it. In the LOG a cell is capped so
     // one step's output cannot swallow the transcript; in the BENCH the pane IS the cap — you dragged the
@@ -967,10 +973,17 @@ export function OutputCell({ children, text, corner, fill }: { children: Compone
     const find = useFind(box, (el, r) => {
         follow.current = false;   // the reader is navigating; don't yank them back to the tail
         const box0 = el.getBoundingClientRect(), hit = r.getBoundingClientRect();
+        const before = el.scrollTop;
         el.scrollTop += (hit.top - box0.top) - el.clientHeight / 3;
+        ownWrite.current = el.scrollTop !== before ? el.scrollTop : ownWrite.current;   // no move → no event to ignore
         revealSideways(el, r, hit);
     });
-    const onScroll = (): void => { const el = box.current; if (el) follow.current = atBottomOf(el); };
+    const onScroll = (): void => {
+        const el = box.current;
+        if (!el) return;
+        const j = judgeScroll(el, ownWrite.current, follow.current);
+        follow.current = j.follow; ownWrite.current = j.ownWrite;
+    };
     const onGrab = (e: any): void => {
         const startY = e.clientY, start = box.current?.getBoundingClientRect().height ?? cap;
         followDrag(e, (ev) => setDragH(Math.max(60, Math.round(start + (ev.clientY - startY)))));
@@ -1515,7 +1528,10 @@ export function PyBenchOut({ d, running, marks }: { d: Extract<RenderDescriptor,
  *
  *  Exported so the ANSWER's embedded citations draw code the same way a step does: `![the code](@tool:…:in)`
  *  used to render a bare `Code`, so the same block was explainable in one surface and inert in the other,
- *  purely because of where it was cited. Pass `ctx` to get the tools; without it this is just the block. */
+ *  purely because of where it was cited. Pass `ctx` to get the tools; without it this is just the block.
+ *
+ *  A descriptor with several `rules` (a policy proposal) draws one section per rule instead.
+ *  @gallery {"d":{"type":"code","lang":"javascript","text":"// Rule 1 of 2: allow\nreturn true;\n\n// Rule 2 of 2: deny\nreturn false;","note":"Rule 1 of 2. Covers 3 of 3 fetches.\n\nRule 2 of 2. Covers none.","rules":[{"effect":"allow","source":"return c.host === \"a.example\";","note":"Covers 3 of 3 fetches."},{"effect":"deny","source":"return c.url.includes(\"/admin/\");","note":"Covers none."}]}} */
 export function CodeRender({ d, failLine, ctx, failed }: { d: Extract<RenderDescriptor, { type: "code" }>; failLine?: number | null; ctx?: CodeCtx; failed?: boolean }) {
     const rv = rev.value;   // subscribe: a landed annotation repaints the block (retained via data-rev below)
     const [map, setMap] = useState<number[] | null>(null);
@@ -1525,6 +1541,19 @@ export function CodeRender({ d, failLine, ctx, failed }: { d: Extract<RenderDesc
     const shown = displaySource(d.text, d.lang, d.format, d.marks);
     const block = useRef<HTMLDivElement>(null);
     const find = useCodeFind(block);
+    // A several-rule proposal draws one section per rule. `text` stays the whole proposal (the raw view and the export
+    // read it); the sections are the same rules, each under its own effect and its own measured note.
+    if (d.rules && d.rules.length > 1) return (
+        <div class="code-block rule-sections" data-cite="in">
+            {d.rules.map((r, i) => (
+                <section class="rule-section" data-effect={r.effect} key={i}>
+                    <div class="rule-head"><span class="rule-n">Rule {i + 1} of {d.rules!.length}</span><span class={`rule-effect rule-${r.effect}`}>{r.effect}</span></div>
+                    <Code text={r.source} lang={d.lang} format={d.format} />
+                    <div class="rp-note">{r.note}</div>
+                </section>
+            ))}
+        </div>
+    );
     return (
         <div class="code-block" data-cite="in" data-rev={rv} data-py-map={map ? JSON.stringify(map) : undefined}
             ref={block} tabIndex={0} onKeyDown={find.onKey}>

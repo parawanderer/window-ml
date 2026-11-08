@@ -122,7 +122,7 @@ it was learned by shipping the wrong version first.
 | which sites may use `window.ml`: the origin gate, the approved/denied lists, their settings | `docs/dev/site-access.md` (+ `docs/spec/SITE_ACCESS.md`) |
 | what a page can observe of window.ml acting in it (globals, stacks, event trust, CDP traces, request headers) | `docs/dev/detection-surface.md` |
 | notifications: what reaches someone with the app closed, on which surface, and what a real push would still add | `docs/spec/NOTIFICATIONS.md` |
-| a call that outlives its turn, a wake on an event, a detach, a background task: the three modes and the one inbox | `docs/spec/ASYNC_CALLS.md` (concept, nothing built) |
+| a call that outlives its turn, a wake on an event, a detach, a background task: the three modes and the one inbox | `docs/spec/ASYNC_CALLS.md` (mode 1 built on `ml.sh`: `docs/dev/shell.md`, "Detached calls") |
 | the patched Ollama/OpenWebUI features and how the client reads them | `docs/FORKED-BACKENDS.md` |
 | the e2e harness, observe, the bench, live probes, demos | `docs/dev/e2e-harness.md` (+ each tool's skill in `.claude/skills/`) |
 | the system prompt, a tool's description, anything else the model reads | `docs/dev/prompt-review.md` (+ `docs/spec/PROMPT_BUDGET.md`) |
@@ -232,6 +232,9 @@ reply:** `notebooks/<topic>/`, run with `node scripts/nb.mjs`. `docs/dev/noteboo
 - **Iterating? Run a GENRE: `npm run test:core`** (the `test-genres` skill); run the full `npm test` before you commit.
 - **Tests: `npm test`** (`node:test`, real files in `node:vm` with mocked `chrome`). A new primitive gets a test in
   `tests/background.test.js` and `tests/relay.test.js`.
+- **RULE — scratch output (a saved diff, a probe, a detached run's log, a review draft, a CI artifact) goes in YOUR
+  SESSION'S SCRATCHPAD**, the path the system prompt states, never `/tmp`: a read there prompts the user; the
+  scratchpad does not. → working-in-the-repo.md
 - **Several sessions at once? Each gets its own CLONE** as a sibling directory (`.env`, `pyodide-wheels` and
   `pyodide-core` symlinked, `git config core.hooksPath .githooks`, `npm ci`). Never `git add -A` in a shared tree.
 - **RULE — a clone or worktree you CREATED for a topic, you REMOVE once its PR has merged**, after checking it holds
@@ -267,6 +270,9 @@ CPython), which a green local `npm test` is not. Why each of these: `docs/dev/wo
   the forked Ollama/OpenWebUI. A missing topic gets a new `@` label with a description, not a stretched old one.
 - **A PR that changes what the phone app does gets `run:android-flows`** (a trigger, not a topic). The `phone` skill.
 - **A PR that conflicts with its base has NO checks at all**; **a CANCELLED check prints as `fail`**.
+- **RULE — never write `fix #N`, `close #N` or `resolve #N` in a PR body or commit message unless you MEAN to close
+  N.** GitHub reads the pair anywhere in prose, case-insensitive, and closes N when the squash lands on main; plan,
+  spec and red-team bodies name other lanes' PRs beside those words constantly. Write "#N (the fix)". → working-in-the-repo.md
 - **RULE — every GitHub post an agent makes says WHICH SESSION made it** (comment, review, inline remark, PR body):
   end with `> *Drafted by <harness> · work: <slug> · session <id8> · <model>*` and `<!-- agent-post: harness=… work=…
   session=<full id> model=… -->`; the work slug is session-mail's name for your work. Not in commits.

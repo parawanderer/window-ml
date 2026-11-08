@@ -1,7 +1,7 @@
 // The ml.agent system prompt + the tool-aware clauses appended to it. Split out
 // so the prompt is easy to find and tune. Bundled into injected.js.
-import type { AttachedFile, ElementContext, PromptDisplay } from "../contract/contract-run";
-import { fileDisplay, withFileBlocks } from "../attached-files";
+import type { ElementContext, PromptDisplay } from "../contract/contract-run";
+import { fileDisplay, withFileBlocks, type FramedFile } from "../attached-files";
 import { CURRENT_SIGNATURE } from "../api-docs.gen";
 
 export const AGENT_SYSTEM = [
@@ -268,10 +268,11 @@ export const askAboutTask = (userTask: string, ctx: ElementContext): string => {
  * an element card instead of the whole framed block. The one place every "ask about this" path frames a message.
  * @param typed what the person typed
  * @param ctx the right-clicked element, when there is one
- * @param files text files attached to the message, appended to it as `<file>` blocks (attached-files.ts)
+ * @param files files attached to the message, appended to it as `<file>` blocks (attached-files.ts): a text file
+ *   whole, a PDF as the runtime read it
  * @returns the model-facing text, and how to show it (absent when it is just what they typed)
  */
-export function framePrompt(typed: string, ctx?: ElementContext | null, files?: readonly AttachedFile[] | null): { text: string; display?: PromptDisplay } {
+export function framePrompt(typed: string, ctx?: ElementContext | null, files?: readonly FramedFile[] | null): { text: string; display?: PromptDisplay } {
     const element = ctx && typeof ctx.selector === "string" ? ctx : null;
     if (!element && !files?.length) return { text: typed };
     const lead = element ? askAboutTask(typed, element) : typed;

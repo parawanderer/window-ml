@@ -274,6 +274,9 @@ for (const [name, rules] of [["the spec's order", [ALLOW_SITE, ALLOW_USER, DENY_
         ]);
         assert.deepEqual(cards.map((c) => c.tool), ["propose_policy"], "one card for the proposal, none for the fetch inside the rules");
         assert.match(cards[0].renderIn.note, /Rule 1 of 3\..*Rule 2 of 3\..*Rule 3 of 3\./s, "each rule has its own measured note");
+        const sections = cards[0].renderIn.rules;
+        assert.deepEqual(sections.map((r) => r.effect), rules.map((r) => r.effect), "the card's sections name each rule's effect, in the order sent");
+        assert.ok(cards[0].renderIn.text.includes(sections[0].source) && cards[0].renderIn.note.includes(sections[0].note), "the sections are the same rules the whole-proposal text and note carry");
         assert.match(results[0], /^Added for this run: /);
         assert.match(results[2], /^(Denied|Refused) by/, "the admin read is refused by the deny");
         assert.deepEqual(fetched, ["https://other.example/user/x"], "only the allowed page was fetched");

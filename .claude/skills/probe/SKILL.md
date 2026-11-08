@@ -10,7 +10,7 @@ node scripts/probe.mjs dist-web/index.html                                   # d
 node scripts/probe.mjs dist-web/index.html#/settings/devices --phone --touch --dark
 node scripts/probe.mjs dist-native/embed-demo.html --phone --wait 1500 \
     --eval '(() => { __wmlReceive(JSON.stringify({v:1,type:"open",key:"laptop:7b21d4e8"})); return 1; })()'
-node scripts/probe.mjs http://127.0.0.1:5173/ --size 1280x800 --webkit --shot /tmp/x.png --full
+node scripts/probe.mjs http://127.0.0.1:5173/ --size 1280x800 --webkit --shot $SCRATCH/x.png --full
 ```
 
 - A file path is served over HTTP from its directory (IndexedDB and WebCrypto need a real origin); `#…`/`?…` after

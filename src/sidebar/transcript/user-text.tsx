@@ -109,11 +109,11 @@ const EDIT_SOON = "Editing a message you have sent is not built yet.";
  * COPY WORKS. Edit is the placeholder: it is drawn, dimmed, and says why, because a control that silently does
  * nothing teaches people the app is broken, and a missing one teaches them the feature will never exist.
  */
-export function UserActions({ text }: { text: string }) {
+export function UserActions({ text, editable = true }: { text: string; /** false: no one wrote it (a task's result), so no Edit */ editable?: boolean }) {
     const { copied, copy } = useCopy();
     const items = [
         { label: copied ? "Copied" : "Copy", icon: <IconCopy />, run: () => copy(text) },
-        { label: "Edit", icon: <IconCompose />, disabled: true, run: () => {} },
+        ...(editable ? [{ label: "Edit", icon: <IconCompose />, disabled: true, run: () => {} }] : []),
     ];
     // A long press, by hand: `contextmenu` does not fire consistently over text on a phone, where the platform wants
     // to start a selection instead. The timer is dropped the moment the finger moves, so scrolling past a message
@@ -131,9 +131,9 @@ export function UserActions({ text }: { text: string }) {
             <button type="button" class="icon-btn" aria-label="Copy this message" {...cursorTipOn("Copy")} onClick={() => copy(text)}>
                 {copied ? <IconCheck /> : <IconCopy />}
             </button>
-            <button type="button" class="icon-btn off" aria-label="Edit this message" aria-disabled="true" {...cursorTipOn(EDIT_SOON)}>
+            {editable ? <button type="button" class="icon-btn off" aria-label="Edit this message" aria-disabled="true" {...cursorTipOn(EDIT_SOON)}>
                 <IconCompose />
-            </button>
+            </button> : null}
         </span>
     );
 }

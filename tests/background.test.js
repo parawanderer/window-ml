@@ -3759,6 +3759,16 @@ test("LIST_MODELS: `kinds` is opt-in, costs nothing when unasked, and is never s
     const fromPage = await mk().send({ type: "LIST_MODELS", payload: { kinds: true } }, { tab: { id: 4 } });
     assert.equal(fromPage.kinds, undefined, "a page cannot ask for kinds");
     assert.equal(shows.length, 0);
+    const fromPageUrl = await mk().send({ type: "LIST_MODELS", payload: { kinds: true } }, { tab: { id: 4 }, url: "https://example.com/" });
+    assert.equal(fromPageUrl.kinds, undefined, "nor can a page that names its own url");
+    assert.equal(shows.length, 0);
+
+    // The overlay sidebar is OUR page in a frame of a web page's tab, so it carries `sender.tab` too. Its Settings
+    // ask for kinds, and when the tab alone decided, the embedding picker listed nothing on a server full of them.
+    const fromSidebar = await mk().send({ type: "LIST_MODELS", payload: { kinds: true } },
+        { tab: { id: 4 }, url: "chrome-extension://test/sidebar.html" });
+    assert.deepEqual(fromSidebar.kinds["embeddinggemma:300m"], ["embedding"], "the sidebar's Settings get capabilities");
+    assert.equal(fromSidebar.dims["embeddinggemma:300m"], 768);
 });
 
 // `ml.embed` reaches the model through the background like any other call. Two endpoint shapes exist in the
@@ -4768,8 +4778,11 @@ test("FETCH_URL: a page's fetch follows a hop that stays on the same site, and a
     assert.match(JSON.stringify(u.data), /secure/);
 });
 
-test("FETCH_URL: a hop to another site that the tab already approved is followed", async () => {
-    // The tab's consent grows only through an approved fetch_url (as in the consent-boundary test above); a hop to that URL is then approved.
+/**
+ * A worker whose tab 8 has approved `approvedUrl` through a run's fetch_url, the only way a tab's consent grows (as in
+ * the consent-boundary test above), with `https://start.example/go` a 302 to it.
+ */
+async function approvedHopWorker() {
     const approvedUrl = "https://approved-elsewhere.example/doc.txt";
     let n = 0;
     let bg;
@@ -4800,14 +4813,34 @@ test("FETCH_URL: a hop to another site that the tab already approved is followed
         model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools",
     } }, { tab: { id: 8 } });
     assert.ok(run.data, "the run finished");
+    return { bg, approvedUrl };
+}
+const TAB8_PAGE = { tab: { id: 8, url: "https://start.example/" }, url: "https://start.example/" };
+
+test("FETCH_URL: a hop to another site that the tab already approved is followed", async () => {
+    const { bg, approvedUrl } = await approvedHopWorker();
     // Another tab has no such consent: the same hop is refused there.
     const other = await bg.send({ type: "FETCH_URL", payload: { url: "https://start.example/go" } }, { tab: { id: 33, url: "https://start.example/" }, url: "https://start.example/" });
     assert.match(other.error, /another site/, "a tab without the approval is refused");
     const before = fetchedUrls(bg).length;
-    const mine = await bg.send({ type: "FETCH_URL", payload: { url: "https://start.example/go" } }, { tab: { id: 8, url: "https://start.example/" }, url: "https://start.example/" });
+    const mine = await bg.send({ type: "FETCH_URL", payload: { url: "https://start.example/go" } }, TAB8_PAGE);
     assert.ok(!mine.error, mine.error);
     assert.match(JSON.stringify(mine.data), /approved body/);
     assert.ok(fetchedUrls(bg).slice(before).includes(approvedUrl), "the approved target was requested");
+});
+
+for (const effect of ["deny", "ask"])
+test(`FETCH_URL: a hop to a URL the tab approved is refused, its target never requested, once ${effect === "ask" ? "an" : "a"} ${effect} policy withdraws that approval (as a direct fetch of it is)`, async () => {
+    const { bg, approvedUrl } = await approvedHopWorker();
+    await new Promise((r) => setTimeout(r, 0));
+    const added = await bg.send({ type: "POLICIES", payload: { op: "add", effect, source: '(c) => c.host === "approved-elsewhere.example"', label: `${effect} approved-elsewhere` } }, { url: "chrome-extension://test/sidebar.html" });
+    assert.ok(!added.error, added.error);
+    const direct = await bg.send({ type: "FETCH_URL", payload: { url: approvedUrl } }, TAB8_PAGE);
+    assert.match(direct.error ?? "", /hasn't been approved/, "setup: the direct fetch is refused once the policy withdraws the consent");
+    const before = fetchedUrls(bg).length;
+    const hop = await bg.send({ type: "FETCH_URL", payload: { url: "https://start.example/go" } }, TAB8_PAGE);
+    assert.match(hop.error ?? "", /another site/, `the redirect reached what the direct fetch is refused: ${JSON.stringify(hop)}`);
+    assert.ok(!fetchedUrls(bg).slice(before).includes(approvedUrl), "the withdrawn target was requested");
 });
 
 test("FETCH_URL: the value store's budget is the setting, and each eviction or refusal is in the housekeeping log", async () => {

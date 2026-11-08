@@ -29,7 +29,8 @@ export interface PinPrompt { key: string; text: string; who: string }
 export function promptsOf(s: Session): PinPrompt[] {
     const text = (t: string | undefined, images?: readonly string[] | null): string => (t || "").trim() || (images?.length ? "(an image)" : "");
     if (s.kind === "agent") {
-        const says = (s.says || []).map((m, i) => ({ m, i })).sort((a, b) => a.m.atStep - b.m.atStep || a.m.ts - b.m.ts);
+        // What someone SENT: a task's result is no one's prompt, so it is never a pin row (on any view).
+        const says = (s.says || []).map((m, i) => ({ m, i })).filter(({ m }) => !m.task).sort((a, b) => a.m.atStep - b.m.atStep || a.m.ts - b.m.ts);
         return [
             { key: "task", text: text(s.taskDisplay?.typed ?? s.task, s.taskImages), who: s.site ? hostOf(s.site) : "you" },
             ...says.map(({ m, i }) => ({ key: `s${i}`, text: text(m.display?.typed ?? m.text, m.images), who: m.site ? hostOf(m.site) : "you" })),

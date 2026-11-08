@@ -763,6 +763,10 @@
           "description": "User only: how `text` was SHOWN, when that is not what the person typed: their words and what they attached (a right-clicked element, whose content `text` has folded in). `text` stays what the model got.",
           "$ref": "#/$defs/PromptDisplay"
         },
+        "task": {
+          "description": "User role only: this message is a detached call's result (its task id, docs/spec/ASYNC_CALLS.md), which the run inbox carried to the model. No person typed it.",
+          "type": "string"
+        },
         "model": {
           "description": "Assistant only: the model that actually produced this, after server-side resolution. May differ from model.",
           "type": "string"
@@ -1175,6 +1179,29 @@
                 },
                 "revision": {
                   "$ref": "#/$defs/CodeRevision"
+                },
+                "rules": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "effect": {
+                        "type": "string"
+                      },
+                      "source": {
+                        "type": "string"
+                      },
+                      "note": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "effect",
+                      "source",
+                      "note"
+                    ],
+                    "additionalProperties": true
+                  }
                 }
               },
               "required": [
@@ -1753,6 +1780,29 @@
                 },
                 "revision": {
                   "$ref": "#/$defs/CodeRevision"
+                },
+                "rules": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "effect": {
+                        "type": "string"
+                      },
+                      "source": {
+                        "type": "string"
+                      },
+                      "note": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "effect",
+                      "source",
+                      "note"
+                    ],
+                    "additionalProperties": true
+                  }
                 }
               },
               "required": [
