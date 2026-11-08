@@ -167,6 +167,21 @@ export function pythonExec(message: any, sender: chrome.runtime.MessageSender, s
 }
 
 /**
+ * A BENCH STOP (`PYTHON_INTERRUPT`): interrupt the Python bench's running script. Extension pages only, judged by the
+ * browser-stamped sender: a content script is refused before the offscreen document is reached. The message names no
+ * request, so it cannot reach any namespace but the bench's own (offscreen.ts `interruptBench`). With no offscreen
+ * document there is nothing running, and it is not started for this.
+ * @param sender who sent it
+ * @param sendResponse `{ data: { interrupted: true } | { running: false } }`, or `{ error: "refused" }`
+ */
+export function pythonInterrupt(sender: chrome.runtime.MessageSender, sendResponse: (r: unknown) => void): void {
+    if (!isExtensionSender(sender)) { sendResponse({ error: "refused" }); return; }
+    chrome.runtime.sendMessage({ type: "PY_INTERRUPT" })
+        .then((r: unknown) => sendResponse({ data: r && typeof r === "object" && "interrupted" in r ? { interrupted: true } : { running: false } }),
+            () => sendResponse({ data: { running: false } }));
+}
+
+/**
  * Run one sandboxed-Python call in the offscreen host. THE choke point for a cell outside the read-only dialect, which
  * runs as full Python with the gated `ml` set: it needs a trusted surface, a whitelisted domain, or a grant for exactly
  * this code. Rejected with a clear error, never silently downgraded.

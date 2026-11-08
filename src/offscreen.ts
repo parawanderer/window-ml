@@ -17,6 +17,12 @@ const PY_TIMEOUT_MS = 15000;
 // so it is armed only once the worker says the script has started; this one exists so something hung AHEAD of a
 // run (an unarmed completion, a boot that never finishes) is still cleared.
 const PY_START_TIMEOUT_MS = 120000;
+// How long a bench Stop waits for its interrupt to end the script before the worker is killed. A GUESS, under the same
+// bench rule as SH_LEASE_MS: a Python loop answers the interrupt in about 3 ms, a C call not until it returns, which
+// may be minutes, so no number between helps; 1 s is the fallback's honest latency (docs/dev/python-sandbox.md).
+export const BENCH_STOP_KILL_MS = 1000;
+/** A bench script's result when its Stop had to restart the sandbox: the cost is the point. */
+export const BENCH_STOP_KILLED = "Stopped by restarting the sandbox: it did not answer the interrupt, so its variables are gone.";
 
 import { ValueStore } from "./pointers/value-store";
 import { htmlToMarkdown } from "./dom/html-to-md";
@@ -78,13 +84,15 @@ async function withStoredTables(tables: unknown): Promise<{ tables: unknown; tra
 // `bootMs`/`runMs` come from the WORKER, which is the executor — anything measured downstream of it is
 // measuring the message bus as well. See python-worker.ts.
 type PyEnv = { python: string; pyodide: string; packages: { name: string; version?: string }[] };
-type PyResult = { prewarm?: "started" | "already" | "warm" | "starting"; ok: boolean; env?: PyEnv; completions?: { name: string; type: string; complete: string }[]; bench?: { id: string; vars: { name: string; type: string }[] }; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img" | "figure"; bootMs?: number; runMs?: number; nsReset?: string; dropped?: { count: number; afterCell: number } };
+type PyResult = { stopped?: "restarted"; prewarm?: "started" | "already" | "warm" | "starting"; ok: boolean; env?: PyEnv; completions?: { name: string; type: string; complete: string }[]; bench?: { id: string; vars: { name: string; type: string }[] }; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img" | "figure"; bootMs?: number; runMs?: number; nsReset?: string; dropped?: { count: number; afterCell: number } };
 
 // One worker per PRINCIPAL (PYODIDE_LOCKDOWN.md step 1): a worker-hosted run, a page, `full`. A principal
 // change is a new worker, never a reused one — a patch one principal left in module state must not reach
 // the next. The workers are same-origin (extension page → chrome-extension:// worker), so they need no
 // web_accessible_resources entry; they inherit this page's 'wasm-unsafe-eval' CSP.
-type PyWorkerEntry = { w: Worker; readonly: boolean };
+// `flag` is the worker's interrupt buffer (`py.setInterruptBuffer`): writing 2 raises `KeyboardInterrupt` at the next
+// bytecode. A SharedArrayBuffer, which an extension page has without COOP/COEP; absent where it is not (a test world).
+type PyWorkerEntry = { w: Worker; readonly: boolean; flag?: Int32Array };
 const workers = new Map<string, PyWorkerEntry>();   // state: plumbing — one Python worker per principal
 // Principals whose worker was killed and whose next spawn is a RESPAWN: the kept bench namespace died with
 // the old worker, and the new one starts from empty. The respawn writes the housekeeping record that the
@@ -126,7 +134,7 @@ defineState({
 });
 let nextId = 1;
 type WireStamp = { client: string; run: string | null };
-const pending = new Map<number, { resolve: (r: PyResult) => void; timer: ReturnType<typeof setTimeout>; streamId?: string; armOnStart?: boolean; principal: string; wire?: WireStamp; spending?: boolean }>();   // state: plumbing
+const pending = new Map<number, { resolve: (r: PyResult) => void; timer: ReturnType<typeof setTimeout>; streamId?: string; armOnStart?: boolean; principal: string; wire?: WireStamp; spending?: boolean; bench?: boolean; started?: boolean; stopping?: boolean }>();   // state: plumbing
 // THE `ml` WIRE (ML_WIRE.md): which worker a client handle's answers go back to. The handle is this
 // document's to stamp — the worker never sees it (LANE_1_PR2_DESIGN.md "Who stamps the handle"). An
 // `ask` first answer is NOT relayed down: the cell's `send` stays pending until the later `ML_ANSWER`
@@ -149,14 +157,14 @@ export function memoryKilled(reason: string, spending: boolean): string {
 
 /** Arm a kill for run `id`: when it fires, that run fails with `error` and its worker is terminated,
  *  failing anything queued behind it on that principal. */
-function killAfter(id: number, ms: number, error: string, reason: "timeout" | "start-timeout"): ReturnType<typeof setTimeout> {
+function killAfter(id: number, ms: number, error: string, reason: "timeout" | "start-timeout" | "stopped"): ReturnType<typeof setTimeout> {
     return setTimeout(() => {
         const entry = pending.get(id);
         if (!entry) return;   // already resolved
         pending.delete(id);
         // Past the cell's own code: the cancel was spending a task the cell left, which would not stop (a loop inside a
         // C function is beyond the spend's bound, python-runtime.ts). Not the cell's computation, so not "simplify".
-        entry.resolve({ ok: false, stdout: "", error: entry.spending && reason === "timeout" ? SPEND_KILLED : error });
+        entry.resolve({ ok: false, stdout: "", error: entry.spending && reason === "timeout" ? SPEND_KILLED : error, ...(reason === "stopped" ? { stopped: "restarted" as const } : {}) });
         killWorker(entry.principal, reason);   // nuke the (still-busy) instance + fail any others queued behind it
     }, ms);
 }
@@ -176,7 +184,7 @@ function killWorker(principal: string, reason: string): void {
     // ROOT C: a kill wipes every run dict this worker held: its own run's for `run:<id>`, every full-mode run's for the
     // shared `full` one. Each such run's next cell opens with the loss line (PYTHON_DIALECT.md, "Lifetime and loss").
     const killedRuns = [...runPrincipals].filter(([, ps]) => ps.has(principal)).map(([runId]) => runId);
-    const named = reason === "timeout" || reason === "start-timeout" || reason === "library-removed";
+    const named = reason === "timeout" || reason === "start-timeout" || reason === "library-removed" || reason === "stopped";
     const lossReason = named ? reason : "crashed";
     if (entry) {
         try { entry.w.terminate(); } catch { /* already gone */ }
@@ -280,6 +288,9 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
     // a full worker is never locked. One Worker per principal is one REALM per principal — a second Pyodide
     // cannot boot in a realm `lockdown()` froze.
     const w = new Worker(chrome.runtime.getURL("python-worker.js"), { name: readonly ? "readonly" : "full" });
+    // The interrupt buffer goes first, before any run is posted, so the worker holds it when the runtime boots.
+    const flag = typeof SharedArrayBuffer === "function" ? new Int32Array(new SharedArrayBuffer(4)) : undefined;
+    if (flag) w.postMessage({ interruptBuffer: flag });
     // A respawn after a kill: the old worker's kept bench namespace died with it, and this one starts empty.
     // The record is the log's account of the loss the bench's "sandbox restarted" banner shows the person.
     if (respawned.delete(principal)) {
@@ -307,7 +318,8 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
         // The USER'S CELL is starting (runtime up, prelude done, this run's turn): its own 15s begins now.
         if (e.data?.started) {
             const entry = pending.get(e.data.id);
-            if (entry?.armOnStart) {
+            if (entry) entry.started = true;   // the one a bench Stop may interrupt (`PY_INTERRUPT`)
+            if (entry?.armOnStart && !entry.stopping) {
                 clearTimeout(entry.timer);
                 entry.timer = killAfter(e.data.id, PY_TIMEOUT_MS, `Python run exceeded ${PY_TIMEOUT_MS / 1000}s and was terminated — simplify the computation or reduce the input size.`, "timeout");
             }
@@ -358,7 +370,7 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
     };
     // A worker-level failure (load error, uncaught throw) would otherwise strand every pending run.
     w.onerror = (ev: ErrorEvent) => { if (workers.get(principal)?.w === w) killWorker(principal, ev.message || "crashed"); };
-    workers.set(principal, { w, readonly });
+    workers.set(principal, { w, readonly, ...(flag ? { flag } : {}) });
     return w;
 }
 
@@ -388,7 +400,7 @@ function runInWorker(code: string, image: string | null, hardened: boolean, tabl
         // START bound, and the worker's `started` (the user's cell is about to run) swaps in the script's cap.
         const timer = noTimeout || complete || bench?.reset ? (0 as unknown as ReturnType<typeof setTimeout>)
             : killAfter(id, PY_START_TIMEOUT_MS, `The Python sandbox did not start within ${PY_START_TIMEOUT_MS / 1000}s and was terminated.`, "start-timeout");
-        pending.set(id, { resolve, timer, streamId, armOnStart: !(noTimeout || complete || bench?.reset), principal, wire });   // streamId → the background can key live stdout chunks
+        pending.set(id, { resolve, timer, streamId, armOnStart: !(noTimeout || complete || bench?.reset), principal, wire, ...(bench?.persist && principal === "own" ? { bench: true } : {}) });   // streamId → the background can key live stdout chunks
         // The worker creates the run's dict BEFORE the cell runs, so the principal is recorded at the post, not only from
         // a returned manifest: a cell that throws or is killed still leaves a dict the delete must reach.
         if (wire?.run) (runPrincipals.get(wire.run) ?? runPrincipals.set(wire.run, new Set()).get(wire.run)!).add(principal);
@@ -533,6 +545,32 @@ chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
         .then(sendResponse, e => sendResponse({ ok: false, stdout: "", error: String(e) }));
     return true;   // keep the channel open for the async result
 });
+
+// A BENCH STOP (docs/dev/python-sandbox.md, "Stopping a bench script"): interrupt the bench's own script, and kill its
+// worker if the interrupt has not ended it within BENCH_STOP_KILL_MS. The message names nothing: the target is the
+// one bench request of the `own` principal that has started, so no message can reach another run's namespace, a
+// model's `python_exec` cell included. Only the service worker sends it (`PYTHON_INTERRUPT`, extension pages only).
+chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
+    if (msg?.type !== "PY_INTERRUPT") return undefined;
+    if (sender.id !== chrome.runtime.id || sender.tab) return undefined;
+    sendResponse(interruptBench());
+    return undefined;
+});
+
+/** Interrupt the bench's running script: `{ interrupted: true }`, or `{ running: false }` when no bench script runs. */
+export function interruptBench(): { interrupted: true } | { running: false } {
+    const found = [...pending.entries()].find(([, p]) => p.bench && p.started && p.principal === "own");
+    const flag = workers.get("own")?.flag;
+    if (!found || !flag) return { running: false };
+    const [id, entry] = found;
+    if (!entry.stopping) {
+        entry.stopping = true;
+        Atomics.store(flag, 0, 2);   // SIGINT: `KeyboardInterrupt` at the next bytecode
+        clearTimeout(entry.timer);
+        entry.timer = killAfter(id, BENCH_STOP_KILL_MS, BENCH_STOP_KILLED, "stopped");
+    }
+    return { interrupted: true };
+}
 
 // THE `ml` WIRE'S LATER ANSWER (ML_WIRE.md): a call that answered `ask` first is resolved here when the
 // person decides. Matched by the client handle this document stamped; the worker is told only `seq` +

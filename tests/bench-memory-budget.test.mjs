@@ -10,7 +10,7 @@ import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseSize, fmtBytes, autoLimit, parseMemoryLevel, parseVmStat, parseMeminfo, processTable, treeRss, parseSwapUsage, parseCompressed, ledgerOut, withLedger, ledger, register, update, unregister, measureLedger,
-    budgetState, admits, notYetResident, PENDING_MS, tooSmall, p90, openFootprints, logFootprint, predictBrowser, startBudget, ASSUMED_BROWSER, PAUSED_EXIT, joinLedger, roomWarning, setLimit } from "../tests/e2e/bench/memory-budget.mjs";
+    budgetState, admits, notYetResident, PENDING_MS, tooSmall, p90, openFootprints, logFootprint, predictBrowser, startBudget, ASSUMED_BROWSER, PAUSED_EXIT, joinLedger, roomWarning, setLimit, pausesAt } from "../tests/e2e/bench/memory-budget.mjs";
 import { failureShape, groupHeld, groupCommands, freeingCommands, menuText, shellLine, inDir, HOLD_HINTS } from "../tests/e2e/bench/hold-menu.mjs";
 import { doneLine } from "../tests/e2e/bench/sinks.mjs";
 
@@ -203,7 +203,7 @@ test("the budget's room is whichever runs out first: the limit, or the free memo
     const entries = [{ kind: "runner", rss: 1 * GB }, { kind: "held", rss: 2 * GB }, { kind: "held", rss: 1 * GB }];
     const s = budgetState({ limit: 12 * GB, entries, available: 30 * GB, total: 64 * GB });
     assert.deepEqual([s.used, s.byKind.held, s.reserve, s.room], [4 * GB, 3 * GB, 16 * GB, 8 * GB]);
-    assert.deepEqual(admits(s, 7 * GB), { ok: true, why: null });
+    assert.deepEqual(admits(s, 7 * GB), { ok: true, why: null, promised: false });
     assert.match(admits(s, 9 * GB).why, /the memory limit: the bench holds 4\.0 GB of 12\.0 GB/);
     const tight = budgetState({ limit: 40 * GB, entries, available: 17 * GB, total: 64 * GB });
     assert.equal(tight.room, 1 * GB);
@@ -235,6 +235,32 @@ test("a test run counts against free memory only; what is on its way shrinks the
     const lim = budgetState({ limit: 5 * GB, entries, available: 60 * GB, total: 64 * GB, now });
     assert.match(admits(lim, 2.5 * GB).why, /the bench holds 1\.0 GB \(and 2\.0 GB more starting up\) of 5\.0 GB/);
     assert.equal(budgetState({ limit: 5 * GB, entries, available: 60 * GB, total: 64 * GB, now: now + 1 }).benchComing, 0, "an admission expires");
+});
+
+test("a refusal only for promised memory is `promised` and waits under every mode; one that holds with nothing promised pauses under `pause`", () => {
+    const now = 1_000_000;
+    // Enumerated over what is promised (none, the bench's own admissions, a test run's plan, both), how much free
+    // memory there is, and the limit; `promised` is asserted against the same request with nothing promised at all.
+    const promises = { none: [], bench: [{ kind: "runner", rss: 1 * GB, pending: [{ bytes: 2 * GB, until: now + 1 }] }], tests: [{ kind: "tests", rss: 1 * GB, planned: 8 * GB }] };
+    promises.both = [...promises.bench, ...promises.tests];
+    for (const [name, extra] of Object.entries(promises)) for (const available of [18 * GB, 21 * GB, 30 * GB]) for (const limit of [3 * GB, 12 * GB]) {
+        const entries = [{ kind: "runner", rss: 1 * GB }, ...extra];
+        const s = budgetState({ limit, entries, available, total: 64 * GB, now });
+        const bare = admits({ ...s, coming: 0, benchComing: 0 }, 1 * GB);
+        const a = admits(s, 1 * GB);
+        const at = JSON.stringify({ name, available: available / GB, limit: limit / GB });
+        if (a.ok) { assert.equal(a.promised, false, at); continue; }
+        assert.equal(a.promised, bare.ok, `${at}: promised iff it would fit with nothing promised`);
+        if (name === "none") assert.equal(a.promised, false, `${at}: nothing promised, nothing to wait for`);
+        for (const mode of ["pause", "stop-holding", "release-duplicates"]) assert.equal(pausesAt(mode, a), mode === "pause" && !bare.ok, `${at} ${mode}`);
+    }
+    // The 2026-11-08 sweep: 13.9 GB free, 7.0 GB of a test run's plan not yet resident, 6.0 GB kept free (24 GB RAM).
+    const s = budgetState({ limit: 12 * GB, entries: [{ kind: "tests", rss: 0.2 * GB, planned: 7.2 * GB }], available: 13.9 * GB, total: 24 * GB, now });
+    const a = admits(s, 1 * GB);
+    assert.equal(a.ok, false);
+    assert.equal(a.promised, true);
+    assert.equal(pausesAt("pause", a), false, "it waits for the suite, and does not end the sweep");
+    assert.equal(pausesAt("pause", { ok: true }), false);
 });
 
 test("p90 is the nearest-rank 90th percentile; none is null", () => {

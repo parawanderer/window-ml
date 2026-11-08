@@ -37,6 +37,15 @@ let bridgeLift: ((on: boolean) => void) | null = null;   // state: plumbing — 
 // kill that lands during the spend after a task the cell left, not after the cell's computation.
 let spendingFor = 0;   // state: plumbing — 0 when no cell is running
 let cellSeq = 0;   // state: plumbing — counts cells of this worker's one principal; dies with the worker
+// The interrupt buffer the offscreen document sent (a bench Stop writes 2 into it), installed at boot. A stop written
+// while C code ran stays pending and fires on the NEXT bytecode, which would be the next script's: `clearInterrupt`
+// runs before a run touches the interpreter and again when it ends (docs/dev/python-sandbox.md, "Stopping a bench script").
+let interruptFlag: Int32Array | null = null;   // state: plumbing — set once, from the first message
+
+/** Drop a stop that did not land: no run may be interrupted by a Stop meant for the one before it. */
+function clearInterrupt(): void {
+    if (interruptFlag) Atomics.store(interruptFlag, 0, 0);
+}
 
 type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown; stream?: boolean; env?: boolean; complete?: { line: number; column: number; bench?: "readonly" | "full" }; persist?: boolean; benchReset?: boolean; wire?: boolean; inside?: boolean; bridges?: boolean; run?: string | null; deleteRun?: string; takeDropped?: boolean; libraries?: DialectLibrary[]; library?: { op: "shape" | "load"; lib: DialectLibrary } };
 // `bootMs` is present ONLY on the call that paid for the cold start; `runMs` is the script itself, so the
@@ -104,6 +113,7 @@ function getPyodide(by: "prewarm" | "run" = "run"): Promise<any> {
         const t0 = Date.now();
         const { loadPyodide } = await import(new URL("pyodide/pyodide.mjs", base).href);
         const py = await loadPyodide({ indexURL: new URL("pyodide/", base).href });
+        if (interruptFlag) py.setInterruptBuffer(interruptFlag);
         await py.loadPackage(PY_PACKAGE_LOADS);
         // Lazy tooling (jedi) loads BEFORE the lockdown too: `complete()` calls `py.loadPackage(PY_LAZY_LOADS)`
         // after the strip has removed `fetch`, and Pyodide's loader needs it to fetch the wheel. Only readonly
@@ -237,6 +247,7 @@ async function run(code: string, image: string | null, hardened: boolean, tables
     const wasLive = pyodideLive;
     const w0 = Date.now();
     const py = await getPyodide();
+    clearInterrupt();
     const boot = wasLive ? null : Date.now() - w0;
     // INSIDE THE DIALECT (docs/spec/PYTHON_DIALECT.md, "Membership replaces `mode`"): an interpreter that cannot judge
     // membership runs nothing unasked; the cell is reported outside and goes to the person.
@@ -367,6 +378,7 @@ async function run(code: string, image: string | null, hardened: boolean, tables
         if (kept) { try { keptCatch = { bench: { id: kept.id, vars: benchVars(py, ns) } }; } catch { /* the namespace is unreadable */ } }
         return timed({ ok: false, stdout: cancelled?.out ?? "", error: String((e && e.message) || e) + (cancelled?.refusal ? `\n${cancelled.refusal}` : ""), ...keptCatch });
     } finally {
+        clearInterrupt();
         if (!kept) injectInputs(ns, null, null, harness);
         if (wire) { try { ns.delete("_ml_send"); } catch { /* the wrapper dropped it */ } }
         if (onStdout) { try { py.setStdout({}); } catch { /* ignore */ } }
@@ -443,6 +455,9 @@ function onMessage(e: MessageEvent): void {
         }
         return;
     }
+    // The interrupt buffer, posted once before anything else (offscreen.ts `ensureWorker`).
+    const buf = (e.data as { interruptBuffer?: unknown })?.interruptBuffer;
+    if (buf instanceof Int32Array && !interruptFlag && !pyodideReady) { interruptFlag = buf; return; }
     if (!msg || typeof msg.id !== "number") return;
     // ROOT C: drop a run's kept namespace when the run closes or is archived. Through the chain so it
     // cannot land mid-run. Callables the run's last cell handed to JavaScript that fired since its result have no next
