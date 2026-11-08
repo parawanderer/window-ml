@@ -596,10 +596,10 @@ function contextText(runId: string): string | null {
 
 defineState({
     id: "run.files", scope: "session", realm: "worker", audience: "model", lostOn: [],
-    describe: "The files the person attached to the run, as `@file:` pointers: name, pages, the turn each came in. Kept in the run's payload, so the pointers come back after the worker is evicted.",
+    describe: "The files the person attached to the run, and its long pastes, as `@file:` pointers: name, type, pages (a PDF) or lines (text), the turn each came in. Kept in the run's payload, so the pointers come back after the worker is evicted.",
     read: ({ runId }) => {
         const files = runId ? workerFiles(runId) : [];
-        return files.length ? files.map((f) => ({ id: f.id, name: f.name, pages: f.pages, read: f.read, turn: f.turn })) : undefined;
+        return files.length ? files.map((f) => ({ id: f.id, name: f.name, type: f.type, ...(typeof f.lines === "number" ? { lines: f.lines } : { pages: f.pages, read: f.read }), turn: f.turn })) : undefined;
     },
 });
 

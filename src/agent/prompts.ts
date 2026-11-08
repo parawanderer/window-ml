@@ -229,7 +229,8 @@ export const UNATTENDED_CLAUSE =
     "operations — inspect and query the DOM, and (where available) read-only `exec` surveys / " +
     "`python_exec` inside the read-only dialect. Any call that needs approval — clicking, typing, mutating exec, " +
     "network, any other python — will be REFUSED, so don't attempt it; find a read-only path or " +
-    "report what you could and couldn't do.";
+    "report what you could and couldn't do. `ml.embed` in a read-only survey still works: it reaches only the " +
+    "configured embedding model, capped per survey.";
 
 // The tool-result a refused (approval-gated) call gets in an unattended run — steers to read-only.
 export const UNATTENDED_REFUSAL =

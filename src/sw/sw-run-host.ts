@@ -308,7 +308,7 @@ export const GATED_TOOL_NAMES: ReadonlySet<string> = GATED_BUILTINS;
 
 /**
  * A page's START_RUN payload as the worker may trust it. A page's payload may ask for MORE gating, never less.
- * - Removed, the worker's to set: `builtBy`, `rebuild.builtBy`, `display`, `files` (pointers naming value-store rows)
+ * - Removed, the worker's to set: `builtBy`, `rebuild.builtBy`, `display`, `files` (pointers naming value-store rows), `sends`
  *   and `origin` (the PromptOrigin: a page could stamp its prompt as typed on an extension surface). Only the worker's own `hostRun` call
  *   (sw-run-start.ts) marks a run worker-built, and `makeWorkerRun` hands one over; a page's claim would give its run the
  *   worker's tool routing, grants, vision and answer, and lock the run as the person's.
@@ -328,7 +328,7 @@ export const GATED_TOOL_NAMES: ReadonlySet<string> = GATED_BUILTINS;
  */
 export function pageStartPayload(payload: unknown, sender: chrome.runtime.MessageSender, cfg: Pick<MlConfig, "autoApprovePython" | "autoApproveReadonly" | "autoApproveSelfSource" | "selfIntrospection">): unknown {
     if (!payload || typeof payload !== "object") return payload;
-    const { builtBy: _b, display: _d, files: _f, origin: _p, pageOrigin: _o, pageUrl: _u, ...rest } = payload as StartRunPayload;
+    const { builtBy: _b, display: _d, files: _f, sends: _n, origin: _p, pageOrigin: _o, pageUrl: _u, ...rest } = payload as StartRunPayload;
     // The budget RESUME_RUN honours, so a page cannot ask for an unbounded run; an invalid one is no budget, and the loop's default applies.
     const budget = stepBudget(rest.maxSteps);
     if (budget) rest.maxSteps = budget; else delete (rest as { maxSteps?: number }).maxSteps;
@@ -1162,7 +1162,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // The route is decided here, so the page is not told which world was asked for: it sees the call only when
                     // the call runs in its world, where that is no news.
                     const pageArgs = name === "exec" ? withoutWorld(args as Record<string, unknown>) : args;
-                    // A page-built run's exec runs in its page's world or not at all (an approval's edit could have added one).
+                    // A page-built run's exec runs in its page's world or not at all. Unpinned on purpose: it stands in front of an
+                    // approval's edited `arguments` (`args = d.arguments` in agent-loop.ts), which no resolve path produces today.
                     if (name === "exec" && !byWorker()) { const refused = pageWorldRefusal((args as { world?: unknown }).world); if (refused) return { result: refused }; }
                     if (js !== undefined) {
                         // The document FIRST, then its URL: the call is pinned to that document, so a navigation after this

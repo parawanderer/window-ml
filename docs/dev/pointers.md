@@ -50,12 +50,21 @@ background-hosted paths with no page round-trip and no approval.
   quoted. A name two files share is REFUSED, listing both, never resolved to the latest; the same bytes attached
   twice are one pointer. `derefLocally` reads the document from the value store on every read, so a file whose
   rows are gone fails with the store's reason. `ml.dereference` in code refuses `@file:` with a sentence for now.
-  A PDF reaches the shelf when it is attached to an agent run's FIRST message (sw-attach.ts `attachFiles`): read
-  once, its bytes and its read document stored as held rows of the run's session, its pointer noted, and the task
-  given its outline under `pointer="@file:…"` in place of the pages. The pointers ride the run's payload
-  (`StartRunPayload.files`, worker-built runs only), so a store made after a worker eviction, or after newer
-  sessions pushed the run's store out (which then keeps the file's rows), puts them back. A run under way is
-  refused a PDF (`FileTarget` "agent-turn"): the page's path would drop it.
+  A file reaches the shelf when it is sent with any message to an agent run the worker built (sw-attach.ts
+  `attachFiles`): a PDF read once, its bytes and its read document stored as held rows of the run's session, a
+  text file as a `text` row, each pointer noted with the message's turn, and the message given each one under
+  `pointer="@file:…"`: a PDF and a text past `FILE_INLINE_MAX` as their outline, a short text whole. A typed message
+  of `FETCH_PREVIEW_CHARS` or more is held too, as `@file:"pasted text"`. A text pointer has `lines` (a PDF's has
+  none, which is how an older pointer reads as a PDF) and is read as its text, not by pages. The pointers ride the
+  run's payload (`StartRunPayload.files`, worker-built runs only), so a store made after a worker eviction, or after
+  newer sessions pushed the run's store out (which then keeps the file's rows), puts them back. A run a PAGE built
+  is refused a PDF (`FileTarget` "page-run"): the page's path would drop it.
+- **The escapes inside a `<file>` block must stay.** `fileBlock` writes a literal `</file` in a text as `<\/file`,
+  and an outline (`fileOutline`, `textOutline`, through `escapeSectionText`) escapes `</file`, `</page` and an
+  OPENING `<page` as `<\page`. The close escape keeps a file inside its block, so its text cannot speak as the
+  person; the open escape keeps a page's text from starting a section the `pages` verb reads as another page.
+  Dropping either for a cleaner preview reopens both (tests/sw-attach.test.mjs, tests/file-pointer.test.mjs,
+  "ADVERSARIAL").
 - The pointer carries the value's **TYPE**, from the render descriptor the step already produced — so `keys`
   on a DataFrame means its COLUMNS, and two casts the line dialect can't express work: `latex`, and `img`,
   which never dumps the payload but says it IS base64 image data, how large, and what to do instead.
