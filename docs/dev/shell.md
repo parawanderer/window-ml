@@ -35,6 +35,11 @@ refuses it where no isolation exists. The wrapper (`isolatedWrapper`) gives the 
 bound it, and each call rides the exec's own channel (`iso-channel.ts`, op `sh`) to `sw-shell-call.ts` with the run
 and the step's seq the worker already knows (`delegateTool`'s `call`), never anything the script said.
 
+0. `parseShRun` checks the argv before the host sees it: an item that IS a pointer token (`@tool:…`, `@file:…`,
+   `@pt:…`, `@box:…`, the whole item) is refused as a held value, not a path (`heldValueRefusal`, SHELL.md's ruling of
+   2026-10-28; one rule for every program, so no manifest repeats it). An item that only contains one (`--in=@file:x`)
+   is the program's text. The prefixes come from `token-prefixes.ts`, a leaf, so the shell call's neutral bundle does
+   not pull in the modules that mint them.
 1. `spawn`: the host resolves the argv into facts (program, cwd, paths, repo, sandbox) and starts nothing.
 2. **The version probe**, for a manifest written against a version range (git, rg): an ordinary call of the manifest's
    own version args with effects empty, judged like any other. Free only under the sandbox, so on the plain host it

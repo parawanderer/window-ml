@@ -8,9 +8,8 @@ import type { PdfDoc } from "../pdf/pdf-read";
 import { escapePageText, pageRanges } from "../pdf/pdf-frame";
 import { toolToken } from "../util";
 import { isTokenShape } from "./token-id";
+import { FILE_PREFIX } from "./token-prefixes";
 
-/** The prefix of an attached file's pointer, beside `@tool:`: the value came from the person, not a tool call. */
-export const FILE_PREFIX = "@file:";
 /** Characters of a file's name kept: the name is untrusted text and travels in every outline and refusal. */
 export const FILE_NAME_MAX = 120;
 /** Characters of the first page's text (a text file's opening) the outline previews. */
