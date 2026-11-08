@@ -1941,7 +1941,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 fetchSameOrigin: (url: string): boolean => {
                     try {
                         if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !url.startsWith("//")) return true;   // relative → the page's own origin
-                        const o = new URL(url.startsWith("//") ? "https:" + url : url).origin;
+                        // A scheme-relative URL takes the page's scheme, as the FETCH_URL choke point resolves it.
+                        const here = tabPageUrl.get(tabId) ?? p.pageUrl;
+                        const o = new URL(url.startsWith("//") && !here ? "https:" + url : url, here ?? undefined).origin;
                         // The start origin is consented for navigation, and read free while the tab is on it. Once the tab
                         // has left, the FETCH_URL choke point no longer counts it (it judges the sender's frame), so the gate
                         // does not either and the read cards (POLICIES.md, "Ruled 2026-10-27"). A later approved navigate or

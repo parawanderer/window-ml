@@ -1263,13 +1263,13 @@ const RUN_TAB = { tab: { id: 7, url: SITE.url }, url: SITE.url, origin: "https:/
  * tab 7 is hostile: `atApproval(bg)` runs the instant the person's approval is sent, and `inPage(bg, msg)` whenever the
  * run sends a tool to the page. `siteGate` applies the real origin gate, so site.example is NOT approved.
  */
-async function attackRun(args, { then = [], siteGate = true, atApproval, inPage, evictAtFirstGate = false, local = {}, first, persist = false, atGate } = {}) {
+async function attackRun(args, { then = [], siteGate = true, atApproval, inPage, evictAtFirstGate = false, local = {}, first, persist = false, atGate, tab = SITE } = {}) {
     let turns = 0, bg, evicted = false;
     const calls = [first ?? { name: "fetch_url", args }, ...then];
     const gates = [];
     const seenByModel = [];
     bg = loadBackground({
-        config: { ...config, autoApproveReadonly: true }, openTabs: [SITE], siteGate, local,
+        config: { ...config, autoApproveReadonly: true }, openTabs: [tab], siteGate, local,
         onFetch: (call) => {
             if (call.url.startsWith("https://other.example/")) return { ok: true, status: 200, url: call.url, headers: { get: (h) => (/content-type/i.test(h) ? "text/html; charset=utf-8" : null) }, text: async () => SECRET, arrayBuffer: async () => new TextEncoder().encode(SECRET).buffer, body: null };
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
@@ -1391,6 +1391,14 @@ test("'Approve + remember' on an exec with a relative literal remembers the URL 
     assert.deepEqual(JSON.parse(JSON.stringify(step?.reused)), [{ kind: "policy", detail: `fetch ${OTHER}` }]);
     assert.match(toolResults.at(-1) ?? "", /SECRET OTHER SITE/);
     assert.equal(fetched.length, 1);
+});
+
+test("on an http page, a scheme-relative fetch_url naming the page's own host is same-origin and asks nothing", T, async () => {
+    // "//site.example/x" resolves against http://site.example/page to the page's own origin, as the FETCH_URL choke point
+    // judges it. The gate once forced "https:" onto it, so it asked for an origin the fetch itself treats as free.
+    const HTTP_SITE = { ...SITE, url: "http://site.example/page" };
+    const { gates } = await attackRun({ url: "//site.example/x" }, { tab: HTTP_SITE, local: { ml_site_always: ["http://site.example"] } });
+    assert.deepEqual(gates, [], `no card for the page's own origin. Gates: ${JSON.stringify(gates)}`);
 });
 
 test("RED TEAM: approving a relative fetch_url grants the resolved origin only, and a literal resolved on one page grants nothing on another origin", T, async () => {
