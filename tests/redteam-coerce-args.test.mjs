@@ -8,12 +8,13 @@
 //
 // The set is enumerated from `BY_KIND` (src/readonly-exec/policy.ts), not sampled: one row per admitted name that
 // converts an argument to a primitive, plus one row per receiver kind whose names all convert by the same route (the
-// row's reason names the rest of them). Positions that do NOT convert are one-line reasons below rather than rows, so
-// a fix is not asked to refuse a call that is already data.
+// comment beside it names the rest of them). Positions that do NOT convert are one-line reasons below rather than rows,
+// so a fix is not asked to refuse a call that is already data.
 //
-// Each row lands `{ todo }` while the hole is open: it asserts the page's functions never ran, that the survey is
-// refused, and that the refusal NAMES the method (the ruled shape). Its control, beside it, runs the same call with a
-// real number or string argument and asserts the ordinary answer, so a fix that refused every argument fails here.
+// Each row landed `{ todo }` while the hole was open; #1536 judges a converted value by provenance and turns them all, so
+// the option is gone from this commit on. A row asserts the page's functions never ran, that the survey is refused, and
+// that the refusal NAMES the method (the ruled shape). Its control, beside it, runs the same call with a real number or
+// string argument and asserts the ordinary answer, so a fix that refused every argument fails here.
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
@@ -114,8 +115,7 @@ const COERCING = [
 // `Number.parseFloat` as `Number.parseInt`; `"abc".toUpperCase`-style readers take no argument at all.
 
 for (const [name, named, js, control, expected, receiver] of COERCING) {
-    const twice = /^(repeat|padStart|padEnd)$/.test(named) ? " TWICE — the size preflight converts, then the native call converts again, the shape the join separator's fix met" : "";
-    test(`RED TEAM: ${name} does not run a page function for its argument`, { todo: `open: ${named} coerces the page's object into a primitive, so the host runs the page's own toString/valueOf${twice}` }, async () => {
+    test(`RED TEAM: ${name} does not run a page function for its argument`, async () => {
         const ran = [];
         const r = await run(js, ran, receiver).catch((e) => ({ refused: String(e) }));
         assert.deepEqual(ran, [], `${name} ran the page's function: ${JSON.stringify(ran)}`);
@@ -129,3 +129,70 @@ for (const [name, named, js, control, expected, receiver] of COERCING) {
         assert.deepEqual(r.value, expected, `${name} with a real argument answered something else`);
     });
 }
+
+// --- operators: the converting positions with no method to name ---
+
+// The same predicate judges the operands of `+`, a comparison, a unary sign, a template and a computed key
+// (evaluator.ts, `coerces`; called from `applyBinary`, the unary branch, the template branch and `guardKey`, and so by
+// `+=` too). There is no method for the refusal to name, so it names the POSITION, and the control beside each row runs
+// the same operator on real operands: a fix that refused every operator fails there.
+const OPERATORS = [
+    ["`+`", /the operator \+/, O + `return o + 1`, `return 2 + 1`, 3],
+    // The compound form shares `applyBinary`, so it cannot quietly skip the judgement.
+    ["`+=`", /the operator \+/, O + `let x = 1; x += o; return x`, `let x = 1; x += 2; return x`, 3],
+    ["an ordering comparison (`>`)", /the operator >/, O + `return o > 1`, `return 2 > 1`, true],
+    // `==` between a page object and a number coerces (only two objects, or a null, do not).
+    ["a loose comparison (`==`)", /the operator ==/, O + `return o == 2`, `return 2 == 2`, true],
+    ["unary `-`", /unary -/, O + `return -o`, `return -2`, -2],
+    ["a template literal", /a template/, O + "return `${o}`", "return `${2}`", "2"],
+    // `guardKey` judges a computed key on a host receiver AND on an object the script built, so neither is a way in.
+    ["a computed key", /a computed key/, O + `const a = { x: 1 }; return a[o]`, `const a = { x: 1 }; return a["x"]`, 1],
+];
+
+for (const [name, names, js, control, expected] of OPERATORS) {
+    test(`RED TEAM: an operand of ${name} does not run a page function (the refusal names the position)`, async () => {
+        const ran = [];
+        const r = await run(js, ran).catch((e) => ({ refused: String(e) }));
+        assert.deepEqual(ran, [], `${name} ran the page's function: ${JSON.stringify(ran)}`);
+        assert.ok(r.refused, `${name}: the survey answered instead of refusing: ${JSON.stringify(r.value)}`);
+        assert.match(r.refused, names, `${name}: the refusal does not name the position: ${r.refused}`);
+    });
+
+    test(`CONTROL: ${name} on real operands still does its work`, async () => {
+        const r = await runControl(control).catch((e) => ({ refused: String(e) }));
+        assert.ok(!r.refused, `${name}: real operands were refused: ${r.refused}`);
+        assert.deepEqual(r.value, expected, `${name} on real operands answered something else`);
+    });
+}
+
+// Provenance, not kind: a Date or an element the page hands over is refused as an operand, whatever it would convert to.
+for (const [name, value] of [["a page's Date", () => new Date(0)], ["a page's element", (d) => d.querySelector("p")]]) {
+    test(`RED TEAM: ${name} as an operand is refused, never converted by the host`, async () => {
+        const ran = [];
+        const r = await run(O + `return o > 1`, ran, value).catch((e) => ({ refused: String(e) }));
+        assert.deepEqual(ran, []);
+        assert.match(String(r.refused), /the operator > was given an object the script did not build/, `${name} as an operand answered instead of refusing: ${JSON.stringify(r.value)}`);
+    });
+}
+
+// The rule is provenance, so the same operators stay usable on what the script itself built and on the page's DATA.
+test("CONTROL: an array of strings, a String object and the script's own arrow still convert as operands", async () => {
+    assert.equal((await run(O + `return o + ""`, [], () => ["a", "b"])).value, "a,b", "an array of page strings converts as data");
+    assert.equal((await run(O + "return `${o}`", [], () => ["a", "b"])).value, "a,b", "and in a template");
+    // A String object carrying its own `toString`: the intrinsic's slot is the data, so no page function runs.
+    assert.equal((await run(O + `return o + ""`, [], () => { const s = new String("a,b"); s.toString = () => "PAGE"; return s; })).value, "a,b", "a String object converts to its data");
+    assert.equal((await run(`const a = { toString: () => "X" }; return a + ""`, [])).value, "X", "an arrow the script wrote is allowed to convert");
+    assert.equal((await run("const a = { toString: () => \"X\" }; return `${a}`", [])).value, "X", "and in a template");
+});
+
+test("RED TEAM: an object the script built converts only through arrows the script wrote", async () => {
+    // The literal is the script's, but its `toString` is the PAGE's function: provenance is per function, not per object.
+    const ran = [];
+    const pageFn = function pageFn() { ran.push("page"); return "P"; };
+    const r = await run(O + `const a = { toString: o }; return a + ""`, [], () => pageFn).catch((e) => ({ refused: String(e) }));
+    assert.deepEqual(ran, [], "the page's function ran as a conversion");
+    assert.match(String(r.refused), /the operator \+ was given an object the script did not build/, `a page function inside the script's literal was run: ${JSON.stringify(r.value)}`);
+    // A page's array holding an object is refused for its ITEM, so the array is not a way to smuggle one into `+`.
+    const nested = await run(O + `return o + ""`, [], () => [{ a: 1 }]).catch((e) => ({ refused: String(e) }));
+    assert.match(String(nested.refused), /item 0 is an object/, `an array holding a page object was converted: ${JSON.stringify(nested.value)}`);
+});
