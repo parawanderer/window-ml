@@ -10,7 +10,8 @@
 import type { ElementContext } from "../contract";
 import type { StartRunPayload } from "../contract/contract-messages";
 import { imagesRefusal, shortHash, type AttachedFile, type PromptDisplay, type PromptOrigin, type SentFile } from "../contract/contract-run";
-import { FilesRefused, checkFilesField, cleanFiles, isPdfFile, pageRunMoved, pdfToPageRun } from "../attached-files";
+import { FilesRefused, checkFilesField, cleanFiles, isPdfFile, pdfToPageRun } from "../attached-files";
+import { PageGone, pageRouteFor } from "./page-route";
 import { ImagesRefused } from "../image-gate";
 import { framePrompt } from "../agent/prompts";
 import { promptSurfaceOf } from "../agent/prompt-surface";
@@ -234,8 +235,9 @@ function turnVision(hash: string): { driverSees: boolean; runModel: string | nul
 
 /**
  * A person's message or "Continue" on a run the WORKER built: steer it when it is running, or start its next turn
- * when it has settled, from the worker, so the page never carries the message. Null when the hash is not such a run
- * (or not on `fromTabId`), so the caller can fall back to the page, which still owns the runs and chats it built.
+ * when it has settled, from the worker, so the page never carries the message. Null when the message is the page's to
+ * frame (`pageRouteFor`: the tab and site that built the run or chat), so the caller hands it to the page. A page-built
+ * run off its builder is handed to the worker; a message for a run the worker drives, sent from another tab, is refused.
  * The message's files and a long paste become the run's pointers only when it is delivered ("steer" or "turn"): on
  * any other outcome, or a throw, the pointers this call added are taken back and the run's message count is left;
  * their value-store rows stay held until the session is released.
@@ -248,48 +250,53 @@ function turnVision(hash: string): { driverSees: boolean; runModel: string | nul
  * @returns what happened, or null when this is not the worker's run to drive
  * @throws {FilesRefused} the files break the rule, a PDF will not read, or one would go to a page
  * @throws {ImagesRefused} the images may not be sent
+ * @throws {PageGone} no page may frame the message here and the worker may not drive it from this tab
  */
 export async function userRunAction(hash: string, action: "send" | "continue", body: { text?: string; images?: string[]; files?: SentFile[]; elementContext?: ElementContext; maxSteps?: number; surface?: string }, fromTabId?: number, sentFrom?: PromptOrigin): Promise<"steer" | "turn" | "continued" | "busy" | "none" | null> {
     const stored = bgRuns.get(hash);
     const live = runInboxes.get(hash);
     const tabId = stored?.tabId ?? live?.tabId;
-    if (tabId == null || (fromTabId != null && fromTabId !== tabId)) {
-        // Not this worker's to drive, so the message falls back to a page, which never gets a PDF's bytes: refused here.
-        const sent = action === "send" ? cleanFiles(body.files) ?? [] : [];
-        const pdf = sent.find(isPdfFile);
-        if (pdf) throw new FilesRefused(pdfToPageRun(pdf.name));
-        // A run that is on ANOTHER tab: the page it would fall back to is not the one that built it, so no file goes.
-        if (tabId != null && sent.length) {
-            const there = originOf(await chrome.tabs.get(fromTabId as number).then((t) => t.url, () => undefined));
-            throw new FilesRefused(pageRunMoved(sent[0].name, there ?? "another site"));
-        }
-        return null;
-    }
-    // Past the cap the message is refused, never cut, whoever built the run.
-    const tooMany = action === "send" ? imagesRefusal(body.images?.length ?? 0) : null;
-    if (tooMany) throw new ImagesRefused(tooMany);
-    // A run a PAGE built is the page's to drive while that page may: its handle keeps the history in step. Once the
-    // tab is on a site that may not use window.ml (the run navigated off its builder's origin), the page's RESUME_RUN
-    // would be refused, and nothing page-side owns the run any more: it is handed to the worker.
+    // A run the worker drives (it built it, or took it over) is driven only from its own tab: from another, or one it no
+    // longer holds, no page owns it either, so the message is refused rather than handed to the sending tab's page.
+    if (isWorkerRun(hash) && (tabId == null || (fromTabId != null && fromTabId !== tabId))) throw new PageGone();
+    // A run or chat a PAGE built is the page's to drive only on the tab that built it, on the site that built it, while
+    // that site may use window.ml (page-route.ts): its handle keeps the history in step. Anywhere else the page the tab
+    // shows did not build it, so the worker takes the run over if it holds it, and refuses the message if it does not.
     if (!isWorkerRun(hash)) {
-        const here = originOf(await chrome.tabs.get(tabId).then((t) => t.url, () => undefined));
-        const decision = here ? await siteDecision(here) : "unknown";
-        if (decision === "always" || decision === "session") {
+        const at = fromTabId ?? tabId;
+        const url = at == null ? undefined : await chrome.tabs.get(at).then((t) => t.url, () => undefined);
+        const route = at == null ? "off" : await pageRouteFor(hash, at, url);
+        if (route === "page" && tabId == null) {
+            // A chat, or a run this worker no longer holds (it was evicted since): the page frames the message, and it
+            // never gets a PDF's bytes, so a message carrying one is refused here rather than sent without it. Past the
+            // image cap it is refused, never cut, as everywhere.
+            const tooMany = action === "send" ? imagesRefusal(body.images?.length ?? 0) : null;
+            if (tooMany) throw new ImagesRefused(tooMany);
+            const pdf = action === "send" ? (cleanFiles(body.files) ?? []).find(isPdfFile) : undefined;
+            if (pdf) throw new FilesRefused(pdfToPageRun(pdf.name));
+            return null;
+        }
+        if (route === "page") {
+            // Past the cap the message is refused, never cut, whoever built the run.
+            const tooMany = action === "send" ? imagesRefusal(body.images?.length ?? 0) : null;
+            if (tooMany) throw new ImagesRefused(tooMany);
             // The page frames the message, so it takes text files whole only: a PDF, or text past what is sent whole,
             // is refused here with its reason, before the page is told anything, never dropped on the way.
             const pageFiles = action === "send" ? checkFilesField(body.files, "page-run") : {};
             if (pageFiles.reason) throw new FilesRefused(pageFiles.reason);
-            // The page that frames it is the one the tab shows NOW: on another approved site than the builder's, the
-            // person's files would go to a site that did not build the run, so they are refused. Its text goes as before.
-            const moved = pageFiles.files?.length && here !== stored?.p.pageOrigin ? pageFiles.files[0] : undefined;
-            if (moved) throw new FilesRefused(pageRunMoved(moved.name, here ?? "another site"));
             // The page relays it, as the run's handle lives there: its copy of exactly this text is the person's turn,
             // not one of the site's (docs/spec/SITE_ACCESS_SLICE3.md, Q2). Framed as the page frames it (injected.ts).
             await notePersonTurn(hash, action === "send" ? framePrompt(String(body.text || ""), body.elementContext, pageFiles.files as AttachedFile[] | undefined).text : "", action === "send" ? body.images : [], stepBudget(body.maxSteps));
             return null;
         }
+        // Nothing here holds it, or it is another tab's run: no page may frame it and the worker cannot drive it.
+        if (tabId == null || at !== tabId) throw new PageGone();
         makeWorkerRun(hash);
     }
+    if (tabId == null) return null;   // every branch above has answered a run no tab holds
+    // Past the cap the message is refused, never cut, whoever built the run.
+    const tooMany = action === "send" ? imagesRefusal(body.images?.length ?? 0) : null;
+    if (tooMany) throw new ImagesRefused(tooMany);
     const surface = promptSurfaceOf(body.surface);
     const origin: PromptOrigin | undefined = sentFrom ?? (surface ? { surface } : undefined);
     // The one rule for a message's files, whichever surface sent them: this run holds each one as a pointer.

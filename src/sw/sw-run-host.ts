@@ -3,6 +3,7 @@
 // This is design A, and it is the whole of it: the router in background.ts only hands a START_RUN / RESUME_RUN
 // over and keeps the channel open until the run finishes.
 
+import { notePageBuilt } from "./page-route";
 import { runBackgroundAgent } from "../agent/agent-host";
 import { pythonCellInDialect, pythonOutsideWhy } from "../agent/python-dialect";
 import { namesJsBridge } from "../python/bridge-names";
@@ -296,6 +297,8 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
             // the person allowed it, and a page could otherwise hand it a conversation it never had. None held (the worker
             // restarted between turns) is an empty one, which still continues the session rather than restarting it.
             const history = verdict.first ? undefined : (bgRuns.get(p.runId)?.messages ?? []);
+            // Who built it, from the browser's stamp, once: the person's later messages reach a page only there.
+            await notePageBuilt(p.runId, tabId, origin, "run");
             endStarting();
             hostRun({ ...message, payload: { ...p, resumeMessages: history } }, tabId, sendResponse, undefined, { origin, person: verdict.person, first: verdict.first, docId, ...(verdict.pagePrefix ? { pagePrefix: verdict.pagePrefix } : {}) });
         }, (e) => answer({ error: (e as Error)?.message || String(e) }));

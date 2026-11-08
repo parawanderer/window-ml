@@ -187,11 +187,6 @@ export function tooLargeHeld(name: string, bytes: number, together: boolean): st
 export const pdfToPageRun = (name: string): string =>
     `${name} is a PDF, and this run was built by the page, which does not read one: start a run from the panel to attach it`;
 
-/** The sentence for a file sent to a run a page built while its tab shows another site: the page that would frame the
- *  message is not the one that built the run. */
-export const pageRunMoved = (name: string, origin: string): string =>
-    `${name} would go to ${origin}, which did not build this run: start a run from the panel to attach it`;
-
 /** The largest file a picker reads for `target`: a text file can fit only {@link FILE_READ_MAX_BYTES} whole, and an
  *  agent run the worker built holds one up to {@link PDF_ATTACH_MAX}. */
 export const readMaxBytes = (target: FileTarget): number => (target === "agent" ? PDF_ATTACH_MAX + 1 : FILE_READ_MAX_BYTES);
