@@ -674,6 +674,33 @@ test("ADVERSARIAL: a run a page built, its tab now on ANOTHER approved site, is 
     assert.deepEqual(JSON.parse(JSON.stringify(bg.tabMessages.map(([, m]) => m).filter((m) => m.type === "ML_SESSION_TO_PAGE").map((m) => m.files))), [[NOTES]]);
 });
 
+test("ADVERSARIAL: a run's hash sent with ANOTHER tab's id is refused the person's files; nothing reaches that tab's page", T, async () => {
+    // The worker declines a run that is not on the sending tab, and the caller then hands the message to THAT tab's
+    // page: the person's files would go to a page that did not build the run (flaky-ci's review of #1520).
+    const A = "https://builder.example/", B = "https://other.example/";
+    const bg = loadBackground({
+        config, siteGate: true, local: { ml_site_always: ["https://builder.example", "https://other.example"] },
+        openTabs: [{ id: 7, url: A, title: "Builder" }, { id: 8, url: B, title: "Other" }],
+        onFetch: (call) => call.url.includes("/chat/completions") ? jsonResponse({ choices: [{ message: { content: "ok" } }] }) : jsonResponse({}),
+        onTabMessage: async (_t, msg) => (msg.type === "ADOPT_RUN_NOW" ? { pageInfo: "" } : msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.finish ? { result: "" } : undefined),
+    });
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "pagebuilt3", task: "first", systemPrompt: "S", tools: [], model: "m", think: null, maxSteps: 2,
+        autoApprovePython: false, autoApproveReadonly: false, surface: "off",
+        rebuild: { toolNames: [], model: "m", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: true },
+    } }, { tab: { id: 7, url: A }, url: A });
+    await flush(20);
+    const r = await bg.send({ type: "USER_RUN_ACTION", payload: { hash: "pagebuilt3", action: "send", text: "and this", files: [NOTES] } }, { tab: { id: 8, url: B }, url: B });
+    assert.deepEqual([r.data, r.refused], [null, pageRunMoved("notes.txt", "https://other.example")], "refused with its reason, answered as handled");
+    void bg.send({ type: "ML_SESSION_REMOTE", tabId: 8, action: "send", hash: "pagebuilt3", text: "and this", files: [NOTES], surface: "devtools" }, EXT);
+    await flush(20);
+    assert.equal(bg.tabMessages.filter(([, m]) => m.type === "ML_SESSION_TO_PAGE" && m.files).length, 0, "no file to the other tab's page");
+    // With no file, the message falls back to that page as before.
+    void bg.send({ type: "ML_SESSION_REMOTE", tabId: 8, action: "send", hash: "pagebuilt3", text: "and this", surface: "devtools" }, EXT);
+    await flush(20);
+    assert.equal(bg.tabMessages.filter(([t, m]) => t === 8 && m.type === "ML_SESSION_TO_PAGE").length, 1);
+});
+
 test("a PDF for a run this worker does not hold is refused, never handed to a page without it", T, async () => {
     const { bg } = world();
     const r = await bg.send({ type: "USER_RUN_ACTION", payload: { hash: "0".repeat(32), action: "send", text: "x", files: [PDF] } }, fromTab);

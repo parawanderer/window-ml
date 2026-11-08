@@ -255,8 +255,14 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
     const tabId = stored?.tabId ?? live?.tabId;
     if (tabId == null || (fromTabId != null && fromTabId !== tabId)) {
         // Not this worker's to drive, so the message falls back to a page, which never gets a PDF's bytes: refused here.
-        const pdf = action === "send" ? (cleanFiles(body.files) ?? []).find(isPdfFile) : undefined;
+        const sent = action === "send" ? cleanFiles(body.files) ?? [] : [];
+        const pdf = sent.find(isPdfFile);
         if (pdf) throw new FilesRefused(pdfToPageRun(pdf.name));
+        // A run that is on ANOTHER tab: the page it would fall back to is not the one that built it, so no file goes.
+        if (tabId != null && sent.length) {
+            const there = originOf(await chrome.tabs.get(fromTabId as number).then((t) => t.url, () => undefined));
+            throw new FilesRefused(pageRunMoved(sent[0].name, there ?? "another site"));
+        }
         return null;
     }
     // Past the cap the message is refused, never cut, whoever built the run.

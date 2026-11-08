@@ -611,7 +611,8 @@ with the reason before the page hears of it (`pdfToPageRun`); no route hands a p
 refuses a PDF for a run it does not hold, the session commands' page fallback and DevTools' `ML_SESSION_REMOTE`
 forward text files only). Those text files go only while the tab shows the run's builder's origin
 (`stored.p.pageOrigin`): on another approved site the relay would reach a page that did not build the run, so the
-files are refused by name (`pageRunMoved`) and the text goes as before (e3's second pass, 2026-11-08). A run an
+files are refused by name (`pageRunMoved`) and the text goes as before (e3's second pass, 2026-11-08). So are a run's
+files sent from another tab than the run's, whose page did not build it either (flaky-ci's review). A run an
 approved iframe built is therefore refused files too, since the tab shows the top frame's origin; the composers
 (sidebar, DevTools) take files for an agent session. The
 `dereference` tool reads a text pointer as its text through the pipe ("Text, N lines" in the header); the inventory,
