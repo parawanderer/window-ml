@@ -25,9 +25,10 @@
 // refusal's own text. The controls pass today and hold the fixture honest: the harness reaches the host, the run really
 // holds an `@file:` pointer, and the bytes the worker keeps are the ones the person attached.
 //
-// One row here is not about `put` alone and is worth its own line: SHELL.md's argv ruling (a pointer token of ANY
-// prefix in argv is refused, "a held value, not a path", RULED 2026-10-28) is ruled and NOT implemented. Measured with
-// the todos stripped, `ml.sh.run(["cat", "@file:3fa91c2"])` spawns `["cat","@file:3fa91c2"]` on the host, unflagged.
+// SHELL.md's argv ruling (a pointer token of any prefix in argv is refused, "a held value, not a path", RULED
+// 2026-10-28) is NOT tested here: it was found beside these rows but measured unbuilt, and it travels with the fix that
+// answers it, on its own branch (`feat/sh-argv-pointer`), as that fixer's flip. Only `put` and its own surfaces are
+// below.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
@@ -399,16 +400,4 @@ test("RED TEAM: a file bigger than one chunk is sent as contiguous chunks the ho
     const joined = Buffer.concat(parts);
     assert.equal(joined.length, bytes.length, `the join is ${joined.length} bytes, not the file's ${bytes.length}`);
     assert.equal(createHash("sha256").update(joined).digest("hex"), createHash("sha256").update(bytes).digest("hex"), "the join is not the file");
-});
-
-// --- 6. the ruling `put` sits beside: a pointer in argv is not a path ---
-
-test("RED TEAM: an `@file:` (or `@tool:`) token in argv never reaches the host as an argv item", { ...T, todo: "open: SHELL.md's ruling (a pointer token of any prefix in argv is refused, 'a held value, not a path') is ruled and unbuilt; the row measures the host being sent the pointer as an argument, and once `put` exists the sentence must name it" }, async () => {
-    for (const token of ["@file:3fa91c2", "@tool:ab12cd3"]) {
-        const host = putHost();
-        const { results } = await runPut({ host, script: () => `(async () => { try { return JSON.stringify(await ml.sh.run(["cat", ${JSON.stringify(token)}])); } catch (e) { return JSON.stringify({ threw: e.message, code: e.code }); } })()` });
-        const argvSent = JSON.stringify(callsOf(host, "spawn").map((c) => c.args?.argv ?? null));
-        assert.ok(!argvSent.includes(token), `${token}: the pointer reached the host as an argv item: ${argvSent.slice(0, 300)}`);
-        assert.match(why(answer(results[0])), /held value|attachment|put/i, `${token}: the refusal does not say it is a held value: ${results[0]?.slice(0, 300)}`);
-    }
 });
