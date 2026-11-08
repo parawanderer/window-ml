@@ -149,6 +149,9 @@ export const getModel = async function(): Promise<string | null> {
  *   q.rank(docs.map((embedding, key) => ({ key, embedding })));   // most similar first
  * ```
  *
+ * In a read-only `exec` survey it runs with no approval, with the configured model only (no `opts`), up to 500,000
+ * characters and 32 calls a survey, 512 strings a call; past them the survey asks first.
+ *
  * @param {string|string[]} input Text, or several strings embedded together.
  * @param {{model?: string}} [opts] Override the configured model. Vectors from DIFFERENT models are
  *        different geometries, so comparing across them throws rather than returning a meaningless number.

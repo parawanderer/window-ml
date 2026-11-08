@@ -49,6 +49,18 @@ export const MAX_COLLECTION = 1_000_000;
 /** The most cells one script may read out of STORED tables in total (each read is a request over the whole table). */
 export const MAX_STORED_CELLS = 5_000_000;
 
+/** The most characters one survey may send to `ml.embed`, across its calls. The one survey member that makes a live
+ *  model call: the step budget measures the interpreter's time, and an embed's is the embedding server's, so its
+ *  wall time is bounded by this and {@link EMBED_SURVEY_CALLS} instead (measured: notebooks/readonly/embed-cost.ipynb). */
+export const EMBED_SURVEY_CHARS = 500_000;
+
+/** The most `ml.embed` calls one survey may make: each is a round trip, whatever it carries, so a loop of one-input
+ *  calls is bounded by its count rather than its characters. Batch instead (`ml.embed([a, b, c])`). */
+export const EMBED_SURVEY_CALLS = 32;
+
+/** The most strings one `ml.embed` call may carry (the server embeds a batch in one request). */
+export const EMBED_CALL_INPUTS = 512;
+
 /** The longest string one step may produce, for the same reason (`repeat`, `padStart`, doubling by `+`). */
 export const MAX_STRING = 10_000_000;
 

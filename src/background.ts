@@ -62,6 +62,7 @@ import type { SiteRunEvent } from "./contract/contract-debug";
 import { START_REFUSED } from "./agent-start";
 import { startUserRun, userRunAction, steerRun, noteRefusedTurn } from "./sw/sw-run-start";
 import { ImagesRefused } from "./image-gate";
+import { FilesRefused, cleanFiles, isPdfFile, pdfToPageRun, textFiles } from "./attached-files";
 import { adoptOnTab } from "./sw/adopt-run";
 import { pageRebuild } from "./agent/run-assembly";
 import { runControlPayloadError } from "./sw/run-payload-check";
@@ -70,6 +71,7 @@ import { pythonPrewarm, pythonExec, pythonInterrupt, relayPyStdout, deletePython
 import { focusLineFor } from "./sw/sw-focus";
 import { eventSession, pageMayWrite, withoutPageWhy, WORKER_ONLY_KINDS, type WorkerClaim } from "./event-admission";   // what a page may add to a session the worker speaks for
 import { fetchUrlFor, pageFetchCaller } from "./sw/sw-fetch-url";
+import { watchRedirects } from "./sw/sw-redirects";
 import { fetchImageDataUrl } from "./sw/sw-image-fetch";
 import { approvalKey } from "./approval-key";
 import { raiseAsk } from "./sw/sw-asks";
@@ -393,14 +395,20 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             // A run the worker holds is never a page's to drive, and the person's message for it goes to no page: not to
             // the panel's tab when the run is on another (userRunAction answers null there), and not when that failed.
             if (typeof message.hash === "string" && isWorkerRun(message.hash)) return;
-            try { void chrome.tabs.sendMessage(message.tabId, { type: "ML_SESSION_TO_PAGE", action: message.action, hash: message.hash, text: message.text, images: message.images, ...(message.surface ? { surface: message.surface } : {}), ...(typeof message.maxSteps === "number" ? { maxSteps: message.maxSteps } : {}) }).catch(() => {}); } catch { /* tab gone */ }
+            // A page frames text files only: a PDF's bytes never go to one, and a message carrying one is refused, not
+            // sent without it.
+            const pdf = (sentFiles ?? []).find(isPdfFile);
+            if (pdf) { if (typeof message.hash === "string") noteRefusedTurn(message.hash, pdfToPageRun(pdf.name)); return; }
+            const files = textFiles(sentFiles);
+            try { void chrome.tabs.sendMessage(message.tabId, { type: "ML_SESSION_TO_PAGE", action: message.action, hash: message.hash, text: message.text, images: message.images, ...(files ? { files } : {}), ...(message.surface ? { surface: message.surface } : {}), ...(typeof message.maxSteps === "number" ? { maxSteps: message.maxSteps } : {}) }).catch(() => {}); } catch { /* tab gone */ }
         };
+        const sentFiles = cleanFiles(message.files);
         // A run the worker built is driven from here: the page never carries the person's message (sw-run-start.ts).
         if ((message.action === "send" || message.action === "continue") && typeof message.hash === "string") {
-            void userRunAction(message.hash, message.action, { text: message.text, images: message.images, surface: message.surface, maxSteps: message.maxSteps }, message.tabId)
+            void userRunAction(message.hash, message.action, { text: message.text, images: message.images, ...(message.files != null ? { files: message.files } : {}), surface: message.surface, maxSteps: message.maxSteps }, message.tabId)
                 .then((mine) => { if (!mine) toPage(); }, (e) => {
                     // As on USER_RUN_ACTION: a refused turn is said in the run's step list, never handed to the page.
-                    if (e instanceof ImagesRefused) { noteRefusedTurn(message.hash as string, e.message); return; }
+                    if (e instanceof ImagesRefused || e instanceof FilesRefused) { noteRefusedTurn(message.hash as string, e.message); return; }
                     toPage();
                 });
             return;
@@ -863,7 +871,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         userRunAction(p.hash, p.action, message.payload, sender.tab.id).then((outcome) => sendResponse({ data: outcome }), (e) => {
             // Images the run may not be sent (vision not known, no reader): said in the run's step list, since this
             // surface has no other place to say it, and answered as handled so the shell does not hand it to the page.
-            if (e instanceof ImagesRefused) { noteRefusedTurn(p.hash as string, e.message); sendResponse({ data: null, refused: e.message }); return; }
+            if (e instanceof ImagesRefused || e instanceof FilesRefused) { noteRefusedTurn(p.hash as string, e.message); sendResponse({ data: null, refused: e.message }); return; }
             sendResponse({ data: null });
         });
         return true;
@@ -1508,6 +1516,10 @@ function rightClickedContext(tabId: number): Promise<unknown> {
 // Right-click "Ask window.ml about this" — the content-script shell resolves the clicked element's
 // semantic container + clean context and opens the Commander pre-loaded with it (see shell.ts). Created on
 // install (persists); re-created defensively in case the item was cleared. contextMenus may be absent in tests.
+// A redirect hop's target, read for the worker's judged fetches (sw-redirects.ts); registered at the top level, so a
+// fetch in a worker that just woke still sees its hop.
+watchRedirects();
+
 chrome.runtime.onInstalled?.addListener((details) => {
     // A deliberate reload or an update (NOT an idle SW respawn — that never fires onInstalled): invalidate any
     // in-flight background run. Its snapshot may be from OLD code, and this is often how you kill a runaway —

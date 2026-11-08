@@ -1,0 +1,260 @@
+{
+  "commit": "a490c36ae80fbfb5f71a8d3fe4a5fd546de66500",
+  "extracted_at": "2026-10-29T11:03:47+00:00",
+  "rows": {
+    "meta": {
+      "date": "2026-10-29T11:03:47.314Z",
+      "node": "v26.12.1",
+      "chunk_chars": 2000,
+      "reps": 3,
+      "placement": "num_gpu 0",
+      "corpus": "docs/spec/*.md"
+    },
+    "rows": [
+      {
+        "model": "embeddinggemma:300m",
+        "batch": 1,
+        "rep": 0,
+        "chars": 2000,
+        "ms": 227.43174999999997,
+        "tokens": 558,
+        "dims": 768,
+        "server_ms": 207.34218
+      },
+      {
+        "model": "embeddinggemma:300m",
+        "batch": 1,
+        "rep": 1,
+        "chars": 2000,
+        "ms": 127.24749999999995,
+        "tokens": 497,
+        "dims": 768,
+        "server_ms": 109.016631
+      },
+      {
+        "model": "embeddinggemma:300m",
+        "batch": 1,
+        "rep": 2,
+        "chars": 2000,
+        "ms": 116.93262500000014,
+        "tokens": 485,
+        "dims": 768,
+        "server_ms": 96.920271
+      },
+      {
+        "model": "embeddinggemma:300m",
+        "batch": 8,
+        "rep": 0,
+        "chars": 16000,
+        "ms": 717.4017920000001,
+        "tokens": 4034,
+        "dims": 768,
+        "server_ms": 677.241346
+      },
+      {
+        "model": "embeddinggemma:300m",
+        "batch": 8,
+        "rep": 1,
+        "chars": 16000,
+        "ms": 684.933333,
+        "tokens": 3979,
+        "dims": 768,
+        "server_ms": 649.200397
+      },
+      {
+        "model": "embeddinggemma:300m",
+        "batch": 8,
+        "rep": 2,
+        "chars": 16000,
+        "ms": 859.5030419999998,
+        "tokens": 4220,
+        "dims": 768,
+        "server_ms": 792.482189
+      },
+      {
+        "model": "embeddinggemma:300m",
+        "batch": 32,
+        "rep": 0,
+        "chars": 64000,
+        "ms": 3229.0887919999996,
+        "tokens": 17019,
+        "dims": 768,
+        "server_ms": 3078.770673
+      },
+      {
+        "model": "embeddinggemma:300m",
+        "batch": 32,
+        "rep": 1,
+        "chars": 64000,
+        "ms": 2651.0068330000004,
+        "tokens": 16488,
+        "dims": 768,
+        "server_ms": 2600.531593
+      },
+      {
+        "model": "embeddinggemma:300m",
+        "batch": 32,
+        "rep": 2,
+        "chars": 64000,
+        "ms": 2708.059833000001,
+        "tokens": 16968,
+        "dims": 768,
+        "server_ms": 2654.664614
+      },
+      {
+        "model": "embeddinggemma:300m",
+        "batch": 64,
+        "rep": 0,
+        "chars": 128000,
+        "ms": 5839.808083,
+        "tokens": 35219,
+        "dims": 768,
+        "server_ms": 5747.916578
+      },
+      {
+        "model": "embeddinggemma:300m",
+        "batch": 64,
+        "rep": 1,
+        "chars": 128000,
+        "ms": 5450.775666000001,
+        "tokens": 33434,
+        "dims": 768,
+        "server_ms": 5363.58499
+      },
+      {
+        "model": "embeddinggemma:300m",
+        "batch": 64,
+        "rep": 2,
+        "chars": 128000,
+        "ms": 5445.546624999999,
+        "tokens": 33456,
+        "dims": 768,
+        "server_ms": 5345.952399
+      },
+      {
+        "model": "qwen3-embedding:0.6b",
+        "batch": 1,
+        "rep": 0,
+        "chars": 2000,
+        "ms": 463.7009579999976,
+        "tokens": 539,
+        "dims": 1024,
+        "server_ms": 444.557152
+      },
+      {
+        "model": "qwen3-embedding:0.6b",
+        "batch": 1,
+        "rep": 1,
+        "chars": 2000,
+        "ms": 372.706124999997,
+        "tokens": 482,
+        "dims": 1024,
+        "server_ms": 354.984249
+      },
+      {
+        "model": "qwen3-embedding:0.6b",
+        "batch": 1,
+        "rep": 2,
+        "chars": 2000,
+        "ms": 419.2937500000007,
+        "tokens": 470,
+        "dims": 1024,
+        "server_ms": 338.793605
+      },
+      {
+        "model": "qwen3-embedding:0.6b",
+        "batch": 8,
+        "rep": 0,
+        "chars": 16000,
+        "ms": 2550.6169580000023,
+        "tokens": 3864,
+        "dims": 1024,
+        "server_ms": 2519.39674
+      },
+      {
+        "model": "qwen3-embedding:0.6b",
+        "batch": 8,
+        "rep": 1,
+        "chars": 16000,
+        "ms": 2521.5577089999933,
+        "tokens": 3860,
+        "dims": 1024,
+        "server_ms": 2484.893438
+      },
+      {
+        "model": "qwen3-embedding:0.6b",
+        "batch": 8,
+        "rep": 2,
+        "chars": 16000,
+        "ms": 2772.9233749999985,
+        "tokens": 4077,
+        "dims": 1024,
+        "server_ms": 2741.032996
+      },
+      {
+        "model": "qwen3-embedding:0.6b",
+        "batch": 32,
+        "rep": 0,
+        "chars": 64000,
+        "ms": 10825.159124999998,
+        "tokens": 16377,
+        "dims": 1024,
+        "server_ms": 10765.629525
+      },
+      {
+        "model": "qwen3-embedding:0.6b",
+        "batch": 32,
+        "rep": 1,
+        "chars": 64000,
+        "ms": 10138.686000000002,
+        "tokens": 15716,
+        "dims": 1024,
+        "server_ms": 10075.726721
+      },
+      {
+        "model": "qwen3-embedding:0.6b",
+        "batch": 32,
+        "rep": 2,
+        "chars": 64000,
+        "ms": 10454.382582999999,
+        "tokens": 16103,
+        "dims": 1024,
+        "server_ms": 10390.38266
+      },
+      {
+        "model": "qwen3-embedding:0.6b",
+        "batch": 64,
+        "rep": 0,
+        "chars": 128000,
+        "ms": 22196.847292000006,
+        "tokens": 33932,
+        "dims": 1024,
+        "server_ms": 22031.572413
+      },
+      {
+        "model": "qwen3-embedding:0.6b",
+        "batch": 64,
+        "rep": 1,
+        "chars": 128000,
+        "ms": 20720.550292,
+        "tokens": 32194,
+        "dims": 1024,
+        "server_ms": 20619.682509
+      },
+      {
+        "model": "qwen3-embedding:0.6b",
+        "batch": 64,
+        "rep": 2,
+        "chars": 128000,
+        "ms": 20670.099000000017,
+        "tokens": 31819,
+        "dims": 1024,
+        "server_ms": 20560.014649
+      }
+    ]
+  },
+  "source": {
+    "cmd": "node notebooks/readonly/embed-bench.mjs",
+    "driver": "notebooks/readonly/embed-bench.mjs"
+  }
+}

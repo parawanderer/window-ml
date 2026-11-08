@@ -17,6 +17,7 @@
 // are crops of its own capture (worker-media.ts).
 
 import { readCapped, imageMime } from "./body-read";
+import { judgedFetch } from "./sw-redirects";
 
 /** The most bytes an image read keeps; a longer body is refused, not cut (a prefix of an image is not an image). */
 export const IMAGE_FETCH_MAX = 16_000_000;
@@ -102,9 +103,10 @@ function discard(res: Response): void {
 export async function fetchImageDataUrl(url: string): Promise<{ data: string } | { error: string }> {
     if (isBlockedFetchTarget(url)) return { error: IMAGE_REFUSED };
     try {
-        const res = await fetch(url, { credentials: "omit", referrerPolicy: "no-referrer", cache: "no-store", redirect: "follow" });
-        // A redirect is followed by the browser, which reads no hop's Location for us (`manual` answers an opaque
-        // response): the hops before the last were requested, but nothing of theirs is read, and the last is judged here.
+        // Every hop is held to the first URL's rule before its target is requested (sw-redirects.ts): a CDN on another site
+        // is followed, a private or loopback address is not. The declared exception to "any other hop asks": the request
+        // carries no credentials on any hop and only a public raster image is read, which no hop can weaken.
+        const res = await judgedFetch(url, { credentials: "omit", referrerPolicy: "no-referrer", cache: "no-store" }, ({ to }) => !isBlockedFetchTarget(to));
         if (!res.ok || (res.url && isBlockedFetchTarget(res.url))) { discard(res); return { error: IMAGE_FAILED }; }
         const header = (name: string) => String(res.headers?.get?.(name) ?? "");
         const declared = Number(header("content-length"));

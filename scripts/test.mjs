@@ -22,6 +22,7 @@ import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { stalenessReport } from "./check-dist-fresh.mjs";
+import { acquire } from "./test-slot.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -45,6 +46,7 @@ const GENRES = {
             "sidebar-approval.test.js", "sidebar-card.test.js", "sidebar-event-lane.test.js",
             "sidebar-export.test.js", "sidebar-output.test.js", "sidebar-resource.test.js",
             "sidebar-session.test.js", "sidebar-settings.test.js", "sidebar-vram.test.js",
+            "sidebar-asks.test.js", "sidebar-render-kinds.test.js", "sidebar-start-card.test.js",
             "output-cell.test.mjs", "pointer-gone.test.mjs", "code-tools.test.mjs", "legend.test.mjs",
             "context-container.test.mjs", "sidebar-prompt-display.test.js", "fold-badges.test.mjs", "tooltip-layer.test.mjs", "tip.test.mjs", "code-diff.test.mjs", "views.test.mjs",
             "json-tree.test.mjs", "run-state-view.test.mjs", "run-log-view.test.mjs", "chart-gestures.test.mjs", "stacked-area.test.mjs", "sidebar-bench-stop.test.js"],
@@ -109,7 +111,7 @@ const GENRES = {
     // property is a test with a positive control, and the suite is the one to run after any security-relevant change.
     redteam: {
         about: "what a hostile page must NOT get: every tool, member and page-started message, each property a test",
-        files: ["redteam.test.js", "lapsed-ask-redteam.test.mjs", "redteam-agent-level-3.test.mjs", "redteam-agent-level-2.test.mjs", "redteam-agent-level.test.mjs", "redteam-answer.test.mjs", "redteam-capture.test.mjs", "redteam-coerce-args.test.mjs", "redteam-current-client.test.mjs",
+        files: ["redteam.test.js", "lapsed-ask-redteam.test.mjs", "redteam-agent-level-3.test.mjs", "redteam-agent-level-2.test.mjs", "redteam-agent-level.test.mjs", "redteam-answer.test.mjs", "redteam-attach-pdf.test.mjs", "redteam-capture.test.mjs", "redteam-coerce-args.test.mjs", "redteam-current-client.test.mjs",
             "redteam-current-env.test.mjs", "redteam-current-runtime.test.mjs", "redteam-dialect-widenings.test.mjs",
             "redteam-embed-filter.test.mjs", "redteam-exec-console.test.mjs", "redteam-exec-page-leg.test.mjs",
             "redteam-exec-shared-world.test.mjs", "redteam-exec-world.test.mjs", "redteam-geometry.test.mjs",
@@ -118,7 +120,7 @@ const GENRES = {
             "redteam-ml-wire.test.mjs", "redteam-operand-check.test.mjs", "redteam-page-run-builtby.test.mjs", "redteam-propose-manifest.test.mjs", "redteam-render-values.test.mjs",
             "redteam-run-payload.test.mjs", "redteam-text-captures.test.mjs", "redteam-tool-throw.test.mjs",
             "redteam-worker-shot.test.mjs", "redteam-bench-stop.test.mjs", "redteam-hard-python-cancel.test.mjs", "redteam-policy-ask-free-tiers.test.mjs",
-            "redteam-presence-ask.test.mjs", "redteam-brand-tag.test.mjs", "redteam-task.test.mjs", "redteam-act-consumer.test.mjs", "redteam-person-word.test.mjs", "redteam-coercion.test.mjs"],
+            "redteam-presence-ask.test.mjs", "redteam-brand-tag.test.mjs", "redteam-task.test.mjs", "redteam-act-consumer.test.mjs", "redteam-person-word.test.mjs", "redteam-coercion.test.mjs", "redteam-embed.test.mjs"],
     },
     // The chat page's own logic (the client store, the view prefs, the local host) and the check that its web build
     // never reaches `chrome`. Its browser half is Playwright: `npm run test:chat` runs both.
@@ -210,9 +212,13 @@ if (args.includes("--list")) {
 // turned — pull it to `CORES - 1` before touching the assertion.
 const CORES = (() => { try { return require("node:os").cpus().length; } catch { return 4; } })();
 const ON_CI = !!(process.env.CI || process.env.GITHUB_ACTIONS);
+// ONE RUN ON THE MACHINE AT A TIME, LOCALLY: every run that spawns tests waits its turn in the machine-wide queue
+// (test-slot.mjs), and is given its workers from the memory free when its turn comes. CI, `TEST_SLOT=off` and a run
+// inside a queued job skip the wait; `--jobs` still decides the workers.
+const SLOT = args.includes("--check-genres") ? null : await acquire({ cmd: [process.execPath, ...process.argv.slice(1)], cwd: ROOT, kind: "unit" });
 const jobsArg = process.argv.find((a) => a.startsWith("--jobs"));
 const JOBS = Math.max(1, Number(jobsArg?.split("=")[1] ?? process.argv[process.argv.indexOf("--jobs") + 1])
-    || Math.min(8, ON_CI ? CORES : Math.max(1, CORES - 2)));
+    || SLOT?.jobs || Math.min(8, ON_CI ? CORES : Math.max(1, CORES - 2)));
 const NODE_ARGS = ["--import", "tsx", "--test", `--test-concurrency=${JOBS}`];
 
 // SLOWEST FIRST. `node --test --test-concurrency=N` starts the files in the order they are listed, and a

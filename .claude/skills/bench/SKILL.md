@@ -60,7 +60,10 @@ fit), each measured every 5 s as the
 summed resident memory of its process tree (`memory-budget.mjs`; shared pages count once per process, so it over-states).
 A sweep that holds runs or uses a real model checks it before each cell starts and before it keeps a failed run open:
 the bench's total plus one more browser must fit under `--memory-limit` (default half the RAM) AND leave a quarter of the
-RAM free by the machine's own live account (macOS's `kern.memorystatus_level`, Linux's `MemAvailable`). One more
+RAM free by the machine's own live account (macOS's `kern.memorystatus_level`, Linux's `MemAvailable`), less what is
+on its way and not yet resident: a browser a sweep admitted in the last 30 s (`pending` on its entry), and a running test
+suite's planned workers beyond what its tree holds. A test run (`scripts/test-slot.mjs`, the `test-slot` skill) is in the
+ledger as kind `tests` while it runs; it counts against free memory only, never against `--memory-limit`. One more
 browser is predicted as the p90 of the peaks measured for that task (`footprints` in scores.sqlite, from every cell that
 ran in its own process), else of every task's, else 1 GB. At the start it says what to expect ("about 3 failed runs can
 be held this sweep …"). At the limit, `--when-full pause` (the default) starts nothing more, keeps nothing more (a

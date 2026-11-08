@@ -14,13 +14,15 @@
 // can't leave it un-live.
 import { SB_ROOT, SB_HOST, SB_TAB, SB_FRAME, SB_LIGHTBOX, SB_LIGHTBOX_X, SB_HIGHLIGHT, SB_CARD, SB_STYLE, anonymousTag } from "../ids";
 import { cleanImages } from "../contract/contract-run";
+import { cleanFiles, textFiles } from "../attached-files";
 import { onSessionDone, relaySessionToPage } from "./shell-session-relay";
 import { stepBudget } from "../agent/step-budget";
 import { resolveContextContainer, domToContext, queryAll, viewportRect, setClosedRootReader } from "../dom/dom";   // the content script sees the page DOM
 import type { ElementContext } from "../contract/contract-run";
 import type { DebugMode } from "../contract/contract-config";
 import { eventSession, pageMayWrite, type WorkerClaim } from "../event-admission";
-import { answerShotRects, pageShotGate, sheetText, HOST_STYLE, setHostHidden, type ShotRoots } from "./shell-shot";
+import { answerShotRects, pageShotGate, clickHideGate, sheetText, fromWorker, HOST_STYLE, type ShotRoots } from "./shell-shot";
+import { setHostHidden } from "../dom/host-hide";
 import { topLayerKeeper, browserTopLayerDoc, browserClock } from "./shell-top-layer";
 import { approvalPayload } from "../approval-key";
 import { gateOpen, whenOpen, whenEverOpen, whenVisible } from "../page-gate";
@@ -857,15 +859,12 @@ const shotRoots = (): ShotRoots => ({
  */
 Object.defineProperty(globalThis, "__wmlShellRoots", { configurable: true, value: () => ({ sidebar: shellRoot, card: cardRoot, highlight: hlRoot, highlightTag: HL_TAG }) });
 
-/** The page's hide handshake for a page-hosted screenshot, bounded (shell-shot.ts). */
-const shot = pageShotGate({
+/** Who holds the shell's UI hidden: the page for its own shot, the worker around a trusted click. The UI comes back
+ *  only when neither does, so the page's "show" cannot bring the sidebar back under a click the worker is making. */
+const shotHolders = new Set<string>();   // state: ui — "page", or "click:<id>" per trusted click; each cleared by its show or its hold
+/** What a hide covers, shared by both holders: the hosts, the image viewer and the hover box. */
+const shotSurface = {
     hide() {
-        if (!scrollPin) {
-            const x = window.scrollX, y = window.scrollY;
-            const onScroll = () => window.scrollTo(x, y);
-            window.addEventListener("scroll", onScroll, { passive: true });
-            scrollPin = { x, y, onScroll };
-        }
         setHostHidden(shellHost, true);
         setHostHidden(cardHost, true);   // the off-mode card, if it's showing
         if (lightbox) lightbox.style.visibility = "hidden";   // full-viewport overlay — MUST hide too, else the shot is all backdrop
@@ -875,13 +874,39 @@ const shot = pageShotGate({
         setHostHidden(shellHost, false);
         setHostHidden(cardHost, false);
         if (lightbox) lightbox.style.visibility = "";
+    },
+};
+/** One holder's view of {@link shotSurface}: hiding adds it, showing removes it and shows only when no holder is left. */
+const heldBy = (who: string) => ({
+    hide() { shotHolders.add(who); shotSurface.hide(); },
+    show() { shotHolders.delete(who); if (!shotHolders.size) shotSurface.show(); },
+});
+/** The page's shot also pins the scroll while it is hidden, so the capture is of the place it asked about; a click's
+ *  hide does not, since the click may scroll the page itself (a focused field brought into view). */
+const pageHeld = heldBy("page");
+const pageShotSurface = {
+    hide() {
+        if (!scrollPin) {
+            const x = window.scrollX, y = window.scrollY;
+            const onScroll = () => window.scrollTo(x, y);
+            window.addEventListener("scroll", onScroll, { passive: true });
+            scrollPin = { x, y, onScroll };
+        }
+        pageHeld.hide();
+    },
+    show() {
+        pageHeld.show();
         if (scrollPin) {
             window.removeEventListener("scroll", scrollPin.onScroll);
             window.scrollTo(scrollPin.x, scrollPin.y);   // final restore in case one slipped through
             scrollPin = null;
         }
     },
-});
+};
+/** The page's hide handshake for a page-hosted screenshot, bounded (shell-shot.ts). */
+const shot = pageShotGate(pageShotSurface);
+/** The worker's hide around each trusted click (sw-cdp.ts `cdpClick`), one bounded hold per click. */
+const clickShot = clickHideGate(heldBy);
 
 function onWindowMessage(e: ChannelMessage): void {
     const d = e.data;
@@ -1084,10 +1109,13 @@ function fromApp(d: any): void {
         // An `elementContext` (from the right-click "Add to current run") lets an image-less/text-less send
         // through — the element reference IS the payload; the page folds it into the appended message.
         const elementContext = (d.elementContext && typeof d.elementContext.selector === "string") ? d.elementContext : undefined;
-        if (d.text.trim() || cleanImages(d.images) || elementContext) {
+        const files = cleanFiles(d.files);
+        if (d.text.trim() || cleanImages(d.images) || elementContext || files) {
             const body = { hash: d.hash, text: d.text, images: cleanImages(d.images), elementContext, surface: promptSurface() };
-            // The worker drives a run it built; anything else (a run or chat this page built) is the page's.
-            workerFirst({ ...body, action: "send" }, () => whenOpen(() => toPage({ __mlSessionSend: body })));
+            // The worker drives a run it built; anything else (a run or chat this page built) is the page's, which gets
+            // text files only: the worker refuses a PDF for a run it does not hold before this falls back.
+            const pageFiles = textFiles(files);
+            workerFirst({ ...body, ...(files ? { files } : {}), action: "send" }, () => whenOpen(() => toPage({ __mlSessionSend: { ...body, ...(pageFiles ? { files: pageFiles } : {}) } })));
         }
         return;
     }
@@ -1654,7 +1682,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // A run's event from the worker, for the card or the overlay. It comes this way, and never over the page's window,
     // so the page neither reads it nor can pass one off as the worker's (docs/spec/SITE_ACCESS.md, attack 15).
     if (msg?.type === "ML_DEBUG_TO_PAGE") { if (startupQueue) workerStartup.push(msg.event); else feedDebug(msg.event, true); return; }
-    // The worker hiding the sidebar for a screenshot it takes itself: answered only for the worker, never the page.
+    // The worker hiding the extension's UI around a trusted click, so the browser's hit-test reaches the page element
+    // the act judge resolved and not our host: hide, ack, and "show" after the dispatch. Worker only. The ack is at
+    // once, not after two frames: the click's hit-test reads the style the hide set, not a painted frame, and a tab in
+    // the background runs no frames to wait for.
+    if (msg?.type === "CLICK_HIDE" && fromWorker(sender) && typeof msg.id === "string") {
+        if (msg.hidden === true) clickShot.hide(msg.id); else clickShot.show(msg.id);
+        sendResponse({ ok: true }); return;
+    }
     // Where the extension's UI is, for a screenshot the worker takes and masks itself: read only, for the worker only.
     if (msg?.type === "SHOT_RECTS") return answerShotRects(sender, shotRoots, sendResponse, msg);   // true: a begin answers after two frames
     // Not ours to answer (content.ts relays them to the page), but they carry a run's id to the page: claim it first.

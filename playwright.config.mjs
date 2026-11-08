@@ -2,6 +2,13 @@
 // the built extension. Deliberately separate from the fast node:test suite (`npm test`), which never runs
 // these. See CLAUDE.md "End-to-end tests". Run with `npm run test:e2e` (builds dist/ first).
 import { defineConfig } from "@playwright/test";
+import { acquire } from "./scripts/test-slot.mjs";
+
+// ONE TEST RUN ON THE MACHINE AT A TIME, LOCALLY (scripts/test-slot.mjs): Playwright's main process waits its turn in
+// the machine-wide queue and holds it until it exits. This file is loaded again in every worker (TEST_WORKER_INDEX set),
+// and by `--list` or `show-report`, none of which run tests; those never queue. CI skips the queue.
+const RUNS_TESTS = !process.env.TEST_WORKER_INDEX && process.argv.includes("test") && !process.argv.includes("--list");
+const SLOT = RUNS_TESTS ? await acquire({ cmd: [process.execPath, ...process.argv.slice(1)], kind: "e2e" }) : null;
 
 export default defineConfig({
     testDir: "./tests/e2e",
@@ -16,9 +23,9 @@ export default defineConfig({
     // their tests (a beforeAll) pin themselves with `test.describe.configure({ mode: "default" })`. Serial
     // was 26 minutes in CI, most of it waiting on timers rather than CPU.
     fullyParallel: true,
-    // A CI runner has 4 vCPUs: 3 workers leaves one for the server processes the tests start. Locally,
-    // Playwright's default (half the cores).
-    workers: process.env.CI ? 3 : undefined,
+    // A CI runner has 4 vCPUs: 3 workers leaves one for the server processes the tests start. Locally, what the
+    // queue gave this run from free memory (at most half the cores, Playwright's default); `--workers` still wins.
+    workers: process.env.CI ? 3 : SLOT?.jobs ?? undefined,
     // ONE RETRY IN CI, and none locally. Not a licence to ignore flakes — three of them were just fixed by
     // finding what each test was actually asking (a premise that depended on machine speed), and that is the
     // work when a test is wrong. This is for the other kind: ~240 tests that each drive a real browser on a
