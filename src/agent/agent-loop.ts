@@ -118,7 +118,7 @@ export interface AgentLoopDeps {
     // Mid-run STEERING (a.say()): drained at each step boundary (before the model call) — returns any user
     // messages queued since the last step, injected via pushUser so the model sees them on its next turn.
     // Omit → no steering. The queue lives in the caller's world (page handle / SW inbox).
-    drainInbox?(): (string | { text: string; origin?: PromptOrigin; images?: string[] })[];
+    drainInbox?(): (string | { text: string; origin?: PromptOrigin; images?: string[]; task?: string })[];
     pushUser?(messages: unknown[], text: string, images?: string[]): void;
     // Self-introspection (ml.chatMetaTool): resolve the run's model facts for the metadata summary.
     // World-specific (page: ml.capabilities/ml.ps/config; background: the SW's caches). The token/message
@@ -888,6 +888,9 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // from the HUD and steered from the chat app is being driven by someone who has stopped looking at
             // the page. A plain string carries no origin and leaves the current one standing.
             const text = typeof queued === "string" ? queued : queued.text;
+            // A detached call's result (ASYNC_CALLS.md, mode 1) arrives here too: no one typed it, so it has no surface or
+            // client, and says which task it is.
+            if (typeof queued !== "string" && queued.task) { pushed(() => deps.pushUser?.(messages, text), { surface: null, client: null, task: queued.task }); continue; }
             if (typeof queued !== "string" && queued.origin) lastOrigin = queued.origin;
             const images = typeof queued === "string" ? undefined : queued.images;
             pushed(() => deps.pushUser?.(messages, text, images), { surface: lastOrigin?.surface ?? null, client: clientOf(lastOrigin) });

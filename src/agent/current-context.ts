@@ -12,6 +12,7 @@ import type { LogLevel } from "../log/housekeeping";
 import type { RunLogEvent } from "../log/run-log";
 import { toolToken } from "../util";
 import type { CurrentClient } from "./current-client";
+import type { TableLike } from "../table/table-data";
 
 /** What the loop records about a message at the moment it appends it. Every field is null when not known, which
  *  is the case for history a session carried in from an earlier turn: the turn that appended it is gone. */
@@ -27,6 +28,8 @@ export interface RecordedMeta {
     counted: number | null;
     /** The tool output in this message was cut BEFORE the model saw it. */
     truncated: boolean;
+    /** A user message that is a detached call's result, not a person's: the task's id. */
+    task?: string;
 }
 
 /** Nothing known: a message no turn of this loop appended. */
@@ -53,8 +56,10 @@ export interface MessageMeta {
     ageMs: number | null;
     /** The gap since the PREVIOUS message: a long one is someone going away between turns. Null when either is unknown. */
     gapMs: number | null;
-    /** Where a user message was typed. Null for every other role, and for history. */
+    /** Where a user message was typed. Null for every other role, for history, and for a task's result. */
     surface: PromptSurface | null;
+    /** A user message no one typed: the result of a detached call, with the task's id (`ml.current.tasks`). Absent otherwise. */
+    task?: string;
     /** Who sent a user message: the same record as `ml.current.client`, so a model can see the conversation change
      *  hands. Absent for every other role, and for a message whose sender is unknown (history, an older runtime). */
     client?: CurrentClient;
@@ -145,6 +150,18 @@ export interface CurrentSnapshot {
      *  device that reached it through the hub and cannot see the page. Use it for how to answer, never as permission.
      *  Absent when that message's sender is unknown. */
     client?: CurrentClient;
+    /** This run's calls that outran their lease and run on as tasks (docs/spec/ASYNC_CALLS.md), one row each, read at
+     *  this instant: `id`, `kind` (`call`), `tool`, `status` (`running`, `done`, `failed`, `cancelled`, `orphaned`),
+     *  `started` (epoch ms), `elapsed_ms`, `lease_ms`, `expect_ms` (null when you gave none), `tail` (null when the
+     *  executor cannot read a running call's output) and `result` (an `@tool:` pointer once done, else null). Act on
+     *  one with the `task` tool by its `id`; a task ends with the turn. Absent when the run has none.
+     *
+     *  ```js
+     *  const t = ml.current.tasks;
+     *  t ? t.rows.filter(r => r[t.columns.indexOf("status")] === "running").map(r => r[0]) : []
+     *  ```
+     */
+    tasks?: TableLike;
 }
 
 /** The runtime a run executes in, as it describes itself to its clients: what kind it is, and what it can do. */
@@ -247,6 +264,7 @@ export function snapshotCurrent(src: {
             gapMs: r.ts == null || prev == null ? null : Math.max(0, r.ts - prev),
             surface: m.role === "user" ? r.surface : null,
             ...(m.role === "user" && r.client ? { client: structuredClone(r.client) } : {}),
+            ...(m.role === "user" && r.task ? { task: r.task } : {}),
             ...(counted != null ? { tokens: counted } : { estimatedTokens: Math.ceil(textChars(m) / CHARS_PER_TOKEN) }),
             images: m.images?.length ?? 0,
             step: r.step,
@@ -258,7 +276,8 @@ export function snapshotCurrent(src: {
     const records = currentLogRecords(src.log ?? []);
     const log = Object.assign(records, { text: logText(records) });
     let lastUser: MessageMeta | undefined;
-    messages.forEach((m, i) => { if (m.role === "user") lastUser = meta[i]; });
+    // A task's result is no one's message: the latest SENDER is whoever wrote the last one someone did.
+    messages.forEach((m, i) => { if (m.role === "user" && !meta[i].task) lastUser = meta[i]; });
     return { run: { ...src.run }, messages, meta, log, ...(lastUser?.client ? { client: structuredClone(lastUser.client) } : {}) };
 }
 

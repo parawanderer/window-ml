@@ -134,7 +134,7 @@ export interface Session {
     // answer is an `answer`. `atStep` is the cumulative step count when it arrived, so the render interleaves
     // them with the turn step-groups in order. (`summary` still holds the LATEST answer for the title/status.)
     /** A message in the conversation after the task. `site`: a turn the SITE sent, shown with its name (Q2a). */
-    says?: { text: string; ts: number; atStep: number; images?: string[]; id?: string; seen?: boolean; display?: import("../contract/contract-run").PromptDisplay; site?: string }[];
+    says?: { text: string; ts: number; atStep: number; images?: string[]; id?: string; seen?: boolean; display?: import("../contract/contract-run").PromptDisplay; site?: string; /** a detached call's result (its task id), not the person's words */ task?: string; /** how that task ended, for the calm line */ taskEnd?: { status: string; ms: number; code: number | null } }[];
     /** The site that started this run, when a site did (docs/spec/SITE_ACCESS_SLICE3.md): its first task is shown with
      *  the site's name, and its tool gates take no focus and no Enter of their own (Q15). Written only by the worker. */
     site?: string;

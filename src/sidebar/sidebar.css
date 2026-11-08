@@ -4481,6 +4481,16 @@ button.chat-chip.on { background: var(--accent); color: var(--accent-fg); }
 .start-wait { margin: 8px 0; }
 /* A quiet line the worker writes in a run's step list (a start a page the run opened asked for). */
 .arun-note { color: var(--fg-dim); font-size: .85em; margin: 4px 0; font-style: italic; }
+/* A detached call's result as one quiet line in the run's flow (task-line.tsx), a note that opens to the text the model got. */
+.task-line .disc-label { font-style: normal; }
+/* The exact text the run inbox gave the model, inside an opened task line. */
+.task-line-raw { white-space: pre-wrap; word-break: break-word; font-size: .95em; margin: 4px 0 0; }
+/* The transcript draws a task's result both ways and one is hidden, as every calm difference is a hide: the calm view
+   and the overlay's focus mode show the line (quieter, and it still opens to everything the model saw), the unfocused
+   dev transcript and DevTools the labelled bubble. The HUD card draws only the line. */
+.task-say > .task-line { display: none; }
+html[data-calm] .task-say > .task-line, html[data-focus] .task-say > .task-line { display: block; }
+html[data-calm] .task-say > .task-dev, html[data-focus] .task-say > .task-dev { display: none; }
 
 /* --- Mermaid diagrams in model-written Markdown (src/mermaid/mermaid-client.ts) ---------------------------------
    A ```mermaid fence drawn as its diagram, an `<img>` of the SVG a sandboxed frame made. States, by `data-mmd`:
