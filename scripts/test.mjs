@@ -47,7 +47,7 @@ const GENRES = {
             "sidebar-session.test.js", "sidebar-settings.test.js", "sidebar-vram.test.js",
             "output-cell.test.mjs", "pointer-gone.test.mjs", "code-tools.test.mjs", "legend.test.mjs",
             "context-container.test.mjs", "sidebar-prompt-display.test.js", "fold-badges.test.mjs", "tooltip-layer.test.mjs", "tip.test.mjs", "code-diff.test.mjs", "views.test.mjs",
-            "json-tree.test.mjs", "run-state-view.test.mjs", "run-log-view.test.mjs", "chart-gestures.test.mjs", "stacked-area.test.mjs"],
+            "json-tree.test.mjs", "run-state-view.test.mjs", "run-log-view.test.mjs", "chart-gestures.test.mjs", "stacked-area.test.mjs", "sidebar-bench-stop.test.js"],
     },
     // The repo's own checks (scripts/check-*.mjs): broken doc links, JSDoc that contradicts its code, the prompt
     // review's age, and notebooks committed without the evidence they were run.
@@ -167,7 +167,7 @@ const GENRES = {
     // The Python sandbox's host side with no Pyodide: the offscreen document's routing and the idle reap through fake
     // Workers, the prelude's environment and the table sources. Fast; `python` below is the real interpreter.
     "python-host": { about: "the Python sandbox's host side without Pyodide: offscreen routing, the idle reap, the env, table sources", files: ["python-env.test.mjs", "python-reap.test.mjs", "python-run-namespace.test.mjs", "python-table-sources.test.mjs", "redteam-python-keep.test.mjs", "python-keep-fixes.test.mjs"] },
-    python: { about: "real CPython in Pyodide (self-skips without dist/pyodide)", files: ["python.test.mjs", "redteam-python-sandbox.test.mjs", "redteam-python-regex-backtrack.test.mjs", "python-lockdown.test.mjs", "python-run-namespace-py.test.mjs", "python-dialect-vectors-wasm.test.mjs", "regex-corpus-core.test.mjs", "regex-cost-core.test.mjs", "python-matplotlib.test.mjs", "python-dialect-inside.test.mjs", "redteam-python-inside.test.mjs", "python-dialect-library.test.mjs", "python-dialect-library-redteam.test.mjs", "redteam-python-lockdown.test.mjs", "redteam-hard-python-lockdown.test.mjs", "redteam-hard-python-realm.test.mjs", "python-spend-queue.test.mjs"] },
+    python: { about: "real CPython in Pyodide (self-skips without dist/pyodide)", files: ["python.test.mjs", "redteam-python-sandbox.test.mjs", "redteam-python-regex-backtrack.test.mjs", "python-lockdown.test.mjs", "python-run-namespace-py.test.mjs", "python-dialect-vectors-wasm.test.mjs", "regex-corpus-core.test.mjs", "regex-cost-core.test.mjs", "python-matplotlib.test.mjs", "python-dialect-inside.test.mjs", "redteam-python-inside.test.mjs", "python-dialect-library.test.mjs", "python-dialect-library-redteam.test.mjs", "redteam-python-lockdown.test.mjs", "redteam-hard-python-lockdown.test.mjs", "redteam-hard-python-realm.test.mjs", "python-spend-queue.test.mjs", "python-worker-bridges.test.mjs", "python-bench-stop.test.mjs"] },
     live: { about: "opt-in, hits the backend in .env", files: ["live.test.js"] },
 };
 const claimed = new Set(Object.values(GENRES).flatMap((g) => g.files));
