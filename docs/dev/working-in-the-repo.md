@@ -435,6 +435,17 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
   suite globs `tests/*.test.*`; E2E is `tests/e2e/*.spec.mjs`). See the fuller
   writeup below.
 
+## One test run on the machine at a time
+
+On 2026-11-08 nine `node --import tsx --test` runners from different sessions ran at once: 34 workers, 27 GB of swap,
+and a 40 s suite took ten minutes. A rule each lane had to remember did not hold, so the runners themselves queue.
+`scripts/test-slot.mjs` is one machine-wide queue that every `scripts/test.mjs` spawn, Playwright's main process and
+`npm run coverage` goes through: one run at a time, its workers sized from the memory free when its turn comes (a
+per-worker figure measured from past runs). `--jobs N` still fixes the workers; CI, `TEST_SLOT=off` and a runner
+nested in a job skip it. `submit` and `wait` start a run without blocking the session. Commands, the opt-outs, where
+the state lives and the environment a detached job gets: the `test-slot` skill. The limit: it covers only clones that
+have pulled it, so until every lane has, check `pgrep -f 'node --import tsx --test'` before a full suite.
+
 ## Scratch files go in your session's scratchpad, never in `/tmp`
 
 A diff you save to read or hand over, a probe or a throwaway test driver, the log of a detached build or suite, a

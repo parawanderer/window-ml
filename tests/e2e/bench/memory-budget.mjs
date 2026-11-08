@@ -171,7 +171,8 @@ export function ledgerOut(entries, table = processTable(), read = compressedTabl
     return trees.flat().reduce((a, pid) => a + (cmprs.get(pid) ?? 0), 0);
 }
 
-const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === "EPERM"; } };
+/** Whether a process with this pid exists (one we may not signal counts). */
+export const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === "EPERM"; } };
 const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 const readRaw = (file) => { try { const l = JSON.parse(fs.readFileSync(file, "utf8")); return Array.isArray(l) ? l : []; } catch { return []; } };
 function writeRaw(file, list) {
@@ -184,8 +185,21 @@ function writeRaw(file, list) {
 /** Run `fn(list)` with the ledger locked across processes (a lock directory; one left by a dead holder is taken after
  *  10 s) and write back what it returns, when it returns a list. Dead pids are dropped on the way. */
 export function withLedger(fn, file = LEDGER_FILE) {
-    const lock = `${file}.lock`;
-    fs.mkdirSync(path.dirname(file), { recursive: true });
+    return withFileLock(`${file}.lock`, () => {
+        const before = readRaw(file);
+        const live = before.filter((e) => alive(e.pid));
+        const out = fn(live);
+        const next = Array.isArray(out) ? out : live;
+        if (Array.isArray(out) || live.length !== before.length) writeRaw(file, next);
+        return next;
+    });
+}
+
+/** Run `fn()` holding the lock directory `lock` across processes, and return what it returns. A lock older than 10 s
+ *  is taken as left by a dead holder, and one still held after 5 s of waiting is taken anyway: `fn` must be quick.
+ *  The ledger's lock, and the test queue's (scripts/test-slot.mjs). */
+export function withFileLock(lock, fn) {
+    fs.mkdirSync(path.dirname(lock), { recursive: true });
     for (const until = Date.now() + 5000; ;) {
         try { fs.mkdirSync(lock); break; } catch (e) {
             if (e.code !== "EEXIST") throw e;
@@ -195,14 +209,7 @@ export function withLedger(fn, file = LEDGER_FILE) {
             sleep(20);
         }
     }
-    try {
-        const before = readRaw(file);
-        const live = before.filter((e) => alive(e.pid));
-        const out = fn(live);
-        const next = Array.isArray(out) ? out : live;
-        if (Array.isArray(out) || live.length !== before.length) writeRaw(file, next);
-        return next;
-    } finally { fs.rmSync(lock, { recursive: true, force: true }); }
+    try { return fn(); } finally { fs.rmSync(lock, { recursive: true, force: true }); }
 }
 
 /** The ledger's live entries (a dead pid's entry is dropped on read). */
