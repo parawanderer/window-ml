@@ -75,6 +75,20 @@ const allowDestination = (dest) => dest === "allowed" ? approveOrigin(ext.sw, si
 const releaseDestination = (dest) => dest === "allowed" ? revokeOrigin(ext.sw, site.crossOrigin).catch(() => {}) : undefined;
 
 /**
+ * The overlay sidebar's frame, once it is on the page. The iframe mounts asynchronously (fresh after a nav), so a
+ * one-shot `page.frames().find` races its arrival: CI failed `cross-page.spec.mjs:1268` that way on #1492 (head
+ * cb90644e), a diff that does not touch this file. The assertion is unchanged; only its wait is added.
+ * @param {import("@playwright/test").Page} page the tab the overlay is on
+ * @param {string} why the named assertion, kept as the poll's failure
+ */
+async function overlayFrame(page, why) {
+    await expect.poll(() => !!page.frames().find((f) => f.url().includes("sidebar.html")), { timeout: 15000 }).toBe(true);
+    const sb = page.frames().find((f) => f.url().includes("sidebar.html"));
+    expect(sb, why).toBeTruthy();
+    return sb;
+}
+
+/**
  * Where the run's card text is read on the page the run landed on: the page's own corner card for an "allowed" destination,
  * the tab's side panel for a hidden one (and the hidden page is checked to hold none of the card).
  * @returns {Promise<() => Promise<string>>}
@@ -1264,8 +1278,7 @@ test("cross-page: the composer Stop cancels a background run blocked on an appro
     await expect.poll(() => new URL(page.url()).pathname, { timeout: 20000 }).toBe("/step2");   // it navigated
     await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(2);            // …and reached the exec turn, then blocked
 
-    const sb = page.frames().find((f) => f.url().includes("sidebar.html"));
-    expect(sb, "the overlay sidebar iframe is present on the destination page").toBeTruthy();
+    const sb = await overlayFrame(page, "the overlay sidebar iframe is present on the destination page");
     await expect.poll(async () => await sb.locator(".row").count(), { timeout: 15000 }).toBeGreaterThanOrEqual(1);
     await clickInShell(page, "sidebar", "#ml-sb-tab");     // open the collapsed overlay panel
     // Blocked on the gate → the composer shows Stop (running + empty box). The freshly re-adopted destination
@@ -1325,8 +1338,7 @@ test("button #3 (overlay UI): clicking 'Approve + remember' persists the URL —
     const before = fake.calls().length;
     await page.evaluate((t) => { window.ml.agent(t, { env: false }); return true; }, "Fetch the file, then fetch it again.");
 
-    const sb = page.frames().find((f) => f.url().includes("sidebar.html"));
-    expect(sb, "the overlay sidebar iframe is present").toBeTruthy();
+    const sb = await overlayFrame(page, "the overlay sidebar iframe is present");
     await expect.poll(async () => await sb.locator(".row").count(), { timeout: 15000 }).toBeGreaterThanOrEqual(1);
     await clickInShell(page, "sidebar", "#ml-sb-tab");     // open the collapsed overlay panel
 
