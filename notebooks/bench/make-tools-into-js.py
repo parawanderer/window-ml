@@ -340,6 +340,7 @@ quotes the computed total.
 
 code("""
 spend = pd.DataFrame(data["spend"]).T[["calls", "computed", "computedCalls", "reported", "reportedCalls"]]
+spend = spend.reindex(sorted(k for k in spend.index if k != "total") + ["total"])  # a fixed order, refreshed or not
 print("currency:", data["currency"])
 spend.assign(computed=spend.computed.astype(float).round(4), reported=spend.reported.astype(float).round(4))
 """)
