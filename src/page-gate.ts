@@ -7,20 +7,24 @@
 // forge; it decides how long to wait, never whether to speak. Both content scripts share one isolated world, so the
 // state lives on that world's global, where the page cannot see it.
 //
+// An open gate does not say the ORIGIN is visible: a run the person starts on a hidden page opens it too. `visible` is the
+// worker's word that it is (the CONTENT_READY reply, or PRESENCE_OPEN once the origin was allowed), and only it lets the
+// shell draw its overlay into the page (SITE_PRESENCE gap 7).
+//
 // A closed gate can still ASK (`gateAsks`): the worker said the page has the stub (ask.js, SITE_PRESENCE.md), so the one
 // message the stub sends, its access request, is relayed and answered. Nothing else crosses: no run traffic, no shell.
 
 /** The gate's state. `pending` until the worker has answered, so an early message is held rather than refused. */
 export type GateState = "pending" | "open" | "closed";
 
-interface PageGate { state: GateState; alive: boolean; ask: boolean; waiting: (() => void)[]; deciding: (() => void)[]; opening: (() => void)[] }
+interface PageGate { state: GateState; alive: boolean; ask: boolean; visible: boolean; waiting: (() => void)[]; deciding: (() => void)[]; opening: (() => void)[]; showing: (() => void)[] }
 
 const KEY = "__mlPageGate";   // a property of the isolated world's global, which no page script reaches
 
 /** The one gate of this document, made on first use. */
 function gate(): PageGate {
     const g = globalThis as unknown as Record<string, PageGate | undefined>;
-    return (g[KEY] ??= { state: "pending", alive: false, ask: false, waiting: [], deciding: [], opening: [] });   // state: plumbing
+    return (g[KEY] ??= { state: "pending", alive: false, ask: false, visible: false, waiting: [], deciding: [], opening: [], showing: [] });   // state: plumbing
 }
 
 /** The gate's state now. */
@@ -73,6 +77,31 @@ export function whenEverOpen(f: () => void): void {
     const g = gate();
     if (g.state === "open") f();
     else if (g.opening.length < 16) g.opening.push(f);
+}
+
+/**
+ * Mark this document's origin visible, on the worker's word only (the CONTENT_READY reply's `open`, or PRESENCE_OPEN),
+ * and run what waited for it. Never on a run's page script going in: that opens the gate of a hidden page too.
+ */
+export function setVisible(): void {
+    const g = gate();
+    if (g.visible) return;
+    g.visible = true;
+    for (const f of g.showing.splice(0)) f();
+}
+
+/** True once the worker has said this document's origin may use window.ml. */
+export function gateVisible(): boolean { return gate().visible; }
+
+/**
+ * Run `f` once the worker has said the origin is visible: now if it has, later if it does while the document is open.
+ * For what a hidden page must never get even with a run live in it (the shell's overlay).
+ * @param f what to run
+ */
+export function whenVisible(f: () => void): void {
+    const g = gate();
+    if (g.visible) f();
+    else if (g.showing.length < 16) g.showing.push(f);
 }
 
 /**

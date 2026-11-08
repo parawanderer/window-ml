@@ -9,7 +9,7 @@
 // Two regressions live here permanently, both found by running this and neither visible from a unit
 // test: Ctrl+Enter on macOS, and characters landing in the order they were typed.
 import { expect, test } from "@playwright/test";
-import { configureExtension, launchExtension, inShell, waitInShell } from "./harness.mjs";
+import { configureExtension, launchExtension, inShell, waitInShell, approveOrigin } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -25,6 +25,8 @@ const MOD_ENTER = MAC ? "Meta+Enter" : "Control+Enter";
 async function openBench(fake, ext) {
     const page = await ext.context.newPage();
     await page.setViewportSize({ width: 1280, height: 900 });
+    // the overlay mounts only on a page that may use window.ml, so approve the fake server's origin first
+    await approveOrigin(ext.sw, new URL(fake.url).origin);
     await page.goto(`${fake.url}/api/version`);
     await waitInShell(page, (roots) => !!roots.sidebar, null, { timeout: 20000 });
     await inShell(page, (roots) => {

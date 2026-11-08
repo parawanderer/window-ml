@@ -10,7 +10,7 @@
 
 import { test, expect } from "@playwright/test";
 import http from "node:http";
-import { launchExtension, configureExtension, inShell, onChannel, waitForMl } from "./harness.mjs";
+import { launchExtension, configureExtension, inShell, onChannel, waitForMl, waitInShell, approveOrigin } from "./harness.mjs";
 
 /** A page that is one flat green, on a local http server. */
 async function greenSite() {
@@ -40,12 +40,16 @@ const offGreen = (page, dataUrl) => page.evaluate(async (src) => {
 }, dataUrl);
 
 /** The extension on the green page with the sidebar mounted, and the worker's shot and bare capture of its tab. */
-async function setup({ cdp = false } = {}) {
+async function setup({ cdp = false, hidden = false } = {}) {
     const site = await greenSite();
     const ext = await launchExtension();
     await configureExtension(ext.sw, { debugMode: "overlay", cdp });
+    // The overlay mounts only on a page that may use window.ml, so approve the site's origin first (`hidden` leaves it
+    // unapproved: no overlay, and so no shot to take).
+    if (!hidden) await approveOrigin(ext.sw, new URL(site.url).origin);
     const page = await ext.context.newPage();
     await page.goto(site.url);
+    if (hidden) { await waitInShell(page, () => globalThis.__mlPageGate?.state === "closed"); return { page, close: async () => { await ext.close(); await site.close(); } }; }
     await page.waitForSelector("#ml-sb-root", { state: "attached", timeout: 15000 });
     await page.bringToFront();
     const tabId = await ext.sw.evaluate(async (u) => (await chrome.tabs.query({})).find((t) => t.url === u)?.id, site.url);
@@ -71,17 +75,19 @@ const blockSoon = (page, ms) => page.evaluate((ms) => {
 // --- the oracle of worker-shot.spec.mjs is not vacuous ---
 
 test("a window post of the shot handshake hides nothing, from a hidden page, an allowed page or a subframe; only injected.js's port does", async () => {
-    const { page, close } = await setup();
+    const { page, close } = await setup({ hidden: true });
     try {
         const vis = () => page.evaluate(() => document.getElementById("ml-sb-root").style.visibility);
-        const shown = await vis();
-        // A page nobody allowed is hidden and builds no run, so its hide is dropped (docs/spec/SITE_PRESENCE.md).
+        // A page nobody allowed is hidden and gets no overlay at all (docs/spec/SITE_PRESENCE.md step 4), so there is no
+        // sidebar for its hide to reach, and its post leaves none behind.
         await page.evaluate(() => window.postMessage({ __mlSidebarShot: "hide" }, "*"));
         await page.waitForTimeout(300);
-        expect(await vis(), "a hidden page's hide hid the sidebar").toBe(shown);
+        expect(await page.evaluate(() => !!document.getElementById("ml-sb-root")), "a hidden page was given the overlay").toBe(false);
         // Allowed, the page's window still reaches nothing (step 2b): the handshake rides the page channel, and the shell
         // hears nothing the page posts on window. Before 2b this window post hid the sidebar on an allowed page.
         await waitForMl(page);
+        await page.waitForSelector("#ml-sb-root", { state: "attached", timeout: 15000 });
+        const shown = await vis();
         await page.evaluate(() => window.postMessage({ __mlSidebarShot: "hide" }, "*"));
         await page.waitForTimeout(300);
         expect(await vis(), "an allowed page's window post hid the sidebar").toBe(shown);

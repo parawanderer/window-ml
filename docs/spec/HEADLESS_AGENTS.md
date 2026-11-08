@@ -23,7 +23,24 @@ disabled "headless" option as a placeholder for this.
   (`SESSION_CONTRACT.md` §Agent to agent, 2026-09-17): a subagent's result comes back as a remote tool result, a
   preview plus a pointer whose value stays on the child's runtime; a blocked child opens a gate (approval, question,
   takeover) routed by `escalate`; a work order on the start carries the child's tools, budget and result schema; the
-  child nests under the spawning step through `lineage`, and `started` grants cover the whole subtree.
+  child nests under the spawning step through `lineage`, and `started` grants cover the whole subtree. PROPOSED 2026-11-07 (Shane's question through the chat-page lane, "could a subagent simply be a fork"; the
+  coordinator's recommendation, nothing built, no lane named, for Shane to accept or change): **a fork, by
+  reference.** Not by passing messages: an extension-hosted run refuses a first turn carrying its own history
+  (API.md, `fork()`), deliberately, since such a run trusts that a user turn is the person's and a tool result the
+  tool's, so a caller-supplied history could forge an approval or a page read; `host: "page"` forks fine because that
+  run has only the page's powers. The safe shape is `fork: <run hash>` on the work order: the WORKER copies its own
+  stored history of that run and never accepts one from the caller. Rulings proposed on the open points: (1) grants
+  and approvals are NOT inherited, the child asks again (a grant is to a run, not a lineage; `started` covers the
+  parent's ask having happened, not the child's own asks); (2) the `@tool:` values and the `@file:` shelf the copied
+  history names are readable by the child as shared, immutable values, or the copied context is damaged, the child's
+  new values its own, nothing of the parent's writable from the child; (3) the child never drives the parent's tab, it
+  starts on its own blank tab (`blankStart`), and a fork that needs the parent's page is a steer, not a fork; (4) reach:
+  a fork is started by the subagent-spawning tool's work order, never from the read-only dialect, which does not reach
+  `ml.agent`; (5) cost is an open measurement: the child prefills the whole context, and a backend's prefix cache helps
+  only if the children do not contend for one slot. A red-team pass by e3 when built, as a new way to start a run.
+  Settled the same day: a model CAN read its own whole history as data in `exec` (`ml.current.messages` is complete
+  and only the print abridges, as `CURRENT_CONTEXT.md` decided); the inspector's `run.messages` row is a preview of
+  the same data, not the source, which is what made it look cut.
 - **Runs that outlive the service worker by design**: long or scheduled work rather than a run that happens to
   survive an eviction.
 - **The box**: several agents at once on one GPU box compete for it. The request hints (`use`, `session`) are where

@@ -13,7 +13,8 @@ const RETIRED_MAX = 8;
 /** The values of secret settings replaced since the worker started, newest first: an error written under the old URL
  *  (a request in flight when the setting changed) reaches a crossing after the change, and is scrubbed by them too. */
 const retired: Partial<MlConfig>[] = [];   // state: cache
-chrome.storage?.onChanged?.addListener((changes, area) => {
+// Guarded: a module imported outside the worker (a test, a page bundle) has no `chrome` at import.
+if (typeof chrome !== "undefined") chrome.storage?.onChanged?.addListener((changes, area) => {
     if (area !== "sync") return;
     const old: Record<string, string> = {};
     for (const k of SECRET_KEYS) {

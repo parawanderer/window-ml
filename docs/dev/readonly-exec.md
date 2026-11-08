@@ -215,7 +215,11 @@ Three rules make it a mechanism rather than a lookup table:
 - **Kinds are decided structurally**, never by `instanceof` or a constructor name. The dialect can hold a value
   from an iframe's realm (`ml.queryAll` pierces them), and a page can name a class anything it likes. `Set` and
   `Map` are identified by borrowing their prototype's own `size` getter, which throws on anything that is not
-  one — a brand no shape-copying can fake.
+  one — a brand no shape-copying can fake. So are `Date` (`Date.prototype.getTime`), a String object
+  (`String.prototype.valueOf`), a RegExp (the `global` accessor) and an Array/Set/Map iterator (the intrinsic
+  `next`, `drainIterator`). **Never by `Object.prototype.toString`**: a page answers that tag through a
+  `Symbol.toStringTag` getter, which both picks the kind and RUNS (the red team's pin, #1381,
+  `tests/readonly-exec.test.mjs` "a kind is decided by a BRAND").
 
 Ownership stays a SEPARATE, orthogonal gate: the kind answers "is this name meaningful here", `owned` answers
 "may I mutate THIS object". A `Set` reached off a page object is still a `Set`, and must still not be mutable.
@@ -471,8 +475,9 @@ Tests: the `stored table` block in `tests/readonly-exec.test.mjs`.
   (`sw-readonly.ts`, with the `ml` of `worker-readonly-ml.ts`, which reads the run's pointers in-process). Only one
   that reaches for the page is sent there, to `readonlyTry` in `run-delegation.ts`, which REFUSES every pointer read:
   a survey needing both the page and the run's pointers goes to the approval gate. Each decision is an execution-log
-  record, subsystem `routing`: `readonly-worker` (`no-page-reads`, `out-of-dialect`, or `world-isolated` for a
-  survey whose exec would run isolated, by its `world` or the default world, which never goes to the page's leg) or
+  record, subsystem `routing`: `readonly-worker` (`no-page-reads`, `out-of-dialect`, `world-isolated` for a
+  survey whose exec would run isolated, by its `world` or the default world, or `script-isolated` for one whose
+  SCRIPT names `ml.sh`, `ml.current` or a pointer (`surveyMayEnterPage`); neither ever goes to the page's leg) or
   `readonly-page` (`reads-page` or `refused-in-page`). The step's In is drawn in the worker too (`execCodeIn`), so a survey the
   worker answers never sends its script to the page.
 - **After approval**: the real `exec` tool (`tools.ts`) expands pointers, resolves them, and runs the code with
@@ -833,3 +838,13 @@ unsafely" — new tests prove the new surface keeps that.
 - **Gaps degrade to "asks the human", never to "runs unsafely"**, and each extension's tests prove it still does.
 - **An extension can break an argument made for an EARLIER one** (`for…of` and the owned `Set`/`Map` mutators):
   "The rule for extending the dialect" above.
+- **A kind decided by `Object.prototype.toString` is a page's choice.** Borrow the intrinsic that throws without the
+  internal slot (`policy.ts`: `isStringObject`, `isRegExpObject`, `drainIterator`); the internal slots are realm-agnostic, so a foreign realm's real value still passes.
+- **`join` turns only data into text.** The host's `join` coerces each element by running its own `toString`/`valueOf`, so an
+  array reaching `join`, `toString`, `+`, a template or a `sort` with no comparator (its default order is by `ToString`, and `sort(undefined)` is that sort) is checked first (`evaluator.ts` `joinsData`, before `expands`): a primitive or an
+  array of them passes; any other element (a page object, a script-built one with a `toString` arrow, a Date, a function) is
+  `NotInDialect`, as is an object or function SEPARATOR (judged by `typeof`, before anything stringifies it), a getter or an inherited index (own data descriptors are read, never run). A Proxy array's traps are page
+  code by design and are not made worse.
+  **Open** (a coercion that runs the object's own `toString`, with or without a tag): a pattern
+  object coerced by native `replaceAll`/`replace` (`ToString(searchValue)`, which also reads the tag), and `String(obj).length`
+  (`evaluator.ts` `replace`/`replaceAll` charge) on a real String object carrying its own `toString`.

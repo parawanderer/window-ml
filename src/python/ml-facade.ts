@@ -30,10 +30,11 @@ def _ml_make(_send, _codec):
     _loads, _dumps, _b64e, _b64d = _codec.loads, _codec.dumps, _codec.b64encode, _codec.b64decode
 
     class MlError(Exception):
-        """An ml call the server refused or that failed: \`code\` is the wire's (Absent, Denied, BadRequest, TooLarge, …)."""
-        def __init__(self, code, message):
+        """An ml call the server refused or that failed: \`code\` is the wire's (Absent, Denied, BadRequest, TooLarge, …).
+        \`Detached\`: the call runs on as task \`task\`, and its result arrives later."""
+        def __init__(self, code, message, task=None):
             super().__init__(f"{code}: {message}")
-            self.code, self.message = code, message
+            self.code, self.message, self.task = code, message, task
 
     class MlSecret:
         """A secret handle: names a grant, carries no value. Passed back as it came; it has nothing to read."""
@@ -90,7 +91,7 @@ def _ml_make(_send, _codec):
             raise MlError("Failed", "the answer was for another call")
         if "error" in ans:
             e = ans["error"] if isinstance(ans["error"], dict) else {}
-            raise MlError(str(e.get("code", "Failed")), str(e.get("message", "")))
+            raise MlError(str(e.get("code", "Failed")), str(e.get("message", "")), e.get("task") if isinstance(e.get("task"), str) else None)
         if "pointer" in ans:
             p = ans["pointer"] if isinstance(ans["pointer"], dict) else {}
             return MlPointer(str(p.get("token", "")), str(p.get("label", "")), int(p.get("size", 0) or 0))

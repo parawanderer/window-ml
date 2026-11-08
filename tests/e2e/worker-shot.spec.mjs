@@ -5,7 +5,7 @@
 // page is one flat green and the mask one flat grey (MASK_FILL), so any other pixel is the extension's UI.
 import { test, expect } from "@playwright/test";
 import http from "node:http";
-import { launchExtension, configureExtension, inShell, onChannel } from "./harness.mjs";
+import { launchExtension, configureExtension, inShell, onChannel, approveOrigin } from "./harness.mjs";
 
 /** A page that is one flat green, on a local http server (content scripts run on http, not on about:blank). */
 async function greenSite() {
@@ -55,6 +55,8 @@ test("the worker's shot has no sidebar pixels and most of the page, the page see
     const ext = await launchExtension();
     try {
         await configureExtension(ext.sw, { debugMode: "overlay", cdp: false });
+        // the overlay mounts only on a page that may use window.ml, so approve the site's origin first
+        await approveOrigin(ext.sw, new URL(site.url).origin);
         const page = await ext.context.newPage();
         await page.goto(site.url);
         await page.waitForSelector("#ml-sb-root", { state: "attached", timeout: 15000 });

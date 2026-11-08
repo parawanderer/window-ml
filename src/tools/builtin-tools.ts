@@ -1136,8 +1136,8 @@ export function clickHref({ selector, index = 0 }: { selector: string; index?: n
 /**
  * What a click or a type is on, as the page resolves the element NOW: its tag, its nearest link's absolute `href`, its
  * accessible name. The facts the worker's `act` policies judge (docs/spec/POLICIES.md), read from the same resolution
- * the call then runs on, never from the model's description. Name and tag are empty for a point or a box token, which
- * resolve no element; `name` is "" for an element without one.
+ * the call then runs on, never from the model's description. A point token resolves the element under the point, as the click
+ * will hit it; a box token resolves none (the click is refused). `name` is "" for an element without one.
  * @param args the call's selector and index
  * @returns tag, href (null for none) and name, or undefined when no element resolves
  */
@@ -1145,7 +1145,13 @@ export function actElement({ selector, index = 0 }: { selector: string; index?: 
     const s = (selector || "").trim();
     let el: Element | null | undefined;
     if (s === "@focus" || s === "") el = typeof document !== "undefined" ? document.activeElement : null;
-    else if (BOX_RE.test(s) || POINT_RE.test(s)) return undefined;
+    else if (BOX_RE.test(s)) return undefined;   // a region is not clickable: the click's precheck refuses it
+    else if (POINT_RE.test(s)) {
+        // The element the click lands on: the same hit-test `clickAt` makes (topmost at the point, a canvas first).
+        const pt = resolvePoint(s);
+        if (!pt) return undefined;
+        el = withHiddenSidebar(() => canvasAt(pt.x, pt.y) || (() => { try { return document.elementFromPoint(pt.x, pt.y); } catch { return null; } })());
+    }
     else { try { el = queryAll(selector)[index]; } catch { return undefined; } }
     if (!el) return undefined;
     const link = el.closest("a[href], area[href]") as HTMLAnchorElement | HTMLAreaElement | null;

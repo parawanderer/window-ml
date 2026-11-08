@@ -144,7 +144,7 @@ function streamResponse(lines, { status = 200 } = {}) {
 // lets a test declare contextMenus, which GET_INVOCATION reads as "the right-click entry exists".
 // `holdPolicies` is a promise the policy store's first storage read waits on.
 // `holdRestore` is a promise the worker's read of ALL of local storage (its run restore) waits on.
-function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false, siteAgents = "always", userScripts, onTabsGet, holdRestore, onNative, dialectInside, pyInside, holdPolicies, onPyDelete }) {
+function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, onPdfRead, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false, siteAgents = "always", userScripts, onTabsGet, holdRestore, onNative, dialectInside, pyInside, holdPolicies, onPyDelete }) {
     const calls = [];
     // chrome.runtime.connectNative: each host name asked for, in order. With `onNative(name, end)`, the test plays the
     // native host: `end.send(msg)` delivers a message to the worker's port, `end.close(why)` disconnects it, and the
@@ -375,6 +375,8 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                     if (msg?.type === "PY_PREWARM") { pyRuns.push(msg); return onPyRun ? onPyRun(msg) : { ok: true, prewarm: "started" }; }
                     // The session archive's worker, behind the offscreen document: `onArchiveOp(msg)` answers for it.
                     if (msg?.type === "ARCHIVE_OP" && onArchiveOp) return onArchiveOp(msg);
+                    // The offscreen document's PDF reader: `onPdfRead(msg)` answers a `PDF_READ` for it.
+                    if (msg?.type === "PDF_READ" && onPdfRead) return onPdfRead(msg);
                     // HTML→Markdown for a fetch the worker made: a stand-in for the offscreen document's converter.
                     if (msg?.type === "HTML_TO_MD") { htmlToMd.push(msg.html); return { markdown: `MD(${String(msg.html).replace(/<[^>]*>/g, "").trim()})` }; }
                     return undefined;
@@ -592,7 +594,12 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         // Simulates the content script opening a streaming Port. Returns a client
         // handle: send(msg) posts to the background port; onMessage(fn) receives
         // background pushes; messages[] collects them.
-        connect: (name = "LLM_STREAM", sender = undefined) => {
+        connect: (...args) => {
+            const name = args[0] ?? "LLM_STREAM";
+            // The DevTools feed's port is the panel's when a test names no sender: an extension page with no tab, as a
+            // devtools page's port was measured to carry (serveDevtoolsPort closes any other sender's). A sender passed
+            // as undefined or null is a test asking for no sender, and gets none.
+            const sender = args.length < 2 && name === "ml-devtools" ? { url: "chrome-extension://test/panel.html" } : args[1];
             if (!siteGate && sender) approveSender(sender);
             const messages = [];
             const clientHandlers = [];

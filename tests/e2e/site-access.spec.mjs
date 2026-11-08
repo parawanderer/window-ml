@@ -1098,6 +1098,8 @@ test.describe("@security attack 17: the shell's shadow roots", () => {
     test("17a: the overlay sidebar: the page reads no root of ours, by any path", async () => {
         const { site, ext, close } = await setup({ debugMode: "overlay" });
         try {
+            // the overlay mounts only on a page that may use window.ml, so approve the site's origin first
+            await allowSite(ext, site.origin("evil.test"));
             const page = await open(ext, site.url("evil.test"));
             await watchForOurNodes(page);
             await waitInShell(page, (roots) => !!roots.sidebar?.getElementById("ml-sb-tab"));
@@ -2077,6 +2079,10 @@ test.describe("@security attacks 3-7: requestAccess from a site that may ask", (
             // Deny it from an extension page, as the popup does.
             const popup = await ext.context.newPage();
             await popup.goto(`chrome-extension://${ext.extensionId}/popup.html`);
+            // The popup lists models with their capabilities as it opens, which POSTs /api/show from OUR page. Wait
+            // for that listing to answer, so the POSTs counted below are only the ones the attack could have made.
+            await expect.poll(() => popup.evaluate(() => document.getElementById("status")?.className), { timeout: 10000 }).not.toBe("busy");
+            const ours = postHits(fake).length;
             await popup.evaluate((o) => chrome.runtime.sendMessage({ type: "SITE_ACCESS", payload: { edit: { op: "deny", origin: o } } }), origin);
             await expect.poll(() => visibleIn(ext, first), { timeout: 10000 }).toBe(false);
             const before = JSON.stringify(await storedRequests(ext));
@@ -2099,7 +2105,7 @@ test.describe("@security attacks 3-7: requestAccess from a site that may ask", (
             await retry(win, "new window");
             expect(JSON.stringify(await storedRequests(ext)), "nothing new stored").toBe(before);
             expect(fake.calls()).toEqual([]);
-            expect(postHits(fake), "a model request the attack made").toEqual([]);
+            expect(postHits(fake).slice(ours), "a model request the attack made").toEqual([]);
         } finally { await close(); }
     });
 

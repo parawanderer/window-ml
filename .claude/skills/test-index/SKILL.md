@@ -11,7 +11,13 @@ node scripts/test-index.mjs approve --word         # anchored, so it does not al
 node scripts/test-index.mjs '' --file sidebar      # one file's tests
 node scripts/test-index.mjs --sections             # the groups, with how many tests each holds
 node scripts/test-index.mjs --stats                # how many tests, by file, biggest first
+node scripts/test-index.mjs --driven python_exec   # e2e tests where a SCRIPTED model calls that tool
+node scripts/test-index.mjs --driven --gaps        # builtin tools no scripted model calls in any e2e test
 ```
+
+`--driven` answers "is this tool exercised end to end the way a model would call it?", which the name search cannot:
+it reads each e2e spec's scripted `{ tool, args }` turns. What such a test should assert: docs/dev/e2e-harness.md,
+"A scripted model driving the tools".
 
 One TAB-separated line per test: `PATH:LINE`, `SECTION`, `NAME`. Nothing is column-padded, so it pipes:
 `| cut -f3`, `| awk -F'\t' '{print $2}' | sort -u`.

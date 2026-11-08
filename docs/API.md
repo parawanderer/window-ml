@@ -12,6 +12,9 @@ them (a fetch of another origin, Python, starting agents) need more. A run you s
 or the chat page is different: the extension builds it, it works on any page, and every action it takes asks you.
 What each kind of site gets, how a page asks for more, and the refusals it sees: [PAGE-API.md](PAGE-API.md).
 
+The extension's chat page has an `ml` of its own in its DevTools console, with the chat and model members (`chat`,
+`createChat`, `models`, `info`, `ps`, …) and no `agent` or page tools.
+
 ## Backends and API formats
 
 | URL | API format | Notes |

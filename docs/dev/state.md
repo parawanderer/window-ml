@@ -27,7 +27,7 @@ declaration yet still gets a row here.
 | `chrome.storage.session` | worker eviction | browser restart |
 | `chrome.storage.local` | restarts | uninstall, explicit removal |
 | `chrome.storage.sync` | restarts; syncs across the person's browsers | uninstall |
-| IndexedDB (extension origin, and the chat page's origin): `ml-drafts` (a composer's attached images by session key, and the images of a send in flight, written through from the in-memory Maps in `drafts.ts`; capped at 50 MB of data URL, least recently saved key first; read back on load, a save made before that wins), `ml-values`, `ml-saved-sessions`, `ml-hub-keyring`, `ml-archive-folder` (the picked folder's handle under `dir`, and under `pin` the key id this install expects its months under, set by the Settings page only and dropped by a `saveFolder` of any entry but the stored one (`isSameEntry`; a re-pick of the same folder keeps it), `archive-folder.ts`), `ml-backup-keyring` (the backup data key: a non-extractable `CryptoKey`, its two wrapped copies, and the non-extractable keys of any earlier data key this install retired when it adopted another's (each with the time it was retired, and forgotten by hand in Settings), `backup-keyring.ts`) | restarts | budget and retention eviction, uninstall |
+| IndexedDB (extension origin, and the chat page's origin): `ml-drafts` (a composer's attached images by session key, and the images of a send in flight, written through from the in-memory Maps in `drafts.ts`; capped at 50 MB of data URL, least recently saved key first; read back on load, a save made before that wins), `ml-values`, `ml-saved-sessions`, `ml-hub-keyring`, `ml-archive-folder` (the picked folder's handle under `dir`, and under `pin` the key id this install expects its months under, set by the Settings page only and dropped by a `saveFolder` of any entry but the stored one (`isSameEntry`; a re-pick of the same folder keeps it), `archive-folder.ts`), `ml-backup-keyring` (the backup data key: a non-extractable `CryptoKey`, its two wrapped copies, and the non-extractable keys of any earlier data key this install retired when it adopted another's (each with the time it was retired, and forgotten by hand in Settings), `backup-keyring.ts`) | restarts | budget and retention eviction (a held row, a file the person attached: its session's end, pointers.md), uninstall |
 | OPFS: the session archive (`archive.sqlite`) | restarts | uninstall |
 | `localStorage` (extension pages, chat page) | restarts | clearing site data |
 
@@ -141,7 +141,8 @@ The questions for persisting per run are in the spec's "Python state persists pe
   `SessionSummary.pendingApprovals`, which diverge after a worker eviction.
 - **Page:** `tabPageUrl` against `p.pageUrl` against `SessionSummary.page`.
 - **Value claims:** a `ml-values` row's `sessions` (persistent) against `tokensByRun` (memory): after an eviction a row
-  stays claimed by a session whose pointers are gone, until release or the idle sweep.
+  stays claimed by a session whose pointers are gone, until release or the idle sweep. An attached file's rows are
+  the exception: its pointer is in the run's payload (`run.files`), so a new store puts it back.
 - **The title**: one owner now, but the sidebar keeps the copy it was handed and hears of no rename.
 
 ## Lost on a worker eviction
@@ -162,7 +163,7 @@ hold live network handles: neither shown nor evaluated).
 
 Each realm's bundle has its own registry (`src/state-registry.ts`); a snapshot asks the realm that holds the run.
 Declared so far, in the worker: `run.init`, `run.sub`, `run.model`, `run.interrupted`, `run.mailbox`, `run.pointers`,
-`run.page`, `run.messages`, `run.input`, `grants.turn` (`sw-runs.ts`), `run.values` (`sw-values.ts`), `run.approvals`, `grants.call`, `grants.fetch`, `grants.credentialedFetch` (`sw-consent.ts`),
+`run.page`, `run.messages`, `run.input`, `run.files`, `grants.turn` (`sw-runs.ts`), `run.values` (`sw-values.ts`), `run.approvals`, `grants.call`, `grants.fetch`, `grants.credentialedFetch` (`sw-consent.ts`),
 `run.log` (`sw-run-log.ts`), `session.title` (`sw-sessions.ts`), `site.levels` (`sw-site-access.ts`: the site in the run's tab, its three levels, read for a `tabId`), `run.startAsk`, `run.startApproval`, `run.personTurn`, `site.startDenials`, `site.agentOpened`, `site.notStarted` (`sw-start-approval.ts`), `run.meta` and `run.current` (`sw-runs.ts`), `policies.global` and `policies.run` (`sw-policies.ts`), `manifests.global` and `manifests.workspace` (`sw-manifests.ts`), `libraries.global` (`sw-libraries.ts`). In the worker also `run.answer` (`worker-answer.ts`) for a run it built, declared `heldOnly` so the panel lists it only for a run whose set it holds, and a page-built run's row is the page's. In the page: `run.answer` (`run-delegation.ts`),
 `page.points`, `page.boxes` (`util.ts`), and for a page-hosted run `run.messages`, `run.pointers`, `run.mailbox`
 (`page-run-state.ts`), asked of the run's tab with `RUN_STATE_IN_PAGE` (`sw-run-state.ts`). An id is unique per realm,

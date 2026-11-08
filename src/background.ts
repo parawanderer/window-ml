@@ -60,7 +60,8 @@ import { panelWaits } from "./sw/sw-badge";   // the toolbar badge: what is wait
 import { AGENT_LEVEL_TYPES, PAGE_STARTED_TYPES, PAGE_UNGATED_TYPES, RUN_CONTROL_TYPES } from "./page-relay";
 import type { SiteRunEvent } from "./contract/contract-debug";
 import { START_REFUSED } from "./agent-start";
-import { startUserRun, userRunAction, steerRun } from "./sw/sw-run-start";
+import { startUserRun, userRunAction, steerRun, noteRefusedTurn } from "./sw/sw-run-start";
+import { ImagesRefused } from "./image-gate";
 import { adoptOnTab } from "./sw/adopt-run";
 import { pageRebuild } from "./agent/run-assembly";
 import { runControlPayloadError } from "./sw/run-payload-check";
@@ -398,7 +399,11 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // A run the worker built is driven from here: the page never carries the person's message (sw-run-start.ts).
         if ((message.action === "send" || message.action === "continue") && typeof message.hash === "string") {
             void userRunAction(message.hash, message.action, { text: message.text, images: message.images, surface: message.surface, maxSteps: message.maxSteps }, message.tabId)
-                .then((mine) => { if (!mine) toPage(); }, toPage);
+                .then((mine) => { if (!mine) toPage(); }, (e) => {
+                    // As on USER_RUN_ACTION: a refused turn is said in the run's step list, never handed to the page.
+                    if (e instanceof ImagesRefused) { noteRefusedTurn(message.hash as string, e.message); return; }
+                    toPage();
+                });
             return;
         }
         toPage();
@@ -856,7 +861,12 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     if (message.type === "USER_RUN_ACTION") {
         const p = (message.payload || {}) as { hash?: unknown; action?: unknown };
         if (sender.tab?.id == null || typeof p.hash !== "string" || (p.action !== "send" && p.action !== "continue")) { sendResponse({ data: null }); return; }
-        userRunAction(p.hash, p.action, message.payload, sender.tab.id).then((outcome) => sendResponse({ data: outcome }), () => sendResponse({ data: null }));
+        userRunAction(p.hash, p.action, message.payload, sender.tab.id).then((outcome) => sendResponse({ data: outcome }), (e) => {
+            // Images the run may not be sent (vision not known, no reader): said in the run's step list, since this
+            // surface has no other place to say it, and answered as handled so the shell does not hand it to the page.
+            if (e instanceof ImagesRefused) { noteRefusedTurn(p.hash as string, e.message); sendResponse({ data: null, refused: e.message }); return; }
+            sendResponse({ data: null });
+        });
         return true;
     }
     if (message.type === "START_RUN" || message.type === "RESUME_RUN") {
@@ -1065,8 +1075,10 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // `kinds: true` additionally reports each model's CAPABILITIES, so a picker can tell a chat model
         // from an embedding one. OPT-IN because it costs an /api/show per model (~60-110ms each, bounded
         // concurrency, cached for the worker's life): the settings and popup pickers want it, while the
-        // composer and the VRAM panel just want names and must not pay for it.
-        const wantKinds = !sender.tab && !!(message.payload as { kinds?: unknown })?.kinds;
+        // composer and the VRAM panel just want names and must not pay for it. The overlay sidebar is OUR page in
+        // a frame of a web page's tab, so it has `sender.tab` like a page does: `!sender.tab` alone left its
+        // Settings with no capabilities and an embedding picker that said no model reports the capability.
+        const wantKinds = (!sender.tab || isExtensionSender(sender)) && !!(message.payload as { kinds?: unknown })?.kinds;
         Promise.all([listAvailableModels(sender.tab ? {} : (message.payload || {})), getConfig()])
             .then(async ([{ ids, ollamaModels }, cfg]) => {
                 const keep = (m: string) => modelFilterAllows(m, cfg.modelFilter);

@@ -3759,6 +3759,16 @@ test("LIST_MODELS: `kinds` is opt-in, costs nothing when unasked, and is never s
     const fromPage = await mk().send({ type: "LIST_MODELS", payload: { kinds: true } }, { tab: { id: 4 } });
     assert.equal(fromPage.kinds, undefined, "a page cannot ask for kinds");
     assert.equal(shows.length, 0);
+    const fromPageUrl = await mk().send({ type: "LIST_MODELS", payload: { kinds: true } }, { tab: { id: 4 }, url: "https://example.com/" });
+    assert.equal(fromPageUrl.kinds, undefined, "nor can a page that names its own url");
+    assert.equal(shows.length, 0);
+
+    // The overlay sidebar is OUR page in a frame of a web page's tab, so it carries `sender.tab` too. Its Settings
+    // ask for kinds, and when the tab alone decided, the embedding picker listed nothing on a server full of them.
+    const fromSidebar = await mk().send({ type: "LIST_MODELS", payload: { kinds: true } },
+        { tab: { id: 4 }, url: "chrome-extension://test/sidebar.html" });
+    assert.deepEqual(fromSidebar.kinds["embeddinggemma:300m"], ["embedding"], "the sidebar's Settings get capabilities");
+    assert.equal(fromSidebar.dims["embeddinggemma:300m"], 768);
 });
 
 // `ml.embed` reaches the model through the background like any other call. Two endpoint shapes exist in the

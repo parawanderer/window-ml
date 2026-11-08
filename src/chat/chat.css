@@ -1537,6 +1537,68 @@ button.chat-page-go:hover { color: var(--fg); }
 /* The extension's Settings groups (Connection, Models, …) as a SECONDARY pill row, under the page's own Settings tabs
    (settings.tsx `layout="pills"`), so the page does not show an underline tab bar stacked under its pills. */
 .set-pills { align-self: flex-start; flex-wrap: wrap; margin: 2px 0 10px; }
+/* THE EXTENSION'S SETTINGS IN THIS PAGE'S CLOTHES. The view is the DevTools panel's (settings.tsx), sized for a 400px
+   side panel: 5px-radius boxes, uppercase group labels, a thin search line. Here it sits in a 42rem sheet between the
+   page's pills, so every rule below is scoped to `.chat-settings-body` and the panel keeps its own look. */
+/* The search is the Search page's pill (`.chat-search-box`, wrapped in settings.tsx), so its input sheds the panel's box. */
+.set-search-box { min-height: 48px; margin: 0 0 14px; }
+.set-search-box .set-search { flex: 1 1 auto; width: auto; margin: 0; padding: 0; border: none; border-radius: 0; background: none; font-size: 1em; }
+.set-search-box .set-search:focus { border: none; }
+.set-search-box svg { width: 18px; height: 18px; }
+/* The panel pads its body 12px a side; the sheet already pads 12px, so the fields sat a step in from the search and
+   the pills above them. */
+.chat-settings-body .set-body { padding: 18px 0 16px; gap: 14px; }
+.chat-settings-body .set-section { padding-bottom: 22px; }
+/* Spaced by MARGIN: a <details> lays its children out in its content slot, not as the flex items `gap` would space,
+   so the panel's `gap` never reached them and a field's hint ran into the next field's label. */
+.chat-settings-body .set-section > :not(summary) { margin-top: 18px; }
+.chat-settings-body .set-section > .set-check + .set-check { margin-top: 10px; }
+/* Group headings in the page's voice: sentence case, the size of a row label, not a shouted 12px caption. */
+.chat-settings-body .set-group, .chat-settings-body .set-section > summary.set-group {
+    margin: 6px 0 0; color: var(--fg); font-size: 1.02em; font-weight: 600; letter-spacing: 0; text-transform: none;
+}
+.chat-settings-body .set-search-tab { margin: 18px 0 2px; padding-bottom: 6px; color: var(--fg-dim); font-size: .86em; }
+.chat-settings-body .set-field { gap: 7px; padding-top: 0; }
+.chat-settings-body .set-field > span { color: var(--fg-dim); font-size: .95em; }
+.chat-settings-body .set-field input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+.chat-settings-body .set-field select, .chat-settings-body .perm-input, .chat-settings-body .perm-search {
+    box-sizing: border-box; min-height: 42px; padding: 9px 14px; border: 1px solid transparent; border-radius: 12px;
+    background-color: var(--panel); color: var(--fg); font: inherit;
+}
+.chat-settings-body .set-field select { padding-right: 40px; }
+.chat-settings-body .set-field input:focus, .chat-settings-body .set-field select:focus,
+.chat-settings-body .perm-input:focus, .chat-settings-body .perm-search:focus { outline: none; border-color: var(--panel-2-hover); }
+.chat-settings-body .set-field input.err { border-color: var(--err); }
+/* The compact selects that sit in a row (a policy's effect, a site's scope) and the policy source box: the same fill
+   and radius, at the size of the row they are in. */
+.chat-settings-body select:not(.set-field select) {
+    min-height: 34px; padding: 6px 34px 6px 12px; border: 1px solid transparent; border-radius: 10px;
+    background-color: var(--panel); color: var(--fg); font: inherit; font-size: .92em;
+}
+.chat-settings-body .pol-source-input { padding: 10px 14px; border: 1px solid transparent; border-radius: 12px; background: var(--panel); }
+.chat-settings-body .pol-source-input:focus, .chat-settings-body select:focus { outline: none; border-color: var(--panel-2-hover); }
+.chat-settings-body .set-test { padding: 14px 16px; border: none; border-radius: 14px; }
+/* One chevron for a native select and the model picker's caret alike, where the browser drew one and the picker a
+   tiny ▾ of its own. */
+.chat-settings-body select {
+    appearance: none; -webkit-appearance: none; cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5' fill='none' stroke='%238b8d96' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 14px center;
+}
+.chat-settings-body .model-pick input { padding-right: 40px; }
+.chat-settings-body .model-pick-caret { width: 40px; border-radius: 0 12px 12px 0; font-size: 0; }
+.chat-settings-body .model-pick-caret::before {
+    content: ""; width: 12px; height: 12px; background: currentColor;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.chat-settings-body .model-pick-menu { top: calc(100% + 6px); border-radius: 14px; padding: 6px; }
+.chat-settings-body .model-pick-opt { padding: 8px 12px; border-radius: 9px; }
+.chat-settings-body .set-hint { margin: 0 2px; font-size: .86em; line-height: 1.45; }
+/* A note is a card like the Search page's foot: no outline, the panel's fill, the page's radius. */
+.chat-settings-body .set-note { margin: 0; padding: 12px 16px; border: none; border-radius: 14px; line-height: 1.5; }
+.chat-settings-body .set-check { gap: 10px; margin: 0; }
+.chat-settings-body .set-check input { accent-color: var(--accent); width: 16px; height: 16px; }
+.chat-settings-body .test-btn { padding: 8px 18px; border-radius: 999px; }
 
 /* ===================== THE START PAGE (start-page.tsx) =====================
    What the page is with nothing open: one pill to start the next session in, a little above the middle, and nothing

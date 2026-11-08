@@ -3,7 +3,7 @@
 //
 //   node scripts/frames.mjs --scenario reload --turns 12 --width phone
 //   node scripts/frames.mjs --scenario send   --turns 6  --ms 2500 --watch '.msg:last-child'
-//   node scripts/frames.mjs --scenario stream --turns 3  --dist ../other-clone/dist --out /tmp/frames-a
+//   node scripts/frames.mjs --scenario stream --turns 3  --dist ../other-clone/dist --out $SCRATCH/frames-a
 //
 // It launches the built extension with a fake backend, starts a chat through the start box, plays N turns, then records one
 // thing: `reload` reloads the page, `send` sends one more message through its reply, `stream` records one reply paced by the

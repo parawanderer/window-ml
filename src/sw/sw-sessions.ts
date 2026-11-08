@@ -29,6 +29,7 @@ import { workerMl } from "./worker-ml";
 import { ocrRequest } from "../ml/ml-vision";
 import { planImages } from "../image-gate";
 import { ensureOffscreen } from "./sw-offscreen";
+import { readPdfOffscreen } from "./sw-attach";
 import type { PdfMessage } from "../pdf/pdf-wire";
 import { pythonBundlePresent } from "./sw-python";
 import { recordHousekeeping, senderOrigin } from "./sw-housekeeping";
@@ -313,7 +314,7 @@ export function configureSessionCommands(run: RunDeps): void {
         },
         // The offscreen document's PDF reader (docs/dev/pdf.md): only the service worker may ask it.
         pdf: {
-            read: async (b64) => { await ensureOffscreen(); return await chrome.runtime.sendMessage({ type: "PDF_READ", b64 } satisfies PdfMessage); },
+            read: readPdfOffscreen,
             render: async (b64, n, scale) => { await ensureOffscreen(); return await chrome.runtime.sendMessage({ type: "PDF_RENDER", b64, n, scale } satisfies PdfMessage); },
         },
         // A worker chat sends no num_ctx, so a loaded model answers with the context it is loaded with.
