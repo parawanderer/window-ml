@@ -1393,12 +1393,32 @@ test("'Approve + remember' on an exec with a relative literal remembers the URL 
     assert.equal(fetched.length, 1);
 });
 
-test("on an http page, a scheme-relative fetch_url naming the page's own host is same-origin and asks nothing", T, async () => {
-    // "//site.example/x" resolves against http://site.example/page to the page's own origin, as the FETCH_URL choke point
-    // judges it. The gate once forced "https:" onto it, so it asked for an origin the fetch itself treats as free.
-    const HTTP_SITE = { ...SITE, url: "http://site.example/page" };
-    const { gates } = await attackRun({ url: "//site.example/x" }, { tab: HTTP_SITE, local: { ml_site_always: ["http://site.example"] } });
-    assert.deepEqual(gates, [], `no card for the page's own origin. Gates: ${JSON.stringify(gates)}`);
+test("on an http page, a scheme-relative fetch_url to an http origin the run consented to takes the page's scheme and asks nothing", T, async () => {
+    // An approved navigate to http://other.example consents to that http origin; the run then goes back to its page.
+    // "//other.example/x" resolves against the http page to the consented origin, as the FETCH_URL choke point judges it.
+    // The gate once forced "https:" onto it and asked for https://other.example, which the run never consented to. Not
+    // the page's own host: the current-page check answers that one before the gate's same-origin rule is read.
+    const tab = { ...SITE, url: "http://site.example/page" };
+    let docN = 1;
+    const sender = () => ({ tab: { id: tab.id, url: tab.url }, url: tab.url, origin: new URL(tab.url).origin, frameId: 0, documentId: `doc-nav-${docN}` });
+    const { gates } = await attackRun({}, {
+        tab, local: { ml_site_always: ["http://site.example"] },
+        first: { name: "navigate", args: { url: "http://other.example/page" } },
+        then: [{ name: "navigate", args: { url: tab.url } }, { name: "fetch_url", args: { url: "//other.example/x" } }],
+        inPage: async (bg, msg) => {
+            const p = msg.payload;
+            if (p.name !== "navigate" || p.precheck || p.renderOnly || p.readonlyTry) return undefined;
+            const to = p.args.url;
+            tab.url = to; docN++;
+            bg.commit(tab.id, { documentId: `doc-nav-${docN}`, url: to });
+            setTimeout(async () => {
+                const ready = JSON.parse(JSON.stringify(await bg.send({ type: "CONTENT_READY" }, sender()) ?? {}));
+                for (const a of ready.adopt ?? []) void bg.send({ type: "RUN_READOPTED", payload: { runId: a.runId, pageInfo: `You are on ${to}` } }, sender());
+            }, 5);
+            return { result: `Navigating to ${to}` };
+        },
+    });
+    assert.deepEqual(gates, ["navigate"], `the navigate out asks; the way back and the fetch of its origin do not. Gates: ${JSON.stringify(gates)}`);
 });
 
 test("RED TEAM: approving a relative fetch_url grants the resolved origin only, and a literal resolved on one page grants nothing on another origin", T, async () => {
