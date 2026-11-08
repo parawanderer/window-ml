@@ -62,12 +62,40 @@ test("RED TEAM, ENUMERATED: no type a page can start reads a PDF, keeps a row or
             await sendSoon(w.bg, { type, ...bait, payload: bait }, PAGE);
         }
     }
-    await flush(40);
+    // Settled, not budgeted: what the worker did in answer to the bait is the same after another round as before it.
+    let seen;
+    for (let i = 0; i < 50; i++) {
+        await flush(8);
+        const now = `${w.chats().length}/${w.reads.length}`;
+        if (now === seen) break;
+        seen = now;
+    }
+    await flush(20);
+    assert.equal(`${w.chats().length}/${w.reads.length}`, seen, "nothing more arrived once the bait settled");
     assert.equal(w.reads.length, 1, "no page-started type had a PDF read");
     assert.deepEqual(await w.rows(), before, "no row stored or newly held");
     assert.deepEqual((await w.files(w.hash)).map((f) => f.name), ["report.pdf"], "the person's run has only its own file");
     assert.equal(await w.files("page-run"), null, "a run a page built carries no files");
     assert.ok(!JSON.stringify(w.chats().map((c) => c.body.messages)).includes("@file:x"), "no forged pointer reached the model");
+});
+
+test("a page's START_RUN payload loses the person's fields: files and the turn count go, the task stays", async () => {
+    // pageStartPayload's destructuring is the one strip: the enumeration above never sends `sends`, so this names each key.
+    const deep = () => new Proxy(function () {}, {
+        get: (_t, k) => (k === "then" ? undefined : k === Symbol.toPrimitive ? () => "" : deep()),
+        apply: () => deep(),
+    });
+    const prev = globalThis.chrome;
+    globalThis.chrome = deep();
+    let pageStartPayload;
+    try { ({ pageStartPayload } = await import("../src/sw/sw-run-host.ts")); } finally { globalThis.chrome = prev; }
+    const out = pageStartPayload({
+        task: "read the attached file", files: [PDF], sends: 7, builtBy: "user", display: "the person's words",
+        rebuild: { builtBy: "user", tools: [] },
+    }, PAGE, {});
+    assert.equal(out.task, "read the attached file");
+    for (const key of ["files", "sends", "builtBy", "display"]) assert.ok(!(key in out), key);
+    assert.ok(!("builtBy" in out.rebuild), "rebuild.builtBy");
 });
 
 test("the oracle sees an attachment: the same PDF through the shell's USER_START_RUN is read and kept", T, async () => {

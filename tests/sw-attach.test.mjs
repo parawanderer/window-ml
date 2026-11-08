@@ -51,7 +51,7 @@ test("a PDF is stored as its bytes and its read document for the run's session, 
     assert.ok(!block.includes("chart"), "the pages are not sent, only the first page's preview");
 });
 
-test("the task carries the text files whole and the PDF as its outline, in attach order, each under its pointer", async () => {
+test("the task carries a short text file whole and the PDF as its outline, in attach order, each under its pointer", async () => {
     const w = world();
     const r = await attachFiles("run1", [{ name: "a.log", type: "text/plain", text: "line\n" }, pdf("report.pdf")], 1, w.deps);
     const { text, display } = framePrompt("summarise", null, r.files);
