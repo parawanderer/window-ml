@@ -609,7 +609,11 @@ named in one line after the message; the display keeps what was typed, and a pas
 without its pointer. A run a PAGE built is unchanged: text whole through the page, and a PDF or over-cap text refused
 with the reason before the page hears of it (`pdfToPageRun`); no route hands a page a PDF's bytes (the worker
 refuses a PDF for a run it does not hold, the session commands' page fallback and DevTools' `ML_SESSION_REMOTE`
-forward text files only). The extension's composers (sidebar, DevTools) take files for an agent session. The
+forward text files only). Those text files go only while the tab shows the run's builder's origin
+(`stored.p.pageOrigin`): on another approved site the relay would reach a page that did not build the run, so the
+files are refused by name (`pageRunMoved`) and the text goes as before (e3's second pass, 2026-11-08). A run an
+approved iframe built is therefore refused files too, since the tab shows the top frame's origin; the composers
+(sidebar, DevTools) take files for an agent session. The
 `dereference` tool reads a text pointer as its text through the pipe ("Text, N lines" in the header); the inventory,
 the shelf's refusals and the `run.files` state row say lines for text and pages for a PDF. Images wait, as ruled.
 

@@ -510,6 +510,7 @@ test("a page cannot start, resume or steer a turn in a run the worker built, eve
 
 const NOTES = { name: "notes.txt", type: "text/plain", text: "alpha\nbeta\n" };
 const PDF_TO_PAGE_RUN = "report.pdf is a PDF, and this run was built by the page, which does not read one: start a run from the panel to attach it";
+const pageRunMoved = (name, origin) => `${name} would go to ${origin}, which did not build this run: start a run from the panel to attach it`;
 
 /** A worker with a value store and a PDF reader whose model answers "done", and helpers to wait on and read it. */
 function fileWorld(more = {}) {
@@ -640,6 +641,37 @@ test("a run a page built is refused a PDF by name, from the panel (USER_RUN_ACTI
     assert.deepEqual(JSON.parse(JSON.stringify(toPage.map((m) => m.files))), [[NOTES]], "from DevTools too, the page gets the text file to frame");
     const big = await bg.send({ type: "USER_RUN_ACTION", payload: { hash: "pagebuilt1", action: "send", text: "x", files: [{ name: "big.txt", type: "text/plain", text: "x".repeat(40_000) }] } }, from);
     assert.match(big.refused, /^big\.txt is too large to send whole: 40 kB; a message takes up to 32 kB of files\. This run was built by the page/);
+});
+
+test("ADVERSARIAL: a run a page built, its tab now on ANOTHER approved site, is refused the person's files; nothing reaches that page", T, async () => {
+    // The relay goes to whatever page the tab shows now: the site decision alone would let the person's files into a site
+    // that did not build the run (e3's second pass on #1492).
+    const A = "https://builder.example/", B = "https://other.example/";
+    const tab = { id: 7, url: A, title: "Builder" };
+    const bg = loadBackground({
+        config, siteGate: true, local: { ml_site_always: ["https://builder.example", "https://other.example"] },
+        openTabs: [tab],
+        onFetch: (call) => call.url.includes("/chat/completions") ? jsonResponse({ choices: [{ message: { content: "ok" } }] }) : jsonResponse({}),
+        onTabMessage: async (_t, msg) => (msg.type === "ADOPT_RUN_NOW" ? { pageInfo: "" } : msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.finish ? { result: "" } : undefined),
+    });
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "pagebuilt2", task: "first", systemPrompt: "S", tools: [], model: "m", think: null, maxSteps: 2,
+        autoApprovePython: false, autoApproveReadonly: false, surface: "off",
+        rebuild: { toolNames: [], model: "m", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: true },
+    } }, { tab: { id: 7, url: A }, url: A });
+    await flush(20);
+    tab.url = B;
+    const from = { tab: { id: 7, url: B }, url: B };
+    const r = await bg.send({ type: "USER_RUN_ACTION", payload: { hash: "pagebuilt2", action: "send", text: "and this", files: [NOTES] } }, from);
+    assert.deepEqual([r.data, r.refused], [null, pageRunMoved("notes.txt", "https://other.example")], "refused with its reason, answered as handled");
+    void bg.send({ type: "ML_SESSION_REMOTE", tabId: 7, action: "send", hash: "pagebuilt2", text: "and this", files: [NOTES], surface: "devtools" }, EXT);
+    await flush(20);
+    assert.equal(bg.tabMessages.filter(([, m]) => m.type === "ML_SESSION_TO_PAGE").length, 0, "no message, and no file, to the other site's page");
+    // Back on the builder's site, the same file goes to its page as before.
+    tab.url = A;
+    void bg.send({ type: "ML_SESSION_REMOTE", tabId: 7, action: "send", hash: "pagebuilt2", text: "and this", files: [NOTES], surface: "devtools" }, EXT);
+    await flush(20);
+    assert.deepEqual(JSON.parse(JSON.stringify(bg.tabMessages.map(([, m]) => m).filter((m) => m.type === "ML_SESSION_TO_PAGE").map((m) => m.files))), [[NOTES]]);
 });
 
 test("a PDF for a run this worker does not hold is refused, never handed to a page without it", T, async () => {

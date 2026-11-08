@@ -10,7 +10,7 @@
 import type { ElementContext } from "../contract";
 import type { StartRunPayload } from "../contract/contract-messages";
 import { imagesRefusal, shortHash, type AttachedFile, type PromptDisplay, type PromptOrigin, type SentFile } from "../contract/contract-run";
-import { FilesRefused, checkFilesField, cleanFiles, isPdfFile, pdfToPageRun } from "../attached-files";
+import { FilesRefused, checkFilesField, cleanFiles, isPdfFile, pageRunMoved, pdfToPageRun } from "../attached-files";
 import { ImagesRefused } from "../image-gate";
 import { framePrompt } from "../agent/prompts";
 import { promptSurfaceOf } from "../agent/prompt-surface";
@@ -273,6 +273,10 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
             // is refused here with its reason, before the page is told anything, never dropped on the way.
             const pageFiles = action === "send" ? checkFilesField(body.files, "page-run") : {};
             if (pageFiles.reason) throw new FilesRefused(pageFiles.reason);
+            // The page that frames it is the one the tab shows NOW: on another approved site than the builder's, the
+            // person's files would go to a site that did not build the run, so they are refused. Its text goes as before.
+            const moved = pageFiles.files?.length && here !== stored?.p.pageOrigin ? pageFiles.files[0] : undefined;
+            if (moved) throw new FilesRefused(pageRunMoved(moved.name, here ?? "another site"));
             // The page relays it, as the run's handle lives there: its copy of exactly this text is the person's turn,
             // not one of the site's (docs/spec/SITE_ACCESS_SLICE3.md, Q2). Framed as the page frames it (injected.ts).
             await notePersonTurn(hash, action === "send" ? framePrompt(String(body.text || ""), body.elementContext, pageFiles.files as AttachedFile[] | undefined).text : "", action === "send" ? body.images : [], stepBudget(body.maxSteps));
