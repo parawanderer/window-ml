@@ -56,8 +56,9 @@ One row per run, from each run's `cell.json` (outcome, tokens, time) and `run.js
 the same sweep ran with `navigate` on and left stale cells. A cell is **excluded** when any of these holds: it sits under
 `history/` (the harness moves a replaced cell there), its run has a `navigate` step (no arm offers it, so only the broken
 launch can produce one), or its session started before the first `sweeps.jsonl` record carrying the latest record's
-fingerprint (it ran under an older spec). The cell itself carries no fingerprint, so the third test uses the session
-time. The excluded cells are listed in `excluded`.
+`specHash` (it ran under an older spec). The spec hash, not the commit fingerprint: the cloud pair ran later on a newer
+main with the same spec, and nothing between the two commits touches fetch, exec or the agent loop. The cell itself
+carries no hash, so the third test uses the session time. The excluded cells are listed in `excluded`.
 """)
 
 code("""
@@ -89,8 +90,8 @@ def read_runs():
     root = wmlnb.find_sweep(SWEEP)
     sweeps = [json.loads(l) for l in (root / "sweeps.jsonl").read_text().splitlines() if l.strip()]
     sweeps = [s for s in sweeps if s.get("op") == "sweep"]
-    latest = sweeps[-1]["fingerprint"]
-    since = min(s["at"] for s in sweeps if s["fingerprint"] == latest)
+    latest = sweeps[-1]["specHash"]
+    since = min(s["at"] for s in sweeps if s["specHash"] == latest)
     rows, excluded = [], []
     for cell in sorted(root.rglob("cell.json")):
         rel = str(cell.relative_to(root))
@@ -101,7 +102,7 @@ def read_runs():
         steps = [s for s in sess["steps"] if s.get("tool")]
         why = ("history/" if rel.startswith("history/") else
                "navigate step" if any(s["tool"] == "navigate" for s in steps) else
-               "older fingerprint" if sess.get("createdAt", "") < since else None)
+               "older spec" if sess.get("createdAt", "") < since else None)
         if why:
             excluded.append({"cell": rel, "why": why})
             continue
@@ -129,12 +130,19 @@ def read_runs():
             "relative_mlfetch": sum(len([u for u in REL_JS.findall(str((s.get("arguments") or {}).get("js", ""))) if not u.startswith(("http://", "https://"))]) for s in steps if s["tool"] == "exec"),
             "relative_refused": sum("not a valid URL" in str(s.get("result")) for s in steps if s["tool"] == "exec"),
         })
-    return {"rows": rows, "excluded": excluded, "latest_fingerprint": latest, "since": since}
+    # Spend of the sweep's last invocation (the cloud pair; local calls cost nothing): `computed` is tokens times the
+    # price snapshot, `reported` what the provider's response said it cost (DeepSeek reports none).
+    sp = json.loads((root / "status.json").read_text()).get("spend") or {}
+    keep = ("calls", "computed", "computedCalls", "reported", "reportedCalls")
+    spend = {k: {f: v.get(f) for f in keep} for k, v in {**sp.get("models", {}), "total": sp.get("total", {})}.items()}
+    return {"rows": rows, "excluded": excluded, "latest_spec": latest, "since": since, "spend": spend, "currency": sp.get("currency")}
 
 
 data = wmlnb.extract(EXTRACT, read_runs, source={"sweep": SWEEP, "sweep_root": "tests/e2e/artifacts/bench/tools-into-js"})
 runs = pd.DataFrame(data["rows"])
-print(len(runs), "runs kept; excluded:", data["excluded"], "; latest fingerprint", data["latest_fingerprint"], "since", data["since"])
+# A cloud model's id opens with its provider; a local (Ollama) one does not, though it may hold a dot (`qwen3.8-…`).
+runs["where"] = runs.model.map(lambda m: "cloud" if m.startswith(("deepseek.", "openrouter.")) else "local")
+print(len(runs), "runs kept; excluded:", data["excluded"], "; latest spec", data["latest_spec"], "since", data["since"])
 pd.DataFrame(wmlnb.provenance(EXTRACT))
 """)
 
@@ -298,6 +306,43 @@ r = runs[runs.relative_mlfetch > 0]
 print("relative ml.fetch calls:", int(runs.relative_mlfetch.sum()), "in", len(r), "runs; refused:", int(runs.relative_refused.sum()))
 display(r[["model", "task", "arm", "repeat", "relative_mlfetch", "relative_refused", "correct"]].sort_values(["model", "task", "arm", "repeat"]))
 print("of those runs, correct:", f"{int(r.correct.sum())}/{len(r)}")
+""")
+
+md("""
+## Local against cloud
+
+The cloud pair ran after the local sweep, same spec: `deepseek.deepseek-flash` and `openrouter.openai/gpt-6-luna`
+(Sonnet 5.5 was the planned second model; the Anthropic account's credit was in doubt, so Shane chose gpt-6-luna). Does
+the split hold on them: the tool for a read, exec for a computation, and fetch_url first when both are offered?
+""")
+
+code("""
+H = ["where", "task", "arm"]
+g = runs.groupby(H).agg(correct=("correct", "sum"), n=("correct", "count"), steps=("steps", "mean"), tokens=("tokens", "mean"), run_s=("run_s", "mean")).round(1)
+display(g)
+c = runs[runs["where"] == "cloud"]
+display(c.groupby(["model", "task", "arm"]).agg(correct=("correct", "sum"), n=("correct", "count"), steps=("steps", "mean"), tokens=("tokens", "mean"), run_s=("run_s", "mean")).round(1))
+cb = c[c.arm == "both"]
+display(cb.assign(first_reader=cb.first_reader.fillna("none")).groupby(["model", "task", "first_reader"]).size().rename("runs"))
+display(cb.groupby(["model", "task"]).agg(used_exec=("used_exec", "sum"), correct=("correct", "sum"), n=("correct", "count")))
+ce = c[c.arm == "exec"]
+display(ce.assign(first_reader=ce.first_reader.fillna("none")).groupby(["model", "task", "first_reader"]).size().rename("runs"))
+print("cloud exec runs reading agent_api_docs before ml.fetch:", int(ce.docs_before_mlfetch.fillna(False).astype(bool).sum()), "of", len(ce))
+""")
+
+md("""
+### Spend of the cloud pair
+
+Two figures per model. `computed` is each call's tokens times the price snapshot, over every call; `reported` is what
+the provider's response said the call cost, over only the calls that said (DeepSeek's say nothing). RECOMMENDATION.md
+quotes the computed total.
+""")
+
+code("""
+spend = pd.DataFrame(data["spend"]).T[["calls", "computed", "computedCalls", "reported", "reportedCalls"]]
+spend = spend.reindex(sorted(k for k in spend.index if k != "total") + ["total"])  # a fixed order, refreshed or not
+print("currency:", data["currency"])
+spend.assign(computed=spend.computed.astype(float).round(4), reported=spend.reported.astype(float).round(4))
 """)
 
 nb = nbf.v4.new_notebook(cells=cells)
