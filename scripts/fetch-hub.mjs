@@ -13,6 +13,7 @@ import { existsSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
@@ -25,12 +26,12 @@ const run = promisify(execFile);
 async function pinnedTag() {
     const harness = new URL("../tests/fixtures/hub-harness.mjs", import.meta.url);
     const m = /HUB_TAG\s*=\s*"([^"]+)"/.exec(await readFile(harness, "utf8"));
-    if (!m) throw new Error("no HUB_TAG in tests/fixtures/hub-harness.mjs: it moved, and this reads it by name");
+    if (!m) throw new Error("noHUB_TAG in tests/fixtures/hub-harness.mjs: it moved, and this reads it by name");
     return m[1];
 }
 const REPO = "parawanderer/window-ml-hub";
 
-/** The release archive for THIS machine. A platform with no published build says so rather than downloading a 404. */
+/**The release archive for THIS machine. A platform with no published build says so rather than downloading a 404. */
 function target() {
     const key = `${process.platform}-${process.arch}`;
     const known = { "linux-x64": "x86_64-unknown-linux-gnu", "darwin-arm64": "aarch64-apple-darwin" };
@@ -40,11 +41,38 @@ function target() {
     return known[key];
 }
 
-const get = async (url) => {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`${res.status} ${res.statusText} for ${url}`);
-    return new Uint8Array(await res.arrayBuffer());
-};
+/**
+ * The release archive and its shasum line. The `releases/download/` CDN has answered 504 for
+ * window-ml-hub specifically (e3, 2026-11-08: three CI reruns in the same window 504'd
+ * there while `github.com` itself was still 302, and a fourth run's setup steps hit
+ * `Unexpected HTTP response: 504` on other github.com URLs too). Three attempts with a short
+ * backoff on the download; only then does this fall back to the release API's asset endpoint
+ * (`Accept: application/octet-stream`), a genuine second path that serves the same bytes and
+ * its `digest` with no token. The sha256 check in `main` below is what makes a
+ * wrong body safe either way.
+ */
+export async function releaseAsset(tag, name) {
+    const base = `https://github.com/${REPO}/releases/download/${tag}`;
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const direct = await Promise.all([
+            fetch(`${base}/${name}.tar.gz`),
+            fetch(`${base}/${name}.tar.gz.sha256`),
+        ]).catch(() => null);
+        if (direct?.[0]?.ok && direct[1]?.ok) {
+            return { archive: new Uint8Array(await direct[0].arrayBuffer()), sums: new Uint8Array(await direct[1].arrayBuffer()) };
+        }
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+    }
+    // Three 5xxs and still nothing: take the API asset endpoint, which is the genuine second path.
+    const meta = await fetch(`https://api.github.com/repos/${REPO}/releases/tags/${tag}`);
+    if (!meta.ok) throw new Error(`${meta.status} ${meta.statusText} for the release ${tag}`);
+    const asset = ((await meta.json()).assets ?? []).find((a) => a.name === name);
+    if (!asset?.id) throw new Error(`no asset named ${name} on ${tag}`);
+    const bytes = await fetch(`https://api.github.com/repos/${REPO}/releases/assets/${asset.id}`, { headers: { Accept: "application/octet-stream" } });
+    if (!bytes.ok) throw new Error(`${bytes.status} ${bytes.statusText} for asset ${asset.id}`);
+    const digest = String(asset.digest || "").replace(/^sha256:/, "");
+    return { archive: new Uint8Array(await bytes.arrayBuffer()), sums: new TextEncoder().encode(`${digest}  ${name}\n`) };
+}
 
 async function main() {
     const tag = await pinnedTag();
@@ -54,9 +82,8 @@ async function main() {
         return;
     }
     const name = `wmlhub-${tag}-${target()}`;
-    const base = `https://github.com/${REPO}/releases/download/${tag}`;
     console.log(`fetching ${name}.tar.gz`);
-    const [archive, sums] = await Promise.all([get(`${base}/${name}.tar.gz`), get(`${base}/${name}.tar.gz.sha256`)]);
+    const { archive, sums } = await releaseAsset(tag, name);
 
     // CHECKED BEFORE IT IS UNPACKED, let alone run: this ends in a binary that a test suite executes, and a download
     // nobody verifies is a supply chain with no links in it. The file is `<sha>  <name>`, as shasum writes it.
@@ -84,4 +111,6 @@ async function main() {
     console.log(`${stdout.trim()} → ${dir}`);
 }
 
-main().catch((e) => { console.error(`fetch-hub: ${e?.message ?? e}`); process.exit(1); });
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+    main().catch((e) => { console.error(`fetch-hub: ${e?.message ?? e}`); process.exit(1); });
+}
