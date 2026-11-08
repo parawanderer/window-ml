@@ -22,6 +22,7 @@ import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { stalenessReport } from "./check-dist-fresh.mjs";
+import { acquire } from "./test-slot.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -211,9 +212,13 @@ if (args.includes("--list")) {
 // turned — pull it to `CORES - 1` before touching the assertion.
 const CORES = (() => { try { return require("node:os").cpus().length; } catch { return 4; } })();
 const ON_CI = !!(process.env.CI || process.env.GITHUB_ACTIONS);
+// ONE RUN ON THE MACHINE AT A TIME, LOCALLY: every run that spawns tests waits its turn in the machine-wide queue
+// (test-slot.mjs), and is given its workers from the memory free when its turn comes. CI, `TEST_SLOT=off` and a run
+// inside a queued job skip the wait; `--jobs` still decides the workers.
+const SLOT = args.includes("--check-genres") ? null : await acquire({ cmd: [process.execPath, ...process.argv.slice(1)], cwd: ROOT, kind: "unit" });
 const jobsArg = process.argv.find((a) => a.startsWith("--jobs"));
 const JOBS = Math.max(1, Number(jobsArg?.split("=")[1] ?? process.argv[process.argv.indexOf("--jobs") + 1])
-    || Math.min(8, ON_CI ? CORES : Math.max(1, CORES - 2)));
+    || SLOT?.jobs || Math.min(8, ON_CI ? CORES : Math.max(1, CORES - 2)));
 const NODE_ARGS = ["--import", "tsx", "--test", `--test-concurrency=${JOBS}`];
 
 // SLOWEST FIRST. `node --test --test-concurrency=N` starts the files in the order they are listed, and a
