@@ -37,7 +37,7 @@ import { CardApp, endActiveCardDrag } from "./card/hud-card";
 import { releaseAxisHold } from "./resource/chart-interaction";
 import {
     composerOpen, composerElement, composerTarget, selectedRun, cardSteerHash, setCardCollapsed,
-    cardSelectedHash, cardDetail, cardDismissedSet, isCardDismissed,
+    cardSelectedHash, cardDetail, cardDismissedSet, isCardDismissed, startRefused,
 } from "./card/card-state";
 import { shownModel, sessionProfile } from "./model";
 import { exportSession, exportSessionJson, printSession } from "./export/export";
@@ -480,6 +480,8 @@ function onMessage(d: any): void {
     else if (typeof d.__mlForgetSession === "string") { forgetSessionReduced(d.__mlForgetSession); rev.value++; }
     // The worker no longer holds a start card's ask this surface answered (card-start.tsx): it shows expired.
     else if (typeof d.__mlStartExpired === "string") expireStartAsk(d.__mlStartExpired);
+    // The worker refused the run the card's composer sent: the composer comes back with its text, files and the reason.
+    else if (typeof d.__mlStartRefused === "string") startRefused(d.__mlStartRefused);
     // The chart's keys, RELAYED from the page by the overlay's shell while the pointer is on a plot (see `chartKey`):
     // hovering does not move focus, so the page's document is the one receiving them.
     else if (typeof d.__mlSidebarChartKey === "string") chartKey(d.__mlSidebarChartKey);

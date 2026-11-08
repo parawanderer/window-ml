@@ -857,6 +857,10 @@ for whether it can bind a live method or reach a denied prop; a new allowed meth
 return leaks the realm. The invariant is unchanged: gaps degrade to "asks the human," never to "runs
 unsafely" — new tests prove the new surface keeps that.
 
+  **A new allowed method that takes a callback needs nothing new** (`onlyOurFunctions` covers it), but its row goes in the red team's
+  callback file and a script-written arrow must still work in it. A method that CALLS something else it is handed (a getter, a
+  `toString`, a `valueOf`) is the coercion rule above.
+
   **A new allowed method is decided in `policy.ts` `CONVERTS` (which arguments the host converts to a primitive) or `NO_CONVERSION` (with a reason).**
   `tests/readonly-convert.test.mjs` fails for a method in neither.
 
@@ -875,6 +879,19 @@ unsafely" — new tests prove the new surface keeps that.
 - **Gaps degrade to "asks the human", never to "runs unsafely"**, and each extension's tests prove it still does.
 - **An extension can break an argument made for an EARLIER one** (`for…of` and the owned `Set`/`Map` mutators):
   "The rule for extending the dialect" above.
+- **A host method calls its callbacks itself, so it is handed only functions the script wrote.** `onlyOurFunctions`
+  (`evaluator.ts`) runs at the host-call site, after the arguments are evaluated and before anything runs: a function
+  argument that is not in `ourFns` and not one of the engine's own bare roots (`INTRINSIC_CALLBACKS`: `String`, `Number`,
+  `Boolean`, `Array`, `parseInt`, `parseFloat`, `isNaN`, `isFinite`, matched by identity, so a rebound name or another
+  realm's `Number` is refused) is `NotInDialect`, the message naming the method. One predicate for every method, not a
+  list: `map`/`sort`/`Array.from`/`JSON.parse`'s reviver/`forEach` of a Set, a Map or a DOM collection all take the same
+  path, and a method added to the whitelist later is covered. A function a page handed back as data (`ml.models()` can)
+  therefore never runs during a survey. Three admissions beyond the script's arrows: the realm's own bound `getComputedStyle` (`Evaluator.ownGetComputedStyle`, compared by identity, never by the name in the script's frame, which a
+  script can shadow; the worker has none, so a bare one there stays refused); a member reference such as `Math.abs`, which is the inert `METHOD_REF` and
+  throws its own refusal if the host calls it; and the intrinsics above. Six of those intrinsics COERCE (`COERCING_CALLBACKS`: all
+  but `Boolean` and `Array`), so the host would run an element's own `valueOf`/`toString`: as a callback they are admitted only over an
+  array whose elements pass `joinsData` (data, no getters, no objects), for `map`/`filter`/... and `Array.from(arr, Number)`; over a
+  Set, Map or other receiver they are refused.
 - **A kind decided by `Object.prototype.toString` is a page's choice.** Borrow the intrinsic that throws without the
   internal slot (`policy.ts`: `isStringObject`, `isRegExpObject`, `drainIterator`); the internal slots are realm-agnostic, so a foreign realm's real value still passes.
 - **`join` turns only data into text.** The host's `join` coerces each element by running its own `toString`/`valueOf`, so an

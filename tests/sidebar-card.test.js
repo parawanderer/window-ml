@@ -860,6 +860,132 @@ test("card composer: the dropdown ALWAYS includes the configured default (even a
     assert.match(starred.textContent, /deepseek-v4-pro/, "the default (not in the server list) is the starred row");
 });
 
+// --- the card composer's files: text files and PDFs ride a send like the session composer's ------------
+
+/** Attach `files` (`[name, type, body]`) through the composer's file input, as the "＋" does, and wait for them to be read. */
+async function attachToCard(w, files) {
+    const input = w.window.document.querySelector('.card-foot input[type="file"]');
+    const list = files.map(([name, type, body]) => new w.window.File([body], name, { type }));
+    Object.defineProperty(input, "files", { value: list, configurable: true });
+    input.dispatchEvent(new w.window.Event("change", { bubbles: true }));
+    for (let i = 0; i < 20; i++) { await w.flush(); if (w.window.document.querySelectorAll(".cfiles .cfile, .cfiles > *").length >= files.length) break; }
+    await w.tick();
+}
+
+const sendBtn = (w) => [...w.window.document.querySelectorAll(".card-foot button")].find(b => /Send/.test(b.textContent));
+const typeInto = async (w, text) => {
+    const ta = w.window.document.querySelector(".card-cmp-input");
+    ta.value = text;
+    ta.dispatchEvent(new w.window.Event("input", { bubbles: true }));
+    await w.tick();
+};
+
+test("card composer: a new run's startRun carries the attached text file; the input takes files and PDFs", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off", model: "llama3" } });
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.raw({ __mlSidebarComposer: "open" });
+    await w.flush();
+    assert.match(w.window.document.querySelector('.card-foot input[type="file"]').getAttribute("accept"), /^image\/\*,text\/\*,.*application\/pdf,\.pdf$/);
+    await attachToCard(w, [["server.log", "text/plain", "boot\nready\n"]]);
+    assert.equal(w.window.document.querySelectorAll(".cfiles .cfile-pill, .cfiles > *").length, 1, "the file shows as a pill in the box");
+    await typeInto(w, "why did it boot twice?");
+    posted.length = 0;
+    sendBtn(w).click();
+    await w.flush();
+    const start = posted.find(m => m.__mlSidebarApp === "startRun");
+    assert.ok(start, "a startRun was posted");
+    assert.deepEqual(JSON.parse(JSON.stringify(start.files)), [{ name: "server.log", type: "text/plain", text: "boot\nready\n" }]);
+    assert.ok(!w.window.document.querySelector(".card-cmp-input"), "the composer closed");
+});
+
+test("card composer: a FILE-ONLY send works (no typed words), and Send is enabled by the file alone", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off", model: "llama3" } });
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.raw({ __mlSidebarComposer: "open" });
+    await w.flush();
+    assert.ok(sendBtn(w).disabled, "an empty box cannot send");
+    await attachToCard(w, [["notes.txt", "text/plain", "alpha\n"]]);
+    assert.ok(!sendBtn(w).disabled, "a file alone enables Send");
+    posted.length = 0;
+    sendBtn(w).click();
+    await w.flush();
+    const start = posted.find(m => m.__mlSidebarApp === "startRun");
+    assert.ok(start, "posted");
+    assert.equal(start.task, "");
+    assert.equal(start.files.length, 1);
+});
+
+test("card composer: a refused file stays in the box with its reason and is NOT sent", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off", model: "llama3" } });
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.raw({ __mlSidebarComposer: "open" });
+    await w.flush();
+    await attachToCard(w, [["ok.txt", "text/plain", "fine\n"], ["blob.bin", "application/octet-stream", "\u0000\u0001\u0002binary"]]);
+    await typeInto(w, "read these");
+    posted.length = 0;
+    sendBtn(w).click();
+    await w.flush();
+    const start = posted.find(m => m.__mlSidebarApp === "startRun");
+    assert.deepEqual(start.files.map(f => f.name), ["ok.txt"], "only the readable file goes");
+});
+
+test("card composer: 'add to current run' sends the file with sessionSend", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off", model: "llama3" } });
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    const hash = "cardfile1";
+    await w.dispatch(agentStart(hash, "look around", "m"));
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.raw({ __mlAddToCurrentRun: { ctx: { selector: "p#x", role: "paragraph", text: "hi" } } });
+    await w.flush();
+    await attachToCard(w, [["more.txt", "text/plain", "extra\n"]]);
+    await typeInto(w, "and this");
+    posted.length = 0;
+    sendBtn(w).click();
+    await w.flush();
+    const sent = posted.find(m => m.__mlSidebarApp === "sessionSend");
+    assert.ok(sent, "a sessionSend");
+    assert.equal(sent.hash, hash);
+    assert.deepEqual(JSON.parse(JSON.stringify(sent.files)), [{ name: "more.txt", type: "text/plain", text: "extra\n" }]);
+});
+
+test("card composer: a refused start (__mlStartRefused) reopens the composer with the typed text and the file, and says why", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off", model: "llama3" } });
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.raw({ __mlSidebarComposer: "open" });
+    await w.flush();
+    await attachToCard(w, [["server.log", "text/plain", "boot\n"]]);
+    await typeInto(w, "why twice?");
+    sendBtn(w).click();
+    await w.flush();
+    assert.ok(!w.window.document.querySelector(".card-cmp-input"), "the composer closed on send");
+    await w.raw({ __mlStartRefused: "server.log is too large to send whole" });
+    await w.flush();
+    const doc = w.window.document;
+    assert.equal(doc.querySelector(".card-cmp-input")?.value, "why twice?", "the typed text is back");
+    assert.match(doc.querySelector(".card-cmp-err")?.textContent ?? "", /too large to send whole/, "the reason shows in the box");
+    posted.length = 0;
+    sendBtn(w).click();
+    await w.flush();
+    assert.deepEqual(posted.find(m => m.__mlSidebarApp === "startRun")?.files.map(f => f.name), ["server.log"], "and the file is still attached");
+});
+
+test("card composer: a refusal with nothing sent (no draft) opens nothing", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off", model: "llama3" } });
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.raw({ __mlStartRefused: "nothing to restore" });
+    await w.flush();
+    assert.ok(!w.window.document.querySelector(".card-cmp-input"));
+});
+
 // --- several runs at once: the tab strip, its badges and the collapsed summary ---------------------------
 
 test("card concurrency: a second run does NOT steal the card from a run awaiting approval (badge-don't-steal)", async () => {

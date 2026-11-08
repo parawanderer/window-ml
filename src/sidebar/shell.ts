@@ -1079,7 +1079,7 @@ function fromApp(d: any): void {
     // The composer's "start this task": the WORKER assembles and hosts the run (sw-run-start.ts,
     // docs/spec/SITE_ACCESS.md slice 0). It used to be relayed to the page, which built the run in its own world and
     // so decided what a run the PERSON asked for contained. Origin-checked: only the real extension frame starts one.
-    if (d.__mlSidebarApp === "startRun" && frame && typeof d.task === "string" && d.task.trim()) {
+    if (d.__mlSidebarApp === "startRun" && frame && typeof d.task === "string" && (d.task.trim() || cleanFiles(d.files))) {
         // `hud` is the verbosity hint (quiet → stay silent mid-run; progress → one short line between steps), `model`
         // the composer's per-call pick, `vision:true` its per-call native-vision override.
         const payload = {
@@ -1089,6 +1089,8 @@ function fromApp(d: any): void {
             vision: d.vision === true ? true : undefined,
             stream: d.stream === true ? true : undefined,
             images: cleanImages(d.images),
+            // Checked again by the worker (`startUserRun`, as an "agent" run): this only drops what is not a file.
+            files: cleanFiles(d.files),
             elementContext: (d.elementContext && typeof d.elementContext.selector === "string") ? d.elementContext : undefined,
             hud: agentHud,
             surface: promptSurface(),
@@ -1096,7 +1098,7 @@ function fromApp(d: any): void {
         // A run the person started here is kept unless they turned that off; a run started from CODE is not.
         try {
             void chrome.runtime.sendMessage({ type: "USER_START_RUN", payload, keep: persistUiRuns })
-                .then((r: { error?: string } | undefined) => { if (r?.error) console.warn("window.ml: the run did not start:", r.error); })
+                .then((r: { error?: string } | undefined) => { if (r?.error) { console.warn("window.ml: the run did not start:", r.error); toApp({ __mlStartRefused: r.error }); } })
                 .catch(() => { /* worker gone */ });
         } catch { /* extension context gone */ }
         return;

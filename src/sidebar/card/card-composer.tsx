@@ -5,11 +5,12 @@ import { useState, useEffect, useRef } from "preact/hooks";
 import { models, modelKinds, config, ollamaIds, rev, sessionMap, backendError } from "../store";
 import { generatesText, producesEmbeddings } from "../../contract/contract-server";
 import { IconChevron, IconEye, IconEyeOff } from "../icons";
-import { useImageAttach, ThumbStrip } from "../transcript/composer";
+import { useImageAttach, ThumbStrip, FileStrip } from "../transcript/composer";
+import { services } from "../services";
 import { ElementPill } from "../transcript/user-text";
 import {
     composerModel, composerModelOpen, composerVision, composerStream, composerMaxSteps, composerResolvedModel,
-    composerOpen, composerElement, composerTarget, composerStarting, setDefaultModel,
+    composerOpen, composerElement, composerTarget, composerStarting, composerDraft, setDefaultModel,
     isOllamaModel,
 } from "./card-state";
 import { isCloudModel } from "../model";
@@ -116,26 +117,34 @@ export function ComposerModelBar() {
 // (same 🤖 in the same top-left spot as every other state) so it reads as the SAME blob reshaping, not a
 // new panel. On send it posts `startRun` to the shell → the page runs a real ml.agent() (hash, resumable).
 export function ComposerCard() {
-    const [text, setText] = useState("");
-    const [err, setErr] = useState("");   // pre-flight complaint (e.g. no model configured) — blocks the send
-    const att = useImageAttach();
+    // A refused start comes back with what it took (`startRefused`): the text, the files and the reason, read once.
+    const [back] = useState(() => { const d = composerDraft.peek(); composerDraft.value = null; return d?.refusal !== undefined ? d : null; });
+    const [text, setText] = useState(back?.text ?? "");
+    const [err, setErr] = useState(back?.refusal ?? "");   // pre-flight complaint (e.g. no model configured) — blocks the send
+    const target = composerTarget.value;   // NEW run (default) vs APPEND to the open run
+    // Files ride along as in the session composer. A NEW run is the worker's (`startUserRun` checks them as an "agent"
+    // run, PDFs included); a follow-up asks the runtime that holds the run, as the session composer does.
+    const appendTo = target.mode === "append" ? target.hash : "";
+    const att = useImageAttach(() => back?.imgs ?? [], {
+        files: { target: () => "agent", accepts: () => !appendTo || services().acceptsFiles(appendTo), acceptsPdf: () => !appendTo || services().acceptsPdf(appendTo), initial: () => back?.files ?? [] },
+    });
     const budget = composerMaxSteps.value;   // the step budget (persists across opens)
     const ref = useRef<HTMLTextAreaElement>(null);
     // Focus after a frame so the container's morph (and the shell's frame.focus) has landed.
     useEffect(() => { const id = requestAnimationFrame(() => ref.current?.focus()); return () => cancelAnimationFrame(id); }, []);
     const el = composerElement.value;   // right-click "ask about this" context, if any
-    const target = composerTarget.value;   // NEW run (default) vs APPEND to the open run
     const appendRun = target.mode === "append" ? sessionMap.get(target.hash) : undefined;
     const close = () => { composerOpen.value = false; composerElement.value = null; composerTarget.value = { mode: "new" }; };
     const send = () => {
         const t = text.trim();
-        if (!t && !att.imgs.length && !el) return;   // allow an image-only OR element-only task
+        const files = att.sendable;
+        if (!t && !att.imgs.length && !files.length && !el) return;   // allow an image-only, file-only OR element-only task
         if (imagesRefusal(att.imgs.length)) return;   // the strip says why
         // APPEND mode ("add to current run"): route to the open session — the page steers a running loop
         // (say) or starts a follow-up turn (run), and folds any element context into the message. No model
         // pre-flight (the run already resolved one). Optimistically flip it to working so the card morphs now.
         if (target.mode === "append") {
-            toHost({ __mlSidebarApp: "sessionSend", hash: target.hash, text: t, images: att.imgs, elementContext: el || undefined });
+            toHost({ __mlSidebarApp: "sessionSend", hash: target.hash, text: t, images: att.imgs, ...(files.length ? { files } : {}), elementContext: el || undefined });
             const s = sessionMap.get(target.hash);
             if (s) { s.status = "pending"; s.ended = false; s.lastTs = Date.now(); rev.value++; }
             close();
@@ -162,7 +171,9 @@ export function ComposerCard() {
         const t0 = Date.now();
         composerStarting.value = t0;
         setTimeout(() => { if (composerStarting.value === t0) composerStarting.value = 0; }, 10000);
-        toHost({ __mlSidebarApp: "startRun", task: t, maxSteps: composerMaxSteps.value, model: model || undefined, vision, stream: composerStream.value || undefined, images: att.imgs, elementContext: el || undefined });
+        // Kept until the worker takes the run: a refusal (`__mlStartRefused`) reopens the composer with all of it.
+        composerDraft.value = { text, imgs: att.imgs, files, element: el };
+        toHost({ __mlSidebarApp: "startRun", task: t, maxSteps: composerMaxSteps.value, model: model || undefined, vision, stream: composerStream.value || undefined, images: att.imgs, ...(files.length ? { files } : {}), elementContext: el || undefined });
         close();
     };
     return (
@@ -179,11 +190,12 @@ export function ComposerCard() {
             <div class="card-body">
                 {el ? <ElementPill ctx={el} onRemove={() => (composerElement.value = null)} /> : null}
                 <ThumbStrip imgs={att.imgs} loading={att.loading} onRemove={att.remove} />
+                <FileStrip docs={att.docs} reasons={att.reasons} onRemove={att.removeDoc} />
                 <textarea ref={ref} class="card-cmp-input" rows={3}
-                    placeholder={el ? "Ask about the selected element…" : "Ask window.ml to do something on this page… (paste an image to attach)"}
+                    placeholder={el ? "Ask about the selected element…" : "Ask window.ml to do something on this page… (paste an image or a file to attach)"}
                     value={text}
                     onInput={e => { setText((e.target as HTMLTextAreaElement).value); if (err) setErr(""); }}
-                    onPaste={att.onPaste}
+                    onPaste={att.onPaste} onDragOver={att.onDragOver} onDrop={att.onDrop}
                     onKeyDown={e => {
                         if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
                         else if (e.key === "Escape") { e.preventDefault(); close(); }
@@ -193,9 +205,9 @@ export function ComposerCard() {
                         : null}
             </div>
             <div class="card-foot card-cmp-foot">
-                <input ref={att.fileRef} type="file" accept="image/*" multiple style="display:none"
+                <input ref={att.fileRef} type="file" accept={att.fileAccept} multiple style="display:none"
                     onChange={e => { att.addFiles((e.target as HTMLInputElement).files); (e.target as HTMLInputElement).value = ""; }} />
-                <button class="tt cbtn" onClick={() => att.fileRef.current?.click()} aria-label="Attach an image">＋<span class="tt-pop left above" role="tooltip">Attach an image (or paste one)</span></button>
+                <button class="tt cbtn" onClick={() => att.fileRef.current?.click()} aria-label={att.canFiles ? "Attach a file" : "Attach an image"}>＋<span class="tt-pop left above" role="tooltip">{att.canFiles ? "Attach an image or a text file (or paste or drop one)" : "Attach an image (or paste one)"}</span></button>
                 <span class="card-cmp-hint"><kbd class="kb">↵</kbd> send · <kbd class="kb">esc</kbd> cancel</span>
                 <span class="sp" />
                 {/* No `live` toggle. Streaming is what the Commander IS — a run you watch — so it was a
@@ -212,7 +224,7 @@ export function ComposerCard() {
                         ))}
                     </div>
                 </div>
-                <button class="appr-btn yes" onClick={send} disabled={(!text.trim() && !att.imgs.length && !el) || !!imagesRefusal(att.imgs.length)}>Send</button>
+                <button class="appr-btn yes" onClick={send} disabled={(!text.trim() && !att.imgs.length && !att.sendable.length && !el) || !!imagesRefusal(att.imgs.length)}>Send</button>
             </div>
         </div>
     );

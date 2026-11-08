@@ -133,6 +133,8 @@ export async function evalReadonly(code: string, doc: Document | null, ml?: unkn
     // asked to approve a script whose first half had already run. The caller's checkpoint restores it.
     const restore = opts.checkpoint?.();
     const ev = new Evaluator(facade, opts.stepBudget, realm);
+    // The realm's OWN bound getComputedStyle, by identity: a script's `const getComputedStyle = …` shadows the NAME in its frame, never this.
+    if (realm !== "worker" && typeof root.getComputedStyle === "function") ev.ownGetComputedStyle = root.getComputedStyle as Function;
     if (opts.hidden) ev.hidden = opts.hidden;
     charge = (n) => ev.spend(n);
     if (opts.current && facade) facade.current = ev.adoptCurrent(opts.current);
