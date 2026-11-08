@@ -2,17 +2,14 @@
 // our sidebar must mint the page element's point, and the element resolved by the act judge must be the element the
 // trusted click actually reaches. The clear-point control exercises the same path without either extension host.
 //
-// The two covered rows are expected failures on main. SHOW_PENDING=1 runs them unmarked to inspect their assertions;
-// the security owner's branch removes both markers when their fixes land, before that branch merges.
+// The two covered rows are live: they guard minting the page element's point beneath our sidebar and dispatching the
+// trusted click to the element the act judge resolved.
 
 import { test, expect } from "@playwright/test";
 import { launchClean } from "./fixtures/detect/clean-browser.mjs";
 import { startProbeSite, DETECT_RESOLVER_ARGS } from "./fixtures/detect/server.mjs";
 import { openProbe, runOn, summarize, toolResults, waitFor } from "./fixtures/detect/measure.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
-
-/** Mark an unbuilt defended outcome without skipping its measurement. */
-const pending = (why) => test.fail(!process.env.SHOW_PENDING, why);
 
 /** Every probe origin is a secure context, as in the detection-surface scenarios. */
 const secureArgs = (site) => [`--unsafely-treat-insecure-origin-as-secure=${["probe.test", "other.test", "xo.test", "api.test"].map((h) => site.origin(h)).join(",")}`];
