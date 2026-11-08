@@ -12,11 +12,11 @@ import type { InvocationInfo } from "../contract/contract-server";
 import type { MlDebugEvent } from "../contract/contract-debug";
 import { DEFAULT_CONFIG } from "../contract/contract-config";
 import {
-    FONT_KEY, WRAP_KEY, LINES_KEY, CODE_THEME_KEY, CODE_THEME_VSCODE_KEY, CODE_THEME_UI_KEY, codeTheme, codeThemeCustom, codeThemeUi, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_PREF_KEY, RESWIN_DEFAULT, resWindowPref, VRAMH_KEY, LANE_HIDDEN_KEY, laneHidden, LANE_SCOPE_KEY, laneScoped, SECTIONS_KEY, laneEnabled, showLane, showModels, LANEH_KEY, laneH, LANE_H_DEFAULT, SNAPDOT_KEY, snapDot, PREDICT_KEY, predictView, TIMEGRID_KEY, timeGrid, FOCUS_KEY, focusMode,
-    benchOpen, benchDock, benchH, benchSplit, viewReturn, markReturn, openBench, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY,
-    benchEnv, BENCH_ENV_KEY, prefsSnapshot, restorePrefs,
-    sessionMap, rev, view, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes, config,
-    vramOpen, sidebarOpen, backendError, backendLoading, surface, atBottom, resWindowS, vramH } from "./store";
+    FONT_KEY, WRAP_KEY, LINES_KEY, CODE_THEME_KEY, CODE_THEME_VSCODE_KEY, CODE_THEME_UI_KEY, codeTheme, codeThemeCustom, codeThemeUi, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_PREF_KEY, RESWIN_DEFAULT, VRAMH_KEY, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, SECTIONS_KEY, LANEH_KEY, LANE_H_DEFAULT, SNAPDOT_KEY, PREDICT_KEY, TIMEGRID_KEY, FOCUS_KEY, focusMode,
+    benchOpen, benchDock, viewReturn, markReturn, openBench, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY,
+    prefsSnapshot, restorePrefs,
+    sessionMap, rev, view, config,
+    vramOpen, sidebarOpen, backendError, backendLoading, surface, atBottom } from "./store";
 import { installTooltipLayer } from "./tooltip-layer";
 import { trackPointer, pointerGone } from "./pointer-gone";
 import { ContextMenu, CursorTipLayer, highlightPos } from "./ui-kit";
@@ -29,7 +29,7 @@ import { Composer } from "./transcript/composer";
 import { VramPanel } from "./resource/vram";
 import { chartKey } from "./resource/resource-chart";
 import { keyRelay, VRAM_POLL_MS } from "./resource/panel-state";
-import { VRAM_PALETTE_KEY, VRAM_PALETTES, vramPalette } from "./palette";
+import { VRAM_PALETTE_KEY } from "./palette";
 import { ModelStatusDot } from "./resource/model-status";
 import { fetchModels, pollPs, connectResourceStream, pollBackendHealth, BACKEND_HEALTH_MS } from "./resource/resource-feed";
 import { PythonBench, BenchDrawer, BenchVer } from "./vram-bench";

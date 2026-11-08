@@ -16,7 +16,8 @@ test("a click landing before the restore stays open", () => {
     benchOpen.value = false;
     const snap = prefsSnapshot();
     openBench();               // the toolbar click, before the callback lands
-    restorePrefs({}, snap);    // the callback: nothing remembered
+    // The callback hands the default-filled record a fresh profile reads back, its remembered open false.
+    restorePrefs({ [BENCH_OPEN_KEY]: false }, snap);
     assert.equal(benchOpen.value, true, "the restore must not close a bench the person opened mid-read");
 });
 
