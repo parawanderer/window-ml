@@ -32,7 +32,7 @@ import { recordAppended, snapshotCurrent, type CurrentSnapshot, type RecordedMet
 import type { RunLogEvent } from "../log/run-log";
 import { TokenStore, derefPipe, describeToken, extraBeyondModel, memoryFault, cleanLabel, nameOf, shortType, isAliasRef, parseLabel, DEREF_TOOL, type TokenKind, type TokenValue, type DerefRead } from "../pointers/token-pipe";
 import { runPipe, type PipeLimits } from "../pointers/text-pipe";
-import { FILE_PREFIX, fileRef, fileSections, quoteName } from "../pointers/file-pointer";
+import { FILE_PREFIX, filePagesSaid, fileRef, fileSections, firstPages, quoteName } from "../pointers/file-pointer";
 import type { PdfDoc } from "../pdf/pdf-read";
 import { CITABLE_TOOLS } from "../tools/tool-params";
 
@@ -118,8 +118,8 @@ export interface AgentLoopDeps {
     // Mid-run STEERING (a.say()): drained at each step boundary (before the model call) — returns any user
     // messages queued since the last step, injected via pushUser so the model sees them on its next turn.
     // Omit → no steering. The queue lives in the caller's world (page handle / SW inbox).
-    drainInbox?(): (string | { text: string; origin?: PromptOrigin })[];
-    pushUser?(messages: unknown[], text: string): void;
+    drainInbox?(): (string | { text: string; origin?: PromptOrigin; images?: string[]; task?: string })[];
+    pushUser?(messages: unknown[], text: string, images?: string[]): void;
     // Self-introspection (ml.chatMetaTool): resolve the run's model facts for the metadata summary.
     // World-specific (page: ml.capabilities/ml.ps/config; background: the SW's caches). The token/message
     // counts come from the loop itself (accurate on BOTH paths), so only the MODEL facts need a dep.
@@ -698,7 +698,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             if (!opts.readText) throw new Error("this run cannot read attached files.");
             const sections = fileSections(JSON.parse(await opts.readText(f.doc)) as PdfDoc);
             const text = clipOut(pipe.trim() ? runPipe(sections, pipe) : sections, UI_OUT_CAP);
-            const head = `${fileRef(f)} ${quoteName(f.name)}: attached by the person. PDF, ${f.pages} page${f.pages === 1 ? "" : "s"}.`;
+            const head = `${fileRef(f)} ${quoteName(f.name)}: attached by the person. PDF, ${filePagesSaid(f)}.`;
             return { result: `${head}\n\n${text}`, renderOut: derefRender(text) };
         } catch (e) {
             return { result: `Error: ${(e as Error)?.message || e}` };
@@ -714,8 +714,8 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         const all = tokenStore.all();
         const files = tokenStore.files.all();
         const attached = files.length
-            ? `${files.length} file${files.length === 1 ? "" : "s"} attached by the person:\n${files.map((f) => `  ${fileRef(f)} ${quoteName(f.name)} PDF, ${f.pages} pages, turn ${f.turn}`).join("\n")}\n`
-                + `Read one by pages: token "${fileRef(files[files.length - 1])}", pipe "pages 1-3".`
+            ? `${files.length} file${files.length === 1 ? "" : "s"} attached by the person:\n${files.map((f) => `  ${fileRef(f)} ${quoteName(f.name)} PDF, ${filePagesSaid(f)}, turn ${f.turn}`).join("\n")}\n`
+                + `Read one by pages: token "${fileRef(files[files.length - 1])}", pipe "pages ${firstPages(files[files.length - 1])}".`
             : "";
         if (!all.length) return attached ? `${attached}\nNo tool outputs captured yet.` : "No pointers captured yet this session. Run a tool with `token: true` (or a short label) and its output becomes readable here.";
         const lines = all.map((v) => `  @tool:${v.id} (${nameOf(v)}) ${shortType(v)}, step ${v.step}`);
@@ -744,7 +744,10 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     // read inside exec surfaces the same MemoryFault / pipe error the model sees from the tool itself.
     opts.tokenSink?.((ref: string, pipe?: string | string[], limits?: PipeLimits): DerefRead => {
         // The tool reads an attached file; code does not yet (its typed read is a later change, FILE_ATTACHMENTS.md).
-        if (String(ref).trim().startsWith(FILE_PREFIX)) throw new Error(`ml.dereference cannot read an attached file yet. Read its pages with the dereference tool: token "${String(ref).trim()}", pipe "pages 1-3".`);
+        if (String(ref).trim().startsWith(FILE_PREFIX)) {
+            const f = tokenStore.files.resolve(String(ref)).file;
+            throw new Error(`ml.dereference cannot read an attached file yet. Read its pages with the dereference tool: token "${String(ref).trim()}", pipe "pages ${f ? firstPages(f) : "1"}".`);
+        }
         const { value: v, matched, score } = tokenStore.resolveRef(ref, opts.labelMatch);
         if (!v) throw new Error(memoryFault(ref, tokenStore.nearest(ref), seq));
         // A soft label match travels BESIDE the value, never inside it: the caller here is a script that will
@@ -885,8 +888,12 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // from the HUD and steered from the chat app is being driven by someone who has stopped looking at
             // the page. A plain string carries no origin and leaves the current one standing.
             const text = typeof queued === "string" ? queued : queued.text;
+            // A detached call's result (ASYNC_CALLS.md, mode 1) arrives here too: no one typed it, so it has no surface or
+            // client, and says which task it is.
+            if (typeof queued !== "string" && queued.task) { pushed(() => deps.pushUser?.(messages, text), { surface: null, client: null, task: queued.task }); continue; }
             if (typeof queued !== "string" && queued.origin) lastOrigin = queued.origin;
-            pushed(() => deps.pushUser?.(messages, text), { surface: lastOrigin?.surface ?? null, client: clientOf(lastOrigin) });
+            const images = typeof queued === "string" ? undefined : queued.images;
+            pushed(() => deps.pushUser?.(messages, text, images), { surface: lastOrigin?.surface ?? null, client: clientOf(lastOrigin) });
         }
         // A CANCEL_RUN mid-generation aborts the in-flight fetch, which REJECTS here — convert that to a
         // clean cancel (don't propagate as a run error), same as the boundary check. Re-throw a real error.

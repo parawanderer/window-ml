@@ -72,10 +72,14 @@ export interface JsonSchema {
  *
  *  Underscore-prefixed members are internal plumbing exposed for debugging;
  *  they are NOT part of the stable public API and may change. */
-/** `ml.sh`: programs on the person's machine, from an approved `exec` (MlApi `sh`). */
+/** `ml.sh`: programs on the person's machine, from an approved `exec`, which then runs in an isolated world rather than
+ *  the page's (MlApi `sh`). A namespace, not a function: `await ml.sh.run(["cat", "notes.txt"])` takes an argv array,
+ *  never a shell string. */
 export interface MlSh {
-    /** Run one program and wait for it. A non-zero exit is a result (`ok` false), not a throw; a refusal (`Denied`,
-     *  `Refused`, `BadRequest`) throws with `e.code`. Each output comes back as its first 64 KiB of text (`text`,
+    /** Run one program and wait for it, up to `expectMs` (default: a short lease, which the `Detached` error names): past that it throws `Detached` with `e.task`
+     *  and runs on; its result arrives later as a `[task <id> …]` message, and the `task` tool awaits, tails or cancels
+     *  it. A non-zero exit is a result (`ok` false), not a throw; a refusal (`Denied`, `Refused`, `BadRequest`) throws
+     *  with `e.code`. Each output comes back as its first 64 KiB of text (`text`,
      *  `complete`) and a `@tool:` pointer (`token`) to the whole. `ran` says where it ran: `host-sandbox` (writes only
      *  inside the workspace folders, no network) or `host-plain`. A call past its memory bound is killed: `killed`
      *  is `"oom"`, and `peakFootprint`/`memoryBound` are bytes; `cpuMs` is the CPU time it used, in milliseconds,
@@ -86,8 +90,8 @@ export interface MlSh {
      *  when the host reported nothing (unknown, never "none"); `protectedChangedTruncated` means the list was cut.
      * @param argv the program and its arguments, e.g. `["rg", "-n", "TODO", "src"]`
      * @param opts `cwd` (absolute, or relative to the first workspace folder), `env` (variables to add; most make the
-     *   call ask), `timeoutMs` */
-    run(argv: string[], opts?: { cwd?: string; env?: Record<string, string>; timeoutMs?: number }): Promise<{
+     *   call ask), `timeoutMs` (the host kills it then; default 120 s), `expectMs` (how long you expect it to take) */
+    run(argv: string[], opts?: { cwd?: string; env?: Record<string, string>; timeoutMs?: number; expectMs?: number }): Promise<{
         code: number | null; signal: string | null; ok: boolean; timedOut: boolean; cancelled: boolean; durationMs: number;
         ran: "host-sandbox" | "host-plain" | "container";
         stdout: { token: string | null; size: number; truncated: boolean; text: string; complete: boolean };

@@ -137,6 +137,77 @@ test("a run a PAGE built cannot dress its task up: a display on its START_RUN is
     assert.equal("display" in start, false, "the transcript shows the page's task as the model got it");
 });
 
+// --- a PDF attached at the start: an `@file:` pointer the run reads by page (sw-attach.ts) ---
+
+const PDF = { name: "report.pdf", type: "application/pdf", data: Buffer.from("%PDF-1.7 annual").toString("base64") };
+const PDF_DOC = { pageCount: 2, pages: [{ n: 1, text: "Annual report", kind: "text", measure: {} }, { n: 2, text: "Revenue grew 12% in the second half.", kind: "text", measure: {} }] };
+
+/** A worker with a value store and a PDF reader, whose model reads page 2 of the file its task names on every turn. */
+async function pdfWorld() {
+    const { IDBFactory } = require("fake-indexeddb");
+    const reads = [];
+    const bg = loadBackground({
+        config, openTabs: [SITE], indexedDB: new IDBFactory(),
+        onPdfRead: (msg) => { reads.push(msg.b64); return { ok: true, doc: PDF_DOC }; },
+        onFetch: (call) => {
+            if (!call.url.includes("/chat/completions")) return jsonResponse({});
+            const msgs = call.body.messages;
+            const ptr = msgs.map((m) => String(m.content ?? "")).join("\n").match(/pointer="(@file:[^"]+)"/)?.[1];
+            return msgs.at(-1).role === "tool" || !ptr
+                ? jsonResponse({ choices: [{ message: { content: "done" } }] })
+                : jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: `d${msgs.length}`, type: "function", function: { name: "dereference", arguments: JSON.stringify({ token: ptr, pipe: "pages 2" }) } }] } }] });
+        },
+        onTabMessage: async (_t, msg) => (msg.type === "ADOPT_RUN_NOW" ? { pageInfo: "" } : msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.finish ? { result: "" } : undefined),
+    });
+    const chats = () => bg.calls.filter((c) => c.url.includes("/chat/completions"));
+    const toolReplies = () => chats().flatMap((c) => c.body.messages.filter((m) => m.role === "tool").map((m) => m.content));
+    const state = async (hash, id) => JSON.parse(JSON.stringify((await bg.send({ type: "DUMP_RUN_STATE", payload: { run: hash } }, EXT)).data.entries.find((e) => e.id === id)?.value ?? null));
+    return { bg, reads, chats, toolReplies, state };
+}
+
+test("a PDF at the start: the task carries its outline under its pointer, the rows are held for the session, and the run reads a page by it", T, async () => {
+    const w = await pdfWorld();
+    const { hash } = await w.bg.context.__mlStartUserRunForTest(7, { task: "what grew?", files: [PDF], surface: "hud" });
+    for (let i = 0; i < 100 && w.chats().length < 2; i++) await flush(4);
+    assert.equal(w.reads.length, 1, "read once, in the offscreen document");
+    const user = w.chats()[0].body.messages.find((m) => m.role === "user").content;
+    assert.match(user, /^what grew\?\n\n<file name="report\.pdf" type="application\/pdf" bytes="15" pages="2" pointer="@file:[^"]+">\n@file:\S+ "report\.pdf": attached by the person\. PDF, 2 pages/);
+    assert.ok(!user.includes("Revenue grew"), "page 2 is not in the task, only the first page's preview");
+    assert.match(w.toolReplies().at(-1), /<page n="2">\nRevenue grew 12% in the second half\.\n<\/page>/, "the pointer reads the stored document");
+    const rows = (await w.bg.context.__mlValues.rows()).filter((r) => r.sessions.includes(hash));
+    assert.deepEqual(rows.map((r) => [r.format, r.held, r.source]).sort(), [["bytes", true, "report.pdf"], ["paged", true, "report.pdf"]]);
+    assert.deepEqual((await w.state(hash, "run.files")).map((f) => [f.name, f.pages, f.turn]), [["report.pdf", 2, 1]]);
+});
+
+test("a session whose pointer store newer sessions pushed out keeps its file: the next turn's store puts the pointer back from the payload and reads it", T, async () => {
+    const w = await pdfWorld();
+    const { hash } = await w.bg.context.__mlStartUserRunForTest(7, { task: "what grew?", files: [PDF], surface: "hud" });
+    for (let i = 0; i < 100 && w.chats().length < 2; i++) await flush(4);
+    for (let n = 0; n < 24; n++) await w.bg.context.__mlStartUserRunForTest(7, { task: `other ${n}`, surface: "hud" });
+    await flush(40);
+    const held = (await w.bg.context.__mlValues.rows()).filter((r) => r.sessions.includes(hash));
+    assert.equal(held.length, 2, "the file's rows outlive its pointer store");
+    const before = w.toolReplies().length;
+    const r = await w.bg.send({ type: "USER_RUN_ACTION", payload: { hash, action: "send", text: "and again?", surface: "hud" } }, { tab: { id: 7, url: SITE.url }, url: SITE.url });
+    assert.equal(r.data, "turn");
+    for (let i = 0; i < 200 && w.toolReplies().length <= before; i++) await flush(4);
+    assert.match(w.toolReplies().at(-1), /Revenue grew 12%/, "the pointer resolves and its document reads");
+});
+
+test("a PDF that will not read refuses the start with its reason, and nothing is stored or started", T, async () => {
+    const { IDBFactory } = require("fake-indexeddb");
+    const bg = loadBackground({ config, openTabs: [SITE], indexedDB: new IDBFactory(), onPdfRead: () => ({ ok: false, code: "encrypted", refusal: "This PDF is encrypted." }),
+        onFetch: () => jsonResponse({ choices: [{ message: { content: "done" } }] }), onTabMessage: async () => ({ pageInfo: "" }) });
+    await assert.rejects(bg.context.__mlStartUserRunForTest(7, { task: "read", files: [PDF], surface: "hud" }), /report\.pdf: This PDF is encrypted\./);
+    assert.deepEqual(await bg.context.__mlValues.rows(), []);
+    assert.equal(bg.calls.filter((c) => c.url.includes("/chat/completions")).length, 0);
+});
+
+test("a run started with a malformed files list is refused by the one rule, whichever surface sent it", T, async () => {
+    const { bg } = world();
+    await assert.rejects(bg.context.__mlStartUserRunForTest(7, { task: "read", files: [{ name: "x", type: "application/pdf", body: "forged outline", pointer: "@file:abc" }], surface: "hud" }), /files must be a list of/);
+});
+
 // --- where a person's message was typed, as the channel it came over says ---
 
 const EXT = { id: "ext", url: "chrome-extension://ext/sidebar.html", origin: "chrome-extension://ext" };
@@ -285,6 +356,116 @@ test("a follow-up to a run the worker built is a turn the worker starts, only fr
     const last = chats()[1].body.messages.filter((m) => m.role === "user").map((m) => m.content);
     assert.deepEqual(last, ["first", "and then this"]);
     assert.ok(!JSON.stringify(chats()).includes("hijacked follow-up"));
+});
+
+const IMG = "data:image/png;base64,iVBORw0KGgoFOLLOWUP";
+const fromTab = { tab: { id: 7, url: SITE.url }, url: SITE.url };
+/** The images of the last user message of a model call, as the openai adapter writes them. */
+const userImages = (call) => JSON.stringify(call.body.messages.filter((m) => m.role === "user").at(-1)).match(/data:image\/png;base64,[A-Za-z0-9]+/g) ?? [];
+
+test("a follow-up's image reaches the model on the next turn, and the transcript shows it with the person's words", T, async () => {
+    const { bg, chats } = world();
+    const { hash } = await bg.context.__mlStartUserRunForTest(7, { task: "first", surface: "hud", vision: true });
+    await flush(20);
+    const r = await bg.send({ type: "USER_RUN_ACTION", payload: { hash, action: "send", text: "what is in this?", images: [IMG], surface: "hud" } }, fromTab);
+    assert.equal(r.data, "turn");
+    await flush(30);
+    assert.equal(chats().length, 2);
+    assert.deepEqual(userImages(chats()[1]), [IMG], "this turn's image, sent to a driver that sees");
+    assert.deepEqual(userImages(chats()[0]), [], "and not carried back into the first turn's message");
+    const say = fanned(bg, "agent-say").at(-1);
+    assert.deepEqual([say.text, [...say.images]], ["what is in this?", [IMG]]);
+});
+
+test("an image-only follow-up is a turn too", T, async () => {
+    const { bg, chats } = world();
+    const { hash } = await bg.context.__mlStartUserRunForTest(7, { task: "first", surface: "hud", vision: true });
+    await flush(20);
+    assert.equal((await bg.send({ type: "USER_RUN_ACTION", payload: { hash, action: "send", text: "", images: [IMG], surface: "hud" } }, fromTab)).data, "turn");
+    await flush(30);
+    assert.deepEqual(userImages(chats()[1]), [IMG]);
+});
+
+test("a steer with an image while the run works reaches the model at its next step, beside the words", T, async () => {
+    const w = heldWorld(["chat_metadata"]);
+    const { hash } = await w.bg.context.__mlStartUserRunForTest(7, { task: "first", surface: "hud", vision: true });
+    await w.waitCalls(1);
+    assert.equal(await w.bg.context.__mlUserRunActionForTest(hash, "send", { text: "look at this too", images: [IMG] }, HUB), "steer");
+    w.gates[0]();
+    await w.waitCalls(2);
+    const user = w.chats()[1].body.messages.filter((m) => m.role === "user").at(-1);
+    assert.match(JSON.stringify(user), /look at this too/);
+    assert.deepEqual(userImages(w.chats()[1]), [IMG]);
+    w.gates[1]();
+});
+
+test("a follow-up image the run may not send (vision not known, no reader) is refused before anything is sent, and the run says so", T, async () => {
+    const { bg, chats } = world();
+    const { hash } = await bg.context.__mlStartUserRunForTest(7, { task: "first", surface: "hud" });
+    await flush(20);
+    const r = await bg.send({ type: "USER_RUN_ACTION", payload: { hash, action: "send", text: "and this?", images: [IMG], surface: "hud" } }, fromTab);
+    assert.equal(r.data, null);
+    assert.match(r.refused, /image/i, "answered as handled, so the shell does not hand it to the page");
+    await flush(20);
+    assert.equal(chats().length, 1, "no turn went out");
+    assert.match(fanned(bg, "agent-note").at(-1).text, /^Your message was not sent: /);
+    assert.equal(fanned(bg, "agent-say").length, 0, "nothing is shown as sent");
+});
+
+test("from the DevTools or side panel (ML_SESSION_REMOTE), a refused follow-up image is said in the run's step list, and nothing goes to the page", T, async () => {
+    const { bg, chats } = world();
+    const { hash } = await bg.context.__mlStartUserRunForTest(7, { task: "first", surface: "hud" });
+    await flush(20);
+    const before = bg.tabMessages.filter(([, m]) => m.type === "ML_SESSION_TO_PAGE").length;
+    void bg.send({ type: "ML_SESSION_REMOTE", tabId: 7, action: "send", hash, text: "and this?", images: [IMG], surface: "hud" }, EXT);
+    await flush(20);
+    assert.equal(chats().length, 1, "no turn went out");
+    assert.match(fanned(bg, "agent-note").at(-1)?.text ?? "", /^Your message was not sent: /);
+    assert.equal(bg.tabMessages.filter(([, m]) => m.type === "ML_SESSION_TO_PAGE").length, before);
+});
+
+const NINE = Array.from({ length: 9 }, (_, i) => `data:image/png;base64,iVBORw0KGgoNINE${i}`);
+const CAP = "a message takes up to 8 images; remove 1";
+
+test("past the cap a follow-up is refused at the worker, never cut, on a run that sees: USER_RUN_ACTION and ML_SESSION_REMOTE", T, async () => {
+    const { bg, chats } = world();
+    const { hash } = await bg.context.__mlStartUserRunForTest(7, { task: "first", surface: "hud", vision: true });
+    await flush(20);
+    const r = await bg.send({ type: "USER_RUN_ACTION", payload: { hash, action: "send", text: "and these?", images: NINE, surface: "hud" } }, fromTab);
+    assert.equal(r.data, null);
+    assert.equal(r.refused, CAP);
+    void bg.send({ type: "ML_SESSION_REMOTE", tabId: 7, action: "send", hash, text: "and these?", images: NINE, surface: "devtools" }, EXT);
+    await flush(20);
+    assert.equal(chats().length, 1, "no turn went out");
+    assert.deepEqual(fanned(bg, "agent-note").map((n) => n.text), [`Your message was not sent: ${CAP}`, `Your message was not sent: ${CAP}`], "both refusals are said in the step list");
+    assert.equal(fanned(bg, "agent-say").length, 0, "nothing is shown as sent");
+    assert.ok(!JSON.stringify(chats()).includes("NINE"), "no image reached the model");
+});
+
+test("past the cap a start is refused at the worker (USER_START_RUN): no run, no model call", T, async () => {
+    const { bg, chats } = world();
+    const r = await bg.send({ type: "USER_START_RUN", payload: { task: "what are these?", images: NINE, surface: "hud", vision: true } }, fromTab);
+    assert.equal(r.error, CAP);
+    await flush(20);
+    assert.equal(chats().length, 0);
+});
+
+test("the relays pass every image through: the worker's refusal, not a silent cut, decides", async () => {
+    const { cleanImages } = await import("../src/contract/contract-run.ts");
+    assert.equal(cleanImages(NINE).length, 9);
+    assert.deepEqual(cleanImages(["not an image", NINE[0]]), [NINE[0]]);
+});
+
+test("ADVERSARIAL: a page's RESUME_RUN cannot put images into a turn: only the worker's own call carries them", T, async () => {
+    const { bg, chats } = world();
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "pagerun2", task: "go", systemPrompt: "sys", tools: [], model: "m", think: null, maxSteps: 3, autoApprovePython: false, autoApproveReadonly: false, surface: "off",
+    } }, fromTab);
+    await flush(20);
+    await bg.send({ type: "RESUME_RUN", payload: { runId: "pagerun2", task: "again", images: [IMG] } }, fromTab);
+    await flush(20);
+    assert.ok(chats().length >= 2, "the page's turn ran");
+    assert.ok(!JSON.stringify(chats()).includes("FOLLOWUP"), "no image from the page's payload reached the model");
 });
 
 test("a run a page built is not the worker's to drive: the action falls back to the page", T, async () => {
@@ -657,13 +838,14 @@ test("a pointer read is answered in the worker from the run's own store; the pag
     assert.deepEqual(log.map((r) => r.kind), ["readonly-page", "readonly-worker"]);
 });
 
-test("a survey that needs the page AND the run's pointers reaches the person: the page leg refuses it", T, async () => {
-    // The worker reads the pointer, reaches `document`, defers; the page leg refuses pointer reads (run-delegation.ts),
-    // which the fake page plays by answering `readonly: false`. Either way, nothing is auto-approved.
+test("a survey that needs the page AND the run's pointers reaches the person: it never goes to the page leg", T, async () => {
+    // The worker reads the pointer, reaches `document`, defers; a script naming a pointer has no page leg (exec-routing.ts
+    // `surveyMayEnterPage`), so it goes to the gate. Were it sent, the page leg would refuse the pointer read
+    // (run-delegation.ts), which the fake page plays by answering `readonly: false`. Either way, nothing is auto-approved.
     const { toPage, log } = await surveyRun(["document.title", "document.title + @tool:exec"],
         (js) => (/dereference/.test(js) || /@tool:/.test(js) ? { readonly: false, result: "" } : { readonly: true, result: "value: \"Site\"" }));
-    assert.equal(toPage.filter((p) => p.readonlyTry).length, 2);
-    assert.deepEqual(log.map((r) => [r.kind, r.reason]), [["readonly-page", "reads-page"], ["readonly-page", "refused-in-page"]]);
+    assert.equal(toPage.filter((p) => p.readonlyTry).length, 1, "only the plain survey went to the page");
+    assert.deepEqual(log.map((r) => [r.kind, r.reason]), [["readonly-page", "reads-page"], ["readonly-worker", "script-isolated"]]);
 });
 
 // --- the pointer values an approved exec is sent (slice 2 part 1c) ---
@@ -1087,9 +1269,12 @@ test("what real models got wrong about ml.current is said where agent_api_docs s
 });
 
 test("the flag OFF: no word of ml.current in the prompt, and a survey naming it is not answered from the run's context", T, async () => {
-    const { system, toPage } = await surveyRun(["ml.current.run.step"], () => ({ readonly: false }), { selfIntrospection: false });
+    const { system, toPage, log } = await surveyRun(["ml.current.run.step"], () => ({ readonly: false }), { selfIntrospection: false });
     assert.doesNotMatch(system, /ml\.current/);
-    assert.equal(toPage.length > 0, true, "with no snapshot in the worker the survey went on to the page, which refuses it");
+    // With no snapshot in the worker the survey needs more than the worker has; a script naming ml.current has no page
+    // leg, so it goes to the gate.
+    assert.equal(toPage.filter((p) => p.readonlyTry).length, 0, "the page was asked to survey a script naming ml.current");
+    assert.deepEqual(log.map((r) => [r.kind, r.reason]), [["readonly-worker", "script-isolated"]]);
 });
 
 test("read-only exec NOT auto-approved: the prompt does not offer ml.current, which no survey could then reach", T, async () => {

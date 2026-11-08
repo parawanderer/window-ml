@@ -186,7 +186,7 @@ const ROWS = "rows", BLOBS = "blobs", TOMBS = "tombstones";
 const DB_VERSION = 2;
 
 /** The SHA-256 of a blob's bytes, hex. */
-async function sha256Hex(blob: Blob): Promise<string> {
+export async function sha256Hex(blob: Blob): Promise<string> {
     const d = new Uint8Array(await crypto.subtle.digest("SHA-256", await blob.arrayBuffer()));
     return [...d].map((x) => x.toString(16).padStart(2, "0")).join("");
 }
@@ -347,10 +347,11 @@ export class ValueStore {
         return ok;
     }
 
-    /** A session ended: drop it from every value it held, and evict the values nobody else holds. */
-    async releaseSession(session: string): Promise<Eviction[]> {
+    /** A session ended: drop it from every value it held, and evict the values nobody else holds. `keep` names rows
+     *  the session still reaches after all (an attached file whose pointer is put back from the run's payload). */
+    async releaseSession(session: string, keep: readonly string[] = []): Promise<Eviction[]> {
         const db = await this.open();
-        const rows = await done(db.transaction(ROWS).objectStore(ROWS).index("session").getAll(session)) as ValueRow[];
+        const rows = (await done(db.transaction(ROWS).objectStore(ROWS).index("session").getAll(session)) as ValueRow[]).filter((r) => !keep.includes(r.key));
         const shared = rows.filter((r) => r.sessions.length > 1);
         if (shared.length) {
             const tx = db.transaction(ROWS, "readwrite");

@@ -327,7 +327,7 @@ function writeAgent(s: Session, d: Sink): void {
     // before the next turn's prompt at the same step). The LAST answer is the final one (Answer/Stopped).
     const answers = s.answers || [];
     const inter = [
-        ...(s.says || []).map((x, j) => ({ pos: x.atStep || 0, ts: x.ts, say: x.text, sayImages: x.images, sayDisplay: x.display, sayIdx: j })),
+        ...(s.says || []).map((x, j) => ({ pos: x.atStep || 0, ts: x.ts, say: x.text, sayImages: x.images, sayDisplay: x.display, sayIdx: j, sayTask: x.task })),
         ...answers.map((a, i) => ({ pos: a.atStep || 0, ts: a.ts, answer: a, last: i === answers.length - 1 })),
         // The session picked up again on ANOTHER page, drawn as the same seam the sidebar draws. Positioned at the
         // newest step that had already happened when it did, so the timestamp tie-break puts it after that turn's
@@ -346,6 +346,8 @@ function writeAgent(s: Session, d: Sink): void {
     const emitInter = (x: typeof inter[number]) => {
         // "User Asked" (not "you") — the export is shared with the DevTools panel; "you" is HUD-only.
         if ("say" in x) {
+            // A detached call's result: what the model read, under the task's name, never as the person's words.
+            if (x.sayTask) { d.head(`Task ${x.sayTask} Result`); d.code(x.say || ""); return; }
             d.head("User Asked");
             (x.sayImages || []).forEach((img, k) => d.image(img, `say-${x.sayIdx}-img-${k + 1}`, `follow-up image ${k + 1}`));
             if (!x.sayDisplay) { d.prose(x.say || ""); return; }

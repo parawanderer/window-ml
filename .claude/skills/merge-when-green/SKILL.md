@@ -7,13 +7,18 @@ description: Merge your own PR only when the standing rule holds (pipeline green
 
 ```bash
 node scripts/merge-when-green.mjs 501                  # check once: OK, or why not (exit 0 / 1)
-node scripts/merge-when-green.mjs 501 --wait --merge --session <your session id>   # while CI runs, one API call a minute (up to 90 min; sleeps if the account's hourly API budget runs low), then squash-merge
+node scripts/merge-when-green.mjs 501 --wait --merge --session <your session id>   # while CI runs, a poll a minute (each poll ~6 REST + 2 GraphQL calls; up to 90 min; sleeps if the account's hourly API budget runs low), then squash-merge
 node scripts/merge-when-green.mjs 501 --read 5577239105 --read 444   # a post you have read that asks nothing further
-node scripts/merge-when-green.mjs 501 --wait --merge --await-review   # you NAMED a reviewer: wait for their post first
+node scripts/merge-when-green.mjs 501 --wait --merge --await-review   # you NAMED a reviewer: wait for their post ON THIS HEAD first (created after the head commit; an older post is a review of an older head and does not release it)
 ```
 
 Run the `--wait` form in the background (the `background-work` skill): it exits when the PR is merged or refused, so the
 completion notice is the signal.
+
+Waiting is not one API call: every minute's poll costs about 6 REST + 2 GraphQL calls (the PR view, the run and its
+jobs, the three post lists, the stacked list), so a wait that runs to its 90-minute cap costs ~540 REST calls. An
+`--await-review` wait is the one likely to run that long — nobody has posted on the head yet, and the arm holds — so
+budget for it before naming a reviewer.
 
 ## The rule it checks
 
@@ -91,8 +96,11 @@ form the flag takes, so the next run is a copy of what it printed:
 
 ```
 834: has 1 reviews/comments and 0 inline comments: read them (--read 5577239105)
-  review 5577239105 parawanderer: Reviewed on `7afaedde` because the red team cannot review it
+  review 5577239105 parawanderer at 2026-11-07T12:02:47.000Z (head 2026-11-07T12:03:15.000Z): Reviewed on `7afaedde` because the red team cannot review it
 ```
+
+Each unread line carries when the post was created beside the head commit's own time: a post older than the head is
+one a push has already answered, and the line says so without anybody comparing timestamps.
 
 - **The tool never parses a body.** The flag is YOU saying you read that one post and nothing is outstanding on it. A
   review that asks something and is not named still refuses, as does one you never look at.

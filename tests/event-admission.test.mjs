@@ -11,8 +11,9 @@ const { pageMayWrite, eventSession, WORKER_ONLY_KINDS } = await import("../src/e
 const KINDS = [...new Set([...readFileSync(new URL("../src/contract/contract-debug.ts", import.meta.url), "utf8").matchAll(/kind: "([a-z-]+)"/g)].map((m) => m[1]))];
 // Not `agent-say`: the worker shows every turn of a run it hosts itself, the site's with its name (SITE_ACCESS_SLICE3.md, Q2a).
 const LIFECYCLE = new Set(["agent", "agent-result"]);
-/** The kinds only the worker writes about a site's agent (the start card, its outcome, the site's turns, its wait). */
-const WORKER_ONLY = new Set(["agent-start-ask", "agent-start-decided", "agent-site", "agent-person", "agent-wait", "agent-site-say", "agent-note"]);
+/** The kinds only the worker writes about a site's agent (the start card, its outcome, the site's turns, its wait), and a
+ *  detached call's result (`agent-task-say`, ASYNC_CALLS.md mode 1), which a page that could write would put words in. */
+const WORKER_ONLY = new Set(["agent-start-ask", "agent-start-decided", "agent-site", "agent-person", "agent-wait", "agent-site-say", "agent-task-say", "agent-note"]);
 
 // --- what a page may add ---
 

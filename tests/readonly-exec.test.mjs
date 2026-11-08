@@ -2086,3 +2086,111 @@ test("RegExp.prototype is no regexp, and a Proxy is no String or RegExp, and the
     await assert.rejects(run(`const o = await ml.models(); return o.test("x")`, world(), handed(RegExp.prototype)), refused);
     assert.ok(!trapped.some((t) => t === "global" || t === "valueOf"), `a borrowed brand touched a trap: ${trapped}`);
 });
+
+// --- ADVERSARIAL: `join` (and what is `join` underneath) turns only data into text -------------------------------------------
+// The host's `join` coerces each element by running its OWN `toString`/`valueOf`, page code the interpreter cannot see. So an
+// array reaching `join`, `toString`, `+` or a template is checked first: primitives and arrays of them pass, anything else
+// is `NotInDialect`. Elements are read as own data descriptors (a getter or an inherited index is refused, not run).
+
+test("join refuses an object element, whoever built it, and no function runs", async () => {
+    const ran = [];
+    const page = { toString() { ran.push("page.toString"); return "P"; }, valueOf() { ran.push("page.valueOf"); return "P"; } };
+    for (const js of [
+        `const o = await ml.models(); return [o].join("")`,
+        `const o = await ml.models(); return [].concat(o).join("-")`,
+        `const o = await ml.models(); return [1, [2, [o]]].join(",")`,
+        `const o = await ml.models(); return [o].toString()`,
+        `const o = await ml.models(); return [o] + ""`,
+        "const o = await ml.models(); return `${[o]}`",
+        `return [{ toString: () => "x" }].join("")`,
+        `return [{ a: 1 }].join("")`,
+        `return [new Date(0)].join("")`,
+        `const o = await ml.models(); return [o, "a"].sort()`,
+        `const o = await ml.models(); return [[o], 1].sort()`,
+        `return [[1], () => 2].join("")`,
+    ]) {
+        await assert.rejects(run(js, world(), handed(page)), outOfDialect, js);
+        assert.deepEqual(ran, [], `${js} ran ${JSON.stringify(ran)}`);
+    }
+});
+
+test("join refuses an element that is a getter or inherited, and runs neither", async () => {
+    const ran = [];
+    const withGetter = []; Object.defineProperty(withGetter, 0, { get() { ran.push("getter"); return "x"; }, enumerable: true }); withGetter.length = 1;
+    const inherits = new Array(1); Object.setPrototypeOf(inherits, Object.assign([], { 0: { toString() { ran.push("inherited"); return "I"; } } }));
+    for (const arr of [withGetter, inherits]) {
+        await assert.rejects(run(`const a = await ml.models(); return a.join("")`, world(), handed(arr)), outOfDialect);
+    }
+    assert.deepEqual(ran, [], `page code ran: ${JSON.stringify(ran)}`);
+});
+
+test("the controls: joining the page's own strings, numbers, nulls, holes and nested arrays of them still works", async () => {
+    assert.equal((await run(`return ["a", 1, null, undefined, true].join("-")`)).value, "a-1---true");
+    assert.equal((await run(`return [1, [2, [3, "x"]]].join(",")`)).value, "1,2,3,x");
+    assert.equal((await run(`return [1, 2].toString()`)).value, "1,2");
+    assert.equal((await run(`return [1, 2] + ""`)).value, "1,2");
+    assert.equal((await run("return `${[1, [2]]}`")).value, "1,2");
+    assert.equal((await run(`const a = await ml.models(); return a.join("+")`, world(), handed(["x", "y"]))).value, "x+y");
+    assert.equal((await run(`const a = await ml.models(); return a.join("-")`, world(), handed([1, , 3]))).value, "1--3", "a real hole is empty text");
+    assert.equal((await run(`const a = [1]; a.push(a); return a.join("-")`)).value, "1-", "a cycle prints empty, as join does");
+    assert.deepEqual((await run(`return [10, 9, 1, "b", "a"].sort()`)).value, [1, 10, 9, "a", "b"], "a default sort of data is unchanged");
+    assert.deepEqual((await run(`return [{ n: 2 }, { n: 1 }].sort((x, y) => x.n - y.n)`)).value, [{ n: 1 }, { n: 2 }], "a sort WITH a comparator never coerces, so objects still sort");
+});
+
+test("join's refusal is the SAME gate when the array falls out of dialect afterwards: nothing is left behind", async () => {
+    const doc = world();
+    const before = doc.body.innerHTML;
+    await assert.rejects(run(`const o = await ml.models(); document.body.setAttribute("x", "1"); return [o].join("")`, doc, handed({ toString() { return "P"; } })), outOfDialect);
+    assert.equal(doc.body.innerHTML, before);
+});
+
+test("join over a large nested array is still bounded before the element check, and finishes", async () => {
+    // Halting: the walk is `expands`-bounded first (a shared-part array refuses), then each node is visited once.
+    await assert.rejects(run(`let d = [1]; for (const i of Array.from({ length: 40 }, (_, k) => k)) d = [d, d]; return d.join(",")`), outOfDialect);
+    const t0 = Date.now();
+    assert.equal((await run(`return Array.from({ length: 2000 }, (_, k) => k).join(",").length`)).value, 8889);
+    assert.ok(Date.now() - t0 < 5000);
+});
+
+// --- join's guard, the arguments and branches the first rows did not pin ---------------------------------------------------
+
+test("join's SEPARATOR is data too: an object separator is refused and its own toString never runs", async () => {
+    const ran = [];
+    const page = { toString() { ran.push("toString"); return "P"; }, valueOf() { ran.push("valueOf"); return "P"; } };
+    for (const js of [
+        `const o = await ml.models(); return [1, 2].join(o)`,
+        `const o = await ml.models(); return [1, 2].join([o])`,
+        `return [1, 2].join({ toString: () => "x" })`,
+        `return [1, 2].join(() => "x")`,
+    ]) {
+        await assert.rejects(run(js, world(), handed(page)), outOfDialect, js);
+        assert.deepEqual(ran, [], `${js} ran ${JSON.stringify(ran)}`);
+    }
+    assert.equal((await run(`return [1, 2].join(null)`)).value, "1null2", "a primitive separator (null included) is unchanged");
+    assert.equal((await run(`return [1, 2].join(3)`)).value, "132");
+});
+
+test("sort(undefined) is a comparator-less sort, and its refusal names sort, not join", async () => {
+    const ran = [];
+    const page = { toString() { ran.push("toString"); return "P"; } };
+    for (const js of [`const o = await ml.models(); return [o, 2].sort(undefined)`, `const o = await ml.models(); return [o, 2].sort()`]) {
+        await assert.rejects(run(js, world(), handed(page)), (e) => outOfDialect(e) && /sort/.test(e.message) && !/join would/.test(e.message), js);
+    }
+    await assert.rejects(run(`const o = await ml.models(); return [o].join("")`, world(), handed(page)), (e) => /which join would/.test(e.message));
+    assert.deepEqual(ran, [], `page code ran: ${JSON.stringify(ran)}`);
+});
+
+test("the guard's remaining branches: an expanding coercion is still refused, an enormous length is refused unread, a lying length is refused", async () => {
+    // `expands` after `joinsData` in a coercion: a part-sharing array of primitives passes the element check once and is then
+    // refused by the expansion bound, instead of the host building a 2^40-element string.
+    await assert.rejects(run(`let d = [1]; for (const k of Array.from({ length: 40 }, (_, i) => i)) d = [d, d]; return d + ""`), outOfDialect);
+    await assert.rejects(run("let d = [1]; for (const k of Array.from({ length: 40 }, (_, i) => i)) d = [d, d]; return `${d}`"), outOfDialect);
+    // joinsData's own cap: refused from the length alone, before one element is read.
+    const huge = Array.from({ length: 6 }, () => { const a = []; a.length = 1_000_000; return a; });
+    const t0 = Date.now();
+    await assert.rejects(run(`const a = await ml.models(); return a + ""`, world(), handed(huge)), (e) => outOfDialect(e) && /too large for this coercion without asking/.test(e.message));
+    assert.ok(Date.now() - t0 < 2000, "the length was refused without walking it");
+    // A length the page reports as something other than a number (a Proxy's descriptor trap) is not trusted.
+    const lying = new Proxy([], { getOwnPropertyDescriptor(t, k) { return k === "length" ? { value: "2", writable: true, enumerable: false, configurable: false } : Reflect.getOwnPropertyDescriptor(t, k); } });
+    await assert.rejects(run(`const a = await ml.models(); return a.join(",")`, world(), handed(lying)), (e) => outOfDialect(e) && /length is not plain data/.test(e.message));
+});

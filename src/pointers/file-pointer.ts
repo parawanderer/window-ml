@@ -89,26 +89,35 @@ function pagesSay(ns: number[], one: string, many: string): string {
     return ns.length === 1 ? `page ${ns[0]} ${one}` : `pages ${pageRanges(ns)} ${many}`;
 }
 
+/** "48 pages", or "500 of 900 pages read" when the read stopped short: what every line about the file says. */
+export function filePagesSaid(f: Pick<FilePointer, "pages" | "read">): string {
+    return f.read < f.pages ? `${f.read} of ${f.pages} pages read` : `${f.pages} page${f.pages === 1 ? "" : "s"}`;
+}
+
+/** The `pages` argument a hint suggests: the first three pages read, or "1" for a one-page file, so it never names a
+ *  page the file does not hold. */
+export const firstPages = (f: Pick<FilePointer, "read">): string => (f.read > 1 ? `1-${Math.min(f.read, 3)}` : "1");
+
 /**
  * What the model is given up front for an attached PDF, in place of its content: the pointer, the name, who it came
  * from, its size, which pages need eyes, how to read it, and the first page's opening.
  * @param f the file
  * @param doc the read document, for the preview
  * @param first the earlier file by the same name, when there is one
+ * @returns the outline, escaped, and how many escapes it took (the block's `escaped`)
  */
-export function fileOutline(f: FilePointer, doc: PdfDoc, first?: FilePointer): string {
+export function fileOutline(f: FilePointer, doc: PdfDoc, first?: FilePointer): { text: string; escaped: number } {
     const who = first
         ? `a second file by this name; the first is ${fileRef(first)}, attached in turn ${first.turn}. Attached by the person`
         : "attached by the person";
-    const size = f.read < f.pages ? `${f.read} of ${f.pages} pages read` : `${f.pages} page${f.pages === 1 ? "" : "s"}`;
+    const size = filePagesSaid(f);
     const text = f.chars ? `about ${tokensOf(f.chars)} tokens of text` : "no text layer";
     const lines = [`${fileRef(f)} ${quoteName(f.name)}: ${who}. PDF, ${size}, ${text}.`];
     const kinds = [
         f.figures.length ? pagesSay(f.figures, "has a figure", "have figures") : "",
         f.scans.length ? pagesSay(f.scans, "is scanned", "are scanned") : "",
     ].filter(Boolean).join("; ");
-    const span = f.read > 1 ? `1-${Math.min(f.read, 3)}` : "1";
-    lines.push(`${kinds ? `${kinds[0].toUpperCase()}${kinds.slice(1)}. ` : ""}Read with dereference(${fileRef(f)}, pipe "pages ${span}").`);
+    lines.push(`${kinds ? `${kinds[0].toUpperCase()}${kinds.slice(1)}. ` : ""}Read with dereference(${fileRef(f)}, pipe "pages ${firstPages(f)}").`);
     const page = doc.pages.find((p) => p.text.trim());
     if (page) {
         const flat = page.text.replace(/\s+/g, " ").trim();
@@ -117,7 +126,7 @@ export function fileOutline(f: FilePointer, doc: PdfDoc, first?: FilePointer): s
     }
     if (f.truncated) lines.push(f.truncated);
     // Escaped whole: the name and the preview are the file's text, and the outline sits inside the message's `<file>`.
-    return escapeSectionText(lines.join("\n")).text;
+    return escapeSectionText(lines.join("\n"));
 }
 
 /** A read document as the `pages` verb's input: one `<page n="k">` section per page read, its text escaped. A page

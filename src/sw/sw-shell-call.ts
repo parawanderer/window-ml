@@ -14,7 +14,9 @@ import type { EffectsData } from "../effects";
 import type { ShCallSpan, ShUnasked } from "../contract";
 import type { TokenStore } from "../pointers/token-pipe";
 import { bytesOf, HostError, hostTakesEnvelope, READ_CHUNK, type HostClient, type HostEnvelope, type HostFacts, type HostStream } from "../shell/host-protocol";
-import { envelopeFor, envelopeMismatch, envelopeText, manifestFor, manifestsFor, parseShRun, planSpawn, protectedChangesText, shFacts, shOut, shOutcome, shResult, wireCodeOf, ShRefused, SH_HEAD_BYTES, type ShFacts, type ShOut, type ShResult } from "../shell/sh-call";
+import { envelopeFor, envelopeMismatch, envelopeText, manifestFor, manifestsFor, parseShRun, planSpawn, protectedChangesText, shFacts, shOut, shOutcome, shResult, wireCodeOf, ShRefused, SH_HEAD_BYTES, SH_HOST_TIMEOUT_MS, SH_LEASE_MS, type ShFacts, type ShOut, type ShResult, type ShRunRequest } from "../shell/sh-call";
+import { OUTPUT_CAP } from "../contract/contract-pointers";
+import { detachTask, type TaskOutcome } from "./sw-tasks";
 import { toolToken } from "../util";
 import { defineState } from "../state-registry";
 import { binaryKind } from "./body-read";
@@ -38,10 +40,15 @@ export interface ShCallContext {
     signal: AbortSignal;
     /** The run's pointers, where each output's pointer is noted. */
     tokens: TokenStore;
+    /** `false`: the call never detaches (the extension's own read, which nothing awaits as a task). Set by worker code only. */
+    lease?: false;
 }
 
 /** What a call answers the script: its value, or the error it throws, with the `ml` wire's code. */
-export type ShAnswer = { ok: unknown } | { error: string; code: "Refused" | "Denied" | "BadRequest" | "TooLarge" | "SecretHandle" | "Failed" };
+export type ShAnswer = { ok: unknown }
+    | { error: string; code: "Refused" | "Denied" | "BadRequest" | "TooLarge" | "SecretHandle" | "Failed" }
+    /** The call outran its lease and runs on as task `task`: the script's await throws, and the result arrives later. */
+    | { error: string; code: "Detached"; task: string };
 
 /** How many outputs the host keeps for one run before the oldest is released (its pointer then holds its head only). */
 export const SH_HELD_PER_RUN = 32;
@@ -159,7 +166,7 @@ defineState({
 });
 
 /** An error answer. */
-const refuse = (code: Exclude<ShAnswer, { ok: unknown }>["code"], error: string): ShAnswer => ({ error, code });
+const refuse = (code: Exclude<Exclude<ShAnswer, { ok: unknown }>["code"], "Detached">, error: string): ShAnswer => ({ error, code });
 
 /** The answer for a throw from the host or the session. */
 function failure(e: unknown): ShAnswer {
@@ -176,8 +183,81 @@ function failure(e: unknown): ShAnswer {
  * @returns the result, or why not
  */
 export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promise<ShAnswer> {
-    let req;
+    let req: ShRunRequest;
     try { req = parseShRun(args); } catch (e) { return failure(e); }
+    const r = req;
+    return new Promise<ShAnswer>((resolve) => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        // Set once the call has detached into a task: its answer then settles the task instead of the script's await.
+        let settleTask: ((a: ShAnswer) => void) | undefined;
+        // The lease starts when the program does, never while the person is asked: a card waiting is not a call running.
+        const started = (h: ShellHost, id: string): void => {
+            if (ctx.lease === false) return;
+            const leaseMs = r.expectMs ?? SH_LEASE_MS, startedMs = Date.now();
+            timer = setTimeout(() => {
+                const settled = new Promise<TaskOutcome>((done) => { settleTask = (a) => done(taskOutcomeOf(a)); });
+                const task = detachTask(ctx.runId, { tool: "ml.sh", startedMs, leaseMs, expectMs: r.expectMs ?? null, exec: {
+                    cancel: () => h.client.cancel(id).then(
+                        (c) => c.signalled ? { confirmed: true, text: "cancelled: the host signalled its process group (SIGTERM, then SIGKILL after 2 s)." }
+                            : { confirmed: true, text: "it had already ended." },
+                        (e) => e instanceof HostError && e.code === "UnknownId" ? { confirmed: true, text: "it had already ended." }
+                            : { confirmed: false, text: `the cancel did not reach the host (${(e as Error)?.message || String(e)}).` }),
+                    tail: () => null, tailAbsent: SH_TAIL_ABSENT, settled,
+                } });
+                recordRunLog(ctx.runId, { subsystem: "shell", kind: "detached", reason: r.expectMs !== undefined ? "expected" : "default", ms: leaseMs, detail: { seq: ctx.seq, id: task, program: r.argv[0] ?? "" } });
+                resolve({ error: detachedText(task, leaseMs, r), code: "Detached", task });
+            }, leaseMs);
+        };
+        void runCall(ctx, r, started).then((a) => {
+            clearTimeout(timer);
+            if (settleTask) settleTask(a); else resolve(a);
+        });
+    });
+}
+
+/** What a detached call's `tail` says while the host cannot read a running call's output. */
+export const SH_TAIL_ABSENT = "The host reports a call's output when it ends, not while it runs.";
+
+/**
+ * The text a detached call throws in the script: which of rule 2's two cases it was (the script's own estimate missed,
+ * or the default applied), the task's id and how its result arrives, that it ends with the turn, and the time limit
+ * the host still holds it to.
+ * @param id the task
+ * @param leaseMs how long it ran before it detached
+ * @param r the request
+ */
+export function detachedText(id: string, leaseMs: number, r: Pick<ShRunRequest, "expectMs" | "timeoutMs">): string {
+    const s = (ms: number) => `${Math.round(ms / 1000)} s`;
+    const why = r.expectMs !== undefined
+        ? `you expected ~${s(r.expectMs)} and it is still running: investigate the stall, or`
+        : `no expectMs was given, so the ${s(leaseMs)} default applied and it is still running: estimate (expectMs), investigate, or`;
+    return `Detached: ml.sh detached as task ${id}; ${why} use the task tool (await, tail, cancel). Its result arrives as a [task ${id} …] message. `
+        + `It is cancelled when this turn ends; the host kills it at ${s(r.timeoutMs ?? SH_HOST_TIMEOUT_MS)} (timeoutMs).`;
+}
+
+/**
+ * A finished call's answer as a task's outcome: a non-zero exit is a result like any other (`done`); a cancelled call is
+ * `cancelled`; a call that could not run is `failed`. The text is what the model would have read, each stream's text
+ * cut to exec's own output cap with its pointer for the rest.
+ * @param a the call's answer
+ */
+export function taskOutcomeOf(a: ShAnswer): TaskOutcome {
+    if ("error" in a) return { status: "failed", text: `${a.code}: ${a.error}`, result: null };
+    const res = a.ok as ShResult;
+    const cap = OUTPUT_CAP.exec.default;
+    const stream = (name: string, o: ShOut) => o.size === 0 && !o.error ? `${name} empty`
+        : `${name} ${o.token ?? "(not kept)"} (${o.size} B)${o.error ? ` ${o.error}` : ""}: ${JSON.stringify(o.text.length > cap ? `${o.text.slice(0, cap)}…` : o.text)}`;
+    const how = [`exit ${res.code ?? res.signal ?? "?"}`, res.ok ? "ok" : "not ok", ...(res.timedOut ? ["timed out"] : []), ...(res.killed ? [`killed (${res.killed})`] : []), ...(res.error ? [res.error] : [])].join(", ");
+    return { status: res.cancelled ? "cancelled" : "done", text: `ml.sh ${how}; ${stream("stdout", res.stdout)}; ${stream("stderr", res.stderr)}`, result: res.stdout.token, code: res.code };
+}
+
+/**
+ * One call, from its facts to its result: what `shRun` answers, or, once the call has detached, what settles its task.
+ * @param ctx the step
+ * @param req the checked request
+ * @param started told once the program has started: where the lease begins
+ */
+async function runCall(ctx: ShCallContext, req: ShRunRequest, started: (h: ShellHost, id: string) => void): Promise<ShAnswer> {
     try {
         return await withShell(async (h) => {
             const cwd = h.configured.roots[0]?.path;
@@ -237,6 +317,7 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
                     }
                     noteRan(ctx.runId, facts);
                     if (ctx.signal.aborted) onAbort();
+                    started(h, id);
                     done = await h.client.waitDone(id);
                     if (before) noteOperands(ctx.runId, id, before, await readOperands(h, facts));
                 } finally { ctx.signal.removeEventListener("abort", onAbort); }

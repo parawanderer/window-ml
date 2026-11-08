@@ -511,7 +511,7 @@ export class FakeHost implements SessionHost {
                 return ok({ resolved: true });
             }
             case "session.send": {
-                const att = checkFilesField(c.files, h.summary.kind === "agent" ? "agent" : "chat");
+                const att = checkFilesField(c.files, h.summary.kind === "agent" ? "agent-turn" : "chat");
                 if (att.reason) return fail("invalid", att.reason);
                 const framed = frameFiles(c.text, fakeRead(att.files));
                 if (h.summary.kind === "agent") {
