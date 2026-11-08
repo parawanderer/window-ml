@@ -79,6 +79,13 @@ export interface BenchTask {
      * so a task about RENDERING sets it, or it measures recovery from that error. Part of the task's hash.
      */
     incognito?: boolean;
+    /**
+     * Run with ml.sh ON against a real `wmlhost`, over a fresh temp workspace holding `files`, with each of `manifests`
+     * stored for it as Settings stores one (run-once.mjs `shell`). Every gate of such a run is ruled by `shLeaseDecide`
+     * (bench/sh-lease-approver.mjs), whatever the sweep's `approve` says: only the run's own exec step is approved, and
+     * every ml.sh ask is denied. Needs a UI `surface`. Part of the task's hash.
+     */
+    shell?: { files?: Record<string, string>; manifests?: Record<string, unknown>[] };
     /** a SECOND measured turn in the same session */
     followup?: string;
     /**

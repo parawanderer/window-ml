@@ -31,6 +31,7 @@ export function statusText(s, now = Date.now()) {
     const failed = runs.filter((r) => r.state === "done" && !r.ok).length;
     const clock = (t) => new Date(t).toISOString().slice(11, 19);
     const out = [`# ${s.name}: ${s.finished ? "finished" : "running"}`, "",
+        ...(s.spec?.runsIn ? [`Runs in ${s.spec.runsIn}.`, ""] : []),
         `${done} of ${runs.length} runs done${failed ? `, ${failed} failed` : ""}${s.memory?.paused ? "; PAUSED at the memory budget" : ""}. Written ${new Date(now).toISOString()}${s.finished ? "" : ", rewritten every few seconds while the sweep runs"}.`, ""];
     if (running.length) {
         out.push("## Running now", "");
@@ -95,20 +96,23 @@ export function statusText(s, now = Date.now()) {
     return out.join("\n");
 }
 
-/** Write status.md and status.json into `dir` now, each replaced whole (a reader never sees half a file). */
+/** Write status.md, status.json and live.json into `dir` now, each replaced whole (a reader never sees half a file).
+ *  live.json is the page's whole state, which `serve.mjs <sweep dir>` follows while the sweep runs: so a sweep in a
+ *  container, whose directory is mounted from the machine, is watched from a server on the machine. */
 export function writeStatus(dir, state, now = Date.now()) {
-    for (const [f, text] of [["status.md", statusText(state, now)], ["status.json", JSON.stringify(statusJson(state), null, 2)]]) {
+    for (const [f, text] of [["status.md", statusText(state, now)], ["status.json", JSON.stringify(statusJson(state), null, 2)], ["live.json", JSON.stringify(state)]]) {
         const p = path.join(dir, f), tmp = `${p}.${process.pid}`;
         writeFileSync(tmp, text);
         renameSync(tmp, p);
     }
 }
 
-/** A writer that writes at most every `everyMs`, the latest state always landing (a trailing write), and `flush()` now.
+/** A writer that writes at most every `everyMs`, the latest state always landing (a trailing write), and `flush()` now
+ *  and for the last time: an update after it is dropped, so no live.json lands after the sweep's page.json (sweepRunning).
  *  `update` takes the state or a function that builds it, called only when a write happens, so a sweep with nobody
  *  reading pays for one build every `everyMs`, not one per event. */
 export function statusWriter(dir, { everyMs = 2000, write = writeStatus } = {}) {
-    let last = 0, timer = null, pending = null;
+    let last = 0, timer = null, pending = null, done = false;
     const go = () => {
         timer = null; last = Date.now();
         const s = pending; pending = null;
@@ -116,12 +120,13 @@ export function statusWriter(dir, { everyMs = 2000, write = writeStatus } = {}) 
     };
     return {
         update(state) {
+            if (done) return;
             pending = state;
             if (timer) return;
             const wait = Math.max(0, last + everyMs - Date.now());
             timer = setTimeout(go, wait);
             timer.unref?.();
         },
-        flush(state) { if (timer) clearTimeout(timer); timer = null; pending = state ?? pending; if (pending) go(); },
+        flush(state) { if (timer) clearTimeout(timer); timer = null; done = true; pending = state ?? pending; if (pending) go(); },
     };
 }
