@@ -137,7 +137,6 @@ test("control: a located point clear of our hosts is judged and clicked on the s
 });
 
 test("covered locate mints a point on the canvas beneath the open sidebar", async () => {
-    pending("SITE_PRESENCE gap (8) prerequisite: the locate hide must resolve the page element beneath our host");
     test.setTimeout(90_000);
     const row = await measure(true, { click: false });
     expect(row.approved, "locate itself needs no approval").toEqual([]);
@@ -147,7 +146,6 @@ test("covered locate mints a point on the canvas beneath the open sidebar", asyn
 
 // Gated on the covered-locate row: main mints no point, so the click assertion is reachable only after that fix lands.
 test("a located point beneath the open sidebar is judged and clicked on the same canvas", async () => {
-    pending("SITE_PRESENCE gap (8): trusted dispatch must reach the element the act judge resolved");
     test.setTimeout(90_000);
     const row = await measure(true);
     expectJudged(row);
