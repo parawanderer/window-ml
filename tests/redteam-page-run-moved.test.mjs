@@ -12,7 +12,10 @@
 //     ANOTHER tab's id, the early-out refuses only a PDF (`fromTabId !== tabId`, src/sw/sw-run-start.ts), and both
 //     callers then forward the files to the SENDING tab's page that built nothing (flaky-ci, review 6719096527). Its
 //     text-only sibling still falls back to that page by ruling, since a page-built chat lives there and is in none of
-//     `bgRuns`, so that shape gets the files row only.
+//     `bgRuns`, so that shape gets the files row only. A FOURTH shape needs no navigation and no aim: a settled
+//     page-built run leaves no snapshot (`tests/nav-handover.test.mjs` pins it), so after the worker is evicted it
+//     holds no `tabId` and #1520's guard (`tabId != null`) cannot fire: the file goes to the tab's current page. That
+//     row is measured and stays `{ todo }` after #1520's flip, which turns the two rows above.
 //   - TEXT: the person's typed message is relayed the same way, and is what the run is then driven BY. The fix is the
 //     hand-over the code already has for a site that may NOT use window.ml: the run becomes the worker's, the worker
 //     starts the turn, and no page carries the message. Landing after #1316; my own commit on that branch flips these.
@@ -56,14 +59,15 @@ const lastUser = (bg) => String(chats(bg).at(-1)?.body?.messages?.filter((m) => 
 
 /**
  * A worker with one tab on `A`, `A` and `B` approved (`approvedB: false` leaves `B` off the list), and a page that
- * answers the toolset push and the adoption, so a run it starts really is stored as page-built.
- * @param {{approvedB?: boolean}} [o]
+ * answers the toolset push and the adoption, so a run it starts really is stored as page-built. `restore` is a whole
+ * `chrome.storage.local` a worker wakes up on, which is how an eviction is played.
+ * @param {{approvedB?: boolean, restore?: Record<string, unknown>}} [o]
  */
-function world({ approvedB = true } = {}) {
+function world({ approvedB = true, restore } = {}) {
     const tab = { id: 7, url: A, title: "Builder" };
     const bg = loadBackground({
         config, siteGate: true,
-        local: { ml_site_always: ["https://builder.example", ...(approvedB ? ["https://other.example"] : [])] },
+        local: { ml_site_always: ["https://builder.example", ...(approvedB ? ["https://other.example"] : [])], ...(restore ?? {}) },
         openTabs: [tab],
         onFetch: (call) => call.url.includes("/chat/completions") ? jsonResponse({ choices: [{ message: { content: "ok" } }] }) : jsonResponse({}),
         onTabMessage: async (_t, msg) => (msg.type === "ADOPT_RUN_NOW" ? { pageInfo: "" } : msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.finish ? { result: "" } : undefined),
@@ -186,6 +190,26 @@ test("RED TEAM: a run's hash sent with ANOTHER tab's id sends no file to that ta
         assert.ok(!JSON.stringify(m).includes(NOTES.text), `the file's body reached tab ${tid} inside another field`);
     }
     assert.ok(fanned(bg, "agent-note").some((n) => String(n.text).includes(moved("notes.txt", "https://elsewhere.example"))), "the person was not told, in the run's step list, that the file was not sent");
+});
+
+test("RED TEAM: after the worker is evicted, a page-built run's file still cannot reach a page that did not build it", { todo: "open: a settled page-built run leaves no `ml_bgrun_*` snapshot, so a worker that has since been evicted holds no `tabId` for it and #1520's guard (`tabId != null`, src/sw/sw-run-start.ts:257-266) cannot fire: the file falls back to whatever page the tab shows" }, T, async () => {
+    // MV3 evicts an idle worker, and the run then lives only in the page that built it. The person's follow-up wakes a
+    // worker that knows nothing of the hash, so the refusal that holds before the eviction (the row above) has nothing
+    // to consult. The same tab, the same message: only the worker's memory differs.
+    const first = world();
+    await pageBuild(first.bg, "pagebuilt6");
+    const saved = JSON.parse(JSON.stringify(first.bg.localStore));
+    assert.equal(Object.keys(saved).filter((k) => k.startsWith("ml_bgrun_")).length, 0, "a settled page-built run left a snapshot, so this row's premise changed");
+    const second = world({ restore: saved });
+    second.tab.url = B;
+    const sent = await second.bg.send({ type: "USER_RUN_ACTION", payload: { hash: "pagebuilt6", action: "send", text: SECRET, files: [NOTES] } }, fromTab(7, B));
+    assert.equal(sent.refused, moved("notes.txt", "https://other.example"), `the tab channel was not told the file is refused: ${JSON.stringify(sent)}`);
+    void second.bg.send({ type: "ML_SESSION_REMOTE", tabId: 7, action: "send", hash: "pagebuilt6", text: SECRET, files: [NOTES], surface: "devtools" }, EXT);
+    await flush();
+    for (const [tid, m] of second.bg.tabMessages.filter(([, m]) => m.type === "ML_SESSION_TO_PAGE")) {
+        assert.equal(m.files, undefined, `a file went to tab ${tid}, which built nothing: ${JSON.stringify(m.files)}`);
+        assert.ok(!JSON.stringify(m).includes(NOTES.text), `the file's body reached tab ${tid} inside another field`);
+    }
 });
 
 // --- the text half: the person's message reaches the run, never the page that did not build it (after #1316) ---
