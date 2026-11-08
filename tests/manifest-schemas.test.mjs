@@ -121,7 +121,17 @@ const cmd = (m, c) => { Object.assign(m.command, c); };
 const prim = (m, p) => { m.command.primaries["-name"] = p; };
 
 /** One entry per rule validateManifest enforces: [name, base, mutate]. Both the schema and the validator must reject it. */
+const GH = () => ({ ...BIN(), program: "gh", credential: { provider: "github" }, network: { ports: [443] } });
+
 const INVALID = [
+    // a credential and its network
+    ["an unknown credential provider", GH, (m) => { m.credential.provider = "aws"; }],
+    ["a credential with an env name", GH, (m) => { m.credential.env = "GH_TOKEN"; }],
+    ["a provider named by another program", GH, (m) => { m.program = "curl"; }],
+    ["a network with no credential", GH, (m) => { delete m.credential; }],
+    ["a port the provider does not list", GH, (m) => { m.network.ports = [80]; }],
+    ["an empty port list", GH, (m) => { m.network.ports = []; }],
+    ["a host list (not yet a field)", GH, (m) => { m.network.hosts = ["api.github.com"]; }],
     // unknown keys, at every level
     ["unknown top-level key", BIN, (m) => { m.extra = 1; }],
     ["unknown command key", BIN, (m) => { m.command.extra = 1; }],
