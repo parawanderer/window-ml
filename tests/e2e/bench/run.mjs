@@ -73,7 +73,7 @@ import { measureRun, aggregate, isRateLimit } from "./metrics.mjs";
 import { expandCells, cellKey, cellPath, comboLabel, buildGroups, parseSelector, slug, cellStream, runConfig } from "./cells.mjs";
 import { holdMode, loadSpec, startHeld, heldWindow, HOLD_IDLE_MIN } from "./hold.mjs";
 import { writeReport, mdSink, terminalSink, doneSummary, doneLine } from "./sinks.mjs";
-import { startDashboard, staticPage, servedSweep, handOffPage } from "./serve.mjs";
+import { startDashboard, staticPage, servedSweep, handOffPage, finishSweepFiles } from "./serve.mjs";
 import { pageSources } from "./page/bundle.mjs";
 import { addMark, readMarks, defaultBy } from "./mark.mjs";
 import { recordSweep, specProvenance, specText, keepEarlierRun, cellsOnDisk, sortOnDisk } from "./sweeps.mjs";
@@ -161,8 +161,10 @@ function parseArgv(argv) {
  * commit X" is otherwise a claim the sweep cannot support.
  */
 function buildFingerprint() {
-    const git = (args) => { try { return execFileSync("git", args, { cwd: ROOT, encoding: "utf8" }).trim(); } catch { return ""; } };
-    const head = git(["rev-parse", "HEAD"]) || "nogit";
+    const git = (args) => { try { return execFileSync("git", args, { cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch { return ""; } };
+    // A tree with no git (a container built from `git archive`) is told its commit by BENCH_SOURCE_HEAD; an archive holds
+    // no uncommitted changes, so it is never dirty. Without either, every build looks alike and the cache cannot tell them apart.
+    const head = git(["rev-parse", "HEAD"]) || process.env.BENCH_SOURCE_HEAD || "nogit";
     const diff = git(["diff", "HEAD"]);
     if (!diff) return { fingerprint: head, dirty: false };
     return { fingerprint: `${head}+${createHash("sha256").update(diff).digest("hex").slice(0, 8)}`, dirty: true };
@@ -623,7 +625,7 @@ const main = async () => {
     // Which spec this sweep ran and who started it, appended to the sweep's log; the page's Spec card, spec.md and
     // page.json show it beside the diff against the sweep before (sweeps.mjs).
     const specRel = path.relative(ROOT, path.resolve(args.specPath));
-    const provenance = specProvenance(await recordSweep(sweepDir, { specPath: specRel, onDisk: path.resolve(args.specPath), source: await readFile(args.specPath, "utf8"), fingerprint, dirty, by: defaultBy() }));
+    const provenance = specProvenance(await recordSweep(sweepDir, { specPath: specRel, onDisk: path.resolve(args.specPath), source: await readFile(args.specPath, "utf8"), fingerprint, dirty, by: defaultBy(), runsIn: process.env.BENCH_RUNS_IN || null }));
 
     // The scores log (scores.mjs): every run against a real model, one row each, for the scoreboard. Never the fake's.
     const scores = backend ? await openScores() : null;
@@ -988,8 +990,7 @@ const main = async () => {
     // the page is already an index of the runs, so archiving it is what makes the sweep directory
     // navigable on its own. Links are relative, so it works from disk with no server.
     await writeFile(path.join(sweepDir, "report.html"), await staticPage(pageState));
-    await writeFile(path.join(sweepDir, "page.json"), JSON.stringify(pageState, null, 2));
-    status.flush(pageState);
+    await finishSweepFiles(sweepDir, status, pageState);
     const nameOf = (i) => [runs[i].taskId, ...Object.keys(spec.dimensions || {}).map((d) => runs[i].combo[d]), `r${runs[i].repeat}`].join(" · ");
     await writeFile(path.join(sweepDir, "timeline.md"), timelineText(pageState.timeline, nameOf, { cached: runs.filter((r) => r.cached).length }));
     await writeFile(path.join(sweepDir, "spec.md"), specText(provenance));

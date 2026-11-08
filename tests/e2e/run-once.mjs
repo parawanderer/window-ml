@@ -36,6 +36,9 @@ const MANIFEST_VERSION = await import("node:fs/promises")
 
 import { launchExtension, configureExtension, waitForMl, watchRunEvents, tapPageChannel, setWindow, screencast, inShell, waitInShell } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
+import { wmlhostBinary, registerNativeHost, tempProfile, tempWorkspace } from "./native-host.mjs";
+import { shLeaseDecide } from "./bench/sh-lease-approver.mjs";
+import { rmSync, writeFileSync } from "node:fs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 import { renderMarkdownPage, lanePrelude } from "./viewer.mjs";
 import { readDotenv } from "../../scripts/dotenv.mjs";
@@ -361,6 +364,10 @@ export function decideApproval(policy, gate) {
 /** The scripted fake LLM's model name: every model call of a fake run, and the seed turn of a seeded one. */
 export const FAKE_MODEL = "fake-model";
 
+/** The tools a factory on `ml` makes, which `ml.domTools` does not hold: a tools subset naming one gets it from its
+ *  factory (tool name → `ml` member; src/ml/ml-tool-factories.ts). tests/bench-run-once.test.mjs pins each pair. */
+export const FACTORY_TOOLS = [["fetch_url", "fetchTool"], ["click", "clickTool"], ["type", "typeTool"]];
+
 /**
  * Drive one agent run end to end and return everything it produced.
  *
@@ -410,6 +417,12 @@ export const FAKE_MODEL = "fake-model";
  *   the worker, with the kit a UI run gets (click, type, python_exec, chat_metadata) and its prompt clauses, and each
  *   later turn sent as that person's message. Null (the default) is a console run, `ml.agent` from the page. `tools`,
  *   `python`, `toolTokens`, `agentOptions` and `seed` are the console run's knobs and do not apply.
+ * @param {{ files?: Record<string, string>, manifests?: object[] } | null} [cfg.shell] turn ml.sh ON against a REAL
+ *   `wmlhost` (native-host.mjs): registered in a fresh test profile only, over a fresh temp workspace holding `files`, with
+ *   each of `manifests` stored for that workspace from an extension page, as Settings does (the host pins it). Every gate
+ *   is then ruled by `shLeaseDecide` and nothing else: `approve`, `hold` and `decide` are ignored, since an unattended yes
+ *   to an ml.sh ask would hand the model any file the user can read. Needs a UI `surface` (ml.sh exists only in a run the
+ *   worker built). The result's `shell` says where it ran and what was stored.
  * @returns {Promise<{events, session, runMd, runJson, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, models, seedBoundaryStep, seedMs, captured, stream}>}
  *   `stream` is whether the run asked to stream; its `agent-stream` events say whether it did. `seedMs` is how long a
  *   seeded run's scripted first turn took (0 unseeded); `runMs` includes it.
@@ -421,7 +434,7 @@ export async function runOnce(cfg = {}) {
         backend = null, script = DEFAULT_SCRIPT, warm = true, warmAll = false,
         dist = null, artDir = null, approve = "auto", capture = "failure",
         focusSidebar = true, hold = false, synthetic = true, sharedWatches = [], watchNotes = {}, nextTurn = null, decide = null, surface = null, keep = null, window: windowMode = null, havePrice = null,
-        timeoutMs = followup ? 240000 : 120000,
+        timeoutMs = followup ? 240000 : 120000, shell = null,
         log = () => {}, onEvent = null,
     } = cfg;
 
@@ -433,7 +446,13 @@ export async function runOnce(cfg = {}) {
     const site = await startPageServer({});
     // A window only when someone is watching: `hold` (observe's WATCH) or an explicit focusSidebar
     // request means a human is looking at it. A bench cell is neither.
-    const ext = await launchExtension({ dist, headful: !!(hold || cfg.headful || windowMode), incognito: !!cfg.incognito });
+    const wmlhost = shell ? wmlhostBinary() : null;
+    if (shell && !wmlhost) throw new Error("runOnce: `shell` needs a built wmlhost (E2E_WMLHOST, or `cargo build --release` in a sibling window-ml-host)");
+    if (shell && !surface) throw new Error("runOnce: `shell` needs a UI `surface`: ml.sh exists only in a run the worker built");
+    const profile = shell ? tempProfile() : "", workspace = shell ? tempWorkspace() : null;
+    for (const [name, text] of Object.entries(shell?.files ?? {})) writeFileSync(path.join(/** @type {string} */ (workspace), name), text);
+    const ext = await launchExtension({ dist, headful: !!(hold || cfg.headful || windowMode), incognito: !!cfg.incognito, ...(shell ? { userDataDir: profile } : {}) });
+    const shellInfo = shell ? { workspace, wmlhost, manifests: /** @type {object[]} */ ([]) } : null;
     let approvalLoopOn = true;
     let captured = [];
     const approvals = [];
@@ -481,7 +500,22 @@ export async function runOnce(cfg = {}) {
             modelFilter: "",
             autoApprovePython: true,   // wire python_exec (auto-approve readonly) so a DataFrame/table probe can run
             debugMode: "overlay",   // the surface a person sees, and the one the prompt names; tapPageChannel hears the page's events
+            // ml.sh on, over the temp workspace only; autoApproveReadonly off until the routing fix (an exec naming ml.sh
+            // is surveyed in the page realm under it, reported 2026-11-07), and the approver below then rules every exec.
+            ...(shell ? { shellEnabled: true, shellRoots: [workspace], shellSandbox: true, autoApproveReadonly: false } : {}),
         });
+        if (shell) {
+            registerNativeHost(profile, ext.extensionId, /** @type {string} */ (wmlhost));
+            const settings = await ext.context.newPage();
+            await settings.goto(`chrome-extension://${ext.extensionId}/popup.html`);
+            for (const manifest of shell.manifests ?? []) {
+                const r = await settings.evaluate((payload) => chrome.runtime.sendMessage({ type: "MANIFESTS", payload }), { op: "add", scope: "workspace", root: workspace, manifest });
+                if (r?.error) throw new Error(`runOnce: the workspace refused a task manifest: ${r.error}`);
+                /** @type {object[]} */ (shellInfo?.manifests).push(manifest);
+            }
+            await settings.close();
+            log(`  ml.sh on: ${wmlhost} over ${workspace}, ${shell.manifests?.length ?? 0} manifest(s) stored; every gate ruled by shLeaseDecide`);
+        }
         // A fresh profile holds no price snapshot, and a call waits only 15 s for its first one: the cell's first calls
         // ran unpriced while the refresh was still going. Fetched here, before the clock starts (sw-prices.ts).
         if (backend?.priceSnapshotUrl) {
@@ -560,6 +594,15 @@ export async function runOnce(cfg = {}) {
                     if (seen.has(g.key)) continue;
                     seen.add(g.key);
                     const argstr = JSON.stringify(g.arguments ?? {}).slice(0, 200);
+                    if (shell) {
+                        // The ml.sh rule, and nothing a caller passed: approve the run's own exec step, deny everything else.
+                        const yes = shLeaseDecide(g);
+                        log(`  ⏸ APPROVAL GATE (step ${g.step}) — ${g.tool}${g.askId ? " (nested ask)" : ""} → ${yes ? "APPROVE" : "DENY"}  [shLeaseDecide]`);
+                        approvals.push({ tool: g.tool, arguments: g.arguments, decision: yes ? "approved" : "denied", step: g.step, nested: !!g.askId });
+                        try { await ext.sw.evaluate(({ key, d }) => globalThis.__mlApprovals.resolve(key, d), { key: g.key, d: yes }); }
+                        catch (e) { log(`  (approval resolve failed: ${String(e).slice(0, 80)})`); }
+                        continue;
+                    }
                     if (approve === "hold") { log(`  ⏸ APPROVAL GATE (step ${g.step}) — ${g.tool}(${argstr})  [APPROVE=hold → left for a manual click]`); approvals.push({ tool: g.tool, arguments: g.arguments, decision: "held", step: g.step }); continue; }
                     const decision = decide ? !!(await decide(g).catch(() => false)) : decideApproval(approve, g);
                     log(`  ⏸ APPROVAL GATE (step ${g.step}) — ${g.tool}(${argstr}) → ${decision ? "APPROVE" : "DENY"}  [${decide ? "decided by the caller" : `APPROVE=${approve}`}]`);
@@ -586,7 +629,7 @@ export async function runOnce(cfg = {}) {
         let uiHash = null;
         /** Start a console run in the page: an `ml.createAgent` handle for a multi-turn run, else one `ml.agent` call.
          *  Self-contained (it runs in the page), so the same function can rebuild the handle in a new document. */
-        const launchInPage = ({ task, needsHandle, toolNames, toolTokens, python, extra, stream, resume }) => {
+        const launchInPage = ({ task, needsHandle, toolNames, toolTokens, python, extra, stream, resume, factoryTools }) => {
             const opts = {
                 toolTokens,
                 approvalRouting: "both",   // gates show in the UI AND are resolvable via the __mlApprovals channel
@@ -603,8 +646,12 @@ export async function runOnce(cfg = {}) {
                 opts.tools = (window.ml.domTools || []).filter((t) => toolNames.includes(t.name));
                 // The tools a factory makes are not in domTools: a subset naming one gets it from the factory, or
                 // the name would drop out silently (tools-into-js's `fetch_url` arm ran with no fetch_url).
-                for (const [name, make] of [["fetch_url", "fetchTool"], ["click", "clickTool"], ["type", "typeTool"]])
-                    if (toolNames.includes(name) && !opts.tools.some((t) => t.name === name) && typeof window.ml[make] === "function") opts.tools.push(window.ml[make]());
+                // A missing factory throws: a silent skip is the failure this repairs.
+                for (const [name, make] of factoryTools) {
+                    if (!toolNames.includes(name) || opts.tools.some((t) => t.name === name)) continue;
+                    if (typeof window.ml[make] !== "function") throw new Error(`run-once: the subset names ${name}, and ml.${make} is not a function`);
+                    opts.tools.push(window.ml[make]());
+                }
                 opts.vision = false;
             }
             // python_exec is an extraTool, so it survives the tools subset filter above.
@@ -625,7 +672,7 @@ export async function runOnce(cfg = {}) {
             }
             return null;
         };
-        const launchArgs = { task, needsHandle, toolNames: tools, toolTokens, python, extra: agentOptions, stream };
+        const launchArgs = { task, needsHandle, toolNames: tools, toolTokens, python, extra: agentOptions, stream, factoryTools: FACTORY_TOOLS };
         if (!surface) try {
             await page.evaluate(launchInPage, launchArgs);
         } catch (e) { error = String(e); }
@@ -768,7 +815,7 @@ export async function runOnce(cfg = {}) {
         }
 
         const out = { events, session, runMd: md, runJson: json, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, models, seedBoundaryStep, seedMs, captured, priceBodies,
-            stream: stream ?? (surface ? false : agentOptions.stream === true) };
+            stream: stream ?? (surface ? false : agentOptions.stream === true), ...(shellInfo ? { shell: shellInfo } : {}) };
         if (keep) {
             // The run is over and measured; the browser, the session and its gates stay live for as long as `keep` says.
             // Each `talk` is one more turn in the same session, with its own deadline.
@@ -801,5 +848,6 @@ export async function runOnce(cfg = {}) {
         await ext.close().catch(() => {});
         await fake?.stop().catch(() => {});
         await site.stop().catch(() => {});
+        if (shell) for (const d of [profile, workspace]) if (d) rmSync(d, { recursive: true, force: true });
     }
 }

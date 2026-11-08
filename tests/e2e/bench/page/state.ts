@@ -47,7 +47,9 @@ export interface RunState {
 /** One sweep's record, as sweeps.mjs keeps it (without the spec's text). */
 export interface SweepRecord { at: string; by: string; specHash: string; fingerprint: string; dirty: boolean; spec: string;
     /** where the spec file was on disk; null for a record from before it was kept */
-    onDisk?: string | null }
+    onDisk?: string | null;
+    /** where the sweep ran when not on the machine itself (a container and its image); null on the machine */
+    runsIn?: string | null }
 
 /** Which spec this sweep ran and what changed since the sweep before (sweeps.mjs `specProvenance`). */
 export interface SpecState extends SweepRecord {

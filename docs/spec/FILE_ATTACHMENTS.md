@@ -547,8 +547,17 @@ or a message"). What a hostile page must not get, as tests that fail first:
 1. Python takes an attachment as an injected value (`files:`, and `@file:` in `tables`), never a path; above.
 2. Rows over blobs is fine: the key is the only handle, claims and tombstones per row, the budget charges a blob once,
    the hold is the `protect` list, hash before the budget check.
-3. `@file:` is this spec's; nothing on the shell side uses it. The argv refusal is the shell call's rule for every
-   prefix.
+3. `@file:` is this spec's. The argv refusal is the shell call's rule for every prefix, and it stays: a handle in argv is
+   a held value, not a path. AMENDED 2026-11-08 (Shane confirmed): one explicit shell member uses a handle, `ml.sh.put(handle, path)`,
+   which writes the attachment's ORIGINAL bytes (the value store's blob, found by the run's own row; another session's handle is
+   `ValueMissing`) to the host's disk and returns the path written relative to its root. It is judged as an in-root write today, no
+   new tier; an existing file ALWAYS asks (never a policy allow); the parent must exist and resolve inside a root through the tilde
+   realpath path; a symlink target or a parent that leaves the roots through a link is refused; protected names and secret-looking
+   targets are refused outright with no tier that can allow them; the whole-file cap is the host's, advertised in hello; it never
+   detaches; a run whose `origin.remote` is set is refused with one sentence (the file would land on a machine the person is not at),
+   and the host refuses the hub transport too. Page-started runs never reach `ml.sh`, so nothing here is reachable from a page; one row
+   asserts it. The host half is the fourth slice of SHELL.md's resolve path (`put`/`write`/`commit`); the chat-page lane writes this
+   spec's paragraph and UPGRADE row once the window-ml half merges.
 4. Reading an attachment is free (effects algebra); no policy line.
 5. Nothing in flight collides. `navigate` on a PDF is a new red-team pass; `pages` joins `PIPE_CMDS` with its own bound
    and adversarial rows.

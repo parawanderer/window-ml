@@ -90,6 +90,18 @@ but nothing more starts or is held until it is under. A paused sweep has exited:
 command. A limit set by hand either way keeps no reserve. A budget with room for no browser does not start (`BENCH NOT STARTED … paused=memory-budget`, exit 75) and one with room
 for one warns, each naming the `--memory-limit` to pass; a limit set by hand also drops the quarter kept free (it swaps).
 
+**A sweep in a container is watched from the machine, never served from the container.** Mount the clone's
+`tests/e2e/artifacts` into it. The runner also rewrites the page's whole state as `live.json` beside `status.json`, and
+`node --import tsx tests/e2e/bench/serve.mjs <sweep dir>`, run on the machine, follows a sweep whose `live.json` is newer
+than its `page.json` (polled every 2 s) and serves `page.json` once it lands. Start it after the sweep has written its
+first `live.json`, or it serves the previous sweep's page. An image built from `git archive` has no `.git`, so it sets
+`BENCH_SOURCE_HEAD` (the build fingerprint; without it every build is `nogit` and the cache cannot tell them apart) and
+`BENCH_RUNS_IN` (shown on the Spec card, in spec.md and at the top of status.md). The ml.sh lease bench's image,
+`tests/e2e/docker/sh-lease.Dockerfile` with `sh-lease-context.sh`, does both; its header names the flags bwrap needs. While it runs, start no other bench process from the SAME
+clone: both would write its `scores.sqlite` across Docker's file sharing, whose locking is not to be trusted, and the
+memory ledger (`~/.cache/window-ml-bench/`) is not shared, so neither side counts the other's browsers (the machine's
+own free-memory check still sees the container's VM). Use another clone for anything else.
+
 **Reading a running sweep from the CLI: `status.md` and `status.json`** in the sweep directory, rewritten at most every
 2 s from the same state the page renders (`status.mjs`) and once more at the end: progress, what runs now, spend per
 driver, the memory budget with the chart's readings as a table, the held groups with every command, what was not held,
