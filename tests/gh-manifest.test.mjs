@@ -247,7 +247,11 @@ test("FINDING: with a '*' network allowlist a write to GitHub is covered as well
     assert.equal(free(desc(argvOf("api -X DELETE repos/x/y")).effects, sandboxAny), true);
 });
 
-test("FINDING: the description carries no 'as the person' term: a read and a read of nothing credentialed have the same effects", () => {
-    // PROGRAM_MANIFEST.md's effect vocabulary is read/write/write-names/runs-code/unknown/network{direction}; there is no use(secret) for a program.
+test("the 'as the person' term is the call's credential fact, not an effect: every read names the github credential (flipped 2026-11-08)", async () => {
+    // The effect vocabulary still has no use(secret) for a program, so the effects are an anonymous curl's; the person's
+    // identity rides `credential` on the manifest and, once the host injects it, `ShFacts.credential` (the card's "Sends").
     for (const s of READS) assert.ok(desc(argvOf(s)).effects.every((e) => e.res.kind !== "secret"), s);
+    assert.deepEqual(need().credential, { provider: "github" });
+    const { planSpawn } = await import("../src/shell/sh-call.ts");
+    assert.equal(planSpawn({ argv: argvOf(READS[0]), env: {} }, { cwd: "/w" }).credential.provider, "github");
 });

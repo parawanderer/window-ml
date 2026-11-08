@@ -1,4 +1,4 @@
-// secret-scrub.ts — takes the configured server URLs, the API key and the model filter out of text bound for a page or the model.
+// secret-scrub.ts — takes the configured server URLs, the API key, the model filter and anything shaped like a GitHub token out of text bound for a page or the model.
 
 import type { MlConfig } from "./contract/contract-config";
 
@@ -16,6 +16,14 @@ const REGEX_META = /[\\^$|?*+()[\]{}]/;
 
 /** Names that say nothing about where a server is, and are ordinary words in text: never scrubbed bare. */
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "0.0.0.0", "[::1]", "::1"]);
+
+/** A GitHub token by its documented shape (`ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_` and a fine-grained `github_pat_`): the
+ *  credential the process host injects into a credentialed `gh` call, whose value the worker never holds, so it is
+ *  matched by shape wherever a program printed it (`gh auth token`, `gh auth status -t`). */
+const GITHUB_TOKEN = /\b(?:gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{22,255})\b/g;
+
+/** What stands in for one. */
+const GITHUB_TOKEN_PUT = "[a GitHub token]";
 
 /** Shorter than this, an API key is a placeholder (`ollama`, `EMPTY`, `sk-1234`) and also an ordinary word. */
 const MIN_KEY = 12;
@@ -105,7 +113,7 @@ const escapeRe = (s: string): string => s.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")
  * @returns the text, with each secret's placeholder in its place
  */
 export function scrubSecrets(text: string, secrets: readonly SecretSub[]): string {
-    let out = text;
+    let out = text.replace(GITHUB_TOKEN, GITHUB_TOKEN_PUT);
     for (const s of secrets) {
         if (s.ci) out = out.replace(new RegExp(escapeRe(s.find), "gi"), () => s.put);
         else if (out.includes(s.find)) out = out.split(s.find).join(s.put);

@@ -156,6 +156,31 @@ test("an in-root file named like a shipped program asks under the sandbox, where
     }
 });
 
+// --- a credentialed call: the host injects the person's GitHub token (SHELL.md, GH UNDER THE SANDBOX RULED 2026-11-08) ---
+
+test("a host that lists github gets the credential with the manifest's hash; the call asks, saying it sends the token", T, async () => {
+    const token = `gho_${"Ab1".repeat(12)}`;
+    const host = fakeNativeHost({ landlockAbi: null, credentials: ["github"], done: () => ({ out: `${token}\n`, err: "", code: 0, envelope: { write: "none", exec: "program-only", profile: "credentialed:github" } }) });
+    const ask = answering(true);
+    const { results } = await runOn("userScripts", [runs(["gh", "auth", "token"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep });
+    const spawn = host.calls.find((c) => c.call === "spawn" && c.args.argv[0] === "gh");
+    assert.equal(spawn.args.credential.provider, "github");
+    assert.match(spawn.args.credential.manifest, /^[0-9a-f]{64}$/);
+    assert.equal(ask.asked.length, 1, "always asked");
+    assert.equal(JSON.stringify(ask.asked[0].facts.credential), JSON.stringify({ provider: "github", sends: "your GitHub token", held: true }));
+    assert.ok(!results[0].includes(token), `the token reached the model: ${results[0]}`);
+    assert.match(results[0], /\[a GitHub token\]/);
+});
+
+test("an older host, which lists no credentials, is sent none: the card says nothing is sent (the upgrade)", T, async () => {
+    const host = fakeNativeHost({ landlockAbi: null });
+    const ask = answering(false);
+    await runOn("userScripts", [runs(["gh", "api", "/user"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep });
+    const spawn = host.calls.find((c) => c.call === "spawn" && c.args.argv[0] === "gh");
+    assert.equal(spawn.args.credential, undefined, "never sent where it would be ignored");
+    assert.equal(ask.asked[0].facts.credential.held, false);
+});
+
 // --- policies ---
 
 test("a saved deny refuses the call without a card, naming the policy; the host discards it", T, async () => {

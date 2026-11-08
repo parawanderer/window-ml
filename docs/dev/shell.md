@@ -35,7 +35,10 @@ refuses it where no isolation exists. The wrapper (`isolatedWrapper`) gives the 
 bound it, and each call rides the exec's own channel (`iso-channel.ts`, op `sh`) to `sw-shell-call.ts` with the run
 and the step's seq the worker already knows (`delegateTool`'s `call`), never anything the script said.
 
-1. `spawn`: the host resolves the argv into facts (program, cwd, paths, repo, sandbox) and starts nothing.
+1. `spawn`: the host resolves the argv into facts (program, cwd, paths, repo, sandbox) and starts nothing. A manifest
+   naming a `credential` (gh) adds `spawn.credential` when the session is sandboxed and `hello.credentials` lists the
+   provider (`credentialFor`): the host then injects the person's token at `start`, and `judgeCall` never lets an
+   allow or the free tier answer it (PROGRAM_MANIFEST.md, "The credentialed profile").
 2. **The version probe**, for a manifest written against a version range (git, rg): an ordinary call of the manifest's
    own version args with effects empty, judged like any other. Free only under the sandbox, so on the plain host it
    is never raised; refused for a program inside the roots (and, since 2026-10-22, `shFacts` describes no in-root program by a shipped manifest, so `./cat` asks: PROGRAM_MANIFEST.md); 2 s, 4 KiB; cached by the program file's fingerprint

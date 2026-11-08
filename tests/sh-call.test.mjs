@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseShRun, planSpawn, shFacts, shCardLines, headText, shOut, shResult, wireCodeOf, manifestFor, SHIPPED_MANIFESTS, ShRefused, SH_LIMITS, envelopeFor, envelopeMismatch, protectedChangesText, shOutcome, shOutcomeLines, SH_CHANGES_SHOWN, unaskedCalls, unaskedLines } from "../src/shell/sh-call.ts";
+import { credentialFor, manifestSha256, parseShRun, planSpawn, shFacts, shCardLines, headText, shOut, shResult, wireCodeOf, manifestFor, SHIPPED_MANIFESTS, ShRefused, SH_LIMITS, envelopeFor, envelopeMismatch, protectedChangesText, shOutcome, shOutcomeLines, SH_CHANGES_SHOWN, unaskedCalls, unaskedLines } from "../src/shell/sh-call.ts";
 import { HostClient, HostError, hostTakesEnvelope, READ_CHUNK, bytesOf } from "../src/shell/host-protocol.ts";
 
 const S = { cwd: "/w" };
@@ -399,6 +399,62 @@ test("a runner is called out: the card does not show the program it starts", () 
     const f = shFacts(facts({ argv: ["find", ".", "-exec", "rm", "{}", ";"], paths: [{ arg: 1, given: ".", path: "/w", inRoot: true, secret: false, exists: true, containsSecret: false }] }));
     assert.equal(f.runner, true);
     assert.ok(shCardLines(f).some((l) => l.label === "Starts" && l.warn));
+});
+
+// --- a credentialed call: the host injects the person's token (window-ml-host src/credential.rs) ---
+
+test("every shipped manifest's file is its object as JSON with two-space indent and a newline, so the bundle hashes to the host's pin", async () => {
+    const fs = await import("node:fs");
+    const crypto = await import("node:crypto");
+    for (const [program, m] of Object.entries(SHIPPED_MANIFESTS)) {
+        const file = fs.readFileSync(new URL(`../src/shell/manifests/${program}.json`, import.meta.url));
+        assert.equal(`${JSON.stringify(m, null, 2)}\n`, file.toString("utf8"), program);
+        assert.equal(await manifestSha256(m), crypto.createHash("sha256").update(file).digest("hex"), program);
+    }
+});
+
+test("the credential is sent only to a sandboxed session whose host lists the provider, with the gh manifest's hash", async () => {
+    const plan = planSpawn({ argv: ["gh", "api", "/user"], env: {} }, S);
+    assert.equal(plan.credential.provider, "github");
+    const host = (credentials, sandboxed = true) => ({ hello: credentials === undefined ? {} : { credentials }, configured: { sandboxed } });
+    assert.deepEqual(await credentialFor(plan, host(["github"])), { provider: "github", manifest: await manifestSha256(SHIPPED_MANIFESTS.gh) });
+    assert.equal(await credentialFor(plan, host(undefined)), undefined, "an older host would ignore it: not sent");
+    assert.equal(await credentialFor(plan, host([])), undefined, "Linux: the host cannot hold it");
+    assert.equal(await credentialFor(plan, host(["github"], false)), undefined, "unsandboxed: gh reads its own login");
+    assert.equal(planSpawn({ argv: ["git", "status"], env: {} }, S).credential, undefined, "a manifest naming none");
+});
+
+test("the card says the call sends the token when the host injects it, and that nothing is sent when it cannot", () => {
+    const gh = (over) => facts({ argv: ["gh", "api", "/user"], program: { path: "/opt/homebrew/bin/gh", inRoot: false }, paths: [], ...over });
+    const held = shFacts(gh({ credential: { provider: "github", ports: [443], profile: "credentialed:github" } }));
+    assert.deepEqual(held.credential, { provider: "github", sends: "your GitHub token", held: true });
+    const lines = shCardLines(held);
+    assert.deepEqual(lines.find((l) => l.label === "Sends"), { label: "Sends", value: "your GitHub token", warn: true });
+    assert.match(lines.find((l) => l.label === "Sandbox").value, /port 443/);
+    // the upgrade: an older host reports no credential (absent), a newer one that could not hold it null
+    for (const credential of [undefined, null]) {
+        const f = shFacts(gh(credential === undefined ? {} : { credential }));
+        assert.equal(f.credential.held, false);
+        const sends = shCardLines(f).find((l) => l.label === "Sends");
+        assert.match(sends.value, /^nothing: this host cannot send your GitHub token/);
+        assert.equal(sends.warn, true);
+        assert.match(shCardLines(f).find((l) => l.label === "Sandbox").value, /no network/);
+    }
+    const plain = shFacts(gh({ sandboxed: false, placement: "host-plain" }));
+    assert.match(shCardLines(plain).find((l) => l.label === "Sends").value, /read by the program itself/);
+    assert.equal(shFacts(facts()).credential, null, "cat names no credential");
+});
+
+test("a credentialed profile's program-only exec is the host's rule, not a mismatch; another write still is", () => {
+    const applied = { write: "none", exec: "program-only", profile: "credentialed:github" };
+    assert.equal(envelopeMismatch(applied, { write: "none", exec: "program-only" }), false);
+    assert.equal(envelopeMismatch({ ...applied, write: "today" }, undefined), false, "no envelope asked: the floor's write, program-only exec");
+    assert.equal(envelopeMismatch({ ...applied, write: "today" }, { write: "none", exec: "program-only" }), true);
+    assert.equal(envelopeMismatch({ write: "today", exec: "program-only" }, undefined), true, "the control: without a profile it is one");
+});
+
+test("a host's CredentialRefused reaches the script as Refused", () => {
+    assert.equal(wireCodeOf("CredentialRefused"), "Refused");
 });
 
 // --- the result ---

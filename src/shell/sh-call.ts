@@ -7,7 +7,7 @@
 // script supplies the argv, the cwd and the environment additions, and nothing else.
 
 import type { CallDescription, ProgramManifest } from "./program-manifest";
-import { describeCall, hardenArgv } from "./program-manifest";
+import { CREDENTIAL_PROVIDERS, describeCall, hardenArgv } from "./program-manifest";
 import { claimsTopLevelName, type EffectsData, type Resource } from "../effects";
 import type { HostDone, HostDoneEnvelope, HostEnvelope, HostFacts, HostPathArg, HostPlacement, HostProtectedChange, HostSpawn, HostStream } from "./host-protocol";
 import { binaryKind } from "../sw/body-read";
@@ -209,6 +209,33 @@ export interface ShPlan {
     spawn: HostSpawn;
     /** The manifest's description of the final argv, or null for an unannotated program. */
     description: CallDescription | null;
+    /** The credential the manifest names, and the manifest itself, whose bytes' hash the host checks: what
+     *  `credentialFor` turns into `spawn.credential` once it knows the host holds the provider. */
+    credential?: { provider: string; manifest: ProgramManifest };
+}
+
+/**
+ * The sha256 of a shipped manifest's file, as the host pins it: every shipped file is `JSON.stringify(m, null, 2)`
+ * plus a newline (tests/program-manifest.test.mjs holds them to it), so the bundled object hashes to its file.
+ * @param m a shipped manifest
+ * @returns lowercase hex
+ */
+export async function manifestSha256(m: ProgramManifest): Promise<string> {
+    const bytes = new TextEncoder().encode(`${JSON.stringify(m, null, 2)}\n`);
+    return [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * `spawn.credential` for a plan whose manifest names one, or undefined when the host would not hold it: only to a
+ * sandboxed session whose host lists the provider in `hello.credentials` (an older host has no list and would ignore
+ * the field, running the call under the ordinary profile as if it had been honoured).
+ * @param plan the plan
+ * @param host what `hello` and `configure` answered
+ */
+export async function credentialFor(plan: ShPlan, host: { hello: { credentials?: readonly string[] }; configured: { sandboxed: boolean } }): Promise<HostSpawn["credential"]> {
+    const c = plan.credential;
+    if (!c || !host.configured.sandboxed || !(host.hello.credentials ?? []).includes(c.provider)) return undefined;
+    return { provider: c.provider, manifest: await manifestSha256(c.manifest) };
 }
 
 /**
@@ -237,7 +264,7 @@ export function planSpawn(req: ShRunRequest, session: { cwd: string; roots?: rea
     if (pathArgs.length) spawn.pathArgs = pathArgs;
     if (d.recursive && d.actsOnDir && d.dirArg === null) spawn.walkCwd = true;
     if (m.program === "git" && d.dirArg !== null) spawn.repoArg = d.dirArg;
-    return { spawn, description: d };
+    return { spawn, description: d, ...(m.credential ? { credential: { provider: m.credential.provider, manifest: m } } : {}) };
 }
 
 /** One path argument as a policy reads it. `containsSecret` only for a walked directory: null when the walk could not
@@ -300,6 +327,9 @@ export interface ShFacts {
     mode: "host" | "container";
     sandboxed: boolean;
     placement: HostPlacement;
+    /** The credential the call's manifest names: what the card says it sends, and `held` when the host's facts say it
+     *  will inject it (the call then always asks, `judgeCall`); null when the manifest names none. */
+    credential: { provider: string; sends: string; held: boolean } | null;
 }
 
 /** A walked directory whose walk found a secret, or could not tell, counts as one. */
@@ -366,7 +396,16 @@ export function shFacts(facts: HostFacts, version: string | null = null, place?:
         repoConfigRunsCode: facts.repoConfigRunsCode,
         effects, described, why, runner,
         mode: facts.mode, sandboxed: facts.sandboxed, placement: facts.placement,
+        credential: credentialOf(facts, m),
     };
+}
+
+/** The call's credential: the host's word when it will inject one, else the manifest's, not held. */
+function credentialOf(facts: HostFacts, m: ProgramManifest | undefined): ShFacts["credential"] {
+    const provider = facts.credential?.provider ?? m?.credential?.provider;
+    if (provider === undefined) return null;
+    const sends = Object.hasOwn(CREDENTIAL_PROVIDERS, provider) ? CREDENTIAL_PROVIDERS[provider]!.sends : `the ${provider} credential`;
+    return { provider, sends, held: !!facts.credential };
 }
 
 /**
@@ -418,7 +457,7 @@ function sandboxAppliedLine(applied: HostDoneEnvelope | null, asked: HostEnvelop
 }
 
 /** An envelope in words, as the card and the run log print it. */
-export const envelopeText = (e: HostDoneEnvelope): string => `write ${e.write}, exec ${e.exec}`;
+export const envelopeText = (e: HostDoneEnvelope): string => `write ${e.write}, exec ${e.exec}${e.profile ? `, profile ${e.profile}` : ""}`;
 
 /**
  * Whether the host applied something other than what was asked for, an absent ask being the floor. An unreported
@@ -429,7 +468,8 @@ export const envelopeText = (e: HostDoneEnvelope): string => `write ${e.write}, 
 export function envelopeMismatch(applied: HostDoneEnvelope | null, asked: HostEnvelope | undefined): boolean {
     if (applied === null) return false;
     const want = asked ?? FLOOR;
-    return applied.write !== want.write || applied.exec !== want.exec;
+    // A credentialed profile runs program-only whatever was asked: that narrowing is the host's rule, not a mismatch.
+    return applied.write !== want.write || applied.exec !== (applied.profile ? "program-only" : want.exec);
 }
 
 /**
@@ -507,9 +547,12 @@ export function shCardLines(f: ShFacts, applied?: HostDoneEnvelope | null, asked
         { label: "Program", value: f.program.path + (f.program.version ? ` (version ${f.program.version})` : "") },
         { label: "In", value: f.cwd.path + (f.cwd.inRoot ? "" : " (outside the workspace roots)"), ...(f.cwd.inRoot ? {} : { warn: true }) },
         f.sandboxed
-            ? { label: "Sandbox", value: "on: writes only inside the workspace roots, no network" }
+            ? { label: "Sandbox", value: f.credential?.held ? "on: writes only inside the workspace roots, network to any host on port 443 only" : "on: writes only inside the workspace roots, no network" }
             : { label: "Sandbox", value: "off: runs as you, with your files and network", warn: true },
     ];
+    if (f.credential?.held) lines.push({ label: "Sends", value: f.credential.sends, warn: true });
+    // Named by the manifest, not injected: unsandboxed the program uses its own login; sandboxed it has none.
+    else if (f.credential) lines.push({ label: "Sends", value: f.sandboxed ? `nothing: this host cannot send ${f.credential.sends} under its sandbox, where the program cannot read its own login either` : `${f.credential.sends}, read by the program itself`, warn: true });
     if (applied !== undefined) lines.push(sandboxAppliedLine(applied, asked));
     if (f.env.set.length) lines.push({ label: "Sets", value: f.env.set.join(", "), ...(f.env.free ? {} : { warn: true }) });
     for (const p of f.paths) {
@@ -658,7 +701,7 @@ export function shResult(done: HostDone, facts: Pick<ShFacts, "placement">, desc
  *  caller's, and the rest failed. */
 export function wireCodeOf(hostCode: string): "Refused" | "BadRequest" | "TooLarge" | "SecretHandle" | "Failed" {
     switch (hostCode) {
-        case "CwdOutsideRoots": case "EnvRefused": case "ProgramNotFound": case "Unsupported": case "NotConfigured": case "BadRoot": return "Refused";
+        case "CwdOutsideRoots": case "EnvRefused": case "ProgramNotFound": case "Unsupported": case "NotConfigured": case "BadRoot": case "CredentialRefused": return "Refused";
         case "SecretUnavailable": return "SecretHandle";
         case "BadRequest": return "BadRequest";
         case "TooLarge": return "TooLarge";
