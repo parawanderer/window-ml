@@ -27,7 +27,7 @@ import { tableFromDelimited } from "../table/table-data";
 import { derivedFetchFields, cacheCopy, fetchIsCacheable } from "../ml/fetch-result";
 import { hintSession } from "../contract/contract-run";
 import { isCurrentPage } from "../dom/dom";
-import { fetchUrlFor } from "./sw-fetch-url";
+import { fetchTarget, fetchUrlFor } from "./sw-fetch-url";
 import { apiDocsTool } from "../tools/api-docs-tool";
 import { WORKER_BUILTINS } from "../tools/tool-registry";
 import { makeDomTools } from "../tools/tools";
@@ -275,7 +275,9 @@ function runMl(ctx: RunCtx): MlApi {
             // A SESSION RENDER OF THE PAGE THE RUN IS ON: what the page's own `ml.fetch` answers from its live DOM, with
             // no request and no grant (injected.ts). The worker asks the page for that document's HTML, as plain data,
             // and runs the rest of the tool here, so an `ask` over it is the worker's model call, not the page's.
-            if (credentials && rendered && tabUrl && isCurrentPage(String(url), tabUrl)) {
+            // A relative URL names the page the run is on as its absolute form does (fetchTarget).
+            const target = fetchTarget(String(url), tabUrl);
+            if (credentials && rendered && tabUrl && "url" in target && isCurrentPage(target.url, tabUrl)) {
                 if (!ctx.media?.document) throw new Error("the page the run is on cannot be read here.");
                 const text = await ctx.media.document(tabUrl);
                 const live: FetchResult = { url: tabUrl, status: 200, ok: true, type: "html", typeByHeader: null, typeByContent: "html",

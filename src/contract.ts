@@ -293,7 +293,7 @@ export interface MlApi {
     embed<T extends string | string[]>(input: T, opts?: { model?: string }): Promise<T extends string[] ? Embedding[] : Embedding>;
     /** GET a URL's content via the background (bypasses CORS; UNCREDENTIALED BY DEFAULT — no cookies unless you
      *  ask). Use it to READ a page/file the current DOM can't reach — a raw file, a JSON API, another site —
-     *  instead of navigating there. Returns a {@link FetchResult}: `.type` classifies the body ({@link ContentKind})
+     *  instead of navigating there. A relative `url` resolves against the page you are on. Returns a {@link FetchResult}: `.type` classifies the body ({@link ContentKind})
      *  so you can chain (`.json` is pre-parsed; a CSV/TSV comes back parsed as `.table`, with `col`/`records`). Each new URL
      *  requires the user's one-time approval (then it's remembered for the session). GET only — no custom
      *  headers or body. `credentials: true` fetches AS THE USER (sends cookies; always prompts, never cached).
