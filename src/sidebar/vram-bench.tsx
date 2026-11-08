@@ -349,7 +349,15 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
     const stopRun = () => {
         if (!running || benchStopping.value) return;
         benchStopping.value = true;
-        try { chrome.runtime.sendMessage({ type: "PYTHON_INTERRUPT" }, () => { void chrome.runtime.lastError; }); } catch { /* no live channel */ }
+        // Only a stop that landed holds the flag: `{ running: false }` (a cold start not yet at the worker) or no answer
+        // leaves Stop live for another click, and the run's own KeyboardInterrupt is not read as "Stopped".
+        const missed = () => { benchStopping.value = false; };
+        try {
+            chrome.runtime.sendMessage({ type: "PYTHON_INTERRUPT" }, (r?: { data?: { interrupted?: boolean } }) => {
+                void chrome.runtime.lastError;
+                if (r?.data?.interrupted !== true) missed();
+            });
+        } catch { missed(); }
     };
     // ⌘/Ctrl+Enter runs, from ANYWHERE in the bench — not just the textarea. It used to be bound to the
     // field alone, so clicking the mode picker or the environment list silently disarmed the only shortcut

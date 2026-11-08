@@ -8,14 +8,14 @@ after(closeSidebarWorlds);
 
 // --- the Run / Stop button ---
 
-/** A bench world whose PYTHON_EXEC is HELD until the test answers it, and which records every other message. */
-async function heldBench() {
+/** A bench world whose PYTHON_EXEC is HELD until the test answers it, and which records every other message; a Stop is answered `interrupt`. */
+async function heldBench(interrupt = { data: { interrupted: true } }) {
     const w = await loadSidebarWorld({ pythonExec: () => ({ ok: true, value: 1, stdout: "" }) });
     const real = w.window.chrome.runtime.sendMessage;
     const held = [], seen = [];
     w.window.chrome.runtime.sendMessage = (msg, cb) => {
         if (msg && msg.type === "PYTHON_EXEC" && !msg.payload.env) { held.push({ msg, cb }); seen.push(msg); return; }
-        if (msg && msg.type === "PYTHON_INTERRUPT") { seen.push(msg); cb && cb({ data: { interrupted: true } }); return; }
+        if (msg && msg.type === "PYTHON_INTERRUPT") { seen.push(msg); cb && cb(interrupt); return; }
         return real(msg, cb);
     };
     w.shadow.querySelector('[aria-label="Python bench"]').click();
@@ -59,6 +59,18 @@ test("python bench: Ctrl/Cmd+Enter while a script runs neither stops it nor star
     await w.tick();
     assert.equal(count("PYTHON_INTERRUPT"), 0);
     assert.equal(count("PYTHON_EXEC"), 1);
+});
+
+test("python bench: a Stop answered `running: false` (the run has not reached the worker yet) leaves Stop live, and the next click sends again", async () => {
+    const { w, held, btn, count } = await heldBench({ data: { running: false } });
+    btn().click(); await w.tick();
+    btn().click(); await w.tick();
+    assert.equal(count("PYTHON_INTERRUPT"), 1);
+    btn().click(); await w.tick();
+    assert.equal(count("PYTHON_INTERRUPT"), 2, "a stop that did not land does not swallow the next one");
+    // Nothing was interrupted, so the run's own KeyboardInterrupt is its own error, not Stopped.
+    held[0].cb({ data: { ok: false, stdout: "", error: KI } }); await w.tick();
+    assert.equal(w.shadow.querySelector(".bench-lost"), null);
 });
 
 // --- how a Stop ends ---
