@@ -2246,10 +2246,28 @@ test("the controls: the engine's own roots and the script's own arrows are still
     assert.deepEqual((await run(`const m = new Map([["a", 1]]); const out = []; m.forEach((v, k) => out.push(k + v)); return out`)).value, ["a1"]);
 });
 
-test("a bare getComputedStyle or a member reference is not a callback; wrapped in an arrow it is", async () => {
-    await assert.rejects(run(`return [document.body].map(getComputedStyle)`), outOfDialect);
-    await assert.rejects(run(`return [1, -2].map(Math.abs)`), outOfDialect);
+test("our own bare getComputedStyle is a callback, as getComputedStyle(el) is a call; a member reference stays the inert sentinel", async () => {
+    const w = styleWorld();
+    const out = (await run(`return [document.querySelector('#x')].map(getComputedStyle).map((s) => s.color)`, w, null)).value;
+    assert.equal(out.length, 1);
+    // A member reference is passed along inert: the host calling it reaches the sentinel's refusal, never the method.
+    await assert.rejects(run(`return [1, -2].map(Math.abs)`), /method reference cannot be called indirectly/);
     assert.deepEqual((await run(`return [1, -2].map((n) => Math.abs(n))`)).value, [1, 2]);
+});
+
+test("a COERCING intrinsic as a callback is judged like any coercion: data elements pass, an object element is refused before it runs", async () => {
+    const ran = [];
+    const o = { valueOf() { ran.push("valueOf"); return 1; }, toString() { ran.push("toString"); return "1"; } };
+    for (const cb of ["Number", "String", "parseInt", "parseFloat", "isNaN", "isFinite"]) {
+        await assert.rejects(run(`const o = await ml.models(); return [o].map(${cb})`, world(), handed(o)), outOfDialect, cb);
+        await assert.rejects(run(`const o = await ml.models(); return [o].filter(${cb})`, world(), handed(o)), outOfDialect, cb);
+        await assert.rejects(run(`const o = await ml.models(); return Array.from([o], ${cb})`, world(), handed(o)), outOfDialect, cb);
+    }
+    // Over something that is not an array the elements cannot be judged: refused.
+    await assert.rejects(run(`return Array.from(new Set([1]), Number)`), outOfDialect);
+    assert.deepEqual(ran, []);
+    // Boolean and Array do not coerce, so an object element is fine.
+    assert.deepEqual((await run(`const o = await ml.models(); return [o].filter(Boolean).length`, world(), handed(o))).value, 1);
 });
 
 test("a refused callback leaves nothing behind when the survey falls out of dialect", async () => {
