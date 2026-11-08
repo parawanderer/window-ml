@@ -44,11 +44,12 @@ estimate given before the first `Detached` is the model's own idea.
 md("""
 ## Conditions
 
-- **Code.** Integration commit `bc0edb7e`, local and unpushed:
+- **Code.** Integration commit `bc0edb7e`, a local merge that was never pushed:
   - window-ml main `4e5277ae`;
   - #1437 at `859cd023`: `4706fae1` plus the JSDoc clause that `ml.sh` is a namespace called as `ml.sh.run(argv)`;
-  - the e2e harness for a native host, `dd870393` (#1453);
-  - the bench's own commits, including `efb2eb1a`, which gives the scripts' manifest `runs-code`.
+  - the e2e harness for a native host, `dd870393` (#1453, merged as `b17db896`);
+  - the bench's own commits, including `efb2eb1a` (`27d949d9` on this PR's branch), which gives the scripts' manifest
+    `runs-code`.
 - **wmlhost:** `ae7284e`.
 - **Container.** A Linux container (`tests/e2e/docker/sh-lease.Dockerfile`) with bwrap and Landlock ABI 8, run with
   seccomp, apparmor and systempaths unconfined. Every call ran `host-sandbox`.
@@ -56,7 +57,8 @@ md("""
   but their stats are identical (44 files, +1191/−77). The 12 lines that differ thread main's steering `images` field
   through `drainInbox`'s return type, its item map and the `runInboxes` queue type. The task-result branch is
   identical, and no lease, `Detached` or `ml.sh` line differs. The coordinator and the async lane agreed that this
-  sweep stands for the final head.
+  sweep stands for the final head. #1437 was then rebased once more, to `04572cce` (a pure rebase, checked by the
+  coordinator), and merged as `f49b935a`.
 - **Approvals.** `autoApproveReadonly` was OFF: the routing bug, #1451.
   - Every gate was ruled by `shLeaseDecide`: the run's own `exec` was approved, and every nested ask and every other
     gated tool was DENIED.
