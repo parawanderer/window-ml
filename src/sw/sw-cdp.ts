@@ -92,7 +92,15 @@ export async function cdpClick(tabId: number, x: number, y: number): Promise<{ o
     const target: chrome.debugger.Debuggee = { tabId };
     // The browser hit-tests the point with our UI on top, so it is hidden first: the act judge resolved the element
     // beneath it (locate.ts `withHiddenSidebar`), and the click has to reach that one, not our host.
-    const hidden = await setClickHide(tabId, true);
+    const id = randomHex(8);
+    const hide = await setClickHide(tabId, true, id);
+    if (hide === "timeout") {
+        // A shell that is there but did not hide in time (the page holds its main thread): the click could land in our
+        // own UI, so it is not sent. Its hide lifts on its own if it lands late.
+        void setClickHide(tabId, false, id);
+        touchDebugger(tabId);
+        return { error: `The page did not let the extension hide its own UI within ${CLICK_HIDE_ACK_MS} ms, so the click was not sent: it could have landed on the extension's sidebar instead of the page.` };
+    }
     try {
         for (const params of cdpClickPlan(x, y)) {
             await chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", params);
@@ -101,26 +109,29 @@ export async function cdpClick(tabId: number, x: number, y: number): Promise<{ o
     } catch (e) {
         return { error: `The CDP click failed (${(e as Error)?.message || e}).` };
     } finally {
-        if (hidden) void setClickHide(tabId, false);
+        if (hide === "hidden") void setClickHide(tabId, false, id);
         touchDebugger(tabId);   // keep the attachment warm; the run's finally (or the idle timer) detaches
     }
 }
 
-/** How long a click waits for the shell's hide to paint (two frames) before it dispatches anyway. */
+/** How long a click waits for the shell to say it hid the extension's UI; past it the click is refused. */
 export const CLICK_HIDE_ACK_MS = 500;
 
 /**
  * Ask the tab's top-frame shell to hide or show the extension's UI around a trusted click (shell.ts `CLICK_HIDE`).
- * A tab with no shell (or one that never answers within {@link CLICK_HIDE_ACK_MS}) has nothing to wait for.
  * @param tabId the tab being clicked
  * @param hidden hide before the dispatch, or show after it
- * @returns whether the shell acknowledged
+ * @param id this click's hold, so two clicks on one tab do not lift each other's hide
+ * @returns "hidden" when the shell acked; "absent" when the tab has no shell to ask (the message had no receiver, or
+ *   nothing answered it), so nothing of ours is there to hit; "timeout" when no answer came within
+ *   {@link CLICK_HIDE_ACK_MS}, which is not told apart from a shell that is there and slow
  */
-async function setClickHide(tabId: number, hidden: boolean): Promise<boolean> {
+async function setClickHide(tabId: number, hidden: boolean, id: string): Promise<"hidden" | "absent" | "timeout"> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-        const ack = Promise.resolve().then(() => chrome.tabs.sendMessage(tabId, { type: "CLICK_HIDE", hidden }, { frameId: 0 })).then((r) => !!r?.ok, () => false);
-        return await Promise.race([ack, new Promise<boolean>((r) => { timer = setTimeout(() => r(false), CLICK_HIDE_ACK_MS); })]);
+        const ack = Promise.resolve().then(() => chrome.tabs.sendMessage(tabId, { type: "CLICK_HIDE", hidden, id }, { frameId: 0 }))
+            .then((r): "hidden" | "absent" => (r?.ok ? "hidden" : "absent"), (): "absent" => "absent");
+        return await Promise.race([ack, new Promise<"timeout">((r) => { timer = setTimeout(() => r("timeout"), CLICK_HIDE_ACK_MS); })]);
     } finally { clearTimeout(timer); }
 }
 

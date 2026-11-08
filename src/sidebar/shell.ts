@@ -20,7 +20,7 @@ import { resolveContextContainer, domToContext, queryAll, viewportRect, setClose
 import type { ElementContext } from "../contract/contract-run";
 import type { DebugMode } from "../contract/contract-config";
 import { eventSession, pageMayWrite, type WorkerClaim } from "../event-admission";
-import { answerShotRects, pageShotGate, sheetText, fromWorker, HOST_STYLE, CLICK_HIDE_HOLD_MS, type ShotRoots } from "./shell-shot";
+import { answerShotRects, pageShotGate, clickHideGate, sheetText, fromWorker, HOST_STYLE, type ShotRoots } from "./shell-shot";
 import { setHostHidden } from "../dom/host-hide";
 import { topLayerKeeper, browserTopLayerDoc, browserClock } from "./shell-top-layer";
 import { approvalPayload } from "../approval-key";
@@ -860,7 +860,7 @@ Object.defineProperty(globalThis, "__wmlShellRoots", { configurable: true, value
 
 /** Who holds the shell's UI hidden: the page for its own shot, the worker around a trusted click. The UI comes back
  *  only when neither does, so the page's "show" cannot bring the sidebar back under a click the worker is making. */
-const shotHolders = new Set<"page" | "worker">();   // state: ui — cleared by each holder's show or its gate's hold
+const shotHolders = new Set<string>();   // state: ui — "page", or "click:<id>" per trusted click; each cleared by its show or its hold
 /** What a hide covers, shared by both holders: the hosts, the image viewer and the hover box. */
 const shotSurface = {
     hide() {
@@ -876,7 +876,7 @@ const shotSurface = {
     },
 };
 /** One holder's view of {@link shotSurface}: hiding adds it, showing removes it and shows only when no holder is left. */
-const heldBy = (who: "page" | "worker") => ({
+const heldBy = (who: string) => ({
     hide() { shotHolders.add(who); shotSurface.hide(); },
     show() { shotHolders.delete(who); if (!shotHolders.size) shotSurface.show(); },
 });
@@ -904,8 +904,8 @@ const pageShotSurface = {
 };
 /** The page's hide handshake for a page-hosted screenshot, bounded (shell-shot.ts). */
 const shot = pageShotGate(pageShotSurface);
-/** The worker's hide around a trusted click (sw-cdp.ts `cdpClick`), bounded the same way. */
-const clickShot = pageShotGate(heldBy("worker"), CLICK_HIDE_HOLD_MS);
+/** The worker's hide around each trusted click (sw-cdp.ts `cdpClick`), one bounded hold per click. */
+const clickShot = clickHideGate(heldBy);
 
 function onWindowMessage(e: ChannelMessage): void {
     const d = e.data;
@@ -1679,10 +1679,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // so the page neither reads it nor can pass one off as the worker's (docs/spec/SITE_ACCESS.md, attack 15).
     if (msg?.type === "ML_DEBUG_TO_PAGE") { if (startupQueue) workerStartup.push(msg.event); else feedDebug(msg.event, true); return; }
     // The worker hiding the extension's UI around a trusted click, so the browser's hit-test reaches the page element
-    // the act judge resolved and not our host: hide, ack after two frames, and "show" after the dispatch. Worker only.
-    if (msg?.type === "CLICK_HIDE" && fromWorker(sender)) {
-        if (msg.hidden === true) { clickShot.pageHide(() => sendResponse({ ok: true })); return true; }
-        clickShot.pageShow(); sendResponse({ ok: true }); return;
+    // the act judge resolved and not our host: hide, ack, and "show" after the dispatch. Worker only. The ack is at
+    // once, not after two frames: the click's hit-test reads the style the hide set, not a painted frame, and a tab in
+    // the background runs no frames to wait for.
+    if (msg?.type === "CLICK_HIDE" && fromWorker(sender) && typeof msg.id === "string") {
+        if (msg.hidden === true) clickShot.hide(msg.id); else clickShot.show(msg.id);
+        sendResponse({ ok: true }); return;
     }
     // Where the extension's UI is, for a screenshot the worker takes and masks itself: read only, for the worker only.
     if (msg?.type === "SHOT_RECTS") return answerShotRects(sender, shotRoots, sendResponse, msg);   // true: a begin answers after two frames

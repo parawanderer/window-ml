@@ -1,7 +1,8 @@
 // click-hide.test.mjs — the extension's UI is hidden around a trusted (CDP) click, so the browser's hit-test reaches the
 // page element the act judge resolved beneath it (SITE_PRESENCE gap 8). The worker half runs in the real bundle against
 // a mocked chrome (the order of what it sends the tab and the debugger); the shell half is the BUILT sidebar-shell.js in
-// jsdom (who may hide it, and that the page's own "show" does not lift the worker's hide).
+// jsdom (who may hide it, that the page's own "show" does not lift the worker's hide, and that one click's show does not
+// lift another's).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -24,26 +25,35 @@ const CLICK_HIDE_ACK_MS = Number(fs.readFileSync(new URL("../src/sw/sw-cdp.ts", 
  * @param {(m: any) => any} answer what the shell answers a `CLICK_HIDE`
  */
 function clickWorld(answer) {
-    const order = [];
+    const order = [], ids = [];
     const bg = loadBackground({
         config,
-        onTabMessage: (tabId, m, opts) => { if (m?.type === "CLICK_HIDE") { order.push(`${m.hidden ? "hide" : "show"}@${tabId}/${opts?.frameId}`); return answer(m); } },
+        onTabMessage: (tabId, m, opts) => { if (m?.type === "CLICK_HIDE") { ids.push(m.id); order.push(`${m.hidden ? "hide" : "show"}@${tabId}/${opts?.frameId}`); return answer(m); } },
         onDebuggerCommand: (method, params) => { if (method === "Input.dispatchMouseEvent") order.push(params.type); },
     });
-    return { bg, order };
+    return { bg, order, ids };
 }
 
 // --- the worker: hide, wait for the ack, dispatch, show ---
 
-test("a trusted click hides the extension's UI in the tab's top frame first, dispatches once the shell says it painted, then shows it", T, async () => {
-    const { bg, order } = clickWorld(() => ({ ok: true }));
+test("a trusted click hides the extension's UI in the tab's top frame first, dispatches once the shell says it hid it, then shows it under the same id", T, async () => {
+    const { bg, order, ids } = clickWorld(() => ({ ok: true }));
     assert.deepEqual(plain(await bg.send({ type: "CDP_CLICK", payload: { x: 120, y: 340, tabId: 9 } }, {})), { ok: true });
     await flush();
     assert.deepEqual(order, ["hide@9/0", "mouseMoved", "mousePressed", "mouseReleased", "show@9/0"]);
+    assert.ok(typeof ids[0] === "string" && ids[0].length > 0 && ids[1] === ids[0], `the show names the hide's id: ${JSON.stringify(ids)}`);
 });
 
-test("a tab with no shell (nothing answers) is clicked without a show, and without waiting out the bound", T, async () => {
-    const { bg, order } = clickWorld(() => undefined);
+test("two clicks on one tab hold their hides under different ids", T, async () => {
+    const { bg, ids } = clickWorld(() => ({ ok: true }));
+    await Promise.all([bg.send({ type: "CDP_CLICK", payload: { x: 1, y: 2, tabId: 9 } }, {}), bg.send({ type: "CDP_CLICK", payload: { x: 3, y: 4, tabId: 9 } }, {})]);
+    await flush();
+    assert.equal(new Set(ids).size, 2, `one id per click: ${JSON.stringify(ids)}`);
+});
+
+for (const [what, answer] of [["nothing answers", () => undefined], ["the message has no receiver", () => Promise.reject(new Error("Could not establish connection. Receiving end does not exist."))]])
+test(`a tab with no shell (${what}) is clicked without a show, and without waiting out the bound`, T, async () => {
+    const { bg, order } = clickWorld(answer);
     const t0 = Date.now();
     assert.deepEqual(plain(await bg.send({ type: "CDP_CLICK", payload: { x: 1, y: 2, tabId: 9 } }, {})), { ok: true });
     await flush();
@@ -51,13 +61,15 @@ test("a tab with no shell (nothing answers) is clicked without a show, and witho
     assert.deepEqual(order, ["hide@9/0", "mouseMoved", "mousePressed", "mouseReleased"]);
 });
 
-test("a shell that never acks (the page holds its main thread) delays the click by the bound at most", T, async () => {
+test("a shell that never acks (the page holds its main thread) gets no click: it is refused within the bound, and the hide is taken back", T, async () => {
     const { bg, order } = clickWorld(() => new Promise(() => {}));
     const t0 = Date.now();
-    assert.deepEqual(plain(await bg.send({ type: "CDP_CLICK", payload: { x: 1, y: 2, tabId: 9 } }, {})), { ok: true });
+    const res = plain(await bg.send({ type: "CDP_CLICK", payload: { x: 1, y: 2, tabId: 9 } }, {}));
     const took = Date.now() - t0;
-    assert.ok(took >= CLICK_HIDE_ACK_MS - 50 && took < CLICK_HIDE_ACK_MS + 1000, `the click waited ${took} ms`);
-    assert.deepEqual(order, ["hide@9/0", "mouseMoved", "mousePressed", "mouseReleased"]);
+    assert.ok(took >= CLICK_HIDE_ACK_MS - 50 && took < CLICK_HIDE_ACK_MS + 1000, `the refusal took ${took} ms`);
+    assert.match(res?.error ?? "", /did not let the extension hide its own UI/, `refused, not clicked: ${JSON.stringify(res)}`);
+    await flush();
+    assert.deepEqual(order, ["hide@9/0", "show@9/0"], "a click was dispatched onto a point our UI may cover");
 });
 
 // --- the shell: the worker's hide, and only the worker's ---
@@ -118,9 +130,9 @@ const WORKER = { id: "test" };   // this extension, no tab: what the browser sta
 test("the worker's CLICK_HIDE hides the overlay's host with !important and acks; its show brings it back", T, async () => {
     const s = await shellWorld();
     assert.ok(s.host(), "setup: the overlay is mounted on a visible page");
-    assert.deepEqual(plain(await s.deliver({ type: "CLICK_HIDE", hidden: true }, WORKER)), { ok: true });
+    assert.deepEqual(plain(await s.deliver({ type: "CLICK_HIDE", hidden: true, id: "a" }, WORKER)), { ok: true });
     assert.ok(s.hidden(), "the host is not hidden with !important, so the host's own `all: initial !important` wins");
-    await s.deliver({ type: "CLICK_HIDE", hidden: false }, WORKER);
+    await s.deliver({ type: "CLICK_HIDE", hidden: false, id: "a" }, WORKER);
     assert.equal(s.hidden(), false);
     s.close();
 });
@@ -128,7 +140,7 @@ test("the worker's CLICK_HIDE hides the overlay's host with !important and acks;
 for (const [what, sender] of [["a page's content script (a sender with a tab)", { id: "test", tab: { id: 9 } }], ["another extension", { id: "other" }]])
 test(`a CLICK_HIDE from ${what} hides nothing and is not answered`, T, async () => {
     const s = await shellWorld();
-    assert.equal(await s.deliver({ type: "CLICK_HIDE", hidden: true }, sender), undefined);
+    assert.equal(await s.deliver({ type: "CLICK_HIDE", hidden: true, id: "a" }, sender), undefined);
     assert.equal(s.hidden(), false);
     s.close();
 });
@@ -137,20 +149,38 @@ test("the page's own shot \"show\" does not bring the UI back under the worker's
     const s = await shellWorld();
     const page = s.handOver();
     await flush(10);
-    await s.deliver({ type: "CLICK_HIDE", hidden: true }, WORKER);
+    await s.deliver({ type: "CLICK_HIDE", hidden: true, id: "a" }, WORKER);
     page.post({ __mlSidebarShot: "hide" });
     page.post({ __mlSidebarShot: "show" });
     await flush(10);
     assert.ok(s.hidden(), "the page lifted the worker's hide: the click would land on our host");
-    await s.deliver({ type: "CLICK_HIDE", hidden: false }, WORKER);
+    await s.deliver({ type: "CLICK_HIDE", hidden: false, id: "a" }, WORKER);
     assert.equal(s.hidden(), false, "the worker's show, with no other holder, brings it back");
+    s.close();
+});
+
+test("one click's show does not lift another click's hide on the same tab; the last show does", T, async () => {
+    const s = await shellWorld();
+    await s.deliver({ type: "CLICK_HIDE", hidden: true, id: "a" }, WORKER);
+    await s.deliver({ type: "CLICK_HIDE", hidden: true, id: "b" }, WORKER);
+    await s.deliver({ type: "CLICK_HIDE", hidden: false, id: "a" }, WORKER);
+    assert.ok(s.hidden(), "the first click's show lifted the hide under the second click's dispatch");
+    await s.deliver({ type: "CLICK_HIDE", hidden: false, id: "b" }, WORKER);
+    assert.equal(s.hidden(), false);
+    s.close();
+});
+
+test("a CLICK_HIDE with no id hides nothing", T, async () => {
+    const s = await shellWorld();
+    await s.deliver({ type: "CLICK_HIDE", hidden: true }, WORKER);
+    assert.equal(s.hidden(), false);
     s.close();
 });
 
 test("a worker hide whose show never comes lifts on its own", T, async () => {
     const hold = Number(fs.readFileSync(new URL("../src/sidebar/shell-shot.ts", import.meta.url), "utf8").match(/CLICK_HIDE_HOLD_MS = (\d+)/)[1]);
     const s = await shellWorld();
-    await s.deliver({ type: "CLICK_HIDE", hidden: true }, WORKER);
+    await s.deliver({ type: "CLICK_HIDE", hidden: true, id: "a" }, WORKER);
     assert.ok(s.hidden());
     await new Promise((r) => setTimeout(r, hold + 200));
     assert.equal(s.hidden(), false);

@@ -36,6 +36,30 @@ export const PAGE_SHOT_HOLD_MS = 5000;
 /** How long the worker's hide around a trusted click is held with no "show": past the click's three dispatches. */
 export const CLICK_HIDE_HOLD_MS = 2000;
 
+/** The worker's hide around trusted clicks, from {@link clickHideGate}. */
+export interface ClickHideGate {
+    /** One click's `CLICK_HIDE` hide: hold the UI hidden under this click's id until its show or the hold. */
+    hide(id: string): void;
+    /** That click's show: lifts only its own hold. */
+    show(id: string): void;
+}
+
+/**
+ * The worker's hide around trusted clicks, one hold per click: two clicks on one tab can interleave (a `CDP_CLICK`
+ * beside a run's click), so the first click's show must not lift the hide under the second's dispatch.
+ * @param holder the hide/show of one named holder over the shell's UI (shell.ts `heldBy`)
+ * @param holdMs how long a click's hide is held with no show ({@link CLICK_HIDE_HOLD_MS})
+ * @returns the handlers the shell's `CLICK_HIDE` listener calls
+ */
+export function clickHideGate(holder: (key: string) => ShotSurface, holdMs = CLICK_HIDE_HOLD_MS): ClickHideGate {
+    const holds = new Map<string, ReturnType<typeof setTimeout>>();   // state: ui — each click's hold, lifted by its show or its timer
+    const lift = (id: string): void => { clearTimeout(holds.get(id)); holds.delete(id); holder(`click:${id}`).show(); };
+    return {
+        hide(id) { clearTimeout(holds.get(id)); holds.set(id, setTimeout(() => lift(id), holdMs)); holder(`click:${id}`).hide(); },
+        show: lift,
+    };
+}
+
 /** The two frames a hide waits before it is acknowledged, so the hidden state has painted before the capture fires. */
 const afterTwoFrames = (fn: () => void): void => { requestAnimationFrame(() => requestAnimationFrame(fn)); };
 
