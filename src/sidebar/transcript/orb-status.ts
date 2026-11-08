@@ -39,7 +39,8 @@ export const ACTIVITY: Record<string, { icon: string; label: string; short: stri
  *  that finished before you typed. */
 export function currentTurnSteps(run: Session): AgentStep[] {
     const steps = run.steps || [];
-    const turnStart = Math.max(0, ...(run.says || []).map(s => s.atStep || 0));
+    // A task's result arrives inside a turn and starts none: only what someone sent marks where the turn began.
+    const turnStart = Math.max(0, ...(run.says || []).filter(s => !s.task).map(s => s.atStep || 0));
     return steps.filter(s => (s.step || 0) > turnStart);
 }
 

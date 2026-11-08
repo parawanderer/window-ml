@@ -14,6 +14,7 @@ wire it speaks.
 | `src/sw/sw-shell-call.ts` | one `ml.sh` call: spawn → facts → version probe → policy or ask → judged again → start → outputs as pointers; `ml.sh.read` |
 | `src/sidebar/settings/shell-section.tsx` | the Settings section "Programs (ml.sh)" |
 | `tests/fake-native-host.mjs` | a host on the far end of the mocked `connectNative` (`loadBackground({ onNative })`) |
+| `tests/e2e/native-host.mjs` | a REAL `wmlhost` for an e2e run, registered in the test profile only (`tests/e2e/ml-sh-host.spec.mjs`) |
 
 ## How a session lives
 
@@ -161,6 +162,11 @@ its owner tables, which hold what it spawned and the process groups a connection
 `register`; `HostClient.owner` and `HostClient.status` read them. The worker only reads: it never sends `register`
 (`tests/sh-call.test.mjs` holds that no file in `src/` does), and no page-started type reaches either call. Nothing in
 the extension shows the answer yet: the agent-status line it is meant for is `AGENT_MAIL.md`'s first build step.
+
+## Detached calls (ASYNC_CALLS.md, mode 1)
+
+A call that runs past its lease detaches into a task: [`async-calls.md`](async-calls.md) is how that is built (the
+lease, the task table, the inbox, the `task` tool), for `ml.sh` and every executor after it.
 
 ## Capabilities
 

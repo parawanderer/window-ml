@@ -28,8 +28,9 @@ test("argv is an array of strings with the program first; anything else is refus
     assert.deepEqual(parseShRun([["ls"], null]), { argv: ["ls"], env: {} }, "null options are no options");
 });
 
-test("the options are cwd, env and timeoutMs, each checked; an unknown one is refused by name, and shell says there is none", () => {
-    refused([["ls"], { shell: true }], "BadRequest", /no option "shell"; its options are cwd, env, timeoutMs\. There is no shell: pass the argv/);
+test("the options are cwd, env, timeoutMs and expectMs, each checked; an unknown one is refused by name, and shell says there is none", () => {
+    refused([["ls"], { shell: true }], "BadRequest", /no option "shell"; its options are cwd, env, timeoutMs, expectMs\. There is no shell: pass the argv/);
+    refused([["ls"], { expectMs: 0 }], "BadRequest", /expectMs is a positive number/);
     refused([["ls"], { stdio: "inherit" }], "BadRequest", /no option "stdio"/);
     refused([["ls"], "x"], "BadRequest", /second argument is an options object/);
     refused([["ls"], { cwd: 3 }], "BadRequest", /cwd is a directory path/);

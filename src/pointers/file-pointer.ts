@@ -104,8 +104,9 @@ export const firstPages = (f: Pick<FilePointer, "read">): string => (f.read > 1 
  * @param f the file
  * @param doc the read document, for the preview
  * @param first the earlier file by the same name, when there is one
+ * @returns the outline, escaped, and how many escapes it took (the block's `escaped`)
  */
-export function fileOutline(f: FilePointer, doc: PdfDoc, first?: FilePointer): string {
+export function fileOutline(f: FilePointer, doc: PdfDoc, first?: FilePointer): { text: string; escaped: number } {
     const who = first
         ? `a second file by this name; the first is ${fileRef(first)}, attached in turn ${first.turn}. Attached by the person`
         : "attached by the person";
@@ -125,7 +126,7 @@ export function fileOutline(f: FilePointer, doc: PdfDoc, first?: FilePointer): s
     }
     if (f.truncated) lines.push(f.truncated);
     // Escaped whole: the name and the preview are the file's text, and the outline sits inside the message's `<file>`.
-    return escapeSectionText(lines.join("\n")).text;
+    return escapeSectionText(lines.join("\n"));
 }
 
 /** A read document as the `pages` verb's input: one `<page n="k">` section per page read, its text escaped. A page

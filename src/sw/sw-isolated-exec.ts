@@ -115,7 +115,7 @@ export function isolatedWrapper(inner: string, b: IsolatedBindings, n: string, s
     const __chanAsk = __chan && (async (req) => {
         const r = await __chan(req);
         if (!r || typeof r !== "object") throw new Error("The worker did not answer this exec's pointer read.");
-        if (typeof r.error === "string") { const e = new Error(r.error); if (typeof r.code === "string") e.code = r.code; throw e; }
+        if (typeof r.error === "string") { const e = new Error(r.error); if (typeof r.code === "string") e.code = r.code; if (typeof r.task === "string") e.task = r.task; throw e; }
         return r.ok;
     });
     // ml.sh: each call goes to the worker over the call's channel, which judges it (a policy, or a card for the person)

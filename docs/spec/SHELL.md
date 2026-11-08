@@ -253,6 +253,35 @@ ml.pipe(r.stdout, "grep -c '^ '");         // stdout and stderr are pointers, he
   an earlier result cannot be shown before it exists, and with policies covering the free tier a chain of read-only
   calls asks nothing today. Build it only once a measured case shows the per-call asks are the annoying part.
 
+RULED 2026-11-07 (the bench lane's proposal, `20261107-1357Z-bench-to-repl-specs-sh-tilde-proposal.md`; Shane's
+agreement reached the coordinator relayed, "it saves tokens", and he CONFIRMED it in the coordinator's session the
+same day, leaving the allocation to the coordinator): the HOST
+expands a leading `~` in an `ml.sh.run` argument. Today argv is passed as written with no shell, so
+`["cat", "~/notes.txt"]` names `<cwd>/~/notes.txt`, reads free inside the workspace and finds nothing (CORRECTED
+2026-11-07 by the bench lane: a literal `~/.ssh/config` does NOT read free, since the credential-store segment match
+applies anywhere in the path, so it asks, as qwen's canary run showed); in the bench's canary gemma4:31b spent a step
+on `~` and fell back to `sh -c`, which always asks. The rule: the host
+expands at resolve time, in the facts pass that already resolves path arguments, from the `HOME` it already passes
+through, so the facts, the judging, the card and the spawn see one path; the judge never sees an unexpanded `~`,
+because an expansion after judging would let `~/.ssh/config` pass as an in-root relative path. POSIX tilde-prefix
+cut down: a whole argument that is `~` or starts with `~/`, in `argv[0]`, every operand and `cwd` alike; never
+`~user`, never after `=`, never inside an argument; no globs, `$VAR` or pipes. Shown, not silent: the facts record
+`{ index, from, to }` per expanded argument, the card and the unasked line show `~/x → /real/x`, the result's argv
+echo carries the expanded form. No `HOME`: the argument stays literal and the facts say why, never `""` or `/`. A
+host that cannot expand is told apart by its version; against it the worker keeps today's literal behaviour and the
+JSDoc clause ("a leading `~` or `~/` in an argument is your home directory; nothing else is expanded") does not
+appear. It is a host protocol change (resolve plus a facts field, PROTOCOL.md) and then a window-ml PR; the host
+owner is the ASYNC LANE, as a third host slice after `peek` (allocated 2026-11-07, both in the host's resolve path),
+starting only once `peek`, #1437, #1451 and #1453 are through; the window-ml tests and the `~`-spelled
+canary row (must ASK and show the expanded path, never read free as a workspace path) are the bench lane's, finder's
+own file. Independent of the lease bench.
+
+TRAP (the bench lane, 2026-11-07, measured): a stored WORKSPACE manifest for a script that calls other programs must
+declare `runs-code`; with `effects: ["read"]` alone, `envelopeFor` sends `{write: "none", exec: "program-only"}` and
+the host refuses every child of `bash` (`/usr/bin/sleep: Permission denied`) while the call still reports `ok: true`,
+because builtins such as `echo` run. The lease bench's first matrix was invalid for this reason. The Settings
+manifest editor should warn when an entrypoint script's manifest lacks `runs-code` (open item for the shell UI).
+
 ## The API's shape: borrowed, not invented
 
 The calls above are illustrative. The SHAPE should be one models already know, executed differently underneath: the
