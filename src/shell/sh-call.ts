@@ -14,6 +14,7 @@ import { binaryKind } from "../sw/body-read";
 import { applicable, storedMisses, type StoredManifest } from "./stored-manifests";
 import cat from "./manifests/cat.json";
 import find from "./manifests/find.json";
+import gh from "./manifests/gh.json";
 import git from "./manifests/git.json";
 import head from "./manifests/head.json";
 import jq from "./manifests/jq.json";
@@ -30,7 +31,7 @@ import type { ShCallSpan, ShUnasked, StepAsk } from "../contract";
 /** The manifests shipped with the extension, by program name. A program not here is unannotated: its effects are
  *  `unknown`, the host resolves none of its arguments as paths, and every call to it asks. */
 export const SHIPPED_MANIFESTS: Readonly<Record<string, ProgramManifest>> = Object.freeze(Object.fromEntries(
-    ([cat, find, git, head, jq, ls, mv, rg, rm, rmdir, tail, unlink, wc] as unknown as ProgramManifest[]).map((m) => [m.program, m]),
+    ([cat, find, gh, git, head, jq, ls, mv, rg, rm, rmdir, tail, unlink, wc] as unknown as ProgramManifest[]).map((m) => [m.program, m]),
 ));
 
 /** The manifests a call is described by: the shipped ones, unless the caller names its own. */
