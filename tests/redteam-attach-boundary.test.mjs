@@ -79,7 +79,7 @@ test("RED TEAM, ENUMERATED: no type a page can start reads a PDF, keeps a row or
     assert.ok(!JSON.stringify(w.chats().map((c) => c.body.messages)).includes("@file:x"), "no forged pointer reached the model");
 });
 
-test("a page's START_RUN payload loses the person's fields: files and the turn count go, the task stays", async () => {
+test("a page's START_RUN payload loses the person's fields and the sender's: files, the turn count and the origins go, the task stays", async () => {
     // pageStartPayload's destructuring is the one strip: the enumeration above never sends `sends`, so this names each key.
     const deep = () => new Proxy(function () {}, {
         get: (_t, k) => (k === "then" ? undefined : k === Symbol.toPrimitive ? () => "" : deep()),
@@ -91,10 +91,14 @@ test("a page's START_RUN payload loses the person's fields: files and the turn c
     try { ({ pageStartPayload } = await import("../src/sw/sw-run-host.ts")); } finally { globalThis.chrome = prev; }
     const out = pageStartPayload({
         task: "read the attached file", files: [PDF], sends: 7, builtBy: "user", display: "the person's words",
+        origin: "chrome-extension://ext", pageOrigin: "https://bank.example", pageUrl: "https://bank.example/account",
         rebuild: { builtBy: "user", tools: [] },
     }, PAGE, {});
     assert.equal(out.task, "read the attached file");
-    for (const key of ["files", "sends", "builtBy", "display"]) assert.ok(!(key in out), key);
+    for (const key of ["files", "sends", "builtBy", "display", "origin"]) assert.ok(!(key in out), key);
+    // The origin and the page are the sender's, as the browser stamped them, never what the page named.
+    assert.equal(out.pageOrigin, "https://site.example", "pageOrigin");
+    assert.equal(out.pageUrl, SITE.url, "pageUrl");
     assert.ok(!("builtBy" in out.rebuild), "rebuild.builtBy");
 });
 
