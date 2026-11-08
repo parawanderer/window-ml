@@ -76,6 +76,43 @@ test("a press on the box focuses it and stirs nothing; nor does a press on one o
     await page.close();
 });
 
+// --- under every pane ---
+
+test("the field is a background only: a docked panel above the start page, the list and the box all draw over it", async () => {
+    const { page, errors } = await startPage();
+    // The web build has no panels of its own (they come from the extension), so stand in the resource panel's slot with
+    // the real dock markup: the top region, a SIBLING BEFORE the start page in the column, as `DockFrame` places it.
+    await page.evaluate(() => {
+        const mid = document.querySelector(".chat-work-mid");
+        const dock = document.createElement("section");
+        dock.className = "chat-dock chat-dock-top";
+        dock.id = "fake-dock";
+        dock.style.height = "160px";
+        mid.insertBefore(dock, mid.firstChild);
+    });
+    // The canvas takes no pointer events, so hit-testing would look straight through it: let it be hit, to see what is on top.
+    await page.evaluate(() => { document.querySelector(".chat-start-field").style.pointerEvents = "auto"; });
+    const hit = (sel, fx = 0.5, fy = 0.5) => page.evaluate(([s, x, y]) => {
+        const r = document.querySelector(s).getBoundingClientRect();
+        const el = document.elementFromPoint(r.left + r.width * x, r.top + r.height * y);
+        return { onField: !!el?.closest(".chat-start-field"), tag: el ? el.tagName + "." + el.className : null };
+    }, [sel, fx, fy]);
+    expect(await hit("#fake-dock"), "inside the docked panel").toMatchObject({ onField: false });
+    expect(await hit("#fake-dock", 0.1, 0.9), "the panel's corner").toMatchObject({ onField: false });
+    expect(await hit(".chat-start-box"), "the box").toMatchObject({ onField: false });
+    expect(await hit(".chat-list", 0.5, 0.5), "the list").toMatchObject({ onField: false });
+    // The rule behind it: the canvas sits below every positioned pane, in one stacking order.
+    const z = await page.evaluate(() => {
+        const n = (s) => { const v = getComputedStyle(document.querySelector(s)).zIndex; return v === "auto" ? 0 : Number(v); };
+        return { field: n(".chat-start-field"), dock: n("#fake-dock"), list: n(".chat-list"), col: n(".chat-start-col") };
+    });
+    expect(z.dock, JSON.stringify(z)).toBeGreaterThan(z.field);
+    expect(z.list).toBeGreaterThan(z.field);
+    expect(z.col).toBeGreaterThan(z.field);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 // --- the list over it ---
 
 test("closing the list slides it off the field: the canvas keeps its size and is never rebuilt", async () => {
