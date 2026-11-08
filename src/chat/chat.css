@@ -618,7 +618,9 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-work-mid > .chat-main { flex: 1 1 auto; }
 /* Its base size is the docked panels' own (`--panel-fs`, "Panel text size"), never the page's reading size: they were
    built for the DevTools panel's 12px and size everything off `--fs`. */
-.chat-dock { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; flex: 0 0 auto; background: var(--bg);
+/* z-index 1: above the start page's dot field (`.chat-start-field`, z-index 0, fixed over the window). The top and left
+   regions come BEFORE the start page in the tree, and equal levels paint in tree order, so with `auto` the field drew over them. */
+.chat-dock { position: relative; z-index: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; flex: 0 0 auto; background: var(--bg);
     --fs: var(--panel-fs, 12px); font-size: var(--fs); }
 /* A region docked to the top edge: its border faces the reading column. */
 .chat-dock.chat-dock-top { border-bottom: 1px solid var(--border); }
