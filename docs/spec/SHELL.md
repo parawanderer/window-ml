@@ -43,7 +43,7 @@ made and the script holding a handle to it.
   and pure (`text-pipe.ts`), so the host runs the same code, not a reimplementation.
 - **Crossing is explicit and bounded.** Bringing a whole value into the script's realm is `ml.dereference`, with the
   same size rules as any pointer read. Nothing crosses because a variable was touched. RULED 2026-10-28 (for
-  `FILE_ATTACHMENTS.md`): a pointer token of any prefix (`@tool:`, `@file:`) given as an argv item is refused by the shell
+  `FILE_ATTACHMENTS.md`): a pointer token of any prefix (`@tool:`, `@file:`, `@pt:`, `@box:`) given as an argv item is refused by the shell
   call itself (`describeCall`, one rule), with a sentence saying it is a held value, not a path; a manifest never repeats it.
   BUILT 2026-11-08 in `parseShRun` (`heldValueRefusal`), the check every argv passes before the host sees it, whatever
   its manifest: an item that IS a token is refused; one that only contains a token is the program's text.

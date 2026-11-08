@@ -29,7 +29,7 @@ test("argv is an array of strings with the program first; anything else is refus
 });
 
 test("a pointer token as an argv item is refused as a held value at every position, for every prefix; an item that only contains one passes", () => {
-    for (const tok of ["@file:3fa91c2", "@tool:ab12cd3", "@tool:read_page", "@tool:"]) {
+    for (const tok of ["@file:3fa91c2", "@tool:ab12cd3", "@tool:read_page", "@tool:", "@pt:1a2b3c", "@box:9f8e7d6c"]) {
         for (const argv of [[tok, "x"], ["cat", tok], ["cat", "a", tok]]) {
             const i = argv.indexOf(tok);
             refused([argv], "BadRequest", new RegExp(`^argv\\[${i}\\] is "${tok}", a held value, not a path: .*A file that really has this name is \\./${tok}$`));
@@ -37,7 +37,8 @@ test("a pointer token as an argv item is refused as a held value at every positi
     }
     refused([["cat", "@file:3fa91c2"]], "BadRequest", /an attachment is not on the host's disk/);
     refused([["cat", "@tool:ab12cd3"]], "BadRequest", /read it with ml\.dereference, or reduce it with ml\.pipe/);
-    for (const literal of ["./@file:3fa91c2", "--in=@file:3fa91c2", " @file:3fa91c2", "@FILE:3fa91c2", "@files:x", "@file", "@tool", "a@tool:ab12cd3", "@"])
+    for (const tok of ["@pt:1a2b3c", "@box:9f8e7d6c"]) refused([["cat", tok]], "BadRequest", /it names a place on the page, which no program on the host can see/);
+    for (const literal of ["./@file:3fa91c2", "--in=@file:3fa91c2", " @file:3fa91c2", "@FILE:3fa91c2", "@files:x", "@file", "@tool", "a@tool:ab12cd3", "@pt", "@box", "x@pt:1a2b3c", "@"])
         assert.deepEqual(parseShRun([["cat", literal]]).argv, ["cat", literal], `${JSON.stringify(literal)} is the program's text`);
 });
 

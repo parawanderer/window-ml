@@ -32,7 +32,8 @@ import { recordAppended, snapshotCurrent, type CurrentSnapshot, type RecordedMet
 import type { RunLogEvent } from "../log/run-log";
 import { TokenStore, derefPipe, describeToken, extraBeyondModel, memoryFault, cleanLabel, nameOf, shortType, isAliasRef, parseLabel, DEREF_TOOL, type TokenKind, type TokenValue, type DerefRead } from "../pointers/token-pipe";
 import { runPipe, type PipeLimits } from "../pointers/text-pipe";
-import { FILE_PREFIX, fileKindSaid, fileRef, fileSections, firstRead, isTextFile, quoteName } from "../pointers/file-pointer";
+import { fileKindSaid, fileRef, fileSections, firstRead, isTextFile, quoteName } from "../pointers/file-pointer";
+import { FILE_PREFIX } from "../pointers/token-prefixes";
 import type { PdfDoc } from "../pdf/pdf-read";
 import { CITABLE_TOOLS } from "../tools/tool-params";
 

@@ -16,7 +16,8 @@ globalThis.chrome = {
 };
 
 const { attachFiles } = await import("../src/sw/sw-attach.ts");
-const { FileShelf, fileId, cleanFileName, FILE_NAME_MAX, FILE_PREFIX } = await import("../src/pointers/file-pointer.ts");
+const { FileShelf, fileId, cleanFileName, FILE_NAME_MAX } = await import("../src/pointers/file-pointer.ts");
+const { FILE_PREFIX } = await import("../src/pointers/token-prefixes.ts");
 const { fileBlocks } = await import("../src/attached-files.ts");
 const { pageStartPayload } = await import("../src/sw/sw-run-host.ts");
 
