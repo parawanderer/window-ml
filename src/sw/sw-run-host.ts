@@ -1162,7 +1162,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     // The route is decided here, so the page is not told which world was asked for: it sees the call only when
                     // the call runs in its world, where that is no news.
                     const pageArgs = name === "exec" ? withoutWorld(args as Record<string, unknown>) : args;
-                    // A page-built run's exec runs in its page's world or not at all (an approval's edit could have added one).
+                    // A page-built run's exec runs in its page's world or not at all. Unpinned on purpose: it stands in front of an
+                    // approval's edited `arguments` (`args = d.arguments` in agent-loop.ts), which no resolve path produces today.
                     if (name === "exec" && !byWorker()) { const refused = pageWorldRefusal((args as { world?: unknown }).world); if (refused) return { result: refused }; }
                     if (js !== undefined) {
                         // The document FIRST, then its URL: the call is pinned to that document, so a navigation after this
