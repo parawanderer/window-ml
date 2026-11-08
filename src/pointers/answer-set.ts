@@ -15,6 +15,7 @@ import type { AgentOutput } from "../contract/contract-agent";
 import type { AnswerMedia, TokenRender } from "../contract/contract-render";
 import { TOKEN_HEX_SRC, TOOL_NAME_SRC } from "./token-id";
 import { tokenIdsIn, resolveToken } from "./answer-tokens";
+import { TOOL_TOKEN_PREFIX } from "./token-prefixes";
 
 /** One item in the answer set. `element` carries live nodes (page-side only) + a serialized preview
  *  and optional media; `text` is literal markdown; `token` (step 3) references a tool step's output. */
@@ -22,10 +23,6 @@ export type AnswerItem =
     | { kind: "element"; nodes: unknown[]; preview: string; media?: AnswerMedia[]; note?: string }
     | { kind: "text"; text: string }
     | { kind: "token"; ref: string; preview?: string };
-
-/** The sentinel that marks a tool-output reference (cf. `@pt:`/`@box:`). A CSS selector can't start with
- *  it (`@…` begins an at-rule, not a selector), so it unambiguously means "a token", never a selector. */
-export const TOOL_TOKEN_PREFIX = "@tool:";
 
 /**
  * Classify a STRING answer input (`ml.answer.add("…")` / the tool's `text`): a `@tool:` reference →

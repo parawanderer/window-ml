@@ -1,7 +1,8 @@
 // The pure answer-set core (answer-set.ts): the ordered, curatable user-facing result of a run.
 import { test } from "node:test";
 import assert from "node:assert";
-import { AnswerSet, answerItemFromString, TOOL_TOKEN_PREFIX, makeAnswerFacade, finalizeAnswer, resolveOutputs } from "../src/pointers/answer-set.ts";
+import { AnswerSet, answerItemFromString, makeAnswerFacade, finalizeAnswer, resolveOutputs } from "../src/pointers/answer-set.ts";
+import { TOOL_TOKEN_PREFIX } from "../src/pointers/token-prefixes.js";
 
 const el = (nodes, preview, extra = {}) => ({ kind: "element", nodes, preview, ...extra });
 const txt = (text) => ({ kind: "text", text });
