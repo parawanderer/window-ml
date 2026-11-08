@@ -10,7 +10,7 @@ import { Card } from "../../../../src/sidebar/fold-card";
 
 const GB = 1024 ** 3;
 const fmt = (b?: number | null) => (b == null ? "?" : b >= GB ? `${(b / GB).toFixed(1)} GB` : `${Math.round(b / 1024 ** 2)} MB`);
-const KIND: Record<string, string> = { held: "held runs", running: "running cells (own process)", runner: "this sweep (runner, its in-process browsers, the page)", page: "page servers", tool: "other bench tools (converse, observe) and their browsers" };
+const KIND: Record<string, string> = { held: "held runs", running: "running cells (own process)", runner: "this sweep (runner, its in-process browsers, the page)", page: "page servers", tool: "other bench tools (converse, observe) and their browsers", tests: "a test suite (test-slot; free memory only, not the limit)" };
 
 /** The chart's series, bottom first: the bench's own processes, then the cells running, then the runs held open. */
 const SERIES = [

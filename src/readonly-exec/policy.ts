@@ -258,6 +258,20 @@ export function methodAllowed(obj: unknown, key: string): boolean {
 // stay reachable as member calls regardless.
 export const CALLABLE_ROOTS = new Set(["String", "Number", "Boolean", "Array", "parseInt", "parseFloat", "isNaN", "isFinite", "getComputedStyle"]);
 
+/** The engine's OWN functions a script may hand a host method as its callback by bare name (`.map(Number)`, `.filter(Boolean)`):
+ *  this module's intrinsics, matched by identity, so a function a page handed back as data is never one of them. A member
+ *  reference (`Math.abs`) is the inert `METHOD_REF`, which throws if called and so is always admitted. `getComputedStyle`
+ *  is admitted by the evaluator against its own root, not here. */
+export const INTRINSIC_CALLBACKS: ReadonlySet<unknown> = new Set([String, Number, Boolean, Array, parseInt, parseFloat, isNaN, isFinite]);
+
+/** The engine's own function for each bare root a script may call by name (all of `CALLABLE_ROOTS` but `getComputedStyle`, which is per realm):
+ *  a call is allowed only when the name still holds THIS function, by identity. */
+export const INTRINSIC_ROOTS: Readonly<Record<string, unknown>> = { String, Number, Boolean, Array, parseInt, parseFloat, isNaN, isFinite };
+
+/** The intrinsics in `INTRINSIC_CALLBACKS` that COERCE their argument (all but `Boolean` and `Array`): as a callback they
+ *  run an element's own `valueOf`/`toString`, so the elements they are handed must be data. */
+export const COERCING_CALLBACKS: ReadonlySet<unknown> = new Set([String, Number, parseInt, parseFloat, isNaN, isFinite]);
+
 // A target a member WRITE may land on: a SCRIPT-LOCAL computation container only — a plain object (`{}` /
 // `Object.create(null)` / a JSON.parse result / an `ml.config()` value) or an Array. A DOM node (proto is
 // HTMLElement.prototype), a NodeList, a Set/Map, `window`, the interpreter's scope — anything with a

@@ -60,7 +60,10 @@ fit), each measured every 5 s as the
 summed resident memory of its process tree (`memory-budget.mjs`; shared pages count once per process, so it over-states).
 A sweep that holds runs or uses a real model checks it before each cell starts and before it keeps a failed run open:
 the bench's total plus one more browser must fit under `--memory-limit` (default half the RAM) AND leave a quarter of the
-RAM free by the machine's own live account (macOS's `kern.memorystatus_level`, Linux's `MemAvailable`). One more
+RAM free by the machine's own live account (macOS's `kern.memorystatus_level`, Linux's `MemAvailable`), less what is
+on its way and not yet resident: a browser a sweep admitted in the last 30 s (`pending` on its entry), and a running test
+suite's planned workers beyond what its tree holds. A test run (`scripts/test-slot.mjs`, the `test-slot` skill) is in the
+ledger as kind `tests` while it runs; it counts against free memory only, never against `--memory-limit`. One more
 browser is predicted as the p90 of the peaks measured for that task (`footprints` in scores.sqlite, from every cell that
 ran in its own process), else of every task's, else 1 GB. At the start it says what to expect ("about 3 failed runs can
 be held this sweep …"). At the limit, `--when-full pause` (the default) starts nothing more, keeps nothing more (a
@@ -86,6 +89,18 @@ RAM, `--limit` alone shows it. A sweep's own `--memory-limit` wins over it; lowe
 but nothing more starts or is held until it is under. A paused sweep has exited: raise the limit, then run its resume
 command. A limit set by hand either way keeps no reserve. A budget with room for no browser does not start (`BENCH NOT STARTED … paused=memory-budget`, exit 75) and one with room
 for one warns, each naming the `--memory-limit` to pass; a limit set by hand also drops the quarter kept free (it swaps).
+
+**A sweep in a container is watched from the machine, never served from the container.** Mount the clone's
+`tests/e2e/artifacts` into it. The runner also rewrites the page's whole state as `live.json` beside `status.json`, and
+`node --import tsx tests/e2e/bench/serve.mjs <sweep dir>`, run on the machine, follows a sweep whose `live.json` is newer
+than its `page.json` (polled every 2 s) and serves `page.json` once it lands. Start it after the sweep has written its
+first `live.json`, or it serves the previous sweep's page. An image built from `git archive` has no `.git`, so it sets
+`BENCH_SOURCE_HEAD` (the build fingerprint; without it every build is `nogit` and the cache cannot tell them apart) and
+`BENCH_RUNS_IN` (shown on the Spec card, in spec.md and at the top of status.md). The ml.sh lease bench's image,
+`tests/e2e/docker/sh-lease.Dockerfile` with `sh-lease-context.sh`, does both; its header names the flags bwrap needs. While it runs, start no other bench process from the SAME
+clone: both would write its `scores.sqlite` across Docker's file sharing, whose locking is not to be trusted, and the
+memory ledger (`~/.cache/window-ml-bench/`) is not shared, so neither side counts the other's browsers (the machine's
+own free-memory check still sees the container's VM). Use another clone for anything else.
 
 **Reading a running sweep from the CLI: `status.md` and `status.json`** in the sweep directory, rewritten at most every
 2 s from the same state the page renders (`status.mjs`) and once more at the end: progress, what runs now, spend per

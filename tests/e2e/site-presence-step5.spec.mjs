@@ -30,9 +30,9 @@ import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startRedirectSite, redirectResolverArgs, secureOriginArgs } from "./fixtures/redirect/server.mjs";
 
-/** The slices of step 5 that have NOT landed. `step5worker` is the worker-fetch half (PR #1305): flip the
- *  entry in my commit on that PR's branch before it merges — the rows then assert the defended outcome. */
-const OPEN = { step5worker: true };
+/** The slices of step 5 that have NOT landed. `step5worker` is the worker-fetch half (PR #1305), flipped in a
+ *  commit of its own on that PR's branch: the rows now assert the defended outcome. */
+const OPEN = { step5worker: false };
 
 /** Whether `slice` is still open, recording it on the test so the report says which holes this run demonstrated. */
 function holeOpen(slice, what) {

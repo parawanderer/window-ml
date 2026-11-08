@@ -10,7 +10,7 @@ import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseSize, fmtBytes, autoLimit, parseMemoryLevel, parseVmStat, parseMeminfo, processTable, treeRss, parseSwapUsage, parseCompressed, ledgerOut, withLedger, ledger, register, update, unregister, measureLedger,
-    budgetState, admits, tooSmall, p90, openFootprints, logFootprint, predictBrowser, startBudget, ASSUMED_BROWSER, PAUSED_EXIT, joinLedger, roomWarning, setLimit } from "../tests/e2e/bench/memory-budget.mjs";
+    budgetState, admits, notYetResident, PENDING_MS, tooSmall, p90, openFootprints, logFootprint, predictBrowser, startBudget, ASSUMED_BROWSER, PAUSED_EXIT, joinLedger, roomWarning, setLimit, pausesAt } from "../tests/e2e/bench/memory-budget.mjs";
 import { failureShape, groupHeld, groupCommands, freeingCommands, menuText, shellLine, inDir, HOLD_HINTS } from "../tests/e2e/bench/hold-menu.mjs";
 import { doneLine } from "../tests/e2e/bench/sinks.mjs";
 
@@ -203,11 +203,64 @@ test("the budget's room is whichever runs out first: the limit, or the free memo
     const entries = [{ kind: "runner", rss: 1 * GB }, { kind: "held", rss: 2 * GB }, { kind: "held", rss: 1 * GB }];
     const s = budgetState({ limit: 12 * GB, entries, available: 30 * GB, total: 64 * GB });
     assert.deepEqual([s.used, s.byKind.held, s.reserve, s.room], [4 * GB, 3 * GB, 16 * GB, 8 * GB]);
-    assert.deepEqual(admits(s, 7 * GB), { ok: true, why: null });
+    assert.deepEqual(admits(s, 7 * GB), { ok: true, why: null, promised: false });
     assert.match(admits(s, 9 * GB).why, /the memory limit: the bench holds 4\.0 GB of 12\.0 GB/);
     const tight = budgetState({ limit: 40 * GB, entries, available: 17 * GB, total: 64 * GB });
     assert.equal(tight.room, 1 * GB);
     assert.match(admits(tight, 2 * GB).why, /free memory: 17\.0 GB available, and 16\.0 GB \(25% of RAM\) stays free/);
+});
+
+test("what is on its way: a sweep's admitted browsers until they expire, and a test run's plan beyond what it holds", () => {
+    const now = 1_000_000;
+    const runner = (pending) => ({ kind: "runner", rss: 1 * GB, pending });
+    const tests = (planned, rss) => ({ kind: "tests", rss, planned });
+    // Enumerated: each pending entry live or expired, each test run under, at and over its plan, and none.
+    for (const p of [[], [{ bytes: 2 * GB, until: now + 1 }], [{ bytes: 2 * GB, until: now }], [{ bytes: 2 * GB, until: now + 1 }, { bytes: 1 * GB, until: now - 1 }]]) {
+        for (const t of [null, tests(8 * GB, 3 * GB), tests(8 * GB, 8 * GB), tests(8 * GB, 9 * GB), tests(undefined, 3 * GB)]) {
+            const want = p.filter((x) => x.until > now).reduce((a, x) => a + x.bytes, 0) + (t?.planned ? Math.max(0, t.planned - t.rss) : 0);
+            assert.equal(notYetResident([runner(p), ...(t ? [t] : [])], now), want, JSON.stringify({ p, t }));
+        }
+    }
+    assert.equal(notYetResident([]), 0);
+});
+
+test("a test run counts against free memory only; what is on its way shrinks the room and is named when it says no", () => {
+    const now = 1_000_000;
+    const entries = [{ kind: "runner", rss: 1 * GB, pending: [{ bytes: 2 * GB, until: now + 1 }] }, { kind: "tests", rss: 3 * GB, planned: 8 * GB }];
+    const s = budgetState({ limit: 12 * GB, entries, available: 30 * GB, total: 64 * GB, now });
+    // used: the runner only; on its way: 2 GB admitted + 5 GB of the test run's plan; room = min(12 - 1 - 2, 30 - 7 - 16).
+    assert.deepEqual([s.used, s.byKind.tests, s.coming, s.benchComing, s.room], [1 * GB, 3 * GB, 7 * GB, 2 * GB, 7 * GB]);
+    assert.equal(admits(s, 7 * GB).ok, true);
+    assert.match(admits(s, 8 * GB).why, /free memory: 30\.0 GB available \(7\.0 GB of it already promised to runs starting up\)/);
+    const lim = budgetState({ limit: 5 * GB, entries, available: 60 * GB, total: 64 * GB, now });
+    assert.match(admits(lim, 2.5 * GB).why, /the bench holds 1\.0 GB \(and 2\.0 GB more starting up\) of 5\.0 GB/);
+    assert.equal(budgetState({ limit: 5 * GB, entries, available: 60 * GB, total: 64 * GB, now: now + 1 }).benchComing, 0, "an admission expires");
+});
+
+test("a refusal only for promised memory is `promised` and waits under every mode; one that holds with nothing promised pauses under `pause`", () => {
+    const now = 1_000_000;
+    // Enumerated over what is promised (none, the bench's own admissions, a test run's plan, both), how much free
+    // memory there is, and the limit; `promised` is asserted against the same request with nothing promised at all.
+    const promises = { none: [], bench: [{ kind: "runner", rss: 1 * GB, pending: [{ bytes: 2 * GB, until: now + 1 }] }], tests: [{ kind: "tests", rss: 1 * GB, planned: 8 * GB }] };
+    promises.both = [...promises.bench, ...promises.tests];
+    for (const [name, extra] of Object.entries(promises)) for (const available of [18 * GB, 21 * GB, 30 * GB]) for (const limit of [3 * GB, 12 * GB]) {
+        const entries = [{ kind: "runner", rss: 1 * GB }, ...extra];
+        const s = budgetState({ limit, entries, available, total: 64 * GB, now });
+        const bare = admits({ ...s, coming: 0, benchComing: 0 }, 1 * GB);
+        const a = admits(s, 1 * GB);
+        const at = JSON.stringify({ name, available: available / GB, limit: limit / GB });
+        if (a.ok) { assert.equal(a.promised, false, at); continue; }
+        assert.equal(a.promised, bare.ok, `${at}: promised iff it would fit with nothing promised`);
+        if (name === "none") assert.equal(a.promised, false, `${at}: nothing promised, nothing to wait for`);
+        for (const mode of ["pause", "stop-holding", "release-duplicates"]) assert.equal(pausesAt(mode, a), mode === "pause" && !bare.ok, `${at} ${mode}`);
+    }
+    // The 2026-11-08 sweep: 13.9 GB free, 7.0 GB of a test run's plan not yet resident, 6.0 GB kept free (24 GB RAM).
+    const s = budgetState({ limit: 12 * GB, entries: [{ kind: "tests", rss: 0.2 * GB, planned: 7.2 * GB }], available: 13.9 * GB, total: 24 * GB, now });
+    const a = admits(s, 1 * GB);
+    assert.equal(a.ok, false);
+    assert.equal(a.promised, true);
+    assert.equal(pausesAt("pause", a), false, "it waits for the suite, and does not end the sweep");
+    assert.equal(pausesAt("pause", { ok: true }), false);
 });
 
 test("p90 is the nearest-rank 90th percentile; none is null", () => {
@@ -246,6 +299,19 @@ test("a sweep's budget says no at the limit only when active, and says up front 
     assert.equal(off.canStart("t").ok, true, "a fake-model sweep that holds nothing is never stopped");
     off.stop();
     assert.deepEqual(ledger(f), [], "the runner is gone from the ledger once its budget stops");
+});
+
+test("a cell let start counts its browser as on its way, for the next cell and in the ledger, until PENDING_MS", () => {
+    const f = tmpLedger();
+    // room = min(6 - 2, 40 - 16) = 4 GB, a browser assumed 1 GB: four cells start, the fifth does not.
+    const b = startBudget({ file: f, total: 64 * GB, avail: () => 40 * GB, everyMs: 60_000, limit: 6 * GB, measure: () => [{ kind: "runner", pid: process.pid, rss: 2 * GB }] });
+    assert.deepEqual([...Array(5)].map(() => b.canStart("t").ok), [true, true, true, true, false]);
+    assert.equal(b.canKeep("t").ok, false, "keeping a run admits nothing new, but sees what is on its way");
+    const mine = ledger(f).find((e) => e.pid === process.pid);
+    assert.equal(mine.pending.length, 4);
+    assert.ok(mine.pending.every((p) => p.bytes === ASSUMED_BROWSER && p.until > Date.now() && p.until <= Date.now() + PENDING_MS));
+    assert.equal(notYetResident(ledger(f)), 4 * GB, "another process reading the ledger counts them");
+    b.stop();
 });
 
 // --- the menu ---

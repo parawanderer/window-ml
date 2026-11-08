@@ -67,10 +67,11 @@ import { adoptOnTab } from "./sw/adopt-run";
 import { pageRebuild } from "./agent/run-assembly";
 import { runControlPayloadError } from "./sw/run-payload-check";
 import { forPage } from "./sw/sw-scrub";   // error text bound for a page, without the config's secrets
-import { pythonPrewarm, pythonExec, relayPyStdout, deletePythonRun, dropPythonLibraries, pythonReaped } from "./sw/sw-python";
+import { pythonPrewarm, pythonExec, pythonInterrupt, relayPyStdout, deletePythonRun, dropPythonLibraries, pythonReaped } from "./sw/sw-python";
 import { focusLineFor } from "./sw/sw-focus";
 import { eventSession, pageMayWrite, withoutPageWhy, WORKER_ONLY_KINDS, type WorkerClaim } from "./event-admission";   // what a page may add to a session the worker speaks for
 import { fetchUrlFor, pageFetchCaller } from "./sw/sw-fetch-url";
+import { watchRedirects } from "./sw/sw-redirects";
 import { fetchImageDataUrl } from "./sw/sw-image-fetch";
 import { approvalKey } from "./approval-key";
 import { raiseAsk } from "./sw/sw-asks";
@@ -884,6 +885,8 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     // only starts Pyodide early, which a page could already cause by being where a person opens the Commander.
     if (message.type === "USER_PYTHON_PREWARM") { pythonPrewarm(message, sender, sendResponse); return true; }
     if (message.type === "PYTHON_EXEC") { pythonExec(message, sender, sendResponse); return true; }   // async
+    // The Python bench's Stop: extension pages only, and never in HANDLE_MAP, so no page can start it (sw-python.ts).
+    if (message.type === "PYTHON_INTERRUPT") { pythonInterrupt(sender, sendResponse); return true; }   // async
     // One `ml` call over the wire from a client the worker opened (sw-ml-wire.ts): answered by the sender and the handle,
     // never the run id. Not in HANDLE_MAP, so a page cannot start it, and a tab's sender never matches a client.
     if (message.type === "ML_CALL") return onMlCall(message, sender, sendResponse);
@@ -1152,7 +1155,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
 
     } else if (message.type === "EMBED") {
         // Embedding runs on the user's own box like any other model call, so a page may ask — the same
-        // reasoning that lets a page call ml.chat. An explicit model still passes the access whitelist, so a
+        // reasoning that lets a page call ml.chat. The resolved model, asked or configured, passes the access whitelist, so a
         // page cannot reach a model the user excluded, and the resolved model is reported back so a caller
         // can see WHICH geometry the vectors are in (comparing across models is meaningless).
         (async () => {
@@ -1162,7 +1165,8 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             try {
                 const cfg = await getConfig();
                 const model = asked || cfg.embeddingModel;
-                if (asked && !modelFilterAllows(asked, cfg.modelFilter)) { sendResponse({ error: `Refused: "${asked}" is excluded by the model filter.` }); return; }
+                // The RESOLVED model, whoever chose it: the configured embedding model is as filterable as one a page names.
+                if (model && !modelFilterAllows(model, cfg.modelFilter)) { sendResponse({ error: `Refused: "${model}" is excluded by the model filter.` }); return; }
                 sendResponse({ data: { model, vectors: await embedTexts(cfg, model, inputs as string[]) } });
             } catch (e) { sendResponse({ error: (e as Error)?.message || String(e) }); }
         })();
@@ -1513,6 +1517,10 @@ function rightClickedContext(tabId: number): Promise<unknown> {
 // Right-click "Ask window.ml about this" — the content-script shell resolves the clicked element's
 // semantic container + clean context and opens the Commander pre-loaded with it (see shell.ts). Created on
 // install (persists); re-created defensively in case the item was cleared. contextMenus may be absent in tests.
+// A redirect hop's target, read for the worker's judged fetches (sw-redirects.ts); registered at the top level, so a
+// fetch in a worker that just woke still sees its hop.
+watchRedirects();
+
 chrome.runtime.onInstalled?.addListener((details) => {
     // A deliberate reload or an update (NOT an idle SW respawn — that never fires onInstalled): invalidate any
     // in-flight background run. Its snapshot may be from OLD code, and this is often how you kill a runaway —

@@ -9,6 +9,7 @@
 
 import { showLightbox, relayAppToWorker } from "./app-host";
 import { cleanImages } from "../contract/contract-run";
+import { cleanFiles } from "../attached-files";
 
 const frame = document.getElementById("app") as HTMLIFrameElement;
 const tabId = Number(new URLSearchParams(location.search).get("tabId"));
@@ -61,7 +62,7 @@ window.addEventListener("message", (e: MessageEvent) => {
     if (typeof d.__mlSidebarCard === "string") { document.body.toggleAttribute("data-empty", d.__mlSidebarCard === "hidden"); return; }
     if (typeof d.__mlLightbox === "string") { showLightbox(d.__mlLightbox); return; }
     // The composer's "start this task" for this tab. The worker builds the run, as from the page's card (sw-run-start.ts).
-    if (d.__mlSidebarApp === "startRun" && typeof d.task === "string" && d.task.trim()) {
+    if (d.__mlSidebarApp === "startRun" && typeof d.task === "string" && (d.task.trim() || cleanFiles(d.files))) {
         const payload = {
             tabId,
             task: d.task,
@@ -70,12 +71,13 @@ window.addEventListener("message", (e: MessageEvent) => {
             vision: d.vision === true ? true : undefined,
             stream: d.stream === true ? true : undefined,
             images: cleanImages(d.images),
+            files: cleanFiles(d.files),
             elementContext: (d.elementContext && typeof d.elementContext.selector === "string") ? d.elementContext : undefined,
             surface: "hud",
         };
         chrome.storage.sync.get({ agentHud: "progress", persistUiRuns: true }, (c: { agentHud?: string; persistUiRuns?: boolean }) => {
             void chrome.runtime.sendMessage({ type: "PANEL_START_RUN", payload: { ...payload, hud: c.agentHud || "progress" }, keep: c.persistUiRuns !== false })
-                .then((r: { error?: string } | undefined) => { if (r?.error) console.warn("window.ml: the run did not start:", r.error); })
+                .then((r: { error?: string } | undefined) => { if (r?.error) { console.warn("window.ml: the run did not start:", r.error); toApp({ __mlStartRefused: r.error }); } })
                 .catch(() => { /* worker gone */ });
         });
         return;
