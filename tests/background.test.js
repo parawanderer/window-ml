@@ -4740,6 +4740,109 @@ test("FETCH_URL: a body the redirect guard withholds is never stored", async () 
     assert.deepEqual(await new ValueStore({ idb, budgetBytes: () => 1e12 }).rows(), []);
 });
 
+// --- FETCH_URL redirect hops (SITE_PRESENCE step 5): each hop is judged before its target is requested ---
+
+/** A worker whose fetches follow `routes`: a string value is a 3xx to that Location (its headers event fired as Chrome would), an object a 200. */
+function redirectingWorker(routes, extra = {}) {
+    let bg;
+    const onFetch = (call) => {
+        const r = routes[call.url];
+        if (typeof r === "string") { bg.headersReceived(call.url, 302, r); return { type: "opaqueredirect", ok: false, status: 0, url: "", headers: { get: () => null }, body: null }; }
+        if (r) return { type: "basic", ...fetchResponse(r.body, { contentType: "text/plain", url: call.url }) };
+        return { type: "basic", ...fetchResponse("not found", { status: 404, url: call.url }) };
+    };
+    bg = loadBackground({ config: baseConfig(), onFetch, ...extra });
+    return bg;
+}
+const SELF_PAGE = { tab: { id: 31, url: "https://start.example/" }, url: "https://start.example/" };
+const fetchedUrls = (bg) => bg.calls.map((c) => c.url).filter((u) => !u.startsWith("http://host/"));
+
+test("FETCH_URL: a page's fetch whose hop goes to another site is refused with no URL of the target, and the target is never requested", async () => {
+    const bg = redirectingWorker({ "https://start.example/go": "https://secret-target.example/private?token=1", "https://secret-target.example/private?token=1": { body: "SECRET" } });
+    const r = await bg.send({ type: "FETCH_URL", payload: { url: "https://start.example/go" } }, SELF_PAGE);
+    assert.match(r.error, /redirected to a different origin on another site, which hasn't been approved, so the redirect was not followed/);
+    assert.ok(!/secret-target|token=1|SECRET/.test(JSON.stringify(r)), "the page learns nothing of the target");
+    assert.ok(!fetchedUrls(bg).some((u) => u.includes("secret-target")), "the refused hop's target was never requested");
+});
+
+test("FETCH_URL: a page's fetch follows a hop that stays on the same site, and an http to https upgrade of the host", async () => {
+    const same = redirectingWorker({ "https://start.example/go": "https://www.start.example/landing", "https://www.start.example/landing": { body: "landed" } });
+    const r = await same.send({ type: "FETCH_URL", payload: { url: "https://start.example/go" } }, SELF_PAGE);
+    assert.ok(!r.error, r.error);
+    assert.match(JSON.stringify(r.data), /landed/);
+    assert.deepEqual(fetchedUrls(same).slice(-2), ["https://start.example/go", "https://www.start.example/landing"]);
+
+    const up = redirectingWorker({ "http://start.example/go": "https://start.example/go", "https://start.example/go": { body: "secure" } });
+    const u = await up.send({ type: "FETCH_URL", payload: { url: "http://start.example/go" } }, { tab: { id: 32, url: "http://start.example/" }, url: "http://start.example/" });
+    assert.ok(!u.error, u.error);
+    assert.match(JSON.stringify(u.data), /secure/);
+});
+
+/**
+ * A worker whose tab 8 has approved `approvedUrl` through a run's fetch_url, the only way a tab's consent grows (as in
+ * the consent-boundary test above), with `https://start.example/go` a 302 to it.
+ */
+async function approvedHopWorker() {
+    const approvedUrl = "https://approved-elsewhere.example/doc.txt";
+    let n = 0;
+    let bg;
+    const routes = { "https://start.example/go": approvedUrl };
+    bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            if (call.url === baseConfig().chatUrl) {
+                return (++n === 1)
+                    ? jsonResponse({ choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "fetch_url", arguments: JSON.stringify({ url: approvedUrl }) } }] } }] })
+                    : jsonResponse({ choices: [{ message: { content: "done" } }] });
+            }
+            if (typeof routes[call.url] === "string") { bg.headersReceived(call.url, 302, routes[call.url]); return { type: "opaqueredirect", ok: false, status: 0, url: "", headers: { get: () => null }, body: null }; }
+            return { type: "basic", ...fetchResponse("approved body", { contentType: "text/plain", url: call.url }) };
+        },
+        onTabMessage: async (tabId, msg) => {
+            if (msg?.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) await bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
+            if (msg?.type === "RUN_TOOL_IN_PAGE" && msg.payload?.name === "fetch_url" && !msg.payload?.renderOnly && !msg.payload?.readonlyTry && !msg.payload?.precheck) {
+                const r = await bg.send({ type: "FETCH_URL", payload: { url: approvedUrl } }, { tab: { id: tabId, url: "https://start.example/" } });
+                return { result: r.error ? `Error: ${r.error}` : "ok" };
+            }
+            return undefined;
+        },
+    });
+    const run = await bg.send({ type: "START_RUN", payload: {
+        runId: "hop1", task: "read it", systemPrompt: "S",
+        tools: [{ name: "fetch_url", requiresApproval: true, description: "", parameters: {}, capabilities: [] }],
+        model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools",
+    } }, { tab: { id: 8 } });
+    assert.ok(run.data, "the run finished");
+    return { bg, approvedUrl };
+}
+const TAB8_PAGE = { tab: { id: 8, url: "https://start.example/" }, url: "https://start.example/" };
+
+test("FETCH_URL: a hop to another site that the tab already approved is followed", async () => {
+    const { bg, approvedUrl } = await approvedHopWorker();
+    // Another tab has no such consent: the same hop is refused there.
+    const other = await bg.send({ type: "FETCH_URL", payload: { url: "https://start.example/go" } }, { tab: { id: 33, url: "https://start.example/" }, url: "https://start.example/" });
+    assert.match(other.error, /another site/, "a tab without the approval is refused");
+    const before = fetchedUrls(bg).length;
+    const mine = await bg.send({ type: "FETCH_URL", payload: { url: "https://start.example/go" } }, TAB8_PAGE);
+    assert.ok(!mine.error, mine.error);
+    assert.match(JSON.stringify(mine.data), /approved body/);
+    assert.ok(fetchedUrls(bg).slice(before).includes(approvedUrl), "the approved target was requested");
+});
+
+for (const effect of ["deny", "ask"])
+test(`FETCH_URL: a hop to a URL the tab approved is refused, its target never requested, once ${effect === "ask" ? "an" : "a"} ${effect} policy withdraws that approval (as a direct fetch of it is)`, async () => {
+    const { bg, approvedUrl } = await approvedHopWorker();
+    await new Promise((r) => setTimeout(r, 0));
+    const added = await bg.send({ type: "POLICIES", payload: { op: "add", effect, source: '(c) => c.host === "approved-elsewhere.example"', label: `${effect} approved-elsewhere` } }, { url: "chrome-extension://test/sidebar.html" });
+    assert.ok(!added.error, added.error);
+    const direct = await bg.send({ type: "FETCH_URL", payload: { url: approvedUrl } }, TAB8_PAGE);
+    assert.match(direct.error ?? "", /hasn't been approved/, "setup: the direct fetch is refused once the policy withdraws the consent");
+    const before = fetchedUrls(bg).length;
+    const hop = await bg.send({ type: "FETCH_URL", payload: { url: "https://start.example/go" } }, TAB8_PAGE);
+    assert.match(hop.error ?? "", /another site/, `the redirect reached what the direct fetch is refused: ${JSON.stringify(hop)}`);
+    assert.ok(!fetchedUrls(bg).slice(before).includes(approvedUrl), "the withdrawn target was requested");
+});
+
 test("FETCH_URL: the value store's budget is the setting, and each eviction or refusal is in the housekeeping log", async () => {
     const { IDBFactory } = await import("fake-indexeddb");
     const { MAX_TABLE_ROWS } = await import("../src/table/table-data.ts");
