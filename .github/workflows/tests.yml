@@ -65,6 +65,7 @@ jobs:
     outputs:
       code: ${{ steps.filter.outputs.code }}
       hub: ${{ steps.filter.outputs.hub }}
+      host: ${{ steps.filter.outputs.host }}
       phone: ${{ steps.filter.outputs.phone }}
       native: ${{ steps.filter.outputs.native }}
     steps:
@@ -90,6 +91,7 @@ jobs:
           if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
             echo "code=true" >> "$GITHUB_OUTPUT"
             echo "hub=true" >> "$GITHUB_OUTPUT"
+            echo "host=true" >> "$GITHUB_OUTPUT"
             echo "phone=true" >> "$GITHUB_OUTPUT"
             echo "native=true" >> "$GITHUB_OUTPUT"
             echo "Ran everything: no comparable base for \`${{ github.event_name }}\`." >> "$GITHUB_STEP_SUMMARY"
@@ -106,6 +108,14 @@ jobs:
           else
             echo "hub=false" >> "$GITHUB_OUTPUT"
             echo "Nothing the hub suite could notice changed, so \`hub\` was skipped." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # The ml.sh gate runs against a REAL `wmlhost`, which has to be downloaded, so it too runs only when
+          # something it could notice changed: the pin, the fetch script, the shell's own code and tests, the spec.
+          if echo "$files" | grep -qE '^(tools/host-dist\.json|scripts/fetch-host|src/(shell/|sw/sw-shell\.ts)|tests/(e2e/(ml-sh-host|native-host)|sh-|program-manifest|manifest-schemas|fixtures/program-)|\.github/workflows/tests\.yml)'; then
+            echo "host=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "host=false" >> "$GITHUB_OUTPUT"
+            echo "Nothing the host gate could notice changed, so \`host\` was skipped." >> "$GITHUB_STEP_SUMMARY"
           fi
           # WHAT THE PHONE'S JS BUNDLE IS BUILT FROM: `mobile/` plus the folders Metro watches (mobile/metro.config.js:
           # src/native, src/pairing, src/chat) — a change outside those cannot alter the bundle. This drives
@@ -184,6 +194,81 @@ jobs:
       - name: The suite can see it
         run: node --import tsx -e "import('./tests/fixtures/hub-harness.mjs').then((h) => { if (!h.HAVE_HUB) { console.error(h.NO_HUB); process.exit(1); } console.log('hub binary:', h.BIN); })"
       - run: npm test
+
+  # The ml.sh GATE: `tests/e2e/ml-sh-host.spec.mjs` against a REAL `wmlhost`, the pinned release's binary
+  # (scripts/fetch-host.mjs, tools/host-dist.json). The spec self-skips without a binary, so a broken download
+  # would be a green run of skipped tests — the worst possible outcome. The visibility step below fails instead,
+  # and E2E_WMLHOST names the binary it found, so the spec's own skip cannot fire in this job: an unreachable
+  # release FAILS, never skips.
+  host:
+    needs: changes
+    if: needs.changes.outputs.host == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      # `test:e2e` runs `pretest:e2e` (npm run build:all) first, and the build refuses without the pinned
+      # Pyodide core. Cached exactly as the `test` and `e2e-shard` jobs cache it.
+      - name: Cache pyodide wheels
+        id: pyocache
+        uses: actions/cache@v6
+        with:
+          path: |
+            pyodide-wheels
+            pyodide-core
+          key: pyodide-wheels-${{ hashFiles('package-lock.json', 'src/python/python-env.ts', 'tools/pyodide-dist.json') }}
+      - if: steps.pyocache.outputs.cache-hit != 'true'
+        run: npm run fetch-pyodide
+      # The pinned host release, checksum-verified against tools/host-dist.json — the pin is the only trust
+      # root — and run once before anything trusts it. Cached by the pin, so the release is downloaded when the
+      # pin moves and not before.
+      - name: Cache the host binary
+        id: hostcache
+        uses: actions/cache@v6
+        with:
+          path: ../window-ml-host-*
+          key: wmlhost-${{ hashFiles('tools/host-dist.json') }}
+      - if: steps.hostcache.outputs.cache-hit != 'true'
+        run: npm run fetch-host
+      # What a host-side release needs on this runner, its two guesses carried as requirements (gh-host,
+      # 2026-11-08): glibc >= 2.39 (this image is fine) and bubblewrap at run time, plus the AppArmor userns
+      # opt-in window-ml-host's own ci.yml carries — Ubuntu 24.04 confines unprivileged user namespaces until
+      # a profile says otherwise, and the sandbox does not start without it.
+      - name: Install bubblewrap
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - name: Let bubblewrap create user namespaces
+        run: |
+          sudo tee /etc/apparmor.d/bwrap >/dev/null <<'PROFILE'
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile bwrap /usr/bin/bwrap flags=(unconfined) {
+            userns,
+          }
+          PROFILE
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap
+          bwrap --ro-bind / / --unshare-net --unshare-pid --dev /dev --proc /proc /bin/true
+          echo "bubblewrap starts: the host sandbox runs"
+      # Proof the spec will have a host: it self-skips without one, which would turn a broken download into a
+      # green run of skipped tests. E2E_WMLHOST names the binary this step found, so the skip cannot fire here.
+      - name: The spec can see the host
+        run: |
+          BIN=$(node -e "import('./tests/e2e/native-host.mjs').then((m) => { const b = m.wmlhostBinary(); if (!b) { console.error('no wmlhost: npm run fetch-host'); process.exit(1); } process.stdout.write(b); })")
+          echo "wmlhost binary: $BIN"
+          echo "E2E_WMLHOST=$BIN" >> "$GITHUB_ENV"
+      - name: Run the ml.sh gate
+        run: xvfb-run -a npm run test:e2e -- tests/e2e/ml-sh-host.spec.mjs
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: e2e-results-host
+          path: test-results/
+          retention-days: 7
 
   test:
     name: test (node ${{ matrix.node }})
