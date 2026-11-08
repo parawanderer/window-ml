@@ -3,7 +3,7 @@
 // stream/vision), and the run-selection logic (cardRuns / selectedRun / isPendingGate). A leaf module
 // (no JSX) shared by the card view components AND app.tsx's message bus. Extracted from hud-card.tsx.
 import { signal } from "@preact/signals";
-import type { ElementContext } from "../../contract/contract-run";
+import type { ElementContext, SentFile } from "../../contract/contract-run";
 import { sessionMap, ollamaIds, config } from "../store";
 import type { AgentStep, Session } from "../store";
 import { decidedSteps, stepKey, askKey } from "../ui-kit";
@@ -48,6 +48,25 @@ export const composerMaxSteps = signal(20);         // step budget for a UI-star
 // wanted. (Console `ml.agent` stays default-off — the primitive is unchanged.)
 export const composerStream = signal(true);
 export const composerStarting = signal(0);          // timestamp: a UI run was sent, awaiting its first event (bridge pill)
+/** What a NEW run's send took out of the composer (its text, images, readable files and element), kept until the worker has taken the run. */
+export interface ComposerDraft { text: string; imgs: string[]; files: SentFile[]; element: ElementContext | null; refusal?: string }
+/** The composer's content from the last send of a new run: a refused start (`__mlStartRefused`) puts it back, with the reason. */
+export const composerDraft = signal<ComposerDraft | null>(null);   // state: ui — lives only until the worker answers the start
+
+/**
+ * The worker refused the run the composer just sent (a file past its cap, no model, a page it cannot host): reopen the
+ * composer with what was typed and attached, and the reason in the box. Nothing to restore when the send is not known.
+ * @param reason the worker's reason
+ */
+export function startRefused(reason: string): void {
+    const d = composerDraft.value;
+    composerStarting.value = 0;
+    if (!d) return;
+    composerDraft.value = { ...d, refusal: reason };
+    composerElement.value = d.element;
+    composerTarget.value = { mode: "new" };
+    composerOpen.value = true;
+}
 // Per-call model pick for a UI-started run. "" = follow the configured default (so switching the default
 // from the dropdown just keeps this on it). A non-"" value overrides the model FOR THIS RUN ONLY — the
 // startRun payload carries it to createAgent({ model }); it never touches config. Persists across opens.
