@@ -120,6 +120,8 @@ def read_runs():
             "mlfetch_turn": mf, "before_mlfetch": kinds[:mf - 1] if mf else None,
             "docs_before_mlfetch": ("api-docs" in kinds[:mf - 1]) if mf else None,
             "failed_first_exec": ("Error" in str(execs[0].get("result"))) if execs else None,
+            "used_exec": any(s["tool"] == "exec" for s in steps),
+            "answer": next((x.get("text") for x in reversed(sess.get("messages", [])) if x.get("role") == "assistant"), None),
             "unknown_tool_calls": sum("no tool named" in str(s.get("result")) for s in sess["steps"]),
             # The runner's own error (a run that hit the spec's 300 s cap gives no agent-result), scored as not correct.
             "timed_out": "timed out" in str(c.get("error") or m.get("error") or ""),
@@ -244,6 +246,32 @@ code("""
 u = runs.groupby(G).unknown_tool_calls.agg(["sum", "count"]).rename(columns={"sum": "unknown_tool_calls", "count": "runs"})
 display(u)
 print("total:", int(runs.unknown_tool_calls.sum()), "in", int((runs.unknown_tool_calls > 0).sum()), "of", len(runs), "runs")
+""")
+
+md("""
+In the both arm: how many runs used exec at all (any exec step, a reader or not), and of the runs that opened with
+fetch_url, how many then used exec.
+""")
+
+code("""
+bo.groupby("task").apply(lambda d: pd.Series({
+    "n": len(d), "used_exec": int(d.used_exec.sum()),
+    "opened_fetch_url": int((d.first_reader == "fetch_url").sum()),
+    "opened_fetch_url_then_exec": int(((d.first_reader == "fetch_url") & d.used_exec).sum()),
+    "correct": int(d.correct.sum()),
+}))
+""")
+
+md("""
+## The wrong answers in the exec and both arms
+
+Each wrong run that had exec, with its tools in order and its final message.
+""")
+
+code("""
+w = runs[(runs.arm != "tool") & ~runs.correct]
+pd.set_option("display.max_colwidth", 160)
+w.assign(tools=w.readers.map(lambda r: " → ".join(r)), answer=w.answer.fillna("").str.slice(0, 160))[["model", "task", "arm", "repeat", "tools", "answer"]]
 """)
 
 md("""

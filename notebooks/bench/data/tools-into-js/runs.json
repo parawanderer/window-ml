@@ -1,6 +1,6 @@
 {
-  "commit": "0bfc76bb6caf8195b9d4ac85774a54544dd9b51d",
-  "extracted_at": "2026-11-08T11:44:03+00:00",
+  "commit": "baf824a3be0bb2ba37b81c41489475656e7bcb93",
+  "extracted_at": "2026-11-08T12:08:46+00:00",
   "rows": {
     "excluded": [
       {
@@ -15,6 +15,7 @@
     "latest_fingerprint": "0bfc76bb6caf8195b9d4ac85774a54544dd9b51d",
     "rows": [
       {
+        "answer": "v2.4.0",
         "arm": "both",
         "before_mlfetch": null,
         "completion_tokens": 602,
@@ -38,9 +39,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": "The newest version in the changelog is v2.4.0.",
         "arm": "both",
         "before_mlfetch": null,
         "completion_tokens": 361,
@@ -63,9 +66,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": "The newest version in the changelog is v2.4.0.",
         "arm": "both",
         "before_mlfetch": null,
         "completion_tokens": 669,
@@ -90,9 +95,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": "v2.4.0",
         "arm": "both",
         "before_mlfetch": null,
         "completion_tokens": 530,
@@ -116,9 +123,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": "The newest version in the changelog is v2.4.0.",
         "arm": "both",
         "before_mlfetch": null,
         "completion_tokens": 692,
@@ -143,9 +152,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": "The newest version in the changelog at /pipe-playground is v2.4.0.",
         "arm": "exec",
         "before_mlfetch": [],
         "completion_tokens": 1052,
@@ -170,9 +181,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "The newest version in the changelog at `/pipe-playground` is v2.4.0.",
         "arm": "exec",
         "before_mlfetch": [],
         "completion_tokens": 1529,
@@ -200,9 +213,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "v2.4.0",
         "arm": "exec",
         "before_mlfetch": [
           "exec-other"
@@ -233,9 +248,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "The newest version in the changelog at `/pipe-playground` is v1.4.0.",
         "arm": "exec",
         "before_mlfetch": [],
         "completion_tokens": 2361,
@@ -264,9 +281,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "The newest version in the changelog is v2.4.0.",
         "arm": "exec",
         "before_mlfetch": [
           "exec-other"
@@ -294,9 +313,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "The newest version is v2.4.0.",
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 519,
@@ -320,9 +341,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": "v2.4.0",
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 501,
@@ -346,9 +369,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": "The newest version in the changelog is v2.4.0.",
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 399,
@@ -373,9 +398,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": "v2.4.0",
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 711,
@@ -399,9 +426,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": "The newest version in the changelog is v2.4.0.",
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 304,
@@ -424,9 +453,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": "v2.4.0",
         "arm": "both",
         "before_mlfetch": null,
         "completion_tokens": 303,
@@ -449,9 +480,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": "v2.4.0",
         "arm": "both",
         "before_mlfetch": null,
         "completion_tokens": 357,
@@ -474,9 +507,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": "v2.4.0",
         "arm": "both",
         "before_mlfetch": null,
         "completion_tokens": 268,
@@ -499,9 +534,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": "v2.4.0",
         "arm": "both",
         "before_mlfetch": null,
         "completion_tokens": 413,
@@ -524,9 +561,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": "v2.4.0",
         "arm": "both",
         "before_mlfetch": null,
         "completion_tokens": 411,
@@ -549,9 +588,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": "v2.4.0",
         "arm": "exec",
         "before_mlfetch": [],
         "completion_tokens": 1177,
@@ -579,9 +620,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "v2.4.0",
         "arm": "exec",
         "before_mlfetch": [],
         "completion_tokens": 586,
@@ -605,9 +648,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "v2.4.0",
         "arm": "exec",
         "before_mlfetch": [],
         "completion_tokens": 1103,
@@ -632,9 +677,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "v2.4.0",
         "arm": "exec",
         "before_mlfetch": [],
         "completion_tokens": 1536,
@@ -660,9 +707,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "v2.4.0",
         "arm": "exec",
         "before_mlfetch": [],
         "completion_tokens": 1885,
@@ -689,9 +738,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "v2.4.0",
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 411,
@@ -714,9 +765,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": "v2.4.0",
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 351,
@@ -739,9 +792,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": "v2.4.0",
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 242,
@@ -764,9 +819,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": "v2.4.0",
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 408,
@@ -789,9 +846,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": "v2.4.0",
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 360,
@@ -814,9 +873,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": "**v2.4.0 \u2014 2026-08-30** (newest of 8 releases; changes: pipe scanner for `fetch_url` #412, redirect sanitisation CVE-2026-1188, nested-list indentation fix, debugger attached once per run).\n\nRead via `fetch_url` on `/pipe-playground` \u2014 your page at `/step3` was untouched.",
         "arm": "both",
         "before_mlfetch": null,
         "completion_tokens": 470,
@@ -840,9 +901,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": "**v2.4.0 \u2014 2026-08-30**, the top of the 8-release changelog (v2.0.0 \u2026 v2.4.0): fetch_url gains the grep/head/tail scanner (#412), redirect-target sanitizing for credentialed fetches (CVE-2026-1188), nested-list markdown indentation fix, debugger attached once per run.\n\nRead via a background fetch \u2014 your page was not touched.",
         "arm": "both",
         "before_mlfetch": [
           "fetch_url",
@@ -874,9 +937,11 @@
         "switched": true,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "**v2.4.0 \u2014 2026-08-30** is the newest release in the changelog (confirmed as the top entry by both version sort and date).\n\nHighlights: `pipe` scanner for fetch_url (#412), redirect sanitization before credentialed fetches (CVE-2026-1188), nested-list indentation fix, debugger attached once per run.\n\nYour page at `/step3` was untouched \u2014 I read the changelog via a background fetch.",
         "arm": "both",
         "before_mlfetch": null,
         "completion_tokens": 502,
@@ -900,9 +965,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": "**v2.4.0 \u2014 2026-08-30**",
         "arm": "both",
         "before_mlfetch": null,
         "completion_tokens": 604,
@@ -926,9 +993,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": "**v2.4.0 \u2014 2026-08-30** (newest by both version number and date; it's the top entry of the 8-release changelog at /pipe-playground, fetched without touching your page).",
         "arm": "both",
         "before_mlfetch": [
           "fetch_url",
@@ -956,9 +1025,11 @@
         "switched": true,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "**v2.4.0 \u2014 2026-08-30** is the newest entry in the /pipe-playground changelog (newest by both semver and date across all 8 entries). It covers: a grep/head/tail scanner for `fetch_url` (#412), redirect-target sanitizing before credentialed fetches (CVE-2026-1188), nested-list indentation fix, and attaching the debugger once per run.\n\nYour current page (/step3) was left untouched \u2014 I read the changelog via a background fetch.",
         "arm": "exec",
         "before_mlfetch": [],
         "completion_tokens": 1763,
@@ -986,9 +1057,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "**v2.4.0 \u2014 2026-08-30** (top of the changelog; newest by both version and date, out of 8 releases v2.0.0\u2013v2.4.0). Read via a background fetch \u2014 your current page is untouched.",
         "arm": "exec",
         "before_mlfetch": [],
         "completion_tokens": 1189,
@@ -1014,9 +1087,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "**v2.4.0 \u2014 2026-08-30** \u2014 the newest of the 8 releases in the changelog at `/pipe-playground` (highest semver and latest date). Your page (`/step3`) was left untouched; the changelog was read out-of-band.",
         "arm": "exec",
         "before_mlfetch": [],
         "completion_tokens": 1071,
@@ -1041,9 +1116,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "**v2.4.0 \u2014 2026-08-30** is the newest entry in the changelog at `/pipe-playground` (newest by both version number and date; 8 releases listed, v2.0.0 \u2192 v2.4.0). Fetched out-of-band, so your view of `/step3` is unchanged.",
         "arm": "exec",
         "before_mlfetch": [],
         "completion_tokens": 1370,
@@ -1072,9 +1149,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "**v2.4.0 \u2014 2026-08-30** is the newest release (8 releases total, v2.0.0 \u2192 v2.4.0; confirmed by both semver and date sort). Fetched read-only, so nothing on the current page changed.",
         "arm": "exec",
         "before_mlfetch": [],
         "completion_tokens": 742,
@@ -1099,9 +1178,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "**v2.4.0 \u2014 2026-08-30** (topmost/newest heading in the `/pipe-playground` changelog; entries run v2.4.0 \u2192 v2.0.0). Fetched via the extension, so your page at `/step3` was untouched.",
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 560,
@@ -1125,9 +1206,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": "**v2.4.0 \u2014 2026-08-30** is the newest release in the `/pipe-playground` changelog (8 releases, v2.0.0 \u2192 v2.4.0; highest version and most recent date agree). Read via a background fetch, so your current page was untouched.",
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 630,
@@ -1151,9 +1234,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": "**v2.4.0 \u2014 2026-08-30** is the newest release in the changelog (highest version and most recent date; 8 releases total, oldest v2.0.0 \u2014 2026-04-22). Read via a background fetch, so your page on `The code` was left untouched.",
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 685,
@@ -1177,9 +1262,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": "**v2.4.0 \u2014 2026-08-30** is the newest release (8 releases total, down to v2.0.0 \u2014 2026-04-22; no \"unreleased\" section). Read via fetch, so your page is untouched.",
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 933,
@@ -1205,9 +1292,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": "Newest release in the changelog at /pipe-playground: **v2.4.0 \u2014 2026-08-30** (the latest of the 8 listed releases). Your open tab was untouched \u2014 read via a background fetch.",
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 857,
@@ -1231,9 +1320,11 @@
         "switched": false,
         "task": "find-out",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": "2562507.54",
         "arm": "both",
         "before_mlfetch": [
           "fetch_url"
@@ -1261,9 +1352,11 @@
         "switched": true,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "The total of the `amount` column is 120,468.85.",
         "arm": "both",
         "before_mlfetch": null,
         "completion_tokens": 2287,
@@ -1288,9 +1381,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "The total amount in the `amount` column of `sales.csv` is 1044418.04.",
         "arm": "both",
         "before_mlfetch": [
           "fetch_url"
@@ -1318,9 +1413,11 @@
         "switched": true,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "The total of the `amount` column is 2,562,507.54.",
         "arm": "both",
         "before_mlfetch": [
           "fetch_url"
@@ -1346,9 +1443,11 @@
         "switched": true,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "The total amount is 2,562,507.54.",
         "arm": "both",
         "before_mlfetch": null,
         "completion_tokens": 2381,
@@ -1373,9 +1472,11 @@
         "switched": true,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "The exact total of the `amount` column in `/sales.csv` is 2,562,507.54.",
         "arm": "exec",
         "before_mlfetch": null,
         "completion_tokens": 501,
@@ -1398,9 +1499,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "The total sum of the `amount` column in the `sales.csv` file is 2,562,507.54.",
         "arm": "exec",
         "before_mlfetch": null,
         "completion_tokens": 625,
@@ -1423,9 +1526,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "The total of the `amount` column in the `sales.csv` file is 2,562,507.54.",
         "arm": "exec",
         "before_mlfetch": null,
         "completion_tokens": 468,
@@ -1448,9 +1553,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "The total amount of the `amount` column in sales.csv is 2,562,507.54.",
         "arm": "exec",
         "before_mlfetch": null,
         "completion_tokens": 454,
@@ -1473,9 +1580,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "2562507.54",
         "arm": "exec",
         "before_mlfetch": [],
         "completion_tokens": 882,
@@ -1500,9 +1609,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "The exact total of the `amount` column in the `sales.csv` file is 117,436.81.",
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 3618,
@@ -1529,9 +1640,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 1
+        "unknown_tool_calls": 1,
+        "used_exec": false
       },
       {
+        "answer": "The total amount in the `amount` column is 25806.43.",
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 1486,
@@ -1555,9 +1668,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 1
+        "unknown_tool_calls": 1,
+        "used_exec": false
       },
       {
+        "answer": "The exact total of the `amount` column is 2860.75.",
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 6958,
@@ -1582,9 +1697,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 1
+        "unknown_tool_calls": 1,
+        "used_exec": false
       },
       {
+        "answer": "The total of the `amount` column is 14350.19.",
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 3890,
@@ -1609,9 +1726,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 1
+        "unknown_tool_calls": 1,
+        "used_exec": false
       },
       {
+        "answer": null,
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 290,
@@ -1634,9 +1753,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": true,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": "2562507.54",
         "arm": "both",
         "before_mlfetch": [],
         "completion_tokens": 2545,
@@ -1663,9 +1784,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "2562507.54",
         "arm": "both",
         "before_mlfetch": [
           "fetch_url"
@@ -1694,9 +1817,11 @@
         "switched": true,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "2562507.54",
         "arm": "both",
         "before_mlfetch": [
           "fetch_url"
@@ -1725,9 +1850,11 @@
         "switched": true,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "The exact total of the `amount` column in `/sales.csv` is 2,562,507.54.",
         "arm": "both",
         "before_mlfetch": [
           "fetch_url"
@@ -1756,9 +1883,11 @@
         "switched": true,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "2562507.54",
         "arm": "both",
         "before_mlfetch": null,
         "completion_tokens": 1955,
@@ -1783,9 +1912,11 @@
         "switched": true,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "2562507.54",
         "arm": "exec",
         "before_mlfetch": [],
         "completion_tokens": 2122,
@@ -1814,9 +1945,11 @@
         "switched": true,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "2562507.54",
         "arm": "exec",
         "before_mlfetch": [],
         "completion_tokens": 932,
@@ -1842,9 +1975,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "2562507.54",
         "arm": "exec",
         "before_mlfetch": [],
         "completion_tokens": 1194,
@@ -1870,9 +2005,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "2562507.54",
         "arm": "exec",
         "before_mlfetch": [],
         "completion_tokens": 1280,
@@ -1899,9 +2036,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "2562507.54",
         "arm": "exec",
         "before_mlfetch": [],
         "completion_tokens": 1845,
@@ -1929,9 +2068,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "Stopped at the 10-step cap without finishing.",
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 10136,
@@ -1961,9 +2102,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 3
+        "unknown_tool_calls": 3,
+        "used_exec": true
       },
       {
+        "answer": "Stopped at the 10-step cap without finishing.",
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 11301,
@@ -1994,9 +2137,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 2
+        "unknown_tool_calls": 2,
+        "used_exec": true
       },
       {
+        "answer": "Stopped at the 10-step cap without finishing.",
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 9648,
@@ -2027,9 +2172,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 2
+        "unknown_tool_calls": 2,
+        "used_exec": true
       },
       {
+        "answer": "Stopped at the 10-step cap without finishing.",
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 8081,
@@ -2060,9 +2207,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 2
+        "unknown_tool_calls": 2,
+        "used_exec": true
       },
       {
+        "answer": null,
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 11646,
@@ -2092,9 +2241,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": true,
-        "unknown_tool_calls": 2
+        "unknown_tool_calls": 2,
+        "used_exec": true
       },
       {
+        "answer": "**2,562,507.54** \u2014 sum of all 3,000 `amount` values in `/sales.csv` (exact, summed in integer cents).",
         "arm": "both",
         "before_mlfetch": [
           "fetch_url"
@@ -2122,9 +2273,11 @@
         "switched": true,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "**2,562,507.54** \u2014 sum of `amount` across all 3,000 rows of /sales.csv (no missing/non-numeric values; range 1.23\u20133297.03).",
         "arm": "both",
         "before_mlfetch": [
           "fetch_url"
@@ -2150,9 +2303,11 @@
         "switched": true,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "**2,562,507.54** \u2014 sum of `amount` over all 3,000 rows of /sales.csv (no malformed/missing values; integer-cent summation to avoid float drift).",
         "arm": "both",
         "before_mlfetch": [
           "fetch_url"
@@ -2180,9 +2335,11 @@
         "switched": true,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "**2,562,507.54** \u2014 summed across all 3,000 rows of `/sales.csv` (computed in integer cents to avoid float drift; naive float addition gives 2562507.5399999986). No missing or malformed values in the column.",
         "arm": "both",
         "before_mlfetch": [
           "fetch_url"
@@ -2210,9 +2367,11 @@
         "switched": true,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "**2,562,507.54** \u2014 sum of `amount` across all 3,000 rows of `/sales.csv` (computed in integer cents to avoid float error; every value parsed cleanly).",
         "arm": "both",
         "before_mlfetch": [
           "fetch_url"
@@ -2238,9 +2397,11 @@
         "switched": true,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "**2,562,507.54** \u2014 sum of the `amount` column over all 3000 rows of /sales.csv (computed in integer cents: 256,250,754; values range 1.23\u20133297.03, none missing or non-numeric).",
         "arm": "exec",
         "before_mlfetch": [],
         "completion_tokens": 923,
@@ -2266,9 +2427,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "**2,562,507.54** \u2014 3000 rows, all numeric (no blanks/quoted fields), computed with Kahan summation and cross-checked against `ml.fetch().table` parsing (same result).",
         "arm": "exec",
         "before_mlfetch": [],
         "completion_tokens": 1739,
@@ -2296,9 +2459,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "Confirmed: HTTP 200, `text/csv`, no `Content-Disposition` \u2192 inline.\n\n- Raw body length **84198** characters (vs. 75108 after markdown conversion); the body ends with the row `2500,north,sprocket,47,2316.62` followed by a single newline.\n- The page's `document.body` markdown is a **rendered version of that CSV**: its `raw-text` block is exactly **1 line** \u2014 the header \u2014 while the other **2500 lines** are its HTML table (2501 lines total).\n- So the \"2501 lines\" in `ml.fetch`'s warning counted that rendered view, not the file. The real file is plain CSV, **2501 lines (2500 data rows + header)**.",
         "arm": "exec",
         "before_mlfetch": [],
         "completion_tokens": 1473,
@@ -2322,9 +2487,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "**2,562,507.54** \u2014 sum of the `amount` column over all 3,000 data rows of `/sales.csv` (computed in integer cents to avoid float drift; no quoted or malformed values).",
         "arm": "exec",
         "before_mlfetch": [],
         "completion_tokens": 959,
@@ -2351,9 +2518,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": "**2,562,507.54** \u2014 the sum of the `amount` column across all 3,000 data rows of `/sales.csv` (verified two ways: raw line parsing and the parsed table's numeric column).",
         "arm": "exec",
         "before_mlfetch": [],
         "completion_tokens": 1349,
@@ -2382,9 +2551,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": false,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": true
       },
       {
+        "answer": null,
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 7530,
@@ -2411,9 +2582,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": true,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": null,
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 7352,
@@ -2445,9 +2618,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": true,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": null,
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 13262,
@@ -2484,9 +2659,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": true,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": null,
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 12422,
@@ -2524,9 +2701,11 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": true,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       },
       {
+        "answer": null,
         "arm": "tool",
         "before_mlfetch": null,
         "completion_tokens": 15190,
@@ -2568,7 +2747,8 @@
         "switched": false,
         "task": "sales-total",
         "timed_out": true,
-        "unknown_tool_calls": 0
+        "unknown_tool_calls": 0,
+        "used_exec": false
       }
     ],
     "since": "2026-11-08T09:37:16.352Z"
