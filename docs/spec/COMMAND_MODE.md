@@ -1,6 +1,6 @@
 # Command mode: a typed cell as the person's turn
 
-Status: IDEA (Shane, 2026-11-08, relayed through the chat-page lane; nothing built, nothing scheduled). This file
+Status: IDEA (Shane, 2026-11-08, through the chat-page lane, CONFIRMED by Shane in the coordinator's session the same day; nothing built, nothing scheduled). This file
 records the idea, the refinements Shane agreed to, his rulings on the open questions, and what is still open, so that
 whoever builds it starts from the decisions rather than from the conversation. It is a sibling of
 `docs/spec/AGENT_SKILLS.md`: a REPL-lane idea spec.
@@ -37,7 +37,7 @@ as the person's. Backspace on an empty editor leaves the mode and keeps a litera
 - **Mid-run**, a command arrives like a mid-run message or file (#1492's rule). Esc or Stop cancels it and keeps the
   output so far, marked as cut off.
 
-## Rulings (Shane, 2026-11-08, relayed; to be confirmed in the coordinator's session)
+## Rulings (Shane, 2026-11-08, confirmed)
 
 1. **A typed cell needs no approval**, in `full` Python mode too. Shane's words: "The `!` concept in general would only
    work from isolated surfaces, not from the API. As of right now." A later API form of command mode REOPENS this
