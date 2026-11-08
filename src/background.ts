@@ -1153,7 +1153,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
 
     } else if (message.type === "EMBED") {
         // Embedding runs on the user's own box like any other model call, so a page may ask — the same
-        // reasoning that lets a page call ml.chat. An explicit model still passes the access whitelist, so a
+        // reasoning that lets a page call ml.chat. The resolved model, asked or configured, passes the access whitelist, so a
         // page cannot reach a model the user excluded, and the resolved model is reported back so a caller
         // can see WHICH geometry the vectors are in (comparing across models is meaningless).
         (async () => {
@@ -1163,7 +1163,8 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             try {
                 const cfg = await getConfig();
                 const model = asked || cfg.embeddingModel;
-                if (asked && !modelFilterAllows(asked, cfg.modelFilter)) { sendResponse({ error: `Refused: "${asked}" is excluded by the model filter.` }); return; }
+                // The RESOLVED model, whoever chose it: the configured embedding model is as filterable as one a page names.
+                if (model && !modelFilterAllows(model, cfg.modelFilter)) { sendResponse({ error: `Refused: "${model}" is excluded by the model filter.` }); return; }
                 sendResponse({ data: { model, vectors: await embedTexts(cfg, model, inputs as string[]) } });
             } catch (e) { sendResponse({ error: (e as Error)?.message || String(e) }); }
         })();

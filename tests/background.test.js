@@ -3812,6 +3812,11 @@ test("EMBED: says what to DO when unconfigured or unsupported, and honours the m
         .send({ type: "EMBED", payload: { inputs: ["a"] } });
     assert.match(none.error, /No embedding model configured.*Settings/s, "names the setting, not just the failure");
 
+    // With a filter and no embedding model configured, the answer is still the setting to fix, not a filter refusal of "".
+    const noneFiltered = await loadBackground({ config: baseConfig({ embeddingModel: "", modelFilter: "^qwen" }), onFetch: () => jsonResponse({}) })
+        .send({ type: "EMBED", payload: { inputs: ["a"] } });
+    assert.match(noneFiltered.error, /No embedding model configured/);
+
     // A model that answers neither endpoint is the "you picked a chat model" case; say so.
     const wrong = await loadBackground({ config: baseConfig({ embeddingModel: "qwen3:14b" }), onFetch: () => jsonResponse({}, 404) })
         .send({ type: "EMBED", payload: { inputs: ["a"] } });
