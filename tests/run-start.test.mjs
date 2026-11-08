@@ -1458,6 +1458,51 @@ test("a survey reads the policies that apply to its run as ml.current.policies",
     assert.match(toolResults[0] ?? "", /never x\.example/, `the survey saw the policy; got ${(toolResults[0] ?? "").slice(0, 300)}`);
 });
 
+// --- a SCHEME-RELATIVE navigate: the gate judges it on the page's scheme, as the browser goes there ---
+
+/** A tab on `url` whose navigates arrive: each one commits a new document there and the run is re-adopted on it. */
+function arrivingTab(url) {
+    const tab = { ...SITE, url };
+    let docN = 1;
+    const sender = () => ({ tab: { id: tab.id, url: tab.url }, url: tab.url, origin: new URL(tab.url).origin, frameId: 0, documentId: `doc-nav-${docN}` });
+    const inPage = async (bg, msg) => {
+        const p = msg.payload;
+        if (p.name !== "navigate" || p.precheck || p.renderOnly || p.readonlyTry) return undefined;
+        const to = new URL(p.args.url, tab.url).href;
+        tab.url = to; docN++;
+        bg.commit(tab.id, { documentId: `doc-nav-${docN}`, url: to });
+        setTimeout(async () => {
+            const ready = JSON.parse(JSON.stringify(await bg.send({ type: "CONTENT_READY" }, sender()) ?? {}));
+            for (const a of ready.adopt ?? []) void bg.send({ type: "RUN_READOPTED", payload: { runId: a.runId, pageInfo: `You are on ${to}` } }, sender());
+        }, 5);
+        return { result: `Navigating to ${to}` };
+    };
+    return { tab, inPage };
+}
+
+test("on an http page, a scheme-relative navigate to an http origin the run consented to takes the page's scheme and asks nothing", T, async () => {
+    // An approved navigate to http://other.example consents to that http origin; the run then goes back to its page.
+    // "//other.example/y" takes the http page's scheme, which is where the browser goes. The gate once forced "https:"
+    // onto it and asked for https://other.example, which the run never consented to.
+    const { tab, inPage } = arrivingTab("http://site.example/page");
+    const { gates } = await attackRun({}, {
+        tab, local: { ml_site_always: ["http://site.example"] }, inPage,
+        first: { name: "navigate", args: { url: "http://other.example/page" } },
+        then: [{ name: "navigate", args: { url: "http://site.example/page" } }, { name: "navigate", args: { url: "//other.example/y" } }],
+    });
+    assert.deepEqual(gates, ["navigate"], `the navigate out asks; the way back and the scheme-relative return do not. Gates: ${JSON.stringify(gates)}`);
+});
+
+test("RED TEAM: on an http page, consenting to http://other.example does not let a scheme-relative navigate to another host past the gate", T, async () => {
+    const { tab, inPage } = arrivingTab("http://site.example/page");
+    const { gates } = await attackRun({}, {
+        tab, local: { ml_site_always: ["http://site.example"] }, inPage,
+        first: { name: "navigate", args: { url: "http://other.example/page" } },
+        then: [{ name: "navigate", args: { url: "http://site.example/page" } }, { name: "navigate", args: { url: "//third.example/y" } }],
+    });
+    assert.deepEqual(gates, ["navigate", "navigate"], `each new host asks. Gates: ${JSON.stringify(gates)}`);
+});
+
 // --- the policy page (POLICIES): only extension pages, and a change re-judges a card already showing ---
 
 /** The Settings panel, as the browser describes an extension page sending a message. */

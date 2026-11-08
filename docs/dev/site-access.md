@@ -896,6 +896,14 @@ that lists the waiting requests (each with `allowed`) or applies `{ origin, deci
 `answerRequest` returns. An allowed site asking for agents is offered "Let it start agents" (the level becomes Ask each time) and Deny
 (agents Denied). Nothing opens a window or takes focus (rule 5).
 
+## Traps
+
+- **A scheme-relative URL takes the page's scheme at every gate** (`onPageUrl`, sw-run-host.ts): the navigate gate, its
+  consent and the fetch_url gate judge `//host/x` as the browser and the FETCH_URL choke point resolve it, and assume
+  https only when the run has no page. A fixed `https:` there asked again for an http origin the run had consented to.
+  Known gap: no red-team row probes it yet (one follows the fix on main); the run-start rows in section "a
+  SCHEME-RELATIVE navigate" are the only cover.
+
 ## Tests
 
 - `tests/site-requests.test.mjs`: the request rules, enumerated over every (state x event), the caps by registrable
