@@ -2040,13 +2040,13 @@ test("a tagged page object is no RegExp to the evaluator: its source and flags n
     // match: refused outright, nothing runs.
     await assert.rejects(run(`const o = await ml.models(); return "abc".match(o)`, world(), handed(o)), outOfDialect);
     assert.deepEqual(ran, [], "match ran the page's object");
-    // replaceAll: native ToString(searchValue) still resolves it (the open item in readonly-exec.md), but never as a regexp.
+    // replaceAll: its pattern is a converting position (judged like any conversion), and never read as a regexp.
     ran.length = 0;
     await run(`const o = await ml.models(); return "abc".replaceAll(o, "x")`, world(), handed(o)).catch(() => {});
     assert.ok(!ran.includes("source") && !ran.includes("flags"), `replaceAll read the page's regexp fields: ${JSON.stringify(ran)}`);
 });
 
-test("a pattern object is not coerced by native replaceAll: its tag getter never runs", { todo: "open: ToString(searchValue) reads the page's Symbol.toStringTag; the same hole as [o].join(\"\")" }, async () => {
+test("a pattern object is not coerced by native replaceAll: its tag getter never runs", async () => {
     const { o, ran } = claimed("RegExp");
     await run(`const o = await ml.models(); return "abc".replaceAll(o, "x")`, world(), handed(o)).catch(() => {});
     assert.deepEqual(ran, []);

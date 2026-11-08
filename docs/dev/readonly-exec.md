@@ -886,14 +886,14 @@ unsafely" — new tests prove the new surface keeps that.
   object argument with ToString or ToNumber, which runs the object's own `toString`/`valueOf`, so each converting position
   (`CONVERTS` in `policy.ts`, by receiver kind and method: the string, array-index, number, Math, `Number.parse*`, `Date.parse`/`UTC`,
   `JSON.parse`, DOM finder, `getAttribute`/`matches`/`closest`, `getPropertyValue`/`item` and locale-options positions), the converting
-  bare roots (`String`, `Number`, `parseInt`, `parseFloat`, `isNaN`, `isFinite`, `getComputedStyle`'s pseudo-element), and every operand
+  bare roots (`String`, `Number`, `parseInt`, `parseFloat`, `isNaN`, `isFinite`, `getComputedStyle`'s pseudo-element), the converting constructors (`CTOR_CONVERTS`: `new Date`, `new String`, `new Number`, `new RegExp`, `new Error`), and every operand
   of an operator, a template and a computed key goes through it. It answers the value to USE: a primitive is itself; a String object is
   its primitive, read by the intrinsic's slot, so its own `toString`/`valueOf`/`split` and a Proxy around it are never looked up (a
   String object receiver is called as its primitive); an array passes `joinsData`; a RegExp passes where a pattern is taken; an object the
   SCRIPT built (`owned`) passes only if its own `toString`/`valueOf`/`Symbol.toPrimitive` are arrows the script wrote and it has no own
   `Symbol.toStringTag` and only intrinsic prototypes (`convertsByIntrinsics`); anything else, a page's object included, is
   `NotInDialect` naming the method or operator and never the value (the survey asks). Never decided by inspecting a page's object, since
-  inspection can itself run its traps. A function is not judged here (a callback is `onlyOurFunctions`'s). **Every admitted method is in
+  inspection can itself run its traps. A function converts through its own `toString` too, so only an arrow the script wrote (or the inert method reference) passes; any other function is `NotInDialect` (a callback position is also `onlyOurFunctions`'s). **Every admitted method is in
   `CONVERTS` or `NO_CONVERSION`** (with a reason); `tests/readonly-convert.test.mjs` walks `METHODS_BY_KIND` and fails for a method in
   neither, so a method added to the whitelist is decided. A page's `Date` or element used as an operand now asks (a `new Date` the script made
   passes). `tests/redteam-coerce-args.test.mjs` is the measured list of 35 positions.

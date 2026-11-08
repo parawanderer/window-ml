@@ -202,6 +202,9 @@ export function convertingArgs(kind: string | null, key: string, count: number):
     return at === "all" ? Array.from({ length: count }, (_, i) => i) : at.filter((i) => i < count);
 }
 
+/** The constructors (`SAFE_CONSTRUCTORS`) that convert their arguments, with the positions: `new Date(o)`, `new String(o)`, `new RegExp(o, flags)`. The rest take data (a Set's iterable, an Array's length). */
+export const CTOR_CONVERTS: Readonly<Record<string, Positions>> = { Date: "all", RegExp: [0, 1], Number: "all", String: "all", Error: [0] };
+
 /** The bare roots that convert their arguments (`String(o)`, `parseInt(o)`), with the positions: `getComputedStyle`'s pseudo-element
  *  is the one converting argument of a function whose first is an element. */
 export const ROOT_CONVERTS: Readonly<Record<string, Positions>> = { String: "all", Number: "all", parseInt: "all", parseFloat: "all", isNaN: "all", isFinite: "all", getComputedStyle: [1] };

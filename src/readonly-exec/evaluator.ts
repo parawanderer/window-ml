@@ -8,7 +8,7 @@ import { NotInDialect, Stopped, MAX_STRING, MAX_COLLECTION, Denied, riskyRegex, 
 import { Node } from "./parser";
 import { regexSteps } from "./regex-cost";
 import { replaceSize, replaceWorstCase } from "./replace-size";
-import { isSet, isMap, isStringObject, isRegExpObject, drainIterator, isWritableTarget, ReadonlyRealm, DENIED_PROPS, isDomCollection, SAFE_CONSTRUCTORS, ANSWER_METHODS, methodAllowed, kindOf, MUTATING_METHODS, CALLABLE_ROOTS, convertingArgs, ROOT_CONVERTS, convertsByIntrinsics, argWrites } from "./policy";
+import { isSet, isMap, isStringObject, isRegExpObject, drainIterator, isWritableTarget, ReadonlyRealm, DENIED_PROPS, isDomCollection, SAFE_CONSTRUCTORS, ANSWER_METHODS, methodAllowed, kindOf, MUTATING_METHODS, CALLABLE_ROOTS, convertingArgs, ROOT_CONVERTS, CTOR_CONVERTS, convertsByIntrinsics, argWrites } from "./policy";
 import { PrintSwap, abridgeRow, diffSwap, jsonPathKey } from "./print";
 
 /** Per-frame set of names declared `const`, kept off the frame's own enumerable keys. */
@@ -323,10 +323,8 @@ export class Evaluator {
      *  {@link converts}, and a String object is replaced by its primitive. */
     private coerces(via: string, ...vs: unknown[]): unknown[] {
         return vs.map((v) => {
-            if (typeof v === "function" && !this.ourFns.has(v)) throw new NotInDialect(`${via} was given a function that is not an arrow written in the script, whose own toString could run page code`);
-            if (v === null || typeof v !== "object") return v;
             const u = this.converts(via, v);
-            this.expands(u);
+            if (u !== null && typeof u === "object") this.expands(u);
             return u;
         });
     }
@@ -337,6 +335,12 @@ export class Evaluator {
      *  (`owned`) whose own conversions are its arrows. Provenance, never inspection of a page's object (a Proxy answers `has` and
      *  `getPrototypeOf`). A function is not judged here. `via` names the method or operator, never the value. */
     private converts(via: string, v: unknown, pattern = false): unknown {
+        // A function converts through its own `toString` too (a page's can be an own property): only an arrow the script wrote, or the
+        // inert method reference, is data. A callback position is also `onlyOurFunctions`'s.
+        if (typeof v === "function") {
+            if (this.ourFns.has(v) || v === METHOD_REF) return v;
+            throw new NotInDialect(`${via} was given a function that is not an arrow written in the script, whose own toString could run page code`);
+        }
         if (v === null || typeof v !== "object") return v;
         if (isStringObject(v)) return String.prototype.valueOf.call(v);
         if (Array.isArray(v)) { this.joinsData(v, via); return v; }
@@ -911,6 +915,9 @@ export class Evaluator {
                 const args = yield* this.evalArgs(node.args, scope);
                 for (const a of args) this.noteNulls(a);
                 this.allocation(node.ctor, args);
+                // A constructor that converts its argument (`new Date(o)`, `new RegExp(o)`) judges it like any other conversion.
+                const at = Object.hasOwn(CTOR_CONVERTS, node.ctor) ? CTOR_CONVERTS[node.ctor] : undefined;
+                if (at !== undefined) args.forEach((a, i) => { if (at === "all" || at.includes(i)) args[i] = this.converts(`new ${node.ctor}`, a, node.ctor === "RegExp" && i === 0); });
                 if (node.ctor === "RegExp") this.patternArg(isRegExp(args[0]) ? String(args[0].source) : args[0]);
                 for (const a of args) if (ONE_LEVEL_CTORS.has(node.ctor)) this.shallow(a); else this.expands(a);
                 const inst = new ctor(...args);

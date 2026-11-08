@@ -141,3 +141,30 @@ test("a String object of another realm unboxes as a script-built one does; a Pro
         await assert.rejects(run(js, wrapped), (e) => refused(e) && /(operator \+|includes|split)/.test(e.message), js);
     assert.ok(!trapped.some((k) => k === "valueOf" || k === "toString" || String(k).startsWith("Symbol(Symbol.toPrimitive")), `a Proxy trap saw a conversion: ${trapped}`);
 });
+
+test("a page's FUNCTION in a converting position is refused like any page value: its own toString never runs", async () => {
+    const ran = [];
+    const f = () => 1;
+    f.toString = () => { ran.push("toString"); return "2"; };
+    f.valueOf = () => { ran.push("valueOf"); return 2; };
+    for (const js of [
+        `const o = await ml.models(); return "abc".includes(o)`, `const o = await ml.models(); return "abc".slice(o)`, `const o = await ml.models(); return Math.floor(o)`,
+        `const o = await ml.models(); return String(o)`, `const o = await ml.models(); return Number(o)`, `const o = await ml.models(); return Date.parse(o)`,
+        `const o = await ml.models(); return document.querySelector(o)`, `const o = await ml.models(); return o + ""`, `const o = await ml.models(); return new Date(o)`,
+    ]) await assert.rejects(run(js, f), (e) => refused(e) && /function that is not an arrow/.test(e.message), js);
+    assert.deepEqual(ran, []);
+    // The script's own arrow and the inert method reference are still data.
+    assert.equal((await run(`return "abc".replace("b", (m) => m.toUpperCase())`)).value, "aBc");
+});
+
+test("a constructor that converts its argument judges it: new Date, new String, new Number, new RegExp, new Error", async () => {
+    const ran = [];
+    const o = { toString() { ran.push("toString"); return "2"; }, valueOf() { ran.push("valueOf"); return 2; } };
+    for (const ctor of ["Date", "String", "Number", "RegExp", "Error"])
+        await assert.rejects(run(`const o = await ml.models(); return new ${ctor}(o)`, o), (e) => refused(e) && new RegExp(`new ${ctor}`).test(e.message), ctor);
+    await assert.rejects(run(`const o = await ml.models(); return new RegExp("a", o)`, o), refused);
+    assert.deepEqual(ran, []);
+    assert.equal((await run(`return new Date(5).getTime() + new Number("3") + new String("x").length`)).value, 9);
+    assert.equal((await run(`return new RegExp("a+", "g").test("caab")`)).value, true);
+    assert.equal((await run(`return new RegExp(/b/).test("abc")`)).value, true);
+});
