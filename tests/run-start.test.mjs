@@ -701,7 +701,7 @@ test("ADVERSARIAL: a run's hash sent with ANOTHER tab's id is refused the person
     assert.equal(bg.tabMessages.filter(([t, m]) => t === 8 && m.type === "ML_SESSION_TO_PAGE").length, 1);
 });
 
-test("ADVERSARIAL: files from the HUD card's sessionSend for a run a PAGE built still meet userRunAction's guards: its tab on ANOTHER site, or another tab's id, is refused and nothing reaches a page", { ...T, todo: "needs #1520 (pageRunMoved)" }, async () => {
+test("ADVERSARIAL: files from the HUD card's sessionSend for a run a PAGE built still meet userRunAction's guards: its tab on ANOTHER site, or another tab's id, is refused and nothing reaches a page", T, async () => {
     // The card's sessionSend reaches the worker as USER_RUN_ACTION from the shell's tab (shell.ts, `workerFirst`), so the
     // guards are the ones the two rows of #1520 pin; this row is the card's route through them with a file the card now sends.
     const A = "https://builder.example/", B = "https://other.example/";
