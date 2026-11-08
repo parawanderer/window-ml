@@ -612,9 +612,9 @@ refuses a PDF for a run it does not hold, the session commands' page fallback an
 forward text files only). Those text files go only while the tab shows the run's builder's origin
 (`stored.p.pageOrigin`): on another approved site the relay would reach a page that did not build the run, so the
 files are refused by name (`pageRunMoved`) and the text goes as before (e3's second pass, 2026-11-08). So are a run's
-files sent from another tab than the run's, whose page did not build it either (flaky-ci's review). A run an
-approved iframe built is therefore refused files too, since the tab shows the top frame's origin; the composers
-(sidebar, DevTools) take files for an agent session. The
+files sent from another tab than the run's, whose page did not build it either (flaky-ci's review). Only a top frame
+can build a run (`grantableOrigin`), so `pageOrigin` is the top frame's origin and the comparison is exact; the
+composers (sidebar, DevTools) take files for an agent session. The
 `dereference` tool reads a text pointer as its text through the pipe ("Text, N lines" in the header); the inventory,
 the shelf's refusals and the `run.files` state row say lines for text and pages for a PDF. Images wait, as ruled.
 
