@@ -42,21 +42,21 @@ function target() {
 }
 
 /**
- * The release archive and its shasum line. The `releases/download/` CDN has answered 504 for
- * window-ml-hub specifically (e3, 2026-11-08: three CI reruns in the same window 504'd
- * there while `github.com` itself was still 302, and a fourth run's setup steps hit
- * `Unexpected HTTP response: 504` on other github.com URLs too). Three attempts with a short
- * backoff on the download; only then does this fall back to the release API's asset endpoint
- * (`Accept: application/octet-stream`), a genuine second path that serves the same bytes and
- * its `digest` with no token. The sha256 check in `main` below is what makes a
- * wrong body safe either way.
+ * The release archive and its shasum line. `name` is the asset's OWN name — the `.tar.gz` file on the
+ * release, `wmlhub-<tag>-<target>.tar.gz` — the same string the download URL and the API's `asset.name`
+ * carry. The `releases/download/` CDN has answered 504 for window-ml-hub specifically (e3, 2026-11-08:
+ * three CI reruns in the same window 504'd there while `github.com` itself was still 302, and a fourth
+ * run's setup steps hit `Unexpected HTTP response: 504` on other github.com URLs too). Three attempts
+ * with a short backoff on the download; only then does this fall back to the release API's asset endpoint
+ * (`Accept: application/octet-stream`), a genuine second path that serves the same bytes and its `digest`
+ * with no token. The sha256 check in `main` below is what makes a wrong body safe either way.
  */
 export async function releaseAsset(tag, name) {
     const base = `https://github.com/${REPO}/releases/download/${tag}`;
     for (let attempt = 0; attempt < 3; attempt++) {
         const direct = await Promise.all([
-            fetch(`${base}/${name}.tar.gz`),
-            fetch(`${base}/${name}.tar.gz.sha256`),
+            fetch(`${base}/${name}`),
+            fetch(`${base}/${name}.sha256`),
         ]).catch(() => null);
         if (direct?.[0]?.ok && direct[1]?.ok) {
             return { archive: new Uint8Array(await direct[0].arrayBuffer()), sums: new Uint8Array(await direct[1].arrayBuffer()) };
@@ -81,18 +81,19 @@ async function main() {
         console.log(`wmlhub ${tag} is already in ${dir} (--force to replace it)`);
         return;
     }
-    const name = `wmlhub-${tag}-${target()}`;
-    console.log(`fetching ${name}.tar.gz`);
-    const { archive, sums } = await releaseAsset(tag, name);
+    const asset = `wmlhub-${tag}-${target()}.tar.gz`;   // the release asset's own name
+    const unpacked = asset.slice(0, -".tar.gz".length); // the tar's top directory, no suffix
+    console.log(`fetching ${asset}`);
+    const { archive, sums } = await releaseAsset(tag, asset);
 
     // CHECKED BEFORE IT IS UNPACKED, let alone run: this ends in a binary that a test suite executes, and a download
     // nobody verifies is a supply chain with no links in it. The file is `<sha>  <name>`, as shasum writes it.
     const want = new TextDecoder().decode(sums).trim().split(/\s+/)[0];
     const got = createHash("sha256").update(archive).digest("hex");
     if (!/^[0-9a-f]{64}$/.test(want)) throw new Error(`the published checksum is not one: ${want.slice(0, 80)}`);
-    if (got !== want) throw new Error(`checksum mismatch for ${name}.tar.gz\n  published ${want}\n  downloaded ${got}`);
+    if (got !== want) throw new Error(`checksum mismatch for ${asset}\n  published ${want}\n  downloaded ${got}`);
 
-    const tmp = join(tmpdir(), `${name}-${process.pid}`);
+    const tmp = join(tmpdir(), `${unpacked}-${process.pid}`);
     await mkdir(tmp, { recursive: true });
     await mkdir(dir, { recursive: true });
     try {
@@ -100,7 +101,7 @@ async function main() {
         await writeFile(tar, archive);
         await run("tar", ["-xzf", tar, "-C", tmp]);
         for (const bin of ["wmlhub", "wmlbox"]) {
-            await writeFile(join(dir, bin), await readFile(join(tmp, name, bin)));
+            await writeFile(join(dir, bin), await readFile(join(tmp, unpacked, bin)));
             await chmod(join(dir, bin), 0o755);
         }
     } finally {

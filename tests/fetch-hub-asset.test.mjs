@@ -83,7 +83,7 @@ test("an intermittent 504 is survived by the retry, with no API call", async () 
     }
 });
 
-test("the download route's own bytes and shasum line are used when it answers first time", async () => {
+test("the download route's own bytes and shasum line are used when it answers first time, and the URL is the asset's own name", async () => {
     const digest = "ef".repeat(32);
     const archive = new TextEncoder().encode("first try\n");
     const sums = new TextEncoder().encode(`${digest}  wmlhub-x86_64-unknown-linux-gnu.tar.gz\n`);
@@ -97,7 +97,9 @@ test("the download route's own bytes and shasum line are used when it answers fi
         const got = await releaseAsset("v0.4.3", "wmlhub-x86_64-unknown-linux-gnu.tar.gz");
         assert.equal(Buffer.from(got.archive).toString("utf8"), "first try\n");
         assert.equal(asked.filter((u) => u.includes("/releases/download/") && !u.endsWith(".sha256")).length, 1, "only one pair, no retry needed");
-        assert.equal(asked.some((u) => u.includes("/releases/download/")), true, "the download route is tried first");
+        // The name is the asset's own: the URL is exactly `<tag>/<asset.name>`, never a second `.tar.gz`.
+        assert.equal(asked[0], "https://github.com/parawanderer/window-ml-hub/releases/download/v0.4.3/wmlhub-x86_64-unknown-linux-gnu.tar.gz");
+        assert.equal(asked[1], "https://github.com/parawanderer/window-ml-hub/releases/download/v0.4.3/wmlhub-x86_64-unknown-linux-gnu.tar.gz.sha256");
     } finally {
         globalThis.fetch = real;
     }
