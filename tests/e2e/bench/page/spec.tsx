@@ -31,6 +31,7 @@ export function SpecCard({ s }: { s: BenchState }) {
                 <dt><Tip tip="The commit the extension was built from, plus a hash of any uncommitted changes. Runs are cached per build.">build</Tip></dt><dd>{commitUrl
                     ? <a class="tt" href={commitUrl} target="_blank" rel="noopener noreferrer" data-tip={`Opens commit ${commit!.slice(0, 12)} in ${s.repo}.${p.dirty ? " The build also had uncommitted changes (the hash after +), which are not in that commit." : ""}`}><code>{p.fingerprint}</code></a>
                     : <code>{p.fingerprint}</code>}{p.dirty ? <span class="badge warn">uncommitted changes</span> : null}</dd>
+                {p.runsIn ? <><dt><Tip tip="Where the sweep ran: set by BENCH_RUNS_IN when it runs in a container rather than on the machine itself.">runs in</Tip></dt><dd>{p.runsIn}</dd></> : null}
                 <dt><Tip tip="Whether the spec text differs from the previous sweep's in this directory.">since last</Tip></dt>
                 <dd>{!prev ? <span class="dim">the first sweep recorded here</span>
                     : !p.changed ? <><span class="badge ok">unchanged</span> <span class="dim">since {prev.by}'s sweep, {when(prev.at)}</span></>

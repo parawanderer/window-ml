@@ -146,7 +146,7 @@ try {
     for (let i = 0; i < 30 && !(await frame.locator(".bench-outpane").count()); i++) await sleep(100);
     for (let i = 0; i < 100; i++) {
         if (!(await frame.locator(".bench-outpane .r-ranfor.live").count())
-            && await frame.locator(".bench-play:not([disabled])").count()) break;
+            && await frame.locator('.bench-play[aria-label="Run"]:not([disabled])').count()) break;
         await sleep(400);
     }
     console.log(`   result: ${(await frame.locator(".bench-outbody").innerText()).replace(/\s+/g, " ").trim()}`);

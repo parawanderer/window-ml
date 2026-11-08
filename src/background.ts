@@ -67,7 +67,7 @@ import { adoptOnTab } from "./sw/adopt-run";
 import { pageRebuild } from "./agent/run-assembly";
 import { runControlPayloadError } from "./sw/run-payload-check";
 import { forPage } from "./sw/sw-scrub";   // error text bound for a page, without the config's secrets
-import { pythonPrewarm, pythonExec, relayPyStdout, deletePythonRun, dropPythonLibraries, pythonReaped } from "./sw/sw-python";
+import { pythonPrewarm, pythonExec, pythonInterrupt, relayPyStdout, deletePythonRun, dropPythonLibraries, pythonReaped } from "./sw/sw-python";
 import { focusLineFor } from "./sw/sw-focus";
 import { eventSession, pageMayWrite, withoutPageWhy, WORKER_ONLY_KINDS, type WorkerClaim } from "./event-admission";   // what a page may add to a session the worker speaks for
 import { fetchUrlFor, pageFetchCaller } from "./sw/sw-fetch-url";
@@ -885,6 +885,8 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     // only starts Pyodide early, which a page could already cause by being where a person opens the Commander.
     if (message.type === "USER_PYTHON_PREWARM") { pythonPrewarm(message, sender, sendResponse); return true; }
     if (message.type === "PYTHON_EXEC") { pythonExec(message, sender, sendResponse); return true; }   // async
+    // The Python bench's Stop: extension pages only, and never in HANDLE_MAP, so no page can start it (sw-python.ts).
+    if (message.type === "PYTHON_INTERRUPT") { pythonInterrupt(sender, sendResponse); return true; }   // async
     // One `ml` call over the wire from a client the worker opened (sw-ml-wire.ts): answered by the sender and the handle,
     // never the run id. Not in HANDLE_MAP, so a page cannot start it, and a tab's sender never matches a client.
     if (message.type === "ML_CALL") return onMlCall(message, sender, sendResponse);

@@ -953,7 +953,7 @@ textarea.cinput { resize: none; overflow-y: auto; line-height: 1.5; font: inheri
 /** THE SPINNER: a ring with one lit arc, for anywhere something is being fetched and there is no number to show. */
 /* Size it with `--spin` where the default 16px is wrong for the line it sits in; the border follows, so it stays a
    ring rather than a disc at small sizes. It is the shared one deliberately — this repo already grew three
-   (`.card-tab-spin`, `.bench-play-spin` and this), which is how a fourth gets written. A wait that KNOWS how far
+   (`.card-tab-spin`, the bench's old Run spinner and this), which is how a fourth gets written. A wait that KNOWS how far
    along it is takes a `<progress>` instead: a spinner there would be hiding a number we have. */
 .cspin {
     width: var(--spin, 16px); height: var(--spin, 16px); flex: 0 0 auto;
@@ -3859,6 +3859,9 @@ pre.code.dlines > code.hljs { display: block; }
 }
 .bench-play:hover:not(:disabled) { background: color-mix(in srgb, var(--ok) 16%, transparent); }
 .bench-play:disabled { opacity: .4; cursor: default; }
+/* STOP while a script runs: the composer's square, in the text colour like the composer's, never the Run green. */
+.bench-play.is-stop { color: inherit; }
+.bench-play.is-stop:hover { background: color-mix(in srgb, currentColor 14%, transparent); }
 /* SEND TO THE MODEL — hand the script you just got working to the model as a turn. A placeholder, and
    DISABLED so that reads as "not built yet" rather than as a button that ignores you: an affordance which
    silently does nothing cannot be told from a bug, so you try it twice. Quiet beside Run, which is the one
@@ -3866,13 +3869,6 @@ pre.code.dlines > code.hljs { display: block; }
 .bench-send { display: inline-flex; align-items: center; justify-content: center; line-height: 0;
     padding: 3px; border-radius: 5px; color: var(--fg-faint); background: transparent; border: none;
     opacity: .45; cursor: default; }
-/* Running: the same box, with a spinner where the triangle was. Swapping the GLYPH rather than the button
-   keeps the row from reflowing at the exact moment you are watching it. */
-.bench-play-spin { width: 13px; height: 13px; border-radius: 50%;
-    border: 2px solid color-mix(in srgb, var(--ok) 30%, transparent);
-    border-top-color: var(--ok); animation: bench-spin .7s linear infinite; }
-@keyframes bench-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .bench-play-spin { animation: none; } }
 /* The environment button, in the header beside the mode picker. `.on` while its body is open, so the row
    says which disclosure the panel below it belongs to. */
 .bench-env-btn.on { color: var(--fg); border-color: var(--fg-dim); }

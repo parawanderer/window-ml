@@ -73,7 +73,7 @@ import { measureRun, aggregate, isRateLimit } from "./metrics.mjs";
 import { expandCells, cellKey, cellPath, comboLabel, buildGroups, parseSelector, slug, cellStream, runConfig } from "./cells.mjs";
 import { holdMode, loadSpec, startHeld, heldWindow, HOLD_IDLE_MIN } from "./hold.mjs";
 import { writeReport, mdSink, terminalSink, doneSummary, doneLine } from "./sinks.mjs";
-import { startDashboard, staticPage, servedSweep, handOffPage } from "./serve.mjs";
+import { startDashboard, staticPage, servedSweep, handOffPage, finishSweepFiles } from "./serve.mjs";
 import { pageSources } from "./page/bundle.mjs";
 import { addMark, readMarks, defaultBy } from "./mark.mjs";
 import { recordSweep, specProvenance, specText, keepEarlierRun, cellsOnDisk, sortOnDisk } from "./sweeps.mjs";
@@ -93,7 +93,7 @@ import { pastRuns, predictCells, forecast, forecastText, estimateCheck, latestPr
 import { estimateLine } from "./estimate-line.mjs";
 import { headerHelp } from "./cli-help.mjs";
 import { statusWriter } from "./status.mjs";
-import { startBudget, tooSmall, limitWhence, fmtBytes, parseSize, register, update, unregister, openFootprints, logFootprint, ledger, PAUSED_EXIT } from "./memory-budget.mjs";
+import { startBudget, tooSmall, limitWhence, fmtBytes, parseSize, register, update, unregister, openFootprints, logFootprint, ledger, PAUSED_EXIT, pausesAt } from "./memory-budget.mjs";
 import { failureShape, menuText, groupHeld, groupCommands, freeingCommands, duplicatesToRelease, shellLine, inDir, HOLD_HINTS } from "./hold-menu.mjs";
 import { fitRasch } from "./rasch.mjs";
 import { watch as watchFs } from "node:fs";
@@ -161,8 +161,10 @@ function parseArgv(argv) {
  * commit X" is otherwise a claim the sweep cannot support.
  */
 function buildFingerprint() {
-    const git = (args) => { try { return execFileSync("git", args, { cwd: ROOT, encoding: "utf8" }).trim(); } catch { return ""; } };
-    const head = git(["rev-parse", "HEAD"]) || "nogit";
+    const git = (args) => { try { return execFileSync("git", args, { cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch { return ""; } };
+    // A tree with no git (a container built from `git archive`) is told its commit by BENCH_SOURCE_HEAD; an archive holds
+    // no uncommitted changes, so it is never dirty. Without either, every build looks alike and the cache cannot tell them apart.
+    const head = git(["rev-parse", "HEAD"]) || process.env.BENCH_SOURCE_HEAD || "nogit";
     const diff = git(["diff", "HEAD"]);
     if (!diff) return { fingerprint: head, dirty: false };
     return { fingerprint: `${head}+${createHash("sha256").update(diff).digest("hex").slice(0, 8)}`, dirty: true };
@@ -448,7 +450,7 @@ const driverModel = (cell, ctx) => cell.effects.backend?.model ?? ctx.backend?.m
 /**
  * Whether a cell may start under the memory budget: false once the sweep paused at it. At the limit, `pause` pauses the
  * sweep (no more cells; it exits PAUSED_EXIT once the running ones end); `stop-holding` waits for room, which a held run
- * released or an app closed gives back.
+ * released or an app closed gives back. A refusal only for promised memory (admits' `promised`) waits under every mode.
  */
 async function memoryLets(cell, ctx) {
     if (ctx.paused) return false;
@@ -457,7 +459,9 @@ async function memoryLets(cell, ctx) {
     for (;;) {
         const a = ctx.budget.canStart(cell.task.id);
         if (a.ok) { if (ctx.waiting) { ctx.waiting = null; ctx.changed?.(); } return true; }
-        if (ctx.budget.whenFull === "pause") { ctx.pause(a.why); return false; }
+        // A refusal only for memory promised and not yet resident (a test suite just granted, browsers starting) clears
+        // on its own: the cell waits for it under every mode, and `pause` is kept for a budget nobody frees but a person.
+        if (pausesAt(ctx.budget.whenFull, a)) { ctx.pause(a.why); return false; }
         // release-duplicates: this sweep's own held duplicates go first (each group keeps the one its attach line names);
         // the cell then waits for the budget's next measurement to see the memory come back.
         if (ctx.budget.whenFull === "release-duplicates" && ctx.releaseDuplicates?.(cellPath(cell), a.why)) {
@@ -621,7 +625,7 @@ const main = async () => {
     // Which spec this sweep ran and who started it, appended to the sweep's log; the page's Spec card, spec.md and
     // page.json show it beside the diff against the sweep before (sweeps.mjs).
     const specRel = path.relative(ROOT, path.resolve(args.specPath));
-    const provenance = specProvenance(await recordSweep(sweepDir, { specPath: specRel, onDisk: path.resolve(args.specPath), source: await readFile(args.specPath, "utf8"), fingerprint, dirty, by: defaultBy() }));
+    const provenance = specProvenance(await recordSweep(sweepDir, { specPath: specRel, onDisk: path.resolve(args.specPath), source: await readFile(args.specPath, "utf8"), fingerprint, dirty, by: defaultBy(), runsIn: process.env.BENCH_RUNS_IN || null }));
 
     // The scores log (scores.mjs): every run against a real model, one row each, for the scoreboard. Never the fake's.
     const scores = backend ? await openScores() : null;
@@ -986,8 +990,7 @@ const main = async () => {
     // the page is already an index of the runs, so archiving it is what makes the sweep directory
     // navigable on its own. Links are relative, so it works from disk with no server.
     await writeFile(path.join(sweepDir, "report.html"), await staticPage(pageState));
-    await writeFile(path.join(sweepDir, "page.json"), JSON.stringify(pageState, null, 2));
-    status.flush(pageState);
+    await finishSweepFiles(sweepDir, status, pageState);
     const nameOf = (i) => [runs[i].taskId, ...Object.keys(spec.dimensions || {}).map((d) => runs[i].combo[d]), `r${runs[i].repeat}`].join(" · ");
     await writeFile(path.join(sweepDir, "timeline.md"), timelineText(pageState.timeline, nameOf, { cached: runs.filter((r) => r.cached).length }));
     await writeFile(path.join(sweepDir, "spec.md"), specText(provenance));

@@ -36,6 +36,15 @@ A delete, a rename and a create of a directory entry are `write-names` on the op
 
 A nested `rm` inside a root stays free under `host-sandbox` (ruled 2026-10-22): the built-in default is one algebra over effects, as it is for `find -delete` and for overwriting a file with `>`, never a per-program exception, so deleting a top-level name, a root, a secret or anything outside the roots asks and a nested delete does not; a person who wants stricter or wider writes a policy, and stored policies are judged before the built-in.
 
+### `gh` (the GitHub CLI; 2026-11-08)
+
+`src/shell/manifests/gh.json`, written against `gh >=2.40.0 <3` (measured on 2.103.0). The read-only subcommands (`pr view/list/diff/checks/status`, `issue view/list`, `run view/list`, `release view/list`, `repo view`, `label list`, `search *`, `auth status`, `api` with no method, body, header or input flag) are `read` of the repository plus `read(net(*))`. Every writer says what it writes: GitHub is `write(net(*))`, a checkout, clone, merge or download adds `write` on the directory and `runs-code` (`gh` starts `git`), and a body or notes file is a read path.
+
+- **Credentials.** The vocabulary has no term for "this request carries the person's token", and a program has no `use(secret)` (only `ml.fetch` does, `fromFetch`). So `gh`'s reads are `read(net(*))`, the same description as an anonymous `curl`; the person's identity is stated here and in the manifest's file, not in the effects. Calls that print the token (`auth token`, `auth status --show-token`/`-t`), write gh's config or credentials (`auth login/logout/refresh/setup-git`, `config set`, `alias set`, `extension install`), or send a file named inside a value (`api -F key=@path`) are `unknown`: a `write` with no path operand projects to no resource at all, so a config write cannot be declared as one. There is no way to REFUSE a call in a manifest, only to make it ask. On the plain host any authenticated `gh` call may also rewrite the credential store: gh renews and persists an expiring token (`ActiveTokenWithRefresh`, `internal/config/config.go`, used by the API client), so a described read such as `gh pr view 12` (`read(net(*))`, no path) can rewrite `~/.config/gh/hosts.yml`, a write the effects do not show. `auth status --no-refresh` is the one read that provably does not. Under host-sandbox it cannot: the stores are masked and the network is denied.
+- **A flag's value is not read.** `api -X GET` cannot be told from `api -X DELETE`, so `-X`/`--method` always carries `write(net(*))`; `api graphql` needs `-f` and so asks. `--hostname`, `--web` and `--editor` are `unknown`.
+- **Not free by default.** `net(*)` is covered by a bound only when the sandbox's network allowlist holds `"*"`, and `boundFor` pairs an allowlisted host with BOTH ops: with `"*"`, a write to GitHub is as free as a read (pinned as a finding in `tests/gh-manifest.test.mjs`).
+- **Under the host's sandbox `gh` cannot run at all**: the profile denies the network, reads under `.config/gh` and the Keychains, and `exec` of anything but the program (so `gh` cannot start `git`); `GH_TOKEN` is not on the host's environment whitelist, and `XDG_CONFIG_HOME` is denied.
+
 ## Pinning
 
 A library manifest is pinned to a content hash of one build. A program cannot be, in general: `git` is whatever the
@@ -61,7 +70,7 @@ person may never call.
 
 As for library manifests: shipped with the extension or installed by the person; never from a page, never from the
 program. A first set covers `git` (the read subcommands without their writing flags, and `rm`/`mv`), `rg`, `ls`, `cat`, `wc`, `head`,
-`tail`, `find` without its effectful flags, `jq`, `rm`, `mv`, `rmdir`, `unlink`.
+`tail`, `find` without its effectful flags, `jq`, `rm`, `mv`, `rmdir`, `unlink`, `gh`.
 
 ## Registering a program (2026-10-15)
 

@@ -121,6 +121,7 @@ export function runConfig(cell, env, dir, extra = {}) {
         ...(t.script ? { script: t.script } : {}),
         surface: cellSurface(cell),
         sharedWatches: t.sharedWatches ?? [], watchNotes: t.watchNotes ?? {},
+        ...(t.shell ? { shell: t.shell } : {}),
         backend: backend && isLocal(env.localModels, backend.model) ? { ...backend, agentStepMaxTokens: BENCH_STEP_MAX_TOKENS } : backend,
         dist: env.dist ?? null,
         artDir: dir,
@@ -159,7 +160,7 @@ export function cellKey(cell, fingerprint) {
             script: cell.task.script ? String(cell.task.script) : null,
             agentOptions: cell.task.agentOptions ?? null,
             // Only when set, so adding these fields left every cache written before them valid.
-            ...Object.fromEntries(["asks", "surface", "sharedWatches", "watchNotes", "incognito"]
+            ...Object.fromEntries(["asks", "surface", "sharedWatches", "watchNotes", "incognito", "shell"]
                 .filter((k) => cell.task[k] != null).map((k) => [k, cell.task[k]])),
         },
     });

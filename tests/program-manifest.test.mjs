@@ -27,7 +27,7 @@ const changesEffect = (f) => (f.effects?.length ?? 0) > 0 || f.valueIsPath || f.
 // --- the shipped manifests ---
 
 test("the first set from PROGRAM_MANIFEST.md ships, one file per program", () => {
-    assert.deepEqual(Object.keys(manifests).sort(), ["cat", "find", "git", "head", "jq", "ls", "mv", "rg", "rm", "rmdir", "tail", "unlink", "wc"]);
+    assert.deepEqual(Object.keys(manifests).sort(), ["cat", "find", "gh", "git", "head", "jq", "ls", "mv", "rg", "rm", "rmdir", "tail", "unlink", "wc"]);
     for (const [file, m] of Object.entries(manifests)) assert.equal(m.program, file, `${file}.json names ${m.program}`);
 });
 
@@ -332,7 +332,7 @@ test("repoWide + pathspecs: git rm / mv also claim the directory and the reposit
 /** The pin both repos hold: sha256 of the lines "<sha256 hex of the raw bytes>  <name>\n", over every .json of the fixtures
  *  ("calls/<p>.json") and the manifests ("manifests/<p>.json"), names sorted bytewise. The host's copy under
  *  `vectors/program-manifests/` records it in `PIN`. */
-const VECTOR_PIN = "9deeb830d82eefec2674eb6e2bcc48dbc8c90a8c14503de8b9260b9d60bd1b7c";
+const VECTOR_PIN = "08a37cf2ef1a64a6fc319c9940c25df5327ea2e377cf8d09611380ee355c0768";
 
 test("the manifests and call fixtures hash to the pin the host holds", () => {
     const sha = (b) => crypto.createHash("sha256").update(b).digest("hex");

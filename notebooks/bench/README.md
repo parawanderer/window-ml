@@ -14,3 +14,10 @@ Each notebook has a generator beside it (`make-<name>.py`, the file to edit) and
 - [spend-to-date.ipynb](spend-to-date.ipynb): the bench panel's size and its cloud calls' cost, each call priced at the
   snapshot it ran under by the bench's own pricer (`price-calls.mjs`), and the calls no snapshot prices. Generator:
   `make-spend-to-date.py`.
+- [sh-lease.ipynb](sh-lease.ipynb): what `SH_LEASE_MS` should be (#1437). It covers correct/wrong by lease × task × model,
+  estimates given before the first `Detached`, wake turns, stalls noticed before the host's kill, and wall and GPU
+  time. The first, invalid matrix (whose scripts' `sleep` the sandbox refused) is kept as the negative result.
+  Generator: `make-sh-lease.py`; the recommendation prose is `data/sh-lease/RECOMMENDATION.md`.
+- [tools-into-js.ipynb](tools-into-js.ipynb): `fetch_url` as a tool against `ml.fetch` inside exec (and both), over a CSV
+  total and a one-fact read: correctness, steps, tokens and time per arm, which reader each run used first, where
+  `ml.fetch` appears in the exec arm, and switching in the both arm. Generator: `make-tools-into-js.py`; the recommendation prose is `data/tools-into-js/RECOMMENDATION.md`.
