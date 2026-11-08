@@ -169,9 +169,11 @@ test("ADVERSARIAL: a page's START_RUN loses `files`, in every shape it can be wr
 test("ADVERSARIAL: a page's START_RUN loses `files` inside `rebuild` too, not just beside it", { todo: "open: pageStartPayload strips `rebuild.builtBy` alone, so `rebuild.files` survives the page's own payload (sw-run-host.ts:335)" }, () => {
     // Asserted on the DATA, not by grepping the sources: a source scan for `rebuild?.files` misses `rebuild["files"]`,
     // a destructuring `const { files } = rebuild`, and `const r = p.rebuild; r.files`, so it cannot say what a payload
-    // carries. The worker reads a run's shelf from `p.files` (sw-runs.ts `workerFiles`), so a key left nested in
-    // `rebuild` is a second spelling of the page's pointer list waiting for the next reader; the page boundary should
-    // not hand it on at all.
+    // carries. The worker reads a run's shelf from `p.files` (sw-runs.ts `workerFiles`, which also requires
+    // `builtBy === "worker"`), so the nested key is NOT READ as a shelf. It is still CARRIED: `pageRebuild`
+    // (run-assembly.ts) spreads `rebuild`, and background.ts sends it to the page as `ADOPT_RUN`, so a page's forged
+    // `rebuild.files` comes back to the page that wrote it. The claim here is "not read", and a key left nested is a
+    // second spelling of the page's pointer list waiting for the next reader; the page boundary should not pass it on.
     const forged = [{ id: "abc1234", name: "report.pdf", type: "application/pdf", bytes: 10, pages: 1, read: 1, turn: 1, doc: KEY, data: KEY, sha256: "aa", chars: 5, figures: [], scans: [] }];
     const sender = { tab: { id: 7, url: "https://site.example/p" }, url: "https://site.example/p", origin: "https://site.example", frameId: 0 };
     const cfg = { autoApprovePython: false, autoApproveReadonly: false, autoApproveSelfSource: false, selfIntrospection: false };
