@@ -113,6 +113,7 @@ const GENRES = {
             "redteam-current-env.test.mjs", "redteam-current-runtime.test.mjs", "redteam-dialect-widenings.test.mjs",
             "redteam-embed-filter.test.mjs", "redteam-exec-console.test.mjs", "redteam-exec-page-leg.test.mjs",
             "redteam-exec-shared-world.test.mjs", "redteam-exec-world.test.mjs", "redteam-geometry.test.mjs",
+            "redteam-host-callbacks.test.mjs",
             "redteam-image-fetch.test.mjs", "redteam-isolated-channel.test.mjs", "redteam-mermaid.test.mjs", "redteam-isolated.test.mjs", "redteam-presence.test.mjs", "redteam-presence-race.test.mjs",
             "redteam-ml-wire.test.mjs", "redteam-operand-check.test.mjs", "redteam-page-run-builtby.test.mjs", "redteam-propose-manifest.test.mjs", "redteam-render-values.test.mjs",
             "redteam-run-payload.test.mjs", "redteam-text-captures.test.mjs", "redteam-tool-throw.test.mjs",
