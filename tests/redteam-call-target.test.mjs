@@ -3,9 +3,11 @@
 // The dialect's call path admits a callee by NAME — `CALLABLE_ROOTS.has(callee.name)` (src/readonly-exec/evaluator.ts)
 // — and the value it then calls is read from `scope`, which is the script's frame over the host's root. A script may
 // shadow any root name (`const document = …` writes to the frame, which readonly-exec.ts calls "possible and
-// harmless"), so binding one of those names to a function the PAGE handed back as data (`ml.models()` can) buys the
-// admission: measured on main, `const Number = o; Number(1)` runs the page's function inside the mediated
-// interpreter, whose whole promise is that page code does not run (docs/dev/readonly-exec.md).
+// harmless"), so binding one of those names to a function that arrived as DATA buys the admission: measured on main,
+// `const Number = o; Number(1)` runs that function inside the mediated interpreter, whose whole promise is that page
+// code does not run (docs/dev/readonly-exec.md). The rows carry the function in through an `ml` read (`{ models: async
+// () => value }`), which is the carrier for "a value the page controls, that the dialect cannot tell from data"; the
+// same admission for a function handed to a HOST method as a callback is tests/redteam-host-callbacks.test.mjs.
 //
 // Every row has a plain control beside it, so a fixture that cannot call a root at all fails rather than passing by
 // refusing nothing. The defence that DOES exist — a callee that is neither a root name nor an arrow the script wrote
