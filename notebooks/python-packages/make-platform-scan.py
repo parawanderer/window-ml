@@ -161,10 +161,14 @@ The fourteen are fewer causes than packages: `pexpect` fails through `ptyprocess
   `raise` in the loop's `else` is the failure.
 - **py-cpuinfo** compares `platform.machine()`'s result, through a parser, with a list of CPU names.
 - **posthog** reads an attribute urllib3's emscripten connection class does not define.
-- **opentelemetry-distro** starts its thread in code an entry point loads.
+- **opentelemetry-distro** starts its thread from a class body: a dataclass field's default,
+  `Resource.create({})` (`sdk/_logs/_internal/__init__.py:281`), reaches `get_aggregated_resources`, which builds a
+  `concurrent.futures.ThreadPoolExecutor` into a local and calls `submit` on it (`sdk/resources/__init__.py:750-752`).
+  The core fails that `submit`; the scan lists no `concurrent.futures` call, and would not know the local's type if
+  it did.
 
-Apart from pip-api's depth, each is a fact about a VALUE at run time or a dynamic dispatch, not a construct in the
-source.
+Apart from pip-api's depth and opentelemetry's executor, each is a fact about a VALUE at run time or a dynamic
+dispatch, not a construct in the source.
 """)
 
 code("""
