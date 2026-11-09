@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import sys
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -294,6 +296,55 @@ def classify(top: list[dict], env_probe: dict, cache: Path | None = None, worker
             "pypi_wheel_bytes": size,
         })
     return sorted(out, key=lambda r: (not r["in_top"], r.get("rank") or 0, r["project"]))
+
+
+# What an import or install error that is the CORE's limit looks like (processes, threads, a native library, a CPU
+# probe), as opposed to a version, a build or a missing dependency.
+PLATFORM = re.compile(r"does not support processes|can't start new thread|unsupported platform|find_library|"
+                      r"failed to find lib|no library called|libdl|only works on X86|socket|dynamic library", re.I)
+_norm = lambda s: re.sub(r"[-_.]", "", s.lower())
+
+
+def primary(r) -> str | None:
+    """The module a probe row is judged by: the one named like the project, else the first it imported."""
+    for m in r["modules"]:
+        if _norm(m) == _norm(r["project"]) or _norm(m.split(".")[-1]) == _norm(r["project"].split("-")[-1]):
+            return m
+    return r["modules"][0] if r["modules"] else None
+
+
+def cause(r, lock: set[str]) -> str:
+    """Why a probe row (`probe.mjs install`) is not "ok": version, extra, no build, platform, undeclared host, probe
+    (the probe's own artefact), timeout, crash, or "install: other" / "import: other". `lock` is the canonical names
+    of the core's lock packages. Takes a dict or a pandas row."""
+    if r["stage"] in ("timeout", "crash"):
+        return r["stage"]
+    if r["stage"] == "no-module":
+        return "probe"
+    if r["stage"] == "install":
+        e = r.get("error") or ""
+        m = re.search(r"wheel for '([A-Za-z0-9_.\-]+)", e)
+        if "already installed" in e or (m and canonicalize_name(m.group(1)) in lock):
+            return "version"
+        if "extra ==" in e:
+            return "extra"
+        if PLATFORM.search(e):
+            return "platform"
+        return "no build" if "Can't find a pure Python 3 wheel" in e else "install: other"
+    bad = {i["module"]: i for i in r["imports"] if not i["ok"]}
+    p = primary(r)
+    if p not in bad:
+        return "probe"
+    b = bad[p]
+    if PLATFORM.search(b["error"]):
+        return "platform"
+    m = re.search(r"No module named '([^']+)'", b["error"])
+    if m:
+        missing = m.group(1).split(".")[0]
+        if "/" in missing:
+            return "probe"
+        return "platform" if missing in sys.stdlib_module_names else "undeclared host"
+    return "import: other"
 
 
 def probe_installs(names: list[str], root: Path, workers: int = 6, timeout: int = 180) -> list[dict]:
