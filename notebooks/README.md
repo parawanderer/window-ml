@@ -8,5 +8,6 @@ README naming every notebook. How they are made, run and checked: [docs/dev/note
 - [readonly/](readonly/README.md): the read-only dialect's halting constants (what a regex search costs against its bound).
 - [pdf/](pdf/README.md): the PDF page classifier's cut-offs, read against vision models' labels of real pages.
 - [python-dialect/](python-dialect/README.md): what the read-only Python dialect must admit, counted on real `python_exec` cells.
+- [python-packages/](python-packages/README.md): which PyPI packages `python_exec` could install on demand, judged by wheel tags and checked by installing them.
 - `pyproject.toml`, `uv.lock`: the one environment (`node scripts/nb.mjs setup`).
 - `src/wmlnb/`: what every notebook shares (`extract`, `open_ro`, `provenance`, `find_sweep`, `store`).

@@ -103,10 +103,16 @@ the page's tab and origin, so anything it sends under a page-startable type is r
 its own types instead (`USER_START_RUN`, `USER_RUN_ACTION`, `USER_PYTHON_PREWARM`, `CANCEL_RUN`), and
 `tests/redteam.test.js` scans `sidebar/shell.ts` for any page-startable type it sends.
 
-**A page-built run whose page may not drive it is handed to the worker.** A person's follow-up or Continue for a run
-a PAGE built goes to the page while that page's site may use window.ml. Once the tab is on a site that may not (the
-run navigated off its builder's origin), `userRunAction` hands the run to the worker (`makeWorkerRun`) instead of
-leaving it to a refused `RESUME_RUN`.
+**A person's message reaches a page only on the tab and site that built the session** (`pageRouteFor`,
+`src/sw/page-route.ts`). A follow-up or Continue for a run or chat a PAGE built goes to the page the tab shows NOW, so
+the worker records who built it: the tab and that tab's top-frame origin, from the browser's stamp at the page's
+`START_RUN` or its first session event (top frame only), written once, in `chrome.storage.session` so an eviction
+keeps it. The page frames the message only when the tab is the builder's, it still shows the builder's origin, and that
+site may use window.ml. Anywhere else (another approved site, a site that may not, another tab's id) the worker takes
+the run over if it holds it (`makeWorkerRun`), and otherwise refuses the message with `PAGE_GONE`, which names no
+site. No record is a mismatch: a session the worker never saw built, or whose record a browser restart dropped, is
+refused rather than handed to whatever page the tab shows. Both channels ask the same decision through
+`userRunAction`: the tab's `USER_RUN_ACTION` and the panel's `ML_SESSION_REMOTE`.
 
 **A page-built run that navigates onto a site that may not use window.ml is the worker's from that commit**
 (`src/sw/nav-handover.ts`, part 5; owner's decision 2026-10-10). `handOverOnCommit` runs at the browser's
@@ -895,6 +901,14 @@ whose Allow is disabled for a second) or in DevTools Settings, both through `ACC
 that lists the waiting requests (each with `allowed`) or applies `{ origin, decision }` (checked by `isRequestDecision`) as the list edits
 `answerRequest` returns. An allowed site asking for agents is offered "Let it start agents" (the level becomes Ask each time) and Deny
 (agents Denied). Nothing opens a window or takes focus (rule 5).
+
+## Traps
+
+- **A scheme-relative URL takes the page's scheme at every gate** (`onPageUrl`, sw-run-host.ts): the navigate gate, its
+  consent and the fetch_url gate judge `//host/x` as the browser and the FETCH_URL choke point resolve it, and assume
+  https only when the run has no page. A fixed `https:` there asked again for an http origin the run had consented to.
+  The cover is the run-start rows in section "a SCHEME-RELATIVE navigate" (one a RED TEAM row for a third host) and
+  person-word-navigate.test.mjs's http-keyed row; an independent red-team pass follows the fix on main.
 
 ## Tests
 

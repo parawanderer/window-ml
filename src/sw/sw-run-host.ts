@@ -3,6 +3,7 @@
 // This is design A, and it is the whole of it: the router in background.ts only hands a START_RUN / RESUME_RUN
 // over and keeps the channel open until the run finishes.
 
+import { notePageBuilt } from "./page-route";
 import { runBackgroundAgent } from "../agent/agent-host";
 import { pythonCellInDialect, pythonOutsideWhy } from "../agent/python-dialect";
 import { namesJsBridge } from "../python/bridge-names";
@@ -296,6 +297,8 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
             // the person allowed it, and a page could otherwise hand it a conversation it never had. None held (the worker
             // restarted between turns) is an empty one, which still continues the session rather than restarting it.
             const history = verdict.first ? undefined : (bgRuns.get(p.runId)?.messages ?? []);
+            // Who built it, from the browser's stamp, once: the person's later messages reach a page only there.
+            await notePageBuilt(p.runId, tabId, origin, "run");
             endStarting();
             hostRun({ ...message, payload: { ...p, resumeMessages: history } }, tabId, sendResponse, undefined, { origin, person: verdict.person, first: verdict.first, docId, ...(verdict.pagePrefix ? { pagePrefix: verdict.pagePrefix } : {}) });
         }, (e) => answer({ error: (e as Error)?.message || String(e) }));
@@ -514,6 +517,10 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     const storedP = (): StartRunPayload => (p.builtBy !== "worker" && isWorkerRun(runId)
         ? { ...p, builtBy: "worker", tools: withoutProposals(p.tools), ...(p.rebuild ? { rebuild: { ...p.rebuild, builtBy: "worker" } } : {}) } : p);
     const tabUrlNow = (): string => tabPageUrl.get(tabId) || p.pageUrl || "";
+    /** `url` as the browser resolves it on the page the run's tab is on now: the one rule the navigate and fetch_url gates
+     *  judge an origin by. A scheme-relative URL takes the page's scheme, and https only when there is no page. Throws on
+     *  one that cannot be read. */
+    const onPageUrl = (url: string): URL => { const here = tabUrlNow() || undefined; return new URL(url.startsWith("//") && !here ? "https:" + url : url, here); };
     /** A fetch URL as the fetch is judged: a relative one resolved against the page the run is on (`fetchTarget`), since the
      *  choke point's consents, policies and exec literals are all keyed by the resolved URL. One that cannot resolve stays as
      *  spelled, since the call is refused anyway. */
@@ -578,7 +585,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     /** Whether an approved policy of the person's (proposed or person, never a builtin) allows a navigate to `url`. */
     const personAllowsNav = (url: string): boolean => {
         let dest: URL | undefined;
-        try { dest = new URL(url.startsWith("//") ? "https:" + url : url, tabPageUrl.get(tabId) ?? p.pageUrl ?? undefined); } catch { return false; }
+        try { dest = onPageUrl(url); } catch { return false; }
         const j = judgeCall(runId, "fetch", navigateFacts(dest.href));
         return j.decision === "allow" && !!j.by && j.by !== "builtin" && (j.by.origin === "proposed" || j.by.origin === "person");
     };
@@ -716,7 +723,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             origins: [...consentedOrigins], sheets: [...approvedSheets], payload: p }));
         /** Where a navigate to `url` goes, resolved against the page the tab is on now; undefined when it cannot be read. */
         const navDest = (url: string): URL | undefined => {
-            try { return new URL(url.startsWith("//") ? "https:" + url : url, tabPageUrl.get(tabId) ?? p.pageUrl ?? undefined); } catch { return undefined; }
+            try { return onPageUrl(url); } catch { return undefined; }
         };
         /** Whether `url` is on the origin of the page the run's tab is on now. */
         const fetchOnPageOrigin = (url: string): boolean => {
@@ -729,7 +736,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             if (!p.crossOrigin) return false;   // can't cross origins → tool refuses cross-origin; same-site fine → no gate
             try {
                 if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !url.startsWith("//")) return false;   // relative → same-origin
-                const dest = new URL(url.startsWith("//") ? "https:" + url : url);
+                const dest = onPageUrl(url);   // a scheme-relative URL takes the page's scheme, as the browser goes there
                 return !consentedOrigins.has(dest.origin) && !navOnlyOrigins.has(dest.origin);   // a NEW cross-origin → gate; an already-consented one → no
             } catch { return false; }   // unparseable → the tool will error; no pointless gate
         };
@@ -1942,8 +1949,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     try {
                         if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !url.startsWith("//")) return true;   // relative → the page's own origin
                         // A scheme-relative URL takes the page's scheme, as the FETCH_URL choke point resolves it.
-                        const here = tabPageUrl.get(tabId) ?? p.pageUrl;
-                        const o = new URL(url.startsWith("//") && !here ? "https:" + url : url, here ?? undefined).origin;
+                        const o = onPageUrl(url).origin;
                         // The start origin is consented for navigation, and read free while the tab is on it. Once the tab
                         // has left, the FETCH_URL choke point no longer counts it (it judges the sender's frame), so the gate
                         // does not either and the read cards (POLICIES.md, "Ruled 2026-10-27"). A later approved navigate or

@@ -97,6 +97,11 @@ page-hosted one. Several stores exist once per host.
 | Page registries of runs and handles | `agentRegistry`, `handleRegistry` (`bus.ts`) | no; they never shrink, so finished runs stay resumable for the page's life |
 | Reader-triggered model calls (titles, summaries, annotations) | `asides` (`store.ts`), client-side | no |
 | The title | owned by the worker (`titleSession`, `sw-sessions.ts`): kept in the session index, asked of the utility model once; every surface asks it (`SESSION_TITLE`, or `side.call` with purpose `title`) | in `ml-saved-sessions` if saved. A rename on the chat page does not yet reach a sidebar that already shows the old one |
+| Who built a page-built run or chat: its tab and that tab's top-frame origin (`run.builder`) | `ml_pagebuilt` in `chrome.storage.session` (`page-route.ts`), written once from the browser's stamp at the page's START_RUN or first session event | survives a worker eviction, not a browser restart; dropped when its tab closes, when the session is forgotten, and oldest first past 500 |
+
+The builder record is what lets a person's message to a page-built session reach a page at all
+(`pageRouteFor`): without one the message is refused, so losing it fails closed. A browser restart loses it along
+with the pages it named.
 
 ## Page state (one document, every run in the tab)
 

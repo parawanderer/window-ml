@@ -510,7 +510,6 @@ test("a page cannot start, resume or steer a turn in a run the worker built, eve
 
 const NOTES = { name: "notes.txt", type: "text/plain", text: "alpha\nbeta\n" };
 const PDF_TO_PAGE_RUN = "report.pdf is a PDF, and this run was built by the page, which does not read one: start a run from the panel to attach it";
-const pageRunMoved = (name, origin) => `${name} would go to ${origin}, which did not build this run: start a run from the panel to attach it`;
 
 /** A worker with a value store and a PDF reader whose model answers "done", and helpers to wait on and read it. */
 function fileWorld(more = {}) {
@@ -643,100 +642,217 @@ test("a run a page built is refused a PDF by name, from the panel (USER_RUN_ACTI
     assert.match(big.refused, /^big\.txt is too large to send whole: 40 kB; a message takes up to 32 kB of files\. This run was built by the page/);
 });
 
-test("ADVERSARIAL: a run a page built, its tab now on ANOTHER approved site, is refused the person's files; nothing reaches that page", T, async () => {
-    // The relay goes to whatever page the tab shows now: the site decision alone would let the person's files into a site
-    // that did not build the run (e3's second pass on #1492).
-    const A = "https://builder.example/", B = "https://other.example/";
-    const tab = { id: 7, url: A, title: "Builder" };
+const PAGE_GONE = "The page that started this conversation is no longer open in this tab, so this message was not sent.";
+const BUILDER = "https://builder.example/", OTHER_SITE = "https://other.example/";
+const REBUILD = { toolNames: [], model: "m", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: true };
+/** The messages the worker relayed to a page, and the chat requests it made itself. */
+const toPageMsgs = (bg) => bg.tabMessages.filter(([, m]) => m.type === "ML_SESSION_TO_PAGE");
+/** A worker with tabs 7 (builder) and 8 (other) on approved sites, a value store, and a page that adopts the runs it builds. `more` overrides loadBackground options. */
+function pageWorld({ tabs, approved = ["https://builder.example", "https://other.example"], ...more } = {}) {
+    const { IDBFactory } = require("fake-indexeddb");
+    const open = tabs ?? [{ id: 7, url: BUILDER, title: "Builder" }, { id: 8, url: OTHER_SITE, title: "Other" }];
     const bg = loadBackground({
-        config, siteGate: true, local: { ml_site_always: ["https://builder.example", "https://other.example"] },
-        openTabs: [tab],
+        config, siteGate: true, local: { ml_site_always: approved }, openTabs: open, indexedDB: new IDBFactory(),
         onFetch: (call) => call.url.includes("/chat/completions") ? jsonResponse({ choices: [{ message: { content: "ok" } }] }) : jsonResponse({}),
         onTabMessage: async (_t, msg) => (msg.type === "ADOPT_RUN_NOW" ? { pageInfo: "" } : msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.finish ? { result: "" } : undefined),
+        ...more,
     });
+    const chats = () => bg.calls.filter((c) => c.url.includes("/chat/completions"));
+    const lastUser = () => String(chats().at(-1)?.body?.messages?.filter((m) => m.role === "user").at(-1)?.content ?? "");
+    return { bg, open, chats, lastUser };
+}
+/** The page's own START_RUN from `tabId` showing `url`, as the browser stamps it. */
+async function pageStart(bg, runId, tabId = 7, url = BUILDER) {
     await bg.send({ type: "START_RUN", payload: {
-        runId: "pagebuilt2", task: "first", systemPrompt: "S", tools: [], model: "m", think: null, maxSteps: 2,
-        autoApprovePython: false, autoApproveReadonly: false, surface: "off",
-        rebuild: { toolNames: [], model: "m", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: true },
-    } }, { tab: { id: 7, url: A }, url: A });
+        runId, task: "first", systemPrompt: "S", tools: [], model: "m", think: null, maxSteps: 2,
+        autoApprovePython: false, autoApproveReadonly: false, surface: "off", rebuild: REBUILD,
+    } }, { tab: { id: tabId, url }, url });
     await flush(20);
-    tab.url = B;
-    const from = { tab: { id: 7, url: B }, url: B };
-    const r = await bg.send({ type: "USER_RUN_ACTION", payload: { hash: "pagebuilt2", action: "send", text: "and this", files: [NOTES] } }, from);
-    assert.deepEqual([r.data, r.refused], [null, pageRunMoved("notes.txt", "https://other.example")], "refused with its reason, answered as handled");
-    void bg.send({ type: "ML_SESSION_REMOTE", tabId: 7, action: "send", hash: "pagebuilt2", text: "and this", files: [NOTES], surface: "devtools" }, EXT);
+}
+/** A page's first session event for a chat (no run behind it), as the browser stamps it; `frameId` 0 is the top frame. */
+async function pageChatEvent(bg, hash, tabId = 7, url = BUILDER, frameId = 0) {
+    await bg.send({ type: "ML_SESSION_EVENT", event: { kind: "agent-step", id: hash, ts: Date.now(), save: false, session: { hash, turn: 1 }, step: 1, seq: 1, tool: "fetch_url", pending: false, arguments: {} } }, { tab: { id: tabId, url }, url, frameId });
     await flush(20);
-    assert.equal(bg.tabMessages.filter(([, m]) => m.type === "ML_SESSION_TO_PAGE").length, 0, "no message, and no file, to the other site's page");
-    // Back on the builder's site, the same file goes to its page as before.
-    tab.url = A;
-    void bg.send({ type: "ML_SESSION_REMOTE", tabId: 7, action: "send", hash: "pagebuilt2", text: "and this", files: [NOTES], surface: "devtools" }, EXT);
-    await flush(20);
-    assert.deepEqual(JSON.parse(JSON.stringify(bg.tabMessages.map(([, m]) => m).filter((m) => m.type === "ML_SESSION_TO_PAGE").map((m) => m.files))), [[NOTES]]);
+}
+
+test("ADVERSARIAL: a run a page built, its tab now on ANOTHER approved site, is driven by the worker: its file and text reach the model, and nothing reaches that page", T, async () => {
+    // The relay goes to whatever page the tab shows now, so a site that did not build the run must never carry the
+    // person's message (e3's second pass on #1492). The run is handed to the worker instead (page-route.ts).
+    const w = pageWorld();
+    await pageStart(w.bg, "pagebuilt2");
+    w.open[0].url = OTHER_SITE;
+    const r = await w.bg.send({ type: "USER_RUN_ACTION", payload: { hash: "pagebuilt2", action: "send", text: "and this", files: [NOTES] } }, { tab: { id: 7, url: OTHER_SITE }, url: OTHER_SITE });
+    assert.deepEqual([r.data, r.refused], ["turn", undefined], "the worker started the turn");
+    await flush(40);
+    assert.match(w.lastUser(), /^and this\n\n<file name="notes\.txt" type="text\/plain" bytes="11" pointer="@file:[^"]+">/, "the model got the typed text and the file as a pointer");
+    assert.equal(toPageMsgs(w.bg).length, 0, "no message, and no file, to the other site's page");
+    // Back on the builder's site the run stays the worker's: the page that built it no longer owns it.
+    w.open[0].url = BUILDER;
+    const back = await w.bg.send({ type: "USER_RUN_ACTION", payload: { hash: "pagebuilt2", action: "send", text: "once more" } }, { tab: { id: 7, url: BUILDER }, url: BUILDER });
+    assert.notEqual(back.data, null, "still the worker's");
+    await flush(40);
+    assert.equal(w.lastUser(), "once more");
+    assert.equal(toPageMsgs(w.bg).length, 0, "nothing to any page");
 });
 
-test("ADVERSARIAL: a run's hash sent with ANOTHER tab's id is refused the person's files; nothing reaches that tab's page", T, async () => {
-    // The worker declines a run that is not on the sending tab, and the caller then hands the message to THAT tab's
-    // page: the person's files would go to a page that did not build the run (flaky-ci's review of #1520).
-    const A = "https://builder.example/", B = "https://other.example/";
-    const bg = loadBackground({
-        config, siteGate: true, local: { ml_site_always: ["https://builder.example", "https://other.example"] },
-        openTabs: [{ id: 7, url: A, title: "Builder" }, { id: 8, url: B, title: "Other" }],
-        onFetch: (call) => call.url.includes("/chat/completions") ? jsonResponse({ choices: [{ message: { content: "ok" } }] }) : jsonResponse({}),
-        onTabMessage: async (_t, msg) => (msg.type === "ADOPT_RUN_NOW" ? { pageInfo: "" } : msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.finish ? { result: "" } : undefined),
-    });
-    await bg.send({ type: "START_RUN", payload: {
-        runId: "pagebuilt3", task: "first", systemPrompt: "S", tools: [], model: "m", think: null, maxSteps: 2,
-        autoApprovePython: false, autoApproveReadonly: false, surface: "off",
-        rebuild: { toolNames: [], model: "m", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: true },
-    } }, { tab: { id: 7, url: A }, url: A });
-    await flush(20);
-    const r = await bg.send({ type: "USER_RUN_ACTION", payload: { hash: "pagebuilt3", action: "send", text: "and this", files: [NOTES] } }, { tab: { id: 8, url: B }, url: B });
-    assert.deepEqual([r.data, r.refused], [null, pageRunMoved("notes.txt", "https://other.example")], "refused with its reason, answered as handled");
-    void bg.send({ type: "ML_SESSION_REMOTE", tabId: 8, action: "send", hash: "pagebuilt3", text: "and this", files: [NOTES], surface: "devtools" }, EXT);
-    await flush(20);
-    assert.equal(bg.tabMessages.filter(([, m]) => m.type === "ML_SESSION_TO_PAGE" && m.files).length, 0, "no file to the other tab's page");
-    // With no file, the message falls back to that page as before.
-    void bg.send({ type: "ML_SESSION_REMOTE", tabId: 8, action: "send", hash: "pagebuilt3", text: "and this", surface: "devtools" }, EXT);
-    await flush(20);
-    assert.equal(bg.tabMessages.filter(([t, m]) => t === 8 && m.type === "ML_SESSION_TO_PAGE").length, 1);
+test("ADVERSARIAL: a run's hash sent with ANOTHER tab's id is refused (PAGE_GONE), with or without a file; nothing reaches that tab's page", T, async () => {
+    // The worker declines a run that is not on the sending tab, and the caller used to hand the message to THAT tab's
+    // page (flaky-ci's review of #1520). Now the page that built nothing is not asked, file or no file.
+    const w = pageWorld();
+    await pageStart(w.bg, "pagebuilt3");
+    const other = { tab: { id: 8, url: OTHER_SITE }, url: OTHER_SITE };
+    const turnsBefore = w.chats().length;   // the page's own start made the first
+    for (const files of [[NOTES], undefined]) {
+        const r = await w.bg.send({ type: "USER_RUN_ACTION", payload: { hash: "pagebuilt3", action: "send", text: "and this", ...(files ? { files } : {}) } }, other);
+        assert.deepEqual([r.data, r.refused], [null, PAGE_GONE], "refused with its reason, answered as handled");
+        void w.bg.send({ type: "ML_SESSION_REMOTE", tabId: 8, action: "send", hash: "pagebuilt3", text: "and this", ...(files ? { files } : {}), surface: "devtools" }, EXT);
+        await flush(20);
+    }
+    assert.equal(toPageMsgs(w.bg).length, 0, "nothing to the other tab's page, on either channel");
+    assert.equal(w.chats().length, turnsBefore, "and no turn");
 });
 
-test("ADVERSARIAL: files from the HUD card's sessionSend for a run a PAGE built still meet userRunAction's guards: its tab on ANOTHER site, or another tab's id, is refused and nothing reaches a page", T, async () => {
+test("ADVERSARIAL: files from the HUD card's sessionSend for a run a PAGE built still meet userRunAction's guards: its tab on ANOTHER site is handed to the worker, another tab's id is refused", T, async () => {
     // The card's sessionSend reaches the worker as USER_RUN_ACTION from the shell's tab (shell.ts, `workerFirst`), so the
-    // guards are the ones the two rows of #1520 pin; this row is the card's route through them with a file the card now sends.
-    const A = "https://builder.example/", B = "https://other.example/";
-    const tabs = [{ id: 7, url: A, title: "Builder" }, { id: 8, url: B, title: "Other" }];
-    const bg = loadBackground({
-        config, siteGate: true, local: { ml_site_always: ["https://builder.example", "https://other.example"] },
-        openTabs: tabs,
-        onFetch: (call) => call.url.includes("/chat/completions") ? jsonResponse({ choices: [{ message: { content: "ok" } }] }) : jsonResponse({}),
-        onTabMessage: async (_t, msg) => (msg.type === "ADOPT_RUN_NOW" ? { pageInfo: "" } : msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.finish ? { result: "" } : undefined),
-    });
-    await bg.send({ type: "START_RUN", payload: {
-        runId: "pagebuilt4", task: "first", systemPrompt: "S", tools: [], model: "m", think: null, maxSteps: 2,
-        autoApprovePython: false, autoApproveReadonly: false, surface: "off",
-        rebuild: { toolNames: [], model: "m", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: true },
-    } }, { tab: { id: 7, url: A }, url: A });
+    // guards are the ones the two rows above pin; this row is the card's route through them with a file the card now sends.
+    const w = pageWorld();
+    await pageStart(w.bg, "pagebuilt4");
+    // Another tab's id first: once the worker holds the run, that is a different case.
+    const other = await w.bg.send({ type: "USER_RUN_ACTION", payload: { hash: "pagebuilt4", action: "send", text: "and this", files: [NOTES], surface: "hud" } }, { tab: { id: 8, url: OTHER_SITE }, url: OTHER_SITE });
+    assert.deepEqual([other.data, other.refused], [null, PAGE_GONE]);
+    w.open[0].url = OTHER_SITE;
+    const moved = await w.bg.send({ type: "USER_RUN_ACTION", payload: { hash: "pagebuilt4", action: "send", text: "and this", files: [NOTES], surface: "hud" } }, { tab: { id: 7, url: OTHER_SITE }, url: OTHER_SITE });
+    assert.deepEqual([moved.data, moved.refused], ["turn", undefined], "handed to the worker");
     await flush(20);
-    const toPage = () => bg.tabMessages.filter(([, m]) => m.type === "ML_SESSION_TO_PAGE" && m.files).length;
-    // The tab now shows another approved site.
-    tabs[0].url = B;
-    const moved = await bg.send({ type: "USER_RUN_ACTION", payload: { hash: "pagebuilt4", action: "send", text: "and this", files: [NOTES], surface: "hud" } }, { tab: { id: 7, url: B }, url: B });
-    assert.deepEqual([moved.data, typeof moved.refused], [null, "string"], "refused with a reason, answered as handled, so the shell hands the page nothing");
-    assert.match(moved.refused, /notes\.txt/);
-    // Another tab's id.
-    tabs[0].url = A;
-    const other = await bg.send({ type: "USER_RUN_ACTION", payload: { hash: "pagebuilt4", action: "send", text: "and this", files: [NOTES], surface: "hud" } }, { tab: { id: 8, url: B }, url: B });
-    assert.deepEqual([other.data, typeof other.refused], [null, "string"]);
-    await flush(20);
-    assert.equal(toPage(), 0, "no ML_SESSION_TO_PAGE carried the file");
+    assert.equal(toPageMsgs(w.bg).length, 0, "no ML_SESSION_TO_PAGE carried the file");
 });
 
-test("a PDF for a run this worker does not hold is refused, never handed to a page without it", T, async () => {
-    const { bg } = world();
-    const r = await bg.send({ type: "USER_RUN_ACTION", payload: { hash: "0".repeat(32), action: "send", text: "x", files: [PDF] } }, fromTab);
-    assert.deepEqual([r.data, r.refused], [null, PDF_TO_PAGE_RUN]);
-    assert.equal((await bg.send({ type: "USER_RUN_ACTION", payload: { hash: "0".repeat(32), action: "send", text: "x", files: [NOTES] } }, fromTab)).refused, undefined);
+test("a message to a hash no page was recorded as building is refused, never handed to a page; a page chat recorded on this tab is relayed (a PDF refused by name)", T, async () => {
+    const w = pageWorld();
+    const unknown = "0".repeat(32);
+    for (const files of [[PDF], [NOTES]]) {
+        const r = await w.bg.send({ type: "USER_RUN_ACTION", payload: { hash: unknown, action: "send", text: "x", files } }, { tab: { id: 7, url: BUILDER }, url: BUILDER });
+        assert.deepEqual([r.data, r.refused], [null, PAGE_GONE]);
+    }
+    assert.equal(toPageMsgs(w.bg).length, 0, "no page got it");
+    // The positive control: a chat the tab's page started is the page's to frame.
+    await pageChatEvent(w.bg, "chat0001");
+    const pdf = await w.bg.send({ type: "USER_RUN_ACTION", payload: { hash: "chat0001", action: "send", text: "x", files: [PDF] } }, { tab: { id: 7, url: BUILDER }, url: BUILDER });
+    assert.deepEqual([pdf.data, pdf.refused], [null, PDF_TO_PAGE_RUN]);
+    const text = await w.bg.send({ type: "USER_RUN_ACTION", payload: { hash: "chat0001", action: "send", text: "x", files: [NOTES] } }, { tab: { id: 7, url: BUILDER }, url: BUILDER });
+    assert.deepEqual([text.data, text.refused], [null, undefined], "relayed by the shell to the page that built the chat");
+    void w.bg.send({ type: "ML_SESSION_REMOTE", tabId: 7, action: "send", hash: "chat0001", text: "x", files: [NOTES], surface: "devtools" }, EXT);
+    await flush(20);
+    assert.deepEqual(JSON.parse(JSON.stringify(toPageMsgs(w.bg).map(([, m]) => m.files))), [[NOTES]]);
+});
+
+// --- the page route (page-route.ts): a page frames the person's message only on the tab and site that built it ---
+
+test("RED TEAM: once the worker drives a run, a message for it with ANOTHER tab's id is refused, and that tab's page gets nothing", T, async () => {
+    // The hand-over makes the run the worker's; a message sent with tab 8's id then took the worker-run early-out, which
+    // answered null, and both callers hand a null to the sending tab's page (the shell's workerFirst, the panel's toPage).
+    const w = pageWorld();
+    await pageStart(w.bg, "takenover1");
+    w.open[0].url = OTHER_SITE;
+    const first = await w.bg.send({ type: "USER_RUN_ACTION", payload: { hash: "takenover1", action: "send", text: "hand it over" } }, { tab: { id: 7, url: OTHER_SITE }, url: OTHER_SITE });
+    assert.equal(first.data, "turn", "the worker took the run over");
+    await flush(40);
+    const turns = w.chats().length;
+    const r = await w.bg.send({ type: "USER_RUN_ACTION", payload: { hash: "takenover1", action: "send", text: "from tab 8" } }, { tab: { id: 8, url: OTHER_SITE }, url: OTHER_SITE });
+    assert.deepEqual([r.data, r.refused], [null, PAGE_GONE], "refused, so the shell hands its page nothing");
+    void w.bg.send({ type: "ML_SESSION_REMOTE", tabId: 8, action: "send", hash: "takenover1", text: "from tab 8", surface: "devtools" }, EXT);
+    await flush(40);
+    assert.equal(toPageMsgs(w.bg).length, 0, "no message to any page");
+    assert.equal(w.chats().length, turns, "and no turn from tab 8");
+});
+
+test("the page route is one decision: the tab channel and the panel channel agree for every case", T, async () => {
+    const AT7 = { tab: { id: 7, url: BUILDER }, url: BUILDER };
+    const AT7_ON_B = { tab: { id: 7, url: OTHER_SITE }, url: OTHER_SITE };
+    const AT8 = { tab: { id: 8, url: OTHER_SITE }, url: OTHER_SITE };
+    /** Each case builds its own world and returns who sends the message. */
+    const cases = [
+        ["the builder's tab, still on its site", "page", async () => { const w = pageWorld(); await pageStart(w.bg, "h1"); return { w, hash: "h1", tabId: 7, sender: AT7 }; }],
+        ["the builder's tab, moved to another approved site", "worker", async () => { const w = pageWorld(); await pageStart(w.bg, "h2"); w.open[0].url = OTHER_SITE; return { w, hash: "h2", tabId: 7, sender: AT7_ON_B }; }],
+        ["another tab's id", "refused", async () => { const w = pageWorld(); await pageStart(w.bg, "h3"); return { w, hash: "h3", tabId: 8, sender: AT8 }; }],
+        ["a hash no record names", "refused", async () => ({ w: pageWorld(), hash: "h4", tabId: 7, sender: AT7 })],
+        ["after an eviction, a page chat, tab still on its site", "page", async () => {
+            const first = pageWorld(); await pageChatEvent(first.bg, "h5");
+            const w = pageWorld({ local: { ml_site_always: ["https://builder.example", "https://other.example"], ...JSON.parse(JSON.stringify(first.bg.localStore)) }, session: JSON.parse(JSON.stringify(first.bg.sessionStore)) });
+            return { w, hash: "h5", tabId: 7, sender: AT7 };
+        }],
+        ["after an eviction, a run, tab now on another site", "refused", async () => {
+            const first = pageWorld(); await pageStart(first.bg, "h6");
+            const w = pageWorld({ local: { ml_site_always: ["https://builder.example", "https://other.example"], ...JSON.parse(JSON.stringify(first.bg.localStore)) }, session: JSON.parse(JSON.stringify(first.bg.sessionStore)), tabs: [{ id: 7, url: OTHER_SITE, title: "Moved" }] });
+            return { w, hash: "h6", tabId: 7, sender: AT7_ON_B };
+        }],
+    ];
+    for (const [name, want, make] of cases) {
+        const tabSide = await make();
+        const r = await tabSide.w.bg.send({ type: "USER_RUN_ACTION", payload: { hash: tabSide.hash, action: "send", text: "hello there" } }, tabSide.sender);
+        await flush(40);
+        const viaTab = r.refused === PAGE_GONE ? "refused" : r.data === null ? "page" : "worker";
+        assert.equal(toPageMsgs(tabSide.w.bg).length, 0, `${name}: the tab channel relays through the shell, never the worker`);
+        const panelSide = await make();
+        const base = panelSide.w.chats().length;
+        void panelSide.w.bg.send({ type: "ML_SESSION_REMOTE", tabId: panelSide.tabId, action: "send", hash: panelSide.hash, text: "hello there", surface: "devtools" }, EXT);
+        await flush(40);
+        const relayed = toPageMsgs(panelSide.w.bg).length, drove = panelSide.w.chats().length - base;
+        const viaPanel = relayed === 1 && drove === 0 ? "page" : relayed === 0 && drove === 1 ? "worker" : relayed === 0 && drove === 0 ? "refused" : `both (${relayed} relays, ${drove} turns)`;
+        assert.deepEqual([viaTab, viaPanel], [want, want], name);
+        if (want === "worker") assert.match(panelSide.w.lastUser(), /hello there/, `${name}: the worker's turn carries the text`);
+    }
+});
+
+test("UPGRADE: a page chat from before builders were recorded is refused, not relayed, and the person is told on the tab channel", T, async () => {
+    // The old worker wrote no `ml_pagebuilt`: a session the old page owns has no record, which reads as no page.
+    // The step list's note needs a run the worker holds (noteRefusedTurn finds the tab through bgRuns/runInboxes), and
+    // a chat it never saw has none, so the panel channel's refusal is observable only as the absence of a relay.
+    const w = pageWorld({ session: {} });
+    assert.equal(w.bg.sessionStore.ml_pagebuilt, undefined, "premise: nothing recorded");
+    const r = await w.bg.send({ type: "USER_RUN_ACTION", payload: { hash: "oldchat1", action: "send", text: "still there?" } }, { tab: { id: 7, url: BUILDER }, url: BUILDER });
+    assert.deepEqual([r.data, r.refused], [null, PAGE_GONE]);
+    void w.bg.send({ type: "ML_SESSION_REMOTE", tabId: 7, action: "send", hash: "oldchat1", text: "still there?", surface: "devtools" }, EXT);
+    await flush(30);
+    assert.equal(toPageMsgs(w.bg).length, 0, "nothing relayed");
+    assert.equal(w.chats().length, 0, "and the worker started no turn of a run it does not hold");
+});
+
+test("a page-built chat survives an eviction on its builder's page", T, async () => {
+    const first = pageWorld();
+    await pageChatEvent(first.bg, "chatev01");
+    assert.equal(first.bg.sessionStore.ml_pagebuilt.chatev01.tabId, 7, "premise: recorded");
+    const make = () => pageWorld({ local: { ml_site_always: ["https://builder.example", "https://other.example"], ...JSON.parse(JSON.stringify(first.bg.localStore)) }, session: JSON.parse(JSON.stringify(first.bg.sessionStore)) });
+    const viaTab = make();
+    const r = await viaTab.bg.send({ type: "USER_RUN_ACTION", payload: { hash: "chatev01", action: "send", text: "back again" } }, { tab: { id: 7, url: BUILDER }, url: BUILDER });
+    assert.deepEqual([r.data, r.refused], [null, undefined], "the tab channel hands it to the page");
+    const viaPanel = make();
+    void viaPanel.bg.send({ type: "ML_SESSION_REMOTE", tabId: 7, action: "send", hash: "chatev01", text: "back again", surface: "devtools" }, EXT);
+    await flush(30);
+    assert.deepEqual(toPageMsgs(viaPanel.bg).map(([t, m]) => [t, m.text]), [[7, "back again"]]);
+});
+
+test("RED TEAM: the builder is the first stamp: a later page on the same tab cannot repoint it", T, async () => {
+    const w = pageWorld();
+    await pageStart(w.bg, "firststamp");
+    w.open[0].url = OTHER_SITE;
+    // The other site's shell claims the same hash from the same tab.
+    await pageChatEvent(w.bg, "firststamp", 7, OTHER_SITE, 0);
+    assert.equal(w.bg.sessionStore.ml_pagebuilt.firststamp.origin, "https://builder.example", "the first stamp stayed");
+    const r = await w.bg.send({ type: "USER_RUN_ACTION", payload: { hash: "firststamp", action: "send", text: "for the builder only" } }, { tab: { id: 7, url: OTHER_SITE }, url: OTHER_SITE });
+    assert.notEqual(r.data, null, "the worker drives it; the other site is not handed the message");
+    void w.bg.send({ type: "ML_SESSION_REMOTE", tabId: 7, action: "send", hash: "firststamp", text: "for the builder only", surface: "devtools" }, EXT);
+    await flush(40);
+    assert.equal(toPageMsgs(w.bg).length, 0, "nothing relayed to the tab on the other site");
+    assert.equal(w.bg.sessionStore.ml_pagebuilt.firststamp.origin, "https://builder.example");
+});
+
+test("RED TEAM: a subframe's session event records no builder", T, async () => {
+    const w = pageWorld();
+    await pageChatEvent(w.bg, "framechat", 7, BUILDER, 3);
+    assert.equal(w.bg.sessionStore.ml_pagebuilt?.framechat, undefined, "only the top frame can build");
+    const r = await w.bg.send({ type: "USER_RUN_ACTION", payload: { hash: "framechat", action: "send", text: "x" } }, { tab: { id: 7, url: BUILDER }, url: BUILDER });
+    assert.deepEqual([r.data, r.refused], [null, PAGE_GONE], "so no page frames a message to it");
 });
 
 test("a long paste at a run's start is held as \"pasted text\", named in one line after it; what was typed is shown, not the line", T, async () => {
@@ -1515,6 +1631,51 @@ test("a survey reads the policies that apply to its run as ml.current.policies",
         first: { name: "exec", args: { js: "return JSON.stringify(ml.current.policies)" } },
     });
     assert.match(toolResults[0] ?? "", /never x\.example/, `the survey saw the policy; got ${(toolResults[0] ?? "").slice(0, 300)}`);
+});
+
+// --- a SCHEME-RELATIVE navigate: the gate judges it on the page's scheme, as the browser goes there ---
+
+/** A tab on `url` whose navigates arrive: each one commits a new document there and the run is re-adopted on it. */
+function arrivingTab(url) {
+    const tab = { ...SITE, url };
+    let docN = 1;
+    const sender = () => ({ tab: { id: tab.id, url: tab.url }, url: tab.url, origin: new URL(tab.url).origin, frameId: 0, documentId: `doc-nav-${docN}` });
+    const inPage = async (bg, msg) => {
+        const p = msg.payload;
+        if (p.name !== "navigate" || p.precheck || p.renderOnly || p.readonlyTry) return undefined;
+        const to = new URL(p.args.url, tab.url).href;
+        tab.url = to; docN++;
+        bg.commit(tab.id, { documentId: `doc-nav-${docN}`, url: to });
+        setTimeout(async () => {
+            const ready = JSON.parse(JSON.stringify(await bg.send({ type: "CONTENT_READY" }, sender()) ?? {}));
+            for (const a of ready.adopt ?? []) void bg.send({ type: "RUN_READOPTED", payload: { runId: a.runId, pageInfo: `You are on ${to}` } }, sender());
+        }, 5);
+        return { result: `Navigating to ${to}` };
+    };
+    return { tab, inPage };
+}
+
+test("on an http page, a scheme-relative navigate to an http origin the run consented to takes the page's scheme and asks nothing", T, async () => {
+    // An approved navigate to http://other.example consents to that http origin; the run then goes back to its page.
+    // "//other.example/y" takes the http page's scheme, which is where the browser goes. The gate once forced "https:"
+    // onto it and asked for https://other.example, which the run never consented to.
+    const { tab, inPage } = arrivingTab("http://site.example/page");
+    const { gates } = await attackRun({}, {
+        tab, local: { ml_site_always: ["http://site.example"] }, inPage,
+        first: { name: "navigate", args: { url: "http://other.example/page" } },
+        then: [{ name: "navigate", args: { url: "http://site.example/page" } }, { name: "navigate", args: { url: "//other.example/y" } }],
+    });
+    assert.deepEqual(gates, ["navigate"], `the navigate out asks; the way back and the scheme-relative return do not. Gates: ${JSON.stringify(gates)}`);
+});
+
+test("RED TEAM: on an http page, consenting to http://other.example does not let a scheme-relative navigate to another host past the gate", T, async () => {
+    const { tab, inPage } = arrivingTab("http://site.example/page");
+    const { gates } = await attackRun({}, {
+        tab, local: { ml_site_always: ["http://site.example"] }, inPage,
+        first: { name: "navigate", args: { url: "http://other.example/page" } },
+        then: [{ name: "navigate", args: { url: "http://site.example/page" } }, { name: "navigate", args: { url: "//third.example/y" } }],
+    });
+    assert.deepEqual(gates, ["navigate", "navigate"], `each new host asks. Gates: ${JSON.stringify(gates)}`);
 });
 
 // --- the policy page (POLICIES): only extension pages, and a change re-judges a card already showing ---

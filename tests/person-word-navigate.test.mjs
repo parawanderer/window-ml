@@ -24,12 +24,13 @@ const row = (id, consumer, effect, source, origin = "person") => ({ id, scope: "
 const ALLOW_B = (origin) => row("allow-b", "fetch", "allow", '(c) => c.host === "b.example" && c.interactive', origin);
 
 /**
- * A page-built run on tab 7 with `crossOrigin: false` whose model calls `calls` in turn. Returns the navigate messages the
+ * A page-built run on tab 7 (on `site`) with `crossOrigin: false` whose model calls `calls` in turn. Returns the navigate messages the
  * page was sent (`{ url, word }`) and the gates the person was shown.
  */
-async function run(calls, { policies = [], crossOrigin = false } = {}) {
-    const fromPage = { tab: { id: 7, url: SITE }, url: SITE, origin: "https://site.example", frameId: 0 };
-    const tab = { id: 7, windowId: 3, active: true, url: SITE, title: "Site" };
+async function run(calls, { policies = [], crossOrigin = false, site = SITE } = {}) {
+    const pageOrigin = new URL(site).origin;
+    const fromPage = { tab: { id: 7, url: site }, url: site, origin: pageOrigin, frameId: 0 };
+    const tab = { id: 7, windowId: 3, active: true, url: site, title: "Site" };
     let turns = 0, docN = 1, bg;
     const navs = [], gates = [];
     const answered = new Set();
@@ -39,7 +40,7 @@ async function run(calls, { policies = [], crossOrigin = false } = {}) {
         for (const a of r?.adopt ?? []) void bg.send({ type: "RUN_READOPTED", payload: { runId: a.runId, pageInfo: `You are on ${url}` } }, sender());
     };
     bg = loadBackground({
-        config, openTabs: [tab], siteGate: true, local: { ml_policies_global: policies, ml_site_always: ["https://site.example", "https://b.example", "https://c.example"] },
+        config, openTabs: [tab], siteGate: true, local: { ml_policies_global: policies, ml_site_always: ["https://site.example", "http://site.example", "https://b.example", "https://c.example"] },
         onFetch: async (call) => {
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
             const next = calls[turns++];
@@ -67,9 +68,10 @@ async function run(calls, { policies = [], crossOrigin = false } = {}) {
             if (p.name === "navigate") {
                 const to = p.args.url;
                 navs.push({ url: to, word: p.crossOriginWord === true });
-                tab.url = to; docN++;
-                bg.commit(7, { documentId: `doc-${docN}`, url: to });
-                setTimeout(() => void ready(to), 5);
+                const at = new URL(to, tab.url).href;   // as the browser resolves a scheme-relative URL
+                tab.url = at; docN++;
+                bg.commit(7, { documentId: `doc-${docN}`, url: at });
+                setTimeout(() => void ready(at), 5);
                 return { result: `Navigating to ${to}` };
             }
             return { result: `ran ${p.name}` };
@@ -79,7 +81,7 @@ async function run(calls, { policies = [], crossOrigin = false } = {}) {
         runId: "pagerun-word", task: "do it", systemPrompt: "S",
         tools: [{ name: "navigate", description: "go", parameters: { type: "object", properties: { url: { type: "string" } } }, requiresApproval: true, capabilities: [] }],
         model: "m", think: null, maxSteps: 8, autoApprovePython: false, autoApproveReadonly: false, surface: "off",
-        crossOrigin, approvalRouting: "ui", pageOrigin: "https://site.example",
+        crossOrigin, approvalRouting: "ui", pageOrigin,
         rebuild: { toolNames: ["navigate"], model: "m", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin },
     } }, fromPage);
     const raced = await Promise.race([done.then(() => true), sleep(15000).then(() => false)]);
@@ -100,6 +102,14 @@ test("a policy of origin person or proposed that allows this navigate lets a run
 test("judged per navigate: a destination the allow row does not cover carries no word, though the run's earlier navigate did", T, async () => {
     const r = await run([{ name: "navigate", args: { url: OTHER } }, { name: "navigate", args: { url: ELSE } }], { policies: [ALLOW_B("person")] });
     assert.deepEqual(r.navs, [{ url: OTHER, word: true }, { url: ELSE, word: false }]);
+});
+
+test("a scheme-relative navigate is judged at the page's scheme: an allow row keyed to http carries the word from an http page, and not from an https one", T, async () => {
+    const httpB = row("allow-http-b", "fetch", "allow", '(c) => c.url.startsWith("http://b.example/") && c.interactive');
+    const onHttp = await run([{ name: "navigate", args: { url: "//b.example/docs" } }], { policies: [httpB], site: "http://site.example/page" });
+    assert.deepEqual(onHttp.navs, [{ url: "//b.example/docs", word: true }], "//b.example from an http page is http://b.example");
+    const onHttps = await run([{ name: "navigate", args: { url: "//b.example/docs" } }], { policies: [httpB] });
+    assert.deepEqual(onHttps.navs.map((n) => n.word), onHttps.navs.map(() => false), "from an https page it is https://b.example, which the row does not cover");
 });
 
 // --- what is not the word ---
