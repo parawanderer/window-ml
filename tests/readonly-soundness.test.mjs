@@ -237,7 +237,7 @@ test("HALTING: a replace is charged for the text it builds, so a loop of them un
 test("HALTING: a replacement is a string or an arrow: an object, an array or a builtin is not a way past the size", async () => {
     for (const v of lifted("halting", "a replacement is a string or an arrow")) {
         const r = await fallsBack(v.js, v.name, { stepBudget: v.budget, ms: 8000 });
-        assert.match(r.message, /a replace(r|ment) that/, v.name);
+        assert.match(r.message, /a replace(r|ment) that|function that is not an arrow/, v.name);
     }
 });
 

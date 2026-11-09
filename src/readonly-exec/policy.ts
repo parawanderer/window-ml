@@ -126,6 +126,122 @@ const BY_KIND: Record<MethodKind | "*", readonly string[]> = {
     NumberCtor: ["isNaN", "isFinite", "isInteger", "isSafeInteger", "parseFloat", "parseInt"],
 };
 
+// ---------------------------------------------------------------------------------------------------------------
+// CONVERSION: which argument of which admitted method the HOST converts to a primitive.
+//
+// A host method converts an object argument with ToString or ToNumber, which calls the object's own `toString`/`valueOf`:
+// a page's code, run inside a survey that promised to run none. So at the host-call site each converting position must
+// hold a value `convertible` (evaluator.ts) judges to be data. Every admitted method is in exactly ONE of the two tables
+// below, and a test walks `METHODS_BY_KIND` to fail for a method in neither: a method added to the whitelist later has
+// to be decided here, not slip through. A position is "all" (every argument) or the indexes that convert.
+type Positions = "all" | readonly number[];
+/** Types a table of positions, since object literals naming `toString`/`toLocaleString` fight the inherited signatures. */
+const all = (...names: string[]): Record<string, Positions> => Object.fromEntries(names.map((n) => [n, "all" as const]));
+const pos = (...o: Record<string, Positions>[]): Record<string, Positions> => Object.assign(Object.create(null), ...o);
+/** The arguments of each admitted method (by receiver kind) that the host converts to a primitive, running an object's own `toString`/`valueOf`: each must hold a value `converts` accepts. */
+export const CONVERTS: Readonly<Record<string, Readonly<Record<string, Positions>>>> = {
+    string: {
+        substring: "all", substr: "all", slice: "all", at: "all", charAt: "all", charCodeAt: "all", codePointAt: "all",
+        repeat: "all", padStart: "all", padEnd: "all", normalize: "all", includes: "all", indexOf: "all", lastIndexOf: "all",
+        startsWith: "all", endsWith: "all", concat: "all", localeCompare: "all", split: "all", replace: "all", replaceAll: "all",
+    },
+    array: { flat: [0], slice: [0, 1], at: [0], splice: [0, 1], fill: [1, 2], includes: [1], indexOf: [1], lastIndexOf: [1] },
+    number: pos(all("toFixed", "toPrecision", "toLocaleString"), { toString: [0] }),
+    date: pos(all("toLocaleString", "toLocaleDateString", "toLocaleTimeString")),
+    Math: { max: "all", min: "all", floor: "all", ceil: "all", round: "all", abs: "all", pow: "all", sqrt: "all", sign: "all", trunc: "all" },
+    JSON: { parse: [0], stringify: [2] },
+    NumberCtor: { parseFloat: "all", parseInt: "all" },
+    DateCtor: { parse: [0], UTC: "all" },
+    element: { querySelector: [0], querySelectorAll: [0], getElementsByClassName: [0], getElementsByTagName: [0], getElementsByName: [0],
+        closest: [0], matches: [0], getAttribute: [0], hasAttribute: [0], getRootNode: [0] },
+    document: { querySelector: [0], querySelectorAll: [0], getElementById: [0], getElementsByClassName: [0], getElementsByTagName: [0],
+        getElementsByName: [0], getRootNode: [0] },
+    collection: { item: [0], at: [0] },
+    style: { getPropertyValue: [0], getPropertyPriority: [0], item: [0] },
+    table: { col: "all", select: "all", records: "all", head: "all" },
+};
+
+const NONE = "takes no argument";
+const DATA = "its arguments are values compared or stored as data, never converted";
+/** The admitted methods that convert NO argument, each with the reason. A method here that gains a converting position is a bug the
+ *  tests catch by measurement (tests/redteam-coerce-args.test.mjs), not by this list. */
+export const NO_CONVERSION: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+    "*": { then: "takes a callback, judged by onlyOurFunctions", toString: NONE + " (a number's radix is under `number`)" },
+    array: { map: "callback", filter: "callback", forEach: "callback", reduce: "callback", reduceRight: "callback", find: "callback",
+        findIndex: "callback", findLast: "callback", findLastIndex: "callback", some: "callback", every: "callback", flatMap: "callback",
+        sort: "callback or none", join: "its separator is judged by joinsData and the string-separator check",
+        concat: DATA, reverse: NONE, push: DATA, pop: NONE, shift: NONE, unshift: DATA, keys: NONE, values: NONE, entries: NONE },
+    string: { toLowerCase: NONE, toUpperCase: NONE, trim: NONE, trimStart: NONE, trimEnd: NONE,
+        match: "a non-string non-regex pattern already refuses (redteam-coercion)", matchAll: "as match", search: "as match" },
+    date: { getTime: NONE, getTimezoneOffset: NONE, valueOf: NONE, toISOString: NONE, toJSON: NONE, toString: NONE, toDateString: NONE,
+        toTimeString: NONE, toUTCString: NONE, getFullYear: NONE, getMonth: NONE, getDate: NONE, getDay: NONE, getHours: NONE,
+        getMinutes: NONE, getSeconds: NONE, getMilliseconds: NONE, getUTCFullYear: NONE, getUTCMonth: NONE, getUTCDate: NONE,
+        getUTCDay: NONE, getUTCHours: NONE, getUTCMinutes: NONE, getUTCSeconds: NONE, getUTCMilliseconds: NONE },
+    regexp: { test: "a non-string argument already refuses (redteam-coercion)", exec: "as test" },
+    set: { has: DATA, add: DATA, delete: DATA, clear: NONE, forEach: "callback", keys: NONE, values: NONE, entries: NONE },
+    map: { has: DATA, get: DATA, set: DATA, delete: DATA, clear: NONE, forEach: "callback", keys: NONE, values: NONE, entries: NONE },
+    promise: {},
+    element: { getAttributeNames: NONE, contains: "takes a Node: a TypeError, never a conversion", getBoundingClientRect: NONE },
+    document: { contains: "takes a Node: a TypeError, never a conversion" },
+    collection: { forEach: "callback", keys: NONE, values: NONE, entries: NONE },
+    console: { log: "recorded through printable(), never converted", info: "as log", warn: "as log", error: "as log", debug: "as log" },
+    embedding: { dot: "arguments are validated as embeddings by preflight", rank: "as dot" },
+    ObjectCtor: { keys: "property reads, not conversion", values: "as keys", entries: "as keys", fromEntries: "as keys", assign: "as keys" },
+    ArrayCtor: { from: "its first argument is an iterable judged by `iterates` (an array-like included), its mapper by onlyOurFunctions", isArray: DATA, of: DATA },
+    PromiseCtor: { all: DATA, allSettled: DATA },
+    DateCtor: { now: NONE },
+    NumberCtor: { isNaN: "does not coerce", isFinite: "does not coerce", isInteger: "does not coerce", isSafeInteger: "does not coerce" },
+};
+
+/** The argument indexes of `args` that `kind`'s method `key` converts to a primitive, or none. */
+export function convertingArgs(kind: string | null, key: string, count: number): number[] {
+    if (kind === null) return [];
+    const at = CONVERTS[kind] !== undefined && Object.hasOwn(CONVERTS[kind], key) ? CONVERTS[kind][key] : undefined;
+    if (at === undefined) return [];
+    return at === "all" ? Array.from({ length: count }, (_, i) => i) : at.filter((i) => i < count);
+}
+
+/** The constructors (`SAFE_CONSTRUCTORS`) that convert their arguments, with the positions: `new Date(o)`, `new String(o)`, `new RegExp(o, flags)`. A collection's iterable is `CTOR_ITERABLES`; the rest are `NO_CTOR_CONVERSION`. */
+export const CTOR_CONVERTS: Readonly<Record<string, Positions>> = { Date: "all", RegExp: [0, 1], Number: "all", String: "all", Error: [0] };
+
+/** The constructors whose first argument is an ITERABLE the host walks by calling its `Symbol.iterator` and `next` (`new Set(o)`): a page's own
+ *  iterator is page code, so the argument must be a string, an array, a Set or a Map without an own iterator (judged in `iterates`). */
+export const CTOR_ITERABLES: ReadonlySet<string> = new Set(["Set", "Map", "WeakSet", "WeakMap"]);
+
+/** The `SAFE_CONSTRUCTORS` that neither convert an argument nor walk an iterable, each with the reason; a test enumerates the whitelist against
+ *  this and `CTOR_CONVERTS` and `CTOR_ITERABLES`, so a constructor added later has to be decided. */
+export const NO_CTOR_CONVERSION: Readonly<Record<string, string>> = {
+    Array: "a length (a number) or the elements themselves, stored as data",
+    Object: "wraps its argument as it is",
+    Boolean: "truthiness, never a conversion that calls a method",
+};
+
+/** The bare roots that convert their arguments (`String(o)`, `parseInt(o)`), with the positions: `getComputedStyle`'s pseudo-element
+ *  is the one converting argument of a function whose first is an element. */
+export const ROOT_CONVERTS: Readonly<Record<string, Positions>> = { String: "all", Number: "all", parseInt: "all", parseFloat: "all", isNaN: "all", isFinite: "all", getComputedStyle: [1] };
+
+/** The prototypes a script-built object may inherit from without any of them being a page's: compared by identity. */
+const INTRINSIC_PROTOS: ReadonlySet<unknown> = new Set([Object.prototype, Array.prototype, Date.prototype, RegExp.prototype, String.prototype, Number.prototype, Boolean.prototype, Map.prototype, Set.prototype]);
+
+/** Does a SCRIPT-BUILT object convert to a primitive only through code the engine mediates? Its own `toString`, `valueOf` and
+ *  `Symbol.toPrimitive` must be a function the script wrote (`ours`; a page's function stored in a literal is not), it has no
+ *  accessor for them and no own `Symbol.toStringTag`, and its prototype chain is intrinsic prototypes only. Only ever asked
+ *  of a value the evaluator owns: inspecting a page's object this way could itself run its Proxy traps. */
+export function convertsByIntrinsics(o: object, ours: (f: unknown) => boolean): boolean {
+    for (const k of Reflect.ownKeys(o)) {
+        if (k === Symbol.toStringTag) return false;
+        if (k === "toString" || k === "valueOf" || k === Symbol.toPrimitive) {
+            const d = Object.getOwnPropertyDescriptor(o, k);
+            if (!d || !("value" in d) || (typeof d.value === "function" ? !ours(d.value) : d.value != null)) return false;
+        }
+    }
+    for (let p = Object.getPrototypeOf(o); p !== null; p = Object.getPrototypeOf(p)) if (!INTRINSIC_PROTOS.has(p)) return false;
+    return true;
+}
+
+/** Every method the dialect admits, by receiver kind (`*` is every receiver): what the completeness walk in the tests reads. */
+export const METHODS_BY_KIND: Readonly<Record<string, readonly string[]>> = BY_KIND;
+
 const KIND_SETS = new Map<string, Set<string>>(Object.entries(BY_KIND).map(([k, v]) => [k, new Set(v)]));
 
 const ANY_KIND = KIND_SETS.get("*")!;
