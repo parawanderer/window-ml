@@ -1572,9 +1572,11 @@ test("RED TEAM: on an http page, consenting to http://other.example does not let
 // while the browser leaves for the other site. The neighbour that must stay free is in the rows too: a percent-encoded
 // backslash is not a separator, so "/%5Cother.example/x" stays on the page's origin.
 //
-// The card is the property under test: a navigate that leaves the origin the person consented to asks, whoever spelled
-// it. The first two rows measure the shape (the browser goes there) and the default (what stays on the origin); the
-// third is the red-team row, marked todo while the gate reads these spellings as relative.
+// The card is the property under test: a navigate or a read that leaves the origin the person consented to goes behind
+// one, whoever spelled it. The first two rows measure the shape (the browser goes there) and the default (what stays on
+// the origin); the third is the red-team row, marked todo while the gate reads these spellings as relative; the fourth
+// holds on either side of the fix — today the fetch choke point refuses these reads uncarded, once the gate resolves
+// the spelling it cards them and they are read, and no state may read one without a card.
 
 /** Spellings the gate's relative test accepts and the browser resolves to another origin, from the https SITE.
  *  Each is a distinct mechanism in the WHATWG parser, not a sample: a backslash is a special URL's separator; a
@@ -1635,19 +1637,19 @@ test("RED TEAM: a navigate the gate calls relative but the browser resolves to a
     assert.deepEqual(seen.map(([, , gates]) => gates), pairs.map(() => ["navigate"]), `each spelling leaves the origin, so each must ask once; got ${JSON.stringify(seen)}`);
 });
 
-test("RED TEAM: a fetch_url the gate calls relative never reads the other origin's body without the card", T, async () => {
-    // The free tier here is the agent-host prompt only: the FETCH_URL choke point judges the resolved URL again
-    // (sw-fetch-url.ts, `caller.consented`), so the read must be refused there even when no card was shown. The
-    // absolute spelling is the control: the same shape of call DOES read the site once the card is answered, so a row
-    // that finds nothing is the choke point refusing, not a harness that cannot see a read.
+test("RED TEAM: a fetch_url the gate calls relative reads the other origin only through its card", T, async () => {
+    // One property across both orders the code can have: while the spelling early-out stood, no card was shown and the
+    // FETCH_URL choke point refused the read (sw-fetch-url.ts, `caller.consented`); with the gate resolving the
+    // spelling, each of them cards like the absolute control and the read its card approves happens. What may never be
+    // true is a read with no card — and a card whose read silently does not happen would hide exactly that.
     const control = await attackRun({ url: "https://other.example/x" }, { local: SITE_APPROVED });
     assert.deepEqual(control.gates, ["fetch_url"], `the absolute spelling's read asks`);
     assert.equal(control.fetched.length, 1, `the absolute spelling was fetched: the harness sees a read`);
     assert.match(control.toolResults[0] ?? "", /SECRET OTHER SITE/, `and the model read it`);
     for (const url of SPELLED_RELATIVE) {
         const { gates, toolResults, fetched } = await attackRun({ url }, { local: SITE_APPROVED });
-        assert.ok(!toolResults.some((t) => /SECRET OTHER SITE/.test(t ?? "")), `${JSON.stringify(url)}: the body reached the model without a card (gates ${JSON.stringify(gates)})`);
-        assert.equal(fetched.length, 0, `${JSON.stringify(url)}: the worker fetched the other origin (gates ${JSON.stringify(gates)})`);
+        const read = fetched.length > 0 || toolResults.some((t) => /SECRET OTHER SITE/.test(t ?? ""));
+        assert.equal(read, gates.length > 0, `${JSON.stringify(url)}: a read of the other origin only behind its card; got gates ${JSON.stringify(gates)}, read ${read}`);
     }
 });
 
