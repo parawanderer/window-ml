@@ -348,7 +348,7 @@ test("repoWide + pathspecs: git rm / mv also claim the directory and the reposit
 /** The pin both repos hold: sha256 of the lines "<sha256 hex of the raw bytes>  <name>\n", over every .json of the fixtures
  *  ("calls/<p>.json") and the manifests ("manifests/<p>.json"), names sorted bytewise. The host's copy under
  *  `vectors/program-manifests/` records it in `PIN`. */
-const VECTOR_PIN = "45639c5115f63077e74fd16ed00cc051c34fb0e679d5a83e43b26e0f3dd387f9";
+const VECTOR_PIN = "67a6e11461609f3d8a02313659a3829ffc7acbbe5f8c7bec9696bb596c33f769";
 
 test("the manifests and call fixtures hash to the pin the host holds", () => {
     const sha = (b) => crypto.createHash("sha256").update(b).digest("hex");
