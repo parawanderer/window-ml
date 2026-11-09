@@ -111,7 +111,9 @@ jobs:
           fi
           # The ml.sh gate runs against a REAL `wmlhost`, which has to be downloaded, so it too runs only when
           # something it could notice changed: the pin, the fetch script, the shell's own code and tests, the spec.
-          if echo "$files" | grep -qE '^(tools/host-dist\.json|scripts/fetch-host|src/(shell/|sw/sw-shell\.ts)|tests/(e2e/(ml-sh-host|native-host)|sh-|program-manifest|manifest-schemas|fixtures/program-)|\.github/workflows/tests\.yml)'; then
+          # The sw/ names are the route the spec's exec takes to the host (exec-routing's isolated world, iso-channel,
+          # sw-shell-call, sw-manifests) and the ask it expects denied (sw-asks): a change to one alone must run it.
+          if echo "$files" | grep -qE '^(tools/host-dist\.json|scripts/fetch-host|src/(shell/|sw/(sw-shell|sw-shell-call|sw-manifests|sw-manifest-proposal|exec-routing|iso-channel|sw-asks)\.ts)|tests/(e2e/(ml-sh-host|native-host)|sh-|program-manifest|manifest-schemas|fixtures/program-)|\.github/workflows/tests\.yml)'; then
             echo "host=true" >> "$GITHUB_OUTPUT"
           else
             echo "host=false" >> "$GITHUB_OUTPUT"

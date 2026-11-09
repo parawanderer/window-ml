@@ -40,7 +40,7 @@ export async function readPin(pinPath = PIN) {
  * @param {string} [key] `platform-arch`, default this machine's; a parameter so a row can name another one.
  */
 export function target(key = `${process.platform}-${process.arch}`) {
-    const known = { "linux-x64": "x86_64-unknown-linux-gnu", "darwin-arm64": "aarch64-apple-darwin" };
+    const known = { "linux-x64": "x86_64-unknown-linux-gnu", "linux-arm64": "aarch64-unknown-linux-gnu", "darwin-arm64": "aarch64-apple-darwin" };
     if (!known[key]) {
         throw new Error(`no published host build for ${key}. Build it yourself and set E2E_WMLHOST, or add the target to ${REPO}'s release.yml.`);
     }
@@ -49,6 +49,14 @@ export function target(key = `${process.platform}-${process.arch}`) {
 
 /** Between attempts: the CDN's 504 window is measured in tens of seconds, not milliseconds. */
 const backoff = (attempt) => new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+
+/** api.github.com's unauthenticated budget is 60/hour per IP, which only bites someone re-running `--bump
+ *  --check` in a loop. A token in the environment rides the API calls as a bearer when one is set; the
+ *  `releases/download` routes stay bare (the pin is the check, and the CDN does not need the token). */
+function apiHeaders() {
+    const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+    return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 /**
  * The release archive's bytes. `name` is the asset's OWN name, `wmlhost-<tag>-<target>.tar.gz`. The same retry
@@ -71,12 +79,12 @@ export async function releaseArchive(tag, name, sleep = backoff) {
     }
     // Both spent: the release API's asset endpoint is a second route to the same bytes.
     for (let attempt = 0; attempt < 3; attempt++) {
-        const meta = await fetch(`https://api.github.com/repos/${REPO}/releases/tags/${tag}`).catch(() => null);
+        const meta = await fetch(`https://api.github.com/repos/${REPO}/releases/tags/${tag}`, { headers: apiHeaders() }).catch(() => null);
         const parsed = meta?.ok ? await meta.json().catch(() => null) : null;
         if (parsed) {
             const asset = (parsed.assets ?? []).find((a) => a.name === name);
             if (!asset?.id) throw new Error(`no asset named ${name} on ${tag}`);
-            const bytes = await fetch(`https://api.github.com/repos/${REPO}/releases/assets/${asset.id}`, { headers: { Accept: "application/octet-stream" } }).catch(() => null);
+            const bytes = await fetch(`https://api.github.com/repos/${REPO}/releases/assets/${asset.id}`, { headers: { Accept: "application/octet-stream", ...apiHeaders() } }).catch(() => null);
             const body = bytes?.ok ? await bytes.arrayBuffer().catch(() => null) : null;
             if (body) return new Uint8Array(body);
         }
@@ -94,14 +102,14 @@ export async function releaseArchive(tag, name, sleep = backoff) {
  * @returns {Promise<{commit: string, tagObjectSha: string}>}
  */
 export async function resolveCommit(tag) {
-    const ref = await fetch(`https://api.github.com/repos/${REPO}/git/ref/tags/${tag}`).catch(() => null);
+    const ref = await fetch(`https://api.github.com/repos/${REPO}/git/ref/tags/${tag}`, { headers: apiHeaders() }).catch(() => null);
     const parsed = ref?.ok ? await ref.json().catch(() => null) : null;
     let obj = parsed?.object;
     if (!obj?.sha || !obj.type) throw new Error(`no git ref for tag ${tag} on ${REPO}`);
     const tagObjectSha = obj.sha;
     for (let depth = 0; obj.type === "tag"; depth++) {
         if (depth > 4) throw new Error(`tag ${tag} peels past five objects: ${obj.sha}`);
-        const t = await fetch(`https://api.github.com/repos/${REPO}/git/tags/${obj.sha}`).catch(() => null);
+        const t = await fetch(`https://api.github.com/repos/${REPO}/git/tags/${obj.sha}`, { headers: apiHeaders() }).catch(() => null);
         const tp = t?.ok ? await t.json().catch(() => null) : null;
         obj = tp?.object;
         if (!obj?.sha || !obj.type) throw new Error(`no git tag object ${tagObjectSha} on ${REPO}`);
@@ -172,9 +180,10 @@ export function checkAgainstPin(pin, fresh) {
 /**
  * The CLI. `--bump <tag>` rewrites the pin from the release; `--bump --check` compares and writes nothing; with
  * no flag it fetches THIS machine's archive, verifies it against the pin and lands it. `sleep` is injectable so
- * rows run in milliseconds; `pinPath` so a row never touches the real pin.
+ * rows run in milliseconds; `pinPath` so a row never touches the real pin; `dir` so a row's land path is its own
+ * temp directory instead of the `../window-ml-host-<tag>/` sibling `native-host.mjs` scans.
  */
-export async function cli(argv, { pinPath = PIN, sleep = backoff } = {}) {
+export async function cli(argv, { pinPath = PIN, sleep = backoff, dir = null } = {}) {
     const check = argv.includes("--check");
     const bumpIdx = argv.indexOf("--bump");
     if (check && bumpIdx < 0) throw new Error("--check is --bump's: --bump <tag> --check");
@@ -199,9 +208,9 @@ export async function cli(argv, { pinPath = PIN, sleep = backoff } = {}) {
     const t = target();
     const asset = pin.assets[t];
     if (!asset) throw new Error(`no pinned host asset for ${t}: --bump ${pin.tag}`);
-    const dir = new URL(`../../window-ml-host-${pin.tag}/target/release/`, import.meta.url).pathname;
-    if (existsSync(join(dir, "wmlhost")) && !argv.includes("--force")) {
-        console.log(`wmlhost ${pin.tag} is already in ${dir} (--force to replace it)`);
+    const out = dir ?? new URL(`../../window-ml-host-${pin.tag}/target/release/`, import.meta.url).pathname;
+    if (existsSync(join(out, "wmlhost")) && !argv.includes("--force")) {
+        console.log(`wmlhost ${pin.tag} is already in ${out} (--force to replace it)`);
         return;
     }
     console.log(`fetching ${asset.file}`);
@@ -210,19 +219,19 @@ export async function cli(argv, { pinPath = PIN, sleep = backoff } = {}) {
     const unpacked = asset.file.slice(0, -".tar.gz".length); // the tar's top directory
     const tmp = join(tmpdir(), `${unpacked}-${process.pid}`);
     await mkdir(tmp, { recursive: true });
-    await mkdir(dir, { recursive: true });
+    await mkdir(out, { recursive: true });
     try {
         const tar = join(tmp, "host.tar.gz");
         await writeFile(tar, archive);
         await run("tar", ["-xzf", tar, "-C", tmp]);
-        await writeFile(join(dir, "wmlhost"), await readFile(join(tmp, unpacked, "wmlhost")));
-        await chmod(join(dir, "wmlhost"), 0o755);
+        await writeFile(join(out, "wmlhost"), await readFile(join(tmp, unpacked, "wmlhost")));
+        await chmod(join(out, "wmlhost"), 0o755);
     } finally {
         await rm(tmp, { recursive: true, force: true });
     }
     // Proof it runs here, not merely that it arrived: a binary for the wrong libc downloads perfectly.
-    const { stdout } = await run(join(dir, "wmlhost"), ["--version"]);
-    console.log(`${stdout.trim()} → ${dir}`);
+    const { stdout } = await run(join(out, "wmlhost"), ["--version"]);
+    console.log(`${stdout.trim()} → ${out}`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

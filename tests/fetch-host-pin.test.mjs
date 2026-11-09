@@ -3,6 +3,7 @@
 import test from "node:test";
 import assert from "node:assert";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -164,8 +165,9 @@ test("a body whose hash is not the pin's is refused, naming both", () => {
     );
 });
 
-test("the two known targets map, the default takes this machine's key, and an unknown platform names itself", () => {
+test("the three published targets map from their Node keys, and an unknown platform names itself", () => {
     assert.equal(target("linux-x64"), "x86_64-unknown-linux-gnu");
+    assert.equal(target("linux-arm64"), "aarch64-unknown-linux-gnu");
     assert.equal(target("darwin-arm64"), "aarch64-apple-darwin");
     assert.equal(target(), target(`${process.platform}-${process.arch}`), "the default is this machine's key");
     assert.throws(
@@ -348,5 +350,78 @@ test("--bump stores the PEELED commit in the ruled shape, and --check writes not
         await cli(["--bump", "--check"], { pinPath, sleep }); // the fresh pin passes with no write
     } finally {
         globalThis.fetch = real;
+    }
+});
+
+// --- the land path checks the pin before anything is unpacked or lands ---
+
+test("a wrong-hash archive is refused with checksum mismatch, and the land dir is never created", async () => {
+    // The body is not a tar either: a `assertPinned` moved after `tar -xzf` would surface tar's error instead of
+    // the pin's, and this row would go red on the message. The ordering is the invariant the file exists for.
+    const dir = await mkdtemp(join(tmpdir(), "fetch-host-land-"));
+    const out = join(dir, "out");
+    const pinPath = join(dir, "host-dist.json");
+    await writeFile(pinPath, `${JSON.stringify(diskPin(), null, 2)}\n`);
+    const garbage = new TextEncoder().encode("not an archive");
+    const real = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+        if (String(url).includes("/releases/download/")) return { ok: true, arrayBuffer: async () => garbage };
+        throw new Error(`nothing but the download route should be asked: ${url}`);
+    };
+    try {
+        await assert.rejects(
+            cli([], { pinPath, sleep: instantSleep().sleep, dir: out }),
+            (e) => e.message.includes("checksum mismatch for") && e.message.includes("pinned") && e.message.includes("downloaded"),
+            "the pin names both hashes",
+        );
+        assert.equal(existsSync(out), false, "nothing behind: the land dir is never created");
+    } finally {
+        globalThis.fetch = real;
+    }
+});
+
+// --- a token in the environment rides the API calls ---
+
+test("GITHUB_TOKEN or GH_TOKEN is a bearer on the API calls, and the download routes never see it", async () => {
+    const seen = []; // {url, headers}
+    const stub = async (url, init) => {
+        const u = String(url);
+        seen.push({ url: u, headers: init?.headers ?? {} });
+        if (u.includes("/releases/download/")) return { ok: false, status: 504, arrayBuffer: async () => new Uint8Array() };
+        if (u.includes("/releases/tags/")) return { ok: true, json: async () => ({ assets: [{ id: 4242, name: ARCHIVE }] }) };
+        if (u.includes("/releases/assets/")) return { ok: true, arrayBuffer: async () => new TextEncoder().encode("bytes\n") };
+        if (u.includes("/git/ref/tags/")) return { ok: true, json: async () => ({ object: { type: "commit", sha: PEELED } }) };
+        return { ok: false, status: 404, json: async () => ({}), arrayBuffer: async () => new Uint8Array() };
+    };
+    const real = globalThis.fetch;
+    const had = { GITHUB_TOKEN: process.env.GITHUB_TOKEN, GH_TOKEN: process.env.GH_TOKEN };
+    globalThis.fetch = stub;
+    try {
+        process.env.GITHUB_TOKEN = "ghs_row_token";
+        delete process.env.GH_TOKEN;
+        await releaseArchive("v0.7.0", ARCHIVE, instantSleep().sleep); // download 504s → the API fallback carries it
+        await resolveCommit("v0.7.0");
+        for (const s of seen.filter((x) => x.url.includes("api.github.com"))) {
+            assert.equal(s.headers.Authorization, "Bearer ghs_row_token", `${s.url} carries the token`);
+        }
+        assert.ok(seen.some((x) => x.url.includes("/releases/download/")), "the download route was asked");
+        for (const s of seen.filter((x) => x.url.includes("/releases/download/"))) {
+            assert.equal(s.headers.Authorization, undefined, "the download route never sees the token");
+        }
+        seen.length = 0;
+        delete process.env.GITHUB_TOKEN;
+        process.env.GH_TOKEN = "ghp_row_token";
+        await resolveCommit("v0.7.0");
+        assert.ok(seen.length > 0 && seen.every((x) => x.headers.Authorization === "Bearer ghp_row_token"), "GH_TOKEN alone counts too");
+        seen.length = 0;
+        delete process.env.GH_TOKEN;
+        await resolveCommit("v0.7.0");
+        assert.ok(seen.length > 0 && seen.every((x) => x.headers.Authorization === undefined), "with neither set, no Authorization header at all");
+    } finally {
+        globalThis.fetch = real;
+        for (const k of ["GITHUB_TOKEN", "GH_TOKEN"]) {
+            if (had[k] === undefined) delete process.env[k];
+            else process.env[k] = had[k];
+        }
     }
 });
