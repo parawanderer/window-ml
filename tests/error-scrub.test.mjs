@@ -77,6 +77,17 @@ test("an empty config scrubs nothing, and a short filter that is a plain word is
     assert.doesNotMatch(out, /\/qwen\//, "the filter's own form is gone");
 });
 
+test("a GitHub token is scrubbed by its shape with no config at all, since the worker never holds the host's", () => {
+    const none = secretsOf({});
+    for (const t of [`gho_${"a1B2".repeat(9)}`, `ghp_${"Z".repeat(36)}`, `ghs_${"9".repeat(40)}`, `github_pat_${"x_Y1".repeat(20)}`]) {
+        const out = scrubSecrets(`token: ${t}\n`, none);
+        assert.equal(out, "token: [a GitHub token]\n", t);
+    }
+    // gh's own masked form, a prefix in prose and a short look-alike are not tokens
+    for (const t of ["Token: gho_************************************", "a ghp_ prefix", `gho_${"a".repeat(35)}`, `xgho_${"a".repeat(36)}`])
+        assert.equal(scrubSecrets(t, none), t, t);
+});
+
 test("scrubErrors rewrites every `error` string in a response, at any depth, and leaves data alone", () => {
     const s = secretsOf(config);
     const r = scrubErrors({ error: `at ${URL_}`, data: { url: URL_, result: { error: `key ${KEY}` }, list: [{ error: FILTER }] } }, s);

@@ -8,7 +8,7 @@ import { NotInDialect, Stopped, MAX_STRING, MAX_COLLECTION, Denied, riskyRegex, 
 import { Node } from "./parser";
 import { regexSteps } from "./regex-cost";
 import { replaceSize, replaceWorstCase } from "./replace-size";
-import { isSet, isMap, isStringObject, isRegExpObject, drainIterator, isWritableTarget, ReadonlyRealm, DENIED_PROPS, isDomCollection, SAFE_CONSTRUCTORS, ANSWER_METHODS, methodAllowed, kindOf, MUTATING_METHODS, CALLABLE_ROOTS, INTRINSIC_CALLBACKS, INTRINSIC_ROOTS, COERCING_CALLBACKS, argWrites } from "./policy";
+import { isSet, isMap, isStringObject, isRegExpObject, drainIterator, isWritableTarget, ReadonlyRealm, DENIED_PROPS, isDomCollection, SAFE_CONSTRUCTORS, ANSWER_METHODS, methodAllowed, kindOf, MUTATING_METHODS, CALLABLE_ROOTS, INTRINSIC_CALLBACKS, INTRINSIC_ROOTS, COERCING_CALLBACKS, convertingArgs, ROOT_CONVERTS, CTOR_CONVERTS, CTOR_ITERABLES, convertsByIntrinsics, argWrites } from "./policy";
 import { PrintSwap, abridgeRow, diffSwap, jsonPathKey } from "./print";
 
 /** Per-frame set of names declared `const`, kept off the frame's own enumerable keys. */
@@ -321,10 +321,55 @@ export class Evaluator {
     /** Refuse a value that expands past {@link MAX_EXPANDED}, without charging: for what the caller serialises after the
      *  survey has finished (the returned value). */
     checkExpands(v: unknown): void { if (v !== null && typeof v === "object") this.expanded(v); }
-    /** A COERCION of an operand (`+`, `<`, a template, a computed key): an object becomes a string through its
-     *  `toString`, which for an array is `join`, so it is walked first. Two strings compared cost their shorter one. */
-    private coerces(...vs: unknown[]): void {
-        for (const v of vs) if (v !== null && typeof v === "object") { if (Array.isArray(v)) this.joinsData(v, "this coercion"); this.expands(v); }
+    /** A COERCION of operands (`+`, `<`, a template, a computed key), returned as the values to USE: each is judged by
+     *  {@link converts}, and a String object is replaced by its primitive. */
+    private coerces(via: string, ...vs: unknown[]): unknown[] {
+        return vs.map((v) => {
+            const u = this.converts(via, v);
+            if (v !== null && typeof v === "object") this.expands(v);   // the ORIGINAL: a String object is charged its length before it is unboxed
+            return u;
+        });
+    }
+    /** THE predicate for a value a host call or an operator would CONVERT to a primitive (running its own `toString`/`valueOf`/
+     *  `Symbol.toPrimitive`), answering the value to use instead. A primitive is data. A String object is its primitive, read by the
+     *  intrinsic's slot (which a Proxy or an own `toString` cannot change): it is data whatever it carries. An array is data if
+     *  `joinsData` says so; a RegExp is a pattern where `pattern` says so. Anything else must be an object the SCRIPT built
+     *  (`owned`) whose own conversions are its arrows. Provenance, never inspection of a page's object (a Proxy answers `has` and
+     *  `getPrototypeOf`). A function is not judged here. `via` names the method or operator, never the value. */
+    private converts(via: string, v: unknown, pattern = false): unknown {
+        // A function converts through its own `toString` too (a page's can be an own property): only an arrow the script wrote, or the
+        // inert method reference, is data. A callback position is also `onlyOurFunctions`'s.
+        if (typeof v === "function") {
+            if (this.ourFns.has(v) || v === METHOD_REF) return v;
+            throw new NotInDialect(`${via} was given a function that is not an arrow written in the script, whose own toString could run page code`);
+        }
+        if (v === null || typeof v !== "object") return v;
+        if (isStringObject(v)) return String.prototype.valueOf.call(v);
+        if (Array.isArray(v)) { this.joinsData(v, via); return v; }
+        if (pattern && isRegExpObject(v)) return v;
+        if (this.owned.has(v) && convertsByIntrinsics(v, (f) => this.ourFns.has(f as Function))) return v;
+        throw new NotInDialect(`${via} was given an object the script did not build, which converting would run its own toString or valueOf`);
+    }
+    /** The iterable a collection constructor walks (`new Set(o)`): the host calls its `Symbol.iterator` and `next`, so only a string, an array, a Set or a
+     *  Map with no iterator of its own is data. Anything else, a page's iterable included, is `NotInDialect`. Answers the value to use. */
+    private iterates(via: string, v: unknown, arrayLike = false): unknown {
+        if (v == null || typeof v === "string") return v;
+        if (typeof v === "object") {
+            if (isStringObject(v)) return String.prototype.valueOf.call(v);
+            if ((Array.isArray(v) || isSet(v) || isMap(v)) && !Object.hasOwn(v, Symbol.iterator)) return v;
+            // `Array.from` also reads an array-like (`{ length: 3 }`): one the script built, whose length converts by its own arrows, and which has no iterator of its own.
+            // The realm's own DOM collections are iterated by the host, not by the page.
+            if (arrayLike && isDomCollection(v)) return v;
+            if (arrayLike && this.owned.has(v) && !Object.hasOwn(v, Symbol.iterator) && convertsByIntrinsics(v, (f) => this.ourFns.has(f as Function))) return v;
+        }
+        throw new NotInDialect(`${via} was given an iterable the script did not build, which would run its own Symbol.iterator`);
+    }
+    /** Every converting argument of a host call (`CONVERTS`) judged by {@link converts} and replaced by the value to use (a String
+     *  object by its primitive), in place. */
+    private convertingArgsAreData(kind: ReturnType<typeof kindOf>, key: string, args: unknown[]): void {
+        const pattern = kind === "string" && (key === "split" || key === "replace" || key === "replaceAll");
+        for (const i of convertingArgs(kind, key, args.length)) args[i] = this.converts(key, args[i], pattern && i === 0);
+        if (kind === "ArrayCtor" && key === "from" && args.length) args[0] = this.iterates("Array.from", args[0], true);
     }
     /** A host method is handed a FUNCTION only if the script wrote it: the host calls its callbacks itself (`map`, `sort`,
      *  `Array.from`'s mapper, `JSON.parse`'s reviver, `forEach` of a Set, a Map or a DOM collection, ...), outside the
@@ -650,7 +695,7 @@ export class Evaluator {
     }
 
     private guardKey(key: unknown): string {
-        this.coerces(key);   // a computed key is coerced with `String`, which walks an array whole
+        [key] = this.coerces("a computed key", key);   // a computed key is coerced with `String`, which walks an array whole
         this.scans(key);     // and a string key is hashed
         const k = String(key);
         if (DENIED_PROPS.has(k)) throw new Denied(`access to '${k}' is not allowed`);
@@ -727,7 +772,7 @@ export class Evaluator {
         // So does an ordering between a string and a number (`c.n < "10"`): refused there too.
         if (this.realm === "policy" && (op === "<" || op === ">" || op === "<=" || op === ">=") && typeof l !== typeof r)
             throw new NotInDialect(`${op} between a ${typeof l} and a ${typeof r} coerces`);
-        if (op !== "===" && op !== "!==" && !(loose && (l == null || r == null || (typeof l === "object") === (typeof r === "object")))) this.coerces(l, r);
+        if (op !== "===" && op !== "!==" && !(loose && (l == null || r == null || (typeof l === "object") === (typeof r === "object")))) [l, r] = this.coerces(`the operator ${op}`, l, r);
         // A string operand of anything but `+` (a rope stays O(1) there) is flattened and compared or parsed: charged its
         // length. `===` between strings of different lengths answers from the lengths alone.
         if (op === "===" || op === "!==") { if (typeof l === "string" && typeof r === "string" && l.length === r.length) this.scans(l, r); }
@@ -915,6 +960,10 @@ export class Evaluator {
                 const args = yield* this.evalArgs(node.args, scope);
                 for (const a of args) this.noteNulls(a);
                 this.allocation(node.ctor, args);
+                // A constructor that converts its argument (`new Date(o)`, `new RegExp(o)`) judges it like any other conversion.
+                const at = Object.hasOwn(CTOR_CONVERTS, node.ctor) ? CTOR_CONVERTS[node.ctor] : undefined;
+                if (at !== undefined) args.forEach((a, i) => { if (at === "all" || at.includes(i)) args[i] = this.converts(`new ${node.ctor}`, a, node.ctor === "RegExp" && i === 0); });
+                if (CTOR_ITERABLES.has(node.ctor) && args.length) args[0] = this.iterates(`new ${node.ctor}`, args[0]);
                 if (node.ctor === "RegExp") this.patternArg(isRegExp(args[0]) ? String(args[0].source) : args[0]);
                 for (const a of args) if (ONE_LEVEL_CTORS.has(node.ctor)) this.shallow(a); else this.expands(a);
                 const inst = new ctor(...args);
@@ -976,8 +1025,8 @@ export class Evaluator {
                 return node.prefix ? before + delta : before;
             }
             case "Unary": {
-                const a = yield* this.eval(node.arg, scope);
-                if (node.op === "-" || node.op === "+") { this.coerces(a); this.scans(a); }
+                let a = yield* this.eval(node.arg, scope);
+                if (node.op === "-" || node.op === "+") { [a] = this.coerces(`unary ${node.op}`, a); this.scans(a); }
                 if (node.op === "!") return !a;
                 if (node.op === "-") return -(a as number);
                 if (node.op === "+") return +(a as number);
@@ -1001,8 +1050,7 @@ export class Evaluator {
                 // Concatenate quasi[0] expr[0] quasi[1] … — String() coercion, exactly like JS.
                 let out = node.quasis[0];
                 for (let k = 0; k < node.exprs.length; k++) {
-                    const v = yield* this.eval(node.exprs[k], scope);
-                    this.coerces(v);
+                    const [v] = this.coerces("a template", yield* this.eval(node.exprs[k], scope));
                     out = this.sized(out + String(v) + node.quasis[k + 1]);
                 }
                 return out;
@@ -1073,7 +1121,7 @@ export class Evaluator {
         const callee = node.callee;
         // obj.method(args) — the common case. Allowlisted method names only.
         if (callee.type === "Member") {
-            const obj: any = yield* this.evalChain(callee.obj, scope);
+            let obj: any = yield* this.evalChain(callee.obj, scope);
             if (obj === SHORT) return SHORT;                    // the receiver chain short-circuited → skip the call
             if (callee.optional && obj == null) return SHORT;
             const key = callee.computed ? this.guardKey(yield* this.eval(callee.prop, scope)) : this.guardKey(callee.prop);
@@ -1137,6 +1185,9 @@ export class Evaluator {
                 if (!ours) throw new NotInDialect("then() needs an inline callback");
                 return yield* this.callArrow(ours.node, ours.scope, [obj]);
             }
+            // A String object is called as its primitive, read by the intrinsic's slot: its own `split`, `toString` or `valueOf`, or a
+            // Proxy around it, is never looked up.
+            if (obj !== null && typeof obj === "object" && isStringObject(obj)) obj = String.prototype.valueOf.call(obj);
             const fn = obj?.[key];
             // The method name already passed the allowlist (above), so a non-function here is a RUNTIME
             // error — the receiver is null/undefined or the wrong type (`document.querySelector('#gone')
@@ -1157,6 +1208,7 @@ export class Evaluator {
                     throw new Denied(`${key} can only write into an object or array you built — never a DOM node, a page object, or a builtin`);
                 this.notIterating(target, "write into");
             }
+            this.convertingArgsAreData(kindOf(obj), key, args);
             this.preflight(obj, key, args, onMl ? "ml" : onAnswer ? "answer" : null);
             // A builtin reads its arguments whole (`JSON.stringify(c)`, `Object.values(c.program)`): a `null` field it
             // takes out of the call is a read of it. `Object.keys` reads names, never values.
@@ -1205,6 +1257,8 @@ export class Evaluator {
             const fn = scope[callee.name] as Function;
             const args = yield* this.evalArgs(node.args, scope);
             this.allocation(callee.name, args);
+            const at = ROOT_CONVERTS[callee.name];
+            if (at !== undefined) args.forEach((a, i) => { if (at === "all" || at.includes(i)) args[i] = this.converts(callee.name, a); });
             for (const a of args) this.expands(a);   // each coerces its argument (`String(d)` is `join` for an array)
             return this.sized(fn(...args));
         }

@@ -1748,7 +1748,8 @@ test("`**`: an unparenthesised unary left operand is refused, as JavaScript refu
 test("ADVERSARIAL `**`: it produces a number from anything and reaches nothing", async () => {
     const doc = kindWorld();
     // A page object as an operand coerces to NaN; the operator hands back a number, never the object or the realm.
-    assert.ok(Number.isNaN((await run(`return document.body ** 2`, doc)).value));
+    // A page object is not one the script built, so converting it asks (provenance, not inspection).
+    await assert.rejects(run(`return document.body ** 2`, doc), outOfDialect);
     assert.ok(Number.isNaN((await run(`return "x" ** 2`, doc)).value));
     for (const js of [
         `return (document.body ** 1).constructor`,
@@ -2039,13 +2040,13 @@ test("a tagged page object is no RegExp to the evaluator: its source and flags n
     // match: refused outright, nothing runs.
     await assert.rejects(run(`const o = await ml.models(); return "abc".match(o)`, world(), handed(o)), outOfDialect);
     assert.deepEqual(ran, [], "match ran the page's object");
-    // replaceAll: native ToString(searchValue) still resolves it (the open item in readonly-exec.md), but never as a regexp.
+    // replaceAll: its pattern is a converting position (judged like any conversion), and never read as a regexp.
     ran.length = 0;
     await run(`const o = await ml.models(); return "abc".replaceAll(o, "x")`, world(), handed(o)).catch(() => {});
     assert.ok(!ran.includes("source") && !ran.includes("flags"), `replaceAll read the page's regexp fields: ${JSON.stringify(ran)}`);
 });
 
-test("a pattern object is not coerced by native replaceAll: its tag getter never runs", { todo: "open: ToString(searchValue) reads the page's Symbol.toStringTag; the same hole as [o].join(\"\")" }, async () => {
+test("a pattern object is not coerced by native replaceAll: its tag getter never runs", async () => {
     const { o, ran } = claimed("RegExp");
     await run(`const o = await ml.models(); return "abc".replaceAll(o, "x")`, world(), handed(o)).catch(() => {});
     assert.deepEqual(ran, []);
@@ -2188,7 +2189,7 @@ test("the guard's remaining branches: an expanding coercion is still refused, an
     // joinsData's own cap: refused from the length alone, before one element is read.
     const huge = Array.from({ length: 6 }, () => { const a = []; a.length = 1_000_000; return a; });
     const t0 = Date.now();
-    await assert.rejects(run(`const a = await ml.models(); return a + ""`, world(), handed(huge)), (e) => outOfDialect(e) && /too large for this coercion without asking/.test(e.message));
+    await assert.rejects(run(`const a = await ml.models(); return a + ""`, world(), handed(huge)), (e) => outOfDialect(e) && /too large for the operator \+ without asking/.test(e.message));
     assert.ok(Date.now() - t0 < 2000, "the length was refused without walking it");
     // A length the page reports as something other than a number (a Proxy's descriptor trap) is not trusted.
     const lying = new Proxy([], { getOwnPropertyDescriptor(t, k) { return k === "length" ? { value: "2", writable: true, enumerable: false, configurable: false } : Reflect.getOwnPropertyDescriptor(t, k); } });

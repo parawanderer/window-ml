@@ -8,7 +8,7 @@
 // `origin: "proposed"`, so it describes sandboxed calls only (B5) until its evidence run passes.
 
 import type { HostFacts, HostPathArg, HostPathFact } from "./host-protocol";
-import { validateManifest, type ProgramManifest } from "./program-manifest";
+import { shippedOnlyRefusal, validateManifest, type ProgramManifest } from "./program-manifest";
 import { effectsText, manifestFor, quoteArg, type ShFacts } from "./sh-call";
 import { manifestKey, type ManifestOrigin, type ManifestRequest } from "./stored-manifests";
 
@@ -145,6 +145,8 @@ export function draftRequest(d: ManifestDraft, facts: HostFacts, root: string, r
     }
     const problems = validateManifest(manifest);
     if (problems.length) return { error: `Error: not a valid program manifest: ${problems.slice(0, 5).join("; ")}` };
+    const shippedOnly = shippedOnlyRefusal(manifest);
+    if (shippedOnly) return { error: `Error: ${shippedOnly}` };
     const request: ManifestRequest = { scope, ...(scope === "workspace" ? { root: where } : {}), manifest: manifest as unknown as ProgramManifest, origin, ...(pin ? { pin } : {}) };
     return { request, ...(forced ? { forced } : {}) };
 }

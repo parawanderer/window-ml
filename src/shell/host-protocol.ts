@@ -36,6 +36,10 @@ export interface HostHello {
     /** That the host answers `put`/`write`/`commit`, and the most bytes one put may declare; `null` over the hub, where
      *  the three are refused. Absent from an older host: it cannot take a file. */
     put?: { max: number } | null;
+    /** The credential providers a `spawn` may name (host 0.8.0): `[]` where the sandbox cannot hold the credentialed
+     *  profile (Linux) and over the hub. Absent from an older host, which ignores a `credential` on `spawn`: the
+     *  worker's only gate. */
+    credentials?: string[];
 }
 
 /** The worker's narrowing envelope on `start`/`pipe`. Both keys are required and there are no others. `"today"` is the
@@ -45,7 +49,7 @@ export type HostEnvelope = { write: "roots" | "none"; exec: "any" | "program-onl
 /** What `done` reports as applied. `"today"` is the floor, which is also what an absent envelope on `done` means from
  *  a worker that sent none; an absent `envelope` on `done` itself is an older host, which the extension reads as
  *  unknown, never as narrow. */
-export type HostDoneEnvelope = { write: "today" | "roots" | "none"; exec: "any" | "program-only" };
+export type HostDoneEnvelope = { write: "today" | "roots" | "none"; exec: "any" | "program-only"; /** A credentialed call's profile (`credentialed:github`): exec is then program-only whatever was asked. */ profile?: string };
 
 /** Whether this host understands AND can hold `envelope` on `start`/`pipe`. K3 put `landlockAbi` on `hello.sandbox`,
  *  present on both platforms (`null` on macOS); an older host has `sandbox` without that key and silently ignores
@@ -91,6 +95,9 @@ export interface HostSpawn {
     memoryBound?: number;
     /** What happens to the call when the port closes: killed (the host's default) or kept as an orphan until a deadline. */
     onOwnerLoss?: "kill" | "orphan";
+    /** A credential the host injects (host 0.8.0): the provider, and the sha256 of the manifest bytes the call was
+     *  described with, which the host honours only when it pinned them. Sent only when `hello.credentials` names it. */
+    credential?: { provider: string; manifest: string };
 }
 
 /** One resolved path argument. `containsSecret` only for a walked one: null past the walk's cap. */
@@ -132,6 +139,8 @@ export interface HostFacts {
     expiresInMs: number;
     /** The bound the call will run under, after clamping (host 0.3.0; absent from an older host). */
     memoryBound?: number;
+    /** The credential the host will inject (host 0.8.0): null when none was asked for; absent from an older host. */
+    credential?: { provider: string; ports: number[]; profile: string } | null;
 }
 
 /** One stream of a finished call: a pointer to the bytes the host holds, or why it could not keep them. */

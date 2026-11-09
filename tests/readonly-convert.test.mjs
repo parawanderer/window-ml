@@ -1,0 +1,234 @@
+// readonly-convert.test.mjs — a value a host call or an operator CONVERTS to a primitive is judged once, by provenance.
+//
+// The dialect's promise is that a page's value is data. Converting an object runs its own `toString`/`valueOf`, so every
+// converting position (the CONVERTS table in policy.ts) and every operator holds a value the script built, a String object
+// (read by its slot), or an array of data. These rows are the adversarial pass for that rule and its completeness walk;
+// e3's redteam-coerce-args.test.mjs is the measured list of positions.
+import { test } from "node:test";
+import assert from "node:assert";
+import { JSDOM } from "jsdom";
+import { evalReadonly } from "../src/readonly-exec.ts";
+import { METHODS_BY_KIND, CONVERTS, NO_CONVERSION, SAFE_CONSTRUCTORS, CTOR_CONVERTS, CTOR_ITERABLES, NO_CTOR_CONVERSION } from "../src/readonly-exec/policy.ts";
+
+const doc = () => new JSDOM("<!doctype html><body><p class=\"x\">hi</p></body>").window.document;
+const handed = (...vs) => { const q = [...vs]; return { models: async () => q.shift() }; };
+const run = (js, ...vs) => evalReadonly(js, doc(), handed(...vs), undefined, {});
+const refused = (e) => e?.name === "NotInDialect" || /NotInDialect/.test(String(e?.constructor?.name)) || /was given|too large|not allowed/.test(String(e?.message));
+const page = (ran) => ({ toString() { ran.push("toString"); return "2"; }, valueOf() { ran.push("valueOf"); return 2; } });
+
+// --- completeness: every admitted method is decided ---
+
+test("every admitted method is in CONVERTS or NO_CONVERSION, and in not both", () => {
+    const undecided = [], both = [];
+    for (const [kind, names] of Object.entries(METHODS_BY_KIND))
+        for (const m of names) {
+            const c = Object.hasOwn(CONVERTS[kind] ?? {}, m), n = Object.hasOwn(NO_CONVERSION[kind] ?? {}, m);
+            if (!c && !n) undecided.push(`${kind}.${m}`);
+            if (c && n) both.push(`${kind}.${m}`);
+        }
+    assert.deepEqual(undecided, [], "a method added to the whitelist needs a decision in CONVERTS or NO_CONVERSION (policy.ts)");
+    assert.deepEqual(both, []);
+});
+
+test("neither table names a method the whitelist does not have", () => {
+    const stray = [];
+    for (const [kind, t] of [...Object.entries(CONVERTS), ...Object.entries(NO_CONVERSION)])
+        for (const m of Object.keys(t)) if (!(METHODS_BY_KIND[kind] ?? []).includes(m) && !(METHODS_BY_KIND["*"].includes(m))) stray.push(`${kind}.${m}`);
+    assert.deepEqual(stray, []);
+});
+
+// --- positions the red team did not list ---
+
+test("JSON.parse, getRootNode and a locale options object do not run a page's conversion", async () => {
+    const ran = [];
+    for (const js of [
+        `const o = await ml.models(); return JSON.parse(o)`,
+        `const o = await ml.models(); return document.getRootNode(o)`,
+        `const o = await ml.models(); return (5).toLocaleString("en", o)`,
+        `const o = await ml.models(); return [1, 2, 3].fill(0, o)`,
+        `const o = await ml.models(); return [1, 2, 3].indexOf(2, o)`,
+        `const o = await ml.models(); return String(o)`,
+        `const o = await ml.models(); return Number(o)`,
+        `const o = await ml.models(); return isNaN(o)`,
+        `const o = await ml.models(); return getComputedStyle(document.body, o)`,
+    ]) await assert.rejects(run(js, page(ran)), refused, js);
+    assert.deepEqual(ran, []);
+});
+
+test("every operator, a template and a computed key refuse a page object before converting it", async () => {
+    const ran = [];
+    for (const js of [
+        `const o = await ml.models(); return o + 1`, `const o = await ml.models(); return 1 - o`, `const o = await ml.models(); return o * 2`,
+        `const o = await ml.models(); return o < 3`, `const o = await ml.models(); return o == 2`, `const o = await ml.models(); return -o`,
+        `const o = await ml.models(); return +o`, "const o = await ml.models(); return `${o}`", `const o = await ml.models(); return ({})[o]`,
+        `const o = await ml.models(); const t = {}; t[o] = 1; return t`,
+    ]) await assert.rejects(run(js, page(ran)), refused, js);
+    assert.deepEqual(ran, [], "a conversion ran");
+});
+
+// --- provenance: what the script built ---
+
+test("a script's own objects convert, and its own arrows run mediated", async () => {
+    assert.equal((await run(`return "abc".slice({ valueOf: () => 1 })`)).value, "bc");
+    assert.equal((await run("const o = { toString: () => 'z' }; return `${o}` + (o + '')")).value, "zz");
+    assert.equal((await run(`return String({})`)).value, "[object Object]");
+    assert.equal((await run(`return new Date(5) - new Date(2)`)).value, 3);
+    assert.equal((await run(`return new Date(2) < new Date(5)`)).value, true);
+});
+
+test("a function a page handed back, stored in the script's own object, is not a conversion the script wrote", async () => {
+    const ran = [];
+    const f = () => { ran.push("f"); return "x"; };
+    await assert.rejects(run(`const f = await ml.models(); const o = { toString: f }; return "abc".slice(o)`, f), refused);
+    await assert.rejects(run(`const f = await ml.models(); const o = { valueOf: f }; return o + 1`, f), refused);
+    await assert.rejects(run(`const f = await ml.models(); return f + ""`, f), refused);
+    assert.deepEqual(ran, []);
+});
+
+test("a script's object with an own toStringTag or an accessor conversion is refused", async () => {
+    await assert.rejects(run(`return "abc".slice({ [Symbol.toStringTag]: "x" })`), refused);
+    // A getter is not in the dialect's object literals, so the accessor case cannot be written; a tag can only be a computed key.
+});
+
+// --- a String object is its slot's primitive ---
+
+test("a String object is its primitive wherever it is converted or called, whatever it carries", async () => {
+    const ran = [];
+    const s = new String("a,b");
+    s.toString = () => { ran.push("toString"); return "PAGE"; };
+    s.valueOf = () => { ran.push("valueOf"); return "PAGE"; };
+    s.split = () => { ran.push("split"); return ["PAGE"]; };
+    s[Symbol.toPrimitive] = () => { ran.push("toPrimitive"); return "PAGE"; };
+    assert.equal((await run(`const s = await ml.models(); return s + "!"`, s)).value, "a,b!");
+    assert.equal((await run("const s = await ml.models(); return `<${s}>`", s)).value, "<a,b>");
+    assert.deepEqual((await run(`const s = await ml.models(); return s.split(",")`, s)).value, ["a", "b"]);
+    assert.equal((await run(`const s = await ml.models(); return "xa,bx".includes(s)`, s)).value, true);
+    assert.equal((await run(`const s = await ml.models(); return String(s)`, s)).value, "a,b");
+    assert.deepEqual(ran, []);
+});
+
+test("the controls: real arguments and operands still answer", async () => {
+    assert.equal((await run(`return "abc".slice(1) + 1 + \`\${2}\``)).value, "bc12");
+    assert.equal((await run(`return Math.max(1, 3) - parseInt("2") + Number("1")`)).value, 2);
+    assert.equal((await run(`return [1, 2, 3].indexOf(2, 1)`)).value, 1);
+    assert.equal((await run(`return (255).toString(16)`)).value, "ff");
+    assert.equal((await run(`return document.querySelector("p").getAttribute("class")`)).value, "x");
+    assert.equal((await run(`return "a-b".replace(/-/, "+")`)).value, "a+b");
+    assert.deepEqual((await run(`return "a-b".split(/-/)`)).value, ["a", "b"]);
+    assert.equal((await run(`return [["a"], ["b"]].join(",")`)).value, "a,b");
+});
+
+test("a refused conversion leaves nothing behind when the survey falls out of dialect", async () => {
+    const d = doc();
+    const before = d.body.innerHTML;
+    await assert.rejects(evalReadonly(`const o = await ml.models(); document.body.setAttribute("x", "1"); return "abc".slice(o)`, d, handed({ toString: () => "1" }), undefined, {}), refused);
+    assert.equal(d.body.innerHTML, before);
+});
+
+test("a String object of another realm unboxes as a script-built one does; a Proxy around a String does not", async () => {
+    const ran = [];
+    const foreign = new (new JSDOM("").window.String)("a,b");
+    foreign.toString = () => { ran.push("toString"); return "PAGE"; };
+    foreign.valueOf = () => { ran.push("valueOf"); return "PAGE"; };
+    assert.equal((await run(`const s = await ml.models(); return s + "!"`, foreign)).value, "a,b!");
+    assert.deepEqual((await run(`const s = await ml.models(); return s.split(",")`, foreign)).value, ["a", "b"]);
+    assert.equal((await run(`const s = await ml.models(); return "xa,bx".includes(s)`, foreign)).value, true);
+    assert.deepEqual(ran, [], "the foreign String's own conversions ran");
+
+    const trapped = [];
+    const wrapped = new Proxy(new String("a,b"), { get(t, k, r) { trapped.push(String(k)); return Reflect.get(t, k, r); } });
+    for (const js of [`const s = await ml.models(); return s + "!"`, `const s = await ml.models(); return "abc".includes(s)`, `const s = await ml.models(); return s.split(",")`])
+        await assert.rejects(run(js, wrapped), (e) => refused(e) && /(operator \+|includes|split)/.test(e.message), js);
+    assert.ok(!trapped.some((k) => k === "valueOf" || k === "toString" || String(k).startsWith("Symbol(Symbol.toPrimitive")), `a Proxy trap saw a conversion: ${trapped}`);
+});
+
+test("a page's FUNCTION in a converting position is refused like any page value: its own toString never runs", async () => {
+    const ran = [];
+    const f = () => 1;
+    f.toString = () => { ran.push("toString"); return "2"; };
+    f.valueOf = () => { ran.push("valueOf"); return 2; };
+    for (const js of [
+        `const o = await ml.models(); return "abc".includes(o)`, `const o = await ml.models(); return "abc".slice(o)`, `const o = await ml.models(); return Math.floor(o)`,
+        `const o = await ml.models(); return String(o)`, `const o = await ml.models(); return Number(o)`, `const o = await ml.models(); return Date.parse(o)`,
+        `const o = await ml.models(); return document.querySelector(o)`, `const o = await ml.models(); return o + ""`, `const o = await ml.models(); return new Date(o)`,
+    ]) await assert.rejects(run(js, f), (e) => refused(e) && /function that is not an arrow/.test(e.message), js);
+    assert.deepEqual(ran, []);
+    // The script's own arrow and the inert method reference are still data.
+    assert.equal((await run(`return "abc".replace("b", (m) => m.toUpperCase())`)).value, "aBc");
+});
+
+test("a constructor that converts its argument judges it: new Date, new String, new Number, new RegExp, new Error", async () => {
+    const ran = [];
+    const o = { toString() { ran.push("toString"); return "2"; }, valueOf() { ran.push("valueOf"); return 2; } };
+    for (const ctor of ["Date", "String", "Number", "RegExp", "Error"])
+        await assert.rejects(run(`const o = await ml.models(); return new ${ctor}(o)`, o), (e) => refused(e) && new RegExp(`new ${ctor}`).test(e.message), ctor);
+    await assert.rejects(run(`const o = await ml.models(); return new RegExp("a", o)`, o), refused);
+    assert.deepEqual(ran, []);
+    assert.equal((await run(`return new Date(5).getTime() + new Number("3") + new String("x").length`)).value, 9);
+    assert.equal((await run(`return new RegExp("a+", "g").test("caab")`)).value, true);
+    assert.equal((await run(`return new RegExp(/b/).test("abc")`)).value, true);
+});
+
+test("every safe constructor is decided: converts, walks an iterable, or neither with a reason", () => {
+    const undecided = [], twice = [];
+    for (const name of Object.keys(SAFE_CONSTRUCTORS)) {
+        const n = [Object.hasOwn(CTOR_CONVERTS, name), CTOR_ITERABLES.has(name), Object.hasOwn(NO_CTOR_CONVERSION, name)].filter(Boolean).length;
+        if (n === 0) undecided.push(name);
+        if (n > 1) twice.push(name);
+    }
+    assert.deepEqual(undecided, [], "a constructor added to SAFE_CONSTRUCTORS needs a decision in policy.ts");
+    assert.deepEqual(twice, []);
+    const stray = [...Object.keys(CTOR_CONVERTS), ...CTOR_ITERABLES, ...Object.keys(NO_CTOR_CONVERSION)].filter((n) => !Object.hasOwn(SAFE_CONSTRUCTORS, n));
+    assert.deepEqual(stray, []);
+});
+
+test("a collection constructor walks only an iterable without an iterator of its own", async () => {
+    const ran = [];
+    const iterable = { [Symbol.iterator]() { ran.push("iterator"); return { next() { ran.push("next"); return { done: true }; } }; } };
+    const arr = [1, 2];
+    arr[Symbol.iterator] = function () { ran.push("array iterator"); return [][Symbol.iterator](); };
+    for (const ctor of ["Set", "Map", "WeakSet", "WeakMap"]) {
+        await assert.rejects(run(`const o = await ml.models(); return new ${ctor}(o)`, iterable), (e) => refused(e) && new RegExp(`new ${ctor}`).test(e.message), ctor);
+        await assert.rejects(run(`const o = await ml.models(); return new ${ctor}(o)`, arr), (e) => refused(e) && new RegExp(`new ${ctor}`).test(e.message), `${ctor} array`);
+    }
+    assert.deepEqual(ran, []);
+    assert.equal((await run(`return new Set([1, 2, 2]).size + new Set("abc").size + new Set(new Set([1])).size + new Map([[1, 2]]).size`)).value, 7);
+    assert.equal((await run(`return new Set(new String("ab")).size`)).value, 2);
+});
+
+test("a String object operand is charged its length, so a loop over a huge one is stopped", async () => {
+    const s = new String("x".repeat(2_000_000));
+    await assert.rejects(run(`const s = await ml.models(); let n = 0; for (const i of Array.from({ length: 100000 }, (_, k) => k)) n += (s + "").length; return n`, s), (e) => /steps|too large|budget/i.test(String(e?.message)));
+});
+
+// --- Array.from's source and JSON.stringify's space (janitor-2, 6724120604) ---
+
+test("Array.from refuses a page iterable, with an iterator of its own or an array carrying one, without running it", async () => {
+    const ran = [];
+    const iterable = { [Symbol.iterator]() { ran.push("iterator"); return { next() { ran.push("next"); return { done: true }; } }; } };
+    const ownIter = Object.assign([1], { [Symbol.iterator]() { ran.push("own"); return [][Symbol.iterator](); } });
+    for (const [v, js] of [[iterable, "Array.from(o)"], [iterable, "Array.from(o, (x) => x)"], [ownIter, "Array.from(o)"]]) {
+        await assert.rejects(run(`const o = await ml.models(); return ${js}`, v), refused, js);
+    }
+    assert.deepEqual(ran, [], "no page code ran");
+});
+
+test("Array.from still takes the data forms: string, array, Set, Map, a DOM collection, a script-built array-like", async () => {
+    assert.deepEqual((await run(`return Array.from("ab")`)).value, ["a", "b"]);
+    assert.deepEqual((await run(`return Array.from([1, 2], (x) => x * 2)`)).value, [2, 4]);
+    assert.deepEqual((await run(`return Array.from(new Set([1, 1, 2]))`)).value, [1, 2]);
+    assert.deepEqual((await run(`return Array.from(new Map([[1, 2]]))`)).value, [[1, 2]]);
+    assert.deepEqual((await run(`return Array.from({ length: 3 }, (_, i) => i)`)).value, [0, 1, 2]);
+    assert.equal((await run(`return Array.from(document.querySelectorAll("div")).length`)).value >= 0, true);
+});
+
+test("JSON.stringify's space argument does not run a page's Number or String object conversion", async () => {
+    const ran = [];
+    const n = new Number(2); n.valueOf = () => { ran.push("valueOf"); return 2; };
+    const s = new String("  "); s.toString = () => { ran.push("toString"); return " "; };
+    for (const v of [n, page(ran)]) await assert.rejects(run(`const o = await ml.models(); return JSON.stringify([1], null, o)`, v), refused);
+    // a String object is read by its slot, so its own toString never runs and the space is the string it holds
+    assert.equal((await run(`const o = await ml.models(); return JSON.stringify([1], null, o)`, s)).value, "[\n  1\n]");
+    assert.deepEqual(ran, []);
+    assert.equal((await run(`return JSON.stringify([1], null, 2)`)).value, "[\n  1\n]");
+});

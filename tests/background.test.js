@@ -2667,9 +2667,20 @@ test("two START_RUNs under one run id while the first is still starting: one hos
     await new Promise(r => setTimeout(r, 0));
     assert.ok(bg.context.__mlRunStateForTest().starting.includes("dup1"), "both starts are registered while they wait");
     releaseRestore();
-    // Let both starts reach hostRun (the first claims the controller, the second is refused) while the first
-    // turn's model call is still in flight.
-    await new Promise(r => setTimeout(r, 20));
+    // The loser's own refusal is the visible sign both starts reached a duplicate-start guard (the `running()`
+    // refusals on the way in, or hostRun's claim) while the first turn was live: the winner cannot answer before
+    // the held model call is released, so whichever start settles first here is the refusal. Waiting for it
+    // replaces a fixed 20 ms bet on the distance to hostRun, which lost once on a loaded runner (the starts
+    // arrived after the fetch released, the first turn had settled, and the second hosted as a legitimate second
+    // turn). The cap fails instead of hanging if the refusal never comes.
+    let cap;
+    const firstToSettle = await Promise.race([
+        Promise.race([first, second]),
+        new Promise((resolve) => { cap = setTimeout(() => resolve(null), 5000); }),
+    ]);
+    clearTimeout(cap);
+    assert.ok(firstToSettle, "neither start settled while the model call was held: the loser was never refused");
+    assert.match(String(firstToSettle.error), /already running/, "the first to settle is the loser, refused while the first turn was live");
     releaseFetch();
     const [a, b] = await Promise.all([first, second]);
     const hosted = [a, b].filter((x) => x.data);

@@ -416,6 +416,13 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
   job, on PRs that touch what they cover, and the e2e shards fetch it too, for the Playwright specs that pair a client
   through a hub (`chat-pairing`, `remote-stream`), which skipped on every run until they did; before the hub published binaries it could not, which is why a skipped test
   and a passing one looking identical on a green page is worth remembering.
+- **A FIFTH absence: the `wmlhost` binary.** `tests/e2e/ml-sh-host.spec.mjs` runs ml.sh against a REAL process
+  host and self-skips without one. **`npm run fetch-host`** downloads the pinned release from `tools/host-dist.json`,
+  checks it against the sha256 PINNED THERE (never the release's own sums), and lands it where
+  `tests/e2e/native-host.mjs` looks; `E2E_WMLHOST` still wins. `--bump <tag>` moves the pin from a release's
+  SHA256SUMS, hashing each archive itself and peeling an annotated tag down to its commit; `--bump --check`
+  compares and writes nothing. CI's `host` job fetches it and runs the spec as a GATE: a visibility step fails on
+  a missing binary, so an unreachable release is a red job, never a green run of skipped tests.
 - **Coverage: `npm run coverage`** — Node's built-in coverage (no dependency), writing
   `coverage/lcov.info` (the **Coverage Gutters** VSCode extension reads it with no configuration) plus a
   table on stdout. `node scripts/coverage-lines.mjs <file>` prints the gaps AS SOURCE, separating **NEVER
@@ -581,9 +588,10 @@ you are replacing.
 The incidents behind the rules above, one line each; the full story is in the section named.
 
 - **`core.hooksPath` does not clone, and its absence is silent.** (Builds, bundles and tests)
-- **Five absences are silent:** `node_modules`, `pyodide-wheels/` (`No module named 'numpy'` at run time),
+- **Six absences are silent:** `node_modules`, `pyodide-wheels/` (`No module named 'numpy'` at run time),
   `pyodide-core/` (stock Pyodide; the fork's tests skip), `.env`
-  (`USE_ENV=1` dies on ENOENT) and the `wmlhub` binary (thirty hub tests SKIP; `npm run fetch-hub`). (Builds,
+  (`USE_ENV=1` dies on ENOENT), the `wmlhub` binary (thirty hub tests SKIP; `npm run fetch-hub`) and the
+  `wmlhost` binary (ml-sh-host.spec SKIPs; `npm run fetch-host`). (Builds,
   bundles and tests)
 - **A FAILED build leaves `dist/` alone**, so a silenced failed build looks like a working one. (Builds, bundles and
   tests)

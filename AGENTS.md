@@ -241,8 +241,8 @@ reply:** `notebooks/<topic>/`, run with `node scripts/nb.mjs`. `docs/dev/noteboo
 - **RULE — a clone or worktree you CREATED for a topic, you REMOVE once its PR has merged**, after checking it holds
   nothing unpushed. One you did not create is never removed without asking; `~/git/window-ml` and
   `~/git/window-ml-hub` never.
-- **Five absences are silent:** `node_modules`, `pyodide-wheels/`, `pyodide-core/` (stock Pyodide; ~320 real-CPython
-  tests skip), `.env`, and the `wmlhub` binary (`npm run fetch-hub`).
+- **Six absences are silent:** `node_modules`, `pyodide-wheels/`, `pyodide-core/` (stock Pyodide; ~320 real-CPython
+  tests skip), `.env`, the `wmlhub` binary (`npm run fetch-hub`) and the `wmlhost` binary (`npm run fetch-host`).
 - **Coverage: `npm run coverage`** (the `coverage` skill). **End-to-end** only for what jsdom/`node:vm` cannot
   represent; factor pure logic out into a fast `*.test.mjs` instead.
 

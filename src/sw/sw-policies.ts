@@ -391,11 +391,18 @@ export function judgeCall(runId: string | undefined, consumer: PolicyConsumer, f
     if (ask) return { decision: "ask", by: { ...ask }, broken };
     // The read failed: a saved `deny` may be missing, so nothing short of an added one's deny answers without the person.
     if (readState === "failed") return { decision: "ask", broken };
+    // A call the host sends the person's credential with ALWAYS asks: no allow policy and no free tier answers it
+    // (SHELL.md, "GH UNDER THE SANDBOX RULED"). A deny or an ask policy above still does.
+    if (isCredentialed(facts)) return { decision: undefined, broken };
     if (allow) return { decision: "allow", by: { ...allow }, broken };
     if (free(facts.effects, boundFor(placement))) return { decision: "allow", by: "builtin", broken };
     const gone = lapsedCover(runId, consumer, facts);
     return { decision: undefined, broken, ...(gone ? { lapsed: gone } : {}) };
 }
+
+/** Whether a call's facts say the host will inject a credential into it (`ShFacts.credential.held`). */
+const isCredentialed = (facts: Record<string, unknown>): boolean =>
+    typeof facts.credential === "object" && facts.credential !== null && (facts.credential as { held?: unknown }).held === true;
 
 /** The most recent gone policy that would have allowed this call, or undefined. Evaluated like a live one, but its answer
  *  only becomes text on the ask: nothing here is read by the decision. */

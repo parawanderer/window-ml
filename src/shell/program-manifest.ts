@@ -108,9 +108,34 @@ interface ManifestBase {
     echoes?: boolean;
     /** Environment variables that change what the program does: a call setting one is not described. */
     env?: readonly string[];
+    /** A credential the HOST holds and injects for this program, named by provider (`CREDENTIAL_PROVIDERS`). Only the
+     *  provider's own program may name it, and the host honours it only for a manifest whose bytes it pinned; such a
+     *  call always asks. */
+    credential?: ManifestCredential;
+    /** What the credentialed profile may connect to. Only beside `credential`. */
+    network?: ManifestNetwork;
     /** The program's top-level command: its effects, path operands, flags and subcommands. */
     command: CommandSpec;
 }
+
+/** Which host-held credential a program's calls carry. */
+export type ManifestCredential = {
+    /** A key of `CREDENTIAL_PROVIDERS`. */
+    provider: string;
+};
+
+/** The ports a credentialed call may connect to, a subset of its provider's (no host list yet: Seatbelt filters by
+ *  address and port). */
+export type ManifestNetwork = {
+    /** TCP ports, each one of the provider's. */
+    ports: readonly number[];
+};
+
+/** A credential provider the process host knows (window-ml-host `src/credential.rs` holds the same table): the one
+ *  program that may name it, the ports its profile may reach, and what the card says the call sends. */
+export const CREDENTIAL_PROVIDERS: Readonly<Record<string, { program: string; ports: readonly number[]; sends: string }>> = {
+    github: { program: "gh", ports: [443], sends: "your GitHub token" },
+};
 
 /** The version range a binary's manifest was written against (`>=2.30.0 <3`) and how the host reads the version
  *  (`args`, a regex whose group 1 is it). `"*"` with no `args` is a program that reports no version (BSD `ls`,
@@ -477,7 +502,16 @@ function notLiteralPathspec(a: string): boolean {
 
 const COMMAND_KEYS = new Set(["effects", "paths", "noPaths", "terminator", "numericFlag", "clusters", "maxOperands", "flags", "subcommands", "syntax", "primaries", "okCodes", "echoes", "recursive", "harden", "optionsFirst", "dashIsPath", "repoWide", "pathspecs"]);
 const VERSION_KEYS = new Set(["range", "args", "pattern"]);
-const MANIFEST_KEYS = new Set(["$schema", "program", "version", "okCodes", "echoes", "env", "entrypoint", "command"]);
+const MANIFEST_KEYS = new Set(["$schema", "program", "version", "okCodes", "echoes", "env", "entrypoint", "credential", "network", "command"]);
+
+/** Why a manifest that is not shipped may not carry `m`'s credential fields, or undefined: the host honours a
+ *  credential only for manifest bytes it pinned, which are the shipped ones, so a stored `credential` or `network`
+ *  could only end in `CredentialRefused` after the person was asked. */
+export function shippedOnlyRefusal(m: { credential?: unknown; network?: unknown }): string | undefined {
+    return m.credential !== undefined || m.network !== undefined
+        ? "credential and network belong to a shipped manifest only: the process host honours a credential only for the manifest bytes it pinned"
+        : undefined;
+}
 
 /** Checks a parsed manifest against the format above; returns every problem, with its JSON path. Unknown keys are
  *  problems, so a misspelt `runer` cannot silently drop a runner flag. */
@@ -569,6 +603,20 @@ export function validateManifest(m: unknown): string[] {
     if (m.okCodes !== undefined) codes(m.okCodes, "$.okCodes");
     if (m.echoes !== undefined && typeof m.echoes !== "boolean") errs.push("$.echoes: boolean");
     if (m.env !== undefined && !(Array.isArray(m.env) && m.env.every((e) => typeof e === "string"))) errs.push("$.env: names");
+    const cred = m.credential;
+    const provider = isObj(cred) && typeof cred.provider === "string" && Object.hasOwn(CREDENTIAL_PROVIDERS, cred.provider) ? CREDENTIAL_PROVIDERS[cred.provider] : undefined;
+    if (cred !== undefined) {
+        if (!isObj(cred) || Object.keys(cred).length !== 1 || typeof cred.provider !== "string") errs.push("$.credential: {provider}");
+        else if (!provider) errs.push(`$.credential.provider: one of ${Object.keys(CREDENTIAL_PROVIDERS).join(", ")}`);
+        else if (provider.program !== m.program) errs.push(`$.credential.provider: ${cred.provider} is ${provider.program}'s alone`);
+    }
+    if (m.network !== undefined) {
+        const n = m.network;
+        if (cred === undefined) errs.push("$.network: only beside a credential");
+        if (!isObj(n) || Object.keys(n).length !== 1 || !Array.isArray(n.ports) || !n.ports.length || !n.ports.every((p) => Number.isInteger(p)))
+            errs.push("$.network: {ports}, a non-empty list of port numbers");
+        else if (provider && !n.ports.every((p) => provider.ports.includes(p as number))) errs.push(`$.network.ports: a subset of ${provider.ports.join(", ")}`);
+    }
     command(m.command, "$.command");
     return errs;
 }
