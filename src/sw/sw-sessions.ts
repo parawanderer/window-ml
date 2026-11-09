@@ -926,11 +926,12 @@ export function saveRunHistory(hash: string, history: Omit<Extract<SessionHistor
 }
 
 /** Fold one debug event into the index, and save it when the session is one we keep. Never throws: a malformed event
- *  must not break the relay it rides beside, and a full disk must not stop a run. */
-export function ingestSessionEvent(event: unknown, source: IngestSource): void {
+ *  must not break the relay it rides beside, and a full disk must not stop a run.
+ *  @returns the session's hash when the index took the event, else undefined */
+export function ingestSessionEvent(event: unknown, source: IngestSource): string | undefined {
     try {
         const out = sessionServer.ingest(event as MlDebugEvent, source);
-        if (!out.accepted) return;
+        if (!out.accepted) return undefined;
         // `out.summary` is the row only when it CHANGED, which most events do not: keying the write on it stored a
         // saved run's start and end and dropped the steps between, so a restarted worker served a transcript with
         // holes. Whether to write is whether the session is saved, read from the index every time — and read BEFORE
@@ -941,7 +942,8 @@ export function ingestSessionEvent(event: unknown, source: IngestSource): void {
         const row = sessionServer.index.get(out.session.hash);
         if (wasSaved && row && sessionStore) sessionStore.put(row, out.event);
         if (row?.saved) maybeTitle(out.session.hash);
-    } catch { /* refused */ }
+        return out.session.hash;
+    } catch { return undefined; /* refused */ }
 }
 
 

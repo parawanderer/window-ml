@@ -2096,23 +2096,27 @@ test("ML_SESSION_REMOTE: the panel's composer Send/Stop is relayed to the inspec
     // page, so panel.ts posts ML_SESSION_REMOTE{tabId, action} to the background, which forwards
     // ML_SESSION_TO_PAGE to that tab's shell → the SAME page handlers (incl. the cross-page CANCEL_RUN fix).
     // Different backend mechanism, same behaviour. Fire-and-forget (no sendResponse) → don't await.
-    const bg = loadBackground({ config: baseConfig() });
+    // "abc" is a chat the page on tab 5 built (its builder recorded, page-route.ts), on a site that may use window.ml.
+    const bg = loadBackground({ config: baseConfig(), siteGate: true, local: { ml_site_always: ["https://site.example"] }, openTabs: [{ id: 5, url: "https://site.example/" }],
+        session: { ml_pagebuilt: { abc: { tabId: 5, origin: "https://site.example", kind: "chat", ts: 1 } } } });
     bg.send({ type: "ML_SESSION_REMOTE", tabId: 5, action: "send", hash: "abc", text: "steer left", images: [] });
     // A Send is offered to the worker first (a run it built is driven from there, sw-run-start.ts); "abc" is not one,
-    // so it reaches the page a turn later.
-    await new Promise((r) => setTimeout(r, 0));
-    assert.equal(bg.tabMessages.length, 1, "one relay to the tab");
-    assert.equal(bg.tabMessages[0][0], 5, "addressed to the inspected tab");
-    assert.deepEqual(bg.tabMessages[0][1], { type: "ML_SESSION_TO_PAGE", action: "send", hash: "abc", text: "steer left", images: [] }, "Send is forwarded verbatim");
+    // so it reaches the page once the route is decided.
+    // The site gate also talks to the tab (presence), so only the relays are counted.
+    const relays = () => bg.tabMessages.filter(([, m]) => m.type === "ML_SESSION_TO_PAGE");
+    for (let i = 0; i < 100 && !relays().length; i++) await new Promise((r) => setTimeout(r, 2));
+    assert.equal(relays().length, 1, "one relay to the tab");
+    assert.equal(relays()[0][0], 5, "addressed to the inspected tab");
+    assert.deepEqual(relays()[0][1], { type: "ML_SESSION_TO_PAGE", action: "send", hash: "abc", text: "steer left", images: [] }, "Send is forwarded verbatim");
     // Stop (cancel) forwards too — this is the reverse-channel half of the composer Stop button on the panel.
     bg.send({ type: "ML_SESSION_REMOTE", tabId: 5, action: "cancel", hash: "abc" });
-    const cancelMsg = bg.tabMessages[1][1];
+    const cancelMsg = relays()[1][1];
     assert.equal(cancelMsg.type, "ML_SESSION_TO_PAGE");
     assert.equal(cancelMsg.action, "cancel");
     assert.equal(cancelMsg.hash, "abc");
     // A non-numeric tabId is ignored (no throw, no relay) — mirrors ML_HL_REMOTE.
     bg.send({ type: "ML_SESSION_REMOTE", action: "cancel", hash: "abc" });
-    assert.equal(bg.tabMessages.length, 2, "no tabId → not relayed");
+    assert.equal(relays().length, 2, "no tabId → not relayed");
 });
 
 test("START_RUN (surface 'devtools') fans a background run's step events to the PANEL port, not the page", async () => {

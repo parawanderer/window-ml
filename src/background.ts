@@ -2,6 +2,7 @@
 // extracts replies, and makes the privileged (host-permissioned) fetches. All
 // server JSON is genuinely opaque, so it's typed `any`; our own data uses the
 // shared contract types.
+import { PageGone, forgetPageBuilt, forgetPageBuiltTab, movePageBuiltTab, notePageBuilt } from "./sw/page-route";
 import { dropAllLocalTools } from "./sw/sw-local-tools";
 import { invocationInfo } from "./sw/sw-invocation";
 import { onIsolatedMessage, pageApproved } from "./sw/sw-isolated-exec";
@@ -226,7 +227,7 @@ if (typeof chrome !== "undefined" && chrome.storage?.onChanged) {
     void handOverOnRevoke().catch(() => []);
 }
 if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
-    chrome.tabs.onRemoved.addListener((tabId) => { tabPageUrl.delete(tabId); forgetHandOverTab(tabId); forgetArrivalTab(tabId); activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); replayedTo.delete(tabId); forgetTab(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); releaseSessionValues(pageValueSession(tabId)); releaseDebugger(tabId); sessionServer.pageGone(tabId, { closed: true }); });
+    chrome.tabs.onRemoved.addListener((tabId) => { tabPageUrl.delete(tabId); forgetHandOverTab(tabId); forgetArrivalTab(tabId); activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); replayedTo.delete(tabId); forgetTab(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); releaseSessionValues(pageValueSession(tabId)); releaseDebugger(tabId); sessionServer.pageGone(tabId, { closed: true }); void forgetPageBuiltTab(tabId); });
 }
 // THE THIRD THING A TAB CAN DO, besides navigate and close: come back under a new id. A discard the browser
 // restores, or a prerender swapped in, fires only this — so without it a run's tab state is left filed under an
@@ -236,8 +237,15 @@ if (typeof chrome !== "undefined" && chrome.tabs?.onReplaced) {
     chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
         retabRuns(removedTabId, addedTabId);
         moveTabKey([fetchConsent, credFetchGrants, debugBuffer] as Array<Map<number, unknown>>, removedTabId, addedTabId);
+        void movePageBuiltTab(removedTabId, addedTabId);
         sessionServer.pageGone(removedTabId, { closed: true });
     });
+}
+
+/** A page's session the index just took from `sender`: its builder is recorded, once, from the browser's stamp of the
+ *  tab's top frame (page-route.ts), so the person's later message reaches a page only there. */
+function notePageChat(hash: string | undefined, sender: chrome.runtime.MessageSender): void {
+    if (hash && sender.frameId === 0) void notePageBuilt(hash, sender.tab?.id, sender.tab?.url, "chat");
 }
 
 // PDF-export docs awaiting their print.html tab (key → rendered HTML + its TTL timer). Kept out of the URL
@@ -342,7 +350,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         if (sender.tab?.id != null && pageMayWrite(message.event?.kind, workerClaimOf(message.event))) {
             const ev = withoutPageWhy(message.event);
             relayDebugEvent(sender.tab.id, ev);
-            ingestSessionEvent(ev, { tabId: sender.tab.id, trusted: false, page: senderPage(sender.tab) });
+            notePageChat(ingestSessionEvent(ev, { tabId: sender.tab.id, trusted: false, page: senderPage(sender.tab) }), sender);
         }
         return;
     }
@@ -350,7 +358,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     // otherwise never leave the page, and off mode with `listPageSessions`). Bound to the sending tab: the index
     // refuses a page writing into a session another tab owns.
     if (message.type === "ML_SESSION_EVENT") {
-        if (sender.tab?.id != null && pageMayWrite(message.event?.kind, workerClaimOf(message.event))) ingestSessionEvent(withoutPageWhy(message.event), { tabId: sender.tab.id, trusted: false, page: senderPage(sender.tab) });
+        if (sender.tab?.id != null && pageMayWrite(message.event?.kind, workerClaimOf(message.event))) notePageChat(ingestSessionEvent(withoutPageWhy(message.event), { tabId: sender.tab.id, trusted: false, page: senderPage(sender.tab) }), sender);
         return;
     }
     // Await the startup rehydrate before deciding whether to wipe: right after an SW respawn (e.g. a site-access
@@ -408,7 +416,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             void userRunAction(message.hash, message.action, { text: message.text, images: message.images, ...(message.files != null ? { files: message.files } : {}), surface: message.surface, maxSteps: message.maxSteps }, message.tabId)
                 .then((mine) => { if (!mine) toPage(); }, (e) => {
                     // As on USER_RUN_ACTION: a refused turn is said in the run's step list, never handed to the page.
-                    if (e instanceof ImagesRefused || e instanceof FilesRefused) { noteRefusedTurn(message.hash as string, e.message); return; }
+                    if (e instanceof ImagesRefused || e instanceof FilesRefused || e instanceof PageGone) { noteRefusedTurn(message.hash as string, e.message); return; }
                     toPage();
                 });
             return;
@@ -871,7 +879,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         userRunAction(p.hash, p.action, message.payload, sender.tab.id).then((outcome) => sendResponse({ data: outcome }), (e) => {
             // Images the run may not be sent (vision not known, no reader): said in the run's step list, since this
             // surface has no other place to say it, and answered as handled so the shell does not hand it to the page.
-            if (e instanceof ImagesRefused || e instanceof FilesRefused) { noteRefusedTurn(p.hash as string, e.message); sendResponse({ data: null, refused: e.message }); return; }
+            if (e instanceof ImagesRefused || e instanceof FilesRefused || e instanceof PageGone) { noteRefusedTurn(p.hash as string, e.message); sendResponse({ data: null, refused: e.message }); return; }
             sendResponse({ data: null });
         });
         return true;
@@ -1485,7 +1493,7 @@ configureSessionCommands({
     forgetRun: (hash) => {
         if (runControllers.has(hash)) return;   // never a live run: the command refuses those first
         bgRuns.delete(hash); hydratedRuns.delete(hash); releaseSessionTokens(hash);
-        deleteRun(hash); forgetRunModel(hash); forgetRunPolicies(hash); deletePythonRun(hash);
+        deleteRun(hash); forgetRunModel(hash); forgetRunPolicies(hash); deletePythonRun(hash); void forgetPageBuilt(hash);
     },
 });
 
