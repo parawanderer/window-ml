@@ -19,11 +19,11 @@
 //   - `src/sw/iso-channel.ts` admits `op: "sh"` for call `run`|`read` with `args.length <= 2`; `put` joins that
 //     allowlist by NAME and gets its own arity check (handle and path are exactly two), never a relaxed length guard.
 //
-// Every row is `{ todo }` because the surface does not exist yet; each asserts the DEFENDED outcome, so it fails today
-// at the sentence it demands and turns with the feature. The failure is never vacuous: today `ml.sh.put` is not a
-// function, so a row's "nothing was written" would pass for the wrong reason, which is why every row also demands the
-// refusal's own text. The controls pass today and hold the fixture honest: the harness reaches the host, the run really
-// holds an `@file:` pointer, and the bytes the worker keeps are the ones the person attached.
+// The rows were written before the feature, as `{ todo }`, and the surface now exists (window-ml #1553, the host in
+// window-ml-host): each asserts the DEFENDED outcome and every one is live. The failure is never vacuous: while
+// `ml.sh.put` did not exist a row's "nothing was written" would have passed for the wrong reason, which is why every
+// row also demands the refusal's own text. The controls hold the fixture honest: the harness reaches the host, the run
+// really holds an `@file:` pointer, and the bytes the worker keeps are the ones the person attached.
 //
 // SHELL.md's argv ruling (a pointer token of any prefix in argv is refused, "a held value, not a path", RULED
 // 2026-10-28) is NOT tested here: it was found beside these rows but measured unbuilt, and it travels with the fix that
@@ -223,7 +223,7 @@ test("CONTROL: the run holds an `@file:` pointer whose name is the file's own, a
 
 // --- 1. the path: in a root or not at all, and the host resolves it ---
 
-test("RED TEAM: a path that leaves the root writes nothing, and the refusal names the root rather than the file", { ...T, todo: "open: the host judges `OutsideRoots` at `put`; the row pins that no chunk is ever sent for `../escape.pdf`, an absolute path or a nested `..`, and that the refusal says so" }, async () => {
+test("RED TEAM: a path that leaves the root writes nothing, and the refusal names the root rather than the file", T, async () => {
     for (const path of ["../escape.pdf", "/etc/escape.pdf", "inbox/../../escape.pdf"]) {
         const host = putHost({ put: "outside-roots" });
         const { results } = await runPut({ host, script: ({ ptr }) => put(ptr, path) });
@@ -233,7 +233,7 @@ test("RED TEAM: a path that leaves the root writes nothing, and the refusal name
     }
 });
 
-test("RED TEAM: a symlinked root cannot carry the write out of it: `IsSymlink` surfaces and nothing is written", { ...T, todo: "open: the host refuses `IsSymlink` at `put`; the row pins that the model sees that refusal, not a success, and that the put is not retried in a loop" }, async () => {
+test("RED TEAM: a symlinked root cannot carry the write out of it: `IsSymlink` surfaces and nothing is written", T, async () => {
     const host = putHost({ put: "symlink" });
     const { results } = await runPut({ host, script: ({ ptr }) => put(ptr, "inbox/report.pdf") });
     const a = answer(results[0]);
@@ -243,14 +243,14 @@ test("RED TEAM: a symlinked root cannot carry the write out of it: `IsSymlink` s
     assert.deepEqual(writes(host), [], "a chunk was sent for a symlinked target");
 });
 
-test("RED TEAM: a parent that is not there is refused, and the file is not created where the person made no directory", { ...T, todo: "open: the host refuses `NoParent` at `put`; the row pins that the refusal surfaces and no chunk is sent" }, async () => {
+test("RED TEAM: a parent that is not there is refused, and the file is not created where the person made no directory", T, async () => {
     const host = putHost({ put: "no-parent" });
     const { results } = await runPut({ host, script: ({ ptr }) => put(ptr, "nowhere/deep/report.pdf") });
     assert.deepEqual(writes(host), [], "a chunk was sent for a path with no parent");
     assert.match(why(answer(results[0])), /NoParent|no parent|does not exist/i, `the refusal does not name the missing parent: ${results[0]?.slice(0, 300)}`);
 });
 
-test("RED TEAM: a `~`-spelled path is the HOST's to resolve: `~/…` lands on the resolved path, and another user's home is refused", { ...T, todo: "open: `put`'s facts carry `path`/`tilde`; the row pins that a `~` path is accepted through those facts and committed at the RESOLVED path, while `~someone/…` is refused with nothing written" }, async () => {
+test("RED TEAM: a `~`-spelled path is the HOST's to resolve: `~/…` lands on the resolved path, and another user's home is refused", T, async () => {
     const home = putHost();
     const r1 = await runPut({ host: home, script: ({ ptr }) => put(ptr, "~/proj/inbox/report.pdf") });
     assert.equal(puts(home).length, 1, `the put never reached the host that resolves the tilde: ${r1.results[0]?.slice(0, 300)}`);
@@ -267,7 +267,7 @@ test("RED TEAM: a `~`-spelled path is the HOST's to resolve: `~/…` lands on th
     assert.match(why(answer(r2.results[0])), /OutsideRoots|outside|root|~|home/i, `the refusal does not name the other home: ${r2.results[0]?.slice(0, 300)}`);
 });
 
-test("RED TEAM: a protected name and a looks-secret target are refused outright: no ask, no chunk, whatever the policy allows", { ...T, todo: "open: `Protected` (sandbox::protected_rels, looks_secret) is refused at `put` and no tier can allow it; the row stores an ALLOW policy that frees an ordinary target and then demands no ask and nothing written for `.git/hooks/pre-commit`, `.git/config`, `.zshrc` and `.env`" }, async () => {
+test("RED TEAM: a protected name and a looks-secret target are refused outright: no ask, no chunk, whatever the policy allows", T, async () => {
     const local = { ml_policies_global: [ALLOW_SH] };
     // The control this row rests on: the same stored policy frees an ordinary in-root target, so a protected name's "no
     // ask" is the refusal's doing and not a policy that never loaded or never applied.
@@ -288,7 +288,7 @@ test("RED TEAM: a protected name and a looks-secret target are refused outright:
 
 // --- 2. the handle: this run's attachment, and nothing else ---
 
-test("RED TEAM: another run's `@file:` handle cannot be named, and the refusal says nothing about that run's file", { ...T, todo: "open: a handle is resolved on THIS run's shelf (the rule `ml.sh.read` keeps for outputs), so a second run's pointer is a miss and never reaches the host" }, async () => {
+test("RED TEAM: another run's `@file:` handle cannot be named, and the refusal says nothing about that run's file", T, async () => {
     const host = putHost();
     const first = await runPut({ host, script: () => "JSON.stringify({ done: true })" });
     const otherPtr = `@file:${fileId(first.hash, 1)}`;
@@ -300,7 +300,7 @@ test("RED TEAM: another run's `@file:` handle cannot be named, and the refusal s
     assert.ok(!text.includes("report.pdf") && !text.includes(PAGE), `the refusal carried the other run's file: ${text.slice(0, 200)}`);
 });
 
-test("RED TEAM: the bytes written are the attachment's ORIGINAL bytes, never the PDF's extracted text", { ...T, todo: "open: `put` streams the value-store `bytes` row, so a PDF's page text must never be what reaches the disk" }, async () => {
+test("RED TEAM: the bytes written are the attachment's ORIGINAL bytes, never the PDF's extracted text", T, async () => {
     const host = putHost();
     const { results } = await runPut({ host, script: ({ ptr }) => put(ptr, "inbox/report.pdf") });
     assert.ok(writes(host).length > 0, `nothing was written: ${results[0]?.slice(0, 300)}`);
@@ -311,7 +311,7 @@ test("RED TEAM: the bytes written are the attachment's ORIGINAL bytes, never the
 
 // --- 3. writing is judged: an existing file asks, even where an allow policy covers the call ---
 
-test("RED TEAM: an existing file asks the person, and no allow policy commits over it without the answer", { ...T, todo: "open: `put`'s facts carry `exists`, the ask is raised before any commit, and `replace` is true only after the person says yes" }, async () => {
+test("RED TEAM: an existing file asks the person, and no allow policy commits over it without the answer", T, async () => {
     const host = putHost({ exists: true });
     const allow = { id: "p-allow", scope: "global", consumer: "sh", effect: "allow", source: "() => true", label: "allow every call", origin: "person", created: 1 };
     let atAsk = null;
@@ -332,7 +332,7 @@ test("RED TEAM: an existing file asks the person, and no allow policy commits ov
 
 // --- 4. the surfaces that must never get it ---
 
-test("RED TEAM: a hand-posted `put` is refused by its OWN arity of exactly two, and `run` keeps its two-argument bound", { ...T, todo: "open: `put` joins iso-channel's allowlist by NAME with an arity of exactly two (handle and path), never a relaxed length guard, so a 1- or 3-argument put is `malformed` and reaches no host while a 2-argument one is answered like `ml.sh.put`; `run` and `read` keep `args.length <= 2`, so a third argument is malformed there too. The two-argument put is the row's positive control, because today the NAME is what is refused and the arity rows would pass for its doing" }, async () => {
+test("RED TEAM: a hand-posted `put` is refused by its OWN arity of exactly two, and `run` keeps its two-argument bound", T, async () => {
     const host = putHost();
     // The script names ml.sh, so the call HAS a channel, and the hand-posted calls beside it prove it was live.
     const script = ({ ptr }) => `(async () => {
@@ -355,7 +355,7 @@ test("RED TEAM: a hand-posted `put` is refused by its OWN arity of exactly two, 
     assert.equal(puts(host).length, 1, `the host saw ${puts(host).length} put call(s), not the one well-formed one`);
 });
 
-test("RED TEAM: a run started over the hub is refused at the worker, and the run really is marked remote", { ...T, todo: "open: refused on both sides — the worker reads the RUN's `origin.remote` (not the option a test passes) and says the file would land on a machine the person is not at; the host's half (async/put in window-ml-host) answers Refused/scope to put, write and commit before reading an argument, and is covered there" }, async () => {
+test("RED TEAM: a run started over the hub is refused at the worker, and the run really is marked remote", T, async () => {
     const host = putHost();
     let live = null;
     const { results } = await runPut({
@@ -370,7 +370,7 @@ test("RED TEAM: a run started over the hub is refused at the worker, and the run
 
 // --- 5. the bounds: a file over the advertised cap is refused before anything is sent ---
 
-test("RED TEAM: a file over the host's advertised cap is refused by the worker, naming the size and the cap, with no chunk sent", { ...T, todo: "open: `hello` advertises `put: { max }` (64 MiB first); the worker refuses over it before the first `write`, and the sentence names both numbers" }, async () => {
+test("RED TEAM: a file over the host's advertised cap is refused by the worker, naming the size and the cap, with no chunk sent", T, async () => {
     const big = { name: "big.pdf", type: "application/pdf", data: Buffer.alloc(300 * 1024, 0x41).toString("base64") };
     const host = putHost({ max: PUT_MAX });
     const { results } = await runPut({ host, files: [big], script: ({ ptr }) => put(ptr, "inbox/big.pdf") });
@@ -383,7 +383,7 @@ test("RED TEAM: a file over the host's advertised cap is refused by the worker, 
     assert.match(text, /307200|300\s?KiB|300\s?KB/i, `the refusal does not name the file's size: ${results[0]?.slice(0, 300)}`);
 });
 
-test("RED TEAM: a host that does not advertise `put` gets no bytes at all", { ...T, todo: "open: `hello` reports `put: { max }` natively and `put: null` over the hub (as `register` is false there); a worker that cannot see a cap must not attempt the write, and must say the host cannot take a file" }, async () => {
+test("RED TEAM: a host that does not advertise `put` gets no bytes at all", T, async () => {
     const host = putHost({ advertise: null });
     const { results } = await runPut({ host, script: ({ ptr }) => put(ptr, "inbox/report.pdf") });
     assert.deepEqual(puts(host), [], "a host that advertises no `put` was still offered a file");
@@ -391,7 +391,7 @@ test("RED TEAM: a host that does not advertise `put` gets no bytes at all", { ..
     assert.match(why(answer(results[0])), /cannot take|can't take|does not support|doesn't support|no put|older/i, `the refusal does not say the host cannot take a file: ${results[0]?.slice(0, 300)}`);
 });
 
-test("RED TEAM: a file bigger than one chunk is sent as contiguous chunks the host's cap allows, and their join is the file", { ...T, todo: "open: the host owns the chunk cap (512 KiB, PROTOCOL's `store::MAX_READ`) and the worker splits, so no chunk exceeds it, the offsets are contiguous from 0, and the concatenation hashes to the attachment — a truncating or overlapping split must not pass as a written file" }, async () => {
+test("RED TEAM: a file bigger than one chunk is sent as contiguous chunks the host's cap allows, and their join is the file", T, async () => {
     const bytes = Buffer.alloc(700 * 1024);
     for (let i = 0; i < bytes.length; i++) bytes[i] = (i * 31 + 7) & 0xff;
     const big = { name: "big.pdf", type: "application/pdf", data: bytes.toString("base64") };
