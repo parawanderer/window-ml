@@ -8,6 +8,7 @@ dependencies = [
     "ipykernel", "nbclient", "nbconvert", "nbformat",
     "numpy", "pandas", "scipy", "matplotlib",
     "duckdb",
+    "packaging",
 ]
 
 [build-system]
