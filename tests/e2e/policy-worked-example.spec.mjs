@@ -108,7 +108,7 @@ test("one card of four rules; navigate and a click under /user/ run with no card
     expect(card.renderIn.note, "an act rule's breadth says so when the run has made no click").toContain("no click or type to measure");
     const [nav1, nav2] = only(o, "navigate");
     expect(nav1.approval, "navigate to B runs on the first row, with no card").toBe("consented");
-    expect(nav2.approval).toBe("consented");
+    expect(nav2.approval, "the tab is on B by then: the page the run is on is the one free tier (POLICIES.md), reached once no deny or ask covers it").toBe("same-origin");
     const [anchor, button] = only(o, "click");
     expect(anchor.approval).toBe("denied");
     expect(anchor.result).toContain('the policy "Never /admin/" denies: the click was not made');
