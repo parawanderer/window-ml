@@ -453,7 +453,9 @@ leaves room for its minimum (2 workers for a unit run, 1 for e2e) at its kind's 
 past runs, and gets the workers that room gives. One run at a time had twelve sessions' 6.5-minute suites queued behind
 each other while the machine ran three workers. The queue is FIFO among the admissible (a small e2e probe passes a
 waiting suite only while the suite cannot start), and with nothing running the head always starts. Each footprint
-records how many runs shared the machine (`runs`), for a later tuning. `--jobs N` still fixes the workers; CI, `TEST_SLOT=off` and a runner
+records how many runs shared the machine (`runs`), for a later tuning. Work that is not a test run but wants the memory
+lock (probes, scans, notebook data runs) goes in as `--kind batch --workers N` (rule of 2026-11-09): after every test
+job, one at a time, all N workers or none, chunked to about five minutes, its footprints kept apart from the suites'. `--jobs N` still fixes the workers; CI, `TEST_SLOT=off` and a runner
 nested in a job skip it. `submit` and `wait` start a run without blocking the session. Commands, the opt-outs, where
 the state lives and the environment a detached job gets: the `test-slot` skill. A granted run joins the bench's memory
 ledger as kind `tests`, and each sizes itself from free memory less what the other has admitted and not yet started, so a
