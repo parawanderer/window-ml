@@ -450,6 +450,20 @@ test("the tasks row carries the same peeked tail, and a failing peek leaves its 
     await endTasks("run-peek-row2");
 });
 
+test("one ml.current.tasks read peeks each running task once, and the state inspector's read peeks never", T, async () => {
+    let peeks = 0;
+    const { host } = await detachedPeeking("run-peek-once", () => { peeks++; return peekOf("x\n"); });
+    await withTasks(snap(), "run-peek-once");
+    assert.equal(peeks, 1, "ml.current.tasks asked the host more than once for one running task");
+    const { declaredState } = await import("../src/state-registry.ts");
+    const decl = declaredState().find((d) => d.id === "run.tasks");
+    assert.ok(decl?.read, "run.tasks has no read");
+    await decl.read({ runId: "run-peek-once" });
+    assert.equal(peeks, 1, "the state inspector's read of run.tasks asked the host");
+    host.finish();
+    await endTasks("run-peek-once");
+});
+
 test("another run's task id and a made-up one read the same UnknownTask, and no action reaches the host", T, async () => {
     const host = slowHost();
     liveRun("run-own");
