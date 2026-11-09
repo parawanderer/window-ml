@@ -21,7 +21,7 @@ process.env.TEST_SLOT_POLL_MS = "50";
 process.env.TEST_SLOT_MAX_RUNS = "1";
 const GB = 1024 ** 3;
 const tmpDir = () => fs.mkdtempSync(path.join(os.tmpdir(), "test-slot-"));
-const memory = () => ({ available: 16 * GB, total: 32 * GB, perWorker: GB, cap: 4 });
+const memory = () => ({ available: 16 * GB, total: 32 * GB, perWorker: GB, cap: 4, cores: 15 });
 const tree = (dirty = null) => ({ clone: "/c", head: "abc", dirty });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /** A pid that existed and has exited. */
