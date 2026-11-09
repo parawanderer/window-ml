@@ -24,6 +24,8 @@ export interface TaskOutcome {
     /** the raw debug events, if a predicate needs something the summary doesn't carry */
     events: Record<string, unknown>[];
     result: { summary?: string; steps?: number; cancelled?: boolean } | null;
+    /** every gate the run's approver ruled, in order: an ml.sh ask is `tool: "sh"`, `nested`, its `arguments` the call's facts */
+    approvals: { tool?: string; arguments?: Record<string, unknown>; decision?: string; step?: number; nested?: boolean }[];
 }
 
 /**
