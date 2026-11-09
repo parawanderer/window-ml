@@ -901,8 +901,8 @@ that lists the waiting requests (each with `allowed`) or applies `{ origin, deci
 - **A scheme-relative URL takes the page's scheme at every gate** (`onPageUrl`, sw-run-host.ts): the navigate gate, its
   consent and the fetch_url gate judge `//host/x` as the browser and the FETCH_URL choke point resolve it, and assume
   https only when the run has no page. A fixed `https:` there asked again for an http origin the run had consented to.
-  Known gap: no red-team row probes it yet (one follows the fix on main); the run-start rows in section "a
-  SCHEME-RELATIVE navigate" are the only cover.
+  The cover is the run-start rows in section "a SCHEME-RELATIVE navigate" (one a RED TEAM row for a third host) and
+  person-word-navigate.test.mjs's http-keyed row; an independent red-team pass follows the fix on main.
 
 ## Tests
 
