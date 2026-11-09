@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { peekText, peekBytesFor, PEEK_MAX_BYTES } from "../src/shell/sh-tail.ts";
+import { peekText, peekDetail, peekBytesFor, PEEK_MAX_BYTES, ASKED_TAIL_CHARS } from "../src/shell/sh-tail.ts";
 
 const enc = (s) => Buffer.from(s, "utf8");
 /** A peek stream: `data` is the last bytes of a stream whose size is `size` (default: all of it). */
@@ -153,4 +153,26 @@ test("bytes asked: scaled from the line count, never under the host's default, n
     assert.equal(peekBytesFor(200), 201 * 240);
     assert.equal(peekBytesFor(1e9), PEEK_MAX_BYTES);
     for (const bad of [0, -3, NaN, 0.4]) assert.ok(peekBytesFor(bad) >= 4096 && Number.isInteger(peekBytesFor(bad)));
+});
+
+// --- the asked tail's ceiling, the cut marker ---
+
+test("the asked tail's ceiling is 8 KiB characters; peekDetail says when it cut and keeps the whole", () => {
+    assert.equal(ASKED_TAIL_CHARS, 8192);
+    const body = `${"a".repeat(300)}\n${"z".repeat(9000)}\n`;
+    const d = peekDetail(peek(stream(enc(body))), 5, ASKED_TAIL_CHARS);
+    assert.equal(d.cut, true);
+    assert.equal(d.text.split("\n")[1], `…${"z".repeat(8192)}`);
+    assert.ok(d.whole.includes("a".repeat(300)) && d.whole.includes("z".repeat(9000)));
+    const small = peekDetail(peek(stream(enc("a\nb\n"))), 5, ASKED_TAIL_CHARS);
+    assert.equal(small.cut, false);
+    assert.equal(small.text, small.whole);
+});
+
+test("the markers the tail adds carry no run of two spaces (model-facing text)", () => {
+    const fragment = peekText(peek(stream(enc("only a fragment"), 5000), stream(enc("e\n"), 99999, true)), 5);
+    assert.match(fragment, /\(start of the line cut\)/);
+    assert.ok(!/ {2}/.test(fragment), fragment);
+    const cut = peekDetail(peek(stream(enc(`${"a".repeat(600)}\n`))), 5).text;
+    assert.ok(cut.includes("…") && !/ {2}/.test(cut), cut);
 });

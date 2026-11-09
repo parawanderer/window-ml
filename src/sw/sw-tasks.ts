@@ -35,13 +35,20 @@ export interface TaskEnd { status: TaskStatus; ms: number; code: number | null }
 export interface TaskExecutor {
     /** Cancel the call; resolves to what happened, in words (a cancel's effect is a fact, never a promise). */
     cancel(): Promise<{ confirmed: boolean; text: string }>;
-    /** The output so far, or null when the executor cannot read it while the call runs (said so, never a fake ""). */
-    tail(lines: number): string | null | Promise<string | null>;
+    /**
+     * The output so far, or null when the executor cannot read it while the call runs (said so, never a fake ""). `asked`
+     * is true for `task tail`, where the model chose the length; false for the tail nobody asked for (`ml.current.tasks`),
+     * which stays small.
+     */
+    tail(lines: number, asked?: boolean): string | TailAnswer | null | Promise<string | TailAnswer | null>;
     /** The sentence the model reads where `tail` is null. */
     tailAbsent: string;
     /** Settles once the call ends, however it ends. */
     settled: Promise<TaskOutcome>;
 }
+
+/** A tail with the key of the stored whole it was cut from (the pointer the step mints reads all of it). */
+export interface TailAnswer { text: string; value: string }
 
 /** What an executor says about a call it detaches. */
 export interface TaskSpec {
@@ -185,7 +192,7 @@ const UNKNOWN = (id: string): string => `UnknownTask: this run has no task ${JSO
  * @param args the tool's arguments: `op`, `id`, and `timeout_ms` or `lines`
  * @returns what the model reads
  */
-export async function taskAction(runId: string, args: Record<string, unknown>): Promise<string> {
+export async function taskAction(runId: string, args: Record<string, unknown>): Promise<string | { content: string; textValue: string }> {
     const id = typeof args.id === "string" ? args.id : "";
     const t = tasks.get(runId)?.get(id);
     if (!t) return UNKNOWN(id);
@@ -193,8 +200,10 @@ export async function taskAction(runId: string, args: Record<string, unknown>): 
     if (op === "tail") {
         const n = Math.max(1, Math.min(TASK_TAIL_MAX_LINES, Math.floor(Number(args.lines) || 20)));
         if (t.status !== "running") return `task ${t.id} ${t.status}: ${t.text ?? ""}`;
-        const tail = await t.exec.tail(n);
-        return tail === null ? `task ${t.id} running for ${secs(Date.now() - t.startedMs)}. ${t.exec.tailAbsent}` : (await forModel(tail)).text;
+        const tail = await t.exec.tail(n, true);
+        if (tail === null) return `task ${t.id} running for ${secs(Date.now() - t.startedMs)}. ${t.exec.tailAbsent}`;
+        if (typeof tail === "string") return (await forModel(tail)).text;
+        return { content: (await forModel(tail.text)).text, textValue: tail.value };
     }
     if (op === "cancel") {
         if (t.status !== "running") return `task ${t.id} already ${t.status}: ${t.text ?? ""}`;
@@ -222,9 +231,6 @@ export async function taskAction(runId: string, args: Record<string, unknown>): 
     return `BadRequest: op is "await", "cancel" or "tail".`;
 }
 
-/** A tail an executor answered at once, or null when it is still a promise. */
-const syncTail = (t: string | null | Promise<string | null>): string | null => typeof t === "string" ? t : null;
-
 /** The columns of `ml.current.tasks`, in order. */
 const COLUMNS = ["id", "kind", "tool", "status", "started", "elapsed_ms", "lease_ms", "expect_ms", "tail", "result"];
 
@@ -232,31 +238,32 @@ const COLUMNS = ["id", "kind", "tool", "status", "started", "elapsed_ms", "lease
  * This run's tasks as rows, at one instant.
  * @param runId the run
  * @param now the snapshot's instant
+ * @param tails each running task's tail, already read (`withTasks`, one ask per task); absent, a running row's tail is
+ *  null: the state inspector reads synchronously and never asks the host
  */
-function rowsOf(runId: string, now: number): (string | number | null)[][] {
+function rowsOf(runId: string, now: number, tails?: ReadonlyMap<string, string | null>): (string | number | null)[][] {
     return [...(tasks.get(runId)?.values() ?? [])].map((t) => [
         t.id, "call", t.tool, t.status, t.startedMs, now - t.startedMs, t.leaseMs, t.expectMs,
-        // The tail the executor can read NOW, synchronously: null when it cannot (the sentence is the task tool's). An
-        // executor that must ask the host answers a promise, which `withTasks` awaits; the state inspector reads null.
-        t.status === "running" ? syncTail(t.exec.tail(20)) : null, t.result,
+        t.status === "running" ? tails?.get(t.id) ?? null : null, t.result,
     ]);
 }
 
 /**
  * The snapshot with `tasks` added, on a copy: one row per detached call of THIS run, read at the snapshot's instant.
- * Absent when the run has none. A running task's tail is scrubbed like any text the model reads.
+ * Absent when the run has none. A running task's tail is the small one (the tail nobody asked for: `tail(20)`, one ask of
+ * the executor per running task per snapshot), scrubbed like any text the model reads.
  * @param current the snapshot as the host made it
  * @param runId the run
  */
 export async function withTasks(current: CurrentSnapshot, runId: string): Promise<CurrentSnapshot> {
     if (!tasks.get(runId)?.size) return current;
-    const rows = rowsOf(runId, Date.now());
-    // A tail that needs the host is asked for here, one per running task; a failed ask leaves the cell null.
-    const running = [...(tasks.get(runId)?.values() ?? [])];
-    await Promise.all(rows.map(async (r, i) => {
-        const t = running[i];
-        if (t?.status === "running" && r[8] === null) r[8] = await Promise.resolve(t.exec.tail(20)).catch(() => null);
+    const now = Date.now();
+    const tails = new Map<string, string | null>();
+    // A tail that needs the host is asked for here; a failed ask leaves the cell null.
+    await Promise.all([...(tasks.get(runId)?.values() ?? [])].filter((t) => t.status === "running").map(async (t) => {
+        const x = await Promise.resolve().then(() => t.exec.tail(20)).catch(() => null);
+        const text = typeof x === "string" ? x : x?.text ?? null;
+        tails.set(t.id, text === null ? null : (await forModel(text)).text);
     }));
-    for (const r of rows) if (typeof r[8] === "string") r[8] = (await forModel(r[8])).text;
-    return { ...current, tasks: tableOf(COLUMNS, rows) as TableLike };
+    return { ...current, tasks: tableOf(COLUMNS, rowsOf(runId, now, tails)) as TableLike };
 }

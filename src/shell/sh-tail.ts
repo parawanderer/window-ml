@@ -10,6 +10,12 @@ import { OUTPUT_CAP } from "../contract/contract-pointers";
 /** The most bytes a `peek` may ask for: the host clamps to this (PROTOCOL.md), so asking for more buys nothing. */
 export const PEEK_MAX_BYTES = 512 * 1024;
 
+/** The host's default read for a `peek` that names no size: what a tail nobody asked for requests. */
+export const PEEK_DEFAULT_BYTES = 4096;
+
+/** The characters per stream a tail the model ASKED for (`task tail`) may show, from the end. Past it the whole is stored. */
+export const ASKED_TAIL_CHARS = 8192;
+
 /**
  * How many bytes to ask `peek` for to show `lines` lines. A line of program output is rarely over 120 bytes and a
  * log line can be twice that, so 240 per line covers the usual case; a longer line shows as its last part, which is
@@ -19,7 +25,7 @@ export const PEEK_MAX_BYTES = 512 * 1024;
  */
 export function peekBytesFor(lines: number): number {
     const n = Math.max(1, Math.floor(lines) || 1);
-    return Math.min(PEEK_MAX_BYTES, Math.max(4096, (n + 1) * 240));
+    return Math.min(PEEK_MAX_BYTES, Math.max(PEEK_DEFAULT_BYTES, (n + 1) * 240));
 }
 
 /**
@@ -36,6 +42,9 @@ function withoutPartialTail(b: Uint8Array): Uint8Array {
     return b;
 }
 
+/** One stream as shown, and as the whole peeked stream: `cut` is true when the character cap shortened what is shown. */
+interface StreamParts { text: string; whole: string; cut: boolean }
+
 /**
  * One stream's lines. `label` is "stdout" or "stderr".
  * @param label the stream's name
@@ -43,10 +52,10 @@ function withoutPartialTail(b: Uint8Array): Uint8Array {
  * @param lines how many lines at most, from the end
  * @param cap the most characters of text to keep, from the end
  */
-function streamText(label: string, s: HostPeekStream, lines: number, cap: number): string {
+function streamText(label: string, s: HostPeekStream, lines: number, cap: number): StreamParts {
     let b = bytesOf(s.data);
     const fromStart = s.size <= b.length;
-    if (b.length === 0) return s.size === 0 ? `${label}: empty` : `${label} (${s.size} B so far): nothing readable`;
+    if (b.length === 0) { const t = s.size === 0 ? `${label}: empty` : `${label} (${s.size} B so far): nothing readable`; return { text: t, whole: t, cut: false }; }
     // The host cut at a byte, not a character: drop a half character at the front when the data is not the stream's start.
     if (!fromStart) { let i = 0; while (i < b.length && i < 3 && (b[i] & 0xc0) === 0x80) i++; b = b.subarray(i); }
     b = withoutPartialTail(b);
@@ -62,19 +71,34 @@ function streamText(label: string, s: HostPeekStream, lines: number, cap: number
     if (all.length && all[all.length - 1] === "") all.pop();
     const kept = all.slice(-lines);
     let body = kept.join("\n");
-    if (body.length > cap) { body = `…${body.slice(-cap)}`; }
+    const cut = body.length > cap;
+    if (cut) { body = `…${body.slice(-cap)}`; }
     const head = `${label} (${s.size} B so far${all.length > kept.length ? `, last ${kept.length} lines` : ""}${s.truncated ? "; passed the host's output cap, later output is not kept" : ""})${note}`;
-    return kept.length ? `${head}:\n${body}` : `${head}: no complete line yet`;
+    if (!kept.length) { const t = `${head}: no complete line yet`; return { text: t, whole: t, cut: false }; }
+    return { text: `${head}:\n${body}`, whole: `${head}:\n${all.join("\n")}`, cut };
 }
 
 /**
- * What the model reads for a `peek` answer: both streams, labelled, the last `lines` lines of each cut to exec's output
- * cap. A null stdout feeds the next pipeline stage and cannot be read; an empty stream says so.
+ * What the model reads for a `peek` answer, and the whole of it: both streams, labelled, the last `lines` lines of each
+ * cut to `cap` characters from the end. `whole` is every peeked line of both streams, uncut, for a value the model can
+ * point at; `cut` says `text` is shorter than it. A null stdout feeds the next pipeline stage and cannot be read; an
+ * empty stream says so.
+ * @param p the host's answer
+ * @param lines how many lines at most, per stream
+ * @param cap characters per stream; exec's own output cap by default
+ */
+export function peekDetail(p: HostPeek, lines: number, cap: number = OUTPUT_CAP.exec.default): { text: string; whole: string; cut: boolean } {
+    const n = Math.max(1, Math.floor(lines) || 1);
+    const parts = [p.stdout ? streamText("stdout", p.stdout, n, cap) : { text: "stdout: feeds the next pipeline stage, not readable", whole: "stdout: feeds the next pipeline stage, not readable", cut: false }, streamText("stderr", p.stderr, n, cap)];
+    return { text: parts.map((x) => x.text).join("\n"), whole: parts.map((x) => x.whole).join("\n"), cut: parts.some((x) => x.cut) };
+}
+
+/**
+ * What the model reads for a `peek` answer: {@link peekDetail}'s text.
  * @param p the host's answer
  * @param lines how many lines at most, per stream
  * @param cap characters per stream; exec's own output cap by default
  */
 export function peekText(p: HostPeek, lines: number, cap: number = OUTPUT_CAP.exec.default): string {
-    const n = Math.max(1, Math.floor(lines) || 1);
-    return [p.stdout ? streamText("stdout", p.stdout, n, cap) : "stdout: feeds the next pipeline stage, not readable", streamText("stderr", p.stderr, n, cap)].join("\n");
+    return peekDetail(p, lines, cap).text;
 }

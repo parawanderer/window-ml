@@ -343,13 +343,98 @@ test("any other peek failure is one short sentence, and a secret in the host's m
     await endTasks("run-peek-bad");
 });
 
-test("a tail is cut to exec's output cap, from the end", T, async () => {
-    const { host, task } = await detachedPeeking("run-peek-cap", () => peekOf(`${"a".repeat(900)}\n${"z".repeat(900)}\n`));
+// --- the two bounds: the tail nobody asked for is 500 characters, the tail asked for is lines first up to 8 KiB ---
+
+test("the tail the model asks for is lines first: N whole lines under 8 KiB, even where a line is over 500 characters", T, async () => {
+    const lines = Array.from({ length: 30 }, (_, i) => `L${i}:${"w".repeat(100)}`);
+    const { host, task } = await detachedPeeking("run-peek-lines", () => peekOf(lines.join("\n") + "\n"));
+    const t = await taskAction("run-peek-lines", { op: "tail", id: task, lines: 30 });
+    assert.equal(typeof t, "string", "nothing was cut, so there is nothing to point at");
+    const body = t.split("\nstderr")[0].split("\n").slice(1);
+    assert.deepEqual(body, lines, "all 30 lines whole (3 KB, well past the 500-character bound of an unasked tail)");
+    host.finish();
+    await endTasks("run-peek-lines");
+});
+
+test("lines past 200 are clamped to 200, and the bytes asked leave room for them", T, async () => {
+    const seen = [];
+    const lines = Array.from({ length: 300 }, (_, i) => `n${i}`);
+    const { host, task } = await detachedPeeking("run-peek-200", (a) => { seen.push(a); return peekOf(lines.join("\n") + "\n"); });
+    const t = await taskAction("run-peek-200", { op: "tail", id: task, lines: 5000 });
+    const body = t.split("\nstderr")[0].split("\n").slice(1);
+    assert.equal(body.length, 200);
+    assert.equal(body[0], "n100");
+    assert.equal(body[199], "n299");
+    assert.equal(seen[0].bytes, 201 * 240);
+    host.finish();
+    await endTasks("run-peek-200");
+});
+
+test("a stream over 8 KiB keeps its END and is cut to the ceiling", T, async () => {
+    const { host, task } = await detachedPeeking("run-peek-cap", () => peekOf(`${"a".repeat(9000)}\n${"z".repeat(9000)}\n`));
     const t = await taskAction("run-peek-cap", { op: "tail", id: task, lines: 5 });
-    const body = t.split("\n")[1];
-    assert.equal(body, `…${"z".repeat(500)}`);
+    const text = typeof t === "string" ? t : t.content;
+    const body = text.split("\n")[1];
+    assert.equal(body, `…${"z".repeat(8192)}`);
+    assert.ok(!text.includes("a".repeat(10)));
     host.finish();
     await endTasks("run-peek-cap");
+});
+
+test("a tail cut by the ceiling names a stored value of the whole peeked stream; an uncut one names none", T, async () => {
+    const { IDBFactory } = (await import("node:module")).createRequire(import.meta.url)("fake-indexeddb");
+    globalThis.indexedDB = new IDBFactory();
+    try {
+        const { readStoredText, claimValue } = await import("../src/sw/sw-values.ts");
+        const lines = Array.from({ length: 40 }, (_, i) => `row${i}:${"q".repeat(400)}`);
+        const { host, task } = await detachedPeeking("run-peek-ptr", () => peekOf(lines.join("\n") + "\n"));
+        const t = await taskAction("run-peek-ptr", { op: "tail", id: task, lines: 40 });
+        assert.equal(typeof t, "object", "40 lines of 400 characters is 16 KB: cut to 8 KiB");
+        assert.ok(t.content.length < 8192 + 200);
+        assert.ok(!t.content.includes("row0:"), "the start was cut");
+        await claimValue(t.textValue, "run-peek-ptr");
+        const whole = await readStoredText(t.textValue, "run-peek-ptr");
+        for (const l of lines) assert.ok(whole.includes(l), "the stored whole holds every peeked line, including the cut ones");
+        assert.ok(whole.startsWith("stdout ("));
+        const small = await taskAction("run-peek-ptr", { op: "tail", id: task, lines: 2 });
+        assert.equal(typeof small, "string", "2 lines of 400 characters fit the ceiling: no value to point at");
+        host.finish();
+        await endTasks("run-peek-ptr");
+    } finally { delete globalThis.indexedDB; }
+});
+
+test("the task tool hands the stored value on as its result's textValue, which the loop turns into a pointer", async () => {
+    const { taskTool } = await import("../src/tools/task-tool.ts");
+    const { defineTool } = await import("../src/ml/ml-tool-factories.ts");
+    const tool = taskTool(defineTool, { act: async () => ({ content: "tail text", textValue: "k1" }) });
+    assert.deepEqual(await tool.run({ op: "tail", id: "t000000" }), { content: "tail text", textValue: "k1" });
+});
+
+test("the tail nobody asked for stays at 500 characters per stream and asks the host's default 4 KiB", T, async () => {
+    const seen = [];
+    const { host, task } = await detachedPeeking("run-peek-row500", (a) => { seen.push(a); return peekOf(`${"a".repeat(900)}\n${"z".repeat(900)}\n`, `${"e".repeat(900)}\n`); });
+    const [row] = (await withTasks(snap(), "run-peek-row500")).tasks.rows;
+    const cells = String(row[8]).split("\n");
+    assert.equal(cells[1], `…${"z".repeat(500)}`);
+    assert.equal(cells[3], `…${"e".repeat(500)}`);
+    assert.equal(seen.length, 1, "one peek per running task per snapshot");
+    assert.equal(seen[0].bytes, 4096);
+    host.finish();
+    await endTasks("run-peek-row500");
+});
+
+test("the Detached message and the inbox line stay at the 500-character bound and ask nothing of the host", T, async () => {
+    const host = slowHost({ peek: true, peekAnswer: () => peekOf("x\n") });
+    const run = liveRun("run-peek-unasked");
+    const r = await shRun(ctxFor("run-peek-unasked"), [["ls"], { expectMs: 30 }]);
+    assert.ok(r.error.length < 1500, r.error.length);
+    assert.ok(!host.names().includes("peek"), "the Detached message does not read the host");
+    host.finish();
+    await until(() => run.inbox().length > 0);
+    const line = run.inbox()[0].text;
+    assert.ok(line.length < 2000, line.length);
+    assert.ok(!host.names().includes("peek"), "the inbox line does not read the host");
+    await endTasks("run-peek-unasked");
 });
 
 test("the tasks row carries the same peeked tail, and a failing peek leaves its cell null", T, async () => {
