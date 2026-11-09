@@ -368,10 +368,82 @@ def probe_installs(names: list[str], root: Path, workers: int = 6, timeout: int 
         return list(ex.map(one, names))
 
 
+def freeze_top(n: int, out: Path) -> None:
+    """Write the top `n` (and the list's date) to `out/top.json`, once, so every chunk of a long probe reads the same
+    ranking."""
+    out.mkdir(parents=True, exist_ok=True)
+    when, top = top_projects(n)
+    (out / "top.json").write_text(json.dumps({"top_list_updated": when, "rows": top}))
+
+
+def probe_chunk(start: int, end: int, out: Path, root: Path) -> Path:
+    """Probe ranks [start, end) of `out/top.json` into `out/chunk-<start>.json` (skipped when it exists). The unit a
+    long probe is queued in: one test-slot job each, so other suites run between chunks."""
+    import time
+    f = out / f"chunk-{start:05d}.json"
+    if f.exists():
+        return f
+    top = json.loads((out / "top.json").read_text())["rows"][start:end]
+    t0 = time.time()
+    rows = probe_installs([r["project"] for r in top], root)
+    for r, t in zip(rows, top):
+        r["rank"] = t["rank"]
+    tmp = f.with_suffix(".part")
+    tmp.write_text(json.dumps({"start": start, "end": end, "seconds": round(time.time() - t0), "rows": rows}))
+    tmp.rename(f)
+    return f
+
+
+def compact(r: dict) -> dict:
+    """A probe row trimmed to what `cause` and the notebook read: each installed wheel as `name==version@source`, an
+    import only when it failed (its message cut at 300 characters). An install error is kept whole: micropip ends it with
+    a generic hint, so its reason is at the start."""
+    out = {k: r.get(k) for k in ("project", "rank", "stage", "install_s", "modules")}
+    out["installed"] = [f"{x['name']}=={x['version']}@{x['source']}" for x in r.get("installed") or []]
+    out["imports"] = [{k: i.get(k) for k in ("module", "ok", "error_type", "error", "where")} | {"error": (i.get("error") or "")[:300]}
+                      for i in r.get("imports") or [] if not i["ok"]]
+    out["error"] = r.get("error")
+    return out
+
+
+def probe_top(n: int, out: Path, root: Path, chunk: int = 500) -> list[dict]:
+    """The top `n` probed in chunks under `out` (a chunk already there is kept), compacted, in rank order, after a
+    first row holding the ranking's date. Run the chunks through the test-slot queue first (`probe-chunk`, one ticket
+    each); this then only reads them."""
+    if not (out / "top.json").exists():
+        freeze_top(n, out)
+    top = json.loads((out / "top.json").read_text())
+    downloads = {t["rank"]: t["downloads_30d"] for t in top["rows"]}
+    rows = []
+    for s in range(0, n, chunk):
+        rows += json.loads(probe_chunk(s, min(s + chunk, n), out, root).read_text())["rows"]
+    rows = [compact(r) | {"downloads_30d": downloads[r["rank"]]} for r in sorted(rows, key=lambda r: r["rank"])]
+    return [{"top_list_updated": top["top_list_updated"]}] + rows
+
+
+def verdicts(rows: list[dict], lock: set[str]) -> dict:
+    """One verdict per project, for the install card: `ok` or the `cause`, the rank, and the version that installed
+    (None when nothing did)."""
+    def version(r):
+        own = next((x for x in r["installed"] if canonicalize_name(x.split("==")[0]) == canonicalize_name(r["project"])), None)
+        return own.split("==")[1].split("@")[0] if own else None
+    return {r["project"]: {"rank": r["rank"], "verdict": "ok" if r["stage"] == "ok" else cause(r, lock), "version": version(r)}
+            for r in rows}
+
+
 if __name__ == "__main__":
+    # python pypi.py [n]                          the static verdict for the top n, printed
+    # python pypi.py freeze-top <n> <dir>         the ranking a long probe uses
+    # python pypi.py probe-chunk <start> <end> <dir>
     import subprocess, sys
-    n = int(sys.argv[1]) if len(sys.argv) > 1 else 50
     root = Path(__file__).resolve().parents[2]
+    if sys.argv[1:2] == ["freeze-top"]:
+        freeze_top(int(sys.argv[2]), Path(sys.argv[3]))
+        sys.exit(0)
+    if sys.argv[1:2] == ["probe-chunk"]:
+        print(probe_chunk(int(sys.argv[2]), int(sys.argv[3]), Path(sys.argv[4]), root))
+        sys.exit(0)
+    n = int(sys.argv[1]) if len(sys.argv) > 1 else 50
     env_probe = json.loads(subprocess.run(["node", "notebooks/python-packages/probe.mjs", "env"], cwd=root, capture_output=True, text=True, check=True).stdout)
     _, top = top_projects(n)
     cache = Path(os.environ["PYPKG_CACHE"]) if os.environ.get("PYPKG_CACHE") else None
