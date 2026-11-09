@@ -118,6 +118,17 @@ test("the worker cap: runs together never have more than cores − 2 workers", (
     assert.equal(q.why, "the running runs have 13 of 13 workers");
 });
 
+test("one pass counts the workers it has just granted: three queued jobs, one look, 8 and 5 of 13", () => {
+    const dir = tmpDir(), one = { ...laptop(40 * GB), maxRuns: 1 };
+    const t = ["a", "b", "c", "d"].map((c) => submit({ cmd: [c], mode: "attached", dir, deps: one, tree: tree() }).ticket);
+    assert.deepEqual(states(dir, t, one), ["running", "queued", "queued", "queued"]);
+    const deps = laptop(40 * GB);
+    finish(t[0], 0, { dir, deps });
+    const q = look(t[3], { dir, deps });
+    assert.deepEqual([...q.running.map((j) => j.jobs), q.job.state], [8, 5, "queued"], "the second start sees the first one's 8 workers");
+    assert.equal(q.why, "the running runs have 13 of 13 workers");
+});
+
 test("the budget full: a second run waits for memory; alone, a run starts on what there is", () => {
     const dir = tmpDir(), deps = laptop(9 * GB);
     const [a, b] = ["a", "b"].map((c) => submit({ cmd: [c], mode: "attached", dir, deps, tree: tree() }).ticket);

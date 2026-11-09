@@ -47,7 +47,7 @@ waiting job. When its turn comes it prints the grant line:
 State lives in `~/.cache/window-ml/test-queue/` (`TEST_SLOT_DIR` overrides): `queue.json`, `<ticket>.log` per job,
 `footprints.jsonl` (each line has `runs`, the most runs that shared the machine with it). The per-worker figure is measured: the p90 of the last 20 measured runs of that kind (runs of 10 s or
 more only), 1 GB before any. Free memory is taken less what a bench sweep admitted in the last 30 s and has not started
-yet (its ledger, the `bench` skill), which the grant line names ("… of it promised to bench browsers starting up").
+yet (its ledger, the `bench` skill), which the grant line names ("… of it promised to bench browsers and other test runs starting up"; a running run's own unresident plan is counted from the queue, not the ledger).
 
 **With the bench.** A granted run joins the bench's ledger (`~/.cache/window-ml-bench/ledger.json`) as kind `tests`, its
 planned memory (workers × per-worker) beside it, and leaves when it ends; `hold.mjs --ledger` lists it. A sweep counts the
