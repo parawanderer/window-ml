@@ -26,6 +26,8 @@ import { readStoredBytes } from "./sw-values";
 import { noteAskOutcome, raiseAsk } from "./sw-asks";
 import { recordRunLog } from "./sw-run-log";
 import { MAX_DETAIL_STRING } from "../log/housekeeping";
+import { peekBytesFor, peekText } from "../shell/sh-tail";
+import { forModel } from "./sw-scrub";
 import { holdOutput, shellHost, ShellUnavailable, withShell, type ShellHost } from "./sw-shell";
 import { manifestsReady, storedManifests } from "./sw-manifests";
 import type { ProgramManifest } from "../shell/program-manifest";
@@ -207,7 +209,7 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
                             : { confirmed: true, text: "it had already ended." },
                         (e) => e instanceof HostError && e.code === "UnknownId" ? { confirmed: true, text: "it had already ended." }
                             : { confirmed: false, text: `the cancel did not reach the host (${(e as Error)?.message || String(e)}).` }),
-                    tail: () => null, tailAbsent: SH_TAIL_ABSENT, settled,
+                    tail: (n) => h.hello.peek === true ? peekTail(h, id, n) : null, tailAbsent: SH_TAIL_ABSENT, settled,
                 } });
                 recordRunLog(ctx.runId, { subsystem: "shell", kind: "detached", reason: r.expectMs !== undefined ? "expected" : "default", ms: leaseMs, detail: { seq: ctx.seq, id: task, program: r.argv[0] ?? "" } });
                 resolve({ error: detachedText(task, leaseMs, r), code: "Detached", task });
@@ -220,8 +222,26 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
     });
 }
 
+/**
+ * A running call's latest output, from the host's `peek`: the last lines of each stream, labelled. Asked only when
+ * `hello.peek` is true. A call that has just ended answers a sentence saying so (its result arrives on its own); any
+ * other failure is one short sentence. The caller scrubs and caps the text like any text the model reads.
+ * @param h the connected host
+ * @param id the call's id
+ * @param lines how many lines per stream
+ */
+async function peekTail(h: ShellHost, id: string, lines: number): Promise<string> {
+    try { return peekText(await h.client.peek(id, peekBytesFor(lines)), lines); }
+    catch (e) {
+        if (e instanceof HostError && e.code === "UnknownId") return "It has just ended; its result arrives on its own.";
+        // Scrubbed BEFORE it is cut, so the cut cannot leave the front of a key that the scrub then fails to recognise.
+        const why = (await forModel(String((e as Error)?.message || e))).text.slice(0, 120);
+        return `The host could not read its output (${why}).`;
+    }
+}
+
 /** What a detached call's `tail` says while the host cannot read a running call's output. */
-export const SH_TAIL_ABSENT = "The host reports a call's output when it ends, not while it runs.";
+export const SH_TAIL_ABSENT = "This host reports a call's output when it ends, not while it runs (it predates peek, or is reached over the hub).";
 
 /**
  * The text a detached call throws in the script: which of rule 2's two cases it was (the script's own estimate missed,

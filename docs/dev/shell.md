@@ -204,6 +204,26 @@ In an isolated exec, `iso-channel.ts` names `put` with its own arity of exactly 
 A call that runs past its lease detaches into a task: [`async-calls.md`](async-calls.md) is how that is built (the
 lease, the task table, the inbox, the `task` tool), for `ml.sh` and every executor after it.
 
+### A running call's tail (host `peek`)
+
+`task tail` on a detached `ml.sh` call asks the host's `peek` (`HostClient.peek`) for the last bytes of each stream and
+`sh-tail.ts` (`peekText`) turns them into lines. `hello.peek === true` is the ONLY gate: on a host without it, and over
+the hub, `tail` stays null and the task tool says `SH_TAIL_ABSENT`; the worker never probes by calling `peek`.
+
+- **The bytes are cut at a byte.** `peekText` drops a half character at the front (continuation bytes `0x80`-`0xBF`) and
+  holds back an unfinished sequence at the end, so U+FFFD appears only for bytes the program itself wrote. When the data
+  does not begin the stream (`size` is more than the data) the first line is partial and is dropped; a fragment with no
+  newline at all is kept and marked, rather than showing nothing. Then the last N lines (CRLF split), each stream
+  labelled, a null stdout (it feeds a pipeline stage) said as such, and `truncated` said as "passed the host's output cap".
+- **How many bytes are asked** (`peekBytesFor`): 240 per line plus one line, never under the host's 4096 default, never
+  over its 512 KiB ceiling.
+- **The text is model-facing**: each stream is cut to exec's output cap (`OUTPUT_CAP.exec.default`, from the end), then
+  `taskAction` runs the whole through `forModel` like any tool result. A `peek` failure sentence is scrubbed before it
+  is cut to 120 characters, so the cut cannot leave the front of a key. `UnknownId` (the call ended between the
+  model's request and the host's answer) says so; its result arrives on its own.
+- **`ml.current.tasks` carries the same tail** in each running row's `tail` cell, one `peek` per running `ml.sh` task per
+  snapshot; a failing ask leaves the cell null. The state inspector reads synchronously and sees null for these.
+
 ## Capabilities
 
 `shellCapabilities()` feeds the runtime's `RuntimeCapabilities` (sw-sessions.ts): `shellHost` when the host was

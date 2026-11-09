@@ -221,8 +221,8 @@ each of which amends the text above where it says otherwise:
   the `Detached` exception on `sh.run` (an `MlError` carrying the task id), the same inbox return and the same `task`
   tool, which is the loop's and does not care which world started the call. "`ml.current` in Python" is an OPEN item
   below, its own piece of work.
-- **Live `tail` on `ml.sh` has nothing to read today** (the host reports output only with `done`): the row's `tail`
-  is null with the sentence saying so, never a fake empty string, until a host `peek` op exists. The host op is a
+- **Live `tail` on `ml.sh` reads the host's `peek`** (BUILT on `async/peek-tail`; `docs/dev/shell.md`): where `hello.peek` is absent the row's `tail`
+  is null with the sentence saying so, never a fake empty string. History of the host op: The host op is a
   window-ml-host PR; no lane owns that repo today, so WHO WRITES IT IS A CALL FOR SHANE (recommended: the async
   lane, as a second slice after mode 1 merges, since it knows the shape it needs). DECIDED 2026-11-07 (Shane): the async lane writes it as its second slice after mode 1 merges: `peek { id, stream, offset, length }` reads the growing held file before `done`, with `read`'s 512 KiB range cap and `{ "$bytes" }` form, a paragraph in the host's `PROTOCOL.md` and a test in the host repo, from the lane's own clone of window-ml-host; the window-ml PR that consumes it names the host version it needs; the shape comes to the coordinator as a short note before the host PR, since it is a protocol change.
 - **The host's 2-minute default stays the script's business**: the worker sends no `timeoutMs` the script did not

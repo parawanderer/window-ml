@@ -36,7 +36,7 @@ export interface TaskExecutor {
     /** Cancel the call; resolves to what happened, in words (a cancel's effect is a fact, never a promise). */
     cancel(): Promise<{ confirmed: boolean; text: string }>;
     /** The output so far, or null when the executor cannot read it while the call runs (said so, never a fake ""). */
-    tail(lines: number): string | null;
+    tail(lines: number): string | null | Promise<string | null>;
     /** The sentence the model reads where `tail` is null. */
     tailAbsent: string;
     /** Settles once the call ends, however it ends. */
@@ -193,7 +193,7 @@ export async function taskAction(runId: string, args: Record<string, unknown>): 
     if (op === "tail") {
         const n = Math.max(1, Math.min(TASK_TAIL_MAX_LINES, Math.floor(Number(args.lines) || 20)));
         if (t.status !== "running") return `task ${t.id} ${t.status}: ${t.text ?? ""}`;
-        const tail = t.exec.tail(n);
+        const tail = await t.exec.tail(n);
         return tail === null ? `task ${t.id} running for ${secs(Date.now() - t.startedMs)}. ${t.exec.tailAbsent}` : (await forModel(tail)).text;
     }
     if (op === "cancel") {
@@ -222,6 +222,9 @@ export async function taskAction(runId: string, args: Record<string, unknown>): 
     return `BadRequest: op is "await", "cancel" or "tail".`;
 }
 
+/** A tail an executor answered at once, or null when it is still a promise. */
+const syncTail = (t: string | null | Promise<string | null>): string | null => typeof t === "string" ? t : null;
+
 /** The columns of `ml.current.tasks`, in order. */
 const COLUMNS = ["id", "kind", "tool", "status", "started", "elapsed_ms", "lease_ms", "expect_ms", "tail", "result"];
 
@@ -233,8 +236,9 @@ const COLUMNS = ["id", "kind", "tool", "status", "started", "elapsed_ms", "lease
 function rowsOf(runId: string, now: number): (string | number | null)[][] {
     return [...(tasks.get(runId)?.values() ?? [])].map((t) => [
         t.id, "call", t.tool, t.status, t.startedMs, now - t.startedMs, t.leaseMs, t.expectMs,
-        // The tail the executor can read now, capped by it: null when it cannot (the sentence is the task tool's).
-        t.status === "running" ? t.exec.tail(20) : null, t.result,
+        // The tail the executor can read NOW, synchronously: null when it cannot (the sentence is the task tool's). An
+        // executor that must ask the host answers a promise, which `withTasks` awaits; the state inspector reads null.
+        t.status === "running" ? syncTail(t.exec.tail(20)) : null, t.result,
     ]);
 }
 
@@ -247,6 +251,12 @@ function rowsOf(runId: string, now: number): (string | number | null)[][] {
 export async function withTasks(current: CurrentSnapshot, runId: string): Promise<CurrentSnapshot> {
     if (!tasks.get(runId)?.size) return current;
     const rows = rowsOf(runId, Date.now());
+    // A tail that needs the host is asked for here, one per running task; a failed ask leaves the cell null.
+    const running = [...(tasks.get(runId)?.values() ?? [])];
+    await Promise.all(rows.map(async (r, i) => {
+        const t = running[i];
+        if (t?.status === "running" && r[8] === null) r[8] = await Promise.resolve(t.exec.tail(20)).catch(() => null);
+    }));
     for (const r of rows) if (typeof r[8] === "string") r[8] = (await forModel(r[8])).text;
     return { ...current, tasks: tableOf(COLUMNS, rows) as TableLike };
 }
