@@ -2218,8 +2218,9 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
 .jt-number { color: var(--j-key); }
 .jt-boolean { color: var(--j-lit); }
 .jt-null { color: var(--j-lit); }
-/* A key the tool schema documents → dotted underline (this key has a hover tooltip with its description). */
-.jt-key-doc { text-decoration: underline dotted; text-underline-offset: 2px; text-decoration-thickness: 1px; cursor: help; }
+/* A key the tool schema documents → dotted underline on its name only (this key has a hover tooltip with its description). */
+.jt-key-doc { cursor: help; }
+.jt-key-doc .jt-key-name { text-decoration: underline dotted; text-underline-offset: 2px; text-decoration-thickness: 1px; }
 .jt-key-doc:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: 2px; }
 /* A key the schema does NOT define → red wavy squiggle + a warning tooltip (probably a hallucinated arg). */
 .jt-key-unknown { text-decoration: underline wavy var(--err); text-underline-offset: 3px; text-decoration-thickness: 1px; cursor: help; }
