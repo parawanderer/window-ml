@@ -66,7 +66,7 @@ function run(cmd, args, opts) {
         p.stderr.on("data", (d) => { err = (err + d).slice(-2000); });
         p.stdout.resume();
         const t = setTimeout(() => p.kill("SIGKILL"), INSTALL_TIMEOUT_MS);
-        p.on("close", (code) => { clearTimeout(t); resolve({ code, err }); });
+        p.on("close", (code, signal) => { clearTimeout(t); resolve({ code, signal, err }); });
         p.on("error", (e) => { clearTimeout(t); resolve({ code: -1, err: String(e) }); });
     });
 }
@@ -112,6 +112,7 @@ async function installAndBundle(item) {
         const r = await run("npm", ["install", `${item.name}@latest`, "--ignore-scripts", "--no-audit", "--no-fund", "--omit=dev",
             "--no-package-lock", "--prefix", dir], { cwd: dir });
         row.install_s = +((Date.now() - t0) / 1000).toFixed(2);
+        if (r.signal) { row.bundle_errors = [{ kind: "timeout", text: `npm install killed (${r.signal}) after ${INSTALL_TIMEOUT_MS / 1000} s` }]; return { row }; }
         if (r.code !== 0) { row.bundle_errors = [{ kind: "install", text: r.err.slice(-300) }]; return { row }; }
         const nm = path.join(dir, "node_modules");
         row.n_installed = countInstalled(nm);

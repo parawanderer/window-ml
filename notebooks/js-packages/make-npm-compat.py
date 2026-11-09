@@ -6,9 +6,10 @@ source tell which before anything is installed? The npm half of python-packages/
     (or: node scripts/nb.mjs make notebooks/js-packages/npm-compat.ipynb)
 
 The cells are written here; edit this file, not the notebook. The inputs are pinned in data/npm-compat/: the static
-rows (npm.py, read from the registry) and the sandbox probes (sandbox.mjs, plain and with --shims). NB_REFRESH=1 reads
-them all again: about 5 minutes, the registry and one headless Chromium. NPMPKG_CACHE=<dir> holds the downloads
-(default: the system temp dir); npm installs run with --ignore-scripts, in directories under it.
+rows (npm.py, read from the registry) and the sandbox probes (sandbox.mjs, plain and with --shims). NB_REFRESH=1
+re-extracts them from NPMPKG_CACHE=<dir> (default: the system temp dir), which keeps the registry manifests and each
+finished sandbox run: to read the registry and run the sandbox again (about 5 minutes, one headless Chromium), clear
+that directory first. npm installs run with --ignore-scripts, in directories under it.
 """
 
 from pathlib import Path
@@ -86,6 +87,9 @@ Each failure gets one cause, in the same spirit as the Python study's:
   host packages).
 - **probe**: the package has no JavaScript entry to import: types only (`@types/node`, `type-fest`), data
   (`@babel/compat-data`), or only subpath exports (`@babel/runtime`). Not an incompatibility.
+- **timeout**: the install ran past 180 s or the evaluation past 10 s (the probe's caps), so a loaded machine shows
+  here rather than in another row. None in the pinned runs.
+- **install, bundle or eval: other**: a failure at that stage none of the above explains.
 """)
 
 code("""
@@ -94,6 +98,8 @@ def cause(r):
     if r.stage == "ok":
         return "ok"
     if r.stage == "install":
+        if r.bundle_errors[0]["kind"] == "timeout":
+            return "timeout"
         return "no build" if "notsup" in r.bundle_errors[0]["text"] else "install: other"
     if r.stage == "bundle":
         kinds = Counter(e["kind"] for e in r.bundle_errors)
@@ -103,6 +109,8 @@ def cause(r):
             return "probe"
         return "undeclared dep" if kinds["unresolved"] else "bundle: other"
     e = r.eval_error or ""
+    if e == "timeout":
+        return "timeout"
     if "SharedArrayBuffer" in e:  # first: its message contains "Buffer is not defined"
         return "isolation"
     return "node global" if any(g in e for g in GLOBALS) else "eval: other"
