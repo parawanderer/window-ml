@@ -72,7 +72,12 @@ function streamText(label: string, s: HostPeekStream, lines: number, cap: number
     const kept = all.slice(-lines);
     let body = kept.join("\n");
     const cut = body.length > cap;
-    if (cut) { body = `…${body.slice(-cap)}`; }
+    if (cut) {
+        body = body.slice(-cap);
+        // The cap counts UTF-16 units: a character outside the BMP cut in two leaves its low half, which is dropped.
+        if ((body.charCodeAt(0) & 0xFC00) === 0xDC00) body = body.slice(1);
+        body = `…${body}`;
+    }
     const head = `${label} (${s.size} B so far${all.length > kept.length ? `, last ${kept.length} lines` : ""}${s.truncated ? "; passed the host's output cap, later output is not kept" : ""})${note}`;
     if (!kept.length) { const t = `${head}: no complete line yet`; return { text: t, whole: t, cut: false }; }
     return { text: `${head}:\n${body}`, whole: `${head}:\n${all.join("\n")}`, cut };

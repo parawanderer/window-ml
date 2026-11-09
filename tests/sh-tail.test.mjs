@@ -37,6 +37,17 @@ for (const [name, ch, width] of [["2-byte", "é", 2], ["3-byte", "€", 3], ["4-
     });
 }
 
+test("the 8 KiB character ceiling never leaves half of a 4-byte character at the front of what is shown", () => {
+    // The ceiling counts UTF-16 units: an emoji straddling it would leave its low surrogate, which is U+FFFD on the wire.
+    const split = peekDetail(peek(stream(enc(`😀${"z".repeat(8191)}\n`))), 5, ASKED_TAIL_CHARS);
+    const shown = split.text.split("\n")[1];
+    assert.equal(shown, `…${"z".repeat(8191)}`);
+    assert.ok(![...shown].some((c) => (c.charCodeAt(0) & 0xF800) === 0xD800), "a lone surrogate was shown");
+    // One that falls whole inside the ceiling is kept.
+    const whole = peekDetail(peek(stream(enc(`y😀${"z".repeat(8190)}\n`))), 5, ASKED_TAIL_CHARS);
+    assert.equal(whole.text.split("\n")[1], `…😀${"z".repeat(8190)}`);
+});
+
 // --- a cut inside a line ---
 
 test("data that does not start the stream loses its first, partial line", () => {
