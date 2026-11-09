@@ -123,6 +123,7 @@ export function isolatedWrapper(inner: string, b: IsolatedBindings, n: string, s
     const __sh = __B.members.includes("sh") && __chanAsk ? Object.freeze({
         run(argv, opts) { return __chanAsk({ op: "sh", call: "run", args: opts === undefined ? [argv] : [argv, opts] }); },
         read(pointer, range) { return __chanAsk({ op: "sh", call: "read", args: range === undefined ? [pointer] : [pointer, range] }); },
+        put(file, path) { return __chanAsk({ op: "sh", call: "put", args: [file, path] }); },
     }) : undefined;
     const __t0 = {
         dereference(ref, opts) {

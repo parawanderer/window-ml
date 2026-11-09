@@ -16,8 +16,8 @@ import { workerReadonlyMl, derefWhole, type RunDeref } from "./worker-readonly-m
 import { pipeStages } from "../pointers/token-pipe";
 import type { PipeLimits } from "../pointers/text-pipe";
 import { MAX_STRING, PIPE_CHARS_PER_STEP, STEP_BUDGET } from "../readonly-exec/limits";
-import { derefByRun, runControllers, sessionTokens } from "./sw-runs";
-import { shRead, shRun, type ShAnswer, type ShCallContext } from "./sw-shell-call";
+import { derefByRun, runControllers, sessionTokens, turnByRun } from "./sw-runs";
+import { shPut, shRead, shRun, type ShAnswer, type ShCallContext } from "./sw-shell-call";
 import { forPage } from "./sw-scrub";
 import { serveWireCall, wirePointer, WireError, wireClient, deliverIfOpen, type WireMember, type WireClient, type WireFrom, type WireArgsMeter } from "./ml-wire-serve";
 
@@ -36,7 +36,7 @@ function senderIs(from: WireFrom, sender: chrome.runtime.MessageSender): boolean
 }
 
 /**
- * The members a client's realm has. `full` adds `sh.run`/`sh.read` for a client a running step of its run opened; the
+ * The members a client's realm has. `full` adds `sh.run`/`sh.read`/`sh.put` for a client a running step of its run opened; the
  * other gated members (a live fetch, `chat`, `click`) come with the consent path, each with its own gate.
  * @param client the client
  * @returns its members, by name
@@ -57,6 +57,7 @@ function membersFor(client: WireClient): Record<string, WireMember> {
     if (sh) {
         out["sh.run"] = { run: (...a: unknown[]) => shMember(shRun, sh, a) };
         out["sh.read"] = { run: (...a: unknown[]) => shMember(shRead, sh, a) };
+        out["sh.put"] = { run: (...a: unknown[]) => shMember(shPut, sh, a) };
     }
     return out;
 }
@@ -69,12 +70,13 @@ function shContextFor(client: WireClient): ShCallContext | undefined {
     if (client.realm !== "full" || !client.run || !client.step) return undefined;
     const ctl = runControllers.get(client.run);
     if (!ctl) return undefined;
-    return { runId: client.run, seq: client.step.seq, local: { ...client.step.local }, signal: ctl.signal, tokens: sessionTokens(client.run) };
+    const run = client.run;
+    return { runId: run, seq: client.step.seq, local: { ...client.step.local }, signal: ctl.signal, tokens: sessionTokens(run), origin: () => turnByRun.get(run)?.()?.origin };
 }
 
 /**
  * One `ml.sh` call as a wire member: its value, or a WireError with the call's own code.
- * @param fn `shRun` or `shRead`
+ * @param fn `shRun`, `shRead` or `shPut`
  * @param ctx the call's context
  * @param args the copied arguments
  */

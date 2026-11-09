@@ -108,6 +108,12 @@ export interface MlSh {
      * @param token the output's `@tool:` pointer
      * @param range `offset` and `length` in bytes (default 0 and 64 KiB; at most 512 KiB) */
     read(token: string, range?: { offset?: number; length?: number }): Promise<{ offset: number; length: number; size: number; eof: boolean; text?: string; bytes?: { $bytes: string } }>;
+    /** Write a file the person attached, its original bytes, into a workspace folder, so a program can open it:
+     *  `await ml.sh.put("@file:3fa91c2", "inbox/report.pdf")`, then `ml.sh.run(["pdftotext", "inbox/report.pdf", "-"])`.
+     *  The folder must exist; replacing a file there always asks the person. `path` comes back relative to its folder.
+     * @param file the attachment's `@file:` handle
+     * @param path where to write it: relative to the first workspace folder, absolute, or `~/…` */
+    put(file: string, path: string): Promise<{ path: string; root: string; size: number; sha256: string; replaced: boolean }>;
 }
 
 export interface MlApi {

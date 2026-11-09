@@ -35,6 +35,7 @@ const sizeTag = (s: string): string => `(${s.length.toLocaleString()} chars, ~${
 const buildLabel = (): string => `${BUILD_INFO.shortCommit}${(BUILD_INFO as { dirty?: boolean }).dirty ? "-dirty (uncommitted changes)" : ""} · built ${fullStamp(Date.parse(BUILD_INFO.buildTime))}`;
 import { annotatedConfig, resolveModel, shownModel } from "../model";
 import { askOutcomeLines, unaskedCalls, unaskedLines } from "../../shell/sh-call";
+import { putSubject } from "../../shell/sh-put";
 
 type Sidecar = { name: string; bytes: Uint8Array };
 
@@ -626,7 +627,7 @@ export const ASK_NOTE: Record<import("../../contract").AskState, string> = {
  * @param a the ask
  */
 export function askNote(a: import("../../contract").StepAsk): string {
-    const argv = Array.isArray(a.facts?.argv) ? (a.facts.argv as unknown[]).map(String).join(" ") : "";
+    const argv = a.kind === "put" ? putSubject(a.facts) : Array.isArray(a.facts?.argv) ? (a.facts.argv as unknown[]).map(String).join(" ") : "";
     const waited = a.answeredAt != null ? ` after ${Math.max(0, Math.round((a.answeredAt - a.raisedAt) / 1000))} s` : "";
     const outcome = (ASK_NOTE as Record<string, string>)[a.state] ?? `ended: ${a.state}`;
     return `asked (${a.kind}${argv ? `: ${argv}` : ""}): ${outcome}${waited}${a.note ? ` — “${a.note}”` : ""}`;

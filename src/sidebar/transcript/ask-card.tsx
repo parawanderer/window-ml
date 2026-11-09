@@ -13,10 +13,12 @@ import { decidedSteps, sendApproval, askKey, cursorTipOn } from "../ui-kit";
 import { ApprovalRow } from "./approval-row";
 import { IconWarn } from "../icons";
 import { askOutcomeLines, shCardLines, unaskedCalls, unaskedLines, type ShCardLine, type ShFacts } from "../../shell/sh-call";
+import { putCardLines, putSubject, type PutFacts } from "../../shell/sh-put";
 
 /** What each kind of ask is, said as the card's question. A kind this build does not know is asked about plainly. */
 const ASK_TITLE: Readonly<Record<string, string>> = {
     sh: "While it runs, this step wants to start a program:",
+    put: "While it runs, this step wants to write a file you attached to this machine:",
 };
 
 /** How an answered ask reads on its line, by state. */
@@ -34,6 +36,9 @@ const ASK_DONE: Record<StepAsk["state"], string> = {
 export function askLines(a: StepAsk): ShCardLine[] {
     if (a.kind === "sh") {
         try { return shCardLines(a.facts as unknown as ShFacts); } catch { /* facts of another shape: drawn as they are */ }
+    }
+    if (a.kind === "put") {
+        try { return putCardLines(a.facts as unknown as PutFacts); } catch { /* facts of another shape: drawn as they are */ }
     }
     return Object.entries(a.facts ?? {}).map(([label, v]) => ({ label, value: typeof v === "string" ? v : JSON.stringify(v) }));
 }
@@ -127,13 +132,13 @@ function AskDone({ a }: { a: StepAsk }) {
             : Object.hasOwn(ASK_DONE, a.state) ? ASK_DONE[a.state] : String(a.state);
         return <div class={`astep-ask-done ${a.state === "allowed" ? "ok" : "no"}`}>{a.why?.line ?? String(a.facts?.url ?? "")}: {outcome}</div>;
     }
-    const argv = Array.isArray(a.facts?.argv) ? (a.facts.argv as unknown[]).map(String).join(" ") : a.kind;
+    const argv = a.kind === "put" ? putSubject(a.facts) : Array.isArray(a.facts?.argv) ? (a.facts.argv as unknown[]).map(String).join(" ") : a.kind;
     const waited = a.answeredAt != null ? ` after ${Math.max(0, Math.round((a.answeredAt - a.raisedAt) / 1000))} s` : "";
     const outcome = a.state === "pending" ? "answered, waiting for the run" : Object.hasOwn(ASK_DONE, a.state) ? ASK_DONE[a.state] : String(a.state);
     const ran = askOutcomeLines(a);
     return (
         <div class={`astep-ask-done ${a.state === "allowed" ? "ok" : "no"}`}>
-            Asked to run <code>{argv}</code>: {outcome}{waited}{a.note ? <> — “{a.note}”</> : null}
+            Asked to {a.kind === "put" ? "write" : "run"} <code>{argv}</code>: {outcome}{waited}{a.note ? <> — “{a.note}”</> : null}
             {ran.length ? <FactList lines={ran} /> : null}
         </div>
     );

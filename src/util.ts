@@ -4,6 +4,7 @@
 
 import { truncate, shadowRootStats, iframeStats, markdownTwin } from "./dom/dom";
 import { TOKEN_PAYLOAD_LEN, checkChar, formatToken } from "./pointers/token-id";
+import { BOX_PREFIX, POINT_PREFIX } from "./pointers/token-prefixes";
 import type { ShotBox, VisionMemory } from "./contract/contract-render";
 import { defineState } from "./state-registry";
 import { pageRaster, withDecoded, type Raster } from "./raster";
@@ -257,9 +258,10 @@ const pointRegistry = new Map<string, { x: number; y: number }>();
 defineState({
     id: "page.points", scope: "page", realm: "page", audience: "model", lostOn: ["navigation"],
     describe: "The `@pt` tokens `locate` minted on this page, with the viewport point each stands for. Shared by every run in the tab.",
-    read: () => (pointRegistry.size ? [...pointRegistry].map(([id, p]) => ({ token: `@pt:${id}`, ...p })) : undefined),
+    read: () => (pointRegistry.size ? [...pointRegistry].map(([id, p]) => ({ token: `${POINT_PREFIX}${id}`, ...p })) : undefined),
 });
-export const POINT_RE = /^@pt:([0-9a-f]{1,12})$/;
+/** A whole `@pt:<hex>` token, capturing its id: what `look` and `locate` accept as a point. */
+export const POINT_RE = new RegExp(`^${POINT_PREFIX}([0-9a-f]{1,12})$`);
 // Half-size of the square `look({ @pt })` crops around a point (→ a 2·R box). Shared
 // so `locate({ selector: "@pt:…" })` searches the EXACT box look showed — the model
 // re-locates the neighborhood it just visually confirmed holds the target.
@@ -267,7 +269,7 @@ export const PT_LOOK_RADIUS = 100;
 export const mintPoint = (x: number, y: number): string => {
     const id = Math.random().toString(16).slice(2, 10);
     pointRegistry.set(id, { x: Math.round(x), y: Math.round(y) });
-    return `@pt:${id}`;
+    return `${POINT_PREFIX}${id}`;
 };
 export const resolvePoint = (token: string): { x: number; y: number } | null => {
     const m = POINT_RE.exec((token || "").trim());
@@ -283,7 +285,7 @@ export const nearbyPoint = (x: number, y: number, within = 12): { token: string;
     let bestD = within * within;
     for (const [id, p] of pointRegistry) {
         const dx = p.x - x, dy = p.y - y, d = dx * dx + dy * dy;
-        if (d <= bestD) { bestD = d; best = { token: `@pt:${id}`, x: p.x, y: p.y }; }
+        if (d <= bestD) { bestD = d; best = { token: `${POINT_PREFIX}${id}`, x: p.x, y: p.y }; }
     }
     return best;
 };
@@ -313,13 +315,14 @@ const boxRegistry = new Map<string, PtBox>();
 defineState({
     id: "page.boxes", scope: "page", realm: "page", audience: "model", lostOn: ["navigation"],
     describe: "The `@box` tokens `locate` minted on this page, with the viewport box each stands for. Shared by every run in the tab.",
-    read: () => (boxRegistry.size ? [...boxRegistry].map(([id, b]) => ({ token: `@box:${id}`, ...b })) : undefined),
+    read: () => (boxRegistry.size ? [...boxRegistry].map(([id, b]) => ({ token: `${BOX_PREFIX}${id}`, ...b })) : undefined),
 });
-export const BOX_RE = /^@box:([0-9a-f]{1,12})$/;
+/** A whole `@box:<hex>` token, capturing its id: what `look` and `locate` accept as a box. */
+export const BOX_RE = new RegExp(`^${BOX_PREFIX}([0-9a-f]{1,12})$`);
 export const mintBox = (b: PtBox): string => {
     const id = Math.random().toString(16).slice(2, 10);
     boxRegistry.set(id, { left: Math.round(b.left), top: Math.round(b.top), right: Math.round(b.right), bottom: Math.round(b.bottom) });
-    return `@box:${id}`;
+    return `${BOX_PREFIX}${id}`;
 };
 export const resolveBox = (token: string): PtBox | null => {
     const m = BOX_RE.exec((token || "").trim());

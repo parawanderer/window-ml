@@ -10,8 +10,9 @@ wire it speaks.
 | --- | --- |
 | `src/shell/host-protocol.ts` | the protocol client (`HostClient`): seq matching, `done` events, `{ $bytes }`, the types. No `chrome` |
 | `src/shell/sh-call.ts` | pure: a call's arguments parsed, a program manifest turned into spawn args, facts into card lines and policy facts, a `done` into a result |
+| `src/shell/sh-put.ts` | pure: one `ml.sh.put` checked, the host's `put` facts into policy facts and card lines, a refusal's sentence |
 | `src/sw/sw-shell.ts` | the ONE native port: connect, `hello`, protocol check, `configure` from Settings, idle close, the status and the shell capabilities |
-| `src/sw/sw-shell-call.ts` | one `ml.sh` call: spawn → facts → version probe → policy or ask → judged again → start → outputs as pointers; `ml.sh.read` |
+| `src/sw/sw-shell-call.ts` | one `ml.sh` call: spawn → facts → version probe → policy or ask → judged again → start → outputs as pointers; `ml.sh.read`; `ml.sh.put` |
 | `src/sidebar/settings/shell-section.tsx` | the Settings section "Programs (ml.sh)" |
 | `tests/fake-native-host.mjs` | a host on the far end of the mocked `connectNative` (`loadBackground({ onNative })`) |
 | `tests/e2e/native-host.mjs` | a REAL `wmlhost` for an e2e run, registered in the test profile only (`tests/e2e/ml-sh-host.spec.mjs`) |
@@ -170,6 +171,33 @@ its owner tables, which hold what it spawned and the process groups a connection
 `register`; `HostClient.owner` and `HostClient.status` read them. The worker only reads: it never sends `register`
 (`tests/sh-call.test.mjs` holds that no file in `src/` does), and no page-started type reaches either call. Nothing in
 the extension shows the answer yet: the agent-status line it is meant for is `AGENT_MAIL.md`'s first build step.
+
+## Writing an attachment to disk (`ml.sh.put`)
+
+`ml.sh.put(file, path)` writes an `@file:` attachment's ORIGINAL bytes (the value store's `data` row, never a PDF's
+text) into a workspace folder (FILE_ATTACHMENTS.md ruling 3, amended 2026-11-08; the host's `put`/`write`/`commit` in
+window-ml-host's PROTOCOL.md). `shPut` in order:
+
+1. `parseShPut`: exactly a `@file:` handle and a path. The handle resolves on THIS run's shelf (`ctx.tokens.files`), so
+   another run's handle is `ValueMissing` and names nothing of that run's file.
+2. A run whose turn has `origin.remote` is refused, and so is one whose origin cannot be read (`ctx.origin`, read from
+   `turnByRun`): the file would land on a machine the person is not at. The host refuses the hub transport too.
+3. `hello.put` absent (an older host) or `null` (the hub) means the host cannot take a file; a file over `hello.put.max`
+   is `TooLarge`, naming both numbers. Both before anything is sent.
+4. The host's `put` resolves the target and writes nothing: `OutsideRoots`, `NoParent`, `IsSymlink`, `IsDirectory` and
+   `Protected` become a sentence (`putRefusalText`) and no verdict can allow them.
+5. `decidePut`: a `deny` always holds. A NEW file is judged as an in-root write by `judgeCall(…, "sh", putFacts(…),
+   "host-sandbox")`: a policy, or the built-in default, which frees a nested path and asks for a new top-level name.
+   The placement is the sandbox's because the host itself holds that bound for this one write (the parent's realpath in
+   a root, through a held directory descriptor; protected and secret-looking names refused; never through a link). An
+   EXISTING file always asks (`kind: "put"`), whatever a policy allows.
+6. Chunks of `READ_CHUNK`, contiguous from 0, then `commit` with `replace` true only for a file that existed AND the
+   person approved; a file that appeared since `put` is `Exists`. A cancel between chunks discards the put.
+
+`putFacts` carries the keys of an `ml.sh.run` call that runs nothing (`argv: []`, `program`, `cwd`, …) beside its `put`
+fact, so a person's policy written for programs reads them without throwing and is never marked broken by a put. A put
+that ran without an ask is drawn under its step like any unasked call (`Wrote …`, `unaskedLines`). It never detaches.
+In an isolated exec, `iso-channel.ts` names `put` with its own arity of exactly two; `run` and `read` keep theirs.
 
 ## Detached calls (ASYNC_CALLS.md, mode 1)
 

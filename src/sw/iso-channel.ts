@@ -35,7 +35,7 @@ export interface IsoDeps {
     columns: (key: string, names: string[], opts: { delimiter?: string; headerless?: boolean }) => Promise<{ rowCount: number; columns: Record<string, unknown[]> }>;
     /** `ml.sh`'s calls, bound by the worker to the run and the step the exec runs in (sw-shell-call.ts); absent for a
      *  script that does not name `ml.sh`, which then has no `ml.sh` to call. */
-    sh?: (call: "run" | "read", args: unknown[]) => Promise<IsoAnswer>;
+    sh?: (call: "run" | "read" | "put", args: unknown[]) => Promise<IsoAnswer>;
 }
 
 /** The sentence a refused request throws in the world. */
@@ -102,7 +102,8 @@ export function isoServer(runId: string, reads: readonly PreRead[], deps: IsoDep
         if (q.op === "sh") {
             const c = (q as { call?: unknown }).call, a = (q as { args?: unknown }).args;
             if (!deps.sh) return { error: ISO_REFUSED.noSh };
-            if ((c !== "run" && c !== "read") || !Array.isArray(a) || a.length > 2) return { error: ISO_REFUSED.malformed };
+            // Each call by NAME, with its own arity: `put` takes exactly its handle and path.
+            if ((c !== "run" && c !== "read" && c !== "put") || !Array.isArray(a) || a.length > 2 || (c === "put" && a.length !== 2)) return { error: ISO_REFUSED.malformed };
             try { return await deps.sh(c, a); } catch (e) { return { error: (e as Error)?.message || String(e) }; }
         }
         return { error: ISO_REFUSED.malformed };

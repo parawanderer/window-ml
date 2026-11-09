@@ -292,6 +292,26 @@ test("HALTING: a CDP world whose server throws still gets an answer, so the scri
     } finally { releaseDebugger(7); globalThis.chrome = prev; }
 });
 
+test("the sh op admits put by name with exactly two arguments; run and read keep at most two; any other call name is malformed and none reaches deps.sh", async () => {
+    const seen = [];
+    const serve = isoServer("run-1", [], { deref: () => undefined, holders: async () => null, columns: async () => ({}), sh: async (call, args) => { seen.push([call, args]); return { ok: { call } }; } });
+    const sh = (call, args) => serve({ op: "sh", call, args });
+    const bad = { error: ISO_REFUSED.malformed };
+    for (const args of [[], ["@file:3fa91c2"], ["@file:3fa91c2", "a", "b"], ["@file:3fa91c2", "a", "b", "c"]]) assert.deepEqual(await sh("put", args), bad, `put with ${args.length} args`);
+    for (const call of ["run", "read"]) assert.deepEqual(await sh(call, ["a", "b", "c"]), bad, `${call} with 3 args`);
+    for (const call of ["write", "commit", "discard", "spawn", "start", "PUT", "put ", "", null, 3, undefined, ["put"], { toString: () => "put" }]) assert.deepEqual(await sh(call, ["@file:3fa91c2", "a"]), bad, `call ${JSON.stringify(call)}`);
+    for (const args of ["@file:3fa91c2", null, undefined, { length: 2, 0: "a", 1: "b" }]) assert.deepEqual(await sh("put", args), bad, `put args ${JSON.stringify(args)}`);
+    assert.deepEqual(seen, [], "a refused request reached deps.sh");
+    // Positive controls: put with two arguments is passed by name with its arguments; run and read still pass.
+    assert.deepEqual(await sh("put", ["@file:3fa91c2", "inbox/x.pdf"]), { ok: { call: "put" } });
+    assert.deepEqual(await sh("run", [["ls"]]), { ok: { call: "run" } });
+    assert.deepEqual(await sh("read", ["@tool:abc1234", { offset: 0 }]), { ok: { call: "read" } });
+    assert.deepEqual(seen, [["put", ["@file:3fa91c2", "inbox/x.pdf"]], ["run", [["ls"]]], ["read", ["@tool:abc1234", { offset: 0 }]]]);
+    // Without deps.sh, put is refused as every sh call is.
+    const none = isoServer("run-1", [], { deref: () => undefined, holders: async () => null, columns: async () => ({}) });
+    assert.deepEqual(await none({ op: "sh", call: "put", args: ["@file:3fa91c2", "a"] }), { error: ISO_REFUSED.noSh });
+});
+
 // --- 5. the wrapper's channel binding, as source ---
 
 test("the kit and the channel are locals of the wrapper: a world's globals hold neither after the call", async () => {

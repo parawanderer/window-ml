@@ -93,6 +93,21 @@ export async function readStoredText(key: string, session: string, charge?: (byt
     return blob.text();
 }
 
+/**
+ * The bytes of a stored value, for a session that holds it, with the same "not in the store" as {@link readStoredText}
+ * for one it does not: an attachment's original bytes, for `ml.sh.put`.
+ * @param key the value's key
+ * @param session the run reading it
+ */
+export async function readStoredBytes(key: string, session: string): Promise<Uint8Array> {
+    const s = values();
+    if (!s) throw new Error("there is no value store in this context");
+    const holders = await valueHolders(key);
+    if (holders && !holders.includes(session)) throw new ValueMissing(key, null);
+    const { blob } = await s.get(key);
+    return new Uint8Array(await blob.arrayBuffer());
+}
+
 /** A run's pointer names a stored value: hold it for that session, when `may` (given the value's holders) allows it. */
 export function claimValue(key: string, session: string, may?: (holders: readonly string[]) => boolean): void {
     void values()?.claim(key, session, may).catch(() => {});

@@ -29,6 +29,13 @@ export interface HostHello {
     owners?: { ledger: boolean; register?: boolean };
     /** What `cpuMs` counts (host 0.7.0): user and system time, with reaped children. Absent from an older host. */
     cpu?: { metric: string };
+    /** Whether the host answers `peek`. Absent from an older host. */
+    peek?: boolean;
+    /** Whether the host expands a leading `~` in argv and cwd. Absent from an older host. */
+    tilde?: boolean;
+    /** That the host answers `put`/`write`/`commit`, and the most bytes one put may declare; `null` over the hub, where
+     *  the three are refused. Absent from an older host: it cannot take a file. */
+    put?: { max: number } | null;
     /** The credential providers a `spawn` may name (host 0.8.0): `[]` where the sandbox cannot hold the credentialed
      *  profile (Linux) and over the hub. Absent from an older host, which ignores a `credential` on `spawn`: the
      *  worker's only gate. */
@@ -202,10 +209,28 @@ export type HostOwnerAnswer = { owner: null }
 /** `read`'s answer: a range of held output, as base64 bytes. */
 export interface HostRead { ptr: string; offset: number; length: number; size: number; eof: boolean; data: { $bytes: string } }
 
+/** `put`'s answer: where the file would land, and whether one is there now. Nothing is written yet. */
+export interface HostPutFacts {
+    id: string;
+    /** The resolved absolute path. */
+    path: string;
+    /** The root it lies in, and the path relative to it. */
+    root: string;
+    rel: string;
+    exists: boolean;
+    existingSize: number | null;
+    size: number;
+    tilde: { index: number | "cwd" | "path"; from: string; to: string | null; reason?: string }[];
+    expiresInMs: number;
+}
+
+/** `commit`'s answer: the file in place, and the hash of the bytes written. */
+export interface HostCommitted { id: string; path: string; rel: string; size: number; sha256: string }
+
 /** The host's error codes (PROTOCOL.md, "Error codes"). */
 export type HostErrorCode = "BadRequest" | "NotConfigured" | "BadRoot" | "ProgramNotFound" | "CwdOutsideRoots" | "EnvRefused"
     | "SecretUnavailable" | "Unsupported" | "UnknownId" | "UnknownPtr" | "SandboxFailed" | "SpawnFailed" | "Busy" | "Failed"
-    | "TooLarge" | "Disconnected";
+    | "TooLarge" | "Disconnected" | "Refused" | "NoParent" | "OutsideRoots" | "IsSymlink" | "IsDirectory" | "Protected" | "Exists";
 
 /** A call the host answered with an error, or the port closing under it (`Disconnected`). */
 export class HostError extends Error {
@@ -348,6 +373,26 @@ export class HostClient {
     read(ptr: string, offset: number, length: number): Promise<HostRead> {
         return this.call("read", { ptr, offset: Math.max(0, Math.floor(offset)), length: Math.max(0, Math.min(READ_CHUNK, Math.floor(length))) });
     }
+
+    /**
+     * Resolve where a file of `size` bytes would land, writing nothing (host `put`); `discard` drops it.
+     * @param a the path (relative to `cwd`, or absolute, or `~/…`), the cwd, and the byte count the writes will send
+     */
+    put(a: { path: string; cwd: string; size: number }): Promise<HostPutFacts> { return this.call("put", a); }
+    /**
+     * Append one chunk of at most {@link READ_CHUNK} bytes at `offset`, which must be the bytes sent so far.
+     * @param id the put
+     * @param offset where the chunk starts
+     * @param bytes the chunk, base64
+     */
+    write(id: string, offset: number, bytes: { $bytes: string }): Promise<{ id: string; received: number }> { return this.call("write", { id, offset, bytes }); }
+    /**
+     * Put the written bytes in place. `replace` only once the person approved overwriting; without it a file that
+     * appeared since `put` is `Exists`. Consumes the put, whatever its outcome.
+     * @param id the put
+     * @param replace whether to rename over a file at the target
+     */
+    commit(id: string, replace: boolean): Promise<HostCommitted> { return this.call("commit", { id, replace }); }
 }
 
 /**
