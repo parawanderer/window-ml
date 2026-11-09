@@ -377,19 +377,26 @@ def freeze_top(n: int, out: Path) -> None:
 
 
 def probe_chunk(start: int, end: int, out: Path, root: Path) -> Path:
-    """Probe ranks [start, end) of `out/top.json` into `out/chunk-<start>.json` (skipped when it exists). The unit a
-    long probe is queued in: one test-slot job each, so other suites run between chunks."""
+    """Probe ranks [start, end) of `out/top.json` into `out/chunk-<start>.json` (skipped when it exists and was probed
+    from the same ranking; a chunk from another ranking raises). The unit a long probe is queued in: one test-slot job
+    each, so other suites run between chunks."""
     import time
+    frozen = json.loads((out / "top.json").read_text())
     f = out / f"chunk-{start:05d}.json"
     if f.exists():
+        had = json.loads(f.read_text()).get("top_list_updated")
+        if had != frozen["top_list_updated"]:
+            raise ValueError(f"{f} was probed from the ranking of {had}, top.json is {frozen['top_list_updated']}: "
+                             "remove the old chunks or use another directory")
         return f
-    top = json.loads((out / "top.json").read_text())["rows"][start:end]
+    top = frozen["rows"][start:end]
     t0 = time.time()
     rows = probe_installs([r["project"] for r in top], root)
     for r, t in zip(rows, top):
         r["rank"] = t["rank"]
     tmp = f.with_suffix(".part")
-    tmp.write_text(json.dumps({"start": start, "end": end, "seconds": round(time.time() - t0), "rows": rows}))
+    tmp.write_text(json.dumps({"start": start, "end": end, "top_list_updated": frozen["top_list_updated"],
+                               "seconds": round(time.time() - t0), "rows": rows}))
     tmp.rename(f)
     return f
 
@@ -414,9 +421,11 @@ def probe_top(n: int, out: Path, root: Path, chunk: int = 500) -> list[dict]:
         freeze_top(n, out)
     top = json.loads((out / "top.json").read_text())
     downloads = {t["rank"]: t["downloads_30d"] for t in top["rows"]}
+    project = {t["rank"]: t["project"] for t in top["rows"]}
     rows = []
     for s in range(0, n, chunk):
         rows += json.loads(probe_chunk(s, min(s + chunk, n), out, root).read_text())["rows"]
+    assert all(project[r["rank"]] == r["project"] for r in rows), "a chunk's rows do not match top.json's ranks"
     rows = [compact(r) | {"downloads_30d": downloads[r["rank"]]} for r in sorted(rows, key=lambda r: r["rank"])]
     return [{"top_list_updated": top["top_list_updated"]}] + rows
 

@@ -351,7 +351,7 @@ lag.sort_values("rank")[["rank", "project", "lock_version", "version"]].rename(c
 md("""
 ## 5. The top 10,000, and the verdicts the card reads
 
-The same probe, run over the top 10,000 (a later ranking than section 2's, frozen for the run) in 20 chunks of 500
+The same probe, run over the top 10,000 (the ranking section 1 read, frozen for the run) in 20 chunks of 500
 queued through test-slot (`pypi.py freeze-top` / `probe-chunk`; a refresh reads the chunks under `PYPKG_10K_DIR`).
 Each project gets the cause section 2's rules give it. The result is written to `data/pypi-compat/verdicts.json`,
 keyed by the core's release tag, so a later core adds a key instead of overwriting these.
@@ -376,16 +376,15 @@ by_band
 """)
 
 md("""
-**Does a second run agree?** The two probes share their top 1,000 (by project, not rank: the rankings are a week
-apart and PyPI moved in between). A verdict that changed is a release that changed, or a probe that is not
-deterministic.
+**Does a second run agree?** The two probes share their top 1,000: the same ranking, probed hours apart. A verdict
+that changed is a release published in between, or a probe that is not deterministic.
 """)
 
 code("""
 again = pr[["project", "cause"]].merge(ten[["project", "cause"]], on="project", suffixes=(" (section 2)", " (10k)"))
 moved = again[again["cause (section 2)"] != again["cause (10k)"]]
-pd.Series({"projects in both": len(again), "same verdict": len(again) - len(moved),
-           "moved": "; ".join(f"{r.project}: {r['cause (section 2)']} -> {r['cause (10k)']}" for _, r in moved.iterrows())})
+print(f"projects in both: {len(again)}, same verdict: {len(again) - len(moved)}, moved:")
+print("\\n".join(f"  {r.project}: {r['cause (section 2)']} -> {r['cause (10k)']}" for _, r in moved.iterrows()))
 """)
 
 md("""
