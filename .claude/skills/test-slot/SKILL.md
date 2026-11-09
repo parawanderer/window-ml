@@ -1,14 +1,19 @@
 ---
 name: test-slot
-description: The machine-wide queue every local test run goes through (one at a time, workers sized from free memory). Use when `npm test` prints a waiting line, when you want to start a suite without blocking on it, or before a full suite in a clone that has not pulled the queue.
+description: The machine-wide queue every local test run goes through (up to three runs at once under a memory budget, workers sized from free memory). Use when `npm test` prints a waiting line, when you want to start a suite without blocking on it, or before a full suite in a clone that has not pulled the queue.
 ---
 
-# test-slot: one test run on the machine at a time
+# test-slot: a few test runs on the machine at a time, under a budget
 
 `scripts/test-slot.mjs` is ONE queue shared by every clone and session on this machine. Every local test runner goes
 through it: each `scripts/test.mjs` spawn (so `npm test` and the genres), Playwright's main process, and
-`npm run coverage`. One run holds the slot at a time; when a run's turn comes its workers are sized from the memory free
-at that moment. Why: on 2026-11-08 nine runners from different sessions ran at once (34 workers, 27 GB of swap).
+`npm run coverage`. Up to 3 runs go at once (`TEST_SLOT_MAX_RUNS` overrides), 13 workers between them (cores − 2). A
+queued run starts when free memory, less the 25% reserve, less what the running runs planned and do not hold yet, leaves
+room for its minimum (2 workers for unit, 1 for e2e) at its kind's per-worker figure; it gets the workers that room
+gives, up to its kind's cap. FIFO among the admissible: a job is passed only by one that fits while it does not (a small
+e2e probe past a waiting suite). With nothing running the head always starts, on one worker if that is all there is.
+Why the limits: on 2026-11-08 nine runners from different sessions ran at once (34 workers, 27 GB of swap); one at a
+time then queued twelve sessions' suites behind a single 3-worker run.
 
 ```bash
 node scripts/test-slot.mjs submit [--kind unit|e2e] -- <command…>   # queue a DETACHED job; prints its ticket, returns at once
@@ -24,9 +29,10 @@ Either run `npm test` (it waits in the foreground and prints the result), or do 
 run `node scripts/test-slot.mjs wait <ticket>` in the BACKGROUND (the `background-work` skill) and let its completion
 notice arrive while you do other work.
 
-A waiting runner prints `test-slot: waiting for pid N (<clone>, <command>, W workers, held 3m); K ahead of you` at the
-start and every 30 s. When its turn comes it prints the grant line:
-`test-slot: W workers (X available, Y reserved, ~Z per worker)`.
+A waiting runner prints `test-slot: waiting for pid N (<clone>, <command>, W workers, held 3m) and pid … (<why>); K ahead
+of you` at the start and every 30 s, where `<why>` is the cap, the workers or the memory that holds the queue's first
+waiting job. When its turn comes it prints the grant line:
+`test-slot: W workers (X available, Y reserved, ~Z per worker; run 2 at once, 9 workers between them)`.
 
 ## Opt-outs
 
@@ -39,16 +45,16 @@ start and every 30 s. When its turn comes it prints the grant line:
 ## State and sizing
 
 State lives in `~/.cache/window-ml/test-queue/` (`TEST_SLOT_DIR` overrides): `queue.json`, `<ticket>.log` per job,
-`footprints.jsonl`. The per-worker figure is measured: the p90 of the last 20 measured runs of that kind (runs of 10 s or
+`footprints.jsonl` (each line has `runs`, the most runs that shared the machine with it). The per-worker figure is measured: the p90 of the last 20 measured runs of that kind (runs of 10 s or
 more only), 1 GB before any. Free memory is taken less what a bench sweep admitted in the last 30 s and has not started
-yet (its ledger, the `bench` skill), which the grant line names ("… of it promised to bench browsers starting up").
+yet (its ledger, the `bench` skill), which the grant line names ("… of it promised to bench browsers and other test runs starting up"; a running run's own unresident plan is counted from the queue, not the ledger).
 
 **With the bench.** A granted run joins the bench's ledger (`~/.cache/window-ml-bench/ledger.json`) as kind `tests`, its
 planned memory (workers × per-worker) beside it, and leaves when it ends; `hold.mjs --ledger` lists it. A sweep counts the
 part of that plan its workers do not hold yet against free memory, never against the bench's own limit. Bench sweeps do
 not queue here: they size themselves cell by cell, so a sweep backs off while a suite runs, and a suite sized while a
 sweep runs gets fewer workers. A suite's workers are fixed once granted. A holder whose process has died is reclaimed on every read, so the queue does not stall
-behind a crashed run. There is no daemon: whoever finds the slot free starts the head of the queue.
+behind a crashed run. There is no daemon: every read of the queue starts whatever is admissible.
 
 A DETACHED job runs in its own process, in the ticket's cwd, with a RECORDED subset of the environment (`PATH`, `HOME`,
 `E2E_*`, `BENCH_*`, `PW_*` and a few more) and nothing named like a secret (`KEY`, `TOKEN`, `SECRET`, `PASS`, `CRED`,
