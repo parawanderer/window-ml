@@ -99,6 +99,15 @@ test("one entry per key per scope and root: a second is refused, the same key in
     assert.equal(S.storeRefusal({ scope: "workspace", root: "/w", manifest: MYTOOL, origin: "person", pin: PIN }, have, SHIPPED_MANIFESTS), undefined);
 });
 
+test("a stored manifest may not name a credential or a network: the host honours only the shipped bytes it pinned", () => {
+    // gh itself is refused as shipped first (B2); with no shipped set to name it, the credential's reason is what is left.
+    const gh = { ...SHIPPED_MANIFESTS.gh };
+    assert.match(S.storeRefusal({ scope: "global", manifest: gh, origin: "person", pin: PIN }, [], {}), /shipped manifest only/);
+    const { credential, network, ...plain } = gh;
+    assert.ok(credential && network);
+    assert.doesNotMatch(S.storeRefusal({ scope: "global", manifest: plain, origin: "person", pin: PIN }, [], {}) ?? "", /shipped manifest only/, "the control: without them it is not this refusal");
+});
+
 // --- what a call's facts must bear out (B3, B4, B5) ---
 
 test("B4: a stored tool describes its call only while the host reports the pinned program, fingerprint and version", () => {

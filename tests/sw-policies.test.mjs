@@ -230,6 +230,21 @@ test("a stored policy over writes sees a names write: has(\"write\") and c.effec
     assert.notEqual(P.judgeCall("h-names2", "sh", rmTop, "host-sandbox").decision, "allow", "a writes-under-src allow does not cover a top-level names write");
 });
 
+// --- a call the host sends the person's credential with always asks (SHELL.md, GH UNDER THE SANDBOX RULED 2026-11-08) ---
+
+test("judgeCall: a credentialed call is answered by no allow policy and no free tier; a deny or an ask policy still answers", () => {
+    const gh = (held) => ({ argv: ["gh", "api", "/user"], credential: { provider: "github", sends: "your GitHub token", held }, effects: [] });
+    P.addRunPolicy("h-cred", { consumer: "sh", effect: "allow", source: '(c) => c.argv[0] === "gh"', label: "gh", origin: "person" });
+    assert.equal(P.judgeCall("h-cred", "sh", gh(false), "host-sandbox").decision, "allow", "the control: not injected, the allow answers");
+    assert.equal(P.judgeCall("h-cred", "sh", gh(true), "host-sandbox").decision, undefined, "injected: the person is asked");
+    assert.equal(P.judgeCall("h-none", "sh", gh(false), "host-sandbox").decision, "allow", "the control: no effects is the free tier");
+    assert.equal(P.judgeCall("h-none", "sh", gh(true), "host-sandbox").decision, undefined, "injected: not free");
+    P.addRunPolicy("h-cred-deny", { consumer: "sh", effect: "deny", source: '(c) => c.argv[0] === "gh"', label: "no gh", origin: "person" });
+    assert.equal(P.judgeCall("h-cred-deny", "sh", gh(true), "host-sandbox").decision, "deny");
+    P.addRunPolicy("h-cred-ask", { consumer: "sh", effect: "ask", source: '(c) => c.credential !== null', label: "token", origin: "person" });
+    assert.equal(P.judgeCall("h-cred-ask", "sh", gh(true), "host-sandbox").decision, "ask");
+});
+
 // --- SHELL.md's name-immutable top level at the judge (2026-10-19): a name claim at the top level is not the builtin's allow ---
 
 test("judgeCall: a shell call that claims a top-level name in a root is not the builtin's allow", () => {

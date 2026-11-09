@@ -40,7 +40,10 @@ and the step's seq the worker already knows (`delegateTool`'s `call`), never any
    2026-10-28; one rule for every program, so no manifest repeats it). An item that only contains one (`--in=@file:x`)
    is the program's text. The prefixes come from `token-prefixes.ts`, a leaf, so the shell call's neutral bundle does
    not pull in the modules that mint them.
-1. `spawn`: the host resolves the argv into facts (program, cwd, paths, repo, sandbox) and starts nothing.
+1. `spawn`: the host resolves the argv into facts (program, cwd, paths, repo, sandbox) and starts nothing. A manifest
+   naming a `credential` (gh) adds `spawn.credential` when the session is sandboxed and `hello.credentials` lists the
+   provider (`credentialFor`): the host then injects the person's token at `start`, and `judgeCall` never lets an
+   allow or the free tier answer it (PROGRAM_MANIFEST.md, "The credentialed profile").
 2. **The version probe**, for a manifest written against a version range (git, rg): an ordinary call of the manifest's
    own version args with effects empty, judged like any other. Free only under the sandbox, so on the plain host it
    is never raised; refused for a program inside the roots (and, since 2026-10-22, `shFacts` describes no in-root program by a shipped manifest, so `./cat` asks: PROGRAM_MANIFEST.md); 2 s, 4 KiB; cached by the program file's fingerprint

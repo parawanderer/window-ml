@@ -34,6 +34,14 @@
         "type": "string"
       }
     },
+    "credential": {
+      "description": "A credential the HOST holds and injects for this program, named by provider (`CREDENTIAL_PROVIDERS`). Only the provider's own program may name it, and the host honours it only for a manifest whose bytes it pinned; such a call always asks.",
+      "$ref": "#/$defs/ManifestCredential"
+    },
+    "network": {
+      "description": "What the credentialed profile may connect to. Only beside `credential`.",
+      "$ref": "#/$defs/ManifestNetwork"
+    },
     "command": {
       "description": "The program's top-level command: its effects, path operands, flags and subcommands.",
       "$ref": "#/$defs/CommandSpec"
@@ -75,6 +83,41 @@
     }
   ],
   "$defs": {
+    "ManifestCredential": {
+      "type": "object",
+      "description": "Which host-held credential a program's calls carry.",
+      "properties": {
+        "provider": {
+          "description": "A key of `CREDENTIAL_PROVIDERS`.",
+          "type": "string",
+          "enum": [
+            "github"
+          ]
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "additionalProperties": false
+    },
+    "ManifestNetwork": {
+      "type": "object",
+      "description": "The ports a credentialed call may connect to, a subset of its provider's (no host list yet: Seatbelt filters by address and port).",
+      "properties": {
+        "ports": {
+          "description": "TCP ports, each one of the provider's.",
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "ports"
+      ],
+      "additionalProperties": false
+    },
     "CommandSpec": {
       "type": "object",
       "description": "A program or one of its subcommands.",
@@ -589,5 +632,53 @@
         }
       ]
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "network"
+        ]
+      },
+      "then": {
+        "required": [
+          "credential"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "credential"
+        ],
+        "properties": {
+          "credential": {
+            "properties": {
+              "provider": {
+                "const": "github"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "program": {
+            "const": "gh"
+          },
+          "network": {
+            "properties": {
+              "ports": {
+                "items": {
+                  "enum": [
+                    443
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

@@ -235,6 +235,22 @@ test("a script's manifest has an entrypoint and NO version; a binary's has a ver
     assert.match(ep({ path: "t.mjs", sha256: "a".repeat(64), extra: 1 }), /\$\.entrypoint: \{path, sha256\}/);
 });
 
+test("a credential is its provider's program's alone, and its ports a subset of the provider's", () => {
+    const gh = JSON.parse(fs.readFileSync(new URL("gh.json", MANIFESTS), "utf8"));
+    assert.deepEqual(gh.credential, { provider: "github" });
+    assert.deepEqual(gh.network, { ports: [443] });
+    const v = (patch) => validateManifest({ ...gh, ...patch }).join("\n");
+    assert.equal(v({}), "");
+    assert.match(v({ credential: { provider: "aws" } }), /\$\.credential\.provider: one of github/);
+    assert.match(v({ credential: { provider: "toString" } }), /\$\.credential\.provider: one of github/, "a prototype key is no provider");
+    assert.match(v({ credential: { provider: "github", env: "GH_TOKEN" } }), /\$\.credential: \{provider\}/, "no env name comes from a manifest");
+    assert.match(v({ credential: "github" }), /\$\.credential: \{provider\}/);
+    assert.match(v({ program: "curl" }), /\$\.credential\.provider: github is gh's alone/);
+    for (const ports of [[80], [443, 22], [], ["443"], 443]) assert.match(v({ network: { ports } }), /\$\.network/, JSON.stringify(ports));
+    assert.match(v({ network: { ports: [443], hosts: ["*"] } }), /\$\.network: \{ports\}/, "no host list yet");
+    assert.match(v({ credential: undefined }), /\$\.network: only beside a credential/);
+});
+
 test("a script's options parse from argv[2], and a flag at argv[1] is not the script", () => {
     const m = { program: "node", entrypoint: { path: "scripts/tool.mjs", sha256: "a".repeat(64) }, command: { effects: ["read"], paths: "operands", flags: { "-n": {} } } };
     const d = describeCall(["node", "scripts/tool.mjs", "-n", "a.txt"], m);
@@ -332,7 +348,7 @@ test("repoWide + pathspecs: git rm / mv also claim the directory and the reposit
 /** The pin both repos hold: sha256 of the lines "<sha256 hex of the raw bytes>  <name>\n", over every .json of the fixtures
  *  ("calls/<p>.json") and the manifests ("manifests/<p>.json"), names sorted bytewise. The host's copy under
  *  `vectors/program-manifests/` records it in `PIN`. */
-const VECTOR_PIN = "08a37cf2ef1a64a6fc319c9940c25df5327ea2e377cf8d09611380ee355c0768";
+const VECTOR_PIN = "45639c5115f63077e74fd16ed00cc051c34fb0e679d5a83e43b26e0f3dd387f9";
 
 test("the manifests and call fixtures hash to the pin the host holds", () => {
     const sha = (b) => crypto.createHash("sha256").update(b).digest("hex");

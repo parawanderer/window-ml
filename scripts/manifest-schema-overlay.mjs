@@ -140,5 +140,18 @@ export function refineProgramManifest(gen) {
     // The entrypoint: a relative path with no `.`, `..` or empty segment and no leading `-`; a sha256 in lowercase hex.
     patch(doc, "$defs.ManifestEntrypoint.properties.path", { pattern: `^(?![/-])${SEGMENT}(?:/${SEGMENT})*$` });
     patch(doc, "$defs.ManifestEntrypoint.properties.sha256", { pattern: "^[0-9a-f]{64}$" });
+
+    // A credential provider (program-manifest.ts `CREDENTIAL_PROVIDERS`, restated: this script reads no TypeScript) is
+    // its program's alone, its ports a subset of the provider's, and `network` exists only beside a credential.
+    const PROVIDERS = { github: { program: "gh", ports: [443] } };
+    patch(doc, "$defs.ManifestCredential.properties.provider", { enum: Object.keys(PROVIDERS) });
+    patch(doc, "$defs.ManifestNetwork.properties.ports", { minItems: 1, items: { type: "integer" } });
+    doc.allOf = [
+        { if: { required: ["network"] }, then: { required: ["credential"] } },
+        ...Object.entries(PROVIDERS).map(([name, p]) => ({
+            if: { required: ["credential"], properties: { credential: { properties: { provider: { const: name } } } } },
+            then: { properties: { program: { const: p.program }, network: { properties: { ports: { items: { enum: p.ports } } } } } },
+        })),
+    ];
     return doc;
 }

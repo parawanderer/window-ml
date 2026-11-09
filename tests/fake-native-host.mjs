@@ -36,7 +36,7 @@ export function fakeNativeHost(opts = {}) {
                 if (call === "hello") {
                     const sandbox = { kind: opts.sandboxKind === undefined ? "seatbelt" : opts.sandboxKind, available: opts.sandbox !== false };
                     if (opts.landlockAbi !== undefined) sandbox.landlockAbi = opts.landlockAbi;
-                    return reply({ seq, value: { host: "window-ml-host", version: "0.2.0", protocol: opts.protocol ?? 1, platform: "macos", sandbox, modes: ["host"] } });
+                    return reply({ seq, value: { host: "window-ml-host", version: "0.2.0", protocol: opts.protocol ?? 1, platform: "macos", sandbox, modes: ["host"], ...(opts.credentials ? { credentials: opts.credentials } : {}) } });
                 }
                 if (call === "configure") return reply({ seq, value: { roots: args.roots.map((r) => ({ given: r, path: r })), sandboxed: args.sandbox !== false && opts.sandbox !== false } });
                 if (call === "spawn") {
@@ -51,6 +51,8 @@ export function fakeNativeHost(opts = {}) {
                             return { arg: p.arg, given, path, inRoot: true, secret: false, exists, ...(p.walk ? { containsSecret: false } : {}), ...(p.hash ? { sha256: opts.fs ? opts.fs[path] ?? null : opts.sha256?.(n) ?? "0".repeat(64) } : {}) };
                         }),
                         effects: "unknown", mode: "host", sandboxed: opts.sandbox !== false, placement: opts.sandbox !== false ? "host-sandbox" : "host-plain",
+                        // A host that lists credentials honours one asked for (the real one also checks the manifest's hash).
+                        ...(opts.credentials ? { credential: args.credential ? { provider: args.credential.provider, ports: [443], profile: `credentialed:${args.credential.provider}` } : null } : {}),
                     };
                     msg.id = id;
                     return reply({ seq, value: { id, expiresInMs: 1800000, ...f } });

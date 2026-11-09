@@ -14,7 +14,7 @@ import type { EffectsData } from "../effects";
 import type { ShCallSpan, ShUnasked } from "../contract";
 import type { TokenStore } from "../pointers/token-pipe";
 import { bytesOf, HostError, hostTakesEnvelope, READ_CHUNK, type HostClient, type HostEnvelope, type HostFacts, type HostStream } from "../shell/host-protocol";
-import { envelopeFor, envelopeMismatch, envelopeText, manifestFor, manifestsFor, parseShRun, planSpawn, protectedChangesText, shFacts, shOut, shOutcome, shResult, wireCodeOf, ShRefused, SH_HEAD_BYTES, SH_HOST_TIMEOUT_MS, SH_LEASE_MS, type ShFacts, type ShOut, type ShResult, type ShRunRequest } from "../shell/sh-call";
+import { credentialFor, envelopeFor, envelopeMismatch, envelopeText, manifestFor, manifestsFor, parseShRun, planSpawn, protectedChangesText, shFacts, shOut, shOutcome, shResult, wireCodeOf, ShRefused, SH_HEAD_BYTES, SH_HOST_TIMEOUT_MS, SH_LEASE_MS, type ShFacts, type ShOut, type ShResult, type ShRunRequest } from "../shell/sh-call";
 import { OUTPUT_CAP } from "../contract/contract-pointers";
 import { detachTask, type TaskOutcome } from "./sw-tasks";
 import { toolToken } from "../util";
@@ -268,7 +268,9 @@ async function runCall(ctx: ShCallContext, req: ShRunRequest, started: (h: Shell
             await manifestsReady;
             const stored = storedManifests();
             const plan = planSpawn(req, { cwd, roots, stored });
-            const spawn = () => h.client.spawn({ ...plan.spawn, owner: ownerOf(ctx) });
+            // A credential the host injects, only when its hello lists the provider (an older host would ignore it).
+            const credential = await credentialFor(plan, h);
+            const spawn = () => h.client.spawn({ ...plan.spawn, owner: ownerOf(ctx), ...(credential ? { credential } : {}) });
             let facts = await spawn();
             let f: ShFacts;
             let verdict: { by: string; policy?: string; waitedMs?: number; askId?: string };
