@@ -23,7 +23,10 @@
 //
 // Batch jobs (the rule of 2026-11-09): `--kind batch` is for any job that is NOT a test run but wants the memory lock
 // (probes, scans, notebook data runs). It declares the workers it really uses, `--workers N` (1 to BATCH_MAX_WORKERS,
-// default 1), and the queue grants all N or none: min and cap are both N, and alone it still gets N. It counts toward
+// default 1), and the queue grants all N or none: min and cap are both N, and both caps hold even alone (the
+// always-starts rule is for a run sized from free memory, not a declared count). A submit is refused (exit 2) when N
+// exceeds the machine's worker cap, or when nothing runs and N workers' memory exceeds the room: waiting would never
+// end on a small box, and granting fewer breaks all-or-nothing. It counts toward
 // the run and worker caps like any run, at most ONE runs at a time, and every queued test job is judged before any
 // batch job, whatever the submit order. Its footprints are its own (`perWorkerFor("batch")`, the unit figure until it
 // has any), so it never sizes a test run. Submitters chunk it to about five minutes or less (guidance, not enforced); a
@@ -134,17 +137,19 @@ function residentOf() {
 const readMemory = () => ({ available: availableMemory(), coming: benchComing(), total: os.totalmem(), cores: os.cpus().length });
 /** A kind's per-worker figure and worker cap (injected in tests). */
 const readKind = (kind, dir) => ({ perWorker: perWorkerFor(kind, dir).bytes, cap: capFor(kind) });
+/** A kind's per-worker figure and cap under a reading: injected by `deps.kind` or the reading itself in tests, else measured. */
+const sizingFor = (kind, m, dir, deps) => (deps.kind ? deps.kind(kind) : m.perWorker ? { perWorker: m.perWorker, cap: m.cap } : readKind(kind, dir));
 
 /**
  * Whether a job of `kind` may start now, and with how many workers. `room` is free memory less the reserve, less what
  * the bench admitted and what running runs planned and do not hold yet; `workers` is what the running runs have.
- * With nothing running the job always starts (at least one worker); else it needs its minimum in memory and in the
- * worker cap. A job that declares `want` workers (batch) needs exactly that many, gets exactly that many even alone,
- * and waits while `batches` batch jobs run (at most one). Returns `{ jobs }` or `{ jobs: 0, why }`.
+ * With nothing running a job without `want` always starts (at least one worker); else it needs its minimum in memory
+ * and in the worker cap. A job that declares `want` workers (batch) needs exactly that many in both, even alone, gets
+ * exactly that many, and waits while `batches` batch jobs run (at most one). Returns `{ jobs }` or `{ jobs: 0, why }`.
  */
 export function admit({ kind, running, workers, room, perWorker, cap, maxRuns = MAX_RUNS, maxWorkers, want = 0, batches = 0 }) {
     const left = Math.max(0, maxWorkers - workers), fit = Math.floor(room / perWorker);
-    if (!running) return { jobs: want || Math.max(1, Math.min(cap, left, fit)) };
+    if (!running && !want) return { jobs: Math.max(1, Math.min(cap, left, fit)) };
     if (kind === "batch" && batches) return { jobs: 0, why: "a batch job runs already (at most one)" };
     if (running >= maxRuns) return { jobs: 0, why: `${running} run${running === 1 ? "" : "s"} at once already (at most ${maxRuns})` };
     const min = want || minWorkersFor(kind);
@@ -234,7 +239,7 @@ export function startNext(state, dir, deps = {}) {
     const started = [];
     let batches = running.filter((j) => j.kind === "batch").length;
     for (const job of [...queued.filter((j) => j.kind !== "batch"), ...queued.filter((j) => j.kind === "batch")]) {
-        const k = deps.kind ? deps.kind(job.kind) : m.perWorker ? { perWorker: m.perWorker, cap: m.cap } : readKind(job.kind, dir);
+        const k = sizingFor(job.kind, m, dir, deps);
         const room = base - promised;
         const a = admit({ kind: job.kind, running: running.length, workers, room, perWorker: k.perWorker, cap: k.cap, maxRuns, maxWorkers, want: job.kind === "batch" ? job.want ?? 1 : 0, batches });
         if (!a.jobs) { state.waiting ??= { ticket: job.ticket, why: a.why }; if (running.length >= maxRuns) break; continue; }
@@ -263,23 +268,43 @@ function spawnJob(job, dir) {
 }
 
 /**
- * Put a job in the queue. A detached job with the same clone, command, head and working-tree hash as one still QUEUED
- * gets that one's ticket (`shared: true`): two sessions asking for the same check get one run.
+ * Why a batch job declaring `want` workers is refused at submit, or null: more workers than the machine's cap, or, with
+ * nothing running, more memory than the room above the reserve. Both are figures the submitter acts on by asking for
+ * fewer; with something running the job queues and waits for both caps like any other.
+ */
+export function batchRefusal(state, want, dir, deps = {}) {
+    const m = (deps.memory ?? readMemory)(), maxWorkers = maxWorkersFor(m.cores ?? os.cpus().length);
+    if (want > maxWorkers) return `--workers ${want}: this machine's worker cap is ${maxWorkers} (its cores less two)`;
+    if (state.jobs.some((j) => j.state === "running")) return null;
+    const { perWorker } = sizingFor("batch", m, dir, deps), room = m.available - (m.coming ?? 0) - RESERVE_FRAC * m.total;
+    if (want * perWorker <= room) return null;
+    const most = Math.floor(Math.max(0, room) / perWorker);
+    return `--workers ${want}: ${want} workers take ${fmtBytes(want * perWorker)} and, with nothing else running, the memory room is ${fmtBytes(Math.max(0, room))} above the reserve; ${most ? `ask for at most ${most}` : "not even one fits now: try later"}`;
+}
+
+/**
+ * Put a job in the queue. A detached job with the same clone, command, head and working-tree hash (and, for batch, the
+ * same declared workers) as one still QUEUED gets that one's ticket (`shared: true`): two sessions asking for the same
+ * check get one run. A batch job `batchRefusal` refuses is not queued: `{ refused }`, no ticket.
  * @param {{ cmd: string[], cwd?: string, kind?: "unit" | "e2e" | "batch", workers?: number, mode?: "attached" | "detached", env?: object, dir?: string, deps?: object, tree?: object }} o
  */
 export function submit({ cmd, cwd = process.cwd(), kind = "unit", workers = 1, mode = "detached", env = process.env, dir = slotDir(env), deps = {}, tree = treeState(cwd) }) {
-    const key = createHash("sha256").update(JSON.stringify([tree.clone, cmd, tree.head, tree.dirty])).digest("hex").slice(0, 16);
+    // A test job's key is what it was before batch existed, so an old copy's queued job is still shared.
+    const key = createHash("sha256").update(JSON.stringify([tree.clone, cmd, tree.head, tree.dirty, ...(kind === "batch" ? ["batch", workers] : [])])).digest("hex").slice(0, 16);
     const ticket = `${new Date().toISOString().replace(/[-:]/g, "").slice(0, 15)}-${randomBytes(3).toString("hex")}`;
     const by = { pid: process.pid, started: (deps.startTime ?? startTime)(process.pid) };
     const { out, reaped } = withQueue(dir, (state) => {
         const same = mode === "detached" && state.jobs.find((j) => j.state === "queued" && j.mode === "detached" && j.key === key);
         if (same) return { job: same, shared: true };
+        const refused = kind === "batch" ? batchRefusal(state, workers, dir, deps) : null;
+        if (refused) return { refused };
         const job = { ticket, mode, kind, cmd, cwd, key, clone: tree.clone, head: tree.head, dirty: tree.dirty, by, state: "queued", submittedAt: new Date().toISOString(),
             ...(kind === "batch" ? { want: workers } : {}),
             ...(mode === "detached" ? { env: jobEnv(env), log: path.join(dir, `${ticket}.log`) } : {}) };
         state.jobs.push(job);
         return { job, shared: false };
     }, deps);
+    if (out.refused) return { refused: out.refused, reaped };
     return { ticket: out.job.ticket, shared: out.shared, reaped };
 }
 
@@ -350,7 +375,8 @@ export async function acquire({ cmd, cwd = process.cwd(), kind = "unit", workers
         return { jobs: Number(env.TEST_SLOT_JOBS) || null, skipped };
     }
     const dir = slotDir(env);
-    const { ticket, reaped } = submit({ cmd, cwd, kind, workers, mode: "attached", env, dir });
+    const { ticket, reaped, refused } = submit({ cmd, cwd, kind, workers, mode: "attached", env, dir });
+    if (refused) throw Object.assign(new Error(`test-slot: refused: ${refused}`), { code: "TEST_SLOT_REFUSED" });
     const sayReaped = (list) => { for (const r of list) log(`test-slot: reclaimed the slot from pid ${r.pid ?? r.by.pid} (${r.state}: its process is gone)`); };
     sayReaped(reaped);
     let release = () => {};
@@ -446,17 +472,18 @@ if (process.argv[1] && path.resolve(process.argv[1]) === SELF) {
     const dash = rest.indexOf("--"), cmd = dash >= 0 ? rest.slice(dash + 1) : [];
     const opts = dash >= 0 ? rest.slice(0, dash) : rest;
     const kind = opts.includes("--kind") ? opts[opts.indexOf("--kind") + 1] : "unit";
-    const wArg = opts.includes("--workers") ? opts[opts.indexOf("--workers") + 1] : null;
+    const wArg = opts.includes("--workers") ? opts[opts.indexOf("--workers") + 1] ?? "" : null;
     const workers = wArg == null ? 1 : /^\d+$/.test(wArg) ? Number(wArg) : 0;
     if (op === "__job") await runJob(rest[0]);
     else if (op === "submit" || op === "run") {
         if (!cmd.length) { console.error(`usage: test-slot.mjs ${op} [--kind unit|e2e|batch [--workers N]] -- <command…>`); process.exit(2); }
         if (wArg != null && (kind !== "batch" || workers < 1 || workers > BATCH_MAX_WORKERS)) { console.error(`test-slot.mjs: --workers is for --kind batch only, an integer from 1 to ${BATCH_MAX_WORKERS}`); process.exit(2); }
         if (op === "submit") {
-            const { ticket, shared } = submit({ cmd, kind, workers });
+            const { ticket, shared, refused } = submit({ cmd, kind, workers });
+            if (refused) { console.error(`test-slot.mjs: refused: ${refused}`); process.exit(2); }
             console.log(`${ticket}${shared ? "  (the same tree and command was already queued: sharing its run)" : ""}\nwait: node scripts/test-slot.mjs wait ${ticket}\nlog:  ${path.join(slotDir(), `${ticket}.log`)}`);
         } else {
-            const { jobs } = await acquire({ cmd, kind, workers });
+            const { jobs } = await acquire({ cmd, kind, workers }).catch((e) => { if (e.code !== "TEST_SLOT_REFUSED") throw e; console.error(e.message.replace("test-slot:", "test-slot.mjs:")); process.exit(2); });
             const child = spawn(cmd[0], cmd.slice(1), { stdio: "inherit", env: { ...process.env, ...(jobs ? { TEST_SLOT_JOBS: String(jobs) } : {}) } });
             child.on("exit", (c, s) => { process.exitCode = c ?? (s ? 128 : 1); });
         }

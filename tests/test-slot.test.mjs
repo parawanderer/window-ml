@@ -15,7 +15,7 @@ const SLOT = path.join(ROOT, "scripts", "test-slot.mjs");
 // The bench's ledger, which a granted job joins: this file's own, set before the import reads it.
 process.env.BENCH_LEDGER_FILE = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "test-slot-ledger-")), "ledger.json");
 const { ledger, register, unregister } = await import("../tests/e2e/bench/memory-budget.mjs");
-const { jobsFor, capFor, skipReason, submit, finish, look, cancel, waitFor, acquire, waitingLine, jobEnv, procLive, startTime, perWorkerFor, admit, minWorkersFor, maxWorkersFor, promisedBy, MAX_RUNS, BATCH_OVERRUN_MS, BATCH_MAX_WORKERS } = await import(SLOT);
+const { jobsFor, capFor, skipReason, submit, finish, look, cancel, waitFor, acquire, waitingLine, jobEnv, procLive, startTime, perWorkerFor, admit, minWorkersFor, maxWorkersFor, promisedBy, MAX_RUNS, BATCH_OVERRUN_MS, BATCH_MAX_WORKERS, batchRefusal } = await import(SLOT);
 
 process.env.TEST_SLOT_POLL_MS = "50";
 process.env.TEST_SLOT_MAX_RUNS = "1";
@@ -94,11 +94,12 @@ test("admit: the rule written out, enumerated over runs, workers, room and kind"
     }
     assert.deepEqual([minWorkersFor("unit"), minWorkersFor("e2e"), maxWorkersFor(15), maxWorkersFor(2), MAX_RUNS], [2, 1, 13, 1, 3]);
     assert.equal(admit({ kind: "unit", running: 0, workers: 0, room: -5 * GB, perWorker: GB, cap: 8, maxWorkers: 13 }).jobs, 1, "alone, a run always starts");
-    // A declared minimum (`want`, a batch job's workers): all of it or none, and alone it still gets all of it.
+    // A declared count (`want`, a batch job's workers): all of it or none, and alone too it must fit both caps.
     for (const running of [0, 1, 2]) for (const workers of [0, 7, 8, 13]) for (const room of [-GB, 5 * GB, 6 * GB, 20 * GB]) {
         const got = admit({ kind: "batch", running, workers, room, perWorker: GB, cap: 1, maxWorkers: 13, want: 6 }).jobs;
-        assert.equal(got, running === 0 || (13 - workers >= 6 && room >= 6 * GB) ? 6 : 0, `want 6: ${running} running with ${workers} workers, ${room / GB} GB`);
+        assert.equal(got, 13 - workers >= 6 && room >= 6 * GB ? 6 : 0, `want 6: ${running} running with ${workers} workers, ${room / GB} GB`);
     }
+    assert.equal(admit({ kind: "batch", running: 0, workers: 0, room: 20 * GB, perWorker: GB, cap: 1, maxWorkers: 2, want: 6 }).jobs, 0, "alone on a 4-core machine: 6 of 2 workers is refused");
     assert.equal(admit({ kind: "unit", running: 1, workers: 0, room: 4 * GB, perWorker: GB, cap: 8, maxWorkers: 13, want: 3 }).jobs, 3, "`want` replaces the kind's minimum and cap");
 });
 
@@ -238,10 +239,41 @@ test("batch: at most one batch job runs at a time, even with room; the next star
     assert.equal(look(b, { dir, deps }).job.state, "running");
 });
 
-test("batch: a lone batch job with nothing running starts, on the memory it finds", () => {
-    const dir = tmpDir(), deps = laptop(1 * GB);
-    const a = putBatch(dir, deps, "a");
-    assert.deepEqual([look(a, { dir, deps }).job.state, look(a, { dir, deps }).job.jobs], ["running", 1]);
+test("batch: alone, a submit whose workers do not fit the memory room is refused with the figures; one that fits starts", () => {
+    // 24 GB total: the reserve is 6 GB, so 10 GB free is 4 GB of room, 4 workers at 1 GB.
+    const dir = tmpDir(), deps = laptop(10 * GB);
+    const no = submit({ kind: "batch", workers: 5, cmd: ["five"], mode: "attached", dir, deps, tree: tree() });
+    assert.deepEqual([no.ticket, no.refused], [undefined, "--workers 5: 5 workers take 5.0 GB and, with nothing else running, the memory room is 4.0 GB above the reserve; ask for at most 4"]);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, "queue.json"), "utf8")).jobs, [], "nothing queued");
+    assert.match(submit({ kind: "batch", workers: 1, cmd: ["one"], mode: "attached", dir: tmpDir(), deps: laptop(1 * GB), tree: tree() }).refused, /not even one fits now: try later$/);
+    const a = putBatch(dir, deps, "four", 4);
+    assert.deepEqual([look(a, { dir, deps }).job.state, look(a, { dir, deps }).job.jobs], ["running", 4]);
+});
+
+test("batch: more workers than the machine's cap is refused at submit, whatever runs", () => {
+    const four = { ...laptop(23 * GB), memory: () => ({ available: 23 * GB, coming: 0, total: 24 * GB, cores: 4 }) };
+    for (const queue of [[], [holder(process.pid, startTime(process.pid))]]) {
+        const dir = tmpDir();
+        writeQueue(dir, queue);
+        assert.equal(batchRefusal({ jobs: queue }, 3, dir, four), "--workers 3: this machine's worker cap is 2 (its cores less two)");
+        assert.equal(submit({ kind: "batch", workers: 3, cmd: ["three"], mode: "attached", dir, deps: four, tree: tree() }).refused, "--workers 3: this machine's worker cap is 2 (its cores less two)");
+        assert.equal(batchRefusal({ jobs: queue }, 2, dir, four), null);
+    }
+    // With something running, a short room is not a refusal: the job queues and waits.
+    const dir = tmpDir();
+    held(dir);
+    assert.equal(look(putBatch(dir, laptop(0), "six", 6), { dir, deps: laptop(0) }).job.state, "queued");
+});
+
+test("batch: the dedupe key carries the declared count, and a batch job never shares a test job's run", () => {
+    const dir = tmpDir(), deps = { ...laptop(0), spawnJob: () => assert.fail("nothing has room to start") };
+    held(dir);
+    const put = (kind, workers) => submit({ kind, workers, cmd: ["probe"], mode: "detached", dir, deps, tree: tree(), env: {} });
+    const one = put("batch", 1), six = put("batch", 6), sixAgain = put("batch", 6), unit = put("unit", 1);
+    assert.deepEqual([one.shared, six.shared, sixAgain.shared, unit.shared], [false, false, true, false]);
+    assert.notEqual(one.ticket, six.ticket);
+    assert.equal(sixAgain.ticket, six.ticket);
+    assert.equal(look(six.ticket, { dir, deps }).job.want, 6);
 });
 
 test("batch: it counts toward the 3-run cap and the 13-worker cap", () => {
@@ -258,7 +290,7 @@ test("batch: it counts toward the 3-run cap and the 13-worker cap", () => {
     assert.equal(look(six, { dir: d2, deps: big }).why, "the running runs have 8 of 13 workers");
 });
 
-test("batch: a declared worker count is all or nothing; alone it is granted whole", () => {
+test("batch: a declared worker count is all or nothing; alone it must fit too", () => {
     let dir = tmpDir(), deps = laptop(23 * GB, { perWorker: 0.1 * GB, cap: 8 });
     const a = putTest(dir, deps, "a"), b = putBatch(dir, deps, "six", 6);
     assert.deepEqual([look(b, { dir, deps }).job.state, look(b, { dir, deps }).job.want], ["queued", 6], "5 workers left of 13: held back");
@@ -273,10 +305,9 @@ test("batch: a declared worker count is all or nothing; alone it is granted whol
         assert.deepEqual([free, got.state], [free, state]);
         if (state === "running") assert.equal(got.jobs, 6);
     }
-    // Alone with a tight reading it still gets 6.
-    dir = tmpDir();
-    const d = putBatch(dir, laptop(1 * GB), "six", 6);
-    assert.deepEqual([look(d, { dir, deps: laptop(1 * GB) }).job.state, look(d, { dir, deps: laptop(1 * GB) }).job.jobs], ["running", 6]);
+    // Alone with a tight reading it is refused at submit, not granted (the always-starts rule is not for a declared count).
+    const d = submit({ kind: "batch", workers: 6, cmd: ["six"], mode: "attached", dir: tmpDir(), deps: laptop(1 * GB), tree: tree() });
+    assert.deepEqual([d.ticket, /^--workers 6: 6 workers take 6\.0 GB/.test(d.refused)], [undefined, true]);
     assert.equal(BATCH_MAX_WORKERS, 6);
 });
 
@@ -311,13 +342,18 @@ test("batch: a footprint line has durationMs, and a batch run past the overrun m
 test("batch: the CLI takes --kind batch --workers N and refuses a bad count with exit 2", () => {
     const dir = tmpDir(), env = { ...process.env, TEST_SLOT_DIR: dir };
     delete env.TEST_SLOT_TICKET;
-    const run = (...a) => spawnSync(process.execPath, [SLOT, "submit", ...a, "--", process.execPath, "-e", "0"], { cwd: ROOT, env, encoding: "utf8" });
-    for (const bad of [["--kind", "batch", "--workers", "0"], ["--kind", "batch", "--workers", "7"], ["--kind", "batch", "--workers", "2.5"], ["--kind", "batch", "--workers", "x"], ["--kind", "unit", "--workers", "2"], ["--workers", "2"]]) {
-        const r = run(...bad);
+    // Something runs (this process), so the memory room is not judged at submit; the cores are fixed by a preload.
+    writeQueue(dir, [holder(process.pid, startTime(process.pid))]);
+    const cores = (n) => `data:text/javascript,import os from "node:os"; os.cpus = () => Array(${n}).fill({});`;
+    const run = (n, ...a) => spawnSync(process.execPath, ["--import", cores(n), SLOT, "submit", ...a, "--", process.execPath, "-e", "0"], { cwd: ROOT, env, encoding: "utf8" });
+    for (const bad of [["--kind", "batch", "--workers", "0"], ["--kind", "batch", "--workers", "7"], ["--kind", "batch", "--workers", "2.5"], ["--kind", "batch", "--workers", "x"], ["--kind", "batch", "--workers"], ["--kind", "unit", "--workers", "2"], ["--workers", "2"]]) {
+        const r = run(15, ...bad);
         assert.equal(r.status, 2, bad.join(" "));
         assert.match(r.stderr, /--workers is for --kind batch only/);
     }
-    for (const ok of [["--kind", "batch"], ["--kind", "batch", "--workers", "6"]]) assert.equal(run(...ok).status, 0, ok.join(" "));
+    const capped = run(4, "--kind", "batch", "--workers", "3");
+    assert.deepEqual([capped.status, capped.stderr.trim()], [2, "test-slot.mjs: refused: --workers 3: this machine's worker cap is 2 (its cores less two)"]);
+    for (const ok of [["--kind", "batch"], ["--kind", "batch", "--workers", "6"]]) assert.equal(run(15, ...ok).status, 0, ok.join(" "));
 });
 
 // --- who skips the queue ---

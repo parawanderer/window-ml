@@ -40,7 +40,13 @@ A probe, a scan or a notebook data run that is not a test but wants the machine-
 `--kind batch`, never as `--kind unit` (that sizes it as a suite, puts its memory into the unit figures and takes a
 slot ahead of tests). The rule of 2026-11-09:
 
-- It declares the cores it really uses, `--workers N` (1 to 6, default 1); the queue grants all N or none, also alone.
+- It declares the cores it really uses, `--workers N` (1 to 6, default 1); the queue grants all N or none. `--workers`
+  with no value, outside 1..6, or with another kind exits 2.
+- Alone, both caps still hold: the always-starts rule is for a run sized from free memory, not a declared count. So a
+  submit (or `run`) exits 2 with the figures when N exceeds the machine's worker cap (cores less two: 2 on a 4-core box),
+  or when nothing runs and N workers' memory exceeds the room above the reserve; ask for fewer. Waiting would never end
+  on a small box, and granting fewer breaks all-or-nothing. Submitted while something runs, it queues and waits for both.
+- The same command submitted with a different N is a different job (the dedupe key carries N).
 - Every queued test job is judged before any batch job, whatever the submit order; at most ONE batch job runs at a time.
 - It counts toward the 3-run and 13-worker caps like any run.
 - Chunk it to about five minutes or less (guidance, not enforced). A run past 15 minutes is marked `overran: true` in
