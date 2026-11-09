@@ -240,46 +240,7 @@ counts against a tag-based filter:
 
 code("""
 LOCK = {pypi.canonicalize_name(k) for k in ENV["lock"]}
-STDLIB = set(sys.stdlib_module_names)
-PLATFORM = re.compile(r"does not support processes|can't start new thread|unsupported platform|find_library|"
-                      r"failed to find lib|no library called|libdl|only works on X86|socket|dynamic library", re.I)
-norm = lambda s: re.sub(r"[-_.]", "", s.lower())
-
-def primary(r):
-    for m in r.modules:
-        if norm(m) == norm(r.project) or norm(m.split(".")[-1]) == norm(r.project.split("-")[-1]):
-            return m
-    return r.modules[0] if r.modules else None
-
-def cause(r):
-    if r.stage in ("timeout", "crash"):
-        return r.stage
-    if r.stage == "no-module":
-        return "probe"
-    if r.stage == "install":
-        e = r.get("error") or ""
-        m = re.search(r"wheel for '([A-Za-z0-9_.\\-]+)", e)
-        if "already installed" in e or (m and pypi.canonicalize_name(m.group(1)) in LOCK):
-            return "version"
-        if "extra ==" in e:
-            return "extra"
-        if PLATFORM.search(e):
-            return "platform"
-        return "no build" if "Can't find a pure Python 3 wheel" in e else "install: other"
-    bad = {i["module"]: i for i in r.imports if not i["ok"]}
-    p = primary(r)
-    if p not in bad:
-        return "probe"
-    b = bad[p]
-    if PLATFORM.search(b["error"]):
-        return "platform"
-    m = re.search(r"No module named '([^']+)'", b["error"])
-    if m:
-        missing = m.group(1).split(".")[0]
-        if "/" in missing:
-            return "probe"
-        return "platform" if missing in STDLIB else "undeclared host"
-    return "import: other"
+cause = lambda r: pypi.cause(r, LOCK)
 
 COUNTS = {"version": "no, if the filter reads ranges", "extra": "yes (extras unread)", "no build": "yes",
           "platform": "yes, irreducible for tags", "undeclared host": "no", "probe": "no (the probe's)",
