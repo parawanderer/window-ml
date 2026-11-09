@@ -4,6 +4,7 @@
 //
 //     node notebooks/python-packages/probe.mjs env
 //     node notebooks/python-packages/probe.mjs install tabulate
+//     node notebooks/python-packages/probe.mjs core       # the stdlib modules that fail to import, and attributes
 //
 // Wheels the lock names come from the Pyodide CDN for the pinned version (tools/pyodide-dist.json), the rest from PyPI,
 // which is what micropip does in the browser. Run from the repo root.
@@ -112,14 +113,68 @@ else:
 json.dumps(out)
 `;
 
+// What scan.py needs to know about the core: every stdlib module and submodule that fails to import (its value is the
+// error), and the attributes of the stdlib modules that platform tests ask about (`hasattr(select, "epoll")`).
+const CORE_PY = `
+import sys, json, importlib, pkgutil, platform
+skip = ("test", "idlelib", "tkinter", "turtledemo", "lib2to3", "ensurepip", "antigravity", "this", "__phello__", "__hello__")
+names = {m.name for m in pkgutil.walk_packages(onerror=lambda n: None)
+         if m.name.split(".")[0] in sys.stdlib_module_names and m.name.split(".")[0] not in skip}
+names |= {m for m in sys.stdlib_module_names if m not in skip}
+bad = {}
+for m in sorted(names):
+    try:
+        importlib.import_module(m)
+    except BaseException as e:
+        bad[m] = type(e).__name__ + ": " + str(e)[:100]
+attrs = {}
+for m in ["os", "sys", "select", "socket", "signal", "time", "fcntl", "termios", "errno", "mmap", "posix", "threading",
+          "asyncio", "ssl", "ctypes", "subprocess", "multiprocessing", "platform"]:
+    try:
+        attrs[m] = sorted(dir(importlib.import_module(m)))
+    except BaseException:
+        attrs[m] = None
+import ctypes, ctypes.util, multiprocessing as mp, os, subprocess, threading, concurrent.futures as cf
+calls = {}
+def t(name, f):
+    try:
+        f()
+        calls[name] = "ok"
+    except BaseException as e:
+        calls[name] = type(e).__name__ + ": " + str(e)[:80]
+t("subprocess.run", lambda: subprocess.run(["true"]))
+t("subprocess.Popen", lambda: subprocess.Popen(["true"]))
+t("subprocess.getoutput", lambda: subprocess.getoutput("true"))
+t("os.popen", lambda: os.popen("true").read())
+t("os.system", lambda: os.system("true"))
+t("os.fork", lambda: os.fork())
+t("threading.Thread.start", lambda: threading.Thread(target=lambda: None).start())
+t("threading.Timer.start", lambda: threading.Timer(1, print).start())
+t("concurrent.futures.ThreadPoolExecutor.submit", lambda: cf.ThreadPoolExecutor(1).submit(lambda: 1).result())
+for n in ["Lock", "RLock", "Queue", "Pool", "Manager", "Event", "Semaphore", "get_context"]:
+    t("multiprocessing." + n, lambda n=n: getattr(mp, n)())
+t("multiprocessing.Value", lambda: mp.Value("i", 1))
+t("multiprocessing.Process()", lambda: mp.Process(target=print))
+t("multiprocessing.Process.start", lambda: mp.Process(target=print).start())
+t("ctypes.CDLL(None)", lambda: ctypes.CDLL(None))
+t("ctypes.CDLL('libc.so.6')", lambda: ctypes.CDLL("libc.so.6"))
+calls["ctypes.util.find_library('c')"] = repr(ctypes.util.find_library("c"))
+t("socket.socket", lambda: __import__("socket").socket())
+t("signal.signal", lambda: __import__("signal").signal(2, lambda *a: None))
+json.dumps({"n_stdlib": len(names), "bad": bad, "calls": calls, "attrs": attrs, "machine": platform.machine(), "system": platform.system(),
+            "version_info": list(sys.version_info[:3])})
+`;
+
 const [mode, arg] = process.argv.slice(2);
 const py = await boot();
 if (mode === "env") {
     console.log(await py.runPythonAsync(ENV_PY));
+} else if (mode === "core") {
+    console.log(await py.runPythonAsync(CORE_PY));
 } else if (mode === "install" && arg) {
     console.log(await py.runPythonAsync(INSTALL_PY(arg)));
 } else {
-    console.error("usage: probe.mjs env | install <project>");
+    console.error("usage: probe.mjs env | core | install <project>");
     process.exit(2);
 }
 process.exit(0);
