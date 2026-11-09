@@ -8,7 +8,7 @@
 import type { EffectsData } from "../effects";
 import type { HostPutFacts } from "./host-protocol";
 import type { ShCardLine } from "./sh-call";
-import { ShRefused } from "./sh-call";
+import { ShRefused, tildeLines } from "./sh-call";
 import { FILE_PREFIX } from "../pointers/token-prefixes";
 
 /** The longest `path` one put may name, in characters: a path, not a payload. */
@@ -89,7 +89,7 @@ export function putCardLines(f: PutFacts): ShCardLine[] {
         { label: "write", value: `${p.file} (${p.size.toLocaleString("en-US")} bytes)` },
         { label: "to", value: p.path },
         ...(p.exists ? [{ label: "replaces", value: `the file there now${p.existingSize !== null ? ` (${p.existingSize.toLocaleString("en-US")} bytes)` : ""}`, warn: true }] : []),
-        ...p.tilde.filter((t) => t.index === "path").map((t) => ({ label: "~", value: t.to ? `${t.from} is ${t.to}` : `${t.from} stays literal (${t.reason ?? "no home"})`, warn: !t.to })),
+        ...tildeLines(p.tilde.filter((t) => t.index === "path")),
     ];
 }
 

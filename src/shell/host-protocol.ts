@@ -120,6 +120,10 @@ export interface HostPathFact {
 /** The enforcer whose bound applies to a call (docs/spec/EFFECTS.md): the OS sandbox, nothing, or a container. */
 export type HostPlacement = "host-sandbox" | "host-plain" | "container";
 
+/** One argument the host expanded a leading `~` in: where it was (an argv position, `"cwd"`, or a put's `"path"`), what it
+ *  said, and what it became, or `to: null` with why it stayed literal (no usable `HOME`). */
+export interface HostTilde { index: number | "cwd" | "path"; from: string; to: string | null; reason?: "no-home" | "home-not-absolute" | string }
+
 /** `spawn`'s answer: the RESOLVED FACTS of one pending call, which a policy and the card are given. */
 export interface HostFacts {
     id: string;
@@ -143,6 +147,8 @@ export interface HostFacts {
      *  `hosts` are the names its proxy admits; a build from before the proxy (window-ml-host #34, never released)
      *  reports none, and its profile reaches any host on `ports`. */
     credential?: { provider: string; ports: number[]; hosts?: string[]; profile: string } | null;
+    /** The arguments that began with `~`, as the host expanded them (`hello.tilde`); absent from an older host. */
+    tilde?: HostTilde[];
 }
 
 /** One stream of a finished call: a pointer to the bytes the host holds, or why it could not keep them. */
@@ -228,7 +234,7 @@ export interface HostPutFacts {
     exists: boolean;
     existingSize: number | null;
     size: number;
-    tilde: { index: number | "cwd" | "path"; from: string; to: string | null; reason?: string }[];
+    tilde: HostTilde[];
     expiresInMs: number;
 }
 
