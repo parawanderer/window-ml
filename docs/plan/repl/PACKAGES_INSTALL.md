@@ -110,8 +110,19 @@ Its size is measured in slice 1. The raw cache for 2,110 projects is 16 MB untri
 the number.
 
 The test names the pin it was measured against, and fails if `tools/pyodide-dist.json` names another one. So a pin
-bump cannot pass on a stale fixture: the bump reruns the probe and the extract (notebook-only, through test-slot as
-the 2026-11-09 ruling describes) and updates the pin in the test.
+bump cannot pass on a stale fixture, and every bump turns the test red until the probe and the extract rerun.
+
+**Who reruns it, and where** (ruled 2026-11-09, the coordinator's review of this brief). The rerun goes in the pin-bump
+PR itself, and whoever bumps the pin does it. The `pyodide-build` skill gains a step, in slice 1's PR, that names the
+notebook's make script (`notebooks/python-packages/make-pypi-compat.py`, whose header lists the commands) and the
+probe's job command. The packages lane reviews the new `verdicts.json` and snapshot in that PR. The test's pin line
+moves in the same PR, so main never has a bumped core with a stale oracle.
+
+The rerun's cost, from #1584: `freeze-top 10000`, then 20 chunks of 500 at 6 interpreters, submitted one at a time as
+`--kind unit` jobs. Each chunk's time from submit to finish was 174 to 2,217 s, median 227 s, 11,006 s (about 3 h 3 min)
+in all. Those times include waiting in the queue behind other jobs. test-slot does not keep a finished job's own run
+time, so the share spent queued is not known. Once the bench lane's batch kind lands (#1583, open at the time of
+writing), the chunks run as `--kind batch --workers 6`, and the skill step names that command.
 
 Three assertions, against the same snapshot:
 
