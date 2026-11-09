@@ -510,6 +510,7 @@ test("a page cannot start, resume or steer a turn in a run the worker built, eve
 
 const NOTES = { name: "notes.txt", type: "text/plain", text: "alpha\nbeta\n" };
 const PDF_TO_PAGE_RUN = "report.pdf is a PDF, and this run was built by the page, which does not read one: start a run from the panel to attach it";
+const pageRunMoved = (name, origin) => `${name} would go to ${origin}, which did not build this run: start a run from the panel to attach it`;
 
 /** A worker with a value store and a PDF reader whose model answers "done", and helpers to wait on and read it. */
 function fileWorld(more = {}) {
@@ -642,7 +643,65 @@ test("a run a page built is refused a PDF by name, from the panel (USER_RUN_ACTI
     assert.match(big.refused, /^big\.txt is too large to send whole: 40 kB; a message takes up to 32 kB of files\. This run was built by the page/);
 });
 
-test("ADVERSARIAL: files from the HUD card's sessionSend for a run a PAGE built still meet userRunAction's guards: its tab on ANOTHER site, or another tab's id, is refused and nothing reaches a page", { ...T, todo: "needs #1520 (pageRunMoved)" }, async () => {
+test("ADVERSARIAL: a run a page built, its tab now on ANOTHER approved site, is refused the person's files; nothing reaches that page", T, async () => {
+    // The relay goes to whatever page the tab shows now: the site decision alone would let the person's files into a site
+    // that did not build the run (e3's second pass on #1492).
+    const A = "https://builder.example/", B = "https://other.example/";
+    const tab = { id: 7, url: A, title: "Builder" };
+    const bg = loadBackground({
+        config, siteGate: true, local: { ml_site_always: ["https://builder.example", "https://other.example"] },
+        openTabs: [tab],
+        onFetch: (call) => call.url.includes("/chat/completions") ? jsonResponse({ choices: [{ message: { content: "ok" } }] }) : jsonResponse({}),
+        onTabMessage: async (_t, msg) => (msg.type === "ADOPT_RUN_NOW" ? { pageInfo: "" } : msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.finish ? { result: "" } : undefined),
+    });
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "pagebuilt2", task: "first", systemPrompt: "S", tools: [], model: "m", think: null, maxSteps: 2,
+        autoApprovePython: false, autoApproveReadonly: false, surface: "off",
+        rebuild: { toolNames: [], model: "m", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: true },
+    } }, { tab: { id: 7, url: A }, url: A });
+    await flush(20);
+    tab.url = B;
+    const from = { tab: { id: 7, url: B }, url: B };
+    const r = await bg.send({ type: "USER_RUN_ACTION", payload: { hash: "pagebuilt2", action: "send", text: "and this", files: [NOTES] } }, from);
+    assert.deepEqual([r.data, r.refused], [null, pageRunMoved("notes.txt", "https://other.example")], "refused with its reason, answered as handled");
+    void bg.send({ type: "ML_SESSION_REMOTE", tabId: 7, action: "send", hash: "pagebuilt2", text: "and this", files: [NOTES], surface: "devtools" }, EXT);
+    await flush(20);
+    assert.equal(bg.tabMessages.filter(([, m]) => m.type === "ML_SESSION_TO_PAGE").length, 0, "no message, and no file, to the other site's page");
+    // Back on the builder's site, the same file goes to its page as before.
+    tab.url = A;
+    void bg.send({ type: "ML_SESSION_REMOTE", tabId: 7, action: "send", hash: "pagebuilt2", text: "and this", files: [NOTES], surface: "devtools" }, EXT);
+    await flush(20);
+    assert.deepEqual(JSON.parse(JSON.stringify(bg.tabMessages.map(([, m]) => m).filter((m) => m.type === "ML_SESSION_TO_PAGE").map((m) => m.files))), [[NOTES]]);
+});
+
+test("ADVERSARIAL: a run's hash sent with ANOTHER tab's id is refused the person's files; nothing reaches that tab's page", T, async () => {
+    // The worker declines a run that is not on the sending tab, and the caller then hands the message to THAT tab's
+    // page: the person's files would go to a page that did not build the run (flaky-ci's review of #1520).
+    const A = "https://builder.example/", B = "https://other.example/";
+    const bg = loadBackground({
+        config, siteGate: true, local: { ml_site_always: ["https://builder.example", "https://other.example"] },
+        openTabs: [{ id: 7, url: A, title: "Builder" }, { id: 8, url: B, title: "Other" }],
+        onFetch: (call) => call.url.includes("/chat/completions") ? jsonResponse({ choices: [{ message: { content: "ok" } }] }) : jsonResponse({}),
+        onTabMessage: async (_t, msg) => (msg.type === "ADOPT_RUN_NOW" ? { pageInfo: "" } : msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.finish ? { result: "" } : undefined),
+    });
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "pagebuilt3", task: "first", systemPrompt: "S", tools: [], model: "m", think: null, maxSteps: 2,
+        autoApprovePython: false, autoApproveReadonly: false, surface: "off",
+        rebuild: { toolNames: [], model: "m", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: true },
+    } }, { tab: { id: 7, url: A }, url: A });
+    await flush(20);
+    const r = await bg.send({ type: "USER_RUN_ACTION", payload: { hash: "pagebuilt3", action: "send", text: "and this", files: [NOTES] } }, { tab: { id: 8, url: B }, url: B });
+    assert.deepEqual([r.data, r.refused], [null, pageRunMoved("notes.txt", "https://other.example")], "refused with its reason, answered as handled");
+    void bg.send({ type: "ML_SESSION_REMOTE", tabId: 8, action: "send", hash: "pagebuilt3", text: "and this", files: [NOTES], surface: "devtools" }, EXT);
+    await flush(20);
+    assert.equal(bg.tabMessages.filter(([, m]) => m.type === "ML_SESSION_TO_PAGE" && m.files).length, 0, "no file to the other tab's page");
+    // With no file, the message falls back to that page as before.
+    void bg.send({ type: "ML_SESSION_REMOTE", tabId: 8, action: "send", hash: "pagebuilt3", text: "and this", surface: "devtools" }, EXT);
+    await flush(20);
+    assert.equal(bg.tabMessages.filter(([t, m]) => t === 8 && m.type === "ML_SESSION_TO_PAGE").length, 1);
+});
+
+test("ADVERSARIAL: files from the HUD card's sessionSend for a run a PAGE built still meet userRunAction's guards: its tab on ANOTHER site, or another tab's id, is refused and nothing reaches a page", T, async () => {
     // The card's sessionSend reaches the worker as USER_RUN_ACTION from the shell's tab (shell.ts, `workerFirst`), so the
     // guards are the ones the two rows of #1520 pin; this row is the card's route through them with a file the card now sends.
     const A = "https://builder.example/", B = "https://other.example/";
@@ -1263,13 +1322,13 @@ const RUN_TAB = { tab: { id: 7, url: SITE.url }, url: SITE.url, origin: "https:/
  * tab 7 is hostile: `atApproval(bg)` runs the instant the person's approval is sent, and `inPage(bg, msg)` whenever the
  * run sends a tool to the page. `siteGate` applies the real origin gate, so site.example is NOT approved.
  */
-async function attackRun(args, { then = [], siteGate = true, atApproval, inPage, evictAtFirstGate = false, local = {}, first, persist = false, atGate } = {}) {
+async function attackRun(args, { then = [], siteGate = true, atApproval, inPage, evictAtFirstGate = false, local = {}, first, persist = false, atGate, tab = SITE } = {}) {
     let turns = 0, bg, evicted = false;
     const calls = [first ?? { name: "fetch_url", args }, ...then];
     const gates = [];
     const seenByModel = [];
     bg = loadBackground({
-        config: { ...config, autoApproveReadonly: true }, openTabs: [SITE], siteGate, local,
+        config: { ...config, autoApproveReadonly: true }, openTabs: [tab], siteGate, local,
         onFetch: (call) => {
             if (call.url.startsWith("https://other.example/")) return { ok: true, status: 200, url: call.url, headers: { get: (h) => (/content-type/i.test(h) ? "text/html; charset=utf-8" : null) }, text: async () => SECRET, arrayBuffer: async () => new TextEncoder().encode(SECRET).buffer, body: null };
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
@@ -1347,6 +1406,97 @@ test("ACCEPTANCE: a worker-hosted run's fetch_url gate honours a run policy that
     assert.deepEqual(JSON.parse(JSON.stringify(fetchStep?.reused)), [{ kind: "policy", detail: `fetch ${OTHER}` }], "the row says which policy allowed it");
     assert.match(toolResults.at(-1) ?? "", /SECRET OTHER SITE/, "and the fetch ran, in the worker, and the model read it");
     assert.equal(fetched.length, 1);
+});
+
+// --- a RELATIVE fetch URL: approvals are keyed by the URL the fetch is judged as, not by how the call spelled it ---
+
+/** Scheme-relative: resolved against site.example/page it is OTHER (cross-origin, so it needs an approval a path-relative one would not). */
+const OTHER_REL = "//other.example/private";
+
+test("an approved relative fetch_url succeeds, and its repeat is answered with no card and no refusal", T, async () => {
+    const { gates, toolResults, fetched } = await attackRun({ url: OTHER_REL }, { local: SITE_APPROVED, then: [{ name: "fetch_url", args: { url: OTHER_REL } }] });
+    assert.deepEqual(gates, ["fetch_url"], `one card, for the first call only. Gates: ${JSON.stringify(gates)}`);
+    assert.equal(toolResults.length, 2);
+    for (const r of toolResults) assert.match(r, /SECRET OTHER SITE/, `both calls read it; got ${r.slice(0, 200)}`);
+    assert.equal(fetched.length, 2, "the repeat fetched too");
+});
+
+test("an approved exec whose ml.fetch literal is scheme-relative may fetch it, as its absolute form may", T, async () => {
+    let literal;
+    const { gates, fetched } = await attackRun({}, {
+        local: SITE_APPROVED,
+        first: { name: "exec", args: { js: `return (await ml.fetch(${JSON.stringify(OTHER_REL)})).status` } },
+        inPage: async (bg, msg) => {
+            if (msg.payload.name !== "exec" || msg.payload.renderOnly || msg.payload.readonlyTry || msg.payload.precheck) return undefined;
+            // What the approved script's own ml.fetch sends: the literal as written.
+            literal = await bg.send({ type: "FETCH_URL", payload: { url: OTHER_REL } }, RUN_TAB);
+            return undefined;
+        },
+    });
+    assert.deepEqual(gates, ["exec"]);
+    assert.equal(literal?.data?.status, 200, `the literal URL was fetched: ${JSON.stringify(literal).slice(0, 160)}`);
+    assert.equal(fetched.length, 1);
+});
+
+test("'Approve + remember' on an exec with a relative literal remembers the URL the fetch is judged as", T, async () => {
+    const { gates, toolResults, steps, fetched } = await attackRun({}, {
+        local: SITE_APPROVED, persist: true,
+        first: { name: "exec", args: { js: `return (await ml.fetch(${JSON.stringify(OTHER_REL)})).status` } },
+        then: [{ name: "fetch_url", args: { url: OTHER } }],
+    });
+    assert.deepEqual(gates, ["exec"], `one card; the fetch_url of the resolved URL asked nothing. Gates: ${JSON.stringify(gates)}`);
+    const step = steps.find((e) => e.tool === "fetch_url");
+    assert.equal(step?.approval, "consented");
+    assert.deepEqual(JSON.parse(JSON.stringify(step?.reused)), [{ kind: "policy", detail: `fetch ${OTHER}` }]);
+    assert.match(toolResults.at(-1) ?? "", /SECRET OTHER SITE/);
+    assert.equal(fetched.length, 1);
+});
+
+test("on an http page, a scheme-relative fetch_url to an http origin the run consented to takes the page's scheme and asks nothing", T, async () => {
+    // An approved navigate to http://other.example consents to that http origin; the run then goes back to its page.
+    // "//other.example/x" resolves against the http page to the consented origin, as the FETCH_URL choke point judges it.
+    // The gate once forced "https:" onto it and asked for https://other.example, which the run never consented to. Not
+    // the page's own host: the current-page check answers that one before the gate's same-origin rule is read.
+    const tab = { ...SITE, url: "http://site.example/page" };
+    let docN = 1;
+    const sender = () => ({ tab: { id: tab.id, url: tab.url }, url: tab.url, origin: new URL(tab.url).origin, frameId: 0, documentId: `doc-nav-${docN}` });
+    const { gates } = await attackRun({}, {
+        tab, local: { ml_site_always: ["http://site.example"] },
+        first: { name: "navigate", args: { url: "http://other.example/page" } },
+        then: [{ name: "navigate", args: { url: tab.url } }, { name: "fetch_url", args: { url: "//other.example/x" } }],
+        inPage: async (bg, msg) => {
+            const p = msg.payload;
+            if (p.name !== "navigate" || p.precheck || p.renderOnly || p.readonlyTry) return undefined;
+            const to = p.args.url;
+            tab.url = to; docN++;
+            bg.commit(tab.id, { documentId: `doc-nav-${docN}`, url: to });
+            setTimeout(async () => {
+                const ready = JSON.parse(JSON.stringify(await bg.send({ type: "CONTENT_READY" }, sender()) ?? {}));
+                for (const a of ready.adopt ?? []) void bg.send({ type: "RUN_READOPTED", payload: { runId: a.runId, pageInfo: `You are on ${to}` } }, sender());
+            }, 5);
+            return { result: `Navigating to ${to}` };
+        },
+    });
+    assert.deepEqual(gates, ["navigate"], `the navigate out asks; the way back and the fetch of its origin do not. Gates: ${JSON.stringify(gates)}`);
+});
+
+test("RED TEAM: approving a relative fetch_url grants the resolved origin only, and a literal resolved on one page grants nothing on another origin", T, async () => {
+    // Approving "//other.example/private" does not cover a different host, or the same path on another origin.
+    const a = await attackRun({ url: OTHER_REL }, { local: SITE_APPROVED, then: [{ name: "fetch_url", args: { url: "//third.example/private" } }] });
+    assert.deepEqual(a.gates, ["fetch_url", "fetch_url"], "the second origin asked again");
+    // An exec literal "/private" resolves to site.example/private; it must not let the page fetch other.example/private meanwhile.
+    let page;
+    const b = await attackRun({}, {
+        local: SITE_APPROVED,
+        first: { name: "exec", args: { js: `const r = await ml.fetch("/private"); return r.status;` } },
+        inPage: async (bg, msg) => {
+            if (msg.payload.name !== "exec" || msg.payload.renderOnly || msg.payload.readonlyTry || msg.payload.precheck) return undefined;
+            page = await bg.send({ type: "FETCH_URL", payload: { url: OTHER } }, RUN_TAB);
+            return undefined;
+        },
+    });
+    assert.equal(b.fetched.length, 0, `nothing reached other.example; got ${JSON.stringify(b.fetched)}`);
+    assert.ok(page === undefined || !JSON.stringify(page).includes("SECRET OTHER SITE"), `the page read it: ${JSON.stringify(page)}`);
 });
 
 test("a global DENY policy refuses a fetch_url with no card, and the model reads which policy refused it", T, async () => {

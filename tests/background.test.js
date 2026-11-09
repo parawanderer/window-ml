@@ -537,6 +537,52 @@ test("FETCH_URL: the Advanced same-origin-auth opt-in frees a SAME-ORIGIN creden
     assert.ok(cross.error && /wasn't approved/i.test(cross.error), "cross-origin credentialed still ALWAYS asks, even with the opt-in");
 });
 
+// --- FETCH_URL with a relative URL: resolved against the page the call is for, then judged as its absolute form ---
+
+test("FETCH_URL: a relative URL resolves against the caller's page and is fetched as that same-origin URL", async () => {
+    const page = "https://site.example/inbox/today?tab=1";
+    const urls = [];
+    const bg = loadBackground({ config: baseConfig(), onFetch: (call) => { urls.push(call.url); return fetchResponse('{"ok":1}', { contentType: "application/json", url: call.url }); } });
+    const send = (payload) => bg.send({ type: "FETCH_URL", payload }, { tab: { id: 9, url: page }, url: page });
+    for (const [rel, abs] of [["../other", "https://site.example/other"], ["/api/me.json", "https://site.example/api/me.json"], ["?q=2", "https://site.example/inbox/today?q=2"], ["next", "https://site.example/inbox/next"]]) {
+        const r = await send({ url: rel });
+        assert.ok(r.data && !r.error, `${rel}: fetched (${r.error})`);
+        assert.equal(urls.at(-1), abs, `${rel}: requested as ${abs}`);
+    }
+    const asYou = await send({ url: "/api/me.json", credentials: true });
+    assert.ok(asYou.data && !asYou.error, `a same-origin relative as-you fetch is free, as its absolute form is (${asYou.error})`);
+});
+
+test("FETCH_URL: a relative URL from a call with no page is refused with a sentence saying there is nothing to resolve it against, and nothing is requested", async () => {
+    const urls = [];
+    const bg = loadBackground({ config: baseConfig(), onFetch: (call) => { urls.push(call.url); return fetchResponse("x", { url: call.url }); } });
+    for (const rel of ["/api/me.json", "../other", "next"]) {
+        const r = await bg.send({ type: "FETCH_URL", payload: { url: rel } }, {});
+        assert.equal(r.error, `Refused: "${rel}" is a relative URL, and this call has no page to resolve it against. Give the full URL, starting with https://.`);
+    }
+    // A string no base can rescue keeps the existing refusal.
+    const page = "https://site.example/a";
+    assert.equal((await bg.send({ type: "FETCH_URL", payload: { url: "http://[bad" } }, { tab: { id: 9, url: page }, url: page })).error, `Refused: "http://[bad" is not a valid URL.`);
+    assert.deepEqual(urls, []);
+});
+
+test("ADVERSARIAL: a relative URL that resolves off the page's origin is judged exactly as its absolute form", async () => {
+    const urls = [];
+    const bg = loadBackground({ config: baseConfig(), onFetch: (call) => { urls.push(call.url); return fetchResponse("x", { url: call.url }); } });
+    const page = "https://site.example/inbox";
+    const send = (url, extra = {}) => bg.send({ type: "FETCH_URL", payload: { url, ...extra } }, { tab: { id: 9, url: page }, url: page });
+    // A scheme-relative URL names another host: the same refusal as the absolute URL, for a plain and an as-you fetch.
+    for (const extra of [{}, { credentials: true }, { rendered: true }]) {
+        const rel = await send("//other.example/x", extra);
+        const abs = await send("https://other.example/x", extra);
+        assert.ok(abs.error, `${JSON.stringify(extra)}: the absolute form is refused`);
+        assert.equal(rel.error, abs.error, `${JSON.stringify(extra)}: the relative form gets the absolute form's refusal`);
+    }
+    // A relative URL from a local file (a worker run's page; the router refuses a file page's own call) is pinned in
+    // tests/fetch-target.test.mjs.
+    assert.deepEqual(urls, [], "nothing was requested");
+});
+
 // ---- GET_INVOCATION (how the user opens the HUD) ----
 // The shortcut is user-rebindable, so the answer must come from chrome.commands at call
 // time. Hardcoding "Alt+Space" anywhere would eventually tell a user to press a dead key.
