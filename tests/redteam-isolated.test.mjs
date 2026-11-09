@@ -298,7 +298,8 @@ test("a MAIN-world CDP exec's wrapper deletes __mlCdpStream from the page's glob
     const lines = [];
     vm.runInContext(`globalThis.${boundName(r.bg)} = (p) => __sent.push(p)`, Object.assign(page, { __sent: lines }));
     const out = await vm.runInContext(wrapper, page);
-    assert.deepEqual(JSON.parse(JSON.stringify(out.logs)), ["real"], "positive control: the script's own line was collected");
+    // The wrapper keeps its lines in a null-prototype store with a count (no page builtin on them); the worker rebuilds the list.
+    assert.deepEqual(Array.from({ length: out.n }, (_, i) => out.logs[i]), ["real"], "positive control: the script's own line was collected");
     assert.equal(lines.length, 1, "positive control: and streamed through the binding");
     assert.equal(vm.runInContext("Object.getOwnPropertyNames(globalThis).some((k) => k.startsWith('__mlCdpStream'))", page), false, "the binding is still on the page's global after the exec");
     assert.equal(page.console, pageConsole, "the page's console object was replaced");
