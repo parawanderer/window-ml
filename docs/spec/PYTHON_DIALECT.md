@@ -346,6 +346,36 @@ package name, a version, a source, the hash), which makes this a cheap early con
 The same hash keys the package's library manifest, so an installed package arrives with the description the dialect
 needs, or arrives as `unknown` and every call into it asks.
 
+**Measured 2026-11-09** (the packages lane's notebook, `notebooks/python-packages/pypi-compat.ipynb`, PR #1557, against
+the real core `pyodide-restricted-314.0.3-35bd1d69`: 110 tags, 354 lock entries): 725 of PyPI's top 1,000 projects
+install and import; 95% of the top 100 are installable, 67% of ranks 1001-2000; `grpcio` alone blocks 79 of the top
+2,000. Four rulings follow from it.
+
+- **Three sources, two of them local.** 62% of the wheels a successful install fetched came from the core's lock (the
+  Pyodide CDN), not PyPI. The local mirror therefore holds the pinned core's WHOLE lock beside the wheels the person
+  has approved, so the lock is never a network read; PyPI stays the one gated network read. The `source` fact a policy
+  sees is one of `lock`, `mirror`, `pypi`.
+- **One artefact per package, decided before download.** 1,461 of 1,467 installable closures resolve to ONE file per
+  package under the core's tags (the four with more, `isort`, `multiprocess`, `backrefs`, `pex`, take the first file
+  in the resolver's order and record its hash like any other). The "works here" verdict (tags, the closure under the
+  interpreter's markers, version ranges against the lock) is computed BEFORE the download and before the approval
+  card: right 96.4% of the times it says yes, and saying yes to 99.0% of what works. The card therefore lists every
+  file the approval covers, with its hash, or refuses up front. A failed import AFTER the install is still a failure
+  (15 platform limits no tag carries, 8 micropip non-backtracks, 3 extras in the measurement): the install rolls back
+  and nothing is recorded as installed.
+- **The start-up set pins versions.** 161 of the 208 lock packages in the top 2,000 lag PyPI, and a loaded package
+  cannot move, so the `version` fact for a package in the lock IS the lock's version; a newer PyPI release is not
+  offered (nine top projects fail only on `packaging>=26.2` against the loaded 26.1; a core bump moves them, an
+  install does not).
+- **An undeclared dependency is a second ask, not a failure.** 31 projects (`opentelemetry-instrumentation-*`,
+  `sphinxcontrib-*`) import a package they do not declare: the install succeeds, the import asks for the missing
+  package by name through the same card.
+
+Host placement is a COLUMN of the notebook, not a verdict: 459 of the 533 projects not installable in Pyodide have a
+wheel for a native CPython 3.14 on macOS arm64, measured directly with the host's closure unchecked and the host's tag
+set assumed rather than read from window-ml-host. No placement rule is drawn from it until the host side reads its own
+tags. Not measured anywhere: whether a package WORKS when called beyond import (a locked cell cannot reach the network).
+
 ## Secrets
 
 A secret handle is a receiver kind of its own in the dialect: no attributes, no methods, `repr` is `[secret: github]`,
