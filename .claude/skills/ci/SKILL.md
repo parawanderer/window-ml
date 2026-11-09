@@ -224,13 +224,6 @@ flaky), and the only entries that BLOCKED a run that day:
 
 Flaky only (passed on retry, never blocked a run), worth knowing because two may be PRODUCT bugs, not races:
 
-- **`site-access.spec.mjs` › `@security attack 13: cannot be cancelled by the page`** (`:258` on main; `:238` on
-  `7ae44af9`) — count 2. Once on run 40579352419 (2026-10-15 era); then BOTH tries on run 40712844338 (e2e 3/3 on #1244,
-  job 122902564352): times out at `idx.settled(hash)` after `approveInCard`, the run never left running/waiting within
-  its 20 s. The same shard is green on `7ae44af9` (run 40710327490) and the only commit between was a one-line chat-web
-  locator change, so not the diff; a rerun of the shard passed. A @security test going flaky is a bug report until
-  proven otherwise: security's test-only fix (#1255) replaces the settled poll with a wait on `fake.calls()` and names
-  the stage that stalled. Do not raise the 20 s and do not touch `idx.settled`'s meaning of "ended" without that.
 - **`site-access.spec.mjs` › `@security attack 15 › 15e: the shell's own admission keeps the page out of the card…`** —
   see Recently removed (#1236 fixed the mechanism). The flaky history stands as a measurement: 3 flaky on main in the
   80-run window of 2026-10-15 (the run did not reach an ended status within 20 s of the approve click, security
@@ -240,10 +233,6 @@ Flaky only (passed on retry, never blocked a run), worth knowing because two may
   `ml_res_window` Received 6 Expected < 6 on both tries; the on-screen check at `:2119` passed. Peer traced it to
   `settleScrub` in `src/sidebar/resource/resource-scrub.tsx:44-55` (400 ms re-armed `setTimeout`, `chrome.storage.local.set`
   in a swallowed catch). Owner: resource panel. Do not chase as a flake.
-- **`background.test.js:2588` › `two START_RUNs under one run id while the first is still starting: one hosts, one is
-  refused`** — flaked once on #998 (both starts hosted, `actual: 2, expected: 1`), passed on rerun. The test races two
-  START_RUNs through a held restore and a 20ms wait; timing-sensitive. Rerun the job before blaming a diff that does
-  not touch background start.
 - Seen once each: `site-access` 16a (@security), `site-access` 18 closed-shadow-root (`:1164`, 16.5 s), `site-access` 19
   DevTools-panel ask (`:1492`, 16.3 s), `cross-page` composer seq collision, `chat-web`
   phone tooltip, `focus-restore`, `bench-editor` traceback, `resource-panel` narrow window (`:3619`),
@@ -255,13 +244,10 @@ Flaky only (passed on retry, never blocked a run), worth knowing because two may
   person allows THIS site to approve its own actions (17.4 s on retry). The two site-access rows are the security
   lane's if a second hit lands. `bench-editor.spec.mjs:207` traceback row — second sighting, also retry-passed here
   (first is in the line above).
-- Node-suite, seen once each on 2026-10-28: `hub-host.test.mjs:96` › a session's events arrive in the contract's order,
+- Node-suite, seen once on 2026-10-28: `hub-host.test.mjs:96` › a session's events arrive in the contract's order,
   with its own cursor (run 40700963610, hub job on #1238; got `["reset","first","backfilled","second","live"]`, expected
-  "second" before "backfilled" — the backfill command's result raced cursor 2's stream delivery; the job reran green)
-  and `python-spend-queue.test.mjs:184` › a flood of queued callbacks is cut at the deadline (run 40710327490 on #1244,
-  test node 26: "the spend took 1745 ms" against the row's `1500`; the PR's diff touches no python code). The flood
-  row is fixed in #1269 (`973c979c`) — see Recently removed; run 40723506642 (#1250's head, test node 26) measured
-  1620 ms against the same `1500`, the sighting that ruled it.
+  "second" before "backfilled" — the backfill command's result raced cursor 2's stream delivery; the job reran green).
+  (`python-spend-queue.test.mjs:184` ran the same day and is fixed — see Recently removed.)
 
 - Seen on 2026-10-28 (run 40731919596, e2e 3/3 on #1269 — a one-file `tests/python-spend-queue.test.mjs` diff,
   none of these rows; the shard rerun passed): `review-look.spec.mjs:730` › the parameterized "Hiding or recolouring
@@ -298,6 +284,25 @@ Flaky only (passed on retry, never blocked a run), worth knowing because two may
 node:test had no real failures in that window: every `not ok` was a documented `# TODO`.
 
 Recently removed, recorded so nobody re-adds them from memory:
+
+- ~~`background.test.js` › `two START_RUNs under one run id while the first is still starting: one hosts, one is
+  refused`~~ (listed at `:2588`, then `:2603`) — **fixed** in #1556 (`b6ab8dc3`, 2026-11-09): the row raced two
+  START_RUNs through a held restore and a fixed `setTimeout(r, 20)`, and on a loaded runner the starts reached the
+  claim after `releaseFetch`, so the first turn settled and the second hosted. It now waits for the loser's own
+  refusal (the visible sign both starts reached a duplicate-start guard while the first turn was live) before
+  releasing the fetch, with a 5 s cap that fails rather than hangs. Invariants unchanged: one hosts, the loser is
+  refused `/already running/`, fetches 1. Measured before the fix: flaked once on #998 (both hosted, `actual: 2,
+  expected: 1`), then again on #1520's CI (run 42495939024, `hosted 2, expected 1` at :2631 on a 14-min loaded
+  runner). Do not add as flake; the 20 ms was never the bound.
+
+- ~~`site-access.spec.mjs` › `@security attack 13: cannot be cancelled by the page`~~ (`:258` on main; `:238` on
+  `7ae44af9`) — **fixed** in #1255 (`677faeb1`, 2026-10-28), a test fix and not a mechanism change: the run's
+  `idx.settled(hash)` poll is replaced by a wait on `fake.calls()` and the failure names the stage that stalled.
+  Measured before the fix: count 2, once on run 40579352419 (2026-10-15 era) and then BOTH tries on run 40712844338
+  (e2e 3/3 on #1244, job 122902564352) — times out after `approveInCard`, the run never left running/waiting within
+  its 20 s. The same shard is green on `7ae44af9` (run 40710327490), the only commit between a one-line chat-web
+  locator change. Do not add as flake; the 20 s bound and `idx.settled`'s meaning of "ended" were left alone on
+  purpose.
 
 - ~~`output-scroll.spec.mjs:34` › `output cell: tail-follows at the bottom, holds still when scrolled up`~~ —
   **fixed** in #1345 (`263e8359`, 2026-10-29), the wait and not the product: the `the matched line is on screen
