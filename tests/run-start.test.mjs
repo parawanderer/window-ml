@@ -1761,11 +1761,11 @@ test("RED TEAM: a navigate the gate calls relative but the browser resolves to a
     assert.deepEqual(seen.map(([, , gates]) => gates), pairs.map(() => ["navigate"]), `each spelling leaves the origin, so each must ask once; got ${JSON.stringify(seen)}`);
 });
 
-test("RED TEAM: a fetch_url the gate calls relative reads the other origin only through its card", T, async () => {
-    // One property across both orders the code can have: while the spelling early-out stood, no card was shown and the
-    // FETCH_URL choke point refused the read (sw-fetch-url.ts, `caller.consented`); with the gate resolving the
-    // spelling, each of them cards like the absolute control and the read its card approves happens. What may never be
-    // true is a read with no card — and a card whose read silently does not happen would hide exactly that.
+test("RED TEAM: a fetch_url the gate calls relative cards like the absolute control, and its approved read happens", T, async () => {
+    // What this pins is the fetch half of the fix, not merely "no uncarded read": while fetchSameOrigin kept its
+    // spelling early-out, every row below still passed (the FETCH_URL choke point refused the read for want of a card),
+    // so a card-free refusal and a silent failure were the same observable. Each spelling must now card exactly like the
+    // absolute control and the read that card approves must go out; reverting fetchSameOrigin alone fails this row.
     const control = await attackRun({ url: "https://other.example/x" }, { local: SITE_APPROVED });
     assert.deepEqual(control.gates, ["fetch_url"], `the absolute spelling's read asks`);
     assert.equal(control.fetched.length, 1, `the absolute spelling was fetched: the harness sees a read`);
@@ -1773,7 +1773,8 @@ test("RED TEAM: a fetch_url the gate calls relative reads the other origin only 
     for (const url of SPELLED_RELATIVE) {
         const { gates, toolResults, fetched } = await attackRun({ url }, { local: SITE_APPROVED });
         const read = fetched.length > 0 || toolResults.some((t) => /SECRET OTHER SITE/.test(t ?? ""));
-        assert.equal(read, gates.length > 0, `${JSON.stringify(url)}: a read of the other origin only behind its card; got gates ${JSON.stringify(gates)}, read ${read}`);
+        assert.deepEqual(gates, ["fetch_url"], `${JSON.stringify(url)}: the other origin's read asks`);
+        assert.equal(read, true, `${JSON.stringify(url)}: the read its card approved happened; got ${JSON.stringify({ fetched: fetched.length, toolResults })}`);
     }
 });
 
