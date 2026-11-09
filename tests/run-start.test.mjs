@@ -1562,6 +1562,95 @@ test("RED TEAM: on an http page, consenting to http://other.example does not let
     assert.deepEqual(gates, ["navigate", "navigate"], `each new host asks. Gates: ${JSON.stringify(gates)}`);
 });
 
+// --- a navigate or fetch SPELLED so the gate reads it as relative, and the browser does not ---
+//
+// navNeedsConsent and fetchSameOrigin (sw-run-host.ts) answer "same-origin" for any URL that is neither absolute
+// (/^[a-z][a-z0-9+.-]*:\/\//i) nor "//"-prefixed. WHATWG resolution, which the page's navigate tool uses (dom.ts
+// navTarget: new URL(url, href)) and the FETCH_URL choke point uses, puts several such spellings on ANOTHER origin: a
+// backslash is a separator in a special URL; a scheme with the wrong number of slashes still yields an authority; and
+// a space, tab or newline is stripped before parsing. The gate then reads a same-origin navigate and shows no card
+// while the browser leaves for the other site. The neighbour that must stay free is in the rows too: a percent-encoded
+// backslash is not a separator, so "/%5Cother.example/x" stays on the page's origin.
+//
+// The card is the property under test: a navigate that leaves the origin the person consented to asks, whoever spelled
+// it. The first two rows measure the shape (the browser goes there) and the default (what stays on the origin); the
+// third is the red-team row, marked todo while the gate reads these spellings as relative.
+
+/** Spellings the gate's relative test accepts and the browser resolves to another origin, from the https SITE.
+ *  Each is a distinct mechanism in the WHATWG parser, not a sample: a backslash is a special URL's separator; a
+ *  scheme with the wrong number of slashes still yields an authority; a space, tab or newline is stripped before
+ *  parsing. */
+const SPELLED_RELATIVE = [
+    "/\\other.example/x",        // a backslash after the first slash: the parser reads it as a second one
+    "\\\\other.example/x",       // two backslashes: WHATWG reads this as "//"
+    "\\/other.example/x",        // backslash then slash
+    "https:/\\other.example/x",  // a scheme with one slash too few, then a backslash
+    "http:other.example/z",      // a scheme, no slashes: an authority all the same, and a downgrade
+    " https://other.example/z",  // a leading space, stripped before parsing
+    "\thttps://other.example/z", // a leading tab, stripped before parsing
+    "\nhttps://other.example/z", // a leading newline, stripped before parsing
+];
+
+/** The same mechanism as "http:other.example/z", on a page whose scheme is already https: there the browser reads it
+ *  as a PATH on the page's origin, so the page a run starts on decides. Measured both ways below. */
+const SCHEME_ONLY = "https:other.example/z";
+const HTTP_PAGE = "http://site.example/page";
+
+/** Spellings that are the page's own origin, as the gate reads them and as the browser resolves them. */
+const SPELLED_OWN = ["/deeper/page", "?q=1", "#top", "/%5Cother.example/x", SCHEME_ONLY];
+
+test("a navigate's spelling the gate calls relative still moves the tab to the other origin", T, async () => {
+    const pairs = [...SPELLED_RELATIVE.map((url) => [SITE.url, url]), [HTTP_PAGE, SCHEME_ONLY]];
+    for (const [page, url] of pairs) {
+        const { tab, inPage } = arrivingTab(page);
+        await attackRun({}, { tab, local: SITE_APPROVED, inPage, first: { name: "navigate", args: { url } } });
+        const dest = new URL(url, page);
+        // Another origin, whichever one it is: "http:other.example/z" names http, which from this https page is also a
+        // downgrade. Where the browser goes, not merely that it leaves, is the assertion.
+        assert.notEqual(dest.origin, new URL(page).origin, `${JSON.stringify(url)} on ${page} is another origin`);
+        assert.equal(tab.url, dest.href, `the tab went where the browser resolves ${JSON.stringify(url)} on ${page}`);
+    }
+});
+
+test("a navigate spelled as the page's own origin takes no card, and the tab stays on it", T, async () => {
+    // The default's own assertion: the free path must stay free, "https:other.example/z" on an https page included,
+    // which is the same string the row above takes off-origin from an http one.
+    for (const url of SPELLED_OWN) {
+        const { tab, inPage } = arrivingTab(SITE.url);
+        const { gates } = await attackRun({}, { tab, local: SITE_APPROVED, inPage, first: { name: "navigate", args: { url } } });
+        assert.deepEqual(gates, [], `${JSON.stringify(url)} is the page's own origin: no card`);
+        assert.equal(new URL(tab.url).origin, "https://site.example", `${JSON.stringify(url)} stayed on the site`);
+    }
+});
+
+test("RED TEAM: a navigate the gate calls relative but the browser resolves to another origin asks first", { ...T, todo: "navNeedsConsent's relative early-out (sw-run-host.ts) reads a backslash, a short-slashed scheme and a stripped space/tab/newline as same-origin; #1551 resolved the scheme, not the spelling" }, async () => {
+    // Every spelling, measured, not the first one to fail: the row is the list, and the diff names each.
+    const pairs = [...SPELLED_RELATIVE.map((url) => [SITE.url, url]), [HTTP_PAGE, SCHEME_ONLY]];
+    const seen = [];
+    for (const [page, url] of pairs) {
+        const { tab, inPage } = arrivingTab(page);
+        const { gates } = await attackRun({}, { tab, local: SITE_APPROVED, inPage, first: { name: "navigate", args: { url } } });
+        seen.push([page, url, gates]);
+    }
+    assert.deepEqual(seen.map(([, , gates]) => gates), pairs.map(() => ["navigate"]), `each spelling leaves the origin, so each must ask once; got ${JSON.stringify(seen)}`);
+});
+
+test("RED TEAM: a fetch_url the gate calls relative never reads the other origin's body without the card", T, async () => {
+    // The free tier here is the agent-host prompt only: the FETCH_URL choke point judges the resolved URL again
+    // (sw-fetch-url.ts, `caller.consented`), so the read must be refused there even when no card was shown. The
+    // absolute spelling is the control: the same shape of call DOES read the site once the card is answered, so a row
+    // that finds nothing is the choke point refusing, not a harness that cannot see a read.
+    const control = await attackRun({ url: "https://other.example/x" }, { local: SITE_APPROVED });
+    assert.deepEqual(control.gates, ["fetch_url"], `the absolute spelling's read asks`);
+    assert.equal(control.fetched.length, 1, `the absolute spelling was fetched: the harness sees a read`);
+    assert.match(control.toolResults[0] ?? "", /SECRET OTHER SITE/, `and the model read it`);
+    for (const url of SPELLED_RELATIVE) {
+        const { gates, toolResults, fetched } = await attackRun({ url }, { local: SITE_APPROVED });
+        assert.ok(!toolResults.some((t) => /SECRET OTHER SITE/.test(t ?? "")), `${JSON.stringify(url)}: the body reached the model without a card (gates ${JSON.stringify(gates)})`);
+        assert.equal(fetched.length, 0, `${JSON.stringify(url)}: the worker fetched the other origin (gates ${JSON.stringify(gates)})`);
+    }
+});
+
 // --- the policy page (POLICIES): only extension pages, and a change re-judges a card already showing ---
 
 /** The Settings panel, as the browser describes an extension page sending a message. */
