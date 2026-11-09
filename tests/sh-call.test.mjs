@@ -36,6 +36,8 @@ test("a pointer token as an argv item is refused as a held value at every positi
         }
     }
     refused([["cat", "@file:3fa91c2"]], "BadRequest", /an attachment is not on the host's disk/);
+    // The way out is named with the item's own handle (FILE_ATTACHMENTS.md ruling 3, amended 2026-11-08).
+    refused([["cat", "@file:3fa91c2"]], "BadRequest", /write it there first with ml\.sh\.put\("@file:3fa91c2", "inbox\/<name>"\) and pass that path/);
     refused([["cat", "@tool:ab12cd3"]], "BadRequest", /read it with ml\.dereference, or reduce it with ml\.pipe/);
     for (const tok of ["@pt:1a2b3c", "@box:9f8e7d6c"]) refused([["cat", tok]], "BadRequest", /it names a place on the page, which no program on the host can see/);
     for (const literal of ["./@file:3fa91c2", "--in=@file:3fa91c2", " @file:3fa91c2", "@FILE:3fa91c2", "@files:x", "@file", "@tool", "a@tool:ab12cd3", "@pt", "@box", "x@pt:1a2b3c", "@"])

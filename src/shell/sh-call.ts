@@ -153,7 +153,7 @@ const POINTER_PREFIXES = [TOOL_TOKEN_PREFIX, FILE_PREFIX, POINT_PREFIX, BOX_PREF
 export function heldValueRefusal(a: string, i: number): string | null {
     const prefix = POINTER_PREFIXES.find((p) => a.startsWith(p));
     if (!prefix) return null;
-    const how = prefix === FILE_PREFIX ? "an attachment is not on the host's disk, so no program can open it by that name"
+    const how = prefix === FILE_PREFIX ? `an attachment is not on the host's disk, so no program can open it by that name; write it there first with ml.sh.put(${JSON.stringify(a.slice(0, 80))}, "inbox/<name>") and pass that path`
         : prefix === TOOL_TOKEN_PREFIX ? "read it with ml.dereference, or reduce it with ml.pipe, and pass the text"
         : "it names a place on the page, which no program on the host can see";
     return `argv[${i}] is ${JSON.stringify(a.slice(0, 80))}, a held value, not a path: ${how}. A file that really has this name is ./${a.slice(0, 80)}`;
