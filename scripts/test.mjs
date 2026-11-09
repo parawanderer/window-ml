@@ -176,6 +176,13 @@ const GENRES = {
     // Workers, the prelude's environment and the table sources. Fast; `python` below is the real interpreter.
     "python-host": { about: "the Python sandbox's host side without Pyodide: offscreen routing, the idle reap, the env, table sources", files: ["python-env.test.mjs", "python-reap.test.mjs", "python-run-namespace.test.mjs", "python-table-sources.test.mjs", "redteam-python-keep.test.mjs", "python-keep-fixes.test.mjs"] },
     python: { about: "real CPython in Pyodide (self-skips without dist/pyodide)", files: ["python.test.mjs", "redteam-python-sandbox.test.mjs", "redteam-python-regex-backtrack.test.mjs", "python-lockdown.test.mjs", "python-run-namespace-py.test.mjs", "python-dialect-vectors-wasm.test.mjs", "regex-corpus-core.test.mjs", "regex-cost-core.test.mjs", "python-matplotlib.test.mjs", "python-dialect-inside.test.mjs", "redteam-python-inside.test.mjs", "python-dialect-library.test.mjs", "python-dialect-library-redteam.test.mjs", "redteam-python-lockdown.test.mjs", "redteam-hard-python-lockdown.test.mjs", "redteam-hard-python-realm.test.mjs", "python-spend-queue.test.mjs", "python-worker-bridges.test.mjs", "python-bench-stop.test.mjs"] },
+    // Everything named `fetch-*`, which is two subjects the filename prefix alone joins: the page's fetch
+    // machinery (the cache's budget, the ladder's presentation both sinks share) and the release-download
+    // scripts the CI gates fetch binaries with (fetch-hub's retry and fallback, fetch-host's pin).
+    fetch: {
+        about: "the fetch surface: the page's cache and the ladder's presentation, and the release downloads fetch-hub and fetch-host retry and pin",
+        files: ["fetch-cache.test.mjs", "fetch-ladder.test.mjs", "fetch-hub-asset.test.mjs", "fetch-host-pin.test.mjs"],
+    },
     live: { about: "opt-in, hits the backend in .env", files: ["live.test.js"] },
 };
 const claimed = new Set(Object.values(GENRES).flatMap((g) => g.files));
