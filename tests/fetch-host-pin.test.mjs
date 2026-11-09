@@ -382,13 +382,26 @@ test("a wrong-hash archive is refused with checksum mismatch, and the land dir i
 
 // --- a token in the environment rides the API calls ---
 
-test("GITHUB_TOKEN or GH_TOKEN is a bearer on the API calls, and the download routes never see it", async () => {
+test("GITHUB_TOKEN or GH_TOKEN is a bearer on the API calls, and no download route — SHA256SUMS included — ever sees it", async () => {
+    // `bumpPin` reads SHA256SUMS from `releases/download` like the archives: a token leaked onto that fetch would
+    // be the same leak as onto an archive's, so the row runs `bumpPin` and judges EVERY download URL it asks.
     const seen = []; // {url, headers}
+    const bodies = {};
+    const sums = [];
+    for (const t of ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin"]) {
+        const file = `wmlhost-v0.7.0-${t}.tar.gz`;
+        const bytes = new TextEncoder().encode(`the ${t} archive\n`);
+        bodies[file] = bytes;
+        sums.push(`${createHash("sha256").update(bytes).digest("hex")}  ${file}`);
+    }
+    const API_ONLY = "wmlhost-v0.7.0-api-only.tar.gz"; // absent from the download route → the fallback is exercised
     const stub = async (url, init) => {
         const u = String(url);
         seen.push({ url: u, headers: init?.headers ?? {} });
+        if (u.endsWith("/SHA256SUMS")) return { ok: true, text: async () => sums.join("\n") + "\n" };
+        if (u.includes("/releases/download/") && bodies[u.split("/").pop()]) return { ok: true, arrayBuffer: async () => bodies[u.split("/").pop()] };
         if (u.includes("/releases/download/")) return { ok: false, status: 504, arrayBuffer: async () => new Uint8Array() };
-        if (u.includes("/releases/tags/")) return { ok: true, json: async () => ({ assets: [{ id: 4242, name: ARCHIVE }] }) };
+        if (u.includes("/releases/tags/")) return { ok: true, json: async () => ({ assets: [{ id: 4242, name: API_ONLY }] }) };
         if (u.includes("/releases/assets/")) return { ok: true, arrayBuffer: async () => new TextEncoder().encode("bytes\n") };
         if (u.includes("/git/ref/tags/")) return { ok: true, json: async () => ({ object: { type: "commit", sha: PEELED } }) };
         return { ok: false, status: 404, json: async () => ({}), arrayBuffer: async () => new Uint8Array() };
@@ -399,14 +412,15 @@ test("GITHUB_TOKEN or GH_TOKEN is a bearer on the API calls, and the download ro
     try {
         process.env.GITHUB_TOKEN = "ghs_row_token";
         delete process.env.GH_TOKEN;
-        await releaseArchive("v0.7.0", ARCHIVE, instantSleep().sleep); // download 504s → the API fallback carries it
-        await resolveCommit("v0.7.0");
+        await bumpPin("v0.7.0", instantSleep().sleep); // SHA256SUMS + three archives + the peel
+        await releaseArchive("v0.7.0", API_ONLY, instantSleep().sleep); // download 504s → the API fallback carries it
+        assert.ok(seen.some((x) => x.url.endsWith("/SHA256SUMS")), "bumpPin's SHA256SUMS fetch is among the asks");
         for (const s of seen.filter((x) => x.url.includes("api.github.com"))) {
             assert.equal(s.headers.Authorization, "Bearer ghs_row_token", `${s.url} carries the token`);
         }
-        assert.ok(seen.some((x) => x.url.includes("/releases/download/")), "the download route was asked");
+        assert.ok(seen.filter((x) => x.url.includes("/releases/download/")).length > 1, "the download routes were asked (SHA256SUMS and the archives)");
         for (const s of seen.filter((x) => x.url.includes("/releases/download/"))) {
-            assert.equal(s.headers.Authorization, undefined, "the download route never sees the token");
+            assert.equal(s.headers.Authorization, undefined, `${s.url} never sees the token`);
         }
         seen.length = 0;
         delete process.env.GITHUB_TOKEN;
