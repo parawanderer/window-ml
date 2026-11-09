@@ -52,7 +52,7 @@ export function fakeNativeHost(opts = {}) {
                         }),
                         effects: "unknown", mode: "host", sandboxed: opts.sandbox !== false, placement: opts.sandbox !== false ? "host-sandbox" : "host-plain",
                         // A host that lists credentials honours one asked for (the real one also checks the manifest's hash).
-                        ...(opts.credentials ? { credential: args.credential ? { provider: args.credential.provider, ports: [443], profile: `credentialed:${args.credential.provider}` } : null } : {}),
+                        ...(opts.credentials ? { credential: args.credential ? { provider: args.credential.provider, ports: [443], hosts: ["api.github.com", "github.com"], profile: `credentialed:${args.credential.provider}` } : null } : {}),
                     };
                     msg.id = id;
                     return reply({ seq, value: { id, expiresInMs: 1800000, ...f } });

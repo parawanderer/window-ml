@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 
-const { describeCall, hardenArgv, validateManifest, inRange } = await import("../src/shell/program-manifest.ts");
+const { describeCall, hardenArgv, validateManifest, inRange, CREDENTIAL_PROVIDERS } = await import("../src/shell/program-manifest.ts");
 const { effectKey, free, boundFor, fromProgramEffect } = await import("../src/effects.ts");
 
 const MANIFESTS = new URL("../src/shell/manifests/", import.meta.url);
@@ -235,10 +235,10 @@ test("a script's manifest has an entrypoint and NO version; a binary's has a ver
     assert.match(ep({ path: "t.mjs", sha256: "a".repeat(64), extra: 1 }), /\$\.entrypoint: \{path, sha256\}/);
 });
 
-test("a credential is its provider's program's alone, and its ports a subset of the provider's", () => {
+test("a credential is its provider's program's alone, and its ports and hosts subsets of the provider's", () => {
     const gh = JSON.parse(fs.readFileSync(new URL("gh.json", MANIFESTS), "utf8"));
     assert.deepEqual(gh.credential, { provider: "github" });
-    assert.deepEqual(gh.network, { ports: [443] });
+    assert.deepEqual(gh.network, { ports: [443], hosts: CREDENTIAL_PROVIDERS.github.hosts }, "the shipped gh.json asks for every GitHub host the host lists");
     const v = (patch) => validateManifest({ ...gh, ...patch }).join("\n");
     assert.equal(v({}), "");
     assert.match(v({ credential: { provider: "aws" } }), /\$\.credential\.provider: one of github/);
@@ -247,7 +247,11 @@ test("a credential is its provider's program's alone, and its ports a subset of 
     assert.match(v({ credential: "github" }), /\$\.credential: \{provider\}/);
     assert.match(v({ program: "curl" }), /\$\.credential\.provider: github is gh's alone/);
     for (const ports of [[80], [443, 22], [], ["443"], 443]) assert.match(v({ network: { ports } }), /\$\.network/, JSON.stringify(ports));
-    assert.match(v({ network: { ports: [443], hosts: ["*"] } }), /\$\.network: \{ports\}/, "no host list yet");
+    for (const hosts of [["*"], ["*.github.com"], ["example.com"], ["api.github.com", "evil.test"], ["API.GITHUB.COM"], ["api.github.com."], [], [1], "api.github.com"])
+        assert.match(v({ network: { ports: [443], hosts } }), /\$\.network\.hosts: /, JSON.stringify(hosts));
+    assert.equal(v({ network: { ports: [443], hosts: ["api.github.com"] } }), "", "a subset");
+    assert.equal(v({ network: { ports: [443] } }), "", "no hosts: every provider host, as a manifest from before the field");
+    assert.match(v({ network: { ports: [443], paths: ["/"] } }), /\$\.network: \{ports, hosts\?\}/);
     assert.match(v({ credential: undefined }), /\$\.network: only beside a credential/);
 });
 

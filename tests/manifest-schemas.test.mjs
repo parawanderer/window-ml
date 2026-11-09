@@ -131,7 +131,11 @@ const INVALID = [
     ["a network with no credential", GH, (m) => { delete m.credential; }],
     ["a port the provider does not list", GH, (m) => { m.network.ports = [80]; }],
     ["an empty port list", GH, (m) => { m.network.ports = []; }],
-    ["a host list (not yet a field)", GH, (m) => { m.network.hosts = ["api.github.com"]; }],
+    ["a host the provider does not list", GH, (m) => { m.network.hosts = ["api.github.com", "example.com"]; }],
+    ["a host the provider lists, spelt otherwise", GH, (m) => { m.network.hosts = ["API.github.com"]; }],
+    ["an empty host list", GH, (m) => { m.network.hosts = []; }],
+    ["a host not a string", GH, (m) => { m.network.hosts = [443]; }],
+    ["an unknown network key", GH, (m) => { m.network.paths = ["/"]; }],
     // unknown keys, at every level
     ["unknown top-level key", BIN, (m) => { m.extra = 1; }],
     ["unknown command key", BIN, (m) => { m.command.extra = 1; }],
