@@ -1446,7 +1446,15 @@ async function attackRun(args, { then = [], siteGate = true, atApproval, inPage,
     bg = loadBackground({
         config: { ...config, autoApproveReadonly: true }, openTabs: [tab], siteGate, local,
         onFetch: (call) => {
-            if (call.url.startsWith("https://other.example/")) return { ok: true, status: 200, url: call.url, headers: { get: (h) => (/content-type/i.test(h) ? "text/html; charset=utf-8" : null) }, text: async () => SECRET, arrayBuffer: async () => new TextEncoder().encode(SECRET).buffer, body: null };
+            // What the fetch actually requests, as a browser normalises it before it goes out: the free-tier section
+            // below feeds spellings like "https:/\\other.example/x" to it, which reach other.example but not a prefix
+            // match on the raw string, and "http:other.example/z", which is the http origin and not the https one. A
+            // URL that will not parse is matched as spelled.
+            let asked = String(call.url);
+            try { asked = new URL(asked).href; } catch { /* not absolute: the string as spelled is all there is */ }
+            // A response's url is the normalised one a browser would report, which is what the spellings under test
+            // reach; for every other row here the two are the same string.
+            if (/^https?:\/\/other\.example\//.test(asked)) return { ok: true, status: 200, url: asked, headers: { get: (h) => (/content-type/i.test(h) ? "text/html; charset=utf-8" : null) }, text: async () => SECRET, arrayBuffer: async () => new TextEncoder().encode(SECRET).buffer, body: null };
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
             const msgs = call.body.messages;
             seenByModel.push(msgs);
@@ -1741,7 +1749,7 @@ test("a navigate spelled as the page's own origin takes no card, and the tab sta
     }
 });
 
-test("RED TEAM: a navigate the gate calls relative but the browser resolves to another origin asks first", { ...T, todo: "navNeedsConsent's relative early-out (sw-run-host.ts) reads a backslash, a short-slashed scheme and a stripped space/tab/newline as same-origin; #1551 resolved the scheme, not the spelling" }, async () => {
+test("RED TEAM: a navigate the gate calls relative but the browser resolves to another origin asks first", T, async () => {
     // Every spelling, measured, not the first one to fail: the row is the list, and the diff names each.
     const pairs = [...SPELLED_RELATIVE.map((url) => [SITE.url, url]), [HTTP_PAGE, SCHEME_ONLY]];
     const seen = [];
