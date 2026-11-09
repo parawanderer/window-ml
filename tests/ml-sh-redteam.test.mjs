@@ -895,3 +895,38 @@ test("ml.sh.put: another run's handle, a host that cannot take a file, and a fil
         } finally { unhost(); }
     }
 });
+
+// --- 10. UPGRADE: an attachment stored before ml.sh.put (the run's payload and value rows as sw-attach.ts wrote them) ---
+
+test("UPGRADE: a PDF attached before ml.sh.put, its pointer restored from the run's payload after a worker eviction, is written byte for byte", T, async () => {
+    releasePolicies();
+    globalThis.indexedDB ??= new IDBFactory();
+    globalThis.IDBKeyRange ??= IDBKeyRange;
+    const { storeHeld } = await import("../src/sw/sw-values.ts");
+    const { bgRuns, sessionTokens } = await import("../src/sw/sw-runs.ts");
+    const runId = `put-upgrade-${++putRun}`;
+    const bytes = bytesOfLen(3000);   // bytes above 127: any text decoding on the way would change them
+    // What attachFiles wrote for a PDF (#1413, #1492): the original bytes as a held "bytes" row, the read document as a
+    // held "paged" row, both claimed by the run's session. ml.sh.put (#1553) added no field to either.
+    const data = await storeHeld(new Blob([bytes]), "bytes", "old.pdf", runId);
+    const doc = await storeHeld(new Blob([JSON.stringify({ pageCount: 1, pages: [{ n: 1, text: "old", kind: "text" }] })]), "paged", "old.pdf", runId);
+    // The pointer as the run's payload kept it (StartRunPayload.files): no `lines`, which is how an old pointer reads as a PDF.
+    const stored = JSON.parse(JSON.stringify({
+        id: "bbbbbbb", name: "old.pdf", type: "application/pdf", bytes: bytes.length, pages: 1, read: 1, turn: 1,
+        doc: doc.key, data: data.key, sha256: createHash("sha256").update(bytes).digest("hex"), chars: 3, figures: [], scans: [],
+    }));
+    bgRuns.set(runId, { p: { builtBy: "worker", files: [stored] }, tabId: 7, messages: [] });
+    const host = useHost(putHost());
+    const ctl = new AbortController();
+    const unhost = hostAsks({ runId, unattended: false, routing: "ui", signal: ctl.signal, emit: () => {}, stepOf: () => 1, running: () => true, waitMs: 5000 });
+    try {
+        // No store was made for this run in this process: sessionTokens builds one and puts the shelf back from the payload.
+        const tokens = sessionTokens(runId);
+        assert.equal(tokens.files.resolve("@file:bbbbbbb").file?.data, data.key, "the restored shelf names the stored bytes");
+        const r = await shPut({ runId, seq: PUT_SEQ, local: { step: 1, seq: PUT_SEQ }, signal: ctl.signal, tokens, origin: () => ({}) }, ["@file:bbbbbbb", "inbox/old.pdf"]);
+        assert.equal(r.ok?.size, bytes.length, JSON.stringify(r));
+        assert.equal(r.ok.sha256, stored.sha256);
+        assert.equal(r.ok.replaced, false);
+        assert.deepEqual(Buffer.concat(host.written), Buffer.from(bytes), "the host got the original bytes of the old attachment");
+    } finally { unhost(); bgRuns.delete(runId); }
+});
