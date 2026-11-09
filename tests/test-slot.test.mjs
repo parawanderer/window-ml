@@ -1,5 +1,6 @@
-// The machine-wide test queue (scripts/test-slot.mjs): one run at a time, workers from free memory, a dead holder
-// reclaimed, detached jobs that outlive their submitter. Every test uses its own queue folder.
+// The machine-wide test queue (scripts/test-slot.mjs): a few runs at once under a memory budget, workers from free
+// memory, a dead holder reclaimed, detached jobs that outlive their submitter. Every test uses its own queue folder.
+// The tests from "who skips" on run with TEST_SLOT_MAX_RUNS=1 (one at a time); admission's own tests pass `maxRuns`.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -14,9 +15,10 @@ const SLOT = path.join(ROOT, "scripts", "test-slot.mjs");
 // The bench's ledger, which a granted job joins: this file's own, set before the import reads it.
 process.env.BENCH_LEDGER_FILE = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "test-slot-ledger-")), "ledger.json");
 const { ledger, register, unregister } = await import("../tests/e2e/bench/memory-budget.mjs");
-const { jobsFor, capFor, skipReason, submit, finish, look, cancel, waitFor, acquire, waitingLine, jobEnv, procLive, startTime, perWorkerFor } = await import(SLOT);
+const { jobsFor, capFor, skipReason, submit, finish, look, cancel, waitFor, acquire, waitingLine, jobEnv, procLive, startTime, perWorkerFor, admit, minWorkersFor, maxWorkersFor, promisedBy, MAX_RUNS } = await import(SLOT);
 
 process.env.TEST_SLOT_POLL_MS = "50";
+process.env.TEST_SLOT_MAX_RUNS = "1";
 const GB = 1024 ** 3;
 const tmpDir = () => fs.mkdtempSync(path.join(os.tmpdir(), "test-slot-"));
 const memory = () => ({ available: 16 * GB, total: 32 * GB, perWorker: GB, cap: 4 });
@@ -62,6 +64,115 @@ test("perWorkerFor: the p90 of the kind's last measured runs, else 1 GB", () => 
     fs.writeFileSync(path.join(dir, "footprints.jsonl"), `${lines.map((l) => JSON.stringify(l)).join("\n")}\nnot json\n`);
     assert.deepEqual(perWorkerFor("unit", dir), { bytes: 900, measured: 10 });
     assert.deepEqual(perWorkerFor("e2e", dir), { bytes: 9e9, measured: 1 });
+});
+
+// --- admission: a few runs at once under the budget ---
+
+/** This laptop's shape: 24 GB, 15 cores (13 workers between runs), `available` free; a fixed per-worker figure. */
+const laptop = (available, { perWorker = GB, cap = 8, e2e = {} } = {}) => ({
+    memory: () => ({ available, coming: 0, total: 24 * GB, cores: 15 }),
+    kind: (k) => (k === "e2e" ? { perWorker, cap: 7, ...e2e } : { perWorker, cap }),
+    maxRuns: MAX_RUNS, resident: () => 0, startTime: () => startTime(process.pid),
+});
+const states = (dir, tickets, deps) => tickets.map((t) => look(t, { dir, deps }).job.state);
+
+test("admit: the rule written out, enumerated over runs, workers, room and kind", () => {
+    const maxWorkers = 13;
+    for (const kind of ["unit", "e2e"]) {
+        for (const running of [0, 1, 2, 3, 4]) {
+            for (const workers of [0, 5, 11, 12, 13]) {
+                for (const room of [-2 * GB, 0, 0.9 * GB, 1.5 * GB, 2 * GB, 6.5 * GB, 30 * GB]) {
+                    const perWorker = GB, cap = 8, min = kind === "e2e" ? 1 : 2, left = maxWorkers - workers, fit = Math.floor(room / perWorker);
+                    const want = running === 0 ? Math.max(1, Math.min(cap, left, fit))
+                        : running >= 3 || left < min || fit < min ? 0 : Math.min(cap, left, fit);
+                    const got = admit({ kind, running, workers, room, perWorker, cap, maxWorkers });
+                    assert.equal(got.jobs, want, `${kind}, ${running} running with ${workers} workers, ${room / GB} GB room`);
+                    assert.equal(!!got.why, want === 0);
+                }
+            }
+        }
+    }
+    assert.deepEqual([minWorkersFor("unit"), minWorkersFor("e2e"), maxWorkersFor(15), maxWorkersFor(2), MAX_RUNS], [2, 1, 13, 1, 3]);
+    assert.equal(admit({ kind: "unit", running: 0, workers: 0, room: -5 * GB, perWorker: GB, cap: 8, maxWorkers: 13 }).jobs, 1, "alone, a run always starts");
+});
+
+test("three runs start together under the budget; a fourth waits on the cap and starts when one ends", () => {
+    const dir = tmpDir(), deps = laptop(20 * GB, { cap: 4 });
+    const t = ["a", "b", "c", "d"].map((c) => submit({ cmd: [c], mode: "attached", dir, deps, tree: tree() }).ticket);
+    assert.deepEqual(states(dir, t, deps), ["running", "running", "running", "queued"]);
+    const q = look(t[3], { dir, deps });
+    assert.deepEqual(q.running.map((j) => j.jobs), [4, 4, 4], "20 GB less the 6 GB reserve is room for 14 workers; each takes its cap");
+    assert.equal(q.why, "3 runs at once already (at most 3)");
+    assert.match(waitingLine(q), /^test-slot: waiting for pid \d+ .* and pid \d+ .* and pid \d+ .*\(3 runs at once already \(at most 3\)\); 0 ahead of you$/);
+    assert.deepEqual(q.running.map((j) => [j.sizing.runs, j.sizing.workers]), [[1, 4], [2, 8], [3, 12]]);
+    finish(t[0], 0, { dir, deps });
+    assert.deepEqual(states(dir, t, deps), ["done", "running", "running", "running"]);
+    assert.equal(look(t[3], { dir, deps }).job.jobs, 4, "14 GB of room less the two running runs' 8 GB: 6 workers, 5 of 13 left, a cap of 4");
+});
+
+test("the worker cap: runs together never have more than cores − 2 workers", () => {
+    const dir = tmpDir(), deps = laptop(23 * GB, { perWorker: 0.1 * GB });
+    const t = ["a", "b", "c"].map((c) => submit({ cmd: [c], mode: "attached", dir, deps, tree: tree() }).ticket);
+    const q = look(t[2], { dir, deps });
+    assert.deepEqual([...q.running.map((j) => j.jobs), q.job.state], [8, 5, "queued"]);
+    assert.equal(q.why, "the running runs have 13 of 13 workers");
+});
+
+test("the budget full: a second run waits for memory; alone, a run starts on what there is", () => {
+    const dir = tmpDir(), deps = laptop(9 * GB);
+    const [a, b] = ["a", "b"].map((c) => submit({ cmd: [c], mode: "attached", dir, deps, tree: tree() }).ticket);
+    assert.deepEqual(states(dir, [a, b], deps), ["running", "queued"]);
+    assert.equal(look(a, { dir, deps }).job.jobs, 3, "9 GB less the 6 GB reserve: 3 workers");
+    assert.match(look(b, { dir, deps }).why, /^memory: 0 MB above the reserve, 2 workers take 2\.0 GB$/);
+    const tight = laptop(2 * GB);
+    finish(a, 0, { dir, deps: tight });
+    assert.deepEqual([look(b, { dir, deps: tight }).job.state, look(b, { dir, deps: tight }).job.jobs], ["running", 1], "below the reserve, the head still starts on one worker");
+});
+
+test("what a running run planned counts until its workers hold it, and no further", () => {
+    const run = (jobs, perWorker, pid) => ({ jobs, sizing: { perWorker }, pid });
+    assert.equal(promisedBy([run(4, GB, 1), run(2, GB, 2)], (j) => (j.pid === 1 ? 3 * GB : 5 * GB)), GB, "1 GB still to come; the second run holds more than it planned");
+    // A run that planned 6 GB and holds none of it yet leaves 8 GB of room; holding all of it, it leaves 8 GB too,
+    // since free memory has then dropped by what it holds.
+    const dir = tmpDir(), deps = { ...laptop(20 * GB), resident: () => 0 };
+    writeQueue(dir, [holder(process.pid, startTime(process.pid), { jobs: 6, sizing: { perWorker: GB } })]);
+    const b = submit({ cmd: ["b"], mode: "attached", dir, deps, tree: tree() });
+    assert.equal(look(b.ticket, { dir, deps }).job.jobs, 7, "13 − 6 workers left; 8 GB of room");
+    assert.equal(look(b.ticket, { dir, deps }).job.sizing.coming, 6 * GB);
+});
+
+test("FIFO among the admissible: a small e2e probe passes a waiting suite only while the suite cannot start", () => {
+    const dir = tmpDir(), deps = laptop(13 * GB);
+    const a = submit({ cmd: ["a"], mode: "attached", dir, deps, tree: tree() }).ticket;
+    assert.equal(look(a, { dir, deps }).job.jobs, 7, "13 GB less the reserve: 7 workers, and nothing else fits a suite's 2");
+    const suite = submit({ cmd: ["suite"], mode: "attached", dir, deps, tree: tree() }).ticket;
+    const later = submit({ cmd: ["later"], mode: "attached", dir, deps, tree: tree() }).ticket;
+    assert.deepEqual(states(dir, [suite, later], deps), ["queued", "queued"], "a unit run behind a waiting one does not pass it");
+    // Room for one worker opens: the suite still cannot start, so the probe behind it may.
+    const roomy = laptop(14.5 * GB);
+    const probe = submit({ kind: "e2e", cmd: ["probe"], mode: "attached", dir, deps: roomy, tree: tree() }).ticket;
+    assert.deepEqual(states(dir, [suite, later, probe], roomy), ["queued", "queued", "running"]);
+    assert.equal(look(probe, { dir, deps: roomy }).job.jobs, 1);
+    // When the suite fits, it goes first, and a probe queued behind it waits its turn.
+    finish(probe, 0, { dir, deps: roomy });
+    const probe2 = submit({ kind: "e2e", cmd: ["probe2"], mode: "attached", dir, deps: laptop(16 * GB), tree: tree() }).ticket;
+    assert.deepEqual(states(dir, [suite, later, probe2], laptop(16 * GB)), ["running", "queued", "queued"]);
+    assert.equal(look(suite, { dir, deps: laptop(16 * GB) }).job.jobs, 3);
+});
+
+test("a footprint records how many runs shared the machine with it", () => {
+    const dir = tmpDir(), deps = laptop(20 * GB, { cap: 2 });
+    const [a, b] = ["a", "b"].map((c) => submit({ cmd: [c], mode: "attached", dir, deps, tree: tree() }).ticket);
+    const backdate = (t) => { const s = JSON.parse(fs.readFileSync(path.join(dir, "queue.json"), "utf8")); s.jobs.find((j) => j.ticket === t).grantedAt = new Date(Date.now() - 60_000).toISOString(); fs.writeFileSync(path.join(dir, "queue.json"), JSON.stringify(s)); };
+    backdate(a);
+    finish(a, 0, { dir, deps, peak: 2 * GB });
+    finish(b, 0, { dir, deps, peak: 2 * GB });
+    const lines = fs.readFileSync(path.join(dir, "footprints.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    assert.deepEqual(lines.map((f) => [f.ticket, f.runs, f.perWorker]), [[a, 2, GB]], "b ran under 10 s: not measured");
+    const c = submit({ cmd: ["c"], mode: "attached", dir, deps, tree: tree() }).ticket;
+    backdate(c);
+    finish(c, 0, { dir, deps, peak: GB });
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "footprints.jsonl"), "utf8").trim().split("\n")[1]).runs, 1);
 });
 
 // --- who skips the queue ---
@@ -128,7 +239,7 @@ test("attached runs are granted in FIFO order, one at a time; the waiting line n
     const b = submit({ cmd: ["b"], mode: "attached", dir, deps, tree: tree() });
     let qa = look(a.ticket, { dir, deps }), qb = look(b.ticket, { dir, deps });
     assert.deepEqual([qa.job.state, qa.ahead, qb.job.state, qb.ahead], ["queued", 0, "queued", 1]);
-    assert.match(waitingLine(qb), /^test-slot: waiting for pid \d+ \(\/other, x, 2 workers, held \d+s\); 1 ahead of you$/);
+    assert.match(waitingLine(qb), /^test-slot: waiting for pid \d+ \(\/other, x, 2 workers, held \d+s\) \(1 run at once already \(at most 1\)\); 1 ahead of you$/);
     finish("held", 0, { dir, deps });
     qa = look(a.ticket, { dir, deps }); qb = look(b.ticket, { dir, deps });
     assert.deepEqual([qa.job.state, qa.job.jobs, qb.job.state, qb.ahead], ["running", 4, "queued", 0]);
@@ -239,7 +350,7 @@ test("a grant subtracts the browsers a sweep just admitted, joins the bench's le
         const job = look(r.ticket, { dir }).job;
         assert.equal(job.sizing.coming, 3 * GB, "the expired admission is not counted");
         assert.equal(job.jobs, jobsFor({ ...job.sizing, available: job.sizing.available - 3 * GB, cap: capFor("unit") }));
-        assert.ok(said.some((l) => l.includes("3.0 GB of it promised to bench browsers starting up")), said.join("\n"));
+        assert.ok(said.some((l) => l.includes("3.0 GB of it promised to bench browsers and other test runs starting up")), said.join("\n"));
         const mine = ledger().find((e) => e.kind === "tests");
         assert.deepEqual([mine.pid, mine.ticket, mine.planned], [process.pid, r.ticket, job.jobs * job.sizing.perWorker]);
         finish(r.ticket, 0, { dir });

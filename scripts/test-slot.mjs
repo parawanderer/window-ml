@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// test-slot.mjs — one test run on this machine at a time: a QUEUE that every local test runner goes through (every
-// scripts/test.mjs spawn, Playwright, `npm run coverage`), shared by every clone and every session, which sizes each
-// run's workers from the memory free when its turn comes.
+// test-slot.mjs — a few test runs on this machine at a time, under a memory budget: a QUEUE that every local test
+// runner goes through (every scripts/test.mjs spawn, Playwright, `npm run coverage`), shared by every clone and every
+// session, which admits a run when the memory free above the reserve leaves room for its minimum workers, and sizes
+// its workers from that room.
 //
 //   node scripts/test-slot.mjs submit [--kind unit|e2e] -- <command…>   queue a DETACHED job; prints its ticket, returns at once
 //   node scripts/test-slot.mjs wait <ticket>                            block until it ends; its log's tail, its exit code
@@ -13,12 +14,19 @@
 // them, and the laptop swapped 27 GB; a suite that takes 40 s alone ran for ten minutes. A rule each lane had to
 // remember did not hold, so the runners themselves queue.
 //
-// Two kinds of job share the one slot. An ATTACHED job is a runner waiting in its own process (`npm test`, a genre,
+// Admission (the rule of 2026-11-09): at most MAX_RUNS runs at once and MAX_WORKERS workers between them (cores − 2).
+// A queued job starts when free memory, less the reserve, less what every running run planned and does not hold yet
+// (and what a bench sweep admitted), leaves room for its kind's minimum workers at its p90 per-worker figure; it gets
+// as many as that room gives. The queue is FIFO among the admissible: a job is passed only by one that fits while it
+// does not. With nothing running the head always starts, on one worker if that is all there is, so a busy machine
+// slows the queue and never stops it.
+//
+// Two kinds of job share the slots. An ATTACHED job is a runner waiting in its own process (`npm test`, a genre,
 // Playwright's main process): it keeps its terminal and exit code, and holds the slot until it exits. A DETACHED job
 // (`submit`) runs in a process of its own, in the ticket's cwd with the ticket's recorded environment, so it outlives
-// the session that asked for it; its output goes to `<ticket>.log`. There is no daemon: whoever finds the slot free
-// starts the head of the queue (a job ending, a submit, a `wait` or `status` poll, a waiting runner's poll), and a
-// holder whose process has died is reclaimed on every read, so a queue never sits idle while anything waits on it.
+// the session that asked for it; its output goes to `<ticket>.log`. There is no daemon: every read of the queue starts
+// whatever is admissible (a job ending, a submit, a `wait` or `status` poll, a waiting runner's poll), and a holder
+// whose process has died is reclaimed on every read, so a queue never sits idle while anything waits on it.
 //
 // CI skips it (`CI` or `GITHUB_ACTIONS`: the runner is a VM whose only job is the suite), so does `TEST_SLOT=off`, and a
 // runner started INSIDE a job (`TEST_SLOT_TICKET` set) runs at once. It only covers clones that have pulled it.
@@ -35,6 +43,12 @@ const SELF = fileURLToPath(import.meta.url);
 const GB = 1024 ** 3;
 /** What one worker is assumed to take before any run was measured: a node:test file process or a Chromium. */
 export const PER_WORKER_DEFAULT = GB;
+/** The most runs at once (the 2026-11-08 incident was nine; a few is fine). `TEST_SLOT_MAX_RUNS` overrides it. */
+export const MAX_RUNS = 3;
+/** The most workers all running runs may have between them: the cores less two. */
+export const maxWorkersFor = (cores = os.cpus().length) => Math.max(1, cores - 2);
+/** The fewest workers a run of a kind is started with, unless nothing else runs: a suite on one worker takes twice as long. */
+export const minWorkersFor = (kind) => (kind === "e2e" ? 1 : 2);
 /** How many finished jobs the queue keeps (their logs go with them). */
 const KEEP_DONE = 20;
 /** Footprints of the last this-many runs of a kind decide its per-worker figure. */
@@ -85,16 +99,42 @@ export function perWorkerFor(kind, dir = slotDir()) {
     return { bytes: v ?? PER_WORKER_DEFAULT, measured: mine.length };
 }
 
-/** What the bench's ledger says is on its way but not yet in free memory: browsers a sweep just admitted. Never throws. */
+/** What the bench's ledger says is on its way but not yet in free memory: browsers a sweep just admitted. Test runs'
+ *  own entries are left out: the queue counts them itself, from what each holds now (`promisedBy`). Never throws. */
 function benchComing() {
-    try { return notYetResident(ledger()); } catch { return 0; }
+    try { return notYetResident(ledger().filter((e) => e.kind !== "tests")); } catch { return 0; }
 }
 
-/** The memory reading a grant is made from, and the workers it gives (injected in tests). Free memory is taken less
- *  what the bench has admitted and not yet started, so a sweep and a run starting together do not count the same room. */
-function sizeJob(kind, dir, memory) {
-    const m = memory ? memory(kind) : { available: availableMemory(), coming: benchComing(), total: os.totalmem(), perWorker: perWorkerFor(kind, dir).bytes, cap: capFor(kind) };
-    return { ...m, jobs: jobsFor({ ...m, available: m.available - (m.coming ?? 0) }) };
+/** What running jobs planned and do not hold yet: each one's workers × per-worker, less its process tree's memory now. */
+export function promisedBy(running, resident = residentOf()) {
+    return running.reduce((a, j) => a + Math.max(0, (j.jobs ?? 0) * (j.sizing?.perWorker ?? PER_WORKER_DEFAULT) - resident(j)), 0);
+}
+/** A job's process tree's resident memory, from one process table. */
+function residentOf() {
+    let table = null;
+    return (j) => { try { table ??= processTable(); return j.pid ? treeRss(table, j.pid) : 0; } catch { return 0; } };
+}
+
+/** The memory reading admission is made from (injected in tests, which may also fix `perWorker` and `cap` for every
+ *  kind): free memory, what the bench admitted and has not started, the machine's total and cores. One reading per pass; each start in the pass is counted against it. */
+const readMemory = () => ({ available: availableMemory(), coming: benchComing(), total: os.totalmem(), cores: os.cpus().length });
+/** A kind's per-worker figure and worker cap (injected in tests). */
+const readKind = (kind, dir) => ({ perWorker: perWorkerFor(kind, dir).bytes, cap: capFor(kind) });
+
+/**
+ * Whether a job of `kind` may start now, and with how many workers. `room` is free memory less the reserve, less what
+ * the bench admitted and what running runs planned and do not hold yet; `workers` is what the running runs have.
+ * With nothing running the job always starts (at least one worker); else it needs its minimum in memory and in the
+ * worker cap. Returns `{ jobs }` or `{ jobs: 0, why }`.
+ */
+export function admit({ kind, running, workers, room, perWorker, cap, maxRuns = MAX_RUNS, maxWorkers }) {
+    const left = Math.max(0, maxWorkers - workers), fit = Math.floor(room / perWorker);
+    if (!running) return { jobs: Math.max(1, Math.min(cap, left, fit)) };
+    if (running >= maxRuns) return { jobs: 0, why: `${running} run${running === 1 ? "" : "s"} at once already (at most ${maxRuns})` };
+    const min = minWorkersFor(kind);
+    if (left < min) return { jobs: 0, why: `the running runs have ${workers} of ${maxWorkers} workers` };
+    if (fit < min) return { jobs: 0, why: `memory: ${fmtBytes(Math.max(0, room))} above the reserve, ${min} workers take ${fmtBytes(min * perWorker)}` };
+    return { jobs: Math.min(cap, left, fit) };
 }
 
 /** Put a granted job in the bench's ledger as kind `tests`, with the memory its workers will take, so a sweep counts
@@ -163,27 +203,43 @@ export function reap(state, probe) {
     return reaped;
 }
 
-/** Start the queue's head job if nothing runs: an attached one is GRANTED (its runner sees it and goes), a detached
- *  one is spawned. Returns the started record or null. */
+/** Start every queued job that is admissible, in queue order (`admit`): an attached one is GRANTED (its runner sees it
+ *  and goes), a detached one is spawned. Each start is counted against the same reading before the next is judged.
+ *  Records why the first job left waiting waits (`state.waiting`). Returns the started records. */
 export function startNext(state, dir, deps = {}) {
-    if (state.jobs.some((j) => j.state === "running")) return null;
-    const head = state.jobs.find((j) => j.state === "queued");
-    if (!head) return null;
-    const size = sizeJob(head.kind, dir, deps.memory);
-    Object.assign(head, { state: "running", grantedAt: new Date().toISOString(), jobs: size.jobs, sizing: { available: size.available, coming: size.coming ?? 0, total: size.total, perWorker: size.perWorker } });
-    if (head.mode === "attached") Object.assign(head, { pid: head.by.pid, started: head.by.started });
-    else {
-        const { pid, started } = (deps.spawnJob ?? spawnJob)(head, dir);
-        Object.assign(head, { pid, started });
+    const queued = state.jobs.filter((j) => j.state === "queued");
+    state.waiting = null;
+    if (!queued.length) return [];
+    const running = state.jobs.filter((j) => j.state === "running");
+    const m = (deps.memory ?? readMemory)();
+    const maxRuns = deps.maxRuns ?? (Number(process.env.TEST_SLOT_MAX_RUNS) || MAX_RUNS), maxWorkers = maxWorkersFor(m.cores ?? os.cpus().length);
+    const base = m.available - (m.coming ?? 0) - RESERVE_FRAC * m.total;
+    let promised = promisedBy(running, deps.resident ?? residentOf()), workers = running.reduce((a, j) => a + (j.jobs ?? 0), 0);
+    const started = [];
+    for (const job of queued) {
+        const k = deps.kind ? deps.kind(job.kind) : m.perWorker ? { perWorker: m.perWorker, cap: m.cap } : readKind(job.kind, dir);
+        const room = base - promised;
+        const a = admit({ kind: job.kind, running: running.length, workers, room, perWorker: k.perWorker, cap: k.cap, maxRuns, maxWorkers });
+        if (!a.jobs) { state.waiting ??= { ticket: job.ticket, why: a.why }; if (running.length >= maxRuns) break; continue; }
+        Object.assign(job, { state: "running", grantedAt: new Date().toISOString(), jobs: a.jobs,
+            sizing: { available: m.available, coming: (m.coming ?? 0) + promised, total: m.total, perWorker: k.perWorker, runs: running.length + 1, workers: workers + a.jobs } });
+        if (job.mode === "attached") Object.assign(job, { pid: job.by.pid, started: job.by.started });
+        else Object.assign(job, (deps.spawnJob ?? spawnJob)(job, dir));
+        (deps.joinBench ?? joinBench)(job);
+        running.push(job);
+        promised += a.jobs * k.perWorker;
+        workers += a.jobs;
+        started.push(job);
     }
-    (deps.joinBench ?? joinBench)(head);
-    return head;
+    // The most runs each running job has shared the machine with, for its footprint.
+    for (const j of running) j.peakRuns = Math.max(j.peakRuns ?? 1, running.length);
+    return started;
 }
 
 /** Start a detached job: this script's `__job` in the ticket's cwd with the ticket's environment, in a process group
  *  of its own, so it outlives whoever started it and `cancel` stops all of it. */
 function spawnJob(job, dir) {
-    const child = spawn(process.execPath, [SELF, "__job", job.ticket], { cwd: job.cwd, env: { ...job.env, TEST_SLOT_DIR: dir }, detached: true, stdio: "ignore" });
+    const child = spawn(process.execPath, [SELF, "__job", job.ticket], { cwd: job.cwd, env: { ...job.env, TEST_SLOT_DIR: dir, ...(process.env.TEST_SLOT_MAX_RUNS ? { TEST_SLOT_MAX_RUNS: process.env.TEST_SLOT_MAX_RUNS } : {}) }, detached: true, stdio: "ignore" });
     child.unref();
     return { pid: child.pid, started: startTime(child.pid) };
 }
@@ -220,32 +276,34 @@ export function finish(ticket, exit, { dir = slotDir(), deps = {}, peak = null }
     }, deps);
     if (rec) (deps.leaveBench ?? leaveBench)(rec);
     if (rec?.peakRss && rec.durationMs >= MEASURE_MIN_MS && rec.jobs) {
-        try { fs.appendFileSync(path.join(dir, "footprints.jsonl"), `${JSON.stringify({ at: rec.endedAt, kind: rec.kind, jobs: rec.jobs, peakRss: rec.peakRss, perWorker: Math.round(rec.peakRss / rec.jobs), ticket })}\n`); } catch { /* unmeasured */ }
+        try { fs.appendFileSync(path.join(dir, "footprints.jsonl"), `${JSON.stringify({ at: rec.endedAt, kind: rec.kind, jobs: rec.jobs, peakRss: rec.peakRss, perWorker: Math.round(rec.peakRss / rec.jobs), runs: rec.peakRuns ?? 1, ticket })}\n`); } catch { /* unmeasured */ }
     }
     return rec;
 }
 
-/** Look at the queue (reaping and starting on the way, so a poll keeps it moving): the job, what runs, what is ahead of it. */
+/** Look at the queue (reaping and starting on the way, so a poll keeps it moving): the job, what runs, what is ahead
+ *  of it, and why the first waiting job waits. */
 export function look(ticket, { dir = slotDir(), deps = {} } = {}) {
     const { state, reaped, started } = withQueue(dir, () => undefined, deps);
     const job = state.jobs.find((j) => j.ticket === ticket) ?? null;
-    const running = state.jobs.find((j) => j.state === "running") ?? null;
+    const running = state.jobs.filter((j) => j.state === "running");
     const queued = state.jobs.filter((j) => j.state === "queued");
-    return { job, running, ahead: job ? queued.indexOf(job) : -1, queued, state, reaped, started };
+    return { job, running, ahead: job ? queued.indexOf(job) : -1, queued, why: state.waiting?.why ?? null, state, reaped, started };
 }
 
 const home = (p) => (p && p.startsWith(os.homedir()) ? `~${p.slice(os.homedir().length)}` : p);
 const age = (iso, now = Date.now()) => { const s = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000)); return s >= 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s` : `${s}s`; };
 const cmdText = (cmd) => cmd.map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(" ").replace(process.execPath, "node").slice(0, 120);
 
-/** The line a waiting runner prints: who holds the slot, since when, and how many are ahead. */
-export function waitingLine({ running, ahead }, now = Date.now()) {
-    const who = running ? `pid ${running.pid} (${home(running.clone)}, ${cmdText(running.cmd)}, ${running.jobs} worker${running.jobs === 1 ? "" : "s"}, held ${age(running.grantedAt, now)})` : "the slot to free";
-    return `test-slot: waiting for ${who}; ${ahead} ahead of you`;
+/** The line a waiting runner prints: what runs, since when, why the queue waits, and how many are ahead. */
+export function waitingLine({ running = [], ahead, why = null }, now = Date.now()) {
+    const one = (r) => `pid ${r.pid} (${home(r.clone)}, ${cmdText(r.cmd)}, ${r.jobs} worker${r.jobs === 1 ? "" : "s"}, held ${age(r.grantedAt, now)})`;
+    const who = running.length ? running.map(one).join(" and ") : "a slot to free";
+    return `test-slot: waiting for ${who}${why ? ` (${why})` : ""}; ${ahead} ahead of you`;
 }
 
 /** The line a granted run prints: its workers and the reading they came from. */
-export const grantLine = (job) => `test-slot: ${job.jobs} worker${job.jobs === 1 ? "" : "s"} (${fmtBytes(job.sizing.available)} available${job.sizing.coming ? `, ${fmtBytes(job.sizing.coming)} of it promised to bench browsers starting up` : ""}, ${fmtBytes(RESERVE_FRAC * job.sizing.total)} reserved, ~${fmtBytes(job.sizing.perWorker)} per worker)`;
+export const grantLine = (job) => `test-slot: ${job.jobs} worker${job.jobs === 1 ? "" : "s"} (${fmtBytes(job.sizing.available)} available${job.sizing.coming ? `, ${fmtBytes(job.sizing.coming)} of it promised to bench browsers and other test runs starting up` : ""}, ${fmtBytes(RESERVE_FRAC * job.sizing.total)} reserved, ~${fmtBytes(job.sizing.perWorker)} per worker${job.sizing.runs > 1 ? `; run ${job.sizing.runs} at once, ${job.sizing.workers} workers between them` : ""})`;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -360,7 +418,7 @@ function printStatus(dir = slotDir()) {
     const running = state.jobs.filter((j) => j.state === "running"), queued = state.jobs.filter((j) => j.state === "queued");
     const done = state.jobs.filter((j) => !["queued", "running"].includes(j.state)).slice(-10);
     console.log(running.length ? `running:\n${running.map((j) => `${row(j)}  pid ${j.pid}, ${j.jobs} workers, ${age(j.grantedAt)}`).join("\n")}` : "running: nothing");
-    console.log(queued.length ? `queued:\n${queued.map((j) => `${row(j)}  waiting ${age(j.submittedAt)}`).join("\n")}` : "queued: nothing");
+    console.log(queued.length ? `queued:${state.waiting?.why ? ` (${state.waiting.why})` : ""}\n${queued.map((j) => `${row(j)}  waiting ${age(j.submittedAt)}`).join("\n")}` : "queued: nothing");
     if (done.length) console.log(`finished:\n${done.map((j) => `${row(j)}  exit ${j.exit ?? "-"}${j.durationMs ? `, ${Math.round(j.durationMs / 1000)}s` : ""}`).join("\n")}`);
 }
 

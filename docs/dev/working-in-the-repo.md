@@ -442,13 +442,18 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
   suite globs `tests/*.test.*`; E2E is `tests/e2e/*.spec.mjs`). See the fuller
   writeup below.
 
-## One test run on the machine at a time
+## A few test runs on the machine at a time, under a budget
 
 On 2026-11-08 nine `node --import tsx --test` runners from different sessions ran at once: 34 workers, 27 GB of swap,
 and a 40 s suite took ten minutes. A rule each lane had to remember did not hold, so the runners themselves queue.
 `scripts/test-slot.mjs` is one machine-wide queue that every `scripts/test.mjs` spawn, Playwright's main process and
-`npm run coverage` goes through: one run at a time, its workers sized from the memory free when its turn comes (a
-per-worker figure measured from past runs). `--jobs N` still fixes the workers; CI, `TEST_SLOT=off` and a runner
+`npm run coverage` goes through. Since 2026-11-09 it admits up to three runs at once and 13 workers between them (cores
+− 2): a queued run starts when free memory, less the 25% reserve and what the running runs planned and do not hold yet,
+leaves room for its minimum (2 workers for a unit run, 1 for e2e) at its kind's p90 per-worker figure, measured from
+past runs, and gets the workers that room gives. One run at a time had twelve sessions' 6.5-minute suites queued behind
+each other while the machine ran three workers. The queue is FIFO among the admissible (a small e2e probe passes a
+waiting suite only while the suite cannot start), and with nothing running the head always starts. Each footprint
+records how many runs shared the machine (`runs`), for a later tuning. `--jobs N` still fixes the workers; CI, `TEST_SLOT=off` and a runner
 nested in a job skip it. `submit` and `wait` start a run without blocking the session. Commands, the opt-outs, where
 the state lives and the environment a detached job gets: the `test-slot` skill. A granted run joins the bench's memory
 ledger as kind `tests`, and each sizes itself from free memory less what the other has admitted and not yet started, so a
