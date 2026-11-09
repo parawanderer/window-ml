@@ -1,6 +1,6 @@
 {
-  "commit": "a154fa2828d1dad2851e0347ae9c894d7122b22b",
-  "extracted_at": "2026-11-09T08:49:05+00:00",
+  "commit": "f449ca0a4c5b56e453262c3dbbf8eb7b1b3fb401",
+  "extracted_at": "2026-11-09T09:09:41+00:00",
   "rows": [
     {
       "top_list_updated": "2026-11-01 06:41:05"
@@ -8077,8 +8077,8 @@
       }
     },
     {
-      "blocked_by": "docutils",
-      "blocked_why": "lock-too-old",
+      "blocked_by": null,
+      "blocked_why": null,
       "closure_size": 10,
       "deps": [
         "colorama",
@@ -8093,7 +8093,7 @@
       "emscripten_wheel_any_abi": false,
       "host": "pure",
       "in_top": true,
-      "installable": false,
+      "installable": true,
       "installable_by_tags": true,
       "kind": "pure-wheel",
       "lock_version": null,
@@ -27392,8 +27392,8 @@
       }
     },
     {
-      "blocked_by": "protobuf",
-      "blocked_why": "lock-too-old",
+      "blocked_by": "cachebox",
+      "blocked_why": "no-build",
       "closure_size": 136,
       "deps": [
         "sagemaker-core",
@@ -29586,8 +29586,8 @@
       }
     },
     {
-      "blocked_by": "more-itertools",
-      "blocked_why": "lock-too-old",
+      "blocked_by": null,
+      "blocked_why": null,
       "closure_size": 21,
       "deps": [
         "click",
@@ -29604,7 +29604,7 @@
       "emscripten_wheel_any_abi": false,
       "host": "pure",
       "in_top": true,
-      "installable": false,
+      "installable": true,
       "installable_by_tags": true,
       "kind": "pure-wheel",
       "lock_version": null,
@@ -31037,8 +31037,8 @@
       "wheel": null
     },
     {
-      "blocked_by": "protobuf",
-      "blocked_why": "lock-too-old",
+      "blocked_by": "snowflake-connector-python",
+      "blocked_why": "no-build",
       "closure_size": 18,
       "deps": [
         "cloudpickle",
@@ -31683,8 +31683,8 @@
       }
     },
     {
-      "blocked_by": "protobuf",
-      "blocked_why": "lock-too-old",
+      "blocked_by": "kfp-server-api",
+      "blocked_why": "no-build",
       "closure_size": 51,
       "deps": [
         "certifi",
@@ -37688,8 +37688,8 @@
       }
     },
     {
-      "blocked_by": "more-itertools",
-      "blocked_why": "lock-too-old",
+      "blocked_by": "rapidfuzz",
+      "blocked_why": "no-build",
       "closure_size": 23,
       "deps": [
         "importlib-metadata",
@@ -41825,8 +41825,8 @@
       }
     },
     {
-      "blocked_by": "pydantic",
-      "blocked_why": "lock-too-old",
+      "blocked_by": null,
+      "blocked_why": null,
       "closure_size": 19,
       "deps": [
         "boto3",
@@ -41838,7 +41838,7 @@
       "emscripten_wheel_any_abi": false,
       "host": "pure",
       "in_top": true,
-      "installable": false,
+      "installable": true,
       "installable_by_tags": true,
       "kind": "pure-wheel",
       "lock_version": null,
@@ -42409,7 +42409,7 @@
       "wheel": null
     },
     {
-      "blocked_by": "anyio",
+      "blocked_by": "pillow",
       "blocked_why": "lock-too-old",
       "closure_size": 96,
       "deps": [
@@ -49182,8 +49182,8 @@
       }
     },
     {
-      "blocked_by": "protobuf",
-      "blocked_why": "lock-too-old",
+      "blocked_by": null,
+      "blocked_why": null,
       "closure_size": 17,
       "deps": [
         "authlib",
@@ -49198,7 +49198,7 @@
       "emscripten_wheel_any_abi": false,
       "host": "pure",
       "in_top": true,
-      "installable": false,
+      "installable": true,
       "installable_by_tags": true,
       "kind": "pure-wheel",
       "lock_version": null,
@@ -50672,8 +50672,8 @@
       }
     },
     {
-      "blocked_by": "msgpack",
-      "blocked_why": "lock-too-old",
+      "blocked_by": null,
+      "blocked_why": null,
       "closure_size": 7,
       "deps": [
         "croniter",
@@ -50685,7 +50685,7 @@
       "emscripten_wheel_any_abi": false,
       "host": "pure",
       "in_top": true,
-      "installable": false,
+      "installable": true,
       "installable_by_tags": true,
       "kind": "pure-wheel",
       "lock_version": null,
@@ -55110,8 +55110,8 @@
       }
     },
     {
-      "blocked_by": "click",
-      "blocked_why": "lock-too-old",
+      "blocked_by": null,
+      "blocked_why": null,
       "closure_size": 4,
       "deps": [
         "click",
@@ -55122,7 +55122,7 @@
       "emscripten_wheel_any_abi": false,
       "host": "pure",
       "in_top": true,
-      "installable": false,
+      "installable": true,
       "installable_by_tags": true,
       "kind": "pure-wheel",
       "lock_version": null,
@@ -58502,8 +58502,8 @@
       "wheel": null
     },
     {
-      "blocked_by": "protobuf",
-      "blocked_why": "lock-too-old",
+      "blocked_by": null,
+      "blocked_why": null,
       "closure_size": 2,
       "deps": [
         "protobuf"
@@ -58511,7 +58511,7 @@
       "emscripten_wheel_any_abi": false,
       "host": "pure",
       "in_top": false,
-      "installable": false,
+      "installable": true,
       "installable_by_tags": true,
       "kind": "pure-wheel",
       "lock_version": null,
@@ -60522,8 +60522,8 @@
       "wheel": null
     },
     {
-      "blocked_by": "protobuf",
-      "blocked_why": "lock-too-old",
+      "blocked_by": null,
+      "blocked_why": null,
       "closure_size": 47,
       "deps": [
         "attrs",
@@ -60554,7 +60554,7 @@
       "emscripten_wheel_any_abi": false,
       "host": "pure",
       "in_top": false,
-      "installable": false,
+      "installable": true,
       "installable_by_tags": true,
       "kind": "pure-wheel",
       "lock_version": null,
@@ -60598,8 +60598,8 @@
       }
     },
     {
-      "blocked_by": "protobuf",
-      "blocked_why": "lock-too-old",
+      "blocked_by": "cachebox",
+      "blocked_why": "no-build",
       "closure_size": 135,
       "deps": [
         "boto3",
@@ -60691,8 +60691,8 @@
       }
     },
     {
-      "blocked_by": "protobuf",
-      "blocked_why": "lock-too-old",
+      "blocked_by": null,
+      "blocked_why": null,
       "closure_size": 116,
       "deps": [
         "graphene",
@@ -60711,7 +60711,7 @@
       "emscripten_wheel_any_abi": false,
       "host": "pure",
       "in_top": false,
-      "installable": false,
+      "installable": true,
       "installable_by_tags": true,
       "kind": "pure-wheel",
       "lock_version": null,

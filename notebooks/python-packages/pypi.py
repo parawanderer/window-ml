@@ -18,6 +18,7 @@ from packaging.markers import InvalidMarker
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.utils import InvalidWheelFilename, canonicalize_name, parse_wheel_filename
+from packaging.version import InvalidVersion
 
 TOP_URL = "https://hugovk.dev/top-pypi-packages/top-pypi-packages.min.json"
 UA = {"User-Agent": "window-ml notebooks/python-packages (pypi-compat)"}
@@ -66,6 +67,23 @@ def project(name: str, cache: Path | None = None) -> dict | None:
         cache.mkdir(parents=True, exist_ok=True)
         (cache / f"{name}.json").write_text(json.dumps(row))
     return row
+
+
+def releases(name: str, cache: Path | None = None) -> dict[str, list[dict]]:
+    """Every release of a project with its files (filename, yanked, requires_python): what `replaceable` needs to find
+    the newest release inside a range, which the latest-only `project` row does not carry."""
+    if cache:
+        f = cache / f"{name}.releases.json"
+        if f.exists():
+            return json.loads(f.read_text())
+    d = _get_json(f"https://pypi.org/pypi/{name}/json")
+    out = {} if d is None else {v: [{"filename": u["filename"], "yanked": u.get("yanked", False),
+                                     "requires_python": u.get("requires_python") or ""} for u in files]
+                                 for v, files in (d.get("releases") or {}).items()}
+    if cache:
+        cache.mkdir(parents=True, exist_ok=True)
+        (cache / f"{name}.releases.json").write_text(json.dumps(out))
+    return out
 
 
 def wheel_verdict(row: dict, tags: set[str], python: str) -> dict:
@@ -164,8 +182,9 @@ def classify(top: list[dict], env_probe: dict, cache: Path | None = None, worker
     tags, env, python = set(env_probe["tags"]), env_probe["env"], env_probe["python"]
     lock = {canonicalize_name(k): v for k, v in env_probe["lock"].items()}
     # A lock package too old for a range is fatal only when micropip cannot replace it from PyPI: it is already
-    # loaded (micropip and what it needs; in the extension, the start-up set too), or PyPI's latest release has no
-    # wheel this core accepts inside that range.
+    # loaded (micropip and what it needs; in the extension, the start-up set too), or NO release inside that range has
+    # a wheel this core accepts. micropip takes the newest release the range admits, not PyPI's latest: awscli's
+    # `docutils<0.20` against the lock's 0.22.4 installs docutils 0.19 from PyPI.
     preloaded = {canonicalize_name(p) for p in env_probe.get("preloaded", [])}
     replaceable_memo: dict[tuple[str, str], bool] = {}
 
@@ -173,12 +192,31 @@ def classify(top: list[dict], env_probe: dict, cache: Path | None = None, worker
         if d in preloaded:
             return False
         if (d, spec) not in replaceable_memo:
-            row = rows.get(d) or project(d, cache)
-            ok = bool(row) and wheel_verdict(row, tags, python)["kind"] in ("pure-wheel", "wasm-wheel")
             try:
-                ok = ok and SpecifierSet(spec).contains(row["version"], prereleases=True)
+                rng = SpecifierSet(spec)
             except InvalidSpecifier:
-                pass
+                rng = SpecifierSet()
+            ok = False
+            for version, files in releases(d, cache).items():
+                try:
+                    if not rng.contains(version):
+                        continue
+                except InvalidVersion:
+                    continue
+                for f in files:
+                    if f["yanked"] or not f["filename"].endswith(".whl"):
+                        continue
+                    try:
+                        if f["requires_python"] and not SpecifierSet(f["requires_python"]).contains(python, prereleases=True):
+                            continue
+                        ws = {str(t) for t in parse_wheel_filename(f["filename"])[3]}
+                    except (InvalidSpecifier, InvalidWheelFilename):
+                        continue
+                    if ws & tags:
+                        ok = True
+                        break
+                if ok:
+                    break
             replaceable_memo[(d, spec)] = ok
         return replaceable_memo[(d, spec)]
     rows: dict[str, dict | None] = {}
@@ -210,7 +248,7 @@ def classify(top: list[dict], env_probe: dict, cache: Path | None = None, worker
     def closure(name: str, seen: set[str], versions: bool = True) -> tuple[str, str] | None:
         """The first dependency (depth-first) that cannot be installed, and why: `no-build` (it has no wheel or lock
         entry for this core) or `lock-too-old` (a lock package whose pinned version is outside the range asked for, and
-        which micropip cannot replace from PyPI: see `replaceable`)."""
+        which no release of it inside that range can replace from PyPI: see `replaceable`)."""
         specs = verdict.get(name, {}).get("specs", {})
         for d in verdict.get(name, {}).get("deps", []):
             if versions and d in lock and specs.get(d):

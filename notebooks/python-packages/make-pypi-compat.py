@@ -383,31 +383,58 @@ lag.sort_values("rank")[["rank", "project", "lock_version", "version"]].rename(c
 md("""
 ## What this says for "Packages on demand"
 
-Read on 2026-11-09 against `pyodide-restricted-314.0.3-35bd1d69` (the figures are the cells above):
+The cell below writes this section from the figures above, so the prose cannot drift from them.
+""")
 
-- **Worth building.** Of the top 100 projects 95% are installable by the static verdict (97% by downloads), 84% of
-  ranks 101-500, 67% of 1001-2000. Of the top 1,000, 725 installed AND imported in the real core.
-- **The card's "will this work here" can be decided before downloading**, from the PyPI JSON and the lock: wheel
-  tags, the dependency closure under the core's markers, and the version ranges checked against the lock (a lock
-  package too old for a range blocks only when PyPI cannot replace it). Counted fairly (section 2), that verdict is
-  right 96.4% of the times it says yes, and says yes to 99.0% of what works. What it cannot see: platform limits a
-  tag does not carry (processes, threads, `resource`, native shared libraries: 15 of the 1,000), micropip not
-  backtracking between two dependencies' ranges (8, all the langchain family's `uuid-utils<1.0`), and extras (3).
-  So the card should say "should work" and the install step must still report a failed import as one.
-- **Undeclared host packages are a card fact, not a verdict**: 31 plugins (`opentelemetry-instrumentation-*`,
-  `sphinxcontrib-*`) import the package they extend without declaring it. A card that names the missing module turns
-  that into a second approval, not a dead end.
-- **A policy's hash is one artefact**: all but 6 of the installable closures resolve to one file per package.
-- **The cache holds lock wheels too.** 62% of the wheels a successful install fetched came from the lock (the Pyodide
-  CDN), not PyPI. The median install fetched 2 wheels and 0.03 MB from PyPI; the 99th percentile 16 MB.
-- **The version shown is the one that installs**, which is usually the lock's: 161 of the 208 lock packages in the
-  top 2,000 lag PyPI's latest, and micropip takes the lock's. A package already loaded cannot move at all, so in the
-  extension the start-up set (numpy, pandas, ...) pins its versions for every later install.
-- **A few builds unlock a long tail**: `grpcio` alone blocks 79 of the top 2,000, then `pyzmq`, `psutil`, `greenlet`.
-- **The host is the other placement.** Of the 533 projects not installable here, 459 have a wheel for a native CPython
-  3.14 on macOS arm64 (the dependency closure there is not checked).
-- **Import is the bar measured**, not use: `requests` installs and imports and still cannot reach the network from a
-  locked cell. Which calls work is the library manifest's job (`docs/spec/PYTHON_DIALECT.md`).
+code("""
+from IPython.display import Markdown
+band = top.groupby("band", observed=True).apply(lambda g: pd.Series({
+    "n": g.installable.mean(), "w": (g.installable * g.downloads_30d).sum() / g.downloads_30d.sum()}), include_groups=False)
+pc = lambda x: f"{x:.0%}"
+P = prec("installable")
+yes = pr[pr.installable]
+def asked(r):
+    m = re.search(r"Requested '([^']+)', but (\\S+) is already installed", r.get("error") or "")
+    return f"`{m.group(1)}` against {m.group(2)}" if m else (r.get("error") or "")[:60]
+unbacktracked = Counter(asked(r) for _, r in yes[yes.cause == "version"].iterrows())
+lock_share = src["pyodide"] / sum(src.values())
+not_here = top[~top.installable]
+host_ok = not_here.host.isin(["native", "pure"]).sum()
+lines = [
+    f"Read against `{DIST['artefact']['name']}` (the figures are the cells above):",
+    "",
+    f"- **Worth building.** Installable by the static verdict: {pc(band.n.iloc[0])} of the top 100 ({pc(band.w.iloc[0])} by "
+    f"downloads), {pc(band.n.iloc[1])} of ranks 101-500, {pc(band.n.iloc[3])} of 1001-2000. Of the top {len(pr):,}, "
+    f"{int(ok.sum())} installed AND imported in the real core.",
+    f"- **The card's 'will this work here' can be decided before downloading**, from PyPI's JSON and the lock: wheel "
+    f"tags, the dependency closure under the core's markers, and version ranges checked against the lock (a lock package "
+    f"too old for a range blocks only when no release inside the range has a wheel this core accepts; micropip takes the "
+    f"newest such release, which is how awscli gets docutils 0.19). Counted fairly (section 2), the verdict is right "
+    f"{P['precision']:.1%} of the times it says yes and says yes to {P['recall']:.1%} of what works. What it cannot see: "
+    f"platform limits a tag does not carry ({int((yes.cause == 'platform').sum())}: processes, threads, `resource`, native "
+    f"shared libraries), micropip not backtracking between two dependencies' ranges "
+    f"({int((yes.cause == 'version').sum())}: " + "; ".join(f"{n}x {k}" for k, n in unbacktracked.most_common()) + "), "
+    f"and extras ({int((yes.cause == 'extra').sum())}). So the card says 'should work', and the install step still "
+    f"reports a failed import as a failure.",
+    f"- **Undeclared host packages are a card fact, not a verdict**: {int((pr.cause == 'undeclared host').sum())} plugins "
+    f"(`opentelemetry-instrumentation-*`, `sphinxcontrib-*`) import the package they extend without declaring it; the "
+    f"card can name it as a second approval.",
+    f"- **A policy's hash is one artefact**: {int(pinnable.sum()):,} of the {len(inst):,} installable closures resolve "
+    f"to one file per package.",
+    f"- **The cache holds lock wheels too**: {lock_share:.0%} of the wheels a successful install fetched came from the "
+    f"lock (the Pyodide CDN). The median install fetched {good.n_installed.median():.0f} wheels and "
+    f"{good.pypi_wheel_mb.median():.2f} MB from PyPI; the 99th percentile {good.pypi_wheel_mb.quantile(.99):.0f} MB.",
+    f"- **The version shown is the one that installs**, usually the lock's: {len(lag)} of the {len(lk)} lock packages in "
+    f"the top 2,000 lag PyPI's latest. A package already loaded cannot move at all, so in the extension the start-up "
+    f"set pins its versions for every later install.",
+    f"- **A few builds unlock a long tail**: `{blockers.index[0]}` alone blocks {int(blockers.blocks.iloc[0])} of the "
+    f"top 2,000, then " + ", ".join(f"`{b}`" for b in blockers.index[1:4]) + ".",
+    f"- **The host is the other placement**: of the {len(not_here)} projects not installable here, {int(host_ok)} have a "
+    f"wheel for a native CPython 3.14 on macOS arm64 (their closure there is not checked).",
+    "- **Import is the bar measured**, not use: `requests` installs and imports and still cannot reach the network from "
+    "a locked cell. Which calls work is the library manifest's job (`docs/spec/PYTHON_DIALECT.md`).",
+]
+Markdown("\\n".join(lines))
 """)
 
 nb = nbf.v4.new_notebook(cells=cells)
