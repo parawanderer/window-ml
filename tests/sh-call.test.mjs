@@ -438,10 +438,24 @@ test("the credential is sent only to a sandboxed session whose host lists the pr
     assert.equal(planSpawn({ argv: ["git", "status"], env: {} }, S).credential, undefined, "a manifest naming none");
 });
 
+test("only the shipped manifest's own object gets a credential: an equal copy (a stored entry from before the rule) gets none", () => {
+    const copy = structuredClone(SHIPPED_MANIFESTS.gh);
+    assert.equal(planSpawn({ argv: ["gh", "api", "/user"], env: {} }, { ...S, manifests: [copy] }).credential, undefined);
+    assert.equal(planSpawn({ argv: ["gh", "api", "/user"], env: {} }, S).credential.manifest, SHIPPED_MANIFESTS.gh, "the control");
+});
+
+test("the card's Sandbox line names the ports the host granted, not a fixed 443", () => {
+    const gh = (ports) => shFacts(facts({ argv: ["gh", "api", "/user"], program: { path: "/opt/homebrew/bin/gh", inRoot: false }, paths: [], credential: { provider: "github", ports, profile: "credentialed:github" } }));
+    assert.match(shCardLines(gh([443])).find((l) => l.label === "Sandbox").value, /on port 443 only$/);
+    assert.match(shCardLines(gh([443, 8443])).find((l) => l.label === "Sandbox").value, /on ports 443 and 8443 only$/);
+    assert.deepEqual(gh([8443]).credential.ports, [8443], "the host's grant, not the provider's");
+    assert.deepEqual(shFacts(facts({ argv: ["gh", "api", "/user"], program: { path: "/opt/homebrew/bin/gh", inRoot: false }, paths: [] })).credential.ports, [443], "not held: the manifest's");
+});
+
 test("the card says the call sends the token when the host injects it, and that nothing is sent when it cannot", () => {
     const gh = (over) => facts({ argv: ["gh", "api", "/user"], program: { path: "/opt/homebrew/bin/gh", inRoot: false }, paths: [], ...over });
     const held = shFacts(gh({ credential: { provider: "github", ports: [443], profile: "credentialed:github" } }));
-    assert.deepEqual(held.credential, { provider: "github", sends: "your GitHub token", held: true });
+    assert.deepEqual(held.credential, { provider: "github", sends: "your GitHub token", held: true, ports: [443] });
     const lines = shCardLines(held);
     assert.deepEqual(lines.find((l) => l.label === "Sends"), { label: "Sends", value: "your GitHub token", warn: true });
     assert.match(lines.find((l) => l.label === "Sandbox").value, /port 443/);

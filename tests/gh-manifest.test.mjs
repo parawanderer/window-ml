@@ -255,3 +255,22 @@ test("the 'as the person' term is the call's credential fact, not an effect: eve
     const { planSpawn } = await import("../src/shell/sh-call.ts");
     assert.equal(planSpawn({ argv: argvOf(READS[0]), env: {} }, { cwd: "/w" }).credential.provider, "github");
 });
+
+// --- the host pins these bytes: an edit needs a host release ---
+
+test("every shipped manifest naming a credential matches credential-pins.json, so an edit cannot land without a host bump", async () => {
+    // window-ml-host honours a credential only for manifest bytes it compiled in (`PINNED`, src/credential.rs). An edit to
+    // one of these manifests turns credentialed calls off (CredentialRefused) until a host release carries the new
+    // bytes: re-copy the vectors to window-ml-host, release it, then record its commit and release here with the hash.
+    const pins = JSON.parse(fs.readFileSync(new URL("../src/shell/credential-pins.json", import.meta.url), "utf8"));
+    const { SHIPPED_MANIFESTS, manifestSha256 } = await import("../src/shell/sh-call.ts");
+    const named = Object.values(SHIPPED_MANIFESTS).filter((m) => m.credential).map((m) => m.program).sort();
+    assert.deepEqual(Object.keys(pins).sort(), named, "a pin for each credentialed manifest, and none for another");
+    for (const p of named) {
+        const bytes = fs.readFileSync(new URL(`../src/shell/manifests/${p}.json`, import.meta.url));
+        const sha = (await import("node:crypto")).createHash("sha256").update(bytes).digest("hex");
+        assert.equal(sha, pins[p].sha256, `${p}.json changed: credentialed ${p} is refused by every host until a release pins the new bytes (see this test's comment)`);
+        assert.equal(await manifestSha256(SHIPPED_MANIFESTS[p]), sha, `the hash the worker sends for ${p} is the file's`);
+        assert.match(pins[p].host, /^[0-9a-f]{40}$/, "the window-ml-host commit whose PINNED holds these bytes");
+    }
+});

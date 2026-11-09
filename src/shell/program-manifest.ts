@@ -504,6 +504,15 @@ const COMMAND_KEYS = new Set(["effects", "paths", "noPaths", "terminator", "nume
 const VERSION_KEYS = new Set(["range", "args", "pattern"]);
 const MANIFEST_KEYS = new Set(["$schema", "program", "version", "okCodes", "echoes", "env", "entrypoint", "credential", "network", "command"]);
 
+/** Why a manifest that is not shipped may not carry `m`'s credential fields, or undefined: the host honours a
+ *  credential only for manifest bytes it pinned, which are the shipped ones, so a stored `credential` or `network`
+ *  could only end in `CredentialRefused` after the person was asked. */
+export function shippedOnlyRefusal(m: { credential?: unknown; network?: unknown }): string | undefined {
+    return m.credential !== undefined || m.network !== undefined
+        ? "credential and network belong to a shipped manifest only: the process host honours a credential only for the manifest bytes it pinned"
+        : undefined;
+}
+
 /** Checks a parsed manifest against the format above; returns every problem, with its JSON path. Unknown keys are
  *  problems, so a misspelt `runer` cannot silently drop a runner flag. */
 export function validateManifest(m: unknown): string[] {

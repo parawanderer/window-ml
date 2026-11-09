@@ -96,6 +96,12 @@ test("a binary with no fingerprint has nothing to pin to, and an invalid manifes
     assert.match(P.draftRequest({ manifest: { program: "mytool" }, scope: "global" }, facts(), "/w/proj", ROOTS).error, /not a valid program manifest/);
 });
 
+test("a proposed manifest may not name a credential: no host pins its bytes, so the call could only be refused after the ask", () => {
+    const gh = { ...SHIPPED_MANIFESTS.gh, program: "gh" };
+    const r = P.draftRequest({ manifest: gh, scope: "global" }, facts({ argv: ["gh"], program: { path: "/opt/bin/gh", inRoot: false, fingerprint: "1:2:3:4" } }), "/w/proj", ROOTS);
+    assert.match(r.error, /^Error: credential and network belong to a shipped manifest only/);
+});
+
 // --- this run's calls it would describe ---
 
 test("callsOfDraft keeps this run's calls of the same program file, or of the same script under its own root, latest first", () => {

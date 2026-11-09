@@ -287,7 +287,10 @@ export function planSpawn(req: ShRunRequest, session: { cwd: string; roots?: rea
     if (pathArgs.length) spawn.pathArgs = pathArgs;
     if (d.recursive && d.actsOnDir && d.dirArg === null) spawn.walkCwd = true;
     if (m.program === "git" && d.dirArg !== null) spawn.repoArg = d.dirArg;
-    return { spawn, description: d, ...(m.credential ? { credential: { provider: m.credential.provider, manifest: m } } : {}) };
+    // Only the shipped manifest's own object: the host pins the shipped bytes alone, and a stored entry kept from before
+    // `shippedOnlyRefusal` existed would only end in CredentialRefused after the ask.
+    const shipped = m.credential && SHIPPED_MANIFESTS[m.program] === m;
+    return { spawn, description: d, ...(shipped ? { credential: { provider: m.credential!.provider, manifest: m } } : {}) };
 }
 
 /** One path argument as a policy reads it. `containsSecret` only for a walked directory: null when the walk could not
@@ -352,7 +355,7 @@ export interface ShFacts {
     placement: HostPlacement;
     /** The credential the call's manifest names: what the card says it sends, and `held` when the host's facts say it
      *  will inject it (the call then always asks, `judgeCall`); null when the manifest names none. */
-    credential: { provider: string; sends: string; held: boolean } | null;
+    credential: { provider: string; sends: string; held: boolean; ports: readonly number[] } | null;
 }
 
 /** A walked directory whose walk found a secret, or could not tell, counts as one. */
@@ -428,7 +431,9 @@ function credentialOf(facts: HostFacts, m: ProgramManifest | undefined): ShFacts
     const provider = facts.credential?.provider ?? m?.credential?.provider;
     if (provider === undefined) return null;
     const sends = Object.hasOwn(CREDENTIAL_PROVIDERS, provider) ? CREDENTIAL_PROVIDERS[provider]!.sends : `the ${provider} credential`;
-    return { provider, sends, held: !!facts.credential };
+    // The host's grant when it holds one, else what the manifest asks for, else the provider's own.
+    const ports = facts.credential?.ports ?? m?.network?.ports ?? (Object.hasOwn(CREDENTIAL_PROVIDERS, provider) ? CREDENTIAL_PROVIDERS[provider]!.ports : []);
+    return { provider, sends, held: !!facts.credential, ports };
 }
 
 /**
@@ -555,6 +560,11 @@ export function shOutcomeLines(o: ShOutcome): ShCardLine[] {
     return lines;
 }
 
+/** `port 443`, `ports 80 and 443`: the ports a credentialed profile reaches, for the card. */
+function portsText(ports: readonly number[]): string {
+    return ports.length === 1 ? `port ${ports[0]}` : `ports ${ports.slice(0, -1).join(", ")} and ${ports[ports.length - 1]}`;
+}
+
 /**
  * The approval card's lines for one call: what will run, where, with what, as the host resolved it. Never the script
  * that computed the call (SHELL.md, "Approval": what was approved is exactly what runs). Human-facing text.
@@ -570,7 +580,7 @@ export function shCardLines(f: ShFacts, applied?: HostDoneEnvelope | null, asked
         { label: "Program", value: f.program.path + (f.program.version ? ` (version ${f.program.version})` : "") },
         { label: "In", value: f.cwd.path + (f.cwd.inRoot ? "" : " (outside the workspace roots)"), ...(f.cwd.inRoot ? {} : { warn: true }) },
         f.sandboxed
-            ? { label: "Sandbox", value: f.credential?.held ? "on: writes only inside the workspace roots, network to any host on port 443 only" : "on: writes only inside the workspace roots, no network" }
+            ? { label: "Sandbox", value: f.credential?.held ? `on: writes only inside the workspace roots, network to any host on ${portsText(f.credential.ports)} only` : "on: writes only inside the workspace roots, no network" }
             : { label: "Sandbox", value: "off: runs as you, with your files and network", warn: true },
     ];
     if (f.credential?.held) lines.push({ label: "Sends", value: f.credential.sends, warn: true });
