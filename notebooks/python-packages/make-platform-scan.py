@@ -213,14 +213,15 @@ per_depth = {d: (int(((rows.depth == d) & (rows.cause == "platform") & rows.flag
 lines = [
     "## Conclusion",
     "",
-    f"- **A rule, with a short list beside it.** Scanning what runs at import, one call deep, finds {caught} of the "
-    f"{len(plat)} platform failures among the 1,000 probes, and calls {len(fp)} working packages broken "
-    f"({', '.join(fp.index)}, one cause). Applied on top of the tags-and-ranges verdict it moves precision from "
-    f"{a.precision:.1%} to {b.precision:.1%} and recall from {a.recall:.1%} to {b.recall:.1%}.",
-    f"- **What it misses is a short list**: {', '.join(missed)}. All but pip-api (two calls deep) turn on a run-time "
-    "value or a dynamic dispatch. Those are a list keyed by package, "
-    "re-measured at every core bump by the install probes; the scan is what keeps that list short and makes it hold for "
-    "packages nobody probed.",
+    f"- **A rule, one call deep.** Scanning what runs at import, one call into the package's own functions, finds "
+    f"{caught} of the {len(plat)} platform failures among the 1,000 probes, and calls {len(fp)} working packages broken "
+    f"({', '.join(fp.index)}, one cause). Were it a refusal, it would move precision from {a.precision:.1%} to "
+    f"{b.precision:.1%} and recall from {a.recall:.1%} to {b.recall:.1%}.",
+    "- **So it is a note, not a refusal**: the recall it would cost is working flagship packages. The import still "
+    "runs; when it fails, the scan's finding (which module or call the core lacks) is the reason given, in place of a "
+    "traceback; when it succeeds the finding costs nothing.",
+    f"- **What it misses ends as it does today**, in a failed import: {', '.join(missed)}. All but pip-api (two calls "
+    "deep) turn on a run-time value or a dynamic dispatch, which no scan of constructs sees.",
     f"- **The naive rule is not usable**: mentioning a platform module flags {int(at[at.cause == 'ok'].naive_flag.sum())} "
     f"of the {int((at.cause == 'ok').sum())} packages that work.",
     "- **It runs after the download, before the import.** It reads the wheels, so it cannot sit on the approval card "
