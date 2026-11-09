@@ -622,8 +622,9 @@ forward text files only). The message, its text files included, goes to a page o
 the session (`pageRouteFor`, src/sw/page-route.ts, from a builder record the browser's stamp writes at the start): on
 another approved site the relay would reach a page that did not build the run, so the worker takes the run over and
 holds the files as this message's pointers (e3's second pass, 2026-11-08; #1520's by-name refusal was the first step).
-A message sent from another tab than the run's, or for a session with no recorded builder, is refused (`PAGE_GONE`),
-files and text alike (flaky-ci's review). Only a top frame can build a run (`grantableOrigin`), so the recorded origin
+A message sent from another tab than the run's is refused (`PAGE_GONE`), files and text alike (flaky-ci's review). A
+session with no recorded builder never reaches a page: the worker takes it over when it holds the run on that tab, and
+otherwise it is refused (`PAGE_GONE`). Only a top frame can build a run (`grantableOrigin`), so the recorded origin
 is the top frame's and the comparison is exact; the composers (sidebar, DevTools) take files for an agent session. The
 `dereference` tool reads a text pointer as its text through the pipe ("Text, N lines" in the header); the inventory,
 the shelf's refusals and the `run.files` state row say lines for text and pages for a PDF. Images wait, as ruled.
