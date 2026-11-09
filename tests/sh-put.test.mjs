@@ -53,6 +53,8 @@ test("the sh-call keys are present, so a policy written for ml.sh.run reads them
     assert.equal(f.cwd.path, "/w");
     assert.equal(f.cwd.inRoot, true);
     assert.equal(f.placement, "host-sandbox");
+    assert.equal(f.described, false, "no manifest describes a put: it runs no program");
+    assert.equal(f.credential, null);
     assert.equal(f.put.exists, false);
     assert.equal(f.put.file, "r.pdf");
     assert.equal(f.put.sha256, FILE.sha256);
@@ -70,11 +72,14 @@ const PROGRAM_POLICIES = [
     "(c) => c.program.path.endsWith(\"/rg\") && c.cwd.inRoot",
     "(c) => c.placement === \"host-sandbox\" && c.argv.includes(\"status\")",
     "(c) => c.program.inRoot === false && c.program.path.startsWith(\"/usr/\")",
+    "(c) => c.described",
+    "(c) => c.described && c.cwd.inRoot && c.placement === \"host-sandbox\"",
+    "(c) => c.credential?.provider === \"gh\" && !c.credential.held",
 ];
 
 test("a policy that frees a named program, evaluated on a put's facts, neither allows nor breaks, at either placement", () => {
-    const program = (path, argv) => ({ argv, program: { path, inRoot: false, version: null }, cwd: { path: "/w", inRoot: true }, placement: "host-sandbox" });
-    const controls = [program("/usr/bin/git", ["git", "status"]), program("/usr/bin/git", ["git", "status"]), program("/bin/ls", ["ls"]), program("/usr/bin/rg", ["rg", "x"]), program("/usr/bin/git", ["git", "status"]), program("/usr/bin/git", ["git", "status"])];
+    const program = (path, argv) => ({ argv, program: { path, inRoot: false, version: null }, cwd: { path: "/w", inRoot: true }, placement: "host-sandbox", described: true, credential: { provider: "gh", sends: "", held: false, ports: [] } });
+    const controls = [program("/usr/bin/git", ["git", "status"]), program("/usr/bin/git", ["git", "status"]), program("/bin/ls", ["ls"]), program("/usr/bin/rg", ["rg", "x"]), program("/usr/bin/git", ["git", "status"]), program("/usr/bin/git", ["git", "status"]), program("/usr/bin/git", ["git", "status"]), program("/usr/bin/git", ["git", "status"]), program("/usr/bin/git", ["git", "status"])];
     for (const [i, source] of PROGRAM_POLICIES.entries()) {
         assert.equal(evalPolicy(source, controls[i], "allow").decision, "allow", `control: ${source} does not free its own program, so this row proves nothing`);
         for (const rel of ["r.pdf", "inbox/r.pdf"]) for (const exists of [false, true]) {

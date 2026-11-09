@@ -48,12 +48,14 @@ export interface PutFacts {
     paths: [];
     repo: null;
     repoConfigRunsCode: null;
-    described: true;
+    /** A put runs no program, so no manifest describes it: a policy freeing described calls never frees a put. */
+    described: false;
     why: string[];
     runner: false;
     mode: "host";
     sandboxed: false;
     placement: "host-sandbox";
+    credential: null;
     put: { file: string; type: string; size: number; sha256: string; path: string; root: string; rel: string; exists: boolean; existingSize: number | null;
         tilde: HostPutFacts["tilde"] };
     effects: EffectsData;
@@ -71,7 +73,7 @@ export interface PutFacts {
 export function putFacts(f: HostPutFacts, file: PutFile): PutFacts {
     return {
         argv: [], program: { path: "", inRoot: false, version: null }, cwd: { path: f.root, inRoot: true }, env: { set: [], free: true }, secrets: [],
-        paths: [], repo: null, repoConfigRunsCode: null, described: true, why: [], runner: false, mode: "host", sandboxed: false, placement: "host-sandbox",
+        paths: [], repo: null, repoConfigRunsCode: null, described: false, why: [], runner: false, mode: "host", sandboxed: false, placement: "host-sandbox", credential: null,
         put: { file: file.name, type: file.type, size: f.size, sha256: file.sha256, path: f.path, root: f.root, rel: f.rel, exists: f.exists, existingSize: f.existingSize, tilde: f.tilde },
         effects: [{ op: "write", res: { kind: "fs", path: f.path, inRoot: true, exists: f.exists, topLevel: !f.rel.includes("/") } }],
     };
