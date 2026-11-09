@@ -15,7 +15,8 @@ write every ruling into the spec it changes within the hour, and keep the plan's
   (session `7cf7e86b`) takes every PR that changes code or touches security in window-ml; `window-ml-janitor-3-bc`
   (session `393a79b2`) takes test-only, docs, notebook, CI and window-ml-host PRs. OVERFLOW (Shane, 2026-11-09): when
   janitor-2 holds three or more, one FRESH code review moves to janitor-3; a re-review stays with whoever reviewed
-  first; a rule 10 flip stays with janitor-3. The flaky-ci session no longer reviews. A finding goes to the row's
+  first; a rule 10 flip stays with janitor-3. SYMMETRIC (Shane, 2026-11-09): when janitor-3 holds three or more and
+  janitor-2 holds none, FRESH reviews of any kind go to janitor-2 (first applied to #1564 and #1553's rebased head). The flaky-ci session no longer reviews. A finding goes to the row's
   owner through you, the same day. A lane arms merge-when-green only after the review comment NAMES its current head
   and asks no change.
 - A lane never blocks on you: it states its assumption and continues. So an answer that arrives late must say whether
