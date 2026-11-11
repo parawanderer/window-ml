@@ -26,7 +26,6 @@ import { stepBudget } from "../agent/step-budget";
 import { grantableOrigin, originOf } from "../site-access";
 import type { StartRunPayload, ResumeRunPayload } from "../contract/contract-messages";
 import { type MlConfig, modelFilterAllows } from "../contract/contract-config";
-import { withPageContext } from "../agent/run-assembly";
 import { workerPageContext } from "../agent/site-instructions";
 import { ourToolTexts } from "./builtin-texts";
 import { type RequestHint, hintSession } from "../contract/contract-run";
@@ -284,11 +283,12 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
             if (workerHeld()) { await verdict.refund(); answer({ error: WORKER_RUN_REFUSED }); return; }
             if (running()) { await verdict.refund(); answer({ error: RUNNING }); return; }
             // The page's context is the worker's to write, from the browser's facts (B1): whatever context the page wrote
-            // into its prompt is the site's, shown on the card as its instructions. Added after the card's snapshot, since
-            // the time in it changes every turn.
+            // into its prompt is the site's, shown on the card as its instructions, and a `pageContext` it sent is replaced.
+            // Written after the card's snapshot, since the time in it changes every turn.
+            p.pageContext = undefined;
             if (p.env !== false) {
                 const title = (await Promise.resolve(chrome.tabs.get(tabId)).catch(() => null))?.title;
-                p.systemPrompt = withPageContext(p.systemPrompt, workerPageContext(p.pageUrl ?? sender.url ?? "", title));
+                p.pageContext = workerPageContext(p.pageUrl ?? sender.url ?? "", title);
             }
             if (startCancelled()) { answer(cancelledStart()); return; }
             // The person's turn runs at the budget they chose (or the approved one), never at one the page named.
@@ -1089,7 +1089,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             return { result: env.result || "", renderIn: env.renderIn, renderOut: env.renderOut, feedback: env.feedback, image: env.image, imageLabel: env.imageLabel, images: env.images, ...(env && workerEnvelopes.has(env as import("../contract").PageToolEnvelope) && typeof env.textValue === "string" ? { textValue: env.textValue } : {}) };
         };
         runBackgroundAgent(
-            { task: modelTask, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSelfSource: p.autoApproveSelfSource, unattended: p.unattended, toolTokens: p.toolTokens, stream: p.stream, ...(p.origin ? { origin: p.origin } : {}), runId, seqBase, tokenStore: sessionTokens(runId), labelMatch: p.labelMatch, resumeMessages, images: p.images,
+            { task: modelTask, systemPrompt: p.systemPrompt, pageContext: p.pageContext, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSelfSource: p.autoApproveSelfSource, unattended: p.unattended, toolTokens: p.toolTokens, stream: p.stream, ...(p.origin ? { origin: p.origin } : {}), runId, seqBase, tokenStore: sessionTokens(runId), labelMatch: p.labelMatch, resumeMessages, images: p.images,
               // A resumed turn follows a PERSON (a follow-up, Continue, Retry) — except a run resurrected after the
               // worker was evicted, where nobody was waited on.
               ...(resumeMessages && !resurrected ? { after: "human" as const } : {}) },

@@ -16,7 +16,7 @@ import { ImagesRefused } from "../image-gate";
 import { framePrompt } from "../agent/prompts";
 import { promptSurfaceOf } from "../agent/prompt-surface";
 import { stepBudget } from "../agent/step-budget";
-import { assembleRun, rebuildFor, routeTurnImages, startPayload, userRunOptions, withPageContext, type UserRunRequest } from "../agent/run-assembly";
+import { assembleRun, rebuildFor, routeTurnImages, startPayload, userRunOptions, type UserRunRequest } from "../agent/run-assembly";
 import { relayDebugEvent } from "./sw-debug";
 import { getConfig } from "./sw-llm";
 import { dropLocalTools, registerLocalTools } from "./sw-local-tools";
@@ -127,7 +127,7 @@ async function startMinted(tabId: number, tab: chrome.tabs.Tab, url: string, ml:
     const surface: StartRunPayload["surface"] = cfg.debugMode === "overlay" || cfg.debugMode === "devtools" ? cfg.debugMode : "off";
     const payload: StartRunPayload = {
         ...startPayload(asm, {
-            runId, systemPrompt: withPageContext(asm.systemPrompt, capPageContext(adopted.pageInfo)), think: null,
+            runId, systemPrompt: asm.systemPrompt, pageContext: capPageContext(adopted.pageInfo), think: null,
             maxSteps: recipe.maxSteps ?? DEFAULT_MAX_STEPS, surface, stream: recipe.stream, toolTokens: true, origin: recipe.origin,
             navigate: true, crossOrigin: true, approvalRouting: opts.approvalRouting ?? "ui",
             page: { origin: new URL(url).origin, url, title: tab.title || undefined },
