@@ -49,7 +49,7 @@ export type HostEnvelope = { write: "roots" | "none"; exec: "any" | "program-onl
 /** What `done` reports as applied. `"today"` is the floor, which is also what an absent envelope on `done` means from
  *  a worker that sent none; an absent `envelope` on `done` itself is an older host, which the extension reads as
  *  unknown, never as narrow. */
-export type HostDoneEnvelope = { write: "today" | "roots" | "none"; exec: "any" | "program-only"; /** A credentialed call's profile (`credentialed:github`): exec is then program-only whatever was asked. */ profile?: string };
+export type HostDoneEnvelope = { write: "today" | "roots" | "none"; exec: "any" | "program-only"; /** A credentialed call's profile (`credentialed:github`): exec is then program-only whatever was asked. */ profile?: string; /** The host names its proxy admitted (host 0.8.0). */ hosts?: string[] };
 
 /** Whether this host understands AND can hold `envelope` on `start`/`pipe`. K3 put `landlockAbi` on `hello.sandbox`,
  *  present on both platforms (`null` on macOS); an older host has `sandbox` without that key and silently ignores
@@ -139,8 +139,10 @@ export interface HostFacts {
     expiresInMs: number;
     /** The bound the call will run under, after clamping (host 0.3.0; absent from an older host). */
     memoryBound?: number;
-    /** The credential the host will inject (host 0.8.0): null when none was asked for; absent from an older host. */
-    credential?: { provider: string; ports: number[]; profile: string } | null;
+    /** The credential the host will inject (host 0.8.0): null when none was asked for; absent from an older host.
+     *  `hosts` are the names its proxy admits; a build from before the proxy (window-ml-host #34, never released)
+     *  reports none, and its profile reaches any host on `ports`. */
+    credential?: { provider: string; ports: number[]; hosts?: string[]; profile: string } | null;
 }
 
 /** One stream of a finished call: a pointer to the bytes the host holds, or why it could not keep them. */

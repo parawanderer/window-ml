@@ -167,7 +167,7 @@ test("a host that lists github gets the credential with the manifest's hash; the
     assert.equal(spawn.args.credential.provider, "github");
     assert.match(spawn.args.credential.manifest, /^[0-9a-f]{64}$/);
     assert.equal(ask.asked.length, 1, "always asked");
-    assert.equal(JSON.stringify(ask.asked[0].facts.credential), JSON.stringify({ provider: "github", sends: "your GitHub token", held: true, ports: [443] }));
+    assert.equal(JSON.stringify(ask.asked[0].facts.credential), JSON.stringify({ provider: "github", sends: "your GitHub token", held: true, ports: [443], hosts: ["api.github.com", "github.com"] }));
     assert.ok(!results[0].includes(token), `the token reached the model: ${results[0]}`);
     assert.match(results[0], /\[a GitHub token\]/);
 });

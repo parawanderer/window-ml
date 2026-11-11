@@ -124,17 +124,22 @@ export type ManifestCredential = {
     provider: string;
 };
 
-/** The ports a credentialed call may connect to, a subset of its provider's (no host list yet: Seatbelt filters by
- *  address and port). */
+/** What a credentialed call may connect to: ports and host names, each a subset of its provider's. Seatbelt bounds the
+ *  call to the host's proxy, which admits only these names on these ports. */
 export type ManifestNetwork = {
     /** TCP ports, each one of the provider's. */
     ports: readonly number[];
+    /** Host names, each one of the provider's; absent means all of them (a manifest from before the field). */
+    hosts?: readonly string[];
 };
 
 /** A credential provider the process host knows (window-ml-host `src/credential.rs` holds the same table): the one
- *  program that may name it, the ports its profile may reach, and what the card says the call sends. */
-export const CREDENTIAL_PROVIDERS: Readonly<Record<string, { program: string; ports: readonly number[]; sends: string }>> = {
-    github: { program: "gh", ports: [443], sends: "your GitHub token" },
+ *  program that may name it, the ports and host names its call may reach, and what the card says the call sends. */
+export const CREDENTIAL_PROVIDERS: Readonly<Record<string, { program: string; ports: readonly number[]; hosts: readonly string[]; sends: string }>> = {
+    github: {
+        program: "gh", ports: [443], sends: "your GitHub token",
+        hosts: ["api.github.com", "github.com", "uploads.github.com", "codeload.github.com", "raw.githubusercontent.com", "release-assets.githubusercontent.com"],
+    },
 };
 
 /** The version range a binary's manifest was written against (`>=2.30.0 <3`) and how the host reads the version
@@ -613,9 +618,13 @@ export function validateManifest(m: unknown): string[] {
     if (m.network !== undefined) {
         const n = m.network;
         if (cred === undefined) errs.push("$.network: only beside a credential");
-        if (!isObj(n) || Object.keys(n).length !== 1 || !Array.isArray(n.ports) || !n.ports.length || !n.ports.every((p) => Number.isInteger(p)))
-            errs.push("$.network: {ports}, a non-empty list of port numbers");
+        if (!isObj(n) || !Object.keys(n).every((k) => k === "ports" || k === "hosts") || !Array.isArray(n.ports) || !n.ports.length || !n.ports.every((p) => Number.isInteger(p)))
+            errs.push("$.network: {ports, hosts?}, a non-empty list of port numbers");
         else if (provider && !n.ports.every((p) => provider.ports.includes(p as number))) errs.push(`$.network.ports: a subset of ${provider.ports.join(", ")}`);
+        if (isObj(n) && n.hosts !== undefined) {
+            if (!Array.isArray(n.hosts) || !n.hosts.length || !n.hosts.every((h) => typeof h === "string")) errs.push("$.network.hosts: a non-empty list of host names");
+            else if (provider && !n.hosts.every((h) => provider.hosts.includes(h as string))) errs.push(`$.network.hosts: a subset of ${provider.hosts.join(", ")}`);
+        }
     }
     command(m.command, "$.command");
     return errs;

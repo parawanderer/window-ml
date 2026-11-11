@@ -102,13 +102,21 @@
     },
     "ManifestNetwork": {
       "type": "object",
-      "description": "The ports a credentialed call may connect to, a subset of its provider's (no host list yet: Seatbelt filters by address and port).",
+      "description": "What a credentialed call may connect to: ports and host names, each a subset of its provider's. Seatbelt bounds the call to the host's proxy, which admits only these names on these ports.",
       "properties": {
         "ports": {
           "description": "TCP ports, each one of the provider's.",
           "type": "array",
           "items": {
             "type": "integer"
+          },
+          "minItems": 1
+        },
+        "hosts": {
+          "description": "Host names, each one of the provider's; absent means all of them (a manifest from before the field).",
+          "type": "array",
+          "items": {
+            "type": "string"
           },
           "minItems": 1
         }
@@ -672,6 +680,18 @@
                 "items": {
                   "enum": [
                     443
+                  ]
+                }
+              },
+              "hosts": {
+                "items": {
+                  "enum": [
+                    "api.github.com",
+                    "github.com",
+                    "uploads.github.com",
+                    "codeload.github.com",
+                    "raw.githubusercontent.com",
+                    "release-assets.githubusercontent.com"
                   ]
                 }
               }
