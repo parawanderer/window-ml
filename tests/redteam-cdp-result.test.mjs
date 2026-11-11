@@ -5,13 +5,15 @@
 // TWO SINKS, and the row below pins the stronger one. A call to the `__mlCdpStream` binding only reaches `onStream` —
 // the person's live output and the session events that mirror it — never `r.logs`; redteam-isolated.test.mjs pins that
 // half ("the page cannot write into a MAIN-world CDP exec's live output through __mlCdpStream"). What DOES reach the
-// model's result is the wrapper's own collector: `__logs.push(...)` is a method of the ARRAY the wrapper made in the
-// page's realm, so the page's `Array.prototype.push` (or `JSON.stringify`, or `String`, which the collector also calls)
-// is the one that runs, and it can put text of its own beside the exec's line.
+// model's result is the wrapper's own collector, and it runs in the page's realm, beside the page's own code.
 //
-// The heading `page-writable (ran in page world):` was the whole of the mitigation while the collector ran in the page's
-// realm. The row below is live: it asserts the property against the isolated realm the defence runs the collector in, so
-// a change that put the collector back in the page's world reds it.
+// The heading `page-writable (ran in page world):` was the whole of the mitigation while that collector called the
+// page's builtins on the exec's line. It no longer calls one on a string line: the lines go into a null-prototype
+// object by index with a counter (no `push`, no array whose prototype could hold an index setter), a line is joined by
+// `+` (no `map`/`join`), and the collector is an object literal (no `Object.defineProperty`). The row below is live
+// against that, so a change that makes the collector call one of the page's builtins on a string line again reds it. A
+// NON-string argument's text still goes through the page's `JSON.stringify` (or `String`), which is why the heading
+// stays; tests/cdp-collector-realm.test.mjs pins that residual.
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
@@ -63,8 +65,8 @@ test("the page cannot write into a STRICT-PAGE main-world exec's result by patch
     assert.deepEqual(before.logs, ["own"], "positive control: with no page tampering the result is the exec's own line");
     assert.match(before.text, /^page-writable \(ran in page world\):\nconsole:\nown\n\nvalue: 1/, before.text);
 
-    // A page script, in the same world and before the exec: the collector's own push is the page's, and it adds a line
-    // whenever the exec logs. Nothing about it is async, so it is in place for the wrapper's very first line.
+    // A page script, in the same world and before the exec: it patches the builtin an array collector would call for
+    // the exec's own line. Nothing about it is async, so it is in place for the wrapper's very first line.
     clean.run(`
         globalThis.__ownPush = Array.prototype.push;
         Array.prototype.push = function (...a) {
