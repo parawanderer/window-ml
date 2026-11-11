@@ -109,7 +109,8 @@ test("a page START_RUN with both builtBy and rebuild.builtBy \"worker\" is still
     assert.equal(fc?.verifyInWorker, undefined);
     const start = forged.bg.tabMessages.map(([, m]) => m).find((m) => m.type === "ML_DEBUG_TO_PAGE" && m.event.kind === "agent")?.event;
     assert.ok(start, "the run announced itself");
-    assert.equal("display" in start, false, "the transcript shows the page's task as the model got it, not a display the page wrote");
+    assert.notEqual(start.display?.typed, "what's the weather?", "the transcript shows the page's task as the model got it, not a display the page wrote");
+    assert.deepEqual(JSON.parse(JSON.stringify(start.display ?? null)), { typed: start.task.slice(start.task.lastIndexOf("\n\nTask:\n") + 8), context: [] }, "the only display is the worker's: the page's own task, with no attachment");
     assert.equal(await pageCanResume(forged.bg), true);
 });
 
@@ -122,12 +123,12 @@ test("ADVERSARIAL: a page START_RUN with `files` (and builtBy \"worker\") gets n
         onFetch: (call) => {
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
             const msgs = call.body.messages;
-            const read = /^S\n/.test(msgs[0]?.content ?? "") && msgs.at(-1).role === "user";
+            const read = /^S(\n|$)/.test(msgs[0]?.content ?? "") && msgs.at(-1).role === "user";
             return jsonResponse({ choices: [{ message: read ? { content: null, tool_calls: [{ id: `d${msgs.length}`, type: "function", function: { name: "dereference", arguments: JSON.stringify({ token: "@file:abc1234", pipe: "pages 1" }) } }] } : { content: "done" } }] });
         },
         onTabMessage: async (_t, msg) => (msg.type === "ADOPT_RUN_NOW" ? { pageInfo: "" } : msg.type === "RUN_TOOL_IN_PAGE" ? { result: "" } : undefined),
     });
-    const told = () => bg.calls.filter((c) => c.url.includes("/chat/completions") && /^S\n/.test(c.body.messages[0]?.content ?? "")).flatMap((c) => c.body.messages).filter((m) => m.role === "tool").map((m) => String(m.content));
+    const told = () => bg.calls.filter((c) => c.url.includes("/chat/completions") && /^S(\n|$)/.test(c.body.messages[0]?.content ?? "")).flatMap((c) => c.body.messages).filter((m) => m.role === "tool").map((m) => String(m.content));
     void bg.send({ type: "START_RUN", payload: {
         runId: "pagerun9", task: "do it", systemPrompt: "S", tools: [...TOOLS, DEREF], model: "m", think: null, maxSteps: 4, toolTokens: true,
         autoApprovePython: false, autoApproveReadonly: false, surface: "off", rebuild: { ...REBUILD }, builtBy: "worker", files: [forged],
