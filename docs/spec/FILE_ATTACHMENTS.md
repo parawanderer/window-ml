@@ -275,12 +275,12 @@ Page 1: …the first page's text, to the preview cap…
 
 "Attached by the person" is there so a model does not take the name for a path on disk; `ml.sh` given an `@file:`
 pointer as an argument refuses with a sentence saying an attachment is not on the host's disk, so no program can open it
-by that name, and naming `ml.sh.put` with the item's own handle as the way to write it there (#1595). That refusal is
-the shell call's one rule for every pointer prefix in argv, not a manifest's (SHELL.md), and it stays. The one way to
-put an attachment on disk is `ml.sh.put(handle, path)`: it writes the attachment's original bytes, not a PDF's text. A
-new file in a nested path is judged as an in-root write, a new top-level name asks, and an existing file always asks. A
-remote run, and a host without the put capability, are refused. How it is built: `docs/dev/shell.md`, "Writing an
-attachment to disk".
+by that name; #1595 (open) adds a clause naming `ml.sh.put` with the item's own handle as the way to write it there.
+That refusal is the shell call's one rule for every pointer prefix in argv, not a manifest's (SHELL.md), and it stays.
+The one way to put an attachment on disk is `ml.sh.put(handle, path)`: it writes the attachment's original bytes, not a
+PDF's text. A new file in a nested path is judged as an in-root write, a new top-level name asks, and an existing file
+always asks. A remote run, and a host without the put capability, are refused. How it is built: `docs/dev/shell.md`,
+"Writing an attachment to disk".
 
 **Reading text by page.** The pipe dialect gains one verb, `pages N-M` (`PIPE_CMDS`, text-pipe.ts), which selects whole
 pages from a paged value before the other verbs run: `dereference("@file:3fa91c2", { pipe: "pages 3-5 | grep -i
