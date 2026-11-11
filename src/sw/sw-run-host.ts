@@ -995,9 +995,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         const startEvent = {
             kind: "agent", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 },
             // A fresh run's task as the model got it, the page context in front (`firstUserTurn`); the bubble shows the task.
-            task: resurrected ? (resumeOriginalTask ?? p.task) : firstUserTurn(p.task, resumeMessages ? undefined : p.pageContext), model: p.model, maxSteps: p.maxSteps,
+            task: resurrected ? (resumeOriginalTask ?? p.task) : firstUserTurn(modelTask, resumeMessages ? undefined : p.pageContext), model: p.model, maxSteps: p.maxSteps,
             ...(p.display && !resurrected && p.builtBy === "worker" ? { display: p.display }
-                : !resurrected && !resumeMessages && p.pageContext ? { display: { typed: p.task, context: [] } } : {}),
+                : !resurrected && !resumeMessages && (p.pageContext || modelTask !== p.task) ? { display: { typed: p.task, context: [] } } : {}),
             pageUrl: p.pageUrl, pageTitle: p.pageTitle,
             resumed: resurrected || undefined,   // the sidebar can mark it "resumed after interruption"
             config: {
@@ -1017,7 +1017,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // the worker rewrote above (`ourToolTexts`, `withExecWorld`) and the prompt it extended. The surfaces and both
         // exports must carry what the model is sent, so the worker says it after the page's start, on the same gate.
         if (!resumeMessages && p.surface !== "off" && !hasNavigated && !byWorker())
-            fanEvent({ kind: "agent-config", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, config: { system: startEvent.config.system, tools: startEvent.config.tools } });
+            fanEvent({ kind: "agent-config", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, config: { system: startEvent.config.system, tools: startEvent.config.tools }, ...(startEvent.task !== p.task ? { task: startEvent.task } : {}) });
         else if (resurrected) fanEvent(startEvent);   // resurrected: no page-side caller emitted a start → fan it ourselves
         // A plain resume emits NEITHER, so a cap raised here would reach no surface: the step pill would keep counting
         // against the old number and the next Continue would offer the old budget back. `agent-cap` is the same event
