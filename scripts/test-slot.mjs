@@ -274,12 +274,12 @@ function spawnJob(job, dir) {
  */
 export function batchRefusal(state, want, dir, deps = {}) {
     const m = (deps.memory ?? readMemory)(), maxWorkers = maxWorkersFor(m.cores ?? os.cpus().length);
-    if (want > maxWorkers) return `--workers ${want}: this machine's worker cap is ${maxWorkers} (its cores less two)`;
+    if (want > maxWorkers) return `${want} workers is more than this machine's worker cap of ${maxWorkers} (its cores less two)`;
     if (state.jobs.some((j) => j.state === "running")) return null;
     const { perWorker } = sizingFor("batch", m, dir, deps), room = m.available - (m.coming ?? 0) - RESERVE_FRAC * m.total;
     if (want * perWorker <= room) return null;
     const most = Math.floor(Math.max(0, room) / perWorker);
-    return `--workers ${want}: ${want} workers take ${fmtBytes(want * perWorker)} and, with nothing else running, the memory room is ${fmtBytes(Math.max(0, room))} above the reserve; ${most ? `ask for at most ${most}` : "not even one fits now: try later"}`;
+    return `${want === 1 ? "1 worker takes" : `${want} workers take`} ${fmtBytes(want * perWorker)} and, with nothing else running, the memory room is ${fmtBytes(Math.max(0, room))} above the reserve; ${most ? `ask for at most ${most}` : "not even one fits now: try later"}`;
 }
 
 /**
