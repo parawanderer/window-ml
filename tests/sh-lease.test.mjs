@@ -268,6 +268,202 @@ test("task tail on a running ml.sh call says the host reports output at the end,
     await endTasks("run-tail");
 });
 
+// Long enough for the scrub to treat it as a key (sw-scrub's MIN_KEY is 12); the config below is given it for these rows.
+const PEEK_KEY = "sk-peek-0123456789abcdef";
+const b64 = (s) => ({ $bytes: Buffer.from(s).toString("base64") });
+const peekOf = (out, err = "") => ({ stdout: { size: Buffer.byteLength(out), truncated: false, data: b64(out) }, stderr: { size: Buffer.byteLength(err), truncated: false, data: b64(err) } });
+/** A detached call on a host that answers `peek` with `answer(args)`. */
+async function detachedPeeking(runId, answer, opts = {}) {
+    const host = slowHost({ peek: true, peekAnswer: answer, ...opts });
+    liveRun(runId);
+    const r = await shRun(ctxFor(runId), [["ls"], { expectMs: 30 }]);
+    return { host, task: r.task };
+}
+
+test("task tail on a host that answers peek returns the latest lines of each stream, asked for by the call's id", T, async () => {
+    const seen = [];
+    const { host, task } = await detachedPeeking("run-peek", (a) => { seen.push(a); return peekOf("one\ntwo\nthree\n", "warn\n"); });
+    const t = await taskAction("run-peek", { op: "tail", id: task, lines: 2 });
+    assert.match(t, /^stdout \(14 B so far, last 2 lines\):\ntwo\nthree\nstderr \(5 B so far\):\nwarn$/, t);
+    assert.equal(seen.length, 1);
+    assert.match(seen[0].id, /^c\d+$/);
+    assert.equal(seen[0].bytes, 4096);
+    assert.ok(!t.includes(SH_TAIL_ABSENT));
+    host.finish();
+    await endTasks("run-peek");
+});
+
+test("task tail on a host without hello.peek says SH_TAIL_ABSENT and never calls peek", T, async () => {
+    const host = slowHost({ peekAnswer: () => peekOf("leak\n") });
+    liveRun("run-nopeek");
+    const r = await shRun(ctxFor("run-nopeek"), [["ls"], { expectMs: 30 }]);
+    const t = await taskAction("run-nopeek", { op: "tail", id: r.task });
+    assert.ok(t.endsWith(SH_TAIL_ABSENT), t);
+    assert.ok(!t.includes("leak"));
+    assert.ok(!host.names().includes("peek"), "peek was called on a host that did not say it has it");
+    await withTasks(snap(), "run-nopeek");
+    assert.ok(!host.names().includes("peek"), "ml.current.tasks probed peek on a host without it");
+    host.finish();
+    await endTasks("run-nopeek");
+});
+
+test("a secret in a running call's output (the API key, a bearer token) never reaches the model through tail or the tasks row", T, async () => {
+    sync.apiKey = PEEK_KEY;
+    const { host, task } = await detachedPeeking("run-peek-secret", () => peekOf(`starting\nkey=${PEEK_KEY}\nAuthorization: Bearer ${PEEK_KEY}\n`, `${PEEK_KEY}\n`));
+    const t = await taskAction("run-peek-secret", { op: "tail", id: task, lines: 10 });
+    assert.ok(t.includes("starting"), t);
+    assert.ok(!t.includes(PEEK_KEY), t);
+    const [row] = (await withTasks(snap(), "run-peek-secret")).tasks.rows;
+    assert.ok(String(row[8]).includes("starting"), String(row[8]));
+    assert.ok(!String(row[8]).includes(PEEK_KEY), String(row[8]));
+    sync.apiKey = "sk-test";
+    host.finish();
+    await endTasks("run-peek-secret");
+});
+
+test("peek answering UnknownId (the call just ended) is a sentence, not an error or the absent line", T, async () => {
+    const { host, task } = await detachedPeeking("run-peek-gone", () => undefined);
+    const t = await taskAction("run-peek-gone", { op: "tail", id: task });
+    assert.equal(t, "It has just ended; its result arrives on its own.");
+    host.finish();
+    await endTasks("run-peek-gone");
+});
+
+test("any other peek failure is one short sentence, and a secret in the host's message is scrubbed", T, async () => {
+    sync.apiKey = PEEK_KEY;
+    const { host, task } = await detachedPeeking("run-peek-bad", () => ({ error: { code: "Io", message: `${"x".repeat(100)}${PEEK_KEY} ${"x".repeat(400)}` } }));
+    const t = await taskAction("run-peek-bad", { op: "tail", id: task });
+    assert.match(t, /^The (?:host|\[server\]) could not read its output \(/);
+    assert.ok(!t.includes(PEEK_KEY), t);
+    assert.ok(t.length < 200, t.length);
+    assert.ok(!t.includes("sk-peek"), "the cut to a short sentence must not leave the front of a key");
+    assert.ok(!t.includes("\n"));
+    sync.apiKey = "sk-test";
+    host.finish();
+    await endTasks("run-peek-bad");
+});
+
+// --- the two bounds: the tail nobody asked for is 500 characters, the tail asked for is lines first up to 8 KiB ---
+
+test("the tail the model asks for is lines first: N whole lines under 8 KiB, even where a line is over 500 characters", T, async () => {
+    const lines = Array.from({ length: 30 }, (_, i) => `L${i}:${"w".repeat(100)}`);
+    const { host, task } = await detachedPeeking("run-peek-lines", () => peekOf(lines.join("\n") + "\n"));
+    const t = await taskAction("run-peek-lines", { op: "tail", id: task, lines: 30 });
+    assert.equal(typeof t, "string", "nothing was cut, so there is nothing to point at");
+    const body = t.split("\nstderr")[0].split("\n").slice(1);
+    assert.deepEqual(body, lines, "all 30 lines whole (3 KB, well past the 500-character bound of an unasked tail)");
+    host.finish();
+    await endTasks("run-peek-lines");
+});
+
+test("lines past 200 are clamped to 200, and the bytes asked leave room for them", T, async () => {
+    const seen = [];
+    const lines = Array.from({ length: 300 }, (_, i) => `n${i}`);
+    const { host, task } = await detachedPeeking("run-peek-200", (a) => { seen.push(a); return peekOf(lines.join("\n") + "\n"); });
+    const t = await taskAction("run-peek-200", { op: "tail", id: task, lines: 5000 });
+    const body = t.split("\nstderr")[0].split("\n").slice(1);
+    assert.equal(body.length, 200);
+    assert.equal(body[0], "n100");
+    assert.equal(body[199], "n299");
+    assert.equal(seen[0].bytes, 201 * 240);
+    host.finish();
+    await endTasks("run-peek-200");
+});
+
+test("a stream over 8 KiB keeps its END and is cut to the ceiling", T, async () => {
+    const { host, task } = await detachedPeeking("run-peek-cap", () => peekOf(`${"a".repeat(9000)}\n${"z".repeat(9000)}\n`));
+    const t = await taskAction("run-peek-cap", { op: "tail", id: task, lines: 5 });
+    const text = typeof t === "string" ? t : t.content;
+    const body = text.split("\n")[1];
+    assert.equal(body, `…${"z".repeat(8192)}`);
+    assert.ok(!text.includes("a".repeat(10)));
+    host.finish();
+    await endTasks("run-peek-cap");
+});
+
+test("a tail cut by the ceiling names a stored value of the whole peeked stream; an uncut one names none", T, async () => {
+    const { IDBFactory } = (await import("node:module")).createRequire(import.meta.url)("fake-indexeddb");
+    globalThis.indexedDB = new IDBFactory();
+    try {
+        const { readStoredText, claimValue } = await import("../src/sw/sw-values.ts");
+        const lines = Array.from({ length: 40 }, (_, i) => `row${i}:${"q".repeat(400)}`);
+        const { host, task } = await detachedPeeking("run-peek-ptr", () => peekOf(lines.join("\n") + "\n"));
+        const t = await taskAction("run-peek-ptr", { op: "tail", id: task, lines: 40 });
+        assert.equal(typeof t, "object", "40 lines of 400 characters is 16 KB: cut to 8 KiB");
+        assert.ok(t.content.length < 8192 + 200);
+        assert.ok(!t.content.includes("row0:"), "the start was cut");
+        await claimValue(t.textValue, "run-peek-ptr");
+        const whole = await readStoredText(t.textValue, "run-peek-ptr");
+        for (const l of lines) assert.ok(whole.includes(l), "the stored whole holds every peeked line, including the cut ones");
+        assert.ok(whole.startsWith("stdout ("));
+        const small = await taskAction("run-peek-ptr", { op: "tail", id: task, lines: 2 });
+        assert.equal(typeof small, "string", "2 lines of 400 characters fit the ceiling: no value to point at");
+        host.finish();
+        await endTasks("run-peek-ptr");
+    } finally { delete globalThis.indexedDB; }
+});
+
+test("the task tool hands the stored value on as its result's textValue, which the loop turns into a pointer", async () => {
+    const { taskTool } = await import("../src/tools/task-tool.ts");
+    const { defineTool } = await import("../src/ml/ml-tool-factories.ts");
+    const tool = taskTool(defineTool, { act: async () => ({ content: "tail text", textValue: "k1" }) });
+    assert.deepEqual(await tool.run({ op: "tail", id: "t000000" }), { content: "tail text", textValue: "k1" });
+});
+
+test("the tail nobody asked for stays at 500 characters per stream and asks the host's default 4 KiB", T, async () => {
+    const seen = [];
+    const { host, task } = await detachedPeeking("run-peek-row500", (a) => { seen.push(a); return peekOf(`${"a".repeat(900)}\n${"z".repeat(900)}\n`, `${"e".repeat(900)}\n`); });
+    const [row] = (await withTasks(snap(), "run-peek-row500")).tasks.rows;
+    const cells = String(row[8]).split("\n");
+    assert.equal(cells[1], `…${"z".repeat(500)}`);
+    assert.equal(cells[3], `…${"e".repeat(500)}`);
+    assert.equal(seen.length, 1, "one peek per running task per snapshot");
+    assert.equal(seen[0].bytes, 4096);
+    host.finish();
+    await endTasks("run-peek-row500");
+});
+
+test("the Detached message and the inbox line stay at the 500-character bound and ask nothing of the host", T, async () => {
+    const host = slowHost({ peek: true, peekAnswer: () => peekOf("x\n") });
+    const run = liveRun("run-peek-unasked");
+    const r = await shRun(ctxFor("run-peek-unasked"), [["ls"], { expectMs: 30 }]);
+    assert.ok(r.error.length < 1500, r.error.length);
+    assert.ok(!host.names().includes("peek"), "the Detached message does not read the host");
+    host.finish();
+    await until(() => run.inbox().length > 0);
+    const line = run.inbox()[0].text;
+    assert.ok(line.length < 2000, line.length);
+    assert.ok(!host.names().includes("peek"), "the inbox line does not read the host");
+    await endTasks("run-peek-unasked");
+});
+
+test("the tasks row carries the same peeked tail, and a failing peek leaves its cell null", T, async () => {
+    const good = await detachedPeeking("run-peek-row", () => peekOf("row line\n"));
+    const [row] = (await withTasks(snap(), "run-peek-row")).tasks.rows;
+    assert.match(String(row[8]), /^stdout \(9 B so far\):\nrow line/);
+    good.host.finish();
+    await endTasks("run-peek-row");
+    const bad = await detachedPeeking("run-peek-row2", () => ({ error: { code: "Io", message: "x" } }));
+    const [row2] = (await withTasks(snap(), "run-peek-row2")).tasks.rows;
+    assert.match(String(row2[8]), /^The (?:host|\[server\]) could not read/);
+    bad.host.finish();
+    await endTasks("run-peek-row2");
+});
+
+test("one ml.current.tasks read peeks each running task once, and the state inspector's read peeks never", T, async () => {
+    let peeks = 0;
+    const { host } = await detachedPeeking("run-peek-once", () => { peeks++; return peekOf("x\n"); });
+    await withTasks(snap(), "run-peek-once");
+    assert.equal(peeks, 1, "ml.current.tasks asked the host more than once for one running task");
+    const { declaredState } = await import("../src/state-registry.ts");
+    const decl = declaredState().find((d) => d.id === "run.tasks");
+    assert.ok(decl?.read, "run.tasks has no read");
+    await decl.read({ runId: "run-peek-once" });
+    assert.equal(peeks, 1, "the state inspector's read of run.tasks asked the host");
+    host.finish();
+    await endTasks("run-peek-once");
+});
+
 test("another run's task id and a made-up one read the same UnknownTask, and no action reaches the host", T, async () => {
     const host = slowHost();
     liveRun("run-own");

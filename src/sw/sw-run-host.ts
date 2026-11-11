@@ -735,8 +735,11 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         const navNeedsConsent = (url: string): boolean => {
             if (!p.crossOrigin) return false;   // can't cross origins → tool refuses cross-origin; same-site fine → no gate
             try {
-                if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !url.startsWith("//")) return false;   // relative → same-origin
-                const dest = onPageUrl(url);   // a scheme-relative URL takes the page's scheme, as the browser goes there
+                // Judged on where the browser goes, never on the spelling: a backslash, a scheme with too few slashes and a
+                // leading space each reach another authority from a string that does not look absolute.
+                const dest = onPageUrl(url);
+                if (dest.protocol !== "http:" && dest.protocol !== "https:") return false;   // the tool refuses it; no pointless gate
+                if (tabUrlNow() && dest.origin === new URL(tabUrlNow()).origin) return false;   // the page's own origin
                 return !consentedOrigins.has(dest.origin) && !navOnlyOrigins.has(dest.origin);   // a NEW cross-origin → gate; an already-consented one → no
             } catch { return false; }   // unparseable → the tool will error; no pointless gate
         };
@@ -1947,9 +1950,11 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 fetchOriginGranted: (url: string): boolean => byWorker() && runsInWorker(p, "fetch_url") && runOriginGranted(runId, url),
                 fetchSameOrigin: (url: string): boolean => {
                     try {
-                        if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !url.startsWith("//")) return true;   // relative → the page's own origin
-                        // A scheme-relative URL takes the page's scheme, as the FETCH_URL choke point resolves it.
-                        const o = onPageUrl(url).origin;
+                        // Resolved as the FETCH_URL choke point resolves it, never read off the spelling.
+                        const dest = onPageUrl(url);
+                        if (dest.protocol !== "http:" && dest.protocol !== "https:") return true;   // the choke point refuses it
+                        if (fetchOnPageOrigin(dest.href)) return true;   // the page's own origin
+                        const o = dest.origin;
                         // The start origin is consented for navigation, and read free while the tab is on it. Once the tab
                         // has left, the FETCH_URL choke point no longer counts it (it judges the sender's frame), so the gate
                         // does not either and the read cards (POLICIES.md, "Ruled 2026-10-27"). A later approved navigate or

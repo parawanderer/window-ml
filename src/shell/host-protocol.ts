@@ -49,7 +49,7 @@ export type HostEnvelope = { write: "roots" | "none"; exec: "any" | "program-onl
 /** What `done` reports as applied. `"today"` is the floor, which is also what an absent envelope on `done` means from
  *  a worker that sent none; an absent `envelope` on `done` itself is an older host, which the extension reads as
  *  unknown, never as narrow. */
-export type HostDoneEnvelope = { write: "today" | "roots" | "none"; exec: "any" | "program-only"; /** A credentialed call's profile (`credentialed:github`): exec is then program-only whatever was asked. */ profile?: string };
+export type HostDoneEnvelope = { write: "today" | "roots" | "none"; exec: "any" | "program-only"; /** A credentialed call's profile (`credentialed:github`): exec is then program-only whatever was asked. */ profile?: string; /** The host names its proxy admitted (host 0.8.0). */ hosts?: string[] };
 
 /** Whether this host understands AND can hold `envelope` on `start`/`pipe`. K3 put `landlockAbi` on `hello.sandbox`,
  *  present on both platforms (`null` on macOS); an older host has `sandbox` without that key and silently ignores
@@ -139,8 +139,10 @@ export interface HostFacts {
     expiresInMs: number;
     /** The bound the call will run under, after clamping (host 0.3.0; absent from an older host). */
     memoryBound?: number;
-    /** The credential the host will inject (host 0.8.0): null when none was asked for; absent from an older host. */
-    credential?: { provider: string; ports: number[]; profile: string } | null;
+    /** The credential the host will inject (host 0.8.0): null when none was asked for; absent from an older host.
+     *  `hosts` are the names its proxy admits; a build from before the proxy (window-ml-host #34, never released)
+     *  reports none, and its profile reaches any host on `ports`. */
+    credential?: { provider: string; ports: number[]; hosts?: string[]; profile: string } | null;
 }
 
 /** One stream of a finished call: a pointer to the bytes the host holds, or why it could not keep them. */
@@ -208,6 +210,12 @@ export type HostOwnerAnswer = { owner: null }
 
 /** `read`'s answer: a range of held output, as base64 bytes. */
 export interface HostRead { ptr: string; offset: number; length: number; size: number; eof: boolean; data: { $bytes: string } }
+
+/** One stream of a `peek` answer: its size so far, whether it passed the host's output cap, and its last bytes. */
+export interface HostPeekStream { size: number; truncated: boolean; data: { $bytes: string } }
+
+/** `peek`'s answer for a call still running. `stdout` is null when it feeds the next pipeline stage. */
+export interface HostPeek { id: string; stdout: HostPeekStream | null; stderr: HostPeekStream }
 
 /** `put`'s answer: where the file would land, and whether one is there now. Nothing is written yet. */
 export interface HostPutFacts {
@@ -373,6 +381,14 @@ export class HostClient {
     read(ptr: string, offset: number, length: number): Promise<HostRead> {
         return this.call("read", { ptr, offset: Math.max(0, Math.floor(offset)), length: Math.max(0, Math.min(READ_CHUNK, Math.floor(length))) });
     }
+
+    /**
+     * The last bytes of a call still running on THIS connection (host `peek`; only when `hello.peek` is true, never
+     * probed). `UnknownId` once the call has ended. The cut may split a UTF-8 sequence or a line: see {@link peekText}.
+     * @param id the call's id
+     * @param bytes how many bytes at most (the host defaults to 4096 and clamps to 512 KiB)
+     */
+    peek(id: string, bytes?: number): Promise<HostPeek> { return this.call("peek", bytes === undefined ? { id } : { id, bytes }); }
 
     /**
      * Resolve where a file of `size` bytes would land, writing nothing (host `put`); `discard` drops it.

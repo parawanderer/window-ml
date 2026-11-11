@@ -142,15 +142,16 @@ export function refineProgramManifest(gen) {
     patch(doc, "$defs.ManifestEntrypoint.properties.sha256", { pattern: "^[0-9a-f]{64}$" });
 
     // A credential provider (program-manifest.ts `CREDENTIAL_PROVIDERS`, restated: this script reads no TypeScript) is
-    // its program's alone, its ports a subset of the provider's, and `network` exists only beside a credential.
-    const PROVIDERS = { github: { program: "gh", ports: [443] } };
+    // its program's alone, its ports and hosts subsets of the provider's, and `network` exists only beside a credential.
+    const PROVIDERS = { github: { program: "gh", ports: [443], hosts: ["api.github.com", "github.com", "uploads.github.com", "codeload.github.com", "raw.githubusercontent.com", "release-assets.githubusercontent.com"] } };
     patch(doc, "$defs.ManifestCredential.properties.provider", { enum: Object.keys(PROVIDERS) });
     patch(doc, "$defs.ManifestNetwork.properties.ports", { minItems: 1, items: { type: "integer" } });
+    patch(doc, "$defs.ManifestNetwork.properties.hosts", { minItems: 1, items: { type: "string" } });
     doc.allOf = [
         { if: { required: ["network"] }, then: { required: ["credential"] } },
         ...Object.entries(PROVIDERS).map(([name, p]) => ({
             if: { required: ["credential"], properties: { credential: { properties: { provider: { const: name } } } } },
-            then: { properties: { program: { const: p.program }, network: { properties: { ports: { items: { enum: p.ports } } } } } },
+            then: { properties: { program: { const: p.program }, network: { properties: { ports: { items: { enum: p.ports } }, hosts: { items: { enum: p.hosts } } } } } },
         })),
     ];
     return doc;

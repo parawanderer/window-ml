@@ -14,7 +14,8 @@ import { createHash } from "node:crypto";
  *   "out\n"); `refuse`: { call: code } answers that call with an error; `startError(id, n)`: an error code for the
  *   n-th `start` (0-based), as `PinChanged` when a hashed script changed since its spawn; `fs`: the files in the roots, by
  *   absolute path to its sha256, which a path fact's `exists` and `sha256` read (absent: every path exists); a test's
- *   `done` changes it to make a call write
+ *   `done` changes it to make a call write; `peek`: true puts `peek: true` in hello (host 0.7.0+); `peekAnswer(args)`:
+ *   the value of a `peek` ({ stdout, stderr }, or { error }); returning nothing answers `UnknownId`
  */
 export function fakeNativeHost(opts = {}) {
     const calls = [];
@@ -36,7 +37,7 @@ export function fakeNativeHost(opts = {}) {
                 if (call === "hello") {
                     const sandbox = { kind: opts.sandboxKind === undefined ? "seatbelt" : opts.sandboxKind, available: opts.sandbox !== false };
                     if (opts.landlockAbi !== undefined) sandbox.landlockAbi = opts.landlockAbi;
-                    return reply({ seq, value: { host: "window-ml-host", version: "0.2.0", protocol: opts.protocol ?? 1, platform: "macos", sandbox, modes: ["host"], ...(opts.credentials ? { credentials: opts.credentials } : {}) } });
+                    return reply({ seq, value: { host: "window-ml-host", version: "0.2.0", protocol: opts.protocol ?? 1, platform: "macos", sandbox, modes: ["host"], ...(opts.credentials ? { credentials: opts.credentials } : {}), ...(opts.peek ? { peek: true } : {}) } });
                 }
                 if (call === "configure") return reply({ seq, value: { roots: args.roots.map((r) => ({ given: r, path: r })), sandboxed: args.sandbox !== false && opts.sandbox !== false } });
                 if (call === "spawn") {
@@ -52,7 +53,7 @@ export function fakeNativeHost(opts = {}) {
                         }),
                         effects: "unknown", mode: "host", sandboxed: opts.sandbox !== false, placement: opts.sandbox !== false ? "host-sandbox" : "host-plain",
                         // A host that lists credentials honours one asked for (the real one also checks the manifest's hash).
-                        ...(opts.credentials ? { credential: args.credential ? { provider: args.credential.provider, ports: [443], profile: `credentialed:${args.credential.provider}` } : null } : {}),
+                        ...(opts.credentials ? { credential: args.credential ? { provider: args.credential.provider, ports: [443], hosts: ["api.github.com", "github.com"], profile: `credentialed:${args.credential.provider}` } : null } : {}),
                     };
                     msg.id = id;
                     return reply({ seq, value: { id, expiresInMs: 1800000, ...f } });
@@ -74,6 +75,12 @@ export function fakeNativeHost(opts = {}) {
                     if (!b) return reply({ seq, error: { code: "UnknownPtr", message: "no" } });
                     const part = b.subarray(args.offset, args.offset + args.length);
                     return reply({ seq, value: { ptr: args.ptr, offset: args.offset, length: part.length, size: b.length, eof: args.offset + part.length >= b.length, data: { $bytes: part.toString("base64") } } });
+                }
+                if (call === "peek") {
+                    const r = opts.peekAnswer?.(args);
+                    if (!r) return reply({ seq, error: { code: "UnknownId", message: "no such running call" } });
+                    if (r.error) return reply({ seq, error: r.error });
+                    return reply({ seq, value: { id: args.id, ...r } });
                 }
                 if (call === "discard" || call === "release") return reply({ seq, value: {} });
                 return reply({ seq, error: { code: "BadRequest", message: `unknown call ${call}` } });

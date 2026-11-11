@@ -6,8 +6,15 @@ install on demand, and can a static check of the wheel tags tell which before an
 
 The cells are written here; edit this file, not the notebook. The inputs are pinned in data/pypi-compat/: the core's
 environment (probe.mjs env), the static verdicts (pypi.py, read from PyPI) and the install probes (probe.mjs install,
-one fresh interpreter per project). NB_REFRESH=1 reads them all again: the probes take ~15 minutes and reach PyPI and
-the Pyodide CDN. PYPKG_CACHE=<dir> keeps PyPI's answers between refreshes while iterating.
+one fresh interpreter per project), and the top-10,000 probe. NB_REFRESH=1 reads them all again: the 1,000 probes take
+~15 minutes and reach PyPI and the Pyodide CDN. PYPKG_CACHE=<dir> keeps PyPI's answers between refreshes while
+iterating. The 10,000 take about an hour: queue them first, one test-slot ticket per chunk,
+
+    .venv/bin/python notebooks/python-packages/pypi.py freeze-top 10000 $PYPKG_10K_DIR
+    node scripts/test-slot.mjs submit --kind unit -- .venv/bin/python notebooks/python-packages/pypi.py probe-chunk <start> <end> $PYPKG_10K_DIR
+
+for start = 0, 500, ..., 9500; the refresh then reads the chunks (and runs, unqueued, any that are missing).
+The cells also write data/pypi-compat/verdicts.json from the 10,000.
 """
 
 from pathlib import Path
@@ -41,7 +48,7 @@ threads, subprocesses, the real filesystem. That is a lower bound on what is bro
 """)
 
 code("""
-import json, os, re, subprocess
+import json, os, re, subprocess, tempfile
 from collections import Counter
 from pathlib import Path
 import pandas as pd
@@ -342,6 +349,71 @@ lag.sort_values("rank")[["rank", "project", "lock_version", "version"]].rename(c
 """)
 
 md("""
+## 5. The top 10,000, and the verdicts the card reads
+
+The same probe, run over the top 10,000 (the ranking section 1 read, frozen for the run) in 20 chunks of 500
+queued through test-slot (`pypi.py freeze-top` / `probe-chunk`; a refresh reads the chunks under `PYPKG_10K_DIR`).
+Each project gets the cause section 2's rules give it. The result is written to `data/pypi-compat/verdicts.json`,
+keyed by the core's release tag, so a later core adds a key instead of overwriting these.
+""")
+
+code("""
+TEN_DIR = Path(os.environ.get("PYPKG_10K_DIR") or Path(tempfile.gettempdir()) / "window-ml-pypi-10k")
+_ten = wmlnb.extract(DATA / "probe-10k.json", lambda: pypi.probe_top(10_000, TEN_DIR, wmlnb.ROOT),
+                     source={"top": pypi.TOP_URL, "n": 10_000, "probe": "probe.mjs install, 20 chunks of 500", "core": DIST["artefact"]["name"]})
+TEN_WHEN, ten = _ten[0]["top_list_updated"], pd.DataFrame(_ten[1:])
+pd.DataFrame(wmlnb.provenance(DATA / "probe-10k.json"))
+""")
+
+code("""
+ten["cause"] = ten.apply(lambda r: "ok" if r.stage == "ok" else cause(r), axis=1)
+ten["band"] = pd.cut(ten["rank"], [0, 1000, 2000, 5000, 10_000], labels=["1-1000", "1001-2000", "2001-5000", "5001-10000"])
+by_band = pd.crosstab(ten.cause, ten.band, margins=True, margins_name="all")
+by_band.loc["loads, share"] = (by_band.loc["ok"] / by_band.loc["all"]).map("{:.0%}".format)
+w = ten.groupby("band", observed=True).apply(lambda g: (g.downloads_30d * (g.cause == "ok")).sum() / g.downloads_30d.sum(), include_groups=False)
+by_band.loc["loads, download-weighted"] = [f"{x:.0%}" for x in w] + [f"{(ten.downloads_30d * (ten.cause == 'ok')).sum() / ten.downloads_30d.sum():.0%}"]
+by_band
+""")
+
+md("""
+**Does a second run agree?** The two probes share their top 1,000: the same ranking, probed hours apart. A verdict
+that changed is a release published in between, or a probe that is not deterministic.
+""")
+
+code("""
+again = pr[["project", "cause"]].merge(ten[["project", "cause"]], on="project", suffixes=(" (section 2)", " (10k)"))
+moved = again[again["cause (section 2)"] != again["cause (10k)"]]
+print(f"projects in both: {len(again)}, same verdict: {len(again) - len(moved)}, moved:")
+print("\\n".join(f"  {r.project}: {r['cause (section 2)']} -> {r['cause (10k)']}" for _, r in moved.iterrows()))
+""")
+
+md("""
+**Where the undeclared host packages come from.** The long tail is full of families that extend one package: typing
+stubs for boto3's services, `types-*` stubs, instrumentations. They import what they extend without declaring it.
+""")
+
+code("""
+und = ten[ten.cause == "undeclared host"]
+def family(p):
+    m = re.match(r"(mypy-boto3|types|opentelemetry-instrumentation|sphinxcontrib|django|flake8|pytest|apache-airflow-providers)-", p)
+    return m.group(1) + "-*" if m else "(other)"
+fam = und.groupby(und.project.map(family)).agg(projects=("project", "size"), first_rank=("rank", "min"), examples=("project", lambda s: ", ".join(s.head(3))))
+fam.sort_values("projects", ascending=False)
+""")
+
+code("""
+TAG = DIST["artefact"]["tag"]
+verdicts_path = DATA / "verdicts.json"
+allv = json.loads(verdicts_path.read_text()) if verdicts_path.exists() else {}
+allv[TAG] = {"core": DIST["artefact"]["name"], "top_list_updated": TEN_WHEN, "n": len(ten),
+             "verdicts": pypi.verdicts(_ten[1:], LOCK)}
+body = json.dumps(allv, indent=2, sort_keys=True) + "\\n"
+if not verdicts_path.exists() or verdicts_path.read_text() != body:
+    verdicts_path.write_text(body)
+pd.Series(Counter(v["verdict"] for v in allv[TAG]["verdicts"].values())).sort_values(ascending=False).to_frame(f"verdicts.json[{TAG!r}]")
+""")
+
+md("""
 ## What this says for "Packages on demand"
 
 The cell below writes this section from the figures above, so the prose cannot drift from them.
@@ -392,6 +464,14 @@ lines = [
     f"top 2,000, then " + ", ".join(f"`{b}`" for b in blockers.index[1:4]) + ".",
     f"- **The host is the other placement**: of the {len(not_here)} projects not installable here, {int(host_ok)} have a "
     f"wheel for a native CPython 3.14 on macOS arm64 (their closure there is not checked).",
+    f"- **Over the top {len(ten):,}**, {int((ten.cause == 'ok').sum()):,} install and import "
+    f"({(ten.cause == 'ok').mean():.0%}; {(ten.downloads_30d * (ten.cause == 'ok')).sum() / ten.downloads_30d.sum():.0%} "
+    f"by downloads), falling from {by_band.loc['loads, share', '1-1000']} of the top 1,000 to "
+    f"{by_band.loc['loads, share', '5001-10000']} of ranks 5,001-10,000: no build is "
+    f"{int((ten.cause == 'no build').sum()):,} of the failures, and an undeclared host "
+    f"{int((ten.cause == 'undeclared host').sum())}, mostly `{fam.projects.idxmax()}`. A second run agrees on "
+    f"{len(again) - len(moved)} of the {len(again)} projects both probed. `verdicts.json` holds each one's verdict for "
+    f"`{TAG}`, for the card to read.",
     "- **Import is the bar measured**, not use: `requests` installs and imports and still cannot reach the network from "
     "a locked cell. Which calls work is the library manifest's job (`docs/spec/PYTHON_DIALECT.md`).",
 ]

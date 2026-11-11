@@ -909,6 +909,12 @@ that lists the waiting requests (each with `allowed`) or applies `{ origin, deci
   https only when the run has no page. A fixed `https:` there asked again for an http origin the run had consented to.
   The cover is the run-start rows in section "a SCHEME-RELATIVE navigate" (one a RED TEAM row for a third host) and
   person-word-navigate.test.mjs's http-keyed row; an independent red-team pass follows the fix on main.
+- **A gate judges a URL by where the browser resolves it, never by its spelling** (`onPageUrl`, sw-run-host.ts). A
+  backslash after the first slash, a scheme with too few slashes and a leading space, tab or newline each reach another
+  authority from a string that does not look absolute, so an early-out on `scheme://` or `//` let nine such spellings
+  take the tab to another origin with no card. `navNeedsConsent` and `fetchSameOrigin` resolve first; a result that is
+  not http(s) is left to the tool and the FETCH_URL choke point, which refuse it. The cover is e3's run-start section
+  "a navigate or fetch SPELLED so the gate reads it as relative, and the browser does not".
 
 ## Tests
 

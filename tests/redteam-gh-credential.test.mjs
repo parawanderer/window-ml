@@ -180,6 +180,71 @@ test("RED TEAM: a host whose hello.credentials omits github is sent no credentia
     assert.equal(ask.asked[0].facts.credential.held, false);
 });
 
+// --- the hosts a credentialed call's proxy admits: the validator is the whole gate on the worker's side ---
+
+test("RED TEAM: a manifest asking for a host the provider does not list is refused in every confusable spelling, so only an exact provider name passes", async () => {
+    // Mutation: match by suffix or substring, or on a lowercased or trimmed copy (`provider.hosts.some((h) =>
+    // asked.toLowerCase().endsWith(h))`), and github.com.evil.test, evil-github.com, "api.github.com:443" and
+    // " api.github.com" validate: a host that pinned those bytes would then admit a proxy table of their choosing.
+    // Exact equality against the provider's own names is the whole rule, so every shape is enumerated here, not sampled.
+    const fs = await import("node:fs");
+    const { validateManifest, CREDENTIAL_PROVIDERS } = await import("../src/shell/program-manifest.ts");
+    const gh = JSON.parse(fs.readFileSync(new URL("../src/shell/manifests/gh.json", import.meta.url), "utf8"));
+    const v = (hosts) => validateManifest({ ...gh, network: { ports: [443], hosts } }).join("\n");
+    // A non-empty list of strings that holds anything else is refused for its CONTENT...
+    for (const list of [["github.com.evil.test"], ["evil-github.com"], ["notgithub.com"], ["api.github.com.evil.test"],
+        ["api.github.com:443"], ["https://api.github.com"], ["api.github.com/"], [" api.github.com"], ["api.github.com "],
+        ["*.github.com"], [".github.com"], ["api.github.com", "evil.test"], ["API.github.com"], ["api.github.com."], [""], ["127.0.0.1"]])
+        assert.match(v(list), /\$\.network\.hosts: a subset of /, JSON.stringify(list));
+    // ...and a value that is not one is refused for its FORM, the two errors being what a caller is told.
+    for (const hosts of [{ 0: "api.github.com", length: 1 }, "api.github.com", [443], [null], [["api.github.com"]], [], new String("api.github.com")])
+        assert.match(v(hosts), /\$\.network\.hosts: a non-empty list of host names/, JSON.stringify(hosts));
+    // The positive control: every host the provider lists, alone and all together, is the only thing that passes.
+    for (const h of CREDENTIAL_PROVIDERS.github.hosts) assert.equal(v([h]), "", h);
+    assert.equal(v(CREDENTIAL_PROVIDERS.github.hosts), "", "the provider's whole list");
+    assert.equal(v([...CREDENTIAL_PROVIDERS.github.hosts, ...CREDENTIAL_PROVIDERS.github.hosts]), "", "a repeat is still a subset");
+    assert.equal(v(undefined), "", "no hosts at all: a manifest from before the field");
+});
+
+test("RED TEAM: the card names the hosts the host's grant admits and its ports, and no line says any host while a host named some", T, async () => {
+    // Mutation: print the manifest's hosts (or nothing) in place of the fact's, or say "any host" on a null-or-empty
+    // check that cannot tell the two apart, and one of the assertions below reds. This is the person's consent card,
+    // read from the same `facts` object the ask carries.
+    const { shCardLines } = await import("../src/shell/sh-call.ts");
+    const sandboxOf = async (host) => {
+        const ask = answering(true);
+        await runOn("userScripts", [runs(["gh", "pr", "view", "12"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep });
+        assert.equal(ask.asked.length, 1, "gh's reads are never free, so the card is put to the person");
+        return shCardLines(ask.asked[0].facts).find((l) => l.label === "Sandbox").value;
+    };
+    // The fake host's grant names api.github.com and github.com on 443: the card says exactly that.
+    const held = await sandboxOf(fakeNativeHost({ landlockAbi: null, credentials: ["github"] }));
+    assert.match(held, /network to api\.github\.com, github\.com on port 443 only$/, held);
+    assert.doesNotMatch(held, /any host/, `the grant named hosts, so no line may say any host: ${held}`);
+    // A host that lists no credentials grants nothing: the line is today's, never "network to  on … only".
+    const plain = await sandboxOf(fakeNativeHost({ landlockAbi: null }));
+    assert.match(plain, /no network$/, plain);
+});
+
+test("RED TEAM: a host holding the token but naming no hosts is carded as reaching any host, never as the shipped list", async () => {
+    // The upgrade: a host built before the proxy holds the token and bounds by port alone, and its `facts.credential`
+    // carries no `hosts`. Mutation: fall back to the manifest's `network.hosts` when the fact is absent (`hosts: facts.
+    // credential.hosts ?? m?.network?.hosts …`) and the card reads as scoped to six GitHub hosts while the host admits
+    // any 443 host: the card understates what the person is approving, which is the one thing it exists to state.
+    const { shFacts, shCardLines, SHIPPED_MANIFESTS } = await import("../src/shell/sh-call.ts");
+    const { CREDENTIAL_PROVIDERS } = await import("../src/shell/program-manifest.ts");
+    const facts = (over) => ({ id: "c1", argv: ["gh", "api", "/user"], program: { path: "/opt/homebrew/bin/gh", inRoot: false }, cwd: { path: "/w", inRoot: true }, env: { set: [], secrets: [], free: true }, repo: null, repoConfigRunsCode: null, paths: [], effects: "unknown", mode: "host", sandboxed: true, placement: "host-sandbox", expiresInMs: 1, ...over });
+    const sandbox = (f) => shCardLines(f).find((l) => l.label === "Sandbox").value;
+    const unscoped = shFacts(facts({ credential: { provider: "github", ports: [443], profile: "credentialed:github" } }));
+    assert.equal(unscoped.credential.hosts, null, "a grant that names no hosts is null, never the manifest's list");
+    assert.match(sandbox(unscoped), /network to any host on port 443 only$/, sandbox(unscoped));
+    // The shipped list is the provider's whole, so a host pinned to these bytes advertises exactly it, and the card of
+    // that grant prints it rather than any host.
+    assert.deepEqual([...SHIPPED_MANIFESTS.gh.network.hosts].sort(), [...CREDENTIAL_PROVIDERS.github.hosts].sort(), "the shipped gh.json names every host the provider lists, and none besides");
+    const scoped = shFacts(facts({ credential: { provider: "github", ports: [443], hosts: SHIPPED_MANIFESTS.gh.network.hosts, profile: "credentialed:github" } }));
+    assert.ok(sandbox(scoped).endsWith(`network to ${SHIPPED_MANIFESTS.gh.network.hosts.join(", ")} on port 443 only`), sandbox(scoped));
+});
+
 // --- an entry a store should not hold is dropped before a call can meet it ---
 
 test("RED TEAM: a stored entry claiming a credential is dropped on READ, so a build that wrote one is not believed", async () => {

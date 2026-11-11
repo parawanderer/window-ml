@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { credentialFor, manifestSha256, parseShRun, planSpawn, shFacts, shCardLines, headText, shOut, shResult, wireCodeOf, manifestFor, SHIPPED_MANIFESTS, ShRefused, SH_LIMITS, envelopeFor, envelopeMismatch, protectedChangesText, shOutcome, shOutcomeLines, SH_CHANGES_SHOWN, unaskedCalls, unaskedLines } from "../src/shell/sh-call.ts";
+import { credentialFor, manifestSha256, parseShRun, planSpawn, shFacts, shCardLines, headText, shOut, shResult, wireCodeOf, manifestFor, SHIPPED_MANIFESTS, ShRefused, SH_LIMITS, envelopeFor, envelopeMismatch, envelopeText, protectedChangesText, shOutcome, shOutcomeLines, SH_CHANGES_SHOWN, unaskedCalls, unaskedLines } from "../src/shell/sh-call.ts";
 import { HostClient, HostError, hostTakesEnvelope, READ_CHUNK, bytesOf } from "../src/shell/host-protocol.ts";
 
 const S = { cwd: "/w" };
@@ -452,10 +452,30 @@ test("the card's Sandbox line names the ports the host granted, not a fixed 443"
     assert.deepEqual(shFacts(facts({ argv: ["gh", "api", "/user"], program: { path: "/opt/homebrew/bin/gh", inRoot: false }, paths: [] })).credential.ports, [443], "not held: the manifest's");
 });
 
+test("the card's Sandbox line names the hosts the host's proxy admits, and says any host when a host names none", () => {
+    const gh = (credential) => shFacts(facts({ argv: ["gh", "api", "/user"], program: { path: "/opt/homebrew/bin/gh", inRoot: false }, paths: [], ...(credential ? { credential } : {}) }));
+    const sandbox = (f) => shCardLines(f).find((l) => l.label === "Sandbox").value;
+    const scoped = gh({ provider: "github", ports: [443], hosts: ["api.github.com", "codeload.github.com"], profile: "credentialed:github" });
+    assert.deepEqual(scoped.credential.hosts, ["api.github.com", "codeload.github.com"], "the host's grant");
+    assert.match(sandbox(scoped), /network to api\.github\.com, codeload\.github\.com on port 443 only$/);
+    // the upgrade: a host built before the proxy holds the token but names no hosts, and its profile reaches any 443 host
+    const unscoped = gh({ provider: "github", ports: [443], profile: "credentialed:github" });
+    assert.equal(unscoped.credential.hosts, null);
+    assert.match(sandbox(unscoped), /network to any host on port 443 only$/);
+    // not held: the shipped manifest's hosts, which the card does not show (no network)
+    assert.deepEqual(gh(undefined).credential.hosts, SHIPPED_MANIFESTS.gh.network.hosts);
+    assert.match(sandbox(gh(undefined)), /no network$/);
+});
+
+test("done's envelope names the admitted hosts in the run log's words, and an envelope without them reads as before", () => {
+    assert.equal(envelopeText({ write: "roots", exec: "program-only", profile: "credentialed:github", hosts: ["api.github.com", "github.com"] }), "write roots, exec program-only, profile credentialed:github, hosts api.github.com, github.com");
+    assert.equal(envelopeText({ write: "roots", exec: "program-only", profile: "credentialed:github" }), "write roots, exec program-only, profile credentialed:github");
+});
+
 test("the card says the call sends the token when the host injects it, and that nothing is sent when it cannot", () => {
     const gh = (over) => facts({ argv: ["gh", "api", "/user"], program: { path: "/opt/homebrew/bin/gh", inRoot: false }, paths: [], ...over });
     const held = shFacts(gh({ credential: { provider: "github", ports: [443], profile: "credentialed:github" } }));
-    assert.deepEqual(held.credential, { provider: "github", sends: "your GitHub token", held: true, ports: [443] });
+    assert.deepEqual(held.credential, { provider: "github", sends: "your GitHub token", held: true, ports: [443], hosts: null });
     const lines = shCardLines(held);
     assert.deepEqual(lines.find((l) => l.label === "Sends"), { label: "Sends", value: "your GitHub token", warn: true });
     assert.match(lines.find((l) => l.label === "Sandbox").value, /port 443/);
