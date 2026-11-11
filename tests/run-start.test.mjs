@@ -623,12 +623,13 @@ test("two sends to an idle stored run at once: the first resumes, the second rea
     let release;
     hold = new Promise((r) => { release = r; });
     const first = send(hash, { text: "one" });
-    for (let i = 0; i < 200 && !reached; i++) await flush(4);
-    assert.ok(reached, "the first send is held in adoptOnTab");
-    const second = await send(hash, { text: "two", files: [NOTES] });
-    assert.equal(second.data, "busy", "a resume is already starting: the message has nowhere to go");
-    assert.equal(await w.state(hash, "run.files"), null, "the file it attached is not on the run's shelf");
-    release();
+    try {
+        for (let i = 0; i < 200 && !reached; i++) await flush(4);
+        assert.ok(reached, "the first send is held in adoptOnTab");
+        const second = await send(hash, { text: "two", files: [NOTES] });
+        assert.equal(second.data, "busy", "a resume is already starting: the message has nowhere to go");
+        assert.equal(await w.state(hash, "run.files"), null, "the file it attached is not on the run's shelf");
+    } finally { release(); }   // a failed assertion above must not leave the first send held
     assert.equal((await first).data, "turn");
     await w.waitChats(2);
     assert.deepEqual(fanned(w.bg, "agent-say").map((s) => s.text), ["one"], "only the delivered message is announced");
