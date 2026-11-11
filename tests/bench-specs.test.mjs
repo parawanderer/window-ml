@@ -144,3 +144,30 @@ test("tools-into-js's arms are fetch_url, exec and both, each with answer and no
     }
     for (const t of spec.tasks) assert.equal(t.regression.included, false, `${t.id} measures a reduced toolset`);
 });
+
+// --- prompt-budget-pagectx: the page context's two facts, the URL and the date ---
+
+test("prompt-budget-pagectx/relative-fetch accepts the pear count from aisle 4's stock.json, and rejects a 404 or another fruit's count", async () => {
+    const t = task(await load("prompt-budget-pagectx"), "relative-fetch");
+    for (const ok of ["23", "There are 23 pears in stock.", "pears: 23", "**23** pears"]) assert.ok(scores(t, ok), `should accept ${JSON.stringify(ok)}`);
+    for (const bad of ["The file returned 404 Not Found.", "41", "There are 8 pears.", "123 pears", "I could not find stock.json at /stock.json."])
+        assert.ok(!scores(t, bad), `should reject ${JSON.stringify(bad)}`);
+    const { startPageServer } = await import("../examples/cross-page/serve.mjs");
+    const site = await startPageServer();
+    try {
+        const near = await fetch(`${site.url}/shop/aisle-4/stock.json`).then((r) => r.json());
+        assert.equal(near.stock.pears, 23, "the fixture's own figure is the predicate's");
+        assert.equal((await fetch(`${site.url}/stock.json`)).status, 404, "the root-relative misreading finds nothing");
+        assert.doesNotMatch(await fetch(`${site.url}/shop/aisle-4/`).then((r) => r.text()), /\b23\b|stock\.json/, "the page itself carries neither the answer nor the file's name");
+    } finally { await site.stop(); }
+});
+
+test("prompt-budget-pagectx/todays-date accepts today's date and rejects another day's", async () => {
+    const t = task(await load("prompt-budget-pagectx"), "todays-date");
+    const pad = (n) => String(n).padStart(2, "0"), d = new Date();
+    const today = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    assert.ok(scores(t, today) && scores(t, `Today's date is ${today}.`), today);
+    const other = new Date(d.getTime() - 3 * 86400000);
+    assert.ok(!scores(t, `${other.getFullYear()}-${pad(other.getMonth() + 1)}-${pad(other.getDate())}`), "three days ago");
+    assert.ok(!scores(t, "2024-06-01"), "a date from the model's training");
+});

@@ -18,7 +18,7 @@ import type { PipeLimits } from "../pointers/text-pipe";
 import { runAgentLoop, shotTurnMessage } from "./agent-loop";
 import type { ToolMeta, AgentLoopDeps, ToolRunResult, LiveOutput } from "./agent-loop";
 import { autoApprovePython } from "./auto-approve";
-import { firstUserTurn } from "./run-assembly";
+import { firstUserTurn, systemWithContext } from "./run-assembly";
 import { externalSheetIds } from "../dom/dom";
 import { isSelfSourceUrl } from "./self-source";
 import { BUILD_INFO } from "../build-info.gen";
@@ -171,7 +171,7 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
                 ...cfg.resumeMessages,
                 ...userTurn,
             ]
-            : [{ role: "system", content: cfg.systemPrompt }, ...userTurn];
+            : [{ role: "system", content: systemWithContext(cfg.systemPrompt, cfg.pageContext) }, ...userTurn];
         return built;
     };
     const pushAssistant = (messages: NeutralMessage[], msg: { content?: string | null; tool_calls?: ToolCall[] }): void => {
