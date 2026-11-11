@@ -354,8 +354,9 @@ export interface ShFacts {
     sandboxed: boolean;
     placement: HostPlacement;
     /** The credential the call's manifest names: what the card says it sends, and `held` when the host's facts say it
-     *  will inject it (the call then always asks, `judgeCall`); null when the manifest names none. */
-    credential: { provider: string; sends: string; held: boolean; ports: readonly number[] } | null;
+     *  will inject it (the call then always asks, `judgeCall`); null when the manifest names none. `hosts` is null when
+     *  a host holds it without naming hosts (a build from before the proxy), whose profile reaches any host on `ports`. */
+    credential: { provider: string; sends: string; held: boolean; ports: readonly number[]; hosts: readonly string[] | null } | null;
 }
 
 /** A walked directory whose walk found a secret, or could not tell, counts as one. */
@@ -432,8 +433,11 @@ function credentialOf(facts: HostFacts, m: ProgramManifest | undefined): ShFacts
     if (provider === undefined) return null;
     const sends = Object.hasOwn(CREDENTIAL_PROVIDERS, provider) ? CREDENTIAL_PROVIDERS[provider]!.sends : `the ${provider} credential`;
     // The host's grant when it holds one, else what the manifest asks for, else the provider's own.
-    const ports = facts.credential?.ports ?? m?.network?.ports ?? (Object.hasOwn(CREDENTIAL_PROVIDERS, provider) ? CREDENTIAL_PROVIDERS[provider]!.ports : []);
-    return { provider, sends, held: !!facts.credential, ports };
+    const own = Object.hasOwn(CREDENTIAL_PROVIDERS, provider) ? CREDENTIAL_PROVIDERS[provider] : undefined;
+    const ports = facts.credential?.ports ?? m?.network?.ports ?? own?.ports ?? [];
+    // A host that holds it says which names its proxy admits; one that names none bounds by port alone.
+    const hosts = facts.credential ? facts.credential.hosts ?? null : m?.network?.hosts ?? own?.hosts ?? [];
+    return { provider, sends, held: !!facts.credential, ports, hosts };
 }
 
 /**
@@ -485,7 +489,7 @@ function sandboxAppliedLine(applied: HostDoneEnvelope | null, asked: HostEnvelop
 }
 
 /** An envelope in words, as the card and the run log print it. */
-export const envelopeText = (e: HostDoneEnvelope): string => `write ${e.write}, exec ${e.exec}${e.profile ? `, profile ${e.profile}` : ""}`;
+export const envelopeText = (e: HostDoneEnvelope): string => `write ${e.write}, exec ${e.exec}${e.profile ? `, profile ${e.profile}` : ""}${e.hosts ? `, hosts ${e.hosts.join(", ")}` : ""}`;
 
 /**
  * Whether the host applied something other than what was asked for, an absent ask being the floor. An unreported
@@ -580,7 +584,7 @@ export function shCardLines(f: ShFacts, applied?: HostDoneEnvelope | null, asked
         { label: "Program", value: f.program.path + (f.program.version ? ` (version ${f.program.version})` : "") },
         { label: "In", value: f.cwd.path + (f.cwd.inRoot ? "" : " (outside the workspace roots)"), ...(f.cwd.inRoot ? {} : { warn: true }) },
         f.sandboxed
-            ? { label: "Sandbox", value: f.credential?.held ? `on: writes only inside the workspace roots, network to any host on ${portsText(f.credential.ports)} only` : "on: writes only inside the workspace roots, no network" }
+            ? { label: "Sandbox", value: f.credential?.held ? `on: writes only inside the workspace roots, network to ${f.credential.hosts ? f.credential.hosts.join(", ") : "any host"} on ${portsText(f.credential.ports)} only` : "on: writes only inside the workspace roots, no network" }
             : { label: "Sandbox", value: "off: runs as you, with your files and network", warn: true },
     ];
     if (f.credential?.held) lines.push({ label: "Sends", value: f.credential.sends, warn: true });

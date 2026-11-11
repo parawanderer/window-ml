@@ -16,11 +16,11 @@ Why the limits: on 2026-11-08 nine runners from different sessions ran at once (
 time then queued twelve sessions' suites behind a single 3-worker run.
 
 ```bash
-node scripts/test-slot.mjs submit [--kind unit|e2e] -- <command…>   # queue a DETACHED job; prints its ticket, returns at once
+node scripts/test-slot.mjs submit [--kind unit|e2e|batch] [--workers N] -- <command…>   # queue a DETACHED job; prints its ticket, returns at once
 node scripts/test-slot.mjs wait <ticket>                            # block until it ends; prints the log's tail, exits with its code
 node scripts/test-slot.mjs status                                   # what runs, what waits, the last finished jobs
 node scripts/test-slot.mjs cancel <ticket>                          # take a queued job out, or stop a running one
-node scripts/test-slot.mjs run [--kind unit|e2e] -- <command…>      # wait in the FOREGROUND, then run the command here
+node scripts/test-slot.mjs run [--kind unit|e2e|batch] [--workers N] -- <command…>      # wait in the FOREGROUND, then run the command here
 ```
 
 ## In a Claude Code session
@@ -33,6 +33,26 @@ A waiting runner prints `test-slot: waiting for pid N (<clone>, <command>, W wor
 of you` at the start and every 30 s, where `<why>` is the cap, the workers or the memory that holds the queue's first
 waiting job. When its turn comes it prints the grant line:
 `test-slot: W workers (X available, Y reserved, ~Z per worker; run 2 at once, 9 workers between them)`.
+
+## Non-test jobs: `--kind batch`
+
+A probe, a scan or a notebook data run that is not a test but wants the machine-wide memory lock is submitted as
+`--kind batch`, never as `--kind unit` (that sizes it as a suite, puts its memory into the unit figures and takes a
+slot ahead of tests). The rule of 2026-11-09:
+
+- It declares the cores it really uses, `--workers N` (1 to 6, default 1); the queue grants all N or none. `--workers`
+  with no value, outside 1..6, or with another kind exits 2.
+- Alone, both caps still hold: the always-starts rule is for a run sized from free memory, not a declared count. So a
+  submit (or `run`) exits 2 with the figures when N exceeds the machine's worker cap (cores less two: 2 on a 4-core box),
+  or when nothing runs and N workers' memory exceeds the room above the reserve; ask for fewer. Waiting would never end
+  on a small box, and granting fewer breaks all-or-nothing. Submitted while something runs, it queues and waits for both.
+- The same command submitted with a different N is a different job (the dedupe key carries N).
+- Every queued test job is judged before any batch job, whatever the submit order; at most ONE batch job runs at a time.
+- It counts toward the 3-run and 13-worker caps like any run.
+- Chunk it to about five minutes or less (guidance, not enforced). A run past 15 minutes is marked `overran: true` in
+  its footprint (every footprint has `durationMs`) so the chunk can be tuned; nothing kills it here.
+- Its per-worker figure is the p90 of the batch footprints only; with none yet it takes the unit figure (the default
+  1 GB when unit is unmeasured too). Batch lines never size a test run.
 
 ## Opt-outs
 
