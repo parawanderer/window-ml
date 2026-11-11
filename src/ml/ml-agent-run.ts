@@ -217,7 +217,9 @@ export const agent = async function(this: MlApi, task: string, { host = null, to
     // `runModel` (resolved once up top) is the driver model — config default when none was passed —
     // so the sidebar shows the REAL model (not "default") and can tell when a vision sub-call reused it.
     const mlApi = this as unknown as MlApi;   // typed self-ref for the deps' chatMeta (capabilities/ps)
-    if (firstTurn) emitDebug({ kind: "agent", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, task, images: turnImages.length ? turnImages : undefined, ...(_display ? { display: _display } : {}), model: runModel, maxSteps, pageUrl: location.href, pageTitle: document.title || undefined, config: {
+    // The start event's task is the first message as the model got it, page context included; the bubble shows the task.
+    const shownDisplay = _display ?? (pageCtx ? { typed: task, context: [] } : undefined);
+    if (firstTurn) emitDebug({ kind: "agent", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, task: firstUserTurn(task, pageCtx), images: turnImages.length ? turnImages : undefined, ...(shownDisplay ? { display: shownDisplay } : {}), model: runModel, maxSteps, pageUrl: location.href, pageTitle: document.title || undefined, config: {
         system: systemPrompt, customSystem: !!system,
         tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, vision: !!(t.capabilities && t.capabilities.includes("vision")), description: t.description, parameters: t.parameters, summary: t.summary, ...(t.remote ? { remote: t.remote } : {}) })),
         maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null,

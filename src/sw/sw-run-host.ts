@@ -73,6 +73,7 @@ import { GATED_BUILTINS } from "../tools/tool-registry";
 import { checkVerifyRequest, verifyAsked, verifyVerb, withoutPageVision, workerVerify, VERIFY_REFUSED, VERIFY_WITHHELD, type VerifyOutcome, type WorkerVerify } from "./worker-verify";
 import { topDocument } from "./worker-vision";
 import { capPageAnswer, capPageContext } from "./page-answer-caps";
+import { firstUserTurn } from "../agent/run-assembly";
 import { hostAsks, raiseAsk, stepAsks } from "./sw-asks";
 import { ARRIVAL_ASK, ARRIVAL_DENIED } from "../contract";
 import { arrivalAnsweredText, arrivalDeniedText, clickDeniedText, arrivalWaitingText, arrivalHold, arrivalLine, arrivalSettled, arrivalVerdict, clearArrival, holdArrival, judgeTurnStart, watchArrivals, watchBetweenTurns } from "./nav-arrival";
@@ -993,8 +994,10 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         void judgeTurnStart(tabId, runId, { first: !resumeMessages, force: resurrected || !!arrivalHold(runId) });
         const startEvent = {
             kind: "agent", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 },
-            task: resurrected ? (resumeOriginalTask ?? p.task) : p.task, model: p.model, maxSteps: p.maxSteps,
-            ...(p.display && !resurrected && p.builtBy === "worker" ? { display: p.display } : {}),
+            // A fresh run's task as the model got it, the page context in front (`firstUserTurn`); the bubble shows the task.
+            task: resurrected ? (resumeOriginalTask ?? p.task) : firstUserTurn(p.task, resumeMessages ? undefined : p.pageContext), model: p.model, maxSteps: p.maxSteps,
+            ...(p.display && !resurrected && p.builtBy === "worker" ? { display: p.display }
+                : !resurrected && !resumeMessages && p.pageContext ? { display: { typed: p.task, context: [] } } : {}),
             pageUrl: p.pageUrl, pageTitle: p.pageTitle,
             resumed: resurrected || undefined,   // the sidebar can mark it "resumed after interruption"
             config: {
