@@ -9,9 +9,9 @@
 // page's realm, so the page's `Array.prototype.push` (or `JSON.stringify`, or `String`, which the collector also calls)
 // is the one that runs, and it can put text of its own beside the exec's line.
 //
-// The heading `page-writable (ran in page world):` is the whole of today's mitigation: it tells the model the console
-// it is reading is not trusted. A test with no `todo` that fails is a gap to fix; a `todo` names the property the
-// code cannot keep yet, so a later defence has a failing row to turn green.
+// The heading `page-writable (ran in page world):` was the whole of the mitigation while the collector ran in the page's
+// realm. The row below is live: it asserts the property against the isolated realm the defence runs the collector in, so
+// a change that put the collector back in the page's world reds it.
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
@@ -56,7 +56,7 @@ after(() => releaseDebugger(7));
 
 // --- the model's result: the wrapper's collector is the page's realm ---
 
-test("the page cannot write into a STRICT-PAGE main-world exec's result by patching the builtins its collector calls", { ...T, todo: "Inherent while the exec runs in the page's world: the wrapper builds __logs there, so __logs.push, JSON.stringify and String are the PAGE's methods, and the page's replacement can add a line of its own beside the exec's before the result is returned — the model, the Out cell and both exports cannot tell the two apart. Nothing a bindingCalled event carries separates the exec's line from the page's either. What holds instead: the whole result is headed page-writable (ran in page world): — the sentence the model reads — and a binding call, which reaches the live output only, is already pinned in redteam-isolated.test.mjs" }, async () => {
+test("the page cannot write into a STRICT-PAGE main-world exec's result by patching the builtins its collector calls", T, async () => {
     const clean = cdpPage();
     const before = await cdpEval(7, "doc-7", "console.log('own'); return 1", () => {});
     assert.ok("ok" in before, `positive control: the exec ran: ${JSON.stringify(before)}`);
