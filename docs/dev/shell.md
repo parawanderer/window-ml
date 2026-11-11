@@ -204,6 +204,37 @@ In an isolated exec, `iso-channel.ts` names `put` with its own arity of exactly 
 A call that runs past its lease detaches into a task: [`async-calls.md`](async-calls.md) is how that is built (the
 lease, the task table, the inbox, the `task` tool), for `ml.sh` and every executor after it.
 
+### A running call's tail (host `peek`)
+
+`task tail` on a detached `ml.sh` call asks the host's `peek` (`HostClient.peek`) for the last bytes of each stream and
+`sh-tail.ts` (`peekText`) turns them into lines. `hello.peek === true` is the ONLY gate: on a host without it, and over
+the hub, `tail` stays null and the task tool says `SH_TAIL_ABSENT`; the worker never probes by calling `peek`.
+
+- **The bytes are cut at a byte.** `peekText` drops a half character at the front (continuation bytes `0x80`-`0xBF`) and
+  holds back an unfinished sequence at the end, so U+FFFD appears only for bytes the program itself wrote. When the data
+  does not begin the stream (`size` is more than the data) the first line is partial and is dropped; a fragment with no
+  newline at all is kept and marked, rather than showing nothing. Then the last N lines (CRLF split), each stream
+  labelled, a null stdout (it feeds a pipeline stage) said as such, and `truncated` said as "passed the host's output cap".
+- **Two bounds, by who asked.** The tail nobody asked for (`ml.current.tasks`'s `tail` cell) asks the host's default 4096
+  bytes and shows exec's output cap, `OUTPUT_CAP.exec.default` (500 characters per stream, from the end). The tail the
+  model asks for (`task tail`) is lines first: the N lines it named (default 20, at most `TASK_TAIL_MAX_LINES`, 200), with a
+  ceiling of `ASKED_TAIL_CHARS` (8 KiB) per stream, keeping the END. The Detached message and the inbox line are results, not
+  tails, and keep the 500-character cap.
+- **How many bytes are asked for a `task tail`** (`peekBytesFor`): 240 per line plus one line, never under the host's 4096
+  default, never over its 512 KiB ceiling (200 lines asks 48,240).
+- **A cut asked tail is a value it can point at.** When the 8 KiB ceiling cut a stream, `peekTail` scrubs the whole peeked
+  text (every peeked line of both streams, labelled) and stores it with `storeText`; `taskAction` answers
+  `{ content, textValue }` and the loop mints the `@tool:` pointer and claims the value for the run, exactly as for
+  `fetch_url` past its preview (`docs/dev/pointers.md`). With no value store the tail is the text alone.
+- **The text is model-facing**: `taskAction` runs it through `forModel` like any tool result, and the markers `peekText`
+  adds (the ellipsis, "(start of the line cut)") have no run of two spaces. A `peek` failure sentence is scrubbed before
+  it is cut to 120 characters, so the cut cannot leave the front of a key. `UnknownId` (the call ended between the
+  model's request and the host's answer) says so; its result arrives on its own.
+- **`ml.current.tasks` carries the small tail** in each running row's `tail` cell: one `peek` per running `ml.sh` task per
+  snapshot (`withTasks` asks once and `rowsOf` only places the answer); a failing ask leaves the cell null. The cell is
+  null otherwise only where `hello.peek` is not true (the `task` tool says why; the worker never probes). The state
+  inspector reads synchronously and sees null for these.
+
 ## Capabilities
 
 `shellCapabilities()` feeds the runtime's `RuntimeCapabilities` (sw-sessions.ts): `shellHost` when the host was

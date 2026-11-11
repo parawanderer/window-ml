@@ -46,8 +46,11 @@ result reaches the model through the run inbox at the next step boundary, or thr
   never idle-closed under a detached call and the kill policy stays the host's. The `Detached` text says which case it
   was (the script's estimate, or the default) and the host's time limit (`timeoutMs`, or the host's 120 s).
 - **One task table for every executor** (`sw-tasks.ts`, state `run.tasks`), with statuses `running`, `done`, `failed`,
-  `cancelled` and `orphaned`. An executor gives `cancel`, `tail` and a `settled` promise. `ml.sh`'s `tail` is null
-  with a sentence saying why: the host reports a call's output only at `done`, until the host `peek` op lands.
+  `cancelled` and `orphaned`. An executor gives `cancel`, `tail` and a `settled` promise. `tail` may answer a promise
+  (the host is asked). `ml.sh`'s `tail` calls the host's `peek` when `hello.peek` is true (`docs/dev/shell.md`, "A
+  running call's tail"); on a host without it, and over the hub, it is null with a sentence saying why. Two bounds, by who asked:
+  the tail nobody asked for (`ml.current.tasks`) shows 500 characters per stream; a `task tail` shows the N lines asked
+  (at most 200) up to 8 KiB per stream, and a stream that hit the 8 KiB cut is also stored whole and pointed at.
 - **The result goes one way, once.** `taskOutcomeOf` (`sw-shell-call.ts`) cuts each stream's text to exec's output cap, with its pointer. If
   a `task await` is waiting, it gets the result. Otherwise the result is queued
   in `runInboxes` as `{ text, task }` (only `sw-tasks.ts` sets `task`). It is DELIVERED only when the loop drains it
@@ -75,5 +78,5 @@ result reaches the model through the run inbox at the next step boundary, or thr
 - **A workspace manifest for a script that runs other programs needs `runs-code`.** Without it the sandbox refuses
   every child (`Permission denied` on stderr) while the call reports `ok: true` and finishes at once, so nothing ever
   detaches. It made the first lease bench invalid (`docs/spec/SHELL.md`).
-- **An `ml.sh` task's `tail` is null while it runs.** That is the host's limit today, said in the tool's answer, never
-  a fake empty string.
+- **An `ml.sh` task's `tail` is null only where the host cannot `peek`** (no `hello.peek`: an older host, or the hub),
+  said in the tool's answer, never a fake empty string.

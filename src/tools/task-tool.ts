@@ -8,8 +8,8 @@ import type { defineTool } from "../ml/ml-tool-factories";
 
 /** What the tool needs of the worker. Absent: the descriptor alone, whose run refuses (only the worker runs it). */
 export interface TaskToolDeps {
-    /** The action's answer, for the run the worker built this tool for. */
-    act(args: Record<string, unknown>): Promise<string>;
+    /** The action's answer (a tail cut to its ceiling names the stored whole in `textValue`), for the run the worker built this tool for. */
+    act(args: Record<string, unknown>): Promise<string | { content: string; textValue: string }>;
 }
 
 /**
@@ -24,7 +24,7 @@ export function taskTool(define: typeof defineTool, deps?: TaskToolDeps): MlTool
         summary: "Await, cancel or tail a call that outran its lease and was detached.",
         description: "Act on a detached call by its task id (ml.current.tasks). await: wait up to timeout_ms (your estimate) for its result; " +
             "if it is still running then, you are told so and it runs on. cancel: stop it; the answer says what happened. " +
-            "tail: its latest output lines. A task ends with this turn; its result also arrives on its own as a [task <id> …] message.",
+            "tail: its latest output lines (a stream past 8 KiB is cut to its end; a pointer reads every line the peek returned). A task ends with this turn; its result also arrives on its own as a [task <id> …] message.",
         parameters: {
             type: "object",
             properties: {
