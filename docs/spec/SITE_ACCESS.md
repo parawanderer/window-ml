@@ -569,7 +569,7 @@ Recorded as each slice lands, with the reason.
     of the page's realm on them (a null-prototype store with a count, `+` for the join, an object-literal console), and
     the worker rebuilds the list, so a page that replaced `Array.prototype.push`, `map` or `join`, an index setter or
     `Object.defineProperty` beforehand adds, drops or rewrites no line, nor a string argument's text
-    (`redteam-cdp-result.test.mjs`, #1592, and `tests/cdp-collector-realm.test.mjs`). What stays page-writable, the residual
+    (`tests/redteam-cdp-result.test.mjs` and `tests/cdp-collector-realm.test.mjs`). What stays page-writable, the residual
     the heading is for: a NON-string argument's text, which goes through the page's `JSON.stringify` (or `String`), and
     the returned value, serialised the same way. The in-page main-world exec (`tools.ts`, in `injected.js`) builds its
     whole result in the page's realm, so there every part of it stays page-writable.
