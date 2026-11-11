@@ -800,14 +800,15 @@ test("~: a cwd of `~/proj` reaches a host that expands it as written and runs th
     assert.equal(plain.calls.find((c) => c.call === "spawn").args.cwd, "/w/proj/~/sub", "no tilde host: a relative name, as before");
 });
 
-test("~: a cwd of `~/proj` that expands outside every root is CwdOutsideRoots, asked about with the line on the card", T, async () => {
+test("~: a cwd of `~/proj` that expands outside every root is refused by the host with CwdOutsideRoots, and nothing asks", T, async () => {
     const host = fakeNativeHost(HOME_OUT);
     const ask = answering(true);
-    await runOn("userScripts", [runs(["ls"], { cwd: "~/proj" })], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep });
-    assert.equal(ask.asked.length, 1);
-    const f = ask.asked[0].facts;
-    assert.deepEqual([f.cwd.path, f.cwd.inRoot], ["/Users/fake/proj", false]);
-    assert.ok(shCardLines(f).some((l) => l.label === "~" && l.value === "~/proj is /Users/fake/proj"));
+    const { results } = await runOn("userScripts", [runs(["ls"], { cwd: "~/proj" })], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep });
+    const r = valueOf(results[0]);
+    assert.equal(r.code, "Refused");
+    assert.match(r.threw, /CwdOutsideRoots/);
+    assert.equal(ask.asked.length, 0, "a refusal draws no card");
+    assert.equal(host.calls.filter((c) => c.call === "start").length, 0);
 });
 
 test("~: a call that ran unasked with an expanded argument carries the entries on its span, and the line shows them", T, async () => {

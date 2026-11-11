@@ -418,6 +418,12 @@ test("tilde: the facts carry the host's entries ([] from a host with none), and 
     assert.deepEqual(tildeLines([]), []);
 });
 
+test("the card's In line marks a cwd outside the roots (synthetic: a host refuses such a cwd, so no host fact carries it)", () => {
+    const line = (inRoot) => shCardLines(shFacts(facts({ cwd: { path: "/elsewhere", inRoot } }))).find((l) => l.label === "In");
+    assert.deepEqual(line(false), { label: "In", value: "/elsewhere (outside the workspace roots)", warn: true });
+    assert.deepEqual(line(true), { label: "In", value: "/elsewhere" });
+});
+
 test("upgrade: facts stored by the code before tilde (no `tilde` key) still draw the card, with no `~` line", () => {
     const old = shFacts(facts());
     delete old.tilde;

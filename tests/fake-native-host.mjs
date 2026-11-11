@@ -67,9 +67,11 @@ export function fakeNativeHost(opts = {}) {
                         entries = e;
                         args = { ...sent, argv: sent.argv.map((a, i) => e.find((t) => t.index === i)?.to ?? a), ...(sent.cwd === undefined ? {} : { cwd: e.find((t) => t.index === "cwd")?.to ?? sent.cwd }) };
                     }
+                    // The real spawn refuses an expanded cwd outside the roots (window-ml-host src/session.rs, CwdOutsideRoots), so a cwd fact is always in a root.
+                    if (tilde && args.cwd !== undefined && !inRoots(args.cwd)) return reply({ seq, error: { code: "CwdOutsideRoots", message: `${args.cwd} is outside every root` } });
                     const f = opts.facts?.(args) ?? {
                         argv: args.argv, program: { path: args.argv[0].startsWith("/") ? args.argv[0] : `/usr/bin/${args.argv[0]}`, inRoot: false, fingerprint: "1:2:3:4" },
-                        cwd: { path: args.cwd, inRoot: tilde ? inRoots(args.cwd) : true }, env: { set: Object.keys(args.env ?? {}), secrets: [], free: true },
+                        cwd: { path: args.cwd, inRoot: true }, env: { set: Object.keys(args.env ?? {}), secrets: [], free: true },
                         repo: null, repoConfigRunsCode: null,
                         paths: (args.pathArgs ?? []).map((p) => {
                             const given = p.split ? args.argv[p.arg].slice(args.argv[p.arg].indexOf(p.split) + 1) : args.argv[p.arg], path = tilde && given.startsWith("/") ? given : `${args.cwd}/${given}`;
