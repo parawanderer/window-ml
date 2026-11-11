@@ -122,7 +122,9 @@ Ranked; each also in the table.
    each is one-shot, so the page cannot evaluate code of its own beside the collector, `state` and `ml`, nor run the
    approved script again (#652 review). What remains is inherent to sharing the world: the page can rewrite the builtins
    the collector and the value's serialisation call (`Array.prototype.map`, `JSON.stringify`; on the CDP path only a
-   non-string argument's text and the value, since its collector calls no builtin on the lines), throw an error with a
+   non-string argument's text and the value, since its collector calls no builtin on the lines; that text can carry a
+   newline that reads as a console or `value:` line of the page's, or pass the output ceiling so the exec's later lines
+   are dropped), throw an error with a
    stack of its choosing, and read the delegated path's `PAGE_TOOL_RESULT` by wrapping `MessagePort.prototype.postMessage` (row 6). The model reads every
    main-world exec result under a first line `page-writable (ran in page world):` (`PAGE_WORLD_HEAD`, output-clip.ts): the
    console, the `value:` (the page's own `JSON.stringify`) and an error the script threw. The console section is the plain

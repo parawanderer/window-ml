@@ -312,7 +312,7 @@ test("the model reads a MAIN-world exec's console as one the page can write into
     assert.match(iso.results[1], /^console:\nreal/, JSON.stringify(iso.results));
 });
 
-test("the page cannot write into a MAIN-world CDP exec's live output through __mlCdpStream", { ...T, todo: "Inherent while the exec runs in the page's world: the page's own scripts run in the very context the listener trusts and can call the binding (or take it before the wrapper starts, or rewrite the builtins the collector calls), and nothing in a bindingCalled event tells them apart. The binding's random per-exec name stops only a page that defines an accessor under it beforehand: the page enumerates the global while the exec runs. What holds instead: other contexts are refused, the global is deleted after the exec, and the model is told the console is page-writable (the tests above)" }, async () => {
+test("the page cannot write into a MAIN-world CDP exec's live output through __mlCdpStream", { ...T, todo: "Inherent while the exec runs in the page's world: the page's own scripts run in the very context the listener trusts and can call the binding (or take it before the wrapper starts), and nothing in a bindingCalled event tells them apart. The binding's random per-exec name stops only a page that defines an accessor under it beforehand: the page enumerates the global while the exec runs. What holds instead: other contexts are refused, the global is deleted after the exec, and the model is told the console is page-writable (the tests above)" }, async () => {
     const r = await cdpMainExec("document.title = 'x'; console.log('real'); return 1", {
         main: 1,
         during: async (bg) => {

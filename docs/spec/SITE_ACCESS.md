@@ -571,7 +571,9 @@ Recorded as each slice lands, with the reason.
     `Object.defineProperty` beforehand adds, drops or rewrites no line, nor a string argument's text
     (`tests/redteam-cdp-result.test.mjs` and `tests/cdp-collector-realm.test.mjs`). What stays page-writable, the residual
     the heading is for: a NON-string argument's text, which goes through the page's `JSON.stringify` (or `String`), and
-    the returned value, serialised the same way. The in-page main-world exec (`tools.ts`, in `injected.js`) builds its
+    the returned value, serialised the same way. That text can hold a newline, so it can read as further console lines
+    or a `value:` line of the page's making, and a text past the output ceiling makes the collector count, not keep,
+    every later line the exec prints. The in-page main-world exec (`tools.ts`, in `injected.js`) builds its
     whole result in the page's realm, so there every part of it stays page-writable.
   - Untested against a real browser: how `userScripts.execute` reports a script that does not parse (handled as
     "no result": a probe of a start marker decides whether to try the body form, so a script is never run twice).
