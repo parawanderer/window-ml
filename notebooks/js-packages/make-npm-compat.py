@@ -224,10 +224,11 @@ LOCK = {pypi.canonicalize_name(k) for k in py_env["lock"]}
 PY["cause"] = [("ok" if r["stage"] == "ok" else pypi.cause(r, LOCK)) for r in pypi_rows]
 py_group = {"ok": "loads", "no build": "no build for the runtime", "platform": "runtime lacks it (platform, Node)",
             "version": "versions / resolver", "extra": "versions / resolver", "probe": "(excluded) probe artefact",
-            "undeclared host": "(excluded) undeclared dependency"}
+            "undeclared host": "(excluded) undeclared dependency", "timeout": "timeout (a probe cap)"}
 js_group = {"ok": "loads", "no build": "no build for the runtime", "node built-in": "runtime lacks it (platform, Node)",
             "node global": "runtime lacks it (platform, Node)", "isolation": "runtime lacks it (platform, Node)",
-            "probe": "(excluded) probe artefact", "undeclared dep": "(excluded) undeclared dependency"}
+            "probe": "(excluded) probe artefact", "undeclared dep": "(excluded) undeclared dependency",
+            "timeout": "timeout (a probe cap)"}
 side = pd.DataFrame({"Python (pypi-compat)": PY.cause.map(lambda c: py_group.get(c, "other")).value_counts(),
                      "npm (this notebook)": plain.cause.map(lambda c: js_group.get(c, "other")).value_counts()}).fillna(0).astype(int)
 counted = side.loc[[i for i in side.index if not i.startswith("(excluded)")]]
