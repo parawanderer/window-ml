@@ -33,7 +33,8 @@ Slice 4 needs both, and slice 5 needs slice 2, since a policy replaces the card'
 ### Module boundary
 
 One new module in `src/python/` (`pkg-verdict.ts`), pure: no `fetch`, no `chrome`, no Pyodide, no storage, no clock. It takes
-plain data and returns plain data, so it runs the same in the worker, the offscreen document and `node:test`.
+plain data and returns plain data, so it runs the same in the worker, the offscreen document and `node:test`. As built,
+its two parsers are files of their own beside it (`pkg-pep440.ts`, `pkg-pep508.ts`), equally pure.
 
 ```ts
 verdict(request: { name: string; version?: string }, core: CoreFacts, index: IndexView): Verdict
@@ -45,10 +46,12 @@ verdict(request: { name: string; version?: string }, core: CoreFacts, index: Ind
 - `IndexView`: a synchronous lookup from a canonical name to that project's metadata (release versions, each release's
   files with filename, sha256, size, `yanked` and `requires_python`, and the chosen release's `requires_dist`). The
   caller fetches. Slice 1 only reads what it is given, which is what keeps it pure and lets the fixture drive it.
-- `Verdict`: either `{ ok: true, files: [{ name, version, filename, sha256, size, source }] }`, the whole closure as one
-  file per package with `source` one of `lock`, `mirror` or `pypi`, or `{ ok: false, reason, at }`, where `reason` is
-  one of `no-build`, `python-version`, `lock-too-old`, `not-on-index`, `too-large` or `malformed` and `at` names the
-  package in the closure that decided it.
+- `Verdict`: either `{ ok: true, files: [{ name, version, filename, source, sha256?, size? }], loaded }`, the whole
+  closure as one file per package with `source` `lock` or `pypi` (`mirror` arrives with slice 3, the digest and size
+  only on a PyPI file, since the core's own loader checks a lock file) and `loaded` the closure's packages already
+  loaded, or `{ ok: false, reason, at }`, where `reason` is one of `no-build`, `python-version`, `lock-too-old`,
+  `not-on-index`, `too-large`, `malformed` or `no-metadata` (a release asked for by version whose requirements the
+  index did not give) and `at` names the package in the closure that decided it.
 
 What it computes is the notebook's static verdict (`notebooks/python-packages/pypi.py`, `classify` and its `closure`),
 ported:
@@ -57,7 +60,9 @@ ported:
 - the closure under markers: `requires_dist` without extras, each marker evaluated against the core's environment;
 - version ranges against the lock: a lock package is used at the lock's version. A range that excludes it is fatal
   unless the package is not preloaded AND some release inside the range has a candidate wheel (micropip then takes the
-  newest such release, as the notebook's `replaceable` measures);
+  newest such release, as the notebook's `replaceable` measures). As built, the release installed must sit inside
+  EVERY range asked of that package on the closure, where the notebook checks each range alone: stricter, and the
+  same on all 2,224 projects it judged;
 - the newest admitted release, the first candidate file in the resolver's order when there are several (the four
   projects the spec names), and the hash the index states for that file.
 
@@ -93,7 +98,8 @@ What it CANNOT make the verdict do:
 - name a path: a filename that does not parse under the wheel grammar, or that contains `/`, `\`, `..` or a NUL, is not
   a candidate. So whatever slice 3 writes is named by a string slice 1 has already validated.
 - run without bound: at most N packages in a closure, D levels deep, and B bytes of metadata per project, plus caps on
-  specifier and marker length. Cycles terminate through the seen set. Past any bound the verdict is
+  specifier and marker length (as built: `VERDICT_BOUNDS` in `pkg-verdict.ts`, B counted per verdict, plus the
+  wheels' total bytes). Cycles terminate through the seen set. Past any bound the verdict is
   `too-large`. Slice 1 picks the values from the 10k probe's largest real closure (the notebook's `closure_size`),
   with headroom stated.
 - approve anything: a verdict is the card's input (slice 2) or a policy's facts (slice 5). Neither installs on its
@@ -107,7 +113,7 @@ snapshot of the index metadata the verdict reads, for every project in the closu
 the notebook writes with `wmlnb.extract` at the same pin and ranking date, holding only the fields `IndexView` carries.
 Its size is measured in slice 1. The raw cache for 2,110 projects is 16 MB untrimmed. If the trimmed snapshot of the
 10,000 is too large to commit, the test runs on the top 2,000, which `static.json` already covers, and the PR states
-the number.
+the number. As built it is the top 2,000 and their dependencies (`index-snapshot.json`, 3.8 MB for 2,078 projects).
 
 The test names the pin it was measured against, and fails if `tools/pyodide-dist.json` names another one. So a pin
 bump cannot pass on a stale fixture, and every bump turns the test red until the probe and the extract rerun.
