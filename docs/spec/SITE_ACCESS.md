@@ -561,9 +561,20 @@ Recorded as each slice lands, with the reason.
     the tab's document first, then the browser's URL for it (not the run's start page, which a restarted worker fell
     back to), and every send is pinned to that document (`tabs.sendMessage` `documentId`, `userScripts.execute`
     `documentIds`, a CDP world checked against it after it is made). An isolated exec with no known document does not
-    run. Still open, and older than part 4: a main-world CDP exec's live output can be written by the page
-    (`__mlCdpStream`), which shares that world. Since SITE_PRESENCE.md step 1 only from that context, and the model
-    reads the whole result of a main-world exec as page-writable (it opens with `page-writable (ran in page world):`).
+    run. Older than part 4, a main-world CDP exec shares the page's world. Since SITE_PRESENCE.md step 1 its
+    `__mlCdpStream` binding is taken only from the wrapper's context, and the model reads the whole result of a
+    main-world exec as page-writable (it opens with `page-writable (ran in page world):`). A page's own scripts can still
+    call the binding while the exec runs, which reaches only the live output, replaced by the result when the exec ends
+    (`tests/redteam-isolated.test.mjs`). The result's LINES are the exec's own: the wrapper's collector calls no builtin
+    of the page's realm on them (a null-prototype store with a count, `+` for the join, an object-literal console), and
+    the worker rebuilds the list, so a page that replaced `Array.prototype.push`, `map` or `join`, an index setter or
+    `Object.defineProperty` beforehand adds, drops or rewrites no line, nor a string argument's text
+    (`tests/redteam-cdp-result.test.mjs` and `tests/cdp-collector-realm.test.mjs`). What stays page-writable, the residual
+    the heading is for: a NON-string argument's text, which goes through the page's `JSON.stringify` (or `String`), and
+    the returned value, serialised the same way. That text can hold a newline, so it can read as further console lines
+    or a `value:` line of the page's making, and a text past the output ceiling makes the collector count, not keep,
+    every later line the exec prints. The in-page main-world exec (`tools.ts`, in `injected.js`) builds its
+    whole result in the page's realm, so there every part of it stays page-writable.
   - Untested against a real browser: how `userScripts.execute` reports a script that does not parse (handled as
     "no result": a probe of a start marker decides whether to try the body form, so a script is never run twice).
     The e2e browser has no "Allow User Scripts" toggle set, so only the vm tests cover that path.

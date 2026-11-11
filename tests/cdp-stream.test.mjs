@@ -59,7 +59,7 @@ test("CDP exec streams each console line live, via a Runtime binding", async () 
     const expr = calls.find(c => c[0] === "Runtime.evaluate")[1].expression;
     assert.match(expr, /const __b = globalThis\.__mlCdpStream[0-9a-f]{16};/, "the wrapper takes the binding, named at random for this exec, as it starts");
     assert.match(expr, /__b\(JSON\.stringify/, "the collector calls the binding");
-    assert.match(expr, /__logs\.push\(__s\)/, "…and still collects the line for the model-facing result");
+    assert.match(expr, /__logs\[__n\] = __s; __n\+\+;/, "…and still collects the line for the model-facing result (by index, no page builtin)");
     assert.match(expr, /ts: Date\.now\(\)/, "the PAGE stamps each line (it is the executor), not the SW");
 
     assert.ok("ok" in r, "the exec still succeeded");
