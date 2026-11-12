@@ -62,32 +62,44 @@ export function syncPresence(): Promise<void> {
             return !!before && !!m && (before.matches ?? []).some((x) => x === m || EVERY_SITE.includes(x)) && !(before.excludeMatches ?? []).includes(m);
         };
         for (const scope of ["lasting", "session"] as const) {
-            const id = REGISTRATION[scope];
             const matches = [...new Set(v[scope].map(originMatchPattern).filter((m): m is string => !!m))];
-            if (have.has(id)) await chrome.scripting.unregisterContentScripts({ ids: [id] });
-            if (!matches.length) continue;
-            await chrome.scripting.registerContentScripts([{
-                id, matches, js: PAGE_SCRIPT_FILES, world: "MAIN", runAt: "document_start", allFrames: false,
+            await putRegistration(have, {
+                id: REGISTRATION[scope], matches, js: PAGE_SCRIPT_FILES, world: "MAIN", runAt: "document_start", allFrames: false,
                 persistAcrossSessions: scope === "lasting",
-            }]);
+            });
         }
         const lists = await readSiteLists();
         const everySite = await sitesMayAsk();
         const marked = askOrigins(lists);
-        if (have.has(REGISTRATION.ask)) await chrome.scripting.unregisterContentScripts({ ids: [REGISTRATION.ask] });
-        if (everySite || marked.length) {
-            // Every pattern of an origin that gets the full API or nothing is excluded, so the stub never lands beside
-            // injected.js and never on a denied site. Exclusions are by exact origin, as the full registration's matches are.
-            const excluded = [...v.lasting, ...v.session, ...lists.denied].map(originMatchPattern).filter((m): m is string => !!m);
-            await chrome.scripting.registerContentScripts([{
-                id: REGISTRATION.ask, matches: everySite ? EVERY_SITE : marked.map(originMatchPattern).filter((m): m is string => !!m),
-                ...(excluded.length ? { excludeMatches: [...new Set(excluded)] } : {}),
-                js: ASK_SCRIPT_FILES, world: "MAIN", runAt: "document_start", allFrames: false, persistAcrossSessions: true,
-            }]);
-        }
+        // Every pattern of an origin that gets the full API or nothing is excluded, so the stub never lands beside
+        // injected.js and never on a denied site. Exclusions are by exact origin, as the full registration's matches are.
+        // Named even when empty: an update keeps every field it is not given, so leaving it out would keep the old list.
+        const excluded = [...v.lasting, ...v.session, ...lists.denied].map(originMatchPattern).filter((m): m is string => !!m);
+        await putRegistration(have, {
+            id: REGISTRATION.ask, matches: everySite ? EVERY_SITE : marked.map(originMatchPattern).filter((m): m is string => !!m),
+            excludeMatches: [...new Set(excluded)],
+            js: ASK_SCRIPT_FILES, world: "MAIN", runAt: "document_start", allFrames: false, persistAcrossSessions: true,
+        });
         await showInOpenTabs((origin) => presenceOf(lists, origin, everySite), askedBefore);
     });
     return syncing;
+}
+
+/**
+ * Bring one registration to `script`: updated in place when it exists, so no navigation meanwhile finds it missing (an
+ * unregister then a register leaves a window where a page loads with neither the old list nor the new one), registered
+ * when it does not, and removed when it should match nothing.
+ * @param have the ids registered when this sync began
+ * @param script the registration as it should be; no `matches` means it should not exist
+ * @returns once Chrome holds it
+ */
+async function putRegistration(have: Set<string>, script: chrome.scripting.RegisteredContentScript): Promise<void> {
+    if (!script.matches?.length) {
+        if (have.has(script.id)) await chrome.scripting.unregisterContentScripts({ ids: [script.id] });
+        return;
+    }
+    if (have.has(script.id)) await chrome.scripting.updateContentScripts([script]);
+    else await chrome.scripting.registerContentScripts([script]);
 }
 
 /**
