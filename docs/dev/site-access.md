@@ -412,7 +412,8 @@ start the filter refuses is refused before any card), and the budgets.
 **The page's context and a builtin's text are the worker's (B1, S2).** A page that starts a worker-hosted run sends no
 "Current page context" block; the worker writes one from the browser's facts (`workerPageContext`: the sender's URL, the
 tab's title cut at 80 characters, the time and the locale) after the card's snapshot, so a context block the page wrote
-is the site's and shows on the card. A tool named like a builtin is given the extension's own description and
+is the site's and shows on the card. The worker's block is the payload's `pageContext`, replaced whatever the page sent
+there, and it leads the first user message under `PAGE_CONTEXT_HEAD`, never the system prompt. A tool named like a builtin is given the extension's own description and
 parameter descriptions (`builtin-texts.ts`, from the factories the worker builds a person's run with); a site's own
 tool keeps its text, which the card shows and the binding covers. The bindings' digests are SHA-256.
 

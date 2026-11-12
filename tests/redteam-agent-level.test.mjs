@@ -15,6 +15,7 @@ const require = createRequire(import.meta.url);
 const { jsonResponse, loadBackground } = require("./helpers");
 const { AGENT_LEVEL_TYPES, PAGE_STARTED_TYPES, HANDLE_MAP, PAGE_RELAYED_EXTRA } = await import("../src/page-relay.ts");
 const { START_REFUSED, PAGE_TURN_BUDGET, CANCELLED_NO_LEVEL, OPENED_BY_AGENT_NOTE, pageTurnText } = await import("../src/agent-start.ts");
+const { PAGE_CONTEXT_HEAD } = await import("../src/agent/output-clip.ts");
 
 const T = { timeout: 30000 };
 const flush = async (n = 8) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
@@ -216,7 +217,9 @@ test("a page-sent turn reaches the model marked with the page's origin, never as
     await send(w.bg, { type: "START_RUN", payload: payload() }, page(), 2000);
     await send(w.bg, { type: "START_RUN", payload: payload({ task: "now do this" }) }, page(), 2000);
     const users = w.models.at(-1).filter((m) => m.role === "user").map((m) => m.content);
-    assert.deepEqual(users, [pageTurnText(ORIGIN, "Summarise this thread."), pageTurnText(ORIGIN, "now do this")]);
+    // The first carries the worker's page context in front (`firstUserTurn`); the page's words are the task after it.
+    assert.deepEqual(users.map((u) => u.startsWith(PAGE_CONTEXT_HEAD + "\n") ? u.slice(u.lastIndexOf("\n\nTask:\n") + 8) : u), [pageTurnText(ORIGIN, "Summarise this thread."), pageTurnText(ORIGIN, "now do this")]);
+    assert.ok(users[0].startsWith(PAGE_CONTEXT_HEAD + "\n") && !users[1].includes(PAGE_CONTEXT_HEAD), "the page context once, at the start");
     assert.ok(w.events.some((e) => e.kind === "agent-site" && e.site === ORIGIN), "the run was marked as the site's");
     assert.ok(w.events.some((e) => e.kind === "agent-site-say" && e.text === "now do this" && e.site === ORIGIN), "the turn was shown with the site's name");
     assert.ok(!w.events.some((e) => e.kind === "agent-say" && e.text === "now do this"), "the page's turn was shown as the person's");

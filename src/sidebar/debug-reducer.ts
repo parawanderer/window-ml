@@ -334,6 +334,7 @@ export function onDebug(input: MlDebugEvent | SiteRunEvent, runtime?: string): v
         const s = sessionMap.get(key);
         if (!s) { queueOrphan(key, ev); return; }
         s.agentConfig = s.agentConfig ? { ...s.agentConfig, ...ev.config } : s.agentConfig;
+        if (ev.task !== undefined && ev.task !== s.task) { s.taskDisplay = s.taskDisplay ?? { typed: s.task || "", context: [] }; s.task = ev.task; }
         s.lastTs = Math.max(s.lastTs, ev.ts); rev.value++;
         return;
     }

@@ -281,7 +281,8 @@ test("a run's history is kept for a session the store holds, and dropped for one
     // descriptors and the rebuild config, none of which can be reconstructed from the transcript.
     assert.equal(row.history.payload.task, "look it up");
     // The page's context is the worker's to write for a run a site started (SITE_ACCESS_SLICE3.md, B1).
-    assert.match(row.history.payload.systemPrompt, /^S\n\nCurrent page context:\nURL: /);
+    assert.equal(row.history.payload.systemPrompt, "S", "the system prompt carries no page context");
+    assert.match(row.history.payload.pageContext, /^URL: /, "it is kept beside it, for the first user message");
     assert.equal(row.history.payload.runId, "run00010");
 
     // Not kept: a one-off run stays one-off. Whether a run persists is `ephemeral`/`persistUiRuns`, and writing a
