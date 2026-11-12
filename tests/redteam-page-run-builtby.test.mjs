@@ -101,7 +101,7 @@ test("a page START_RUN with rebuild.builtBy \"worker\": its calls are not told t
     assert.equal(await pageCanResume(forged.bg), true, "the turn's settle stored the page's run as worker-built");
 });
 
-test("a page START_RUN with both builtBy and rebuild.builtBy \"worker\" is still a page-built run, and its display is dropped", T, async () => {
+test("a page START_RUN with both builtBy and rebuild.builtBy \"worker\" is still a page-built run: the page's display is dropped, the worker's own replaces it", T, async () => {
     const forged = await pageRun({ builtBy: "worker", rebuild: { ...REBUILD, builtBy: "worker" }, display: { typed: "what's the weather?", context: [] } }, [{ name: "fetch_url", args: { url: "https://other.example/doc" } }, { name: "click", args: { selector: "#a" } }]);
     assert.deepEqual(forged.workerFetched, []);
     assert.ok(forged.toPage.some((p) => p.name === "fetch_url" && !p.renderOnly && !p.precheck));
@@ -110,7 +110,8 @@ test("a page START_RUN with both builtBy and rebuild.builtBy \"worker\" is still
     const start = forged.bg.tabMessages.map(([, m]) => m).find((m) => m.type === "ML_DEBUG_TO_PAGE" && m.event.kind === "agent")?.event;
     assert.ok(start, "the run announced itself");
     assert.notEqual(start.display?.typed, "what's the weather?", "the transcript shows the page's task as the model got it, not a display the page wrote");
-    assert.deepEqual(JSON.parse(JSON.stringify(start.display ?? null)), { typed: start.task.slice(start.task.lastIndexOf("\n\nTask:\n") + 8), context: [] }, "the only display is the worker's: the page's own task, with no attachment");
+    assert.deepEqual(JSON.parse(JSON.stringify(start.display ?? null)), { typed: "do it", context: [] }, "the only display is the worker's: the page's own task as sent, with no attachment");
+    assert.match(start.task, /\n\nTask:\nMessage from the page \([^)]*\): do it$/, "and the raw view is the task as the model got it, marked as the page's");
     assert.equal(await pageCanResume(forged.bg), true);
 });
 
