@@ -268,8 +268,8 @@ Flaky only (passed on retry, never blocked a run), worth knowing because two may
   43198617151 / #1634 at `03fc6374` (2026-11-12, a docs-only diff) the API's log is attempt 2, where the `zoom`
   variant flaked (retry #1 passed); attempt 1's log is gone, so the `will-change, contain and an offset path` pair
   is only from the attempt-1 record taken before rotation. All three sightings share the same assertion —
-  "UI pixels outside where it painted before the rule" got 260640 — so the number spans two runs and two
-  different variants. The site-access lane measured this as a SETUP race, not a pin gap: a fixed 400 ms wait
+  "UI pixels outside where it painted before the rule" got 260640 — so the number spans three different variants.
+  The site-access lane measured this as a SETUP race, not a pin gap: a fixed 400 ms wait
   after clicking the overlay tab, the "before" capture taken while the panel was still closed or sliding — an
   open panel's 250584 outside pixels match CI's 260640. #1667 (`921dffc9` → merged `aa4b70d5`, test-only,
   janitor-3) replaces the wait with a poll for the laid-out panel; the setup was changed there. The :730
