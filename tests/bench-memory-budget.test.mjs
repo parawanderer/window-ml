@@ -344,6 +344,24 @@ test("the 2026-11-11 sweep under --kind batch: its own grant no longer leaves it
     assert.equal(st("own").coming, 5.4 * GB, "the other run's promise still counts");
 });
 
+test("the sweep's own budget and roomWarning read TEST_SLOT_TICKET: the 2026-11-11 figures admit a browser inside the job, and refuse outside it", () => {
+    const f = tmpLedger(), was = process.env.TEST_SLOT_TICKET;
+    // What measureLedger read then: this sweep's runner inside its own 1.8 GB grant, another job's 5.4 GB plan. With no
+    // --memory-limit the limit is half the 24 GB, with the 25% reserve.
+    const measure = () => [{ kind: "tests", pid: process.ppid, ticket: "own", rss: 0, planned: 1.8 * GB }, { kind: "tests", pid: 1, ticket: "other", rss: 0, planned: 5.4 * GB },
+        { kind: "runner", pid: process.pid, rss: 0, inside: "own" }];
+    const opts = { file: f, measure, avail: () => 13.4 * GB, total: 24 * GB };
+    const ask = () => { const b = startBudget({ ...opts, everyMs: 60_000, swap: () => null, out: () => null }); try { return [b.canStart("t").ok, roomWarning(1, opts)]; } finally { b.stop(); } };
+    try {
+        delete process.env.TEST_SLOT_TICKET;
+        const [outside, warned] = ask();
+        assert.equal(outside, false, "positive control: the job's ticket unknown, its own grant counts and the cell is refused");
+        assert.match(warned, /do not fit the bench's memory budget/);
+        process.env.TEST_SLOT_TICKET = "own";
+        assert.deepEqual(ask(), [true, null], "inside the job: startBudget's state and roomWarning both pass `self`");
+    } finally { if (was === undefined) delete process.env.TEST_SLOT_TICKET; else process.env.TEST_SLOT_TICKET = was; }
+});
+
 test("an entry written inside a test-slot job is marked `inside` it; the job's own entry and one written outside a job are not", () => {
     const f = tmpLedger(), was = process.env.TEST_SLOT_TICKET;
     try {
