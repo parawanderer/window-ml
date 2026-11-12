@@ -282,7 +282,7 @@ TRAP (the bench lane, 2026-11-07, measured): a stored WORKSPACE manifest for a s
 declare `runs-code`; with `effects: ["read"]` alone, `envelopeFor` sends `{write: "none", exec: "program-only"}` and
 the host refuses every child of `bash` (`/usr/bin/sleep: Permission denied`) while the call still reports `ok: true`,
 because builtins such as `echo` run. The lease bench's first matrix was invalid for this reason. The Settings
-manifest editor should warn when an entrypoint script's manifest lacks `runs-code` (open item for the shell UI).
+manifest editor should warn when an entrypoint script's manifest lacks `runs-code` (open item for the shell UI). BUILT 2026-11-12: #1698 at 3e75c158 (async, by a Sonnet subagent; `@ui` `@host`; one commit over 7a59cebb; src/shell/program-manifest.ts, src/sidebar/settings/manifests-section.tsx, tests/program-manifest.test.mjs, tests/manifests-section.test.mjs; verified): pure scriptLacksRunsCode (entrypoint set and the default command's effects has neither `runs-code` nor `unknown`, since envelopeFor sends no envelope for unknown), the warning line in ManifestRow, eight enumerated rows plus shipped-manifests-unflagged and a render row, mutation-checked; no model-facing text; full suite 9220 pass, 0 fail (the lane's account). Reviewer janitor-2 (fresh, fifth in its order while janitor-3 holds); the lane arms only on a comment naming 3e75c158.
 
 ## The API's shape: borrowed, not invented
 
