@@ -315,7 +315,9 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
   The OTHER cost is a whole subsystem landing there one file at a time — thirteen `hub-*` tests and nine
   `session-*` ones did, until "run the hub tests" meant running a hundred and twenty-three — so
   **`node scripts/test.mjs --check-genres`** (pre-commit hook + CI's `tools` job) fails when four files sharing a
-  name prefix all sit in `core`: four files on one subject are a subject, and a subject gets a genre.
+  name prefix all sit in `core`: four files on one subject are a subject, and a subject gets a genre. `redteam` is
+  the one GLOB genre — every `tests/redteam-*.test.mjs` no other genre names lands there with no edit to the table —
+  and `--check-genres` also refuses a `redteam-*python*` row that neither `python` nor `python-host` names.
   **`--files a.test.mjs b.test.mjs`** runs exactly those, which is what `scripts/test-cover.mjs` prints.
   Still run the full `npm test` before you commit; CI runs everything regardless.
 - **Tests: `npm test`** (Node ≥ 20, `node:test`). `tests/helpers.js` loads the
