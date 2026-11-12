@@ -70,10 +70,36 @@ test("no-cdn: Pyodide's default options try the CDN, and the preload refuses it 
     assert.ok(r.said.includes(`${wheel} is not in dist/pyodide: run \`npm run fetch-pyodide\``), r.said);
 });
 
-// --- the preload reaches every test ---
+// --- the guard reaches every path a test loads Pyodide on ---
 
-test("no-cdn: scripts/test.mjs preloads the guard into every test file", () => {
+test("no-cdn: scripts/test.mjs and `npm run coverage` preload the guard into every test file", () => {
     const src = fs.readFileSync(path.resolve(import.meta.dirname, "../scripts/test.mjs"), "utf8");
     assert.match(src, /const NO_CDN = pathToFileURL\(path\.join\(ROOT, "tests", "no-cdn-fetch\.mjs"\)\)\.href;/);
     assert.match(src, /const NODE_ARGS = \["--import", "tsx", "--import", NO_CDN, "--test",/);
+    const pkg = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "../package.json"), "utf8"));
+    assert.match(pkg.scripts.coverage, /--import \.\/tests\/no-cdn-fetch\.mjs --test /);
+});
+
+/** Children launched with their own argv that load no Pyodide, each with why. Keyed by file and the argv's start. */
+const NO_PYODIDE_CHILD = {
+    "python-bench-stop.test.mjs: [\"-e\", `": "the stop writer's backstop: a worker thread that writes one flag, no Pyodide",
+};
+
+test("no-cdn: every child a Pyodide test launches with its own argv passes the guard, or is listed as loading no Pyodide", () => {
+    const dir = import.meta.dirname;
+    const seen = [];
+    const wrong = [];
+    for (const f of fs.readdirSync(dir).filter((f) => /\.test\.m?js$/.test(f))) {
+        const src = fs.readFileSync(path.join(dir, f), "utf8");
+        if (!src.includes("loadPyodide")) continue;
+        for (const m of src.matchAll(/\b(?:spawn|spawnSync|execFile|execFileSync|fork)\(process\.execPath, (\[[^\n]{0,40})/g)) {
+            const key = `${f}: ${m[1].slice(0, 8)}`;
+            seen.push(key);
+            const line = src.slice(m.index, src.indexOf("\n", m.index));
+            if (!line.includes("NO_CDN_URL") && !NO_PYODIDE_CHILD[key]) wrong.push(`${f}:${src.slice(0, m.index).split("\n").length}`);
+        }
+    }
+    assert.deepEqual(wrong, [], "pass [\"--import\", NO_CDN_URL, …] (tests/no-cdn-fetch.mjs) or list the child in NO_PYODIDE_CHILD");
+    assert.ok(seen.filter((k) => k.startsWith("redteam-python-sandbox.test.mjs")).length >= 2, seen.join(", "));
+    for (const k of Object.keys(NO_PYODIDE_CHILD)) assert.ok(seen.includes(k), `${k} is listed but no longer launched`);
 });
