@@ -170,7 +170,7 @@ page's view, and `ml` (a facade, below). Nothing else is reachable by name: an u
 document, …) throws, whether the key is static or computed at run time. A method read as a value becomes
 `METHOD_REF`, an inert stand-in that is truthy and typed `function`, so `el.closest && el.closest('x')` works, but
 calling it throws, so a method can never be carried past the call gate. A live DOM collection read as a property
-becomes a real array.
+becomes a real array; a DOMTokenList (`classList`) does not (below, "A token list keeps its kind").
 
 **Calls.** A call runs only if one of these holds:
 
@@ -228,6 +228,32 @@ Three rules make it a mechanism rather than a lookup table:
 
 Ownership stays a SEPARATE, orthogonal gate: the kind answers "is this name meaningful here", `owned` answers
 "may I mutate THIS object". A `Set` reached off a page object is still a `Set`, and must still not be mutable.
+
+### A token list keeps its kind
+
+A DOMTokenList (`classList`, `relList`, `sandbox`, `part`, `<output>`'s `htmlFor`) has a numeric `length` and an `item`
+method, the SHAPE `isDomCollection` copies into an Array on a member read. Until 2026-11-12 it was copied, and
+`el.classList.contains('disabled')` threw "contains is not a function on this array": seven bench runs of the
+disabled-controls task (deepseek-flash, gemini-flash) hit it. It is now its own kind, `tokenlist`, read live:
+`contains`, `item`, `forEach`, `keys`, `values`, `entries` are callable, and `length`, `value`, an index, `for…of`, a
+spread and `Array.from` read it. `add`, `remove`, `toggle`, `replace` and `supports` exist on it and are withheld, so
+calling one is `NotInDialect` naming the kind; read as a value each is the inert `METHOD_REF`, and a write to `value`,
+an index or `length` is refused as a write to any page object is. The survey's value and a printed one show a token
+list as its tokens (`printable`), as the copy did, rather than `JSON.stringify`'s `{"0":"btn"}`.
+
+The kind is decided by BRAND (`policy.ts` `tokenListBrand`): the interface's own `length` getter, borrowed and called
+on the object, throws on anything without a DOMTokenList's internals, so a page object with its own `length`, `item`
+and `contains`, one whose prototype was set to `DOMTokenList.prototype`, and one claiming the tag all stay out (a
+look-alike stays a `collection`, whose allowlist has no `contains`). The getter is the one this module's realm had
+when it loaded (the MAIN-world script at `document_start`, before the page's scripts), never one read from the page's
+`window` later; only a realm with no `DOMTokenList` of its own (a Node test holding a jsdom document) takes the
+document's. A platform object's brand check is realm-agnostic, so an iframe's token list (reached through `queryAll`)
+passes as an element does. The evaluator holds the brand (`Evaluator.isTokenList`) and hands it to `kindOf`,
+`methodAllowed` and `isDomCollection`. `contains` and `item` convert their argument (`CONVERTS`), so a page object
+there is refused before its `toString` runs. `DOMStringList` (`location.ancestorOrigins`) has the same shape and a
+`contains` too, and is left a collection: `location` is a denied property, no other one is reachable from a survey,
+and as an Array it answers `includes`. Tests: `tests/readonly-tokenlist.test.mjs`, plus the token-list rows in
+`tests/redteam-host-callbacks.test.mjs` and `tests/redteam-coerce-args.test.mjs`.
 
 ### A missing method is not a refusal
 
