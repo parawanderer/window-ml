@@ -418,7 +418,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
             scripting: {
                 executeScript: async (injection) => { scriptingCalls.push(["executeScript", injection]); return [{ frameId: 0, result: undefined }]; },
                 registerContentScripts: async (list) => { scriptingCalls.push(["registerContentScripts", list]); for (const r of list) { if (registered.has(r.id)) throw new Error(`Duplicate script ID '${r.id}'`); registered.set(r.id, r); } },
-                updateContentScripts: async (list) => { scriptingCalls.push(["updateContentScripts", list]); for (const r of list) { if (!registered.has(r.id)) throw new Error(`Content script with ID '${r.id}' does not exist or is not fully registered`); registered.set(r.id, { ...registered.get(r.id), ...r }); } },
+                updateContentScripts: async (list) => { scriptingCalls.push(["updateContentScripts", list]); for (const r of list) { if (!registered.has(r.id)) throw new Error(`Content script with ID '${r.id}' does not exist or is not fully registered`); registered.set(r.id, r); } },  // whole: Chrome read an omitted persistAcrossSessions back as false
                 unregisterContentScripts: async (filter) => { scriptingCalls.push(["unregisterContentScripts", filter]); for (const id of filter?.ids ?? [...registered.keys()]) registered.delete(id); },
                 getRegisteredContentScripts: async () => [...registered.values()],
             },
