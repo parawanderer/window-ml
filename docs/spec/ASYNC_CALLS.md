@@ -118,7 +118,8 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
    deadline kill. A fetch: its abort. `exec`'s main-world eval CANNOT be interrupted once running; cancel there only
    stops awaiting it, and the result says so rather than implying the JavaScript stopped. CORRECTED the same day: an `exec` that ran through the debugger (an isolated world, or a CDP main-world eval) IS interruptible by `Runtime.terminateExecution`, measured: the script stops about 100 ms later, the page's state survives including the writes made before the loop, timers resume and the context still evaluates; the pending evaluate rejects with a bare "Internal error" when the script had not yet awaited, and NEVER settles once it had (the exec wrapper's common case), so the cancel settles on its own deadline, never on the evaluate, and reports "terminated" from having sent the command plus a fresh evaluate answering. "Cannot interrupt, no longer awaited" stays only for the userScripts main world, which has no debugger. A cancel's effect is a
    fact in the result, never a promise.
-4. **A detached call never outlives its run.** The run's end (an answer, the step cap, Stop, a navigation that kills a
+4. **A detached call never outlives its run.** REVERSED 2026-11-12 (Shane) for `ml.sh` and `python_exec` by rule 4b
+   below: the end of a turn no longer ends their tasks. A fetch keeps this rule. The run's end (an answer, the step cap, Stop, a navigation that kills a
    page-hosted loop) cancels every detached call of that run by its executor's cancel, and what cannot be cancelled is
    reported as an orphan, the way the shell's status already reports its orphan list. A detached cell holds its
    worker as a running message does (the reap's "idle" is no message running or queued), so no clock reaps it, and
@@ -153,6 +154,42 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
    Today no page-bound task exists (only `ml.sh` and `python_exec` detach, and mode 2 is unbuilt), so the rule changes
    nothing that runs now. It must hold before a detached `exec` or a DOM subscription is built, and each of those PRs
    carries its red-team row: a task cancelled by a page change is reported, and never resolves against the new page.
+   **4b. A detached task survives the end of its turn.** RULED 2026-11-12 (Shane: "that is what a user expects of
+   background tasks"; the coordinator's text with the async lane's additions; nothing built). This reverses rule 4, and
+   the mode 1 ruling that a model answering while a build is detached ends the build, for the two executors that run
+   outside the service worker: an `ml.sh` call (the host's process) and a detached `python_exec` cell (the offscreen
+   document). A fetch runs IN the service worker and dies with it, so it stays turn-bound: the turn's end cancels it,
+   as rule 4 says. Built after the Python namespace change (a run's namespace lives per run, not per turn), without
+   which a cell could not outlive the `settle` that drops its worker's state.
+   - **When a task ends.** At its deadline, on its cancel, at session release (`releaseSessionTokens`) and at
+     archive, and a page-bound one on a page change (rule 4a, unchanged). `settle` no longer calls `endTasks`, and it
+     keeps the run's inbox while a task of the run is pending. An `ml.sh` call's owner is the run, so its lease
+     outlives the turn and ends with the run. A detached cell keeps the kernel locked until it ends, so the next
+     turn's `python_exec` is refused with `pyKernelBusy` while it runs, as within a turn.
+   - **The cap.** `PY_DETACHED_MAX_MS` (5 min) was set by the service worker's eviction (`docs/dev/async-calls.md`:
+     a pending reply keeps the worker alive only to about 345 s), not by the work. With the durable path below,
+     a detached task is bounded by its own deadline under one cap, a DevTools Settings knob (the settings rule).
+     Proposed default 60 min; the number is Shane's.
+   - **Durable, filed by run and session.** Between turns nothing keeps the service worker alive: with nothing
+     pending it is evicted at about 65 s. So the task table and a parked result are durable (`chrome.storage.session`
+     or IndexedDB), filed by run and session, and declared through `defineState` from the first commit. `state.md`
+     is read first, so the parked result is the run inbox persisted, never a second copy of it. The pending
+     `sendMessage` reply stays the in-turn path. Past it, the executor delivers its end as a FRESH message (`PY_DONE`
+     by cell id from the offscreen document; the host's own message for `ml.sh`), which starts a new worker; that
+     worker rehydrates the task's row and parks the result. This replaces the mode 1 ruling that `PY_DONE` by cell
+     id is not built.
+   - **A result with no turn running parks.** It waits in the run's inbox. The person sees a transcript system line
+     and a HUD mark that a background task finished; the model reads it at the next turn's first step, through the
+     same checks as any inbox item (rule 6). No model turn starts on its own: a finished task wakes the model only
+     if the model subscribed to its completion (mode 2, "a detached call's completion"). Whether a finished task may
+     start a turn by itself (spend) is put to Shane; until he rules, it notifies only.
+   - **What the model is told.** The `Detached` text and the prompt say that a detached task runs on after the
+     model's answer and that its result arrives at the next turn, replacing the one line that says the answer ends
+     it.
+   - **Bounds** (e3's rows, rule 10, on the building branch): a task never delivers to another run or another
+     session; a parked result is delivered only to its own run, on its own session, at that run's next turn; a run
+     archived or released first drops it, and the drop is a run-log record; the per-task deadline and the cap hold
+     between turns; session release ends every task of the session; a page reaches no parked result.
 5. **The handle is the run's.** It is answered only for the run that made it, from that run's own tab or the service
    worker, with the sender checks the inbox already has; a page cannot await, cancel or read another run's call. A
    detached call, its wake and its collection are records in the run log (`python`/`detached`, `shell`/`detached`,
@@ -237,7 +274,8 @@ each of which amends the text above where it says otherwise:
   model saw, labelled). Only `sw-tasks.ts` sets that origin; a steer cannot claim it.
 - **The run's end is the turn's end** (`settle`), as rule 4 says and as the keep does: a model that answers while a
   build is detached ends the build, and the `Detached` text says so in one line. A session continue does not keep a
-  task.
+  task. REVERSED 2026-11-12 (Shane) for `ml.sh` and `python_exec` by rule 4b: their tasks survive the
+  turn and a result with no turn running parks in the inbox.
 - **`ml.current.tasks` is computed at the snapshot's instant** (`withTasks` beside `withPolicies`, at both assembly
   sites), `elapsed_ms` from the snapshot's clock, the tail read through the row's bounded, scrubbed `tail()`; no row
   is kept live. RE-RULED the same hour on the lane's correction: a Python cell has no `ml.current` today (the
