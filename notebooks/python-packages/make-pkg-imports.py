@@ -210,7 +210,7 @@ that fails for another reason.
 
 code("""
 is_front = (fl.m.str.count(r"\\.") <= 1) & ~fl.m.str.split(".").map(lambda ps: any(p.startswith("_") for p in ps))
-front = fl[is_front & (fl.kind != "optional-dep")]
+front = fl[is_front & ~fl.kind.str.startswith("optional-dep")]
 n_front, n_front_p = len(front), front.spec.nunique()
 display(Markdown(f"{n_front} front-door failures that are not an uninstalled optional dependency, in {n_front_p} projects."))
 display(front.groupby("reason").agg(failures=("m", "size"), projects=("spec", "nunique")).sort_values("failures", ascending=False).head(15))
