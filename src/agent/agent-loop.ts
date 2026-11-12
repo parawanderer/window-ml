@@ -49,7 +49,9 @@ export interface ToolRunResult { result: string; elements?: unknown[]; renderIn?
     shCalls?: import("../contract").ShCallSpan[];
     /** The value-store key of the whole text `result` was clipped from; the host sets it only for a tool the worker ran
      *  itself (ToolResult.textValue). */
-    textValue?: string; }
+    textValue?: string;
+    /** the stored whole's length in characters (ToolResult.textChars) */
+    textChars?: number; }
 
 /** What `autoApprove` answers: the provenance, or it with the grants it reused, or the refusal text of a policy, or null to ask. */
 type AutoApproval = Approval | { approval: Approval; reused?: import("../contract").ReusedGrant[]; refused?: string } | null;
@@ -1141,7 +1143,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // server, so it has no `token` parameter for the model to opt in with either. Which would leave
             // the one kind of output pointers most exist for — large, expensive to reproduce, fetched from
             // off the machine — as the only kind that can never become one.
-            const citable = call.name !== DEREF_TOOL && (CITABLE_TOOLS.has(call.name) || !!meta?.remote || wantsToken) && !failed;
+            const citable = call.name !== DEREF_TOOL && (CITABLE_TOOLS.has(call.name) || !!meta?.remote || wantsToken || typeof tr?.textValue === "string") && !failed;
             // Seed the id from the GLOBAL seq (base + per-turn) so a multi-turn run never mints a colliding id
             // (turn 2's step 1 vs turn 1's step 1) that a citation would then resolve to the wrong, earlier step.
             // A PIPED dereference mints its own id (mintView) and has already registered it — carry that one
@@ -1189,6 +1191,8 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 const fuller = (r?.type === "python-out" || r?.type === "exec-out") ? (r.capture ?? r.stdout ?? (r.type === "exec-out" ? r.value : undefined)) : undefined;
                 const full = fuller && fuller.length > result.length ? fuller : undefined;
                 if (full) heldChars = full.length;
+                // A stored whole (fetch_url past its preview, a cut `task tail`) is not in the render capture, so its own length is what the cut line names.
+                if (!tbl && value && value === tr?.textValue && typeof tr.textChars === "number" && tr.textChars > result.length) heldChars = Math.max(heldChars ?? 0, tr.textChars);
                 // Carry the typed PAYLOADS too, not just the kind — an image pointer with no image is what
                 // `look` would resolve to, and a `latex` cast needs the symbolic string.
                 const image = tr?.image

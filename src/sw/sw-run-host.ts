@@ -1092,7 +1092,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             }
             if (!env) return declined("the worker did not run it");
             recordRunLog(runId, { subsystem: "routing", kind: "python-inside", reason: "in-dialect", detail: { tool: "python_exec" } });
-            return { result: env.result || "", renderIn: env.renderIn, renderOut: env.renderOut, feedback: env.feedback, image: env.image, imageLabel: env.imageLabel, images: env.images, ...(env && workerEnvelopes.has(env as import("../contract").PageToolEnvelope) && typeof env.textValue === "string" ? { textValue: env.textValue } : {}) };
+            return { result: env.result || "", renderIn: env.renderIn, renderOut: env.renderOut, feedback: env.feedback, image: env.image, imageLabel: env.imageLabel, images: env.images, ...(env && workerEnvelopes.has(env as import("../contract").PageToolEnvelope) && typeof env.textValue === "string" ? { textValue: env.textValue, ...(typeof env.textChars === "number" ? { textChars: env.textChars } : {}) } : {}) };
         };
         runBackgroundAgent(
             { task: modelTask, systemPrompt: p.systemPrompt, pageContext: p.pageContext, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSelfSource: p.autoApproveSelfSource, unattended: p.unattended, toolTokens: p.toolTokens, stream: p.stream, ...(p.origin ? { origin: p.origin } : {}), runId, seqBase, tokenStore: sessionTokens(runId), labelMatch: p.labelMatch, resumeMessages, images: p.images,
@@ -1545,7 +1545,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         // The page already computed the rendered In/Out slots (descriptorFor) — forward them so
                         // the sidebar shows the rich view. `image` rides along for INLINE VISION (native look):
                         // the loop injects it into the model's next turn (pushToolImages).
-                        return { result: (env?.result || `Error: the page returned nothing for tool "${name}".`) + (execNote ? `\n\n${execNote}` : ""), renderIn: env?.renderIn, renderOut: env?.renderOut, feedback: env?.feedback, image: env?.image, imageLabel: env?.imageLabel, images: env?.images, remoteMs: env?.remoteMs, ...(env && workerEnvelopes.has(env) && typeof env.textValue === "string" ? { textValue: env.textValue } : {}) };
+                        return { result: (env?.result || `Error: the page returned nothing for tool "${name}".`) + (execNote ? `\n\n${execNote}` : ""), renderIn: env?.renderIn, renderOut: env?.renderOut, feedback: env?.feedback, image: env?.image, imageLabel: env?.imageLabel, images: env?.images, remoteMs: env?.remoteMs, ...(env && workerEnvelopes.has(env) && typeof env.textValue === "string" ? { textValue: env.textValue, ...(typeof env.textChars === "number" ? { textChars: env.textChars } : {}) } : {}) };
                     } finally {
                         dropCallGrants(tabId, callKey);   // grants were for THIS approved call's sub-ops only; another run's call on the tab keeps its own
                         if (pyInWorker) grantRunPython(runId, null);

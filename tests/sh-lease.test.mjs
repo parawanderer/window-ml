@@ -394,6 +394,7 @@ test("a tail cut by the ceiling names a stored value of the whole peeked stream;
         assert.ok(!t.content.includes("row0:"), "the start was cut");
         await claimValue(t.textValue, "run-peek-ptr");
         const whole = await readStoredText(t.textValue, "run-peek-ptr");
+        assert.equal(t.textChars, whole.length, "textChars is the stored whole's length, which the cut line names");
         for (const l of lines) assert.ok(whole.includes(l), "the stored whole holds every peeked line, including the cut ones");
         assert.ok(whole.startsWith("stdout ("));
         const small = await taskAction("run-peek-ptr", { op: "tail", id: task, lines: 2 });

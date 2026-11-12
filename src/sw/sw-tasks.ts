@@ -47,8 +47,8 @@ export interface TaskExecutor {
     settled: Promise<TaskOutcome>;
 }
 
-/** A tail with the key of the stored whole it was cut from (the pointer the step mints reads all of it). */
-export interface TailAnswer { text: string; value: string }
+/** A tail with the key of the stored whole it was cut from (the pointer the step mints reads all of it) and that whole's length in characters. */
+export interface TailAnswer { text: string; value: string; chars: number }
 
 /** What an executor says about a call it detaches. */
 export interface TaskSpec {
@@ -192,7 +192,7 @@ const UNKNOWN = (id: string): string => `UnknownTask: this run has no task ${JSO
  * @param args the tool's arguments: `op`, `id`, and `timeout_ms` or `lines`
  * @returns what the model reads
  */
-export async function taskAction(runId: string, args: Record<string, unknown>): Promise<string | { content: string; textValue: string }> {
+export async function taskAction(runId: string, args: Record<string, unknown>): Promise<string | { content: string; textValue: string; textChars: number }> {
     const id = typeof args.id === "string" ? args.id : "";
     const t = tasks.get(runId)?.get(id);
     if (!t) return UNKNOWN(id);
@@ -203,7 +203,7 @@ export async function taskAction(runId: string, args: Record<string, unknown>): 
         const tail = await t.exec.tail(n, true);
         if (tail === null) return `task ${t.id} running for ${secs(Date.now() - t.startedMs)}. ${t.exec.tailAbsent}`;
         if (typeof tail === "string") return (await forModel(tail)).text;
-        return { content: (await forModel(tail.text)).text, textValue: tail.value };
+        return { content: (await forModel(tail.text)).text, textValue: tail.value, textChars: tail.chars };
     }
     if (op === "cancel") {
         if (t.status !== "running") return `task ${t.id} already ${t.status}: ${t.text ?? ""}`;

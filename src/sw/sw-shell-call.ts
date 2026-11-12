@@ -239,8 +239,9 @@ async function peekTail(h: ShellHost, id: string, lines: number, asked: boolean)
         const d = peekDetail(p, lines, ASKED_TAIL_CHARS);
         if (!d.cut) return d.text;
         // Scrubbed before it is stored: a pointer's value is read back as it was kept.
-        const value = await storeText((await forModel(d.whole)).text, `task tail ${id}`).catch(() => undefined);
-        return value ? { text: d.text, value } : d.text;
+        const whole = (await forModel(d.whole)).text;
+        const value = await storeText(whole, `task tail ${id}`).catch(() => undefined);
+        return value ? { text: d.text, value, chars: whole.length } : d.text;
     }
     catch (e) {
         if (e instanceof HostError && e.code === "UnknownId") return "It has just ended; its result arrives on its own.";

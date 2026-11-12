@@ -536,6 +536,54 @@ test("an output the model got whole carries no cut note", async () => {
     assert.equal(results.find((r) => r.name === "exec").result, "short");
 });
 
+// --- a worker-made textValue makes a result citable, and its textChars is what the cut line names ---
+
+const TASK_TOOLS = [...TOOLS, { name: "task", description: "", parameters: { type: "object", properties: {} } }];
+
+test("a task tail cut to its ceiling is cited: the id is minted, the key claimed, and the cut line names the id and textChars", async () => {
+    const claimed = [], store = new TokenStore();
+    const { results } = await drive(
+        [call("task", { op: "tail", id: "t000000" })],
+        () => ({ result: "tail text", textValue: "k-task-whole", textChars: 16_000 }),
+        { tools: TASK_TOOLS, tokenStore: store, claimValue: (key) => claimed.push(key) });
+    const [t] = store.all();
+    assert.ok(t, "a task result that carries a textValue gets a pointer although task is not citable");
+    assert.equal(t.value, "k-task-whole");
+    assert.deepEqual(claimed, ["k-task-whole"]);
+    assert.match(results.find((r) => r.name === "task").result, new RegExp(`\\[your copy is cut: @tool:${t.id} holds 16000 chars of this output\\.`));
+});
+
+test("a fetch_url past its preview names its stored whole on the cut line", async () => {
+    const store = new TokenStore();
+    const { results } = await drive(
+        [call("fetch_url", { url: "https://x.test/long.txt" })],
+        () => ({ result: "a".repeat(100), textValue: "k-fetch-whole", textChars: 9000 }),
+        { tokenStore: store, claimValue: () => {} });
+    const [t] = store.all();
+    assert.equal(t.value, "k-fetch-whole");
+    assert.match(results.find((r) => r.name === "fetch_url").result, new RegExp(`\\[your copy is cut: @tool:${t.id} holds 9000 chars`));
+});
+
+test("a task result with no textValue stays uncited, and a failed call with one mints nothing", async () => {
+    const store = new TokenStore();
+    const { results } = await drive(
+        [call("task", { op: "tail", id: "t000000" }), call("task", { op: "tail", id: "t000001" }, "c2")],
+        (name, args) => args.id === "t000000" ? { result: "plain tail" } : { result: "Error: the host could not read it", textValue: "k-failed", textChars: 9000 },
+        { tools: TASK_TOOLS, tokenStore: store, claimValue: () => {} });
+    assert.equal(store.all().length, 0, "no pointer for either");
+    const [plain, failed] = results.filter((r) => r.name === "task");
+    assert.equal(plain.result, "plain tail");
+    assert.doesNotMatch(failed.result, /your copy is cut/);
+});
+
+test("a textChars that is not larger than the model's copy adds no cut line", async () => {
+    const { results } = await drive(
+        [call("fetch_url", { url: "https://x.test/a.txt" })],
+        () => ({ result: "a".repeat(100), textValue: "k-same", textChars: 100 }),
+        { tokenStore: new TokenStore(), claimValue: () => {} });
+    assert.doesNotMatch(results.find((r) => r.name === "fetch_url").result, /your copy is cut/);
+});
+
 // --- what a dereference step DRAWS: the value, not the notes addressed to the model ---
 
 test("dereference: the step renders the value alone, and the model still gets the header and the citing note", async () => {
