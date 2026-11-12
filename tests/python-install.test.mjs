@@ -44,6 +44,8 @@ fs.readFileSync = function (p, ...rest) {
 let pypi = new Map();
 /** What files.pythonhosted.org answers: the wheel's bytes by URL; anything else is a 404. */
 let wheels = new Map();
+/** Every URL requested from files.pythonhosted.org, in order. */
+let wheelGets = [];
 const NOT_FOUND = { ok: false, status: 404, headers: { get: () => null }, body: null, text: async () => "", json: async () => { throw new Error("404"); } };
 const jsonBody = (obj) => { const t = JSON.stringify(obj); return { ok: true, status: 200, headers: { get: () => "application/json" }, body: new Response(t).body, text: async () => t, json: async () => obj, arrayBuffer: async () => new TextEncoder().encode(t).buffer }; };
 
@@ -54,7 +56,7 @@ function serveLock(bg) {
         const u = String(url);
         if (u === LOCK_URL) return { ok: true, status: 200, url: u, headers: { get: () => "application/json" }, text: async () => LOCK_TEXT, json: async () => JSON.parse(LOCK_TEXT) };
         if (u.startsWith("https://pypi.org/")) { const v = pypi.get(u); return v === undefined || v === null ? NOT_FOUND : typeof v === "number" ? { ...NOT_FOUND, status: v } : jsonBody(v); }
-        if (u.startsWith("https://files.pythonhosted.org/")) { const b = wheels.get(u); return b ? new Response(b) : NOT_FOUND; }
+        if (u.startsWith("https://files.pythonhosted.org/")) { wheelGets.push(u); const b = wheels.get(u); return b ? new Response(b) : NOT_FOUND; }
         return real(url, ...rest);
     };
 }
@@ -69,6 +71,7 @@ async function installRun(calls, { answer = (_ev, send) => send(false), offered 
     offer = offered;
     pypi = index;
     wheels = files;
+    wheelGets = [];
     const idb = new IDBFactory();
     const cards = [];
     let n = 0, bg;
@@ -287,6 +290,18 @@ test("approving a card with a PyPI row downloads it through the run, and the too
     assert.deepEqual(v.files.map((f) => [f.source, f.sha256, f.size]), [["pypi", WHEEL_SHA, WHEEL.byteLength]]);
     assert.deepEqual(r.mismatches, []);
     assert.equal(r.results[0], "Approved: downloaded and checked 1 file. This build does not install packages yet, so nothing was installed.");
+});
+
+test("asking again in the same run raises a card whose row the mirror holds, and approving it downloads nothing", { ...T, skip: SKIP }, async () => {
+    const TAB = call({ name: "tabulate" });
+    const r = await installRun([TAB, TAB], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]) });
+    assert.equal(r.cards.length, 2);
+    assert.deepEqual(r.cards[0].renderIn.verdict.files.map((f) => f.source), ["pypi"]);
+    assert.deepEqual(r.cards[1].renderIn.verdict.files.map((f) => [f.source, f.sha256]), [["mirror", WHEEL_SHA]]);
+    assert.deepEqual(r.mismatches, []);
+    assert.equal(r.results[0], "Approved: downloaded and checked 1 file. This build does not install packages yet, so nothing was installed.");
+    assert.equal(r.results[1], "Approved: 1 already held. This build does not install packages yet, so nothing was installed.");
+    assert.deepEqual(wheelGets, [WHEEL_URL]);
 });
 
 test("a download whose bytes are not the card's is reported as not installed, naming the file", { ...T, skip: SKIP }, async () => {
