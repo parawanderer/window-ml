@@ -62,6 +62,7 @@ import { fetchTarget } from "./sw-fetch-url";
 import { grantRunFetch, grantRunOrigin, runOriginGranted, runOrigins, runFetchConsented, grantRunPython, takePyRefusal, pythonDialectReady } from "./worker-tools";
 import { autoApprovePython } from "../agent/auto-approve";
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
+import { takeMovedNote } from "./move-run";
 import { PROPOSAL_TOOLS, withoutProposals, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { claimValue, runMayClaim, valueHolders, readStoredColumns, readStoredText, withHeldValuesOnly } from "./sw-values";
@@ -1132,6 +1133,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         // Only a resume the person started (`builtBy` is the worker's to set): a page naming a hash must not be told, or consume, another origin's note.
                         const gone = resumeMessages?.length && p.builtBy === "worker" ? takeArchiveNotice(runId) : undefined;
                         if (gone) { (messages as { role: string; content: string }[]).push({ role: "system", content: gone }); recordRunLog(runId, { subsystem: "policy", kind: "archive-told", reason: "archived" }); }
+                        // A run the person moved to another tab since its last turn is told so, the same way (move-run.ts).
+                        const moved = resumeMessages?.length && p.builtBy === "worker" ? takeMovedNote(runId) : undefined;
+                        if (moved) (messages as { role: string; content: string }[]).push({ role: "system", content: moved });
                     }
                     // WHAT THIS REQUEST IS FOR: an agent step, in this run's session (see RequestHint).
                     const hint: RequestHint = { use: "agent", session: hintSession(runId), ...(opts?.after ? { after: opts.after } : {}) };

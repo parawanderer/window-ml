@@ -103,7 +103,8 @@ export function startingOwnedBy(runId: unknown, tabId: number | undefined): bool
 // RESUME_RUN {runId, task} re-enters the loop from this history. In-memory only, so it's subject to
 // MV3 service-worker eviction (~30s idle) — resume works while the SW is warm (the common
 // finish-then-follow-up flow); an evicted run reports an actionable error and the caller starts fresh.
-export const bgRuns = new Map<string, { p: StartRunPayload; tabId: number; messages: NeutralMessage[]; sub?: import("../contract").SubcallUsage }>();
+// `moved`: the note a move between turns left for the model (move-run.ts), taken by the next turn's first call.
+export const bgRuns = new Map<string, { p: StartRunPayload; tabId: number; messages: NeutralMessage[]; sub?: import("../contract").SubcallUsage; moved?: string }>();
 defineState({
     id: "run.init", scope: "session", realm: "worker", audience: "model", lostOn: ["worker-eviction"],
     describe: "What the run was started with: the task, model, step budget, tool names and what it may do without asking.",
@@ -496,7 +497,13 @@ export const untrackRun = (tabId: number, runId: string): void => {
     // NOT tokensByRun: this runs in each TURN's finally (the run stays resumable in bgRuns), so dropping the
     // pointer store here emptied it between turns — the exact bug the session-scoped store was meant to fix.
     // Its life is the SESSION's, so it is released with the bgRuns entry instead (see releaseSessionTokens).
+    releaseRunTab(tabId, runId);
+};
 
+/** Take a run off a tab's registration, and when it was the tab's last, let the tab go (its pin, its barrier, its
+ *  replay unless a resumable run is still on it). The tab half of {@link untrackRun}; a move (move-run.ts) calls it
+ *  alone, since the run's own per-turn state is not the tab's to drop. */
+export const releaseRunTab = (tabId: number, runId: string): void => {
     const s = activeRuns.get(tabId);
     if (!s) return;
     s.delete(runId);

@@ -2834,6 +2834,16 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 /* Pre-flight complaint (e.g. no model configured) — a small red nudge under the task input. */
 .card-cmp-err { margin-top: 8px; color: var(--err); font-size: .85em; line-height: 1.4;
     border-left: 3px solid var(--err); padding-left: 8px; }
+/* The HUD composer's "bring a session here" list (card-bring.tsx): a session per row, its site and age on the right. */
+.card-bring { display: flex; flex-direction: column; gap: 6px; }
+.card-bring-list { display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow-y: auto; }
+.card-bring-row { width: 100%; text-align: left; background: transparent; border: none; color: inherit; font: inherit; }
+.card-bring-row:disabled { opacity: .6; cursor: progress; }
+.card-bring-meta { flex: 0 0 auto; color: var(--fg-faint); font-size: .78em; font-variant-numeric: tabular-nums; }
+.card-bring-empty { color: var(--fg-faint); font-size: .85em; padding: 6px 2px; }
+.card-bring-open, .card-bring-back { background: transparent; border: none; color: var(--fg-faint); font: inherit;
+    font-size: .82em; cursor: pointer; padding: 2px 4px; border-radius: 4px; align-self: flex-start; }
+.card-bring-open:hover, .card-bring-back:hover { color: var(--fg); background: var(--panel-2); }
 /* Step-budget segmented control — a pretty pill selector (macOS-style raised selected), NOT a bare select. */
 .card-cmp-budget { display: flex; align-items: center; gap: 8px; }
 .card-cmp-budget-label { color: var(--fg-faint); font-size: .82em; }

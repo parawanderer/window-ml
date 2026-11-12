@@ -22,6 +22,7 @@ import type { NeutralMessage } from "../contract/contract-chat";
 import { cleanTitle, titleMessages } from "../session/session-title";
 import { defineState } from "../state-registry";
 import { bgRuns, makeWorkerRun, trackRun, untrackRun } from "./sw-runs";
+import { moveRun } from "./move-run";
 import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
 import { isExtensionSender } from "./sw-site-access";
 import { fileChunks } from "./sw-file-chunks";
@@ -420,6 +421,22 @@ export function configureSessionCommands(run: RunDeps): void {
         ...(sessionStore ? { storedEvents: (hash: string) => sessionStore.read(hash) } : {}),
         adoptSession: async (tabId, hash, history) => {
             if (history.kind !== "agent" || !history.payload) return "none";
+            // A run this worker holds on ANOTHER tab is MOVED there (MOVE_RUN.md), with the same checks and record as the HUD's
+            // move, never hosted a second time: its memory is fresher than the saved history, so that is not read back.
+            // On its own tab it is resumed as before.
+            const held = bgRuns.get(hash);
+            if (held && held.tabId !== tabId) {
+                const rebuild = held.p.rebuild;
+                if (!rebuild) return "none";
+                trackRun(tabId, hash, rebuild);
+                const reply = await run.adoptOnTab(tabId, hash, rebuild);
+                if (reply.error) { untrackRun(tabId, hash); return "unanswered" in reply && reply.unanswered ? "no-answer" : "none"; }
+                const moved = await moveRun(hash, tabId);
+                if ("refused" in moved) { untrackRun(tabId, hash); return "none"; }
+                // The budget a resume names rides on the payload, as for a saved session below.
+                if (history.payload.maxSteps !== held.p.maxSteps) held.p = { ...held.p, maxSteps: history.payload.maxSteps };
+                return "adopted";
+            }
             // Put the run back where a resume looks for it. `RESUME_RUN` reads `bgRuns` and nothing else, and it is
             // worker MEMORY: a run that settled yesterday is not in it, which is the whole reason a saved session
             // keeps its own copy. Hydrating here means the resume path itself needs no second source.
