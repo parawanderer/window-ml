@@ -42,7 +42,7 @@ run's inbox (`runInboxes.set`), and the turn's `settle` (`untrackRun`, `releaseD
 over it, about a hundred uses. Re-keying a map does not redirect a turn that is running. And `settle`, at the end of
 EVERY turn, deletes the run's inbox, ends its tasks (`endTasks`) and its Python namespace (`deletePythonRun`). So:
 
-- **(a) A move BETWEEN TURNS. Ships first.** The run is paused or finished; its stored snapshot's tab is re-homed, and
+- **(a) A move BETWEEN TURNS. Ships first.** The run is paused or finished; its in-memory `bgRuns` entry's tab is re-homed, and
   its next turn is hosted on the new tab from the start. It is cheap, and it covers both headline cases and the crash
   case: a dead tab's turn ends (the page-health work), and the person brings the session to a live tab.
 - **(b) A move BETWEEN STEPS of a running turn.** Needs `hostRun`'s tab to become a mutable cell that every send reads
@@ -84,7 +84,9 @@ tab that stays open. A move needs its own per-run function:
 
 1. **Re-home one run.** Between turns a move changes exactly these, and nothing else filed under the old tab moves or
    is overwritten under the new one:
-   - the stored snapshot's `tabId`;
+   - the `tabId` of its in-memory `bgRuns` entry (`sw-runs.ts`): `settle`'s `deleteRun` already dropped the durable
+     copy (`ml_bgrun_<runId>`), so between turns that entry is the only one, and rewriting what `persistRun` wrote
+     changes nothing;
    - the run's replay ring (`runReplayBuffer`), which is kept between turns only while the tab still holds a
      background run (`tabHasBgRun`);
    - the between-turn ARRIVAL WATCHER: `settle` arms `watchBetweenTurns(tabId, runId)` (`nav-arrival.ts`) on the old
