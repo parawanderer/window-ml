@@ -72,7 +72,8 @@ any new mechanism reports.
 | `page` | `discarded` | the tab was discarded with a call outstanding; `ms` is how long before we noticed |
 | `page` | `reloaded` | reloaded in place and about to retry; a `reason` of `gone` means the reload itself failed |
 | `page` | `recovered` | the retry answered, and how long it took |
-| `page` | `unreachable` (`asleep`/`gone`/`silent`/`unadopted`) | gave up, with how long it waited (`unadopted`: the page answered after a navigation it never re-adopted the run on) |
+| `page` | `unreachable` (`asleep`/`gone`/`crashed`/`busy`/`silent`/`unadopted`) | gave up, with how long it waited (`crashed`: the renderer died; `busy`: the content script missed three pings in a row on a tab that is not frozen; `unadopted`: the page answered after a navigation it never re-adopted the run on) |
+| `page` | `no-commit` (`navigate`) | a `navigate` committed nothing within `NAV_COMMIT_MS` while the tab still held the destination as pending, so the barrier was lifted and the tab is still on the page it was leaving |
 | `cdp` | `attached` (`already`) | the debugger was attached — the banner the person saw |
 | `cdp` | `refused` (`permission`/`busy`) | "CDP not enabled", or DevTools already holds the tab |
 | `cdp` | `detached` | paired with the attach, so the two bracket how long the run held the debugger |
@@ -84,6 +85,8 @@ any new mechanism reports.
 | `python` | `dropped` (`after-last-cell`) | the same, for the turn's last cell: they fired between its result and the turn's end, and are reported when the turn ends and its namespace is deleted (`deletePythonRun`). One still armed then fires later, and is reported by the run's next cell or `at-reap` |
 | `python` | `dropped` (`at-reap`) | the same, fired since the last report, handed over when the idle reap shut the run's worker (`py-reap.ts`) |
 | `python` | `reap` (`idle`) | the idle reap shut the run's worker while its turn was live: the turn's Python names are gone, and its next cell opens with the reset line |
+| `python` | `pkg-card` (`ok`, or the refusal: `not-on-index`, `malformed`, …) | a python_install card was raised; `detail.files` is how many rows it showed, `detail.tool` the tool |
+| `python` | `pkg-card-mismatch` (`refusal`/`files-absent`/`files-malformed`/`files-differ`/`no-check`) | an approval of a python_install card was turned into a denial: the card was a refusal, or the answer did not carry the rows it showed. Level `warn`, the sentence in `detail.why`, the gate's seq in `detail.seq` |
 | `python` | `keep` | the turn asked to keep its Python worker through idle gaps (`python_exec` `keep: true`); once per turn |
 | `tool` | `scrubbed` (`config-secret`) | a tool result named the server URL, the API key or the model filter and was scrubbed before the model read it; `key` holds the text as the tool wrote it |
 
@@ -114,8 +117,9 @@ debug, because a dropped record looks exactly like a mechanic that never happene
 
 So `tests/run-log.test.mjs` enumerates the names the emitters actually pass, by reading the emitter
 sources, rather than sampling them. One of them is not a literal at its emit site (`reason: e.state`
-on an unreachable page), so the guard reads those from where `TabState` is declared. Both directions
-are checked: every name emitted must survive the sanitizer, and every name the module's own convention
+on an unreachable page), so the guard reads those from the `TabState` and `PageUnreachableState`
+unions in page-reachable.ts. Both directions are checked: every name emitted must survive the
+sanitizer, and every name the module's own convention
 table lists must be one something emits.
 
 ## Deliberately not a line per probe

@@ -4549,5 +4549,7 @@ html[data-calm] .task-say > .task-dev, html[data-focus] .task-say > .task-dev { 
     color: var(--warn); outline: 1px solid var(--warn); }
 /* The download total, and the packages the sandbox already has. */
 .pkg-total, .pkg-loaded { color: var(--fg-dim); }
+/* One already-loaded package's name, escaped like every other field of the card. */
+.pkg-loaded-name { color: inherit; }
 /* A refused card: why the package cannot be installed, and the reason's code under it. */
 .pkg-refused .pkg-reason { font-family: var(--mono, ui-monospace, monospace); font-size: .85em; color: var(--fg-dim); }

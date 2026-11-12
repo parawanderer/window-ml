@@ -2,18 +2,18 @@
 //
 // A delegated page tool is watched while it waits (src/sw/page-reachable.ts): a discarded tab is reloaded and retried,
 // a closed tab fails as `gone`, anything else silent is given up after PAGE_SILENCE_CAP_MS (240 s). Three kinds of
-// unhealthy page fall through that net: a page whose main thread SPINS, a page that NEVER FINISHES LOADING, and a
+// unhealthy page fell through that net: a page whose main thread SPINS, a page that NEVER FINISHES LOADING, and a
 // renderer that CRASHES. Each row below asserts what a person would want (the tool fails in well under the cap, with a
-// cause the model can act on, and the run goes on) and is marked `test.fail()` with today's measured behaviour, so it
-// passes CI now and flips the day the fix lands (remove the `test.fail`).
+// cause the model can act on, and the run goes on). They landed as `test.fail()` rows (#1703) and pass since the fix
+// (crashed, busy and a stalled navigate told apart in delegate-send.ts, page-reachable.ts and sw-run-host.ts); each
+// keeps its BEFORE THE FIX note of what it measured then.
 
 import { test, expect } from "@playwright/test";
 import { createServer } from "node:http";
 import { launchExtension, configureExtension, waitForMl, approveOrigin } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 
-const PROBE = !!process.env.PAGE_HEALTH_PROBE;   // measure only: every row runs as an ordinary test and prints what it saw
-const rowFails = PROBE ? test : test.fail;
+const PROBE = !!process.env.PAGE_HEALTH_PROBE;   // print what each row measured
 /** "Well under the cap": the backstop is 240 s; a stuck page named within this is a real detection, not the backstop. */
 const PROMPT_MS = Number(process.env.PAGE_HEALTH_WAIT_MS) || 45_000;
 
@@ -117,8 +117,8 @@ async function measure(page, { tool, args, breakIt, during = false, after = 1500
 
 // --- A. a page whose main thread spins ---
 
-rowFails("A1. a spinning page: the tool names it BUSY and fails well under the cap, and the run goes on", async () => {
-    // TODAY (measured, real cap): the tab reads awake, so the call waits the whole 240 s cap (241.6 s) and ends as `silent`:
+test("A1. a spinning page: the tool names it BUSY and fails well under the cap, and the run goes on", async () => {
+    // BEFORE THE FIX (measured, real cap): the tab reads awake, so the call waits the whole 240 s cap (241.6 s) and ends as `silent`:
     // "Error: could not reach the page to run "pageInfo" (the page did not answer for 240s — its tab is most likely asleep in
     // the background)." Two page/unreachable:silent records (240000 ms) are logged. The run then goes on.
     const page = await ext.context.newPage();
@@ -134,8 +134,8 @@ rowFails("A1. a spinning page: the tool names it BUSY and fails well under the c
     await page.close({ runBeforeUnload: false }).catch(() => {});
 });
 
-rowFails("A2. a page that starts spinning DURING a call: the outstanding tool names it BUSY and fails well under the cap", async () => {
-    // TODAY: the same as A1 (a `wait` of 30 s that the spinning page can never finish waits out the cap and ends as `silent`).
+test("A2. a page that starts spinning DURING a call: the outstanding tool names it BUSY and fails well under the cap", async () => {
+    // BEFORE THE FIX: the same as A1 (a `wait` of 30 s that the spinning page can never finish waits out the cap and ends as `silent`).
     const page = await ext.context.newPage();
     await page.goto(site.url + "/");
     await waitForMl(page);
@@ -161,8 +161,8 @@ test("B1. a page stuck mid-load (headers and half a body, then silence): the con
     await page.close({ runBeforeUnload: false }).catch(() => {});
 });
 
-rowFails("B1b. ...but nothing tells the model the page never finished loading", async () => {
-    // TODAY: pageInfo returns URL, title, time, locale and browser, with no readyState; the model reads half a page as the page.
+test("B1b. ...and pageInfo tells the model the page has not finished loading", async () => {
+    // BEFORE THE FIX: pageInfo returns URL, title, time, locale and browser, with no readyState; the model reads half a page as the page.
     const page = await ext.context.newPage();
     await page.goto(site.url + "/half", { waitUntil: "commit" });
     await page.waitForFunction(() => !!(window.ml && window.ml.ready), null, { timeout: 15000 });
@@ -171,8 +171,8 @@ rowFails("B1b. ...but nothing tells the model the page never finished loading", 
     await page.close({ runBeforeUnload: false }).catch(() => {});
 });
 
-rowFails("B2. a navigation that never commits: navigate says the page did not load, and the next call is not held for the barrier", async () => {
-    // TODAY: `navigate` holds 15.0 s (READOPT_TIMEOUT_MS, sw-run-host.ts:1354) and returns "Navigating to <url> … wait for the new page
+test("B2. a navigation that never commits: navigate says the page did not load, and the next call is not held for the barrier", async () => {
+    // BEFORE THE FIX: `navigate` holds 15.0 s (READOPT_TIMEOUT_MS, sw-run-host.ts:1354) and returns "Navigating to <url> … wait for the new page
     // to load, then continue." with no word that nothing arrived; the next pageInfo answers in ~15 ms from the OLD page (old URL), so
     // the model is silently on a page it did not ask for. No page/* record is written.
     const page = await ext.context.newPage();
@@ -192,8 +192,8 @@ rowFails("B2. a navigation that never commits: navigate says the page did not lo
 
 const crash = async (page) => { const cdp = await page.context().newCDPSession(page); await cdp.send("Page.crash").catch(() => {}); };
 
-rowFails("C1. a crash BETWEEN calls: the next tool says the page crashed, `unreachable` is recorded as crashed, the run goes on", async () => {
-    // TODAY: sendMessage to the dead renderer rejects at once ("Could not establish connection. Receiving end does not exist."; the tab
+test("C1. a crash BETWEEN calls: the next tool says the page crashed, `unreachable` is recorded as crashed, the run goes on", async () => {
+    // BEFORE THE FIX: sendMessage to the dead renderer rejects at once ("Could not establish connection. Receiving end does not exist."; the tab
     // reads status "unloaded", discarded false). sw-run-host.ts:1277 takes that for a NAVIGATION: it waits the 15 s barrier and tells the
     // model "The page navigated while running "pageInfo" ... The new page is still loading — wait, then look." (15.3 s). Every later
     // call pays the same 15 s. No page/* record is written. The run goes on.
@@ -209,8 +209,8 @@ rowFails("C1. a crash BETWEEN calls: the next tool says the page crashed, `unrea
     await page.close({ runBeforeUnload: false }).catch(() => {});
 });
 
-rowFails("C2. a crash MID-CALL: the outstanding tool says the page crashed, `unreachable` is recorded as crashed, the run goes on", async () => {
-    // TODAY: the outstanding `wait` ends when the channel closes and gets the same "The page navigated while running "wait" ..." text
+test("C2. a crash MID-CALL: the outstanding tool says the page crashed, `unreachable` is recorded as crashed, the run goes on", async () => {
+    // BEFORE THE FIX: the outstanding `wait` ends when the channel closes and gets the same "The page navigated while running "wait" ..." text
     // (1.5 s to the crash plus the 15 s barrier = 16.7 s); the next call pays another 15 s. No page/* record is written.
     const page = await ext.context.newPage();
     await page.goto(site.url + "/");

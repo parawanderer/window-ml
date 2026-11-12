@@ -369,3 +369,17 @@ test("sameRows: a mirror row and a pypi row for one file differ", () => {
     assert.equal(sameRows([row({ source: "pypi" })], [row({ source: "mirror" })]), false);
     assert.equal(sameRows([row({ source: "mirror" })], rowsFromAnswer([row({ source: "mirror" })])), true);
 });
+
+// --- approvalPayload: the rows at the sidebar's boundary ---
+
+const { approvalPayload } = await import("../src/approval-key.ts");
+
+test("approvalPayload: valid rows cross rebuilt; rows that do not check out cross as null, never dropped", () => {
+    assert.deepEqual(approvalPayload({ hash: "h", seq: 1, decision: true, files: [row()] }).files, [row()]);
+    for (const bad of ["all of them", [row({ extra: 1 })], [row({ sha256: "x" })], {}]) {
+        const p = approvalPayload({ hash: "h", seq: 1, decision: true, files: bad });
+        assert.ok("files" in p, "a malformed answer still says it carried rows");
+        assert.equal(p.files, null);
+    }
+    assert.ok(!("files" in approvalPayload({ hash: "h", seq: 1, decision: true })), "no rows sent, none carried");
+});
