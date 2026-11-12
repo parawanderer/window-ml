@@ -553,8 +553,9 @@ second place: everything a model can keep, the person can see and delete (the fi
 **Layout.**
 
 - `/files/` is writable: the model's working directory, kept for the session.
-- `/files/attached/` is read-only and holds what the person attached, by name. A file attached mid-run appears there
-  and the model is told its name. The person's files never change; a model that wants to edit one copies it out.
+- `/files/attached/` is read-only and holds what the person attached, each file in a directory named for its handle. A
+  file attached mid-run appears there and the model is told its name. The person's files never change; a model that
+  wants to edit one copies it out.
 - Every attachment lives at `attached/<handle>/<name>` (`attached/3fa91c2/report.pdf`), always, not only once a
   second file shares its name: a path a cell has seen never moves, so a second `report.pdf` arriving between two
   cells breaks neither the first cell's path nor one written into a script (a test row). There is one layout to
@@ -563,16 +564,17 @@ second place: everything a model can keep, the person can see and delete (the fi
   creates each `<handle>/` from JS before the write operations are sealed, so a cell cannot make one.
 - Provenance follows from the folder: a file under `attached/` is the person's; any other was made by a run.
 
-**Which cells see it.** Only cells that can open a file: an approved cell and `full` mode. The read-only (restricted)
-dialect has no `open()` or `os` (PYTHON_DIALECT.md), and its writes roll back when a cell fails, so it keeps what it has
-today: an attachment as an injected value (`files:`, `@file:` in `tables`) and the loader redirect
-(`docs/dev/python-sandbox.md`, "Loader interception"), which also resolves a name in `/files/`, read-only. The redirect
-is re-ruled with the mount (the Pyodide lane's read of this spec):
+**Which cells see it.** Cells that can open a file, an approved cell and `full` mode, see it as a directory; the
+restricted dialect reads it only through the loader redirect. The read-only (restricted) dialect has no `open()` or `os`
+(PYTHON_DIALECT.md), and its writes roll back when a cell fails, so it keeps what it has today: an attachment as an
+injected value (`files:`, `@file:` in `tables`) and the loader redirect (`docs/dev/python-sandbox.md`, "Loader
+interception"), which also resolves a name in `/files/`, read-only. The redirect is re-ruled with the mount (the Pyodide
+lane's read of this spec):
 
 - Builtin `open` is never patched, today or with the mount; only the three loader patches (`Image.open`,
   `pd.read_csv`, `pd.read_html`) gain an `attached/` fallback. `os.open`, `io.FileIO` and `pathlib` would go around a
   patched `open`, so it would be partial magic. A plain `open("x.csv")` that misses fails as real Python does, and
-  the existing failure hint names `/files/attached/x.csv` when that file exists.
+  the existing failure hint names `/files/attached/<handle>/x.csv` when that file exists.
 - A path that exists is that file: the loader patches redirect a name (`'current'`, a selector, the URL a table was
   loaded from, an attachment's name) only when no such file exists. So a cell that writes `/files/current` changes
   what `read_csv('current')` returns; that is accepted, not refused, and has its own test row.
@@ -583,7 +585,10 @@ is re-ruled with the mount (the Pyodide lane's read of this spec):
 
 **The mount** (the Pyodide lane's conditions, measured in Node against `pyodide-core/`, not in a browser worker):
 
-1. MEMFS, loaded from the shelf when the interpreter starts, with Emscripten's JS-side `FS.trackingDelegate`
+1. MEMFS, its listing loaded from the shelf when the interpreter starts and each file's bytes on first open (a lazy
+   node or an open hook; the mechanism is the Pyodide lane's to measure, and until it is, lazy is the rule and named
+   unmeasured), so a session near its quota is never loaded whole and a stateless cell pays only for what it opens;
+   with Emscripten's JS-side `FS.trackingDelegate`
    (`onCloseFile`, `onWriteToFile`) seeing every close, raw `os.open`/`os.write`/`os.close` included. No
    Atomics-backed FS: Pyodide ships no synchronous remote backend, `Atomics.wait` would block the interrupt buffer so
    Stop would fall through to the kill, and it would save almost nothing on a terminate. The hooks live on the
@@ -591,12 +596,12 @@ is re-ruled with the mount (the Pyodide lane's read of this spec):
 2. `/files/attached/` is its own mount whose write operations fail with EROFS (open for writing, chmod, unlink,
    create, mkdir, utime; rename across it is EXDEV, rmdir of it EBUSY). File modes do not hold: a cell's own
    `os.chmod` undoes `0444` (measured). The shelf refuses a write to a person's file too, whatever path asks.
-3. On each close of a writable file, and at cell end after a flush, the bytes are posted, transferred, through the
-   worker's closure-held `post` to the offscreen document, which owns the shelf write and acknowledges each post.
-   Python's buffered writes are not in MEMFS until flushed, so an unflushed write is lost and the cell end flushes
-   first. The offscreen re-checks every post itself: the path canonical and under `/files/`, never under `attached/`,
-   a regular file, and the quota. A `full` cell keeps `js.postMessage` and can forge a post, so nothing the post
-   claims is taken on its word.
+3. On each close of a writable file the bytes are posted, transferred, through the worker's closure-held `post` to the
+   offscreen document, which owns the shelf write and acknowledges each post. JS cannot flush a Python file object's
+   buffer, so a file left open at cell end keeps only what reached MEMFS, and the model is told so: close your files.
+   The offscreen re-checks every post itself: the path canonical and under `/files/`, never under `attached/`, a regular
+   file, and the quota. A `full` cell keeps `js.postMessage` and can forge a post, so nothing the post claims is taken
+   on its word.
 4. One `/files/` per session. The `full` worker is shared across runs, so the directory is the session's, never the
    worker's: one directory per session in it, not a reload per cell, which would cost about three times the
    directory's size on every cell (item 6).
@@ -665,7 +670,8 @@ and the read-back from disk: the async lane.
 - a model-made file described to the model as attached by the person, in every sentence that names a file.
 
 **Not measured.** A terminate racing the last post (the ack is there for it); a lifted-bridge route to the FS object;
-anything in a real browser worker rather than Node.
+anything in a real browser worker rather than Node; the lazy load on first open (item 1); whether the runner can find
+the io objects still open at cell end and flush them (item 3).
 
 **Backups.** A backup never carries the value store today (`ml-values` is marked `never`, "fetched tables a run
 holds; refetchable", `src/backup/backup-inventory.ts`). That holds for fetched tables, not for a person's attachment
@@ -676,7 +682,13 @@ out with one tick, the person's attachments cannot. The session archive carries 
 Fetched values stay out.
 
 **Open.**
-Whether the restricted dialect gets a write of its own (a `keep()` call) is open and not proposed.
+
+- The quota's value and where it is set: a DevTools Settings flag, by the standing rule for a new setting.
+- A post arriving for a path the person deleted or renamed during the run. The lean: it is kept under the written name
+  as a new file, and the inbox notice says so, since the delete removed the old bytes, not the model's work.
+- Whether a frozen version's provenance "read from disk <path>" may reach a page through `dereference`, or is scrubbed
+  like an error's text (`sw-scrub.ts`).
+- Whether the restricted dialect gets a write of its own (a `keep()` call) is open and not proposed.
 
 ## Trust
 
