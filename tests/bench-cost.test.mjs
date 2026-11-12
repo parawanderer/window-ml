@@ -137,6 +137,19 @@ test("a route whose input rate is 0 does not end the lookup: the map is tried by
     near(c.computed, 1000 * 4e-6 + 100 * 2e-5);
 });
 
+test("a route with an input rate but a 0 output rate falls through to the map, and answers itself when the map has nothing", () => {
+    const route = (name) => ({ model_name: name, model_info: { input_cost_per_token: 3e-6, output_cost_per_token: 0 } });
+    const b = priceBook({
+        owui_models: { data: [{ id: "litellm.x/m", connection_type: "external" }, { id: "litellm.x/lone", connection_type: "external" }] },
+        litellm_model_info: { data: [route("x/m"), route("x/lone")] },
+        litellm_map: { m: { input_cost_per_token: 9e-6, output_cost_per_token: 7e-6 } },
+    });
+    assert.deepEqual([b("litellm.x/m").basis, b("litellm.x/m").rates.output], ["litellm_map", 7e-6]);
+    // Nothing in the map: the route's own half-priced answer, as before, so callCost names the missing rate.
+    assert.deepEqual([b("litellm.x/lone").basis, b("litellm.x/lone").rates.input, b("litellm.x/lone").rates.output], ["litellm_model_info", 3e-6, null]);
+    assert.match(JSON.stringify(callCost({ promptTokens: 10, completionTokens: 10 }, "litellm.x/lone", b)), /no rate for output/);
+});
+
 test("a route that does carry an input rate still wins over the map", () => {
     const b = priceBook({
         owui_models: { data: [{ id: "litellm.x/m", connection_type: "external" }] },

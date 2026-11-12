@@ -198,7 +198,7 @@ export function estimateCheck(start, end) {
  * model, even one never run), or when it is unknown (undefined) but has run before; `localOf` true makes it null: no
  * estimate, never 0. A model never run and not known stays null.
  */
-export function predictEnergy(cells, history, energyOf, localOf = () => false, { recent = RECENT } = {}) {
+export function predictEnergy(cells, history, energyOf, localOf = () => undefined, { recent = RECENT } = {}) {
     const drew = history.filter((r) => energyOf.has(r.run));
     return cells.map(({ model, task, taskHash }) => {
         const [basis, runs] = nearest(drew, { model, task, taskHash });

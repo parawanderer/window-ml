@@ -240,6 +240,8 @@ test("a cell's electricity is the mean Wh of its model's recent runs that drew o
     assert.equal(got[5], null, "a model never run and unknown to the price book: no estimate");
     const noEnergy = predictEnergy([{ model: LOCAL, task: "t", taskHash: "h1" }], [run("l0", LOCAL, "t", "h1", "x", [])], new Map(), local);
     assert.deepEqual(noEnergy, [null], "a local model with no energy on record: no estimate, never 0");
+    const omitted = predictEnergy([{ model: "never-ran", task: "t", taskHash: "h1" }, { model: EXT, task: "t", taskHash: "h1" }], hist, energyOf);
+    assert.deepEqual(omitted, [null, { Wh: 0, basis: "none", n: 0 }], "with no localOf every model is unknown: a never-run one is not taken for a known cloud model");
 });
 
 test("the electricity forecast narrows as runs finish, and prices the rest at the current rate", () => {

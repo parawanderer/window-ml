@@ -23,6 +23,8 @@ import { storeText } from "./sw-values";
 import { _loadTable, isTableValue, tableSpecs } from "../ml/ml-python";
 import { googleSheetCsvUrl, googleSheetId } from "../dom/dom";
 import { runPython } from "./sw-python";
+import { leaseCell, pyKernelBusy, type PyDetached } from "./sw-python-task";
+import type { TaskOutcome } from "./sw-tasks";
 import { workerVisionChat } from "./worker-vision";
 import { fetchSheetCsv } from "./sw-fetch";
 import { tableFromDelimited } from "../table/table-data";
@@ -310,7 +312,7 @@ function runMl(ctx: RunCtx): MlApi {
         _queryAll: () => [],
         // fetch_url's whole body past its preview, kept in the value store for the pointer the step mints.
         _keepText: storeText satisfies KeepText,
-        pythonExec: (code: string, opts: { image?: unknown; margin?: number; tableRaw?: boolean; tables?: unknown; keep?: boolean; onStdout?: (chunk: string, ts?: number) => void } = {}) => workerPython(ctx, code, opts),
+        pythonExec: (code: string, opts: { image?: unknown; margin?: number; tableRaw?: boolean; tables?: unknown; keep?: boolean; onStdout?: (chunk: string, ts?: number) => void; expectMs?: number; late?: (r: Record<string, unknown>) => Promise<TaskOutcome> } = {}) => workerPython(ctx, code, opts),
         // A cast's token goes into the page's registry, where a click resolves it (python-tool.ts `MintToken`).
         _mintToken: ((q, documentId) => {
             if (!ctx.media) return Promise.reject(new Error("no page to mint the token in."));
@@ -366,7 +368,11 @@ async function workerTable(ctx: RunCtx, name: string, src: unknown, raw: boolean
 
 /** `ml.pythonExec` for a run's python_exec in the worker: its tables loaded here, then `runPython` with the run as the
  *  caller (a cell outside the dialect only for the code this call was approved for), live stdout straight to the call's output. */
-async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; margin?: number; tableRaw?: boolean; tables?: unknown; keep?: boolean; onStdout?: (chunk: string, ts?: number) => void }) {
+async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; margin?: number; tableRaw?: boolean; tables?: unknown; keep?: boolean; onStdout?: (chunk: string, ts?: number) => void; expectMs?: number; late?: (r: Record<string, unknown>) => Promise<TaskOutcome> }) {
+    // The kernel is locked while the run's detached cell runs (sw-python-task.ts): refused, never queued behind it,
+    // which would put the next cell's start bound on the detached one. Cells inside the dialect included.
+    const busy = pyKernelBusy(ctx.runId);
+    if (busy) throw new Error(busy);
     // The image first, as the page's pythonExec shoots it before loading its tables: from the worker's own capture.
     let shot: { image: string; imageBox: ShotBox | null; documentId: string } | null = null;
     if (opts.image != null && opts.image !== "") {
@@ -376,11 +382,16 @@ async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; 
     }
     // The page's shape rule, so `[[url]]` (a list once unwrapped, its key "0" no variable name) is refused as it is there.
     const specs: [string, unknown, string?][] = tableSpecs(opts.tables ?? null).map(({ name, src, alias }) => [name, src, alias]);
-    const loaded = [];
+    const loaded: Awaited<ReturnType<typeof workerTable>>[] = [];
     for (const [name, src] of specs) loaded.push(await workerTable(ctx, name, src, !!opts.tableRaw));
     // Not derived from anything the page knows (the run id reaches it): a stream id it cannot name.
     const requestId = `wpy-${crypto.randomUUID()}`;
-    const r = await runPython({
+    // A LEASED cell: the tool handed its own formatter (`late`) for a result that arrives after the call detached. Its id
+    // is the stream's: one this worker made, which nothing outside it can name.
+    const leased = typeof opts.late === "function";
+    let attached = true;
+    const onStdout = opts.onStdout && ((chunk: string, ts?: number) => { if (attached) opts.onStdout!(chunk, ts); });
+    const call = runPython({
         code, image: shot?.image ?? null, stream: !!opts.onStdout, ...(opts.keep === true ? { keep: true } : {}),
         tables: loaded.map((l, i) => ({ name: l.name, data: l.data, alias: specs[i][2] ?? (typeof specs[i][1] === "string" ? specs[i][1] : null) })),
     }, requestId, {
@@ -389,14 +400,29 @@ async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; 
         pyCodeOk: (c) => ctx.pyCall?.code === c, runGated: true,
         valueOk: (holders) => holders.includes(ctx.runId),
         wireRun: ctx.runId, tabUrl: ctx.tabUrl, ...(ctx.pyCall?.step ? { wireStep: ctx.pyCall.step } : {}),
-        ...(opts.onStdout ? { stream: opts.onStdout } : {}),
+        ...(onStdout ? { stream: onStdout } : {}),
         ...(ctx.pyCall?.inside ? { inside: true } : {}),
         ...(ctx.pyCall?.bridges ? { bridges: true } : {}),
+        ...(leased ? { cell: requestId } : {}),
     });
+    // What the cell answered, as the tool reads it. A late one's (once detached) is read with the call's grant gone, so
+    // what it needs from the run is taken now.
+    const pyCall = ctx.pyCall;
+    const shape = (r: Awaited<typeof call>) => pythonShape(r, pyCall, shot, loaded);
+    if (!leased) return shape(await call);
+    const expectMs = typeof opts.expectMs === "number" && Number.isFinite(opts.expectMs) && opts.expectMs > 0 ? Math.floor(opts.expectMs) : null;
+    const late = opts.late!;
+    const r = await leaseCell({ runId: ctx.runId, cell: requestId, ...(pyCall?.step ? { seq: pyCall.step.seq } : {}), expectMs, call, onDetach: () => { attached = false; },
+        late: async (x) => { let res: Record<string, unknown>; try { res = shape(x); } catch (e) { return { status: "failed", text: (e as Error)?.message || String(e), result: null }; } return late(res); } });
+    return (r as PyDetached).detached ? r as PyDetached : shape(r as Awaited<typeof call>);
+}
+
+/** A sandbox answer as python_exec reads it: a refusal or failure thrown, the cell's inputs and its stored table added. */
+function pythonShape(r: { data?: unknown; error?: string }, pyCall: RunCtx["pyCall"], shot: { image: string; imageBox: ShotBox | null; documentId: string } | null, loaded: Awaited<ReturnType<typeof workerTable>>[]): Record<string, unknown> {
     if (r.error !== undefined) throw new Error(r.error);
     // Outside the dialect: nothing of the try reaches the model (its output is discarded); the host reads the refusal.
     const outside = (r.data as { notInDialect?: unknown } | undefined)?.notInDialect;
-    if (ctx.pyCall?.inside && typeof outside === "string") { ctx.pyCall.refused = outside; throw new Error(`Not in the Python dialect: ${outside}`); }
+    if (pyCall?.inside && typeof outside === "string") { pyCall.refused = outside; throw new Error(`Not in the Python dialect: ${outside}`); }
     const res = r.data as { table?: { columns: string[]; rows: unknown[][] }; valueKey?: string } & Record<string, unknown>;
     const extra: Record<string, unknown> = {};
     // What the sandbox saw, the crop transform a cast projects through, and the document a cast mints its token in.
