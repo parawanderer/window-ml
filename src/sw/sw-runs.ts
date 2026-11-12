@@ -637,6 +637,29 @@ export function releaseSessionTokens(runId: string): void { tokensByRun.delete(r
 // The navigation SENSOR: a committed MAIN-frame navigation on a tab that hosts a live run means its document
 // (and registered toolset) is going away → engage the barrier so the next delegated tool waits for re-adopt.
 // Sub-frame navigations (frameId != 0) don't replace the run's document, so they're ignored.
+/**
+ * Move a live run's inbox to another tab, so a runtime-bound task's result reaches the run where it is now and the
+ * inbox's owner check (`senderOwnsRun`) answers for the new tab only. The tasks are keyed by run id and follow on their
+ * own. A same-tab navigation needs no re-key. Not wired into any flow: the move-run lane calls it.
+ * @param runId the run
+ * @param to the tab the run is on now
+ * @returns false when the run has no inbox (between turns: nothing to move)
+ */
+export const rekeyRunInbox = (runId: string, to: number): boolean => {
+    const inbox = runInboxes.get(runId);
+    if (!inbox) return false;
+    inbox.tabId = to;
+    return true;
+};
+
+/**
+ * Whether a message's sender may answer for a run: an extension page (no `sender.tab`) may, a tab only if it is the one
+ * the run's inbox is on.
+ * @param sender the message's sender
+ * @param runId the run the message names
+ */
+export const senderOwnsRun = (sender: { tab?: { id?: number } }, runId: string): boolean => !sender.tab || sender.tab.id === runInboxes.get(runId)?.tabId;
+
 /** Each tab's current main-frame URL, as navigation reports it — so a background-hosted run can tell a fetch
  *  of the page it is ON from a fetch of the page it STARTED on (see `fetchIsCurrentPage`). History-API
  *  changes count too: an SPA moves between URLs without committing a navigation. */
@@ -661,6 +684,8 @@ export const retabRuns = (from: number, to: number): number => {
     for (const runId of hosted) recordRunLog(runId, { subsystem: "tab", kind: "replaced", detail: { tab: to, wasTab: from } });
     for (const snap of bgRuns.values()) if (snap.tabId === from) snap.tabId = to;
     navBarrier.forget(from);
+    // The tab is the same tab under a new id: its runs' inboxes follow, or the new tab is refused for its own run.
+    for (const runId of runInboxes.keys()) if (runInboxes.get(runId)?.tabId === from) rekeyRunInbox(runId, to);
     return moved;
 };
 

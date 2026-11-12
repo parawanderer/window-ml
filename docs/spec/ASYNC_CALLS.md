@@ -130,7 +130,12 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
    the loop-side reporting, not a second one.
 
    **4a. A page change ends the page's tasks, not the run's.** DESIGN NOTE 2026-11-12 (the async lane, assigned by the
-   coordinator; nothing built). A worker-hosted run's page changes when it navigates in its own tab or when the person moves it to
+   coordinator). BUILT 2026-11-12 as scaffolding only: `TaskExecutor.pageBound` (sw-tasks.ts; `ml.sh` and `python_exec` declare
+   `false`, absent reads as false), `cancelPageTasks(runId)` (cancels a run's page-bound tasks through their executor's cancel,
+   tells the model the fact line through the inbox or a waiting await, records `task`/`cancelled` with reason `page-change`; a
+   late result of a cancelled task is dropped), called from `webNavigation.onCommitted` (background.ts) for each run in
+   `activeRuns` on the tab, and `rekeyRunInbox(runId, tabId)` (sw-runs.ts; `retabRuns` calls it for `tabs.onReplaced`, the move-run
+   lane calls it for a move between steps), with `senderOwnsRun` as the inbox's owner check. No page-bound task exists yet. A worker-hosted run's page changes when it navigates in its own tab or when the person moves it to
    another tab (`MOVE_RUN.md`). Neither ends the run (a page-hosted loop's navigation does, and is rule 4's), so rule 4
    does not apply; each detached call and subscription is
    decided by where it RUNS:
