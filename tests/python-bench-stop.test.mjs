@@ -1,7 +1,7 @@
 // python-bench-stop.test.mjs — a bench Stop in the real core: the interrupt buffer ends a script, and a stop that did not land never reaches the next one.
 //
-// The real python-worker.ts under a fake `self` (name "readonly") and the real Pyodide in Node (`dist/pyodide/`,
-// self-SKIPS without it), as python-worker-bridges.test.mjs runs it. The buffer is posted first, as the offscreen
+// The real python-worker.ts under a fake `self` (name "readonly") and the real Pyodide in Node (`dist/pyodide/`
+// and the wheels beside it — self-SKIPS without both), as python-worker-bridges.test.mjs runs it. The buffer is posted first, as the offscreen
 // document posts it (offscreen.ts `ensureWorker`), and the stop is written from a SECOND THREAD, since a running script
 // holds this one: that is where the offscreen document stands to the worker. Which run a stop may reach, and the kill
 // when it is not answered, are the offscreen document's (python-bench-stop-offscreen.test.mjs). Its own file because
@@ -26,7 +26,14 @@ import { Worker } from "node:worker_threads";
 
 const DIST = path.resolve(import.meta.dirname, "../dist");
 const hasPyodide = fs.existsSync(path.join(DIST, "pyodide", "pyodide.mjs"));
-const skip = hasPyodide ? false : "no dist/pyodide — run `npm run fetch-pyodide` to enable";
+// The wheels beside the core are a PRECONDITION: build.mjs copies `pyodide-wheels/` into dist/pyodide/ ("No
+// runtime network after" — fetch-pyodide-wheels.mjs). Without them the first cell's loadPackage falls back to
+// the CDN and a 2026-11-12 run wedged there for 40 minutes with no local bound able to fire. Skip instead —
+// the stop machinery is not what such a run would measure.
+const hasWheels = hasPyodide && fs.readdirSync(path.join(DIST, "pyodide")).some((f) => f.endsWith(".whl"));
+const skip = hasPyodide && hasWheels ? false
+    : hasPyodide ? "no wheels in dist/pyodide — run `npm run fetch-pyodide` to copy pyodide-wheels/ in"
+        : "no dist/pyodide — run `npm run fetch-pyodide` to enable";
 
 /** The mark a script prints as its blocking section begins: the moment a stop may safely be written. */
 const BEACON = "WML-STOP-BEACON";
@@ -67,7 +74,7 @@ const WRITER_SRC = `
 `;
 
 before(async () => {
-    if (!hasPyodide) return;
+    if (skip) return;
     // Pyodide in Node wants a filesystem path where the worker hands it a URL (python-worker-bridges.test.mjs).
     shim = fs.mkdtempSync(path.join(os.tmpdir(), "wml-stop-"));
     fs.mkdirSync(path.join(shim, "pyodide"));
