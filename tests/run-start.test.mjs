@@ -617,6 +617,42 @@ test("a message that is not delivered (a busy steer, a resume that cannot start)
     assert.match(w.lastUser(1), new RegExp(`<file name="old\\.txt" type="text/plain" bytes="4" pointer="@file:${oldId}">`));
 });
 
+test("two sends to an idle stored run at once: the first resumes, the second reads busy, holds no file and is never announced", T, async () => {
+    let hold = null, reached = false;
+    const w = fileWorld({
+        onTabMessage: async (_t, msg) => {
+            if (msg.type === "ADOPT_RUN_NOW") { if (hold && !reached) { reached = true; await hold; } return { pageInfo: "" }; }
+            return msg.type === "RUN_TOOL_IN_PAGE" && msg.payload.finish ? { result: "" } : undefined;
+        },
+    });
+    const send = (hash, payload) => w.bg.send({ type: "USER_RUN_ACTION", payload: { hash, action: "send", surface: "hud", ...payload } }, fromTab);
+    const { hash } = await w.bg.context.__mlStartUserRunForTest(7, { task: "first", surface: "hud" });
+    await w.waitChats(1);
+    // The first send is held in its resume awaits (the page adopting the run); the second arrives meanwhile.
+    let release;
+    hold = new Promise((r) => { release = r; });
+    const first = send(hash, { text: "one" });
+    try {
+        for (let i = 0; i < 200 && !reached; i++) await flush(4);
+        assert.ok(reached, "the first send is held in adoptOnTab");
+        const second = await send(hash, { text: "two", files: [NOTES] });
+        assert.equal(second.data, "busy", "a resume is already starting: the message has nowhere to go");
+        assert.equal(await w.state(hash, "run.files"), null, "the file it attached is not on the run's shelf");
+    } finally { release(); }   // a failed assertion above must not leave the first send held
+    assert.equal((await first).data, "turn");
+    await w.waitChats(2);
+    assert.deepEqual(fanned(w.bg, "agent-say").map((s) => s.text), ["one"], "only the delivered message is announced");
+    assert.equal(w.lastUser(1), "one");
+    assert.equal(w.bg.tabMessages.filter(([, m]) => m.type === "ML_SESSION_TO_PAGE").length, 0);
+    // Control: once that turn has ended a send resumes normally.
+    hold = null;
+    for (let i = 0; i < 50; i++) await flush(4);
+    assert.equal((await send(hash, { text: "three" })).data, "turn");
+    await w.waitChats(3);
+    assert.equal(w.lastUser(2), "three");
+    assert.equal(w.chats().length, 3, "one model call per delivered message");
+});
+
 test("a run a page built is refused a PDF by name, from the panel (USER_RUN_ACTION) and DevTools (ML_SESSION_REMOTE): nothing reaches its page", T, async () => {
     const A = "https://builder.example/";
     const bg = loadBackground({
