@@ -137,9 +137,9 @@ flowchart TB
 - **JS dialect**: in daily use; the whitelist, halting and the inert reference are the adversarial tests under `test:core` and `test:security`.
 - **Python dialect**: the fork's first slice costs about 6% on 684 real cells; the memory cap about 4% at the upper quartile on 1,702 real cells, 1.36x only on a bare loop of approved C calls (`notebooks/python-dialect/verify-cost/`); `test:python` runs real CPython; the fork's own `test_restricted` runs on the fork.
 - **Pointers**: one pilot of the identifier's form (2026-09-03, one model, 8 runs): the model retyped the data instead of dereferencing it in every run of both arms, so the form made no difference and the full sweep is not run; typed table pointers both runtimes read; collapse not started.
-- **Policies + effects**: the lifter covers 63% of model-written fetch policies and 45% of sh ones (15 models); the effect algebra's subset test and nine program manifests; `test:security` holds the chokepoints.
+- **Policies + effects**: the lifter covers 63% of model-written fetch policies and 45% of sh ones (15 models); the effect algebra's subset test and fourteen program manifests; `test:security` holds the chokepoints.
 - **Sidebar and exports**: the run log carries what the model saw; `test:panel` and `test:ext` draw it, the e2e demos narrate it.
-- **Host**: v0.5.0; every call reports what changed among a root's protected names; ownership of every spawned process up to three named residuals; the memory bound is next.
+- **Host**: v0.8.0; every call reports what changed among a root's protected names; ownership of every spawned process up to three named residuals; a call past its lease detaches into a task whose tail reads the running call's latest output; an attached file's bytes reach the host's disk; a credentialed `gh` call reaches only the hosts its manifest names, on macOS, and on Linux through a forwarder, host v0.9.0.
 - **Relay + phone**: sealed traffic and a box's telemetry republished; nothing drives an agent through it yet; `test:mobile` and `test:chat` cover the phone app and the chat page.
 - **Serving column**: decode speed predicted per generation with a median error of 1.4% over 8,613 recorded generations on 13 models (75% within 10%, the 90th percentile 43%; `notebooks/bench/serving-decode.ipynb`); the correction is what does it, the 165 uncorrected predictions run 74% too fast; placement and keep-alive prediction not measured yet; the engine's routing record of a mixture of experts not measured yet.
 - **Dashed nodes**: posed, nothing measured. Chosen frames and secret handles have a spec each (`AGENT_COMPACTION.md`, `SECRET_HANDLES.md`); exact arithmetic has none yet.
@@ -155,9 +155,9 @@ exploring what becomes possible once that cost is close to zero is part of the p
 
 Whether agents can keep a codebase this size working with no person reading or reviewing it is itself one of the
 experiments, and the most interesting one. Until recently it could not have been tried at all: no model could keep
-even a small codebase working on its own. In its first three months this repository reached about 317,000 lines of code, tests and
-docs over 2,020 commits, and about 378,000 counting the relay, the host and what the modified tools add to their
-upstreams (October 20, 2026, from `node scripts/ecosystem.mjs`). 97% of the commits carry a Claude co-author trailer. So far they have, by the only measure I have: the parts I use daily keep working. That is a weak
+even a small codebase working on its own. In its first three and a half months this repository reached about 406,000 lines of code, tests and
+docs over 2,765 commits, and about 475,000 counting the relay, the host and what the modified tools add to their
+upstreams (November 12, 2026, from `node scripts/ecosystem.mjs`). 98% of the commits carry a Claude co-author trailer. So far they have, by the only measure I have: the parts I use daily keep working. That is a weak
 measure. A proper one (regressions I notice, whether adding a piece gets more expensive as the code grows) is not
 defined yet.
 

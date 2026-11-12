@@ -23,6 +23,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { stalenessReport } from "./check-dist-fresh.mjs";
 import { acquire } from "./test-slot.mjs";
+import { watchRunner } from "./watch-runner.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -115,19 +116,19 @@ const GENRES = {
     },
     // What a hostile page must NOT get: the red-team pass for every tool, member and page-started message. Each
     // property is a test with a positive control, and the suite is the one to run after any security-relevant change.
+    // Membership is a GLOB, not a list: every `tests/redteam-*.test.mjs` that no other genre names is this genre's,
+    // so a new row file needs no edit here (five PRs went dirty this week over exactly that line). A row another
+    // genre names keeps that genre's home — the CPython gate (`python`, `python-host`) is the case in the tree —
+    // and a file claimed by two genres runs twice. The two names the glob cannot see stay explicit.
     redteam: {
         about: "what a hostile page must NOT get: every tool, member and page-started message, each property a test",
-        files: ["redteam.test.js", "lapsed-ask-redteam.test.mjs", "redteam-agent-level-3.test.mjs", "redteam-agent-level-2.test.mjs", "redteam-agent-level.test.mjs", "redteam-answer.test.mjs", "redteam-attach-pdf.test.mjs", "redteam-call-target.test.mjs", "redteam-capture.test.mjs", "redteam-coerce-args.test.mjs", "redteam-current-client.test.mjs",
-            "redteam-current-env.test.mjs", "redteam-current-runtime.test.mjs", "redteam-dialect-widenings.test.mjs",
-            "redteam-embed-filter.test.mjs", "redteam-exec-console.test.mjs", "redteam-exec-page-leg.test.mjs",
-            "redteam-exec-shared-world.test.mjs", "redteam-exec-world.test.mjs", "redteam-geometry.test.mjs", "redteam-gh-credential.test.mjs",
-            "redteam-host-callbacks.test.mjs",
-            "redteam-image-fetch.test.mjs", "redteam-isolated-channel.test.mjs", "redteam-mermaid.test.mjs", "redteam-isolated.test.mjs", "redteam-presence.test.mjs", "redteam-presence-race.test.mjs",
-            "redteam-ml-wire.test.mjs", "redteam-operand-check.test.mjs", "redteam-page-run-builtby.test.mjs", "redteam-page-run-moved.test.mjs", "redteam-propose-manifest.test.mjs", "redteam-render-values.test.mjs",
-            "redteam-run-payload.test.mjs", "redteam-text-captures.test.mjs", "redteam-tool-throw.test.mjs",
-            "redteam-worker-shot.test.mjs", "redteam-bench-stop.test.mjs", "redteam-hard-python-cancel.test.mjs", "redteam-policy-ask-free-tiers.test.mjs",
-            "redteam-presence-ask.test.mjs", "redteam-brand-tag.test.mjs", "redteam-task.test.mjs", "redteam-act-consumer.test.mjs", "redteam-person-word.test.mjs", "redteam-coercion.test.mjs", "redteam-embed.test.mjs",
-            "redteam-attach-boundary.test.mjs", "redteam-cdp-result.test.mjs", "redteam-ctor-iterable.test.mjs", "redteam-sh-argv-pointer.test.mjs", "redteam-sh-put.test.mjs"],
+        get files() {
+            const others = new Set(Object.entries(GENRES)
+                .filter(([n]) => n !== "redteam" && n !== "core")
+                .flatMap(([, g]) => g.files));
+            return ALL.filter((f) => /^redteam-.*\.test\.mjs$/.test(f) && !others.has(f))
+                .concat(["redteam.test.js", "lapsed-ask-redteam.test.mjs"]);
+        },
     },
     // The chat page's own logic (the client store, the view prefs, the local host) and the check that its web build
     // never reaches `chrome`. Its browser half is Playwright: `npm run test:chat` runs both.
@@ -166,7 +167,7 @@ const GENRES = {
         about: "propose_policy and propose_manifest (a program manifest or a tier 3 library): the drafts, their cards, what is stored on approval",
         files: ["propose-library.test.mjs", "propose-library-redteam.test.mjs", "propose-manifest.test.mjs", "propose-policy-redteam.test.mjs", "propose-policy.test.mjs"],
     },
-    nav: { about: "a run's tab moving: the navigation barrier, the hand-over off an approved site, and the arrival judgement on every commit", files: ["nav-barrier.test.mjs", "nav-handover.test.mjs", "nav-arrival.test.mjs", "nav-arrival-host.test.mjs", "nav-navigate-redteam.test.mjs", "redteam-page-run-moved.test.mjs"] },
+    nav: { about: "a run's tab moving: the navigation barrier, the hand-over off an approved site, and the arrival judgement on every commit", files: ["nav-barrier.test.mjs", "nav-handover.test.mjs", "nav-arrival.test.mjs", "nav-arrival-host.test.mjs", "nav-navigate-redteam.test.mjs"] },
     bench: {
         about: "the benchmark harness (tests/e2e/bench/): its spec matrix, metrics, viewer, server, page, sweep log, scoreboard, memory readings, the box's event stream and the held runs' screens",
         files: ["bench-descriptor.test.mjs", "bench-metrics.test.mjs", "bench-serve.test.mjs",
@@ -176,7 +177,7 @@ const GENRES = {
     // The Python sandbox's host side with no Pyodide: the offscreen document's routing and the idle reap through fake
     // Workers, the prelude's environment and the table sources. Fast; `python` below is the real interpreter.
     "python-host": { about: "the Python sandbox's host side without Pyodide: offscreen routing, the idle reap, the env, table sources, the install verdict", files: ["pkg-verdict.test.mjs", "pkg-pep.test.mjs", "python-env.test.mjs", "python-reap.test.mjs", "python-run-namespace.test.mjs", "python-table-sources.test.mjs", "redteam-python-keep.test.mjs", "python-keep-fixes.test.mjs"] },
-    python: { about: "real CPython in Pyodide (self-skips without dist/pyodide)", files: ["python.test.mjs", "redteam-python-sandbox.test.mjs", "redteam-python-regex-backtrack.test.mjs", "python-lockdown.test.mjs", "python-run-namespace-py.test.mjs", "python-dialect-vectors-wasm.test.mjs", "regex-corpus-core.test.mjs", "regex-cost-core.test.mjs", "python-matplotlib.test.mjs", "python-dialect-inside.test.mjs", "redteam-python-inside.test.mjs", "python-dialect-library.test.mjs", "python-dialect-library-redteam.test.mjs", "redteam-python-lockdown.test.mjs", "redteam-hard-python-lockdown.test.mjs", "redteam-hard-python-realm.test.mjs", "python-spend-queue.test.mjs", "python-worker-bridges.test.mjs", "python-bench-stop.test.mjs"] },
+    python: { about: "real CPython in Pyodide (self-skips without dist/pyodide)", files: ["python.test.mjs", "redteam-python-sandbox.test.mjs", "redteam-python-regex-backtrack.test.mjs", "python-lockdown.test.mjs", "python-run-namespace-py.test.mjs", "python-dialect-vectors-wasm.test.mjs", "regex-corpus-core.test.mjs", "regex-cost-core.test.mjs", "python-matplotlib.test.mjs", "python-dialect-inside.test.mjs", "redteam-python-inside.test.mjs", "python-dialect-library.test.mjs", "python-dialect-library-redteam.test.mjs", "redteam-python-lockdown.test.mjs", "redteam-hard-python-lockdown.test.mjs", "redteam-hard-python-realm.test.mjs", "redteam-hard-python-cancel.test.mjs", "python-spend-queue.test.mjs", "python-worker-bridges.test.mjs", "python-bench-stop.test.mjs"] },
     // Everything named `fetch-*`, which is two subjects the filename prefix alone joins: the page's fetch
     // machinery (the cache's budget, the ladder's presentation both sinks share) and the release-download
     // scripts the CI gates fetch binaries with (fetch-hub's retry and fallback, fetch-host's pin).
@@ -310,7 +311,17 @@ if (args.includes("--check-genres")) {
         console.error("          Give each a genre in the GENRES table, with a sentence saying what it covers.");
         process.exit(1);
     }
-    console.log(`test.mjs: no unnamed subsystem in core (${claimed.size} files across ${Object.keys(GENRES).length - 1} genres).`);
+    // A `redteam-*python*` row is judged with real CPython or not at all: `python` (the gate) or `python-host`
+    // (the host side that owns its subject) must name it, or in `redteam` alone it runs without the interpreter.
+    const strays = ALL.filter((f) => /^redteam-.*python.*\.test\.mjs$/.test(f)
+        && !GENRES.python.files.includes(f) && !GENRES["python-host"].files.includes(f));
+    if (strays.length) {
+        console.error(`test.mjs: ${strays.length} redteam-*python* file(s) named by no python genre: ${strays.join(", ")}`);
+        console.error("          Name each in `python` (real CPython) or `python-host` — in `redteam` alone the row");
+        console.error("          runs without the interpreter it exists to probe.");
+        process.exit(1);
+    }
+    console.log(`test.mjs: no unnamed subsystem in core (${claimed.size} files across ${Object.keys(GENRES).length - 1} genres); every redteam-*python* row is named by python or python-host.`);
     process.exit(0);
 }
 
@@ -346,8 +357,14 @@ function runFiles(list) {
             process.exit(1);
         }
     }
-    spawn(process.execPath, [...NODE_ARGS, ...ordered.map((f) => `tests/${f}`)],
-        { cwd: ROOT, stdio: "inherit" }).on("exit", (c) => process.exit(c ?? 1));
+    // `watchRunner`, not a bare `on("exit")`: a runner that vanished without its exit firing used to hold this
+    // process — and the machine-wide slot with it — forever (20261109T094442-4a6b50). A hang now fails loudly.
+    const child = spawn(process.execPath, [...NODE_ARGS, ...ordered.map((f) => `tests/${f}`)],
+        { cwd: ROOT, stdio: "inherit" });
+    watchRunner(child).then(
+        (c) => process.exit(c),
+        (e) => { console.error(String(e?.message ?? e)); process.exit(1); },
+    );
 }
 
 // `--files a.test.mjs tests/b.test.mjs` runs exactly those, whatever genre they fall in. It exists because

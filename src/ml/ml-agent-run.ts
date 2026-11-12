@@ -40,7 +40,7 @@ import { registerRun, endRun, runAnswer } from "../agent/run-delegation";
 import { isSelfSourceUrl } from "../agent/self-source";
 import { toolContext, executeTool, withRunDeref } from "../tools/tool-exec";
 import { pageContext } from "../util";
-import { assembleRun, withPageContext, withoutCurrentClause, startPayload, type AssemblyMl } from "../agent/run-assembly";
+import { assembleRun, firstUserTurn, withoutCurrentClause, startPayload, type AssemblyMl } from "../agent/run-assembly";
 import { validateArgs } from "../tools/validate";
 
 /**
@@ -184,7 +184,8 @@ export const agent = async function(this: MlApi, task: string, { host = null, to
     if (!bgSurface) systemPrompt = withoutCurrentClause(systemPrompt, toolset);
     // A run the extension hosts gets its page context from the extension, which reads it from the browser rather than
     // from this page (docs/spec/SITE_ACCESS_SLICE3.md: a page's own context lines would be taken for its instructions).
-    if (env && !bgSurface) systemPrompt = withPageContext(systemPrompt, pageContext(n => toolset.some(t => t.name === n)));
+    // It goes at the front of the first user message, as page data (`firstUserTurn`), never in the system prompt.
+    const pageCtx = env && !bgSurface ? pageContext(n => toolset.some(t => t.name === n)) : undefined;
     // The run's curated answer set lives on the ToolContext (built at `toolCtx` below); the loop reads
     // `answerSet.elements()` / `.media()` / `.toMarkdown()` at assembly. (Was two accumulator arrays.)
     // Debug sidebar: announce the run + each step. Its own session hash
@@ -216,7 +217,9 @@ export const agent = async function(this: MlApi, task: string, { host = null, to
     // `runModel` (resolved once up top) is the driver model — config default when none was passed —
     // so the sidebar shows the REAL model (not "default") and can tell when a vision sub-call reused it.
     const mlApi = this as unknown as MlApi;   // typed self-ref for the deps' chatMeta (capabilities/ps)
-    if (firstTurn) emitDebug({ kind: "agent", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, task, images: turnImages.length ? turnImages : undefined, ...(_display ? { display: _display } : {}), model: runModel, maxSteps, pageUrl: location.href, pageTitle: document.title || undefined, config: {
+    // The start event's task is the first message as the model got it, page context included; the bubble shows the task.
+    const shownDisplay = _display ?? (pageCtx ? { typed: task, context: [] } : undefined);
+    if (firstTurn) emitDebug({ kind: "agent", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, task: firstUserTurn(task, pageCtx), images: turnImages.length ? turnImages : undefined, ...(shownDisplay ? { display: shownDisplay } : {}), model: runModel, maxSteps, pageUrl: location.href, pageTitle: document.title || undefined, config: {
         system: systemPrompt, customSystem: !!system,
         tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, vision: !!(t.capabilities && t.capabilities.includes("vision")), description: t.description, parameters: t.parameters, summary: t.summary, ...(t.remote ? { remote: t.remote } : {}) })),
         maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null,
@@ -529,7 +532,10 @@ export const agent = async function(this: MlApi, task: string, { host = null, to
         // reflects it and a handle's next turn continues it). Ensure the system prompt heads it, then
         // append this turn's task (empty when run() was called with no arg — it runs over prior say()s).
         buildMessages: (t) => {
-            if (!control.messages.some(m => m.role === "system")) control.messages.unshift({ role: "system", content: systemPrompt });
+            // A history with no system prompt yet is a fresh session: its first user message carries the page context.
+            const fresh = !control.messages.some(m => m.role === "system");
+            if (fresh) control.messages.unshift({ role: "system", content: systemPrompt });
+            t = firstUserTurn(t || "", fresh ? pageCtx : undefined);
             // Attach this turn's composer images to the user message (native-vision path); the OCR
             // path already folded its text into `t`. pendingImages is consumed once → first turn only.
             if (t || pendingImages) {

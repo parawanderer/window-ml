@@ -95,11 +95,17 @@ const RAW = {
     "/data.csv": { ct: "text/csv", body: "name,qty,price\napples,3,1.20\npears,5,0.90\n" },
     "/sales.csv": { ct: "text/csv", body: salesCsv() },   // 3,000 rows: too many to read off a preview (the prompt-budget bench)
     "/code.ts": { ct: "text/plain; charset=utf-8", body: "export const answer: number = 42;\nexport function id<T>(x: T): T { return x; }\n" },
+    // Beside /shop/aisle-4/ and nowhere else, so only a URL resolved against that page finds it (the prompt-budget bench).
+    "/shop/aisle-4/stock.json": { ct: "application/json", body: JSON.stringify({ aisle: 4, stock: { apples: 41, pears: 23, plums: 8 } }) },
 };
 const sendRaw = (res, r) => { res.writeHead(200, { "content-type": r.ct, "cache-control": "no-store" }); res.end(r.body); };
 
 // --- Same-origin 3-step chain — the Variant A case ----------------------------------------------------
 const routes = (crossOrigin) => ({
+    "/shop/aisle-4/": page({
+        badge: "Aisle 4", title: "Fresh fruit",
+        body: `<p>Apples, pears and plums, delivered every morning.</p>`,
+    }),
     "/": page({
         badge: "Step 1 of 3", title: "Cross-page persistence demo",
         body: `<p>This is a plain multi-page site — every link below is a <strong>real full-page

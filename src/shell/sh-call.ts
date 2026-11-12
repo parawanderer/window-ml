@@ -9,7 +9,7 @@
 import type { CallDescription, ProgramManifest } from "./program-manifest";
 import { CREDENTIAL_PROVIDERS, describeCall, hardenArgv } from "./program-manifest";
 import { claimsTopLevelName, type EffectsData, type Resource } from "../effects";
-import type { HostDone, HostDoneEnvelope, HostEnvelope, HostFacts, HostPathArg, HostPlacement, HostProtectedChange, HostSpawn, HostStream } from "./host-protocol";
+import type { HostDone, HostDoneEnvelope, HostEnvelope, HostFacts, HostPathArg, HostPlacement, HostProtectedChange, HostSpawn, HostStream, HostTilde } from "./host-protocol";
 import { binaryKind } from "../sw/body-read";
 import { BOX_PREFIX, FILE_PREFIX, POINT_PREFIX, TOOL_TOKEN_PREFIX } from "../pointers/token-prefixes";
 import { applicable, storedMisses, type StoredManifest } from "./stored-manifests";
@@ -153,7 +153,7 @@ const POINTER_PREFIXES = [TOOL_TOKEN_PREFIX, FILE_PREFIX, POINT_PREFIX, BOX_PREF
 export function heldValueRefusal(a: string, i: number): string | null {
     const prefix = POINTER_PREFIXES.find((p) => a.startsWith(p));
     if (!prefix) return null;
-    const how = prefix === FILE_PREFIX ? "an attachment is not on the host's disk, so no program can open it by that name"
+    const how = prefix === FILE_PREFIX ? `an attachment is not on the host's disk, so no program can open it by that name; write it there first with ml.sh.put(${JSON.stringify(a.slice(0, 80))}, "inbox/<name>") and pass that path`
         : prefix === TOOL_TOKEN_PREFIX ? "read it with ml.dereference, or reduce it with ml.pipe, and pass the text"
         : "it names a place on the page, which no program on the host can see";
     return `argv[${i}] is ${JSON.stringify(a.slice(0, 80))}, a held value, not a path: ${how}. A file that really has this name is ./${a.slice(0, 80)}`;
@@ -264,11 +264,12 @@ export async function credentialFor(plan: ShPlan, host: { hello: { credentials?:
 /**
  * Turn a checked request into the host's `spawn`, with the manifest's hardening and the arguments it marks as paths.
  * @param req the request
- * @param session the session's working directory (an absolute path inside a root); a relative `cwd` is taken from it
+ * @param session the session's working directory (an absolute path inside a root); a relative `cwd` is taken from it.
+ *   `tilde`: the host expands a leading `~` (`hello.tilde`), so a `cwd` of `~` or `~/…` goes to it as written
  * @returns the plan
  */
-export function planSpawn(req: ShRunRequest, session: { cwd: string; roots?: readonly string[]; manifests?: readonly ProgramManifest[]; stored?: readonly StoredManifest[] }): ShPlan {
-    const cwd = req.cwd === undefined ? session.cwd : req.cwd.startsWith("/") ? req.cwd : `${session.cwd.replace(/\/+$/, "")}/${req.cwd}`;
+export function planSpawn(req: ShRunRequest, session: { cwd: string; roots?: readonly string[]; manifests?: readonly ProgramManifest[]; stored?: readonly StoredManifest[]; tilde?: boolean }): ShPlan {
+    const cwd = req.cwd === undefined ? session.cwd : req.cwd.startsWith("/") || (session.tilde && isTildeArg(req.cwd)) ? req.cwd : `${session.cwd.replace(/\/+$/, "")}/${req.cwd}`;
     const st = session.stored ? manifestsFor(session.stored, session.roots ?? []) : undefined;
     const m = manifestFor(req.argv, session.roots ? { cwd, roots: session.roots, ...(st ? { rootOf: st.rootOf } : {}) } : undefined, st?.list ?? session.manifests);
     const spawn: HostSpawn = { argv: req.argv, cwd, ...(Object.keys(req.env).length ? { env: { ...req.env } } : {}), mode: "host", ...(req.timeoutMs ? { timeoutMs: req.timeoutMs } : {}) };
@@ -357,6 +358,21 @@ export interface ShFacts {
      *  will inject it (the call then always asks, `judgeCall`); null when the manifest names none. `hosts` is null when
      *  a host holds it without naming hosts (a build from before the proxy), whose profile reaches any host on `ports`. */
     credential: { provider: string; sends: string; held: boolean; ports: readonly number[]; hosts: readonly string[] | null } | null;
+    /** The arguments whose leading `~` the host expanded (`argv` and the paths already carry the expansion); `[]` from a
+     *  host that expands nothing. */
+    tilde: HostTilde[];
+}
+
+/** Whether the host expands this argument's `~` (window-ml-host PROTOCOL.md, `spawn`): exactly `~`, or a `~/` prefix. */
+export const isTildeArg = (a: string): boolean => a === "~" || a.startsWith("~/");
+
+/**
+ * The card's lines for the arguments whose `~` the host expanded, or left literal for want of a usable `HOME`.
+ * Human-facing text.
+ * @param tilde the facts' entries
+ */
+export function tildeLines(tilde: readonly HostTilde[]): ShCardLine[] {
+    return tilde.map((t) => ({ label: "~", value: t.to ? `${t.from} is ${t.to}` : `${t.from} stays literal (${t.reason ?? "no home"})`, ...(t.to ? {} : { warn: true }) }));
 }
 
 /** A walked directory whose walk found a secret, or could not tell, counts as one. */
@@ -424,6 +440,7 @@ export function shFacts(facts: HostFacts, version: string | null = null, place?:
         effects, described, why, runner,
         mode: facts.mode, sandboxed: facts.sandboxed, placement: facts.placement,
         credential: credentialOf(facts, m),
+        tilde: (facts.tilde ?? []).map((t) => ({ ...t })),
     };
 }
 
@@ -583,6 +600,7 @@ export function shCardLines(f: ShFacts, applied?: HostDoneEnvelope | null, asked
         { label: "Runs", value: f.argv.map(quoteArg).join(" ") },
         { label: "Program", value: f.program.path + (f.program.version ? ` (version ${f.program.version})` : "") },
         { label: "In", value: f.cwd.path + (f.cwd.inRoot ? "" : " (outside the workspace roots)"), ...(f.cwd.inRoot ? {} : { warn: true }) },
+        ...tildeLines(f.tilde ?? []),
         f.sandboxed
             ? { label: "Sandbox", value: f.credential?.held ? `on: writes only inside the workspace roots, network to ${f.credential.hosts ? f.credential.hosts.join(", ") : "any host"} on ${portsText(f.credential.ports)} only` : "on: writes only inside the workspace roots, no network" }
             : { label: "Sandbox", value: "off: runs as you, with your files and network", warn: true },
@@ -772,6 +790,7 @@ function putWrote(o: unknown): ShCardLine | undefined {
  */
 export function unaskedLines(u: ShUnasked): ShCardLine[] {
     const lines: ShCardLine[] = [{ label: "Allowed by", value: u.by !== "policy" ? "the built-in default" : u.policy ? `the policy "${u.policy}"` : "a policy (no label recorded)" }];
+    if (Array.isArray(u.tilde)) lines.push(...tildeLines(u.tilde));
     const put = putWrote(u.outcome);
     if (put) return [...lines, put];
     try { lines.push(...shOutcomeLines(u.outcome as unknown as ShOutcome)); } catch { /* an outcome of another shape: the line says who allowed it */ }

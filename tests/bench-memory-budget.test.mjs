@@ -314,6 +314,67 @@ test("a cell let start counts its browser as on its way, for the next cell and i
     b.stop();
 });
 
+// --- a bench inside a test-slot job (a sweep under `--kind batch`) ---
+
+test("a job's plan is credited with what the entries inside it hold, and the job this process runs inside counts none of its plan", () => {
+    const now = 1_000_000;
+    const job = (ticket) => ({ kind: "tests", ticket, rss: 0.1 * GB, planned: 4 * GB });
+    // Enumerated: the nested entry's ticket (the job's, another's, none), its rss and admissions, and `self`.
+    for (const inside of ["t1", "t2", undefined]) for (const rss of [0, 1 * GB, 5 * GB]) for (const pending of [[], [{ bytes: 2 * GB, until: now + 1 }], [{ bytes: 2 * GB, until: now }]])
+        for (const self of [null, "t1", "t2"]) {
+            const nested = { kind: "runner", rss, pending, ...(inside ? { inside } : {}) };
+            const live = pending.filter((p) => p.until > now).reduce((a, p) => a + p.bytes, 0);
+            const credit = inside === "t1" ? rss + live : 0;
+            const want = live + (self === "t1" ? 0 : Math.max(0, 4 * GB - 0.1 * GB - credit));
+            assert.equal(notYetResident([job("t1"), nested], now, self), want, JSON.stringify({ inside, rss: rss / GB, pending, self }));
+        }
+    // The default: no `self`, no `inside`, a job without a ticket: the plan less its own tree, as before.
+    assert.equal(notYetResident([{ kind: "tests", rss: 1 * GB, planned: 3 * GB }, { kind: "runner", rss: 9 * GB, inside: "t1" }], now), 2 * GB);
+});
+
+test("the 2026-11-11 sweep under --kind batch: its own grant no longer leaves it room for no browser", () => {
+    const now = 1_000_000;
+    // The grant line: 13.4 GB available, 5.4 GB promised to other runs starting up, 6.0 GB kept free (24 GB RAM), and
+    // this sweep's own 1-worker grant of 1.8 GB; the bench inside it then said "room for no browser".
+    const entries = [{ kind: "tests", ticket: "own", rss: 0, planned: 1.8 * GB }, { kind: "tests", ticket: "other", rss: 0, planned: 5.4 * GB },
+        { kind: "runner", rss: 0, inside: "own" }];
+    const st = (self) => budgetState({ limit: 12 * GB, entries, available: 13.4 * GB, total: 24 * GB, now, self });
+    assert.equal(admits(st(null), 1 * GB).ok, false, "positive control: counting its own grant, it refuses");
+    assert.equal(admits(st("own"), 1 * GB).ok, true);
+    assert.equal(st("own").coming, 5.4 * GB, "the other run's promise still counts");
+});
+
+test("the sweep's own budget and roomWarning read TEST_SLOT_TICKET: the 2026-11-11 figures admit a browser inside the job, and refuse outside it", () => {
+    const f = tmpLedger(), was = process.env.TEST_SLOT_TICKET;
+    // What measureLedger read then: this sweep's runner inside its own 1.8 GB grant, another job's 5.4 GB plan. With no
+    // --memory-limit the limit is half the 24 GB, with the 25% reserve.
+    const measure = () => [{ kind: "tests", pid: process.ppid, ticket: "own", rss: 0, planned: 1.8 * GB }, { kind: "tests", pid: 1, ticket: "other", rss: 0, planned: 5.4 * GB },
+        { kind: "runner", pid: process.pid, rss: 0, inside: "own" }];
+    const opts = { file: f, measure, avail: () => 13.4 * GB, total: 24 * GB };
+    const ask = () => { const b = startBudget({ ...opts, everyMs: 60_000, swap: () => null, out: () => null }); try { return [b.canStart("t").ok, roomWarning(1, opts)]; } finally { b.stop(); } };
+    try {
+        delete process.env.TEST_SLOT_TICKET;
+        const [outside, warned] = ask();
+        assert.equal(outside, false, "positive control: the job's ticket unknown, its own grant counts and the cell is refused");
+        assert.match(warned, /do not fit the bench's memory budget/);
+        process.env.TEST_SLOT_TICKET = "own";
+        assert.deepEqual(ask(), [true, null], "inside the job: startBudget's state and roomWarning both pass `self`");
+    } finally { if (was === undefined) delete process.env.TEST_SLOT_TICKET; else process.env.TEST_SLOT_TICKET = was; }
+});
+
+test("an entry written inside a test-slot job is marked `inside` it; the job's own entry and one written outside a job are not", () => {
+    const f = tmpLedger(), was = process.env.TEST_SLOT_TICKET;
+    try {
+        process.env.TEST_SLOT_TICKET = "tk";
+        // Live pids, since the ledger drops a dead one: this process, its parent, and launchd/init (EPERM counts as alive).
+        register({ kind: "runner", pid: process.pid }, f);
+        register({ kind: "tests", pid: process.ppid, ticket: "tk2" }, f);
+        delete process.env.TEST_SLOT_TICKET;
+        register({ kind: "page", pid: 1 }, f);
+        assert.deepEqual(ledger(f).map((e) => [e.pid, e.inside]), [[process.pid, "tk"], [process.ppid, undefined], [1, undefined]]);
+    } finally { if (was === undefined) delete process.env.TEST_SLOT_TICKET; else process.env.TEST_SLOT_TICKET = was; }
+});
+
 // --- the menu ---
 
 test("a failure's shape: step cap, rate limit, timeout, wrong answer, or the error's words without ids", () => {

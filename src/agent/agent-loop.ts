@@ -745,10 +745,14 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     // Hand the resolver to the host (see tokenSink). Throws exactly what the tool would return, so a failed
     // read inside exec surfaces the same MemoryFault / pipe error the model sees from the tool itself.
     opts.tokenSink?.((ref: string, pipe?: string | string[], limits?: PipeLimits): DerefRead => {
-        // The tool reads an attached file; code does not yet (its typed read is a later change, FILE_ATTACHMENTS.md).
+        // An attached file: what it is, and the key of its stored text, never the text. The read is the worker's
+        // (derefWhole), which can wait on the store; a caller that cannot is refused there (preReadsFor).
         if (String(ref).trim().startsWith(FILE_PREFIX)) {
-            const f = tokenStore.files.resolve(String(ref)).file;
-            throw new Error(`ml.dereference cannot read an attached file yet. Read ${f && isTextFile(f) ? "it" : "its pages"} with the dereference tool: token "${String(ref).trim()}", pipe "${f ? firstRead(f) : "pages 1"}".`);
+            const r = tokenStore.files.resolve(String(ref));
+            if (!r.file) throw new Error(r.error);
+            const f = r.file;
+            const file = { name: f.name, type: f.type, bytes: f.bytes, turn: f.turn, ...(isTextFile(f) ? { lines: f.lines } : { pages: f.pages }) };
+            return { value: `${fileRef(f)} ${quoteName(f.name)}: attached by the person. ${fileKindSaid(f)}.`, meta: { id: f.id, tool: "attached", kind: "text", step: 0, value: f.doc, file } };
         }
         const { value: v, matched, score } = tokenStore.resolveRef(ref, opts.labelMatch);
         if (!v) throw new Error(memoryFault(ref, tokenStore.nearest(ref), seq));

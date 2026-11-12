@@ -1,10 +1,19 @@
 {
   "repo": "parawanderer/window-ml-host",
-  "tag": "v0.7.0",
-  "commit": "323b5c2155fdd75782926073b9d9c18201b7214c",
+  "tag": "v0.9.0",
+  "commit": "5fd151e23df07f9f926e51909c2d9d0ad4b2070d",
   "assets": {
-    "x86_64-unknown-linux-gnu": { "file": "wmlhost-v0.7.0-x86_64-unknown-linux-gnu.tar.gz", "sha256": "a762407899b4be96d7d313d159a025d67a71719fbaa57635e839d74823a83fc9" },
-    "aarch64-unknown-linux-gnu": { "file": "wmlhost-v0.7.0-aarch64-unknown-linux-gnu.tar.gz", "sha256": "f7772d3fb504949ecc47a0f1048d7d2c34efefa2660b6c1942c9dfa4aefa7bfb" },
-    "aarch64-apple-darwin": { "file": "wmlhost-v0.7.0-aarch64-apple-darwin.tar.gz", "sha256": "9f91a28aa1ccf4a6cf63923fba1f107af4ef89b70e72949b30162244719e74eb" }
+    "x86_64-unknown-linux-gnu": {
+      "file": "wmlhost-v0.9.0-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "f64eb0022f2a4e3e4ecf996116ac0610f3c1c1aa4c6c7d23c74fce6cd13f0efe"
+    },
+    "aarch64-unknown-linux-gnu": {
+      "file": "wmlhost-v0.9.0-aarch64-unknown-linux-gnu.tar.gz",
+      "sha256": "1439cf67815ca06d93c0959ca65cd7eeaf22502d7b6621218b293881a7972924"
+    },
+    "aarch64-apple-darwin": {
+      "file": "wmlhost-v0.9.0-aarch64-apple-darwin.tar.gz",
+      "sha256": "fbdb2b73b01eec8af5bebad99b1061560ca601bb3b099090f8c33a038f61ba43"
+    }
   }
 }

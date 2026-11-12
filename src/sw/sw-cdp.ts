@@ -180,7 +180,7 @@ export async function cdpEval(tabId: number, documentId: string, source: string,
     const at = await ensureDebuggerAttached(tabId);   // reuses a live attachment; attach/detach is the dominant per-exec cost on a strict page
     if ("error" in at) return { error: `Couldn't attach the debugger to run exec (${at.error}). Another debugger (DevTools?) may be attached to this tab.`, ...(at.needsPermission ? { needsPermission: true } : {}) };
     const target: chrome.debugger.Debuggee = { tabId };
-    type WrapVal = { __mlWrapped: true; v?: string; threw?: string; logs: string[]; dropped?: number };
+    type WrapVal = { __mlWrapped: true; v?: string; threw?: string; logs?: Record<string, unknown>; n?: number; dropped?: number };
     type EvalResult = { result?: { value?: unknown }; exceptionDetails?: { exception?: { description?: string }; text?: string } };
     /** The context the wrapper runs in and the binding's calls are taken from. */
     let contextId: number | undefined;
@@ -226,13 +226,22 @@ export async function cdpEval(tabId: number, documentId: string, source: string,
     // so the page cannot run the approved script again with arguments of its own. The script sits in a block of its own,
     // so a `const console` in it does not collide with the parameter. A throw is caught and returned, so an exception the
     // evaluate reports means the wrapper never parsed, which is the only case the body form is tried for.
+    //
+    // The wrapper runs in the PAGE'S realm, so every builtin it calls is the page's to replace beforehand. The logs path
+    // calls none: the lines go into a null-prototype literal by index with a counter (no `push`, no array whose
+    // prototype could hold an index setter), a line is joined by `+` (no `map`/`join`), and the collector is an object
+    // literal (no `Object.defineProperty`, no `for…of` over an array). So the page cannot add, drop or rewrite a line,
+    // nor a string argument's text; a NON-string argument still goes through the page's `JSON.stringify` (or `String`),
+    // and the returned value too, which is why the result keeps its page-writable heading.
+    const collect = (m: string) => `${m}: (...a) => __col('${m}', a)`;
+    const forward = (k: string) => `${k}: (...a) => Reflect.apply(__N.${k}, __N, a)`;
     const wrap = (inner: string) => `(() => { let __s0 = false; return async (__N) => {
         if (__s0) throw new TypeError("spent"); __s0 = true;
-        const __logs = [], __M = ['log','info','warn','error','debug'], __F = ${JSON.stringify(CONSOLE_FORWARDS)}, __C = Object.create(null);
-        let __c = 0, __d = 0, __on = true;   // characters kept, and dropped past the ceiling (output-clip.ts boundedLines, inlined)
+        const __logs = { __proto__: null };
+        let __n = 0, __c = 0, __d = 0, __on = true;   // lines kept; characters kept, and dropped past the ceiling (output-clip.ts boundedLines, inlined)
         ${bound ? `const __b = globalThis.${BINDING};` : ""}
-        for (const m of __M) Object.defineProperty(__C, m, { configurable: true, enumerable: true, writable: true, value: (...a) => { if (!__on) { Reflect.apply(__N[m], __N, a); return; } const __s = a.map(x => { try { return typeof x === 'string' ? x : JSON.stringify(x); } catch { return String(x); } }).join(' '); const __k = __s.length + (__logs.length || __d ? 1 : 0); if (__d || __c + __k > ${OUTPUT_CEILING}) { __d += __k; return; } __c += __k; __logs.push(__s); ${tee} } });
-        for (const k of __F) Object.defineProperty(__C, k, { configurable: true, enumerable: true, writable: true, value: (...a) => Reflect.apply(__N[k], __N, a) });
+        const __col = (m, a) => { if (!__on) { Reflect.apply(__N[m], __N, a); return; } let __s = ''; for (let i = 0; i < a.length; i++) { const x = a[i]; let t; if (typeof x === 'string') t = x; else { try { t = JSON.stringify(x); } catch { t = String(x); } } t = t === undefined || t === null ? '' : '' + t; __s = i ? __s + ' ' + t : t; } const __k = __s.length + (__n || __d ? 1 : 0); if (__d || __c + __k > ${OUTPUT_CEILING}) { __d += __k; return; } __c += __k; __logs[__n] = __s; __n++; ${tee} };
+        const __C = { __proto__: null, ${["log", "info", "warn", "error", "debug"].map(collect).join(", ")}, ${CONSOLE_FORWARDS.map(forward).join(", ")} };
         let __s1 = false;
         try {
             // Called inline, so its frame has no name a page function's stack would show.
@@ -240,9 +249,9 @@ export async function cdpEval(tabId: number, documentId: string, source: string,
 ${inner}
             } })(__C);
             const __vs = __v === undefined ? '(undefined)' : typeof __v === 'string' ? __v : (() => { try { return JSON.stringify(__v); } catch { return String(__v); } })();
-            return { __mlWrapped: true, v: __vs, logs: __logs, dropped: __d };
+            return { __mlWrapped: true, v: __vs, logs: __logs, n: __n, dropped: __d };
         } catch (e) {
-            return { __mlWrapped: true, threw: String((e && e.stack) || e), logs: __logs, dropped: __d };
+            return { __mlWrapped: true, threw: String((e && e.stack) || e), logs: __logs, n: __n, dropped: __d };
         } finally { __on = false; ${bound ? `try { delete globalThis.${BINDING}; } catch (e) {}` : ""} }
     }; })()(console)`;
     let wrapperRan = false;   // its finally deleted the global; a script that never parsed leaves it to the cleanup below
@@ -258,7 +267,12 @@ ${inner}
         const out = r?.result?.value as WrapVal | undefined;
         if (out && out.__mlWrapped && typeof out.threw === "string") return { error: `The exec threw (via CDP): ${out.threw}`, pageShaped: true as const };
         const value = out && out.__mlWrapped ? (out.v ?? "(undefined)") : "(undefined)";
-        const logs = out && Array.isArray(out.logs) ? out.logs : [];
+        // The wrapper's store is indexed by line, with its count beside it; only the lines it counted, and only strings.
+        // A list with no count (the shape before the store, which the unit mocks of this result still return) is read whole.
+        const store = out && out.logs && typeof out.logs === "object" ? out.logs : {};
+        const n = out && typeof out.n === "number" ? (Number.isInteger(out.n) && out.n > 0 ? out.n : 0) : Array.isArray(store) ? store.length : 0;
+        const logs: string[] = [];
+        for (let i = 0; i < n; i++) { const line = store[String(i)]; if (typeof line === "string") logs.push(line); }
         const dropped = out && typeof out.dropped === "number" ? out.dropped : 0;
         // Prefix captured console output onto the value, exactly like the main-world path's `withLogs`; past the ceiling
         // the model is told after its clip.

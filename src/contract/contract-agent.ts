@@ -243,6 +243,8 @@ export interface ShUnasked {
     policy?: string;
     /** The argv the host got (after hardening), as its facts carried it: what was judged and what ran. */
     argv: string[];
+    /** The arguments whose leading `~` the host expanded (`HostTilde`), when any did: the line shows `~/x is /real/x`. */
+    tilde?: { index: number | "cwd" | "path"; from: string; to: string | null; reason?: string }[];
     /** What the call reported once it ran (`ShOutcome`: where it ran, the sandbox applied, the protected names). */
     outcome: Record<string, unknown>;
 }

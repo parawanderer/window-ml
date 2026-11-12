@@ -31,11 +31,13 @@ Match it to what you touched, not to what you hope passes:
 | `background.ts`, `sw-*.ts`, `content.ts`, `injected.ts` | `ext` |
 | `python-runtime.ts` / `python-worker.ts` | `python` |
 | `offscreen.ts`, `py-reap.ts`, `sw-python.ts` (the sandbox's host side) | `python-host` (`node scripts/test.mjs python-host`) |
+| anything security-relevant (a tool, a member, a page-started message) | `redteam` |
 | anything you are about to commit | `npm test` |
 
 ## Why `core` is derived, not listed
 
-The named genres list their files; `core` is everything left over. That direction is deliberate: a new
+The named genres list their files (`redteam` instead expands a glob — see Gotchas); `core` is everything
+left over. That direction is deliberate: a new
 test file lands in `core` and runs by default, rather than belonging to no genre and being silently
 skipped — which a hand-kept list of every genre would eventually do.
 
@@ -47,6 +49,10 @@ genre or make it fast.
 
 - **A genre naming a file that no longer exists is a hard error**, not a warning — a stale entry means
   those tests stop running and nothing says so.
+- **`redteam` membership is a glob, not a list**: every `tests/redteam-*.test.mjs` no other genre names is
+  claimed there (plus the two the glob cannot see, `redteam.test.js` and `lapsed-ask-redteam.test.mjs`). A row
+  another genre names keeps that home, and `--check-genres` refuses a `redteam-*python*` row that neither
+  `python` nor `python-host` names.
 - `--timings` spawns one node per file (~0.3s of startup each), so its total reads higher than the suite's.
   Compare the ROWS to each other, not the total to `npm test`.
 - This runner does not touch **e2e** (`npm run test:e2e`, Playwright, separate suite) or the **bench**.

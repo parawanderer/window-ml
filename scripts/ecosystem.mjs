@@ -12,7 +12,10 @@
 // WHAT "WRITTEN BY AN AGENT" MEANS HERE. Every commit is authored under the owner's git identity, so the only
 // attribution is the `Co-Authored-By: Claude …` trailer the agent adds. A commit with one counts as agent-written, a
 // non-merge commit without one as unattributed (the owner, or an agent that did not add it). Trailer coverage is printed
-// so the claim carries its own error bar. Under `--blame`, a surviving line is attributed to the commit that last
+// so the claim carries its own error bar. WHICH model: a trailer naming one ("Claude Opus 5.5") is taken as written; the
+// bare "Claude Code" trailer is what every harness writes whatever model runs it, so for that one the model is read from
+// the `<!-- agent-post: … model=… -->` footer of the squash-merged PR the commit's subject names (`(#N)`), and is
+// "unknown" when there is none (`attributeModel`). Under `--blame`, a surviving line is attributed to the commit that last
 // touched it, so a mechanical rewrite (a formatter pass, a bulk rename) moves lines to the rewriting commit.
 //
 // WHAT THE NUMBERS DO NOT SAY.
@@ -47,6 +50,48 @@ const WRITTEN = new Set(["code", "test"]);
 export function claudeTrailer(message) {
     const m = /^co-authored-by:\s*(claude[^<\n]*?)\s*(?:<|$)/im.exec(message);
     return m ? m[1].trim() : null;
+}
+
+/** The `model=` id in a PR body's `<!-- agent-post: … -->` footer, or null when the body has none. */
+export function agentPostModel(body) {
+    const m = /<!--\s*agent-post:[^>]*?\bmodel=([^\s>]+)/.exec(body ?? "");
+    return m ? m[1].replace(/-+$/, "") : null;
+}
+
+/**
+ * One model id however a harness spelled it: a provider or router prefix (`deepseek.`, `moonshot.`, `openrouter.`: letters
+ * only, so the dot in `mimo-v2.6-pro` is not one) and a vendor path (`xiaomi/`) are dropped, so `deepseek.deepseek-flash`,
+ * `openrouter.xiaomi/mimo-v2.6-pro` and the bare ids count once. Otherwise as written.
+ */
+export function normaliseModel(id) {
+    let s = id.trim();
+    const routed = /^[a-z-]+\.(.+)$/i.exec(s);
+    if (routed) s = routed[1];
+    return s.includes("/") ? s.slice(s.lastIndexOf("/") + 1) : s;
+}
+
+/** The bare trailer every harness writes, which names no model. */
+export const HARNESS_TRAILER = "Claude Code";
+
+/** The row a "Claude Code" trailer lands in when PR footers could not be read (`--no-gh`, or `gh` failed). */
+export const FOOTER_NOT_READ = "Claude Code (model not resolved: PR footers not read, --no-gh or gh failed)";
+
+/**
+ * The model a commit is attributed to, from its Claude trailer and the `model=` of its PR's agent-post footer: a trailer
+ * naming a model wins; a bare "Claude Code" trailer takes the footer's model, normalised, or "unknown" without one;
+ * no trailer is null (unattributed). `footer` undefined means footers were not read at all.
+ */
+export function attributeModel(trailer, footer) {
+    if (!trailer) return null;
+    if (trailer !== HARNESS_TRAILER) return trailer;
+    if (footer === undefined) return FOOTER_NOT_READ;
+    return footer ? normaliseModel(footer) : "unknown";
+}
+
+/** The PR number a squash-merge subject ends in (`… (#123)`), or null. */
+export function squashPr(subject) {
+    const m = /\(#(\d+)\)\s*$/.exec(subject ?? "");
+    return m ? Number(m[1]) : null;
 }
 
 /** The path a `git log --numstat` row names, with a rename (`a/{b => c}/d`, `a => b`) resolved to its new name. */
@@ -91,7 +136,7 @@ export function blameOwners(porcelain) {
 
 // --- per repository ---
 
-/** Every non-merge commit on the ref, as `{ sha, date, agent, model, files[] }`; `files` only when `numstat` is set. */
+/** Every non-merge commit on the ref, as `{ sha, date, agent, model, subject, files[] }`; `files` only when `numstat` is set. */
 function readCommits(dir, revs, numstat, extra = []) {
     const fmt = "%x01%H%x02%aI%x02%P%x02%B%x03";
     const raw = git(dir, ["log", `--format=${fmt}`, ...(numstat ? ["--numstat"] : []), ...extra, ...revs]);
@@ -107,7 +152,7 @@ function readCommits(dir, revs, numstat, extra = []) {
                 return { path: resolveRenamed(p.join("\t")), added: a === "-" ? 0 : +a, deleted: d === "-" ? 0 : +d };
             })
             : [];
-        out.push({ sha, date, agent: !!model, model, files });
+        out.push({ sha, date, agent: !!model, model, subject: body.split("\n")[0], files });
     }
     return out;
 }
@@ -150,6 +195,14 @@ function mergedPrs(gh) {
     } catch { return null; }
 }
 
+/** PR number → agent-post `model=` (or null) for a repository's merged PRs, fetched once; null when `gh` fails. */
+function footerModels(gh) {
+    try {
+        const out = execFileSync("gh", ["pr", "list", "--repo", gh, "--state", "merged", "--limit", "10000", "--json", "number,body"], { encoding: "utf8", maxBuffer: 1 << 28 });
+        return new Map(JSON.parse(out).map((p) => [p.number, agentPostModel(p.body)]));
+    } catch { return null; }
+}
+
 /** Who wrote the lines alive in written files at the ref, by agent-or-not and by month, through `git blame`. */
 async function survival(dir, ref, agentShas, dateOf) {
     const tree = git(dir, ["ls-tree", "-r", "--name-only", ref]).split("\n").filter((p) => p && WRITTEN.has(pathKind(p)) && !LOCKFILES.has(basename(p)));
@@ -178,14 +231,20 @@ async function measure(repo, { blame, gh }) {
     try { git(repo.dir, ["fetch", "-q", "origin"]); } catch { /* offline: use the local ref */ }
     const commits = readCommits(repo.dir, [repo.ref], true);
     const agentCommits = commits.filter((c) => c.agent);
-    const models = {};
-    for (const c of agentCommits) models[c.model] = (models[c.model] ?? 0) + 1;
+    const footers = gh && agentCommits.some((c) => c.model === HARNESS_TRAILER) ? footerModels(repo.gh) : null;
+    const models = {}, trailers = {};
+    for (const c of agentCommits) {
+        const pr = squashPr(c.subject);
+        const model = attributeModel(c.model, footers ? (footers.get(pr) ?? null) : undefined);
+        models[model] = (models[model] ?? 0) + 1;
+        trailers[c.model] = (trailers[c.model] ?? 0) + 1;
+    }
     const sha = git(repo.dir, ["rev-parse", repo.ref]).trim();
     const { lines, bigFiles } = linesAt(repo.dir, sha, new Map());
     const churn = churnFrom(commits);
     const res = {
         name: repo.name, head: sha.slice(0, 8), lines, bigFiles,
-        commits: { nonMerge: commits.length, agent: agentCommits.length, models },
+        commits: { nonMerge: commits.length, agent: agentCommits.length, unattributed: commits.length - agentCommits.length, models, trailers, footersRead: !!footers },
         firstCommit: commits[commits.length - 1]?.date.slice(0, 10), lastCommit: commits[0]?.date.slice(0, 10),
         churn, tests: testsAt(repo.dir, repo.ref),
         prs: gh ? mergedPrs(repo.gh) : null,
@@ -240,9 +299,12 @@ function print(results, forks) {
     for (const f of forks) console.log(`  ${f.name.padEnd(11)} ${f.additions != null ? `+${n(f.additions)} -${n(f.deletions)} in ${f.files} files, ${f.aheadBy ?? f.commits} commits${f.agentCommits != null ? ` (${f.agentCommits} with a Claude trailer)` : ""} ahead of ${f.upstream} (${f.measured ?? "now"}, ${f.source})${f.truncated ? ", truncated: a floor" : ""}` : "no figure"}`);
 
     console.log("\nagent-attributed commits by model:");
+    console.log(`  measure: the model a Claude trailer names; for a bare "${HARNESS_TRAILER}" trailer, the model= of the merged PR's agent-post footer, else "unknown".`);
     const models = {};
     for (const r of results) for (const [m, c] of Object.entries(r.commits.models)) models[m] = (models[m] ?? 0) + c;
     for (const [m, c] of Object.entries(models).sort((a, b) => b[1] - a[1])) console.log(`  ${String(c).padStart(5)}  ${m}`);
+    const unattributed = results.reduce((s, r) => s + r.commits.unattributed, 0);
+    console.log(`  ${String(unattributed).padStart(5)}  unattributed (no Claude trailer)`);
 
     const withSurvival = results.filter((r) => r.survival);
     if (withSurvival.length) {

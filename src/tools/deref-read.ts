@@ -43,6 +43,7 @@ export class DerefText extends String implements DerefValue {
     readonly table?: Table;
     readonly image?: string;
     readonly latex?: string;
+    readonly file?: DerefMeta["file"];
 
     #json?: { v: unknown };            // memo: absent = not parsed yet, { v: undefined } = parsed, not JSON
     #repipe: (stages: string | string[]) => Promise<DerefValue>;
@@ -57,6 +58,7 @@ export class DerefText extends String implements DerefValue {
         if (meta?.table) this.table = asTable(meta.table, { python: currentHasTool("python_exec"), ...(readColumns ? { readColumns } : {}) });
         if (meta?.image) this.image = meta.image;
         if (meta?.latex) this.latex = meta.latex;
+        if (meta?.file) this.file = meta.file;
         this.#repipe = repipe;
     }
 

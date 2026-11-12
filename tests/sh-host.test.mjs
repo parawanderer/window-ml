@@ -75,6 +75,18 @@ test("no sandbox on this machine: ready, but not sandboxed, and the capabilities
     assert.deepEqual([caps.shellHost, caps.shellSandboxed], [true, undefined]);
 });
 
+test("a host that expands `~` declares shellTilde and says so in the status; one that does not declares neither", T, async () => {
+    for (const [opts, want] of [[{ tilde: { home: "/Users/fake" } }, true], [{}, undefined]]) {
+        const host = fakeNativeHost(opts);
+        const bg = loadBackground({ config: { ...base, ...ON }, onNative: host.onNative });
+        const r = await status(bg);
+        assert.equal(r.data.ready, true);
+        assert.equal(r.data.host.tilde, want, JSON.stringify(opts));
+        const caps = await capabilities(bg);
+        assert.deepEqual([caps.shellHost, caps.shellTilde], [true, want], JSON.stringify(opts));
+    }
+});
+
 test("the person turned the sandbox off: the host is told, and calls are not sandboxed", T, async () => {
     const host = fakeNativeHost();
     const bg = loadBackground({ config: { ...base, ...ON, shellSandbox: false }, onNative: host.onNative });

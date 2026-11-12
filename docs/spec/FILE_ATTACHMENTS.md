@@ -2,8 +2,8 @@
 
 **Status: slices 1 and 2 built (2026-10-28/29); slice 3 under way: the held rows, the `@file:` pointer, the `pages`
 verb, attaching a PDF to an agent run, and every attachment to a worker-built run (any message) and a long paste as
-pointers are built; `ml.dereference` of `@file:`, `look` at a document, Python's `files`, the files panel and upload
-progress are next (Shane and the calm-chat-motion session).** The order is
+pointers, and `ml.dereference` of `@file:`, are built; `look` at a document, Python's `files`, the files panel and
+upload progress are next (Shane and the calm-chat-motion session).** The order is
 three slices, each landing on its own: text files, then PDFs, then documents as `@file:` pointers in agent runs. Slice
 3's contact points with the python, shell and policies lanes were ruled on by their coordinator (2026-10-28,
 "Rulings" below).
@@ -274,8 +274,13 @@ Page 1: …the first page's text, to the preview cap…
 ```
 
 "Attached by the person" is there so a model does not take the name for a path on disk; `ml.sh` given an `@file:`
-pointer as an argument refuses with a sentence saying it is an attachment, not a file in the workspace. That refusal
-is the shell call's one rule for every pointer prefix in argv, not a manifest's (SHELL.md).
+pointer as an argument refuses with a sentence saying an attachment is not on the host's disk, so no program can open it
+by that name; #1595 (merged 2026-11-12, ab9b4a8a) added a clause naming `ml.sh.put` with the item's own handle as the way to write it there, and #1634 (the prompt review) makes the clause's example path `<folder>/<name>` into a folder that exists, since the host never creates a folder.
+That refusal is the shell call's one rule for every pointer prefix in argv, not a manifest's (SHELL.md), and it stays.
+The one way to put an attachment on disk is `ml.sh.put(handle, path)`: it writes the attachment's original bytes, not a
+PDF's text. A new file in a nested path is judged as an in-root write, a new top-level name asks, and an existing file
+always asks. A remote run, and a host without the put capability, are refused. How it is built: `docs/dev/shell.md`,
+"Writing an attachment to disk".
 
 **Reading text by page.** The pipe dialect gains one verb, `pages N-M` (`PIPE_CMDS`, text-pipe.ts), which selects whole
 pages from a paged value before the other verbs run: `dereference("@file:3fa91c2", { pipe: "pages 3-5 | grep -i
@@ -289,7 +294,8 @@ requires the adversarial tests in readonly-exec.md ("The rule for extending the 
 the `FileShelf` a run's `TokenStore` holds files on; the `pages` verb (`PIPE_PAGES_MAX`, 50 a stage); `derefLocally`'s
 `@file:` branch and the inventory's files. The outline says `Read with dereference(@file:…, pipe "pages 1-3")` only:
 `look` with a document target is not built. Nothing notes a file on the shelf yet: attaching a PDF to an agent run,
-which mints the pointer and stores its rows, is the next change. `ml.dereference` refuses `@file:` with a sentence.
+which mints the pointer and stores its rows, is the next change. `ml.dereference` refused `@file:` with a sentence then
+(read since 2026-11-12, below).
 
 **Built (2026-11-07, the attaching side).** A PDF attached to an agent run's first message (`agent.start`, the HUD,
 the panel) is read once in the offscreen document, its bytes (`bytes`) and read document (`paged`) stored as held rows
@@ -299,6 +305,14 @@ outline as its body. A PDF that will not read, or that the store cannot keep bes
 with the reason, and what was stored by then is released. The pointers ride `StartRunPayload.files` (stripped from a
 page's own payload, honoured only on a worker-built run), so the shelf comes back after a worker eviction. A message
 to a run under way was refused a PDF then; "Every attachment to an agent run as a pointer" below lifted that.
+
+**Built (2026-11-12, `ml.dereference`).** Code reads an attached file as the tool does: `await
+ml.dereference("@file:3fa91c2", { pipe: "pages 3-5" })` answers the PDF's `<page>` sections (a text file's text), and
+the value's `file` says what it is (`name`, `type`, `bytes`, `turn`, and `pages` or `lines`); `tool` is `"attached"`.
+It is read in the worker from the run's held rows, by a read-only survey, an approved exec's isolated world, or a
+Python cell over the wire; the store key never leaves the worker. An exec in the page's main world is refused it, as a
+stored text is not read whole there. The pointer macro stays `@tool:`'s alone. Held back: a `pages` array on the value
+(page numbers already travel in the sections, and `pages N` selects one).
 
 **Looking at pages.** `look` takes a document target: `look({ doc: "@file:3fa91c2", pages: "4", question })`. The
 pages are rendered from the stored bytes by pdf.js in the offscreen document, then go down the existing vision path
@@ -527,6 +541,8 @@ Reading an attachment (`dereference`, `look`, a `python_exec` source) is free by
 ([`EFFECTS.md`](EFFECTS.md)): a read of a value the run already holds spends nothing and reaches nothing, so no policy
 line exists for it and none is added.
 
+SLICE 3 OPEN 2026-11-12: #1623 at 948e9426 (the Chat Page lane; ml.dereference reads an attached @file: in the worker; two commits, nine files, `@api` `@agent` `@security`; verified). Code reviewer janitor-3 by the overflow rule. The lane wrote no red-team rows; e3 writes them against the branch as a test-only PR that lands after #1623 merges (new surface, rule 10 as amended), reviewer janitor-3, from the lane's five surfaces: the file's text or doc key through any page-started type, forged run id, named read or MAIN-world pre-read, in every reference form; one run reading another run's or session's file, including after a worker eviction; a hostile file name breaking the page sections, forging a page or leaking into the description line; the budget on unpiped and piped reads so a loop over a large PDF stops; the wire's TooLarge naming the pointer and never the key. CLEARED 2026-11-12: janitor-3 named 948e9426 (comment 6816920230; 52/52 dereference, 59/59 with the neighbouring pointer suites, dist, doc and jsdoc checks clean; verified); the lane armed. #1623 MERGED 2026-11-12 as 26dd7e44 (run 43168756243 green; verified); e3's rows go on main. E3 STARTED 2026-11-12: branch redteam/deref-file off main, tests/redteam-deref-file.test.mjs, a test-only PR with janitor-3 as reviewer. OPEN 2026-11-12 as #1648 at eb19aef5 (test-only, `@security` `@agent`, two files, no src/; verified): five rows with a positive control each in tests/redteam-deref-file.test.mjs and a `files` option on tests/ml-wire-harness.mjs so a run is built with an attachment. A: an approved exec in the page's main world gets the refusal for an `@file:` read, never its text, value, meta or the held key, while the same run's dereference tool reads it. B: another run, or one whose shelf never held the id, reads nothing. C: a page's own text cannot close its `<page>` section or open a forged one, and an attached name is one line with no control character. D: an unpiped read is charged the stored blob, a piped one what each stage reads. E: past WIRE_VALUE_CAP the answer is the `@file:` token with the file's name, never the bytes or the key. Each guard mutated alone reds only its own row (the preReadsFor refusal, the holders check in readStoredText, escapeSectionText, the unpiped charge, the wire's token prefix); clean tree 5 of 5. Recorded fact, not a defect: a non-holder's refusal is the store's "the stored value v<16 hex> is not in the store", which names the held row's key; every read re-checks holders, so the key alone reads nothing. No genre line: the redteam genre is a glob since #1636. e3 found no other shape in #1623 it could not pin as a row. Reviewer janitor-3 after host#39 (assigned); e3 arms on a comment naming eb19aef5. Two shapes janitor-3 found without a row on the branch, for e3's pass: preReadsFor's MAIN-world refusal of a @file: read (sw-run-host.ts, around line 163) and a page that never held the rows; the branch's charge and another-run rows pass against main's module too, so e3's rows pin what those do not.
+
 Slice 3 adds a pointer kind and a `look` target, so it gets the red-team pass (site-access.md, "Adding a tool, a member
 or a message"). What a hostile page must not get, as tests that fail first:
 
@@ -556,8 +572,8 @@ or a message"). What a hostile page must not get, as tests that fail first:
    targets are refused outright with no tier that can allow them; the whole-file cap is the host's, advertised in hello; it never
    detaches; a run whose `origin.remote` is set is refused with one sentence (the file would land on a machine the person is not at),
    and the host refuses the hub transport too. Page-started runs never reach `ml.sh`, so nothing here is reachable from a page; one row
-   asserts it. The host half is the fourth slice of SHELL.md's resolve path (`put`/`write`/`commit`); the chat-page lane writes this
-   spec's paragraph and UPGRADE row once the window-ml half merges.
+   asserts it. The host half is the fourth slice of SHELL.md's resolve path (`put`/`write`/`commit`). BUILT in #1553; the paragraph above
+   and the UPGRADE row (`tests/ml-sh-redteam.test.mjs`, "UPGRADE: a PDF attached before ml.sh.put") came after.
 4. Reading an attachment is free (effects algebra); no policy line.
 5. Nothing in flight collides. `navigate` on a PDF is a new red-team pass; `pages` joins `PIPE_CMDS` with its own bound
    and adversarial rows.

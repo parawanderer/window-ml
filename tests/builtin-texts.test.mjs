@@ -89,3 +89,44 @@ test("a page-built run's exported config.tools carry the descriptions and schema
         assert.ok(!md.includes("the site's own click") && !md.includes("the site's selector"), `${surface}: and not the page's texts`);
     }
 });
+
+test("a page-built run's exports carry the first user message the model was sent, page context and page marking included, on every surface", { timeout: 20_000 }, async () => {
+    const { createRequire } = await import("node:module");
+    const { jsonResponse, loadBackground } = createRequire(import.meta.url)("./helpers");
+    await import("./stub-css.mjs");
+    const { onDebug } = await import("../src/sidebar/debug-reducer.ts");
+    const { sessionMap } = await import("../src/sidebar/store.ts");
+    const { sessionToJson } = await import("../src/sidebar/export/export-json.ts");
+    const { serializeSession } = await import("../src/sidebar/export/export.ts");
+    const SITE_URL = "https://site.example/page";
+    const sender = { tab: { id: 7, url: SITE_URL }, url: SITE_URL, origin: "https://site.example", frameId: 0, documentId: "doc-7" };
+    for (const surface of ["off", "overlay", "devtools"]) {
+        const runId = `turn-${surface}`;
+        const bg = loadBackground({
+            config: { chatUrl: "http://host/api/chat/completions", apiKey: "k", model: "m", apiFormat: "openai", ocrModel: "", debugMode: surface },
+            siteGate: true, local: { ml_site_always: ["https://site.example"] }, openTabs: [{ id: 7, url: SITE_URL, title: "Site" }],
+            onFetch: (call) => (call.url.includes("/chat/completions") ? jsonResponse({ choices: [{ message: { content: "done" } }] }) : jsonResponse({})),
+            onTabMessage: async (_t, msg) => (msg.type === "RUN_TOOL_IN_PAGE" ? { result: "" } : undefined),
+        });
+        const payload = { runId, task: "do it", systemPrompt: "S", tools: [], model: "m", think: null, maxSteps: 3,
+            autoApprovePython: false, autoApproveReadonly: false, surface, pageUrl: SITE_URL };
+        // The page's own start event (ml-agent-run.ts): a worker-hosted run's page knows only the task it typed.
+        const pageStart = { kind: "agent", id: runId, ts: 1, save: false, session: { hash: runId, turn: 0 }, task: "do it", model: "m", maxSteps: 3,
+            config: { system: "S", customSystem: false, maxSteps: 3, think: null, env: true, vision: null, systemAppend: null, tools: [] } };
+        const res = await bg.send({ type: "START_RUN", payload }, sender);
+        assert.equal(res?.data?.summary, "done", `${surface}: the run answered (${JSON.stringify(res)?.slice(0, 200)})`);
+        const sent = bg.calls.find((c) => c.url.includes("/chat/completions")).body.messages.find((m) => m.role === "user").content;
+        assert.ok(sent.includes("Message from the page") && sent.includes("URL: "), `${surface}: control: the wire's first turn is marked as the page's and carries the context (${sent.slice(0, 120)})`);
+        const worker = bg.tabMessages.map(([, m]) => m).filter((m) => m?.type === "ML_DEBUG_TO_PAGE").map((m) => m.event);
+        sessionMap.clear();
+        if (surface !== "off") onDebug(pageStart);
+        for (const ev of worker) onDebug(ev);
+        const s = sessionMap.get(runId);
+        assert.equal(s.task, sent, `${surface}: the session's raw task is the wire's first user message`);
+        assert.equal(s.taskDisplay?.typed, "do it", `${surface}: and the bubble shows the task as typed`);
+        const json = sessionToJson(s).session;
+        assert.equal(json.task, sent, `${surface}: the JSON export's task is the wire's`);
+        const { md } = serializeSession(s);
+        assert.ok(md.includes("Task · raw (as the model got it)") && md.includes(sent.split("\n")[0]), `${surface}: the Markdown export carries the raw first turn`);
+    }
+});
