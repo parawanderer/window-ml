@@ -196,9 +196,17 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
      task whose completion starts the next, so turns can follow one another with no person's message between them.
      The turns started in a row by task completions, with no message from the person between them, are capped (one
      knob, beside the cap above; default 5); at the cap, a completion parks and notifies as on notify-only.
-   - **What the model is told.** The `Detached` text and the prompt say that a detached task runs on after the
-     model's answer and that its result arrives at the next turn, replacing the one line that says the answer ends
-     it.
+   - **What the model is told: every lifetime, in one place** (Shane, 2026-11-12: the model should know how long
+     each thing in its sandbox lasts, so it never counts on one that is gone). The prompt (or the tool descriptions
+     it already reads) states, in one short list, how long each thing the model can keep lasts and what ends it:
+     Python variables (the run, per the namespace ruling; ended by a kernel death and by the idle reap after its
+     time between turns); `/files/` (the session; `FILE_ATTACHMENTS.md`); `@tool:` values (as `docs/dev/state.md`
+     records them, including what a worker eviction loses); a detached `ml.sh` call or cell (past the answer, to its
+     deadline under the 60 min cap); a fetch (the turn); a page-bound task (the page). The `Detached` text says the
+     task runs on after the answer and its result starts or reaches the next turn, replacing the line that says the
+     answer ends it. Each figure in the list is read from the constant that enforces it, never typed twice, and a row
+     fails when the two differ. The list is measured against the prompt budget (`docs/spec/PROMPT_BUDGET.md`) and
+     goes through the next prompt review.
    - **Bounds** (e3's rows, rule 10, on the building branch): a task never delivers to another run or another
      session; no task completion starts a turn for a run other than its own; a completion on notify-only never starts
      a turn; a started turn runs on no page we own; a parked result is delivered only to its own run, on its own session, at that run's next turn; a run
