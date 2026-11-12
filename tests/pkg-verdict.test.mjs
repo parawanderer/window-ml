@@ -330,12 +330,15 @@ test("hostile: each bound holds at its value and refuses one past it", () => {
     assert.equal(V(nm(VERDICT_BOUNDS.name + 1), {}).reason, "malformed");
 });
 
-test("hostile: every lookup inside its bound, multiplied, is stopped by the work bound: a lock package asked by 254 ranges, with 4,096 releases of 1,024 files", () => {
+test("hostile: every lookup inside its bound, multiplied, is stopped by the work bound: a lock package asked by 254 ranges, with 256 releases of 1,024 files", () => {
     // Each package asks lib-lock for a different range above the lock's 1.0, so each range scans the releases again.
-    const releases = Object.fromEntries(Array.from({ length: VERDICT_BOUNDS.releases }, (_, i) => [`2.${i}`, { requires_dist: [],
+    // 256 releases, not the bound's 4,096: a pick is cached, so the charge is per release per asker, and 4,096 releases
+    // of 1,024 file records is 1.46 GB, past test-slot's 1 GiB per worker.
+    const nRel = 256;
+    const releases = Object.fromEntries(Array.from({ length: nRel }, (_, i) => [`2.${i}`, { requires_dist: [],
         files: Array.from({ length: VERDICT_BOUNDS.files }, (_, j) => ({ ...wheel("lib-lock", `2.${i}`), filename: `lib_lock-2.${i}-${j + 1}-py3-none-any.whl` })) }]));
     const askers = Array.from({ length: VERDICT_BOUNDS.packages - 2 }, (_, k) => `a${k}`);
-    const projects = { "lib-lock": { latest: `2.${VERDICT_BOUNDS.releases - 1}`, releases }, root: proj("root", "1.0", { requires_dist: askers }),
+    const projects = { "lib-lock": { latest: `2.${nRel - 1}`, releases }, root: proj("root", "1.0", { requires_dist: askers }),
         ...Object.fromEntries(askers.map((n, k) => [n, proj(n, "1.0", { requires_dist: [`lib-lock>=2.${k}`] })])) };
     const t = performance.now();
     assert.deepEqual(V("root", projects), { ok: false, reason: "too-large", at: "lib-lock" });
