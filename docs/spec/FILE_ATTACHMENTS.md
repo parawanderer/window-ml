@@ -555,9 +555,12 @@ second place: everything a model can keep, the person can see and delete (the fi
 - `/files/` is writable: the model's working directory, kept for the session.
 - `/files/attached/` is read-only and holds what the person attached, by name. A file attached mid-run appears there
   and the model is told its name. The person's files never change; a model that wants to edit one copies it out.
-- Two attachments with one name are both kept under their real name, each in a directory named for its handle
-  (`attached/3fa91c2/report.pdf`, `attached/9c2e41a/report.pdf`), and `attached/report.pdf` does not exist: a bare
-  path never picks one of them, as `@file:"report.pdf"` never does.
+- Every attachment lives at `attached/<handle>/<name>` (`attached/3fa91c2/report.pdf`), always, not only once a
+  second file shares its name: a path a cell has seen never moves, so a second `report.pdf` arriving between two
+  cells breaks neither the first cell's path nor one written into a script (a test row). There is one layout to
+  learn, and `attached/report.pdf` never exists, so a bare path never picks between two files, as
+  `@file:"report.pdf"` never does. The short name is what the loader fallback and the failure hint take. The loader
+  creates each `<handle>/` from JS before the write operations are sealed, so a cell cannot make one.
 - Provenance follows from the folder: a file under `attached/` is the person's; any other was made by a run.
 
 **Which cells see it.** Only cells that can open a file: an approved cell and `full` mode. The read-only (restricted)
@@ -595,7 +598,8 @@ is re-ruled with the mount (the Pyodide lane's read of this spec):
    a regular file, and the quota. A `full` cell keeps `js.postMessage` and can forge a post, so nothing the post
    claims is taken on its word.
 4. One `/files/` per session. The `full` worker is shared across runs, so the directory is the session's, never the
-   worker's: one directory per session, or a reset per cell.
+   worker's: one directory per session in it, not a reload per cell, which would cost about three times the
+   directory's size on every cell (item 6).
 5. Regular files only, canonicalised (`FS.getPath`): a symlink a cell makes is never persisted, so a link pointing out
    is never saved.
 6. The quota counts about three times a file's size: a 50 MB file cost 154 MB of ArrayBuffers and grew wasm memory to
@@ -603,14 +607,17 @@ is re-ruled with the mount (the Pyodide lane's read of this spec):
 
 **A kernel death.** The restart terminates the worker (the existing kill path). What was posted is safe; files still
 open are lost, and nothing is salvaged from the dead interpreter's heap, which may be corrupt. The restart reloads
-`/files/` from the shelf into the fresh MEMFS and tells the model what survived: `variables gone; /files/ kept
+`/files/` from the shelf into the fresh MEMFS and tells the model which module failed, and what survived (as a cell
+result, or an inbox item for a detached cell): `variables gone; /files/ kept
 (12 files); w.npy was open and is lost.` The restart's message and its delivery are the async lane's (ASYNC_CALLS.md).
 
 **Mutable, frozen when cited.** A file in `/files/` changes freely; there are no versions per write. A file is frozen
 into an immutable version, an `@file:` the transcript can name, only when it leaves the directory or enters the
 record: `dereference`, `look`, `ml.sh.put`, the transcript and the exports. The log stays truthful the way a coding
 agent's does: it records what was read, never the file's current bytes. Two runs of one session writing the same file:
-the last close wins.
+the last close wins. Two live runs of one session in different workers (an approved run's and the shared `full`
+worker) see each other's files as they are kept: each acknowledged post is pushed to the session's other live
+workers, so a read is never of a copy older than the shelf's.
 
 **Provenance is a field, and every sentence reads it.** A file pointer carries who made it: the person, run R's cell N,
 or a read from disk at a path (below). Every model-facing sentence that today says "attached by the person" (the
@@ -626,12 +633,14 @@ close.
 
 **The host's disk.** `/files/` is the browser sandbox's, never the `ml.sh` workspace's, and the two never alias: an argv
 item `/files/x` is a host path, as today. Bytes cross only as `@file:` handles: `ml.sh.put` writes one out (ruling 3),
-and a planned read brings a workspace file in, into `/files/` with provenance "read from disk <path>" (the async
+and a read brings a workspace file in, into `/files/` with provenance "read from disk <path>" (the async
 lane's). The model's text says it in one line: `/files/ is the browser sandbox's, not the workspace's.`
 
 **The person deletes or moves a file.** The files panel can delete, rename and move files in the writable part. During
 a live run the model is told the file's name through the run's inbox, the same as any other notice; a move is a delete
-plus a new name. Without it, the model's next read fails with a bare `ValueMissing`. Uploading straight into the
+plus a new name. The delete or move is also applied to every live worker holding that session's `/files/` (the
+offscreen sends the unlink or rename): a mounted cell's MEMFS would otherwise keep the stale copy, `open()` would
+succeed on it, and its next close would bring the deleted file back to the shelf. Uploading straight into the
 writable part waits: the model copies from `attached/`.
 
 **The files panel and a storage page.** The files panel (above) becomes the browser for this directory: a row per file
@@ -658,9 +667,14 @@ and the read-back from disk: the async lane.
 **Not measured.** A terminate racing the last post (the ack is there for it); a lifted-bridge route to the FS object;
 anything in a real browser worker rather than Node.
 
-**Open.** A backup never carries the value store (`ml-values` is marked `never`, "fetched tables a run holds;
-refetchable", `src/backup/backup-inventory.ts`), which held for fetched tables but not for a person's attachment or a
-session's files, neither of which can be fetched again; whether a backup and the session archive carry them is open.
+**Backups.** A backup never carries the value store today (`ml-values` is marked `never`, "fetched tables a run
+holds; refetchable", `src/backup/backup-inventory.ts`). That holds for fetched tables, not for a person's attachment
+or a session's files, neither of which can be fetched again. RULED 2026-11-12 (Shane, in the calm-chat-motion
+session): a backup carries the person's attachments, so a restored session has its files. Open: whether it also
+carries the files a session's runs made (the lean is yes, with the backup screen showing their size), and whether the
+session archive carries both. Fetched values stay out.
+
+**Open.**
 Whether the restricted dialect gets a write of its own (a `keep()` call) is open and not proposed.
 
 ## Trust
