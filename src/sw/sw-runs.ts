@@ -637,6 +637,19 @@ export function releaseSessionTokens(runId: string): void { tokensByRun.delete(r
 // The navigation SENSOR: a committed MAIN-frame navigation on a tab that hosts a live run means its document
 // (and registered toolset) is going away → engage the barrier so the next delegated tool waits for re-adopt.
 // Sub-frame navigations (frameId != 0) don't replace the run's document, so they're ignored.
+/** Each tab's current main-frame URL, as navigation reports it — so a background-hosted run can tell a fetch
+ *  of the page it is ON from a fetch of the page it STARTED on (see `fetchIsCurrentPage`). History-API
+ *  changes count too: an SPA moves between URLs without committing a navigation. */
+export const tabPageUrl = new Map<number, string>();
+defineState({
+    id: "run.page", scope: "run", realm: "worker", audience: "human", lostOn: ["worker-eviction"],
+    describe: "The tab the run is on and the page that tab shows now, which can differ from the page it started on.",
+    read: ({ runId }) => {
+        const tabId = runId ? bgRuns.get(runId)?.tabId : undefined;
+        return tabId == null ? undefined : { tabId, url: tabPageUrl.get(tabId) ?? null };
+    },
+});
+
 /**
  * Move a live run's inbox to another tab, so a runtime-bound task's result reaches the run where it is now and the
  * inbox's owner check (`senderOwnsRun`) answers for the new tab only. The tasks are keyed by run id and follow on their
@@ -660,19 +673,6 @@ export const rekeyRunInbox = (runId: string, to: number): boolean => {
  */
 export const senderOwnsRun = (sender: { tab?: { id?: number } }, runId: string): boolean => !sender.tab || sender.tab.id === runInboxes.get(runId)?.tabId;
 
-/** Each tab's current main-frame URL, as navigation reports it — so a background-hosted run can tell a fetch
- *  of the page it is ON from a fetch of the page it STARTED on (see `fetchIsCurrentPage`). History-API
- *  changes count too: an SPA moves between URLs without committing a navigation. */
-export const tabPageUrl = new Map<number, string>();
-defineState({
-    id: "run.page", scope: "run", realm: "worker", audience: "human", lostOn: ["worker-eviction"],
-    describe: "The tab the run is on and the page that tab shows now, which can differ from the page it started on.",
-    read: ({ runId }) => {
-        const tabId = runId ? bgRuns.get(runId)?.tabId : undefined;
-        return tabId == null ? undefined : { tabId, url: tabPageUrl.get(tabId) ?? null };
-    },
-});
-
 /** A tab Chrome has handed a NEW id (`chrome.tabs.onReplaced` — a discard restored, a prerender swapped in):
  *  move everything this module files under the old one, or the run it is hosting is orphaned under an id nothing
  *  will ever send again, and the restored page's CONTENT_READY finds nothing to re-adopt. The barrier is not
@@ -687,8 +687,6 @@ export const retabRuns = (from: number, to: number): number => {
     // the new id now. The turn's own page sends still name the old one (`hostRun` closed over it; MOVE_RUN.md shape (b)).
     for (const inbox of runInboxes.values()) if (inbox.tabId === from) inbox.tabId = to;
     navBarrier.forget(from);
-    // The tab is the same tab under a new id: its runs' inboxes follow, or the new tab is refused for its own run.
-    for (const runId of runInboxes.keys()) if (runInboxes.get(runId)?.tabId === from) rekeyRunInbox(runId, to);
     return moved;
 };
 

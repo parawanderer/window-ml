@@ -132,8 +132,9 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
    **4a. A page change ends the page's tasks, not the run's.** DESIGN NOTE 2026-11-12 (the async lane, assigned by the
    coordinator). BUILT 2026-11-12 as scaffolding only: `TaskExecutor.pageBound` (sw-tasks.ts; `ml.sh` and `python_exec` declare
    `false`, absent reads as false), `cancelPageTasks(runId)` (cancels a run's page-bound tasks through their executor's cancel,
-   tells the model the fact line through the inbox or a waiting await, records `task`/`cancelled` with reason `page-change`; a
-   late result of a cancelled task is dropped), called from `webNavigation.onCommitted` (background.ts) for each run in
+   tells the model the fact line through the inbox or a waiting await, records `task`/`cancelled` with reason `page-change`, or
+   `orphaned` in the line, the await's status and the record when the executor does not confirm the cancel; a late result
+   of a cancelled or orphaned task is dropped), called from `webNavigation.onCommitted` (background.ts) for each run in
    `activeRuns` on the tab, and `rekeyRunInbox(runId, tabId)` (sw-runs.ts; `retabRuns` calls it for `tabs.onReplaced`, the move-run
    lane calls it for a move between steps), with `senderOwnsRun` as the inbox's owner check. No page-bound task exists yet. A worker-hosted run's page changes when it navigates in its own tab or when the person moves it to
    another tab (`MOVE_RUN.md`). Neither ends the run (a page-hosted loop's navigation does, and is rule 4's), so rule 4
@@ -148,7 +149,10 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
      document). Each is reported to the model as a fact, as a cancel is (`[task <id> cancelled: it ran in the page
      this run left]`; `[subscription <id> ended: it watched the page this run left]`), and is a run-log record. A
      selector watch is never silently re-armed on the new document, whose elements are not the ones it was asked
-     about; the model subscribes again if it wants to.
+     about; the model subscribes again if it wants to. A cancel the executor does not confirm leaves the task
+     `orphaned`, reported as `[task <id> orphaned: it ran in the page this run left, and its cancel was not
+     confirmed]` and recorded in the run log; an orphaned page-bound task's later result never reaches the inbox
+     (ruled 2026-11-12, the coordinator).
    - **The inbox follows the run, where there is one to follow.** `runInboxes` carries the run's `tabId`, and a turn's
      `settle` deletes it with the turn's tasks. A move BETWEEN TURNS (`MOVE_RUN.md`, shape (a), the one built first)
      therefore meets no inbox and no task: rule 4 already ended them, and this rule has nothing to act on. A move

@@ -17,6 +17,9 @@ import { forModel } from "./sw-scrub";
 /** Where a task is. A detached call is `running`; `detached` is how it got here, not a status. */
 export type TaskStatus = "running" | "done" | "failed" | "cancelled" | "orphaned";
 
+/** What a waiting await is answered with: an executor's outcome, or a page change's cancel the executor did not confirm. */
+type AwaitAnswer = Omit<TaskOutcome, "status"> & { status: TaskOutcome["status"] | "orphaned" };
+
 /** How a task ended, as its executor reports it: the text the model reads (scrubbed here) and the result's pointer. */
 export interface TaskOutcome {
     status: "done" | "failed" | "cancelled";
@@ -76,8 +79,9 @@ interface Task extends Omit<TaskSpec, "exec"> {
     /** When it ended and its exit code, for the surfaces' short line. */
     endedMs?: number;
     code: number | null;
-    /** An await waiting on it now: answered instead of the inbox. */
-    waiter?: (o: TaskOutcome) => void;
+    /** An await waiting on it now: answered instead of the inbox, by its end or by a page change's cancel (which can
+     *  leave it orphaned). */
+    waiter?: (o: AwaitAnswer) => void;
     /** Its end is being recorded (the scrub is async): a second end is ignored, and it still reads as running. */
     ending?: boolean;
     exec: TaskExecutor;
@@ -206,7 +210,7 @@ export async function cancelPageTasks(runId: string): Promise<void> {
         t.text = text;
         recordRunLog(runId, { level: "warn", subsystem: "task", kind: c.confirmed ? "cancelled" : "orphaned", reason: "page-change", ms: t.endedMs - t.startedMs, detail: { id: t.id, tool: t.tool } });
         if (tasks.get(runId)?.get(t.id) !== t) return;
-        if (t.waiter) { const w = t.waiter; t.waiter = undefined; t.delivered = true; w({ status: "cancelled", text, result: null }); return; }
+        if (t.waiter) { const w = t.waiter; t.waiter = undefined; t.delivered = true; w({ status: t.status, text, result: null }); return; }
         runInboxes.get(runId)?.queue.push({ text: `[task ${t.id} ${t.status}: ${text}]`, task: t.id });
     }));
 }
@@ -248,7 +252,7 @@ export async function taskAction(runId: string, args: Record<string, unknown>): 
         const expect = Number.isFinite(given) && given > 0 ? Math.min(Math.floor(given), TASK_AWAIT_MAX_MS) : null;
         const wait = expect ?? t.leaseMs;
         const signal = runControllers.get(runId)?.signal;
-        const o = await new Promise<TaskOutcome | null>((resolve) => {
+        const o = await new Promise<AwaitAnswer | null>((resolve) => {
             const timer = setTimeout(() => { t.waiter = undefined; resolve(null); }, wait);
             const onAbort = () => { clearTimeout(timer); t.waiter = undefined; resolve(null); };
             signal?.addEventListener("abort", onAbort, { once: true });

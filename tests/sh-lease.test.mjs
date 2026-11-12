@@ -589,12 +589,12 @@ test("the task line reads under a second as \"<1 s\", never \"0 s\"", async () =
 // --- a page change ends the page's tasks, not the run's (ASYNC_CALLS.md rule 4a) ---
 
 /** A task whose executor the test owns and which declares where it runs: `pageBound` true is a detached exec's kind. */
-function ownedTask(runId, pageBound) {
+function ownedTask(runId, pageBound, confirmed = true) {
     let end;
     const settled = new Promise((r) => { end = r; });
     const seen = { cancel: 0 };
     const id = detachTask(runId, { tool: pageBound ? "exec" : "ml.sh", startedMs: Date.now(), leaseMs: 15_000, expectMs: null,
-        exec: { pageBound, cancel: async () => { seen.cancel++; return { confirmed: true, text: "cancelled by the test" }; }, tail: () => null, tailAbsent: "no tail", settled } });
+        exec: { pageBound, cancel: async () => { seen.cancel++; return { confirmed, text: "cancelled by the test" }; }, tail: () => null, tailAbsent: "no tail", settled } });
     return { id, seen, end: (text) => end({ status: "done", text, result: null }) };
 }
 
@@ -649,6 +649,29 @@ test("an await on a page-bound task is answered with the cancel fact when the pa
     assert.match(await waiting, new RegExp(`^task ${t.id} cancelled after \\d+ s: it ran in the page this run left$`));
     assert.deepEqual(run.inbox(), []);
     await endTasks("run-pg-await");
+});
+
+test("a page-bound cancel the executor does not confirm leaves the task orphaned: the line, the record and a waiting await all say so", T, async () => {
+    const run = liveRun("run-pg-orphan");
+    const t = ownedTask("run-pg-orphan", true, false);
+    await cancelPageTasks("run-pg-orphan");
+    assert.deepEqual(run.inbox().map((m) => m.text), [`[task ${t.id} orphaned: it ran in the page this run left, and its cancel was not confirmed]`]);
+    const rec = (await runLog.forRun("run-pg-orphan")).filter((e) => e.subsystem === "task");
+    assert.deepEqual(rec.map((e) => [e.kind, e.reason]), [["orphaned", "page-change"]]);
+    t.end("the OLD page's answer");
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(run.inbox().length, 1, "an orphaned page-bound task's late result reached the inbox");
+    await endTasks("run-pg-orphan");
+
+    liveRun("run-pg-orphan-await");
+    const u = ownedTask("run-pg-orphan-await", true, false);
+    const waiting = taskAction("run-pg-orphan-await", { op: "await", id: u.id, timeout_ms: 5000 });
+    await new Promise((r) => setTimeout(r, 20));
+    await cancelPageTasks("run-pg-orphan-await");
+    const answer = await waiting;
+    assert.match(answer, /orphaned/, answer);
+    assert.doesNotMatch(answer, new RegExp(`^task ${u.id} cancelled`), "the await read cancelled while the table reads orphaned");
+    await endTasks("run-pg-orphan-await");
 });
 
 // --- the inbox follows the run to a new tab ---
