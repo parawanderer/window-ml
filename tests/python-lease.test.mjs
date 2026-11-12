@@ -166,6 +166,8 @@ test("an expect_ms at or over the detached ceiling still detaches, at half the c
         const rec = (await runLog.forRun(c.runId)).filter((e) => e.subsystem === "python" && e.kind === "detached");
         assert.equal(rec[0].detail.leaseMs, PY_LEASE_MAX_MS);
         assert.equal(rec[0].detail.expectMs, expectMs);
+        assert.match(r.detached.text, new RegExp(`you expected ~${Math.round(expectMs / 1000)} s, and a cell runs attached for at most ${PY_LEASE_MAX_MS / 1000} s, so it is running as expected`));
+        assert.doesNotMatch(r.detached.text, /stall/, "a cell the cap detached is not called stalled");
         await done(c);
     }
 });
@@ -175,6 +177,11 @@ test("pyDetachedText says 'you expected ~N s' with expect_ms and 'no expect_ms w
     assert.match(withE, /task tabc123 after 15 s/);
     assert.match(withE, /you expected ~45 s/);
     assert.doesNotMatch(withE, /no expect_ms/);
+    assert.doesNotMatch(withE, /running as expected/, "an estimate the lease ran out on is a stall, not the cap");
+    const capped = pyDetachedText("tabc123", PY_LEASE_MAX_MS, PY_LEASE_MAX_MS + 1000, "");
+    assert.match(capped, new RegExp(`you expected ~${PY_LEASE_MAX_MS / 1000 + 1} s, and a cell runs attached for at most ${PY_LEASE_MAX_MS / 1000} s, so it is running as expected: wait for it, or use the task tool`));
+    assert.doesNotMatch(capped, /stall|no expect_ms/);
+    assert.match(pyDetachedText("tabc123", PY_LEASE_MAX_MS, PY_LEASE_MAX_MS, ""), /investigate the stall/, "an estimate equal to the cap ran out: a stall");
     assert.match(withE, /cancelled when this turn ends/);
     assert.match(withE, /the sandbox ends it at 300 s/);
     assert.doesNotMatch(withE, /Output so far/);

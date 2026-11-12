@@ -47,7 +47,8 @@ export function pyCancelText(how: CellCancel): string {
 }
 
 /**
- * The text the tool call answers when its cell detaches: which of rule 2's two cases it was, the task's id and how its
+ * The text the tool call answers when its cell detaches: which of rule 2's two cases it was (or that the lease's cap,
+ * not the estimate, detached it), the task's id and how its
  * result arrives, that it ends with the turn, and the ceiling the sandbox holds it to.
  * @param id the task
  * @param leaseMs how long it ran attached
@@ -55,9 +56,11 @@ export function pyCancelText(how: CellCancel): string {
  * @param tail its output so far, already cut and scrubbed ("" for none)
  */
 export function pyDetachedText(id: string, leaseMs: number, expectMs: number | null, tail: string): string {
-    const why = expectMs !== null
-        ? `you expected ~${secs(expectMs)} and it is still running: investigate the stall, or`
-        : `no expect_ms was given, so the ${secs(leaseMs)} default applied and it is still running: estimate (expect_ms), investigate, or`;
+    const why = expectMs === null
+        ? `no expect_ms was given, so the ${secs(leaseMs)} default applied and it is still running: estimate (expect_ms), investigate, or`
+        : expectMs > PY_LEASE_MAX_MS
+            ? `you expected ~${secs(expectMs)}, and a cell runs attached for at most ${secs(PY_LEASE_MAX_MS)}, so it is running as expected: wait for it, or`
+            : `you expected ~${secs(expectMs)} and it is still running: investigate the stall, or`;
     return `Detached: python_exec detached as task ${id} after ${secs(leaseMs)}; ${why} use the task tool (await, tail, cancel). Its result arrives as a [task ${id} …] message. `
         + `It is cancelled when this turn ends, and the sandbox ends it at ${secs(PY_DETACHED_MAX_MS)}. Until it is done or cancelled, another python_exec in this run is refused.`
         + (tail ? `\nOutput so far:\n${tail}` : "");

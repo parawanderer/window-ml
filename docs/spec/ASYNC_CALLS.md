@@ -252,9 +252,12 @@ with these rulings:
   the 15 s kill: no task table or task tool exists there.
 - **The lease is the service worker's**, as `shRun`'s is: `PY_LEASE_MS`, placeholder 15 s (today's kill point, so
   nothing changes inside it), a `__PY_LEASE_MS__` bench define like `__SH_LEASE_MS__`; `expect_ms` overrides it with
-  rule 2's two wake phrasings. Past the lease the TOOL resolves `{ status: "detached", id, elapsed_ms, tail }` and the
-  offscreen document replaces the kill with `PY_DETACHED_MAX_MS`, placeholder 10 min (equal to `TASK_AWAIT_MAX_MS`),
-  named in the detached text. The cell ends with the turn (rule 4).
+  rule 2's two wake phrasings, but never past `PY_LEASE_MAX_MS`, half the ceiling (2.5 min): a lease at the ceiling
+  would never detach, since the sandbox kills the cell when it ends. An `expect_ms` the cap cut short gets a third
+  phrasing (it is running as expected: wait for it), not the stall one. Past the lease the TOOL resolves `{ status:
+  "detached", id, elapsed_ms, tail }` and the offscreen document replaces the kill with `PY_DETACHED_MAX_MS`, 5 min,
+  measured (#1642's body: a silent cell's pending reply outlives its worker only up to 345-390 s), named in the
+  detached text. The cell ends with the turn (rule 4).
 - **Cancel is `interruptCell(cellId)`**: the bench's interrupt buffer generalised to any cell, then the kill after
   `PY_INTERRUPT_KILL_MS` (placeholder 1 s, rule 3); the answer says which happened and whether the names survived.
   `endTasks` at run end uses the same cancel, so `PY_DELETE_RUN` no longer waits behind a detached cell.
