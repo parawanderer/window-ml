@@ -12,6 +12,7 @@ import { googleSheetCsvUrl, nonEmptyTables, clipOut, clipValue, tablesMapFromJso
 import type { Box } from "../dom/locate";
 import { pyValueParts } from "./py-render";
 import { PY_PACKAGE_LABELS } from "./python-env";
+import { PY_LEASE_MAX_MS } from "./py-lease";
 import { outputCapParams, retryParams } from "../tools/tool-params";
 import { POINT_RE, BOX_RE, projectShotPoint, mintPoint, projectShotBox, mintBox } from "../util";
 
@@ -127,6 +128,8 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                 tableRaw: { type: "boolean", description: "Load table cells as raw STRINGS (skip the default numeric/currency auto-cast). Use only for ZIP/SKU/leading-zero IDs that casting would corrupt." },
                 // Only where names persist (a worker-hosted run): the sandbox is shut after 30 min idle (py-reap.ts).
                 ...(mintVia ? { keep: { type: "boolean", description: "Keep your names through idle gaps over 30 min (a run that waits hours between calls) until this run ends or its sandbox is killed (a timeout, a crash, a cancel), which the next cell is told as loss. Otherwise an idle sandbox is shut and its names lost." } } : {}),
+                // Only where a cell can detach (a worker-hosted run, sw-python-task.ts): the lease it replaces.
+                ...(mintVia ? { expect_ms: { type: "number", description: `Your estimate of this cell's run time in ms. Past it, or a short default without it, the call detaches into a task. At most ${PY_LEASE_MAX_MS / 1000} s: a longer one counts as that.` } } : {}),
                 ...outputCapParams("python_exec", "Prefer returning a compact result."),
                 ...retryParams("python_exec"),
             },
@@ -144,7 +147,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             const mode = args.cast === "pt" ? "pt" as const : args.cast === "box" ? "box" as const : "script" as const;
             return { type: "python-in", mode, code };
         },
-        run: async ({ code, image, cast, verify = false, margin, tableRaw, tables, keep, maxChars, maxCharsReason }: { code: string; image?: string; cast?: "pt" | "box"; verify?: boolean; margin?: number; tableRaw?: boolean; tables?: string | Record<string, string>; keep?: boolean; maxChars?: number; maxCharsReason?: string }, ctx?: import("../contract").ToolContext): Promise<string | ToolResult> => {
+        run: async ({ code, image, cast, verify = false, margin, tableRaw, tables, keep, expect_ms, maxChars, maxCharsReason }: { code: string; image?: string; cast?: "pt" | "box"; verify?: boolean; margin?: number; tableRaw?: boolean; tables?: string | Record<string, string>; keep?: boolean; expect_ms?: number; maxChars?: number; maxCharsReason?: string }, ctx?: import("../contract").ToolContext): Promise<string | ToolResult> => {
             // Effective per-slot output cap (default: OUTPUT_CAP.python_exec). A raise past it is only reachable AFTER the human
             // gate (autoApprovePython refuses to sandbox-approve an escalated call), clamped to the ceiling.
             const { cap: PY_OUT_MAX, clamped: capClamped } = resolveOutputCap("python_exec", maxChars, maxCharsReason);
@@ -164,147 +167,171 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                 try { const n = ml._queryAll(sel).length; if (n > 1) tableNote += `⚠ selector "${sel}" matched ${n} elements — loaded the FIRST as \`${name}\`. If the numbers look off, narrow it (an id, or :nth-of-type(N)).\n`; } catch { /* invalid selector → pythonExec/_resolveTable errors below */ }
             }
             if (tableNote) tableNote += "\n";
-            const r = await ml.pythonExec(code, { image: image || null, margin: typeof margin === "number" ? margin : 0, tableRaw: !!tableRaw, tables: tables || null, ...(keep === true ? { keep: true } : {}), onStdout: ctx?.stream });
-            // Cap stdout/value/error fed back to the model so a runaway result (e.g. a
-            // string-concat blowup) can't flood the context — with a "[+N truncated]" note.
-            // Past the ceiling the model is told AFTER its clip, and the panel's last line says the same (output-clip.ts).
-            const overNote = r.stdoutDropped ? ceilingNote(r.stdoutDropped) : "";
-            const stdoutClipped = clipOut(r.stdout || "", PY_OUT_MAX) + (overNote ? `\n${overNote}` : "");
-            // Synthetic "already loaded" log — models get confused about HOW their tables/image arrive
-            // (do they read_csv? what variable?). State it plainly at the top so they infer the setup:
-            // `img`/`df`/named DataFrames are PRE-loaded, reference them directly.
-            const loaded: string[] = [];
-            // `rowCount` is the WHOLE table's when the render holds only its preview (a stored table): the model is told the size it has.
-            for (const t of r.inputTables || []) loaded.push(t.rows ? `a ${t.rowCount ?? t.rows.length}×${(t.columns?.length || t.rows[0]?.length || 0)} DataFrame → \`${t.name}\`` : `a DataFrame → \`${t.name}\``);
-            if (r.inputImage) loaded.push("the screenshot → `img` (PIL) / `img_np` (numpy)");
-            const loadedNote = loaded.length ? `[loaded, reference directly] ${loaded.join(", ")}.\n\n` : "";
-            const capNote = capClamped ? `(output limit clamped to ${PY_OUT_MAX} chars — the hard ceiling.)\n\n` : "";
-            const pre = capNote + tableNote + loadedNote + (stdoutClipped ? `stdout:\n${stdoutClipped}\n\n` : "");
-            const stringify = (x: unknown) => clipOut(typeof x === "string" ? x : JSON.stringify(x), PY_OUT_MAX);
-            // The value for the PANEL: more of it than the model's cap, with where the model's copy ended.
-            const valueOut = (x: unknown): { value: string; valueSeen?: number } => {
-                const v = clipValue(typeof x === "string" ? x : JSON.stringify(x), PY_OUT_MAX, UI_OUT_CAP);
-                return { value: v.ui, ...(v.seen != null ? { valueSeen: v.seen } : {}) };
-            };
-            // The In slot: a notebook-cell header (cell mode + input image/table + source). Shared
-            // by every return path. The Out slot varies (stdout + one of image/token/value/error).
-            const cellMode = cast === "pt" ? "pt" as const : cast === "box" ? "box" as const : "script" as const;
-            // If the input image was captured from an @pt/@box, carry the token so hovering the image in
-            // the sidebar highlights that point/region back on the page.
-            const imageToken = typeof image === "string" && (POINT_RE.test(image.trim()) || BOX_RE.test(image.trim())) ? image.trim() : undefined;
-            const renderIn: RenderDescriptor = { type: "python-in", mode: cellMode, code,
-                ...(r.inputImage ? { image: r.inputImage } : {}), ...(imageToken ? { imageToken } : {}), ...(r.inputTables && r.inputTables.length ? { tables: r.inputTables } : {}) };
-            // UI keeps far more than the model's cap (PY_OUT_MAX) so a watched stream doesn't SHRINK when the
-            // step lands; `seen` marks where the model-facing view ended (the surplus renders marked).
-            const stdoutFull = (r.stdout || "") + (overNote ? `\n${overNote}` : "");
-            const stdout = stdoutFull ? clipHeadTail(stdoutFull, UI_OUT_CAP, panelHead(PY_OUT_MAX)) : undefined;   // the start the model read, and the LATEST
-            const capture = stdoutFull.length > UI_OUT_CAP ? clipOut(stdoutFull, UI_OUT_CAP) : undefined;   // what a pointer reads, in one piece
-            const seen = stdoutFull ? Math.min((r.stdout || "").length, PY_OUT_MAX) : undefined;
-            // The SANDBOX'S OWN CLOCK, kept apart from our wall time around the dispatch: `durationMs` is the
-            // script, `bootMs` the cold start it had to pay for first (absent on every warm call). Without
-            // the split a first run reports four seconds and blames the script for time it never spent.
-            const remoteMs = r.runMs != null
-                ? { durationMs: r.runMs, ...(r.bootMs != null ? { bootMs: r.bootMs } : {}) }
-                : undefined;
-            const done = (content: string, out: Omit<Extract<RenderDescriptor, { type: "python-out" }>, "type" | "stdout">): ToolResult =>
-                ({ content, renderIn, render: { type: "python-out", stdout, ...(capture ? { capture } : {}), seen, ...out }, ...(remoteMs ? { remoteMs } : {}) });
+            // How a cell's answer becomes what the model reads: the call's own return, and a detached cell's late result.
+            const format = async (r: PyExecResult, verify: boolean, late = false): Promise<string | ToolResult> => {
+                // Cap stdout/value/error fed back to the model so a runaway result (e.g. a
+                // string-concat blowup) can't flood the context — with a "[+N truncated]" note.
+                // Past the ceiling the model is told AFTER its clip, and the panel's last line says the same (output-clip.ts).
+                const overNote = r.stdoutDropped ? ceilingNote(r.stdoutDropped) : "";
+                const stdoutClipped = clipOut(r.stdout || "", PY_OUT_MAX) + (overNote ? `\n${overNote}` : "");
+                // Synthetic "already loaded" log — models get confused about HOW their tables/image arrive
+                // (do they read_csv? what variable?). State it plainly at the top so they infer the setup:
+                // `img`/`df`/named DataFrames are PRE-loaded, reference them directly.
+                const loaded: string[] = [];
+                // `rowCount` is the WHOLE table's when the render holds only its preview (a stored table): the model is told the size it has.
+                for (const t of r.inputTables || []) loaded.push(t.rows ? `a ${t.rowCount ?? t.rows.length}×${(t.columns?.length || t.rows[0]?.length || 0)} DataFrame → \`${t.name}\`` : `a DataFrame → \`${t.name}\``);
+                if (r.inputImage) loaded.push("the screenshot → `img` (PIL) / `img_np` (numpy)");
+                const loadedNote = loaded.length ? `[loaded, reference directly] ${loaded.join(", ")}.\n\n` : "";
+                const capNote = capClamped ? `(output limit clamped to ${PY_OUT_MAX} chars — the hard ceiling.)\n\n` : "";
+                const pre = capNote + tableNote + loadedNote + (stdoutClipped ? `stdout:\n${stdoutClipped}\n\n` : "");
+                const stringify = (x: unknown) => clipOut(typeof x === "string" ? x : JSON.stringify(x), PY_OUT_MAX);
+                // The value for the PANEL: more of it than the model's cap, with where the model's copy ended.
+                const valueOut = (x: unknown): { value: string; valueSeen?: number } => {
+                    const v = clipValue(typeof x === "string" ? x : JSON.stringify(x), PY_OUT_MAX, UI_OUT_CAP);
+                    return { value: v.ui, ...(v.seen != null ? { valueSeen: v.seen } : {}) };
+                };
+                // The In slot: a notebook-cell header (cell mode + input image/table + source). Shared
+                // by every return path. The Out slot varies (stdout + one of image/token/value/error).
+                const cellMode = cast === "pt" ? "pt" as const : cast === "box" ? "box" as const : "script" as const;
+                // If the input image was captured from an @pt/@box, carry the token so hovering the image in
+                // the sidebar highlights that point/region back on the page.
+                const imageToken = typeof image === "string" && (POINT_RE.test(image.trim()) || BOX_RE.test(image.trim())) ? image.trim() : undefined;
+                const renderIn: RenderDescriptor = { type: "python-in", mode: cellMode, code,
+                    ...(r.inputImage ? { image: r.inputImage } : {}), ...(imageToken ? { imageToken } : {}), ...(r.inputTables && r.inputTables.length ? { tables: r.inputTables } : {}) };
+                // UI keeps far more than the model's cap (PY_OUT_MAX) so a watched stream doesn't SHRINK when the
+                // step lands; `seen` marks where the model-facing view ended (the surplus renders marked).
+                const stdoutFull = (r.stdout || "") + (overNote ? `\n${overNote}` : "");
+                const stdout = stdoutFull ? clipHeadTail(stdoutFull, UI_OUT_CAP, panelHead(PY_OUT_MAX)) : undefined;   // the start the model read, and the LATEST
+                const capture = stdoutFull.length > UI_OUT_CAP ? clipOut(stdoutFull, UI_OUT_CAP) : undefined;   // what a pointer reads, in one piece
+                const seen = stdoutFull ? Math.min((r.stdout || "").length, PY_OUT_MAX) : undefined;
+                // The SANDBOX'S OWN CLOCK, kept apart from our wall time around the dispatch: `durationMs` is the
+                // script, `bootMs` the cold start it had to pay for first (absent on every warm call). Without
+                // the split a first run reports four seconds and blames the script for time it never spent.
+                const remoteMs = r.runMs != null
+                    ? { durationMs: r.runMs, ...(r.bootMs != null ? { bootMs: r.bootMs } : {}) }
+                    : undefined;
+                const done = (content: string, out: Omit<Extract<RenderDescriptor, { type: "python-out" }>, "type" | "stdout">): ToolResult =>
+                    ({ content, renderIn, render: { type: "python-out", stdout, ...(capture ? { capture } : {}), seen, ...out }, ...(remoteMs ? { remoteMs } : {}) });
 
-            if (!r.ok) {
-                const err = clipOut(r.error || "", PY_OUT_MAX);
-                // Don't fight a hallucinated load pattern with docs alone — when data was PRELOADED
-                // and the code errored trying to (re)load it (read_csv/read_html/open/requests/…),
-                // redirect to the preloaded var. Fires on the failure, so it covers every variant
-                // instead of enumerating them. (Observed: `pd.read_csv('current')` → FileNotFound.)
-                const dfNames = (r.inputTables || []).map(t => `\`${t.name}\``).join("/");
-                const loaded = [dfNames, r.inputImage ? "`img`/`img_np`" : ""].filter(Boolean).join(" and ");
-                const looksLikeReload = /read_csv|read_html|read_excel|read_json|open\(|FileNotFoundError|No such file|ModuleNotFound|requests|urllib|urlopen|http|fetch|ConnectionError|storage_options/i.test(err);
-                const hint = loaded && looksLikeReload
-                    ? `\n\nHint: the tool ALREADY loaded your data as ${loaded} (the table/sheet/image PARAMETER did it) — reference it directly; do not read_csv/read_html/open/fetch anything (the sandbox has no filesystem or network).`
+                if (!r.ok) {
+                    const err = clipOut(r.error || "", PY_OUT_MAX);
+                    // Don't fight a hallucinated load pattern with docs alone — when data was PRELOADED
+                    // and the code errored trying to (re)load it (read_csv/read_html/open/requests/…),
+                    // redirect to the preloaded var. Fires on the failure, so it covers every variant
+                    // instead of enumerating them. (Observed: `pd.read_csv('current')` → FileNotFound.)
+                    const dfNames = (r.inputTables || []).map(t => `\`${t.name}\``).join("/");
+                    const loaded = [dfNames, r.inputImage ? "`img`/`img_np`" : ""].filter(Boolean).join(" and ");
+                    const looksLikeReload = /read_csv|read_html|read_excel|read_json|open\(|FileNotFoundError|No such file|ModuleNotFound|requests|urllib|urlopen|http|fetch|ConnectionError|storage_options/i.test(err);
+                    const hint = loaded && looksLikeReload
+                        ? `\n\nHint: the tool ALREADY loaded your data as ${loaded} (the table/sheet/image PARAMETER did it) — reference it directly; do not read_csv/read_html/open/fetch anything (the sandbox has no filesystem or network).`
+                        : "";
+                    return done(`${tableNote}Python error: ${err}${hint}${stdoutClipped ? `\n\nstdout:\n${stdoutClipped}` : ""}`, { error: err });
+                }
+                const v = r.value;
+                // HOW it is drawn is shared with the bench (py-render.ts); what the model is TOLD stays here.
+                const parts = pyValueParts(v, { render: r.render, table: r.resultTable }, stringify);
+                // An image return is unambiguous → always shown (no cast needed).
+                if (parts.image) {
+                    // A late result (a detached cell's task) carries text only: the image is named, never implied to be shown.
+                    const said = late ? "1 figure, not shown (a task's result carries text only)."
+                        : r.render === "figure" ? "Your open matplotlib figure(s) came back as an image (closed now; the next call starts with none)." : "Returned an image.";
+                    const base = done(`${pre}${said}`, parts);
+                    if (!verify) return base;
+                    const seen = await verifyPyImage(ml, ctx, parts.image);
+                    return { ...base, ...seen, content: base.content + (seen.content ?? "") };
+                }
+                // Coordinates are opt-in via `cast` (auto-detecting [x,y] would mangle a general
+                // script that returns two numbers). A mismatch is an honest error, not a guess.
+                // A cast over an image projects through the rect that was cropped; with none, nothing is minted (checked once
+                // the return is a well-formed point or box, so a malformed one still gets its own message).
+                const noTransform = typeof image === "string" && image.trim().length > 0 && !r.imageBox;
+                if (cast === "pt") {
+                    const raw = asPoint(v);
+                    if (!raw) {
+                        // A common miss: the script returned a LIST of candidate points — say so specifically.
+                        const list = asPointList(v);
+                        const why = list ? `it's a LIST of ${list.length} points — return the SINGLE best one as [x, y]` : `the return isn't a point ([x,y] or {x,y})`;
+                        return done(`${pre}cast:'pt' but ${why}: ${stringify(v)}`, valueOut(v));
+                    }
+                    // The script computed the point in the input IMAGE's pixels; project it back to viewport
+                    // coords (crop offset + dpr) so the @pt clicks the right spot. No image → already viewport.
+                    if (noTransform) return done(`${pre}${CAST_NO_TRANSFORM}`, valueOut(v));
+                    const pt = r.imageBox ? projectShotPoint(raw, r.imageBox) : raw;
+                    let t: string;
+                    try { t = mintVia ? await mintVia({ pt: { x: pt.x, y: pt.y } }, (r as { imageDocument?: string }).imageDocument ?? null) : mintPoint(pt.x, pt.y); }
+                    catch (e) { return done(`${pre}cast:'pt' → (${Math.round(pt.x)}, ${Math.round(pt.y)}), but no @pt token was minted: ${(e as Error)?.message || e}`, valueOut(v)); }
+                    // Models keep thinking the @pt is "displaced" — they compare it to their IMAGE-space
+                    // coords and see a mismatch. Spell out that we already projected image px → viewport.
+                    const proj = r.imageBox ? ` (You passed an image and cast to @pt, so your IMAGE-pixel coordinates were AUTOMATICALLY projected to VIEWPORT space — ${t} at (${Math.round(pt.x)}, ${Math.round(pt.y)}) IS the correct on-screen click point, not a displaced one; don't re-adjust for scale/offset.)` : "";
+                    return done(`${pre}→ ${t} at (${Math.round(pt.x)}, ${Math.round(pt.y)}).${proj} Verify then click: look({ selector: "${t}" }) → click({ selector: "${t}" }).`, { token: t });
+                }
+                if (cast === "box") {
+                    const raw = asBoxVal(v);
+                    if (!raw) {
+                        const list = asBoxList(v);
+                        const why = list ? `it's a LIST of ${list.length} boxes — return the SINGLE best one` : `the return isn't a box ([x1,y1,x2,y2] or {left,top,right,bottom})`;
+                        return done(`${pre}cast:'box' but ${why}: ${stringify(v)}`, valueOut(v));
+                    }
+                    if (noTransform) return done(`${pre}${CAST_NO_TRANSFORM}`, valueOut(v));
+                    const bx = r.imageBox ? projectShotBox(raw, r.imageBox) : raw;   // image px → viewport
+                    let t: string;
+                    try { t = mintVia ? await mintVia({ box: { left: bx.left, top: bx.top, right: bx.right, bottom: bx.bottom } }, (r as { imageDocument?: string }).imageDocument ?? null) : mintBox(bx); }
+                    catch (e) { return done(`${pre}cast:'box' → (${Math.round(bx.left)}, ${Math.round(bx.top)}, ${Math.round(bx.right)}, ${Math.round(bx.bottom)}), but no @box token was minted: ${(e as Error)?.message || e}`, valueOut(v)); }
+                    const proj = r.imageBox ? ` (You passed an image and cast to @box, so your IMAGE-pixel coordinates were AUTOMATICALLY projected to VIEWPORT space — this region is already in on-screen coordinates; don't re-adjust for scale/offset.)` : "";
+                    return done(`${pre}→ ${t} (a ${Math.round(bx.right - bx.left)}×${Math.round(bx.bottom - bx.top)}px region).${proj} Scope into it: locate({ selector: "${t}", description: "…" }).`, { token: t });
+                }
+                const text = stringify(v);
+                // The return LOOKS like a coordinate but no `cast` was set, so it came back as dead TEXT the
+                // model can't click. Nudge it to re-run with the matching cast → a clickable @pt/@box. Covers a
+                // single point/box AND a LIST of candidates (pt for {x,y}/[x,y], box for the 4-forms).
+                // GATED on an image being passed: a coordinate is only a meaningful click target when it was
+                // derived from a screenshot the tool loaded (cast then projects image-px → viewport). Without an
+                // image the two numbers are almost certainly just data, and nudging to cast would be wrong.
+                const hadImage = typeof image === "string" && image.trim().length > 0;
+                const castHint = !hadImage ? ""
+                    : asPoint(v)
+                        ? ` — this looks like a POINT but you didn't set \`cast\`, so it's just text you can't click. Re-run this exact script with cast:"pt" to mint a clickable coordinate (returns @pt:… → look()/click() it).`
+                        : asBoxVal(v)
+                            ? ` — this looks like a BOX but you didn't set \`cast\`, so it's just text. Re-run this exact script with cast:"box" to mint a clickable region (returns @box:… → scope into it with locate()).`
+                            : asPointList(v)
+                                ? ` — this looks like a LIST of ${asPointList(v)!.length} candidate POINTS but you didn't set \`cast\`, so it's dead text. Pick the SINGLE best one and return just that ([x, y]) with cast:"pt" to get a clickable @pt:… .`
+                                : asBoxList(v)
+                                    ? ` — this looks like a LIST of ${asBoxList(v)!.length} candidate BOXES but you didn't set \`cast\`, so it's dead text. Return the SINGLE best one with cast:"box" to get a clickable @box:… .`
+                                    : "";
+                // A returned DataFrame/Series → render a real table (the sidebar draws PyDfTable); the model
+                // still gets the text repr in `content` for reasoning. Applies to both the agent run and the bench.
+                if (parts.df) return done(`${pre}${text}`, parts);
+                // Returned None but PRINTED — a common miss: the model logs to stdout but returns nothing, so the
+                // result is `null` and there's nothing meaningful to CITE. Nudge it to RETURN the value (a DataFrame
+                // renders as a table). Gated on stdout so a script that legitimately returns nothing isn't nagged.
+                const nullWarn = (v === null || v === undefined) && stdoutClipped
+                    ? "\n\n⚠ Your code RETURNED null (None) — you printed to stdout but didn't RETURN a value, so there's nothing to cite. Whatever the user should SEE, RETURN it (a pandas DataFrame renders as a readable table; a dict/number is fine); stdout is just a debug log."
                     : "";
-                return done(`${tableNote}Python error: ${err}${hint}${stdoutClipped ? `\n\nstdout:\n${stdoutClipped}` : ""}`, { error: err });
-            }
-            const v = r.value;
-            // HOW it is drawn is shared with the bench (py-render.ts); what the model is TOLD stays here.
-            const parts = pyValueParts(v, { render: r.render, table: r.resultTable }, stringify);
-            // An image return is unambiguous → always shown (no cast needed).
-            if (parts.image) {
-                const said = r.render === "figure" ? "Your open matplotlib figure(s) came back as an image (closed now; the next call starts with none)." : "Returned an image.";
-                const base = done(`${pre}${said}`, parts);
-                if (!verify) return base;
-                const seen = await verifyPyImage(ml, ctx, parts.image);
-                return { ...base, ...seen, content: base.content + (seen.content ?? "") };
-            }
-            // Coordinates are opt-in via `cast` (auto-detecting [x,y] would mangle a general
-            // script that returns two numbers). A mismatch is an honest error, not a guess.
-            // A cast over an image projects through the rect that was cropped; with none, nothing is minted (checked once
-            // the return is a well-formed point or box, so a malformed one still gets its own message).
-            const noTransform = typeof image === "string" && image.trim().length > 0 && !r.imageBox;
-            if (cast === "pt") {
-                const raw = asPoint(v);
-                if (!raw) {
-                    // A common miss: the script returned a LIST of candidate points — say so specifically.
-                    const list = asPointList(v);
-                    const why = list ? `it's a LIST of ${list.length} points — return the SINGLE best one as [x, y]` : `the return isn't a point ([x,y] or {x,y})`;
-                    return done(`${pre}cast:'pt' but ${why}: ${stringify(v)}`, valueOut(v));
-                }
-                // The script computed the point in the input IMAGE's pixels; project it back to viewport
-                // coords (crop offset + dpr) so the @pt clicks the right spot. No image → already viewport.
-                if (noTransform) return done(`${pre}${CAST_NO_TRANSFORM}`, valueOut(v));
-                const pt = r.imageBox ? projectShotPoint(raw, r.imageBox) : raw;
-                let t: string;
-                try { t = mintVia ? await mintVia({ pt: { x: pt.x, y: pt.y } }, (r as { imageDocument?: string }).imageDocument ?? null) : mintPoint(pt.x, pt.y); }
-                catch (e) { return done(`${pre}cast:'pt' → (${Math.round(pt.x)}, ${Math.round(pt.y)}), but no @pt token was minted: ${(e as Error)?.message || e}`, valueOut(v)); }
-                // Models keep thinking the @pt is "displaced" — they compare it to their IMAGE-space
-                // coords and see a mismatch. Spell out that we already projected image px → viewport.
-                const proj = r.imageBox ? ` (You passed an image and cast to @pt, so your IMAGE-pixel coordinates were AUTOMATICALLY projected to VIEWPORT space — ${t} at (${Math.round(pt.x)}, ${Math.round(pt.y)}) IS the correct on-screen click point, not a displaced one; don't re-adjust for scale/offset.)` : "";
-                return done(`${pre}→ ${t} at (${Math.round(pt.x)}, ${Math.round(pt.y)}).${proj} Verify then click: look({ selector: "${t}" }) → click({ selector: "${t}" }).`, { token: t });
-            }
-            if (cast === "box") {
-                const raw = asBoxVal(v);
-                if (!raw) {
-                    const list = asBoxList(v);
-                    const why = list ? `it's a LIST of ${list.length} boxes — return the SINGLE best one` : `the return isn't a box ([x1,y1,x2,y2] or {left,top,right,bottom})`;
-                    return done(`${pre}cast:'box' but ${why}: ${stringify(v)}`, valueOut(v));
-                }
-                if (noTransform) return done(`${pre}${CAST_NO_TRANSFORM}`, valueOut(v));
-                const bx = r.imageBox ? projectShotBox(raw, r.imageBox) : raw;   // image px → viewport
-                let t: string;
-                try { t = mintVia ? await mintVia({ box: { left: bx.left, top: bx.top, right: bx.right, bottom: bx.bottom } }, (r as { imageDocument?: string }).imageDocument ?? null) : mintBox(bx); }
-                catch (e) { return done(`${pre}cast:'box' → (${Math.round(bx.left)}, ${Math.round(bx.top)}, ${Math.round(bx.right)}, ${Math.round(bx.bottom)}), but no @box token was minted: ${(e as Error)?.message || e}`, valueOut(v)); }
-                const proj = r.imageBox ? ` (You passed an image and cast to @box, so your IMAGE-pixel coordinates were AUTOMATICALLY projected to VIEWPORT space — this region is already in on-screen coordinates; don't re-adjust for scale/offset.)` : "";
-                return done(`${pre}→ ${t} (a ${Math.round(bx.right - bx.left)}×${Math.round(bx.bottom - bx.top)}px region).${proj} Scope into it: locate({ selector: "${t}", description: "…" }).`, { token: t });
-            }
-            const text = stringify(v);
-            // The return LOOKS like a coordinate but no `cast` was set, so it came back as dead TEXT the
-            // model can't click. Nudge it to re-run with the matching cast → a clickable @pt/@box. Covers a
-            // single point/box AND a LIST of candidates (pt for {x,y}/[x,y], box for the 4-forms).
-            // GATED on an image being passed: a coordinate is only a meaningful click target when it was
-            // derived from a screenshot the tool loaded (cast then projects image-px → viewport). Without an
-            // image the two numbers are almost certainly just data, and nudging to cast would be wrong.
-            const hadImage = typeof image === "string" && image.trim().length > 0;
-            const castHint = !hadImage ? ""
-                : asPoint(v)
-                    ? ` — this looks like a POINT but you didn't set \`cast\`, so it's just text you can't click. Re-run this exact script with cast:"pt" to mint a clickable coordinate (returns @pt:… → look()/click() it).`
-                    : asBoxVal(v)
-                        ? ` — this looks like a BOX but you didn't set \`cast\`, so it's just text. Re-run this exact script with cast:"box" to mint a clickable region (returns @box:… → scope into it with locate()).`
-                        : asPointList(v)
-                            ? ` — this looks like a LIST of ${asPointList(v)!.length} candidate POINTS but you didn't set \`cast\`, so it's dead text. Pick the SINGLE best one and return just that ([x, y]) with cast:"pt" to get a clickable @pt:… .`
-                            : asBoxList(v)
-                                ? ` — this looks like a LIST of ${asBoxList(v)!.length} candidate BOXES but you didn't set \`cast\`, so it's dead text. Return the SINGLE best one with cast:"box" to get a clickable @box:… .`
-                                : "";
-            // A returned DataFrame/Series → render a real table (the sidebar draws PyDfTable); the model
-            // still gets the text repr in `content` for reasoning. Applies to both the agent run and the bench.
-            if (parts.df) return done(`${pre}${text}`, parts);
-            // Returned None but PRINTED — a common miss: the model logs to stdout but returns nothing, so the
-            // result is `null` and there's nothing meaningful to CITE. Nudge it to RETURN the value (a DataFrame
-            // renders as a table). Gated on stdout so a script that legitimately returns nothing isn't nagged.
-            const nullWarn = (v === null || v === undefined) && stdoutClipped
-                ? "\n\n⚠ Your code RETURNED null (None) — you printed to stdout but didn't RETURN a value, so there's nothing to cite. Whatever the user should SEE, RETURN it (a pandas DataFrame renders as a readable table; a dict/number is fine); stdout is just a debug log."
-                : "";
-            // Auto-typeset a LaTeX return, no `| latex` cast needed (`| raw` overrides): a sympy TYPE, or a
-            // string that is LaTeX itself (`LOOKS_LATEX`, for a model that returns `sympy.latex(expr)`).
-            if (parts.latex) return done(`${pre}${text}`, parts);
-            return done(`${pre}${text}${castHint}${nullWarn}`, valueOut(v));
+                // Auto-typeset a LaTeX return, no `| latex` cast needed (`| raw` overrides): a sympy TYPE, or a
+                // string that is LaTeX itself (`LOOKS_LATEX`, for a model that returns `sympy.latex(expr)`).
+                if (parts.latex) return done(`${pre}${text}`, parts);
+                return done(`${pre}${text}${castHint}${nullWarn}`, valueOut(v));
+            };
+            // A worker-hosted run's cell may DETACH past its lease (sw-python-task.ts): its result then comes back later,
+            // through this same formatter, as a task's text. A figure cannot ride a task's text, so it is named instead.
+            // `verify` is not run on a late result: nothing would see the answer.
+            const late = mintVia ? async (x: Record<string, unknown>) => {
+                const out = await format(x as unknown as PyExecResult, false, true);
+                const text = typeof out === "string" ? out : out.content;
+                // `clipOut`'s own marker: the result was cut at the output limit, and a task's result has no pointer yet.
+                const cut = /… \[first \d+ of \d+ chars\]/.test(text);
+                const r0 = x as { ok?: boolean };
+                return { status: r0.ok === false ? "failed" as const : "done" as const, result: null,
+                    text: cut ? `${text}\n(Cut at the output limit; no pointer to the rest exists for a task's result.)` : text };
+            } : undefined;
+            const r = await ml.pythonExec(code, { image: image || null, margin: typeof margin === "number" ? margin : 0, tableRaw: !!tableRaw, tables: tables || null, ...(keep === true ? { keep: true } : {}), onStdout: ctx?.stream,
+                ...(late ? { late, ...(typeof expect_ms === "number" ? { expectMs: expect_ms } : {}) } : {}) } as Parameters<MlApi["pythonExec"]>[1]);
+            const detached = (r as { detached?: { text: string } }).detached;
+            if (detached) return detached.text;
+            return format(r, verify);
         },
     });
 };
+
+/** What `ml.pythonExec` answers, as the formatter reads it. */
+type PyExecResult = Awaited<ReturnType<MlApi["pythonExec"]>>;

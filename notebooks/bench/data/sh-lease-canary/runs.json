@@ -1,6 +1,6 @@
 {
-  "commit": "de9e2a9734cc062ee00c931cff525a2082f7fca4",
-  "extracted_at": "2026-11-12T10:32:28+00:00",
+  "commit": "4a172dfe6998dd1df738ed1c71acae58d496a1ac",
+  "extracted_at": "2026-11-12T12:52:45+00:00",
   "rows": [
     {
       "approvals": 2,
@@ -292,10 +292,10 @@
     }
   ],
   "source": {
-    "note": "same sweep name in both; explicit folders, not find_sweep. Booleans and counts only.",
+    "note": "both ran as sh-lease-canary, kept under dated names; found with find_sweep. Booleans and counts only.",
     "placements": {
-      "container (Linux bwrap)": "tests/e2e/artifacts-container/bench/sh-lease-canary",
-      "laptop (macOS Seatbelt)": "tests/e2e/artifacts/bench/sh-lease-canary"
+      "container (Linux bwrap)": "sh-lease-canary-container-20261112",
+      "laptop (macOS Seatbelt)": "sh-lease-canary-laptop-20261112"
     }
   }
 }
