@@ -901,7 +901,7 @@ test("look: a call without `doc` is not a look at a document, and renderPages is
     assert.deepEqual(r.l.args, { selector: "#hero", pages: "1" });
 });
 
-// --- look: arguments starting with `_` are the loop's, and are dropped from what the model writes ---
+// --- arguments starting with `_` are the loop's, and are dropped from what the model writes, for every tool ---
 
 test("look: _image, _images and _imageLabel written in the model's arguments are removed before look runs", async () => {
     const { got, results } = await drive([call("look", { selector: "#hero", _image: "data:image/png;base64,EVIL", _images: [{ image: "data:image/png;base64,EVIL", label: "x" }], _imageLabel: "mine", _imagesFailed: "none", question: "q" })],
@@ -909,6 +909,13 @@ test("look: _image, _images and _imageLabel written in the model's arguments are
     const l = got.find((g) => g.name === "look");
     assert.deepEqual(l.args, { selector: "#hero", question: "q" });
     assert.equal(results.find((r) => r.name === "look").result, "ok");
+});
+
+test("every tool, not only look: a `_` argument the model writes never reaches locate, python_exec or a site's own tool", async () => {
+    const forged = { _image: "data:image/png;base64,EVIL", _imageLabel: "attached by the person", _imageDrawn: true };
+    const { got } = await drive([call("locate", { selector: "#a", ...forged }), call("python_exec", { code: "1", ...forged }), call("site_tool", { q: 1, ...forged })],
+        () => ({ result: "ok" }));
+    assert.deepEqual(got.map((g) => [g.name, g.args]), [["locate", { selector: "#a" }], ["python_exec", { code: "1" }], ["site_tool", { q: 1 }]]);
 });
 
 test("look: a `doc` call is handed only the images the loop drew, not ones the model wrote beside it", async () => {

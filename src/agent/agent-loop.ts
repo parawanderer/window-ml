@@ -829,8 +829,6 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
      *  call, exactly as it does for `dereference`, rather than the run dying on a mistyped id. */
     const lookArgs = async (name: string, a: Record<string, unknown>, step: number): Promise<{ args: Record<string, unknown> } | { error: string }> => {
         if (name !== "look" && name !== "python_exec") return { args: a };
-        // What the loop hands `look` (`_image`, `_images`, …) is the loop's alone: a model that writes one is not obeyed.
-        if (name === "look") a = Object.fromEntries(Object.entries(a ?? {}).filter(([k]) => !k.startsWith("_")));
         const r = name === "look" ? (await resolveLookDoc(a)) ?? resolveLookPointer(a, step) : resolveTablePointers(a, step);
         if (!r) return { args: a };
         return r.error ? { error: r.error } : { args: r.args! };
@@ -883,6 +881,9 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         // The gap since the model call returned, minus any time a human held the gate open — that wait is
         // already its own phase, and counting it here would draw the same seconds twice.
         if (turnReturnedAt != null) lastDispatchMs = Math.max(0, t0 - turnReturnedAt - (lastApproveMs ?? 0));
+        // A `_`-prefixed argument (`_image`, `_images`, `_imageLabel`, …) is the loop's alone, added below: one the model
+        // writes is dropped for EVERY tool, so no tool that reads a `_` key can be handed a forged one.
+        a = Object.fromEntries(Object.entries(a ?? {}).filter(([k]) => !k.startsWith("_")));
         try {
             if (name === DEREF_TOOL) return await derefLocally(a, step, seq);
             const l = await lookArgs(name, a, step);
