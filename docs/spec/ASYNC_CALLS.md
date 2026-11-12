@@ -186,8 +186,12 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
      `takeArchiveNotice` does), so a person sees why the model spoke. The turn is the run's own, on its session and
      tab, under the run's existing step and token budgets and approvals. It is a user-started run's turn, not a
      page-started one, so the origin gate is unchanged; it still never runs on a page we own (`AGENT_START_PAGE`).
-     A run archived, released or moved before the turn starts, or whose tab is gone, starts none, and that is a
-     run-log record; the result stays parked for the run's next turn while the run exists.
+     A run archived or released first has no task left to finish: both end its tasks (above), so a result that
+     still arrives is dropped, with a run-log record, and starts nothing. A run moved first starts the turn on its
+     CURRENT tab, since the inbox follows the run (rule 4a). A run whose tab is gone keeps its runtime-bound tasks
+     (the kernel and the host do not live in the tab), and a result parks with a run-log record; no turn starts by
+     itself on a run with no tab, and the parked result is read at the run's next turn once the person brings the
+     session to a tab (`adoptSession`).
    - **Notify-only is a setting.** A durable per-config flag in DevTools Settings (the settings rule; the popup is
      optional) switches every run to notify-only: a completion with no turn running parks, the person sees a
      transcript system line and a HUD mark, and the model reads it at the next turn the person starts. The
