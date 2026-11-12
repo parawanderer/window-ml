@@ -174,8 +174,22 @@ system and user message:
 - **Size**: `task`'s definition is 858 characters as sent (name, description, parameters); `python_exec`'s is 4,424.
   The delta is paid on every call of a run that has `python_exec` and not `ml.sh`; a run with `ml.sh` on already paid it.
 - `python_exec`'s own new `expect_ms` parameter is inside the "without" column (worker-hosted runs only).
-- The detached text and the wake's two phrasings (`pyDetachedText`, `src/sw/sw-python-task.ts`) get their panel
-  measurement before the mode 1 PR leaves draft.
+- **The detached text and the wake's two phrasings** (`pyDetachedText`, `src/sw/sw-python-task.ts`), measured by the panel
+  `tests/e2e/panel/python-detach.interview.ts` (DeepSeek v4 Pro, DeepSeek Flash, Gemini Flash, Kimi K3, MiniMax M3). Each
+  turn hands a model the exact text and asks for its next call as text. Two runs, the second after one reword:
+
+  | Turn | the move it calls for | run 1 | run 2 |
+  | --- | --- | --- | --- |
+  | the default wake (no `expect_ms`) | act on the task, not a new cell | 4/5 await; Gemini cancels to rewrite it as a sieve | 4/5 await; Gemini cancels again |
+  | a missed estimate (`expect_ms` 20 s on a 1,000-row sum) | investigate or cancel, not wait longer | 4/5 cancel; DeepSeek Pro awaits 30 s more | 3/5 (cancel, tail); DeepSeek Pro and MiniMax await |
+  | the busy kernel (another cell needed) | await or cancel the task first | 4/5; DeepSeek Pro computes it in JavaScript instead | 5/5 |
+
+  Asked which sentence they relied on most, four of five quoted the busy rule in run 1. Two asked whether a cancel
+  counts as the task ending, so "Until it ends" became "Until it is done or cancelled". In run 2 all five quoted the
+  reworded sentence, and none asked about a cancel. Gemini's cancel is a reasonable move, not a misreading; the only
+  answers that misread a wake are the waits after a missed estimate. What stays open is what "this turn" and "this run"
+  span, asked by three models. The words are shared with `ml.sh`'s detached text and the `task` tool, so that is the
+  next prompt review's, not this text's.
 ## Round 3, first finding: glm-4.7-flash's csv-total was the tool, not the prompt (2026-10-14)
 
 Round 2 left the `python_exec` cut unshipped because glm-4.7-flash lost csv-total under it. Reading its steps showed

@@ -59,7 +59,7 @@ export function pyDetachedText(id: string, leaseMs: number, expectMs: number | n
         ? `you expected ~${secs(expectMs)} and it is still running: investigate the stall, or`
         : `no expect_ms was given, so the ${secs(leaseMs)} default applied and it is still running: estimate (expect_ms), investigate, or`;
     return `Detached: python_exec detached as task ${id} after ${secs(leaseMs)}; ${why} use the task tool (await, tail, cancel). Its result arrives as a [task ${id} …] message. `
-        + `It is cancelled when this turn ends, and the sandbox ends it at ${secs(PY_DETACHED_MAX_MS)}. Until it ends, another python_exec in this run is refused.`
+        + `It is cancelled when this turn ends, and the sandbox ends it at ${secs(PY_DETACHED_MAX_MS)}. Until it is done or cancelled, another python_exec in this run is refused.`
         + (tail ? `\nOutput so far:\n${tail}` : "");
 }
 
