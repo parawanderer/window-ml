@@ -839,3 +839,54 @@ test("a read-only survey in the worker reads an attached file: its pages by pipe
     const macro = await evalReadonlyInWorker({ js: `return @file:${pdf.id}.text.length` }, { ml });
     assert.notEqual(macro.kind, "answered", "the pointer macro is @tool:'s alone; a file is read by ml.dereference");
 });
+
+// --- a detached call's cut result, arriving through the inbox, gets the pointer its step would have minted ---
+
+/** One run whose inbox yields `items` at the first step boundary; what the model was handed as user turns is returned. */
+async function driveInbox(items, opts = {}) {
+    const users = [], claimed = [], store = new TokenStore();
+    let drained = false;
+    await runAgentLoop("t", { tools: TOOLS, maxSteps: () => 2, toolTokens: true, runHash: "abcdef", tokenStore: store, claimValue: (k) => claimed.push(k), ...opts }, {
+        callModel: async () => ({ content: "done", tool_calls: [] }),
+        runTool: async () => ({ result: "" }),
+        autoApprove: () => null,
+        buildMessages: (task) => [{ role: "user", content: task }],
+        pushAssistant: (m, msg) => m.push({ role: "assistant", ...msg }),
+        pushToolResult: (m, c, result) => m.push({ role: "tool", content: result }),
+        drainInbox: () => (drained ? [] : (drained = true, items)),
+        pushUser: (m, text, images) => { users.push({ text, images }); m.push({ role: "user", content: text }); },
+    });
+    return { users, claimed, store };
+}
+
+test("a cut task result through the inbox is minted a pointer to its stored whole, the key claimed, and the cut line names it", async () => {
+    const png = "data:image/png;base64,iVBORw0KGgo=";
+    const text = "[task t1a2b3c done after 40 s: stdout:\nrow 1… [first 2000 of 9000 chars]]";
+    const { users, claimed, store } = await driveInbox([{ text, task: "t1a2b3c", value: "k-late-whole", chars: 9000, images: [png] }]);
+    const [t] = store.all();
+    assert.ok(t, "a pointer was minted");
+    assert.equal(t.value, "k-late-whole");
+    assert.deepEqual(claimed, ["k-late-whole"]);
+    assert.equal(users[0].text, `${text}\n[your copy is cut: @tool:${t.id} holds 9000 chars of this output. Read further with dereference and a pipe (grep PATTERN, head -n N, tail -n N; lines A to B: head -n B | tail -n B-A+1) instead of running it again.]`);
+    assert.deepEqual(users[0].images, [png], "the figure reaches the model with the result");
+});
+
+test("an inbox task result gets no pointer when tool tokens are off, when its whole is no longer than its text, or when it carries none", async () => {
+    const item = { text: "[task t1 done after 1 s: x]", task: "t1", value: "k", chars: 9000 };
+    const off = await driveInbox([item], { toolTokens: false });
+    assert.equal(off.users[0].text, item.text);
+    assert.equal(off.store.all().length, 0);
+    assert.deepEqual(off.claimed, [], "nothing is claimed for a pointer that was never minted");
+    const short = await driveInbox([{ ...item, chars: 5 }]);
+    assert.equal(short.users[0].text, item.text);
+    const none = await driveInbox([{ text: item.text, task: "t1" }]);
+    assert.equal(none.users[0].text, item.text);
+    assert.equal(none.store.all().length, 0);
+});
+
+test("a person's steering message carrying a value is not minted a pointer: only a task item is", async () => {
+    const { users, store, claimed } = await driveInbox([{ text: "hello", value: "k-forged", chars: 9000 }]);
+    assert.equal(users[0].text, "hello");
+    assert.equal(store.all().length, 0);
+    assert.deepEqual(claimed, []);
+});
