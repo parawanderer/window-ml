@@ -4,11 +4,11 @@
 // session, which admits a run when the memory free above the reserve leaves room for its minimum workers, and sizes
 // its workers from that room.
 //
-//   node scripts/test-slot.mjs submit [--kind unit|e2e|batch [--workers N]] -- <command…>   queue a DETACHED job; prints its ticket, returns at once
+//   node scripts/test-slot.mjs submit [--kind unit|e2e|batch [--workers N]] [--max-time MIN] -- <command…>   queue a DETACHED job; prints its ticket, returns at once
 //   node scripts/test-slot.mjs wait <ticket>                            block until it ends; its log's tail, its exit code
 //   node scripts/test-slot.mjs status                                   what runs, what waits, the last finished jobs
 //   node scripts/test-slot.mjs cancel <ticket>                          take a job out of the queue, or stop it
-//   node scripts/test-slot.mjs run [--kind unit|e2e|batch [--workers N]] -- <command…>   wait for the slot in the FOREGROUND, then run it here
+//   node scripts/test-slot.mjs run [--kind unit|e2e|batch [--workers N]] [--max-time MIN] -- <command…>   wait for the slot in the FOREGROUND, then run it here
 //
 // Why: on 2026-11-08 nine `node --import tsx --test` runners from different sessions ran at once, 34 workers between
 // them, and the laptop swapped 27 GB; a suite that takes 40 s alone ran for ten minutes. A rule each lane had to
@@ -30,7 +30,17 @@
 // the run and worker caps like any run, at most ONE runs at a time, and every queued test job is judged before any
 // batch job, whatever the submit order. Its footprints are its own (`perWorkerFor("batch")`, the unit figure until it
 // has any), so it never sizes a test run. Submitters chunk it to about five minutes or less (guidance, not enforced); a
-// run past BATCH_OVERRUN_MS is marked `overran` in its footprint so the chunk can be tuned. Nothing kills it here.
+// run past BATCH_OVERRUN_MS is marked `overran` in its footprint so the chunk can be tuned.
+//
+// A wall-clock cap (the rule of 2026-11-12): every job is stopped once it has run longer than its cap, the longer of
+// TIME_CAP_MIN_MS and TIME_CAP_FACTOR × its kind's p90 duration, or what `--max-time <minutes>` (`TEST_SLOT_MAX_TIME`)
+// asked for. Its process group (an attached runner: the runner, which stops its children) gets SIGTERM, and SIGKILL
+// KILL_GRACE_MS later if anything is left; the record ends `timedout` and writes no footprint. The check runs on every
+// read of the queue, like the reaping. Why: on 2026-11-11 a detached loop of direct `node --import tsx --test` runs
+// with `--test-timeout=0` spun in its first file's `before()` (the python-worker import or SES lockdown, 99% CPU at
+// 7 MB) and held three workers and a 5.4 GB plan for 19.6 hours; every queued suite waited behind it and every bench
+// sweep found no room. test.mjs's watchdog (#1575) covers only runs through test.mjs, and the timeout flag turned off
+// the hook's own; a job's command can be anything. `status` marks a job past SLOW_FACTOR × the usual as slow.
 //
 // Two kinds of job share the slots. An ATTACHED job is a runner waiting in its own process (`npm test`, a genre,
 // Playwright's main process): it keeps its terminal and exit code, and holds the slot until it exits. A DETACHED job
@@ -48,6 +58,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { CAP_MS as RUNNER_CAP_MS } from "./watch-runner.mjs";
 import { alive, availableMemory, fmtBytes, ledger, notYetResident, p90, processTable, register, RESERVE_FRAC, treePids, treeRss, unregister, withFileLock } from "../tests/e2e/bench/memory-budget.mjs";
 
 const SELF = fileURLToPath(import.meta.url);
@@ -64,6 +75,17 @@ export const minWorkersFor = (kind) => (kind === "e2e" || kind === "batch" ? 1 :
 export const BATCH_MAX_WORKERS = 6;
 /** A batch run longer than this is marked `overran` in its footprint, so the chunk size can be tuned. */
 export const BATCH_OVERRUN_MS = 15 * 60_000;
+/** The shortest cap any job gets: a run past its cap is stopped (the rule of 2026-11-12). Five minutes past
+ *  test.mjs's own watchdog (`watch-runner.mjs`), so a stuck suite fails there first, with that diagnostic. */
+export const TIME_CAP_MIN_MS = RUNNER_CAP_MS + 5 * 60_000;
+/** A job's cap is this many times its kind's p90 duration, when that is longer than TIME_CAP_MIN_MS. */
+export const TIME_CAP_FACTOR = 5;
+/** `status` marks a running job past this many times its kind's p90 duration as slow. */
+export const SLOW_FACTOR = 3;
+/** How long a job sent SIGTERM at its cap has to end before what is left of it gets SIGKILL. */
+export const KILL_GRACE_MS = 30_000;
+/** The longest `--max-time` (minutes): a day. */
+export const MAX_TIME_MAX_MIN = 24 * 60;
 /** How many finished jobs the queue keeps (their logs go with them). */
 const KEEP_DONE = 20;
 /** Footprints of the last this-many runs of a kind decide its per-worker figure. */
@@ -109,12 +131,23 @@ export const capFor = (kind, cores = os.cpus().length) => (kind === "batch" ? 1 
 /** The per-worker figure for a kind: the p90 of its measured runs, or the default with none; a batch job with none of
  *  its own takes the unit figure (batch lines never feed a test kind's). */
 export function perWorkerFor(kind, dir = slotDir()) {
-    let lines = [];
-    try { lines = fs.readFileSync(path.join(dir, "footprints.jsonl"), "utf8").split("\n").filter(Boolean); } catch { /* none yet */ }
-    const mine = lines.map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter((f) => f?.kind === kind).slice(-FOOTPRINTS_USED);
+    const mine = footprintsOf(kind, dir);
     const v = p90(mine.map((f) => f.perWorker));
     return { bytes: v ?? (kind === "batch" ? perWorkerFor("unit", dir).bytes : PER_WORKER_DEFAULT), measured: mine.length };
 }
+
+/** The last FOOTPRINTS_USED footprints of a kind. */
+function footprintsOf(kind, dir) {
+    let lines = [];
+    try { lines = fs.readFileSync(path.join(dir, "footprints.jsonl"), "utf8").split("\n").filter(Boolean); } catch { /* none yet */ }
+    return lines.map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter((f) => f?.kind === kind).slice(-FOOTPRINTS_USED);
+}
+
+/** How long a run of a kind usually takes: the p90 of its measured runs' durations, or null with none. */
+export const usualMsFor = (kind, dir = slotDir()) => p90(footprintsOf(kind, dir).map((f) => f.durationMs));
+
+/** A job's wall-clock cap when it asked for none: the longer of TIME_CAP_MIN_MS and TIME_CAP_FACTOR × its kind's usual. */
+export const timeCapFor = (kind, dir = slotDir()) => Math.max(TIME_CAP_MIN_MS, TIME_CAP_FACTOR * (usualMsFor(kind, dir) ?? 0));
 
 /** What the bench's ledger says is on its way but not yet in free memory: browsers a sweep just admitted. Test runs'
  *  own entries are left out: the queue counts them itself, from what each holds now (`promisedBy`). Never throws. */
@@ -199,19 +232,53 @@ function withQueue(dir, fn, deps = {}) {
     return withFileLock(path.join(dir, "queue.lock"), () => {
         const state = readState(dir);
         const out = fn(state);
-        const reaped = reap(state, deps.probe);
+        const reaped = reap(state, deps.probe, deps, dir);
         const started = startNext(state, dir, deps);
         writeState(dir, state);
         return { state, out, reaped, started };
     });
 }
 
-/** Mark what has died: a running job whose process is gone is `lost`, a queued attached one whose runner is gone is
- *  `abandoned`. Then keep only the last finished jobs, deleting the logs of the rest. Returns the reaped records. */
-export function reap(state, probe) {
+/** Send `sig` to a running job: a detached one's process group; an attached runner itself for SIGTERM (it stops its
+ *  children), its whole process tree for SIGKILL (it cannot). */
+function signalJob(j, sig) {
+    const pids = j.mode === "detached" ? [-j.pid] : sig === "SIGKILL" ? treePids(processTable(), j.pid) : [j.pid];
+    for (const p of pids) { try { process.kill(p, sig); } catch { /* gone */ } }
+}
+/** Whether anything of a stopped job is left: a detached job's process group outlives its `__job` process. */
+const remains = (j, probe) => (j.mode === "detached" && !probe ? (() => { try { process.kill(-j.pid, 0); return true; } catch { return false; } })() : procLive(j.pid, j.started, probe));
+const mins = (ms) => `${Math.round(ms / 60_000)} min`;
+
+/**
+ * Stop a running job past its cap (`capMs` from its grant, else `cap`): SIGTERM once, noted in its log and as `termAt`, then
+ * SIGKILL to what is left `graceMs` later. `kill` stands in for the signalling in tests.
+ */
+export function enforceCap(j, { now = Date.now(), graceMs = KILL_GRACE_MS, kill = signalJob, cap = null } = {}) {
+    if (j.state !== "running") return;
+    j.capMs ??= cap;
+    if (!j.capMs) return;
+    const ran = now - new Date(j.grantedAt).getTime();
+    if (!j.termAt && ran >= j.capMs) {
+        j.termAt = new Date(now).toISOString();
+        if (j.log) { try { fs.appendFileSync(j.log, `\ntest-slot: stopped after ${mins(ran)}, past its cap of ${mins(j.capMs)}; submit with --max-time <minutes> if it needs longer\n`); } catch { /* no log */ } }
+        kill(j, "SIGTERM");
+    } else if (j.termAt && !j.killAt && now - new Date(j.termAt).getTime() >= graceMs) {
+        j.killAt = new Date(now).toISOString();
+        kill(j, "SIGKILL");
+    }
+}
+
+/** Mark what has died: a running job whose process is gone is `lost` (`timedout` when its cap stopped it), a queued
+ *  attached one whose runner is gone is `abandoned`. A running job past its cap is stopped first (`enforceCap`); one
+ *  granted with no cap (by a copy from before the cap, in this clone or an older one) gets its kind's default. Then
+ *  keep only the last finished jobs, deleting the logs of the rest. Returns the reaped records. */
+export function reap(state, probe, deps = {}, dir = slotDir()) {
     const now = new Date().toISOString(), reaped = [];
     for (const j of state.jobs) {
-        if (j.state === "running" && !procLive(j.pid, j.started, probe)) Object.assign(j, { state: "lost", endedAt: now, exit: null });
+        if (j.state === "running") enforceCap(j, { graceMs: deps.killGraceMs, kill: deps.kill, cap: j.capMs ? null : (deps.timeCap ?? timeCapFor)(j.kind, dir) });
+        if (j.state === "running" && !(j.termAt ? remains(j, probe) : procLive(j.pid, j.started, probe))) {
+            Object.assign(j, { state: j.termAt ? "timedout" : "lost", endedAt: now, exit: null });
+        }
         else if (j.state === "queued" && j.mode === "attached" && !procLive(j.by.pid, j.by.started, probe)) Object.assign(j, { state: "abandoned", endedAt: now, exit: null });
         else continue;
         reaped.push(j);
@@ -243,7 +310,7 @@ export function startNext(state, dir, deps = {}) {
         const room = base - promised;
         const a = admit({ kind: job.kind, running: running.length, workers, room, perWorker: k.perWorker, cap: k.cap, maxRuns, maxWorkers, want: job.kind === "batch" ? job.want ?? 1 : 0, batches });
         if (!a.jobs) { state.waiting ??= { ticket: job.ticket, why: a.why }; if (running.length >= maxRuns) break; continue; }
-        Object.assign(job, { state: "running", grantedAt: new Date().toISOString(), jobs: a.jobs,
+        Object.assign(job, { state: "running", grantedAt: new Date().toISOString(), jobs: a.jobs, capMs: job.maxTimeMs ?? (deps.timeCap ?? timeCapFor)(job.kind, dir),
             sizing: { available: m.available, coming: (m.coming ?? 0) + promised, total: m.total, perWorker: k.perWorker, runs: running.length + 1, workers: workers + a.jobs } });
         if (job.mode === "attached") Object.assign(job, { pid: job.by.pid, started: job.by.started });
         else Object.assign(job, (deps.spawnJob ?? spawnJob)(job, dir));
@@ -285,21 +352,22 @@ export function batchRefusal(state, want, dir, deps = {}) {
 /**
  * Put a job in the queue. A detached job with the same clone, command, head and working-tree hash (and, for batch, the
  * same declared workers) as one still QUEUED gets that one's ticket (`shared: true`): two sessions asking for the same
- * check get one run. A batch job `batchRefusal` refuses is not queued: `{ refused }`, no ticket.
- * @param {{ cmd: string[], cwd?: string, kind?: "unit" | "e2e" | "batch", workers?: number, mode?: "attached" | "detached", env?: object, dir?: string, deps?: object, tree?: object }} o
+ * check get one run, with the longest `maxTimeMs` either asked for. A batch job `batchRefusal` refuses is not queued:
+ * `{ refused }`, no ticket. `maxTimeMs` replaces the job's default cap (`timeCapFor`).
+ * @param {{ cmd: string[], cwd?: string, kind?: "unit" | "e2e" | "batch", workers?: number, maxTimeMs?: number, mode?: "attached" | "detached", env?: object, dir?: string, deps?: object, tree?: object }} o
  */
-export function submit({ cmd, cwd = process.cwd(), kind = "unit", workers = 1, mode = "detached", env = process.env, dir = slotDir(env), deps = {}, tree = treeState(cwd) }) {
+export function submit({ cmd, cwd = process.cwd(), kind = "unit", workers = 1, maxTimeMs = null, mode = "detached", env = process.env, dir = slotDir(env), deps = {}, tree = treeState(cwd) }) {
     // A test job's key is what it was before batch existed, so an old copy's queued job is still shared.
     const key = createHash("sha256").update(JSON.stringify([tree.clone, cmd, tree.head, tree.dirty, ...(kind === "batch" ? ["batch", workers] : [])])).digest("hex").slice(0, 16);
     const ticket = `${new Date().toISOString().replace(/[-:]/g, "").slice(0, 15)}-${randomBytes(3).toString("hex")}`;
     const by = { pid: process.pid, started: (deps.startTime ?? startTime)(process.pid) };
     const { out, reaped } = withQueue(dir, (state) => {
         const same = mode === "detached" && state.jobs.find((j) => j.state === "queued" && j.mode === "detached" && j.key === key);
-        if (same) return { job: same, shared: true };
+        if (same) { if (maxTimeMs) same.maxTimeMs = Math.max(same.maxTimeMs ?? 0, maxTimeMs); return { job: same, shared: true }; }
         const refused = kind === "batch" ? batchRefusal(state, workers, dir, deps) : null;
         if (refused) return { refused };
         const job = { ticket, mode, kind, cmd, cwd, key, clone: tree.clone, head: tree.head, dirty: tree.dirty, by, state: "queued", submittedAt: new Date().toISOString(),
-            ...(kind === "batch" ? { want: workers } : {}),
+            ...(kind === "batch" ? { want: workers } : {}), ...(maxTimeMs ? { maxTimeMs } : {}),
             ...(mode === "detached" ? { env: jobEnv(env), log: path.join(dir, `${ticket}.log`) } : {}) };
         state.jobs.push(job);
         return { job, shared: false };
@@ -308,18 +376,19 @@ export function submit({ cmd, cwd = process.cwd(), kind = "unit", workers = 1, m
     return { ticket: out.job.ticket, shared: out.shared, reaped };
 }
 
-/** Mark a job ended with `exit` and start the next one. */
+/** Mark a job ended with `exit` and start the next one. One its cap stopped ends `timedout`, with no footprint: its
+ *  duration is the cap's, and would raise the next cap. */
 export function finish(ticket, exit, { dir = slotDir(), deps = {}, peak = null } = {}) {
     let rec = null;
     withQueue(dir, (state) => {
         const j = state.jobs.find((x) => x.ticket === ticket);
         if (!j || j.state !== "running") return;
         const endedAt = new Date();
-        Object.assign(j, { state: "done", exit, endedAt: endedAt.toISOString(), durationMs: endedAt - new Date(j.grantedAt), ...(peak ? { peakRss: peak } : {}) });
+        Object.assign(j, { state: j.termAt ? "timedout" : "done", exit, endedAt: endedAt.toISOString(), durationMs: endedAt - new Date(j.grantedAt), ...(peak ? { peakRss: peak } : {}) });
         rec = j;
     }, deps);
     if (rec) (deps.leaveBench ?? leaveBench)(rec);
-    if (rec?.peakRss && rec.durationMs >= MEASURE_MIN_MS && rec.jobs) {
+    if (rec?.state === "done" && rec.peakRss && rec.durationMs >= MEASURE_MIN_MS && rec.jobs) {
         try { fs.appendFileSync(path.join(dir, "footprints.jsonl"), `${JSON.stringify({ at: rec.endedAt, kind: rec.kind, jobs: rec.jobs, peakRss: rec.peakRss, perWorker: Math.round(rec.peakRss / rec.jobs), runs: rec.peakRuns ?? 1, durationMs: rec.durationMs, ...(rec.kind === "batch" && rec.durationMs > BATCH_OVERRUN_MS ? { overran: true } : {}), ticket })}\n`); } catch { /* unmeasured */ }
     }
     return rec;
@@ -349,6 +418,11 @@ export function waitingLine({ running = [], ahead, why = null }, now = Date.now(
 /** The line a granted run prints: its workers and the reading they came from. */
 export const grantLine = (job) => `test-slot: ${job.jobs} worker${job.jobs === 1 ? "" : "s"} (${fmtBytes(job.sizing.available)} available${job.sizing.coming ? `, ${fmtBytes(job.sizing.coming)} of it promised to bench browsers and other test runs starting up` : ""}, ${fmtBytes(RESERVE_FRAC * job.sizing.total)} reserved, ~${fmtBytes(job.sizing.perWorker)} per worker${job.sizing.runs > 1 ? `; run ${job.sizing.runs} at once, ${job.sizing.workers} workers between them` : ""})`;
 
+/** `--max-time`'s minutes as milliseconds: a whole number from 1 to MAX_TIME_MAX_MIN, else NaN. */
+export const parseMaxTime = (minutes) => (/^\d+$/.test(String(minutes)) && minutes >= 1 && minutes <= MAX_TIME_MAX_MIN ? Number(minutes) * 60_000 : NaN);
+/** `TEST_SLOT_MAX_TIME` (minutes) as milliseconds, or null when unset or not a valid `--max-time`. */
+const maxTimeFromEnv = (env = process.env) => (env.TEST_SLOT_MAX_TIME ? parseMaxTime(env.TEST_SLOT_MAX_TIME) || null : null);
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Sample this process tree's resident memory every 2 s; returns a function giving the peak so far. */
@@ -365,22 +439,25 @@ function samplePeak(pid = process.pid) {
  * Wait in THIS process for the slot, then hold it until the process exits: what test.mjs, Playwright's config and
  * `run` call. Resolves `{ jobs, ticket }`, or `{ jobs: null, skipped }` when this process does not queue (CI, `TEST_SLOT=off`,
  * inside a job, where `TEST_SLOT_JOBS` is the job's workers). Prints the waiting line at the start and every 30 s.
- * `signal` gives up the wait (a test's deadline): the ticket is cancelled and the abort reason thrown.
- * @param {{ cmd: string[], cwd?: string, kind?: "unit" | "e2e" | "batch", workers?: number, log?: (s: string) => void, env?: object, signal?: AbortSignal }} o
+ * `signal` gives up the wait (a test's deadline): the ticket is cancelled and the abort reason thrown. `maxTimeMs`
+ * defaults to `TEST_SLOT_MAX_TIME` (minutes), else the kind's default cap.
+ * @param {{ cmd: string[], cwd?: string, kind?: "unit" | "e2e" | "batch", workers?: number, maxTimeMs?: number, log?: (s: string) => void, env?: object, signal?: AbortSignal }} o
  */
-export async function acquire({ cmd, cwd = process.cwd(), kind = "unit", workers = 1, log = (s) => console.error(s), env = process.env, signal = null }) {
+export async function acquire({ cmd, cwd = process.cwd(), kind = "unit", workers = 1, log = (s) => console.error(s), env = process.env, maxTimeMs = maxTimeFromEnv(env), signal = null }) {
     const skipped = skipReason(env);
     if (skipped) {
         if (skipped === "off") log("test-slot: TEST_SLOT=off, not queueing: other runs on this machine are not waited for");
         return { jobs: Number(env.TEST_SLOT_JOBS) || null, skipped };
     }
     const dir = slotDir(env);
-    const { ticket, reaped, refused } = submit({ cmd, cwd, kind, workers, mode: "attached", env, dir });
+    const { ticket, reaped, refused } = submit({ cmd, cwd, kind, workers, maxTimeMs, mode: "attached", env, dir });
     if (refused) throw Object.assign(new Error(`test-slot: refused: ${refused}`), { code: "TEST_SLOT_REFUSED" });
     const sayReaped = (list) => { for (const r of list) log(`test-slot: reclaimed the slot from pid ${r.pid ?? r.by.pid} (${r.state}: its process is gone)`); };
     sayReaped(reaped);
     let release = () => {};
     const onSignal = (sig) => {
+        const rec = readState(dir).jobs.find((j) => j.ticket === ticket);
+        if (rec?.termAt) log(`test-slot: stopped: this run passed its cap of ${mins(rec.capMs)}; TEST_SLOT_MAX_TIME=<minutes> gives it longer`);
         // The runner's children (node --test, Playwright's workers) do not all get a signal sent to this pid alone.
         for (const p of treePids(processTable(), process.pid).filter((p) => p !== process.pid)) { try { process.kill(p, "SIGTERM"); } catch { /* gone */ } }
         release();
@@ -462,7 +539,8 @@ function printStatus(dir = slotDir()) {
     const row = (j) => `  ${j.ticket}  ${j.state.padEnd(9)} ${j.kind.padEnd(4)} ${j.mode.padEnd(8)} ${home(j.clone)}  ${cmdText(j.cmd)}`;
     const running = state.jobs.filter((j) => j.state === "running"), queued = state.jobs.filter((j) => j.state === "queued");
     const done = state.jobs.filter((j) => !["queued", "running"].includes(j.state)).slice(-10);
-    console.log(running.length ? `running:\n${running.map((j) => `${row(j)}  pid ${j.pid}, ${j.jobs} workers, ${age(j.grantedAt)}`).join("\n")}` : "running: nothing");
+    const slow = (j) => { const u = usualMsFor(j.kind, dir), ran = Date.now() - new Date(j.grantedAt).getTime(); return u && ran > SLOW_FACTOR * u ? `, SLOW: past ${SLOW_FACTOR}× its kind's usual ${mins(u)}` : ""; };
+    console.log(running.length ? `running:\n${running.map((j) => `${row(j)}  pid ${j.pid}, ${j.jobs} workers, ${age(j.grantedAt)}${j.capMs ? ` of a ${mins(j.capMs)} cap` : ""}${j.termAt ? ", STOPPING at its cap" : slow(j)}`).join("\n")}` : "running: nothing");
     console.log(queued.length ? `queued:${state.waiting?.why ? ` (${state.waiting.why})` : ""}\n${queued.map((j) => `${row(j)}  waiting ${age(j.submittedAt)}`).join("\n")}` : "queued: nothing");
     if (done.length) console.log(`finished:\n${done.map((j) => `${row(j)}  exit ${j.exit ?? "-"}${j.durationMs ? `, ${Math.round(j.durationMs / 1000)}s` : ""}`).join("\n")}`);
 }
@@ -474,26 +552,29 @@ if (process.argv[1] && path.resolve(process.argv[1]) === SELF) {
     const kind = opts.includes("--kind") ? opts[opts.indexOf("--kind") + 1] : "unit";
     const wArg = opts.includes("--workers") ? opts[opts.indexOf("--workers") + 1] ?? "" : null;
     const workers = wArg == null ? 1 : /^\d+$/.test(wArg) ? Number(wArg) : 0;
+    const tArg = opts.includes("--max-time") ? opts[opts.indexOf("--max-time") + 1] ?? "" : null;
+    const maxTime = tArg == null ? maxTimeFromEnv() : parseMaxTime(tArg);
     if (op === "__job") await runJob(rest[0]);
     else if (op === "submit" || op === "run") {
-        if (!cmd.length) { console.error(`usage: test-slot.mjs ${op} [--kind unit|e2e|batch [--workers N]] -- <command…>`); process.exit(2); }
+        if (!cmd.length) { console.error(`usage: test-slot.mjs ${op} [--kind unit|e2e|batch [--workers N]] [--max-time MIN] -- <command…>`); process.exit(2); }
+        if (Number.isNaN(maxTime)) { console.error(`test-slot.mjs: --max-time is a whole number of minutes from 1 to ${MAX_TIME_MAX_MIN}`); process.exit(2); }
         if (wArg != null && (kind !== "batch" || workers < 1 || workers > BATCH_MAX_WORKERS)) { console.error(`test-slot.mjs: --workers is for --kind batch only, an integer from 1 to ${BATCH_MAX_WORKERS}`); process.exit(2); }
         if (op === "submit") {
-            const { ticket, shared, refused } = submit({ cmd, kind, workers });
+            const { ticket, shared, refused } = submit({ cmd, kind, workers, maxTimeMs: maxTime });
             if (refused) { console.error(`test-slot.mjs: refused: ${refused}`); process.exit(2); }
             console.log(`${ticket}${shared ? "  (the same tree and command was already queued: sharing its run)" : ""}\nwait: node scripts/test-slot.mjs wait ${ticket}\nlog:  ${path.join(slotDir(), `${ticket}.log`)}`);
         } else {
-            const { jobs } = await acquire({ cmd, kind, workers }).catch((e) => { if (e.code !== "TEST_SLOT_REFUSED") throw e; console.error(e.message.replace("test-slot:", "test-slot.mjs:")); process.exit(2); });
+            const { jobs } = await acquire({ cmd, kind, workers, maxTimeMs: maxTime }).catch((e) => { if (e.code !== "TEST_SLOT_REFUSED") throw e; console.error(e.message.replace("test-slot:", "test-slot.mjs:")); process.exit(2); });
             const child = spawn(cmd[0], cmd.slice(1), { stdio: "inherit", env: { ...process.env, ...(jobs ? { TEST_SLOT_JOBS: String(jobs) } : {}) } });
             child.on("exit", (c, s) => { process.exitCode = c ?? (s ? 128 : 1); });
         }
     } else if (op === "wait" && rest[0]) {
         const job = await waitFor(rest[0]);
         console.error(`test-slot: ${job.ticket} ${job.state}${job.exit != null ? `, exit ${job.exit}` : ""}`);
-        process.exit(job.state === "done" ? (job.exit ?? 1) : 1);
+        process.exit(job.state === "done" ? (job.exit ?? 1) : job.state === "timedout" ? 124 : 1);
     } else if (op === "cancel" && rest[0]) {
         const was = cancel(rest[0]);
         console.log(was ? `cancelled ${rest[0]} (was ${was})` : `no queued or running job ${rest[0]}`);
     } else if (op === "status") printStatus();
-    else { console.error("usage: test-slot.mjs submit|run [--kind unit|e2e|batch [--workers N]] -- <command…> | wait <ticket> | status | cancel <ticket>"); process.exit(2); }
+    else { console.error("usage: test-slot.mjs submit|run [--kind unit|e2e|batch [--workers N]] [--max-time MIN] -- <command…> | wait <ticket> | status | cancel <ticket>"); process.exit(2); }
 }
