@@ -126,7 +126,8 @@ the failing-first row in its own PR.
 - **A page can never start a move.** Not a page that wants a run's context pulled onto itself, and not one that wants a
   run pushed off it. The move is a message only the person's own surfaces (the HUD, the chat page) send, decided in the
   worker from the sender, never from anything a page says. The HUD runs `sidebar-app` in an EXTENSION iframe
-  (`services-ext.ts`), so the worker proves the sender by an extension-origin `sender.url`, as `SET_APPROVAL` does;
+  (`services-ext.ts`), so the worker proves the sender by `isExtensionSender` (an extension-origin `sender.url`,
+  `sw-site-access.ts`), as `SET_START_APPROVAL` does;
   and the move's message type is never listed in `HANDLE_MAP` (`page-relay.ts`), so no page's message is relayed to it.
   Those two are what make this hold. The red-team row is e3's, written after the feature PR
   merges: a page's message that names a run and a tab moves nothing and is answered with nothing.
