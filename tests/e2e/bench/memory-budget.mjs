@@ -215,7 +215,10 @@ export function withFileLock(lock, fn) {
 /** The ledger's live entries (a dead pid's entry is dropped on read). */
 export const ledger = (file = LEDGER_FILE) => withLedger(() => undefined, file);
 /** Add or replace the entry for `entry.pid`. */
-export const register = (entry, file = LEDGER_FILE) => withLedger((l) => [...l.filter((e) => e.pid !== entry.pid), { at: new Date().toISOString(), ...entry }], file);
+export const register = (entry, file = LEDGER_FILE) => withLedger((l) => [...l.filter((e) => e.pid !== entry.pid), { at: new Date().toISOString(), ...insideOf(entry), ...entry }], file);
+/** The test-slot job an entry this process writes runs INSIDE (`TEST_SLOT_TICKET`): `{ inside }`, or nothing. A job's own
+ *  `tests` entry is written by the queue, never inside itself. What lets notYetResident credit the job with it. */
+const insideOf = (entry, env = process.env) => (entry.kind !== "tests" && env.TEST_SLOT_TICKET ? { inside: env.TEST_SLOT_TICKET } : {});
 /** Merge `patch` into the entry for `pid`, if there is one. */
 export const update = (pid, patch, file = LEDGER_FILE) => withLedger((l) => l.map((e) => (e.pid === pid ? { ...e, ...patch } : e)), file);
 /** Drop the entry for `pid`. */
@@ -234,7 +237,7 @@ export function joinLedger({ tool, cmd = null, repo = null, file = LEDGER_FILE }
         withLedger((l) => {
             if (l.some((e) => e.pid === process.pid)) return undefined;
             joined = true;
-            return [...l, { at: new Date().toISOString(), kind: "tool", tool, pid: process.pid, repo, cmd }];
+            return [...l, { at: new Date().toISOString(), kind: "tool", ...insideOf({ kind: "tool" }), tool, pid: process.pid, repo, cmd }];
         }, file);
     } catch { return () => {}; }
     if (!joined) return () => {};
@@ -251,7 +254,7 @@ export function joinLedger({ tool, cmd = null, repo = null, file = LEDGER_FILE }
 export function roomWarning(n, { file = LEDGER_FILE, measure = () => measureLedger({ file }), avail = availableMemory, total = os.totalmem() } = {}) {
     try {
         const lim = resolveLimit({ machine: readLimit(file), total });
-        const st = budgetState({ limit: lim.bytes, entries: measure(), available: avail(), total, reserveFrac: lim.handSet ? 0 : RESERVE_FRAC });
+        const st = budgetState({ limit: lim.bytes, entries: measure(), available: avail(), total, reserveFrac: lim.handSet ? 0 : RESERVE_FRAC, self: process.env.TEST_SLOT_TICKET ?? null });
         const need = n * ASSUMED_BROWSER;
         const a = admits(st, need);
         return a.ok ? null : `${n} browser${n === 1 ? "" : "s"} (about ${fmtBytes(need)}) do not fit the bench's memory budget: ${a.why.replace("one more browser takes", "these take")}. Every sweep on this machine counts them; \`node --import tsx tests/e2e/bench/hold.mjs --ledger\` lists what holds memory.`;
@@ -274,7 +277,7 @@ export function measureLedger({ file = LEDGER_FILE, table = processTable() } = {
  * The budget as it stands: the ceiling, what the ledger's entries use (by kind), what the machine has available, the
  * share kept free, and the ROOM left (whichever runs out first). Every figure in bytes.
  */
-export function budgetState({ limit, entries, available, total = os.totalmem(), reserveFrac = RESERVE_FRAC, now = Date.now() }) {
+export function budgetState({ limit, entries, available, total = os.totalmem(), reserveFrac = RESERVE_FRAC, now = Date.now(), self = null }) {
     const byKind = {};
     for (const e of entries) byKind[e.kind] = (byKind[e.kind] ?? 0) + (e.rss ?? 0);
     // A test run (scripts/test-slot.mjs) is in the ledger so the bench sees it coming, not as part of the bench: its
@@ -282,7 +285,7 @@ export function budgetState({ limit, entries, available, total = os.totalmem(), 
     const used = Object.entries(byKind).reduce((a, [k, b]) => a + (k === "tests" ? 0 : b), 0);
     const reserve = Math.round(total * reserveFrac);
     // What is on its way: all of it against free memory, the bench's own admitted browsers against the limit as well.
-    const coming = notYetResident(entries, now), benchComing = notYetResident(entries.filter((e) => e.kind !== "tests"), now);
+    const coming = notYetResident(entries, now, self), benchComing = notYetResident(entries.filter((e) => e.kind !== "tests"), now);
     return { limit, used, byKind, available, coming, benchComing, total, reserve, room: Math.max(0, Math.min(limit - used - benchComing, available - coming - reserve)) };
 }
 
@@ -294,12 +297,20 @@ export const PENDING_MS = 30_000;
  * last PENDING_MS (each entry's `pending`, `[{ bytes, until }]`), and what a test run's workers will hold beyond what
  * its tree holds now (`planned` less `rss`). What the bench's budget and the test queue both subtract from free memory,
  * so two of them starting at once do not each count the same room.
+ *
+ * A bench process INSIDE a test-slot job (a sweep under `--kind batch`) is the job's plan being spent: what the entries
+ * marked `inside` that job hold or were admitted is taken off its plan, and the job's `ticket` that is `self` (the one
+ * this process runs inside) counts none of its plan, since the room it reserved is this process's to spend.
+ * @param {string | null} [self] the ticket this process runs inside (`TEST_SLOT_TICKET`), or null
  */
-export function notYetResident(entries, now = Date.now()) {
+export function notYetResident(entries, now = Date.now(), self = null) {
+    const live = (e) => (e.pending ?? []).reduce((a, p) => a + (p.until > now ? p.bytes : 0), 0);
     let n = 0;
     for (const e of entries) {
-        for (const p of e.pending ?? []) if (p.until > now) n += p.bytes;
-        if (e.kind === "tests" && e.planned) n += Math.max(0, e.planned - (e.rss ?? 0));
+        n += live(e);
+        if (e.kind !== "tests" || !e.planned || (self && e.ticket === self)) continue;
+        const nested = e.ticket ? entries.reduce((a, x) => a + (x.inside === e.ticket ? (x.rss ?? 0) + live(x) : 0), 0) : 0;
+        n += Math.max(0, e.planned - (e.rss ?? 0) - nested);
     }
     return n;
 }
@@ -440,9 +451,9 @@ export function startBudget({ limit = null, reserveFrac = null, onLimit = () => 
         mine = mine.filter((p) => p.until > Date.now());
         if (!mine.length) return entries;
         const own = entries.some((e) => e.pid === process.pid);
-        return own ? entries.map((e) => (e.pid === process.pid ? { ...e, pending: mine } : e)) : [...entries, { kind: "runner", pid: process.pid, rss: 0, pending: mine }];
+        return own ? entries.map((e) => (e.pid === process.pid ? { ...e, pending: mine } : e)) : [...entries, { kind: "runner", ...insideOf({ kind: "runner" }), pid: process.pid, rss: 0, pending: mine }];
     };
-    const state = () => ({ ...budgetState({ limit: cur.bytes, entries: withMine(), available, total, reserveFrac: reserveOf() }), limitSource: cur.source, limitBy: cur.by ?? null, limitAt: cur.at ?? null });
+    const state = () => ({ ...budgetState({ limit: cur.bytes, entries: withMine(), available, total, reserveFrac: reserveOf(), self: process.env.TEST_SLOT_TICKET ?? null }), limitSource: cur.source, limitBy: cur.by ?? null, limitAt: cur.at ?? null });
     record(state());
     const timer = setInterval(refresh, everyMs);
     timer.unref?.();
