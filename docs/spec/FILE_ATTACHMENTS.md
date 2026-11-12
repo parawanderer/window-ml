@@ -585,10 +585,18 @@ lane's read of this spec):
 
 **The mount** (the Pyodide lane's conditions, measured in Node against `pyodide-core/`, not in a browser worker):
 
-1. MEMFS, its listing loaded from the shelf when the interpreter starts and each file's bytes on first open (a lazy
-   node or an open hook; the mechanism is the Pyodide lane's to measure, and until it is, lazy is the rule and named
-   unmeasured), so a session near its quota is never loaded whole and a stateless cell pays only for what it opens;
-   with Emscripten's JS-side `FS.trackingDelegate`
+1. MEMFS, loaded from the shelf when the interpreter starts as an eager listing whose nodes are zero-copy views of
+   the transferred buffers (`node.contents = new Uint8Array(buffer)`): start-up costs one times the directory's size,
+   held as ArrayBuffers, with no wasm growth (measured: a 50 MB file added nothing beyond its buffer). Loading a
+   file's bytes on its first open was measured too and works on every read path, but saves nothing, since the bytes
+   are already in the worker by then; if it is ever built, `O_TRUNC` truncates before the open hook runs, so `open('w')`
+   needs a `setattr` wrapper or it restores the old bytes. A truly lazy mount, nothing held until a file is opened,
+   needs a synchronous channel (`FS.createLazyFile` uses synchronous XHR; WORKERFS over posted Blobs is unmeasured,
+   needs `FileReaderSync`, which the lockdown does not allow, and fails a write with EIO, not EROFS); it is not
+   proposed. A cell still
+   raises the cost: reading a whole file grows wasm memory by its size, `mmap` copies into the heap, and a copy out of
+   `attached/` is a new node, so item 6's three times bounds the worst case. With Emscripten's JS-side
+   `FS.trackingDelegate`
    (`onCloseFile`, `onWriteToFile`) seeing every close, raw `os.open`/`os.write`/`os.close` included. No
    Atomics-backed FS: Pyodide ships no synchronous remote backend, `Atomics.wait` would block the interrupt buffer so
    Stop would fall through to the kill, and it would save almost nothing on a terminate. The hooks live on the
@@ -597,8 +605,16 @@ lane's read of this spec):
    create, mkdir, utime; rename across it is EXDEV, rmdir of it EBUSY). File modes do not hold: a cell's own
    `os.chmod` undoes `0444` (measured). The shelf refuses a write to a person's file too, whatever path asks.
 3. On each close of a writable file the bytes are posted, transferred, through the worker's closure-held `post` to the
-   offscreen document, which owns the shelf write and acknowledges each post. JS cannot flush a Python file object's
-   buffer, so a file left open at cell end keeps only what reached MEMFS, and the model is told so: close your files.
+   offscreen document, which owns the shelf write and acknowledges each post. At cell end the harness, never the
+   epilogue a cell can rebind, flushes what is still open as a safety net: it scans `gc.get_objects()` by EXACT type
+   (`BufferedWriter`, `BufferedRandom`, a `TextIOWrapper` over a real `FileIO`, and `mmap.mmap`; never `isinstance`,
+   which would run a cell's own subclass's `flush()` inside the runner), skips the standard streams, flushes each, and
+   posts it, resolving an `os.fdopen` file's path from its fd. Measured, it found a file held in a global, a closure,
+   a list, an attribute, an unreferenced cycle and a suspended generator, at 7 to 99 ms by what is imported (349 ms
+   with a million objects held); an audit hook on `open` limits the scan to cells that opened a file. A flush over the
+   quota raises ENOSPC and the bytes stay buffered: each flush is wrapped, and the cell's result names the file and
+   the error. The flush cannot rescue gzip, zip or sqlite (each writes its last structure on close or commit), so the
+   model is still told: close your files.
    The offscreen re-checks every post itself: the path canonical and under `/files/`, never under `attached/`, a regular
    file, and the quota. A `full` cell keeps `js.postMessage` and can forge a post, so nothing the post claims is taken
    on its word.
@@ -633,8 +649,8 @@ model-made or page-derived file must not borrow. Its text is untrusted input lik
 **Lifetime and quota.** A session's files last as long as the session, until the person deletes them, the same as an
 attachment today. Nothing is evicted silently. When the session's files made by its runs are over the quota, a post is
 refused by name and the cell's result says so: `w.npy was not kept: the session holds 1.4 GB of files made by its runs;
-delete some in the files panel.` Open: whether a write can fail with ENOSPC at the time it is made, rather than at
-close.
+delete some in the files panel.` A flush over the quota raises ENOSPC for that file
+when it is made, and the cell's result names it (item 3).
 
 **The host's disk.** `/files/` is the browser sandbox's, never the `ml.sh` workspace's, and the two never alias: an argv
 item `/files/x` is a host path, as today. Bytes cross only as `@file:` handles: `ml.sh.put` writes one out (ruling 3),
@@ -670,8 +686,10 @@ and the read-back from disk: the async lane.
 - a model-made file described to the model as attached by the person, in every sentence that names a file.
 
 **Not measured.** A terminate racing the last post (the ack is there for it); a lifted-bridge route to the FS object;
-anything in a real browser worker rather than Node; the lazy load on first open (item 1); whether the runner can find
-the io objects still open at cell end and flush them (item 3).
+anything in a real browser worker rather than Node; WORKERFS over posted Blobs (item 1); the audit hook under the
+lockdown (item 3). Measured since the spec merged (session-mail
+`20261112-1712Z-python-packages-to-chat-page-files-lazy-and-flush.md`): the zero-copy listing (item 1) and the flush at
+cell end (item 3).
 
 **Backups.** A backup never carries the value store today (`ml-values` is marked `never`, "fetched tables a run
 holds; refetchable", `src/backup/backup-inventory.ts`). That holds for fetched tables, not for a person's attachment
@@ -683,7 +701,9 @@ Fetched values stay out.
 
 **Open.**
 
-- The quota's value and where it is set: a DevTools Settings flag, by the standing rule for a new setting.
+- The quota's value and where it is set: a DevTools Settings flag, by the standing rule for a new setting. The whole
+  directory loads at start (item 1), so the quota is also a start-time budget: the value sits under the worker's
+  2.6 GB heap with room for item 6's worst case.
 - A post arriving for a path the person deleted or renamed during the run. The lean: it is kept under the written name
   as a new file, and the inbox notice says so, since the delete removed the old bytes, not the model's work.
 - Whether a frozen version's provenance "read from disk <path>" may reach a page through `dereference`, or is scrubbed
