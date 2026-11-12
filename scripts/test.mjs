@@ -23,6 +23,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { stalenessReport } from "./check-dist-fresh.mjs";
 import { acquire } from "./test-slot.mjs";
+import { watchRunner } from "./watch-runner.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -128,7 +129,7 @@ const GENRES = {
             "redteam-worker-shot.test.mjs", "redteam-bench-stop.test.mjs", "redteam-hard-python-cancel.test.mjs", "redteam-policy-ask-free-tiers.test.mjs",
             "redteam-presence-ask.test.mjs", "redteam-brand-tag.test.mjs", "redteam-task.test.mjs", "redteam-act-consumer.test.mjs", "redteam-person-word.test.mjs", "redteam-coercion.test.mjs", "redteam-embed.test.mjs",
             "redteam-attach-boundary.test.mjs", "redteam-cdp-result.test.mjs", "redteam-ctor-iterable.test.mjs", "redteam-sh-argv-pointer.test.mjs", "redteam-sh-put.test.mjs",
-            "redteam-peek-tail.test.mjs"],
+            "redteam-peek-tail.test.mjs", "redteam-page-context.test.mjs"],
     },
     // The chat page's own logic (the client store, the view prefs, the local host) and the check that its web build
     // never reaches `chrome`. Its browser half is Playwright: `npm run test:chat` runs both.
@@ -347,8 +348,14 @@ function runFiles(list) {
             process.exit(1);
         }
     }
-    spawn(process.execPath, [...NODE_ARGS, ...ordered.map((f) => `tests/${f}`)],
-        { cwd: ROOT, stdio: "inherit" }).on("exit", (c) => process.exit(c ?? 1));
+    // `watchRunner`, not a bare `on("exit")`: a runner that vanished without its exit firing used to hold this
+    // process — and the machine-wide slot with it — forever (20261109T094442-4a6b50). A hang now fails loudly.
+    const child = spawn(process.execPath, [...NODE_ARGS, ...ordered.map((f) => `tests/${f}`)],
+        { cwd: ROOT, stdio: "inherit" });
+    watchRunner(child).then(
+        (c) => process.exit(c),
+        (e) => { console.error(String(e?.message ?? e)); process.exit(1); },
+    );
 }
 
 // `--files a.test.mjs tests/b.test.mjs` runs exactly those, whatever genre they fall in. It exists because
