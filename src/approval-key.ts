@@ -31,15 +31,15 @@ export function approvalKey(runId: string, seq: number, ask?: unknown): string |
  * @returns the payload
  */
 export function approvalPayload(d: { hash: string; seq: number; decision?: unknown; persist?: unknown; feedback?: unknown; ask?: unknown; files?: unknown }): import("./contract").SetApprovalPayload {
-    // A python_install card's rows, rebuilt field by field (`rowsFromAnswer`); rows that do not check out are dropped,
-    // and the worker then denies the answer as carrying none.
-    const files = d.files !== undefined ? rowsFromAnswer(d.files) : undefined;
+    // A python_install card's rows, rebuilt field by field (`rowsFromAnswer`). Rows that do not check out cross as `null`,
+    // so the worker denies the answer as malformed, never as one that carried none (`judgeAnswer`).
+    const files = d.files !== undefined ? rowsFromAnswer(d.files) ?? null : undefined;
     return {
         runId: d.hash, seq: d.seq, decision: !!d.decision, persist: !!d.persist,
         ...(typeof d.feedback === "string" && d.feedback ? { feedback: d.feedback.slice(0, 2000) } : {}),
         // Present means an ask was meant, whatever its type: the worker's approvalKey refuses a malformed one. Dropping it
         // here would turn the answer into one for the step's own gate.
         ...(d.ask !== undefined ? { ask: d.ask as string } : {}),
-        ...(files ? { files } : {}),
+        ...(files !== undefined ? { files } : {}),
     };
 }

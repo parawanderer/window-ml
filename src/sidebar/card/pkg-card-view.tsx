@@ -59,7 +59,7 @@ export function PkgCardRender({ request, verdict }: { request: { name: string; v
             <div class="pkg-head">Install <Field cls="pkg-asked" text={asked} />: {verdict.files.length} {verdict.files.length === 1 ? "file" : "files"}, each checked against its hash.</div>
             <div class="pkg-rows">{verdict.files.map((r, i) => <Row key={i} r={r} />)}</div>
             <div class="pkg-total">{verdict.totalBytes ? `${formatBytes(verdict.totalBytes)} to download` : "Nothing to download: every file is in the core"}</div>
-            {verdict.loaded.length ? <div class="pkg-loaded">Already loaded: {verdict.loaded.join(", ")}</div> : null}
+            {verdict.loaded.length ? <div class="pkg-loaded">Already loaded: {verdict.loaded.map((n, i) => <>{i ? ", " : ""}<Field cls="pkg-loaded-name" text={n} /></>)}</div> : null}
         </div>
     );
 }

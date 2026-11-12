@@ -199,7 +199,10 @@ for (const [what, f] of Object.entries(MALFORMED)) {
         const r = await installRun([MANY], { answer: approveWith(f) });
         assert.ok(r.results[0].includes(DENIAL), r.results[0]);
         assert.equal(r.mismatches.length, 1);
+        assert.equal(r.mismatches[0].reason, "files-malformed", what);
         assert.equal(judgeOf(r, f(rowsOf(r.cards[0]))).reason, "files-malformed", what);
+        // What the sidebar sends for rows that did not check out (approvalPayload): malformed, not absent.
+        assert.equal(judgeOf(r, null).reason, "files-malformed", what);
     });
 }
 
@@ -305,11 +308,12 @@ test("approvalPayload passes valid files through as fresh objects", () => {
     assert.notEqual(p.files[0], rows[0]);
 });
 
-test("approvalPayload drops files that do not check out, and has no files key when none was sent", () => {
+test("approvalPayload sends files that do not check out as null (the worker denies them as malformed), and has no files key when none was sent", () => {
     const bad = [{ name: "six", version: "1", filename: "f", source: "lock", size: null, sha256: "xyz" }];
     for (const files of [bad, "rows", [{ extra: 1 }], [null], { length: 0 }, [{ name: "six", version: "1", filename: "f", source: "lock", size: null, sha256: "a".repeat(64), more: 1 }]]) {
         const p = approvalPayload({ hash: "h", seq: 1, decision: true, files });
-        assert.ok(!("files" in p), JSON.stringify(files));
+        assert.ok("files" in p, JSON.stringify(files));
+        assert.equal(p.files, null, JSON.stringify(files));
     }
     assert.ok(!("files" in approvalPayload({ hash: "h", seq: 1, decision: true })));
     assert.equal(approvalPayload({ hash: "h", seq: 1, decision: true, files: [] }).files?.length, 0);

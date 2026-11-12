@@ -272,7 +272,7 @@ export interface SetApprovalPayload {
     ask?: string;
     /** On approving a python_install card: the rows it showed (src/python/pkg-card.ts). The worker approves only when
      *  they equal the rows it froze, field by field; absent or different, the answer is a denial. */
-    files?: import("./contract-render").PkgRow[];
+    files?: import("./contract-render").PkgRow[] | null;
 }
 
 /** CANCEL_RUN payload — abort a background-hosted run by id (the HUD's "Cancel agent run"). Harmless
