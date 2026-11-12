@@ -2,8 +2,8 @@
 
 **Status: slices 1 and 2 built (2026-10-28/29); slice 3 under way: the held rows, the `@file:` pointer, the `pages`
 verb, attaching a PDF to an agent run, and every attachment to a worker-built run (any message) and a long paste as
-pointers are built; `ml.dereference` of `@file:`, `look` at a document, Python's `files`, the files panel and upload
-progress are next (Shane and the calm-chat-motion session).** The order is
+pointers, and `ml.dereference` of `@file:`, are built; `look` at a document, Python's `files`, the files panel and
+upload progress are next (Shane and the calm-chat-motion session).** The order is
 three slices, each landing on its own: text files, then PDFs, then documents as `@file:` pointers in agent runs. Slice
 3's contact points with the python, shell and policies lanes were ruled on by their coordinator (2026-10-28,
 "Rulings" below).
@@ -294,7 +294,8 @@ requires the adversarial tests in readonly-exec.md ("The rule for extending the 
 the `FileShelf` a run's `TokenStore` holds files on; the `pages` verb (`PIPE_PAGES_MAX`, 50 a stage); `derefLocally`'s
 `@file:` branch and the inventory's files. The outline says `Read with dereference(@file:…, pipe "pages 1-3")` only:
 `look` with a document target is not built. Nothing notes a file on the shelf yet: attaching a PDF to an agent run,
-which mints the pointer and stores its rows, is the next change. `ml.dereference` refuses `@file:` with a sentence.
+which mints the pointer and stores its rows, is the next change. `ml.dereference` refused `@file:` with a sentence then
+(read since 2026-11-12, below).
 
 **Built (2026-11-07, the attaching side).** A PDF attached to an agent run's first message (`agent.start`, the HUD,
 the panel) is read once in the offscreen document, its bytes (`bytes`) and read document (`paged`) stored as held rows
@@ -304,6 +305,14 @@ outline as its body. A PDF that will not read, or that the store cannot keep bes
 with the reason, and what was stored by then is released. The pointers ride `StartRunPayload.files` (stripped from a
 page's own payload, honoured only on a worker-built run), so the shelf comes back after a worker eviction. A message
 to a run under way was refused a PDF then; "Every attachment to an agent run as a pointer" below lifted that.
+
+**Built (2026-11-12, `ml.dereference`).** Code reads an attached file as the tool does: `await
+ml.dereference("@file:3fa91c2", { pipe: "pages 3-5" })` answers the PDF's `<page>` sections (a text file's text), and
+the value's `file` says what it is (`name`, `type`, `bytes`, `turn`, and `pages` or `lines`); `tool` is `"attached"`.
+It is read in the worker from the run's held rows, by a read-only survey, an approved exec's isolated world, or a
+Python cell over the wire; the store key never leaves the worker. An exec in the page's main world is refused it, as a
+stored text is not read whole there. The pointer macro stays `@tool:`'s alone. Held back: a `pages` array on the value
+(page numbers already travel in the sections, and `pages N` selects one).
 
 **Looking at pages.** `look` takes a document target: `look({ doc: "@file:3fa91c2", pages: "4", question })`. The
 pages are rendered from the stored bytes by pdf.js in the offscreen document, then go down the existing vision path

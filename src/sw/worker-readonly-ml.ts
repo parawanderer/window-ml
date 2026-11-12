@@ -10,6 +10,8 @@ import type { DerefRead, DerefValue } from "../contract/contract-pointers";
 import { DerefText } from "../tools/deref-read";
 import { pipeStages, derefPipe, TokenStore } from "../pointers/token-pipe";
 import { mlPipe, type PipeLimits } from "../pointers/text-pipe";
+import { fileSections } from "../pointers/file-pointer";
+import type { PdfDoc } from "../pdf/pdf-read";
 import { mlJsonPath } from "../json-path";
 import { mlSchema } from "../ml/ml-schema";
 import { mlRange } from "../util";
@@ -38,6 +40,14 @@ export type RunDeref = (ref: string, pipe?: string | string[], limits?: PipeLimi
 export async function derefWhole(runId: string, deref: RunDeref, ref: string, stages: string[], limits?: PipeLimits): Promise<DerefRead> {
     const base = deref(ref);
     const key = base.meta?.value, meta = base.meta;
+    // An attached file is read here, every time, from the run's held rows: a PDF's read document as its `<page>`
+    // sections (what the dereference tool reads), a text file as itself. The key stays here; the caller gets the file.
+    if (key && meta?.file) {
+        const stored = await readStoredText(key, runId, !stages.length && limits?.charge ? limits.charge : undefined);
+        const body = meta.file.lines != null ? stored : fileSections(JSON.parse(stored) as PdfDoc);
+        const { value: _key, ...rest } = meta;
+        return { value: derefPipe({ id: meta.id, tool: meta.tool, kind: "text", out: body, t: 0, step: 0 }, "out", stages, limits), meta: rest };
+    }
     if (!key || !meta || meta.table || meta.kind === "table" || TokenStore.slotOf(ref) === "in") {
         if (stages.length) return deref(ref, stages, limits);
         limits?.charge?.(base.value.length);

@@ -676,16 +676,19 @@ test("a read stopped short says so in the read's header and the inventory, as th
     const one = withFile({ pages: 1, read: 1 });
     const o = await drive([call("dereference", {})], () => ({ result: "" }), { tokenStore: one.tokenStore, readText: one.readText });
     assert.match(derefResult(o), /PDF, 1 page, turn 1\nRead one by pages: token "@file:\S+", pipe "pages 1"\./);
-    let sink;
-    await drive([], () => ({ result: "" }), { tokenStore: one.tokenStore, readText: one.readText, tokenSink: (fn) => { sink = fn; } });
-    assert.throws(() => sink(`@file:${one.f.id}`), /pipe "pages 1"\.$/);
 });
 
-test("ml.dereference in code refuses an attached file with a sentence naming the tool that reads it", async () => {
-    const { tokenStore, f, readText } = withFile();
+test("ml.dereference's resolver answers an attached file with what it is and its stored key, never its text, and reads nothing", async () => {
+    const { tokenStore, f, reads, readText } = withFile();
     let sink;
     await drive([], () => ({ result: "" }), { tokenStore, readText, tokenSink: (fn) => { sink = fn; } });
-    assert.throws(() => sink(`@file:${f.id}`), /cannot read an attached file yet\. Read its pages with the dereference tool/);
+    const r = sink(`@file:${f.id}`, "pages 2");
+    assert.equal(r.value, `@file:${f.id} "report.pdf": attached by the person. PDF, 4 pages.`);
+    assert.deepEqual(r.meta, { id: f.id, tool: "attached", kind: "text", step: 0, value: "k-doc",
+        file: { name: "report.pdf", type: "application/pdf", bytes: 900, turn: 1, pages: 4 } });
+    assert.deepEqual(reads, [], "the resolver cannot wait on the store, so it does not read it");
+    assert.deepEqual(sink('@file:"report.pdf"').meta.id, f.id, "by its quoted name too");
+    assert.throws(() => sink("@file:report.pdf"), /is a file NAME, and a name must be quoted/, "a bad reference throws the tool's sentence");
 });
 
 // --- an attached text file, or a long paste: `@file:` read as its text ----------------------------------------------
@@ -708,11 +711,83 @@ test("dereference @file: of a text file reads its text through the pipe, with a 
     assert.ok(!/<page/.test(grep + head), "a text file has no page sections");
 });
 
-test("the inventory lists a text file with its lines and how to read it; ml.dereference's refusal names a pipe that suits it", async () => {
+test("the inventory lists a text file with its lines and how to read it; ml.dereference's resolver says it has lines, not pages", async () => {
     const { tokenStore, f, readText } = withText();
     const r = await drive([call("dereference", {})], () => ({ result: "" }), { tokenStore, readText });
     assert.equal(derefResult(r), `1 file attached by the person:\n  @file:${f.id} "server.log" Text, 4 lines, turn 2\nRead one through a pipe: token "@file:${f.id}", pipe "head -n 100".\nNo tool outputs captured yet.`);
     let sink;
     await drive([], () => ({ result: "" }), { tokenStore, readText, tokenSink: (fn) => { sink = fn; } });
-    assert.throws(() => sink(`@file:${f.id}`), /cannot read an attached file yet\. Read it with the dereference tool: token "@file:\S+", pipe "head -n 100"\.$/);
+    assert.deepEqual(sink(`@file:${f.id}`).meta.file, { name: "server.log", type: "text/plain", bytes: 60, turn: 2, lines: 4 });
+});
+
+// --- ml.dereference of an attached file, read in the worker from the run's held rows (FILE_ATTACHMENTS.md, slice 3) ---
+
+const { IDBFactory, IDBKeyRange } = await import("fake-indexeddb");
+/** A run whose shelf holds a PDF and a text file, both stored as the attach path stores them (held rows of the run). */
+async function heldFiles(runId) {
+    globalThis.indexedDB ??= new IDBFactory();
+    globalThis.IDBKeyRange ??= IDBKeyRange;
+    // The store reads its budget from the settings; nothing else here touches chrome.
+    globalThis.chrome ??= { storage: { sync: { get: async (d) => d } }, alarms: { create() {}, onAlarm: { addListener() {} } } };
+    const { storeHeld } = await import("../src/sw/sw-values.ts");
+    const doc = await storeHeld(new Blob([JSON.stringify(FILE_DOC)]), "paged", "report.pdf", runId);
+    const text = await storeHeld(new Blob(["boot ok\nERROR disk full\nretry\n"]), "text", "server.log", runId);
+    const tokenStore = new TokenStore();
+    const pdf = tokenStore.files.note({ id: fileId(runId, 0), name: "report.pdf", type: "application/pdf", bytes: 900, pages: 4, read: 4, turn: 1,
+        doc: doc.key, data: "k-data", sha256: "aa", chars: 100, figures: [], scans: [] });
+    const log = tokenStore.files.note({ id: fileId(runId, 1), name: "server.log", type: "text/plain", bytes: 30, lines: 3, pages: 0, read: 0, turn: 2,
+        doc: text.key, data: text.key, sha256: "bb", chars: 30, figures: [], scans: [] });
+    let deref;
+    await drive([], () => ({ result: "" }), { tokenStore, tokenSink: (fn) => { deref = fn; } });
+    return { deref, pdf, log, keys: [doc.key, text.key] };
+}
+
+test("ml.dereference reads an attached PDF as its page sections and a text file as its text, through the pipe, with no store key in what it answers", async () => {
+    const { derefWhole } = await import("../src/sw/worker-readonly-ml.ts");
+    const { pipeStages } = await import("../src/pointers/token-pipe.ts");
+    const { deref, pdf, log, keys } = await heldFiles("deref-file-a");
+    const whole = await derefWhole("deref-file-a", deref, `@file:${pdf.id}`, []);
+    assert.match(whole.value, /^<page n="1">\npage 1 text\nrevenue 10\n<\/page>\n<page n="2">/);
+    assert.equal((whole.value.match(/<page n=/g) ?? []).length, 4, "every page");
+    assert.deepEqual(whole.meta, { id: pdf.id, tool: "attached", kind: "text", step: 0, file: { name: "report.pdf", type: "application/pdf", bytes: 900, turn: 1, pages: 4 } });
+    const piped = await derefWhole("deref-file-a", deref, '@file:"report.pdf"', pipeStages("pages 2-3 | grep revenue"));
+    assert.equal(piped.value, "revenue 20\nrevenue 30");
+    const text = await derefWhole("deref-file-a", deref, `@file:${log.id}`, pipeStages("grep -n ERROR"));
+    assert.equal(text.value, "2:ERROR disk full");
+    assert.equal(text.meta.file.lines, 3);
+    for (const r of [whole, piped, text]) for (const k of keys) assert.ok(!JSON.stringify(r).includes(k), "the held row's key stays in the worker");
+    await assert.rejects(derefWhole("deref-file-a", deref, `@file:${pdf.id}`, pipeStages("pages 9")), /this file holds pages 1-4; it has no page 9/);
+});
+
+test("ml.dereference of an attached file: an unpiped read is charged its size, so a survey's budget bounds a loop of them", async () => {
+    const { derefWhole } = await import("../src/sw/worker-readonly-ml.ts");
+    const { deref, pdf } = await heldFiles("deref-file-b");
+    const charged = [];
+    await derefWhole("deref-file-b", deref, `@file:${pdf.id}`, [], { charge: (n) => charged.push(n) });
+    assert.equal(charged.length, 1);
+    assert.ok(charged[0] >= JSON.stringify(FILE_DOC).length, `charged ${charged[0]}`);
+});
+
+test("ADVERSARIAL: another run's resolver, or a run that does not hold the rows, reads an attached file as absent, never as its text", async () => {
+    const { derefWhole } = await import("../src/sw/worker-readonly-ml.ts");
+    const a = await heldFiles("deref-file-c");
+    // The same shelf entry, read on behalf of a run that does not hold the rows: the store's holders decide, not the pointer.
+    await assert.rejects(derefWhole("deref-file-other", a.deref, `@file:${a.pdf.id}`, []), /ValueMissing|not in the store/);
+    // A run whose own shelf is empty does not resolve another run's file id.
+    let empty;
+    await drive([], () => ({ result: "" }), { tokenStore: new TokenStore(), tokenSink: (fn) => { empty = fn; } });
+    await assert.rejects(derefWhole("deref-file-c", empty, `@file:${a.pdf.id}`, []), (e) => !/revenue/.test(e.message));
+});
+
+test("a read-only survey in the worker reads an attached file: its pages by pipe, and what it is from `.file`", async () => {
+    const { workerReadonlyMl } = await import("../src/sw/worker-readonly-ml.ts");
+    const { evalReadonlyInWorker } = await import("../src/sw/sw-readonly.ts");
+    const { deref, pdf } = await heldFiles("deref-file-d");
+    const ml = workerReadonlyMl("https://a.example/", deref, "deref-file-d");
+    const r = await evalReadonlyInWorker({ js: `const v = await ml.dereference("@file:${pdf.id}", { pipe: "pages 3 | grep revenue" }); return [v.text, v.file.pages, v.file.name, v.type]` }, { ml });
+    assert.equal(r.kind, "answered", JSON.stringify(r));
+    assert.match(r.result, /revenue 30/);
+    assert.match(r.result, /report\.pdf/);
+    const macro = await evalReadonlyInWorker({ js: `return @file:${pdf.id}.text.length` }, { ml });
+    assert.notEqual(macro.kind, "answered", "the pointer macro is @tool:'s alone; a file is read by ml.dereference");
 });
