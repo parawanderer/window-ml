@@ -10,7 +10,8 @@
 //
 // Electricity is estimated the same way, in Wh: the mean of the model's recent past runs the box log has energy for
 // (electricity.mjs), at the same fallbacks, and priced at the rate the coming runs will record. A cloud model whose runs
-// never drew on the box is estimated to draw nothing; a local model with no energy on record has no estimate.
+// never drew on the box, or that the price book knows to be a cloud model, is estimated to draw nothing; a local model
+// with no energy on record has no estimate.
 
 import { existsSync } from "node:fs";
 import { priceBook, callCost, PRICE_CURRENCY } from "../../../src/spend/price-book.ts";
@@ -193,8 +194,9 @@ export function estimateCheck(start, end) {
 /**
  * Each cell's electricity estimate (`cells` as predictCells takes them): `{ Wh, basis, n }` from the mean of its model's
  * most recent past runs the box log has energy for (`energyOf`, run → `{ Wh }`, runEnergy's Map), at the same fallbacks.
- * A model none of whose past runs drew on the box is estimated at 0 Wh unless `localOf(model)` says it is local, which
- * makes it null: no estimate, never 0.
+ * A model none of whose past runs drew on the box is estimated at 0 Wh when `localOf(model)` is false (a known cloud
+ * model, even one never run), or when it is unknown (undefined) but has run before; `localOf` true makes it null: no
+ * estimate, never 0. A model never run and not known stays null.
  */
 export function predictEnergy(cells, history, energyOf, localOf = () => false, { recent = RECENT } = {}) {
     const drew = history.filter((r) => energyOf.has(r.run));
@@ -204,7 +206,10 @@ export function predictEnergy(cells, history, energyOf, localOf = () => false, {
             const last = newest(runs, recent);
             return { Wh: mean(last.map((r) => energyOf.get(r.run).Wh)), basis, n: last.length };
         }
-        return !localOf(model) && history.some((r) => r.model === model) ? { Wh: 0, basis: "none", n: 0 } : null;
+        // `localOf` answers true (local), false (known to be a cloud model: it draws nothing, history or not) or anything
+        // else (not known: it draws nothing only if it has run before without drawing).
+        const local = localOf(model);
+        return local === false || (!local && history.some((r) => r.model === model)) ? { Wh: 0, basis: "none", n: 0 } : null;
     });
 }
 
@@ -238,7 +243,7 @@ export function energyForecast(pred, { stateOf, spentOf = () => null, modelOf, c
 export function energyForecastText(f, { start = false } = {}) {
     const runs = (n) => `${n} run${n === 1 ? "" : "s"}`;
     const cost = f.remainingCost != null ? `, about ${money(f.remainingCost, f.currency)} at ${f.perKwh} ${f.currency}/kWh` : " (no electricity price set: energy only)";
-    const apart = f.unknown ? `; ${runs(f.unknown)} on a local model with no energy on record, not in it` : "";
+    const apart = f.unknown ? `; ${runs(f.unknown)} on a model with no energy on record (a local one, or one the price book does not know), not in it` : "";
     return start
         ? `electricity estimate: about ${f.remainingWh.toFixed(2)} Wh for the ${runs(f.left)} to run${cost}${apart}`
         : `electricity ${f.spentWh.toFixed(2)} Wh so far; about ${f.totalWh.toFixed(2)} Wh by the end (${runs(f.left)} left${f.remainingCost != null ? `, about ${money(f.remainingCost, f.currency)} for them at ${f.perKwh} ${f.currency}/kWh` : "; no electricity price set: energy only"})${apart}`;
