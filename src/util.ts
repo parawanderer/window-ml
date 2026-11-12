@@ -115,6 +115,8 @@ export const pageContext = (hasTool?: (name: string) => boolean): string => {
     const parts = [];
     try { if (typeof location !== "undefined" && location.href) parts.push(`URL: ${location.href}`); } catch {}
     try { if (typeof document !== "undefined" && document.title) parts.push(`Title: ${truncate(document.title, 80)}`); } catch {}
+    // Half a page reads as the page unless something says otherwise: the parser has not reached the end of the document.
+    try { if (typeof document !== "undefined" && document.readyState === "loading") parts.push("Still loading: the page has not finished loading, so what you read may be incomplete."); } catch {}
     try {
         const lang = (typeof document !== "undefined" && document.documentElement && document.documentElement.getAttribute)
             ? document.documentElement.getAttribute("lang") : null;
