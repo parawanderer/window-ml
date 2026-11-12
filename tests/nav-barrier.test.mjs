@@ -178,3 +178,49 @@ test("null leaves nothing to refuse (a fresh document about to re-adopt); an unn
     b.noteReadopted(6, "fresh");
     assert.equal(b.accepts(6, undefined), false, "but not outside one");
 });
+
+// --- a navigation that never commits: noteNoCommit lifts the barrier ---
+
+test("noteNoCommit releases a held waiter, and whenReady resolves true", async () => {
+    const b = createNavBarrier();
+    b.noteNavigating(9);
+    const held = b.whenReady(9, 15000);
+    b.noteNoCommit(9);
+    assert.equal(await held, true);
+    assert.equal(b.isNavigating(9), false);
+});
+
+test("noteNoCommit clears a run-out expiry: the next wait is ready at once, not false", async () => {
+    const timers = manualTimers();
+    const b = createNavBarrier(timers.set, timers.clear);
+    b.noteNavigating(9);
+    const ranOut = b.whenReady(9, 15000); timers.fireAll(); assert.equal(await ranOut, false);
+    b.noteNoCommit(9);
+    assert.equal(await b.whenReady(9, 15000), true);
+    assert.equal(b.isNavigating(9), false);
+});
+
+test("noteNoCommit on a tab that is not navigating changes nothing", async () => {
+    const b = createNavBarrier();
+    b.noteNoCommit(5);
+    assert.equal(b.isNavigating(5), false);
+    assert.equal(await b.whenReady(5), true);
+    b.noteNavigating(5);
+    b.noteNoCommit(5);
+    b.noteNoCommit(5);   // twice is harmless
+    assert.equal(b.isNavigating(5), false);
+});
+
+test("after noteNoCommit a later navigation engages the barrier again", async () => {
+    const b = createNavBarrier();
+    b.noteNavigating(3);
+    b.noteNoCommit(3);
+    b.noteNavigating(3);
+    assert.equal(b.isNavigating(3), true);
+    let settled = false;
+    const p = b.whenReady(3, 15000).then((r) => { settled = true; return r; });
+    await Promise.resolve();
+    assert.equal(settled, false, "held again");
+    b.noteReadopted(3);
+    assert.equal(await p, true);
+});
