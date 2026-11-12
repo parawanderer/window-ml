@@ -1,0 +1,18 @@
+{
+  "commit": "aed17fe578fe6ba82e07ad0e99ec00240f04d37a",
+  "extracted_at": "2026-11-12T14:40:58+00:00",
+  "rows": [
+    "14:35:58.212 allow: ['cdn.jsdelivr.net', 'files.pythonhosted.org', 'pypi.org']",
+    "14:36:08.584 CONNECT cdn.jsdelivr.net:443 ALLOW",
+    "14:36:08.939 CONNECT pypi.org:443 ALLOW",
+    "14:36:08.981 CONNECT files.pythonhosted.org:443 ALLOW",
+    "14:36:10.362 CONNECT huggingface.co:443 DENY",
+    "14:36:18.601 CONNECT cdn.jsdelivr.net:443 ALLOW"
+  ],
+  "source": {
+    "core": "pyodide-restricted-314.0.3-35bd1d69",
+    "file": "pkg-imports/rerun-proxy.log",
+    "measured_on": "mlbox, 2026-11-12",
+    "raw": "slop-zone 27fc603 (rerun: d075ad2)"
+  }
+}

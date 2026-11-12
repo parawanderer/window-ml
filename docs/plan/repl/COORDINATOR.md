@@ -79,3 +79,7 @@ Read, in order: `README.md` here, the lane files, the specs the lanes cite, this
 anything addressed to `repl-specs` that has no reply. The lanes are Claude sessions; they read your messages literally,
 so write a ruling as a ruling (what, why, where it is written). Post nothing on GitHub without the session trailer the
 repo requires (AGENTS.md, "Branches, PRs and CI").
+
+## Where a record goes
+
+A record about a lane's PR goes in `README.md` here, never into a spec paragraph that lane's PR touches: the coordinator's appends to `SHELL.md:279` and `:282-285` made #1693 and #1698 conflict with main twice on 2026-11-12 (janitor-2's finding). Lanes merge main as the last step before handing over a head.

@@ -173,6 +173,24 @@ export type ProgramManifest = ManifestBase & (
     | { version: ManifestVersion; entrypoint?: undefined }
     | { entrypoint: ManifestEntrypoint; version?: undefined });
 
+/**
+ * Whether a manifest is an entrypoint script whose default command lacks `runs-code`: under it `envelopeFor` sends
+ * `exec: "program-only"` and the host refuses every child program the script starts, while the call still reports `ok`
+ * (builtins run). Only an `entrypoint` manifest is a script (a binary has none); an `unknown` default sends no envelope,
+ * so it is not flagged.
+ * @param m the manifest, stored or shipped
+ * @returns true when the editor should warn
+ */
+export function scriptLacksRunsCode(m: Pick<ProgramManifest, "entrypoint" | "command">): boolean {
+    if (!m.entrypoint) return false;
+    const e = m.command?.effects ?? [];
+    return !e.includes("runs-code") && !e.includes("unknown");
+}
+
+/** The warning the manifest editor shows for a manifest `scriptLacksRunsCode` flags. It speaks for the default command
+ *  only: a subcommand that declares `runs-code` gets no envelope when a call reaches it (`describeCall` descends). */
+export const SCRIPT_RUNS_CODE_WARNING = "This script's default command lacks runs-code: under it, any program the script starts will be refused under the sandbox, while the call still reports ok. Add \"runs-code\" to the default command's effects if it runs other programs.";
+
 /** A path the host is asked to resolve: argv index, and the separator to split on when the path is a flag's attached
  *  value (`--output=f`). The shape of the host's `pathArgs` entries (window-ml-host docs/PROTOCOL.md). */
 export type PathArg = { arg: number; split?: string; role: "read" | "write"; walk?: true };

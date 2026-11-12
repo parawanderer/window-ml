@@ -72,7 +72,8 @@ any new mechanism reports.
 | `page` | `discarded` | the tab was discarded with a call outstanding; `ms` is how long before we noticed |
 | `page` | `reloaded` | reloaded in place and about to retry; a `reason` of `gone` means the reload itself failed |
 | `page` | `recovered` | the retry answered, and how long it took |
-| `page` | `unreachable` (`asleep`/`gone`/`silent`/`unadopted`) | gave up, with how long it waited (`unadopted`: the page answered after a navigation it never re-adopted the run on) |
+| `page` | `unreachable` (`asleep`/`gone`/`crashed`/`busy`/`silent`/`unadopted`) | gave up, with how long it waited (`crashed`: the renderer died; `busy`: the content script missed three pings in a row on a tab that is not frozen; `unadopted`: the page answered after a navigation it never re-adopted the run on) |
+| `page` | `no-commit` (`navigate`) | a `navigate` committed nothing within `NAV_COMMIT_MS` while the tab still held the destination as pending, so the barrier was lifted and the tab is still on the page it was leaving |
 | `cdp` | `attached` (`already`) | the debugger was attached — the banner the person saw |
 | `cdp` | `refused` (`permission`/`busy`) | "CDP not enabled", or DevTools already holds the tab |
 | `cdp` | `detached` | paired with the attach, so the two bracket how long the run held the debugger |
@@ -114,8 +115,9 @@ debug, because a dropped record looks exactly like a mechanic that never happene
 
 So `tests/run-log.test.mjs` enumerates the names the emitters actually pass, by reading the emitter
 sources, rather than sampling them. One of them is not a literal at its emit site (`reason: e.state`
-on an unreachable page), so the guard reads those from where `TabState` is declared. Both directions
-are checked: every name emitted must survive the sanitizer, and every name the module's own convention
+on an unreachable page), so the guard reads those from the `TabState` and `PageUnreachableState`
+unions in page-reachable.ts. Both directions are checked: every name emitted must survive the
+sanitizer, and every name the module's own convention
 table lists must be one something emits.
 
 ## Deliberately not a line per probe
