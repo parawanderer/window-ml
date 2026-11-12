@@ -262,6 +262,19 @@ Flaky only (passed on retry, never blocked a run), worth knowing because two may
   document that loads in the registration window and misses the catch-up gets no page script until its next
   reload) — site-access lane's, a bug report until proven otherwise.
 
+- Follow-on to `review-look.spec.mjs:730` above (2026-11-08/12, the host-styling tables' other variants):
+  `review-look.spec.mjs:705` › `a reflection across the viewport (position:fixed, inset:0, -webkit-box-reflect)`
+  failed both tries on run 42455979689 (2026-11-08, main, e2e 3/3). `review-look.spec.mjs:712` › `will-change,
+  contain and an offset path` failed both tries on run 43198617151 / #1634 at `03fc6374` (2026-11-12, a docs-only
+  diff; "UI pixels outside where it painted before the rule" got 260640). The site-access lane measured this as
+  a SETUP race, not a pin gap: a fixed 400 ms wait after clicking the overlay tab, the "before" capture taken
+  while the panel was still closed or sliding — an open panel's 250584 outside pixels match CI's 260640. #1667
+  (`921dffc9`, test-only, janitor-3) replaces the wait with a poll for the laid-out panel. The :730 hide/recolour
+  table goes through the same setup, so its 2026-10-28 sighting above is likely the same race (the lane has not
+  measured it). When #1667 merges the shared setup changes; keep watching for a sighting after it before calling
+  this covered. The host-styling property itself is #581's (`60b61445`), routed to the site-access lane; a PR is
+  owed after #1660.
+
 - Seen once each (2026-10-28/29): `tests/redteam-python-sandbox.test.mjs` › `P2-handle route: a method of a Task
   SUBCLASS the cell defines does not run once the result is returned` (run 40753575484 attempt 1 on #1279, test
   node 26: `nothing scheduled by this route may run after the result returned, got {"woke":["armed","ran"]}` at
@@ -280,6 +293,27 @@ Flaky only (passed on retry, never blocked a run), worth knowing because two may
   pages framed in a tab get LIST_MODELS kinds, so the `popup.html` the test opens as a tab now POSTs `/api/show` and
   `postHits` counts it; fixed in the test on #1367 with Shane's OK (the baseline is taken after the popup's model
   listing settles, asserting the attack adds no POST). Do not add :2069 as flake.
+
+- Seen 2026-11-08 (twice on main) and again 2026-11-12 in #1648's runner-environment red: `tests/sidebar-live-
+  call.test.js:40` › `python_exec being written shows its code so far with a caret, then grows, then the step
+  replaces it` (the test starts at :29) — `AssertionError: the code, decoded, not the JSON`, `actual: ''` against
+  `/import math\s*print\(math\.pi/`, on runs 42455979689 and 42457685296 (main) and run 43198219126 / #1648 at
+  `eb19aef5`. Classified 2026-11-08 (the coordinator's lead): test-side timing in the row's own `typedOut` helper
+  (it settles when `.live-call-code` is unchanged for 200 ms), not a product bug and not order-dependent —
+  `useReveal`'s first tick is `tickDelay(firstRenderCost) = max(16, cost/0.25)` ms away (`reveal.ts:29-31`, armed
+  in `live-call.tsx:51-59`), so a render over 50 ms puts a whole tick gap inside the settle window and `''` is
+  the code element before that first tick (`shown: 0` at first paint). jsdom + highlighting under CI load is over
+  50 ms; locally it is not (janitor-3 could not reproduce at `eb19aef5`: 11/11 on five runs, three under 8 busy
+  loops, eight concurrent copies). If it reddens an unrelated PR: rerun the shard, do not chase. The fix, when
+  written, waits on the arrived text's own length being reached — never a wider fixed window, which cannot beat a
+  tick that scales with render cost.
+- Runner-environment one-off (2026-11-12, #1648 at `eb19aef5`, run 43198219126): `test (node 26)` went red in
+  suites the diff does not touch — stock-Pyodide lockdown reds (live-bridge leaks), several exec-shared-world
+  rows, `attach-pdf`, `isolated`, `sh-delete-manifests`, and the `sidebar-live-call` row above — while main's
+  `test (node 26)` was green at the time. The rerun on the same head completed success on every non-skipped job,
+  no push between the red and the green. Category: runner environment. The stock-Pyodide signature on a runner
+  that should have `pyodide-core` is a runner or fetch-step fault; if it reds the same way again, route it to
+  whoever owns the CI pyodide fetch step.
 
 node:test had no real failures in that window: every `not ok` was a documented `# TODO`.
 
@@ -313,7 +347,9 @@ Recently removed, recorded so nobody re-adds them from memory:
   retry-passed `1 flaky` (40751367821, 40752713621, 40874036389 on main; 40752930715, 40850226606 on PRs), 7 of
   the 9 in one 82-minute burst on 2026-10-28, all on e2e (2/3). The fix's proof: 10 of 10 e2e (2/3) shard reruns
   green on the head (the tally on #1345, jobs 123586226871–123637910312), the standard for a fixed-wait
-  replacement. The reveal-vs-follow race it exposed (find's
+  replacement; post-fix (2026-11-12, the measurement handed to the @ui lane): zero failed attempts across the 16
+  failed `tests.yml` runs on main since #1345, the row passed in two of those runs so the shard ran it. The
+  reveal-vs-follow race it exposed (find's
   `follow.current = false` undone by its own clamped scroll event, render-panel.tsx:968/:973) is routed to the
   sidebar lane in #1345's body. Do not add as flake.
 
