@@ -89,7 +89,7 @@ export interface MlSh {
      *  (`.envrc`, `.git/hooks/*`, …) that changed DURING the call, by it or by anything else, `[]` when none, or `null`
      *  when the host reported nothing (unknown, never "none"); `protectedChangedTruncated` means the list was cut.
      *  When `ml.current.runtime.capabilities` reports `shellTilde`, an argument or `cwd` that is `~` or starts with `~/`
-     *  is the home directory; nothing else is expanded.
+     *  begins at the home directory; nothing else is expanded.
      * @param argv the program and its arguments, e.g. `["rg", "-n", "TODO", "src"]`
      * @param opts `cwd` (absolute, or relative to the first workspace folder), `env` (variables to add; most make the
      *   call ask), `timeoutMs` (the host kills it then; default 120 s), `expectMs` (how long you expect it to take) */

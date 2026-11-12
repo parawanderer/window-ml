@@ -105,6 +105,24 @@ run's own artifact, never from what the model says it did (the pointer pilot sco
 task and input tokens per call, with spread. **Decision rule**: a cut ships when pass rate does not drop on any model
 and tokens per call fall; a cut that costs one model a task it used to pass is reworked, not shipped.
 
+## Review of 2026-11-12: the shell's new text, and the ten model-facing commits since 2026-10-29
+
+Read against the code, no panel or bench: every finding was a direct fix (method step 3), and none moved text out of a
+call or reworded a rule a run depends on.
+
+- **The argv refusal for an `@file:` item** (`heldValueRefusal`, `sh-call.ts`) told the model to `ml.sh.put` it to
+  `"inbox/<name>"`; the host never creates a folder, so a model that followed it got `NoParent`. It now says
+  `"<folder>/<name>"` into a folder that exists.
+- **`SH_TAIL_ABSENT`** (`sw-shell-call.ts`) lost "(it predates peek, or is reached over the hub)": names the model
+  cannot act on. It reads "This host reports a call's output only when it ends."
+- **The `shellTilde` clause** on `ml.sh.run`: `~/x` "begins at" the home directory rather than "is" it.
+- **Checked and kept**: `ml.sh.put`'s `~/…` is unconditional and right (every host with `put` expands `~`: host #31
+  shipped before #33, both first in v0.7.0); the `Detached` text and the `task` tool agree that a task ends with the
+  turn and its result also arrives on its own; the asked tail's cut names its pointer (HELD_BACK.md); the `ml.embed`
+  sentence in `UNATTENDED_CLAUSE` and its numbers in `agent_api_docs` are one rule in two calls, not a repeat;
+  `DerefMeta.file` matches what `agent-loop.ts` sets (`tool: "attached"`, `step: 0`).
+- **Not covered**: no model read any of it. The `~` canary row is the bench lane's.
+
 ## Tried and dropped: "the whole `ml` surface as TypeScript" (2026-10-12)
 
 The proposal was to replace "`agent_api_docs` lists the rest." in `SELF_CLAUSE` (`src/agent/prompts.ts`) with
