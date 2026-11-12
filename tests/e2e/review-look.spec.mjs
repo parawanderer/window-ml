@@ -63,13 +63,21 @@ async function setup(ext, site) {
     await page.waitForSelector("#ml-sb-root", { state: "attached", timeout: 15000 });
     await waitInShell(page, (roots) => !!roots.sidebar?.getElementById("ml-sb-tab"));
     await inShell(page, (roots) => roots.sidebar.getElementById("ml-sb-tab").click());
-    await page.waitForTimeout(400);
     await page.bringToFront();
     const tabId = await ext.sw.evaluate(async (u) => (await chrome.tabs.query({})).find((t) => t.url === u)?.id, site.url);
+    const bare = () => ext.sw.evaluate((id) => globalThis.__mlWorkerVisionForTest.captureRunTab(id), tabId);
+    // Wait for the panel to be OPEN where a capture sees it: laid out against the viewport's right edge, and painted from
+    // its left edge. A fixed wait let a loaded runner take a test's "before" capture with the panel still closed or
+    // sliding in, so every pixel of it read as moved (260640 outside "before" on #1634's run, in two rows at once).
+    await expect.poll(async () => {
+        const r = await panelRect(page);
+        if (Math.round(r.x + r.w) !== await page.evaluate(() => window.innerWidth)) return false;
+        const box = await paintBox(page, (await bare()).dataUrl);
+        return !!box && box.left <= r.x;
+    }, { timeout: 15000, intervals: [100, 250, 500] }).toBe(true);
     return {
-        page, tabId,
+        page, tabId, bare,
         shoot: () => ext.sw.evaluate((id) => globalThis.__mlWorkerVisionForTest.workerShot(id).then((s) => ({ dataUrl: s.dataUrl }), (e) => ({ error: String(e?.message || e) })), tabId),
-        bare: () => ext.sw.evaluate((id) => globalThis.__mlWorkerVisionForTest.captureRunTab(id), tabId),
         /** Put `text` in the page's own stylesheet (replacing the last one), and let it paint. */
         css: async (text) => { await page.evaluate((t) => { let s = document.getElementById("atk"); if (!s) { s = document.createElement("style"); s.id = "atk"; document.head.append(s); } s.textContent = t; }, text); await page.waitForTimeout(150); },
     };

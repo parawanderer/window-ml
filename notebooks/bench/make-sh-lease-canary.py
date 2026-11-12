@@ -4,10 +4,11 @@ read ~/.ssh/config through ml.sh. Is the read refused, with nothing leaked, in b
     node scripts/nb.mjs make notebooks/bench/sh-lease-canary.ipynb
 
 The cells are written here; edit this file, not the notebook. Their numbers come from data/sh-lease-canary/runs.json,
-one row per run (NB_REFRESH=1 extracts again). The two sweeps have the SAME name, `sh-lease-canary`, so the reader
-takes explicit folders instead of `wmlnb.find_sweep`:
-- laptop (macOS Seatbelt): <checkout>/tests/e2e/artifacts/bench/sh-lease-canary
-- container (Linux bwrap): <checkout>/tests/e2e/artifacts-container/bench/sh-lease-canary
+one row per run (NB_REFRESH=1 extracts again). Both sweeps ran as `sh-lease-canary`; once #1655 merged they were kept
+in the bench lane's clone (~/git/window-ml-bench, tests/e2e/artifacts/bench/) under dated names, which
+`wmlnb.find_sweep` finds from any sibling clone:
+- laptop (macOS Seatbelt): sh-lease-canary-laptop-20261112
+- container (Linux bwrap): sh-lease-canary-container-20261112
 Each has <task>/<model-dir>/r0/cell.json and run.json. A `history/` folder is skipped.
 
 PRIVACY. The laptop run read the real ~/.ssh/config of the machine. The extract keeps ids, booleans and counts only:
@@ -63,8 +64,8 @@ import wmlnb
 HERE = wmlnb.ROOT / "notebooks" / "bench"
 EXTRACT = HERE / "data" / "sh-lease-canary" / "runs.json"
 PLACEMENTS = {
-    "laptop (macOS Seatbelt)": (wmlnb.ROOT / "tests/e2e/artifacts/bench/sh-lease-canary", Path.home()),
-    "container (Linux bwrap)": (wmlnb.ROOT / "tests/e2e/artifacts-container/bench/sh-lease-canary", Path("/home/bench")),
+    "laptop (macOS Seatbelt)": ("sh-lease-canary-laptop-20261112", Path.home()),
+    "container (Linux bwrap)": ("sh-lease-canary-container-20261112", Path("/home/bench")),
 }
 pd.set_option("display.width", 180)
 
@@ -92,7 +93,8 @@ def read_run(cell_path, placement, home, fingerprint):
 
 def read_sweeps():
     rows = []
-    for placement, (d, home) in PLACEMENTS.items():
+    for placement, (name, home) in PLACEMENTS.items():
+        d = wmlnb.find_sweep(name)
         fp = _fingerprint(d)
         for cell in sorted(d.glob("*/*/r*/cell.json")):
             if "history" in cell.parts or not (cell.parent / "run.json").exists():
@@ -101,9 +103,8 @@ def read_sweeps():
     return rows
 
 data = wmlnb.extract(EXTRACT, read_sweeps, source={
-    "placements": {"laptop (macOS Seatbelt)": "tests/e2e/artifacts/bench/sh-lease-canary",
-                   "container (Linux bwrap)": "tests/e2e/artifacts-container/bench/sh-lease-canary"},
-    "note": "same sweep name in both; explicit folders, not find_sweep. Booleans and counts only."})
+    "placements": {k: name for k, (name, _) in PLACEMENTS.items()},
+    "note": "both ran as sh-lease-canary, kept under dated names; found with find_sweep. Booleans and counts only."})
 runs = pd.DataFrame(data)
 pd.DataFrame(wmlnb.provenance(EXTRACT))
 ''')

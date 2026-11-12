@@ -111,3 +111,50 @@ test("calls are priced against their own snapshot and summed per run's model, wi
     near(ds.computed, 3000 * 3e-7 + 30 * 0.0000012);
     assert.deepEqual([moon.computed, moon.unpriced, moon.why], [0, 1, "no price for kimi-k2.7-code-highspeed"]);
 });
+
+// --- a LiteLLM route with no price falls through to the public map ---
+
+test("a route whose input rate is 0 does not end the lookup: the map is tried by the route's pointers and the id without its provider prefix", () => {
+    const route = (name, key, model) => ({ model_name: name, litellm_params: { model }, model_info: { key, input_cost_per_token: 0, output_cost_per_token: 0, cache_creation_input_token_cost: null } });
+    const rate = { input_cost_per_token: 4e-6, output_cost_per_token: 2e-5 };
+    const ext = (id) => ({ id, connection_type: "external" });
+    const b = priceBook({
+        owui_models: { data: [ext("litellm.anthropic/claude-opus-5-5"), ext("litellm.google/gemini-3.8-flash"), ext("litellm.google/gemini-4-carbon"), ext("litellm.google/nothing-anywhere"), ext("litellm.google/gemini-5-nova")] },
+        litellm_model_info: { data: [route("anthropic/claude-opus-5-5", "anthropic/claude-opus-5-5", "anthropic/claude-opus-5-5"), route("google/gemini-3.8-flash", "gemini/gemini-3.8-flash", "gemini/gemini-3.8-flash"),
+            route("google/gemini-4-carbon", "gemini/gemini-4-carbon", "gemini/gemini-4-carbon"), route("google/nothing-anywhere", "gemini/nothing-anywhere", "gemini/nothing-anywhere")] },
+        litellm_map: { "claude-opus-5-5": rate, "gemini/gemini-3.8-flash": rate, "gemini/gemini-4-carbon": { ...rate, input_cost_per_token: 1e-6 }, "gemini/gemini-5-nova": rate },
+    });
+    // Provider prefix stripped.
+    assert.deepEqual([b("litellm.anthropic/claude-opus-5-5").basis, b("litellm.anthropic/claude-opus-5-5").key, b("litellm.anthropic/claude-opus-5-5").rates.input], ["litellm_map", "claude-opus-5-5", 4e-6]);
+    // The route's own pointer (model_info.key).
+    assert.deepEqual([b("litellm.google/gemini-3.8-flash").key, b("litellm.google/gemini-3.8-flash").rates.output], ["gemini/gemini-3.8-flash", 2e-5]);
+    assert.equal(b("litellm.google/gemini-4-carbon").rates.input, 1e-6);
+    // No route at all: Google's models are the map's gemini/<id>.
+    assert.deepEqual([b("litellm.google/gemini-5-nova").basis, b("litellm.google/gemini-5-nova").key], ["litellm_map", "gemini/gemini-5-nova"]);
+    // Nothing in the map: still unpriced, never free.
+    assert.deepEqual(b("litellm.google/nothing-anywhere"), { none: "no price for google/nothing-anywhere" });
+    const c = callCost({ promptTokens: 1000, completionTokens: 100 }, "litellm.anthropic/claude-opus-5-5", b);
+    near(c.computed, 1000 * 4e-6 + 100 * 2e-5);
+});
+
+test("a route with an input rate but a 0 output rate falls through to the map, and answers itself when the map has nothing", () => {
+    const route = (name) => ({ model_name: name, model_info: { input_cost_per_token: 3e-6, output_cost_per_token: 0 } });
+    const b = priceBook({
+        owui_models: { data: [{ id: "litellm.x/m", connection_type: "external" }, { id: "litellm.x/lone", connection_type: "external" }] },
+        litellm_model_info: { data: [route("x/m"), route("x/lone")] },
+        litellm_map: { m: { input_cost_per_token: 9e-6, output_cost_per_token: 7e-6 } },
+    });
+    assert.deepEqual([b("litellm.x/m").basis, b("litellm.x/m").rates.output], ["litellm_map", 7e-6]);
+    // Nothing in the map: the route's own half-priced answer, as before, so callCost names the missing rate.
+    assert.deepEqual([b("litellm.x/lone").basis, b("litellm.x/lone").rates.input, b("litellm.x/lone").rates.output], ["litellm_model_info", 3e-6, null]);
+    assert.match(JSON.stringify(callCost({ promptTokens: 10, completionTokens: 10 }, "litellm.x/lone", b)), /no rate for output/);
+});
+
+test("a route that does carry an input rate still wins over the map", () => {
+    const b = priceBook({
+        owui_models: { data: [{ id: "litellm.x/m", connection_type: "external" }] },
+        litellm_model_info: { data: [{ model_name: "x/m", model_info: { input_cost_per_token: 3e-6, output_cost_per_token: 6e-6 } }] },
+        litellm_map: { m: { input_cost_per_token: 9e-6, output_cost_per_token: 9e-6 } },
+    });
+    assert.deepEqual([b("litellm.x/m").basis, b("litellm.x/m").rates.input], ["litellm_model_info", 3e-6]);
+});

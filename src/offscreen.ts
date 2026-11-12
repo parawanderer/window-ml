@@ -25,6 +25,7 @@ export const BENCH_STOP_KILL_MS = 1000;
 export const BENCH_STOP_KILLED = "Stopped by restarting the sandbox: it did not answer the interrupt, so its variables are gone.";
 
 import { ValueStore } from "./pointers/value-store";
+import { PY_DETACHED_MAX_MS, PY_INTERRUPT_KILL_MS, ringAppend, type CellCancel } from "./python/py-lease";
 import { htmlToMarkdown } from "./dom/html-to-md";
 import { PNG_DATA_URL } from "./session/image-compact";
 import { defineState } from "./state-registry";
@@ -134,7 +135,10 @@ defineState({
 });
 let nextId = 1;
 type WireStamp = { client: string; run: string | null };
-const pending = new Map<number, { resolve: (r: PyResult) => void; timer: ReturnType<typeof setTimeout>; streamId?: string; armOnStart?: boolean; principal: string; wire?: WireStamp; spending?: boolean; bench?: boolean; started?: boolean; stopping?: boolean }>();   // state: plumbing
+// `cell` names a worker-hosted run's LEASED cell (the service worker's id for it, py-lease.ts): its start is told to the
+// service worker, its cap is the detached ceiling, its output is kept in `ring` for `task tail`, and a cancel reaches it
+// by that id. `stopOnStart` is a cancel that came before the cell started, done when it does.
+const pending = new Map<number, { resolve: (r: PyResult) => void; timer: ReturnType<typeof setTimeout>; streamId?: string; armOnStart?: boolean; principal: string; wire?: WireStamp; spending?: boolean; bench?: boolean; started?: boolean; stopping?: boolean; cell?: string; ring?: string; stopOnStart?: () => void }>();   // state: plumbing
 // THE `ml` WIRE (ML_WIRE.md): which worker a client handle's answers go back to. The handle is this
 // document's to stamp — the worker never sees it (LANE_1_PR2_DESIGN.md "Who stamps the handle"). An
 // `ask` first answer is NOT relayed down: the cell's `send` stays pending until the later `ML_ANSWER`
@@ -306,6 +310,8 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
         // this run's streamId (the page requestId), which relays it to the page; DON'T resolve the run.
         if (e.data?.partial) {
             const entry = pending.get(e.data.id);
+            // A leased cell's output is kept here, bounded, for `task tail`: the service worker keeps no copy.
+            if (entry?.cell !== undefined) entry.ring = ringAppend(entry.ring ?? "", String(e.data.chunk ?? ""));
             if (entry?.streamId) chrome.runtime.sendMessage({ type: "PY_STDOUT", streamId: entry.streamId, chunk: String(e.data.chunk ?? ""), ts: e.data.ts }).catch(() => { /* no receiver → drop */ });
             return;
         }
@@ -319,10 +325,17 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
         if (e.data?.started) {
             const entry = pending.get(e.data.id);
             if (entry) entry.started = true;   // the one a bench Stop may interrupt (`PY_INTERRUPT`)
-            if (entry?.armOnStart && !entry.stopping) {
+            // A LEASED cell: the service worker starts its lease now (it detaches the call past it), and the sandbox holds
+            // it to the detached ceiling instead of the 15 s, which the lease replaces.
+            if (entry?.cell !== undefined && !entry.stopping) {
+                clearTimeout(entry.timer);
+                entry.timer = killAfter(e.data.id, PY_DETACHED_MAX_MS, `The Python cell ran past ${PY_DETACHED_MAX_MS / 60_000} min and the sandbox was terminated; this run's names are lost.`, "timeout");
+                try { chrome.runtime.sendMessage({ type: "PY_STARTED", cell: entry.cell }).catch(() => { /* no worker listening */ }); } catch { /* context gone */ }
+            } else if (entry?.armOnStart && !entry.stopping) {
                 clearTimeout(entry.timer);
                 entry.timer = killAfter(e.data.id, PY_TIMEOUT_MS, `Python run exceeded ${PY_TIMEOUT_MS / 1000}s and was terminated — simplify the computation or reduce the input size.`, "timeout");
             }
+            if (entry?.stopOnStart) { const stop = entry.stopOnStart; entry.stopOnStart = undefined; stop(); }
             return;
         }
         // THE `ml` WIRE CALL (ML_WIRE.md): the cell's request, stamped HERE with the client handle and the run
@@ -380,7 +393,7 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
  *   ends there wedges the single Pyodide instance for every later call with nobody watching. In the bench a
  *   person is sitting in front of it, chose this, and can close the panel.
  */
-function runInWorker(code: string, image: string | null, hardened: boolean, tables: unknown, stream?: boolean, streamId?: string, env?: boolean, noTimeout?: boolean, complete?: { line: number; column: number; bench?: string }, bench?: { persist?: boolean; reset?: boolean }, transfer: ArrayBuffer[] = [], principal = hardened ? "own" : "full", wire?: WireStamp, inside = false, libraries?: { libraries?: unknown; library?: unknown }, bridges = false): Promise<PyResult> {
+function runInWorker(code: string, image: string | null, hardened: boolean, tables: unknown, stream?: boolean, streamId?: string, env?: boolean, noTimeout?: boolean, complete?: { line: number; column: number; bench?: string }, bench?: { persist?: boolean; reset?: boolean }, transfer: ArrayBuffer[] = [], principal = hardened ? "own" : "full", wire?: WireStamp, inside = false, libraries?: { libraries?: unknown; library?: unknown }, bridges = false, cell?: string): Promise<PyResult> {
     // `hardened` is the mode (true = readonly, the locked-down sandbox); `principal` is WHOSE sandbox.
     // A readonly run gets one worker per principal so a patch one principal left cannot reach the next;
     // `full` is its own worker and is never locked.
@@ -400,7 +413,7 @@ function runInWorker(code: string, image: string | null, hardened: boolean, tabl
         // START bound, and the worker's `started` (the user's cell is about to run) swaps in the script's cap.
         const timer = noTimeout || complete || bench?.reset ? (0 as unknown as ReturnType<typeof setTimeout>)
             : killAfter(id, PY_START_TIMEOUT_MS, `The Python sandbox did not start within ${PY_START_TIMEOUT_MS / 1000}s and was terminated.`, "start-timeout");
-        pending.set(id, { resolve, timer, streamId, armOnStart: !(noTimeout || complete || bench?.reset), principal, wire, ...(bench?.persist && principal === "own" ? { bench: true } : {}) });   // streamId → the background can key live stdout chunks
+        pending.set(id, { resolve, timer, streamId, armOnStart: !(noTimeout || complete || bench?.reset), principal, wire, ...(bench?.persist && principal === "own" ? { bench: true } : {}), ...(cell !== undefined ? { cell, ring: "" } : {}) });   // streamId → the background can key live stdout chunks
         // The worker creates the run's dict BEFORE the cell runs, so the principal is recorded at the post, not only from
         // a returned manifest: a cell that throws or is killed still leaves a dict the delete must reach.
         if (wire?.run) (runPrincipals.get(wire.run) ?? runPrincipals.set(wire.run, new Set()).get(wire.run)!).add(principal);
@@ -408,7 +421,8 @@ function runInWorker(code: string, image: string | null, hardened: boolean, tabl
         // run's namespace it is — never `client` (LANE_1_PR2_DESIGN.md, "Who stamps the handle").
         if ((inside && Array.isArray(libraries?.libraries) && libraries.libraries.length) || libraries?.library) libraryPrincipals.add(principal);
         if (wire) wireByClient.set(wire.client, { post: (m) => { try { w.postMessage(m); } catch { /* worker gone */ } }, runMsgId: id });
-        w.postMessage({ id, code, image, hardened, tables, stream, ...(wire ? { wire: true, run: wire.run } : {}), ...(env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(bench?.persist ? { persist: true } : {}), ...(bench?.reset ? { benchReset: true } : {}), ...(inside ? { inside: true } : {}),
+        // A leased cell always streams to this document, which keeps its tail; the chunks go on only for a `streamId`.
+        w.postMessage({ id, code, image, hardened, tables, stream: stream || cell !== undefined, ...(wire ? { wire: true, run: wire.run } : {}), ...(env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(bench?.persist ? { persist: true } : {}), ...(bench?.reset ? { benchReset: true } : {}), ...(inside ? { inside: true } : {}),
             // The person's approved tier 3 libraries ride an inside run; a library op (its card's shape, its load after
             // approval) is its own message. Only the service worker sends either (PY_RUN is not in HANDLE_MAP).
             ...(inside && Array.isArray(libraries?.libraries) ? { libraries: libraries.libraries } : {}),
@@ -540,9 +554,21 @@ chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
             ? { ok: false, stdout: "", error: t.error }
             : runInWorker(msg.code, msg.image ?? null, msg.hardened !== false, t.tables, msg.stream, msg.streamId, msg.env, msg.noTimeout, msg.complete, { persist: msg.persist, reset: msg.benchReset }, t.transfer, String(msg.principal ?? (msg.hardened !== false ? "own" : "full")), wireStamp, msg.inside === true, { libraries: msg.libraries, library: msg.library },
                 // Only the service worker may lift a cell's bridge refusal: a content script is an extension context too.
-                msg.bridges === true && !sender.tab)
+                msg.bridges === true && !sender.tab,
+                // A LEASED cell (py-lease.ts): only the service worker leases, and only a worker-hosted run's own cell.
+                typeof msg.cell === "string" && !sender.tab && wireStamp?.run && msg.principal === `run:${wireStamp.run}` ? msg.cell : undefined)
                 .then((r) => storeReturnedTable(r, msg.valueBudget)))
-        .then(sendResponse, e => sendResponse({ ok: false, stdout: "", error: String(e) }));
+        .then((r) => { sendResponse(r); return r; }, (e) => { const r = { ok: false, stdout: "", error: String(e) }; sendResponse(r); return r; })
+        // A LEASED cell's end is also told by its id, apart from the reply: when the service worker that sent the cell has
+        // died (past the per-event cap, a crash), the reply goes nowhere, and only this message wakes a new one, which logs
+        // the result as orphaned (sw-python.ts `pythonDone`). The worker that is still waiting ignores it.
+        .then((r: unknown) => {
+            const cell = typeof msg.cell === "string" && !sender.tab && wireStamp?.run ? msg.cell : null;
+            if (!cell) return;
+            let bytes = 0;
+            try { bytes = JSON.stringify(r)?.length ?? 0; } catch { /* unserialisable: size unknown */ }
+            try { chrome.runtime.sendMessage({ type: "PY_DONE", cell, run: wireStamp!.run, ok: (r as { ok?: boolean } | undefined)?.ok !== false, bytes }).catch(() => { /* no worker listening */ }); } catch { /* context gone */ }
+        });
     return true;   // keep the channel open for the async result
 });
 
@@ -563,14 +589,59 @@ export function interruptBench(): { interrupted: true } | { running: false } {
     const flag = workers.get("own")?.flag;
     if (!found || !flag) return { running: false };
     const [id, entry] = found;
-    if (!entry.stopping) {
-        entry.stopping = true;
-        Atomics.store(flag, 0, 2);   // SIGINT: `KeyboardInterrupt` at the next bytecode
-        clearTimeout(entry.timer);
-        entry.timer = killAfter(id, BENCH_STOP_KILL_MS, BENCH_STOP_KILLED, "stopped");
-    }
+    interruptEntry(id, entry, flag, BENCH_STOP_KILL_MS, BENCH_STOP_KILLED);
     return { interrupted: true };
 }
+
+/** Interrupt one started cell, once: SIGINT into its worker's buffer, and its worker killed with `killed` as the cell's
+ *  error if it has not answered within `ms`. */
+function interruptEntry(id: number, entry: NonNullable<ReturnType<typeof pending.get>>, flag: Int32Array, ms: number, killed: string): void {
+    if (entry.stopping) return;
+    entry.stopping = true;
+    Atomics.store(flag, 0, 2);   // SIGINT: `KeyboardInterrupt` at the next bytecode
+    clearTimeout(entry.timer);
+    entry.timer = killAfter(id, ms, killed, "stopped");
+}
+
+/** A cancelled cell's error when its interrupt did not land in time. */
+export const CELL_STOP_KILLED = `Cancelled by restarting the sandbox: the cell did not answer the interrupt within ${PY_INTERRUPT_KILL_MS / 1000} s (most likely inside a C function), so this run's names are lost.`;
+
+/**
+ * Cancel a worker-hosted run's leased cell by its id (a task's cancel, a Stop, the turn's end): interrupt it, and kill its
+ * sandbox if the interrupt has not ended it within PY_INTERRUPT_KILL_MS. A cell that has not started yet is interrupted
+ * when it starts. Resolves once the cell has ended, with how.
+ * @param cell the service worker's id for the cell
+ */
+export function interruptCell(cell: string): Promise<CellCancel> {
+    const found = [...pending.entries()].find(([, p]) => p.cell === cell);
+    if (!found) return Promise.resolve("ended");
+    const [id, entry] = found;
+    return new Promise((done) => {
+        const was = entry.resolve;
+        entry.resolve = (r) => { was(r); done(r.stopped === "restarted" ? "killed" : "interrupted"); };
+        const go = () => {
+            const flag = workers.get(entry.principal)?.flag;
+            // No buffer (a test world without SharedArrayBuffer): the kill is the only cancel there is.
+            if (!flag) { clearTimeout(entry.timer); entry.timer = killAfter(id, 0, CELL_STOP_KILLED, "stopped"); return; }
+            interruptEntry(id, entry, flag, PY_INTERRUPT_KILL_MS, CELL_STOP_KILLED);
+        };
+        if (entry.started) go(); else entry.stopOnStart = go;
+    });
+}
+
+// A LEASED cell's cancel and tail (py-lease.ts), by the service worker's id for it. Only the service worker sends either;
+// the id is its own, never a page's, and naming a cell that is not running answers that it ended.
+chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
+    if (msg?.type !== "PY_CANCEL" && msg?.type !== "PY_TAIL") return undefined;
+    if (sender.id !== chrome.runtime.id || sender.tab || typeof msg.cell !== "string") return undefined;
+    if (msg.type === "PY_TAIL") {
+        const entry = [...pending.values()].find((p) => p.cell === msg.cell);
+        sendResponse(entry ? { running: true, text: entry.ring ?? "" } : { running: false });
+        return undefined;
+    }
+    void interruptCell(msg.cell).then((how) => sendResponse({ how }));
+    return true;
+});
 
 // THE `ml` WIRE'S LATER ANSWER (ML_WIRE.md): a call that answered `ask` first is resolved here when the
 // person decides. Matched by the client handle this document stamped; the worker is told only `seq` +

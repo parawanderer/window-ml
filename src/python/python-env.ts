@@ -66,6 +66,18 @@ export const PY_PACKAGES: PyPackage[] = [
 
 /** Loaded when the sandbox STARTS. Lazy tooling is excluded: see `PY_LAZY_LOADS`. */
 export const PY_PACKAGE_LOADS: string[] = PY_PACKAGES.filter(p => !p.lazy).map(p => p.load);
+/**
+ * The options the sandbox passes to `loadPyodide`: wheels come from `indexURL` and nowhere else.
+ *
+ * Under Node (the tests), Pyodide retries a wheel it cannot read locally from `packageBaseUrl`, which defaults to
+ * the jsdelivr CDN; once that fetch hung a suite for 40 minutes. Pinned to `indexURL`, the retry reads the same
+ * missing file and the package fails at once. In the extension the value is Pyodide's own default.
+ *
+ * @param indexURL The directory holding `pyodide.mjs`, its lock file and the wheels.
+ */
+export function pyodideLoadOptions(indexURL: string): { indexURL: string; packageBaseUrl: string } {
+    return { indexURL, packageBaseUrl: indexURL };
+}
 /** Fetched with the rest but loaded on first use — the bench editor's completion engine. */
 export const PY_LAZY_LOADS: string[] = PY_PACKAGES.filter(p => p.lazy).map(p => p.load);
 /** The start-up packages' `prepare` code, joined: run once, unhardened, right after they load. */

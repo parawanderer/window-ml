@@ -24,3 +24,7 @@ Each notebook has a generator beside it (`make-<name>.py`, the file to edit) and
 - [tools-into-js.ipynb](tools-into-js.ipynb): `fetch_url` as a tool against `ml.fetch` inside exec (and both), over a CSV
   total and a one-fact read: correctness, steps, tokens and time per arm, which reader each run used first, where
   `ml.fetch` appears in the exec arm, switching in the both arm, and three local models against a cloud pair. Generator: `make-tools-into-js.py`; the recommendation prose is `data/tools-into-js/RECOMMENDATION.md`.
+- [sh-lease-peek.ipynb](sh-lease-peek.ipynb): the `ml.sh` lease re-run with the host's `peek` (v0.9.0): tails made on a
+  running detached call and how many returned output, whether the answer mentions progress, the `build` arm against the
+  2026-11-07 one, and what a 5 s lease costs the new 10 s `tests` task. Generator: `make-sh-lease-peek.py`; the
+  recommendation prose is `data/sh-lease-peek/RECOMMENDATION.md`.

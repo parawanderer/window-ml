@@ -439,8 +439,9 @@ a Stop; before, it queued behind a runaway run on the worker's chain.
   interpreter and again when it ends (`tests/python-bench-stop.test.mjs`, red without it).
 - **Who may stop what.** `PYTHON_INTERRUPT` is answered for extension pages only (`isExtensionSender`), is not in
   `HANDLE_MAP`, and names no request: the offscreen document interrupts only the started bench run (`persist`) of the
-  `own` principal (`interruptBench`). No message can reach another namespace, a model's `python_exec` cell included;
-  stopping a model's cell is ASYNC_CALLS.md mode 1's `python_exec` slice, which will use this same buffer.
+  `own` principal (`interruptBench`). No message can reach another namespace, a model's `python_exec` cell included.
+  A model's cell is stopped by its own id (`PY_CANCEL`, `interruptCell`, docs/dev/async-calls.md "Mode 1 on
+  `python_exec`"), over this same buffer.
 
 **The bench editor's COMPLETION is Jedi, in the sandbox (`COMPLETE_HELPER`/`completeIn`, python-runtime.ts).**
 Static analysis of the script being typed — it is never RUN — so a sandbox that holds no state is no limit for
@@ -638,4 +639,8 @@ Tested under real CPython against a fake transport: `tests/ml-facade.test.mjs`.
 - **A Python callable a cell gave JavaScript is REVOKED at the cell's cancel, never destroyed** (`cell-gate.ts`): a
   destroyed proxy throws when a timer fires it, and the throw kills the worker. Revoke after the spend, never before.
 - **The wheels (`pyodide-wheels/`) are gitignored, and a missing set fails only at run time**, as
-  `No module named 'numpy'`.
+  `No module named 'numpy'`. A missing wheel is never fetched: under Node, Pyodide retries it from
+  `packageBaseUrl`, which defaults to its CDN (a hang of 40 minutes once). The sandbox pins that to `indexURL`
+  (`pyodideLoadOptions`, python-env.ts), and `scripts/test.mjs` preloads `tests/no-cdn-fetch.mjs`, which refuses
+  the CDN for the tests that call `loadPyodide` themselves. A shim that overrides `indexURL` overrides
+  `packageBaseUrl` with it.
