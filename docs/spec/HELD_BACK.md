@@ -53,6 +53,7 @@ commit. A row leaves this list when its fix merges.
 | 13 | `ml.sh` host cut (`sh-call.ts:533,597-610`) | Past the host's capture bound; `size` is what was kept | Only the `truncated` field | None for the cut part |
 | 14 | Chat images (`sw-chat.ts:33,172`) | Images past 8 in a turn | Nothing, to the model or the person | None |
 | 15 | Delegated page answers (`page-answer-caps.ts:145-172`; `worker-media.ts:56`) | Columns past 2000, cells past 100k chars, media past 4 MB | Only text and image drops get a note | None |
+| 16 | Asked `task tail` past `ASKED_TAIL_CHARS` (`sw-tasks.ts:206`; `agent-loop.ts:1144,1159-1197` at e9bf2552) | The rest of the peeked lines; their scrubbed whole is stored as `textValue` | The cut (an ellipsis) | None: `task` is `citable: false`, so no `@tool:` id is minted and `heldChars` is never set, so no cut line names one (added 2026-11-12) |
 
 PDF attachments are not wired yet. When they are, a page sent as text without its image says what the measurements
 saw (a figure, drawn paths, broken glyphs) and how to look at the page: `FILE_ATTACHMENTS.md`.

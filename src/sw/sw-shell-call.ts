@@ -251,7 +251,7 @@ async function peekTail(h: ShellHost, id: string, lines: number, asked: boolean)
 }
 
 /** What a detached call's `tail` says while the host cannot read a running call's output. */
-export const SH_TAIL_ABSENT = "This host reports a call's output when it ends, not while it runs (it predates peek, or is reached over the hub).";
+export const SH_TAIL_ABSENT = "This host reports a call's output only when it ends.";
 
 /**
  * The text a detached call throws in the script: which of rule 2's two cases it was (the script's own estimate missed,
