@@ -285,7 +285,10 @@ export type ApprovalDecision =
          *  a plain `approved:false`: the loop must EXIT as cancelled, not treat it as a deny and step on. This is
          *  the cancel channel that works even when the run's AbortController is gone (an evicted/re-adopted run),
          *  where aborting the signal can't reach the loop — resolving the gate cancelled still stops it. */
-        cancelled?: boolean };
+        cancelled?: boolean;
+        /** python_install: the rows the approving surface showed, as SET_APPROVAL carried them. Untrusted: the worker
+         *  rebuilds and compares them with the rows it froze, and denies on any difference or when they are absent. */
+        files?: unknown };
 
 /** A prior grant a tool call REUSED (so it ran without a fresh prompt) — the transparency counterpart of
  *  PersistGrant. `kind` keys the per-kind label/icon; `detail` is the human-readable thing reused (the URL,

@@ -35,6 +35,7 @@ import { noteWorkerVision } from "./run-vision";
 import { capPageContext } from "./page-answer-caps";
 import { proposePolicyTool } from "../tools/propose-policy-tool";
 import { proposeManifestTool } from "../tools/propose-manifest-tool";
+import { pythonInstallTool } from "../tools/python-install-tool";
 import { taskTool } from "../tools/task-tool";
 import { shellTurnedOn } from "./sw-shell";
 import { defineTool } from "../ml/ml-tool-factories";
@@ -42,6 +43,10 @@ import { notePersonTurn } from "./sw-start-approval";
 import { adoptOnTab } from "./adopt-run";
 import { holdStands } from "./nav-arrival";
 import { toPageUi } from "./sw-side-panel";
+
+/** Whether a run the worker builds offers `python_install`. Off until the install step exists (docs/plan/repl/
+ *  PACKAGES_INSTALL.md, slice 4): before it, an approved card installs nothing, so offering it would only mislead. */
+export const OFFER_PYTHON_INSTALL = false;
 
 /** What a run is given when the person set no step budget: the same default `ml.agent` and `createAgent` use. */
 const DEFAULT_MAX_STEPS = 10;
@@ -94,7 +99,8 @@ async function startMinted(tabId: number, tab: chrome.tabs.Tab, url: string, ml:
     // propose_policy only here: a run the worker builds for the person may ask them for a policy; no page's run can. And
     // propose_manifest when the settings turn ml.sh on, which the run's scripts then reach.
     const shellOn = await getConfig().then(shellTurnedOn, () => false);
-    const extraTools = [...(recipe.options.extraTools ?? []), proposePolicyTool(defineTool), ...(shellOn ? [proposeManifestTool(defineTool), taskTool(defineTool)] : [])];
+    const extraTools = [...(recipe.options.extraTools ?? []), proposePolicyTool(defineTool), ...(shellOn ? [proposeManifestTool(defineTool), taskTool(defineTool)] : []),
+        ...(OFFER_PYTHON_INSTALL ? [pythonInstallTool(defineTool)] : [])];
     const asm = await assembleRun(ml, recipe.task, { ...recipe.options, extraTools, ...(opts.answer ? { answer: true } : {}) });
     const rebuild = rebuildFor(asm, true, "worker");
     noteWorkerVision(runId);   // its vision facts are the worker's own (run-vision.ts)

@@ -165,7 +165,7 @@ const GENRES = {
     // The model's proposal tools: a policy or a manifest or library it drafts, the card the person sees, what is stored.
     propose: {
         about: "propose_policy and propose_manifest (a program manifest or a tier 3 library): the drafts, their cards, what is stored on approval",
-        files: ["propose-library.test.mjs", "propose-library-redteam.test.mjs", "propose-manifest.test.mjs", "propose-policy-redteam.test.mjs", "propose-policy.test.mjs"],
+        files: ["propose-library.test.mjs", "propose-library-redteam.test.mjs", "propose-manifest.test.mjs", "python-install.test.mjs", "propose-policy-redteam.test.mjs", "propose-policy.test.mjs"],
     },
     nav: { about: "a run's tab moving: the navigation barrier, the hand-over off an approved site, and the arrival judgement on every commit", files: ["nav-barrier.test.mjs", "nav-handover.test.mjs", "nav-arrival.test.mjs", "nav-arrival-host.test.mjs", "nav-navigate-redteam.test.mjs"] },
     bench: {
@@ -176,7 +176,7 @@ const GENRES = {
     },
     // The Python sandbox's host side with no Pyodide: the offscreen document's routing and the idle reap through fake
     // Workers, the prelude's environment and the table sources. Fast; `python` below is the real interpreter.
-    "python-host": { about: "the Python sandbox's host side without Pyodide: offscreen routing, the idle reap, the env, table sources, the install verdict", files: ["pkg-verdict.test.mjs", "pkg-pep.test.mjs", "python-env.test.mjs", "python-reap.test.mjs", "python-run-namespace.test.mjs", "python-table-sources.test.mjs", "redteam-python-keep.test.mjs", "python-keep-fixes.test.mjs"] },
+    "python-host": { about: "the Python sandbox's host side without Pyodide: offscreen routing, the idle reap, the env, table sources, the install verdict", files: ["pkg-verdict.test.mjs", "pkg-card.test.mjs", "pkg-pep.test.mjs", "python-env.test.mjs", "python-reap.test.mjs", "python-run-namespace.test.mjs", "python-table-sources.test.mjs", "redteam-python-keep.test.mjs", "python-keep-fixes.test.mjs"] },
     python: { about: "real CPython in Pyodide (self-skips without dist/pyodide)", files: ["python.test.mjs", "pyodide-no-cdn.test.mjs", "redteam-python-sandbox.test.mjs", "redteam-python-regex-backtrack.test.mjs", "python-lockdown.test.mjs", "python-run-namespace-py.test.mjs", "python-dialect-vectors-wasm.test.mjs", "regex-corpus-core.test.mjs", "regex-cost-core.test.mjs", "python-matplotlib.test.mjs", "python-dialect-inside.test.mjs", "redteam-python-inside.test.mjs", "python-dialect-library.test.mjs", "python-dialect-library-redteam.test.mjs", "redteam-python-lockdown.test.mjs", "redteam-hard-python-lockdown.test.mjs", "redteam-hard-python-realm.test.mjs", "redteam-hard-python-cancel.test.mjs", "python-spend-queue.test.mjs", "python-worker-bridges.test.mjs", "python-bench-stop.test.mjs"] },
     // Everything named `fetch-*`, which is two subjects the filename prefix alone joins: the page's fetch
     // machinery (the cache's budget, the ladder's presentation both sinks share) and the release-download

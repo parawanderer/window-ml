@@ -4,6 +4,8 @@
 // from the chat page, the phone and the hub), so a malformed ask id is refused the same way everywhere
 // (docs/spec/ML_WIRE.md, "Per-call asking"; src/sw/sw-asks.ts raises the asks).
 
+import { rowsFromAnswer } from "./python/pkg-card";
+
 /** A nested ask's id: `a` and 24 hex digits, unguessable, and the only shape an answer may name. */
 export const ASK_ID = /^a[0-9a-f]{24}$/;
 
@@ -28,12 +30,16 @@ export function approvalKey(runId: string, seq: number, ask?: unknown): string |
  * @param d the app's message, already checked to come from the app's own frame and to name a run and a seq
  * @returns the payload
  */
-export function approvalPayload(d: { hash: string; seq: number; decision?: unknown; persist?: unknown; feedback?: unknown; ask?: unknown }): import("./contract").SetApprovalPayload {
+export function approvalPayload(d: { hash: string; seq: number; decision?: unknown; persist?: unknown; feedback?: unknown; ask?: unknown; files?: unknown }): import("./contract").SetApprovalPayload {
+    // A python_install card's rows, rebuilt field by field (`rowsFromAnswer`); rows that do not check out are dropped,
+    // and the worker then denies the answer as carrying none.
+    const files = d.files !== undefined ? rowsFromAnswer(d.files) : undefined;
     return {
         runId: d.hash, seq: d.seq, decision: !!d.decision, persist: !!d.persist,
         ...(typeof d.feedback === "string" && d.feedback ? { feedback: d.feedback.slice(0, 2000) } : {}),
         // Present means an ask was meant, whatever its type: the worker's approvalKey refuses a malformed one. Dropping it
         // here would turn the answer into one for the step's own gate.
         ...(d.ask !== undefined ? { ask: d.ask as string } : {}),
+        ...(files ? { files } : {}),
     };
 }

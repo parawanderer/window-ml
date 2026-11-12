@@ -33,6 +33,7 @@ import { hostOf } from "../../agent-start";
 import { StartAskBody, StartAskFoot, StartAskExpired, SiteWaitPrompt, startAskPending, startAskExpired } from "./card-start";
 import { toHost } from "../parent-channel";
 import { imagesRefusal, promptLine } from "../../contract/contract-run";
+import { isRefusedPkgCard } from "./pkg-card-view";
 
 /* ------------------------------ off-mode card ----------------------------
  * The "card" surface. When debug is OFF but a privileged ml.agent run must be
@@ -430,7 +431,7 @@ export function CardApp() {
             // Enter approves; Esc denies; KEEP is a deliberate two-key combo (⌘/Ctrl+K) — intentionally NOT
             // Enter-adjacent, so granting a session-long fetch permission can't be a slip of the Approve key.
             if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { if (canKeep) { e.preventDefault(); decideKey(true, true); } }
-            else if (e.key === "Enter" && !e.metaKey && !e.ctrlKey) { e.preventDefault(); decideKey(true); }
+            else if (e.key === "Enter" && !e.metaKey && !e.ctrlKey) { e.preventDefault(); if (!isRefusedPkgCard(pendingStep.renderIn)) decideKey(true); }
             else if (e.key === "Escape") { e.preventDefault(); decideKey(false); }
         };
         window.addEventListener("keydown", onKey);
@@ -628,7 +629,9 @@ export function CardApp() {
                     return <div class="card-foot card-foot-appr">
                         {pendingStep.askWhy ? <AskWhyLine why={pendingStep.askWhy} /> : null}
                         {showGrants ? <GrantCard grants={pendingStep.grants!} /> : null}
-                        {saying
+                        {isRefusedPkgCard(pendingStep.renderIn)
+                            ? <div class="card-foot-row"><button class="appr-btn no pkg-dismiss" aria-label="Dismiss" onClick={() => decide(false)}>Dismiss <kbd class="kb">esc</kbd></button></div>
+                            : saying
                             ? <DenyNote onCancel={() => setSayingFor("")} onInput={(t) => { draft.current = t; }} onSend={(t) => decide(false, false, t || undefined)} />
                             : <div class="card-foot-row">
                                 {/* Deny splits as the transcript's does: the chevron is "deny, and say why", which is

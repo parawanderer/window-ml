@@ -462,7 +462,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         if (sender.tab && sender.tab.id !== runInboxes.get(p?.runId)?.tabId) return;
         // A nested ask is named by its id beside the seq; a malformed one names no gate, not even the step's own.
         const key = approvalKey(p.runId, p.seq, p.ask);
-        if (key) resolveApproval(key, p.decision ? { approved: true, source: "user", persist: p.persist } : { approved: false, feedback: p.feedback, source: "user" });
+        if (key) resolveApproval(key, p.decision ? { approved: true, source: "user", persist: p.persist, ...(p.files !== undefined ? { files: p.files } : {}) } : { approved: false, feedback: p.feedback, source: "user" });
         return;   // fire-and-forget
     }
     // The person's answer to a start card (sw-start-approval.ts). Like SET_APPROVAL it reaches here only from the
