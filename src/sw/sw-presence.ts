@@ -73,7 +73,8 @@ export function syncPresence(): Promise<void> {
         const marked = askOrigins(lists);
         // Every pattern of an origin that gets the full API or nothing is excluded, so the stub never lands beside
         // injected.js and never on a denied site. Exclusions are by exact origin, as the full registration's matches are.
-        // Named even when empty: an update keeps every field it is not given, so leaving it out would keep the old list.
+        // Named even when empty: an update is always given the whole registration, since Chrome does not keep the fields it
+        // leaves out (measured: an omitted persistAcrossSessions read back false), and [] is what clears the old list.
         const excluded = [...v.lasting, ...v.session, ...lists.denied].map(originMatchPattern).filter((m): m is string => !!m);
         await putRegistration(have, {
             id: REGISTRATION.ask, matches: everySite ? EVERY_SITE : marked.map(originMatchPattern).filter((m): m is string => !!m),
@@ -90,7 +91,7 @@ export function syncPresence(): Promise<void> {
  * unregister then a register leaves a window where a page loads with neither the old list nor the new one), registered
  * when it does not, and removed when it should match nothing.
  * @param have the ids registered when this sync began
- * @param script the registration as it should be; no `matches` means it should not exist
+ * @param script the whole registration as it should be, every field named; no `matches` means it should not exist
  * @returns once Chrome holds it
  */
 async function putRegistration(have: Set<string>, script: chrome.scripting.RegisteredContentScript): Promise<void> {
