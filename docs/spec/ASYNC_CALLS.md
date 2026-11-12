@@ -178,16 +178,30 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
      by cell id from the offscreen document; the host's own message for `ml.sh`), which starts a new worker; that
      worker rehydrates the task's row and parks the result. This replaces the mode 1 ruling that `PY_DONE` by cell
      id is not built.
-   - **A result with no turn running parks.** It waits in the run's inbox. The person sees a transcript system line
-     and a HUD mark that a background task finished; the model reads it at the next turn's first step, through the
-     same checks as any inbox item (rule 6). No model turn starts on its own: a finished task wakes the model only
-     if the model subscribed to its completion (mode 2, "a detached call's completion"). Whether a finished task may
-     start a turn by itself (spend) is put to Shane; until he rules, it notifies only.
+   - **A finished task starts a turn, by default.** CORRECTED 2026-11-12 (Shane: that is how he uses and likes
+     Claude Code). A completion arriving while a turn runs parks in the inbox for that turn, as today. One arriving
+     with no turn running starts a turn whose first step reads the inbox, through the same checks as any inbox item
+     (rule 6); completions arriving before that first step coalesce into the one turn, and so does a person's
+     message sent in the meantime. The transcript marks the turn as started by task `<id>` with a system line (as
+     `takeArchiveNotice` does), so a person sees why the model spoke. The turn is the run's own, on its session and
+     tab, under the run's existing step and token budgets and approvals. It is a user-started run's turn, not a
+     page-started one, so the origin gate is unchanged; it still never runs on a page we own (`AGENT_START_PAGE`).
+     A run archived, released or moved before the turn starts, or whose tab is gone, starts none, and that is a
+     run-log record; the result stays parked for the run's next turn while the run exists.
+   - **Notify-only is a setting.** A durable per-config flag in DevTools Settings (the settings rule; the popup is
+     optional) switches every run to notify-only: a completion with no turn running parks, the person sees a
+     transcript system line and a HUD mark, and the model reads it at the next turn the person starts. The
+     subscription path (mode 2, "a detached call's completion") is unchanged by either setting.
+   - **OPEN: a chain of started turns.** A started turn can detach a task whose completion starts the next, so
+     turns can follow one another with no person's message between them. Proposed: the turns started in a row by
+     task completions, with no message from the person between them, are capped (one knob, beside the cap above);
+     at the cap, a completion parks and notifies as on notify-only. The number is Shane's.
    - **What the model is told.** The `Detached` text and the prompt say that a detached task runs on after the
      model's answer and that its result arrives at the next turn, replacing the one line that says the answer ends
      it.
    - **Bounds** (e3's rows, rule 10, on the building branch): a task never delivers to another run or another
-     session; a parked result is delivered only to its own run, on its own session, at that run's next turn; a run
+     session; no task completion starts a turn for a run other than its own; a completion on notify-only never starts
+     a turn; a started turn runs on no page we own; a parked result is delivered only to its own run, on its own session, at that run's next turn; a run
      archived or released first drops it, and the drop is a run-log record; the per-task deadline and the cap hold
      between turns; session release ends every task of the session; a page reaches no parked result.
 5. **The handle is the run's.** It is answered only for the run that made it, from that run's own tab or the service
