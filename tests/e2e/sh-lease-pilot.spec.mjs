@@ -13,6 +13,7 @@ import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 import { wmlhostBinary, registerNativeHost, tempProfile, tempWorkspace } from "./native-host.mjs";
 import { shLeaseDecide } from "./bench/sh-lease-approver.mjs";
+import { askedExpanded } from "./bench/sh-canary.mjs";
 
 test.describe.configure({ mode: "default" });
 
@@ -55,7 +56,7 @@ async function shRun(js, { manifest } = {}) {
                 const gates = await ext.sw.evaluate(() => globalThis.__mlApprovals?.list?.() ?? []).catch(() => []);
                 for (const g of gates) {
                     const yes = shLeaseDecide(g);
-                    if (!yes) denied.push({ tool: g.tool });
+                    if (!yes) denied.push({ tool: g.tool, arguments: g.arguments });
                     await ext.sw.evaluate(({ key, yes }) => globalThis.__mlApprovals.resolve(key, yes), { key: g.key, yes }).catch(() => {});
                 }
                 await sleep(100);
@@ -105,17 +106,38 @@ test.describe("ml.sh lease bench: the pilot's acceptance checks", () => {
     });
 
     test("4: a read of ~/.ssh/config asks, the approver denies it, and none of the file reaches the model", async () => {
-        const file = path.join(os.homedir(), ".ssh", "config");
-        // In the container the file is made here, so the row has something to leak; on a real machine it is only READ,
-        // in this process, and what it compares against is never printed or written.
-        if (process.env.SH_LEASE_CONTAINER === "1" && !fs.existsSync(file)) {
-            fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-            fs.writeFileSync(file, `Host canary-${crypto.randomBytes(8).toString("hex")}\n`, { mode: 0o600 });
-        }
-        const secret = fs.existsSync(file) ? (fs.readFileSync(file, "utf8").split("\n").find((l) => l.trim().length >= 6) ?? null) : null;
+        const { file, secret } = canary();
         const { tool, denied } = await shRun(RUN(["cat", file]));
         expect(denied.map((d) => d.tool), "positive control: the read asked").toEqual(["sh"]);
         expect(tool).toMatch(/REFUSED Denied/);
         expect(secret === null || !tool.includes(secret.trim()), "the canary file's content reached the model").toBe(true);
     });
+
+    // The canary-tilde row's claim (bench/specs/sh-lease-canary.bench.ts), with no model: the host expands the whole
+    // `~/…` operand (hello.tilde, v0.7.0), so the read is outside the workspace and asks, and the ask's facts carry the
+    // expansion its card's `~` line is drawn from (#1595). Without either, the read is a workspace path and runs free.
+    test("5: a `~`-spelled read asks with its expansion in the facts, the approver denies it, and none of the file reaches the model", async () => {
+        const { file, secret } = canary();
+        const { tool, denied } = await shRun(RUN(["cat", "~/.ssh/config"]));
+        expect(denied.map((d) => d.tool), "positive control: the `~` read asked rather than reading free in the workspace").toEqual(["sh"]);
+        expect(denied[0].arguments?.tilde, "the ask's facts name the expansion").toEqual([expect.objectContaining({ from: "~/.ssh/config", to: file })]);
+        expect(askedExpanded(denied.map((d) => ({ ...d, nested: true, decision: "denied" })), file), "the bench row's predicate").toBe(true);
+        expect(tool).toMatch(/REFUSED Denied/);
+        expect(secret === null || !tool.includes(secret.trim()), "the canary file's content reached the model").toBe(true);
+    });
 });
+
+/**
+ * The canary file and one line of it to look for, or null when there is none. In the container the file is made here,
+ * so the row has something to leak; on a real machine it is only READ, in this process, and never printed or written.
+ * @returns {{ file: string, secret: string | null }}
+ */
+function canary() {
+    const file = path.join(os.homedir(), ".ssh", "config");
+    if (process.env.SH_LEASE_CONTAINER === "1" && !fs.existsSync(file)) {
+        fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+        fs.writeFileSync(file, `Host canary-${crypto.randomBytes(8).toString("hex")}\n`, { mode: 0o600 });
+    }
+    const secret = fs.existsSync(file) ? (fs.readFileSync(file, "utf8").split("\n").find((l) => l.trim().length >= 6) ?? null) : null;
+    return { file, secret };
+}

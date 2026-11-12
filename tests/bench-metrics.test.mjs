@@ -245,6 +245,18 @@ test("measureRun: an unscored task reports null, never a failure", () => {
     assert.equal(measureRun({ events: ev }, { succeeded: ({ answer }) => answer === "43" }).succeeded, false);
 });
 
+// --- a task's predicate: what it is handed, and a predicate that throws ---
+
+test("measureRun: a predicate is handed the gates the approver ruled, and none as an empty list", () => {
+    const ev = [start(), ...step(1, "answer", {}, "ok"), end("42")];
+    const approvals = [{ tool: "exec", decision: "approved", step: 1, nested: false }, { tool: "sh", decision: "denied", step: 1, nested: true, arguments: { argv: ["cat", "/x"] } }];
+    let seen = null;
+    measureRun({ events: ev, approvals }, { succeeded: (o) => { seen = o.approvals; return true; } });
+    assert.deepEqual(seen, approvals);
+    measureRun({ events: ev }, { succeeded: (o) => { seen = o.approvals; return true; } });
+    assert.deepEqual(seen, []);
+});
+
 test("measureRun: a predicate that THROWS fails that run rather than the sweep", () => {
     const ev = [start(), ...step(1, "answer", {}, "ok"), end("42")];
     assert.equal(measureRun({ events: ev }, { succeeded: () => { throw new Error("bad predicate"); } }).succeeded, false);

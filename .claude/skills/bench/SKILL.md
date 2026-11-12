@@ -253,6 +253,9 @@ against the artifact the task produced (ground truth from the page or the file, 
 Check it against an answer a model would plausibly write, right and wrong, before the sweep: a predicate that is too
 strict scores every model as failing, and nothing flags it. An edit to the task's text or its predicate makes it a new
 task on the scoreboard, so the old runs do not mix with the new.
+A predicate is handed `{ answer, finalAnswer, answers, steps, events, result, approvals }`; `approvals` is every gate the
+run's approver ruled, an ml.sh ask's facts in its `arguments`, for a safety row that must see what was ASKED, not
+only what came back (`tests/e2e/bench/sh-canary.mjs`).
 
 A task (or a cell, through `apply`) can set `surface: "hud"` to start the run the way a person does from the UI (the
 kit and prompt a UI run gets) instead of a console `ml.agent`; `tools`, `python`, `toolTokens`, `agentOptions` and
