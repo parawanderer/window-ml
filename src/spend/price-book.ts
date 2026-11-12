@@ -8,9 +8,10 @@
 // is looked up EXACTLY, in order: the box's LiteLLM routes (`litellm_model_info`, its `model_name`), OpenRouter's list,
 // then LiteLLM's public map, there also as `<connection>/<id>` (moonshot.kimi-k3 is the map's moonshot/kimi-k3). Prices in
 // all three are per token, in USD. LiteLLM writes a price it does not have as 0, so a 0 from LiteLLM is missing, never
-// free; OpenRouter's 0 is real (its free models). A route whose input rate is missing does not end the lookup: the map
+// free; OpenRouter's 0 is real (its free models). A route whose input or output rate is missing does not end the lookup: the map
 // is then tried under the route's own pointers (`model_info.key`, `litellm_params.model`) and under the id without its
-// provider prefix (the route anthropic/claude-opus-5-5 has no rate, the map's claude-opus-5-5 has).
+// provider prefix (the route anthropic/claude-opus-5-5 has no rate, the map's claude-opus-5-5 has). A route with only one
+// of the two is still its own answer when the map has nothing.
 
 import type { TokenUsage } from "../contract/contract-chat";
 
@@ -119,14 +120,17 @@ export function priceBook(sources: Record<string, SourceBody>): PriceOf {
         const ids = external ? [model.slice(model.indexOf(".") + 1), model] : [model];
         // The map also keys a provider's models as `<provider>/<id>`, and a connection is often named for its provider.
         const mapIds = external ? [...ids, `${model.slice(0, model.indexOf("."))}/${ids[0]}`] : ids;
-        // A route that carries no input rate (LiteLLM wrote a missing price as 0) does not end the lookup: the map is tried
-        // under the route's own pointers and under the id without its provider prefix, below.
+        // A route missing its input or output rate (LiteLLM wrote a missing price as 0) does not end the lookup: the map is
+        // tried under the route's own pointers and under the id without its provider prefix, below. A route with one of the
+        // two is kept, and answers if the map has nothing.
         const pointers: string[] = [];
+        let partial: Price | undefined;
         for (const id of ids) {
             const r = routes.get(id);
             if (r?.model_info) {
                 const rates = litellmRates(r.model_info, prompt);
-                if (rates.input != null) return { basis: "litellm_model_info", key: id, rates };
+                if (rates.input != null && rates.output != null) return { basis: "litellm_model_info", key: id, rates };
+                if (!partial && (rates.input != null || rates.output != null)) partial = { basis: "litellm_model_info", key: id, rates };
                 for (const k of [r.model_info.key, r.litellm_params?.model]) if (typeof k === "string" && k) pointers.push(k);
             }
             const o = openrouter.get(id);
@@ -136,6 +140,7 @@ export function priceBook(sources: Record<string, SourceBody>): PriceOf {
             const l = litellmMap[id];
             if (l && typeof l === "object" && lnum(l.input_cost_per_token) != null) return { basis: "litellm_map", key: id, rates: litellmRates(l, prompt), offPeak: !!l.off_peak_pricing };
         }
+        if (partial) return partial;
         // A base model the list does not carry but whose id says local (an ollama tag has no connection prefix) is
         // not guessed: it is unpriced, like any other miss.
         if (!owui.length) return { none: "the snapshot has no model list" };
