@@ -336,6 +336,8 @@ so the `agent` start is included even when the page-side caller is what fans it 
 live on the tab so the shell's nav-remount doesn't wipe the history (this also keeps a DevTools panel's
 sessions across the nav). Verified e2e (`tests/e2e/cross-page.spec.mjs`, incl. a replay test + observing via
 the stable fake-LLM).
+**Moving a run to ANOTHER tab** (the person's "bring a session here" or "move to tab…") is a design note, not
+built: `docs/spec/MOVE_RUN.md`; what a page change does to a run's detached tasks is `docs/spec/ASYNC_CALLS.md`, rule 4a.
 **Variant B (cross-DOMAIN).** Two gates protect leaving the origin: (1) the run must OPT IN with
 **`crossOrigin: true`** (default false — `navTarget` refuses a cross-site URL otherwise), and (2) even then a
 NEW cross-origin nav must pass an **interactive consent gate** — a page can't silently send the agent to
