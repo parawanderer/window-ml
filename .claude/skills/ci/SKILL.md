@@ -267,7 +267,7 @@ Flaky only (passed on retry, never blocked a run), worth knowing because two may
   run 42455979689 (2026-11-08, main, e2e 3/3; the `-webkit-box-reflect` variant in the same table passed). On run
   43198617151 / #1634 at `03fc6374` (2026-11-12, a docs-only diff) the API's log is attempt 2, where the `zoom`
   variant flaked (retry #1 passed); attempt 1's log is gone, so the `will-change, contain and an offset path` pair
-  is only from the attempt-1 record taken before rotation. All three sightings share the same assertion —
+  is only from the attempt-1 record taken before that log was replaced. All three sightings share the same assertion —
   "UI pixels outside where it painted before the rule" got 260640 — so the number spans three different variants.
   The site-access lane measured this as a SETUP race, not a pin gap: a fixed 400 ms wait
   after clicking the overlay tab, the "before" capture taken while the panel was still closed or sliding — an
