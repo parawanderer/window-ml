@@ -23,6 +23,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { stalenessReport } from "./check-dist-fresh.mjs";
 import { acquire } from "./test-slot.mjs";
+import { watchRunner } from "./watch-runner.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -347,8 +348,14 @@ function runFiles(list) {
             process.exit(1);
         }
     }
-    spawn(process.execPath, [...NODE_ARGS, ...ordered.map((f) => `tests/${f}`)],
-        { cwd: ROOT, stdio: "inherit" }).on("exit", (c) => process.exit(c ?? 1));
+    // `watchRunner`, not a bare `on("exit")`: a runner that vanished without its exit firing used to hold this
+    // process — and the machine-wide slot with it — forever (20261109T094442-4a6b50). A hang now fails loudly.
+    const child = spawn(process.execPath, [...NODE_ARGS, ...ordered.map((f) => `tests/${f}`)],
+        { cwd: ROOT, stdio: "inherit" });
+    watchRunner(child).then(
+        (c) => process.exit(c),
+        (e) => { console.error(String(e?.message ?? e)); process.exit(1); },
+    );
 }
 
 // `--files a.test.mjs tests/b.test.mjs` runs exactly those, whatever genre they fall in. It exists because
