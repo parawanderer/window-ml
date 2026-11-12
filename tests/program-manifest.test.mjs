@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 
-const { describeCall, hardenArgv, validateManifest, inRange, CREDENTIAL_PROVIDERS } = await import("../src/shell/program-manifest.ts");
+const { describeCall, hardenArgv, validateManifest, inRange, CREDENTIAL_PROVIDERS, scriptLacksRunsCode } = await import("../src/shell/program-manifest.ts");
 const { effectKey, free, boundFor, fromProgramEffect } = await import("../src/effects.ts");
 
 const MANIFESTS = new URL("../src/shell/manifests/", import.meta.url);
@@ -361,4 +361,24 @@ test("the manifests and call fixtures hash to the pin the host holds", () => {
     named.sort(([a], [b]) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
     const pin = sha(named.map(([n, bytes]) => `${sha(bytes)}  ${n}\n`).join(""));
     assert.equal(pin, VECTOR_PIN, "the manifests or call fixtures changed: re-copy them to window-ml-host's vectors/program-manifests/ and update VECTOR_PIN here and PIN there together");
+});
+
+// --- the editor's warning: a script whose manifest lacks runs-code (SHELL.md, the TRAP paragraph) ---
+
+test("scriptLacksRunsCode: only an entrypoint script whose default command lacks runs-code is flagged", () => {
+    const ep = { path: "scripts/t.sh", sha256: "a".repeat(64) };
+    const cmd = (effects) => ({ effects, paths: "operands", flags: {} });
+    const ANYV = { range: "*", args: [], pattern: "" };
+    const rows = [
+        ["script, read only", { program: "bash", entrypoint: ep, command: cmd(["read"]) }, true],
+        ["script, no effects", { program: "bash", entrypoint: ep, command: cmd([]) }, true],
+        ["script, read + write", { program: "python3", entrypoint: ep, command: cmd(["read", "write"]) }, true],
+        ["script with runs-code", { program: "bash", entrypoint: ep, command: cmd(["read", "runs-code"]) }, false],
+        ["script with unknown (no envelope is sent)", { program: "bash", entrypoint: ep, command: cmd(["unknown"]) }, false],
+        ["binary, read only", { program: "mytool", version: ANYV, command: cmd(["read"]) }, false],
+        ["an interpreter binary without an entrypoint", { program: "bash", version: ANYV, command: cmd(["read"]) }, false],
+        ["a binary with runs-code", { program: "env", version: ANYV, command: cmd(["runs-code"]) }, false],
+    ];
+    for (const [name, m, want] of rows) assert.equal(scriptLacksRunsCode(m), want, name);
+    for (const [name, m] of Object.entries(manifests)) assert.equal(scriptLacksRunsCode(m), false, `shipped ${name}`);
 });
