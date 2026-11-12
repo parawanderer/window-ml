@@ -147,6 +147,10 @@ export interface StartRunPayload {
      *  the first message alone. The worker's to set, as `files` is. */
     sends?: number;
     systemPrompt: string;
+    /** the page's context (URL, title, time, locale), sent at the front of the first user message behind
+     *  `PAGE_CONTEXT_HEAD`, never in the system prompt. The worker's to write on a run it hosts: a site's START_RUN has
+     *  it replaced from the browser's facts (`workerPageContext`), a run the worker built takes the page's answer. */
+    pageContext?: string;
     tools: { name: string; description: string; parameters: JsonSchema; requiresApproval: boolean; capabilities: string[]; precheck?: boolean; summary?: string; remote?: RemoteToolTarget }[];
     model: string | null;
     think: boolean | null;

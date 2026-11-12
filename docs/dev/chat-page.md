@@ -413,7 +413,7 @@ system prompt before it started (docs/spec/SITE_ACCESS.md, slice 0; attack 12 in
 The worker assembles the run with the same function a console `ml.agent()` uses (`assembleRun`, run-assembly.ts),
 handed `workerMl` instead of `window.ml`, so the two paths cannot drift. It then pushes the builtin toolset into the
 tab (`ADOPT_RUN_NOW`, the same `_adoptRun` a navigation's re-adopt uses), and the page answers with its page context.
-That answer is the only thing the page supplies; it is folded into the system prompt under "Current page context".
+That answer is the only thing the page supplies; it leads the first user message under `PAGE_CONTEXT_HEAD` (`firstUserTurn`), never the system prompt.
 
 **How the command learns which session it got.** The worker mints the hash before anything starts and returns it,
 so the command answers as soon as the toolset is registered and the loop is running. A follow-up, Continue and

@@ -1,16 +1,18 @@
 // redteam-page-context.test.mjs — a page's own words about itself (its title, its URL, the context block it answers a
-// toolset push with) are folded into the run's SYSTEM prompt today, by the one function `withPageContext`
-// (src/agent/run-assembly.ts), called from all three ways a run starts: the page hosts the loop (ml-agent-run.ts), the
-// site starts it (sw-run-host.ts), or the worker builds it (sw-run-start.ts). A hostile page therefore writes into the
-// system role, which is not what page data is.
+// toolset push with) are page DATA, and the model must not be able to read them as its own instructions. The run's
+// first user turn carries them, quoted, behind PAGE_CONTEXT_HEAD (src/agent/output-clip.ts), with the person's task
+// after it; the SYSTEM role holds only what the person or the extension wrote. Both loops build that turn with
+// `firstUserTurn` (src/agent/run-assembly.ts), and the row drives all three ways a run starts: the page hosts the loop
+// (ml-agent-run.ts), the site starts it (sw-run-host.ts), or the worker builds it (sw-run-start.ts).
 //
-// Sink pinned: the messages sent to the MODEL — the system message, and the first user message that is meant to carry
-// the page's words instead, behind a head line the defence introduces beside PAGE_WORLD_HEAD in
-// src/agent/output-clip.ts (named here by import; the row does not define it). The sidebar's card and the site's
-// instructions digest are not this row's: both already treat what the page wrote as the site's.
+// Sink pinned: the messages sent to the MODEL — no system message contains the page's words, the first user message
+// does, and they come AFTER the head line, so both the model and a later reader of the raw turn can tell quoted page
+// data from an instruction. The sidebar's card and the site's instructions digest are not this row's: both already
+// treat what the page wrote as the site's.
 //
-// The row is `todo` while the system role still carries the page's words, and turns green when `withPageContext` moves
-// them into that first user turn.
+// The row was `todo` while `withPageContext` folded the page's words into the system prompt on all three paths; #1618
+// replaced that fold with `firstUserTurn`, so the row is live and reds if any path puts the page's words back into the
+// system role or in front of the head.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
@@ -87,9 +89,9 @@ const bd = (bg) => bg.calls.filter((c) => c.url.includes("/chat/completions"));
 
 // --- the system role holds nothing the page wrote ---
 
-test("the page's own words for itself never reach the SYSTEM role on any start path; the first user turn carries them behind the page-data head", { ...T, todo: "Today `withPageContext` (run-assembly.ts) appends the page's context to the assembled SYSTEM prompt on all three paths, and the page controls what is in it — its title (page-hosted, and site-started through the tab's title), its URL, or the whole block it answers a toolset push with (worker-built) — so a hostile page writes into the system role. Ruled by Shane: the fold moves to the FIRST USER TURN as quoted page data behind a head line beside PAGE_WORLD_HEAD, and the prompt-quality lane builds that defence. The row names the constant by import and does not define it, so the defence's name is the row's" }, async () => {
+test("the page's own words for itself never reach the SYSTEM role on any start path; the first user turn carries them behind the page-data head", T, async () => {
     const { PAGE_CONTEXT_HEAD } = await import("../src/agent/output-clip.ts");
-    assert.ok(typeof PAGE_CONTEXT_HEAD === "string" && PAGE_CONTEXT_HEAD.trim(), "the page-data head line the defence introduces (beside PAGE_WORLD_HEAD) is not exported yet");
+    assert.ok(typeof PAGE_CONTEXT_HEAD === "string" && PAGE_CONTEXT_HEAD.trim(), "the page-data head line (beside PAGE_WORLD_HEAD) is exported");
     for (const [path, start] of [["page-hosted", pageHosted], ["site-started", siteStarted], ["worker-built", workerBuilt]]) {
         const { messages } = await start();
         assert.ok(Array.isArray(messages) && messages.length > 1, `${path}: positive control: the model was called with a conversation: ${JSON.stringify(messages)}`);

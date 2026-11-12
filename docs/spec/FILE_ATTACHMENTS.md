@@ -275,7 +275,7 @@ Page 1: …the first page's text, to the preview cap…
 
 "Attached by the person" is there so a model does not take the name for a path on disk; `ml.sh` given an `@file:`
 pointer as an argument refuses with a sentence saying an attachment is not on the host's disk, so no program can open it
-by that name; #1595 (open) adds a clause naming `ml.sh.put` with the item's own handle as the way to write it there.
+by that name; #1595 (merged 2026-11-12, ab9b4a8a) added a clause naming `ml.sh.put` with the item's own handle as the way to write it there, and #1634 (the prompt review) makes the clause's example path `<folder>/<name>` into a folder that exists, since the host never creates a folder.
 That refusal is the shell call's one rule for every pointer prefix in argv, not a manifest's (SHELL.md), and it stays.
 The one way to put an attachment on disk is `ml.sh.put(handle, path)`: it writes the attachment's original bytes, not a
 PDF's text. A new file in a nested path is judged as an in-root write, a new top-level name asks, and an existing file

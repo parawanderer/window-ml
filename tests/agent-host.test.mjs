@@ -285,3 +285,44 @@ test("a deny still refuses with no card while an ask exists: the fetchPolicy ans
     assert.equal(deps.approvals.length, 0);
     assert.equal(deps.delegated.length, 0);
 });
+
+// --- the first user turn: the page context, once, built the same by both loops ---
+
+test("both loops build the same first user turn from the same task and page context, and neither puts it in the system prompt", async () => {
+    const { createRequire } = await import("node:module");
+    const { loadPageWorld } = createRequire(import.meta.url)("./helpers");
+    const { firstUserTurn } = await import("../src/agent/run-assembly.ts");
+    const { PAGE_CONTEXT_HEAD } = await import("../src/agent/output-clip.ts");
+    // The page's own loop (ml-agent-run.ts) reads its context from its document.
+    const world = loadPageWorld({ onRuntimeMessage: (m) => (m.type === "GET_CONFIG" || m.type === "MODEL_CAPS" ? undefined : { data: { content: "done", tool_calls: [] } }) });
+    await world.ml.agent("summarise this page", { system: "S" });
+    const pageMsgs = world.runtimeCalls.find((c) => c.payload?.messages).payload.messages;
+    const pageTurn = pageMsgs.find((m) => m.role === "user").content;
+    assert.ok(pageTurn.startsWith(PAGE_CONTEXT_HEAD + "\n"), `control: the page loop sent a page context: ${pageTurn.slice(0, 200)}`);
+    const ctx = pageTurn.slice(PAGE_CONTEXT_HEAD.length + 1, pageTurn.lastIndexOf("\n\nTask:\n"));
+    // The worker's loop (agent-host.ts), handed that same context.
+    let workerMsgs;
+    await runBackgroundAgent({ task: "summarise this page", systemPrompt: "S", pageContext: ctx, tools: [] },
+        baseDeps({ callModel: async (messages) => { workerMsgs ??= messages.map((m) => ({ role: m.role, content: m.content })); return answer("done"); } }));
+    const expected = firstUserTurn("summarise this page", ctx);
+    assert.equal(pageTurn, expected, "the page loop's first turn");
+    assert.deepEqual(workerMsgs, [{ role: "system", content: "S" }, { role: "user", content: expected }], "the worker loop's: the same text, and the system prompt alone");
+    assert.equal(pageMsgs.find((m) => m.role === "system").content, "S");
+});
+
+test("a resumed worker run adds no page context: the history's first turn already has it", async () => {
+    let seen;
+    const prior = [{ role: "system", content: "S" }, { role: "user", content: "first" }, { role: "assistant", content: "ok" }];
+    await runBackgroundAgent({ task: "and then", systemPrompt: "S", pageContext: "URL: https://site.example/", tools: [], resumeMessages: prior },
+        baseDeps({ callModel: async (messages) => { seen ??= messages.map((m) => m.content); return answer("done"); } }));
+    assert.deepEqual(seen, ["S", "first", "ok", "and then"]);
+});
+
+test("firstUserTurn: no context is the task alone; context with no task is the context alone", async () => {
+    const { firstUserTurn } = await import("../src/agent/run-assembly.ts");
+    const { PAGE_CONTEXT_HEAD } = await import("../src/agent/output-clip.ts");
+    assert.equal(firstUserTurn("do it", undefined), "do it");
+    assert.equal(firstUserTurn("do it", ""), "do it");
+    assert.equal(firstUserTurn("", "URL: u"), `${PAGE_CONTEXT_HEAD}\nURL: u`);
+    assert.equal(firstUserTurn("do it", "URL: u"), `${PAGE_CONTEXT_HEAD}\nURL: u\n\nTask:\ndo it`);
+});

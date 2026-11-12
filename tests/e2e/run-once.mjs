@@ -162,7 +162,7 @@ export function buildSession(events) {
         if (ev.kind === "agent") {
             map.set(ev.session.hash, {
                 hash: ev.session.hash, model: ev.model, tag: "session", kind: "agent",
-                createdTs: ev.ts, lastTs: ev.ts, status: "pending", turns: [], steps: [], task: ev.task,
+                createdTs: ev.ts, lastTs: ev.ts, status: "pending", turns: [], steps: [], task: ev.task, taskDisplay: ev.display,
                 taskImages: ev.images, pageUrl: ev.pageUrl, pageTitle: ev.pageTitle, maxSteps: ev.maxSteps, agentConfig: ev.config,
                 config: { system: null, model: ev.model, think: null, schema: false, toolIds: null, maxTokens: null, save: false },
             });
@@ -189,6 +189,8 @@ export function buildSession(events) {
             s.says = [...(s.says || []), { text: ev.text, ts: ev.ts, atStep: maxStep(s), images: ev.images }]; s.status = "pending"; s.ended = false; s.lastTs = ev.ts;
         } else if (ev.kind === "agent-config" && s) {
             if (s.agentConfig) s.agentConfig = { ...s.agentConfig, ...ev.config };
+            if (ev.task !== undefined && ev.task !== s.task) { s.taskDisplay = s.taskDisplay ?? { typed: s.task || "", context: [] }; s.task = ev.task; }
+            if (ev.task !== undefined && ev.task !== s.task) { s.taskDisplay = s.taskDisplay ?? { typed: s.task || "", context: [] }; s.task = ev.task; }
         } else if (ev.kind === "agent-cap" && s) {
             s.maxSteps = ev.maxSteps; s.lastTs = ev.ts;
         }
