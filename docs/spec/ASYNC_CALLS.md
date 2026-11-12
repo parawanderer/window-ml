@@ -169,7 +169,7 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
    - **The cap.** `PY_DETACHED_MAX_MS` (5 min) was set by the service worker's eviction (`docs/dev/async-calls.md`:
      a pending reply keeps the worker alive only to about 345 s), not by the work. With the durable path below,
      a detached task is bounded by its own deadline under one cap, a DevTools Settings knob (the settings rule).
-     Proposed default 60 min; the number is Shane's.
+     Default 60 min (RULED 2026-11-12, Shane: tune it later if it is wrong).
    - **Durable, filed by run and session.** Between turns nothing keeps the service worker alive: with nothing
      pending it is evicted at about 65 s. So the task table and a parked result are durable (`chrome.storage.session`
      or IndexedDB), filed by run and session, and declared through `defineState` from the first commit. `state.md`
@@ -192,10 +192,10 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
      optional) switches every run to notify-only: a completion with no turn running parks, the person sees a
      transcript system line and a HUD mark, and the model reads it at the next turn the person starts. The
      subscription path (mode 2, "a detached call's completion") is unchanged by either setting.
-   - **OPEN: a chain of started turns.** A started turn can detach a task whose completion starts the next, so
-     turns can follow one another with no person's message between them. Proposed: the turns started in a row by
-     task completions, with no message from the person between them, are capped (one knob, beside the cap above);
-     at the cap, a completion parks and notifies as on notify-only. The number is Shane's.
+   - **A chain of started turns is capped.** RULED 2026-11-12 (Shane, both numbers). A started turn can detach a
+     task whose completion starts the next, so turns can follow one another with no person's message between them.
+     The turns started in a row by task completions, with no message from the person between them, are capped (one
+     knob, beside the cap above; default 5); at the cap, a completion parks and notifies as on notify-only.
    - **What the model is told.** The `Detached` text and the prompt say that a detached task runs on after the
      model's answer and that its result arrives at the next turn, replacing the one line that says the answer ends
      it.
