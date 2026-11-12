@@ -8,7 +8,9 @@
 // is looked up EXACTLY, in order: the box's LiteLLM routes (`litellm_model_info`, its `model_name`), OpenRouter's list,
 // then LiteLLM's public map, there also as `<connection>/<id>` (moonshot.kimi-k3 is the map's moonshot/kimi-k3). Prices in
 // all three are per token, in USD. LiteLLM writes a price it does not have as 0, so a 0 from LiteLLM is missing, never
-// free; OpenRouter's 0 is real (its free models).
+// free; OpenRouter's 0 is real (its free models). A route whose input rate is missing does not end the lookup: the map
+// is then tried under the route's own pointers (`model_info.key`, `litellm_params.model`) and under the id without its
+// provider prefix (the route anthropic/claude-opus-5-5 has no rate, the map's claude-opus-5-5 has).
 
 import type { TokenUsage } from "../contract/contract-chat";
 
@@ -83,6 +85,15 @@ function litellmRates(info: Json, prompt: number): Rates {
 const openrouterRates = (p: Json): Rates => ({ input: num(p.prompt), output: num(p.completion), cacheRead: num(p.input_cache_read), cacheWrite: num(p.input_cache_write), reasoning: num(p.internal_reasoning) });
 
 /**
+ * The ids with their provider prefix off, for the map: `anthropic/claude-opus-5-5` is its `claude-opus-5-5`, and Google's
+ * models are the map's `gemini/<id>` (the route for google/gemini-3.8-flash points at gemini/gemini-3.8-flash).
+ */
+const unprefixed = (ids: string[]): string[] => ids.filter((i) => i.includes("/")).flatMap((i) => {
+    const [provider, rest] = [i.slice(0, i.indexOf("/")), i.slice(i.indexOf("/") + 1)];
+    return provider === "google" ? [`gemini/${rest}`, rest] : [rest];
+});
+
+/**
  * A price book over one call's snapshot: `{ <source name>: body }` (bytes or parsed). Returns `priceOf(model, prompt)` →
  * `{ local: true }` for a local model, `{ basis, key, rates }` for a priced one, or `{ none: "<why>" }`.
  */
@@ -108,13 +119,20 @@ export function priceBook(sources: Record<string, SourceBody>): PriceOf {
         const ids = external ? [model.slice(model.indexOf(".") + 1), model] : [model];
         // The map also keys a provider's models as `<provider>/<id>`, and a connection is often named for its provider.
         const mapIds = external ? [...ids, `${model.slice(0, model.indexOf("."))}/${ids[0]}`] : ids;
+        // A route that carries no input rate (LiteLLM wrote a missing price as 0) does not end the lookup: the map is tried
+        // under the route's own pointers and under the id without its provider prefix, below.
+        const pointers: string[] = [];
         for (const id of ids) {
             const r = routes.get(id);
-            if (r?.model_info) return { basis: "litellm_model_info", key: id, rates: litellmRates(r.model_info, prompt) };
+            if (r?.model_info) {
+                const rates = litellmRates(r.model_info, prompt);
+                if (rates.input != null) return { basis: "litellm_model_info", key: id, rates };
+                for (const k of [r.model_info.key, r.litellm_params?.model]) if (typeof k === "string" && k) pointers.push(k);
+            }
             const o = openrouter.get(id);
             if (o?.pricing) return { basis: "openrouter", key: id, rates: openrouterRates(o.pricing) };
         }
-        for (const id of mapIds) {
+        for (const id of [...mapIds, ...pointers, ...unprefixed(ids)]) {
             const l = litellmMap[id];
             if (l && typeof l === "object" && lnum(l.input_cost_per_token) != null) return { basis: "litellm_map", key: id, rates: litellmRates(l, prompt), offPeak: !!l.off_peak_pricing };
         }
