@@ -15,7 +15,7 @@ const SLOT = path.join(ROOT, "scripts", "test-slot.mjs");
 // The bench's ledger, which a granted job joins: this file's own, set before the import reads it.
 process.env.BENCH_LEDGER_FILE = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "test-slot-ledger-")), "ledger.json");
 const { ledger, register, unregister } = await import("../tests/e2e/bench/memory-budget.mjs");
-const { jobsFor, capFor, skipReason, submit, finish, look, cancel, waitFor, acquire, waitingLine, jobEnv, procLive, startTime, perWorkerFor, admit, minWorkersFor, maxWorkersFor, promisedBy, MAX_RUNS, BATCH_OVERRUN_MS, BATCH_MAX_WORKERS, batchRefusal } = await import(SLOT);
+const { jobsFor, capFor, skipReason, submit, finish, look, cancel, waitFor, acquire, waitingLine, jobEnv, procLive, startTime, perWorkerFor, admit, minWorkersFor, maxWorkersFor, promisedBy, MAX_RUNS, BATCH_OVERRUN_MS, BATCH_MAX_WORKERS, batchRefusal, usualMsFor, timeCapFor, enforceCap, parseMaxTime, TIME_CAP_MIN_MS, TIME_CAP_FACTOR, KILL_GRACE_MS, MAX_TIME_MAX_MIN } = await import(SLOT);
 
 process.env.TEST_SLOT_POLL_MS = "50";
 process.env.TEST_SLOT_MAX_RUNS = "1";
@@ -356,6 +356,182 @@ test("batch: the CLI takes --kind batch --workers N and refuses a bad count with
     const capped = run(4, "--kind", "batch", "--workers", "3");
     assert.deepEqual([capped.status, capped.stderr.trim()], [2, "test-slot.mjs: refused: 3 workers is more than this machine's worker cap of 2 (its cores less two)"]);
     for (const ok of [["--kind", "batch"], ["--kind", "batch", "--workers", "6"]]) assert.equal(run(15, ...ok).status, 0, ok.join(" "));
+});
+
+// --- the wall-clock cap: a job past it is stopped ---
+
+const MIN = 60_000;
+/** Footprint lines of \`kind\` with these durations. */
+const footprints = (dir, kind, durations) => { fs.mkdirSync(dir, { recursive: true }); if (durations.length) fs.appendFileSync(path.join(dir, "footprints.jsonl"), durations.map((d) => JSON.stringify({ kind, jobs: 2, peakRss: 2 * GB, perWorker: GB, durationMs: d })).join("\n") + "\n"); };
+/** A recorder standing in for the signalling, so no test signals a process it did not start. */
+const kills = () => { const sent = []; return { sent, kill: (j, sig) => sent.push([j.ticket, sig]) }; };
+
+test("timeCapFor: the longer of 50 min (test.mjs's 45 min watchdog, then 5) and 5× the kind's p90 duration; usualMsFor is that p90, null with none", () => {
+    assert.deepEqual([TIME_CAP_MIN_MS, TIME_CAP_FACTOR], [50 * MIN, 5]);
+    // Enumerated over the kind's durations, against the rule written out; another kind's lines never count.
+    for (const durations of [[], [MIN], [4 * MIN, 5 * MIN, 6 * MIN], [9 * MIN], [10 * MIN, 2 * MIN], [3 * 60 * MIN]]) {
+        const dir = tmpDir();
+        footprints(dir, "unit", durations);
+        footprints(dir, "e2e", [100 * MIN]);
+        const want = durations.length ? [...durations].sort((a, b) => a - b)[Math.ceil(0.9 * durations.length) - 1] : null;
+        assert.equal(usualMsFor("unit", dir), want, durations.join(","));
+        assert.equal(timeCapFor("unit", dir), Math.max(50 * MIN, 5 * (want ?? 0)), durations.join(","));
+    }
+    const dir = tmpDir();
+    footprints(dir, "unit", [9 * MIN]);
+    assert.equal(timeCapFor("batch", dir), 50 * MIN, "a kind with no footprints gets the floor, not another kind's figure");
+    assert.equal(timeCapFor("unit", tmpDir()), 50 * MIN, "no footprints file at all: the floor");
+});
+
+test("enforceCap: SIGTERM once at the cap, noted in the log; SIGKILL once after the grace; nothing before, nothing uncapped", () => {
+    const at = Date.parse("2026-11-12T12:00:00Z"), cap = 30 * MIN, g = KILL_GRACE_MS;
+    const job = (ranMs, extra = {}) => ({ ticket: "t", state: "running", mode: "detached", pid: 1, grantedAt: new Date(at - ranMs).toISOString(), capMs: cap, ...extra });
+    // Enumerated over how long it ran × whether SIGTERM was sent and how long ago × whether SIGKILL was.
+    for (const ran of [0, cap - 1, cap, cap + 1, 20 * cap]) {
+        for (const termAgo of [null, 0, g - 1, g, 10 * g]) {
+            for (const killed of [false, true]) {
+                if (termAgo == null && killed) continue;
+                const j = job(ran, termAgo == null ? {} : { termAt: new Date(at - termAgo).toISOString(), ...(killed ? { killAt: "x" } : {}) });
+                const { sent, kill } = kills();
+                enforceCap(j, { now: at, kill });
+                const want = termAgo == null ? (ran >= cap ? ["SIGTERM"] : []) : !killed && termAgo >= g ? ["SIGKILL"] : [];
+                assert.deepEqual(sent.map((x) => x[1]), want, `ran ${ran}, SIGTERM ${termAgo} ago, killed ${killed}`);
+                if (want[0] === "SIGTERM") assert.equal(j.termAt, new Date(at).toISOString());
+                if (want[0] === "SIGKILL") assert.equal(j.killAt, new Date(at).toISOString());
+            }
+        }
+    }
+    const log = path.join(tmpDir(), "j.log");
+    enforceCap(job(31 * MIN, { log }), { now: at, kill: () => {} });
+    assert.equal(fs.readFileSync(log, "utf8"), "\ntest-slot: stopped after 31 min, past its cap of 30 min; submit with --max-time <minutes> if it needs longer\n");
+    for (const [extra, opts, what] of [[{ capMs: null }, {}, "granted with no cap and none given"], [{ state: "done" }, {}, "not running"], [{ capMs: null }, { cap: 40 * MIN }, "a default longer than it ran"]]) {
+        const { sent, kill } = kills();
+        enforceCap(job(35 * MIN, extra), { now: at, kill, ...opts });
+        assert.deepEqual(sent, [], what);
+    }
+    const { sent, kill } = kills(), old = job(35 * MIN, { capMs: undefined });
+    enforceCap(old, { now: at, kill, cap });
+    assert.deepEqual([sent, old.capMs], [[["t", "SIGTERM"]], cap], "a record with no cap takes the default it is given, and keeps it");
+});
+
+test("a grant records its cap: what was asked for, else the kind's default; a shared submit keeps the longer ask", () => {
+    const dir = tmpDir(), deps = { ...laptop(20 * GB, { cap: 3, e2e: { cap: 3 } }), timeCap: (kind) => (kind === "e2e" ? 77 * MIN : 33 * MIN) };
+    const a = submit({ cmd: ["a"], mode: "attached", dir, deps, tree: tree() }).ticket;
+    const b = submit({ cmd: ["b"], kind: "e2e", mode: "attached", dir, deps, tree: tree() }).ticket;
+    const c = submit({ cmd: ["c"], maxTimeMs: 90 * MIN, mode: "attached", dir, deps, tree: tree() }).ticket;
+    assert.deepEqual([a, b, c].map((t) => look(t, { dir, deps }).job.capMs), [33 * MIN, 77 * MIN, 90 * MIN]);
+    const d2 = tmpDir(), dd = { memory, spawnJob: () => ({ pid: process.pid, started: startTime(process.pid) }), timeCap: () => 33 * MIN };
+    writeQueue(d2, [holder(process.pid, startTime(process.pid), { capMs: 60 * MIN })]);
+    const one = submit({ cmd: ["npm", "test"], maxTimeMs: 50 * MIN, dir: d2, deps: dd, tree: tree() }).ticket;
+    for (const [ask, want] of [[40 * MIN, 50 * MIN], [null, 50 * MIN], [120 * MIN, 120 * MIN], [60 * MIN, 120 * MIN]]) {
+        assert.equal(submit({ cmd: ["npm", "test"], maxTimeMs: ask, dir: d2, deps: dd, tree: tree() }).ticket, one);
+        assert.equal(look(one, { dir: d2, deps: dd }).job.maxTimeMs, want, `a sharer asking ${ask}`);
+    }
+    finish("held", 0, { dir: d2, deps: dd });
+    assert.equal(look(one, { dir: d2, deps: dd }).job.capMs, 120 * MIN);
+});
+
+test("a run stopped at its cap ends `timedout` with no footprint, and the next starts", () => {
+    const dir = tmpDir(), deps = { ...laptop(20 * GB), maxRuns: 1 };
+    const a = submit({ cmd: ["a"], mode: "attached", dir, deps, tree: tree() }).ticket;
+    const b = submit({ cmd: ["b"], mode: "attached", dir, deps, tree: tree() }).ticket;
+    // Its runner was sent SIGTERM at the cap and releases the slot on the way out, as acquire's handler does.
+    edit(dir, a, (j) => { j.grantedAt = new Date(Date.now() - 2 * 60 * MIN).toISOString(); j.capMs = 60 * MIN; j.termAt = new Date().toISOString(); });
+    finish(a, null, { dir, deps, peak: 4 * GB });
+    assert.deepEqual(states(dir, [a, b], deps), ["timedout", "running"]);
+    assert.equal(fs.existsSync(path.join(dir, "footprints.jsonl")), false, "a 2-hour run stopped at its cap writes no footprint, so it never raises the next cap");
+});
+
+test("the upgrade: a running record from before the cap (no capMs) gets its kind's default on the next read and is stopped past it", () => {
+    const dir = tmpDir(), probe = { alive: () => true, startTime: () => "then" };
+    // What the code before the cap wrote: a detached job granted 20 hours ago with no capMs, beside a fresh one.
+    const rec = (ticket, pid, ago, extra = {}) => ({ ticket, mode: "detached", kind: "unit", cmd: ["x"], cwd: "/", key: ticket, clone: "/c", by: { pid: 1, started: "then" }, state: "running", pid, started: "then", grantedAt: new Date(Date.now() - ago).toISOString(), jobs: 2, ...extra });
+    writeQueue(dir, [rec("old", 424242, 20 * 60 * MIN, { jobs: 3, sizing: { perWorker: 1.8 * GB } }), rec("fresh", 424243, 0)]);
+    const { sent, kill } = kills();
+    const { state } = look("old", { dir, deps: { ...laptop(20 * GB), probe, kill } });
+    assert.deepEqual(sent, [["old", "SIGTERM"]], "only the one past the default");
+    assert.deepEqual(state.jobs.map((j) => [j.ticket, j.state, j.capMs, !!j.termAt]), [["old", "running", 50 * MIN, true], ["fresh", "running", 50 * MIN, false]]);
+    const gone = look("old", { dir, deps: { ...laptop(20 * GB), probe: { alive: (pid) => pid !== 424242, startTime: () => "then" }, kill } });
+    assert.deepEqual([gone.job.state, gone.job.exit], ["timedout", null], "once it is gone it is `timedout`, not `lost`");
+});
+
+test("a detached job past its cap: its process group is stopped, the next job starts, the log says why, and wait exits 124", async () => {
+    const dir = tmpDir(), never = path.join(dir, "never");
+    const a = submit({ cmd: waitsFor(never), cwd: ROOT, dir, maxTimeMs: 300 });
+    const b = submit({ cmd: quick(0), cwd: ROOT, dir });
+    await until(() => look(a.ticket, { dir }).job.pid, 5000, "a to start");
+    const pid = look(a.ticket, { dir }).job.pid;
+    const jb = await waitFor(b.ticket, { dir, log: () => {} });
+    assert.deepEqual([jb.state, jb.exit], ["done", 0]);
+    const ja = look(a.ticket, { dir }).job;
+    assert.equal(ja.state, "timedout");
+    assert.throws(() => process.kill(-pid, 0), "the job's whole process group is gone");
+    assert.match(fs.readFileSync(ja.log, "utf8"), /test-slot: stopped after 0 min, past its cap of 0 min; submit with --max-time <minutes>/);
+    const env = { ...process.env, TEST_SLOT_DIR: dir };
+    delete env.TEST_SLOT_TICKET;
+    const w = spawnSync(process.execPath, [SLOT, "wait", a.ticket], { cwd: ROOT, env, encoding: "utf8" });
+    assert.equal(w.status, 124, w.stderr);
+    assert.match(w.stderr, /timedout/);
+});
+
+test("a job that ignores SIGTERM: what is left of its process group gets SIGKILL after the grace", { timeout: 15_000 }, async () => {
+    const dir = tmpDir(), started = path.join(dir, "started");
+    // The child ignores SIGTERM; the queue's `__job` process does not, so the group outlives the pid the record names.
+    const stubborn = [process.execPath, "-e", `process.on("SIGTERM",()=>{});require("fs").writeFileSync(${JSON.stringify(started)},"");setInterval(()=>{},1000)`];
+    const a = submit({ cmd: stubborn, cwd: ROOT, dir, maxTimeMs: 1500 });
+    const b = submit({ cmd: quick(0), cwd: ROOT, dir });
+    await until(() => fs.existsSync(started), 5000, "the stubborn child to start");
+    const pid = look(a.ticket, { dir }).job.pid;
+    const deps = { killGraceMs: 500 };
+    await until(() => look(a.ticket, { dir, deps }).job.termAt, 5000, "SIGTERM at the cap");
+    assert.doesNotThrow(() => process.kill(-pid, 0), "the child is still there after SIGTERM");
+    assert.equal(look(a.ticket, { dir, deps }).job.state, "running", "and the slot stays held while it is");
+    const jb = await waitFor(b.ticket, { dir, deps, log: () => {} });
+    assert.equal(jb.state, "done");
+    const ja = look(a.ticket, { dir }).job;
+    assert.ok(ja.killAt, "SIGKILL was sent");
+    assert.equal(ja.state, "timedout");
+    assert.throws(() => process.kill(-pid, 0));
+});
+
+test("an attached run past its cap: its stderr says it was stopped at the cap, the record ends timedout, and it exits 143", { timeout: 15_000 }, async () => {
+    const dir = tmpDir(), started = path.join(dir, "started");
+    // acquire's own process is the job (what test.mjs is): this test's polling is what reaches the cap and signals it.
+    const holder = `import fs from "node:fs"; import { acquire } from ${JSON.stringify(SLOT)}; await acquire({ cmd: ["holder"], maxTimeMs: 1200 }); fs.writeFileSync(${JSON.stringify(started)}, ""); setInterval(() => {}, 1000);`;
+    const env = { ...process.env, TEST_SLOT_DIR: dir };
+    for (const k of ["TEST_SLOT_TICKET", "TEST_SLOT", "CI", "GITHUB_ACTIONS"]) delete env[k]; // each would skip the queue
+    const child = spawn(process.execPath, ["--input-type=module", "-e", holder], { cwd: ROOT, env, stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    child.stderr.on("data", (d) => { stderr += d; });
+    const exited = new Promise((r) => child.on("exit", (code) => r(code)));
+    await until(() => fs.existsSync(started), 5000, "the attached run to be granted");
+    const { ticket } = look(null, { dir }).running[0];
+    let code = null;
+    exited.then((c) => { code = c; });
+    await until(() => (look(null, { dir }), code !== null), 8000, "the run to be stopped at its cap");
+    assert.equal(code, 143, stderr);
+    assert.match(stderr, /test-slot: stopped: this run passed its cap of 0 min; TEST_SLOT_MAX_TIME=<minutes> gives it longer/);
+    assert.equal(look(ticket, { dir }).job.state, "timedout");
+});
+
+test("--max-time: a whole number of minutes from 1 to a day; anything else exits 2", () => {
+    for (const [v, want] of [["1", MIN], ["45", 45 * MIN], [String(MAX_TIME_MAX_MIN), MAX_TIME_MAX_MIN * MIN], ["0", NaN], [String(MAX_TIME_MAX_MIN + 1), NaN], ["2.5", NaN], ["-3", NaN], ["x", NaN], ["", NaN]]) {
+        assert.deepEqual(parseMaxTime(v), want, `"${v}"`);
+    }
+    const dir = tmpDir(), env = { ...process.env, TEST_SLOT_DIR: dir };
+    delete env.TEST_SLOT_TICKET;
+    delete env.TEST_SLOT_MAX_TIME;
+    writeQueue(dir, [holder(process.pid, startTime(process.pid))]);
+    const run = (...a) => spawnSync(process.execPath, [SLOT, "submit", ...a, "--", process.execPath, "-e", "0"], { cwd: ROOT, env, encoding: "utf8" });
+    for (const bad of [["--max-time", "0"], ["--max-time", "x"], ["--max-time"], ["--kind", "batch", "--max-time", "1441"]]) {
+        const r = run(...bad);
+        assert.equal(r.status, 2, bad.join(" "));
+        assert.match(r.stderr, /--max-time is a whole number of minutes from 1 to 1440/);
+    }
+    const ok = run("--kind", "batch", "--max-time", "90");
+    assert.equal(ok.status, 0, ok.stderr);
+    const ticket = ok.stdout.split("\n")[0].trim();
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "queue.json"), "utf8")).jobs.find((j) => j.ticket === ticket).maxTimeMs, 90 * MIN);
 });
 
 // --- who skips the queue ---

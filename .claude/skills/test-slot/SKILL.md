@@ -16,11 +16,11 @@ Why the limits: on 2026-11-08 nine runners from different sessions ran at once (
 time then queued twelve sessions' suites behind a single 3-worker run.
 
 ```bash
-node scripts/test-slot.mjs submit [--kind unit|e2e|batch] [--workers N] -- <command…>   # queue a DETACHED job; prints its ticket, returns at once
+node scripts/test-slot.mjs submit [--kind unit|e2e|batch] [--workers N] [--max-time MIN] -- <command…>   # queue a DETACHED job; prints its ticket, returns at once
 node scripts/test-slot.mjs wait <ticket>                            # block until it ends; prints the log's tail, exits with its code
 node scripts/test-slot.mjs status                                   # what runs, what waits, the last finished jobs
 node scripts/test-slot.mjs cancel <ticket>                          # take a queued job out, or stop a running one
-node scripts/test-slot.mjs run [--kind unit|e2e|batch] [--workers N] -- <command…>      # wait in the FOREGROUND, then run the command here
+node scripts/test-slot.mjs run [--kind unit|e2e|batch] [--workers N] [--max-time MIN] -- <command…>      # wait in the FOREGROUND, then run the command here
 ```
 
 ## In a Claude Code session
@@ -50,9 +50,24 @@ slot ahead of tests). The rule of 2026-11-09:
 - Every queued test job is judged before any batch job, whatever the submit order; at most ONE batch job runs at a time.
 - It counts toward the 3-run and 13-worker caps like any run.
 - Chunk it to about five minutes or less (guidance, not enforced). A run past 15 minutes is marked `overran: true` in
-  its footprint (every footprint has `durationMs`) so the chunk can be tuned; nothing kills it here.
+  its footprint (every footprint has `durationMs`) so the chunk can be tuned. The wall-clock cap below still applies.
 - Its per-worker figure is the p90 of the batch footprints only; with none yet it takes the unit figure (the default
   1 GB when unit is unmeasured too). Batch lines never size a test run.
+
+## The wall-clock cap
+
+Every job, of every kind, is stopped once it has run past its cap (rule of 2026-11-12). The default cap is the longer of
+50 minutes (test.mjs's own 45-minute watchdog plus five, so a stuck suite fails there first, with its diagnostic) and 5×
+the p90 duration of that kind's footprints. `--max-time <minutes>` on `submit` or `run` (1 to 1440), or
+`TEST_SLOT_MAX_TIME=<minutes>` for `npm test` and Playwright, replaces it; two sessions sharing one queued job get the
+longer ask. Past the cap, the job's process group gets SIGTERM (an attached runner gets it itself and stops its children),
+then SIGKILL 30 s later for anything still alive. The record ends `timedout` (`wait` exits 124), the log says why, and
+no footprint is written. The check runs on every read of the queue, like reclaiming a dead holder. A running job granted
+before the cap existed gets the default on the next read. `status` shows each running job's cap and marks it SLOW once
+it has run 3× its kind's usual. Why: on 2026-11-11 a detached loop of direct `node --test` runs with
+`--test-timeout=0` spun in a file's `before()` for 19.6 hours. It held three workers and a 5.4 GB plan, so every queued
+suite waited and every bench sweep found no room. A multi-run repro either declares `--max-time` or goes in as one job
+per run.
 
 ## Opt-outs
 

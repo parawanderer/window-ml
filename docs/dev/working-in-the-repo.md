@@ -455,7 +455,10 @@ each other while the machine ran three workers. The queue is FIFO among the admi
 waiting suite only while the suite cannot start), and with nothing running the head always starts. Each footprint
 records how many runs shared the machine (`runs`), for a later tuning. Work that is not a test run but wants the memory
 lock (probes, scans, notebook data runs) goes in as `--kind batch --workers N` (rule of 2026-11-09): after every test
-job, one at a time, all N workers or none (both caps hold even alone: a submit that could never fit exits 2), chunked to about five minutes, its footprints kept apart from the suites'. `--jobs N` still fixes the workers; CI, `TEST_SLOT=off` and a runner
+job, one at a time, all N workers or none (both caps hold even alone: a submit that could never fit exits 2), chunked to about five minutes, its footprints kept apart from the suites'. Every job has a wall-clock cap (rule of
+2026-11-12): the longer of 50 minutes and 5× its kind's p90 duration, or `--max-time`. Past it, the queue stops the job's
+process group and records it `timedout`. On 2026-11-11 a detached loop of direct `node --test` runs, which bypass
+test.mjs's watchdog, hung for 19.6 hours and held the queue. `--jobs N` still fixes the workers; CI, `TEST_SLOT=off` and a runner
 nested in a job skip it. `submit` and `wait` start a run without blocking the session. Commands, the opt-outs, where
 the state lives and the environment a detached job gets: the `test-slot` skill. A granted run joins the bench's memory
 ledger as kind `tests`, and each sizes itself from free memory less what the other has admitted and not yet started, so a
