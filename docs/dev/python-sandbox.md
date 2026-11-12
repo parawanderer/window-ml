@@ -439,8 +439,9 @@ a Stop; before, it queued behind a runaway run on the worker's chain.
   interpreter and again when it ends (`tests/python-bench-stop.test.mjs`, red without it).
 - **Who may stop what.** `PYTHON_INTERRUPT` is answered for extension pages only (`isExtensionSender`), is not in
   `HANDLE_MAP`, and names no request: the offscreen document interrupts only the started bench run (`persist`) of the
-  `own` principal (`interruptBench`). No message can reach another namespace, a model's `python_exec` cell included;
-  stopping a model's cell is ASYNC_CALLS.md mode 1's `python_exec` slice, which will use this same buffer.
+  `own` principal (`interruptBench`). No message can reach another namespace, a model's `python_exec` cell included.
+  A model's cell is stopped by its own id (`PY_CANCEL`, `interruptCell`, docs/dev/async-calls.md "Mode 1 on
+  `python_exec`"), over this same buffer.
 
 **The bench editor's COMPLETION is Jedi, in the sandbox (`COMPLETE_HELPER`/`completeIn`, python-runtime.ts).**
 Static analysis of the script being typed — it is never RUN — so a sandbox that holds no state is no limit for

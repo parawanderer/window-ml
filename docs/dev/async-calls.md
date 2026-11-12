@@ -62,13 +62,49 @@ result reaches the model through the run inbox at the next step boundary, or thr
 - **No task outlives its turn.** The run host's `settle` calls `endTasks`, which cancels each running task through the
   host; a cancel that cannot reach it is logged `task`/`orphaned`. The inbox is closed first, so a result that lands
   after is dropped.
-- **The `task` tool** (`task-tool.ts`, a worker builtin offered with `ml.sh`, not gated, not citable): `await` (with
+- **The `task` tool** (`task-tool.ts`, a worker builtin offered with `ml.sh` or `python_exec`, not gated, not citable): `await` (with
   its own `timeout_ms`, capped at `TASK_AWAIT_MAX_MS`), `cancel`, `tail`. It is keyed by the loop's run id, so another
   run's id and an invented one read the same `UnknownTask`. `ml.current.tasks` is computed at the snapshot's instant by
   `withTasks`, beside `withPolicies`. Python has no `ml.current` yet.
 - **Rendering.** The dev view draws a task's result as a labelled `UserBubble` (speaker `task <id>`); the calm surfaces
   draw `TaskResultLine` (`task-line.tsx`), one quiet line that opens to the exact text the model got.
 - **A call that must not detach** (the extension's own read in `sw-library-proposal.ts`) passes `lease: false`.
+
+## Mode 1 on `python_exec`
+
+Only a worker-hosted run's cell is leased (`workerPython` passes the tool's `late` formatter; a page-hosted run, the
+bench and a page's `ml.pythonExec` keep the 15 s kill). The pieces, in `sw-python-task.ts`, `py-lease.ts` and the
+offscreen document:
+
+- **The lease starts when the cell does.** The cell's `PY_RUN` carries `cell` (the worker's own stream id). On the Python
+  worker's `started` the offscreen document posts `PY_STARTED`, and `leaseCell` arms `expect_ms ?? PY_LEASE_MS` (15 s
+  placeholder, `__PY_LEASE_MS__`). A cold start and a wait behind another cell are never charged to it. The document
+  swaps the 15 s cap for `PY_DETACHED_MAX_MS` (10 min) for a leased cell: the lease, not the cap, decides when it stops
+  being attached.
+- **Past the lease the call answers `Detached`**, the tool shape's text (`pyDetachedText`) with the output so far, and
+  the cell runs on. Its `sendMessage` reply stays pending, which keeps the service worker alive: measured in Chrome 151,
+  a reply 330 s later reached the same worker instance, and a worker with nothing pending was evicted at about 65 s.
+- **The kernel is locked while a cell is detached.** A second `python_exec` of the run is REFUSED (`pyKernelBusy`), not
+  queued: queued behind the worker's chain, its 120 s start bound would kill the worker and the detached cell with it.
+- **The result goes through the tool's own formatter** (`format` in `python-tool.ts`): the output cap and the hints, then
+  `finish`'s scrub. A figure cannot ride a task's text, so the line says it was not shown. `verify` is not run late.
+- **Cancel is the interrupt first** (`interruptCell`, offscreen.ts): SIGINT into the cell's worker's buffer, and the
+  worker killed after `PY_INTERRUPT_KILL_MS` (1 s) if it has not answered. The cancel says which (`pyCancelText`): names
+  kept, or the sandbox restarted and the names lost. A cancel that arrives before the cell started is done when it starts,
+  since the worker clears the buffer before each cell.
+- **Stop reaches an attached cell.** The run's abort interrupts it by the same `interruptCell`. Before this, nothing on
+  the Python path read the abort and a runaway cell ran to its 15 s kill. A detached cell is the turn end's to cancel
+  (`endTasks`), which also stops `PY_DELETE_RUN` waiting behind it.
+- **The tail is kept in the offscreen document**, beside the worker: the last `PY_TAIL_RING_CHARS` of the cell's
+  output, read by `PY_TAIL`. The service worker keeps no copy. A leased cell always streams to the document. Once
+  detached, its chunks no longer reach the step's live output.
+- **A result whose worker died is logged, not dropped.** The offscreen document posts `PY_DONE` (cell id, run, outcome,
+  size) after every leased cell's reply. The worker that sent the cell ignores it: it is still waiting (`liveCells`) or
+  has just settled it (the last 64). A worker that knows neither is a new one, woken by that message, and logs
+  `python`/`orphaned`. Nothing more is recovered: the dead worker took the run's loop and its task table with it.
+- **The messages are the service worker's alone.** `PY_STARTED`, `PY_CANCEL`, `PY_TAIL` and `PY_DONE` are not in `HANDLE_MAP`, are
+  answered only for our own id with no tab, and name a cell by an id only the worker made. A `cell` on a `PY_RUN` is
+  honoured only from the worker and only for the wire's own `run:<id>` principal.
 
 ## Traps
 

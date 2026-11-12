@@ -121,6 +121,10 @@ if (!EXEC_WORLDS.includes(DEFINES.__EXEC_DEFAULT_WORLD__))
 DEFINES.__SH_LEASE_MS__ ??= "15000";
 if (!/^[1-9][0-9]*$/.test(DEFINES.__SH_LEASE_MS__))
     throw new Error(`__SH_LEASE_MS__ must be a positive integer of milliseconds, got ${DEFINES.__SH_LEASE_MS__}`);
+// The same for a worker-hosted run's python_exec cell (src/python/py-lease.ts `PY_LEASE_MS`): `--define __PY_LEASE_MS__=5000`.
+DEFINES.__PY_LEASE_MS__ ??= "15000";
+if (!/^[1-9][0-9]*$/.test(DEFINES.__PY_LEASE_MS__))
+    throw new Error(`__PY_LEASE_MS__ must be a positive integer of milliseconds, got ${DEFINES.__PY_LEASE_MS__}`);
 
 // Core (injected/content/background/popup/sidebar-shell) is left UNminified so
 // injected.js stays readable when inspected in devtools. The sidebar app is a

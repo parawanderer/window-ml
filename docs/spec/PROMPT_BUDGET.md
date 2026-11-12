@@ -4,7 +4,7 @@ Status: **steps 1 and 2 done (#448, #451); of step 3, the `ml.current` cut shipp
 the default kit (#464), and the tool-output-tokens cut, the `exec`/`fetch_url` split, `locate`'s option texts and (round
 3) `python_exec`'s option texts and the shadow/iframe edge cases shipped measured (below); the pipe-example cut was
 dropped unmeasured, as too small to be worth a sweep.**
-Started 2026-10-08, updated 2026-11-11 (the page context leaves the system prompt, measured).
+Started 2026-10-08, updated 2026-11-12 (`task` offered with `python_exec`, measured).
 
 Every model call carries the system prompt and every tool's schema. This is the plan for making that smaller
 without making runs worse, and the record of what has been measured so far. It is here, not in `tmp/`, so whoever
@@ -158,6 +158,24 @@ root 404s), `todays-date` answers the date.
 - The variant and its spec are deleted (the branch `backup/pagectx-system` has them); the `/shop/aisle-4/` fixture
   stays in `examples/cross-page/serve.mjs`.
 
+
+## `task` reaches every run with `python_exec` (2026-11-12)
+
+A `python_exec` cell of a worker-hosted run now detaches past its lease (ASYNC_CALLS.md mode 1), so `task` is offered
+wherever `python_exec` is, not only where `ml.sh` is on (`offersTask`, `src/tools/task-tool.ts`). Measured as the
+backend's own `usage.prompt_tokens` for one call with `python_exec` alone and with `python_exec` and `task`, the same
+system and user message:
+
+| Model | without `task` | with `task` | delta |
+| --- | --- | --- | --- |
+| gemma4:31b | 1,202 | 1,447 | 245 |
+| qwen3.6:35b | 1,426 | 1,688 | 262 |
+
+- **Size**: `task`'s definition is 858 characters as sent (name, description, parameters); `python_exec`'s is 4,424.
+  The delta is paid on every call of a run that has `python_exec` and not `ml.sh`; a run with `ml.sh` on already paid it.
+- `python_exec`'s own new `expect_ms` parameter is inside the "without" column (worker-hosted runs only).
+- The detached text and the wake's two phrasings (`pyDetachedText`, `src/sw/sw-python-task.ts`) get their panel
+  measurement before the mode 1 PR leaves draft.
 ## Round 3, first finding: glm-4.7-flash's csv-total was the tool, not the prompt (2026-10-14)
 
 Round 2 left the `python_exec` cut unshipped because glm-4.7-flash lost csv-total under it. Reading its steps showed
