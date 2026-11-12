@@ -128,6 +128,31 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
    itself died is reported `host-lost`, and a policy that chooses otherwise parks the process on the ORPHAN list the
    status reports (`SHELL.md`, the kill policy and its orphan list). That is the dead-man's switch; this file adds
    the loop-side reporting, not a second one.
+
+   **4a. A page change ends the page's tasks, not the run's.** DESIGN NOTE 2026-11-12 (the async lane, assigned by the
+   coordinator; nothing built). A worker-hosted run's page changes when it navigates in its own tab or when the person moves it to
+   another tab (`MOVE_RUN.md`). Neither ends the run (a page-hosted loop's navigation does, and is rule 4's), so rule 4
+   does not apply; each detached call and subscription is
+   decided by where it RUNS:
+   - **Runtime-bound tasks run on**: an `ml.sh` call (the host's process), a detached `python_exec` cell (the
+     offscreen document), a fetch (the worker), and a mode 2 subscription whose source is not the page (a detached
+     call's completion, `ml.current`, a host file or process, mail). Their results arrive in the run's inbox as
+     before.
+   - **Page-bound tasks are cancelled** by their executor's cancel (rule 3) when the page changes: a detached `exec`
+     (it runs in the old page's world) and a mode 2 subscription on a DOM event or a selector (it watches the old
+     document). Each is reported to the model as a fact, as a cancel is (`[task <id> cancelled: it ran in the page
+     this run left]`; `[subscription <id> ended: it watched the page this run left]`), and is a run-log record. A
+     selector watch is never silently re-armed on the new document, whose elements are not the ones it was asked
+     about; the model subscribes again if it wants to.
+   - **The inbox follows the run, where there is one to follow.** `runInboxes` carries the run's `tabId`, and a turn's
+     `settle` deletes it with the turn's tasks. A move BETWEEN TURNS (`MOVE_RUN.md`, shape (a), the one built first)
+     therefore meets no inbox and no task: rule 4 already ended them, and this rule has nothing to act on. A move
+     BETWEEN STEPS (shape (b), open) would re-key the inbox, so a runtime-bound task's result reaches the run on its
+     new tab and never the old one. A same-tab navigation keeps the tab id and needs no re-key.
+
+   Today no page-bound task exists (only `ml.sh` and `python_exec` detach, and mode 2 is unbuilt), so the rule changes
+   nothing that runs now. It must hold before a detached `exec` or a DOM subscription is built, and each of those PRs
+   carries its red-team row: a task cancelled by a page change is reported, and never resolves against the new page.
 5. **The handle is the run's.** It is answered only for the run that made it, from that run's own tab or the service
    worker, with the sender checks the inbox already has; a page cannot await, cancel or read another run's call. A
    detached call, its wake and its collection are records in the run log (`python`/`detached`, `shell`/`detached`,
