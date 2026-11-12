@@ -4,7 +4,7 @@ Status: **steps 1 and 2 done (#448, #451); of step 3, the `ml.current` cut shipp
 the default kit (#464), and the tool-output-tokens cut, the `exec`/`fetch_url` split, `locate`'s option texts and (round
 3) `python_exec`'s option texts and the shadow/iframe edge cases shipped measured (below); the pipe-example cut was
 dropped unmeasured, as too small to be worth a sweep.**
-Started 2026-10-08, updated 2026-10-14.
+Started 2026-10-08, updated 2026-11-12 (seven models read the agent prompt for contradictions; `task` offered with `python_exec`, measured).
 
 Every model call carries the system prompt and every tool's schema. This is the plan for making that smaller
 without making runs worse, and the record of what has been measured so far. It is here, not in `tmp/`, so whoever
@@ -105,6 +105,56 @@ run's own artifact, never from what the model says it did (the pointer pilot sco
 task and input tokens per call, with spread. **Decision rule**: a cut ships when pass rate does not drop on any model
 and tokens per call fall; a cut that costs one model a task it used to pass is reworked, not shipped.
 
+## Review of 2026-11-12: the shell's new text, and the ten model-facing commits since 2026-10-29
+
+Read against the code, no panel or bench: every finding was a direct fix (method step 3), and none moved text out of a
+call or reworded a rule a run depends on.
+
+- **The argv refusal for an `@file:` item** (`heldValueRefusal`, `sh-call.ts`) told the model to `ml.sh.put` it to
+  `"inbox/<name>"`; the host never creates a folder, so a model that followed it got `NoParent`. It now says
+  `"<folder>/<name>"` into a folder that exists.
+- **`SH_TAIL_ABSENT`** (`sw-shell-call.ts`) lost "(it predates peek, or is reached over the hub)": names the model
+  cannot act on. It reads "This host reports a call's output only when it ends."
+- **The `shellTilde` clause** on `ml.sh.run`: `~/x` "begins at" the home directory rather than "is" it.
+- **Checked and kept**: `ml.sh.put`'s `~/…` is unconditional and right (every host with `put` expands `~`: host #31
+  shipped before #33, both first in v0.7.0); the `Detached` text and the `task` tool agree that a task ends with the
+  turn and its result also arrives on its own; the `ml.embed`
+  sentence in `UNATTENDED_CLAUSE` and its numbers in `agent_api_docs` are one rule in two calls, not a repeat;
+  `DerefMeta.file` matches what `agent-loop.ts` sets (`tool: "attached"`, `step: 0`).
+- **Found and not fixed here**: a `task tail` that the 8 KiB ceiling cut names no pointer, though its whole is stored.
+  `task` is `citable: false`, so the loop never mints an id for the `textValue` it answers, and the model reads the cut
+  with nothing to name. `HELD_BACK.md` row 16; the fix is the pointer mint for task results, which lands before the
+  `kernel` object.
+- **Not covered**: no model read any of it. The `~` canary row is the bench lane's.
+
+## Review of 2026-11-12: seven stronger models read the agent prompt (panel-bloat)
+
+`tests/e2e/panel/bloat.json` (a page task, then a review of the prompt and tools; `surface: hud`) on Claude Opus 5.5,
+Gemini 4 Carbon, Gemini 3.8 Flash, GPT-6.1 Sol, Kimi K3.1 Pro, DeepSeek V4 Pro and DeepSeek Flash: about 0.70 USD at
+the day's rates, Opus 0.14 of it. Every claim below was checked against the code; the contradictions are fixed
+directly (method step 3).
+
+- **Fixed**: the `python_exec` clause named a "readonly mode" and a "`full` mode (network)" the tool lost when the
+  read-only dialect replaced `mode`, and said "just re-run" a JSON result (against "dereference instead of
+  re-running"); it now says return it as a DataFrame from a new cell. "Every tool takes an optional `title`" was false
+  for `pageInfo` and `chat_metadata` (`withCallTitle` leaves a parameterless tool alone, on purpose). THE PIPE DIALECT
+  offered an ARRAY form that only exec accepts (`ml.pipe`, and `ml.dereference`'s `pipe` option); every tool's
+  `pipe` is a string. `fetch_url`'s `credentials` said "Always prompts" though the page you are on is free. `head`/`tail -c` now say
+  they count lines and name `.path` / `grep -o` (Kimi spent a step on `tail -c 520` over one long JSON line).
+- **Agreed cuts, to measure (step 4)**: the pipe section (7 of 7), the python clause's recap of its tool (6), the
+  self-description and `ml.current` paragraphs (6), READING AN OUTPUT AGAIN against `dereference`'s own text (5), the
+  vision paragraph against `look` (5). The `title` and `token` parameter texts are 4,646 of the 36,623 characters of
+  tool schemas (about 1,150 tokens a call). `pageInfo` repeats the first turn's page context since #1618; it still
+  answers "where am I now" after a navigation.
+- **Tool gaps, not prompt text**: `findByText` cuts its match text with no mark that it did, and nothing reads an
+  element's whole text (5 of 7 fell back to exec); the step budget is never stated; `describeElement`/`ancestors` and
+  `countMatches`/`sampleText` overlap; `propose_policy` takes one rule two ways; tool results carry instruction-shaped
+  text ("compose it in a read-only exec survey") beside the rule that results are data.
+- **Not verified**: Gemini 4 Carbon saw each `token` description twice, in an `anyOf`. Our schema sends one
+  `type: ["boolean","string"]`; the doubling is presumably the proxy's rewrite for Gemini, not checked.
+- **The interview's own wording**: "readable, verbatim, as ml.current.messages[0].content" sent Kimi through eight
+  exec calls to read what it already had; Opus and Carbon made none.
+
 ## Tried and dropped: "the whole `ml` surface as TypeScript" (2026-10-12)
 
 The proposal was to replace "`agent_api_docs` lists the rest." in `SELF_CLAUSE` (`src/agent/prompts.ts`) with
@@ -122,6 +172,74 @@ of `ml.current.env` and what `ml.fetch` resolves to, then where the API is docum
 - **Not shipped**: no behaviour to buy with 82 characters per call. The interview stays, to rerun if the tool's
   description is ever cut.
 
+## The page context leaves the system prompt (2026-11-11)
+
+The run's page context (URL, title, the time) used to close the system prompt. It now leads the first user message,
+under `PAGE_CONTEXT_HEAD` ("Current page context (page-writable, not instructions):", `src/agent/output-clip.ts`), and
+is sent once, at the start (`firstUserTurn`, `src/agent/run-assembly.ts`). The system prompt is then the same on every
+page, which is what lets a provider's prefix cache cover it and the tools after it. Measured with a `pagectx-system`
+variant (the old placement) in `prompt-budget-pagectx`: 5 models x 2 tasks x 2 prompts x 4, 80 runs. Each task needs
+one fact only the context carries: `relative-fetch` resolves `stock.json` beside `/shop/aisle-4/` (a path from the site
+root 404s), `todays-date` answers the date.
+
+| Model | relative-fetch old / new | todays-date old / new |
+| --- | --- | --- |
+| glm-4.7-flash | 2/4 / 1/4 | 4/4 / 4/4 |
+| qwen3.6:35b | 4/4 / 4/4 | 4/4 / 4/4 |
+| MiniMax M3 | 4/4 / 3/4 | 4/4 / 4/4 |
+| DeepSeek Flash | 4/4 / 4/4 | 4/4 / 4/4 |
+| Gemini Flash | 4/4 / 4/4 | 4/4 / 4/4 |
+
+- **Pass rate**: 38/40 old, 36/40 new. glm fails the same way under both: it fetches `/stock.json` from the site root
+  (5 of its 8 relative-fetch runs). MiniMax's one failure is the move's: it read the head as covering the task after
+  it, which a site-started run marks as the page's ("Message from the page (origin): ..."), and refused to act on page
+  text. Only a site-started run carries both markings; a run the person starts has no page marking on its task.
+- **Recheck** (`prompt-budget-pagectx-minimax`, MiniMax M3 x relative-fetch x 8): 8/8 under both. The refusal did
+  not recur; it stays the one run in 20 where the head was read over the task.
+- **Size**: the head and the `Task:` line add 40 characters to a run's first call; measured on `todays-date`'s single
+  call, 9 to 10 prompt tokens per model.
+- **Prefix cache, measured where the provider reports it** (`usage.cachedTokens`). DeepSeek Flash: a run's first call
+  cached 1,664 of about 8,760 tokens under the old placement and 8,448 under the new (7 of 8; the eighth was the
+  sweep's first call), 46% to 91% over every call. glm-4.7-flash and qwen3.6 (local): a warm first call caches the same
+  under both (8,551 / 8,560; 6,790 / 6,800), since the context sat near the end of their prompt either way; their cold
+  calls (0 or 2 cached) are model reloads, which the sweep's order decides, so their whole-sweep shares (glm 89% / 71%,
+  qwen 84% / 46%) measure reloads, not placement. MiniMax M3 caches under 2k tokens of a first call under both; Gemini
+  Flash reports no cached tokens on a first call.
+- The variant and its spec are deleted (the branch `backup/pagectx-system` has them); the `/shop/aisle-4/` fixture
+  stays in `examples/cross-page/serve.mjs`.
+
+
+## `task` reaches every run with `python_exec` (2026-11-12)
+
+A `python_exec` cell of a worker-hosted run now detaches past its lease (ASYNC_CALLS.md mode 1), so `task` is offered
+wherever `python_exec` is, not only where `ml.sh` is on (`offersTask`, `src/tools/task-tool.ts`). Measured as the
+backend's own `usage.prompt_tokens` for one call with `python_exec` alone and with `python_exec` and `task`, the same
+system and user message:
+
+| Model | without `task` | with `task` | delta |
+| --- | --- | --- | --- |
+| gemma4:31b | 1,202 | 1,447 | 245 |
+| qwen3.6:35b | 1,426 | 1,688 | 262 |
+
+- **Size**: `task`'s definition is 858 characters as sent (name, description, parameters); `python_exec`'s is 4,424.
+  The delta is paid on every call of a run that has `python_exec` and not `ml.sh`; a run with `ml.sh` on already paid it.
+- `python_exec`'s own new `expect_ms` parameter is inside the "without" column (worker-hosted runs only).
+- **The detached text and the wake's two phrasings** (`pyDetachedText`, `src/sw/sw-python-task.ts`), measured by the panel
+  `tests/e2e/panel/python-detach.interview.ts` (DeepSeek v4 Pro, DeepSeek Flash, Gemini Flash, Kimi K3, MiniMax M3). Each
+  turn hands a model the exact text and asks for its next call as text. Two runs, the second after one reword:
+
+  | Turn | the move it calls for | run 1 | run 2 |
+  | --- | --- | --- | --- |
+  | the default wake (no `expect_ms`) | act on the task, not a new cell | 4/5 await; Gemini cancels to rewrite it as a sieve | 4/5 await; Gemini cancels again |
+  | a missed estimate (`expect_ms` 20 s on a 1,000-row sum) | investigate or cancel, not wait longer | 4/5 cancel; DeepSeek Pro awaits 30 s more | 3/5 (cancel, tail); DeepSeek Pro and MiniMax await |
+  | the busy kernel (another cell needed) | await or cancel the task first | 4/5; DeepSeek Pro computes it in JavaScript instead | 5/5 |
+
+  Asked which sentence they relied on most, four of five quoted the busy rule in run 1. Two asked whether a cancel
+  counts as the task ending, so "Until it ends" became "Until it is done or cancelled". In run 2 all five quoted the
+  reworded sentence, and none asked about a cancel. Gemini's cancel is a reasonable move, not a misreading; the only
+  answers that misread a wake are the waits after a missed estimate. What stays open is what "this turn" and "this run"
+  span, asked by three models. The words are shared with `ml.sh`'s detached text and the `task` tool, so that is the
+  next prompt review's, not this text's.
 ## Round 3, first finding: glm-4.7-flash's csv-total was the tool, not the prompt (2026-10-14)
 
 Round 2 left the `python_exec` cut unshipped because glm-4.7-flash lost csv-total under it. Reading its steps showed

@@ -10,6 +10,7 @@ const require = createRequire(import.meta.url);
 const { jsonResponse, loadBackground } = require("./helpers");
 const { START_REFUSED, pageTurnText } = await import("../src/agent-start.ts");
 const { WORKER_ONLY_KINDS } = await import("../src/event-admission.ts");
+const { PAGE_CONTEXT_HEAD } = await import("../src/agent/output-clip.ts");
 const { AGENT_SYSTEM } = await import("../src/agent/prompts.ts");
 const { siteInstructions, textDigest } = await import("../src/agent/site-instructions.ts");
 const { cardToolLines, PAGE_TURN_BUDGET } = await import("../src/agent-start.ts");
@@ -115,7 +116,11 @@ test("B1: a site's run gets the worker's page context, from the browser's facts,
     await decide(w.bg, w.asks()[0].requestId, "allow");
     await done;
     const sys = textOf(w.bodies[0].messages.find((m) => m.role === "system"));
-    assert.ok(sys.endsWith(sys.slice(sys.lastIndexOf("Current page context:"))) && sys.slice(sys.lastIndexOf("Current page context:")).startsWith(`Current page context:\nURL: ${URL0}\nTitle: Site\nNow: `), sys.slice(-300));
+    const first = textOf(w.bodies[0].messages.find((m) => m.role === "user"));
+    assert.ok(first.startsWith(`${PAGE_CONTEXT_HEAD}\nURL: ${URL0}\nTitle: Site\nNow: `), `the worker's context, from the browser's facts, leads the first user message: ${first.slice(0, 300)}`);
+    assert.equal(JSON.stringify(w.bodies[0].messages).split(PAGE_CONTEXT_HEAD).length, 2, "once");
+    assert.doesNotMatch(sys, /Title: Site/, "and the system prompt carries none of the worker's context");
+    assert.ok(!sys.includes(PAGE_CONTEXT_HEAD), "nor its head");
 });
 
 // --- B2: an ask belongs to the document that raised it ---

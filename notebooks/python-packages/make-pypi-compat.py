@@ -14,7 +14,8 @@ iterating. The 10,000 take about an hour: queue them first, one test-slot ticket
     node scripts/test-slot.mjs submit --kind unit -- .venv/bin/python notebooks/python-packages/pypi.py probe-chunk <start> <end> $PYPKG_10K_DIR
 
 for start = 0, 500, ..., 9500; the refresh then reads the chunks (and runs, unqueued, any that are missing).
-The cells also write data/pypi-compat/verdicts.json from the 10,000.
+The cells also write data/pypi-compat/verdicts.json from the 10,000, and pin data/pypi-compat/index-snapshot.json (the
+PyPI answers behind static.json, for tests/pkg-verdict.test.mjs) from PYPKG_CACHE, which a refresh must then set.
 """
 
 from pathlib import Path
@@ -411,6 +412,27 @@ body = json.dumps(allv, indent=2, sort_keys=True) + "\\n"
 if not verdicts_path.exists() or verdicts_path.read_text() != body:
     verdicts_path.write_text(body)
 pd.Series(Counter(v["verdict"] for v in allv[TAG]["verdicts"].values())).sort_values(ascending=False).to_frame(f"verdicts.json[{TAG!r}]")
+""")
+
+md("""
+## 6. The index snapshot the install verdict is tested against
+
+`src/python/pkg-verdict.ts` decides the same verdict in the extension, before anything is downloaded. Its test
+(`tests/pkg-verdict.test.mjs`) needs the index this notebook read: the PyPI answers behind section 1, pinned here
+from the same `PYPKG_CACHE`, so the test can assert it gives every project section 1's verdict. A refresh that bumps
+the core regenerates this with `static.json` (the `pyodide-build` skill, "After a bump").
+""")
+
+code("""
+def snapshot_rows():
+    if CACHE is None:
+        raise RuntimeError("set PYPKG_CACHE to the directory static.json was read through: the snapshot must hold the same answers")
+    return pypi.index_snapshot(static.project.tolist(), CACHE, ENV["tags"])
+
+snapshot = wmlnb.extract(DATA / "index-snapshot.json", snapshot_rows, source={"pypi": "https://pypi.org/pypi/<project>/json", "of": "static.json", "core": DIST["artefact"]["name"]})
+pd.DataFrame(wmlnb.provenance(DATA / "index-snapshot.json")).assign(
+    releases=sum(len(r["releases"]) for r in snapshot), wheels=sum(len(v["files"]) for r in snapshot for v in r["releases"].values()),
+    MB=round((DATA / "index-snapshot.json").stat().st_size / 1e6, 1))
 """)
 
 md("""

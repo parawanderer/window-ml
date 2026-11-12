@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { credentialFor, manifestSha256, parseShRun, planSpawn, shFacts, shCardLines, headText, shOut, shResult, wireCodeOf, manifestFor, SHIPPED_MANIFESTS, ShRefused, SH_LIMITS, envelopeFor, envelopeMismatch, envelopeText, protectedChangesText, shOutcome, shOutcomeLines, SH_CHANGES_SHOWN, unaskedCalls, unaskedLines } from "../src/shell/sh-call.ts";
+import { credentialFor, manifestSha256, parseShRun, planSpawn, shFacts, shCardLines, headText, shOut, shResult, wireCodeOf, manifestFor, SHIPPED_MANIFESTS, ShRefused, SH_LIMITS, envelopeFor, envelopeMismatch, envelopeText, protectedChangesText, shOutcome, shOutcomeLines, SH_CHANGES_SHOWN, unaskedCalls, unaskedLines, isTildeArg, tildeLines } from "../src/shell/sh-call.ts";
 import { HostClient, HostError, hostTakesEnvelope, READ_CHUNK, bytesOf } from "../src/shell/host-protocol.ts";
 
 const S = { cwd: "/w" };
@@ -36,6 +36,8 @@ test("a pointer token as an argv item is refused as a held value at every positi
         }
     }
     refused([["cat", "@file:3fa91c2"]], "BadRequest", /an attachment is not on the host's disk/);
+    // The way out is named with the item's own handle (FILE_ATTACHMENTS.md ruling 3, amended 2026-11-08).
+    refused([["cat", "@file:3fa91c2"]], "BadRequest", /write it there first with ml\.sh\.put\("@file:3fa91c2", "<folder>\/<name>"\) into a folder that exists, and pass that path/);
     refused([["cat", "@tool:ab12cd3"]], "BadRequest", /read it with ml\.dereference, or reduce it with ml\.pipe/);
     for (const tok of ["@pt:1a2b3c", "@box:9f8e7d6c"]) refused([["cat", tok]], "BadRequest", /it names a place on the page, which no program on the host can see/);
     for (const literal of ["./@file:3fa91c2", "--in=@file:3fa91c2", " @file:3fa91c2", "@FILE:3fa91c2", "@files:x", "@file", "@tool", "a@tool:ab12cd3", "@pt", "@box", "x@pt:1a2b3c", "@"])
@@ -98,6 +100,21 @@ test("cwd: the session's by default, a relative one under it, an absolute one as
     assert.equal(planSpawn(parseShRun([["ls"]]), S).spawn.cwd, "/w");
     assert.equal(planSpawn(parseShRun([["ls"], { cwd: "src/a" }]), { cwd: "/w/" }).spawn.cwd, "/w/src/a");
     assert.equal(planSpawn(parseShRun([["ls"], { cwd: "/etc" }]), S).spawn.cwd, "/etc");
+});
+
+test("cwd with a host that expands `~`: `~` and `~/…` go as written, anything else is joined as before", () => {
+    for (const cwd of ["~", "~/proj"]) {
+        assert.equal(planSpawn(parseShRun([["ls"], { cwd }]), { cwd: "/w", tilde: true }).spawn.cwd, cwd, `${cwd} reaches the host to expand`);
+        for (const tilde of [false, undefined]) assert.equal(planSpawn(parseShRun([["ls"], { cwd }]), { cwd: "/w", tilde }).spawn.cwd, `/w/${cwd}`, `${cwd} with tilde ${tilde}: a name under the session's directory`);
+    }
+    for (const tilde of [true, false, undefined]) assert.equal(planSpawn(parseShRun([["ls"], { cwd: "/etc" }]), { cwd: "/w", tilde }).spawn.cwd, "/etc");
+    assert.equal(planSpawn(parseShRun([["ls"], { cwd: "~user/x" }]), { cwd: "/w", tilde: true }).spawn.cwd, "/w/~user/x", "~user is not expanded, so it is a relative name");
+    assert.equal(planSpawn(parseShRun([["ls"]]), { cwd: "/w", tilde: true }).spawn.cwd, "/w");
+});
+
+test("isTildeArg: exactly `~` or a `~/` prefix, nothing else", () => {
+    const got = Object.fromEntries(["~", "~/x", "~user", "a~/b", "x=~/a", "--flag=~/x", "~~", ""].map((a) => [a, isTildeArg(a)]));
+    assert.deepEqual(got, { "~": true, "~/x": true, "~user": false, "a~/b": false, "x=~/a": false, "--flag=~/x": false, "~~": false, "": false });
 });
 
 // --- the facts a policy and the card are given ---
@@ -388,6 +405,31 @@ test("K1 ships no script manifest: node with a script in the workspace is unknow
 });
 
 // --- the card ---
+
+test("tilde: the facts carry the host's entries ([] from a host with none), and the card says each expansion, warning on a literal one", () => {
+    assert.deepEqual(shFacts(facts()).tilde, []);
+    const t = [{ index: 1, from: "~/n.txt", to: "/h/n.txt" }, { index: 2, from: "~", to: null, reason: "no-home" }];
+    const f = shFacts(facts({ tilde: t }));
+    assert.deepEqual(f.tilde, t);
+    assert.notEqual(f.tilde[0], t[0], "a copy, not the host's object");
+    const lines = shCardLines(f).filter((l) => l.label === "~");
+    assert.deepEqual(lines, [{ label: "~", value: "~/n.txt is /h/n.txt" }, { label: "~", value: "~ stays literal (no-home)", warn: true }]);
+    assert.deepEqual(shCardLines(f).map((l) => l.label).slice(0, 5), ["Runs", "Program", "In", "~", "~"], "after where it runs");
+    assert.deepEqual(tildeLines([]), []);
+});
+
+test("the card's In line marks a cwd outside the roots (synthetic: a host refuses such a cwd, so no host fact carries it)", () => {
+    const line = (inRoot) => shCardLines(shFacts(facts({ cwd: { path: "/elsewhere", inRoot } }))).find((l) => l.label === "In");
+    assert.deepEqual(line(false), { label: "In", value: "/elsewhere (outside the workspace roots)", warn: true });
+    assert.deepEqual(line(true), { label: "In", value: "/elsewhere" });
+});
+
+test("upgrade: facts stored by the code before tilde (no `tilde` key) still draw the card, with no `~` line", () => {
+    const old = shFacts(facts());
+    delete old.tilde;
+    const lines = shCardLines(old);
+    assert.ok(lines.length > 0 && lines.every((l) => l.label !== "~"));
+});
 
 test("the card shows what runs, where, under what sandbox, and what it does; it flags each thing worth a second look", () => {
     const lines = shCardLines(shFacts(facts()));
@@ -802,6 +844,13 @@ test("a call that ran without asking says who allowed it, then exactly the lines
         assert.deepEqual(lines.slice(1), shOutcomeLines(outcome), "one function says it, so the card and this line never disagree");
     }
     assert.deepEqual(unaskedLines({ by: "default", argv: ["ls"], outcome: { protectedChanged: "not a list" } }).map((l) => l.label), ["Allowed by"], "an outcome of another shape still says who allowed it");
+});
+
+test("an unasked record that carries tilde entries shows them after who allowed it; one without draws none", () => {
+    const tilde = [{ index: 1, from: "~/n.txt", to: "/h/n.txt" }];
+    const lines = unaskedLines({ by: "default", argv: ["cat", "/h/n.txt"], tilde, outcome: {} });
+    assert.deepEqual(lines.slice(0, 2), [{ label: "Allowed by", value: "the built-in default" }, { label: "~", value: "~/n.txt is /h/n.txt" }]);
+    assert.ok(unaskedLines({ by: "default", argv: ["ls"], outcome: {} }).every((l) => l.label !== "~"));
 });
 
 test("only a span that carries an unasked record with an argv is a line", () => {

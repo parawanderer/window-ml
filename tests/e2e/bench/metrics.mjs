@@ -455,7 +455,7 @@ export function measureRun(run, task = {}, opts = {}) {
     const turnsExpected = 1 + (task.followup ? 1 : 0) + (task.asks?.length ?? 0);
     const unfinished = !!(error || done?.error) && answers.length < turnsExpected;
     if (typeof task.succeeded === "function" && !unfinished) {
-        try { succeeded = !!task.succeeded({ answer, finalAnswer, answers, events, result, steps }); }
+        try { succeeded = !!task.succeeded({ answer, finalAnswer, answers, events, result, steps, approvals }); }
         catch { succeeded = false; }   // a predicate that throws is a failed run, not a broken bench
     }
     return {

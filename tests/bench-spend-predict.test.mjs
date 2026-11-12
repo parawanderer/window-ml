@@ -231,14 +231,17 @@ test("a cell's electricity is the mean Wh of its model's recent runs that drew o
     const hist = [run("l1", LOCAL, "t", "h1", "2026-10-10T01", []), run("l2", LOCAL, "t", "h1", "2026-10-10T02", []), run("l3", LOCAL, "u", "h9", "2026-10-10T03", []),
         run("l0", LOCAL, "t", "h1", "2026-10-09T00", []), run("e1", EXT, "t", "h1", "2026-10-10T01", [])];
     const energyOf = new Map([["l1", { Wh: 1 }], ["l2", { Wh: 2 }], ["l3", { Wh: 9 }]]);   // l0 predates the power readings
-    const local = (m) => m === LOCAL;
+    const local = (m) => (m === LOCAL ? true : m === EXT || m === "cloud-new" ? false : undefined);   // undefined: the price book does not know it
     const got = predictEnergy([{ model: LOCAL, task: "t", taskHash: "h1" }, { model: LOCAL, task: "t", taskHash: "h2" }, { model: LOCAL, task: "v", taskHash: "x" },
-        { model: EXT, task: "t", taskHash: "h1" }, { model: "never-ran", task: "t", taskHash: "h1" }, { model: "loc2", task: "t", taskHash: "h1" }], hist, energyOf, local);
+        { model: EXT, task: "t", taskHash: "h1" }, { model: "cloud-new", task: "t", taskHash: "h1" }, { model: "never-ran", task: "t", taskHash: "h1" }, { model: "loc2", task: "t", taskHash: "h1" }], hist, energyOf, local);
     assert.deepEqual(got.slice(0, 3), [{ Wh: 1.5, basis: "item", n: 2 }, { Wh: 1.5, basis: "task", n: 2 }, { Wh: 4, basis: "model", n: 3 }]);
     assert.deepEqual(got[3], { Wh: 0, basis: "none", n: 0 }, "a cloud model whose runs never drew on the box draws nothing");
-    assert.equal(got[4], null, "a model never run: no estimate");
+    assert.deepEqual(got[4], { Wh: 0, basis: "none", n: 0 }, "a cloud model with no past run draws nothing: it is not 'a local model with no energy on record'");
+    assert.equal(got[5], null, "a model never run and unknown to the price book: no estimate");
     const noEnergy = predictEnergy([{ model: LOCAL, task: "t", taskHash: "h1" }], [run("l0", LOCAL, "t", "h1", "x", [])], new Map(), local);
     assert.deepEqual(noEnergy, [null], "a local model with no energy on record: no estimate, never 0");
+    const omitted = predictEnergy([{ model: "never-ran", task: "t", taskHash: "h1" }, { model: EXT, task: "t", taskHash: "h1" }], hist, energyOf);
+    assert.deepEqual(omitted, [null, { Wh: 0, basis: "none", n: 0 }], "with no localOf every model is unknown: a never-run one is not taken for a known cloud model");
 });
 
 test("the electricity forecast narrows as runs finish, and prices the rest at the current rate", () => {
@@ -250,7 +253,7 @@ test("the electricity forecast narrows as runs finish, and prices the rest at th
     assert.deepEqual([f.spentWh, f.remainingWh, f.totalWh, f.left, f.unknown], [3, 1.5, 4.5, 3, 1], "a finished run counts what it drew; a running one the rest of its estimate; a cached one nothing");
     near(f.remainingCost, 1.5 / 1000 * 0.25);
     assert.deepEqual(f.models[LOCAL].left, 1);
-    assert.match(energyForecastText(f), /^electricity 3\.00 Wh so far; about 4\.50 Wh by the end \(3 runs left, about 0\.0004 EUR for them at 0\.25 EUR\/kWh\); 1 run on a local model with no energy on record, not in it$/);
+    assert.match(energyForecastText(f), /^electricity 3\.00 Wh so far; about 4\.50 Wh by the end \(3 runs left, about 0\.0004 EUR for them at 0\.25 EUR\/kWh\); 1 run on a model with no energy on record \(a local one, or one the price book does not know\), not in it$/);
     const bare = energyForecast(pred, { stateOf: () => "pending", modelOf: () => LOCAL });
     assert.equal(bare.remainingCost, null);
     assert.match(energyForecastText(bare, { start: true }), /^electricity estimate: about 9\.00 Wh for the 5 runs to run \(no electricity price set: energy only\)/);

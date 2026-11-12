@@ -18,6 +18,7 @@ import type { PipeLimits } from "../pointers/text-pipe";
 import { runAgentLoop, shotTurnMessage } from "./agent-loop";
 import type { ToolMeta, AgentLoopDeps, ToolRunResult, LiveOutput } from "./agent-loop";
 import { autoApprovePython } from "./auto-approve";
+import { firstUserTurn } from "./run-assembly";
 import { externalSheetIds } from "../dom/dom";
 import { isSelfSourceUrl } from "./self-source";
 import { BUILD_INFO } from "../build-info.gen";
@@ -28,6 +29,8 @@ import { BUILD_INFO } from "../build-info.gen";
 export interface RunAgentConfig {
     task: string;
     systemPrompt: string;
+    /** the page's context, at the front of a FRESH run's first user message (`firstUserTurn`); a resume has it already */
+    pageContext?: string;
     tools: ToolMeta[];
     model?: string | null;
     think?: boolean | null;
@@ -158,9 +161,11 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
     const buildMessages = (task: string): NeutralMessage[] => {
         // This turn's user message — carries native-vision composer images when present. Emitted only when
         // there's text OR an image (a.run() with no arg + no image runs over what say() already queued).
-        const userTurn = (task || cfg.images?.length)
-            ? [{ role: "user", content: task || "", ...(cfg.images?.length ? { images: cfg.images } : {}) } as NeutralMessage] : [];
-        built = cfg.resumeMessages && cfg.resumeMessages.length
+        const resume = !!cfg.resumeMessages?.length;
+        const text = resume ? task || "" : firstUserTurn(task || "", cfg.pageContext);
+        const userTurn = (text || cfg.images?.length)
+            ? [{ role: "user", content: text, ...(cfg.images?.length ? { images: cfg.images } : {}) } as NeutralMessage] : [];
+        built = resume && cfg.resumeMessages
             // Continue the handle's prior history. Ensure a system prompt heads it (an idle say() before the
             // first run() has none).
             ? [

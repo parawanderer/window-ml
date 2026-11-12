@@ -41,7 +41,8 @@ export interface ShellStatus {
     ready: boolean;
     /** Calls will run under the OS sandbox (asked for, and available on this machine). */
     sandboxed: boolean;
-    host?: { version: string; platform: string; sandbox: HostHello["sandbox"] };
+    /** `tilde`: the host expands a leading `~` in argv and cwd (`hello.tilde`). */
+    host?: { version: string; platform: string; sandbox: HostHello["sandbox"]; tilde?: boolean };
     roots?: HostConfigured["roots"];
     /** Why it is not ready, in words for the settings page. */
     error?: string;
@@ -138,7 +139,7 @@ async function connect(cfg: ShellSettings, key: string): Promise<ShellHost> {
         return fail("config", `The process host refused the settings: ${(e as Error)?.message || e}`);
     }
     current = { client, hello, configured, key };
-    setStatus({ enabled, ready: true, sandboxed: configured.sandboxed, host: { version: hello.version, platform: hello.platform, sandbox: hello.sandbox }, roots: configured.roots });
+    setStatus({ enabled, ready: true, sandboxed: configured.sandboxed, host: { version: hello.version, platform: hello.platform, sandbox: hello.sandbox, ...(hello.tilde === true ? { tilde: true } : {}) }, roots: configured.roots });
     touch();
     return current;
 }
@@ -193,12 +194,12 @@ export async function refreshShell(): Promise<ShellStatus> {
 
 /**
  * The shell capabilities this runtime declares (docs/spec/SHELL.md, "What the model sees"): `shellHost` when ml.sh can
- * run on this machine's real filesystem, `shellSandboxed` when such calls run under the OS sandbox. `shellContainer`
- * stays absent: no container runner exists. Absent means no.
+ * run on this machine's real filesystem, `shellSandboxed` when such calls run under the OS sandbox, `shellTilde` when the
+ * host expands a leading `~`. `shellContainer` stays absent: no container runner exists. Absent means no.
  */
-export function shellCapabilities(): { shellHost?: true; shellSandboxed?: true } {
+export function shellCapabilities(): { shellHost?: true; shellSandboxed?: true; shellTilde?: true } {
     if (!status.ready) return {};
-    return { shellHost: true, ...(status.sandboxed ? { shellSandboxed: true as const } : {}) };
+    return { shellHost: true, ...(status.sandboxed ? { shellSandboxed: true as const } : {}), ...(status.host?.tilde ? { shellTilde: true as const } : {}) };
 }
 
 /**

@@ -69,7 +69,7 @@ export const PIPE_SYNTAX =
     "It's an interpreted line-based environment (NOT a real shell); supported commands, chained with `|`: " +
     `${PIPE_CMDS.map(c => PIPE_USAGE[c]).join(", ")}, or a \`.path\` into JSON (\`.rows[0].name\`). ` +
     "E.g. \"grep -i pricing | head -n 20\", or \"grep -o '[0-9]+' | sort -n | tail -n 1\". " +
-    "A stage's argument needs quoting if it contains spaces; you can also pass an ARRAY with one stage per " +
+    "A stage's argument needs quoting if it contains spaces; `ml.pipe` in exec also takes an ARRAY with one stage per " +
     "entry ([\"grep -E error|warn\", \"head 5\"]), which is never re-split, so a `|` inside a stage needs no quotes.";
 const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -211,7 +211,7 @@ function parseArgs(cmd: string, argv: string[], allowed: string, numeric: string
                     nums[f] = nnum;
                     j = a.length;   // consumed the rest of this token
                 } else if (allowed.includes(f)) flags.add(f);
-                else throw new Error(`\`${cmd}\` doesn't support -${f}. Allowed: ${allowed.split("").map(x => "-" + x).join(" ") || "(none)"}${numeric ? ` and ${numeric.split("").map(x => "-" + x + " N").join(" / ")}` : ""}.`);
+                else throw new Error(`\`${cmd}\` doesn't support -${f}. Allowed: ${allowed.split("").map(x => "-" + x).join(" ") || "(none)"}${numeric ? ` and ${numeric.split("").map(x => "-" + x + " N").join(" / ")}` : ""}.${f === "c" && (cmd === "head" || cmd === "tail") ? " It counts lines only: reduce one long line with a `.path` into JSON or `grep -o`." : ""}`);
             }
         } else if (/^-\d+$/.test(a)) nums[""] = Number(a.slice(1));   // bare `-5` (head/tail old syntax)
         else pos.push(a);

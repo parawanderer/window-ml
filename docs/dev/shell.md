@@ -45,6 +45,12 @@ and the step's seq the worker already knows (`delegateTool`'s `call`), never any
    naming a `credential` (gh) adds `spawn.credential` when the session is sandboxed and `hello.credentials` lists the
    provider (`credentialFor`): the host then injects the person's token at `start`, and `judgeCall` never lets an
    allow or the free tier answer it (PROGRAM_MANIFEST.md, "The credentialed profile").
+   A host with `hello.tilde` expands a whole-argument `~` or a `~/` prefix, in argv and `cwd`, BEFORE it resolves
+   anything, so the facts, the judging, the card and the spawn see one path and `~/.ssh/config` is judged as the file
+   in the home directory, never as a workspace path. The worker therefore passes a `~` cwd through as written
+   (`planSpawn`'s `tilde`), where an older host gets today's join to the session cwd. The facts' `tilde` entries become
+   `ShFacts.tilde`, which the card and the unasked line show as `~/x is /real/x`, or warn that the argument stayed
+   literal (no usable `HOME`). The model is told of it only through `shellTilde`: the JSDoc clause names the capability.
 2. **The version probe**, for a manifest written against a version range (git, rg): an ordinary call of the manifest's
    own version args with effects empty, judged like any other. Free only under the sandbox, so on the plain host it
    is never raised; refused for a program inside the roots (and, since 2026-10-22, `shFacts` describes no in-root program by a shipped manifest, so `./cat` asks: PROGRAM_MANIFEST.md); 2 s, 4 KiB; cached by the program file's fingerprint
@@ -222,10 +228,11 @@ the hub, `tail` stays null and the task tool says `SH_TAIL_ABSENT`; the worker n
   tails, and keep the 500-character cap.
 - **How many bytes are asked for a `task tail`** (`peekBytesFor`): 240 per line plus one line, never under the host's 4096
   default, never over its 512 KiB ceiling (200 lines asks 48,240).
-- **A cut asked tail is a value it can point at.** When the 8 KiB ceiling cut a stream, `peekTail` scrubs the whole peeked
-  text (every peeked line of both streams, labelled) and stores it with `storeText`; `taskAction` answers
-  `{ content, textValue }` and the loop mints the `@tool:` pointer and claims the value for the run, exactly as for
-  `fetch_url` past its preview (`docs/dev/pointers.md`). With no value store the tail is the text alone.
+- **A cut asked tail is stored, but not yet a value the model can point at.** When the 8 KiB ceiling cut a stream,
+  `peekTail` scrubs the whole peeked text (every peeked line of both streams, labelled) and stores it with `storeText`,
+  and `taskAction` answers `{ content, textValue }`. The loop does not mint a `@tool:` pointer for it: `task` is
+  `citable: false`, so the mint block never runs and the model reads the cut with no id to name (`HELD_BACK.md` row 16,
+  open until the pointer mint for task results). With no value store the tail is the text alone.
 - **The text is model-facing**: `taskAction` runs it through `forModel` like any tool result, and the markers `peekText`
   adds (the ellipsis, "(start of the line cut)") have no run of two spaces. A `peek` failure sentence is scrubbed before
   it is cut to 120 characters, so the cut cannot leave the front of a key. `UnknownId` (the call ended between the
@@ -238,7 +245,8 @@ the hub, `tail` stays null and the task tool says `SH_TAIL_ABSENT`; the worker n
 ## Capabilities
 
 `shellCapabilities()` feeds the runtime's `RuntimeCapabilities` (sw-sessions.ts): `shellHost` when the host was
-reached and configured, `shellSandboxed` when its calls run under the OS sandbox. `shellContainer` stays absent: no
+reached and configured, `shellSandboxed` when its calls run under the OS sandbox, `shellTilde` when its hello says
+`tilde: true` (it expands a leading `~`). `shellContainer` stays absent: no
 container runner exists. Absent means no, as everywhere in the capabilities. The status is measured at worker start
 when the setting is on, and again on every change to a shell setting.
 

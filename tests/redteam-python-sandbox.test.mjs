@@ -26,6 +26,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { Worker } from "node:worker_threads";
+import { NO_CDN_URL } from "./no-cdn-fetch.mjs";
 import { wrapUserCode, harden, unharden, injectInputs, hostRunScript, cancelPath } from "../src/python/python-runtime.ts";
 
 /** The defence's boot hook and its allow list. Absent on main: the calls below are no-ops and the properties stay open. */
@@ -991,7 +992,7 @@ console.log("DONE " + JSON.stringify(r ?? null));
 process.exit(0);
 `;
     return new Promise((resolve) => {
-        const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], { stdio: ["ignore", "pipe", "pipe"] });
+        const child = spawn(process.execPath, ["--import", "tsx", "--import", NO_CDN_URL, "--input-type=module", "-e", script], { stdio: ["ignore", "pipe", "pipe"] });
         let out = "";
         let timer = setTimeout(() => child.kill("SIGKILL"), 120000);   // the boot's own bound
         child.stdout.on("data", (d) => {
@@ -1559,7 +1560,7 @@ await py.runPythonAsync(wrapUserCode("import asyncio\\nasyncio.new_event_loop().
 await py.runPythonAsync("import asyncio\\nawait asyncio.sleep(0.1)");
 process.exit(0);
 `;
-    const r = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], {
+    const r = spawnSync(process.execPath, ["--import", "tsx", "--import", NO_CDN_URL, "--input-type=module", "-e", script], {
         encoding: "utf8",
         timeout: 60000,
     });

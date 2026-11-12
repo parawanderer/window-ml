@@ -430,6 +430,39 @@ def probe_top(n: int, out: Path, root: Path, chunk: int = 500) -> list[dict]:
     return [{"top_list_updated": top["top_list_updated"]}] + rows
 
 
+def index_snapshot(names: list[str], cache: Path, tags: list[str]) -> list[dict]:
+    """The PyPI answers `classify` read for `names`, from its `cache`, as the index `src/python/pkg-verdict.ts` is tested against:
+    per project its latest release (requires_python, requires_dist, every wheel as "filename\\tsize\\tyanked") and, for
+    the lock packages `replaceable` looked into, its other releases (each wheel as "filename\\t\\tyanked\\trequires_python":
+    the release list carries no size). An old release keeps only the wheels whose platform tag is one the core accepts
+    (`tags`), and drops out when none is left: a wheel for another platform can never match, and the 32 histories are
+    most of the size otherwise. The latest release keeps every wheel, so the tag check runs on all of them. Sdists are
+    dropped: the core never builds one."""
+    plats = {t.split("-")[2] for t in tags}
+
+    def usable(filename: str) -> bool:
+        return any(p in plats for p in filename[:-4].split("-")[-1].split("."))
+    out = []
+    for name in sorted(set(names)):
+        f = cache / f"{name}.json"
+        if not f.exists():
+            continue
+        row = json.loads(f.read_text())
+        if row is None:
+            continue
+        rel = {row["version"]: {"requires_python": row["requires_python"], "requires_dist": row["requires_dist"],
+                                "files": [f"{x['filename']}\t{x['size']}\t{int(x['yanked'])}" for x in row["files"]
+                                          if x["filename"].endswith(".whl")]}}
+        rf = cache / f"{row['project']}.releases.json"
+        for v, files in (json.loads(rf.read_text()) if rf.exists() else {}).items():
+            ws = [f"{x['filename']}\t\t{int(x['yanked'])}\t{x['requires_python']}" for x in files
+                  if x["filename"].endswith(".whl") and usable(x["filename"])]
+            if v != row["version"] and ws:
+                rel[v] = {"files": ws}
+        out.append({"project": row["project"], "latest": row["version"], "releases": rel})
+    return out
+
+
 def verdicts(rows: list[dict], lock: set[str]) -> dict:
     """One verdict per project, for the install card: `ok` or the `cause`, the rank, and the version that installed
     (None when nothing did)."""

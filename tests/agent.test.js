@@ -8,6 +8,10 @@ const { test } = require("node:test");
 const assert = require("node:assert");
 const { loadDomWorld, loadPageWorld } = require("./helpers");
 const { AnswerSet } = require("../src/pointers/answer-set.ts");
+const { PAGE_CONTEXT_HEAD } = require("../src/agent/output-clip.ts");
+
+/** A first user message's task, after the page context `firstUserTurn` puts in front of it; any other message, whole. */
+const taskOf = (content) => content.startsWith(PAGE_CONTEXT_HEAD + "\n") ? content.slice(content.lastIndexOf("\n\nTask:\n") + 8) : content;
 
 // ---- truncate ----
 
@@ -1322,7 +1326,7 @@ test("agent: result carries a session hash, and { resume } appends a follow-up t
     assert.ok(resumedFirst, "a resumed model call has the follow-up task as its last user turn");
     const resumedMsgs = resumedFirst.payload.messages;
     assert.equal(resumedMsgs[0].role, "system");
-    assert.equal(resumedMsgs[1].content, "do the first thing");
+    assert.equal(taskOf(resumedMsgs[1].content), "do the first thing");
     assert.ok(resumedMsgs.some(m => m.role === "assistant" && m.content === "first answer"), "the prior answer is in the resumed context");
     // The resumed turn reused the ORIGINAL toolset (no tools passed on the resume call).
     assert.deepEqual(second.transcript, [{ tool: "pong", arguments: { y: 2 }, result: "ponged" }, { assistant: "second answer" }]);
@@ -1607,7 +1611,7 @@ test("createAgent: run() flushes a leftover inbox steer into the history (never 
     assert.equal(a.inbox.length, 0, "run() drained the leftover inbox");
     const msgs = world.runtimeCalls.filter(c => c.payload && c.payload.messages).at(-1).payload.messages;
     assert.ok(msgs.some(m => m.content === "a steer that got stuck"), "the stuck steer was flushed into the run's history");
-    assert.ok(msgs.some(m => m.content === "proceed"), "…alongside the run's task");
+    assert.ok(msgs.some(m => typeof m.content === "string" && taskOf(m.content) === "proceed"), "…alongside the run's task");
 });
 
 test("createAgent: fork() copies the history into a FRESH session, independent of the original", async () => {
@@ -1687,17 +1691,19 @@ test("agent defaults to ml.domTools and lets you override the system prompt", as
 
     const { messages, tools } = world.runtimeCalls[0].payload;
     assert.ok(messages[0].content.startsWith("CUSTOM STRATEGY"), messages[0].content);
-    assert.equal(messages[1].content, "task");
+    assert.equal(taskOf(messages[1].content), "task");
     const names = tools.map(t => t.function.name);
     assert.ok(names.includes("findByText") && names.includes("exec"), names.join());
 });
 
-test("agent injects page/date context into the system prompt by default", async () => {
+test("agent puts page/date context at the front of the first user message by default, never in the system prompt", async () => {
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("done")]) });
     await world.ml.agent("task", { system: "S" });
-    const sys = world.runtimeCalls[0].payload.messages[0].content;
-    assert.match(sys, /Current page context:/);
-    assert.match(sys, /Now:.*ISO/s);                  // knows what "today" is
+    const [sys, user] = world.runtimeCalls[0].payload.messages.map(m => m.content);
+    assert.equal(sys, "S", "the system prompt is the caller's alone");
+    assert.ok(user.startsWith(PAGE_CONTEXT_HEAD + "\nURL: "), user.slice(0, 200));
+    assert.match(user, /Now:.*ISO/s);                 // knows what "today" is
+    assert.ok(user.endsWith("\n\nTask:\ntask"), "the task comes after the page's data");
 });
 
 test("agent env:false skips the context injection", async () => {
@@ -1905,7 +1911,9 @@ test("agent emits debug events (start → steps → result) after the sidebar ha
 
     const start = events.find(e => e.kind === "agent");
     assert.ok(start, "agent start emitted");
-    assert.equal(start.task, "find x");
+    assert.equal(taskOf(start.task), "find x", "the start event's task is the first message as the model got it");
+    assert.ok(start.task.startsWith(PAGE_CONTEXT_HEAD), "page context included, for the raw view");
+    assert.equal(start.display.typed, "find x", "the bubble shows the task");
     assert.equal(start.model, "qwen3:14b");
     const steps = events.filter(e => e.kind === "agent-step");
     assert.ok(steps.some(e => e.thought === "Looking around."), "thought step emitted");
@@ -2194,6 +2202,9 @@ test("python_exec in the toolset adds the computation-delegation clause to the s
     assert.match(sys, /python_exec/, "the clause names the tool");
     assert.match(sys, /do NOT calculate|NEVER|deterministic/i, "and tells the model to delegate computation");
     assert.ok(!/tool \(JavaScript\)/.test(sys), "python takes precedence — not doubled with the JS-compute clause");
+    // python_exec has had no `mode` since the read-only dialect replaced it; the tool says what asks.
+    assert.ok(!/readonly mode|`full` mode/.test(sys), "the clause names no python_exec mode");
+    assert.ok(!/re-run and return/.test(sys), "nor tells the model to re-run what dereference reads back");
 });
 
 test("navigate is auto-wired by default: the tool is in the toolset + config logs navigation ON, no nav-off clause", async () => {

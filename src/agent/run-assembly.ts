@@ -5,8 +5,9 @@
 // `workerMl`, sw-run-start.ts), so that a page never decides what a run the user asked for contains
 // (docs/spec/SITE_ACCESS.md, slice 0). One function, handed an `ml` by each host, is what stops the two drifting.
 //
-// Nothing here may touch the page. The page context goes into the system prompt AFTER assembly (`withPageContext`),
-// because on the worker path it is the page's answer to a question asked once the toolset exists.
+// Nothing here may touch the page. The page context is kept apart from the system prompt and put at the front of the
+// first user message (`firstUserTurn`), because it is page data, and on the worker path the page's answer to a question
+// asked once the toolset exists.
 
 import { CITABLE_TOOLS, citeParam, withCallTitle } from "../tools/tool-params";
 import { buildServerTools } from "../tools/builtin-tools";
@@ -18,6 +19,7 @@ import { promptSurfaceClause, promptSurfaceOf } from "./prompt-surface";
 import { stepBudget } from "./step-budget";
 import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, tooltokensClause, DEREF_CLAUSE, shadowClause, SHADOW_TRIGGER_TOOLS, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, currentClause, HUD_PROSE_QUIET, HUD_PROSE_PROGRESS, framePrompt } from "./prompts";
 import { buildDereferenceTool } from "../tools/tools";
+import { PAGE_CONTEXT_HEAD } from "./output-clip";
 import { withToolDetails } from "../tools/tool-details";
 import { ImagesRefused, namedNote, planImages, readerNote } from "../image-gate";
 
@@ -88,7 +90,7 @@ export interface AssembledRun {
     toolset: MlTool[];
     byName: Record<string, MlTool>;
     toolDefs: { type: string; function: { name: string; description: string; parameters: unknown } }[];
-    /** without the page context: append that with `withPageContext` */
+    /** without the page context, which goes in the first user message (`firstUserTurn`) */
     systemPrompt: string;
     /** the task, with a pasted image's transcription folded in when the driver cannot see it */
     task: string;
@@ -364,7 +366,7 @@ export function composeSystemPrompt(f: PromptFacts): string {
     let systemPrompt = f.system || AGENT_SYSTEM;
     if (!f.system) {
         // Adapt the default prompt to what the toolset can actually do.
-        systemPrompt += CALL_TITLE_CLAUSE;   // every tool carries the param, so the instruction is unconditional
+        systemPrompt += CALL_TITLE_CLAUSE;   // every tool with parameters carries it, so the instruction is unconditional
         if (f.vision) systemPrompt += VISION_CLAUSE;
         if (f.toolTokens) systemPrompt += tooltokensClause(!!f.answer) + DEREF_CLAUSE;   // rich results carry an @tool: id — to cite verbatim, and to read back
         // The DOM tools all pierce open shadow roots + resolve `>>>` — tell the model, plus (only when
@@ -411,15 +413,17 @@ export function withoutCurrentClause(systemPrompt: string, toolset: readonly MlT
 }
 
 /**
- * Append the page's own context (URL, title, language, time, locale) to an assembled system prompt. Kept apart from
- * `assembleRun` because the worker learns it from the page AFTER assembly, and because it is page DATA: whatever the
- * page says about itself, exactly as a tool result is.
- * @param systemPrompt the assembled prompt
+ * The text of a run's FIRST user message: the page's own context (URL, title, language, time, locale) behind
+ * {@link PAGE_CONTEXT_HEAD}, then the task. Both loops build their first turn with it (agent-host.ts for a run the worker
+ * hosts, ml-agent-run.ts for the page's own), so the two cannot drift. The context is page DATA, whatever the page says
+ * about itself, so it never goes in the system prompt; it is sent once, at the start.
+ * @param task the task, or empty for a turn that runs over what `say()` queued
  * @param ctx the page context text, or null/empty for none
- * @returns the prompt with the context appended, or unchanged
+ * @returns the message text: the task alone when there is no context
  */
-export function withPageContext(systemPrompt: string, ctx: string | null | undefined): string {
-    return ctx ? `${systemPrompt}\n\nCurrent page context:\n${ctx}` : systemPrompt;
+export function firstUserTurn(task: string, ctx: string | null | undefined): string {
+    if (!ctx) return task;
+    return `${PAGE_CONTEXT_HEAD}\n${ctx}${task ? `\n\nTask:\n${task}` : ""}`;
 }
 
 /** A run the USER asked for from one of the extension's own surfaces: the HUD Commander, the chat page, a right-click
@@ -539,8 +543,9 @@ export function pageRebuild(rebuild: RebuildConfig): RebuildConfig {
 /** How an assembled run is to be hosted: what the host decides rather than what assembly produced. */
 export interface RunHosting {
     runId: string;
-    /** the full prompt, page context included */
     systemPrompt: string;
+    /** the page's context, for the front of the first user message (`firstUserTurn`) */
+    pageContext?: string;
     maxSteps: number;
     think: boolean | null;
     surface: StartRunPayload["surface"];
@@ -568,7 +573,8 @@ export interface RunHosting {
  */
 export function startPayload(asm: AssembledRun, h: RunHosting): StartRunPayload {
     return {
-        runId: h.runId, task: asm.task, systemPrompt: h.systemPrompt, tools: toolDescriptors(asm.toolset),
+        runId: h.runId, task: asm.task, systemPrompt: h.systemPrompt, ...(h.pageContext ? { pageContext: h.pageContext } : {}),
+        tools: toolDescriptors(asm.toolset),
         model: asm.runModel, think: h.think, maxSteps: h.maxSteps,
         autoApprovePython: asm.autoPy, autoApproveReadonly: asm.autoRO, autoApproveSelfSource: asm.autoSelfSrc, selfIntrospection: asm.selfIntro,
         labelMatch: asm.labelMatch, surface: h.surface,

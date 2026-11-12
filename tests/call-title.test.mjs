@@ -72,6 +72,13 @@ test("a tool that declares NO properties is left alone, or it starts rejecting i
     assert.deepEqual(validateArgs(withCallTitle(schema({ url: { type: "string" } })), { url: "u", nope: 1 }), ['unknown property "nope"']);
 });
 
+test("the system prompt claims the title only for the tools that get one", async () => {
+    // A parameterless tool is left alone (above), so "every tool takes" is false for pageInfo and chat_metadata.
+    const { CALL_TITLE_CLAUSE } = await import("../src/agent/prompts.ts");
+    assert.match(CALL_TITLE_CLAUSE, /Every tool with parameters also takes an optional `title`/);
+    assert.ok(!/Every tool takes/.test(CALL_TITLE_CLAUSE));
+});
+
 test("injecting twice adds nothing twice", () => {
     const once = withCallTitle(schema({ a: { type: "string" } }));
     assert.deepEqual(withCallTitle(once), once);

@@ -272,7 +272,7 @@ async function estimateEnergy(cells, nRun, { backend, scores, boxLog, driverOf, 
         if (!energyOf.size) return null;
         const toRun = await Promise.all(cells.slice(0, nRun).map((c) => cacheEntry(c, cacheCtx).then((e) => !e?.hit)));
         const est = predictEnergy(cells.map((c, i) => ({ model: driverOf(i), task: c.task.id, taskHash: taskHash(c.task, c.combo) })), history, energyOf,
-            (m) => (priceOf ? !!priceOf(m).local : true));
+            (m) => { const p = priceOf?.(m); return !p ? true : p.local ? true : p.basis ? false : undefined; });
         const price = priceFromSettings(backend);
         const atStart = energyForecast(est, { stateOf: () => "pending", modelOf: driverOf, cachedOf: (i) => i >= nRun || !toRun[i], price });
         console.log(`  ${energyForecastText(atStart, { start: true })}\n`);

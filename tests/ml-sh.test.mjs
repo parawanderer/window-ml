@@ -8,6 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { runOn } from "./isolated-harness.mjs";
 import { fakeNativeHost } from "./fake-native-host.mjs";
+import { shCardLines, unaskedLines } from "../src/shell/sh-call.ts";
 
 const T = { timeout: Number(process.env.ML_SH_T) || 60000 };
 const ON = { shellEnabled: true, shellRoots: ["/w/proj"] };
@@ -759,4 +760,76 @@ test("a done report that does not match what was sent is a fact on the run log: 
     const recs3 = (await c.bg.context.__mlRunLog.all()).filter((x) => x.run === c.hash && x.subsystem === "shell" && x.kind === "run");
     assert.equal(recs3.length, 1);
     assert.match(JSON.stringify(recs3[0]), /unknown/i, "an absent done.envelope is unknown on the record, never a match");
+});
+
+// --- a leading `~` the host expands (hello.tilde) ---
+
+const HOME_OUT = { tilde: { home: "/Users/fake" } };
+
+test("~: an argument expanded to a home outside the roots asks, and the card says the expansion and runs the expanded path", T, async () => {
+    const host = fakeNativeHost({ ...HOME_OUT, done: () => ({ out: "n\n", err: "", code: 0 }) });
+    const ask = answering(true);
+    const { results } = await runOn("userScripts", [runs(["cat", "~/notes.txt"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep });
+    assert.equal(ask.asked.length, 1, "a path outside the roots is never a free workspace read");
+    const lines = shCardLines(ask.asked[0].facts);
+    assert.equal(lines.find((l) => l.label === "Runs").value, "cat /Users/fake/notes.txt");
+    assert.equal(JSON.stringify(lines.find((l) => l.label === "~")), JSON.stringify({ label: "~", value: "~/notes.txt is /Users/fake/notes.txt" }));
+    assert.equal(host.calls.find((c) => c.call === "spawn").args.argv[1], "~/notes.txt", "the host got the tilde, as the person's script wrote it");
+    assert.equal(valueOf(results[0]).approvedBy, "person");
+});
+
+test("~: arguments that merely contain a `~` are left alone and leaves no entry", T, async () => {
+    const host = fakeNativeHost(HOME_OUT);
+    const ask = answering(true);
+    await runOn("userScripts", [runs(["python3", "x=~/a", "~user"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep });
+    assert.equal(JSON.stringify(ask.asked[0].facts.tilde), "[]");
+    assert.equal(shCardLines(ask.asked[0].facts).some((l) => l.label === "~"), false);
+});
+
+test("~: a cwd of `~/proj` reaches a host that expands it as written and runs there; a host that does not gets it under the session cwd", T, async () => {
+    const inside = fakeNativeHost({ tilde: { home: "/w/proj" }, done: () => ({ out: "", err: "", code: 0 }) });
+    const ask = answering(true);
+    const { results } = await runOn("userScripts", [runs(["ls"], { cwd: "~/sub" })], { ...NO_FETCH, onNative: inside.onNative, configExtra: ON, onStep: ask.onStep });
+    const spawn = inside.calls.find((c) => c.call === "spawn");
+    assert.equal(spawn.args.cwd, "~/sub", "as written");
+    assert.equal(spawn.expanded.cwd, "/w/proj/sub", "what the host ran in");
+    assert.equal(ask.asked.length, 0, "inside a root, the home is the workspace");
+    assert.equal(valueOf(results[0]).ok, true);
+    const plain = fakeNativeHost();
+    await runOn("userScripts", [runs(["ls"], { cwd: "~/sub" })], { ...NO_FETCH, onNative: plain.onNative, configExtra: ON, onStep: answering(true).onStep });
+    assert.equal(plain.calls.find((c) => c.call === "spawn").args.cwd, "/w/proj/~/sub", "no tilde host: a relative name, as before");
+});
+
+test("~: a cwd of `~/proj` that expands outside every root is refused by the host with CwdOutsideRoots, and nothing asks", T, async () => {
+    const host = fakeNativeHost(HOME_OUT);
+    const ask = answering(true);
+    const { results } = await runOn("userScripts", [runs(["ls"], { cwd: "~/proj" })], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep });
+    const r = valueOf(results[0]);
+    assert.equal(r.code, "Refused");
+    assert.match(r.threw, /CwdOutsideRoots/);
+    assert.equal(ask.asked.length, 0, "a refusal draws no card");
+    assert.equal(host.calls.filter((c) => c.call === "start").length, 0);
+});
+
+test("~: a call that ran unasked with an expanded argument carries the entries on its span, and the line shows them", T, async () => {
+    const host = fakeNativeHost({ tilde: { home: "/w/proj" }, done: () => ({ out: "", err: "", code: 0 }) });
+    const { spans } = await spansOf([runs(["ls"], { cwd: "~/sub" }), runs(["ls"])], { onNative: host.onNative });
+    assert.equal(spans.length, 2);
+    const [a, b] = spans.map((s) => s.unasked);
+    assert.equal(JSON.stringify(a.tilde), JSON.stringify([{ index: "cwd", from: "~/sub", to: "/w/proj/sub" }]));
+    assert.ok(unaskedLines(a).some((l) => l.label === "~" && l.value === "~/sub is /w/proj/sub"));
+    assert.equal("tilde" in b, false, "nothing expanded, nothing recorded");
+});
+
+test("~: with no usable HOME the argument stays literal and the card warns", T, async () => {
+    for (const [home, reason] of [[null, "no-home"], ["rel", "home-not-absolute"]]) {
+        const host = fakeNativeHost({ tilde: { home } });
+        const ask = answering(true);
+        await runOn("userScripts", [runs(["python3", "~/notes.txt"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep });
+        const f = ask.asked[0]?.facts;
+        assert.ok(f, `${reason}: an undescribed program asks`);
+        const line = shCardLines(f).find((l) => l.label === "~");
+        assert.equal(JSON.stringify(line), JSON.stringify({ label: "~", value: `~/notes.txt stays literal (${reason})`, warn: true }));
+        assert.equal(f.argv[1], "~/notes.txt");
+    }
 });

@@ -16,7 +16,7 @@ import { ImagesRefused } from "../image-gate";
 import { framePrompt } from "../agent/prompts";
 import { promptSurfaceOf } from "../agent/prompt-surface";
 import { stepBudget } from "../agent/step-budget";
-import { assembleRun, rebuildFor, routeTurnImages, startPayload, userRunOptions, withPageContext, type UserRunRequest } from "../agent/run-assembly";
+import { assembleRun, rebuildFor, routeTurnImages, startPayload, userRunOptions, type UserRunRequest } from "../agent/run-assembly";
 import { relayDebugEvent } from "./sw-debug";
 import { getConfig } from "./sw-llm";
 import { dropLocalTools, registerLocalTools } from "./sw-local-tools";
@@ -35,7 +35,7 @@ import { noteWorkerVision } from "./run-vision";
 import { capPageContext } from "./page-answer-caps";
 import { proposePolicyTool } from "../tools/propose-policy-tool";
 import { proposeManifestTool } from "../tools/propose-manifest-tool";
-import { taskTool } from "../tools/task-tool";
+import { offersTask, taskTool } from "../tools/task-tool";
 import { shellTurnedOn } from "./sw-shell";
 import { defineTool } from "../ml/ml-tool-factories";
 import { notePersonTurn } from "./sw-start-approval";
@@ -94,7 +94,9 @@ async function startMinted(tabId: number, tab: chrome.tabs.Tab, url: string, ml:
     // propose_policy only here: a run the worker builds for the person may ask them for a policy; no page's run can. And
     // propose_manifest when the settings turn ml.sh on, which the run's scripts then reach.
     const shellOn = await getConfig().then(shellTurnedOn, () => false);
-    const extraTools = [...(recipe.options.extraTools ?? []), proposePolicyTool(defineTool), ...(shellOn ? [proposeManifestTool(defineTool), taskTool(defineTool)] : [])];
+    // `task` wherever a call can detach: an ml.sh call, or a python_exec cell past its lease (sw-python-task.ts).
+    const base = [...(recipe.options.tools ?? (ml as { domTools?: { name: string }[] }).domTools ?? []), ...(recipe.options.extraTools ?? [])];
+    const extraTools = [...(recipe.options.extraTools ?? []), proposePolicyTool(defineTool), ...(shellOn ? [proposeManifestTool(defineTool)] : []), ...(offersTask(shellOn, base.map((t) => t?.name)) ? [taskTool(defineTool)] : [])];
     const asm = await assembleRun(ml, recipe.task, { ...recipe.options, extraTools, ...(opts.answer ? { answer: true } : {}) });
     const rebuild = rebuildFor(asm, true, "worker");
     noteWorkerVision(runId);   // its vision facts are the worker's own (run-vision.ts)
@@ -127,7 +129,7 @@ async function startMinted(tabId: number, tab: chrome.tabs.Tab, url: string, ml:
     const surface: StartRunPayload["surface"] = cfg.debugMode === "overlay" || cfg.debugMode === "devtools" ? cfg.debugMode : "off";
     const payload: StartRunPayload = {
         ...startPayload(asm, {
-            runId, systemPrompt: withPageContext(asm.systemPrompt, capPageContext(adopted.pageInfo)), think: null,
+            runId, systemPrompt: asm.systemPrompt, pageContext: capPageContext(adopted.pageInfo), think: null,
             maxSteps: recipe.maxSteps ?? DEFAULT_MAX_STEPS, surface, stream: recipe.stream, toolTokens: true, origin: recipe.origin,
             navigate: true, crossOrigin: true, approvalRouting: opts.approvalRouting ?? "ui",
             page: { origin: new URL(url).origin, url, title: tab.title || undefined },

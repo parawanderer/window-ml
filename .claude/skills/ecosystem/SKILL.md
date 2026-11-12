@@ -25,6 +25,14 @@ A non-merge commit with one is agent-written. `--blame` gives a line to the last
 pass or a bulk move re-attributes lines to the rewriting commit (usually an agent too). Say the number as "N% of commits
 carry a Claude trailer", not "the owner wrote none of it".
 
+Which MODEL wrote a commit ("agent-attributed commits by model"): a trailer naming a model (`Claude Opus 5.5`) is taken
+as written. A bare `Claude Code` trailer is what every harness writes whatever model it runs (deepseek-flash,
+mimo-v2.6-pro, gpt-6-luna), so for those the model is the `model=` of the `<!-- agent-post: … -->` footer on the merged PR
+the subject names (`(#N)`), with a router prefix or vendor path dropped (`deepseek.deepseek-flash` is `deepseek-flash`),
+and `unknown` without a footer. Commits with no trailer are a separate `unattributed` row. Under `--no-gh` the footers
+are not read and those commits stay one `Claude Code (model not resolved …)` row. `--json` carries the resolved
+counts (`commits.models`) and the raw trailers (`commits.trailers`).
+
 ## What it does not measure
 
 - "Maintained successfully" has no git measure. `alive %` (code+test now over code+test ever added) says lines were not

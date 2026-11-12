@@ -16,6 +16,7 @@ import { openWireClient } from "./ml-wire-serve";
 import { recordRunLog } from "./sw-run-log";
 import { dialectLibraries } from "./sw-libraries";
 import type { DialectLibrary } from "../python/python-dialect-run";
+import type { CellCancel } from "../python/py-lease";
 import { sessionArea } from "./sw-housekeeping";
 import { defineState } from "../state-registry";
 
@@ -148,6 +149,9 @@ export interface PythonCaller {
     wireStep?: { seq: number; local: { step: number; seq: number } };
     /** The cell's tab URL now, for its `ml.config()`. */
     tabUrl?: () => string;
+    /** A LEASED cell's id (py-lease.ts): a worker-hosted run's python_exec, whose start the offscreen document reports
+     *  (`PY_STARTED`, to {@link onPyCellStarted}) and which a cancel and a tail reach by it. Set only by worker code. */
+    cell?: string;
     /** Run the cell INSIDE the dialect only, under the fork's gate (docs/spec/PYTHON_DIALECT.md, "Membership replaces
      *  `mode`"): a run the worker drives trying it before its own gate. Honoured only with `runGated`. A cell outside
      *  comes back as `notInDialect` and nothing it did is kept. */
@@ -263,16 +267,19 @@ export async function runPython(payload: any, requestId: string | undefined, cal
     const wire = complete ? null : openWireClient({ from: { kind: "offscreen" }, run: caller.wireRun ?? null, realm: outside ? "full" : "readonly", tabUrl: caller.tabUrl, ...(caller.wireStep ? { step: caller.wireStep } : {}) });
     // A KEEP holds a worker-hosted run's sandbox through long idle gaps until the turn ends (py-reap.ts); it is told in
     // the run log once per turn, so the person sees the model asked for it.
+    // A LEASED cell (py-lease.ts): only a worker-hosted run's.
+    const cell = caller.cell && caller.wireRun ? caller.cell : null;
     const keep = payload?.keep === true && !!caller.wireRun;
     // The lift, only for the exact code the person approved, and only outside the dialect (an inside cell needs none).
     const bridges = outside && caller.bridges === true && !!caller.pyCodeOk?.(String(payload?.code ?? ""));
     if (keep && !keptRuns.has(caller.wireRun!)) { keptRuns.add(caller.wireRun!); recordRunLog(caller.wireRun!, { subsystem: "python", kind: "keep" }); }
-    const run = { type: "PY_RUN", principal, ...(wire ? { wire: { client: wire.handle, run: caller.wireRun ?? null } } : {}), ...(valueBudget ? { valueBudget } : {}), code: payload?.code, image: payload?.image ?? null, hardened: true, tables: payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}), ...(inside ? { inside: true } : {}), ...(keep ? { keep: true, turnLive: true } : {}), ...(bridges ? { bridges: true } : {}) };
+    const run = { type: "PY_RUN", principal, ...(wire ? { wire: { client: wire.handle, run: caller.wireRun ?? null } } : {}), ...(valueBudget ? { valueBudget } : {}), code: payload?.code, image: payload?.image ?? null, hardened: true, tables: payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}), ...(inside ? { inside: true } : {}), ...(keep ? { keep: true, turnLive: true } : {}), ...(bridges ? { bridges: true } : {}), ...(cell ? { cell } : {}) };
     // A cell inside the dialect may import the person's approved tier 3 libraries: they ride every inside run, and the
     // sandbox loads each pin once.
     if (inside) { const libraries = await dialectLibraries(); if (libraries.length) Object.assign(run, { libraries }); }
     // A keep is a LIVE turn's: checked again at every send, since the awaits above and the retry below can cross the turn's
     // end (`deletePythonRun`), and a keep landing after it would outlive its turn in the offscreen document.
+    if (cell) liveCells.add(cell);
     const attempt = () => ensureOffscreen().then(() => {
         if (keep && !runControllers.has(caller.wireRun!)) { delete (run as { keep?: boolean }).keep; delete (run as { turnLive?: boolean }).turnLive; }
         return chrome.runtime.sendMessage(run);
@@ -298,6 +305,7 @@ export async function runPython(payload: any, requestId: string | undefined, cal
     } finally {
         if (streamId) pyStreamTabs.delete(streamId);
         wire?.close();
+        if (cell) { liveCells.delete(cell); settledCells.push(cell); if (settledCells.length > SETTLED_CELLS_MAX) settledCells.shift(); }
     }
 }
 
@@ -361,6 +369,79 @@ export function pythonReaped(message: any, sender: chrome.runtime.MessageSender)
     if (message.live === true) recordRunLog(run, { subsystem: "python", kind: "reap", reason: "idle" });
     const dropped = message.dropped as { count?: unknown; afterCell?: unknown } | undefined;
     if (dropped && typeof dropped.count === "number" && dropped.count > 0) recordRunLog(run, { subsystem: "python", kind: "dropped", reason: "at-reap", detail: { count: dropped.count, afterCell: Number(dropped.afterCell) || 0 } });
+}
+
+/** The leased cells this worker sent and is still waiting on, and the last ones it settled: a `PY_DONE` naming neither
+ *  is a cell an earlier worker sent, whose reply went nowhere (`pythonDone`). */
+const liveCells = new Set<string>();   // state: plumbing — this worker's leased cells in flight
+const settledCells: string[] = [];   // state: plumbing — the last SETTLED_CELLS_MAX it settled, for a PY_DONE that lands after the reply
+const SETTLED_CELLS_MAX = 64;
+
+/**
+ * PY_DONE: the offscreen document says a leased cell ended. The worker that sent it ignores it (its reply carries the
+ * result). A worker that never sent it is a new one: the sender died while the cell ran (past the per-event cap, a
+ * crash), the run's loop and its task table with it, so nothing can take the result, and it is logged as orphaned
+ * rather than dropped silently. Only from our own documents.
+ * @param message `{ cell, run, ok, bytes }`
+ * @param sender who sent it
+ */
+export function pythonDone(message: any, sender: chrome.runtime.MessageSender): void {
+    if (!isExtensionSender(sender) || sender.tab || typeof message?.cell !== "string" || typeof message?.run !== "string" || !message.run) return;
+    if (liveCells.has(message.cell) || settledCells.includes(message.cell)) return;
+    recordRunLog(message.run, { level: "warn", subsystem: "python", kind: "orphaned", reason: "worker-lost", bytes: Number(message.bytes) || 0, detail: { cell: message.cell, ok: message.ok !== false } });
+}
+
+/** What to do when a leased cell starts, by its id: the lease's start (worker-tools.ts `workerPython`). */
+const pyCellStarts = new Map<string, () => void>();   // state: plumbing — one entry per leased cell in flight
+
+/**
+ * Be told when a leased cell starts running (its runtime up and its turn come), which is where its lease begins.
+ * @param cell the cell's id
+ * @param fn called once, at the start
+ * @returns a function that forgets it
+ */
+export function onPyCellStarted(cell: string, fn: () => void): () => void {
+    pyCellStarts.set(cell, fn);
+    return () => { if (pyCellStarts.get(cell) === fn) pyCellStarts.delete(cell); };
+}
+
+/**
+ * PY_STARTED: the offscreen document says a leased cell has started. Only from our own documents, and only for a cell
+ * this worker leased: a page cannot start or shorten another run's lease.
+ * @param message `{ cell }`
+ * @param sender who sent it
+ */
+export function pythonStarted(message: any, sender: chrome.runtime.MessageSender): void {
+    if (!isExtensionSender(sender) || sender.tab || typeof message?.cell !== "string") return;
+    const fn = pyCellStarts.get(message.cell);
+    if (!fn) return;
+    pyCellStarts.delete(message.cell);
+    fn();
+}
+
+/**
+ * Cancel a leased cell: its interrupt, then its sandbox's kill if the interrupt has not ended it in time
+ * (offscreen.ts `interruptCell`). With no offscreen document listening, nothing is running.
+ * @param cell the cell's id
+ * @returns how it ended
+ */
+export async function cancelPyCell(cell: string): Promise<CellCancel> {
+    try {
+        const r = await chrome.runtime.sendMessage({ type: "PY_CANCEL", cell }) as { how?: CellCancel } | undefined;
+        return r?.how ?? "ended";
+    } catch { return "ended"; }
+}
+
+/**
+ * A leased cell's output so far, as the offscreen document keeps it (the last PY_TAIL_RING_CHARS of it), or null when
+ * the cell is no longer running there.
+ * @param cell the cell's id
+ */
+export async function tailPyCell(cell: string): Promise<string | null> {
+    try {
+        const r = await chrome.runtime.sendMessage({ type: "PY_TAIL", cell }) as { running?: boolean; text?: string } | undefined;
+        return r?.running ? String(r.text ?? "") : null;
+    } catch { return null; }
 }
 
 /** PY_STDOUT: relay one live stdout chunk from the offscreen host to whoever is awaiting that stream — a page

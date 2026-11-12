@@ -21,16 +21,17 @@ export const DATA_URL = "https://data.example/report.csv";
 /**
  * Run a worker-built run whose python_exec cell plays `cell`.
  * @param cell `(wire, bg) => Promise<void>`: the cell's body, given the PY_RUN's `wire` and the worker
- * @param opts `body`: what fetch_url reads at `url` (or `bodies`, by URL); `mode`: python_exec's mode; `siteGate: false`
+ * @param opts `body`: what fetch_url reads at `url` (or `bodies`, by URL); `mode`: python_exec's mode; `files`: what the
+ *   person attached (a run that holds them as `@file:` pointers); `siteGate: false`
  *   approves every page; `calls`: the model's tool calls in order, in place of fetch_url then python_exec; `local` seeds
  *   `chrome.storage.local` (e.g. `ml_site_selfapprove` so a page-started PYTHON_EXEC is allowed to run); `store`: give
  *   the worker a value store (a `fake-indexeddb` database), with `budgetMB` as its budget; `idb` shares one store across
  *   two `wireRun`s (a cross-run read); `pageAnswer` is what the page's `RUN_TOOL_IN_PAGE` answers; `configExtra` goes
  *   over the config (ml.sh's settings), `onNative` is a fake process host (tests/fake-native-host.mjs), and
  *   `onStep(bg, event)` sees each step event on the run's tab (a nested ask arrives this way)
- * @returns the worker, the PY_RUN messages, and the tool results the model was last handed
+ * @returns the worker, the PY_RUN messages, the tool results the model was last handed, and the run's hash
  */
-export async function wireRun(cell, { body = "region,total\nnorth,12\nsouth,30\n", bodies = {}, mode = "readonly", url = DATA_URL, siteGate = true, calls: script, local, store = false, budgetMB, idb, pageAnswer, configExtra = {}, onNative, onStep, dialectInside, onPyDelete } = {}) {
+export async function wireRun(cell, { body = "region,total\nnorth,12\nsouth,30\n", bodies = {}, mode = "readonly", url = DATA_URL, siteGate = true, calls: script, local, store = false, budgetMB, idb, pageAnswer, configExtra = {}, onNative, onStep, dialectInside, onPyDelete, files } = {}) {
     let turns = 0;
     const pyRuns = [];
     const calls = script ?? [
@@ -69,10 +70,10 @@ export async function wireRun(cell, { body = "region,total\nnorth,12\nsouth,30\n
             return pageAnswer ? await pageAnswer(msg, bg) : { result: "" };
         },
     });
-    await bg.context.__mlStartUserRunForTest(SITE.id, { task: "read the report", surface: "hud" });
+    const { hash } = await bg.context.__mlStartUserRunForTest(SITE.id, { task: "read the report", surface: "hud", ...(files ? { files } : {}) });
     for (let i = 0; i < 3000 && turns <= calls.length; i++) await tick();
     await new Promise((r) => setTimeout(r, 20));
-    return { bg, pyRuns, toolResults };
+    return { bg, pyRuns, toolResults, hash };
 }
 
 let seq = 0;

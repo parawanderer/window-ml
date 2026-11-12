@@ -26,7 +26,6 @@ import { stepBudget } from "../agent/step-budget";
 import { grantableOrigin, originOf } from "../site-access";
 import type { StartRunPayload, ResumeRunPayload } from "../contract/contract-messages";
 import { type MlConfig, modelFilterAllows } from "../contract/contract-config";
-import { withPageContext } from "../agent/run-assembly";
 import { workerPageContext } from "../agent/site-instructions";
 import { ourToolTexts } from "./builtin-texts";
 import { type RequestHint, hintSession } from "../contract/contract-run";
@@ -75,6 +74,7 @@ import { GATED_BUILTINS } from "../tools/tool-registry";
 import { checkVerifyRequest, verifyAsked, verifyVerb, withoutPageVision, workerVerify, VERIFY_REFUSED, VERIFY_WITHHELD, type VerifyOutcome, type WorkerVerify } from "./worker-verify";
 import { topDocument } from "./worker-vision";
 import { capPageAnswer, capPageContext } from "./page-answer-caps";
+import { firstUserTurn } from "../agent/run-assembly";
 import { hostAsks, raiseAsk, stepAsks } from "./sw-asks";
 import { ARRIVAL_ASK, ARRIVAL_DENIED } from "../contract";
 import { arrivalAnsweredText, arrivalDeniedText, clickDeniedText, arrivalWaitingText, arrivalHold, arrivalLine, arrivalSettled, arrivalVerdict, clearArrival, holdArrival, judgeTurnStart, watchArrivals, watchBetweenTurns } from "./nav-arrival";
@@ -288,11 +288,12 @@ export function startBackgroundRun(message: any, sender: chrome.runtime.MessageS
             if (workerHeld()) { await verdict.refund(); answer({ error: WORKER_RUN_REFUSED }); return; }
             if (running()) { await verdict.refund(); answer({ error: RUNNING }); return; }
             // The page's context is the worker's to write, from the browser's facts (B1): whatever context the page wrote
-            // into its prompt is the site's, shown on the card as its instructions. Added after the card's snapshot, since
-            // the time in it changes every turn.
+            // into its prompt is the site's, shown on the card as its instructions, and a `pageContext` it sent is replaced.
+            // Written after the card's snapshot, since the time in it changes every turn.
+            p.pageContext = undefined;
             if (p.env !== false) {
                 const title = (await Promise.resolve(chrome.tabs.get(tabId)).catch(() => null))?.title;
-                p.systemPrompt = withPageContext(p.systemPrompt, workerPageContext(p.pageUrl ?? sender.url ?? "", title));
+                p.pageContext = workerPageContext(p.pageUrl ?? sender.url ?? "", title);
             }
             if (startCancelled()) { answer(cancelledStart()); return; }
             // The person's turn runs at the budget they chose (or the approved one), never at one the page named.
@@ -1002,8 +1003,10 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         void judgeTurnStart(tabId, runId, { first: !resumeMessages, force: resurrected || !!arrivalHold(runId) });
         const startEvent = {
             kind: "agent", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 },
-            task: resurrected ? (resumeOriginalTask ?? p.task) : p.task, model: p.model, maxSteps: p.maxSteps,
-            ...(p.display && !resurrected && p.builtBy === "worker" ? { display: p.display } : {}),
+            // A fresh run's task as the model got it, the page context in front (`firstUserTurn`); the bubble shows the task.
+            task: resurrected ? (resumeOriginalTask ?? p.task) : firstUserTurn(modelTask, resumeMessages ? undefined : p.pageContext), model: p.model, maxSteps: p.maxSteps,
+            ...(p.display && !resurrected && p.builtBy === "worker" ? { display: p.display }
+                : !resurrected && !resumeMessages && (p.pageContext || modelTask !== p.task) ? { display: { typed: p.task, context: [] } } : {}),
             pageUrl: p.pageUrl, pageTitle: p.pageTitle,
             resumed: resurrected || undefined,   // the sidebar can mark it "resumed after interruption"
             config: {
@@ -1023,7 +1026,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // the worker rewrote above (`ourToolTexts`, `withExecWorld`) and the prompt it extended. The surfaces and both
         // exports must carry what the model is sent, so the worker says it after the page's start, on the same gate.
         if (!resumeMessages && p.surface !== "off" && !hasNavigated && !byWorker())
-            fanEvent({ kind: "agent-config", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, config: { system: startEvent.config.system, tools: startEvent.config.tools } });
+            fanEvent({ kind: "agent-config", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, config: { system: startEvent.config.system, tools: startEvent.config.tools }, ...(startEvent.task !== p.task ? { task: startEvent.task } : {}) });
         else if (resurrected) fanEvent(startEvent);   // resurrected: no page-side caller emitted a start → fan it ourselves
         // A plain resume emits NEITHER, so a cap raised here would reach no surface: the step pill would keep counting
         // against the old number and the next Continue would offer the old budget back. `agent-cap` is the same event
@@ -1098,7 +1101,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             return { result: env.result || "", renderIn: env.renderIn, renderOut: env.renderOut, feedback: env.feedback, image: env.image, imageLabel: env.imageLabel, images: env.images, ...(env && workerEnvelopes.has(env as import("../contract").PageToolEnvelope) && typeof env.textValue === "string" ? { textValue: env.textValue } : {}) };
         };
         runBackgroundAgent(
-            { task: modelTask, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSelfSource: p.autoApproveSelfSource, unattended: p.unattended, toolTokens: p.toolTokens, stream: p.stream, ...(p.origin ? { origin: p.origin } : {}), runId, seqBase, tokenStore: sessionTokens(runId), labelMatch: p.labelMatch, resumeMessages, images: p.images,
+            { task: modelTask, systemPrompt: p.systemPrompt, pageContext: p.pageContext, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSelfSource: p.autoApproveSelfSource, unattended: p.unattended, toolTokens: p.toolTokens, stream: p.stream, ...(p.origin ? { origin: p.origin } : {}), runId, seqBase, tokenStore: sessionTokens(runId), labelMatch: p.labelMatch, resumeMessages, images: p.images,
               // A resumed turn follows a PERSON (a follow-up, Continue, Retry) — except a run resurrected after the
               // worker was evicted, where nobody was waited on.
               ...(resumeMessages && !resurrected ? { after: "human" as const } : {}) },

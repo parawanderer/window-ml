@@ -14,6 +14,7 @@ import vm from "node:vm";
 const require = createRequire(import.meta.url);
 const { jsonResponse, loadBackground } = require("./helpers");
 const { IDBFactory } = require("fake-indexeddb");
+const { PAGE_CONTEXT_HEAD } = require("../src/agent/output-clip.ts");
 const { ValueStore } = await import("../src/pointers/value-store.ts");
 const { PAGE_TABLE_CAPS } = await import("../src/sw/worker-page-read.ts");
 const { UI_OUT_CAP } = await import("../src/contract/contract-chat.ts");
@@ -427,13 +428,15 @@ test("control: a normal-sized page render and result reach the pointer and the m
     assert.deepEqual((await runLogOf(r.bg, r.hash)).filter((e) => e.kind === "answer-capped"), []);
 });
 
-test("a worker-built run: the page context the page answers when the run is pushed into it is clipped before it joins the system prompt", async () => {
+test("a worker-built run: the page context the page answers when the run is pushed into it is clipped before it joins the first user message", async () => {
     const big = "z".repeat(20_000_000);
     const r = await run([], { pageInfo: `URL: ${SITE_URL}\n${big}` });
-    const sys = r.bg.calls.filter((c) => c.url.includes("/chat/completions")).map((c) => String(c.body.messages?.[0]?.content ?? ""));
-    assert.ok(sys.length, "control: the model was called");
-    assert.match(sys[0], /Current page context:\nURL: https:\/\/site\.example\/page/);
-    assert.ok(Math.max(...sys.map((t) => t.length)) < 100_000, `a system prompt carried ${Math.max(...sys.map((t) => t.length))} chars`);
+    const msgs = r.bg.calls.filter((c) => c.url.includes("/chat/completions")).map((c) => c.body.messages ?? []);
+    assert.ok(msgs.length, "control: the model was called");
+    const first = String(msgs[0].find((m) => m.role === "user")?.content ?? "");
+    assert.ok(first.startsWith(`${PAGE_CONTEXT_HEAD}\nURL: https://site.example/page`), first.slice(0, 200));
+    const longest = Math.max(...msgs.flat().map((m) => String(m.content ?? "").length));
+    assert.ok(longest < 100_000, `a message carried ${longest} chars`);
 });
 
 test("a worker-built run: a page's result that is not a string is clipped as the text the model reads, not passed by its type", async () => {

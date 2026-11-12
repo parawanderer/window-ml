@@ -150,6 +150,8 @@ export interface RuntimeCapabilities {
     shellHost?: boolean;
     /** Calls on the real filesystem run under the OS sandbox (writes only in the roots, no network). */
     shellSandboxed?: boolean;
+    /** The process host expands a leading `~` in an `ml.sh` argument or `cwd` to the person's home directory. */
+    shellTilde?: boolean;
     /** A container runner is available for `ml.sh`. None exists yet, so no runtime sets it. */
     shellContainer?: boolean;
     /**

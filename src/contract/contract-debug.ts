@@ -355,7 +355,12 @@ export interface DebugAgentCap extends DebugBase { kind: "agent-cap"; maxSteps: 
 /** The worker's record of what a page-built run sends the model: the system prompt and tools after its own rewrite (a
  *  tool named like a builtin gets the extension's texts), which the page's `agent` start event cannot know. Folded over
  *  the session's `agentConfig`, so the tool cards and both exports carry what the model saw. */
-export interface DebugAgentConfigWire extends DebugBase { kind: "agent-config"; config: Pick<DebugAgentConfig, "system" | "tools">; }
+export interface DebugAgentConfigWire extends DebugBase {
+    kind: "agent-config"; config: Pick<DebugAgentConfig, "system" | "tools">;
+    /** The first user message as the worker sent it (the page context in front, a page's turn marked as the page's), when it
+     *  differs from the task the page announced. The session keeps the page's text as what was typed. */
+    task?: string;
+}
 
 /** A handle inserted a user message into a RUNNING loop (a.say(text)) — shown immediately (pending), even
  *  though the model only sees it at the next step boundary. */
