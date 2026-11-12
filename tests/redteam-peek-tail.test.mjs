@@ -109,7 +109,8 @@ test("RED TEAM: the whole a cut tail stores is scrubbed before it is kept, and a
         const t = await taskAction("rt-peek-store", { op: "tail", id: task, lines: 40 });
         assert.equal(typeof t, "object", "control: 16 KB past the ceiling is cut, so a value is named");
         assert.ok(!t.content.includes(KEY), `the model's tail carried the key: ${t.content.slice(0, 200)}`);
-        // The pointer the step mints is claimed for THIS run, then read back as the store keeps it.
+        // Claimed by hand for THIS run (the loop mints no pointer for a `task` result yet: HELD_BACK.md row 16), then read
+        // back as the store keeps it. This row covers the value store, not the loop's minting.
         await claimValue(t.textValue, "rt-peek-store");
         const whole = await readStoredText(t.textValue, "rt-peek-store");
         assert.ok(whole.includes("row0:") && whole.includes("row39:"), "control: the stored whole holds the lines the cut hid");
