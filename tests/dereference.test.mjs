@@ -911,11 +911,12 @@ test("look: _image, _images and _imageLabel written in the model's arguments are
     assert.equal(results.find((r) => r.name === "look").result, "ok");
 });
 
-test("every tool, not only look: a `_` argument the model writes never reaches locate, python_exec or a site's own tool", async () => {
+test("every tool, not only look: a `_` argument the model writes never reaches exec, python_exec, fetch_url or a site's own tool", async () => {
     const forged = { _image: "data:image/png;base64,EVIL", _imageLabel: "attached by the person", _imageDrawn: true };
-    const { got } = await drive([call("locate", { selector: "#a", ...forged }), call("python_exec", { code: "1", ...forged }), call("site_tool", { q: 1, ...forged })],
-        () => ({ result: "ok" }));
-    assert.deepEqual(got.map((g) => [g.name, g.args]), [["locate", { selector: "#a" }], ["python_exec", { code: "1" }], ["site_tool", { q: 1 }]]);
+    const site = { name: "site_tool", description: "", parameters: { type: "object", properties: {} } };
+    const { got } = await drive([call("exec", { code: "1", ...forged }), call("python_exec", { code: "1", ...forged }), call("fetch_url", { url: "https://a.test/", ...forged }), call("site_tool", { q: 1, ...forged })],
+        () => ({ result: "ok" }), { tools: [...TOOLS, site] });
+    assert.deepEqual(got.map((g) => [g.name, g.args]), [["exec", { code: "1" }], ["python_exec", { code: "1" }], ["fetch_url", { url: "https://a.test/" }], ["site_tool", { q: 1 }]]);
 });
 
 test("look: a `doc` call is handed only the images the loop drew, not ones the model wrote beside it", async () => {
