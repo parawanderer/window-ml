@@ -14,7 +14,7 @@
 // the harness's captured refs) and stays that way. A FULL worker is a separate worker that is never
 // locked — that is why `self.name` is "readonly" or "full", set by the host when it spawns us.
 
-import { PY_PACKAGE_LOADS, PY_LAZY_LOADS, PY_BENCH_BASE_NAMES, PY_STARTUP_PREPARE } from "./python-env";
+import { PY_PACKAGE_LOADS, PY_LAZY_LOADS, PY_BENCH_BASE_NAMES, PY_STARTUP_PREPARE, pyodideLoadOptions } from "./python-env";
 import { DIALECT_FILES, DIALECT_MODULES, DIALECT_NODES } from "./dialect-data";
 import { wrapUserSetup, wrapUserScript, COMPLETE_HELPER, completeIn, RESET, injectInputs, stdoutWriter, injectStoredTable, takeIpc, releaseNamespace, hostRunScript, cancelPath, type PyCompletion } from "./python-runtime";
 import { dialectSetup, libraryLoad, libraryShape, type DialectLibrary } from "./python-dialect-run";
@@ -112,7 +112,7 @@ function getPyodide(by: "prewarm" | "run" = "run"): Promise<any> {
         const base = self.location.href;
         const t0 = Date.now();
         const { loadPyodide } = await import(new URL("pyodide/pyodide.mjs", base).href);
-        const py = await loadPyodide({ indexURL: new URL("pyodide/", base).href });
+        const py = await loadPyodide(pyodideLoadOptions(new URL("pyodide/", base).href));
         if (interruptFlag) py.setInterruptBuffer(interruptFlag);
         await py.loadPackage(PY_PACKAGE_LOADS);
         // Lazy tooling (jedi) loads BEFORE the lockdown too: `complete()` calls `py.loadPackage(PY_LAZY_LOADS)`

@@ -20,7 +20,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { stalenessReport } from "./check-dist-fresh.mjs";
 import { acquire } from "./test-slot.mjs";
 import { watchRunner } from "./watch-runner.mjs";
@@ -177,7 +177,7 @@ const GENRES = {
     // The Python sandbox's host side with no Pyodide: the offscreen document's routing and the idle reap through fake
     // Workers, the prelude's environment and the table sources. Fast; `python` below is the real interpreter.
     "python-host": { about: "the Python sandbox's host side without Pyodide: offscreen routing, the idle reap, the env, table sources, the install verdict", files: ["pkg-verdict.test.mjs", "pkg-pep.test.mjs", "python-env.test.mjs", "python-reap.test.mjs", "python-run-namespace.test.mjs", "python-table-sources.test.mjs", "redteam-python-keep.test.mjs", "python-keep-fixes.test.mjs"] },
-    python: { about: "real CPython in Pyodide (self-skips without dist/pyodide)", files: ["python.test.mjs", "redteam-python-sandbox.test.mjs", "redteam-python-regex-backtrack.test.mjs", "python-lockdown.test.mjs", "python-run-namespace-py.test.mjs", "python-dialect-vectors-wasm.test.mjs", "regex-corpus-core.test.mjs", "regex-cost-core.test.mjs", "python-matplotlib.test.mjs", "python-dialect-inside.test.mjs", "redteam-python-inside.test.mjs", "python-dialect-library.test.mjs", "python-dialect-library-redteam.test.mjs", "redteam-python-lockdown.test.mjs", "redteam-hard-python-lockdown.test.mjs", "redteam-hard-python-realm.test.mjs", "redteam-hard-python-cancel.test.mjs", "python-spend-queue.test.mjs", "python-worker-bridges.test.mjs", "python-bench-stop.test.mjs"] },
+    python: { about: "real CPython in Pyodide (self-skips without dist/pyodide)", files: ["python.test.mjs", "pyodide-no-cdn.test.mjs", "redteam-python-sandbox.test.mjs", "redteam-python-regex-backtrack.test.mjs", "python-lockdown.test.mjs", "python-run-namespace-py.test.mjs", "python-dialect-vectors-wasm.test.mjs", "regex-corpus-core.test.mjs", "regex-cost-core.test.mjs", "python-matplotlib.test.mjs", "python-dialect-inside.test.mjs", "redteam-python-inside.test.mjs", "python-dialect-library.test.mjs", "python-dialect-library-redteam.test.mjs", "redteam-python-lockdown.test.mjs", "redteam-hard-python-lockdown.test.mjs", "redteam-hard-python-realm.test.mjs", "redteam-hard-python-cancel.test.mjs", "python-spend-queue.test.mjs", "python-worker-bridges.test.mjs", "python-bench-stop.test.mjs"] },
     // Everything named `fetch-*`, which is two subjects the filename prefix alone joins: the page's fetch
     // machinery (the cache's budget, the ladder's presentation both sinks share) and the release-download
     // scripts the CI gates fetch binaries with (fetch-hub's retry and fallback, fetch-host's pin).
@@ -234,7 +234,9 @@ const SLOT = args.includes("--check-genres") ? null : await acquire({ cmd: [proc
 const jobsArg = process.argv.find((a) => a.startsWith("--jobs"));
 const JOBS = Math.max(1, Number(jobsArg?.split("=")[1] ?? process.argv[process.argv.indexOf("--jobs") + 1])
     || SLOT?.jobs || Math.min(8, ON_CI ? CORES : Math.max(1, CORES - 2)));
-const NODE_ARGS = ["--import", "tsx", "--test", `--test-concurrency=${JOBS}`];
+// The CDN guard (tests/no-cdn-fetch.mjs) by absolute URL: a test's child process may run from another directory.
+const NO_CDN = pathToFileURL(path.join(ROOT, "tests", "no-cdn-fetch.mjs")).href;
+const NODE_ARGS = ["--import", "tsx", "--import", NO_CDN, "--test", `--test-concurrency=${JOBS}`];
 
 // SLOWEST FIRST. `node --test --test-concurrency=N` starts the files in the order they are listed, and a
 // long file that starts last is the one that decides the wall clock while every other slot has gone idle.
