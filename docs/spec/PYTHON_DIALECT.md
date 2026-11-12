@@ -413,12 +413,14 @@ running a Python script via `ml.sh.run(["python3", "script.py", ...])` do not sh
 - **In-kernel (`python_exec`, or `import helper` inside a cell):** Runs inside the persistent per-run `dict` under
   `CO_RESTRICTED` (tier 3 by default for pure-Python functions, [`READONLY_LIBRARY_MANIFEST.md`](READONLY_LIBRARY_MANIFEST.md)
   for native leaves). It has no `open()`, `os`, `sys`, `argparse` or `subprocess`, and halts within the step budget with
-  write-barrier rollback on failure. RULED 2026-10-28, REOPENED 2026-11-12 by Shane in the coordinator's session (the session-files mount; the Chat Page lane writes the FILE_ATTACHMENTS.md amendment, the coordinator reviews it; the paragraph below stands until that amendment merges) (for `FILE_ATTACHMENTS.md` slice 3): an attached file reaches a cell
+  write-barrier rollback on failure. RULED 2026-10-28 (for `FILE_ATTACHMENTS.md` slice 3): an attached file reaches a cell
   the way a stored table does, as an injected value (`files: { name: "@file:…" }` giving the bytes; a tabular one through
   `tables`), never as a path under a mounted directory; a cell's `open("<name>")` is caught by the redirect that catches
   `pd.read_csv('current')`, resolving the attachment by name. A paged document (a PDF) is injected as its pages:
   each page's `text`, `kind` and `measure`, and `png(scale)`, a bounded on-demand render through the offscreen
-  document, beside the bytes (`FILE_ATTACHMENTS.md`, "Python").
+  document, beside the bytes (`FILE_ATTACHMENTS.md`, "Python"). REOPENED 2026-11-12 (Shane, in the coordinator's
+  session) for approved and `full` cells, which get a mounted `/files/` with a read-only `/files/attached/`
+  (`FILE_ATTACHMENTS.md`, "A session's files as a directory"); this dialect keeps the injected value and the redirect.
 - **Subprocess CLI (`ml.sh.run(["python3", ...])`):** Spawns a fresh OS process with `CO_RESTRICTED` off, because a CLI
   script legitimately uses `sys.argv`, `argparse`, `pathlib` and `open()`. While an agent is actively writing and editing
   an ad-hoc script (`tmp/scratch.py`, whose `sha256` changes on every turn), it is bounded by the OS sandbox (Seatbelt /
