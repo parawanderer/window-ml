@@ -7,6 +7,7 @@
 // docs/spec/PROMPT_BUDGET.md, step 3.
 
 import type { MlTool } from "../contract/contract-agent";
+import { cutOr } from "../agent/prompt-variant";
 
 /** `python_exec`'s `tables` and `cast` texts in full: its MECHANICS, served by {@link TOOL_DETAILS}. The
  *  schema carries {@link PYTHON}, the triggers (docs/spec/PROMPT_BUDGET.md, round 3: measured on five models). */
@@ -41,11 +42,12 @@ export const EXEC_SHORT = (cap: number, ceiling: number): string =>
     "`maxCharsReason` asks the human for more room. Read-only code (queries plus `.map`/`.filter`/`.reduce`/`for…of`/" +
     "`ml.range`; no mutation, `.push`, `+=`, `while`/`for(;;)` or `for…in`) runs with NO approval prompt; anything " +
     "else asks the user first. `@tool:<id>` written in the code is that output as a plain value (no `await`). On " +
-    "`ml`: `ml.pipe(text, \"grep x | head\")` filters any string; `ml.queryAll('host >>> inner')` pierces shadow " +
+    "`ml`: `ml.pipe(text, \"grep x | head\")` filters any string" + cutOr(" (or an array, one stage each)", "") + "; `ml.queryAll('host >>> inner')` pierces shadow " +
     "roots and same-origin iframes; `ml.a11y(el)` gives a control's role, name and the selector for click/type; " +
     "`ml.fetch(url)` reads another URL inline, and re-reading an approved one from a read-only survey is free; " +
-    "`state` (`ml.state`) persists across calls: stash results and helpers there and reuse them. Use exec only " +
-    "when the other tools can't answer.";
+    "`state` (`ml.state`) persists across calls: stash results and helpers there and reuse them. " +
+    cutOr("Prefer a dedicated tool when one fits; exec is for what none does (a custom filter, a computation).",
+        "Use exec only when the other tools can't answer.");
 
 /** exec's `world` parameter, as the model reads it (exec-routing.ts decides what each value does). */
 export const EXEC_WORLD_PARAM = `"page": page JS globals. "isolated": hidden from page scripts.`;

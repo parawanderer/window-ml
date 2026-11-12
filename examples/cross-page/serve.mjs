@@ -21,6 +21,7 @@ import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { readFileSync, readdirSync } from "node:fs";
 import { salesCsv } from "./sales.mjs";
+import { appLog, controlsBody, tilesBody, GUIDE_MD, GUIDE_MD_BODY } from "./prompt-cuts.mjs";
 
 // Every example page (all self-contained — inline CSS/JS, data-URL images) served straight off disk, so the
 // harness can drive the EXACT pages a human uses for real tasks (spreadsheet / find-waldo / canvas-input / …)
@@ -41,9 +42,9 @@ const sendExampleFile = (res, file) => {
 
 // One editable template for every page: a heading, an origin/path badge, some body copy, and (usually) a
 // big obvious link to the next step. `next` is the href+label of the forward link (null on a leaf).
-const page = ({ title, badge, body, next, accent = "#4f46e5" }) => `<!doctype html>
+const page = ({ title, badge, body, next, accent = "#4f46e5", head = "" }) => `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${title}</title><style>
+<title>${title}</title>${head}<style>
   :root{--bg:#fbfbfd;--fg:#111;--dim:#555;--card:#fff;--line:#e3e3e8;--accent:${accent}}
   @media(prefers-color-scheme:dark){:root{--bg:#17171b;--fg:#eaeaee;--dim:#b3b3bd;--card:#1e1e24;--line:#2e2e36}}
   *{box-sizing:border-box}
@@ -97,6 +98,9 @@ const RAW = {
     "/code.ts": { ct: "text/plain; charset=utf-8", body: "export const answer: number = 42;\nexport function id<T>(x: T): T { return x; }\n" },
     // Beside /shop/aisle-4/ and nowhere else, so only a URL resolved against that page finds it (the prompt-budget bench).
     "/shop/aisle-4/stock.json": { ct: "application/json", body: JSON.stringify({ aisle: 4, stock: { apples: 41, pears: 23, plums: 8 } }) },
+    // The prompt-budget-cuts bench (prompt-cuts.mjs): a log too long to read whole, and /docs/guide's Markdown twin.
+    "/logs/app.log": { ct: "text/plain; charset=utf-8", body: appLog() },
+    [GUIDE_MD]: { ct: "text/markdown; charset=utf-8", body: GUIDE_MD_BODY },
 };
 const sendRaw = (res, r) => { res.writeHead(200, { "content-type": r.ct, "cache-control": "no-store" }); res.end(r.body); };
 
@@ -106,6 +110,13 @@ const routes = (crossOrigin) => ({
         badge: "Aisle 4", title: "Fresh fruit",
         body: `<p>Apples, pears and plums, delivered every morning.</p>`,
     }),
+    // The prompt-budget-cuts bench (prompt-cuts.mjs).
+    "/controls": page({ badge: "Repository", title: "Actions", body: controlsBody() }),
+    "/docs/guide": page({
+        badge: "Docs", title: "Getting started", head: `<link rel="alternate" type="text/markdown" href="${GUIDE_MD}">`,
+        body: `<p>Install the CLI, then run <code>acme init</code> in an empty folder.</p>`,
+    }),
+    "/tiles": page({ badge: "Gallery", title: "Tiles", body: tilesBody() }),
     "/": page({
         badge: "Step 1 of 3", title: "Cross-page persistence demo",
         body: `<p>This is a plain multi-page site — every link below is a <strong>real full-page

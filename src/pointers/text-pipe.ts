@@ -10,6 +10,7 @@
 // prompt and tool-parameter description that names them); chain them with `|`.
 // The input text is the pipeline's stdin (no `cat`); each stage transforms the lines and feeds the next.
 
+import { cutOr } from "../agent/prompt-variant";
 import { jsonShape } from "../dom/dom";
 import { riskyRegex, MAX_STRING } from "../readonly-exec/limits";
 import { replaceSize, replaceWorstCase } from "../readonly-exec/replace-size";
@@ -65,12 +66,33 @@ export function pipeHint(message: string): string {
  *  carried the ~270-token dialect verbatim, which single-sourcing had made consistent but not smaller. */
 export const PIPE_REF = "The dialect is described once under THE PIPE DIALECT in your instructions.";
 
-export const PIPE_SYNTAX =
+/** {@link PIPE_USAGE} as the `cuts` experiment words it (prompt-variant.ts): the flags, without the prose. */
+const PIPE_USAGE_CUT: Record<(typeof PIPE_CMDS)[number], string> = {
+    grep: "grep PATTERN (-i -v -n -c -F -w -o -E, -A/-B/-C N)",
+    sed: "sed s/PAT/REP/ (g i; substitution only; quote a pattern holding `|`)",
+    head: "head (-n N)",
+    tail: "tail (-n N)",
+    wc: "wc (-l -w -c)",
+    count: "count (array elements, table rows, object keys, else lines)",
+    sort: "sort (-n -r -u -f)",
+    uniq: "uniq (-c -i; adjacent only)",
+    keys: "keys",
+    values: "values",
+    schema: "schema (a JSON value's shape, the cheapest read of something big)",
+    type: "type",
+    pages: `pages N-M (an attached file's, ${PIPE_PAGES_MAX} a stage)`,
+};
+
+/** The pipe dialect's grammar as the model reads it, built from {@link PIPE_CMDS}: what PIPE_CLAUSE says after its lead-in. */
+export const PIPE_SYNTAX = cutOr(
+    "Not a shell; stages chained with `|`: " +
+    `${PIPE_CMDS.map(c => PIPE_USAGE_CUT[c]).join(", ")}, or a \`.path\` (\`.rows[0].name\`). ` +
+    "Quote an argument with spaces. E.g. \"grep -o '[0-9]+' | sort -n | tail -n 1\".",
     "It's an interpreted line-based environment (NOT a real shell); supported commands, chained with `|`: " +
     `${PIPE_CMDS.map(c => PIPE_USAGE[c]).join(", ")}, or a \`.path\` into JSON (\`.rows[0].name\`). ` +
     "E.g. \"grep -i pricing | head -n 20\", or \"grep -o '[0-9]+' | sort -n | tail -n 1\". " +
     "A stage's argument needs quoting if it contains spaces; `ml.pipe` in exec also takes an ARRAY with one stage per " +
-    "entry ([\"grep -E error|warn\", \"head 5\"]), which is never re-split, so a `|` inside a stage needs no quotes.";
+    "entry ([\"grep -E error|warn\", \"head 5\"]), which is never re-split, so a `|` inside a stage needs no quotes.");
 const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**

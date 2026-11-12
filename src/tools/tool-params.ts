@@ -14,6 +14,7 @@
 import type { JsonSchema } from "../contract";
 import { OUTPUT_CAP, type OutputCapTool } from "../contract/contract-pointers";
 import { CITABLE_BUILTINS } from "./tool-registry";
+import { cutOr } from "../agent/prompt-variant";
 
 /** The output-truncation pair for a tool in {@link OUTPUT_CAP}. Takes the TOOL, not the numbers: they were passed in
  *  as literals (`outputCapParams(500, 8000, …)`), a second copy of the table that nothing kept in step, so changing
@@ -50,7 +51,8 @@ export function citeParam(example: string, withBoolean = true): JsonSchema {
     // whole explanation.
     if (withBoolean) return {
         type: ["boolean", "string"] as unknown as JsonSchema["type"],
-        description: `Keep a handle to this output: \`true\`, or better a SHORT LABEL ("${example}"). See TOOL OUTPUT TOKENS in your instructions.`,
+        description: cutOr(`\`true\`, or a short label ("${example}"): keep a handle to this output.`,
+            `Keep a handle to this output: \`true\`, or better a SHORT LABEL ("${example}"). See TOOL OUTPUT TOKENS in your instructions.`),
     };
     return {
         type: "string",
@@ -75,7 +77,7 @@ export const CALL_TITLE = "title";
  * by example rather than by adjectives, which is the cheapest way to get a title instead of a paragraph.
  */
 export function callTitleParam(): JsonSchema {
-    return { type: "string", description: "A few words on what this call is for, e.g. \"Count the fare cards\". Shown to the human; changes nothing about how this runs." };
+    return { type: "string", description: cutOr("What this call is for, in a few words.", "A few words on what this call is for, e.g. \"Count the fare cards\". Shown to the human; changes nothing about how this runs.") };
 }
 
 /*

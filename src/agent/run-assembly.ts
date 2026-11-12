@@ -18,7 +18,8 @@ import type { StartRunPayload, RebuildConfig } from "../contract/contract-messag
 import { promptSurfaceClause, promptSurfaceOf } from "./prompt-surface";
 import { stepBudget } from "./step-budget";
 import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, tooltokensClause, DEREF_CLAUSE, shadowClause, SHADOW_TRIGGER_TOOLS, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, currentClause, HUD_PROSE_QUIET, HUD_PROSE_PROGRESS, framePrompt } from "./prompts";
-import { buildDereferenceTool } from "../tools/tools";
+import { buildDereferenceTool, COMPOSE_NOTE } from "../tools/tools";
+import { cutOr } from "./prompt-variant";
 import { PAGE_CONTEXT_HEAD } from "./output-clip";
 import { withToolDetails } from "../tools/tool-details";
 import { ImagesRefused, namedNote, planImages, readerNote } from "../image-gate";
@@ -313,6 +314,9 @@ export async function assembleRun(ml: AssemblyMl, task: string, { tools = null, 
     }
     // A split tool's mechanics: a pointer into agent_api_docs, or the text itself without that tool (tool-details.ts).
     toolset = withToolDetails(toolset);
+    // The `cuts` experiment's compose hint: said once in `interactives`' description instead of in every result.
+    if (toolset.some(t => t.name === "exec"))
+        toolset = cutOr(toolset.map(t => t.name === "interactives" ? { ...t, description: t.description + COMPOSE_NOTE } : t), toolset);
     // THE MODEL'S OWN ACCOUNT of each call, offered on every tool. Injected into the TOOLSET and not only into
     // the model-facing `toolDefs`, which matters in three places at once: the background run's descriptors are
     // built from the toolset too (so one injection covers both loops), and both the loop's `validateArgs` and the
