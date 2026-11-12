@@ -247,3 +247,16 @@ test("pageContext: the copy-as-Markdown hint appears only when fetch_url is wire
         assert.equal(line(pageContext(() => true)), "");
     });
 });
+
+// ---- pageContext: a page still loading says so ----
+const STILL = /Still loading: the page has not finished loading/;
+
+test("pageContext: a document whose readyState is loading carries the Still loading line; complete and interactive do not", () => {
+    for (const [state, expected] of [["loading", true], ["interactive", false], ["complete", false]]) {
+        withPage("<head><title>t</title></head><body></body>", "https://example.com/", () => {
+            Object.defineProperty(globalThis.document, "readyState", { value: state, configurable: true });
+            const out = pageContext();
+            if (expected) assert.match(out, STILL, state); else assert.doesNotMatch(out, STILL, state);
+        });
+    }
+});

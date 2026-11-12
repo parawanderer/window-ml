@@ -19,6 +19,9 @@
 /** How long `whenReady` waits for a re-adopt before giving up and letting the caller proceed (and fail
  *  normally). Long enough for a real full-page load + content-script boot, short enough not to wedge. */
 export const READOPT_TIMEOUT_MS = 15000;
+/** How long a `navigate` waits for its destination to COMMIT before the worker checks whether anything arrived at
+ *  all: a server that has sent nothing by then leaves the tab on the page it was leaving (sw-run-host.ts). */
+export const NAV_COMMIT_MS = 6000;
 
 interface TabNav {
     navigating: boolean;
@@ -53,6 +56,10 @@ export interface NavBarrier {
      *  the tab is ready, false when the wait ran out with the navigation still waiting on its re-adopt. Once one wait on a
      *  navigation has run out, the next answer false at once, until a re-adopt or a new navigation. */
     whenReady(tabId: number, timeoutMs?: number): Promise<boolean>;
+    /** The navigation never committed (the browser still holds it pending): the tab keeps the document it was leaving,
+     *  which still holds the run, so delegating there is safe again. Pending waiters are released; a later commit
+     *  engages the barrier anew. */
+    noteNoCommit(tabId: number): void;
     /** Drop all state for a tab — the run ended, or the tab closed. Pending waiters are released. */
     forget(tabId: number): void;
 }
@@ -108,6 +115,14 @@ export function createNavBarrier(
                 const timer = setTimer(() => { t.expired = true; finish(false); }, timeoutMs);
                 t.waiters.push(() => finish(true));
             });
+        },
+        noteNoCommit(tabId) {
+            const t = tabs.get(tabId);
+            if (!t?.navigating) return;
+            t.navigating = false;
+            t.leaving = undefined;
+            t.expired = false;
+            release(t);
         },
         forget(tabId) {
             const t = tabs.get(tabId);
