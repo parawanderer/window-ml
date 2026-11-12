@@ -532,6 +532,8 @@ Reading an attachment (`dereference`, `look`, a `python_exec` source) is free by
 ([`EFFECTS.md`](EFFECTS.md)): a read of a value the run already holds spends nothing and reaches nothing, so no policy
 line exists for it and none is added.
 
+SLICE 3 OPEN 2026-11-12: #1623 at 948e9426 (the Chat Page lane; ml.dereference reads an attached @file: in the worker; two commits, nine files, `@api` `@agent` `@security`; verified). Code reviewer janitor-3 by the overflow rule. The lane wrote no red-team rows; e3 writes them against the branch as a test-only PR that lands after #1623 merges (new surface, rule 10 as amended), reviewer janitor-3, from the lane's five surfaces: the file's text or doc key through any page-started type, forged run id, named read or MAIN-world pre-read, in every reference form; one run reading another run's or session's file, including after a worker eviction; a hostile file name breaking the page sections, forging a page or leaking into the description line; the budget on unpiped and piped reads so a loop over a large PDF stops; the wire's TooLarge naming the pointer and never the key.
+
 Slice 3 adds a pointer kind and a `look` target, so it gets the red-team pass (site-access.md, "Adding a tool, a member
 or a message"). What a hostile page must not get, as tests that fail first:
 
