@@ -632,13 +632,20 @@ reach it through the factory's closure, so a JsProxy there would be one in the n
 harness's references captured before any cell ran, never the importable `json`/`base64`, which a cell may patch.
 Tested under real CPython against a fake transport: `tests/ml-facade.test.mjs`.
 
-## Installing a package (`python_install`, slice 2 of docs/plan/repl/PACKAGES_INSTALL.md)
+## Installing a package (`python_install`, slices 2 and 3 of docs/plan/repl/PACKAGES_INSTALL.md)
 
-Not offered to any run yet (`OFFER_PYTHON_INSTALL`, `sw-run-start.ts`): the card exists, the install does not.
+Not offered to any run yet (`OFFER_PYTHON_INSTALL`, `sw-run-start.ts`): the card and the download exist, the install
+does not.
 
-- **The verdict is decided in the worker before anything is fetched** (`sw-pkg-install.ts` `checkInstall`), against the
-  lock the extension ships (`pyodide/pyodide-lock.json`, read once per worker) and the start-up packages' closure as
-  already loaded. The index view is the lock alone until slice 3, so a package the core does not ship is `not-on-index`.
+- **The verdict is decided in the worker before any wheel is fetched** (`sw-pkg-install.ts` `checkInstall`), against the
+  lock the extension ships (`pyodide/pyodide-lock.json`, read once per worker), the start-up packages' closure as
+  already loaded, and the core's tags and environment (`core-env.gen.ts`; regenerate with `scripts/gen-core-env.mjs`
+  after the oracle reruns).
+- **PyPI's index is read before approval, and only there** (`pkg-index.ts` `resolveVerdict`, `sw-pkg-mirror.ts`
+  `indexGetFor`): pypi.org only, a name checked before any request, capped per call and per run, each request a
+  run-log record `python/pkg-index`. A lock name never makes a request.
+- **Approved wheels go to the mirror** (IndexedDB `ml-pkg-mirror`, `ensureWheel`): files.pythonhosted.org only, no
+  redirects, the body cut at the card's size and stored only when its size and sha256 are the card's.
 - **The card's rows are frozen when the card is raised** (`sw-run-host.ts`, the gate's closure) and the answer must
   carry them back (`SET_APPROVAL.files`). `judgeAnswer` compares them field by field; absent, malformed or different
   rows turn the approval into a denial and log `python/pkg-card-mismatch`. So a surface that cannot carry the rows
