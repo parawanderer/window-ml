@@ -192,6 +192,17 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
      (the kernel and the host do not live in the tab), and a result parks with a run-log record; no turn starts by
      itself on a run with no tab, and the parked result is read at the run's next turn once the person brings the
      session to a tab (`adoptSession`).
+   - **A session with no tab shows it** (Shane, 2026-11-12: "the UI should indicate this weird state clearly"). A run
+     with no tab that still has a runtime-bound task running, or a parked result, is shown as such wherever the
+     session is listed or opened. Recommended shape, refined with the chat-page lane when built: the session's card in
+     the sidebar and on the chat page carries a state mark with the count (`background: 2 running`, `1 result
+     waiting`), distinct from the running and idle marks; opening the session shows a banner saying it has no tab,
+     what is running or waiting, and that a result is read at the next turn once the session is brought to a tab,
+     with the bring-here action beside it (`MOVE_RUN.md`). The HUD mark above covers a run that has a tab. The state is
+     read from the durable task table, never a second copy, and clears when the task ends and its result is read.
+     OPEN, a pointer only: whether a parked result reaches someone with the app closed (`NOTIFICATIONS.md`). Owners
+     when built: the async lane supplies the state; the chat-page lane draws the session views (its design language,
+     the calm view and mobile in one change), as with the task line.
    - **Notify-only is a setting.** A durable per-config flag in DevTools Settings (the settings rule; the popup is
      optional) switches every run to notify-only: a completion with no turn running parks, the person sees a
      transcript system line and a HUD mark, and the model reads it at the next turn the person starts. The
