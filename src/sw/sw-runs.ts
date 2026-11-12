@@ -683,6 +683,9 @@ export const retabRuns = (from: number, to: number): number => {
     const moved = moveTabKey([activeRuns, runReplayBuffer, readoptPageInfo, tabPageUrl] as Array<Map<number, unknown>>, from, to);
     for (const runId of hosted) recordRunLog(runId, { subsystem: "tab", kind: "replaced", detail: { tab: to, wasTab: from } });
     for (const snap of bgRuns.values()) if (snap.tabId === from) snap.tabId = to;
+    // A live turn's inbox too: the person's answer to a gate and their steer are checked against its tab, and come from
+    // the new id now. The turn's own page sends still name the old one (`hostRun` closed over it; MOVE_RUN.md shape (b)).
+    for (const inbox of runInboxes.values()) if (inbox.tabId === from) inbox.tabId = to;
     navBarrier.forget(from);
     // The tab is the same tab under a new id: its runs' inboxes follow, or the new tab is refused for its own run.
     for (const runId of runInboxes.keys()) if (runInboxes.get(runId)?.tabId === from) rekeyRunInbox(runId, to);

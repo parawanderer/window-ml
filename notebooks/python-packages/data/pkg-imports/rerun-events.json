@@ -1,0 +1,2373 @@
+{
+  "commit": "aed17fe578fe6ba82e07ad0e99ec00240f04d37a",
+  "extracted_at": "2026-11-12T14:41:12+00:00",
+  "rows": [
+    {
+      "ev": "install",
+      "installed": [
+        {
+          "name": "click",
+          "source": "pypi",
+          "version": "8.5.1"
+        },
+        {
+          "name": "filelock",
+          "source": "pypi",
+          "version": "4.2.10"
+        },
+        {
+          "name": "fsspec",
+          "source": "pyodide",
+          "version": "2026.3.0"
+        },
+        {
+          "name": "httpx2",
+          "source": "pypi",
+          "version": "2.16.0"
+        },
+        {
+          "name": "httpx2-jsfetch",
+          "source": "pypi",
+          "version": "1.0"
+        },
+        {
+          "name": "huggingface-hub",
+          "source": "pypi",
+          "version": "2.4.0"
+        },
+        {
+          "name": "idna",
+          "source": "pypi",
+          "version": "3.20"
+        },
+        {
+          "name": "pyyaml",
+          "source": "pyodide",
+          "version": "6.0.3"
+        },
+        {
+          "name": "tqdm",
+          "source": "pyodide",
+          "version": "4.67.3"
+        },
+        {
+          "name": "typing-extensions",
+          "source": "pyodide",
+          "version": "4.15.0"
+        }
+      ],
+      "ok": true,
+      "s": 0.24,
+      "t": "14:36:09.175"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub",
+      "t": "14:36:09.188"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub",
+      "ok": true,
+      "s": 0.004,
+      "t": "14:36:09.192"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub._bucket_live_follow",
+      "t": "14:36:09.192"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub._bucket_live_follow",
+      "ok": true,
+      "s": 0.267,
+      "t": "14:36:09.459"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub._buckets",
+      "t": "14:36:09.459"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub._buckets",
+      "ok": true,
+      "s": 0.055,
+      "t": "14:36:09.514"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub._commit_api",
+      "t": "14:36:09.514"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub._commit_api",
+      "ok": true,
+      "s": 0.025,
+      "t": "14:36:09.539"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub._commit_scheduler",
+      "t": "14:36:09.539"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub._commit_scheduler",
+      "ok": false,
+      "t": "14:36:09.685",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub._dataset_viewer",
+      "t": "14:36:09.685"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub._dataset_viewer",
+      "ok": true,
+      "s": 0.003,
+      "t": "14:36:09.688"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub._eval_results",
+      "t": "14:36:09.688"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub._eval_results",
+      "ok": true,
+      "s": 0.001,
+      "t": "14:36:09.689"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub._hot_reload",
+      "t": "14:36:09.689"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub._hot_reload",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:09.689"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub._inference_endpoints",
+      "t": "14:36:09.689"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub._inference_endpoints",
+      "ok": true,
+      "s": 0.004,
+      "t": "14:36:09.693"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub._jobs_api",
+      "t": "14:36:09.693"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub._jobs_api",
+      "ok": true,
+      "s": 0.011,
+      "t": "14:36:09.705"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub._local_folder",
+      "t": "14:36:09.705"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub._local_folder",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:09.705"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub._login",
+      "t": "14:36:09.705"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub._login",
+      "ok": true,
+      "s": 0.006,
+      "t": "14:36:09.711"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub._oauth",
+      "t": "14:36:09.711"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub._oauth",
+      "ok": false,
+      "t": "14:36:09.848",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub._oidc",
+      "t": "14:36:09.848"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub._oidc",
+      "ok": true,
+      "s": 0.001,
+      "t": "14:36:09.849"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub._revision",
+      "t": "14:36:09.849"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub._revision",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:09.849"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub._sandbox",
+      "t": "14:36:09.849"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub._sandbox",
+      "ok": false,
+      "t": "14:36:10.014",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub._sandbox_cache",
+      "t": "14:36:10.014"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub._sandbox_cache",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:10.014"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub._snapshot_download",
+      "t": "14:36:10.014"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub._snapshot_download",
+      "ok": false,
+      "t": "14:36:10.154",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub._space_api",
+      "t": "14:36:10.155"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub._space_api",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:10.155"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub._tensorboard_logger",
+      "t": "14:36:10.155"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub._tensorboard_logger",
+      "ok": false,
+      "t": "14:36:10.297",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub._tree_cache",
+      "t": "14:36:10.297"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub._tree_cache",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:10.297"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub._upload_pipeline",
+      "t": "14:36:10.297"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub._upload_pipeline",
+      "ok": true,
+      "s": 0.004,
+      "t": "14:36:10.301"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub._webhooks_payload",
+      "t": "14:36:10.301"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub._webhooks_payload",
+      "ok": true,
+      "s": 0.002,
+      "t": "14:36:10.303"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub._webhooks_server",
+      "t": "14:36:10.303"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub._webhooks_server",
+      "ok": true,
+      "s": 0.001,
+      "t": "14:36:10.304"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli",
+      "t": "14:36:10.304"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.cli",
+      "ok": true,
+      "s": 0.061,
+      "t": "14:36:10.365"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.community",
+      "t": "14:36:10.365"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.community",
+      "ok": true,
+      "s": 0.003,
+      "t": "14:36:10.368"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.constants",
+      "t": "14:36:10.368"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.constants",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:10.368"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.dataclasses",
+      "t": "14:36:10.368"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.dataclasses",
+      "ok": true,
+      "s": 0.004,
+      "t": "14:36:10.372"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.errors",
+      "t": "14:36:10.372"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.errors",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:10.372"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.fastai_utils",
+      "t": "14:36:10.372"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.fastai_utils",
+      "ok": false,
+      "t": "14:36:10.536",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.file_download",
+      "t": "14:36:10.536"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.file_download",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:10.536"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.hf_api",
+      "t": "14:36:10.536"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.hf_api",
+      "ok": false,
+      "t": "14:36:10.670",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.hf_file_system",
+      "t": "14:36:10.670"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.hf_file_system",
+      "ok": false,
+      "t": "14:36:10.849",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.hub_mixin",
+      "t": "14:36:10.849"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.hub_mixin",
+      "ok": false,
+      "t": "14:36:10.983",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference",
+      "t": "14:36:10.983"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference",
+      "ok": true,
+      "s": 0.001,
+      "t": "14:36:10.984"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.lfs",
+      "t": "14:36:10.984"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.lfs",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:10.984"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.repocard",
+      "t": "14:36:10.984"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.repocard",
+      "ok": false,
+      "t": "14:36:11.129",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.repocard_data",
+      "t": "14:36:11.129"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.repocard_data",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:11.129"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.serialization",
+      "t": "14:36:11.129"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.serialization",
+      "ok": true,
+      "s": 0.006,
+      "t": "14:36:11.135"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils",
+      "t": "14:36:11.135"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:11.135"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub._hot_reload.client",
+      "t": "14:36:11.135"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub._hot_reload.client",
+      "ok": true,
+      "s": 0.023,
+      "t": "14:36:11.158"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub._hot_reload.sse_client",
+      "t": "14:36:11.158"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub._hot_reload.sse_client",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:11.158"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub._hot_reload.types",
+      "t": "14:36:11.158"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub._hot_reload.types",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:11.158"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli._city_game",
+      "t": "14:36:11.158"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.cli._city_game",
+      "ok": false,
+      "t": "14:36:11.296",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli._cli_utils",
+      "t": "14:36:11.296"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.cli._cli_utils",
+      "ok": true,
+      "s": 0.025,
+      "t": "14:36:11.321"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli._completion",
+      "t": "14:36:11.321"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.cli._completion",
+      "ok": true,
+      "s": 0.005,
+      "t": "14:36:11.326"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli._cp",
+      "t": "14:36:11.326"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.cli._cp",
+      "ok": false,
+      "t": "14:36:11.461",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli._errors",
+      "t": "14:36:11.461"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.cli._errors",
+      "ok": true,
+      "s": 0.001,
+      "t": "14:36:11.462"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli._file_listing",
+      "t": "14:36:11.462"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.cli._file_listing",
+      "ok": false,
+      "t": "14:36:11.606",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli._framework",
+      "t": "14:36:11.606"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.cli._framework",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:11.606"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli._help_formatter",
+      "t": "14:36:11.606"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.cli._help_formatter",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:11.606"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli._output",
+      "t": "14:36:11.606"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.cli._output",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:11.607"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli._skills",
+      "t": "14:36:11.607"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.cli._skills",
+      "ok": true,
+      "s": 0.005,
+      "t": "14:36:11.611"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli._uv_script_header",
+      "t": "14:36:11.611"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.cli._uv_script_header",
+      "ok": true,
+      "s": 0.002,
+      "t": "14:36:11.613"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli.auth",
+      "t": "14:36:11.613"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.cli.auth",
+      "ok": false,
+      "t": "14:36:11.749",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli.buckets",
+      "t": "14:36:11.749"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.cli.buckets",
+      "ok": false,
+      "t": "14:36:11.886",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli.cache",
+      "t": "14:36:11.886"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.cli.cache",
+      "ok": true,
+      "s": 0.015,
+      "t": "14:36:11.901"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli.collections",
+      "t": "14:36:11.901"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.cli.collections",
+      "ok": false,
+      "t": "14:36:12.036",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli.datasets",
+      "t": "14:36:12.036"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.cli.datasets",
+      "ok": false,
+      "t": "14:36:12.173",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli.discussions",
+      "t": "14:36:12.173"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.cli.discussions",
+      "ok": false,
+      "t": "14:36:12.311",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli.download",
+      "t": "14:36:12.311"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.cli.download",
+      "ok": false,
+      "t": "14:36:12.450",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli.extensions",
+      "t": "14:36:12.450"
+    },
+    {
+      "error": "No module named 'venv'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.cli.extensions",
+      "ok": false,
+      "t": "14:36:12.457",
+      "where": "huggingface_hub/cli/extensions.py:23"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli.hf",
+      "t": "14:36:12.457"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.cli.hf",
+      "ok": true,
+      "s": 0.001,
+      "t": "14:36:12.458"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli.inference_endpoints",
+      "t": "14:36:12.458"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.cli.inference_endpoints",
+      "ok": true,
+      "s": 0.006,
+      "t": "14:36:12.465"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli.jobs",
+      "t": "14:36:12.465"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.cli.jobs",
+      "ok": false,
+      "t": "14:36:12.655",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli.lfs",
+      "t": "14:36:12.655"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.cli.lfs",
+      "ok": true,
+      "s": 0.001,
+      "t": "14:36:12.656"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli.models",
+      "t": "14:36:12.656"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.cli.models",
+      "ok": false,
+      "t": "14:36:12.791",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli.papers",
+      "t": "14:36:12.791"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.cli.papers",
+      "ok": false,
+      "t": "14:36:12.926",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli.repos",
+      "t": "14:36:12.926"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.cli.repos",
+      "ok": false,
+      "t": "14:36:13.063",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli.sandbox",
+      "t": "14:36:13.063"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.cli.sandbox",
+      "ok": false,
+      "t": "14:36:13.213",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli.skills",
+      "t": "14:36:13.213"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.cli.skills",
+      "ok": true,
+      "s": 0.004,
+      "t": "14:36:13.217"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli.spaces",
+      "t": "14:36:13.217"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.cli.spaces",
+      "ok": false,
+      "t": "14:36:13.356",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli.system",
+      "t": "14:36:13.356"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.cli.system",
+      "ok": true,
+      "s": 0.001,
+      "t": "14:36:13.357"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli.upload",
+      "t": "14:36:13.357"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.cli.upload",
+      "ok": false,
+      "t": "14:36:13.498",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.cli.webhooks",
+      "t": "14:36:13.498"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.cli.webhooks",
+      "ok": false,
+      "t": "14:36:13.649",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._client",
+      "t": "14:36:13.649"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.inference._client",
+      "ok": false,
+      "t": "14:36:13.849",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._common",
+      "t": "14:36:13.849"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._common",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.849"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated",
+      "t": "14:36:13.849"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.849"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._mcp",
+      "t": "14:36:13.849"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._mcp",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.849"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._providers",
+      "t": "14:36:13.849"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.inference._providers",
+      "ok": false,
+      "t": "14:36:13.984",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.serialization._base",
+      "t": "14:36:13.984"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.serialization._base",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.984"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.serialization._dduf",
+      "t": "14:36:13.984"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.serialization._dduf",
+      "ok": true,
+      "s": 0.003,
+      "t": "14:36:13.987"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.serialization._torch",
+      "t": "14:36:13.987"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.serialization._torch",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.987"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._auth",
+      "t": "14:36:13.987"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._auth",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.987"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._cache_assets",
+      "t": "14:36:13.987"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._cache_assets",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.987"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._cache_manager",
+      "t": "14:36:13.987"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._cache_manager",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.987"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._chunk_utils",
+      "t": "14:36:13.987"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._chunk_utils",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.987"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._datetime",
+      "t": "14:36:13.987"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._datetime",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.987"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._deprecation",
+      "t": "14:36:13.987"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._deprecation",
+      "ok": true,
+      "s": 0.001,
+      "t": "14:36:13.988"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._detect_agent",
+      "t": "14:36:13.988"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._detect_agent",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.988"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._dotenv",
+      "t": "14:36:13.988"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._dotenv",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.988"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._experimental",
+      "t": "14:36:13.988"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._experimental",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.988"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._fixes",
+      "t": "14:36:13.988"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._fixes",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.988"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._git_credential",
+      "t": "14:36:13.988"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._git_credential",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.988"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._headers",
+      "t": "14:36:13.988"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._headers",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.988"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._hf_uris",
+      "t": "14:36:13.988"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._hf_uris",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.988"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._http",
+      "t": "14:36:13.988"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._http",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.988"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._lfs",
+      "t": "14:36:13.988"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._lfs",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.988"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._oauth_device",
+      "t": "14:36:13.988"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._oauth_device",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.988"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._pagination",
+      "t": "14:36:13.988"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._pagination",
+      "ok": true,
+      "s": 0.001,
+      "t": "14:36:13.989"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._parsing",
+      "t": "14:36:13.989"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._parsing",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.989"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._paths",
+      "t": "14:36:13.989"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._paths",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.989"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._runtime",
+      "t": "14:36:13.989"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._runtime",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.989"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._safetensors",
+      "t": "14:36:13.989"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._safetensors",
+      "ok": true,
+      "s": 0.001,
+      "t": "14:36:13.990"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._shared_blobs",
+      "t": "14:36:13.990"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._shared_blobs",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.990"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._subprocess",
+      "t": "14:36:13.990"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._subprocess",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.990"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._telemetry",
+      "t": "14:36:13.990"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._telemetry",
+      "ok": true,
+      "s": 0.001,
+      "t": "14:36:13.991"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._terminal",
+      "t": "14:36:13.991"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._terminal",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.991"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._typing",
+      "t": "14:36:13.991"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._typing",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.991"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._validators",
+      "t": "14:36:13.991"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._validators",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.991"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._verification",
+      "t": "14:36:13.991"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._verification",
+      "ok": true,
+      "s": 0.002,
+      "t": "14:36:13.993"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._xet",
+      "t": "14:36:13.993"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._xet",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.993"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils._xet_progress_reporting",
+      "t": "14:36:13.993"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils._xet_progress_reporting",
+      "ok": true,
+      "s": 0.002,
+      "t": "14:36:13.995"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils.endpoint_helpers",
+      "t": "14:36:13.995"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils.endpoint_helpers",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.996"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils.insecure_hashlib",
+      "t": "14:36:13.996"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils.insecure_hashlib",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.996"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils.logging",
+      "t": "14:36:13.996"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils.logging",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.996"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils.sha",
+      "t": "14:36:13.996"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils.sha",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.996"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.utils.tqdm",
+      "t": "14:36:13.996"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.utils.tqdm",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:13.996"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated._async_client",
+      "t": "14:36:13.996"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated._async_client",
+      "ok": false,
+      "t": "14:36:14.138",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types",
+      "t": "14:36:14.138"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:14.138"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._mcp._cli_hacks",
+      "t": "14:36:14.138"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._mcp._cli_hacks",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:14.138"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._mcp.agent",
+      "t": "14:36:14.138"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.inference._mcp.agent",
+      "ok": false,
+      "t": "14:36:14.285",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._mcp.cli",
+      "t": "14:36:14.285"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.inference._mcp.cli",
+      "ok": false,
+      "t": "14:36:14.433",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._mcp.constants",
+      "t": "14:36:14.433"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._mcp.constants",
+      "ok": true,
+      "s": 0.001,
+      "t": "14:36:14.434"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._mcp.mcp_client",
+      "t": "14:36:14.434"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.inference._mcp.mcp_client",
+      "ok": false,
+      "t": "14:36:14.578",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._mcp.types",
+      "t": "14:36:14.578"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._mcp.types",
+      "ok": true,
+      "s": 0.001,
+      "t": "14:36:14.579"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._mcp.utils",
+      "t": "14:36:14.579"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.inference._mcp.utils",
+      "ok": false,
+      "t": "14:36:14.713",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._providers._common",
+      "t": "14:36:14.713"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.inference._providers._common",
+      "ok": false,
+      "t": "14:36:14.846",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._providers.baseten",
+      "t": "14:36:14.846"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.inference._providers.baseten",
+      "ok": false,
+      "t": "14:36:14.980",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._providers.cerebras",
+      "t": "14:36:14.980"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.inference._providers.cerebras",
+      "ok": false,
+      "t": "14:36:15.116",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._providers.cohere",
+      "t": "14:36:15.116"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.inference._providers.cohere",
+      "ok": false,
+      "t": "14:36:15.256",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._providers.deepinfra",
+      "t": "14:36:15.256"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.inference._providers.deepinfra",
+      "ok": false,
+      "t": "14:36:15.393",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._providers.fal_ai",
+      "t": "14:36:15.393"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.inference._providers.fal_ai",
+      "ok": false,
+      "t": "14:36:15.531",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._providers.featherless_ai",
+      "t": "14:36:15.531"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.inference._providers.featherless_ai",
+      "ok": false,
+      "t": "14:36:15.676",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._providers.fireworks_ai",
+      "t": "14:36:15.676"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.inference._providers.fireworks_ai",
+      "ok": false,
+      "t": "14:36:15.812",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._providers.groq",
+      "t": "14:36:15.812"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.inference._providers.groq",
+      "ok": false,
+      "t": "14:36:15.948",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._providers.hf_inference",
+      "t": "14:36:15.948"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.inference._providers.hf_inference",
+      "ok": false,
+      "t": "14:36:16.082",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._providers.novita",
+      "t": "14:36:16.082"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.inference._providers.novita",
+      "ok": false,
+      "t": "14:36:16.215",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._providers.nscale",
+      "t": "14:36:16.215"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.inference._providers.nscale",
+      "ok": false,
+      "t": "14:36:16.349",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._providers.openai",
+      "t": "14:36:16.349"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.inference._providers.openai",
+      "ok": false,
+      "t": "14:36:16.485",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._providers.ovhcloud",
+      "t": "14:36:16.485"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.inference._providers.ovhcloud",
+      "ok": false,
+      "t": "14:36:16.623",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._providers.publicai",
+      "t": "14:36:16.623"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.inference._providers.publicai",
+      "ok": false,
+      "t": "14:36:16.763",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._providers.replicate",
+      "t": "14:36:16.763"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.inference._providers.replicate",
+      "ok": false,
+      "t": "14:36:16.901",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._providers.scaleway",
+      "t": "14:36:16.901"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.inference._providers.scaleway",
+      "ok": false,
+      "t": "14:36:17.037",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._providers.together",
+      "t": "14:36:17.037"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.inference._providers.together",
+      "ok": false,
+      "t": "14:36:17.174",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._providers.wavespeed",
+      "t": "14:36:17.174"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.inference._providers.wavespeed",
+      "ok": false,
+      "t": "14:36:17.309",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._providers.zai_org",
+      "t": "14:36:17.309"
+    },
+    {
+      "error": "No module named 'httpcore2'",
+      "error_type": "ModuleNotFoundError",
+      "ev": "import",
+      "m": "huggingface_hub.inference._providers.zai_org",
+      "ok": false,
+      "t": "14:36:17.444",
+      "where": "huggingface_hub/hf_api.py:36"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.audio_classification",
+      "t": "14:36:17.444"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.audio_classification",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.444"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.audio_to_audio",
+      "t": "14:36:17.444"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.audio_to_audio",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.444"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.automatic_speech_recognition",
+      "t": "14:36:17.444"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.automatic_speech_recognition",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.444"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.base",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.base",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.chat_completion",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.chat_completion",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.depth_estimation",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.depth_estimation",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.document_question_answering",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.document_question_answering",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.feature_extraction",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.feature_extraction",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.fill_mask",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.fill_mask",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.image_classification",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.image_classification",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.image_segmentation",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.image_segmentation",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.image_text_to_image",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.image_text_to_image",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.image_text_to_video",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.image_text_to_video",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.image_to_image",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.image_to_image",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.image_to_text",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.image_to_text",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.image_to_video",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.image_to_video",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.object_detection",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.object_detection",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.question_answering",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.question_answering",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.sentence_similarity",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.sentence_similarity",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.summarization",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.summarization",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.table_question_answering",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.table_question_answering",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.text2text_generation",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.text2text_generation",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.text_classification",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.text_classification",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.text_generation",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.text_generation",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.text_to_audio",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.text_to_audio",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.text_to_image",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.text_to_image",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.text_to_speech",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.text_to_speech",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.text_to_video",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.text_to_video",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.token_classification",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.token_classification",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.translation",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.translation",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.video_classification",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.video_classification",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.visual_question_answering",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.visual_question_answering",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.zero_shot_classification",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.zero_shot_classification",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.zero_shot_image_classification",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.zero_shot_image_classification",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "start",
+      "m": "huggingface_hub.inference._generated.types.zero_shot_object_detection",
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "import",
+      "m": "huggingface_hub.inference._generated.types.zero_shot_object_detection",
+      "ok": true,
+      "s": 0.0,
+      "t": "14:36:17.445"
+    },
+    {
+      "ev": "done",
+      "failed": 55,
+      "modules": 182,
+      "ok": 127,
+      "stage": "ok",
+      "t": "14:36:17.445",
+      "truncated": false
+    }
+  ],
+  "source": {
+    "core": "pyodide-restricted-314.0.3-35bd1d69",
+    "file": "pkg-imports/rerun-huggingface-hub.ts.jsonl",
+    "measured_on": "mlbox, 2026-11-12",
+    "raw": "slop-zone 27fc603 (rerun: d075ad2)"
+  }
+}
