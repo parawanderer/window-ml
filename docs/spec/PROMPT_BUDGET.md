@@ -118,9 +118,13 @@ call or reworded a rule a run depends on.
 - **The `shellTilde` clause** on `ml.sh.run`: `~/x` "begins at" the home directory rather than "is" it.
 - **Checked and kept**: `ml.sh.put`'s `~/…` is unconditional and right (every host with `put` expands `~`: host #31
   shipped before #33, both first in v0.7.0); the `Detached` text and the `task` tool agree that a task ends with the
-  turn and its result also arrives on its own; the asked tail's cut names its pointer (HELD_BACK.md); the `ml.embed`
+  turn and its result also arrives on its own; the `ml.embed`
   sentence in `UNATTENDED_CLAUSE` and its numbers in `agent_api_docs` are one rule in two calls, not a repeat;
   `DerefMeta.file` matches what `agent-loop.ts` sets (`tool: "attached"`, `step: 0`).
+- **Found and not fixed here**: a `task tail` that the 8 KiB ceiling cut names no pointer, though its whole is stored.
+  `task` is `citable: false`, so the loop never mints an id for the `textValue` it answers, and the model reads the cut
+  with nothing to name. `HELD_BACK.md` row 16; the fix is the pointer mint for task results, which lands before the
+  `kernel` object.
 - **Not covered**: no model read any of it. The `~` canary row is the bench lane's.
 
 ## Tried and dropped: "the whole `ml` surface as TypeScript" (2026-10-12)
