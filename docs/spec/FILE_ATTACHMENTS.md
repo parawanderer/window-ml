@@ -560,7 +560,7 @@ or a message"). What a hostile page must not get, as tests that fail first:
 
 ## Rulings (2026-10-28, from the python/shell/policies coordinator)
 
-1. Python takes an attachment as an injected value (`files:`, and `@file:` in `tables`), never a path; above.
+1. Python takes an attachment as an injected value (`files:`, and `@file:` in `tables`), never a path; above. REOPENED 2026-11-12 by Shane in the coordinator's session: a session-files mount (`/files/` writable for the session, `/files/attached/` read-only) is being specified by the Chat Page lane with the async lane, under the Pyodide lane's measured conditions recorded in the plan README (MEMFS with trackingDelegate hooks, an EROFS mount for attached, flush and offscreen re-check on every post, one directory per session in the full worker, a quota near three times a file's size, the `open()` redirect re-ruled with the mount); the coordinator reviews the amendment; this ruling stands until it merges.
 2. Rows over blobs is fine: the key is the only handle, claims and tombstones per row, the budget charges a blob once,
    the hold is the `protect` list, hash before the budget check.
 3. `@file:` is this spec's. The argv refusal is the shell call's rule for every prefix, and it stays: a handle in argv is
