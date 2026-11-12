@@ -614,7 +614,8 @@ always coarse; the background-hosted loop calls `focusLineFor` directly. Both re
   is bounded by a deliberately generous cap. A tab hosting a run is also pinned (`autoDiscardable: false`) and
   released when it ends. And a tab can come back under a NEW id: `chrome.tabs.onReplaced` is the only notice, since
   no navigation commits and nothing is removed, so everything keyed by tab is re-filed there or the run is orphaned
-  under an id nothing will send again.
+  under an id nothing will send again. That includes a live turn's inbox, which the person's gate answer and steer
+  are checked against; the turn's own page sends keep the old id (`docs/spec/MOVE_RUN.md`, "Known gap").
 - **A run never starts on a page WE own.** A run that asked for an empty tab has to open some real http(s) page, and
   the three obvious candidates are all wrong: Chrome refuses an extension on `chrome://newtab` and on a top-level
   `about:blank` (an opaque origin, refused even with `<all_urls>` — both checked against the real browser), and the
