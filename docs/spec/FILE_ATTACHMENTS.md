@@ -555,14 +555,28 @@ second place: everything a model can keep, the person can see and delete (the fi
 - `/files/` is writable: the model's working directory, kept for the session.
 - `/files/attached/` is read-only and holds what the person attached, by name. A file attached mid-run appears there
   and the model is told its name. The person's files never change; a model that wants to edit one copies it out.
+- Two attachments with one name are both kept under their real name, each in a directory named for its handle
+  (`attached/3fa91c2/report.pdf`, `attached/9c2e41a/report.pdf`), and `attached/report.pdf` does not exist: a bare
+  path never picks one of them, as `@file:"report.pdf"` never does.
 - Provenance follows from the folder: a file under `attached/` is the person's; any other was made by a run.
 
 **Which cells see it.** Only cells that can open a file: an approved cell and `full` mode. The read-only (restricted)
 dialect has no `open()` or `os` (PYTHON_DIALECT.md), and its writes roll back when a cell fails, so it keeps what it has
 today: an attachment as an injected value (`files:`, `@file:` in `tables`) and the loader redirect
 (`docs/dev/python-sandbox.md`, "Loader interception"), which also resolves a name in `/files/`, read-only. The redirect
-is re-ruled with the mount: where `open()` is real, a path that exists is that file and the redirect never shadows it;
-a bare name that does not exist under the cell's directory resolves to `attached/<name>` when one file has that name.
+is re-ruled with the mount (the Pyodide lane's read of this spec):
+
+- Builtin `open` is never patched, today or with the mount; only the three loader patches (`Image.open`,
+  `pd.read_csv`, `pd.read_html`) gain an `attached/` fallback. `os.open`, `io.FileIO` and `pathlib` would go around a
+  patched `open`, so it would be partial magic. A plain `open("x.csv")` that misses fails as real Python does, and
+  the existing failure hint names `/files/attached/x.csv` when that file exists.
+- A path that exists is that file: the loader patches redirect a name (`'current'`, a selector, the URL a table was
+  loaded from, an attachment's name) only when no such file exists. So a cell that writes `/files/current` changes
+  what `read_csv('current')` returns; that is accepted, not refused, and has its own test row.
+- The cell's directory is `/files/`, and each cell starts there: a worker-hosted run keeps its interpreter across
+  cells, so an `os.chdir` in one cell would otherwise change how the next resolves a bare name.
+- Two attachments with one name resolve to neither: the fallback refuses, and the hint lists both `@file:` handles,
+  as `@file:"name"` does ("The name, and two files with one name", above).
 
 **The mount** (the Pyodide lane's conditions, measured in Node against `pyodide-core/`, not in a browser worker):
 
