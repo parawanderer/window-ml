@@ -302,7 +302,7 @@ async function runCall(ctx: ShCallContext, req: ShRunRequest, started: (h: Shell
             // The stored manifests, once storage has been read (a failed read leaves none, so a call one would describe asks).
             await manifestsReady;
             const stored = storedManifests();
-            const plan = planSpawn(req, { cwd, roots, stored });
+            const plan = planSpawn(req, { cwd, roots, stored, tilde: h.hello.tilde === true });
             // A credential the host injects, only when its hello lists the provider (an older host would ignore it).
             const credential = await credentialFor(plan, h);
             const spawn = () => h.client.spawn({ ...plan.spawn, owner: ownerOf(ctx), ...(credential ? { credential } : {}) });
@@ -380,7 +380,7 @@ async function runCall(ctx: ShCallContext, req: ShRunRequest, started: (h: Shell
             // asking is never only in the run log.
             const unasked: ShUnasked | undefined = verdict.by === "person" ? undefined
                 : { by: verdict.policy !== undefined ? "policy" : "default", ...(verdict.policy !== undefined ? { policy: verdict.policy } : {}),
-                    argv: [...f.argv], outcome: shOutcome(result) as unknown as Record<string, unknown> };
+                    argv: [...f.argv], ...(f.tilde.length ? { tilde: f.tilde } : {}), outcome: shOutcome(result) as unknown as Record<string, unknown> };
             spansByStep.set(k, [...(spansByStep.get(k) ?? []), shSpanOf(f.argv[0] ?? "", result, unasked)]);
             if (spansByStep.size > SPAN_STEPS_MAX) spansByStep.delete(spansByStep.keys().next().value!);
             return { ok: result };
