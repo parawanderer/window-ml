@@ -169,7 +169,11 @@ pinned to the tab's top document once any navigation settles, and runs it throug
 page would. So the model gets the same text, image(s) or reader's words; the capture, the crops, the `views`, the stitch's
 compose, the reader's prompt and reply, and the legend's wording (from structured `legend` geometry, with the run's
 per-document `boundariesSeen`) stay in the worker, and the reader's call is the call's `subUsage`. An `@tool:` image
-pointer (`_image`) asks the page nothing at all. The run's adopt posted to the page's window names no model and no
+pointer (`_image`) asks the page nothing at all, nor does an attached document's pages (`look({ doc: "@file:…", pages
+})`): the loop holds the shelf, checks the pages against the file and `LOOK_DOC_PAGES_MAX` (8), draws them from the
+stored bytes in the offscreen document (`renderPages`, `drawStoredPages` in sw-attach.ts, read only for a run that holds
+them) and hands them down as `_images`, with no navigation wait and no document pin. The loop drops any `_`-prefixed
+argument the model writes to `look`, and the run host refuses to send `_images` to a page. The run's adopt posted to the page's window names no model and no
 vision fact (`pageRebuild`, run-assembly.ts). A preview (an approval card, a pending step) still asks the page to draw
 the In label, sent the target only (`lookPreviewArgs`: `selector`, `index`), never the question. A refused call is
 `Error: ` and the host's fixed sentence, never half a result. A full-page look is bounded by the host (eight screens,

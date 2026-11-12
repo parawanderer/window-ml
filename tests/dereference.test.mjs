@@ -791,3 +791,128 @@ test("a read-only survey in the worker reads an attached file: its pages by pipe
     const macro = await evalReadonlyInWorker({ js: `return @file:${pdf.id}.text.length` }, { ml });
     assert.notEqual(macro.kind, "answered", "the pointer macro is @tool:'s alone; a file is read by ml.dereference");
 });
+
+// --- look at an attached document's pages: the loop draws them and hands the images down (resolveLookDoc) ---
+
+/** A run whose shelf holds a 4-page PDF (`@file:` id returned) and a text file, with `renderPages` recording its asks. */
+function lookShelf({ renderPages, withRender = true } = {}) {
+    const tokenStore = new TokenStore();
+    const pdf = tokenStore.files.note({ id: fileId("abcdef", 0), name: "report.pdf", type: "application/pdf", bytes: 900, pages: 4, read: 4, turn: 1,
+        doc: "k-doc", data: "k-data", sha256: "aa", chars: 100, figures: [2], scans: [] });
+    const log = tokenStore.files.note({ id: fileId("abcdef", 1), name: "server.log", type: "text/plain", bytes: 60, lines: 4, pages: 0, read: 0, turn: 2,
+        doc: "k-log", data: "k-log", sha256: "bb", chars: 60, figures: [], scans: [] });
+    const asks = [];
+    const draw = renderPages ?? (async (key, pages) => pages.map((n) => ({ image: `data:image/png;base64,P${n}` })));
+    const opts = { tokenStore, ...(withRender ? { renderPages: async (key, pages) => { asks.push({ key, pages }); return draw(key, pages); } } : {}) };
+    return { pdf, log, opts, asks };
+}
+const lookResult = (r) => r.results.find((x) => x.name === "look").result;
+const lookDoc = async (args, shelfOpts) => {
+    const s = lookShelf(shelfOpts);
+    const r = await drive([call("look", typeof args === "function" ? args(s) : args)], () => ({ result: "looked" }), s.opts);
+    return { ...r, ...s, out: lookResult(r), l: r.got.find((g) => g.name === "look") };
+};
+
+test("look at a document: the pages are drawn from the file's data key, and look is handed one labelled image per page", async () => {
+    const r = await lookDoc((s) => ({ question: "what does the chart show?", doc: `@file:${s.pdf.id}`, pages: "3,2" }));
+    assert.deepEqual(r.asks, [{ key: "k-data", pages: [2, 3] }], "sorted, from the stored bytes' key");
+    assert.equal(r.out, "looked");
+    assert.deepEqual(r.l.args, {
+        question: "what does the chart show?",
+        _images: [{ image: "data:image/png;base64,P2", label: `@file:${r.pdf.id} page 2` }, { image: "data:image/png;base64,P3", label: `@file:${r.pdf.id} page 3` }],
+        _imageLabel: `pages 2, 3 of @file:${r.pdf.id} "report.pdf", attached by the person`,
+    });
+});
+
+test("look at a document: one page reads `page n`; a name in quotes finds the file", async () => {
+    const r = await lookDoc({ question: "q", doc: '@file:"report.pdf"', pages: "4" });
+    assert.equal(r.l.args._imageLabel, `page 4 of @file:${r.pdf.id} "report.pdf", attached by the person`);
+    assert.equal(r.l.args._images.length, 1);
+});
+
+test("look at a document: pages that fail to draw are named in _imagesFailed and the rest still go down", async () => {
+    const r = await lookDoc((s) => ({ question: "q", doc: `@file:${s.pdf.id}`, pages: "1-3" }), {
+        renderPages: async (_k, pages) => pages.map((n) => (n === 2 ? { failed: "the page is too large" } : { image: `data:image/png;base64,P${n}` })) });
+    assert.deepEqual(r.l.args._images.map((m) => m.label.slice(-6)), ["page 1", "page 3"]);
+    assert.equal(r.l.args._imagesFailed, "page 2: the page is too large");
+    assert.match(r.l.args._imageLabel, /^pages 1, 3 of /);
+});
+
+test("look at a document: every page failing to draw is an error naming each page's reason, and look never runs", async () => {
+    const r = await lookDoc((s) => ({ question: "q", doc: `@file:${s.pdf.id}`, pages: "1,2" }), {
+        renderPages: async (_k, pages) => pages.map((n) => ({ failed: `reason ${n}` })) });
+    assert.equal(r.out, `Error: @file:${r.pdf.id} "report.pdf": no page would draw (page 1: reason 1; page 2: reason 2).`);
+    assert.equal(r.got.length, 0);
+});
+
+test("look at a document: `doc` with a selector or a scope is refused", async () => {
+    for (const extra of [{ selector: "#hero" }, { scope: "page" }]) {
+        const r = await lookDoc((s) => ({ question: "q", doc: `@file:${s.pdf.id}`, pages: "1", ...extra }));
+        assert.equal(r.out, "Error: look takes a `doc` or a `selector`/`scope`, not both: a document's pages are not on the page.");
+        assert.equal(r.got.length, 0);
+        assert.deepEqual(r.asks, []);
+    }
+});
+
+test("look at a document: an unknown file is the shelf's own fault, listing the attached files", async () => {
+    const r = await lookDoc({ question: "q", doc: "@file:zzzzzzz", pages: "1" });
+    assert.match(r.out, /^Error: MemoryFault: '@file:zzzzzzz' is not a file attached to this session\.\nAttached files:\n/);
+    assert.match(r.out, /report\.pdf/);
+    assert.equal(r.got.length, 0);
+});
+
+test("look at a document: a text file has no pages to look at", async () => {
+    const r = await lookDoc((s) => ({ question: "q", doc: `@file:${s.log.id}`, pages: "1" }));
+    assert.equal(r.out, `Error: @file:${r.log.id} "server.log" is a text file, with no pages to look at. Read it with dereference instead.`);
+    assert.deepEqual(r.asks, []);
+});
+
+test("look at a document: a bad `pages` string, a missing one and one past the bound are refused before anything is drawn", async () => {
+    for (const [pages, want] of [["x", /`pages` can't read "x"/], [undefined, /`pages` needs page numbers/], ["0", /numbered from 1/], ["4-2", /runs backwards: write pages 2-4/],
+        ["1-9", /^Error: `pages` selects at most 8 pages in one look; look at the rest in another call\.$/]]) {
+        const r = await lookDoc((s) => ({ question: "q", doc: `@file:${s.pdf.id}`, ...(pages === undefined ? {} : { pages }) }));
+        assert.match(r.out, want, String(pages));
+        assert.deepEqual(r.asks, [], String(pages));
+        assert.equal(r.got.length, 0);
+    }
+});
+
+test("look at a document: a page past the file's page count names the pages it lacks", async () => {
+    const r = await lookDoc((s) => ({ question: "q", doc: `@file:${s.pdf.id}`, pages: "3-6" }));
+    assert.equal(r.out, `Error: @file:${r.pdf.id} "report.pdf" has 4 pages; it has no page 5, 6.`);
+    assert.deepEqual(r.asks, []);
+    const one = await drive([call("look", { question: "q", doc: '@file:"one.pdf"', pages: "2" })], () => ({ result: "" }), (() => {
+        const tokenStore = new TokenStore();
+        tokenStore.files.note({ id: fileId("abcdef", 0), name: "one.pdf", type: "application/pdf", bytes: 9, pages: 1, read: 1, turn: 1, doc: "d", data: "x", sha256: "cc", chars: 1, figures: [], scans: [] });
+        return { tokenStore, renderPages: async () => [] };
+    })());
+    assert.equal(lookResult(one), `Error: @file:${fileId("abcdef", 0)} "one.pdf" has 1 page; it has no page 2.`, "singular for a one-page file");
+});
+
+test("look at a document: a run with no renderPages option says it cannot draw the file's pages", async () => {
+    const r = await lookDoc((s) => ({ question: "q", doc: `@file:${s.pdf.id}`, pages: "1" }), { withRender: false });
+    assert.equal(r.out, "Error: this run cannot draw an attached file's pages.");
+    assert.equal(r.got.length, 0);
+});
+
+test("look: a call without `doc` is not a look at a document, and renderPages is not asked", async () => {
+    const r = await lookDoc({ selector: "#hero", pages: "1" });
+    assert.deepEqual(r.asks, []);
+    assert.deepEqual(r.l.args, { selector: "#hero", pages: "1" });
+});
+
+// --- look: arguments starting with `_` are the loop's, and are dropped from what the model writes ---
+
+test("look: _image, _images and _imageLabel written in the model's arguments are removed before look runs", async () => {
+    const { got, results } = await drive([call("look", { selector: "#hero", _image: "data:image/png;base64,EVIL", _images: [{ image: "data:image/png;base64,EVIL", label: "x" }], _imageLabel: "mine", _imagesFailed: "none", question: "q" })],
+        () => ({ result: "ok" }));
+    const l = got.find((g) => g.name === "look");
+    assert.deepEqual(l.args, { selector: "#hero", question: "q" });
+    assert.equal(results.find((r) => r.name === "look").result, "ok");
+});
+
+test("look: a `doc` call is handed only the images the loop drew, not ones the model wrote beside it", async () => {
+    const r = await lookDoc((s) => ({ question: "q", doc: `@file:${s.pdf.id}`, pages: "1", _images: [{ image: "data:image/png;base64,EVIL", label: "fake" }], _imageLabel: "fake" }));
+    assert.deepEqual(r.l.args._images.map((m) => m.image), ["data:image/png;base64,P1"]);
+    assert.match(r.l.args._imageLabel, /^page 1 of /);
+});

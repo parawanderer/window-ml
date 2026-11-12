@@ -80,6 +80,8 @@ export interface RunAgentHostDeps {
     claimValue?(key: string): void;
     /** The whole of a stored text this run holds (see AgentLoopOptions.readText). */
     readText?(key: string): Promise<string>;
+    /** Draw pages of a stored PDF this run holds (see AgentLoopOptions.renderPages). */
+    renderPages?(key: string, pages: number[]): Promise<({ image: string } | { failed: string })[]>;
     // Pre-run In render for a PENDING step (streaming runs) — the page computes the tool's In descriptor
     // without running it, so a watched streaming step shows a pretty In, not raw JSON args.
     renderFor?: AgentLoopDeps["renderFor"];
@@ -283,6 +285,6 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
         toolThrew: deps.toolThrew,
         subcallTokens: deps.subcallTokens,   // this turn's delegated vision sub-call tally (background-accumulated)
     };
-    return runAgentLoop(cfg.task, { tools: cfg.tools, maxSteps: cfg.maxSteps, signal: deps.signal, unattended: cfg.unattended, toolTokens: cfg.toolTokens, runHash: cfg.runId, seqBase: cfg.seqBase, after: cfg.after, stream: cfg.stream, ...(cfg.origin ? { origin: cfg.origin } : {}), tokenStore: cfg.tokenStore, labelMatch: cfg.labelMatch, tokenSink: deps.tokenSink, contextSink: deps.contextSink, claimValue: deps.claimValue, readText: deps.readText }, loopDeps)
+    return runAgentLoop(cfg.task, { tools: cfg.tools, maxSteps: cfg.maxSteps, signal: deps.signal, unattended: cfg.unattended, toolTokens: cfg.toolTokens, runHash: cfg.runId, seqBase: cfg.seqBase, after: cfg.after, stream: cfg.stream, ...(cfg.origin ? { origin: cfg.origin } : {}), tokenStore: cfg.tokenStore, labelMatch: cfg.labelMatch, tokenSink: deps.tokenSink, contextSink: deps.contextSink, claimValue: deps.claimValue, readText: deps.readText, renderPages: deps.renderPages }, loopDeps)
         .then(result => ({ result, messages: built }));
 }

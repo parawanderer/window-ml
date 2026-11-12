@@ -372,16 +372,19 @@ function sed(lines: string[], argv: string[], limits?: PipeLimits): string[] {
 const PAGE_OPEN = /^<page n="(\d+)"[^>]*>$/;
 
 /**
- * `pages 3`, `pages 3-5`, `pages 3,7-9`: the whole `<page>` sections a paged value (an attached PDF) holds for those
- * numbers, in page order. The request is read and bounded before any page is gathered, so a wide range costs nothing.
- * A page the value does not hold is refused, naming the pages it does: a quiet empty answer reads as "no such text".
+ * The page numbers a page list names (`3`, `3-5`, `3,7-9`), in order and once each, read and bounded before anything
+ * is gathered, so a wide range costs nothing. Shared by the `pages` verb and `look` at a document.
+ * @param raw the list as written
+ * @param max how many pages it may select
+ * @param over what the refusal says past `max`, after "selects at most N pages"
+ * @returns the page numbers, ascending
  */
-function pages(lines: string[], argv: string[]): string[] {
+export function pageSpans(raw: string, max: number, over: string): number[] {
     // A space separates like a comma (`pages 1 2`, `pages 1, 2` are pages 1 and 2), and one around a dash is dropped
     // (`pages 3 - 5`): joining the arguments with nothing read `pages 1,2 3` as pages 1 and 23.
-    const spec = argv.slice(1).join(" ").replace(/\s*-\s*/g, "-").trim();
+    const spec = raw.replace(/\s*-\s*/g, "-").trim();
     if (!spec) throw new Error("`pages` needs page numbers: pages 3, pages 3-5 or pages 3,7-9.");
-    const want: [number, number][] = [];
+    const pick = new Set<number>();
     let width = 0;
     for (const part of spec.split(/[\s,]+/).filter(Boolean)) {
         const m = /^(\d{1,6})(?:-(\d{1,6}))?$/.exec(part);
@@ -390,9 +393,19 @@ function pages(lines: string[], argv: string[]): string[] {
         if (a < 1) throw new Error("`pages`: pages are numbered from 1.");
         if (b < a) throw new Error(`\`pages ${a}-${b}\` runs backwards: write pages ${b}-${a}.`);
         width += b - a + 1;
-        if (width > PIPE_PAGES_MAX) throw new Error(`\`pages\` selects at most ${PIPE_PAGES_MAX} pages in one stage; read them in parts.`);
-        want.push([a, b]);
+        if (width > max) throw new Error(`\`pages\` selects at most ${max} pages ${over}.`);
+        for (let k = a; k <= b; k++) pick.add(k);
     }
+    return [...pick].sort((x, y) => x - y);
+}
+
+/**
+ * `pages 3`, `pages 3-5`, `pages 3,7-9`: the whole `<page>` sections a paged value (an attached PDF) holds for those
+ * numbers, in page order. The request is read and bounded before any page is gathered, so a wide range costs nothing.
+ * A page the value does not hold is refused, naming the pages it does: a quiet empty answer reads as "no such text".
+ */
+function pages(lines: string[], argv: string[]): string[] {
+    const want = pageSpans(argv.slice(1).join(" "), PIPE_PAGES_MAX, "in one stage; read them in parts");
     // A section that is never closed ends at the next opening tag or at the end of the input, and is closed there, so
     // an open tag is never read as another page's text and a last page whose close was lost keeps its lines.
     const held = new Map<number, string[]>();
@@ -407,8 +420,7 @@ function pages(lines: string[], argv: string[]): string[] {
     }
     keep();
     if (!held.size) throw new Error("`pages` needs a paged value (an attached PDF, @file:…); this one has no pages.");
-    const pick = new Set<number>();
-    for (const [a, b] of want) for (let k = a; k <= b; k++) pick.add(k);
+    const pick = new Set(want);
     const missing = [...pick].filter((k) => !held.has(k)).sort((x, y) => x - y);
     if (missing.length) {
         const have = [...held.keys()].sort((x, y) => x - y);
