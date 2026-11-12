@@ -5,7 +5,8 @@ closest to it. Shane confirmed the decisions below in the coordinator's session 
 same runtime only; started only by the person). The build is the `[window-ml move-run]` lane's, started after this note
 and the page-health change land; the chat page's "move to tab…" entry is the Chat Page lane's afterwards. Revised the
 same day on the move-run lane's findings against main b7153df8 (the two shapes of a move, per-run re-keying, the grants
-that stay behind, a page-built run, the point tokens, the origin consent).
+that stay behind, a page-built run, the point tokens, the origin consent), and again on its second read (the arrival
+watcher, the start-origin rule, what `settle` already released, the sender check).
 
 ## Why
 
@@ -45,8 +46,7 @@ EVERY turn, deletes the run's inbox, ends its tasks (`endTasks`) and its Python 
   its next turn is hosted on the new tab from the start. It is cheap, and it covers both headline cases and the crash
   case: a dead tab's turn ends (the page-health work), and the person brings the session to a live tab.
 - **(b) A move BETWEEN STEPS of a running turn.** Needs `hostRun`'s tab to become a mutable cell that every send reads
-  at the moment it sends, the inbox re-keyed, and the between-turn watcher moved. An open item, not built in the first
-  PR.
+  at the moment it sends, and the inbox re-keyed. An open item, not built in the first PR.
 
 ## What a move carries
 
@@ -58,6 +58,7 @@ nothing away from it:
 | the transcript and the run's messages (its snapshot) | the run's inbox (`runInboxes`) | whatever the model made in the old page's world: `exec` variables, DOM edits, form input it filled |
 | the `@tool:` pointers and values of a worker-held run (`tokensByRun`, memory, as a follow-up keeps them) | its detached tasks (`endTasks`; `ASYNC_CALLS.md`, rule 4) | the per-TAB grants: `fetchConsent` and `credFetchGrants` are consent for the old tab's page and do NOT follow the run (`@security`) |
 | `ml.current` | its Python namespace (`deletePythonRun`) | a CDP attach (already released at `settle`, `releaseDebugger`) |
+| | its tracking entry and the tab's pin (`untrackRun`; the tab is unpinned and `tab`/`released` logged when it was the tab's last run) | |
 | | | point and box tokens: see below |
 
 For shape (b) the middle column is live, so a move between steps would carry the inbox and the runtime-bound tasks,
@@ -81,9 +82,18 @@ The re-keying is PER RUN, between two LIVE tabs. `chrome.tabs.onReplaced` is not
 the destination's entry), and it also calls `sessionServer.pageGone` and `navBarrier.forget`, which are wrong for an old
 tab that stays open. A move needs its own per-run function:
 
-1. **Re-home one run.** Its snapshot's tab, its tracking entry and its replay ring move from the old tab to the new;
-   nothing else filed under the old tab moves, and nothing filed under the new tab is overwritten. The per-tab grants
-   stay where they are.
+1. **Re-home one run.** Between turns a move changes exactly these, and nothing else filed under the old tab moves or
+   is overwritten under the new one:
+   - the stored snapshot's `tabId`;
+   - the run's replay ring (`runReplayBuffer`), which is kept between turns only while the tab still holds a
+     background run (`tabHasBgRun`);
+   - the between-turn ARRIVAL WATCHER: `settle` arms `watchBetweenTurns(tabId, runId)` (`nav-arrival.ts`) on the old
+     tab, whose commits would otherwise go on holding or clearing the run, and the next turn's start judges
+     `holdStands(tabId, runId)` against that tab's URL. The move re-arms the watcher on the new tab and DROPS any hold
+     the old tab's page set;
+   - a page-built run's `@tool:` values, through `makeWorkerRun` (above).
+
+   There is no tracking entry to move: `untrackRun` removed the run at `settle`. The per-tab grants stay where they are.
 2. **The model is told** in the next turn's messages, since a settled run has no inbox: `[the person moved this run to
    tab "<title>" (<url>); the previous page's state is not carried]`. Without it the model acts on a page it thinks it
    is still on.
@@ -93,11 +103,14 @@ tab that stays open. A move needs its own per-run function:
 4. **The person choosing the tab is the consent the cross-domain gate asks for** (docs/dev/agent-tools.md, "Variant B").
    `consentedOrigins` is turn-local, seeded from `runOrigins(runId)` and the run's stored `pageOrigin`; the move
    calls `grantRunOrigin(runId, <destination origin>)` (`worker-tools.ts`), which outlives the turn, and REWRITES the
-   stored `pageOrigin` to the destination, so the old origin is no longer seeded as the run's start. An origin the run
-   was granted by an earlier consent stays granted, as it does today. A run that did not opt in with `crossOrigin` is
+   stored `pageOrigin`, with the stored `pageUrl` and `pageTitle` (`run-assembly.ts`), to the destination. That also
+   moves the START-ORIGIN read rule (`startLeftWhy`/`startOriginRead`, `sw-run-host.ts`): after the move the
+   destination is the origin whose uncredentialed reads ask once the tab leaves it, and the old origin stops counting
+   as the start. An origin the run was granted by an earlier consent stays granted, as it does today. A run that did not opt in with `crossOrigin` is
    moved anyway: the gate exists to stop a PAGE sending the run elsewhere, not the person. (`@security`)
-5. **The old tab is released**: unpinned (`autoDiscardable` back on, logged `tab`/`released`) and left as it is. Its
-   page is not reloaded or closed, and no `pageGone` is sent for it.
+5. **The old tab is left as it is.** Its page is not reloaded or closed. The move does not re-pin it and sends no
+   `pageGone` for it; its pin was already released at `settle` if this was its last run. The next turn's `trackRun`
+   pins the new tab.
 6. **The run log records the move** (a `tab` record naming both tab ids and the run), so the person sees where the run
    went and when.
 
@@ -112,7 +125,10 @@ the failing-first row in its own PR.
 
 - **A page can never start a move.** Not a page that wants a run's context pulled onto itself, and not one that wants a
   run pushed off it. The move is a message only the person's own surfaces (the HUD, the chat page) send, decided in the
-  worker from the sender, never from anything a page says. The red-team row is e3's, written after the feature PR
+  worker from the sender, never from anything a page says. The HUD runs `sidebar-app` in an EXTENSION iframe
+  (`services-ext.ts`), so the worker proves the sender by an extension-origin `sender.url`, as `SET_APPROVAL` does;
+  and the move's message type is never listed in `HANDLE_MAP` (`page-relay.ts`), so no page's message is relayed to it.
+  Those two are what make this hold. The red-team row is e3's, written after the feature PR
   merges: a page's message that names a run and a tab moves nothing and is answered with nothing.
 - **The per-tab grants stay behind** (step 1), and the old origin is not carried as the run's start (step 4).
 - **Moving a run to a page discloses the run to nothing.** The destination page learns no more than it does when a run
@@ -121,7 +137,7 @@ the failing-first row in its own PR.
 
 ## Open
 
-- Shape (b), a move between steps of a running turn: `hostRun`'s tab as a mutable cell, the inbox and the between-turn
-  watcher re-keyed, and rule 4a's cancels.
+- Shape (b), a move between steps of a running turn: `hostRun`'s tab as a mutable cell, the inbox re-keyed, and rule
+  4a's cancels.
 - Whether "bring a session here" lists only this tab's site's sessions or all of them.
 - A move between runtimes (another browser through the hub), after this exists.
