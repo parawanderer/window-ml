@@ -3,7 +3,8 @@
 **Status: slices 1 and 2 built (2026-10-28/29); slice 3 under way: the held rows, the `@file:` pointer, the `pages`
 verb, attaching a PDF to an agent run, and every attachment to a worker-built run (any message) and a long paste as
 pointers, and `ml.dereference` of `@file:`, are built; `look` at a document, Python's `files`, the files panel and
-upload progress are next (Shane and the calm-chat-motion session).** The order is
+upload progress are next (Shane and the calm-chat-motion session); a session's files as a directory `/files/` is ruled,
+not built (2026-11-12).** The order is
 three slices, each landing on its own: text files, then PDFs, then documents as `@file:` pointers in agent runs. Slice
 3's contact points with the python, shell and policies lanes were ruled on by their coordinator (2026-10-28,
 "Rulings" below).
@@ -356,7 +357,9 @@ and `bytes` (raw bytes).
 **Python.** An attached file reaches `python_exec` as an INJECTED value, like a stored table, not as a path: there is
 no `/attached/` directory and no `open()` of one. The call names it, `files: { name: "@file:3fa91c2" }`, and the
 `tables` map accepts an `@file:` pointer as a source like a URL; the sandbox's existing `read_csv`/`open` redirect
-resolves a name it was given. Specified on the python side in PYTHON_DIALECT.md.
+resolves a name it was given. Specified on the python side in PYTHON_DIALECT.md. REOPENED 2026-11-12 for approved and
+`full` cells, which get a mounted `/files/` ("A session's files as a directory", below); the restricted dialect
+keeps this.
 
 A paged document is injected as the pages, not only as its bytes (Shane, 2026-10-28): raw PDF bytes are close to
 useless in the sandbox, which has no PDF library and would spend its step budget parsing one.
@@ -482,6 +485,7 @@ The files a session holds, in one place, in the CALM view.
 - **Nothing lives only here.** The panel can be closed, so what it shows is also where it happened: the progress on
   the composer's chip, and what was sent or held back on the message's chip. The panel gathers them; it is never the
   only place a fact is shown.
+- **Files a run made** are listed, in their own group, since 2026-11-12 ("A session's files as a directory").
 - **Not in it, for now**: documents the agent fetched. They are evicted like any value and can be fetched again; the
   panel is the person's own files.
 
@@ -532,6 +536,119 @@ a long PDF, numbers from a table through `python_exec`, a figure or scanned page
 survey, a worker chat past the cap reading held-back pages with `read_pages`, and two different files named
 `report.pdf`. Results in a notebook: correctness, the tools chosen, steps and tokens, and recovery after a refusal.
 
+## A session's files as a directory (ruled 2026-11-12)
+
+RULED 2026-11-12 (Shane, in the coordinator's session; designed with the async lane, conditions from the Pyodide lane's
+answer, session-mail `20261112-1630Z-python-packages-to-chat-page-files-mount.md`). This reopens ruling 1 and the
+"Python" paragraph above, and PYTHON_DIALECT.md's ruling of 2026-10-28, for the cells that can open a file. Nothing
+below is built.
+
+**What it is for.** `python_exec`'s interpreter can die mid-run (an import that traps in wasm fails Pyodide fatally),
+and the restart the async lane is building tells the model its namespace is gone. Work computed over many cells
+(weights, an intermediate table) dies with it. The model already knows how to keep work: write it to a file. So a
+session gets a working directory, the way a coding agent gets a scratchpad: ordinary file operations, kept for the
+session, outliving a kernel death. One store holds every file a session has, whoever made it, so there is no hidden
+second place: everything a model can keep, the person can see and delete (the files panel, below).
+
+**Layout.**
+
+- `/files/` is writable: the model's working directory, kept for the session.
+- `/files/attached/` is read-only and holds what the person attached, by name. A file attached mid-run appears there
+  and the model is told its name. The person's files never change; a model that wants to edit one copies it out.
+- Provenance follows from the folder: a file under `attached/` is the person's; any other was made by a run.
+
+**Which cells see it.** Only cells that can open a file: an approved cell and `full` mode. The read-only (restricted)
+dialect has no `open()` or `os` (PYTHON_DIALECT.md), and its writes roll back when a cell fails, so it keeps what it has
+today: an attachment as an injected value (`files:`, `@file:` in `tables`) and the loader redirect
+(`docs/dev/python-sandbox.md`, "Loader interception"), which also resolves a name in `/files/`, read-only. The redirect
+is re-ruled with the mount: where `open()` is real, a path that exists is that file and the redirect never shadows it;
+a bare name that does not exist under the cell's directory resolves to `attached/<name>` when one file has that name.
+
+**The mount** (the Pyodide lane's conditions, measured in Node against `pyodide-core/`, not in a browser worker):
+
+1. MEMFS, loaded from the shelf when the interpreter starts, with Emscripten's JS-side `FS.trackingDelegate`
+   (`onCloseFile`, `onWriteToFile`) seeing every close, raw `os.open`/`os.write`/`os.close` included. No
+   Atomics-backed FS: Pyodide ships no synchronous remote backend, `Atomics.wait` would block the interrupt buffer so
+   Stop would fall through to the kill, and it would save almost nothing on a terminate. The hooks live on the
+   Module/FS object, which the lockdown seals from cells (`PYODIDE_JS_SEAL`); they stay synchronous.
+2. `/files/attached/` is its own mount whose write operations fail with EROFS (open for writing, chmod, unlink,
+   create, mkdir, utime; rename across it is EXDEV, rmdir of it EBUSY). File modes do not hold: a cell's own
+   `os.chmod` undoes `0444` (measured). The shelf refuses a write to a person's file too, whatever path asks.
+3. On each close of a writable file, and at cell end after a flush, the bytes are posted, transferred, through the
+   worker's closure-held `post` to the offscreen document, which owns the shelf write and acknowledges each post.
+   Python's buffered writes are not in MEMFS until flushed, so an unflushed write is lost and the cell end flushes
+   first. The offscreen re-checks every post itself: the path canonical and under `/files/`, never under `attached/`,
+   a regular file, and the quota. A `full` cell keeps `js.postMessage` and can forge a post, so nothing the post
+   claims is taken on its word.
+4. One `/files/` per session. The `full` worker is shared across runs, so the directory is the session's, never the
+   worker's: one directory per session, or a reset per cell.
+5. Regular files only, canonicalised (`FS.getPath`): a symlink a cell makes is never persisted, so a link pointing out
+   is never saved.
+6. The quota counts about three times a file's size: a 50 MB file cost 154 MB of ArrayBuffers and grew wasm memory to
+   75 MB, which never shrinks (measured), and the worker dies at a 2.6 GB JS heap (`docs/dev/python-sandbox.md`).
+
+**A kernel death.** The restart terminates the worker (the existing kill path). What was posted is safe; files still
+open are lost, and nothing is salvaged from the dead interpreter's heap, which may be corrupt. The restart reloads
+`/files/` from the shelf into the fresh MEMFS and tells the model what survived: `variables gone; /files/ kept
+(12 files); w.npy was open and is lost.` The restart's message and its delivery are the async lane's (ASYNC_CALLS.md).
+
+**Mutable, frozen when cited.** A file in `/files/` changes freely; there are no versions per write. A file is frozen
+into an immutable version, an `@file:` the transcript can name, only when it leaves the directory or enters the
+record: `dereference`, `look`, `ml.sh.put`, the transcript and the exports. The log stays truthful the way a coding
+agent's does: it records what was read, never the file's current bytes. Two runs of one session writing the same file:
+the last close wins.
+
+**Provenance is a field, and every sentence reads it.** A file pointer carries who made it: the person, run R's cell N,
+or a read from disk at a path (below). Every model-facing sentence that today says "attached by the person" (the
+`<file>` block, the outline, `look`'s page label, `ml.sh.put`'s card, which today says the attachment's original bytes)
+reads the field. A file a run made is never described to the model as the person's: that wording carries authority a
+model-made or page-derived file must not borrow. Its text is untrusted input like any other ("Trust", below).
+
+**Lifetime and quota.** A session's files last as long as the session, until the person deletes them, the same as an
+attachment today. Nothing is evicted silently. When the session's files made by its runs are over the quota, a post is
+refused by name and the cell's result says so: `w.npy was not kept: the session holds 1.4 GB of files made by its runs;
+delete some in the files panel.` Open: whether a write can fail with ENOSPC at the time it is made, rather than at
+close.
+
+**The host's disk.** `/files/` is the browser sandbox's, never the `ml.sh` workspace's, and the two never alias: an argv
+item `/files/x` is a host path, as today. Bytes cross only as `@file:` handles: `ml.sh.put` writes one out (ruling 3),
+and a planned read brings a workspace file in, into `/files/` with provenance "read from disk <path>" (the async
+lane's). The model's text says it in one line: `/files/ is the browser sandbox's, not the workspace's.`
+
+**The person deletes or moves a file.** The files panel can delete, rename and move files in the writable part. During
+a live run the model is told the file's name through the run's inbox, the same as any other notice; a move is a delete
+plus a new name. Without it, the model's next read fails with a bare `ValueMissing`. Uploading straight into the
+writable part waits: the model copies from `attached/`.
+
+**The files panel and a storage page.** The files panel (above) becomes the browser for this directory: a row per file
+with its name, size, who made it (the person, run R cell N, read from disk), when it was created and last modified, its
+frozen versions, and which runs read it. Two groups, the person's files and the run's. Actions: open, download, delete,
+rename and move (writable part only), and put to disk. A storage page across sessions shows the total, the use per
+session and the quota, sorts by size and age, and deletes in bulk. Deleting a file deletes its versions.
+
+**Owners.** This spec, the shelf, the provenance field and its sentences, the panel and the storage page: the chat-page
+lane (calm-chat-motion). The mount, the hooks and the redirect: the Pyodide lane. The restart message, the inbox notice
+and the read-back from disk: the async lane.
+
+**Red-team pass** (written by e3 through the coordinator, never by a building lane), what a cell or a page must not get:
+
+- a write to `attached/` by any route: chmod, rename in or out, a symlink, raw `os.open`, a hard link;
+- a forged post from a `full` cell persisting a path outside `/files/`, into `attached/`, past the quota, or into
+  another session's directory;
+- a symlink or a non-regular file persisted;
+- one session's `/files/` seen by another session's cell in the shared `full` worker;
+- a cell reaching the hook closure or `post` (a lifted-bridge or introspection route; not measured);
+- a page-started run, or a page, reading `/files/` or any file in it;
+- a model-made file described to the model as attached by the person, in every sentence that names a file.
+
+**Not measured.** A terminate racing the last post (the ack is there for it); a lifted-bridge route to the FS object;
+anything in a real browser worker rather than Node.
+
+**Open.** A backup never carries the value store (`ml-values` is marked `never`, "fetched tables a run holds;
+refetchable", `src/backup/backup-inventory.ts`), which held for fetched tables but not for a person's attachment or a
+session's files, neither of which can be fetched again; whether a backup and the session archive carry them is open.
+Whether the restricted dialect gets a write of its own (a `keep()` call) is open and not proposed.
+
 ## Trust
 
 A file's text is untrusted input, the same as a web page's: an instruction written inside a PDF gets no authority a
@@ -560,7 +677,8 @@ or a message"). What a hostile page must not get, as tests that fail first:
 
 ## Rulings (2026-10-28, from the python/shell/policies coordinator)
 
-1. Python takes an attachment as an injected value (`files:`, and `@file:` in `tables`), never a path; above.
+1. Python takes an attachment as an injected value (`files:`, and `@file:` in `tables`), never a path; above. REOPENED
+   2026-11-12 (Shane) for the cells that can open a file: "A session's files as a directory".
 2. Rows over blobs is fine: the key is the only handle, claims and tombstones per row, the budget charges a blob once,
    the hold is the `protect` list, hash before the budget check.
 3. `@file:` is this spec's. The argv refusal is the shell call's rule for every prefix, and it stays: a handle in argv is
