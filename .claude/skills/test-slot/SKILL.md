@@ -73,7 +73,9 @@ yet (its ledger, the `bench` skill), which the grant line names ("… of it prom
 planned memory (workers × per-worker) beside it, and leaves when it ends; `hold.mjs --ledger` lists it. A sweep counts the
 part of that plan its workers do not hold yet against free memory, never against the bench's own limit. Bench sweeps do
 not queue here: they size themselves cell by cell, so a sweep backs off while a suite runs, and a suite sized while a
-sweep runs gets fewer workers. A suite's workers are fixed once granted. A holder whose process has died is reclaimed on every read, so the queue does not stall
+sweep runs gets fewer workers. One run inside a job anyway (`--kind batch`) spends that job's grant: what it writes to
+the ledger is marked `inside` the job's ticket and taken off the job's plan, and it does not count its own job's plan
+against itself (until 2026-11-11 it did, and found room for no browser). A suite's workers are fixed once granted. A holder whose process has died is reclaimed on every read, so the queue does not stall
 behind a crashed run. There is no daemon: every read of the queue starts whatever is admissible.
 
 A DETACHED job runs in its own process, in the ticket's cwd, with a RECORDED subset of the environment (`PATH`, `HOME`,
