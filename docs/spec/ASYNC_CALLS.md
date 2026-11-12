@@ -135,8 +135,8 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
    tells the model the fact line through the inbox or a waiting await, records `task`/`cancelled` with reason `page-change`, or
    `orphaned` in the line, the await's status and the record when the executor does not confirm the cancel; a late result
    of a cancelled or orphaned task is dropped), called from `webNavigation.onCommitted` (background.ts) for each run in
-   `activeRuns` on the tab, and `rekeyRunInbox(runId, tabId)` (sw-runs.ts; `retabRuns` calls it for `tabs.onReplaced`, the move-run
-   lane calls it for a move between steps), with `senderOwnsRun` as the inbox's owner check. No page-bound task exists yet. A worker-hosted run's page changes when it navigates in its own tab or when the person moves it to
+   `activeRuns` on the tab, and `rekeyRunInbox(runId, tabId)` (sw-runs.ts; not wired yet: the move-run lane calls it for a move
+   between steps, and `retabRuns` moves inboxes for `tabs.onReplaced` with its own loop), with `senderOwnsRun` as the inbox's owner check. No page-bound task exists yet. A worker-hosted run's page changes when it navigates in its own tab or when the person moves it to
    another tab (`MOVE_RUN.md`). Neither ends the run (a page-hosted loop's navigation does, and is rule 4's), so rule 4
    does not apply; each detached call and subscription is
    decided by where it RUNS:
