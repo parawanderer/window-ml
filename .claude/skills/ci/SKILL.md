@@ -263,17 +263,19 @@ Flaky only (passed on retry, never blocked a run), worth knowing because two may
   reload) — site-access lane's, a bug report until proven otherwise.
 
 - Follow-on to `review-look.spec.mjs:730` above (2026-11-08/12, the host-styling tables' other variants):
-  `review-look.spec.mjs:705` › `a reflection across the viewport (position:fixed, inset:0, -webkit-box-reflect)`
-  failed both tries on run 42455979689 (2026-11-08, main, e2e 3/3). `review-look.spec.mjs:712` › `will-change,
-  contain and an offset path` failed both tries on run 43198617151 / #1634 at `03fc6374` (2026-11-12, a docs-only
-  diff; "UI pixels outside where it painted before the rule" got 260640). The site-access lane measured this as
-  a SETUP race, not a pin gap: a fixed 400 ms wait after clicking the overlay tab, the "before" capture taken
-  while the panel was still closed or sliding — an open panel's 250584 outside pixels match CI's 260640. #1667
-  (`921dffc9`, test-only, janitor-3) replaces the wait with a poll for the laid-out panel. The :730 hide/recolour
-  table goes through the same setup, so its 2026-10-28 sighting above is likely the same race (the lane has not
-  measured it). When #1667 merges the shared setup changes; keep watching for a sighting after it before calling
-  this covered. The host-styling property itself is #581's (`60b61445`), routed to the site-access lane; a PR is
-  owed after #1660.
+  `review-look.spec.mjs:705` › `position, inset, margin and perspective with a 3D transform` failed both tries on
+  run 42455979689 (2026-11-08, main, e2e 3/3; the `-webkit-box-reflect` variant in the same table passed). On run
+  43198617151 / #1634 at `03fc6374` (2026-11-12, a docs-only diff) the API's log is attempt 2, where the `zoom`
+  variant flaked (retry #1 passed); attempt 1's log is gone, so the `will-change, contain and an offset path` pair
+  is only from the attempt-1 record taken before rotation. All three sightings share the same assertion —
+  "UI pixels outside where it painted before the rule" got 260640 — so the number spans two runs and two
+  different variants. The site-access lane measured this as a SETUP race, not a pin gap: a fixed 400 ms wait
+  after clicking the overlay tab, the "before" capture taken while the panel was still closed or sliding — an
+  open panel's 250584 outside pixels match CI's 260640. #1667 (`921dffc9` → merged `aa4b70d5`, test-only,
+  janitor-3) replaces the wait with a poll for the laid-out panel; the setup was changed there. The :730
+  hide/recolour table goes through the same setup, so its 2026-10-28 sighting above is likely the same race (the
+  lane has not measured it). Keep watching for a sighting after #1667 before calling this covered. The
+  host-styling property itself is #581's (`60b61445`), routed to the site-access lane; a PR is owed after #1660.
 
 - Seen once each (2026-10-28/29): `tests/redteam-python-sandbox.test.mjs` › `P2-handle route: a method of a Task
   SUBCLASS the cell defines does not run once the result is returned` (run 40753575484 attempt 1 on #1279, test
@@ -300,7 +302,7 @@ Flaky only (passed on retry, never blocked a run), worth knowing because two may
   `/import math\s*print\(math\.pi/`, on runs 42455979689 and 42457685296 (main) and run 43198219126 / #1648 at
   `eb19aef5`. Classified 2026-11-08 (the coordinator's lead): test-side timing in the row's own `typedOut` helper
   (it settles when `.live-call-code` is unchanged for 200 ms), not a product bug and not order-dependent —
-  `useReveal`'s first tick is `tickDelay(firstRenderCost) = max(16, cost/0.25)` ms away (`reveal.ts:29-31`, armed
+  `useReveal`'s first tick is `tickDelay(firstRenderCost) = max(16, cost/0.25)` ms away (`reveal.ts:40-41`; `revealRate` is :29-31, armed
   in `live-call.tsx:51-59`), so a render over 50 ms puts a whole tick gap inside the settle window and `''` is
   the code element before that first tick (`shown: 0` at first paint). jsdom + highlighting under CI load is over
   50 ms; locally it is not (janitor-3 could not reproduce at `eb19aef5`: 11/11 on five runs, three under 8 busy
