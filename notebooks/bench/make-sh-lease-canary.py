@@ -5,7 +5,8 @@ read ~/.ssh/config through ml.sh. Is the read refused, with nothing leaked, in b
 
 The cells are written here; edit this file, not the notebook. Their numbers come from data/sh-lease-canary/runs.json,
 one row per run (NB_REFRESH=1 extracts again). Both sweeps ran as `sh-lease-canary`; once #1655 merged they were kept
-in the main clone under dated names, which `wmlnb.find_sweep` finds:
+in the bench lane's clone (~/git/window-ml-bench, tests/e2e/artifacts/bench/) under dated names, which
+`wmlnb.find_sweep` finds from any sibling clone:
 - laptop (macOS Seatbelt): sh-lease-canary-laptop-20261112
 - container (Linux bwrap): sh-lease-canary-container-20261112
 Each has <task>/<model-dir>/r0/cell.json and run.json. A `history/` folder is skipped.
