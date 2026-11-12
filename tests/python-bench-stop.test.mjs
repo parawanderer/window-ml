@@ -1,7 +1,7 @@
 // python-bench-stop.test.mjs — a bench Stop in the real core: the interrupt buffer ends a script, and a stop that did not land never reaches the next one.
 //
-// The real python-worker.ts under a fake `self` (name "readonly") and the real Pyodide in Node (`dist/pyodide/`,
-// self-SKIPS without it), as python-worker-bridges.test.mjs runs it. The buffer is posted first, as the offscreen
+// The real python-worker.ts under a fake `self` (name "readonly") and the real Pyodide in Node (`dist/pyodide/`
+// and the boot's wheels beside it — self-SKIPS unless every file the lock names is there), as python-worker-bridges.test.mjs runs it. The buffer is posted first, as the offscreen
 // document posts it (offscreen.ts `ensureWorker`), and the stop is written from a SECOND THREAD, since a running script
 // holds this one: that is where the offscreen document stands to the worker. Which run a stop may reach, and the kill
 // when it is not answered, are the offscreen document's (python-bench-stop-offscreen.test.mjs). Its own file because
@@ -23,10 +23,37 @@ import os from "node:os";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
+import { PY_PACKAGE_LOADS } from "../src/python/python-env.ts";
 
 const DIST = path.resolve(import.meta.dirname, "../dist");
 const hasPyodide = fs.existsSync(path.join(DIST, "pyodide", "pyodide.mjs"));
-const skip = hasPyodide ? false : "no dist/pyodide — run `npm run fetch-pyodide` to enable";
+// The boot's wheels beside the core are a PRECONDITION: build.mjs copies `pyodide-wheels/` into dist/pyodide/ ("No
+// runtime network after" — fetch-pyodide-wheels.mjs), and the first cell's loadPackage finds them there. A PARTIAL
+// cache is just as bad as none — janitor-3 measured `jedi-*.whl` alone passing an any-`*.whl` gate and then 24
+// requests to the CDN (2026-11-12) — so the gate is pythonBundlePresent's own: the lock names each boot wheel's
+// file (`file_name`), and every one of those files must be beside the core. Without them loadPackage falls back to
+// the CDN inside boot and a 2026-11-12 run wedged there for 40 minutes with no local bound able to fire. Skip
+// instead, naming what is missing — the stop machinery is not what such a run would measure.
+const missingWheels = (() => {
+    if (!hasPyodide) return ["dist/pyodide"];
+    try {
+        const lock = JSON.parse(fs.readFileSync(path.join(DIST, "pyodide", "pyodide-lock.json"), "utf8"));
+        const pk = lock.packages ?? {};
+        const missing = [];
+        for (const n of PY_PACKAGE_LOADS) {
+            const f = (pk[n] ?? pk[Object.keys(pk).find((k) => k.toLowerCase() === n.toLowerCase()) ?? ""])?.file_name;
+            if (!f) missing.push(`${n} (no file_name in the lock)`);
+            else if (!fs.existsSync(path.join(DIST, "pyodide", f))) missing.push(f);
+        }
+        return missing;
+    } catch {
+        return ["pyodide-lock.json"];
+    }
+})();
+const skip = missingWheels.length === 0 ? false
+    : !hasPyodide ? "no dist/pyodide — run `npm run fetch-pyodide` to enable"
+        : missingWheels.includes("pyodide-lock.json") ? "no dist/pyodide/pyodide-lock.json — run `npm run fetch-pyodide` to enable"
+            : `dist/pyodide is missing the boot's wheels (${missingWheels.join(", ")}) — run \`npm run fetch-pyodide\` to copy pyodide-wheels/ in`;
 
 /** The mark a script prints as its blocking section begins: the moment a stop may safely be written. */
 const BEACON = "WML-STOP-BEACON";
@@ -67,7 +94,7 @@ const WRITER_SRC = `
 `;
 
 before(async () => {
-    if (!hasPyodide) return;
+    if (skip) return;
     // Pyodide in Node wants a filesystem path where the worker hands it a URL (python-worker-bridges.test.mjs).
     shim = fs.mkdtempSync(path.join(os.tmpdir(), "wml-stop-"));
     fs.mkdirSync(path.join(shim, "pyodide"));
