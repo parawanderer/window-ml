@@ -412,24 +412,6 @@ export function withoutCurrentClause(systemPrompt: string, toolset: readonly MlT
     return systemPrompt.replace(currentClause(toolset.some(t => t.name === "agent_api_docs")), "");
 }
 
-declare const __ML_PROMPT_VARIANT__: string | undefined;
-
-/** The `pagectx-system` experiment (docs/spec/PROMPT_BUDGET.md, "the page context leaves the system prompt"): the
- *  OLD placement, the page context appended to the system prompt, for the bench's old arm. Off unless the build
- *  defines it; deleted with {@link systemWithContext} once measured. */
-const CTX_IN_SYSTEM = typeof __ML_PROMPT_VARIANT__ === "string" && __ML_PROMPT_VARIANT__ === "pagectx-system";
-
-/**
- * A fresh run's system message: the prompt itself, or under the `pagectx-system` experiment the prompt with the page
- * context appended as it was before it moved to the first user message.
- * @param systemPrompt the assembled prompt
- * @param ctx the page context text, or null/empty for none
- * @returns the system message's text
- */
-export function systemWithContext(systemPrompt: string, ctx: string | null | undefined): string {
-    return CTX_IN_SYSTEM && ctx ? `${systemPrompt}\n\nCurrent page context:\n${ctx}` : systemPrompt;
-}
-
 /**
  * The text of a run's FIRST user message: the page's own context (URL, title, language, time, locale) behind
  * {@link PAGE_CONTEXT_HEAD}, then the task. Both loops build their first turn with it (agent-host.ts for a run the worker
@@ -440,7 +422,7 @@ export function systemWithContext(systemPrompt: string, ctx: string | null | und
  * @returns the message text: the task alone when there is no context
  */
 export function firstUserTurn(task: string, ctx: string | null | undefined): string {
-    if (!ctx || CTX_IN_SYSTEM) return task;
+    if (!ctx) return task;
     return `${PAGE_CONTEXT_HEAD}\n${ctx}${task ? `\n\nTask:\n${task}` : ""}`;
 }
 

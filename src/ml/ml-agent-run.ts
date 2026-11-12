@@ -40,7 +40,7 @@ import { registerRun, endRun, runAnswer } from "../agent/run-delegation";
 import { isSelfSourceUrl } from "../agent/self-source";
 import { toolContext, executeTool, withRunDeref } from "../tools/tool-exec";
 import { pageContext } from "../util";
-import { assembleRun, firstUserTurn, systemWithContext, withoutCurrentClause, startPayload, type AssemblyMl } from "../agent/run-assembly";
+import { assembleRun, firstUserTurn, withoutCurrentClause, startPayload, type AssemblyMl } from "../agent/run-assembly";
 import { validateArgs } from "../tools/validate";
 
 /**
@@ -534,7 +534,7 @@ export const agent = async function(this: MlApi, task: string, { host = null, to
         buildMessages: (t) => {
             // A history with no system prompt yet is a fresh session: its first user message carries the page context.
             const fresh = !control.messages.some(m => m.role === "system");
-            if (fresh) control.messages.unshift({ role: "system", content: systemWithContext(systemPrompt, pageCtx) });
+            if (fresh) control.messages.unshift({ role: "system", content: systemPrompt });
             t = firstUserTurn(t || "", fresh ? pageCtx : undefined);
             // Attach this turn's composer images to the user message (native-vision path); the OCR
             // path already folded its text into `t`. pendingImages is consumed once → first turn only.
