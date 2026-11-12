@@ -269,8 +269,8 @@ with these rulings:
 - **Q3, the kernel object is a SECOND PR** on top of mode 1 ("same slice" meant this lane's stretch, not one PR):
   `kernel.reset()`, `kernel.restart()`, `kernel.names()`, `kernel.info()`, one line in python_exec's description;
   worker-hosted run only, its own principal, a restart in the housekeeping log, e3 red-teams it, prompt budget
-  counted. RELAYED: the lane cites Shane's agreement of 2026-11-08 and those conditions; neither is written in a spec
-  or plan file, so this item waits on Shane's confirmation in the coordinator's session before its PR opens.
+  counted. CONFIRMED 2026-11-12: Shane confirmed the 2026-11-08 agreement and these conditions in the coordinator's session
+  ("I agreed on the kernel stuff"); the kernel PR opens after mode 1 merges.
 - **Q4, a second `python_exec` while a cell is detached is REFUSED**, not queued: "busy: task <id> is still running
   in this run's Python; await or cancel it first". Queueing behind `runChain` would arm the queued cell's 120 s start
   bound and kill the worker with the detached cell in it. The read-only dialect's free cells go through the same
