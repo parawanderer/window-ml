@@ -23,7 +23,7 @@ import { dropLocalTools, registerLocalTools } from "./sw-local-tools";
 import { buildWorkerTools } from "./worker-tools";
 import { pyMediaFor } from "./worker-media";
 import { hostRun } from "./sw-run-host";
-import { bgRuns, bufferReplay, isWorkerRun, makeWorkerRun, runControllers, runInboxes, runModelFor, runRebuilds, tabPageUrl, workerRunsStarting, beginStart, endStart, sessionTokens, releaseSessionTokens, turnByRun } from "./sw-runs";
+import { bgRuns, bufferReplay, isWorkerRun, makeWorkerRun, runControllers, runInboxes, runModelFor, runRebuilds, startingControllers, tabPageUrl, workerRunsStarting, beginStart, endStart, sessionTokens, releaseSessionTokens, turnByRun } from "./sw-runs";
 import { attachFiles, attachPaste, readPdfOffscreen } from "./sw-attach";
 import type { FilePointer } from "../pointers/file-pointer";
 import { storeHeld } from "./sw-values";
@@ -345,6 +345,9 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
             return steerRun(hash, text, origin, display, routed.images, attached) ? "steer" : "busy";
         }
         if (!stored) return takeBack("none");
+        // A resume already starting (another send still in the awaits below) makes this one busy: a second RESUME_RUN
+        // would be refused by `hostRun` with no one listening, the message shown as sent and then lost.
+        if (startingControllers.has(hash)) return takeBack("busy");
         // Re-register the builtin toolset in the page first: the document may not be the one the last turn ran on.
         // Registered as a start for that await: a CANCEL_ALL_RUNS there must stop this resume, not find nothing live.
         // Not on a page the run is still held on (nav-arrival.ts): the turn judges it again, and the person answers first.
