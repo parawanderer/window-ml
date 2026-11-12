@@ -1,10 +1,11 @@
-# Moving a live run to another tab
+# Moving a run to another tab
 
 **Status: design note, nothing built.** Written 2026-11-12 by the async lane, assigned by the coordinator as the lane
-closest to it. The owner of the build is OPEN. The decisions below (a move, not a fork; the same runtime only; started
-only by the person, from the Commander HUD or the chat page's "move to tab…") are as RELAYED from Shane through the
-async lane, pending his confirmation in the coordinator's session, which records them the same way. Nothing here is
-built until he confirms there.
+closest to it. Shane confirmed the decisions below in the coordinator's session on 2026-11-12 (a move, not a fork; the
+same runtime only; started only by the person). The build is the `[window-ml move-run]` lane's, started after this note
+and the page-health change land; the chat page's "move to tab…" entry is the Chat Page lane's afterwards. Revised the
+same day on the move-run lane's findings against main b7153df8 (the two shapes of a move, per-run re-keying, the grants
+that stay behind, a page-built run, the point tokens, the origin consent).
 
 ## Why
 
@@ -22,70 +23,105 @@ that URL opens. The person has already done the navigating: the run should follo
 ## The decisions
 
 - **A move, not a fork.** The use case is the same as asking the model to open the site, minus the round trip; the run
-  keeps its id, its transcript and its worker state, and leaves the old tab. A fork onto the new page (the original
-  staying where it was) was considered and rejected for this: it answers a different question.
+  keeps its id and its transcript, and leaves the old tab. A fork onto the new page (the original staying where it
+  was) was considered and rejected for this: it answers a different question.
 - **The same runtime only, at first.** A move re-homes a run between tabs of the browser that hosts it. Moving a run to
   a tab of another runtime (another browser, through the hub) is out of scope until this one exists.
 - **Started only by the person**, from one of two surfaces they own:
-  - **The Commander HUD on the destination page**: "bring a session here", listing this browser's live and resumable
-    sessions.
+  - **The HUD on the destination page** (the off-mode card and its composer, `hud-card.tsx`): "bring a session here",
+    listing this browser's paused and finished sessions (shape (a) below).
   - **The chat page**: a session's "move to tab…", picking from the runtime's open tabs (`tab-tree.ts`).
 
   Never by the model (no tool moves a run), and never by a page.
 
-## What moves and what does not
+## Two shapes of a move, and which ships first
 
-A run the person starts is assembled in the WORKER (`sw-run-start.ts`, docs/dev/agent-tools.md), so almost all of it
-already lives off the page:
+`hostRun` (`sw-run-host.ts`) binds the run's `tabId` ONCE PER TURN: every page send (`toPage`, `delegateSend`), the
+run's inbox (`runInboxes.set`), and the turn's `settle` (`untrackRun`, `releaseDebugger`, `watchBetweenTurns`) close
+over it, about a hundred uses. Re-keying a map does not redirect a turn that is running. And `settle`, at the end of
+EVERY turn, deletes the run's inbox, ends its tasks (`endTasks`) and its Python namespace (`deletePythonRun`). So:
 
-| Moves with the run | Stays behind, or is lost |
-| --- | --- |
-| the transcript and the run's messages | whatever the model made in the old page's world: `exec` variables, DOM edits, form input it filled |
-| the `@tool:` pointers and their values (`tokensByRun`, worker memory) | a CDP attach to the old tab (detached, logged `cdp`/`detached`) |
-| a worker-hosted run's Python namespace | anything bound to the old DOCUMENT: a located element, a screenshot point or box, minted against its `documentId`; each must FAIL as stale on the new page, never resolve against it |
-| the task table and its runtime-bound tasks (ASYNC_CALLS.md, rule 4a) | the old page's page-bound tasks, cancelled by rule 4a |
-| `ml.current` | a page-built run's custom function tools: as on a cross-page navigation, only the BUILTIN toolset is rebuilt (`_rebuildToolset`) |
+- **(a) A move BETWEEN TURNS. Ships first.** The run is paused or finished; its stored snapshot's tab is re-homed, and
+  its next turn is hosted on the new tab from the start. It is cheap, and it covers both headline cases and the crash
+  case: a dead tab's turn ends (the page-health work), and the person brings the session to a live tab.
+- **(b) A move BETWEEN STEPS of a running turn.** Needs `hostRun`'s tab to become a mutable cell that every send reads
+  at the moment it sends, the inbox re-keyed, and the between-turn watcher moved. An open item, not built in the first
+  PR.
 
-## How it would work
+## What a move carries
 
-A move is close to what already happens when a background-hosted run navigates to another site in its own tab (the
-navigation barrier, re-adoption, the hand-over to the worker: docs/dev/agent-tools.md, "Cross-page persistence"), plus
-RE-KEYING the run from one tab id to another. The template for the re-keying exists: `chrome.tabs.onReplaced`
-(`background.ts`) already moves a run and every tab-keyed map (`retabRuns`, `moveTabKey`, `movePageBuiltTab`) to a new
-tab id. A move does the same on the person's word, with these additions:
+For shape (a), the turn has already settled, so most of what a turn holds is gone before any move, and the move takes
+nothing away from it:
 
-1. **At a turn boundary.** A move asked for while a page tool is outstanding either waits for the turn boundary or
-   cancels the outstanding call with honest text (the cancel-per-executor rule, ASYNC_CALLS.md rule 3); which of the
-   two is a decision for the build. It is never applied under a running page call.
-2. **The run's inbox is re-keyed** (`runInboxes` carries a `tabId`), so a task's result is delivered to the new tab.
-3. **The model is told**, as an inbox item at the next turn boundary: `[the person moved this run to tab "<title>"
-   (<url>); the previous page's state is not carried]`. Without it the model acts on a page it thinks it is still on.
-4. **The destination need not be approved for `window.ml`.** A run the person starts works on any page; the worker-hosted
-   path the hand-over already uses (`nav-handover.ts`) covers a site that may not use it, with the isolated-world
-   routing `exec` already has (`exec-routing.ts`).
-   The person choosing the tab IS the consent the cross-domain gate asks for (docs/dev/agent-tools.md, "Variant B"):
-   the destination's origin joins the run's `consentedOrigins`, and a run that did not opt in with `crossOrigin` is
-   moved anyway, because the gate exists to stop a PAGE sending the run elsewhere, not the person.
+| Carried to the new tab | Already ended by the turn's `settle`, move or not | Stays behind with the old tab |
+| --- | --- | --- |
+| the transcript and the run's messages (its snapshot) | the run's inbox (`runInboxes`) | whatever the model made in the old page's world: `exec` variables, DOM edits, form input it filled |
+| the `@tool:` pointers and values of a worker-held run (`tokensByRun`, memory, as a follow-up keeps them) | its detached tasks (`endTasks`; `ASYNC_CALLS.md`, rule 4) | the per-TAB grants: `fetchConsent` and `credFetchGrants` are consent for the old tab's page and do NOT follow the run (`@security`) |
+| `ml.current` | its Python namespace (`deletePythonRun`) | a CDP attach (already released at `settle`, `releaseDebugger`) |
+| | | point and box tokens: see below |
+
+For shape (b) the middle column is live, so a move between steps would carry the inbox and the runtime-bound tasks,
+and cancel the page-bound ones (`ASYNC_CALLS.md`, rule 4a).
+
+**Point and box tokens.** A page-world `@pt`/`@box` token lives in that page's `pointRegistry` (`util.ts`); on another
+tab it does not exist and fails as "Unknown point token … may be stale" (`builtin-tools.ts`). A worker-held shot is
+stamped with its `documentId` (`worker-tools.ts`, `imageDocument`; `python-tool.ts`'s `mintVia` pins it). Either way a
+token from the old page fails on the new one and never resolves against it.
+
+**A page-built run.** Its `@tool:` values sit under `pageValueSession(tabId)` (`"page:<tabId>"`, `sw-runs.ts`), keyed by
+the tab. A move first hands such a run to the worker (`makeWorkerRun`, as `nav-handover.ts` does at a navigation onto a
+site that may not use window.ml), then moves it as a worker-held run. Its custom function tools do not survive, as on a
+cross-page navigation: only the BUILTIN toolset is rebuilt (`_rebuildToolset`).
+
+## How it would work (shape (a))
+
+The re-keying is PER RUN, between two LIVE tabs. `chrome.tabs.onReplaced` is not a template for it: it is per TAB
+(`retabRuns` in `sw-runs.ts` moves every run under the tab, with the replay ring, `readoptPageInfo` and `tabPageUrl`;
+`background.ts` moves `fetchConsent`, `credFetchGrants` and `debugBuffer`; `moveTabKey` in `tab-replaced.ts` OVERWRITES
+the destination's entry), and it also calls `sessionServer.pageGone` and `navBarrier.forget`, which are wrong for an old
+tab that stays open. A move needs its own per-run function:
+
+1. **Re-home one run.** Its snapshot's tab, its tracking entry and its replay ring move from the old tab to the new;
+   nothing else filed under the old tab moves, and nothing filed under the new tab is overwritten. The per-tab grants
+   stay where they are.
+2. **The model is told** in the next turn's messages, since a settled run has no inbox: `[the person moved this run to
+   tab "<title>" (<url>); the previous page's state is not carried]`. Without it the model acts on a page it thinks it
+   is still on.
+3. **The destination need not be approved for `window.ml`.** A run the person starts works on any page; the
+   worker-hosted path the hand-over already uses (`nav-handover.ts`) covers a site that may not use it, with the
+   isolated-world routing `exec` already has (`exec-routing.ts`).
+4. **The person choosing the tab is the consent the cross-domain gate asks for** (docs/dev/agent-tools.md, "Variant B").
+   `consentedOrigins` is turn-local, seeded from `runOrigins(runId)` and the run's stored `pageOrigin`; the move
+   calls `grantRunOrigin(runId, <destination origin>)` (`worker-tools.ts`), which outlives the turn, and REWRITES the
+   stored `pageOrigin` to the destination, so the old origin is no longer seeded as the run's start. An origin the run
+   was granted by an earlier consent stays granted, as it does today. A run that did not opt in with `crossOrigin` is
+   moved anyway: the gate exists to stop a PAGE sending the run elsewhere, not the person. (`@security`)
 5. **The old tab is released**: unpinned (`autoDiscardable` back on, logged `tab`/`released`) and left as it is. Its
-   page is not reloaded or closed.
-6. **The run log records the move** (a `tab` record naming both tab ids), so the person sees where the run went and
-   when.
+   page is not reloaded or closed, and no `pageGone` is sent for it.
+6. **The run log records the move** (a `tab` record naming both tab ids and the run), so the person sees where the run
+   went and when.
 
-A move off a tab that crashed or stopped answering is the same operation, and the page-health work (the async lane,
-2026-11-12) may offer it as the recovery for a dead tab.
+## Known gap, not caused by a move: `onReplaced` during a live turn
+
+Same cause as shape (b): a `chrome.tabs.onReplaced` while a turn runs leaves the turn sending to the removed tab id,
+since `hostRun` closed over it, and `retabRuns` never touches `runInboxes[run].tabId`, so a person's steering message
+from the restored tab is dropped by the inbox's tab check (`background.ts`). Untested today. The move-run lane writes
+the failing-first row in its own PR.
 
 ## Security
 
 - **A page can never start a move.** Not a page that wants a run's context pulled onto itself, and not one that wants a
-  run pushed off it. The move is a message only the person's own surfaces (the Commander, the chat page) send, decided
-  in the worker from the sender, never from anything a page says. The red-team row is e3's, written after the feature
-  PR merges: a page's message that names a run and a tab moves nothing and is answered with nothing.
+  run pushed off it. The move is a message only the person's own surfaces (the HUD, the chat page) send, decided in the
+  worker from the sender, never from anything a page says. The red-team row is e3's, written after the feature PR
+  merges: a page's message that names a run and a tab moves nothing and is answered with nothing.
+- **The per-tab grants stay behind** (step 1), and the old origin is not carried as the run's start (step 4).
 - **Moving a run to a page discloses the run to nothing.** The destination page learns no more than it does when a run
   the person started there runs on it: the presence rules (`docs/dev/site-access.md`, "Presence") hold unchanged.
-- **The model's text never names the old tab's URL to the new page.** The inbox item is model-facing only.
+- **The model's text never names the old tab's URL to the new page.** The note to the model is model-facing only.
 
 ## Open
 
-- Wait for the turn boundary, or cancel the outstanding call (step 1).
+- Shape (b), a move between steps of a running turn: `hostRun`'s tab as a mutable cell, the inbox and the between-turn
+  watcher re-keyed, and rule 4a's cancels.
 - Whether "bring a session here" lists only this tab's site's sessions or all of them.
 - A move between runtimes (another browser through the hub), after this exists.

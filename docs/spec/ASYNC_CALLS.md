@@ -144,9 +144,11 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
      this run left]`; `[subscription <id> ended: it watched the page this run left]`), and is a run-log record. A
      selector watch is never silently re-armed on the new document, whose elements are not the ones it was asked
      about; the model subscribes again if it wants to.
-   - **The inbox follows the run.** `runInboxes` carries the run's `tabId`; a move re-keys it with the other tab-keyed
-     state (`MOVE_RUN.md`), so a runtime-bound task's result reaches the run on its new tab and never the old one. A
-     same-tab navigation keeps the tab id and needs no re-key.
+   - **The inbox follows the run, where there is one to follow.** `runInboxes` carries the run's `tabId`, and a turn's
+     `settle` deletes it with the turn's tasks. A move BETWEEN TURNS (`MOVE_RUN.md`, shape (a), the one built first)
+     therefore meets no inbox and no task: rule 4 already ended them, and this rule has nothing to act on. A move
+     BETWEEN STEPS (shape (b), open) would re-key the inbox, so a runtime-bound task's result reaches the run on its
+     new tab and never the old one. A same-tab navigation keeps the tab id and needs no re-key.
 
    Today no page-bound task exists (only `ml.sh` and `python_exec` detach, and mode 2 is unbuilt), so the rule changes
    nothing that runs now. It must hold before a detached `exec` or a DOM subscription is built, and each of those PRs
