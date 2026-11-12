@@ -5,6 +5,7 @@
 // person's, the model's, each with its source, its pin and the measured evidence. What it adds is the person's; the
 // worker has the host resolve it and pins it (`MANIFESTS`, background.ts), so nothing here names a fingerprint or hash.
 import { useEffect, useState } from "preact/hooks";
+import { SCRIPT_RUNS_CODE_WARNING, scriptLacksRunsCode } from "../../shell/program-manifest";
 import type { StoredManifest } from "../../shell/stored-manifests";
 import { cursorTipOn } from "../ui-kit";
 
@@ -85,6 +86,7 @@ export function ManifestRow({ entry, onRemove }: { entry: StoredManifest; onRemo
             </div>
             <div class="set-hint">{pinText(entry)}. A changed program file describes nothing until it is registered again.</div>
             {ev.detail ? <div class={ev.tone === "deny" ? "set-err pol-broken" : "set-hint"}>{ev.detail}</div> : null}
+            {scriptLacksRunsCode(entry.manifest) ? <div class="set-warn man-runs-code-warn">{SCRIPT_RUNS_CODE_WARNING}</div> : null}
             <details>
                 <summary class="set-hint">The manifest</summary>
                 <pre class="pol-code"><code>{JSON.stringify(entry.manifest, null, 2)}</code></pre>
