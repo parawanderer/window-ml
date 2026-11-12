@@ -249,6 +249,22 @@ test("agent_api_docs: a bad pipe stage is an actionable message, never a lost st
     assert.ok(!out.includes("Opening the HUD"), "and not the whole reference back as if nothing happened");
 });
 
+test("agent_api_docs: a piped call neither marks sections seen nor greps their stubs", async () => {
+    // Observed (prompt-budget-cuts, MiniMax M3, 2026-11-12): three grep'd calls saw a few lines each, then the plain
+    // call answered `[intro already seen]` for an intro the model had never read. The burst memory recorded what the
+    // reply was BUILT from, not what the pipe let through.
+    const { ml } = loadDomWorld("<p>hi</p>");
+    const tool = ml.domTools.find(t => t.name === "agent_api_docs");
+    const ctx = { docsMemory: { shown: new Set(), sinceDocs: 0 } };
+    await tool.run({ pipe: "grep -i screenshot" }, ctx);
+    const whole = await tool.run({}, ctx);
+    assert.ok(!whole.includes("already seen"), "nothing a pipe filtered out counts as shown");
+    assert.ok(whole.includes("devtools console"), "the intro is printed in full");
+    // The other order: once a section is shown, a pipe still greps its text, not its one-line stub.
+    const piped = await tool.run({ pipe: "grep -i 'devtools console'" }, ctx);
+    assert.match(piped, /devtools console/i, "the pipe reads the reference itself");
+});
+
 test("agent_api_docs is CITABLE, so its output can be named by a pointer and read back later", async () => {
     // The other half of the same gap: with a `token` the result mints an @tool:<id>, so `dereference` can pipe
     // it on a LATER step instead of only at the moment of the call.

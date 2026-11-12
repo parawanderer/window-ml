@@ -244,11 +244,13 @@ export function apiDocsTool(define: typeof defineTool, src: DocsSource): MlTool 
             if (mem) { mem.sinceDocs = 0; if (args.fresh) mem.shown.clear(); }
             // A member this run does not have (its tool is not in the toolset) is not in its reference either.
             const parts = ctx?.hasTool ? withoutMembers(ML_API_PARTS, [...hiddenMlMembers(ctx.hasTool).keys()]) : ML_API_PARTS;
-            const view = queryApiDocs(parts, args, env, mem?.shown);
+            const pipe = typeof args.pipe === "string" ? args.pipe.trim() : "";
+            // A piped call skips the burst memory both ways: the model sees only what the pipe lets through, so
+            // nothing counts as shown, and the pipe reads the sections themselves, never their one-line stubs.
+            const view = queryApiDocs(parts, args, env, pipe ? undefined : mem?.shown);
             // The reduction lives HERE rather than in api-docs-query.ts, which has no imports on purpose, and it
             // goes through `runPipe` rather than growing a second one: PIPE_CMDS is the single source for every
             // description of the dialect, and a private reduction in one tool is how that stops being true.
-            const pipe = typeof args.pipe === "string" ? args.pipe.trim() : "";
             if (!pipe) return view;
             try { return `${runPipe(view, pipe)}\n\n(piped through \`${pipe}\`)`; }
             catch (e) { const msg = errText(e as Error); return `Pipe error: ${msg}${pipeHint(msg)}`; }
