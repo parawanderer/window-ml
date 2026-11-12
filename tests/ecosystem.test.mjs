@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { claudeTrailer, resolveRenamed, countTests, churnFrom, blameOwners } = await import("../scripts/ecosystem.mjs");
+const { claudeTrailer, agentPostModel, normaliseModel, attributeModel, squashPr, FOOTER_NOT_READ, resolveRenamed, countTests, churnFrom, blameOwners } = await import("../scripts/ecosystem.mjs");
 
 // --- authorship ---
 
@@ -14,6 +14,39 @@ test("a Claude trailer names its model in either capitalisation, and a human co-
     assert.equal(claudeTrailer("fix: x\n\nCo-authored-by: Someone Else <a@b.c>"), null);
     assert.equal(claudeTrailer("fix: mentions co-authored-by: claude in prose, not as a trailer"), null);
     assert.equal(claudeTrailer(""), null);
+});
+
+// --- model attribution ---
+
+test("a trailer naming a model wins over the footer; a bare Claude Code trailer takes the footer's model or is unknown", () => {
+    assert.equal(attributeModel("Claude Opus 5.5", "deepseek-flash"), "Claude Opus 5.5");
+    assert.equal(attributeModel("Claude Fable 5.1", null), "Claude Fable 5.1");
+    assert.equal(attributeModel("Claude Code", "mimo-v2.6-pro"), "mimo-v2.6-pro");
+    assert.equal(attributeModel("Claude Code", "deepseek.deepseek-flash"), "deepseek-flash");
+    assert.equal(attributeModel("Claude Code", null), "unknown");
+    assert.equal(attributeModel("Claude Code", undefined), FOOTER_NOT_READ);
+    assert.equal(attributeModel(null, "deepseek-flash"), null);
+});
+
+test("model ids lose a router prefix and a vendor path only, and are otherwise kept as written", () => {
+    assert.equal(normaliseModel("deepseek.deepseek-flash"), "deepseek-flash");
+    assert.equal(normaliseModel("deepseek-flash"), "deepseek-flash");
+    assert.equal(normaliseModel("openrouter.xiaomi/mimo-v2.6-pro"), "mimo-v2.6-pro");
+    assert.equal(normaliseModel("mimo-v2.6-pro"), "mimo-v2.6-pro");
+    assert.equal(normaliseModel("moonshot.kimi-k3.1-pro"), "kimi-k3.1-pro");
+    assert.equal(normaliseModel("openrouter.moonshotai/kimi-k3.1-pro"), "kimi-k3.1-pro");
+    assert.equal(normaliseModel("gpt-6-luna"), "gpt-6-luna");
+    assert.equal(normaliseModel("claude-opus-5-5"), "claude-opus-5-5");
+});
+
+test("the agent-post footer's model and a squash subject's PR number are read, and their absence is null", () => {
+    const body = "Body.\n\n> *Drafted by X*\n<!-- agent-post: harness=codex work=w session=abc model=gpt-6-luna -->\n";
+    assert.equal(agentPostModel(body), "gpt-6-luna");
+    assert.equal(agentPostModel("<!-- agent-post: harness=h work=w session=s model=deepseek.deepseek-flash-->"), "deepseek.deepseek-flash");
+    assert.equal(agentPostModel("no footer, model=gpt-6-luna in prose"), null);
+    assert.equal(agentPostModel(null), null);
+    assert.equal(squashPr("fix(security): the gates judge a URL (#1568)"), 1568);
+    assert.equal(squashPr("docs: mentions (#12) mid-subject only"), null);
 });
 
 // --- numstat ---
