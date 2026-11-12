@@ -240,6 +240,52 @@ each of which amends the text above where it says otherwise:
   foreign rows in `ml.current.tasks`; nothing new reaches an unapproved page; the detach never skips the judgement
   or the ask), written by e3 in its own file as a PR after the lane's.
 
+### Rulings on the async lane's python_exec mode 1 design note (coordinator, 2026-11-12)
+
+The note: `20261112-async-to-repl-specs-python-mode1-design.md` in session-mail, read from main d13b56b5. Two facts
+shape it: a cell is KILLED at 15 s today (`PY_TIMEOUT_MS`, the sandbox terminated and the namespace lost), so mode 1
+for Python is "past the lease, detach instead of kill"; and a run's Stop never reaches a running cell (`abortCtl` is not
+read on the python path, and `settle`'s `PY_DELETE_RUN` queues behind the cell). The design is ACCEPTED as written,
+with these rulings:
+
+- **Worker-built runs only** (`caller.wireRun` set). A page-hosted run, the bench and a page's `ml.pythonExec` keep
+  the 15 s kill: no task table or task tool exists there.
+- **The lease is the service worker's**, as `shRun`'s is: `PY_LEASE_MS`, placeholder 15 s (today's kill point, so
+  nothing changes inside it), a `__PY_LEASE_MS__` bench define like `__SH_LEASE_MS__`; `expect_ms` overrides it with
+  rule 2's two wake phrasings. Past the lease the TOOL resolves `{ status: "detached", id, elapsed_ms, tail }` and the
+  offscreen document replaces the kill with `PY_DETACHED_MAX_MS`, placeholder 10 min (equal to `TASK_AWAIT_MAX_MS`),
+  named in the detached text. The cell ends with the turn (rule 4).
+- **Cancel is `interruptCell(cellId)`**: the bench's interrupt buffer generalised to any cell, then the kill after
+  `PY_INTERRUPT_KILL_MS` (placeholder 1 s, rule 3); the answer says which happened and whether the names survived.
+  `endTasks` at run end uses the same cancel, so `PY_DELETE_RUN` no longer waits behind a detached cell.
+- **Q1, Stop on an attached cell: the SAME PR.** One primitive; rule 4 needs it for the detached case and the attached
+  Stop is one more test on it. Landing mode 1 without it would turn a 15 s leak after Stop into a 10 min one.
+- **Q2, the tail ring lives in the OFFSCREEN DOCUMENT**, beside the Pyodide worker it holds, not in the service
+  worker. Rule 6 bounds output AT THE EXECUTOR; the service worker is the return side and is evicted, while the
+  offscreen document holds the worker for as long as the cell runs. `task tail` asks the offscreen document for the
+  last bytes by cell id; the service worker keeps no copy. 64 KiB, a placeholder. The final result keeps Python's own
+  `OUTPUT_CEILING` cut, and the outcome text is built by python_exec's own formatter (cap and `@tool:` pointer), then
+  `finish`'s scrub.
+- **Q3, the kernel object is a SECOND PR** on top of mode 1 ("same slice" meant this lane's stretch, not one PR):
+  `kernel.reset()`, `kernel.restart()`, `kernel.names()`, `kernel.info()`, one line in python_exec's description;
+  worker-hosted run only, its own principal, a restart in the housekeeping log, e3 red-teams it, prompt budget
+  counted. RELAYED: the lane cites Shane's agreement of 2026-11-08 and those conditions; neither is written in a spec
+  or plan file, so this item waits on Shane's confirmation in the coordinator's session before its PR opens.
+- **Q4, a second `python_exec` while a cell is detached is REFUSED**, not queued: "busy: task <id> is still running
+  in this run's Python; await or cancel it first". Queueing behind `runChain` would arm the queued cell's 120 s start
+  bound and kill the worker with the detached cell in it. The read-only dialect's free cells go through the same
+  check.
+- **The keep and detach are independent**: a detached cell is a pending entry, so the idle reap never fires on it.
+  Run log: `python`/`detached` with `{ seq, id, leaseMs, expectMs? }`; `task/*` as the shell's.
+- **OPEN: a figure in a detached result.** The inbox line says "1 figure" and the image is stored as a value the model
+  can show; whether it reaches the model's next call as an image block is not in this slice.
+- **Precondition for review: the service worker eviction row.** A 90 s cell that prints nothing, detached, then
+  awaited, with the result in the PR body. If the worker is evicted, the offscreen document posts `PY_DONE` by cell id
+  and a result with no task row is logged as orphaned, never dropped silently.
+- **Reviewer janitor-2** (code), after it names #1634. The red-team rows (a page cannot interrupt or tail another
+  run's cell; `PYTHON_INTERRUPT` stays extension-only; a page-hosted run and the bench keep the kill) go to e3 through
+  the coordinator once the PR exists, under rule 10 as amended by #1307.
+
 ## `ml.current.tasks`: the model's own view of its async work (Shane, 2026-11-07)
 
 The model gets its async work the way it gets everything else about its run: as a member of `ml.current`, read from
@@ -303,9 +349,8 @@ the first PR, as every REPL lane does.
   the page holds dies with it; the worker's copy is the one that survives.
 - Whether network inspection (the biggest win in the agent's own feedback) ships as a mode-2 source first or as a
   tool first.
-- The ring buffer's size for a detached cell, and whether `tail` reads the worker's buffer live while the cell runs
-  (the worker is busy, so the buffer is read by the offscreen document, which holds it) or only at the detach and
-  the end.
+- RULED 2026-11-12 (above): the ring is 64 KiB (a placeholder) in the offscreen document, and `tail` reads it live by
+  cell id.
 
 ## Related
 
