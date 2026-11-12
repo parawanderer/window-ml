@@ -121,7 +121,7 @@ export interface AgentLoopDeps {
     // Mid-run STEERING (a.say()): drained at each step boundary (before the model call) — returns any user
     // messages queued since the last step, injected via pushUser so the model sees them on its next turn.
     // Omit → no steering. The queue lives in the caller's world (page handle / SW inbox).
-    drainInbox?(): (string | { text: string; origin?: PromptOrigin; images?: string[]; task?: string })[];
+    drainInbox?(): (string | { text: string; origin?: PromptOrigin; images?: string[]; task?: string; value?: string; chars?: number })[];
     pushUser?(messages: unknown[], text: string, images?: string[]): void;
     // Self-introspection (ml.chatMetaTool): resolve the run's model facts for the metadata summary.
     // World-specific (page: ml.capabilities/ml.ps/config; background: the SW's caches). The token/message
@@ -347,6 +347,16 @@ export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() =
 // Live tool-output streaming: throttle the fan (a chatty loop can't flood the bus) and cap the accumulated
 // text (a runaway print can't blow up a message). The DONE emit carries the full result and supersedes this,
 // so the cap only bounds the LIVE view. Mirrors the LLM stream's 90ms cadence.
+/**
+ * The line on a CUT copy that says where the rest is and how to read it: the clause in the system prompt teaches
+ * `dereference`, but the moment a model needs it is when it is holding a truncated output.
+ * @param id the pointer that holds the rest
+ * @param chars how much it holds
+ */
+function cutNote(id: string, chars: number): string {
+    return `\n[your copy is cut: @tool:${id} holds ${chars} chars of this output. Read further with dereference and a pipe (grep PATTERN, head -n N, tail -n N; lines A to B: head -n B | tail -n B-A+1) instead of running it again.]`;
+}
+
 const STREAM_EMIT_MS = 90;
 // Same budget the finished render keeps (UI_OUT_CAP), and the same SHAPE (output-clip.ts): the start the model read
 // and the LATEST output, with the gap counted between them. So the live view and the settled one agree, and a
@@ -884,6 +894,18 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     // the loop is shared. `calls` = model turns so far.
     let promptLast = 0, genTotal = 0, modelCalls = 0;
     const usages: TokenUsage[] = [];   // every call's usage sample → runStats (cumulative in/out spend + tok/s) for chat_metadata
+    /** Mint the pointer to a task result's stored whole as it arrives through the inbox, and the line that names it
+     *  (empty when tool tokens are off, or the whole is no longer than what the model reads). */
+    const taskPointer = (task: string, value: string, chars: number, text: string, step: number): string => {
+        if (!opts.toolTokens || !opts.runHash || chars <= text.length) return "";
+        const s = ++seq;
+        const id = toolToken(opts.runHash, (opts.seqBase ?? 0) + s);
+        try {
+            opts.claimValue?.(value);
+            tokenStore.note({ id, tool: "task", kind: "text", out: text, value, label: cleanLabel(`task ${task} result`), in: JSON.stringify({ id: task }), t: Date.now(), step, seq: s });
+        } catch (e) { threw("task", "run", e); return ""; }
+        return cutNote(id, chars);
+    };
     const cancelled = (steps: number): Omit<AgentResult, "hash"> => ({ summary: "Cancelled by the caller.", steps, transcript, elements: [], cancelled: true, tokenRenders });
 
     for (let step = 1; step <= maxSteps(); step++) {
@@ -898,7 +920,12 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             const text = typeof queued === "string" ? queued : queued.text;
             // A detached call's result (ASYNC_CALLS.md, mode 1) arrives here too: no one typed it, so it has no surface or
             // client, and says which task it is.
-            if (typeof queued !== "string" && queued.task) { pushed(() => deps.pushUser?.(messages, text), { surface: null, client: null, task: queued.task }); continue; }
+            // A cut one carries its stored whole, which gets the pointer the call's own step would have minted, named on it.
+            if (typeof queued !== "string" && queued.task) {
+                const said = queued.value ? `${text}${taskPointer(queued.task, queued.value, queued.chars ?? 0, text, step)}` : text;
+                pushed(() => deps.pushUser?.(messages, said, queued.images), { surface: null, client: null, task: queued.task });
+                continue;
+            }
             if (typeof queued !== "string" && queued.origin) lastOrigin = queued.origin;
             const images = typeof queued === "string" ? undefined : queued.images;
             pushed(() => deps.pushUser?.(messages, text, images), { surface: lastOrigin?.surface ?? null, client: clientOf(lastOrigin) });
@@ -1210,11 +1237,8 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             const embedLine = (tokenId && wantsToken && !mintedView)
                 ? `\n\n[output token @tool:${tokenId} — EMBED this exact output in your final answer with image syntax: ![label](@tool:${tokenId}:out) (use ":in" for the call/code). It expands in place; don't retype it.]`
                 : "";
-            // A CUT copy says where the rest is and how to read it, on the result itself: the clause in the system prompt
-            // teaches `dereference`, but the moment a model needs it is when it is holding a truncated output.
-            const cutLine = tokenId && !mintedView && heldChars
-                ? `\n[your copy is cut: @tool:${tokenId} holds ${heldChars} chars of this output. Read further with dereference and a pipe (grep PATTERN, head -n N, tail -n N; lines A to B: head -n B | tail -n B-A+1) instead of running it again.]`
-                : "";
+            // A CUT copy says where the rest is, on the result itself (`cutNote`).
+            const cutLine = tokenId && !mintedView && heldChars ? cutNote(tokenId, heldChars) : "";
             // The step budget, said on the last result of a step once few are left: the cap is read live (a handle or
             // Continue can raise it mid-run), so a number in the system prompt would go stale.
             const left = maxSteps() - step;

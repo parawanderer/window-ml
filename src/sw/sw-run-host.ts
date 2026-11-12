@@ -1990,7 +1990,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     for (const it of items) if (it.id) fanEvent({ kind: "agent-say-seen", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, sayId: it.id });
                     // Each says where it was typed, so a run steered from another surface reports THAT one.
                     // A task's result is no one's typing: it carries its id and leaves the run's latest origin standing.
-                    return items.map(it => (it.task ? { text: it.text, task: it.task } : it.origin || it.images ? { text: it.text, ...(it.origin ? { origin: it.origin } : {}), ...(it.images ? { images: it.images } : {}) } : it.text));
+                    return items.map(it => (it.task ? { text: it.text, task: it.task, ...(it.value ? { value: it.value, chars: it.chars } : {}), ...(it.images ? { images: it.images } : {}) } : it.origin || it.images ? { text: it.text, ...(it.origin ? { origin: it.origin } : {}), ...(it.images ? { images: it.images } : {}) } : it.text));
                 },
                 signal: abortCtl.signal,
                 // chat_metadata: the run's model FACTS from the SW's caches (the loop supplies the live

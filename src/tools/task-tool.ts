@@ -8,8 +8,9 @@ import type { defineTool } from "../ml/ml-tool-factories";
 
 /** What the tool needs of the worker. Absent: the descriptor alone, whose run refuses (only the worker runs it). */
 export interface TaskToolDeps {
-    /** The action's answer (a tail cut to its ceiling names the stored whole in `textValue`), for the run the worker built this tool for. */
-    act(args: Record<string, unknown>): Promise<string | { content: string; textValue: string; textChars: number }>;
+    /** The action's answer (a cut tail or a cut result names the stored whole in `textValue`; a result's figure is its
+     *  `image`), for the run the worker built this tool for. */
+    act(args: Record<string, unknown>): Promise<string | import("../sw/sw-tasks").TaskAnswer>;
 }
 
 /**
