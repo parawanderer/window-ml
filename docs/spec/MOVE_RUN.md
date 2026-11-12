@@ -131,8 +131,9 @@ the failing-first row in its own PR.
   (`services-ext.ts`), so the worker proves the sender by `isExtensionSender` (an extension-origin `sender.url`,
   `sw-site-access.ts`), as `SET_START_APPROVAL` does;
   and the move's message type is never listed in `HANDLE_MAP` (`page-relay.ts`), so no page's message is relayed to it.
-  Those two are what make this hold. The red-team row is e3's, written after the feature PR
-  merges: a page's message that names a run and a tab moves nothing and is answered with nothing.
+  Those two are what make this hold. The red-team row is e3's: a page's message that names a run and a tab moves
+  nothing and is answered with nothing. It lands in the feature PR as e3's own commit on the move-run branch,
+  touching only e3's file, before that PR merges (AGENTS.md: the change lands with its red-team tests passing).
 - **The per-tab grants stay behind** (step 1), and the old origin is not carried as the run's start (step 4).
 - **Moving a run to a page discloses the run to nothing.** The destination page learns no more than it does when a run
   the person started there runs on it: the presence rules (`docs/dev/site-access.md`, "Presence") hold unchanged.
