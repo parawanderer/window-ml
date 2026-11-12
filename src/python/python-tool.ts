@@ -12,6 +12,7 @@ import { googleSheetCsvUrl, nonEmptyTables, clipOut, clipValue, tablesMapFromJso
 import type { Box } from "../dom/locate";
 import { pyValueParts } from "./py-render";
 import { PY_PACKAGE_LABELS } from "./python-env";
+import { PY_LEASE_MAX_MS } from "./py-lease";
 import { outputCapParams, retryParams } from "../tools/tool-params";
 import { POINT_RE, BOX_RE, projectShotPoint, mintPoint, projectShotBox, mintBox } from "../util";
 
@@ -128,7 +129,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                 // Only where names persist (a worker-hosted run): the sandbox is shut after 30 min idle (py-reap.ts).
                 ...(mintVia ? { keep: { type: "boolean", description: "Keep your names through idle gaps over 30 min (a run that waits hours between calls) until this run ends or its sandbox is killed (a timeout, a crash, a cancel), which the next cell is told as loss. Otherwise an idle sandbox is shut and its names lost." } } : {}),
                 // Only where a cell can detach (a worker-hosted run, sw-python-task.ts): the lease it replaces.
-                ...(mintVia ? { expect_ms: { type: "number", description: "Your estimate of this cell's run time in ms. Past it, or a short default without it, the call detaches into a task." } } : {}),
+                ...(mintVia ? { expect_ms: { type: "number", description: `Your estimate of this cell's run time in ms. Past it, or a short default without it, the call detaches into a task. At most ${PY_LEASE_MAX_MS / 1000} s: a longer one counts as that.` } } : {}),
                 ...outputCapParams("python_exec", "Prefer returning a compact result."),
                 ...retryParams("python_exec"),
             },

@@ -26,6 +26,10 @@ declare const __PY_DETACHED_MAX_MS__: number | undefined;
  */
 export const PY_DETACHED_MAX_MS = typeof __PY_DETACHED_MAX_MS__ === "number" ? __PY_DETACHED_MAX_MS__ : 5 * 60_000;   // state: fixed
 
+/** The longest a cell runs attached, whatever its `expect_ms`: half the detached ceiling, so a cell that detaches still has
+ *  as long again to run as a task. A lease at the ceiling would never detach: the sandbox kills the cell when the lease ends. */
+export const PY_LEASE_MAX_MS = Math.floor(PY_DETACHED_MAX_MS / 2);   // state: fixed
+
 /** How long a cancelled or stopped cell is given to answer its interrupt (`KeyboardInterrupt`) before its sandbox is
  *  killed: a Python loop answers in about 3 ms, a call inside C not until it returns. A placeholder, as the bench's
  *  Stop bound is (offscreen.ts `BENCH_STOP_KILL_MS`). */

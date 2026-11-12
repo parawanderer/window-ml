@@ -410,7 +410,7 @@ async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; 
     if (!leased) return shape(await call);
     const expectMs = typeof opts.expectMs === "number" && Number.isFinite(opts.expectMs) && opts.expectMs > 0 ? Math.floor(opts.expectMs) : null;
     const late = opts.late!;
-    const r = await leaseCell({ runId: ctx.runId, cell: requestId, expectMs, call, onDetach: () => { attached = false; },
+    const r = await leaseCell({ runId: ctx.runId, cell: requestId, ...(pyCall?.step ? { seq: pyCall.step.seq } : {}), expectMs, call, onDetach: () => { attached = false; },
         late: async (x) => { let res: Record<string, unknown>; try { res = shape(x); } catch (e) { return { status: "failed", text: (e as Error)?.message || String(e), result: null }; } return late(res); } });
     return (r as PyDetached).detached ? r as PyDetached : shape(r as Awaited<typeof call>);
 }

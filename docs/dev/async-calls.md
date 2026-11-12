@@ -80,7 +80,9 @@ offscreen document:
   worker's `started` the offscreen document posts `PY_STARTED`, and `leaseCell` arms `expect_ms ?? PY_LEASE_MS` (15 s
   placeholder, `__PY_LEASE_MS__`). A cold start and a wait behind another cell are never charged to it. The document
   swaps the 15 s cap for `PY_DETACHED_MAX_MS` (5 min, `__PY_DETACHED_MAX_MS__`) for a leased cell: the lease, not the cap, decides when it stops
-  being attached.
+  being attached. The lease is clamped to `PY_LEASE_MAX_MS`, half the ceiling (2.5 min), whatever `expect_ms` says: a lease
+  at the ceiling would never detach, because the sandbox kills the cell when the lease ends, and a detached cell keeps as
+  long again to run as a task. The `python`/`detached` record carries `{ seq, id, leaseMs, expectMs? }`, as the shell's does.
 - **Past the lease the call answers `Detached`**, the tool shape's text (`pyDetachedText`) with the output so far, and
   the cell runs on. Its `sendMessage` reply stays pending, which keeps the service worker alive, but not for ever:
   measured in Chrome 151 on a SILENT cell, a reply 345 s after the send reached the same worker in both runs, and one at

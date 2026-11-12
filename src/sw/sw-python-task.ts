@@ -14,7 +14,7 @@ import { recordRunLog } from "./sw-run-log";
 import { runControllers } from "./sw-runs";
 import { forModel } from "./sw-scrub";
 import { storeText } from "./sw-values";
-import { PY_DETACHED_MAX_MS, PY_INTERRUPT_KILL_MS, PY_LEASE_MS, type CellCancel } from "../python/py-lease";
+import { PY_DETACHED_MAX_MS, PY_INTERRUPT_KILL_MS, PY_LEASE_MAX_MS, PY_LEASE_MS, type CellCancel } from "../python/py-lease";
 import { OUTPUT_CAP } from "../contract/contract-pointers";
 import { ASKED_TAIL_CHARS } from "../shell/sh-tail";
 
@@ -86,6 +86,8 @@ export interface LeasedCell<R> {
     runId: string;
     /** The cell's id, as its PY_RUN carried it. */
     cell: string;
+    /** The tool call's step seq, for the run log, when the run gave one. */
+    seq?: number;
     /** The model's own estimate (`expect_ms`), or null: it replaces the lease. */
     expectMs: number | null;
     /** The cell's run in the sandbox, already sent. */
@@ -103,7 +105,7 @@ export interface LeasedCell<R> {
  * @returns the result, or {@link PyDetached}
  */
 export function leaseCell<R>(o: LeasedCell<R>): Promise<R | PyDetached> {
-    const leaseMs = Math.min(o.expectMs ?? PY_LEASE_MS, PY_DETACHED_MAX_MS);
+    const leaseMs = Math.min(o.expectMs ?? PY_LEASE_MS, PY_LEASE_MAX_MS);
     return new Promise<R | PyDetached>((resolve, reject) => {
         let timer: ReturnType<typeof setTimeout> | undefined;
         let settleTask: ((r: { ok: R } | { err: unknown }) => void) | undefined;
@@ -141,7 +143,7 @@ export function leaseCell<R>(o: LeasedCell<R>): Promise<R | PyDetached> {
             detachedCells.set(o.runId, task);
             void settled.finally(() => { if (detachedCells.get(o.runId) === task) detachedCells.delete(o.runId); });
             o.onDetach?.();
-            recordRunLog(o.runId, { subsystem: "python", kind: "detached", reason: o.expectMs !== null ? "expected" : "default", ms: leaseMs, detail: { id: task } });
+            recordRunLog(o.runId, { subsystem: "python", kind: "detached", reason: o.expectMs !== null ? "expected" : "default", ms: leaseMs, detail: { ...(o.seq !== undefined ? { seq: o.seq } : {}), id: task, leaseMs, ...(o.expectMs !== null ? { expectMs: o.expectMs } : {}) } });
             const ring = await tailPyCell(o.cell).catch(() => null);
             const tail = ring ? (await forModel(pyTailText(ring, 20, OUTPUT_CAP.exec.default).text)).text : "";
             resolve({ detached: { id: task, elapsedMs: Date.now() - startedMs, tail, text: pyDetachedText(task, leaseMs, o.expectMs, tail) } });

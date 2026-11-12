@@ -6,7 +6,7 @@
 // document (PY_CANCEL, PY_TAIL, PY_RUN) and answers with what a test chose. The cell's own run is a promise the test
 // settles; the lease starts when the test says PY_STARTED, as the offscreen document does. Real timers, small leases.
 
-import { test } from "node:test";
+import { test, mock } from "node:test";
 import assert from "node:assert/strict";
 
 const T = { timeout: 20000 };
@@ -45,7 +45,7 @@ const { pythonStarted, pythonDone, runPython } = await import("../src/sw/sw-pyth
 const { taskAction, endTasks, openTasks, taskDrained } = await import("../src/sw/sw-tasks.ts");
 const { runControllers, runInboxes } = await import("../src/sw/sw-runs.ts");
 const { runLog } = await import("../src/sw/sw-run-log.ts");
-const { ringAppend, PY_LEASE_MS, PY_INTERRUPT_KILL_MS } = await import("../src/python/py-lease.ts");
+const { ringAppend, PY_LEASE_MS, PY_LEASE_MAX_MS, PY_DETACHED_MAX_MS, PY_INTERRUPT_KILL_MS } = await import("../src/python/py-lease.ts");
 
 const OFFSCREEN = { id: EXT, url: `chrome-extension://${EXT}/offscreen.html` };
 const TASK_ID = /^t[0-9a-f]{6}$/;
@@ -72,7 +72,7 @@ function cell(o = {}) {
     const lates = [];
     let detaches = 0;
     const answer = leaseCell({
-        runId, cell: id, expectMs: o.expectMs ?? null, call, onDetach: () => { detaches++; },
+        runId, cell: id, ...(o.seq !== undefined ? { seq: o.seq } : {}), expectMs: o.expectMs ?? null, call, onDetach: () => { detaches++; },
         late: async (r) => { lates.push(r); return { status: "done", text: `out: ${r.out}`, result: null }; },
     });
     return { runId, id, ctl, answer, resolve: ok, reject: err, lates, detaches: () => detaches, inbox: () => runInboxes.get(runId).queue,
@@ -119,7 +119,7 @@ test("the lease starts at PY_STARTED, not at the call: a cell that has not start
 
 test("past the lease the answer is {detached: {id, elapsedMs, tail, text}}, onDetach ran, and python/detached is in the run log", T, async () => {
     tailAnswer = { running: true, text: "step 1\nstep 2\n" };
-    const c = await detached({ expectMs: 40 });
+    const c = await detached({ expectMs: 40, seq: 3 });
     assert.match(c.r.id, TASK_ID);
     assert.ok(c.r.elapsedMs >= 30, String(c.r.elapsedMs));
     assert.match(c.r.tail, /step 2/);
@@ -130,9 +130,44 @@ test("past the lease the answer is {detached: {id, elapsedMs, tail, text}}, onDe
     const rec = (await runLog.forRun(c.runId)).filter((e) => e.subsystem === "python" && e.kind === "detached");
     assert.equal(rec.length, 1);
     assert.equal(rec[0].reason, "expected");
-    assert.equal(rec[0].detail.id, c.r.id);
+    assert.deepEqual(rec[0].detail, { seq: 3, id: c.r.id, leaseMs: 40, expectMs: 40 }, "the shell twin's { seq, id, leaseMs, expectMs? }");
     tailAnswer = { running: true, text: "" };
     await done(c);
+});
+
+test("python/detached with no expect_ms and no seq logs { id, leaseMs } with the default lease", T, async () => {
+    const c = cell();
+    mock.timers.enable({ apis: ["setTimeout"] });
+    try { c.start(); mock.timers.tick(PY_LEASE_MS); } finally { mock.timers.reset(); }
+    const r = await c.answer;
+    assert.ok(r.detached, JSON.stringify(r));
+    const rec = (await runLog.forRun(c.runId)).filter((e) => e.subsystem === "python" && e.kind === "detached");
+    assert.equal(rec[0].reason, "default");
+    assert.deepEqual(rec[0].detail, { id: r.detached.id, leaseMs: PY_LEASE_MS });
+    await done(c);
+});
+
+test("an expect_ms at or over the detached ceiling still detaches, at half the ceiling, so the task keeps as long again to run", T, async () => {
+    assert.equal(PY_LEASE_MAX_MS, PY_DETACHED_MAX_MS / 2);
+    for (const expectMs of [PY_DETACHED_MAX_MS, PY_DETACHED_MAX_MS * 10]) {
+        const c = cell({ expectMs });
+        let settled = false;
+        c.answer.then(() => { settled = true; });
+        mock.timers.enable({ apis: ["setTimeout"] });
+        try {
+            c.start();
+            mock.timers.tick(PY_LEASE_MAX_MS - 1);
+            await Promise.resolve();
+            assert.equal(settled, false, `expect_ms ${expectMs} detached before PY_LEASE_MAX_MS`);
+            mock.timers.tick(1);
+        } finally { mock.timers.reset(); }
+        const r = await c.answer;
+        assert.ok(r.detached, `expect_ms ${expectMs} never detached: ${JSON.stringify(r)}`);
+        const rec = (await runLog.forRun(c.runId)).filter((e) => e.subsystem === "python" && e.kind === "detached");
+        assert.equal(rec[0].detail.leaseMs, PY_LEASE_MAX_MS);
+        assert.equal(rec[0].detail.expectMs, expectMs);
+        await done(c);
+    }
 });
 
 test("pyDetachedText says 'you expected ~N s' with expect_ms and 'no expect_ms was given' without it, and names the task, the end of the turn and the ceiling", () => {
@@ -398,6 +433,7 @@ async function pyTool({ worker = true, answer = { detached: { text: "Detached: p
 test("a worker-hosted run's python_exec leases: it passes its formatter and expect_ms, and answers the detached text", async () => {
     const { tool, seen } = await pyTool();
     assert.ok(tool.parameters.properties.expect_ms, "expect_ms is offered");
+    assert.match(tool.parameters.properties.expect_ms.description, new RegExp(`At most ${PY_LEASE_MAX_MS / 1000} s`), "the description states the cap");
     const out = await tool.run({ code: "x", expect_ms: 4000 });
     assert.equal(out, "Detached: python_exec detached as task t000001");
     assert.equal(typeof seen.opts.late, "function");
@@ -489,10 +525,10 @@ test("__PY_LEASE_MS__ and __PY_DETACHED_MAX_MS__ set what a build ships; absent,
         const out = await esbuild.build({ entryPoints: [entry], bundle: true, write: false, format: "cjs", platform: "neutral", logLevel: "silent", ...(define ? { define } : {}) });
         const mod = { exports: {} };
         vm.runInNewContext(out.outputFiles[0].text, { module: mod, exports: mod.exports });
-        return { lease: mod.exports.PY_LEASE_MS, max: mod.exports.PY_DETACHED_MAX_MS };
+        return { lease: mod.exports.PY_LEASE_MS, max: mod.exports.PY_DETACHED_MAX_MS, leaseMax: mod.exports.PY_LEASE_MAX_MS };
     };
-    assert.deepEqual(await of(), { lease: 15_000, max: 300_000 }, "undefined: the shipped values");
-    assert.deepEqual(await of({ __PY_LEASE_MS__: "5000", __PY_DETACHED_MAX_MS__: "60000" }), { lease: 5000, max: 60_000 });
+    assert.deepEqual(await of(), { lease: 15_000, max: 300_000, leaseMax: 150_000 }, "undefined: the shipped values");
+    assert.deepEqual(await of({ __PY_LEASE_MS__: "5000", __PY_DETACHED_MAX_MS__: "60000" }), { lease: 5000, max: 60_000, leaseMax: 30_000 }, "the lease's cap follows the ceiling's define");
 });
 
 test("build.mjs refuses a __PY_LEASE_MS__ or __PY_DETACHED_MAX_MS__ that is not a positive integer, before it builds anything", async () => {
