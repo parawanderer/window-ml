@@ -42,6 +42,7 @@ import { toolContext, executeTool, withRunDeref } from "../tools/tool-exec";
 import { pageContext } from "../util";
 import { assembleRun, firstUserTurn, withoutCurrentClause, startPayload, type AssemblyMl } from "../agent/run-assembly";
 import { validateArgs } from "../tools/validate";
+import { surveyWhere } from "../tools/exec-trace";
 
 /**
  * Run a full agent loop over a tool registry: the model calls tools, we
@@ -517,10 +518,10 @@ export const agent = async function(this: MlApi, task: string, { host = null, to
                 if (readonlyRefused(e)) return null;
                 // The line the interpreter was on, when it knows it — the same fact the approved path
                 // reports from a real stack, and the model is retrying this code either way.
-                const at = (e as { mlLine?: number })?.mlLine ?? null;
-                const msg = `Error: ${errText(e)}${at ? ` (line ${at})` : ""}`;
+                const { at, where } = surveyWhere(e);
+                const msg = `Error: ${errText(e)}${where}`;
                 const { in: renderIn } = descriptorFor(byName[name], { result: msg }, args);
-                return { result: msg, renderIn, renderOut: { type: "exec-out" as const, error: `${errText(e)}${at ? ` (line ${at})` : ""}`, ...(at ? { errorLine: at } : {}) } };
+                return { result: msg, renderIn, renderOut: { type: "exec-out" as const, error: `${errText(e)}${where}`, ...(at ? { errorLine: at } : {}) } };
             }
         } : undefined,
         precheck: async (name, args) => {

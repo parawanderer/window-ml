@@ -121,6 +121,8 @@ export class Evaluator {
     // What is left of the step budget. Spent by every node evaluated and every element iterated.
     /** The source line of the statement being evaluated — reported when a script throws. */
     line = 0;
+    /** The source offset of the expression a throw came out of (an identifier, a member read, a call), or -1. */
+    failAt = -1;
     private fuel: number;
     /** Cells read out of STORED tables so far in this run. Each read is one host call doing work proportional to the
      *  table, which the step budget never sees, so the total has its own bound (MAX_STORED_CELLS). */
@@ -832,256 +834,264 @@ export class Evaluator {
         // carry one (parseStatement stamps them), and a nested statement overwrites it on the way in without
         // restoring on the way out — which is right: the innermost statement that was running IS the answer.
         if (node.ln !== undefined) this.line = node.ln;
-        switch (node.type) {
-            case "Program": {
-                let last: unknown;
-                for (const s of node.body) {
-                    const v = yield* this.eval(s, scope);
-                    if (v && typeof v === "object" && RETURN in (v as object)) return (v as any)[RETURN];
-                    if (s.type === "ExprStmt") last = v;
+        // WHERE on the line it threw: the innermost node that has an offset and was running when the throw passed
+        // through it. A throw a script catches is not a failure, so the Try case clears this before its handler.
+        try {
+            switch (node.type) {
+                case "Program": {
+                    let last: unknown;
+                    for (const s of node.body) {
+                        const v = yield* this.eval(s, scope);
+                        if (v && typeof v === "object" && RETURN in (v as object)) return (v as any)[RETURN];
+                        if (s.type === "ExprStmt") last = v;
+                    }
+                    return last;
                 }
-                return last;
-            }
-            case "Block": {
-                const child = Object.create(scope);
-                for (const s of node.body) {
-                    const v = yield* this.eval(s, child);
-                    if (v && typeof v === "object" && RETURN in v) return v;   // propagate return upward
+                case "Block": {
+                    const child = Object.create(scope);
+                    for (const s of node.body) {
+                        const v = yield* this.eval(s, child);
+                        if (v && typeof v === "object" && RETURN in v) return v;   // propagate return upward
+                    }
+                    return undefined;
                 }
-                return undefined;
-            }
-            case "ExprBody": return yield* this.eval(node.expr, scope);
-            case "ExprStmt": return yield* this.eval(node.expr, scope);
-            // A taken branch may `return` — pass its RETURN wrapper up to the block/program loop.
-            case "If": {
-                if (yield* this.eval(node.test, scope)) return yield* this.eval(node.cons, scope);
-                if (node.alt) return yield* this.eval(node.alt, scope);
-                return undefined;
-            }
-            case "VarDecl": {
-                const val = yield* this.eval(node.init, scope);
-                if (node.pattern) { this.bindPattern(scope, node.pattern, val, node.kind === "const"); return undefined; }
-                scope[node.name] = val;
-                if (node.kind === "const") this.markConst(scope, node.name);
-                return undefined;
-            }
-            case "ForOf": {
-                const iterable = yield* this.eval(node.iter, scope);
-                // Must be iterable — a non-iterable throws a catchable TypeError, not a guard error. Every
-                // iterable reachable here is FINITE (arrays, NodeLists, strings, Array(n).keys()…): no
-                // generator syntax, and `Symbol` isn't in scope, so no infinite iterator can be built — the
-                // same termination property spread already relies on. The body is mediated like any code.
-                if (iterable == null || typeof (iterable as { [Symbol.iterator]?: unknown })[Symbol.iterator] !== "function")
-                    throw new TypeError("for…of over a non-iterable value");
-                // HELD for the loop's whole life, released however it ends (return, throw, a closed generator):
-                // the body may read the collection but not change it, so the iteration cannot outrun itself.
-                this.hold(iterable);
-                try {
-                    for (const item of iterable as Iterable<unknown>) {
-                        this.tick();
-                        const child = Object.create(scope);   // fresh per-iteration binding (const semantics)
-                        if (node.pattern) this.bindPattern(child, node.pattern, item, node.kind === "const");
-                        else {
-                            child[node.name] = item;
-                            if (node.kind === "const") this.markConst(child, node.name);
+                case "ExprBody": return yield* this.eval(node.expr, scope);
+                case "ExprStmt": return yield* this.eval(node.expr, scope);
+                // A taken branch may `return` — pass its RETURN wrapper up to the block/program loop.
+                case "If": {
+                    if (yield* this.eval(node.test, scope)) return yield* this.eval(node.cons, scope);
+                    if (node.alt) return yield* this.eval(node.alt, scope);
+                    return undefined;
+                }
+                case "VarDecl": {
+                    const val = yield* this.eval(node.init, scope);
+                    if (node.pattern) { this.bindPattern(scope, node.pattern, val, node.kind === "const"); return undefined; }
+                    scope[node.name] = val;
+                    if (node.kind === "const") this.markConst(scope, node.name);
+                    return undefined;
+                }
+                case "ForOf": {
+                    const iterable = yield* this.eval(node.iter, scope);
+                    // Must be iterable — a non-iterable throws a catchable TypeError, not a guard error. Every
+                    // iterable reachable here is FINITE (arrays, NodeLists, strings, Array(n).keys()…): no
+                    // generator syntax, and `Symbol` isn't in scope, so no infinite iterator can be built — the
+                    // same termination property spread already relies on. The body is mediated like any code.
+                    if (iterable == null || typeof (iterable as { [Symbol.iterator]?: unknown })[Symbol.iterator] !== "function")
+                        throw new TypeError("for…of over a non-iterable value");
+                    // HELD for the loop's whole life, released however it ends (return, throw, a closed generator):
+                    // the body may read the collection but not change it, so the iteration cannot outrun itself.
+                    this.hold(iterable);
+                    try {
+                        for (const item of iterable as Iterable<unknown>) {
+                            this.tick();
+                            const child = Object.create(scope);   // fresh per-iteration binding (const semantics)
+                            if (node.pattern) this.bindPattern(child, node.pattern, item, node.kind === "const");
+                            else {
+                                child[node.name] = item;
+                                if (node.kind === "const") this.markConst(child, node.name);
+                            }
+                            const v = yield* this.eval(node.body, child);
+                            if (v && typeof v === "object" && RETURN in (v as object)) return v;   // a `return` breaks out + propagates
                         }
-                        const v = yield* this.eval(node.body, child);
-                        if (v && typeof v === "object" && RETURN in (v as object)) return v;   // a `return` breaks out + propagates
-                    }
-                } finally { this.release(iterable); }
-                return undefined;
-            }
-            case "Return": return { [RETURN]: yield* this.eval(node.arg, scope) };
-            // `await X` — hand X to the driver, which awaits it (identity on a non-promise). The sync
-            // driver has no way to, so an await inside a host callback (.map/.filter) falls out of dialect.
-            case "Await": return yield yield* this.eval(node.arg, scope);
-            case "Lit": return node.value;
-            // A regex literal → a real RegExp. Pure value: no realm walk-back (its props are source/flags/
-            // lastIndex — none in DENIED_PROPS is needed), and it can only be USED via allowlisted methods
-            // (String.match/replace/split or RegExp.test/exec). An invalid pattern throws → falls back to approval.
-            case "Regex": {
-                const risk = riskyRegex(node.pattern);
-                if (risk) throw new NotInDialect(`a regex that could backtrack without end (${risk})`);
-                try { return new RegExp(node.pattern, node.flags); } catch { throw new NotInDialect("invalid regex"); }
-            }
-            case "Ident": {
-                if (node.name in scope) return scope[node.name];
-                throw new Denied(`'${node.name}' is not available`);
-            }
-            case "Array": {
-                const arr: unknown[] = [];
-                for (const e of node.elements) {
-                    if (e.type === "Spread") { for (const v of (yield* this.eval(e.arg, scope)) as Iterable<unknown>) { this.tick(); arr.push(v); } }
-                    else arr.push(yield* this.eval(e, scope));
+                    } finally { this.release(iterable); }
+                    return undefined;
                 }
-                return this.own(this.sized(arr));
-            }
-            case "Object": {
-                const o: Record<string, unknown> = {};
-                for (const p of node.props) {
-                    if ("spread" in p) {
-                        // Copy the spread source's OWN ENUMERABLE properties, each through the member-read
-                        // guard (denied props throw; a function value → the inert sentinel — so a spread can't
-                        // launder a live method into a plain object). null/undefined/primitives spread nothing.
-                        const src = yield* this.eval(p.spread, scope);
-                        if (src != null) for (const k of Object.keys(Object(src))) { this.tick(); o[k] = this.prop(src, k); }
-                    } else {
-                        o[p.key] = yield* this.eval(p.value, scope);
-                    }
+                case "Return": return { [RETURN]: yield* this.eval(node.arg, scope) };
+                // `await X` — hand X to the driver, which awaits it (identity on a non-promise). The sync
+                // driver has no way to, so an await inside a host callback (.map/.filter) falls out of dialect.
+                case "Await": return yield yield* this.eval(node.arg, scope);
+                case "Lit": return node.value;
+                // A regex literal → a real RegExp. Pure value: no realm walk-back (its props are source/flags/
+                // lastIndex — none in DENIED_PROPS is needed), and it can only be USED via allowlisted methods
+                // (String.match/replace/split or RegExp.test/exec). An invalid pattern throws → falls back to approval.
+                case "Regex": {
+                    const risk = riskyRegex(node.pattern);
+                    if (risk) throw new NotInDialect(`a regex that could backtrack without end (${risk})`);
+                    try { return new RegExp(node.pattern, node.flags); } catch { throw new NotInDialect("invalid regex"); }
                 }
-                return this.own(o);
-            }
-            case "Arrow": {
-                const self = this;
-                // The value form: a plain function, because this is what a host method gets handed
-                // (`arr.map(fn)`) and those invoke it SYNCHRONOUSLY. A direct call goes through
-                // ourFns/callArrow instead, so only the callback case is restricted.
-                const fn = function (...args: unknown[]) {
-                    // Called by a host method that COERCES what it returns (COERCES_CALLBACK): walked before the host gets it.
-                    const coerced = self.coercingAt === self.depth;
-                    const ret = runSync(self.callArrow(node, scope, args));
-                    if (coerced) self.expands(ret);
-                    const rep = self.replacing;
-                    if (rep !== null && rep.depth === self.depth) self.replaced(rep, ret, args[0]);
-                    return ret;
-                };
-                this.ourFns.set(fn, { node, scope });
-                return fn;
-            }
-            case "New": {
-                const ctor = SAFE_CONSTRUCTORS[node.ctor];
-                // A policy is a function of the call alone: the clock is not one of its facts.
-                if (node.ctor === "Date" && this.realm === "policy") throw new NotInDialect("new Date() reads the clock, which is not a fact of the call");
-                if (!ctor) throw new Denied(`new ${node.ctor}() is not allowed — only pure builtins (Set, Map, Array, Date, RegExp, …)`);
-                // A script-CREATED instance is owned, so its own mutators (Set.add / Map.set/…) pass the
-                // MUTATING_METHODS gate. Mark it directly, not via own(): a Set/Map's prototype isn't
-                // Object.prototype, so own()'s isWritableTarget check would skip it. (Assignment `o[k]=v`
-                // stays restricted to plain objects/arrays — the Assign case re-checks isWritableTarget.)
-                const args = yield* this.evalArgs(node.args, scope);
-                for (const a of args) this.noteNulls(a);
-                this.allocation(node.ctor, args);
-                // A constructor that converts its argument (`new Date(o)`, `new RegExp(o)`) judges it like any other conversion.
-                const at = Object.hasOwn(CTOR_CONVERTS, node.ctor) ? CTOR_CONVERTS[node.ctor] : undefined;
-                if (at !== undefined) args.forEach((a, i) => { if (at === "all" || at.includes(i)) args[i] = this.converts(`new ${node.ctor}`, a, node.ctor === "RegExp" && i === 0); });
-                if (CTOR_ITERABLES.has(node.ctor) && args.length) args[0] = this.iterates(`new ${node.ctor}`, args[0]);
-                if (node.ctor === "RegExp") this.patternArg(isRegExp(args[0]) ? String(args[0].source) : args[0]);
-                for (const a of args) if (ONE_LEVEL_CTORS.has(node.ctor)) this.shallow(a); else this.expands(a);
-                const inst = new ctor(...args);
-                if (inst !== null && typeof inst === "object") this.owned.add(inst as object);
-                return this.sized(inst);
-            }
-            case "Assign": {
-                // A BARE NAME must resolve to a binding the SCRIPT declared (setIdent holds that line): the
-                // environment's own names sit in a null-prototype frame and are refused there, an undeclared name
-                // is refused rather than created, and a `const` is refused so the dialect never computes a value
-                // real JavaScript would not.
-                if (node.target.type === "Ident") {
-                    // The TARGET is checked before anything is computed. `ml += 1` would otherwise coerce the
-                    // facade on its way to a refusal and report "Cannot convert object to primitive value" — a
-                    // runtime error about the wrong thing, where the answer is that the name is not the script's.
-                    const frame = this.writableFrame(scope, node.target.name);
+                case "Ident": {
+                    if (node.name in scope) return scope[node.name];
+                    throw new Denied(`'${node.name}' is not available`);
+                }
+                case "Array": {
+                    const arr: unknown[] = [];
+                    for (const e of node.elements) {
+                        if (e.type === "Spread") { for (const v of (yield* this.eval(e.arg, scope)) as Iterable<unknown>) { this.tick(); arr.push(v); } }
+                        else arr.push(yield* this.eval(e, scope));
+                    }
+                    return this.own(this.sized(arr));
+                }
+                case "Object": {
+                    const o: Record<string, unknown> = {};
+                    for (const p of node.props) {
+                        if ("spread" in p) {
+                            // Copy the spread source's OWN ENUMERABLE properties, each through the member-read
+                            // guard (denied props throw; a function value → the inert sentinel — so a spread can't
+                            // launder a live method into a plain object). null/undefined/primitives spread nothing.
+                            const src = yield* this.eval(p.spread, scope);
+                            if (src != null) for (const k of Object.keys(Object(src))) { this.tick(); o[k] = this.prop(src, k); }
+                        } else {
+                            o[p.key] = yield* this.eval(p.value, scope);
+                        }
+                    }
+                    return this.own(o);
+                }
+                case "Arrow": {
+                    const self = this;
+                    // The value form: a plain function, because this is what a host method gets handed
+                    // (`arr.map(fn)`) and those invoke it SYNCHRONOUSLY. A direct call goes through
+                    // ourFns/callArrow instead, so only the callback case is restricted.
+                    const fn = function (...args: unknown[]) {
+                        // Called by a host method that COERCES what it returns (COERCES_CALLBACK): walked before the host gets it.
+                        const coerced = self.coercingAt === self.depth;
+                        const ret = runSync(self.callArrow(node, scope, args));
+                        if (coerced) self.expands(ret);
+                        const rep = self.replacing;
+                        if (rep !== null && rep.depth === self.depth) self.replaced(rep, ret, args[0]);
+                        return ret;
+                    };
+                    this.ourFns.set(fn, { node, scope });
+                    return fn;
+                }
+                case "New": {
+                    const ctor = SAFE_CONSTRUCTORS[node.ctor];
+                    // A policy is a function of the call alone: the clock is not one of its facts.
+                    if (node.ctor === "Date" && this.realm === "policy") throw new NotInDialect("new Date() reads the clock, which is not a fact of the call");
+                    if (!ctor) throw new Denied(`new ${node.ctor}() is not allowed — only pure builtins (Set, Map, Array, Date, RegExp, …)`);
+                    // A script-CREATED instance is owned, so its own mutators (Set.add / Map.set/…) pass the
+                    // MUTATING_METHODS gate. Mark it directly, not via own(): a Set/Map's prototype isn't
+                    // Object.prototype, so own()'s isWritableTarget check would skip it. (Assignment `o[k]=v`
+                    // stays restricted to plain objects/arrays — the Assign case re-checks isWritableTarget.)
+                    const args = yield* this.evalArgs(node.args, scope);
+                    for (const a of args) this.noteNulls(a);
+                    this.allocation(node.ctor, args);
+                    // A constructor that converts its argument (`new Date(o)`, `new RegExp(o)`) judges it like any other conversion.
+                    const at = Object.hasOwn(CTOR_CONVERTS, node.ctor) ? CTOR_CONVERTS[node.ctor] : undefined;
+                    if (at !== undefined) args.forEach((a, i) => { if (at === "all" || at.includes(i)) args[i] = this.converts(`new ${node.ctor}`, a, node.ctor === "RegExp" && i === 0); });
+                    if (CTOR_ITERABLES.has(node.ctor) && args.length) args[0] = this.iterates(`new ${node.ctor}`, args[0]);
+                    if (node.ctor === "RegExp") this.patternArg(isRegExp(args[0]) ? String(args[0].source) : args[0]);
+                    for (const a of args) if (ONE_LEVEL_CTORS.has(node.ctor)) this.shallow(a); else this.expands(a);
+                    const inst = new ctor(...args);
+                    if (inst !== null && typeof inst === "object") this.owned.add(inst as object);
+                    return this.sized(inst);
+                }
+                case "Assign": {
+                    // A BARE NAME must resolve to a binding the SCRIPT declared (setIdent holds that line): the
+                    // environment's own names sit in a null-prototype frame and are refused there, an undeclared name
+                    // is refused rather than created, and a `const` is refused so the dialect never computes a value
+                    // real JavaScript would not.
+                    if (node.target.type === "Ident") {
+                        // The TARGET is checked before anything is computed. `ml += 1` would otherwise coerce the
+                        // facade on its way to a refusal and report "Cannot convert object to primitive value" — a
+                        // runtime error about the wrong thing, where the answer is that the name is not the script's.
+                        const frame = this.writableFrame(scope, node.target.name);
+                        const rhs = yield* this.eval(node.value, scope);
+                        const val = node.op === "=" ? rhs : this.applyBinary(node.op, frame[node.target.name], rhs);
+                        frame[node.target.name] = val;
+                        return val;
+                    }
+                    // MEMBER: the target must be a container the SCRIPT CREATED (`owned`) with a non-denied key
+                    // (guardKey). So a write can never touch a DOM node, a page array, a host object, `window`, the
+                    // scope, or the realm (__proto__/constructor/prototype) — assignment stays read-only w.r.t. the page.
+                    if (node.target.type !== "Member")
+                        throw new NotInDialect("assignment is allowed only to a name you declared, or to a property of an object/array you built (o[k] = v)");
+                    const obj: any = yield* this.eval(node.target.obj, scope);
+                    const key = node.target.computed ? this.guardKey(yield* this.eval(node.target.prop, scope)) : this.guardKey(node.target.prop);
+                    this.refuseWrite(obj);
+                    // owned AND a plain object/array: a script-created Set/Map is owned (so its mutator METHODS
+                    // work) but is NOT a valid `o[k]=v` target — mutate it through .add/.set, not property writes.
+                    if (!this.owned.has(obj) || !isWritableTarget(obj))
+                        throw new Denied("can only assign to an object or array you built — never a DOM node, a page object, or the environment");
+                    this.notIterating(obj, "assign into");
                     const rhs = yield* this.eval(node.value, scope);
-                    const val = node.op === "=" ? rhs : this.applyBinary(node.op, frame[node.target.name], rhs);
-                    frame[node.target.name] = val;
+                    const val = node.op === "=" ? rhs : this.applyBinary(node.op, this.prop(obj, key), rhs);
+                    obj[key] = val;
                     return val;
                 }
-                // MEMBER: the target must be a container the SCRIPT CREATED (`owned`) with a non-denied key
-                // (guardKey). So a write can never touch a DOM node, a page array, a host object, `window`, the
-                // scope, or the realm (__proto__/constructor/prototype) — assignment stays read-only w.r.t. the page.
-                if (node.target.type !== "Member")
-                    throw new NotInDialect("assignment is allowed only to a name you declared, or to a property of an object/array you built (o[k] = v)");
-                const obj: any = yield* this.eval(node.target.obj, scope);
-                const key = node.target.computed ? this.guardKey(yield* this.eval(node.target.prop, scope)) : this.guardKey(node.target.prop);
-                this.refuseWrite(obj);
-                // owned AND a plain object/array: a script-created Set/Map is owned (so its mutator METHODS
-                // work) but is NOT a valid `o[k]=v` target — mutate it through .add/.set, not property writes.
-                if (!this.owned.has(obj) || !isWritableTarget(obj))
-                    throw new Denied("can only assign to an object or array you built — never a DOM node, a page object, or the environment");
-                this.notIterating(obj, "assign into");
-                const rhs = yield* this.eval(node.value, scope);
-                const val = node.op === "=" ? rhs : this.applyBinary(node.op, this.prop(obj, key), rhs);
-                obj[key] = val;
-                return val;
-            }
-            // `n++` / `--o.count`: the same two mediated targets as an assignment, and the same refusals. Postfix
-            // evaluates to the value BEFORE the change, which is why this is not parsed as `n += 1`.
-            case "Update": {
-                const delta = node.op === "+" ? 1 : -1;
-                if (node.arg.type === "Ident") {
-                    const frame = this.writableFrame(scope, node.arg.name);
-                    const before = Number(frame[node.arg.name]);
-                    frame[node.arg.name] = before + delta;
+                // `n++` / `--o.count`: the same two mediated targets as an assignment, and the same refusals. Postfix
+                // evaluates to the value BEFORE the change, which is why this is not parsed as `n += 1`.
+                case "Update": {
+                    const delta = node.op === "+" ? 1 : -1;
+                    if (node.arg.type === "Ident") {
+                        const frame = this.writableFrame(scope, node.arg.name);
+                        const before = Number(frame[node.arg.name]);
+                        frame[node.arg.name] = before + delta;
+                        return node.prefix ? before + delta : before;
+                    }
+                    if (node.arg.type !== "Member") throw new NotInDialect("++ and -- apply to a name you declared or to a property of an object you built");
+                    const obj: any = yield* this.eval(node.arg.obj, scope);
+                    const key = node.arg.computed ? this.guardKey(yield* this.eval(node.arg.prop, scope)) : this.guardKey(node.arg.prop);
+                    this.refuseWrite(obj);
+                    if (!this.owned.has(obj) || !isWritableTarget(obj))
+                        throw new Denied("can only assign to an object or array you built — never a DOM node, a page object, or the environment");
+                    this.notIterating(obj, "assign into");
+                    const before = Number(this.prop(obj, key));
+                    obj[key] = before + delta;
                     return node.prefix ? before + delta : before;
                 }
-                if (node.arg.type !== "Member") throw new NotInDialect("++ and -- apply to a name you declared or to a property of an object you built");
-                const obj: any = yield* this.eval(node.arg.obj, scope);
-                const key = node.arg.computed ? this.guardKey(yield* this.eval(node.arg.prop, scope)) : this.guardKey(node.arg.prop);
-                this.refuseWrite(obj);
-                if (!this.owned.has(obj) || !isWritableTarget(obj))
-                    throw new Denied("can only assign to an object or array you built — never a DOM node, a page object, or the environment");
-                this.notIterating(obj, "assign into");
-                const before = Number(this.prop(obj, key));
-                obj[key] = before + delta;
-                return node.prefix ? before + delta : before;
-            }
-            case "Unary": {
-                let a = yield* this.eval(node.arg, scope);
-                if (node.op === "-" || node.op === "+") { [a] = this.coerces(`unary ${node.op}`, a); this.scans(a); }
-                if (node.op === "!") return !a;
-                if (node.op === "-") return -(a as number);
-                if (node.op === "+") return +(a as number);
-                return typeof a;
-            }
-            case "Logical": {
-                const l = yield* this.eval(node.left, scope);
-                if (node.op === "&&") return l ? yield* this.eval(node.right, scope) : l;
-                if (node.op === "||") return l ? l : yield* this.eval(node.right, scope);
-                return l != null ? l : yield* this.eval(node.right, scope);   // ??
-            }
-            case "Binary": {
-                const l: any = yield* this.eval(node.left, scope), r: any = yield* this.eval(node.right, scope);
-                return this.applyBinary(node.op, l, r);
-            }
-            case "Cond": return (yield* this.eval(node.cond, scope)) ? yield* this.eval(node.cons, scope) : yield* this.eval(node.alt, scope);
-            // The chain result is CONSUMED here (not another chain link) → unwrap a short-circuit to undefined.
-            case "Member": { const v = yield* this.readMember(node, scope); return v === SHORT ? undefined : v; }
-            case "Call": { const v = yield* this.evalCall(node, scope); return v === SHORT ? undefined : v; }
-            case "Template": {
-                // Concatenate quasi[0] expr[0] quasi[1] … — String() coercion, exactly like JS.
-                let out = node.quasis[0];
-                for (let k = 0; k < node.exprs.length; k++) {
-                    const [v] = this.coerces("a template", yield* this.eval(node.exprs[k], scope));
-                    out = this.sized(out + String(v) + node.quasis[k + 1]);
+                case "Unary": {
+                    let a = yield* this.eval(node.arg, scope);
+                    if (node.op === "-" || node.op === "+") { [a] = this.coerces(`unary ${node.op}`, a); this.scans(a); }
+                    if (node.op === "!") return !a;
+                    if (node.op === "-") return -(a as number);
+                    if (node.op === "+") return +(a as number);
+                    return typeof a;
                 }
-                return out;
-            }
-            case "Try": {
-                // A NotInDialect/Denied is a GUARD signal, not a program error — it must ALWAYS reach the
-                // driver so the survey escalates to the human gate. A user catch/finally can never swallow
-                // it (that's the whole safety property); a normal throw (a DOM op, JSON.parse, …) IS caught.
-                let result: unknown, guardErr: NotInDialect | Denied | null = null, otherErr: unknown, hasOther = false;
-                try {
-                    result = yield* this.eval(node.block, scope);   // undefined or a RETURN wrapper
-                } catch (e) {
-                    if (e instanceof NotInDialect || e instanceof Denied) guardErr = e;
-                    else if (node.handler) {
-                        const child = Object.create(scope);
-                        if (node.param) child[node.param] = e;
-                        try { result = yield* this.eval(node.handler, child); }
-                        catch (e2) { if (e2 instanceof NotInDialect || e2 instanceof Denied) guardErr = e2; else { otherErr = e2; hasOther = true; } }
-                    } else { otherErr = e; hasOther = true; }
+                case "Logical": {
+                    const l = yield* this.eval(node.left, scope);
+                    if (node.op === "&&") return l ? yield* this.eval(node.right, scope) : l;
+                    if (node.op === "||") return l ? l : yield* this.eval(node.right, scope);
+                    return l != null ? l : yield* this.eval(node.right, scope);   // ??
                 }
-                if (node.finalizer) {
-                    const f = yield* this.eval(node.finalizer, scope);
-                    // A `return` in finally overrides a normal result/throw — but NEVER a guard denial.
-                    if (!guardErr && f && typeof f === "object" && RETURN in (f as object)) return f;
+                case "Binary": {
+                    const l: any = yield* this.eval(node.left, scope), r: any = yield* this.eval(node.right, scope);
+                    return this.applyBinary(node.op, l, r);
                 }
-                if (guardErr) throw guardErr;   // escalate — no try/catch/finally can paper over a denial
-                if (hasOther) throw otherErr;
-                return result;                  // undefined or a RETURN wrapper (propagates up the block loop)
+                case "Cond": return (yield* this.eval(node.cond, scope)) ? yield* this.eval(node.cons, scope) : yield* this.eval(node.alt, scope);
+                // The chain result is CONSUMED here (not another chain link) → unwrap a short-circuit to undefined.
+                case "Member": { const v = yield* this.readMember(node, scope); return v === SHORT ? undefined : v; }
+                case "Call": { const v = yield* this.evalCall(node, scope); return v === SHORT ? undefined : v; }
+                case "Template": {
+                    // Concatenate quasi[0] expr[0] quasi[1] … — String() coercion, exactly like JS.
+                    let out = node.quasis[0];
+                    for (let k = 0; k < node.exprs.length; k++) {
+                        const [v] = this.coerces("a template", yield* this.eval(node.exprs[k], scope));
+                        out = this.sized(out + String(v) + node.quasis[k + 1]);
+                    }
+                    return out;
+                }
+                case "Try": {
+                    // A NotInDialect/Denied is a GUARD signal, not a program error — it must ALWAYS reach the
+                    // driver so the survey escalates to the human gate. A user catch/finally can never swallow
+                    // it (that's the whole safety property); a normal throw (a DOM op, JSON.parse, …) IS caught.
+                    let result: unknown, guardErr: NotInDialect | Denied | null = null, otherErr: unknown, hasOther = false;
+                    try {
+                        result = yield* this.eval(node.block, scope);   // undefined or a RETURN wrapper
+                    } catch (e) {
+                        if (e instanceof NotInDialect || e instanceof Denied) guardErr = e;
+                        else if (node.handler) {
+                            const child = Object.create(scope);
+                            if (node.param) child[node.param] = e;
+                        this.failAt = -1;   // caught: where it threw is no longer the script's failure
+                            try { result = yield* this.eval(node.handler, child); }
+                            catch (e2) { if (e2 instanceof NotInDialect || e2 instanceof Denied) guardErr = e2; else { otherErr = e2; hasOther = true; } }
+                        } else { otherErr = e; hasOther = true; }
+                    }
+                    if (node.finalizer) {
+                        const f = yield* this.eval(node.finalizer, scope);
+                        // A `return` in finally overrides a normal result/throw — but NEVER a guard denial.
+                        if (!guardErr && f && typeof f === "object" && RETURN in (f as object)) return f;
+                    }
+                    if (guardErr) throw guardErr;   // escalate — no try/catch/finally can paper over a denial
+                    if (hasOther) throw otherErr;
+                    return result;                  // undefined or a RETURN wrapper (propagates up the block loop)
+                }
             }
+            throw new NotInDialect(`node '${node.type}'`);
+        } catch (e) {
+            if (this.failAt < 0 && node.at !== undefined) this.failAt = node.at;
+            throw e;
         }
-        throw new NotInDialect(`node '${node.type}'`);
     }
 
     // Evaluate call arguments, expanding spread (`f(...args)`).

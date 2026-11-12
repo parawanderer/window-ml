@@ -1604,6 +1604,33 @@ test("a runtime throw reports the LINE it happened on — an interpreter has no 
     await assert.rejects(run(`while (true) {}`), (e) => outOfDialect(e) && e.mlLine === undefined);
 });
 
+test("on a LONG line, a runtime throw also carries the piece of the line it came out of", async () => {
+    // Observed (prompt-budget-cuts, MiniMax M3, 2026-11-12): the whole script on one line, so "(line 1)" said nothing.
+    // A column would not help a model, which reads tokens; the code around the spot does. Two calls on the line, and
+    // only the second fails, so the marker must sit on that one. (An unbound name is a refusal here, not a throw, and
+    // a member read of nothing is `undefined`; what throws at run time is a call.)
+    const pad = "const pad = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; ";
+    await assert.rejects(run(pad + "const o = { g: 1 }; const a = JSON.stringify(1); const b = o.g(2); return [a, b, pad.length, pad.slice(1)];"), (e) => {
+        assert.equal(e.mlLine, 1);
+        assert.match(e.mlExcerpt, /const b = o\.g▶\(2\)/, "the marker at the call that failed, not the one before it");
+        assert.match(e.mlExcerpt, /^….*…$/, "cut on both sides, and says so");
+        return true;
+    });
+    // A host method that throws points at its call too.
+    await assert.rejects(run(pad + "return JSON.parse('{bad');"), (e) => /JSON\.parse▶\('\{bad'\)/.test(e.mlExcerpt));
+    // A short line needs nothing past its number.
+    await assert.rejects(run("const o = { g: 1 };\nreturn o.g(2);"), (e) => e.mlLine === 2 && e.mlExcerpt === undefined);
+});
+
+test("a throw the script CAUGHT is not where a later failure happened", async () => {
+    const pad = "const pad = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; ";
+    const js = pad + "let a = 0; try { a = JSON.parse('{bad'); } catch (err) { a = 1; } const o = { g: 1 }; return o.g(a);";
+    await assert.rejects(run(js), (e) => {
+        assert.match(e.mlExcerpt, /o\.g▶\(a\)/, "the uncaught failure, not the caught JSON.parse");
+        return true;
+    });
+});
+
 // --- the TABLE FACADE kind ----------------------------------------------------------------------------------
 //
 // A real run hands the dialect a table as a FACADE (`asTable`, table-data.ts): the data plus col / select /

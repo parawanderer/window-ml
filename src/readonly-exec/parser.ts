@@ -198,12 +198,12 @@ export class Parser {
             if (this.is(".")) {
                 this.i++; const n = this.next();
                 if (n.t !== "name") throw new NotInDialect("expected property name");
-                node = { type: "Member", obj: node, prop: n.v, computed: false, optional: false };
+                node = { type: "Member", obj: node, prop: n.v, computed: false, optional: false, at: n.at };
             } else if (this.is("?.")) {
                 this.i++;
                 if (this.is("(")) { node = this.parseCall(node, true); }
                 else if (this.is("[")) { node = this.parseComputed(node, true); }
-                else { const n = this.next(); if (n.t !== "name") throw new NotInDialect("expected property name"); node = { type: "Member", obj: node, prop: n.v, computed: false, optional: true }; }
+                else { const n = this.next(); if (n.t !== "name") throw new NotInDialect("expected property name"); node = { type: "Member", obj: node, prop: n.v, computed: false, optional: true, at: n.at }; }
             } else if (this.is("[")) {
                 node = this.parseComputed(node, false);
             } else if (this.is("(")) {
@@ -221,12 +221,14 @@ export class Parser {
         return node;
     }
     parseComputed(obj: Node, optional: boolean): Node {
+        const at = this.peek().at;
         this.eat("[");
         const prop = this.parseExpression();
         this.eat("]");
-        return { type: "Member", obj, prop, computed: true, optional };
+        return { type: "Member", obj, prop, computed: true, optional, at };
     }
     parseCall(callee: Node, optional: boolean): Node {
+        const at = this.peek().at;
         this.eat("(");
         const args: Node[] = [];
         while (!this.is(")")) {
@@ -235,7 +237,7 @@ export class Parser {
             if (this.is(",")) this.i++; else break;
         }
         this.eat(")");
-        return { type: "Call", callee, args, optional };
+        return { type: "Call", callee, args, optional, at };
     }
     // function [name](params) { … }  — an anonymous/named function expression (the
     // `(function(){ … })()` IIFE the models write constantly). Treated like an arrow.
@@ -303,7 +305,7 @@ export class Parser {
                 this.i++; this.eat("=>");
                 return { type: "Arrow", params: [t.v], body: this.parseArrowBody() };
             }
-            this.i++; return { type: "Ident", name: t.v };
+            this.i++; return { type: "Ident", name: t.v, at: t.at };
         }
         if (this.is("[")) {
             this.i++; const elements: Node[] = [];
