@@ -57,7 +57,12 @@ async function open(ext, url, { approve = false } = {}) {
     const page = await ext.context.newPage();
     await page.goto(url);
     if (approve || await visibleIn(ext, page)) await waitForMl(page, { approve });
-    else await waitInShell(page, () => globalThis.__mlPageGate?.state === "closed");
+    else {
+        // Wait for the gate to be DECIDED, not for "closed": a registration read inside a sync's unregister gap reads an
+        // allowed page as hidden, and waiting for "closed" then hung for 15 s with no word of why.
+        const state = await waitInShell(page, () => { const s = globalThis.__mlPageGate?.state; return s && s !== "pending" ? s : null; });
+        if (state !== "closed") throw new Error(`open(): ${new URL(url).origin} has no page-script registration, but its gate is ${state}`);
+    }
     return page;
 }
 

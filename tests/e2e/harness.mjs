@@ -243,10 +243,16 @@ export async function approveOrigin(sw, origin, { agents = "always" } = {}) {
     await sw.evaluate(async (/** @type {[string, string | null]} */ [o, level]) => {
         const got = await chrome.storage.local.get(["ml_site_always", "ml_site_agents"]);
         const list = Array.isArray(got.ml_site_always) ? /** @type {string[]} */ (got.ml_site_always) : [];
-        if (!list.includes(o)) await chrome.storage.local.set({ ml_site_always: [...list, o] });
         const levels = /** @type {Record<string, string>} */ (got.ml_site_agents && typeof got.ml_site_agents === "object" ? got.ml_site_agents : {});
-        if (level && levels[o] !== level) await chrome.storage.local.set({ ml_site_agents: { ...levels, [o]: level } });
-        if (!level && o in levels) { const { [o]: _drop, ...rest } = levels; await chrome.storage.local.set({ ml_site_agents: rest }); }
+        // ONE write: each site-access change runs its own syncPresence, which unregisters and re-registers the page
+        // scripts, so a second write re-opens a gap after the wait below has returned, and a page opened in it reads as
+        // hidden (open() in site-access.spec.mjs then waits for a gate that never closes).
+        /** @type {Record<string, unknown>} */
+        const patch = {};
+        if (!list.includes(o)) patch.ml_site_always = [...list, o];
+        if (level && levels[o] !== level) patch.ml_site_agents = { ...levels, [o]: level };
+        if (!level && o in levels) { const { [o]: _drop, ...rest } = levels; patch.ml_site_agents = rest; }
+        if (Object.keys(patch).length) await chrome.storage.local.set(patch);
     }, [origin, agents]);
     // The worker registers the page scripts for the origin on the change (sw-presence.ts); wait for it, so a page
     // opened next is covered from its first navigation. A deadline that passes is an error, never a pass.
@@ -265,10 +271,9 @@ export async function revokeOrigin(sw, origin, timeout = 15000) {
     await sw.evaluate(async (/** @type {string} */ o) => {
         const got = await chrome.storage.local.get(["ml_site_always", "ml_site_agents"]);
         const list = Array.isArray(got.ml_site_always) ? /** @type {string[]} */ (got.ml_site_always) : [];
-        await chrome.storage.local.set({ ml_site_always: list.filter((x) => x !== o) });
         const levels = /** @type {Record<string, string>} */ (got.ml_site_agents && typeof got.ml_site_agents === "object" ? got.ml_site_agents : {});
         const { [o]: _drop, ...rest } = levels;
-        await chrome.storage.local.set({ ml_site_agents: rest });
+        await chrome.storage.local.set({ ml_site_always: list.filter((x) => x !== o), ml_site_agents: rest });   // one write, as in approveOrigin
     }, origin);
     const still = await sw.evaluate(async (/** @type {[string, number]} */ [o, ms]) => {
         const u = new URL(o), pattern = `${u.protocol}//${u.hostname}:${u.port || (u.protocol === "https:" ? "443" : "80")}/*`;
