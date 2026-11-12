@@ -42,6 +42,8 @@ fs.readFileSync = function (p, ...rest) {
 
 /** What pypi.org answers in these tests: a project the lock lacks is a 404 unless a test serves it. Keyed by URL; a value is the JSON body, or null for a 404. */
 let pypi = new Map();
+/** What files.pythonhosted.org answers: the wheel's bytes by URL; anything else is a 404. */
+let wheels = new Map();
 const NOT_FOUND = { ok: false, status: 404, headers: { get: () => null }, body: null, text: async () => "", json: async () => { throw new Error("404"); } };
 const jsonBody = (obj) => { const t = JSON.stringify(obj); return { ok: true, status: 200, headers: { get: () => "application/json" }, body: new Response(t).body, text: async () => t, json: async () => obj, arrayBuffer: async () => new TextEncoder().encode(t).buffer }; };
 
@@ -52,6 +54,7 @@ function serveLock(bg) {
         const u = String(url);
         if (u === LOCK_URL) return { ok: true, status: 200, url: u, headers: { get: () => "application/json" }, text: async () => LOCK_TEXT, json: async () => JSON.parse(LOCK_TEXT) };
         if (u.startsWith("https://pypi.org/")) { const v = pypi.get(u); return v === undefined || v === null ? NOT_FOUND : typeof v === "number" ? { ...NOT_FOUND, status: v } : jsonBody(v); }
+        if (u.startsWith("https://files.pythonhosted.org/")) { const b = wheels.get(u); return b ? new Response(b) : NOT_FOUND; }
         return real(url, ...rest);
     };
 }
@@ -62,9 +65,10 @@ const call = (args, name = "python_install") => ({ name, args });
  * A worker-built run on tab 7 whose model makes `calls` in turn. `answer(card, send)` is the person: it gets the
  * emitted step (its renderIn) and a `send(decision, files)` that posts SET_APPROVAL; it defaults to denying.
  */
-async function installRun(calls, { answer = (_ev, send) => send(false), offered = true, index = new Map() } = {}) {
+async function installRun(calls, { answer = (_ev, send) => send(false), offered = true, index = new Map(), files = new Map() } = {}) {
     offer = offered;
     pypi = index;
+    wheels = files;
     const idb = new IDBFactory();
     const cards = [];
     let n = 0, bg;
@@ -264,6 +268,36 @@ test("an answer that is not the project's is read as not on the index", { ...T, 
     const r = await installRun([call({ name: "tabulate" })], { index: new Map([["https://pypi.org/pypi/tabulate/json", { info: "not a project" }]]) });
     assert.equal(r.cards[0].renderIn.verdict.ok, false);
     assert.equal(r.cards[0].renderIn.verdict.reason, "not-on-index");
+});
+
+// --- an approved PyPI row is downloaded through the run ---
+
+// A pure wheel the lock lacks, served by pypi.org and files.pythonhosted.org: the approval's download is what the tool reports.
+const WHEEL = new TextEncoder().encode("a wheel's bytes, standing in for a zip");
+const WHEEL_SHA = (await import("node:crypto")).createHash("sha256").update(WHEEL).digest("hex");
+const WHEEL_FN = "tabulate-0.9.0-py3-none-any.whl";
+const WHEEL_URL = `https://files.pythonhosted.org/packages/ab/cd/${WHEEL_FN}`;
+const WHEEL_FILE = { filename: WHEEL_FN, size: WHEEL.byteLength, digests: { sha256: WHEEL_SHA }, url: WHEEL_URL, yanked: false };
+const TABULATE = new Map([["https://pypi.org/pypi/tabulate/json", { info: { name: "tabulate", version: "0.9.0", requires_python: null, requires_dist: null }, urls: [WHEEL_FILE], releases: { "0.9.0": [WHEEL_FILE] } }]]);
+
+test("approving a card with a PyPI row downloads it through the run, and the tool says it downloaded and checked the file", { ...T, skip: SKIP }, async () => {
+    const r = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]) });
+    const v = r.cards[0].renderIn.verdict;
+    assert.equal(v.ok, true);
+    assert.deepEqual(v.files.map((f) => [f.source, f.sha256, f.size]), [["pypi", WHEEL_SHA, WHEEL.byteLength]]);
+    assert.deepEqual(r.mismatches, []);
+    assert.equal(r.results[0], "Approved: downloaded and checked 1 file. This build does not install packages yet, so nothing was installed.");
+});
+
+test("a download whose bytes are not the card's is reported as not installed, naming the file", { ...T, skip: SKIP }, async () => {
+    const other = new Uint8Array(WHEEL.byteLength).fill(120);
+    const r = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, other]]) });
+    assert.equal(r.results[0], `Not installed: ${WHEEL_FN} could not be downloaded as approved (${WHEEL_FN} does not match the sha256 the card showed). Nothing of it was kept.`);
+});
+
+test("a download that is refused is reported as not installed, and the run goes on", { ...T, skip: SKIP }, async () => {
+    const r = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE });
+    assert.ok(r.results[0].startsWith(`Not installed: ${WHEEL_FN} could not be downloaded as approved (the download answered 404)`), r.results[0]);
 });
 
 // --- bad arguments and an unoffered tool never raise a card ---

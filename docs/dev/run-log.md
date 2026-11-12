@@ -85,6 +85,7 @@ any new mechanism reports.
 | `python` | `dropped` (`after-last-cell`) | the same, for the turn's last cell: they fired between its result and the turn's end, and are reported when the turn ends and its namespace is deleted (`deletePythonRun`). One still armed then fires later, and is reported by the run's next cell or `at-reap` |
 | `python` | `dropped` (`at-reap`) | the same, fired since the last report, handed over when the idle reap shut the run's worker (`py-reap.ts`) |
 | `python` | `reap` (`idle`) | the idle reap shut the run's worker while its turn was live: the turn's Python names are gone, and its next cell opens with the reset line |
+| `python` | `pkg-index` | a python_install card read PyPI's index before it was raised: one record per request, made before the request, with `detail.url` (always on pypi.org) and `detail.tool`. A lock package makes none |
 | `python` | `pkg-card` (`ok`, or the refusal: `not-on-index`, `malformed`, …) | a python_install card was raised; `detail.files` is how many rows it showed, `detail.tool` the tool |
 | `python` | `pkg-card-mismatch` (`refusal`/`files-absent`/`files-malformed`/`files-differ`/`no-check`) | an approval of a python_install card was turned into a denial: the card was a refusal, or the answer did not carry the rows it showed. Level `warn`, the sentence in `detail.why`, the gate's seq in `detail.seq` |
 | `python` | `keep` | the turn asked to keep its Python worker through idle gaps (`python_exec` `keep: true`); once per turn |

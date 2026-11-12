@@ -277,6 +277,23 @@ test("core-env.gen.ts: the pinned core's name is tools/pyodide-dist.json's artef
     assert.equal(CORE_ENV.core, pin.artefact.name);
 });
 
+test("core-env.gen.ts: its Python and its platform tags are the pin's (python, abi, emscripten)", () => {
+    const pin = JSON.parse(fs.readFileSync(new URL("tools/pyodide-dist.json", ROOT), "utf8"));
+    assert.equal(CORE_ENV.python, pin.python);
+    assert.equal(CORE_ENV.markerEnv.python_full_version, pin.python);
+    const [maj, min] = pin.python.split(".");
+    const platforms = new Set([`pyodide_${pin.abi}_wasm32`, `pyemscripten_${pin.abi}_wasm32`, `emscripten_${pin.emscripten.replaceAll(".", "_")}_wasm32`, "any"]);
+    for (const tag of CORE_ENV.tags) {
+        const [interp, , platform] = tag.split("-");
+        assert.ok(platforms.has(platform), `${tag}: platform is not the pin's`);
+        const m = /^(?:cp|py)(\d)(\d*)$/.exec(interp);
+        assert.ok(m && m[1] === maj && (m[2] === "" || Number(m[2]) <= Number(min)), `${tag}: interpreter is newer than the pin's Python`);
+    }
+    // The pin's abi is what makes a binary wheel installable: both of its platforms appear on the core's own interpreter.
+    assert.ok(CORE_ENV.tags.includes(`cp${maj}${min}-cp${maj}${min}-pyodide_${pin.abi}_wasm32`));
+    assert.ok(CORE_ENV.tags.includes(`cp${maj}${min}-cp${maj}${min}-pyemscripten_${pin.abi}_wasm32`));
+});
+
 test("core-env.gen.ts: scripts/gen-core-env.mjs --check finds it current", () => {
     const r = spawnSync(process.execPath, ["scripts/gen-core-env.mjs", "--check"], { cwd: ROOT.pathname, encoding: "utf8" });
     assert.equal(r.status, 0, r.stdout + r.stderr);
