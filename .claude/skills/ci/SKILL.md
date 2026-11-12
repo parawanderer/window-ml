@@ -342,7 +342,7 @@ Recently removed, recorded so nobody re-adds them from memory:
   in a PR after #1189. Do not add as flake.
 
 - ~~`site-access.spec.mjs:1624` › `@security attack 19 › a real click in the first second does nothing; after it, the
-  agent runs`, failing in SETUP with `waitInShell: timed out after 15000 ms` at `open()`~~ — **fixed** in this PR's
+  agent runs`, failing in SETUP with `waitInShell: timed out after 15000 ms` at `open()`~~ — **fixed** in #1660's
   harness change (2026-11-12, seen on #1634's run 43198617151, retry-passed), a test-harness race and NOT a recurrence of
   #1163 (no card exists yet when it fails). `approveOrigin` wrote `ml_site_always` and `ml_site_agents` in two
   `chrome.storage.local.set` calls; both are site-access keys, so each ran its own `syncPresence`, which unregisters and
