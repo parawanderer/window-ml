@@ -37,6 +37,10 @@ export const VERDICT_BOUNDS = {
     filename: 255,
     /** Characters of a project name, short enough that its wheel's filename fits `filename`. */
     name: 200,
+    /** Steps of one verdict: a file judged, or a version tested against one range. The other bounds cap each lookup,
+     *  not their product (a lock package's 4,096 releases of 1,024 files, rescanned for each of 254 ranges); this caps
+     *  the walk. The pinned snapshot's largest is 2,993; a step is microseconds, so the headroom is wider than twice. */
+    work: 65_536,
 } as const;
 
 /** One package of the core's lock (pyodide-lock.json): the version it pins, its file, its dependencies. */
@@ -248,7 +252,12 @@ function decide(request: { name: string; version?: string }, core: CoreFacts, in
     if (typeof rawName !== "string" || rawName.length > VERDICT_BOUNDS.name || !NAME_RE.test(rawName)) throw new Stop("malformed", String(rawName).slice(0, 80));
     const root = canonicalName(rawName);
     if (rawVersion !== undefined && !parseVersion(rawVersion)) throw new Stop("malformed", root);
-    let metaChars = 0;
+    let metaChars = 0, work = 0;
+    /** Count `n` steps of work against `VERDICT_BOUNDS.work`. */
+    const charge = (n: number, at: string): void => {
+        work += n;
+        if (work > VERDICT_BOUNDS.work) throw new Stop("too-large", at);
+    };
     const lookup = (name: string): unknown => {
         const p = index(name);
         return p === undefined || p === null ? undefined : p;
@@ -272,7 +281,9 @@ function decide(request: { name: string; version?: string }, core: CoreFacts, in
         const py = pythonOk(rp, core);
         if (py === null) throw new Stop("malformed", name);
         if (!py) throw new Stop("python-version", name);
-        const file = pick(core, filesOf(release, name), name, key, undefined);
+        const releaseFiles = filesOf(release, name);
+        charge(releaseFiles.length, name);
+        const file = pick(core, releaseFiles, name, key, undefined);
         if (!file) throw new Stop("no-build", name);
         const rd = own(release, "requires_dist");
         if (rd === undefined) throw new Stop("no-metadata", name);
@@ -296,6 +307,17 @@ function decide(request: { name: string; version?: string }, core: CoreFacts, in
     };
 
     const replaceableMemo = new Map<string, boolean>();
+    // A release's pick does not depend on the ranges, so each release's files are judged once per verdict.
+    const pickMemo = new Map<string, Chosen | null>();
+    const pickRelease = (name: string, v: string, release: unknown): Chosen | null => {
+        const key = name + "\u0000" + v;
+        if (!pickMemo.has(key)) {
+            const releaseFiles = filesOf(release, name);
+            charge(releaseFiles.length, name);
+            pickMemo.set(key, pick(core, releaseFiles, name, v, own(release, "requires_python")));
+        }
+        return pickMemo.get(key)!;
+    };
     /** The newest release of lock package `name` inside every range of `ranges` with a file the core accepts. */
     const replacement = (name: string, ranges: Pep440SpecifierSet[]): { version: string; file: Chosen } | null => {
         if (core.preloaded.has(name)) return null;
@@ -304,11 +326,11 @@ function decide(request: { name: string; version?: string }, core: CoreFacts, in
         const releases = releasesOf(project, name);
         let best: { version: string; file: Chosen } | null = null;
         for (const v of Object.keys(releases)) {
+            charge(ranges.length + 1, name);
             const pv = parseVersion(v);
             if (!pv || !ranges.every((r) => specifierSetContains(r, v))) continue;
             if (best && cmpVersion(pv, parseVersion(best.version)!) <= 0) continue;
-            const release = releases[v];
-            const file = pick(core, filesOf(release, name), name, v, own(release, "requires_python"));
+            const file = pickRelease(name, v, releases[v]);
             if (file) best = { version: v, file };
         }
         return best;
@@ -324,7 +346,10 @@ function decide(request: { name: string; version?: string }, core: CoreFacts, in
     const asked = new Map<string, Pep440SpecifierSet[]>();
     const ask = (name: string, ranges: Pep440SpecifierSet[]): void => {
         const entry = core.lock.get(name)!;
-        asked.set(name, [...(asked.get(name) ?? []), ...ranges]);
+        const list = asked.get(name) ?? [];
+        if (!asked.has(name)) asked.set(name, list);
+        for (const r of ranges) list.push(r);
+        charge(ranges.length, name);
         if (!ranges.every((r) => specifierSetContains(r, entry.version)) && !replaceable(name, ranges)) throw new Stop("lock-too-old", name);
     };
 
@@ -364,6 +389,7 @@ function decide(request: { name: string; version?: string }, core: CoreFacts, in
             loaded.push(node.name);
         } else {
             const ranges = asked.get(node.name) ?? [];
+            charge(ranges.length, node.name);
             if (ranges.every((r) => specifierSetContains(r, node.entry.version))) {
                 files.push({ name: node.name, version: node.entry.version, filename: node.entry.file, source: "lock" });
                 continue;

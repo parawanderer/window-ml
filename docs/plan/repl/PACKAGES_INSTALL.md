@@ -99,7 +99,9 @@ What it CANNOT make the verdict do:
   a candidate. So whatever slice 3 writes is named by a string slice 1 has already validated.
 - run without bound: at most N packages in a closure, D levels deep, and B bytes of metadata per project, plus caps on
   specifier and marker length (as built: `VERDICT_BOUNDS` in `pkg-verdict.ts`, B counted per verdict, plus the
-  wheels' total bytes). Cycles terminate through the seen set. Past any bound the verdict is
+  wheels' total bytes). Those cap each lookup, not their product, so a `work` bound counts every file judged and
+  every range test across the walk (as built: 65,536 steps, where the snapshot's largest verdict takes 2,993); each
+  release's files are judged once per verdict. Cycles terminate through the seen set. Past any bound the verdict is
   `too-large`. Slice 1 picks the values from the 10k probe's largest real closure (the notebook's `closure_size`),
   with headroom stated.
 - approve anything: a verdict is the card's input (slice 2) or a policy's facts (slice 5). Neither installs on its

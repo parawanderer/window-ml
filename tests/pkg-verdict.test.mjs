@@ -296,6 +296,13 @@ test("hostile: each bound holds at its value and refuses one past it", () => {
     assert.equal(V("g", releases(VERDICT_BOUNDS.releases)).ok, true);
     assert.equal(V("g", releases(VERDICT_BOUNDS.releases + 1)).reason, "too-large");
 
+    // Work across the walk: 1 step for root's file, then each dependency's files; 63 x 1,024 + 1,023 + 1 is the bound.
+    const spread = (last) => ({ root: proj("root", "1.0", { requires_dist: Array.from({ length: 64 }, (_, i) => `w${String(i).padStart(2, "0")}`) }),
+        ...Object.fromEntries(Array.from({ length: 64 }, (_, i) => { const n = `w${String(i).padStart(2, "0")}`; return [n, proj(n, "1.0", { files: Array.from({ length: i === 63 ? last : 1024 }, () => wheel(n, "1.0")) })]; })) });
+    assert.equal(VERDICT_BOUNDS.work, 63 * 1024 + 1023 + 1);
+    assert.equal(V("root", spread(1023)).ok, true);
+    assert.deepEqual(V("root", spread(1024)), { ok: false, reason: "too-large", at: "w63" });
+
     // Requirement text read by one verdict, across its whole closure.
     const long = (n) => `never; extra == "${"z".repeat(n - 'never; extra == "'.length - 1)}"`;
     const perReq = MAX_REQUIREMENT_CHARS, count = VERDICT_BOUNDS.metadataChars / perReq;
@@ -321,6 +328,18 @@ test("hostile: each bound holds at its value and refuses one past it", () => {
     const nm = (n) => "n".repeat(n);
     assert.equal(V(nm(VERDICT_BOUNDS.name), { [nm(VERDICT_BOUNDS.name)]: proj(nm(VERDICT_BOUNDS.name), "1.0") }).ok, true);
     assert.equal(V(nm(VERDICT_BOUNDS.name + 1), {}).reason, "malformed");
+});
+
+test("hostile: every lookup inside its bound, multiplied, is stopped by the work bound: a lock package asked by 254 ranges, with 4,096 releases of 1,024 files", () => {
+    // Each package asks lib-lock for a different range above the lock's 1.0, so each range scans the releases again.
+    const releases = Object.fromEntries(Array.from({ length: VERDICT_BOUNDS.releases }, (_, i) => [`2.${i}`, { requires_dist: [],
+        files: Array.from({ length: VERDICT_BOUNDS.files }, (_, j) => ({ ...wheel("lib-lock", `2.${i}`), filename: `lib_lock-2.${i}-${j + 1}-py3-none-any.whl` })) }]));
+    const askers = Array.from({ length: VERDICT_BOUNDS.packages - 2 }, (_, k) => `a${k}`);
+    const projects = { "lib-lock": { latest: `2.${VERDICT_BOUNDS.releases - 1}`, releases }, root: proj("root", "1.0", { requires_dist: askers }),
+        ...Object.fromEntries(askers.map((n, k) => [n, proj(n, "1.0", { requires_dist: [`lib-lock>=2.${k}`] })])) };
+    const t = performance.now();
+    assert.deepEqual(V("root", projects), { ok: false, reason: "too-large", at: "lib-lock" });
+    assert.ok(performance.now() - t < 10_000, "stopped at the work bound, not at the end of the walk");
 });
 
 test("hostile: a requirement, marker or specifier off the grammar is malformed, never skipped", () => {
