@@ -5,10 +5,12 @@
 //   docker run … wml-sh-lease (tests/e2e/docker/sh-lease.Dockerfile; its header has the flags bwrap needs)
 //   SH_LEASE_MODELS=a,b USE_ENV=1 node --import tsx tests/e2e/bench/run.mjs tests/e2e/bench/specs/sh-lease.bench.ts --dry
 //
-// Three task scripts, each in its own fresh workspace with a stored workspace manifest so it runs without asking:
+// Four task scripts, each in its own fresh workspace with a stored workspace manifest so it runs without asking:
 //   build  40 s, a progress line every 5 s, then its result line (detaches under the 5 s and 15 s leases);
+//   tests  10 s, a line every 2 s, then its summary line (detaches under the 5 s lease only): an ordinary call such as
+//          a test run or a `git fetch`, the case where a short lease would tax everyday work;
 //   hang   prints one line and never ends (the host kills it at its 120 s default unless the model cancels first);
-//   quick  2 s (never detaches): the control, the common case the lease must not tax.
+//   quick  2 s (never detaches): the control.
 // The task text names the command and the answer wanted, and never mentions expectMs, leases or tasks, so how often a
 // model gives an estimate before its first Detached is unprompted.
 //
@@ -17,8 +19,9 @@
 // but credential stores; in the container that is the container's files. Local models only (the box) unless Shane says
 // otherwise.
 //
-// What the build arm cannot measure: the host reports a call's output only when it is done (no `peek` yet), so the
-// model never sees the build's progress lines while it runs. Re-run that arm after the host's peek slice.
+// Peek: before host#29 (peek) and #1586 (its window-ml half) a running call's `task tail` was empty, so the 2026-11-07
+// matrix could not see a model read the build's progress. The 2026-11-12 re-run (`--skip task=hang --skip task=quick`)
+// measures build and tests on a build with both.
 
 import { defineBench } from "../spec";
 
@@ -26,7 +29,7 @@ import { defineBench } from "../spec";
 const MODELS = (process.env.SH_LEASE_MODELS || "gemma4:31b,gemma4:e4b,qwen3.8-flash-next:vision").split(",").map((s) => s.trim()).filter(Boolean);
 
 /** The result lines the scripts end with: a right answer reports its own. */
-export const TOKENS = { build: "BUILD OK 7f3a19", quick: "CHECK OK c42e07" };
+export const TOKENS = { build: "BUILD OK 7f3a19", tests: "TESTS OK 31 passed 5d81b4", quick: "CHECK OK c42e07" };
 
 /** A workspace manifest for one task script: `bash <path>`, pinned by the host, reading nothing outside its root. It
  *  declares `runs-code` because the scripts start `sleep`: without it the worker sends `exec: program-only` and the host
@@ -38,6 +41,11 @@ const BUILD_SH = [
     'echo "build: compiling 8 units"',
     ...Array.from({ length: 8 }, (_, i) => `sleep 5\necho "build: unit ${i + 1}/8 done"`),
     `echo "${TOKENS.build}"`,
+].join("\n") + "\n";
+const TESTS_SH = [
+    'echo "tests: 31 to run"',
+    ...Array.from({ length: 5 }, (_, i) => `sleep 2\necho "tests: ${(i + 1) * 6} done"`),
+    `echo "${TOKENS.tests}"`,
 ].join("\n") + "\n";
 const HANG_SH = 'echo "fetch: connecting to the data service"\nwhile true; do sleep 3600; done\n';
 const QUICK_SH = `sleep 2\necho "${TOKENS.quick}"\n`;
@@ -51,7 +59,7 @@ const saysStalled = (answer: string): boolean =>
 
 export default defineBench({
     name: "sh-lease",
-    description: "SH_LEASE_MS: 5, 15 or 60 s before an ml.sh call detaches, over a 40 s build, a hang and a 2 s call.",
+    description: "SH_LEASE_MS: 5, 15 or 60 s before an ml.sh call detaches, over a 40 s build, a 10 s test run, a hang and a 2 s call.",
     repeats: 5,
     timeoutMs: 300000,
     capture: "failure",
@@ -75,6 +83,14 @@ export default defineBench({
             task: "My project's build script is `build.sh` in the workspace. Run it with `bash build.sh` (ml.sh, from an exec) and tell me the last line it prints.",
             shell: { files: { "build.sh": BUILD_SH }, manifests: [scriptManifest("build.sh")] },
             succeeded: ({ answer }) => answer.includes(TOKENS.build),
+        },
+        {
+            id: "tests",
+            regression: NOT_SUITE,
+            task: "Run my project's tests with `bash test.sh` in the workspace (ml.sh, from an exec) and tell me the summary line it ends with.",
+            shell: { files: { "test.sh": TESTS_SH }, manifests: [scriptManifest("test.sh")] },
+            timeoutMs: 240000,
+            succeeded: ({ answer }) => answer.includes(TOKENS.tests),
         },
         {
             id: "hang",
