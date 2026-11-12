@@ -2,7 +2,7 @@
 //
 // A delegated page tool is watched while it waits (src/sw/page-reachable.ts): a discarded tab is reloaded and retried,
 // a closed tab fails as `gone`, anything else silent is given up after PAGE_SILENCE_CAP_MS (240 s). Three kinds of
-// unhealthy page fall through that net: a page whose main thread SPINS, a page that NEVER FINISHES LOADING, and a
+// unhealthy page fell through that net: a page whose main thread SPINS, a page that NEVER FINISHES LOADING, and a
 // renderer that CRASHES. Each row below asserts what a person would want (the tool fails in well under the cap, with a
 // cause the model can act on, and the run goes on). They landed as `test.fail()` rows (#1703) and pass since the fix
 // (crashed, busy and a stalled navigate told apart in delegate-send.ts, page-reachable.ts and sw-run-host.ts); each
@@ -161,7 +161,7 @@ test("B1. a page stuck mid-load (headers and half a body, then silence): the con
     await page.close({ runBeforeUnload: false }).catch(() => {});
 });
 
-test("B1b. ...but nothing tells the model the page never finished loading", async () => {
+test("B1b. ...and pageInfo tells the model the page has not finished loading", async () => {
     // BEFORE THE FIX: pageInfo returns URL, title, time, locale and browser, with no readyState; the model reads half a page as the page.
     const page = await ext.context.newPage();
     await page.goto(site.url + "/half", { waitUntil: "commit" });

@@ -133,8 +133,6 @@ async function withShCalls(runId: string, seq: number | undefined, tool: () => P
 
 const STREAM_EMIT_MS = 90;   // min gap between live `agent-stream` deltas — smooth enough to read, not a flood
 
-/** The tab's main-frame document: the barrier's record of the last commit, else the browser's answer (a worker that was
- *  evicted has no record). Undefined where neither knows, and then a re-adopt is judged on the navigation alone. */
 /**
  * Wait for a `navigate`'s destination to re-adopt the run, and say whether it stalled: nothing re-adopted within
  * NAV_COMMIT_MS, no new document committed, and the browser still holds the destination as the tab's `pendingUrl`.
@@ -155,6 +153,8 @@ async function navStalled(tabId: number, sentTo: string | undefined): Promise<{ 
     return { from: tab.url ?? "", to: tab.pendingUrl };
 }
 
+/** The tab's main-frame document: the barrier's record of the last commit, else the browser's answer (a worker that was
+ *  evicted has no record). Undefined where neither knows, and then a re-adopt is judged on the navigation alone. */
 async function documentOn(tabId: number): Promise<string | undefined> {
     const known = navBarrier.currentDocument(tabId);
     if (known) return known;
