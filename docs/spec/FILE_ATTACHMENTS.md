@@ -670,9 +670,10 @@ anything in a real browser worker rather than Node.
 **Backups.** A backup never carries the value store today (`ml-values` is marked `never`, "fetched tables a run
 holds; refetchable", `src/backup/backup-inventory.ts`). That holds for fetched tables, not for a person's attachment
 or a session's files, neither of which can be fetched again. RULED 2026-11-12 (Shane, in the calm-chat-motion
-session): a backup carries the person's attachments, so a restored session has its files. Open: whether it also
-carries the files a session's runs made (the lean is yes, with the backup screen showing their size), and whether the
-session archive carries both. Fetched values stay out.
+session): a backup carries the person's attachments, so a restored session has its files. It carries the files a
+session's runs made too, and the backup screen shows how much space each kind takes; the run-made files can be left
+out with one tick, the person's attachments cannot. The session archive carries both with the session it archives.
+Fetched values stay out.
 
 **Open.**
 Whether the restricted dialect gets a write of its own (a `keep()` call) is open and not proposed.
