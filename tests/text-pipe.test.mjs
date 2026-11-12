@@ -143,7 +143,7 @@ test("an un-modeled command is an actionable error (not a real shell)", () => {
 test("an unknown flag names the allowed ones", () => {
     assert.throws(() => runPipe("x", "grep -Z foo"), /grep.*doesn't support -Z/s);
 });
-test("the array form is offered for ml.pipe, the one place it is accepted, not for a tool's string `pipe`", async () => {
+test("the array form is offered for exec's ml.pipe, not for a tool's string `pipe`", async () => {
     const { PIPE_SYNTAX } = await import("../src/pointers/text-pipe.ts");
     assert.match(PIPE_SYNTAX, /`ml\.pipe` in exec also takes an ARRAY/);
     // That ml.pipe takes the array entry by entry: tests/token-pipe.test.mjs, "pipeStages: a pipe resolves to STAGES".

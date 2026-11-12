@@ -4,7 +4,7 @@ Status: **steps 1 and 2 done (#448, #451); of step 3, the `ml.current` cut shipp
 the default kit (#464), and the tool-output-tokens cut, the `exec`/`fetch_url` split, `locate`'s option texts and (round
 3) `python_exec`'s option texts and the shadow/iframe edge cases shipped measured (below); the pipe-example cut was
 dropped unmeasured, as too small to be worth a sweep.**
-Started 2026-10-08, updated 2026-11-11 (the page context leaves the system prompt, measured).
+Started 2026-10-08, updated 2026-11-12 (seven models read the agent prompt for contradictions).
 
 Every model call carries the system prompt and every tool's schema. This is the plan for making that smaller
 without making runs worse, and the record of what has been measured so far. It is here, not in `tmp/`, so whoever
@@ -138,9 +138,9 @@ directly (method step 3).
   read-only dialect replaced `mode`, and said "just re-run" a JSON result (against "dereference instead of
   re-running"); it now says return it as a DataFrame from a new cell. "Every tool takes an optional `title`" was false
   for `pageInfo` and `chat_metadata` (`withCallTitle` leaves a parameterless tool alone, on purpose). THE PIPE DIALECT
-  offered an ARRAY form that only `ml.pipe` in exec takes; every tool's `pipe` is a string. `fetch_url`'s
-  `credentials` said "Always prompts" though the page you are on is free. `head`/`tail -c` now say they count lines
-  and name `.path` / `grep -o` (Kimi spent a step on `tail -c 520` over one long JSON line).
+  offered an ARRAY form that only exec accepts (`ml.pipe`, and `ml.dereference`'s `pipe` option); every tool's
+  `pipe` is a string. `fetch_url`'s `credentials` said "Always prompts" though the page you are on is free. `head`/`tail -c` now say
+  they count lines and name `.path` / `grep -o` (Kimi spent a step on `tail -c 520` over one long JSON line).
 - **Agreed cuts, to measure (step 4)**: the pipe section (7 of 7), the python clause's recap of its tool (6), the
   self-description and `ml.current` paragraphs (6), READING AN OUTPUT AGAIN against `dereference`'s own text (5), the
   vision paragraph against `look` (5). The `title` and `token` parameter texts are 4,646 of the 36,623 characters of
