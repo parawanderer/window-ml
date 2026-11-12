@@ -638,4 +638,8 @@ Tested under real CPython against a fake transport: `tests/ml-facade.test.mjs`.
 - **A Python callable a cell gave JavaScript is REVOKED at the cell's cancel, never destroyed** (`cell-gate.ts`): a
   destroyed proxy throws when a timer fires it, and the throw kills the worker. Revoke after the spend, never before.
 - **The wheels (`pyodide-wheels/`) are gitignored, and a missing set fails only at run time**, as
-  `No module named 'numpy'`.
+  `No module named 'numpy'`. A missing wheel is never fetched: under Node, Pyodide retries it from
+  `packageBaseUrl`, which defaults to its CDN (a hang of 40 minutes once). The sandbox pins that to `indexURL`
+  (`pyodideLoadOptions`, python-env.ts), and `scripts/test.mjs` preloads `tests/no-cdn-fetch.mjs`, which refuses
+  the CDN for the tests that call `loadPyodide` themselves. A shim that overrides `indexURL` overrides
+  `packageBaseUrl` with it.

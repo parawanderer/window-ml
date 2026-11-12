@@ -31,7 +31,7 @@ before(async () => {
     fs.mkdirSync(path.join(shim, "pyodide"));
     fs.writeFileSync(path.join(shim, "pyodide", "pyodide.mjs"),
         `import { loadPyodide as real } from ${JSON.stringify(pathToFileURL(path.join(DIST, "pyodide", "pyodide.mjs")).href)};\n` +
-        `export const loadPyodide = (o) => real({ ...o, indexURL: ${JSON.stringify(path.join(DIST, "pyodide") + "/")} });\n`);
+        `export const loadPyodide = (o) => real({ ...o, indexURL: ${JSON.stringify(path.join(DIST, "pyodide") + "/")}, packageBaseUrl: ${JSON.stringify(path.join(DIST, "pyodide") + "/")} });\n`);
     // Inherits the realm's intrinsics: the TypeScript loader reads them off `self` when it compiles the worker's imports.
     globalThis.self = Object.assign(Object.create(globalThis), {
         name: "readonly",
