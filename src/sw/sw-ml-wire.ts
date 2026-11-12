@@ -14,6 +14,7 @@ import type { MlWireAnswer, MlWireRequest } from "../contract";
 import { ML_READONLY_METHODS, mlFacade } from "../readonly-exec/policy";
 import { workerReadonlyMl, derefWhole, type RunDeref } from "./worker-readonly-ml";
 import { pipeStages } from "../pointers/token-pipe";
+import { FILE_PREFIX } from "../pointers/token-prefixes";
 import type { PipeLimits } from "../pointers/text-pipe";
 import { MAX_STRING, PIPE_CHARS_PER_STEP, STEP_BUDGET } from "../readonly-exec/limits";
 import { derefByRun, runControllers, sessionTokens, turnByRun } from "./sw-runs";
@@ -137,7 +138,7 @@ function dereferenceOverWire(deref: RunDeref, run: string, limits: PipeLimits): 
         if (size <= WIRE_VALUE_CAP) return value;
         const id = read.meta?.id;
         if (!id) throw new WireError("TooLarge", `the value is ${size} characters, past the wire's ${WIRE_VALUE_CAP}; read part of it with a pipe`);
-        return wirePointer({ token: `@tool:${id}`, label: read.meta?.label ?? read.meta?.tool ?? id, size });
+        return wirePointer({ token: `${read.meta?.file ? FILE_PREFIX : "@tool:"}${id}`, label: read.meta?.file?.name ?? read.meta?.label ?? read.meta?.tool ?? id, size });
     };
 }
 

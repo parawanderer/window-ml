@@ -153,13 +153,16 @@ function thrownKey(e: unknown): string {
  *  reads it. For the page's MAIN world it is the preview, as before: a pointer-naming script reaches the main world only
  *  where no isolated world is available (exec-routing.ts, the owner's 2026-10-08 fallback), and a page approved for
  *  window.ml is not thereby approved to read the whole of what a run fetched elsewhere (POINTER_VALUES.md, slice 9).
- * @param whole whether a stored text is read whole: true only for an isolated world */
+ * @param whole whether a stored text is read whole, and an attached file read at all: true only for an isolated world */
 async function preReadsFor(runId: string, js: string, whole: boolean): Promise<PreRead[]> {
     const fn = derefByRun.get(runId);
     if (!fn) return [];
     return Promise.all(namedReads(expandPointers(js).code).map(async ({ ref, pipe }): Promise<PreRead> => {
         try {
             const r = whole ? await derefWhole(runId, fn, ref, pipeStages(pipe ?? null)) : fn(ref, pipe);
+            // What the person attached is not read into the page's own world, for the reason a stored text is not read
+            // whole there; the resolver's answer for a file is its description, which must not pass for its text.
+            if (!whole && r.meta?.file) return { ref, pipe, error: "An attached file is read only in an isolated world, which this page has none of. Read it with the dereference tool instead." };
             return { ref, pipe, value: r.value, ...(r.warning ? { warning: r.warning } : {}), ...(r.meta ? { meta: r.meta } : {}) };
         } catch (e) { return { ref, pipe, error: (e as Error)?.message || String(e) }; }
     }));

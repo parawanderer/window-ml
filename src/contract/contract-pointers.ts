@@ -31,6 +31,10 @@ export interface DerefMeta {
     /** A `data:image/…;base64,…` URL when the step produced an image. */
     image?: string;
     latex?: string;
+    /** Set when the pointer is an attached file (`@file:`): what the person attached, as its outline says it. The text
+     *  is then the file's text, a PDF's as `<page n="…">` sections a `pages N-M` stage selects from; `tool` is
+     *  `"attached"` and `step` is 0, since a file comes in with a message (`turn`), not from a tool's step. */
+    file?: { name: string; type: string; bytes: number; turn: number; pages?: number; lines?: number };
 }
 
 // `readColumns` is attached PAGE-SIDE by the resolver of a background-hosted run when `meta.value` names a stored table;
@@ -62,6 +66,8 @@ export interface DerefValue extends String {
     readonly table?: Table;
     readonly image?: string;
     readonly latex?: string;
+    /** What the person attached, when this is an `@file:` pointer (see {@link DerefMeta.file}). */
+    readonly file?: DerefMeta["file"];
     /** Reduce it further through the text-pipe dialect, resolving to a new value. */
     pipe(stages: string | string[]): Promise<DerefValue>;
     /** The TS-like shape of it: for a TABLE its `shape` + `dtypes` (the frame without the rows), else the

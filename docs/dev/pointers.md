@@ -49,7 +49,10 @@ background-hosted paths with no page round-trip and no approval.
   `@tool:` reference never resolves to a file. Two forms, told apart by shape: a minted id, and the file's own name
   quoted. A name two files share is REFUSED, listing both, never resolved to the latest; the same bytes attached
   twice are one pointer. `derefLocally` reads the document from the value store on every read, so a file whose
-  rows are gone fails with the store's reason. `ml.dereference` in code refuses `@file:` with a sentence for now.
+  rows are gone fails with the store's reason. `ml.dereference` in code reads it too, in the worker: the loop's
+  resolver answers a file with its description and the doc's key only (it cannot wait on the store), and `derefWhole`
+  (worker-readonly-ml.ts) reads the rows, a PDF as its `<page>` sections, pipes them, and drops the key from the
+  answer. A read for the page's MAIN world is refused (`preReadsFor`), as a stored text is not read whole there.
   A file reaches the shelf when it is sent with any message to an agent run the worker built (sw-attach.ts
   `attachFiles`): a PDF read once, its bytes and its read document stored as held rows of the run's session, a
   text file as a `text` row, each pointer noted with the message's turn, and the message given each one under
