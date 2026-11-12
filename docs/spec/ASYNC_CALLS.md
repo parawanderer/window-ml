@@ -178,7 +178,7 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
      by cell id from the offscreen document; the host's own message for `ml.sh`), which starts a new worker; that
      worker rehydrates the task's row and parks the result. This replaces the mode 1 ruling that `PY_DONE` by cell
      id is not built.
-   - **A finished task starts a turn, by default.** CORRECTED 2026-11-12 (Shane: that is how he uses and likes
+   - **A finished task starts a turn, by default.** CORRECTED 2026-11-12 (Shane: that is how they use and like
      Claude Code). A completion arriving while a turn runs parks in the inbox for that turn, as today. One arriving
      with no turn running starts a turn whose first step reads the inbox, through the same checks as any inbox item
      (rule 6); completions arriving before that first step coalesce into the one turn, and so does a person's
