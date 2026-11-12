@@ -5,13 +5,15 @@
 // TWO SINKS, and the row below pins the stronger one. A call to the `__mlCdpStream` binding only reaches `onStream` —
 // the person's live output and the session events that mirror it — never `r.logs`; redteam-isolated.test.mjs pins that
 // half ("the page cannot write into a MAIN-world CDP exec's live output through __mlCdpStream"). What DOES reach the
-// model's result is the wrapper's own collector: `__logs.push(...)` is a method of the ARRAY the wrapper made in the
-// page's realm, so the page's `Array.prototype.push` (or `JSON.stringify`, or `String`, which the collector also calls)
-// is the one that runs, and it can put text of its own beside the exec's line.
+// model's result is the wrapper's own collector, and it runs in the page's realm, beside the page's own code.
 //
-// The heading `page-writable (ran in page world):` is the whole of today's mitigation: it tells the model the console
-// it is reading is not trusted. A test with no `todo` that fails is a gap to fix; a `todo` names the property the
-// code cannot keep yet, so a later defence has a failing row to turn green.
+// The heading `page-writable (ran in page world):` was the whole of the mitigation while that collector called the
+// page's builtins on the exec's line. It no longer calls one on a string line: the lines go into a null-prototype
+// object by index with a counter (no `push`, no array whose prototype could hold an index setter), a line is joined by
+// `+` (no `map`/`join`), and the collector is an object literal (no `Object.defineProperty`). The row below is live
+// against that, so a change that makes the collector call one of the page's builtins on a string line again reds it. A
+// NON-string argument's text still goes through the page's `JSON.stringify` (or `String`), which is why the heading
+// stays; tests/cdp-collector-realm.test.mjs pins that residual.
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
@@ -56,15 +58,15 @@ after(() => releaseDebugger(7));
 
 // --- the model's result: the wrapper's collector is the page's realm ---
 
-test("the page cannot write into a STRICT-PAGE main-world exec's result by patching the builtins its collector calls", { ...T, todo: "Inherent while the exec runs in the page's world: the wrapper builds __logs there, so __logs.push, JSON.stringify and String are the PAGE's methods, and the page's replacement can add a line of its own beside the exec's before the result is returned — the model, the Out cell and both exports cannot tell the two apart. Nothing a bindingCalled event carries separates the exec's line from the page's either. What holds instead: the whole result is headed page-writable (ran in page world): — the sentence the model reads — and a binding call, which reaches the live output only, is already pinned in redteam-isolated.test.mjs" }, async () => {
+test("the page cannot write into a STRICT-PAGE main-world exec's result by patching the builtins its collector calls", T, async () => {
     const clean = cdpPage();
     const before = await cdpEval(7, "doc-7", "console.log('own'); return 1", () => {});
     assert.ok("ok" in before, `positive control: the exec ran: ${JSON.stringify(before)}`);
     assert.deepEqual(before.logs, ["own"], "positive control: with no page tampering the result is the exec's own line");
     assert.match(before.text, /^page-writable \(ran in page world\):\nconsole:\nown\n\nvalue: 1/, before.text);
 
-    // A page script, in the same world and before the exec: the collector's own push is the page's, and it adds a line
-    // whenever the exec logs. Nothing about it is async, so it is in place for the wrapper's very first line.
+    // A page script, in the same world and before the exec: it patches the builtin an array collector would call for
+    // the exec's own line. Nothing about it is async, so it is in place for the wrapper's very first line.
     clean.run(`
         globalThis.__ownPush = Array.prototype.push;
         Array.prototype.push = function (...a) {
