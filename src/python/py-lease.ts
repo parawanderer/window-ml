@@ -13,9 +13,18 @@ declare const __PY_LEASE_MS__: number | undefined;
  *  placeholder (rule 1); the bench varies it per cell through `__PY_LEASE_MS__`. */
 export const PY_LEASE_MS = typeof __PY_LEASE_MS__ === "number" ? __PY_LEASE_MS__ : 15_000;   // state: fixed
 
-/** The longest a detached cell may run before the sandbox kills it: the same bound as one `task await`
- *  (sw-tasks.ts `TASK_AWAIT_MAX_MS`). A placeholder. */
-export const PY_DETACHED_MAX_MS = 10 * 60_000;
+/** The ceiling a bench cell builds in (build.mjs `--define __PY_DETACHED_MAX_MS__=…`); undefined when nothing defined it. */
+declare const __PY_DETACHED_MAX_MS__: number | undefined;
+
+/**
+ * The longest a detached cell may run before the sandbox kills it. A placeholder under rule 1, but bounded by a
+ * measurement: the service worker that waits on the cell's reply is killed with the reply still pending somewhere between
+ * 345 s and 390 s after the cell was sent (Chrome 151, a SILENT cell; docs/spec/ASYNC_CALLS.md has the table), and a
+ * reply after that reaches nobody. The ceiling is the last bound both runs survived, less 30 s, to the minute below. A
+ * cell that PRINTS sends a message with every chunk and keeps the worker alive longer, so evidence from a printing cell
+ * is no reason to raise it.
+ */
+export const PY_DETACHED_MAX_MS = typeof __PY_DETACHED_MAX_MS__ === "number" ? __PY_DETACHED_MAX_MS__ : 5 * 60_000;   // state: fixed
 
 /** How long a cancelled or stopped cell is given to answer its interrupt (`KeyboardInterrupt`) before its sandbox is
  *  killed: a Python loop answers in about 3 ms, a call inside C not until it returns. A placeholder, as the bench's

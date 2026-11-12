@@ -125,6 +125,10 @@ if (!/^[1-9][0-9]*$/.test(DEFINES.__SH_LEASE_MS__))
 DEFINES.__PY_LEASE_MS__ ??= "15000";
 if (!/^[1-9][0-9]*$/.test(DEFINES.__PY_LEASE_MS__))
     throw new Error(`__PY_LEASE_MS__ must be a positive integer of milliseconds, got ${DEFINES.__PY_LEASE_MS__}`);
+// And the ceiling a detached cell runs under (`PY_DETACHED_MAX_MS`), in ms: the shipped 300000 unless a cell defines it.
+DEFINES.__PY_DETACHED_MAX_MS__ ??= "300000";
+if (!/^[1-9][0-9]*$/.test(DEFINES.__PY_DETACHED_MAX_MS__))
+    throw new Error(`__PY_DETACHED_MAX_MS__ must be a positive integer of milliseconds, got ${DEFINES.__PY_DETACHED_MAX_MS__}`);
 
 // Core (injected/content/background/popup/sidebar-shell) is left UNminified so
 // injected.js stays readable when inspected in devtools. The sidebar app is a

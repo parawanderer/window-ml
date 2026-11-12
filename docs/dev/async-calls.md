@@ -79,11 +79,14 @@ offscreen document:
 - **The lease starts when the cell does.** The cell's `PY_RUN` carries `cell` (the worker's own stream id). On the Python
   worker's `started` the offscreen document posts `PY_STARTED`, and `leaseCell` arms `expect_ms ?? PY_LEASE_MS` (15 s
   placeholder, `__PY_LEASE_MS__`). A cold start and a wait behind another cell are never charged to it. The document
-  swaps the 15 s cap for `PY_DETACHED_MAX_MS` (10 min) for a leased cell: the lease, not the cap, decides when it stops
+  swaps the 15 s cap for `PY_DETACHED_MAX_MS` (5 min, `__PY_DETACHED_MAX_MS__`) for a leased cell: the lease, not the cap, decides when it stops
   being attached.
 - **Past the lease the call answers `Detached`**, the tool shape's text (`pyDetachedText`) with the output so far, and
-  the cell runs on. Its `sendMessage` reply stays pending, which keeps the service worker alive: measured in Chrome 151,
-  a reply 330 s later reached the same worker instance, and a worker with nothing pending was evicted at about 65 s.
+  the cell runs on. Its `sendMessage` reply stays pending, which keeps the service worker alive, but not for ever:
+  measured in Chrome 151 on a SILENT cell, a reply 345 s after the send reached the same worker in both runs, and one at
+  390 s or later reached nobody (the worker was gone; the next message started a new one). A worker with nothing pending
+  was evicted at about 65 s. The ceiling is therefore 5 min (the last bound both runs survived, less 30 s, to the
+  minute below). A printing cell's chunks are fresh messages and keep the worker longer: that is no reason to raise it.
 - **The kernel is locked while a cell is detached.** A second `python_exec` of the run is REFUSED (`pyKernelBusy`), not
   queued: queued behind the worker's chain, its 120 s start bound would kill the worker and the detached cell with it.
 - **The result goes through the tool's own formatter** (`format` in `python-tool.ts`): the output cap and the hints, then

@@ -141,7 +141,7 @@ test("pyDetachedText says 'you expected ~N s' with expect_ms and 'no expect_ms w
     assert.match(withE, /you expected ~45 s/);
     assert.doesNotMatch(withE, /no expect_ms/);
     assert.match(withE, /cancelled when this turn ends/);
-    assert.match(withE, /600 s/);
+    assert.match(withE, /the sandbox ends it at 300 s/);
     assert.doesNotMatch(withE, /Output so far/);
     const without = pyDetachedText("tabc123", PY_LEASE_MS, null, "x");
     assert.match(without, /no expect_ms was given, so the \d+ s default applied/);
@@ -477,4 +477,36 @@ test("PY_DONE from a tab, or without a run, logs nothing", async () => {
     pythonDone({ type: "PY_DONE", cell: "wpy-y", ok: true, bytes: 1 }, OFFSCREEN);
     await new Promise((r) => setTimeout(r, 20));
     assert.equal((await orphans("run-orph-2")).length, 0);
+});
+
+// --- the build defines a bench cell sets ---
+
+test("__PY_LEASE_MS__ and __PY_DETACHED_MAX_MS__ set what a build ships; absent, the 15 s lease and the measured 5 min ceiling", async () => {
+    const esbuild = await import("esbuild");
+    const vm = await import("node:vm");
+    const entry = new URL("../src/python/py-lease.ts", import.meta.url).pathname;
+    const of = async (define) => {
+        const out = await esbuild.build({ entryPoints: [entry], bundle: true, write: false, format: "cjs", platform: "neutral", logLevel: "silent", ...(define ? { define } : {}) });
+        const mod = { exports: {} };
+        vm.runInNewContext(out.outputFiles[0].text, { module: mod, exports: mod.exports });
+        return { lease: mod.exports.PY_LEASE_MS, max: mod.exports.PY_DETACHED_MAX_MS };
+    };
+    assert.deepEqual(await of(), { lease: 15_000, max: 300_000 }, "undefined: the shipped values");
+    assert.deepEqual(await of({ __PY_LEASE_MS__: "5000", __PY_DETACHED_MAX_MS__: "60000" }), { lease: 5000, max: 60_000 });
+});
+
+test("build.mjs refuses a __PY_LEASE_MS__ or __PY_DETACHED_MAX_MS__ that is not a positive integer, before it builds anything", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const root = new URL("..", import.meta.url).pathname;
+    for (const name of ["__PY_LEASE_MS__", "__PY_DETACHED_MAX_MS__"]) for (const bad of ["0", "15s", ""]) {
+        const out = mkdtempSync(join(tmpdir(), "wml-pylease-"));
+        try {
+            const r = spawnSync(process.execPath, ["build.mjs", "--outdir", join(out, "d"), "--define", `${name}=${bad}`], { cwd: root, encoding: "utf8", timeout: 20000 });
+            assert.notEqual(r.status, 0, `${name}=${JSON.stringify(bad)} built`);
+            assert.match(r.stderr, new RegExp(`${name} must be a positive integer of milliseconds`));
+        } finally { rmSync(out, { recursive: true, force: true }); }
+    }
 });
