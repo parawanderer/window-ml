@@ -282,7 +282,8 @@ TRAP (the bench lane, 2026-11-07, measured): a stored WORKSPACE manifest for a s
 declare `runs-code`; with `effects: ["read"]` alone, `envelopeFor` sends `{write: "none", exec: "program-only"}` and
 the host refuses every child of `bash` (`/usr/bin/sleep: Permission denied`) while the call still reports `ok: true`,
 because builtins such as `echo` run. The lease bench's first matrix was invalid for this reason. The Settings
-manifest editor should warn when an entrypoint script's manifest lacks `runs-code` (open item for the shell UI).
+manifest editor warns when an entrypoint script's default command lacks `runs-code` (`scriptLacksRunsCode`,
+`program-manifest.ts`; the row's `.man-runs-code-warn` line, `manifests-section.tsx`; #1698).
 
 ## The API's shape: borrowed, not invented
 

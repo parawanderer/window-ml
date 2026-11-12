@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 
-const { describeCall, hardenArgv, validateManifest, inRange, CREDENTIAL_PROVIDERS, scriptLacksRunsCode } = await import("../src/shell/program-manifest.ts");
+const { describeCall, hardenArgv, validateManifest, inRange, CREDENTIAL_PROVIDERS, scriptLacksRunsCode, SCRIPT_RUNS_CODE_WARNING } = await import("../src/shell/program-manifest.ts");
 const { effectKey, free, boundFor, fromProgramEffect } = await import("../src/effects.ts");
 
 const MANIFESTS = new URL("../src/shell/manifests/", import.meta.url);
@@ -381,4 +381,16 @@ test("scriptLacksRunsCode: only an entrypoint script whose default command lacks
     ];
     for (const [name, m, want] of rows) assert.equal(scriptLacksRunsCode(m), want, name);
     for (const [name, m] of Object.entries(manifests)) assert.equal(scriptLacksRunsCode(m), false, `shipped ${name}`);
+});
+
+test("scriptLacksRunsCode reads the default command only: a subcommand with runs-code is still flagged, and a call reaching it is exec(process)", () => {
+    const ep = { path: "scripts/t.sh", sha256: "a".repeat(64) };
+    const m = { program: "bash", entrypoint: ep, command: { effects: ["read"], paths: "operands", flags: {}, subcommands: { build: { effects: ["read", "runs-code"], paths: "operands", flags: {} } } } };
+    assert.equal(scriptLacksRunsCode(m), true);
+    assert.match(SCRIPT_RUNS_CODE_WARNING, /default command lacks runs-code: under it,/);
+    const sub = describeCall(["bash", "scripts/t.sh", "build"], m);
+    assert.deepEqual(sub.subcommand, ["build"]);
+    assert.ok(sub.effects !== "unknown" && sub.effects.some((e) => e.op === "exec" && e.res.kind === "process"), JSON.stringify(sub.effects));
+    const top = describeCall(["bash", "scripts/t.sh"], m);
+    assert.ok(top.effects !== "unknown" && !top.effects.some((e) => e.op === "exec"), JSON.stringify(top.effects));
 });

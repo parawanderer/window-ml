@@ -187,8 +187,9 @@ export function scriptLacksRunsCode(m: Pick<ProgramManifest, "entrypoint" | "com
     return !e.includes("runs-code") && !e.includes("unknown");
 }
 
-/** The warning the manifest editor shows for a manifest `scriptLacksRunsCode` flags. */
-export const SCRIPT_RUNS_CODE_WARNING = "This script's manifest lacks runs-code: any program the script starts will be refused under the sandbox, while the call still reports ok. Add \"runs-code\" to its command's effects if it runs other programs.";
+/** The warning the manifest editor shows for a manifest `scriptLacksRunsCode` flags. It speaks for the default command
+ *  only: a subcommand that declares `runs-code` gets no envelope when a call reaches it (`describeCall` descends). */
+export const SCRIPT_RUNS_CODE_WARNING = "This script's default command lacks runs-code: under it, any program the script starts will be refused under the sandbox, while the call still reports ok. Add \"runs-code\" to the default command's effects if it runs other programs.";
 
 /** A path the host is asked to resolve: argv index, and the separator to split on when the path is a flag's attached
  *  value (`--output=f`). The shape of the host's `pathArgs` entries (window-ml-host docs/PROTOCOL.md). */
