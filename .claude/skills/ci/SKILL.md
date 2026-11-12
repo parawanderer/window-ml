@@ -341,6 +341,17 @@ Recently removed, recorded so nobody re-adds them from memory:
   window and misses the catch-up gets `open: true` and no page script until its next reload) is the site-access lane's,
   in a PR after #1189. Do not add as flake.
 
+- ~~`site-access.spec.mjs:1624` › `@security attack 19 › a real click in the first second does nothing; after it, the
+  agent runs`, failing in SETUP with `waitInShell: timed out after 15000 ms` at `open()`~~ — **fixed** in #1660's
+  harness change (2026-11-12, seen on #1634's run 43198617151, retry-passed), a test-harness race and NOT a recurrence of
+  #1163 (no card exists yet when it fails). `approveOrigin` wrote `ml_site_always` and `ml_site_agents` in two
+  `chrome.storage.local.set` calls; both are site-access keys, so each ran its own `syncPresence`, which unregisters and
+  re-registers the page scripts. The registration wait returned after the first sync, the second opened a gap, and
+  `open()`'s one `getRegisteredContentScripts` read inside it took an allowed page for a hidden one and waited for a
+  gate that never closes. Measured with a probe polling the registration for 1 s after the wait: two writes left a gap
+  in 3 of 40 launches, one write in 0 of 40. `approveOrigin` and `revokeOrigin` now write once, and `open()` waits for
+  the gate to be decided and names the mismatch instead of hanging. Do not add as flake.
+
 - ~~`site-access.spec.mjs:1507` › `@security attack 19 › the toolbar badge counts the waiting start on its tab, and the
   popup's Show unfolds its collapsed card`~~ — **fixed** in #1163 (`8f0ea29e`, 2026-10-27), a test-harness gap and not a
   product bug: the Collapse click landed while the shell was still springing the card container in (a 400 ms transform
