@@ -719,7 +719,7 @@ or a message"). What a hostile page must not get, as tests that fail first:
 ## Rulings (2026-10-28, from the python/shell/policies coordinator)
 
 1. Python takes an attachment as an injected value (`files:`, and `@file:` in `tables`), never a path; above. REOPENED
-   2026-11-12 (Shane) for the cells that can open a file: "A session's files as a directory".
+   2026-11-12 (Shane, in the coordinator's session) for the cells that can open a file: "A session's files as a directory".
 2. Rows over blobs is fine: the key is the only handle, claims and tombstones per row, the budget charges a blob once,
    the hold is the `protect` list, hash before the budget check.
 3. `@file:` is this spec's. The argv refusal is the shell call's rule for every prefix, and it stays: a handle in argv is
