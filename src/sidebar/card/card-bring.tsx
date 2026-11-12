@@ -21,6 +21,7 @@ function hostOf(url: string): string {
  *   {"hash": "c3", "title": "Extract the changelog entries", "url": "https://docs.example.net/changelog", "lastTs": 1799900000000, "held": false},
  *   {"hash": "d4", "title": "Fill in the expense form", "url": "https://shop.example.com/expenses", "lastTs": 1799500000000, "held": false}]}
  * @gallery empty {"now": 1800000000000, "rows": []}
+ * @group card
  * @param props.rows the list, for the gallery; omitted, it is fetched from the worker
  * @param props.now the clock the ages are read against, for the gallery
  * @param props.onDone called once a session was brought here
