@@ -92,7 +92,9 @@ offscreen document:
 - **The kernel is locked while a cell is detached.** A second `python_exec` of the run is REFUSED (`pyKernelBusy`), not
   queued: queued behind the worker's chain, its 120 s start bound would kill the worker and the detached cell with it.
 - **The result goes through the tool's own formatter** (`format` in `python-tool.ts`): the output cap and the hints, then
-  `finish`'s scrub. A figure cannot ride a task's text, so the line says it was not shown. `verify` is not run late.
+  `finish`'s scrub. A whole longer than the text is stored, and its key, length and figure travel with it, so the loop
+  mints a `@tool:` pointer with the step's cut line and the figure reaches the model as an image (#1730). `verify` is
+  not run late.
 - **Cancel is the interrupt first** (`interruptCell`, offscreen.ts): SIGINT into the cell's worker's buffer, and the
   worker killed after `PY_INTERRUPT_KILL_MS` (1 s) if it has not answered. The cancel says which (`pyCancelText`): names
   kept, or the sandbox restarted and the names lost. A cancel that arrives before the cell started is done when it starts,

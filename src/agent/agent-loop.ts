@@ -344,9 +344,6 @@ export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() =
     origin?: PromptOrigin;
 }
 
-// Live tool-output streaming: throttle the fan (a chatty loop can't flood the bus) and cap the accumulated
-// text (a runaway print can't blow up a message). The DONE emit carries the full result and supersedes this,
-// so the cap only bounds the LIVE view. Mirrors the LLM stream's 90ms cadence.
 /**
  * The line on a CUT copy that says where the rest is and how to read it: the clause in the system prompt teaches
  * `dereference`, but the moment a model needs it is when it is holding a truncated output.
@@ -357,6 +354,9 @@ function cutNote(id: string, chars: number): string {
     return `\n[your copy is cut: @tool:${id} holds ${chars} chars of this output. Read further with dereference and a pipe (grep PATTERN, head -n N, tail -n N; lines A to B: head -n B | tail -n B-A+1) instead of running it again.]`;
 }
 
+// Live tool-output streaming: throttle the fan (a chatty loop can't flood the bus) and cap the accumulated
+// text (a runaway print can't blow up a message). The DONE emit carries the full result and supersedes this,
+// so the cap only bounds the LIVE view. Mirrors the LLM stream's 90ms cadence.
 const STREAM_EMIT_MS = 90;
 // Same budget the finished render keeps (UI_OUT_CAP), and the same SHAPE (output-clip.ts): the start the model read
 // and the LATEST output, with the gap counted between them. So the live view and the settled one agree, and a

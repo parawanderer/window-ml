@@ -161,9 +161,10 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
    `@tool:` pointer rules for a large value. Nothing reaches the model through the inbox that could not have reached
    it as the call's return. The output of a call that runs for hours is BOUNDED AT THE EXECUTOR, not only at the
    return: the host already caps a shell call's output, and a detached cell's stdout is a fixed-size ring buffer in
-   the worker (the last N KB), never an unbounded array. The inbox carries status and tail only; the model inspects
-   more with `tail(id, { lines })` on the handle, and the full capped output is a value it can point at, as a tool's
-   large result is today.
+   the worker (the last N KB), never an unbounded array. The inbox carries status and tail, and for a cut result the stored
+   whole's key, its length and any figure, minted into a `@tool:` pointer where the loop drains it (#1730); the model
+   inspects more with `tail(id, { lines })` on the handle, and the full capped output is a value it can point at, as
+   a tool's large result is today.
 
 ## Mode 2: the push subscription
 
