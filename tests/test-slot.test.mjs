@@ -494,6 +494,26 @@ test("a job that ignores SIGTERM: what is left of its process group gets SIGKILL
     assert.throws(() => process.kill(-pid, 0));
 });
 
+test("an attached run past its cap: its stderr says it was stopped at the cap, the record ends timedout, and it exits 143", { timeout: 15_000 }, async () => {
+    const dir = tmpDir(), started = path.join(dir, "started");
+    // acquire's own process is the job (what test.mjs is): this test's polling is what reaches the cap and signals it.
+    const holder = `import fs from "node:fs"; import { acquire } from ${JSON.stringify(SLOT)}; await acquire({ cmd: ["holder"], maxTimeMs: 1200 }); fs.writeFileSync(${JSON.stringify(started)}, ""); setInterval(() => {}, 1000);`;
+    const env = { ...process.env, TEST_SLOT_DIR: dir };
+    for (const k of ["TEST_SLOT_TICKET", "TEST_SLOT", "CI", "GITHUB_ACTIONS"]) delete env[k]; // each would skip the queue
+    const child = spawn(process.execPath, ["--input-type=module", "-e", holder], { cwd: ROOT, env, stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    child.stderr.on("data", (d) => { stderr += d; });
+    const exited = new Promise((r) => child.on("exit", (code) => r(code)));
+    await until(() => fs.existsSync(started), 5000, "the attached run to be granted");
+    const { ticket } = look(null, { dir }).running[0];
+    let code = null;
+    exited.then((c) => { code = c; });
+    await until(() => (look(null, { dir }), code !== null), 8000, "the run to be stopped at its cap");
+    assert.equal(code, 143, stderr);
+    assert.match(stderr, /test-slot: stopped: this run passed its cap of 0 min; TEST_SLOT_MAX_TIME=<minutes> gives it longer/);
+    assert.equal(look(ticket, { dir }).job.state, "timedout");
+});
+
 test("--max-time: a whole number of minutes from 1 to a day; anything else exits 2", () => {
     for (const [v, want] of [["1", MIN], ["45", 45 * MIN], [String(MAX_TIME_MAX_MIN), MAX_TIME_MAX_MIN * MIN], ["0", NaN], [String(MAX_TIME_MAX_MIN + 1), NaN], ["2.5", NaN], ["-3", NaN], ["x", NaN], ["", NaN]]) {
         assert.deepEqual(parseMaxTime(v), want, `"${v}"`);

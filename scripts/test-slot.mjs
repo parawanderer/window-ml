@@ -454,13 +454,14 @@ export async function acquire({ cmd, cwd = process.cwd(), kind = "unit", workers
     if (refused) throw Object.assign(new Error(`test-slot: refused: ${refused}`), { code: "TEST_SLOT_REFUSED" });
     const sayReaped = (list) => { for (const r of list) log(`test-slot: reclaimed the slot from pid ${r.pid ?? r.by.pid} (${r.state}: its process is gone)`); };
     sayReaped(reaped);
-    let release = () => {};
+    let release = () => null;
     const onSignal = (sig) => {
-        const rec = readState(dir).jobs.find((j) => j.ticket === ticket);
-        if (rec?.termAt) log(`test-slot: stopped: this run passed its cap of ${mins(rec.capMs)}; TEST_SLOT_MAX_TIME=<minutes> gives it longer`);
         // The runner's children (node --test, Playwright's workers) do not all get a signal sent to this pid alone.
         for (const p of treePids(processTable(), process.pid).filter((p) => p !== process.pid)) { try { process.kill(p, "SIGTERM"); } catch { /* gone */ } }
-        release();
+        // The record `finish` wrote under the lock: the queue sends its SIGTERM before the lock that marks `termAt` is
+        // released, so a read of the queue here can still see the record without it.
+        const rec = release();
+        if (rec?.termAt) log(`test-slot: stopped: this run passed its cap of ${mins(rec.capMs)}; TEST_SLOT_MAX_TIME=<minutes> gives it longer`);
         process.exit(sig === "SIGINT" ? 130 : 143);
     };
     process.on("SIGINT", onSignal);
@@ -472,7 +473,7 @@ export async function acquire({ cmd, cwd = process.cwd(), kind = "unit", workers
         if (q.job?.state === "running") {
             const peak = samplePeak();
             let done = false;
-            release = () => { if (done) return; done = true; finish(ticket, process.exitCode ?? null, { dir, peak: peak() }); };
+            release = () => { if (done) return null; done = true; return finish(ticket, process.exitCode ?? null, { dir, peak: peak() }); };
             process.once("exit", () => release());
             // What this run starts (a test that spawns test.mjs, test-isolated-bundle) is inside the slot, not behind it.
             Object.assign(process.env, { TEST_SLOT_TICKET: ticket, TEST_SLOT_JOBS: String(q.job.jobs) });
