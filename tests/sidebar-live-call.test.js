@@ -5,23 +5,27 @@ const { test, after } = require("node:test");
 const assert = require("node:assert");
 const { closeSidebarWorlds, loadSidebarWorld } = require("./helpers");
 const { agentStart, agentStep, agentResult } = require("./sidebar-helpers");
+const { liveCallView } = require("../src/sidebar/transcript/live-call-view.ts");
 
 after(closeSidebarWorlds);
 
 /** An `agent-stream` for run `id` carrying `calls`. */
 const live = (id, calls, extra = {}) => ({ kind: "agent-stream", id, ts: Date.now(), save: false, session: { hash: id, turn: 1 }, step: 1, localStep: 1, calls, ...extra });
 const call = (name, args) => ({ index: 0, name, args, chars: args.length });
-/** The live call's code once the reveal has caught up with what arrived: unchanged for longer than its slowest tick
- *  (it ticks less often as a render costs more, and a render in jsdom costs a lot). */
-async function typedOut(w) {
-    let last = null, since = Date.now();
-    for (let i = 0; i < 200; i++) {
+/** The live call's code once the reveal has caught up with what `c` carries: the shown length reaches the text
+ *  `liveCallView` decodes from `c` (the same decode the panel draws). The wait breaks on that length, never on a
+ *  quiet window — the reveal's first tick is `tickDelay(firstRenderCost)` away and no fixed settle beats it (a
+ *  200 ms window returned `''` on loaded CI, 2026-11-08). Fails at the cap rather than returning short. */
+async function typedOut(w, c) {
+    const v = liveCallView(c);
+    const arrived = v.kind === "text" || v.kind === "raw" ? v.text.length : 0;
+    for (let i = 0; i < 400; i++) {
         await new Promise((r) => setTimeout(r, 20));
         await w.tick();
         const now = w.shadow.querySelector(".live-call .live-call-code")?.textContent ?? null;
-        if (now !== last) { last = now; since = Date.now(); } else if (Date.now() - since > 200) return now;
+        if (now != null && now.length >= arrived) return now;
     }
-    return last;
+    assert.fail(`the reveal never reached the ${arrived} chars that arrived`);
 }
 
 // --- a call being written: drawn as the step it will become, growing ---
@@ -37,13 +41,13 @@ test("python_exec being written shows its code so far with a caret, then grows, 
     assert.ok(lc(), "the call is drawn while it is written");
     assert.match(lc().querySelector(".tool-name").textContent, /^python_exec$/);
     assert.match(lc().querySelector(".astep-preview").textContent, /writing… \d+ chars/);
-    assert.match(await typedOut(w), /import math\s*print\(math\.pi/, "the code, decoded, not the JSON");
+    assert.match(await typedOut(w, call("python_exec", '{"code": "import math\\nprint(math.pi')), /import math\s*print\(math\.pi/, "the code, decoded, not the JSON");
     assert.ok(lc().querySelector(".live-call-code.writing"), "the caret is on while the code arrives");
     assert.ok(lc().closest(".aturn")?.querySelector(".astep-thought, .thought, .aturn-head"), "inside the turn, under its pill and thinking");
 
     await w.dispatch(live("lc1", [call("python_exec", '{"code": "import math\\nprint(math.pi)\\nprint(2')]));
     await w.tick();
-    assert.match(await typedOut(w), /print\(2/, "it grows in place");
+    assert.match(await typedOut(w, call("python_exec", '{"code": "import math\\nprint(math.pi)\\nprint(2')), /print\(2/, "it grows in place");
 
     await w.dispatch(agentStep("lc1", 1, { seq: 1, pending: true, tool: "python_exec", arguments: { code: "import math\nprint(math.pi)\nprint(2)" } }));
     await w.tick();
@@ -155,7 +159,7 @@ test("a burst is typed out: shown a part at a time, each a start of what arrived
     await w.tick();
     const { code, args } = pyLines(30);
     await w.dispatch(live("lc7", [call("python_exec", args.slice(0, 40))]));
-    await typedOut(w);
+    await typedOut(w, call("python_exec", args.slice(0, 40)));
     await w.dispatch(live("lc7", [call("python_exec", args)]));
     const seen = [];
     for (let i = 0; i < 200; i++) {
@@ -178,7 +182,7 @@ test("the step lands mid-reveal: it replaces the call at once, and the reveal is
     await w.tick();
     const { code, args } = pyLines(60);
     await w.dispatch(live("lc8", [call("python_exec", args.slice(0, 30))]));
-    await typedOut(w);
+    await typedOut(w, call("python_exec", args.slice(0, 30)));
     await w.dispatch(live("lc8", [call("python_exec", args)]));
     await w.tick();
     const mid = w.shadow.querySelector(".live-call .live-call-code")?.textContent ?? "";
