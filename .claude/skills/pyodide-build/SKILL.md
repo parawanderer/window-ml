@@ -21,6 +21,17 @@ npm run build && node scripts/test.mjs python && npx playwright test tests/e2e/p
 
 # 3. publish on the fork, then put the sha256 (and tag/url) in tools/pyodide-dist.json
 gh release create <tag> <tarball> -R parawanderer/cpython --target <fork commit> --notes "<fork commit, Pyodide, emscripten, sha256>"
+
+# 4. After a bump, IN THE SAME PR: rerun the package oracle, or tests/pkg-verdict.test.mjs stays red on its pin test.
+#    About 3 h of queued probes plus ~15 min unqueued; the packages lane reviews the new data. Fresh directories for both:
+export PYPKG_CACHE=<scratch>/pypi-cache PYPKG_10K_DIR=<scratch>/pypi-10k
+.venv/bin/python notebooks/python-packages/pypi.py freeze-top 10000 $PYPKG_10K_DIR
+for s in $(seq 0 500 9500); do   # one ticket per chunk; each waits until 6 workers' memory is free
+  node scripts/test-slot.mjs submit --kind batch --workers 6 -- .venv/bin/python notebooks/python-packages/pypi.py probe-chunk $s $((s + 500)) $PYPKG_10K_DIR
+done
+NB_REFRESH=1 node scripts/nb.mjs run notebooks/python-packages/pypi-compat.ipynb   # after the chunks finish
+.venv/bin/python -I tests/fixtures/pkg-pep/make-cases.py
+node --import tsx --test tests/pkg-verdict.test.mjs tests/pkg-pep.test.mjs   # re-pin PROBE_TABLE, YES_BUT and the figures
 ```
 
 The vector test (`tests/python-dialect-vectors-wasm.test.mjs`) self-skips on the stock core. A host trap during the build is
