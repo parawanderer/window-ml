@@ -2202,6 +2202,9 @@ test("python_exec in the toolset adds the computation-delegation clause to the s
     assert.match(sys, /python_exec/, "the clause names the tool");
     assert.match(sys, /do NOT calculate|NEVER|deterministic/i, "and tells the model to delegate computation");
     assert.ok(!/tool \(JavaScript\)/.test(sys), "python takes precedence — not doubled with the JS-compute clause");
+    // python_exec has had no `mode` since the read-only dialect replaced it; the tool says what asks.
+    assert.ok(!/readonly mode|`full` mode/.test(sys), "the clause names no python_exec mode");
+    assert.ok(!/re-run and return/.test(sys), "nor tells the model to re-run what dereference reads back");
 });
 
 test("navigate is auto-wired by default: the tool is in the toolset + config logs navigation ON, no nav-off clause", async () => {

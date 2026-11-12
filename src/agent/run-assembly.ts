@@ -366,7 +366,7 @@ export function composeSystemPrompt(f: PromptFacts): string {
     let systemPrompt = f.system || AGENT_SYSTEM;
     if (!f.system) {
         // Adapt the default prompt to what the toolset can actually do.
-        systemPrompt += CALL_TITLE_CLAUSE;   // every tool carries the param, so the instruction is unconditional
+        systemPrompt += CALL_TITLE_CLAUSE;   // every tool with parameters carries it, so the instruction is unconditional
         if (f.vision) systemPrompt += VISION_CLAUSE;
         if (f.toolTokens) systemPrompt += tooltokensClause(!!f.answer) + DEREF_CLAUSE;   // rich results carry an @tool: id — to cite verbatim, and to read back
         // The DOM tools all pierce open shadow roots + resolve `>>>` — tell the model, plus (only when
