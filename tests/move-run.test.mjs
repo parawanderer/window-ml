@@ -18,14 +18,15 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 const PAGE_JS = "document.body.remove()";
 
 /**
- * One worker-built run on tab 7, whose model calls `exec` once and then answers. The page answers `exec` through
+ * One worker-built run on tab 7, whose model calls `exec` `execs` times and then answers. The page answers `exec` through
  * `onExec(bg, msg)` (default "ran"); every other delegated message is answered empty. `onAsk(event, bg)` sees the gate's
- * awaiting-approval event instead of the test approving it from tab 7.
+ * awaiting-approval event instead of the test approving it from tab 7. A tab in `gone` refuses a delegated tool call, as
+ * Chrome refuses a message to a tab id it no longer has.
  * @returns the worker, the run id, `ended()` (the terminal event, once out) and `results()` (what the model read)
  */
-async function start({ onAsk, onExec } = {}) {
+async function start({ onAsk, onExec, execs = 1, gone = new Set() } = {}) {
     let n = 0, bg;
-    const steps = [{ name: "exec", args: { js: PAGE_JS } }];
+    const steps = Array.from({ length: execs }, () => ({ name: "exec", args: { js: PAGE_JS } }));
     bg = loadBackground({
         config: { chatUrl: "http://host/api/chat/completions", apiKey: "k", model: "m", apiFormat: "openai", debugMode: "off" },
         openTabs: [{ id: 7, windowId: 3, active: true, url: SITE_URL, title: "Site" }],
@@ -36,7 +37,8 @@ async function start({ onAsk, onExec } = {}) {
             if (!step) return jsonResponse({ choices: [{ message: { content: "done" } }] });
             return jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: `c${n}`, type: "function", function: { name: step.name, arguments: JSON.stringify(step.args) } }] } }] });
         },
-        onTabMessage: async (_t, msg) => {
+        onTabMessage: async (t, msg) => {
+            if (gone.has(t) && msg.type === "RUN_TOOL_IN_PAGE") throw new Error("Could not establish connection. Receiving end does not exist.");
             if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
             if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) {
                 if (onAsk) onAsk(msg.event, bg);
@@ -61,19 +63,22 @@ const hudOn = (tabId) => ({ tab: { id: tabId, url: SITE_URL }, url: HUD_URL, fra
 async function until(done, cap = 4000) { for (let i = 0; i < cap && !done(); i++) await tick(); return done(); }
 
 // --- onReplaced during a live turn: what the person sends from the restored tab (MOVE_RUN.md, "Known gap") ---
-// `retabRuns` (sw-runs.ts) re-files the tab's maps and the run's snapshot under the new id, but not the live turn's
-// `runInboxes` entry, whose `tabId` the person's answer (SET_APPROVAL) and steer (INJECT_MESSAGE) are checked against.
+// `retabRuns` (sw-runs.ts) re-files the live turn's `runInboxes` entry with the tab's maps and the run's snapshot: the
+// person's answer (SET_APPROVAL) and steer (INJECT_MESSAGE) are checked against its `tabId`. The turn's own page sends
+// are NOT redirected: `hostRun` closed over the old id, and following the tab mid-turn is MOVE_RUN.md shape (b), open.
 
 test("control: the person's answer to a gate from the run's own tab reaches the gate", T, async () => {
     const r = await start({ onAsk: (ev, bg) => void bg.send({ type: "SET_APPROVAL", payload: { runId: ev.id, seq: ev.seq, decision: true } }, shellOn(7)) });
     assert.ok(await until(r.ended), "the run ends");
-    assert.ok(r.results().some((t) => t.includes("ran")), "the approved exec ran and the model read it");
+    assert.deepEqual(r.results(), ["ran"], "the approved exec ran and the model read it");
 });
 
-test("the person's answer to a gate from the tab after it was REPLACED under a new id reaches the gate", { ...T, todo: "retabRuns does not re-key runInboxes[run].tabId; background.ts SET_APPROVAL drops the answer" }, async () => {
-    const r = await start({ onAsk: (ev, bg) => { bg.replaceTab(7, 70); void bg.send({ type: "SET_APPROVAL", payload: { runId: ev.id, seq: ev.seq, decision: true } }, shellOn(70)); } });
+test("the person's answer to a gate from the tab after it was REPLACED under a new id reaches the gate", T, async () => {
+    // A DENY, so what the model reads is the gate's own answer: an approve would pass the gate and then meet the turn's
+    // send to the old id, refused (the last test here).
+    const r = await start({ onAsk: (ev, bg) => { bg.replaceTab(7, 70); void bg.send({ type: "SET_APPROVAL", payload: { runId: ev.id, seq: ev.seq, decision: false } }, shellOn(70)); } });
     assert.ok(await until(r.ended), "the run ends: the gate was answered, not left waiting");
-    assert.ok(r.results().some((t) => t.includes("ran")), "the approved exec ran and the model read it");
+    assert.match(r.results()[0] ?? "", /^Denied by the user/, "the model read the person's answer");
 });
 
 test("control: a steer from the HUD on the run's own tab, while a page call is out, is queued", T, async () => {
@@ -86,7 +91,7 @@ test("control: a steer from the HUD on the run's own tab, while a page call is o
     assert.ok(await until(r.ended));
 });
 
-test("a steer from the HUD on the tab after it was REPLACED under a new id, while a page call is out, is queued", { ...T, todo: "retabRuns does not re-key runInboxes[run].tabId; background.ts INJECT_MESSAGE drops the steer" }, async () => {
+test("a steer from the HUD on the tab after it was REPLACED under a new id, while a page call is out, is queued", T, async () => {
     let release, steered;
     const held = new Promise((res) => { release = res; });
     const r = await start({ onExec: async (bg, msg) => { bg.replaceTab(7, 70); steered = await bg.send({ type: "INJECT_MESSAGE", payload: { runId: msg.payload.runId, text: "also check the footer", sayId: "s1" } }, hudOn(70)); await held; return { result: "ran" }; } });
@@ -94,4 +99,21 @@ test("a steer from the HUD on the tab after it was REPLACED under a new id, whil
     assert.deepEqual(steered, { data: true }, "queued for the run, which is still the restored tab's");
     release();
     assert.ok(await until(r.ended));
+});
+
+test("a live turn's page call after the replace goes to the old id and is refused, never to the new tab (shape (b) is open)", T, async () => {
+    const gone = new Set();
+    let replaced = false;
+    const r = await start({
+        execs: 2, gone,
+        onAsk: (ev, bg) => void bg.send({ type: "SET_APPROVAL", payload: { runId: ev.id, seq: ev.seq, decision: true } }, shellOn(replaced ? 70 : 7)),
+        onExec: async (bg) => { if (!replaced) { bg.replaceTab(7, 70); gone.add(7); replaced = true; } return { result: "ran" }; },
+    });
+    assert.ok(await until(r.ended), "the run ends");
+    const res = r.results();
+    assert.equal(res.length, 2, "both calls reached the model");
+    assert.equal(res[0], "ran", "the call before the replace ran");
+    assert.match(res[1], /^Error: /, "the call after it was refused, not run anywhere");
+    const toNew = r.bg.tabMessages.filter(([t, m]) => t === 70 && m?.type === "RUN_TOOL_IN_PAGE");
+    assert.equal(toNew.length, 0, "nothing of the turn was sent to the replacement tab");
 });
