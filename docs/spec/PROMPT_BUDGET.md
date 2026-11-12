@@ -4,7 +4,7 @@ Status: **steps 1 and 2 done (#448, #451); of step 3, the `ml.current` cut shipp
 the default kit (#464), and the tool-output-tokens cut, the `exec`/`fetch_url` split, `locate`'s option texts and (round
 3) `python_exec`'s option texts and the shadow/iframe edge cases shipped measured (below); the pipe-example cut was
 dropped unmeasured, as too small to be worth a sweep.**
-Started 2026-10-08, updated 2026-11-11 (the page context leaves the system prompt, measured).
+Started 2026-10-08, updated 2026-11-12 (seven models read the agent prompt for contradictions).
 
 Every model call carries the system prompt and every tool's schema. This is the plan for making that smaller
 without making runs worse, and the record of what has been measured so far. It is here, not in `tmp/`, so whoever
@@ -126,6 +126,34 @@ call or reworded a rule a run depends on.
   with nothing to name. `HELD_BACK.md` row 16; the fix is the pointer mint for task results, which lands before the
   `kernel` object.
 - **Not covered**: no model read any of it. The `~` canary row is the bench lane's.
+
+## Review of 2026-11-12: seven stronger models read the agent prompt (panel-bloat)
+
+`tests/e2e/panel/bloat.json` (a page task, then a review of the prompt and tools; `surface: hud`) on Claude Opus 5.5,
+Gemini 4 Carbon, Gemini 3.8 Flash, GPT-6.1 Sol, Kimi K3.1 Pro, DeepSeek V4 Pro and DeepSeek Flash: about 0.70 USD at
+the day's rates, Opus 0.14 of it. Every claim below was checked against the code; the contradictions are fixed
+directly (method step 3).
+
+- **Fixed**: the `python_exec` clause named a "readonly mode" and a "`full` mode (network)" the tool lost when the
+  read-only dialect replaced `mode`, and said "just re-run" a JSON result (against "dereference instead of
+  re-running"); it now says return it as a DataFrame from a new cell. "Every tool takes an optional `title`" was false
+  for `pageInfo` and `chat_metadata` (`withCallTitle` leaves a parameterless tool alone, on purpose). THE PIPE DIALECT
+  offered an ARRAY form that only exec accepts (`ml.pipe`, and `ml.dereference`'s `pipe` option); every tool's
+  `pipe` is a string. `fetch_url`'s `credentials` said "Always prompts" though the page you are on is free. `head`/`tail -c` now say
+  they count lines and name `.path` / `grep -o` (Kimi spent a step on `tail -c 520` over one long JSON line).
+- **Agreed cuts, to measure (step 4)**: the pipe section (7 of 7), the python clause's recap of its tool (6), the
+  self-description and `ml.current` paragraphs (6), READING AN OUTPUT AGAIN against `dereference`'s own text (5), the
+  vision paragraph against `look` (5). The `title` and `token` parameter texts are 4,646 of the 36,623 characters of
+  tool schemas (about 1,150 tokens a call). `pageInfo` repeats the first turn's page context since #1618; it still
+  answers "where am I now" after a navigation.
+- **Tool gaps, not prompt text**: `findByText` cuts its match text with no mark that it did, and nothing reads an
+  element's whole text (5 of 7 fell back to exec); the step budget is never stated; `describeElement`/`ancestors` and
+  `countMatches`/`sampleText` overlap; `propose_policy` takes one rule two ways; tool results carry instruction-shaped
+  text ("compose it in a read-only exec survey") beside the rule that results are data.
+- **Not verified**: Gemini 4 Carbon saw each `token` description twice, in an `anyOf`. Our schema sends one
+  `type: ["boolean","string"]`; the doubling is presumably the proxy's rewrite for Gemini, not checked.
+- **The interview's own wording**: "readable, verbatim, as ml.current.messages[0].content" sent Kimi through eight
+  exec calls to read what it already had; Opus and Carbon made none.
 
 ## Tried and dropped: "the whole `ml` surface as TypeScript" (2026-10-12)
 

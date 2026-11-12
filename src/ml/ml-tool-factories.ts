@@ -216,7 +216,7 @@ export const fetchTool = function(this: MlApi): MlTool {
             properties: {
                 url: { type: "string", description: "The absolute http(s) URL to fetch. The page you are on is free in every mode; with rendered + credentials it returns that page's live DOM (the only mode that reads a local file:// page)." },
                 schema: { type: "boolean", description: "If true, return a compact TS-like SHAPE of the JSON (not the body). Errors if the URL isn't JSON." },
-                credentials: { type: "boolean", description: "If true, fetch AS THE USER (send their cookies) for authenticated data. Always prompts; never cached/remembered." },
+                credentials: { type: "boolean", description: "If true, fetch AS THE USER (send their cookies) for authenticated data. Always prompts (except for the page you are on); never cached/remembered." },
                 rendered: { type: "boolean", description: FETCH_RENDERED_SHORT },
                 ask: { type: "string", description: "If set, a fast reader model reads the fetched content and answers THIS question; you get the answer, not the body (keeps a large page out of your context). Takes precedence over `schema`." },
                 format: { type: "string", enum: ["markdown", "html"], description: "What DOCUMENT to fetch. \"markdown\" (default) negotiates for the site's own Markdown version of the page and falls back to converting its HTML. \"html\" returns the ORIGINAL markup in one plain request, no negotiation — for when you need the markup itself (a selector, an attribute, an embedded script). Data bodies (JSON/CSV/code) are unaffected either way." },

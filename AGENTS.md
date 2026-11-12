@@ -218,7 +218,7 @@ harness or script gets `.claude/skills/<name>/SKILL.md`, its detail in e2e-harne
 
 **RULE — review the prompt now and then, without being asked:** after a stretch of agent-loop or tool work, and at
 least monthly (`docs/dev/prompt-review.md`). Last review: **2026-11-12** (the shell's new text: the argv refusal's put path, the tail
-sentence, the `~` clause). A review commit carries `Prompt-Review: <date>`; update the date here with it.
+sentence, the `~` clause; seven models on where the agent prompt contradicts its tools). A review commit carries `Prompt-Review: <date>`; update the date here with it.
 
 **RULE — a complex analysis worth keeping, or a measurement a decision rests on, goes in a notebook, not in a
 reply:** `notebooks/<topic>/`, run with `node scripts/nb.mjs`. `docs/dev/notebooks.md`; the `notebooks` skill.
