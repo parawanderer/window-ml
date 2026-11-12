@@ -8,7 +8,7 @@
   lines (14 of 90 answers); tailing did not make it likelier (3 of 14 runs that tailed, against 11 of 76 that did not).
 - **A 5 s lease taxes a 10 s call only when the model gives no estimate.** At 5 s the `tests` call detached in 8 of 15
   runs, at 15 and 60 s in none. gemma4:31b never estimates: it detached 5 of 5 times and spent one task turn and 1.6
-  more steps each time. qwen3.8 gave `expectMs` in 4 of 5 runs, which replaces the lease, and did not detach. Correct
-  was 12/15 at both 5 and 15 s.
-- **gemma4:e4b's failures are still about finding `ml.sh`**, not about the lease: 9 of its 17 wrong runs called it as
-  a function, 7 never reached the host.
+  more steps each time. gemma4:e4b detached 2 of 5. qwen3.8 gave `expectMs` in 4 of 5 runs, which replaces the lease,
+  and detached only in the fifth. All 8 detaches were runs with no estimate. Correct was 12/15 at both 5 and 15 s.
+- **gemma4:e4b's failures are still about finding `ml.sh`**, not about the lease: of its 17 wrong runs, 9 called it as
+  a function, 7 never reached the host and 1 hit the step cap.
