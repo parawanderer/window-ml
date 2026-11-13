@@ -15,6 +15,11 @@
 // a re-arming writer still doing that 1 run in 14 (2026-11-09). One write BETWEEN the two wipes is the only safe
 // shape: the script prints a beacon as its blocking section begins, the hook below sees the streamed chunk at print
 // time, and the writer thread writes once and stops.
+//
+// The writer enforces its deadline with `Atomics.wait` (a blocking sleep on its own thread), not `setTimeout` —
+// an event loop timer starves when the main thread spins in WASM under load, and the 15 s backstop became 37 min
+// (2026-11-12, test-slot 20261112T175621-8584c5). `Atomics.wait` blocks the thread directly; the deadline is
+// `Date.now()`, checked every 5 ms.
 import { test, before, after } from "node:test";
 import assert from "node:assert";
 import path from "node:path";
@@ -75,22 +80,32 @@ const WRITER_SRC = `
     const { workerData } = require('node:worker_threads');
     const a = new Int32Array(workerData.sab);
     const beacon = new Int32Array(workerData.beacon);
-    const poll = setInterval(() => {
-        if (Atomics.load(beacon, 0)) {              // the script's beacon printed: its blocking section is running
-            Atomics.store(a, 0, 2);                 // the ONE write — after the start wipe, before the end wipe
-            clearInterval(poll);
+    const deadline = Date.now() + workerData.failAfterMs;
+    let written = false;
+    let success = false;
+    while (Date.now() < deadline) {
+        if (!written) {
+            if (Atomics.load(beacon, 0)) {           // the script's beacon printed: its blocking section is running
+                Atomics.store(a, 0, 2);              // the ONE write — after the start wipe, before the end wipe
+                written = true;
+            } else {
+                Atomics.wait(beacon, 0, 0, 5);       // sleep until the beacon store wakes us, or 5 ms
+            }
+            continue;
         }
-    }, 5);
-    setTimeout(() => {
-        clearInterval(poll);
-        if (!Atomics.load(beacon, 0)) {
+        if (Atomics.load(a, 0) !== 2) { success = true; break; } // the end wipe cleared it: the stop landed
+        Atomics.wait(a, 0, 2, 5);                    // sleep while the slot still holds 2: the end wipe wakes us
+    }
+    if (!success) {
+        if (!written) {
             console.error('python-bench-stop: the script never reached its beacon within ' + workerData.failAfterMs + 'ms');
-        } else if (Atomics.load(a, 0) === 2) {
+        } else {
             console.error('python-bench-stop: the stop never ended the script within ' + workerData.failAfterMs + 'ms');
-        } else return;                              // the stop landed and the run ended (the end wipe read 0)
-        process.kill(process.pid, 'SIGKILL');       // process.exit() on a worker thread ends only the THREAD —
-    }, workerData.failAfterMs);                     // measured 2026-11-09: a blocked main thread outlives it and
-                                                    // the process exits 0. SIGKILL takes the process down loud.
+        }
+        process.kill(process.pid, 'SIGKILL');        // process.exit() on a worker thread ends only the THREAD —
+                                                     // measured 2026-11-09: a blocked main thread outlives it and
+                                                     // the process exits 0. SIGKILL takes the process down loud.
+    }
 `;
 
 before(async () => {
@@ -137,9 +152,10 @@ async function cell(code) {
  * (an infinite loop, or a C call far longer than the tick), so it cannot be after the end wipe either.
  *
  * The same thread WATCHES: if the script never reached its beacon, or the stop never ended it, `failAfterMs` later
- * it `SIGKILL`s the PROCESS. The product's own bound is `BENCH_STOP_KILL_MS` in offscreen.ts — this test drives the
- * worker's handler directly and so does not get that kill — and `process.exit(1)` on a worker thread is inert
- * (janitor-3's measurement, 2026-11-09).
+ * it `SIGKILL`s the PROCESS — its deadline is `Date.now()` checked inside an `Atomics.wait` sleep, not a `setTimeout`,
+ * so a main thread spinning in WASM cannot starve the clock (2026-11-12). The product's own bound is
+ * `BENCH_STOP_KILL_MS` in offscreen.ts — this test drives the worker's handler directly and so does not get that
+ * kill — and `process.exit(1)` on a worker thread is inert (janitor-3's measurement, 2026-11-09).
  */
 function stopOnBeacon({ failAfterMs = 15_000 } = {}) {
     Atomics.store(beaconFlag, 0, 0);
