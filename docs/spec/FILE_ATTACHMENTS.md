@@ -982,7 +982,8 @@ neither the folder nor `ml.files`.
 
 **Owners.** This text, the panel's view of both copies, the sync's rules, provenance and the files API's JS side: the
 chat-page lane. The mount, the fallback and the Python binding: the Pyodide lane. The host's folder, the git snapshot
-and the per-request judging, the folder watch: the host lane, as stated in "What window-ml-host must do" below.
+and the per-request judging, the folder watch: the host lane, as stated in "What window-ml-host must do" below (the
+folder, its `.git/info/exclude` and the watch are H16, the step after H15).
 
 ### What window-ml-host must do for mounts, `/files` and `ml.sh` diffs (ruled 2026-11-13)
 
@@ -1001,29 +1002,57 @@ configured roots (`configure`), one list, not a second one beside it.
 
 **The scope check** (what a cell's `open()` through a mount reaches; "Host directories in the sandbox", "Security").
 
-- H1. New host calls, each on a mount the host already holds: `mount`, `unmount`, `list`, `fetch` (read a file whole),
-  `store` (write a file whole), `remove` and `rename`. Every path in a request is relative to a mount and resolved on
+- H1. New host calls, each on a mount the host already holds: `mount`, `unmount`, `stat`, `list`, `fetch` (read a
+  file), `store` (write a file), `remove` and `rename`. Every path in a request is relative to a mount and resolved on
   the host; a path the worker resolved is never trusted, since a `full` cell can forge a worker post.
+  AMENDED 2026-11-13 (host lane): the calls were written as whole-file and mount-wide, which the host cannot bound.
+  - A mount is per session and inside a configured root, with an id, a mode and the session string the worker stamps.
+    `configure` stays the host-wide ceiling, and `ml.sh` keeps judging against the roots, so an `ml.sh` process is
+    bounded by the roots, not by a mount, until H9's written operand.
+  - `stat {mount, path}` returns H7's facts and the `basis` with no bytes. `fetch`, `store`, `remove` and `rename` carry
+    the basis the worker judged on, so a judged call costs two round trips, accepted.
+  - `fetch` is chunked by offset and length, 512 KiB a chunk, each chunk carrying the basis. `store` is staged as open,
+    write and commit through the held descriptor, and the commit does the compare and swap (H8) and the rename. The
+    cap is per call, from the worker, and the host clamps it to 64 MiB (provisional).
+  - `mount` takes an optional `uploads` path, relative to the mount, which must exist with `attached/` inside it.
+  - Path rule, on every platform: a mount-relative path refuses `\`, a leading drive letter (`C:`) and a leading `//`.
+    Named cost: a unix file whose name contains a backslash cannot be reached through a mount.
 - H2. `mount` refuses, by the resolved path and with the sentences above: a path at, under or above a reserved prefix
   (`/files`, `/tmp`, `/lib`, `/home/pyodide`, `/dev`, `/proc`); the home directory or above; a path at, under or above
   the browser profile, the archive folder or the host's own config; a path at, under or above an existing mount, so a
   read-only mount is never reachable for writing through a read-write one around it. The refusal is the host's, so
   the worker's copy of the list is a convenience, not the check.
+  AMENDED 2026-11-13 (host lane): nesting is refused within one session only, since sessions do not share a mount;
+  another session may mount the same or a nested path. Stated limit: the archive folder cannot be refused by path,
+  because the extension holds a File System Access handle with no path the host can see. The browser profile is refused
+  by the known per-browser data directories, and the host's config means its state directory and `~/.config/wmlhost`.
 - H3. The host holds each mount's directory descriptor from `mount` and compares its device and inode on every request;
   a mismatch refuses the request and reports the mount as replaced.
+  AMENDED 2026-11-13 (host lane): the id plus the session string is checked on every request. A host port cannot tell
+  sessions apart, so the worker that stamps the session is the real check, and this is a stated trust: a forged post
+  from a `full` cell is still refused on the facts (H1, H7, H8), and the session stamp is the worker's, never the
+  cell's.
 - H4. A path is opened by walking its components from that descriptor with no symlink followed. `fsx::open_beneath`
   does this today (`openat2` with `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS` on Linux, a per-component `O_NOFOLLOW` walk
   elsewhere), but read-only and from a path; it is extended to start from the held descriptor and to open for writing.
   A symlink component anywhere in the path is refused this round, including one that points inside the mount (open,
-  below).
+  below). AMENDED 2026-11-13 (host lane): the walk is per component on both platforms, not `openat2`, since H6 must
+  see each directory's device and inode to detect `attached/`.
 - H5. `store` writes beside the file and renames into place, so a Stop or a dropped connection leaves the old file
   whole. A write through a descriptor whose `fstat` shows `st_nlink > 1` is refused; a read of one is allowed. A write
-  to a read-only mount fails with `EROFS`; a `fetch` over the fetch cap fails with `EFBIG` and carries the size.
+  to a read-only mount fails with `EROFS`; a `fetch` over the call's cap fails with `EFBIG` and carries the size.
+  AMENDED 2026-11-13 (host lane): the cap is per call (H1) and the size is checked before any byte is read.
 - H6. In the uploads folder, a `store` into `attached/`, and a `rename` into or out of it, are refused by the host
   whatever a policy says, `attached/` being matched by its device and inode, never by name (APFS is case-insensitive, so
   `Attached/` is the same directory); a `remove` there is judged (it asks by default, the person's uploads). This is a
   hard refusal because `attached/` is the person's frozen originals and no policy the model can ask for should make it
-  writable.
+  writable. AMENDED 2026-11-13 (host lane): the host holds the device and inode of the `uploads` folder and of
+  `attached/` from `mount` (H1) and refuses any write whose walk passes through `attached/`.
+- H6b. AMENDED 2026-11-13 (host lane): H2 to H8 were silent on protected names. A write through a mount to a protected
+  name of its root (`sandbox::protected_rels`, as `put` has it) or to any path with a `.git` component, compared
+  case-insensitively, is refused `Protected`, since writing `.git/hooks` is code execution. `remove` and `rename` act on
+  regular files only: no directory, no symlink. A `rename` target must be absent (no-replace), and `EXDEV` fails and is
+  never turned into a copy and a delete.
 
 **The facts a request carries back** (H7), so the worker can judge it: `inMount`, the mount's `mode`, `secret` (the
 host's `SECRET_PATTERNS`, the list an `ml.sh` path argument meets), `exists`, `ignored` (by git, `git check-ignore`
@@ -1033,13 +1062,22 @@ itself carries is ignored; the host computes every answer from the mount's held 
 tracked file with no uncommitted change, false otherwise, and null when `repoConfigRunsCode` is true or null, since the
 undo itself (a `git checkout` of the file) would run the repository's smudge filter or hooks.
 
+AMENDED 2026-11-13 (host lane): the host's own git queries (`check-ignore`, the undoability check, the snapshot) each
+spawn git with `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1` and an explicit `GIT_DIR` and `GIT_WORK_TREE`,
+besides the belt of H11. `gitUndoable` is computed by comparing `git hash-object --no-filters` of the file with its
+index entry and its `HEAD` entry, with no content-comparing git command; a file marked assume-unchanged or
+skip-worktree reads as false.
+
 - H8. Compare and swap. A `store`, `remove` or `rename` that the worker judged on a fact carries the `basis` it was
   judged on, and the host refuses it with `ChangedSinceJudged` when the file's basis differs at the moment of the
   write, including when the file was deleted (never silently recreated) or replaced by a directory. Without it, a file
   judged free as git-undoable could be edited between the judgment and the write and then lost. The `sha256` is there
   because an in-place edit that keeps the size and restores the mtime defeats the other four (e3, 2026-11-13). Decided:
   over the diff cap the basis has no hash, so such an edit goes unseen, and the card for a write or delete of such a
-  file says it was judged by size and modification time.
+  file says it was judged by size and modification time. AMENDED 2026-11-13 (host lane): a missing basis on an existing
+  file is `ChangedSinceJudged`, and the worker keeps the basis it judged on and never takes one from the cell. Residual,
+  stated: the compare and the rename are not atomic against a concurrent writer; the window is one `fstat` and hash,
+  bounded by the descriptor walk (H4).
 
 **`/files` in an `ml.sh` argv: mapped, not refused** (H9; Shane, 2026-11-13). The commonest calls name it: copying an
 upload out of `attached/` into the writable part of `/files`, then from `/files` into the project (`cp
@@ -1099,7 +1137,10 @@ nothing into the repository.
   fsmonitor or hook runs. Untracked files are included; ignored files are not, except the uploads folder. The snapshot
   runs whatever `repoConfigRunsCode` says: the belt, `--no-filters`, `--no-ext-diff` and `--no-textconv` leave no path
   by which the repository's config runs a program, and the e3 row with a clean filter, an fsmonitor and a hook
-  configured is the pass condition for that case too.
+  configured is the pass condition for that case too. AMENDED 2026-11-13 (host lane): the belt alone was not enough,
+  since the person's global config (`git lfs install` sets `filter.lfs.clean`) also runs a program; H7's
+  `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM` close that. The changed set is the host's own stat comparison against
+  the scratch index, not a git status.
 - H12. Bounds: no file over the diff cap (1 MB, "The diff's cap") goes into the tree; it is compared by size and
   sha256 instead. The walk stops at `WALK_CAP` (20 000) entries; past that the call's diff is null with the reason.
 - H13. The diff is `git diff-tree --no-ext-diff --no-textconv` of the two trees. Its body goes out as held output (a
@@ -1113,17 +1154,23 @@ nothing into the repository.
 host: the worker treats mounts and diffs as unavailable, never probes by calling. The `~` form in H9's sentence
 depends on `hello.tilde`: a host without it gets the raw path in that sentence, so the retry it teaches works on both.
 
-**What runs free, what asks, what is refused.** The default policy's rows, each with the fact that backs it. "Refused"
-is the host's and no policy changes it; "asks" is the default, which a policy may change either way. Rows compose:
-every row that applies to a request is taken, and the most restrictive decides, refused over asks over free (a new file
-in a read-only mount is refused, a new file in `attached/` is refused, a secret-looking file in the uploads folder
-asks). The host applies its refusals before the worker judges.
+- H16. AMENDED 2026-11-13 (host lane): the step after H15, in the host lane. Creating the uploads folder, writing
+  `.git/info/exclude` and the folder watch ("`/files` on the person's disk" names them), so the Owners line above and
+  this list agree.
+
+**What runs free, what asks, what is refused.** AMENDED 2026-11-13 (host lane): the `EROFS` row is a cell's store; an
+`ml.sh` process is bounded by the roots until H9's written operand lands (H1). The default policy's rows, each with the
+fact that backs it. "Refused" is the host's and no policy changes it; "asks" is the default, which a policy may change
+either way. Rows compose: every row that applies to a request is taken, and the most restrictive decides, refused over
+asks over free (a new file in a read-only mount is refused, a new file in `attached/` is refused, a secret-looking file
+in the uploads folder asks). The host applies its refusals before the worker judges.
 
 | Operation | Default | Backing fact |
 | --- | --- | --- |
 | read in a mount | free | `inMount` |
 | read of a file that looks like a secret | asks | `secret` |
 | any write to a read-only mount | refused (`EROFS`) | `mode` |
+| a write to a secret-looking name | asks | `secret` |
 | write or delete of a file git can undo | free | `gitUndoable` true |
 | write or delete of a file git cannot undo (untracked, ignored, uncommitted changes) | asks | `gitUndoable` false |
 | the same when git cannot be asked | asks | `gitUndoable` null |
@@ -1153,13 +1200,18 @@ delete of one git cannot undo asks, for a cell and for an `ml.sh` call whose man
 - The scope (H1, H4). A forged request for a path outside the mount, by `..`, a symlink component or an absolute path,
   enumerated per platform: `/etc/passwd`, `C:\x`, `C:/x`, `\\?\C:\x`, `//server/share/x`, a `..\` component on Windows,
   an interior NUL, a path of only `..` components; the absolute forms refused as not relative, `..` as escaping the
-  mount.
+  mount. AMENDED 2026-11-13 (host lane): `\`, a leading drive letter and a leading `//` are refused on every platform
+  including unix (H1), so a unix file named `a\b` is unreachable; and a write to a protected name or a `.git`
+  component, in any case, gets `Protected` (H6b).
 - A forged post (H1, H7). A worker post from a `full` cell gets an answer computed from the held descriptor only; any
-  fact field it carries (`basis`, `inMount`, `mode`, `gitUndoable`, `secret`, `exists`) is ignored.
+  fact field it carries (`basis`, `inMount`, `mode`, `gitUndoable`, `secret`, `exists`) is ignored. AMENDED 2026-11-13
+  (host lane): `stat` and each `fetch` chunk are included, and a forged `session` string is the worker's trust (H3).
 - Mount ids are not a capability (H1, H3). A request naming a mount another session made is refused, unmounting
   another session's mount is refused, and a request on an unmounted mount is refused even with its old id.
+  AMENDED 2026-11-13 (host lane): the refusal is on the id plus the session string, every request; a request with the
+  right id and another session's string is refused, and the same or a nested path mounted by another session is not.
 - What may be mounted (H2). A mount at, under or above each refused path, by its resolved path, and at, under or above
-  an existing mount.
+  an existing mount of the same session; a second session's mount of the same path succeeds.
 - The mount replaced (H3). The mounted directory replaced by another real directory on the same device, so only the
   inode comparison can refuse it; the replacement report reaches the person.
 - The race (H4). A component swapped for a symlink between two requests, and inside one: a rename loop swapping a
@@ -1173,7 +1225,9 @@ delete of one git cannot undo asks, for a cell and for an `ml.sh` call whose man
   gets `EROFS` from the host, with nothing created beside the target or under a temporary name. A `store` interrupted
   mid-transfer leaves the old file whole. A symlink or hard link planted at the temporary name is not written through
   and the target is untouched; no temporary file remains after a success, a failure or a Stop.
-- A `fetch` past the cap answers `EFBIG` with the size, without the host reading the file (H5).
+- A `fetch` past the cap answers `EFBIG` with the size, without the host reading the file (H5). AMENDED 2026-11-13
+  (host lane): the cap is the call's, clamped to 64 MiB; a chunk carries offset and length at most 512 KiB, and a chunk
+  with a missing or stale basis is `ChangedSinceJudged`.
 - `attached/` (H6). A `store` into it and a `rename` into or out of it are refused under every policy and under every
   case variant of every component; a write into it is refused by `/files` and by its real path alike.
 - The facts are true on a fixture repository (H7). `gitUndoable` true only for a tracked file with no uncommitted
@@ -1191,6 +1245,7 @@ delete of one git cannot undo asks, for a cell and for an `ml.sh` call whose man
   and `mv` out of the folder.
 - The snapshot writes nothing into the repository (H10, H11). The person's index, HEAD, stash list and object store
   stay byte-identical, with a clean filter, an fsmonitor and a hook configured that would each leave a mark if run.
+  AMENDED 2026-11-13 (host lane): and with a global `filter.lfs.clean` configured in the person's own git config.
   The scratch index and the private object directory live outside the worktree and are gone after the diff; a build
   that drops `GIT_OBJECT_DIRECTORY` turns this row red.
 - What the snapshot takes (H11). An ignored `.env` never enters a tree; an ignored file inside the uploads folder does;
@@ -1201,7 +1256,7 @@ delete of one git cannot undo asks, for a cell and for an `ml.sh` call whose man
 - The report (H13). The body goes out as a held pointer and `done` carries only the summary line; a change by another
   process reads "changed during this call", unattributed.
 - An old host (H15). With a `hello` carrying neither field the worker sends no `mount`, `fetch`, `store`, `list`,
-  `remove`, `rename` or snapshot call and no probe; `mounts: "yes"`, `1` or `{}` read as absent.
+  `remove`, `rename`, `stat` or snapshot call and no probe; `mounts: "yes"`, `1` or `{}` read as absent.
 - Pages, four ways. Each new message type is refused at the router from a page, the host seeing nothing; a
   page-started run cannot mount or have a cell's calls made for it; an approved exec in the page's world cannot reach
   them through the dialect; each type is absent from `HANDLE_MAP`, `PAGE_STARTED_TYPES` and `RUN_CONTROL_TYPES`,
@@ -1214,12 +1269,16 @@ delete of one git cannot undo asks, for a cell and for an `ml.sh` call whose man
   refused by H2, with one mode followed through the nesting.
 - The git queries per request (`check-ignore`, the undoability check) cost a spawn each; whether the host batches them
   per cell or caches them by `basis` is the lane's to measure.
+- AMENDED 2026-11-13 (host lane), for H10 to H14, owner the host lane, each measured first: H12's before-hash of files
+  over the cap (hash only the stat-changed files, or a cache by basis); H13's orphan report keeps the private object
+  directory beside the ledger; a copied index breaks on a split index (`sharedindex`), so H10 falls back to building
+  the tree from `HEAD`.
 
 **Ruled with it** (Shane, 2026-11-13): the three settlements, the argv refusal replaced by a mapping in path positions
 (H9), the snapshot writing nothing into the repository (H10), and the sandbox and `gitUndoable` both holding (the
 paragraph under the table).
 
-**Owners.** This text: the chat-page lane, until the host lane opens. H1 to H15: the host lane, one lane in its own
+**Owners.** This text: the chat-page lane, until the host lane opens. H1 to H16: the host lane, one lane in its own
 window-ml-host clone, scope check (H1 to H8) first. The worker's judging of the facts and the table's default policy:
 the `ml.sh` extension side (`docs/dev/shell.md`).
 
