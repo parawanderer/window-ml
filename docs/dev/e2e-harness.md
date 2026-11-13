@@ -190,6 +190,11 @@ as in AGENTS.md — they are all under `src/`.
   is the only thing that exercises the real background worker, its host permissions and the real consent
   path. Each site is visited first and fetched from its OWN origin, so the fetch is same-origin and needs no
   approval. Not in CI — the sites are live.
+- **`settings-link-demo.mjs`** — a **narrated demo, not a test** of a `window-ml:` link to a setting (LINKS.md slice
+  1): `npm run build && node --import tsx tests/e2e/settings-link-demo.mjs`. A fake model answers a question with links
+  to two settings and a section; the demo shows the tip, clicks a link (Settings opens at the row, ringed), then the
+  section link. Screenshots land in `tests/e2e/artifacts/settings-link-demo/`. The assertions are
+  `tests/setting-places.test.js` and `tests/links-redteam.test.js`.
 - **`line-map-demo.mjs`** — a **narrated demo, not a test** of the line-mapping system: `npm run build &&
   node --import tsx tests/e2e/line-map-demo.mjs` runs four steps — a dense python one-liner reflowed (toggle
   rendered⇄raw to see the same tokens unbroken), a clean failure, one that PRINTS its way to a failure (so
