@@ -1024,7 +1024,7 @@ configured roots (`configure`), one list, not a second one beside it.
 **The facts a request carries back** (H7), so the worker can judge it: `inMount`, the mount's `mode`, `secret` (the
 host's `SECRET_PATTERNS`, the list an `ml.sh` path argument meets), `exists`, `ignored` (by git, `git check-ignore`
 under the git belt), `inUploads`, `inAttached`, `gitUndoable`, and a `basis` for an existing file: `{ dev, ino, size,
-mtimeNs, sha256 }` for a file under the diff cap, and `{ dev, ino, size, mtimeNs }` over it. Any fact a request itself
+mtimeNs, sha256 }` for a file at or under the diff cap, and `{ dev, ino, size, mtimeNs }` over it. Any fact a request itself
 carries is ignored; the host computes every answer from the mount's held descriptor. `gitUndoable` is true for a tracked
 file with no uncommitted change, false otherwise, and null when `repoConfigRunsCode` is true or null, since the undo
 itself (a `git checkout` of the file) would run the repository's smudge filter or hooks.
@@ -1033,8 +1033,9 @@ itself (a `git checkout` of the file) would run the repository's smudge filter o
   judged on, and the host refuses it with `ChangedSinceJudged` when the file's basis differs at the moment of the
   write, including when the file was deleted (never silently recreated) or replaced by a directory. Without it, a file
   judged free as git-undoable could be edited between the judgment and the write and then lost. The `sha256` is there
-  because an in-place edit that keeps the size and restores the mtime defeats the other four (e3, 2026-11-13); over
-  the diff cap the basis has no hash, and such an edit goes unseen: the accepted limitation.
+  because an in-place edit that keeps the size and restores the mtime defeats the other four (e3, 2026-11-13). Decided:
+  over the diff cap the basis has no hash, so such an edit goes unseen, and the card for a write or delete of such a
+  file says it was judged by size and modification time.
 
 **`/files` in an `ml.sh` argv: mapped, not refused** (H9; Shane, 2026-11-13). The commonest calls name it: copying an
 upload out of `attached/` into the writable part of `/files`, then from `/files` into the project (`cp
@@ -1173,9 +1174,10 @@ delete of one git cannot undo asks, for a cell and for an `ml.sh` call whose man
   change, false for a modified, an untracked and an ignored one; `secret` true for `.env` and an `id_rsa`-shaped name
   from the `ml.sh` list; `ignored` true for a `.gitignore`d file and false for a re-included one; `exists` false for a
   new file.
-- Compare and swap (H8). A git-undoable file edited by another process between the judgment and the write, including
-  an edit that keeps the size and restores the mtime under the diff cap; the file deleted (refused with
-  `ChangedSinceJudged`, not recreated); the file replaced by a directory.
+- Compare and swap (H8). A git-undoable file edited by another process between the judgment and the write, including the
+  cap's boundary both ways: a file AT the cap has a sha256 in its basis and a same-size, same-mtime edit to it is
+  `ChangedSinceJudged`, while a file OVER the cap is judged by size and mtime and its card says so; the file deleted
+  (refused with `ChangedSinceJudged`, not recreated); the file replaced by a directory.
 - The argv mapping (H9). A `/files` item in each form, bare and after `=`, mapped only in a manifest's path position
   and refused where the manifest does not place it; a pattern argument left alone; an option split as its manifest
   says; a `cp` out of `attached/` allowed and into it refused; a writing manifest with no written-operand field refused
