@@ -488,6 +488,12 @@ a mean of five hides the one that went wrong, which is usually the one worth rea
   each example as the WHOLE idiom too: a fragment gets copied as-is. The 2026-10-21 `policy-fetch` rerun used
   `docs.python.org` and `raw.githubusercontent.com/acme/`, F1's and F2's own answers, and a subdomain example
   without the bare host, which three models copied into F4 and one into F1 (a fail-open). The sweep had to be rerun.
+- **Check the `look for <model>:` line in the first cells.** It says where each driver's `look` went (`native`,
+  `reader <model>`, `none`, `off`), read from what the extension resolved, and each cell saves it as `look`. A cloud
+  driver showing `reader` is expected when it is declared text-only (`TEXT_ONLY_CLOUD` in `tests/e2e/run-once.mjs`,
+  DeepSeek V4 Pro today) or when `E2E_MODEL_VISION=no`. For any other cloud driver it means the branch predates the
+  vision declaration (#1757): merge main before spending the sweep. The 2026-11-13 `prompt-budget-cuts-rep` sweep ran
+  from such a branch and sent every cloud look to the reader.
 - **`--dry` first for anything long.** 4 formats x 3 tasks x 2 models x 5 repeats is 120 runs and hours
   of GPU. Trim cells that do not discriminate rather than repeating them five times.
 
