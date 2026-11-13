@@ -873,6 +873,17 @@ test("ESCAPE: a finally that THROWS cannot paper over a guard denial either", as
     await assert.rejects(run(`try { JSON.parse("{bad"); } finally { const o = { g: 1 }; o.g(); }`), (e) => !(e instanceof Denied) && !(e instanceof NotInDialect) && /not a function/.test(e.message));
 });
 
+test("ESCAPE: a finally that throws its OWN refusal while the try holds one: the finalizer's refusal is the one that escalates", async () => {
+    // Both are refusals, so either escalates; the later one is what the person is asked about, as JS would report the
+    // finally's throw. A refusal carries no line (it is about the script's shape), so neither carries mlLine.
+    const nid = await run(`try { return window; } finally { document.querySelector('#a').click(); }`).catch((e) => e);
+    assert.ok(nid instanceof NotInDialect, `the finalizer's NotInDialect, not the held Denied: ${nid}`);
+    assert.equal(nid.mlLine, undefined);
+    const den = await run(`try { document.querySelector('#a').click(); } finally { return window; }`).catch((e) => e);
+    assert.ok(den instanceof Denied, `the finalizer's Denied, not the held NotInDialect: ${den}`);
+    assert.equal(den.mlLine, undefined);
+});
+
 test("finally: a return in finally overrides a NORMAL result (JS semantics)", async () => {
     assert.equal((await run(`try { return 1; } finally { return 2; }`)).value, 2);
 });
