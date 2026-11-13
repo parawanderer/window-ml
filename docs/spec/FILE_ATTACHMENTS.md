@@ -733,12 +733,21 @@ at cell start against the file at cell end.
 cost of one round trip, an `os.walk` and an `import` over a mounted real workspace, and whether the sliced wait holds
 under the lockdown.
 
-**Open.**
+**Initial decisions** (Shane, 2026-11-13: decided now, changed if they cause trouble).
 
-- The cell's directory: a ruling above starts every cell in `/files/`; `ml.sh` starts in the workspace. Whether a cell
-  starts in the workspace's real path when one is mounted, so a relative path means the same file in both.
-- How a mount is approved and shown: per session or per run, and where the person sees what is mounted.
-- The diff's size cap, and whether the person can turn the row off.
+- The cell's directory. With a workspace mounted, each cell starts in the workspace's real path, so a relative path
+  means the same file in a cell as in `ml.sh`; with none, in `/files/`, as ruled above. Every cell still starts there
+  afresh. So a bare `open("notes.txt", "w")` writes to the person's disk when a read-write workspace is mounted, as a
+  coding agent's would; `/files/` is reached by its absolute path.
+- Approving a mount. Only the person mounts, per session, until they remove it. The model can ask through an approval
+  card naming the real path, with two choices, "read and write" and "read only", neither preselected; it never mounts
+  one itself. A page-started run never has a mount. A read-only mount fails a write with EROFS.
+- Seeing what is mounted. The files panel has a group "From this computer", one row per mount with its mode and a
+  remove action, and the run's banner a chip per mount. The model is told the mounts and their modes in one line.
+- The diff's cap. A text file of up to 1 MB on both sides gets a diff, shown to 400 changed lines with "show all"
+  beyond; a larger or binary file gets its size and hash before and after. The shelf keeps a before copy only of
+  files under the cap, which also bounds what it holds during a cell. The row is collapsed and has no setting to turn
+  it off.
 
 **Owners.** This text, the diff row and the provenance of a file read from a mount: the chat-page lane. The channel and
 the mount: the Pyodide lane. The host's scope check, the argv refusal and the `ml.sh` snapshot: the `ml.sh` and
