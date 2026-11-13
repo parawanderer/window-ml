@@ -1294,6 +1294,14 @@ test("#/settings/extension/<tab>/<section> opens that section, and #/setting/<ke
         await expect(row).toBeVisible();
         await expect(row).toBeInViewport();
         await expect(page).toHaveURL(/#\/settings\/extension$/);
+
+        // The address the worker opens for a HUD card's link (OPEN_CHAT_PAGE): its tab and section, row marked.
+        await page.evaluate(() => localStorage.setItem("ml_set_collapsed", JSON.stringify({ shell: true })));
+        await page.goto(`${url}#/setting/shellEnabled`);
+        await page.reload();
+        await expect(page.locator(".set-pills [role=tab][aria-selected=true]")).toHaveText("Advanced");
+        await expect(shell).toHaveAttribute("open", "");
+        await expect(page.locator('.set-marked[data-setting~="shellEnabled"]')).toBeInViewport();
         await page.close();
     } finally { await ext.close(); }
 });
