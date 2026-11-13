@@ -1063,9 +1063,10 @@ refusal and gives a sentence for it:
 - A cell's `/files` is backed by the folder while a host is connected ("`/files` on the person's disk"), so
   `/files/x` names the same file in a cell's `open()` and in an argv.
 - Needs a `cp` manifest (`src/shell/manifests/`): operands as paths, as `mv.json` has, and the written-operand field
-  naming the last operand. Without the field the first call above is refused (its source is in `attached/`); without
-  the manifest both are. The manifest is the extension's work, beside this lane; the field is the manifest schema's
-  (`docs/spec/PROGRAM_MANIFEST.md`) and the host's reader of it.
+  naming the last operand. It is H9's second step, in the host lane after the mapping: the manifest, the field in both
+  readers (`describeCall` in `program-manifest.ts` and the host's `manifest.rs`, per `docs/spec/PROGRAM_MANIFEST.md`)
+  and the vectors (`VECTOR_PIN` moves on both sides), with fail-first adversarial rows and e3's pass, since it is a new
+  agent write path. Until it lands, both `cp` calls above are refused with the real-path sentence.
 
 **The `ml.sh` snapshot** (H10 to H14). Settles the second disagreement: "Diffs from git" takes the snapshot with
 `git add -A` into a scratch index, which writes a blob for every changed file into the repository's object store, and
