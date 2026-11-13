@@ -1,7 +1,9 @@
 # Spec (proposed): links to a setting or a chat page view
 
 **Status: proposed 2026-11-13, nothing built.** From Shane's words in the calm-chat-motion session (2026-11-13),
-handed to the settings-specs lane by the policies/python/desktop/manifests coordinator. Not ruled. A companion to
+handed to the settings-specs lane by the policies/python/desktop/manifests coordinator. Ruled by the coordinator on
+2026-11-13, pending Shane: a spec of its own, one parser for hashes and links, a button and never an `<a href>`, and
+an address in the grammar for the DevTools panel's tabs with no URL of its own; the rest is open. A companion to
 docs/spec/MODEL_SETTINGS.md (proposed in #1793, the same lane), which a link does not depend on.
 
 Shane: "being able to provide the user with a clickable link to a setting or to the Chat UI page, since those have a
@@ -136,7 +138,9 @@ view; so the questions are what opening can cost, and whether the form leaks int
 
 1. **A page making the model link somewhere.** The worst a link does is open Settings at a section or a session's view:
    it changes nothing, and the tip names the place. A link to Permissions → "Sites that approve their own actions" is
-   a social-engineering aid, no more than the model's own text saying "go to Settings → Permissions" is today.
+   a social-engineering aid, no more than the model's own text saying "go to Settings → Permissions" is today. A link
+   to the API key's row (`setting/apiKey`) is the same aid as the text "paste your key in Settings" and no more: the
+   row shows the person a field and reads nothing back to the model.
 2. **A link that acts.** Ruled out by the grammar (rule 1): the parser accepts only the addresses above and returns a
    `Route`, which has no field that acts.
 3. **A destination reaching the browser.** A `window-ml:` link is a button, never an `<a href>` (rule 4); a destination
@@ -145,18 +149,29 @@ view; so the questions are what opening can cost, and whether the form leaks int
 4. **A page using the form itself.** A link is drawn only in the extension's own transcript views, from the model's
    text; a page's DOM never gets one. The new extension-page message the sidebar uses to open the chat page is not
    page-started and is not in `HANDLE_MAP`, so a page cannot open the chat page or Settings through it.
+   The reverse holds too: page text enters the transcript through tool results (a fetched page, a DOM read, a Python
+   `print`) and through the model quoting it, so **a `window-ml:` link is resolved only in the model's own prose**. In
+   a tool result, an output cell, a quoted block, a code span or fence, or anything else that came from a tool or a
+   page, it stays text. The renderer that draws tool output never calls the link resolver; only `Prose`, over the
+   model's reply, does, and a `>` quote inside that reply is text too.
 5. **Another session's view.** `s/<runtime:hash>` opens only a session the viewing surface already lists; one it does
-   not renders as text. The link reveals nothing the model did not already write.
+   not renders as text. The link reveals nothing the model did not already write. The address keeps the key whole,
+   as `parseRoute` does today, and whatever splits it into runtime and hash splits on the LAST `:` (AGENTS.md, the
+   sidebar trap), since a runtime id may itself contain one.
 
-**Red-team rows** (if the coordinator routes one; a link adds no message a page can start): a `window-ml:` destination
+**Red-team rows**: a `window-ml:` destination
 yielding an `<a href>` anywhere in the transcript, the sidebar, the chat page or an export; any address with a query or
 a fragment parsing to anything but text; a page reaching the open-the-chat-page message; an address starting,
-resuming or sending in a session.
+resuming or sending in a session; a tool result, an output cell or a quote containing `[x](window-ml:setting/apiKey)`
+rendering as anything but text. Ruled by the coordinator (pending Shane): no separate red-team pass for this spec,
+since a link adds no agent tool, no `ml.*` member and no page-started message. These rows are the builder's
+checklist, landing in the builder's PR as its own file (rule 10).
 
 ## Tests
 
 - `parseRoute` over every address in the table, each round-tripping through `formatRoute`; the alias `backup`; an
-  unknown tab, section or key returning nothing a link resolves.
+  unknown tab, section or key returning nothing a link resolves; `s/<runtime:hash>` with a runtime id that itself
+  contains a colon (`hub:box-2:3fa91c2e` names runtime `hub:box-2`, hash `3fa91c2e`).
 - The setting-place table against `DEFAULT_CONFIG` (above).
 - The renderer: a `window-ml:` destination is a button with the resolved tip; an unresolved one is its label; every
   other non-`http(s)` destination is text.
