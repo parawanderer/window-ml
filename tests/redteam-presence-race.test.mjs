@@ -172,7 +172,7 @@ test("every refusal gives the same answer and the same side effects, whatever th
         const bg = worker();
         const r = plain(await bg.send(MISSING, s));
         await settle();
-        seen.push(JSON.stringify([r, executes(bg), plain(bg.tabMessages), bg.scriptingCalls.filter(([k]) => k !== "registerContentScripts" && k !== "unregisterContentScripts" && k !== "getRegisteredContentScripts").length, bg.calls.length]));
+        seen.push(JSON.stringify([r, executes(bg), plain(bg.tabMessages), bg.scriptingCalls.filter(([k]) => k !== "registerContentScripts" && k !== "unregisterContentScripts" && k !== "updateContentScripts" && k !== "getRegisteredContentScripts").length, bg.calls.length]));
     }
     assert.equal(new Set(seen).size, 1, `the refusals differ: ${seen.join(" | ")}`);
     assert.deepEqual(JSON.parse(seen[0])[0], NO);

@@ -111,6 +111,18 @@ offscreen document:
   answered only for our own id with no tab, and name a cell by an id only the worker made. A `cell` on a `PY_RUN` is
   honoured only from the worker and only for the wire's own `run:<id>` principal.
 
+## A page change (rule 4a)
+
+Each executor declares where its call runs: `TaskExecutor.pageBound` (`sw-tasks.ts`; `ml.sh` and `python_exec` say `false`, absent
+means false). `webNavigation.onCommitted` (`background.ts`) calls `cancelPageTasks(runId)` for every worker-hosted run on the tab,
+which cancels the page-bound tasks through their executor, queues `[task <id> cancelled: it ran in the page this run left]` (or
+answers a waiting await with it) and records `task`/`cancelled` with reason `page-change`. A cancel the executor does not confirm leaves the task
+`orphaned` instead: the line reads `[task <id> orphaned: …, and its cancel was not confirmed]`, a waiting await gets status
+`orphaned`, and the record is `task`/`orphaned`. A runtime-bound task is left alone. The
+cancelled task's late result is dropped by `finish`'s status guards. No page-bound executor exists yet; the tests use a fake one
+(`tests/sh-lease.test.mjs`). `rekeyRunInbox` (`sw-runs.ts`) moves a live run's inbox to another tab (tasks are keyed by run id and
+follow); `senderOwnsRun` is the owner check `SET_APPROVAL` uses. The run host's `settle` still closes over the starting tab id.
+
 ## Traps
 
 - **A short `expectMs` shortens the lease.** The deadline is `expectMs ?? SH_LEASE_MS`, and models underestimate: on
