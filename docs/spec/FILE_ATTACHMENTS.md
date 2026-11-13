@@ -735,8 +735,8 @@ opening it, so nothing can swap a component between the check and the open. A pa
   and inode on every request, so a mounted directory replaced by a symlink to `/` is refused, not followed.
 - Unmounted or disconnected during a cell. The next read fails; the cached listing and any copy in MEMFS are not
   served, and a close does not push.
-- Bounded sizes. An open and the before copy are bounded by a size cap (256 MB proposed, "What follows" below): a
-  file over it fails the open with `EFBIG` and a sentence naming `ml.sh`, so the worker's memory is never the limit
+- Bounded sizes. An open and the before copy are bounded by a size cap (256 MB (ruled 2026-11-13), "What follows" below):
+  a file over it fails the open with `EFBIG` and a sentence naming `ml.sh`, so the worker's memory is never the limit
   that is hit.
 - Stop between an open and its close. The host gets the file whole or not at all (the rename above), and the cell's
   diff line says the write did not land: `a.py was not written: the cell was stopped.`
@@ -810,7 +810,8 @@ Chromium against a real `wmlhost` (0.7.0) registered in a throwaway profile. Med
   and `SharedArrayBuffer` (allowed globals) and can make its own buffer, but the probes found no name for the channel's
   buffers, the interrupt word, the port or the FS object. Not probed: ctypes, `/proc`, `sys.modules` internals.
 
-**What follows** (proposed by the async lane; for the coordinator, Shane where marked).
+**What follows** (proposed by the async lane; RULED 2026-11-13, the coordinator: all five as written; the 256 MB cap is
+the coordinator's value, Shane may override).
 
 - Route A, not B: Stop is 0.1 ms with the notify, a request 0.26 ms, and it holds under the lockdown. JSPI is not
   needed for either reason the spec gave.
@@ -852,7 +853,7 @@ Chromium against a real `wmlhost` (0.7.0) registered in a throwaway profile. Med
 
 - Whether a mounted file's real path is kept from what the model reads (an e3 row the coordinator did not adopt). By
   design it is not: the model is given the real path because that is what `open()` takes. For Shane.
-- The size cap's value: 256 MB proposed from the measurement above ("What follows").
+- The size cap's value: 256 MB (ruled 2026-11-13) from the measurement above ("What follows").
 
 **Owners.** This text, the diff row and the provenance of a file read from a mount: the chat-page lane. The channel and
 the mount: the Pyodide lane. The host's scope check, the argv mapping and the `ml.sh` snapshot: the host lane, as
