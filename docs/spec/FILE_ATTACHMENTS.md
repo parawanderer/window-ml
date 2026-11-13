@@ -853,11 +853,11 @@ host is mounted (Shane):
   a renamed copy (`report (browser copy).md`), and the panel says so; a live run is told through its inbox. A delete on
   one side against an edit on the other keeps the edit.
 - A change to `attached/` on disk (a process can `chmod` and write, and the person can edit in Finder) never replaces
-  the frozen original: the browser keeps the person's original as the version a transcript cites, and nothing on disk
-  is reverted, since the disk is primary. The panel says `data.csv was changed on disk; the original is kept in the
-  browser copy`.
-- A cited file stays frozen in the browser copy whatever happens on disk: an edit, a move or a delete there changes
-  what the next read sees, never what a transcript cites.
+  the frozen original: the browser copy keeps the person's original at `attached/<handle>/<name>`, the frozen version a
+  transcript cites ("Mutable, frozen when cited", above), and nothing on disk is reverted, since the disk is primary.
+  The panel says `data.csv was changed on disk; the original is kept in the browser copy`.
+- A cited file stays frozen in the browser copy whatever happens on disk (Shane, 2026-11-13): an edit, a move or a
+  delete there changes what the next read sees, never what a transcript cites.
 - A file over the quota is never in the backup, so without the host the model's `/files` lists it as unavailable and
   opening it fails with `data.parquet is on disk only (3.2 GB, over this session's quota): connect the host to read it.`
 
@@ -870,6 +870,13 @@ path, never as empty or gone. Uploads and writes made meanwhile sync forward whe
 transcript keeps the real paths a run used, so a later read without the host says where they were. A cell running when
 the host goes gets "Unmounted or disconnected during a cell" (above): the next read through the mount fails.
 
+**Sessions and mounts** (decided, Shane, 2026-11-13):
+
+- Several sessions mounting one repository share one folder; each session's browser copy stays its own.
+- Archiving or deleting a session never deletes anything on disk.
+- With several mounts, one is the session's primary workspace, chosen at the first approval: cells start there and
+  the uploads folder lives there.
+
 **Three limits, kept apart:**
 
 | Limit | Applies to | Set by |
@@ -880,7 +887,7 @@ the host goes gets "Unmounted or disconnected during a cell" (above): the next r
 
 **What runs free and what asks.** The scope is the mount list; a read-only mount refuses every write.
 
-- Free: reads anywhere in the mounts, except the secrets deny-list (open, below); writes and deletes in a read-write
+- Free: reads anywhere in the mounts, except a file that looks like a secret (below); writes and deletes in a read-write
   mount that git can undo (a tracked file with no uncommitted change); anything in the uploads folder the runs made;
   `git status`, `git diff`, `git add`; and a commit on the current branch after the session's first. The first commit
   in a session asks, since it writes into history under the person's identity; every commit the model makes carries
@@ -888,6 +895,9 @@ the host goes gets "Unmounted or disconnected during a cell" (above): the next r
 - Asks, unless a policy allows it (`docs/spec/POLICIES.md`): a delete or overwrite git cannot undo (an untracked or
   ignored file, or a tracked one with uncommitted changes); deleting the person's own uploads (`attached/`); anything
   that leaves the mounts; network access; git operations that rewrite history or reach a remote.
+- Secrets: a cell's `open()` through a mount goes through the same check as an `ml.sh` path argument (`SHELL.md`, "The
+  free tier narrows to the roots"), so the defaults and the person's policies are one list: a file that looks like a
+  secret asks by default wherever it is, and a workspace policy overrides that either way.
 - How it is enforced: a cell's writes and deletes go through the host's per-request check (above), so each is judged
   as it is made. An `ml.sh` process is judged before it starts, by its manifest's `effects` (`docs/spec/SHELL.md`),
   since the host cannot stop a running process mid-write; its writes are then shown in its diff. That bounds only a
@@ -933,21 +943,20 @@ never taken into the backup; a file over the quota is not backed up, by size or 
 to `attached/` on disk never replaces the frozen original; a conflict keeps both copies; the git snapshot leaves the
 person's index, HEAD and stash list unchanged; a delete git cannot undo asks, by every route (`os.remove`,
 `ml.files.remove`, an `ml.sh` `rm` judged by its manifest); an `ml.sh` program that runs code (`bash -c`, a manifest
-saying `runs-code` or `unknown`, no manifest) asks whatever its argv; the first commit in a session asks; a page or a
-page-started run reaches neither the folder nor `ml.files`.
+saying `runs-code` or `unknown`, no manifest) asks whatever its argv; the first commit in a session asks; a cell's
+`open()` of a file that looks like a secret asks, as an `ml.sh` read of it does; a page or a page-started run reaches
+neither the folder nor `ml.files`.
 
 **Open.**
 
 - The folder's name (`window-ml-files/` is a proposal) and whether the person sets it per workspace.
 - Windows: how a `C:\Users\...` path appears in the sandbox's POSIX tree.
 - A workspace that is not a git repository: whether `ml.sh` calls get a diff by another snapshot.
-- Several sessions mounting one repository. Default: they share one folder; each session's browser copy stays its own.
-- Archiving or deleting a session. Default: it never deletes anything on disk.
-- A read deny-list for the repository's own secrets (`.env*`, `*.pem`, `id_*`, `*.key`). Default: a read of one asks;
-  the red-team rows cover the browser profile and the host config, not the repository.
-- Several mounts in one session. Default: one is the session's primary workspace, chosen at the first approval; cells
-  start there and the uploads folder lives there.
 - The background sync's cadence (a value to pick).
+- Deferred (Shane): the model reading `.env` to pass a secret on to an API call. Until it is taken up, the person
+  writes scripts that read `.env` and policies that let the model run them, and no value from `.env` reaches the
+  model's text. The likely shape is `SHELL.md`'s "a text pipe over a held value": the host reads the secret, so only a
+  reduction crosses.
 
 **Owners.** This text, the panel's view of both copies, the sync's rules, provenance and the files API's JS side: the
 chat-page lane. The mount, the fallback and the Python binding: the Pyodide lane. The host's folder, the git snapshot
