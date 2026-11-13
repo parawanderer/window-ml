@@ -228,9 +228,17 @@ function noteSend(hash: string, turn: number, added: readonly FilePointer[]): vo
  * @param hash the run
  * @param why the refusal's sentence
  */
-export function noteRefusedTurn(hash: string, why: string): void {
+export function noteRefusedTurn(hash: string, why: string): void { noteRunLine(hash, `Your message was not sent: ${why}`); }
+
+/**
+ * Say one line in a run's step list, in the worker's own voice (an `agent-note`): for something that happened to the
+ * run with no turn running to say it, such as the idle reap of its Python namespace. Nothing when the run has no tab.
+ * @param hash the run
+ * @param text the line
+ */
+export function noteRunLine(hash: string, text: string): void {
     const tabId = bgRuns.get(hash)?.tabId ?? runInboxes.get(hash)?.tabId;
-    if (tabId != null) announce(tabId, { kind: "agent-note", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text: `Your message was not sent: ${why}` });
+    if (tabId != null) announce(tabId, { kind: "agent-note", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text });
 }
 
 /** A worker-built run's vision facts, for routing a later turn's images: the model it is on now, and what its build

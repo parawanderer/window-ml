@@ -5,14 +5,21 @@
 // other message of its principal is running or queued; the clock starts when the last one answers and restarts with
 // the next post. What the shut costs decides how long it waits:
 //
-// - a worker holding no namespace of a live turn (the turn settled and `PY_DELETE_RUN` emptied it, or a page's
-//   stateless principal) loses only its warmth: shut after `REAP_SETTLED_MS`;
-// - a worker holding a live turn's namespace loses the model's names: shut after `REAP_LIVE_MS`, the loss told on the
-//   run's next cell like a kill's;
-// - a KEEP exempts that second kind: the model asked (`python_exec` `keep: true`) to hold its namespace through long
-//   gaps, a run that works overnight. It lasts until the turn ends (`PY_DELETE_RUN`), after which the worker is the
-//   first kind again, or until the sandbox is killed (a timeout, a crash, a cancel), which the next cell is told as
-//   loss. A keep never outlives its turn, so it never holds a realm for a run nobody is running.
+// The namespace belongs to the RUN, which outlives its turns: it is dropped at session release and archive
+// (`PY_DELETE_RUN`), and by this reap. At a turn's end (`PY_END_TURN`) the run's own worker keeps it.
+//
+// - a worker holding no namespace (a page's stateless principal, a run that defined nothing, or one whose namespace was
+//   dropped) loses only its warmth: shut after `REAP_SETTLED_MS`;
+// - a worker holding the namespace of a run whose turn is RUNNING loses the model's names: shut after `REAP_LIVE_MS`,
+//   the loss told on the run's next cell like a kill's, and in the run's transcript;
+// - a worker holding the namespace of a run BETWEEN turns (the person is reading, or away) is shut after the person's
+//   `pythonIdleMinutes` (`DEFAULT_REAP_BETWEEN_MS`), told the same way;
+// - a KEEP exempts the live-turn kind: the model asked (`python_exec` `keep: true`) to hold its namespace through long
+//   gaps, a run that works overnight. A keep is bound to its TURN: it ends with it (`PY_END_TURN`), after which the
+//   worker is the between-turns kind, or until the sandbox is killed (a timeout, a crash, a cancel), which the next cell
+//   is told as loss. So a keep never holds a realm for a run nobody is running.
+//
+// The clock starts only when nothing of the principal is pending, so a running or detached cell is never reaped.
 //
 // The bench's own surface (`own`) and the shared `full` worker are never reaped: the bench keeps a person's variables.
 
@@ -21,16 +28,37 @@ export const REAP_SETTLED_MS = 5 * 60_000;
 /** How long a worker that holds a live turn's namespace may sit idle before it is shut, its names lost. */
 export const REAP_LIVE_MS = 30 * 60_000;
 
+/** How long a worker holding a namespace between turns may sit idle by default (the `pythonIdleMinutes` setting, 10). */
+export const DEFAULT_REAP_BETWEEN_MS = 10 * 60_000;
+
+/** The longest delay `setTimeout` keeps: a longer one wraps and fires at once (2^31-1 ms, about 24.8 days). */
+export const MAX_TIMER_MS = 2 ** 31 - 1;
+
+/**
+ * Call `fire` once `ms` has passed, in `setTimeout` steps no longer than {@link MAX_TIMER_MS}, so a delay past it (a
+ * `pythonIdleMinutes` of 35792 or more) waits its full length instead of firing at once.
+ * @param ms the delay
+ * @param fire called once at the end
+ * @param onStep handed each step's timer as it is set, so the caller clears the current one
+ */
+export function longTimeout(ms: number, fire: () => void, onStep: (t: ReturnType<typeof setTimeout>) => void): void {
+    const step = Math.min(ms, MAX_TIMER_MS);
+    onStep(setTimeout(() => (ms > MAX_TIMER_MS ? longTimeout(ms - MAX_TIMER_MS, fire, onStep) : fire()), step));
+}
+
 /**
  * How long a principal's idle worker waits before it is shut, or null when it is never shut for idleness.
  * @param principal whose worker: `run:<id>`, `page:<tabId>`, `own` or `full`
- * @param holdsRun whether the worker holds a namespace of a turn that has not ended
- * @param kept whether that turn asked to keep its worker
+ * @param holdsRun whether the worker holds a run's namespace
+ * @param kept whether the run's live turn asked to keep its worker (meaningless once the turn ended)
+ * @param betweenTurns whether the run's turn has ended
+ * @param betweenMs the between-turns delay (the person's setting); 0 or less never reaps
  * @returns the delay in ms, or null
  */
-export function reapDelay(principal: string, holdsRun: boolean, kept: boolean): number | null {
+export function reapDelay(principal: string, holdsRun: boolean, kept: boolean, betweenTurns = false, betweenMs = DEFAULT_REAP_BETWEEN_MS): number | null {
     if (principal.startsWith("page:")) return REAP_SETTLED_MS;   // a page never holds a live turn's namespace: no flag moves it
     if (!principal.startsWith("run:")) return null;
     if (!holdsRun) return REAP_SETTLED_MS;
+    if (betweenTurns) return betweenMs > 0 ? betweenMs : null;   // a keep ended with its turn
     return kept ? null : REAP_LIVE_MS;
 }

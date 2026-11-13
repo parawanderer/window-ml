@@ -144,7 +144,8 @@ abridging for anything large. A value is fetched when its row is opened, never w
 
 **Answered on 2026-10-15 in [`PYTHON_DIALECT.md`](PYTHON_DIALECT.md), "The namespace"**: one namespace per run with no
 `mode` (so question 1 and 5 dissolve), injected names as plain assignments that are not reset, a loss that is told to
-the run from the housekeeping record, and deletion at run end with a memory eviction that also tells. The survey below
+the run from the housekeeping record, and deletion at session release and archive (not at a turn's end: the namespace is
+per RUN, ruled 2026-11-13) with an idle reap and a memory eviction that also tell. The survey below
 is kept as the record of what the answers had to cover.
 
 Shane, 2026-10-08: `python_exec` keeps its variables between calls within a run, as models already assume, since they

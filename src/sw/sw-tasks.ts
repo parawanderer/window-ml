@@ -13,9 +13,13 @@ import type { CurrentSnapshot } from "../agent/current-context";
 import { runControllers, runInboxes } from "./sw-runs";
 import { recordRunLog } from "./sw-run-log";
 import { forModel } from "./sw-scrub";
+import { storeText } from "./sw-values";
 
 /** Where a task is. A detached call is `running`; `detached` is how it got here, not a status. */
 export type TaskStatus = "running" | "done" | "failed" | "cancelled" | "orphaned";
+
+/** What a waiting await is answered with: an executor's outcome, or a page change's cancel the executor did not confirm. */
+type AwaitAnswer = Omit<TaskOutcome, "status"> & { status: TaskOutcome["status"] | "orphaned" };
 
 /** How a task ended, as its executor reports it: the text the model reads (scrubbed here) and the result's pointer. */
 export interface TaskOutcome {
@@ -26,6 +30,11 @@ export interface TaskOutcome {
     result: string | null;
     /** The program's exit code, when the executor has one; null when it is not known (killed, failed to run). */
     code?: number | null;
+    /** The fuller output `text` was cut from, unscrubbed: scrubbed and stored here, so the step that reads the result
+     *  can mint the pointer to it (rule 6: the full capped output is a value the model can point at). */
+    whole?: string;
+    /** A figure the result drew (a data URL): it reaches the model with the result, as the call's own return would. */
+    image?: string;
 }
 
 /** How a finished task is announced to the run's surfaces beside its text, so a short line never parses the text. */
@@ -33,6 +42,12 @@ export interface TaskEnd { status: TaskStatus; ms: number; code: number | null }
 
 /** What only the executor can do for a task it registered. */
 export interface TaskExecutor {
+    /**
+     * Where the call RUNS (ASYNC_CALLS.md rule 4a): true when it runs in the page the run is on (a detached `exec`, a DOM or
+     * selector subscription), so a page change ends it; false when it runs on the runtime (`ml.sh`, `python_exec`, a fetch),
+     * which a page change leaves running. Each executor kind declares it; absent reads as false.
+     */
+    pageBound?: boolean;
     /** Cancel the call; resolves to what happened, in words (a cancel's effect is a fact, never a promise). */
     cancel(): Promise<{ confirmed: boolean; text: string }>;
     /**
@@ -47,8 +62,8 @@ export interface TaskExecutor {
     settled: Promise<TaskOutcome>;
 }
 
-/** A tail with the key of the stored whole it was cut from (the pointer the step mints reads all of it). */
-export interface TailAnswer { text: string; value: string }
+/** A tail with the key of the stored whole it was cut from (the pointer the step mints reads all of it) and that whole's length in characters. */
+export interface TailAnswer { text: string; value: string; chars: number }
 
 /** What an executor says about a call it detaches. */
 export interface TaskSpec {
@@ -70,8 +85,13 @@ interface Task extends Omit<TaskSpec, "exec"> {
     /** When it ended and its exit code, for the surfaces' short line. */
     endedMs?: number;
     code: number | null;
-    /** An await waiting on it now: answered instead of the inbox. */
-    waiter?: (o: TaskOutcome) => void;
+    /** The stored whole of a cut result and its length, and the figure it drew: carried with its text to the model. */
+    value?: string;
+    chars?: number;
+    image?: string;
+    /** An await waiting on it now: answered instead of the inbox, by its end or by a page change's cancel (which can
+     *  leave it orphaned). */
+    waiter?: (o: AwaitAnswer) => void;
     /** Its end is being recorded (the scrub is async): a second end is ignored, and it still reads as running. */
     ending?: boolean;
     exec: TaskExecutor;
@@ -127,6 +147,9 @@ async function finish(runId: string, t: Task, o: TaskOutcome): Promise<void> {
     t.ending = true;
     const endedMs = Date.now();
     const text = (await forModel(o.text)).text;
+    // Only a whole longer than the text is kept: one the cap did not cut is already all there in the text.
+    const whole = o.whole && o.whole.length > o.text.length ? (await forModel(o.whole)).text : undefined;
+    const value = whole ? await storeText(whole, `task ${t.id}`).catch(() => undefined) : undefined;
     // Ended in the meantime (the turn's end cancelled it): its status is that end's.
     if (t.status !== "running") return;
     // All at once, after the scrub: a read in between sees a running task, never an ended one with no text.
@@ -135,6 +158,8 @@ async function finish(runId: string, t: Task, o: TaskOutcome): Promise<void> {
     t.endedMs = endedMs;
     t.code = o.code ?? null;
     t.text = text;
+    if (value) { t.value = value; t.chars = whole!.length; }
+    if (o.image) t.image = o.image;
     recordRunLog(runId, { ...(o.status === "done" ? {} : { level: "warn" as const }), subsystem: "task", kind: "ended", reason: o.status, ms: Date.now() - t.startedMs, detail: { id: t.id, tool: t.tool } });
     if (tasks.get(runId)?.get(t.id) !== t) return;
     if (t.waiter) { const w = t.waiter; t.waiter = undefined; t.delivered = true; w({ ...o, text: t.text }); return; }
@@ -142,7 +167,28 @@ async function finish(runId: string, t: Task, o: TaskOutcome): Promise<void> {
     if (!inbox || t.delivered) return;
     // Queued only: it is delivered, and drawn, when the loop drains it (`taskDrained`). A turn that ends first drops it,
     // and nothing then shows a result the model never read.
-    inbox.queue.push({ text: `[task ${t.id} ${o.status} after ${secs(endedMs - t.startedMs)}: ${t.text}]`, task: t.id });
+    inbox.queue.push({ text: `[task ${t.id} ${o.status} after ${secs(endedMs - t.startedMs)}: ${t.text}]`, task: t.id, ...carried(t) });
+}
+
+/**
+ * What a finished task's result carries beside its text: the key and length of its stored whole, and its figure.
+ * @param t the task
+ */
+function carried(t: Task): { value?: string; chars?: number; images?: string[] } {
+    return { ...(t.value ? { value: t.value, chars: t.chars } : {}), ...(t.image ? { images: [t.image] } : {}) };
+}
+
+/** An await's answer: the result's text, with its stored whole (the step mints the pointer) and its figure. */
+export interface TaskAnswer { content: string; textValue?: string; textChars?: number; image?: string }
+
+/**
+ * An await's answer for a task that ended: its text alone, or with what the result carries beside it.
+ * @param t the task
+ * @param content the text the model reads
+ */
+function answered(t: Task, content: string): string | TaskAnswer {
+    if (!t.value && !t.image) return content;
+    return { content, ...(t.value ? { textValue: t.value, textChars: t.chars } : {}), ...(t.image ? { image: t.image } : {}) };
 }
 
 /**
@@ -180,6 +226,31 @@ export async function endTasks(runId: string): Promise<void> {
     }));
 }
 
+/**
+ * The run's page changed (a same-tab navigation of a worker-hosted run): each page-bound task still running is cancelled
+ * through its executor's cancel, and the model is told as a fact, through the inbox as a cancel's result is (or to an await
+ * waiting on it). A runtime-bound task is not touched. The cancelled task's late result is dropped (`finish` ignores a task
+ * that is not running), so nothing it started in the old page resolves against the new one.
+ * @param runId the run whose page changed
+ */
+export async function cancelPageTasks(runId: string): Promise<void> {
+    const mine = tasks.get(runId);
+    if (!mine) return;
+    await Promise.all([...mine.values()].filter((t) => t.status === "running" && t.exec.pageBound === true).map(async (t) => {
+        const c = await t.exec.cancel().catch((e) => ({ confirmed: false, text: (e as Error)?.message || String(e) }));
+        // Ended or cancelled while the cancel was in flight: that end's status stands.
+        if (t.status !== "running") return;
+        const text = c.confirmed ? "it ran in the page this run left" : "it ran in the page this run left, and its cancel was not confirmed";
+        t.status = c.confirmed ? "cancelled" : "orphaned";
+        t.endedMs = Date.now();
+        t.text = text;
+        recordRunLog(runId, { level: "warn", subsystem: "task", kind: c.confirmed ? "cancelled" : "orphaned", reason: "page-change", ms: t.endedMs - t.startedMs, detail: { id: t.id, tool: t.tool } });
+        if (tasks.get(runId)?.get(t.id) !== t) return;
+        if (t.waiter) { const w = t.waiter; t.waiter = undefined; t.delivered = true; w({ status: t.status, text, result: null }); return; }
+        runInboxes.get(runId)?.queue.push({ text: `[task ${t.id} ${t.status}: ${text}]`, task: t.id });
+    }));
+}
+
 /** Whole seconds, for the model's text. */
 const secs = (ms: number): string => `${Math.round(ms / 1000)} s`;
 
@@ -192,7 +263,7 @@ const UNKNOWN = (id: string): string => `UnknownTask: this run has no task ${JSO
  * @param args the tool's arguments: `op`, `id`, and `timeout_ms` or `lines`
  * @returns what the model reads
  */
-export async function taskAction(runId: string, args: Record<string, unknown>): Promise<string | { content: string; textValue: string }> {
+export async function taskAction(runId: string, args: Record<string, unknown>): Promise<string | TaskAnswer> {
     const id = typeof args.id === "string" ? args.id : "";
     const t = tasks.get(runId)?.get(id);
     if (!t) return UNKNOWN(id);
@@ -203,7 +274,7 @@ export async function taskAction(runId: string, args: Record<string, unknown>): 
         const tail = await t.exec.tail(n, true);
         if (tail === null) return `task ${t.id} running for ${secs(Date.now() - t.startedMs)}. ${t.exec.tailAbsent}`;
         if (typeof tail === "string") return (await forModel(tail)).text;
-        return { content: (await forModel(tail.text)).text, textValue: tail.value };
+        return { content: (await forModel(tail.text)).text, textValue: tail.value, textChars: tail.chars };
     }
     if (op === "cancel") {
         if (t.status !== "running") return `task ${t.id} already ${t.status}: ${t.text ?? ""}`;
@@ -211,19 +282,19 @@ export async function taskAction(runId: string, args: Record<string, unknown>): 
         return `task ${t.id}: ${c.text}`;
     }
     if (op === "await") {
-        if (t.status !== "running") { t.delivered = true; return `task ${t.id} ${t.status}: ${t.text ?? ""}`; }
+        if (t.status !== "running") { t.delivered = true; return answered(t, `task ${t.id} ${t.status}: ${t.text ?? ""}`); }
         if (t.waiter) return `task ${t.id}: another await is already waiting on it.`;
         const given = Number(args.timeout_ms);
         const expect = Number.isFinite(given) && given > 0 ? Math.min(Math.floor(given), TASK_AWAIT_MAX_MS) : null;
         const wait = expect ?? t.leaseMs;
         const signal = runControllers.get(runId)?.signal;
-        const o = await new Promise<TaskOutcome | null>((resolve) => {
+        const o = await new Promise<AwaitAnswer | null>((resolve) => {
             const timer = setTimeout(() => { t.waiter = undefined; resolve(null); }, wait);
             const onAbort = () => { clearTimeout(timer); t.waiter = undefined; resolve(null); };
             signal?.addEventListener("abort", onAbort, { once: true });
             t.waiter = (x) => { clearTimeout(timer); signal?.removeEventListener("abort", onAbort); resolve(x); };
         });
-        if (o) return `task ${t.id} ${o.status} after ${secs(Date.now() - t.startedMs)}: ${o.text}`;
+        if (o) return answered(t, `task ${t.id} ${o.status} after ${secs(Date.now() - t.startedMs)}: ${o.text}`);
         return `task ${t.id} is still running after ${secs(Date.now() - t.startedMs)}; ` + (expect !== null
             ? `you expected it within ${secs(expect)} more. Investigate the stall, or await, tail or cancel it.`
             : `no timeout_ms was given, so the ${secs(wait)} default applied. Estimate (timeout_ms) or investigate.`);

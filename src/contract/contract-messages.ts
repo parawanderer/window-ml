@@ -419,6 +419,8 @@ export interface PageToolEnvelope {
     /** The stored whole of a clipped text result (ToolResult.textValue). Read only off an envelope the worker made
      *  itself, never off a page's answer. */
     textValue?: string;
+    /** The stored whole's length in characters (ToolResult.textChars). Same trust as `textValue`. */
+    textChars?: number;
 }
 
 /** A resumable chat session persisted to chrome.storage.local for { save: true }

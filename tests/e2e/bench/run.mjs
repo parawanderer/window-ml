@@ -68,7 +68,7 @@ import { mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { runOnce, resolveBackendFromEnv, renderRun, FAKE_MODEL } from "../run-once.mjs";
+import { runOnce, resolveBackendFromEnv, renderRun, FAKE_MODEL, lookNote } from "../run-once.mjs";
 import { measureRun, aggregate, isRateLimit } from "./metrics.mjs";
 import { expandCells, cellKey, cellPath, comboLabel, buildGroups, parseSelector, slug, cellStream, runConfig } from "./cells.mjs";
 import { holdMode, loadSpec, startHeld, heldWindow, HOLD_IDLE_MIN } from "./hold.mjs";
@@ -396,8 +396,12 @@ async function runCell(cell, ctx, index) {
         // not, "which model was this run against" is the first question asked of any result and was
         // previously answerable only by reading a run.md. Saved with the cell so a cached one keeps it.
         backend: run.backendLabel ?? null, models: run.models ?? null,
+        // Where its look went (native, a reader, none): an old branch's sweep sent every cloud driver's to the reader.
+        look: run.look ?? null,
         ...(turns ? { turns, prompt: promptChars(dir), statuses, ...(followUps.length ? { followUps } : {}), ...(expects ? { expects } : {}) } : {}) };
     await writeFile(cacheFile, JSON.stringify(saved, null, 2));
+    const lookLine = lookNote(ctx.lookSeen ??= new Map(), run.models?.driver ?? null, saved.look);
+    if (lookLine) ctx.log(lookLine);
     // Into the scores log, once, as it lands (scores.mjs): a sweep that dies half way still leaves its runs counted.
     const row = ctx.scores && runRow({ ...saved, fromCache: false }, t, ctx.scoreSweep);
     if (row) {

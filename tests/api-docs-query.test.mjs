@@ -110,6 +110,16 @@ test("unknown names are reported with the member + type lists", () => {
     assert.match(out, /Types: MlApi, ChatOptions, ContentKind, FetchResult\./, "type list missing");
 });
 
+test("a name the reference leaves out on purpose is answered with why, and only the rest are \"Not found\"", () => {
+    const absent = new Map([["pythonExec", "ml.pythonExec is the console's method."]]);
+    const out = queryApiDocs(FIXTURE, { members: ["PYTHONEXEC", "nope"] }, [], undefined, absent);
+    assert.match(out, /^> ml\.pythonExec is the console's method\.$/m, "the reason, case-insensitively");
+    assert.match(out, /Not found: nope\./, "a real unknown is still reported");
+    assert.doesNotMatch(out, /Not found:[^\n]*PYTHONEXEC/i, "the explained name is not also 'Not found'");
+    assert.doesNotMatch(queryApiDocs(FIXTURE, { members: ["pythonExec"] }, [], undefined, absent), /Not found/,
+        "with nothing else missing, no Not found line at all");
+});
+
 test("{ search } returns matching member blocks and type sections", () => {
     const out = queryApiDocs(FIXTURE, { search: "fetch" });
     // `fetch` names a member AND appears in the FetchResult section body.

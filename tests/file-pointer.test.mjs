@@ -40,7 +40,7 @@ test("the outline names the pointer, who attached it, its size, the pages that n
     const out = fileOutline(pointer({ figures: [2], scans: [3] }), d).text;
     const [first, second, third] = out.split("\n");
     assert.equal(first, `@file:${fileId("run1", 0)} "report.pdf": attached by the person. PDF, 3 pages, about 1k tokens of text.`);
-    assert.equal(second, `Page 2 has a figure; page 3 is scanned. Read with dereference(@file:${fileId("run1", 0)}, pipe "pages 1-3").`);
+    assert.equal(second, `Page 2 has a figure; page 3 is scanned. Read with dereference(@file:${fileId("run1", 0)}, pipe "pages 1-3"); see a page with look(doc @file:${fileId("run1", 0)}, pages "2").`);
     assert.equal(third, "Page 1: Annual report 2025 Revenue grew.");
 });
 

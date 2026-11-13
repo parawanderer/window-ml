@@ -27,6 +27,7 @@ Configure everything with **env vars** (all optional):
 | `TASK="…"` | The agent task. Default is a findByText demo. |
 | `START=/spreadsheet` | Start route. Any served example page (`/spreadsheet`, `/find-waldo`, `/canvas-input`, `/shadow-dom`, `/agent-hell`, …), the cross-page chain (`/`, `/step2`, `/step3`), or a fixture (`/slow`, `/lazy`, `/table`). `GET /examples` lists them. |
 | `USE_ENV=1` | Real model: read `OPENWEBUI_URL/KEY/MODEL` (+ `OPENWEBUI_UTILITY_MODEL`/`OPENWEBUI_VISION_MODEL`) from `.env`. |
+| `E2E_MODEL_VISION=yes\|no` | Whether a cloud driver sees images. Default: yes, except DeepSeek V4 Pro (`TEXT_ONLY_CLOUD` in run-once.mjs). A local model is probed. Observe prints where the run's `look` went (`look for <model>: native` / `reader <model>`). |
 | `E2E_MODEL=<id>` | Override the model (e.g. `deepseek.deepseek-v4-pro`, `gemma4:31b`, `dsv4-flash:q4kxl`). With no backend vars → the deterministic **fake-LLM**. |
 | `TOOLTOKENS=1` | Enable tool tokens (the `@tool:` embed/answer feature). |
 | `SHARED_WATCHES='["ml.current.run.step"]'` | Watches shared with the model before the run, as the Run state panel's eye stores them: the run reads them in `ml.current.debug.userWatches`. |
