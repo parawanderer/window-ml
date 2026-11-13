@@ -92,7 +92,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
     // a page-hosted agent's cells have no run, so they stay stateless.
     const stateClause = mintVia
         ? "Names you define persist across your python_exec calls in this run (`df`/`tables`/`img` are re-bound when a " +
-          "call passes them); after a sandbox restart the output opens with `namespace reset at <time>: <reason>` and they are gone."
+          "call passes them); across turns too, until a sandbox restart or a long idle gap between turns, after which the output opens with `namespace reset at <time>: <reason>` and they are gone."
         : "Each call is STATELESS — a fresh namespace, nothing persists.";
     return ml.defineTool({
         name: "python_exec",
@@ -126,8 +126,8 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                     description: tablesDesc,
                 },
                 tableRaw: { type: "boolean", description: "Load table cells as raw STRINGS (skip the default numeric/currency auto-cast). Use only for ZIP/SKU/leading-zero IDs that casting would corrupt." },
-                // Only where names persist (a worker-hosted run): the sandbox is shut after 30 min idle (py-reap.ts).
-                ...(mintVia ? { keep: { type: "boolean", description: "Keep your names through idle gaps over 30 min (a run that waits hours between calls) until this run ends or its sandbox is killed (a timeout, a crash, a cancel), which the next cell is told as loss. Otherwise an idle sandbox is shut and its names lost." } } : {}),
+                // Only where names persist (a worker-hosted run): the sandbox is shut after 30 min idle in a turn (py-reap.ts); a keep lasts the turn.
+                ...(mintVia ? { keep: { type: "boolean", description: "Keep your names through idle gaps over 30 min (a run that waits hours between calls) until your turn ends or its sandbox is killed (a timeout, a crash, a cancel), which the next cell is told as loss. Otherwise an idle sandbox is shut and its names lost." } } : {}),
                 // Only where a cell can detach (a worker-hosted run, sw-python-task.ts): the lease it replaces.
                 ...(mintVia ? { expect_ms: { type: "number", description: `Your estimate of this cell's run time in ms. Past it, or a short default without it, the call detaches into a task. At most ${PY_LEASE_MAX_MS / 1000} s: a longer one counts as that.` } } : {}),
                 ...outputCapParams("python_exec", "Prefer returning a compact result."),
@@ -168,7 +168,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             }
             if (tableNote) tableNote += "\n";
             // How a cell's answer becomes what the model reads: the call's own return, and a detached cell's late result.
-            const format = async (r: PyExecResult, verify: boolean, late = false): Promise<string | ToolResult> => {
+            const format = async (r: PyExecResult, verify: boolean): Promise<string | ToolResult> => {
                 // Cap stdout/value/error fed back to the model so a runaway result (e.g. a
                 // string-concat blowup) can't flood the context — with a "[+N truncated]" note.
                 // Past the ceiling the model is told AFTER its clip, and the panel's last line says the same (output-clip.ts).
@@ -232,9 +232,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                 const parts = pyValueParts(v, { render: r.render, table: r.resultTable }, stringify);
                 // An image return is unambiguous → always shown (no cast needed).
                 if (parts.image) {
-                    // A late result (a detached cell's task) carries text only: the image is named, never implied to be shown.
-                    const said = late ? "1 figure, not shown (a task's result carries text only)."
-                        : r.render === "figure" ? "Your open matplotlib figure(s) came back as an image (closed now; the next call starts with none)." : "Returned an image.";
+                    const said = r.render === "figure" ? "Your open matplotlib figure(s) came back as an image (closed now; the next call starts with none)." : "Returned an image.";
                     const base = done(`${pre}${said}`, parts);
                     if (!verify) return base;
                     const seen = await verifyPyImage(ml, ctx, parts.image);
@@ -313,16 +311,19 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                 return done(`${pre}${text}${castHint}${nullWarn}`, valueOut(v));
             };
             // A worker-hosted run's cell may DETACH past its lease (sw-python-task.ts): its result then comes back later,
-            // through this same formatter, as a task's text. A figure cannot ride a task's text, so it is named instead.
-            // `verify` is not run on a late result: nothing would see the answer.
+            // through this same formatter, as a task's text, with what the step would have kept: the fuller capture a pointer
+            // holds (the task table stores it when the text was cut) and the figure. `verify` is not run on a late result:
+            // nothing would see the answer.
             const late = mintVia ? async (x: Record<string, unknown>) => {
-                const out = await format(x as unknown as PyExecResult, false, true);
+                const out = await format(x as unknown as PyExecResult, false);
                 const text = typeof out === "string" ? out : out.content;
-                // `clipOut`'s own marker: the result was cut at the output limit, and a task's result has no pointer yet.
-                const cut = /… \[first \d+ of \d+ chars\]/.test(text);
+                const render = typeof out === "string" ? undefined : out.render;
+                const py = render?.type === "python-out" ? render : undefined;
+                const whole = py ? py.capture ?? py.stdout : undefined;
+                const image = py?.image;
                 const r0 = x as { ok?: boolean };
-                return { status: r0.ok === false ? "failed" as const : "done" as const, result: null,
-                    text: cut ? `${text}\n(Cut at the output limit; no pointer to the rest exists for a task's result.)` : text };
+                return { status: r0.ok === false ? "failed" as const : "done" as const, result: null, text,
+                    ...(whole ? { whole } : {}), ...(image ? { image } : {}) };
             } : undefined;
             const r = await ml.pythonExec(code, { image: image || null, margin: typeof margin === "number" ? margin : 0, tableRaw: !!tableRaw, tables: tables || null, ...(keep === true ? { keep: true } : {}), onStdout: ctx?.stream,
                 ...(late ? { late, ...(typeof expect_ms === "number" ? { expectMs: expect_ms } : {}) } : {}) } as Parameters<MlApi["pythonExec"]>[1]);

@@ -442,11 +442,10 @@ test("Set/Map: reads + mutators (has/get/add/set/delete/clear) work on a contain
 test("adversarial (Set/Map mutators): add/set/delete/clear only touch a container YOU built — never off the page", async () => {
     const doc = world();
     doc.body.className = "a b";
-    // classList reaches the script as an array of class names, so `add`/`remove` are not methods on what it
-    // is holding — they fail as missing rather than as refused. The CLAIM is the line below either way, and
-    // it is the one that matters: the page did not change.
-    await assert.rejects(run(`document.body.classList.add('evil'); 1`, doc), refused);
-    await assert.rejects(run(`document.body.classList.remove('a'); 1`, doc), refused);
+    // classList reaches the script as itself (the `tokenlist` kind, tests/readonly-tokenlist.test.mjs), whose
+    // allowlist has no `add`/`remove`: they are withheld, so refused. The page did not change.
+    await assert.rejects(run(`document.body.classList.add('evil'); 1`, doc), outOfDialect);
+    await assert.rejects(run(`document.body.classList.remove('a'); 1`, doc), outOfDialect);
     assert.equal(doc.body.className, "a b");   // untouched
     // A Set/Map hung on a page object is reached via a property read → NOT owned → mutators Denied.
     doc.appSet = new Set([1, 2]);
@@ -1026,11 +1025,10 @@ test("the answer methods did NOT leak globally — remove()/dump() on any other 
 test("the owned-mutation guard is INTACT — add/clear on a page object stay Denied (only the answer facade is exempt)", async () => {
     // classList.add is reached off a page node, not the answer facade → still refused. Proves `!onAnswer` only
     // exempted the answer facade, not `add`/`clear` everywhere.
-    // `classList` materialises as an array of class names in the dialect, so `add` is not even a method on
-    // what the script is holding — it fails as a missing method rather than as a refusal. Either way the
-    // guard's claim is the same one, and it is asserted directly: the page did not change.
+    // `classList` is the `tokenlist` kind, whose allowlist withholds `add`, so it is refused before the ownership
+    // gate is even asked. The guard's claim is asserted directly: the page did not change.
     const doc = world();
-    await assert.rejects(runAns(`document.body.classList.add("x")`, new AnswerSet(), doc), refused);
+    await assert.rejects(runAns(`document.body.classList.add("x")`, new AnswerSet(), doc), outOfDialect);
     assert.equal(doc.body.classList.contains("x"), false, "the page was not mutated — which is the claim");
     // And a Set the SCRIPT built still takes the ownership route, so the gate that governs real mutation is
     // untouched: allowed on your own container, and the name is meaningful there rather than missing.

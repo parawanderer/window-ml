@@ -2,7 +2,7 @@
 
 **Status: slices 1 and 2 built (2026-10-28/29); slice 3 under way: the held rows, the `@file:` pointer, the `pages`
 verb, attaching a PDF to an agent run, and every attachment to a worker-built run (any message) and a long paste as
-pointers, and `ml.dereference` of `@file:`, are built; `look` at a document, Python's `files`, the files panel and
+pointers, `ml.dereference` of `@file:` and `look` at a document are built; Python's `files`, the files panel and
 upload progress are next (Shane and the calm-chat-motion session); a session's files as a directory `/files/` is ruled,
 not built (2026-11-12).** The order is
 three slices, each landing on its own: text files, then PDFs, then documents as `@file:` pointers in agent runs. Slice
@@ -294,7 +294,7 @@ requires the adversarial tests in readonly-exec.md ("The rule for extending the 
 **Built (2026-10-30, the reading side).** file-pointer.ts: the pointer, `cleanFileName`, the outline, the sections and
 the `FileShelf` a run's `TokenStore` holds files on; the `pages` verb (`PIPE_PAGES_MAX`, 50 a stage); `derefLocally`'s
 `@file:` branch and the inventory's files. The outline says `Read with dereference(@file:…, pipe "pages 1-3")` only:
-`look` with a document target is not built. Nothing notes a file on the shelf yet: attaching a PDF to an agent run,
+`look` with a document target was not built then (since 2026-11-12, below). Nothing notes a file on the shelf yet: attaching a PDF to an agent run,
 which mints the pointer and stores its rows, is the next change. `ml.dereference` refused `@file:` with a sentence then
 (read since 2026-11-12, below).
 
@@ -319,6 +319,15 @@ stored text is not read whole there. The pointer macro stays `@tool:`'s alone. H
 pages are rendered from the stored bytes by pdf.js in the offscreen document, then go down the existing vision path
 (native when the model sees, delegated to the reader otherwise). Bounded per call like a full-page look (eight
 screens): open, a figure of about four pages.
+
+**Built (2026-11-12, `look` at a document).** The run loop resolves `doc` on the run's shelf, reads `pages` with the
+`pages` verb's parser (`pageSpans`), and draws them from the stored bytes in the offscreen document at the worker chat's
+page scale, one PNG a page, at most `LOOK_DOC_PAGES_MAX` (8) a call; a page that will not draw is named beside those that
+did. The native `look` shows them as one image a page, the delegated one asks the reader with all of them. Refused, each
+with a sentence: an unknown file, a text file, a page past the file's count, more than eight, `doc` with `selector` or
+`scope`, a run with no renderer (a page-built run, whose shelf is empty anyway). The outline names it: `see a page with
+look(doc @file:…, pages "N")`, N the first figure or scanned page, else 1. Held back: the math sentence (open, below),
+and saying in the outline whether the run has a `look` at all.
 
 **A paged document, not a PDF type.** The stored value is a list of pages, each with text and an optional render
 recipe. A PDF is the first producer; a very tall image or a long screenshot can be cut into pages the way a full-page
@@ -585,21 +594,19 @@ lane's read of this spec):
 
 **The mount** (the Pyodide lane's conditions, measured in Node against `pyodide-core/`, not in a browser worker):
 
-1. MEMFS, loaded from the shelf when the interpreter starts as an eager listing whose nodes are zero-copy views of
-   the transferred buffers (`node.contents = new Uint8Array(buffer)`): start-up costs one times the directory's size,
-   held as ArrayBuffers, with no wasm growth (measured: a 50 MB file added nothing beyond its buffer). Loading a
-   file's bytes on its first open was measured too and works on every read path, but saves nothing, since the bytes
-   are already in the worker by then; if it is ever built, `O_TRUNC` truncates before the open hook runs, so `open('w')`
-   needs a `setattr` wrapper or it restores the old bytes. A truly lazy mount, nothing held until a file is opened,
-   needs a synchronous channel (`FS.createLazyFile` uses synchronous XHR; WORKERFS over posted Blobs is unmeasured,
-   needs `FileReaderSync`, which the lockdown does not allow, and fails a write with EIO, not EROFS); it is not
-   proposed. A cell still
-   raises the cost: reading a whole file grows wasm memory by its size, `mmap` copies into the heap, and a copy out of
-   `attached/` is a new node, so item 6's three times bounds the worst case. With Emscripten's JS-side
-   `FS.trackingDelegate`
-   (`onCloseFile`, `onWriteToFile`) seeing every close, raw `os.open`/`os.write`/`os.close` included. No
-   Atomics-backed FS: Pyodide ships no synchronous remote backend, `Atomics.wait` would block the interrupt buffer so
-   Stop would fall through to the kill, and it would save almost nothing on a terminate. The hooks live on the
+1. MEMFS, loaded from the shelf when the interpreter starts as an eager listing whose nodes are zero-copy views of the
+   transferred buffers (`node.contents = new Uint8Array(buffer)`): start-up costs one times the directory's size, held
+   as ArrayBuffers, with no wasm growth (measured: a 50 MB file added nothing beyond its buffer). Loading a file's bytes
+   on its first open was measured too and works on every read path, but saves nothing, since the bytes are already in
+   the worker by then; if it is ever built, `O_TRUNC` truncates before the open hook runs, so `open('w')` needs a
+   `setattr` wrapper or it restores the old bytes. A truly lazy mount, nothing held until a file is opened, needs a
+   synchronous channel (`FS.createLazyFile` uses synchronous XHR; WORKERFS over posted Blobs is unmeasured, needs
+   `FileReaderSync`, which the lockdown does not allow, and fails a write with EIO, not EROFS); it is not proposed. A
+   cell still raises the cost: reading a whole file grows wasm memory by its size, `mmap` copies into the heap, and a
+   copy out of `attached/` is a new node, so item 6's three times bounds the worst case. Emscripten's JS-side
+   `FS.trackingDelegate` (`onCloseFile`, `onWriteToFile`) sees every close, raw `os.open`/`os.write`/`os.close`
+   included. No Atomics-backed FS: Pyodide ships no synchronous remote backend, `Atomics.wait` would block the interrupt
+   buffer so Stop would fall through to the kill, and it would save almost nothing on a terminate. The hooks live on the
    Module/FS object, which the lockdown seals from cells (`PYODIDE_JS_SEAL`); they stay synchronous.
 2. `/files/attached/` is its own mount whose write operations fail with EROFS (open for writing, chmod, unlink,
    create, mkdir, utime; rename across it is EXDEV, rmdir of it EBUSY). File modes do not hold: a cell's own
@@ -655,7 +662,315 @@ when it is made, and the cell's result names it (item 3).
 **The host's disk.** `/files/` is the browser sandbox's, never the `ml.sh` workspace's, and the two never alias: an argv
 item `/files/x` is a host path, as today. Bytes cross only as `@file:` handles: `ml.sh.put` writes one out (ruling 3),
 and a read brings a workspace file in, into `/files/` with provenance "read from disk <path>" (the async
-lane's). The model's text says it in one line: `/files/ is the browser sandbox's, not the workspace's.`
+lane's). The model's text says it in one line: `/files/ is the browser sandbox's, not the workspace's.` A proposal
+of 2026-11-13 reopens this for directories the person mounts ("Host directories in the sandbox", next).
+
+### Host directories in the sandbox, and a cell's edits as diffs (proposed 2026-11-13)
+
+PROPOSED 2026-11-13 (Shane, in the calm-chat-motion session); not ruled, waiting on the measurement below and e3's
+pass. Nothing is built. It reopens "the two never alias" above for a directory the person mounts, and item 1's "No
+Atomics-backed FS" for those mounts only.
+
+**What it is for.** Models edit files by writing a Python script that calls `open()`, not only through an edit tool.
+That should work the same on the browser sandbox's `/files/` and on the host's disk, with one syntax, and the person
+should be able to see, skippably, what each cell changed.
+
+**One filesystem, plain paths.** A cell sees `/files/` and the mounted host directories in one tree and uses ordinary
+`open()`, `os` and `pathlib` on both. A prefix inside `open()` (`open("@file:/files/x")`) was considered and dropped:
+most file access (`pandas.read_csv`, `numpy.load`, `sqlite3`, `zipfile`, `shutil`) reaches the filesystem below
+`builtins.open`, so a prefix works only if the filesystem resolves it, which makes it a mount under an odd name; and
+an `@file:` is a frozen version ("Mutable, frozen when cited"), which a live path is not. `@file:` stays the handle a
+tool takes and the transcript cites; a path is what `open()` takes.
+
+**A host directory keeps its real path.** A directory the person approves (the `ml.sh` workspace, say) is mounted at
+the absolute path it has on the host, resolved with the host's realpath so a symlink is not a second name:
+`/Users/sb/git/window-ml/README.md` is that path in the cell, in `ml.sh` and in the transcript. Renaming it to a
+mount point (`/workspace/`) was considered and dropped: the person knows their own paths, and a renamed one makes a
+run harder to review.
+
+**Collisions.** The sandbox owns `/files/` and Pyodide's own tree (`/tmp`, `/lib`, `/home/pyodide`, `/dev`, `/proc`).
+A mount at or under one of these is refused by name when it is approved, never shadowed:
+`/files is this sandbox's directory; the host's /files cannot be mounted at that path.` So is a mount above one (the
+host's `/`, or `/home`, which would shadow `/home/pyodide`):
+`/home holds this sandbox's /home/pyodide; mount a directory inside it instead.` On macOS `/tmp` resolves to
+`/private/tmp`, so a workspace there does not collide.
+
+**A path outside every mount** fails with `PermissionError`, never `FileNotFoundError`, since the file may exist:
+`/Users/sb/other is not mounted in this sandbox; reach it through ml.sh, or ask the person to mount it.`
+
+**`/files/` in an `ml.sh` argv** (chosen by Shane, 2026-11-13). An argv item under `/files/` is refused, unless that
+path exists on the host: `/files/ is this sandbox's; pass the file with ml.sh.put.` On a host that has a `/files`
+directory the person accepts the alias: there `/files/x` is the host's file in `ml.sh` and the sandbox's in a cell.
+
+**The channel.** Pyodide has no synchronous remote backend, so a host-backed node needs one. Two routes, neither
+measured:
+
+- A: a sliced wait, no rebuild. The node posts a request (worker, offscreen, service worker, host) and waits on
+  `Atomics.wait` in slices of about 50 ms, checking the interrupt flag between slices and raising `KeyboardInterrupt`
+  when Stop is set. The worker already holds a shared interrupt buffer (`py.setInterruptBuffer`,
+  `src/python/python-worker.ts`). Item 1's objection, that `Atomics.wait` blocks the interrupt buffer, is to an
+  unsliced wait; that a sliced one keeps Stop working is inferred.
+- B: JSPI-suspending file syscalls, a rebuild (`docs/dev/pyodide-build.md`): Emscripten's file syscall imports become
+  suspending, so a read awaits a promise and the worker's event loop stays free. Only if A's Stop or latency is bad.
+
+Either way a file is fetched whole on open and pushed on close, the close hooks item 1 already has, with the listing
+cached per cell: a change the host makes during a cell is seen at the next open. A host that is not connected fails
+the open with EIO. Every request carries an id, and a reply to a request whose wait was interrupted (Stop, a timeout)
+is discarded by that id. A push never leaves a half-written file on the person's disk: the host writes beside the file
+and renames it into place, so a Stop or a dropped connection mid-transfer leaves the old file whole.
+
+**Security** (each mount is a new surface the model reaches: e3's pass, Shane's ruling). The approval is per mount,
+not per call, so a mounted directory is read and written with no card per `open()`. The host enforces the scope
+itself: a `full` cell can forge a worker post (item 3), so the path a request claims is resolved and checked on the
+host, never taken from the worker. The host opens a path by walking its components from the mount's own descriptor
+(`openat` with `O_NOFOLLOW` on each component, or the platform's equivalent), never by resolving a string and then
+opening it, so nothing can swap a component between the check and the open. A page-started run never has a mount.
+
+- What may be mounted. The approval checks the RESOLVED path, so `~/x/..` or a symlink does not pass as a leaf. A
+  mount at or above the person's home is refused by name, as is one at, under or above the browser profile
+  (`chrome.storage.sync` holds the API key and the model filter), the archive folder or window-ml-host's config:
+  `/Users/sb is your home directory; mount a directory inside it instead.`
+- The directory replaced after approval. The host holds the mount's descriptor from approval and compares its device
+  and inode on every request, so a mounted directory replaced by a symlink to `/` is refused, not followed.
+- Unmounted or disconnected during a cell. The next read fails; the cached listing and any copy in MEMFS are not
+  served, and a close does not push.
+- Bounded sizes. An open and the before copy are bounded by a size cap (its value waits for the measurement below): a
+  file over it fails the open with `EFBIG` and a sentence naming `ml.sh`, so the worker's memory is never the limit
+  that is hit.
+- Stop between an open and its close. The host gets the file whole or not at all (the rename above), and the cell's
+  diff line says the write did not land: `a.py was not written: the cell was stopped.`
+- Hard links. A write through a descriptor whose `fstat` shows `st_nlink > 1` is refused, since it would change a file
+  outside the mount too. Reading one stays allowed, by choice: such a file is the mount's file by every check the
+  host can make (path, device and inode are all inside), so the person who mounts a directory mounts what is linked
+  into it. Multi-linked files could be refused outright; they are kept readable instead, since `cp -al` and backup
+  tools make them.
+
+Rows for e3, beside the list below, each with a pass condition above: a request for a path outside every mount, by
+`..` or a symlink inside the mount pointing out; a forged post; a component swapped for a symlink between the check
+and the open; a mount at, under or above a reserved prefix, at or above the home, or at, under or above the profile,
+the archive folder or the host's config, by its resolved path; the mounted directory replaced after approval; a read
+or a close after an unmount or a disconnect; a file over the size cap; a Stop between an open and its close; a write
+through a hard link; a page or a page-started run reaching a mount.
+
+**A cell's edits as diffs.** Per cell, not per write: a script may write a file several times, so the diff is the file
+at cell start against the file at cell end.
+
+- `/files/`: the shelf keeps a file's bytes from before the cell until the cell ends, instead of replacing them on the
+  first close. That copy is not a version and cannot be cited; it is dropped once the diff is made. This amends "there
+  are no versions per write" for the length of a cell only.
+- A host mount: the before bytes are what the open fetched, so the diff costs nothing extra. Writes made by an `ml.sh`
+  process are not seen this way; a snapshot of the workspace before the call is the host's question (an overlay
+  filesystem's upper layer in a container, a copy-on-write clone on macOS, `git diff` for tracked files; guesses).
+- The model gets one line in the cell's result, never the diff:
+  `edited a.py (+3 −1); wrote out.csv (new, 2.1 KB); deleted old.log`.
+- The person gets a collapsed `edited 2 files` row on the step that opens to the diff, in the sidebar and both
+  exports. A binary file, or one over a size cap, shows its size and hash before and after, no diff.
+
+**To measure first** (the Pyodide lane, through the coordinator): route A's Stop latency during a blocked read, the
+cost of one round trip, an `os.walk` and an `import` over a mounted real workspace, opening a file of several GB
+(a workspace holds them, and a whole-file fetch needs a size cap set from this), and whether the sliced wait holds
+under the lockdown.
+
+**Initial decisions** (Shane, 2026-11-13: decided now, changed if they cause trouble).
+
+- The cell's directory. With a workspace mounted, each cell starts in the workspace's real path, so a relative path
+  means the same file in a cell as in `ml.sh`; with none, in `/files/`, as ruled above. Every cell still starts there
+  afresh. So a bare `open("notes.txt", "w")` writes to the person's disk when a read-write workspace is mounted, as a
+  coding agent's would; `/files/` is reached by its absolute path.
+- Approving a mount. Only the person mounts, per session, until they remove it. The model can ask through an approval
+  card naming the real path, with two choices, "read and write" and "read only", neither preselected; it never mounts
+  one itself. A page-started run never has a mount. A read-only mount fails a write with EROFS.
+- Seeing what is mounted. The files panel has a group "From this computer", one row per mount with its mode and a
+  remove action, and the run's banner a chip per mount. The model is told the mounts and their modes in one line.
+- The diff's cap. A text file of up to 1 MB on both sides gets a diff, shown to 400 changed lines with "show all"
+  beyond; a larger or binary file gets its size and hash before and after. The shelf keeps a before copy only of
+  files under the cap, which also bounds what it holds during a cell. The row is collapsed and has no setting to turn
+  it off.
+- Paths in an export. A real host path carries the person's username (`/Users/sb/...`), and the exports are shared.
+  Both exports write the home directory as `~` (`~/git/window-ml/README.md`) by default, and say so in their header
+  (`the home directory is written as ~`), since an export carries what the model saw (`docs/dev/export.md`) and a
+  silent change would break that. The export can be made with the real paths instead; the run log, which is not
+  shared, keeps them. The rule is checked where `VOLATILE_FIELDS` is.
+
+**Open.**
+
+- Whether a mounted file's real path is kept from what the model reads (an e3 row the coordinator did not adopt). By
+  design it is not: the model is given the real path because that is what `open()` takes. For Shane.
+- The size cap's value, set from the measurement above.
+
+**Owners.** This text, the diff row and the provenance of a file read from a mount: the chat-page lane. The channel and
+the mount: the Pyodide lane. The host's scope check, the argv refusal and the `ml.sh` snapshot: the `ml.sh` and
+window-ml-host owner, through the coordinator.
+
+### `/files` on the person's disk, when a host is connected (proposed 2026-11-13)
+
+PROPOSED 2026-11-13, from Shane's rulings in the coordinator's session (what `ml.sh` is for, the setup, per-platform
+mounts, the size limits, removing the disk, which copy is primary) and the files API (Shane's). Not ruled;
+nothing is built. Where it disagrees with "Host directories in the sandbox" above, this wins: the argv refusal on
+`/files/` goes away, and the `ml.sh` snapshot question is answered by git.
+
+**Use cases** (Shane's, collected as they come; the design follows them, not the other way round):
+
+1. The typical setup. The person makes a git repository and puts the model in it. What they upload in the UI lands in
+   a folder inside that repository: scratch, "your UI-uploaded trash", not a curated shelf.
+2. Editing an attached file. The model copies the person's read-only file to a working copy and edits it, with `cp`
+   and `sed -i` through `ml.sh` or with `open()` in a cell, whichever it reaches for.
+3. Working anywhere on the disk, the way a coding agent does, with restrictions on what can happen (below). `ml.sh` is
+   for giving the model the person's disk, not a separate file-moving system beside it.
+4. Moving a file out of the uploads folder into the project: an ordinary `mv`, or a panel action.
+5. No host connected: the model works in the virtual `/files/` of "A session's files as a directory", as ruled.
+6. Clearing space without the person: the model lists its files, finds the oldest, and deletes them in code.
+
+**The proposal: primary follows the host.** One `/files`, two copies, and which one is primary depends on whether a
+host is mounted (Shane):
+
+- With a host mounted, a folder in the workspace, `<workspace>/window-ml-files/`, is primary, with the same layout
+  (`attached/<handle>/<name>` read-only, the rest writable). A cell's `open()` and `ml.sh` see one set of bytes, so a
+  cell's write is there for the next `cp` with no sync between them. `cp`, `sed -i` and `open()` reach the uploads at
+  a real path (`/Users/sb/git/proj/window-ml-files/attached/3fa91c2/data.csv`), with no `ml.sh.put` or read-back to
+  teach the model; those stay as mechanisms, not as advice. Finder is the truth for the person; the panel is a view of
+  the folder.
+- The browser store (MEMFS over the shelf, as ruled above) is then a capped backup, synced when convenient. A file over
+  the quota lives on disk and is not backed up; the panel shows it with its size.
+- With no host present, or when the host dies, the browser copy is the working store and the model works there, as
+  today. The changes made meanwhile sync forward into the folder when the host returns.
+- The sync covers that folder only, never the rest of the workspace. Authority: for `/files`, the folder while a host
+  is mounted and the browser copy while none is; for everything else in the workspace, the disk, which holds its only
+  copy.
+- While a host is mounted the folder's real path is the name the model is given, and a cell has no `/files` alias, so
+  no one cell sees a file under two paths. Across time it does: a cell run offline names `/files/x` and a mounted one
+  names `/Users/sb/git/proj/window-ml-files/x`, and the transcript keeps each as the cell used it. A bare `/files/x`
+  in a cell or an argv then fails with
+  `/files is on disk while the host is connected: /Users/sb/git/proj/window-ml-files/x`.
+- The folder is ignored by git by default, through `.git/info/exclude` (the clone's own list, never a committed
+  `.gitignore`), so uploads never show in `git status` or a commit unless the person moves them out. The person can
+  name another folder, inside a mount.
+- How the folder is mounted is per platform, whatever works there (Shane): on macOS and Linux it is an ordinary folder
+  under the workspace; Windows is open (the path rule, above).
+
+**The sync.**
+
+- Disk to browser, while mounted: the host watches the folder (FSEvents on macOS, inotify on Linux) and the backup
+  takes each changed regular file under the quota, in the background, and every `ml.sh` call's end flushes what it
+  changed. A symlink or a non-regular file is never taken. The backup may be out of date between syncs; that is
+  accepted (Shane).
+- Browser to disk, when the host returns: what changed in the browser copy while it was the working store is written
+  into the folder, beside each file and renamed into place.
+- A conflict, the same file changed on both sides between syncs, keeps both: the disk's under its name, the browser's as
+  a renamed copy (`report (browser copy).md`), and the panel says so; a live run is told through its inbox. A delete on
+  one side against an edit on the other keeps the edit.
+- A change to `attached/` on disk (a process can `chmod` and write, and the person can edit in Finder) never replaces
+  the frozen original: the browser copy keeps the person's original at `attached/<handle>/<name>`, the frozen version a
+  transcript cites ("Mutable, frozen when cited", above), and nothing on disk is reverted, since the disk is primary.
+  The panel says `data.csv was changed on disk; the original is kept in the browser copy`.
+- A cited file stays frozen in the browser copy whatever happens on disk (Shane, 2026-11-13): an edit, a move or a
+  delete there changes what the next read sees, never what a transcript cites.
+- A file over the quota is never in the backup, so without the host the model's `/files` lists it as unavailable and
+  opening it fails with `data.parquet is on disk only (3.2 GB, over this session's quota): connect the host to read it.`
+
+**Provenance.** The browser keeps the record (path, hash, made by the person, run R's cell N, or an `ml.sh` call),
+since a disk listing cannot say who made a file; a file the record does not know reads as "made on disk".
+
+**The host unavailable or dead.** The files on the disk stay there, and the browser copy becomes the working store:
+the model's `/files` keeps working on what was backed up. The panel shows the folder as disconnected, with its real
+path, never as empty or gone. Uploads and writes made meanwhile sync forward when the host returns (above). The
+transcript keeps the real paths a run used, so a later read without the host says where they were. A cell running when
+the host goes gets "Unmounted or disconnected during a cell" (above): the next read through the mount fails.
+
+**Sessions and mounts** (decided, Shane, 2026-11-13):
+
+- Several sessions mounting one repository share one folder; each session's browser copy stays its own.
+- Archiving or deleting a session never deletes anything on disk.
+- With several mounts, one is the session's primary workspace, chosen at the first approval: cells start there and
+  the uploads folder lives there.
+
+**Three limits, kept apart:**
+
+| Limit | Applies to | Set by |
+| --- | --- | --- |
+| The quota | the browser copy only: the working store with no host, the backup with one; a file over it lives on disk, not backed up | a DevTools Settings flag ("Lifetime and quota", above) |
+| The disk's free space | the folder while a host is mounted, and the rest of every mount: no cap of ours | the disk |
+| The fetch cap | one `open()` pulling one file into Pyodide, on either backing (`EFBIG`, "Bounded sizes" above) | the worker's memory, from the measurement |
+
+**What runs free and what asks.** The scope is the mount list; a read-only mount refuses every write.
+
+- Free: reads anywhere in the mounts, except a file that looks like a secret (below); writes and deletes in a read-write
+  mount that git can undo (a tracked file with no uncommitted change); anything in the uploads folder the runs made;
+  `git status`, `git diff`, `git add`; and a commit on the current branch after the session's first. The first commit
+  in a session asks, since it writes into history under the person's identity; every commit the model makes carries
+  a trailer naming the run (`Window-ML-Run: <run id>`), as the repository's own commits carry an agent trailer.
+- Asks, unless a policy allows it (`docs/spec/POLICIES.md`): a delete or overwrite git cannot undo (an untracked or
+  ignored file, or a tracked one with uncommitted changes); deleting the person's own uploads (`attached/`); anything
+  that leaves the mounts; network access; git operations that rewrite history or reach a remote.
+- Secrets: a cell's `open()` through a mount goes through the same check as an `ml.sh` path argument (`SHELL.md`, "The
+  free tier narrows to the roots"), so the defaults and the person's policies are one list: a file that looks like a
+  secret asks by default wherever it is, and a workspace policy overrides that either way.
+- How it is enforced: a cell's writes and deletes go through the host's per-request check (above), so each is judged
+  as it is made. An `ml.sh` process is judged before it starts, by its manifest's `effects` (`docs/spec/SHELL.md`),
+  since the host cannot stop a running process mid-write; its writes are then shown in its diff. That bounds only a
+  program whose effects on the mounts follow from its argv (`mv`, `rm`, a `cp` or `sed -i` on named paths once they
+  have manifests). A program that runs code from an argument or a file (`bash -c`, `python script.py`, `node`, `make`),
+  or whose manifest says `runs-code` or `unknown`, or that has no manifest, is in the asks category whatever its argv.
+
+**Diffs from git.** The workspace is a git repository by default, so a cell's diff and an `ml.sh` call's diff come from
+git, answering "the `ml.sh` snapshot" above. Before the call the host records the working tree as a tree object through
+a scratch index (`GIT_INDEX_FILE=<scratch> git add -A && git write-tree`, forcing in the uploads folder), which touches
+neither the person's index, HEAD nor stash list; after it, the same again, and the diff is the two trees'. Untracked
+files are included. Ignored files outside the uploads folder are not: force-adding them would copy an `.env` or a key
+into the repository's object store and hash every build output. A delete or overwrite of an ignored file asks (above),
+and that card, kept in the transcript, is the only record of it. A workspace that is not a git repository falls back
+to #1780's before copies for cells, and gets no diff for an `ml.sh` call (open).
+
+**The files API.** The model lists, ages and clears its own files in code (use case 6), with the same names in JS and
+Python:
+
+- `ml.files.list()` returns one row per file: path, size, who made it, created, modified, last read, and whether a
+  transcript cites it. It is a read, so the read-only dialect may call it. On a disk backing Python's `os.scandir`
+  already answers everything but who made it.
+- `ml.files.remove(paths)` deletes, judged as above: the runs' files go free, the person's ask unless a policy allows
+  it. Deleting a file the transcript cites keeps its frozen version, so the record never loses what the model read.
+- The quota refusal ("Lifetime and quota") names the way out: `... delete some with ml.files.remove, or in the files
+  panel.` The Python binding's form is the Pyodide lane's to choose.
+
+**Dropped alternatives.**
+
+- The browser store as primary with the folder a mirror: `ml.sh` would see a cell's write only after a sync, a race
+  the model hits on its next `cp`; it needs an "on disk only" state for every file over the quota while mounted; and
+  it buys only the local read path, which is #1780's measurement anyway.
+- The disk as the only copy once a host connects, with the browser copy cleared: `/files` would stop working when the
+  host is unavailable or dies, and the uploads are what the model is there to work on.
+- A host-side copy of `/files` mapped into a container at `/files`: a second mirror, and it needs a container.
+- A `/files` alias inside the cell while a host is connected: one file under two paths in the transcript and the diffs.
+- The folder in a fixed place in the home directory: it needs a mount of its own, and it is not where the person looks
+  at their work.
+
+**Red-team rows** (e3, through the coordinator): the sync reads and writes nothing outside the folder;
+`.git/info/exclude` is the only other file the host writes on its own; a symlink or non-regular file in the folder is
+never taken into the backup; a file over the quota is not backed up, by size or by growing after it was listed; a change
+to `attached/` on disk never replaces the frozen original; a conflict keeps both copies; the git snapshot leaves the
+person's index, HEAD and stash list unchanged; a delete git cannot undo asks, by every route (`os.remove`,
+`ml.files.remove`, an `ml.sh` `rm` judged by its manifest); an `ml.sh` program that runs code (`bash -c`, a manifest
+saying `runs-code` or `unknown`, no manifest) asks whatever its argv; the first commit in a session asks; a cell's
+`open()` of a file that looks like a secret asks, as an `ml.sh` read of it does; a page or a page-started run reaches
+neither the folder nor `ml.files`.
+
+**Open.**
+
+- The folder's name (`window-ml-files/` is a proposal) and whether the person sets it per workspace.
+- Windows: how a `C:\Users\...` path appears in the sandbox's POSIX tree.
+- A workspace that is not a git repository: whether `ml.sh` calls get a diff by another snapshot.
+- The background sync's cadence (a value to pick).
+- Deferred (Shane): the model reading `.env` to pass a secret on to an API call. Until it is taken up, the person writes
+  scripts that read `.env` and policies that let the model run them, and the values are assumed not to leak into the
+  model's text. The frame for later is three layers: the read gate (`SHELL.md`, exists) decides whether a secret-looking
+  file may be opened; a handle keeps the value out of the model's context when it is
+  ([`SECRET_HANDLES.md`](SECRET_HANDLES.md), the host putting the value into the child's environment or a bound request
+  header, with `SHELL.md`'s "a text pipe over a held value" beside it); and the scrub (`sw-scrub.ts`, exists for the
+  server URL and the API key) catches reflections as a backstop that lowers the rate and does not close the hole.
+
+**Owners.** This text, the panel's view of both copies, the sync's rules, provenance and the files API's JS side: the
+chat-page lane. The mount, the fallback and the Python binding: the Pyodide lane. The host's folder, the git snapshot
+and the per-request judging, the folder watch: the `ml.sh` and window-ml-host owner (none live; with Shane).
 
 **The person deletes or moves a file.** The files panel can delete, rename and move files in the writable part. During
 a live run the model is told the file's name through the run's inbox, the same as any other notice; a move is a delete

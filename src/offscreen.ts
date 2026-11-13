@@ -29,7 +29,7 @@ import { PY_DETACHED_MAX_MS, PY_INTERRUPT_KILL_MS, ringAppend, type CellCancel }
 import { htmlToMarkdown } from "./dom/html-to-md";
 import { PNG_DATA_URL } from "./session/image-compact";
 import { defineState } from "./state-registry";
-import { reapDelay } from "./python/py-reap";
+import { reapDelay, longTimeout, DEFAULT_REAP_BETWEEN_MS } from "./python/py-reap";
 import { createPdfHost } from "./pdf/pdf-host";
 import { b64ToBytes, bytesToB64, type PdfMessage, type PdfReadReply, type PdfRenderReply } from "./pdf/pdf-wire";
 
@@ -101,7 +101,7 @@ const workers = new Map<string, PyWorkerEntry>();   // state: plumbing — one P
 const respawned = new Set<string>();   // state: plumbing — principals awaiting a respawn housekeeping record
 // ROOT C (docs/spec/PYTHON_DIALECT.md, "The namespace"): a run's kept namespace and what it holds, from the
 // last cell's scope manifest (`bench.vars`, PERSISTENT_RUNTIME_SPEC.md). The live dict is the worker's; this is
-// the copy the state inspector and `ml.current.env` read. Dropped with the run (`PY_DELETE_RUN`) or its worker.
+// the copy the state inspector and `ml.current.env` read. Dropped with the run's session (`PY_DELETE_RUN`), its worker, or the idle reap; a turn's end (`PY_END_TURN`) leaves it.
 const runNsVars = new Map<string, { id: string; vars: { name: string; type: string }[] }>();   // state: python.run-namespace
 // Which workers hold a dict for a run: `run:<id>` for its readonly cells, and the SHARED `full` worker for its full
 // ones. A delete must reach every one of them, and a kill of one (the `full` worker included) is a loss for every run it
@@ -111,8 +111,8 @@ const runPrincipals = new Map<string, Set<string>>();   // state: plumbing — r
 // A run whose kept namespace a kill or cold start WIPED, waiting to tell the next cell. Keyed by the run.
 const nsLoss = new Map<string, { at: number; reason: string }>();   // state: plumbing — one loss note per wiped run
 defineState({
-    id: "python.run-namespace", scope: "run", realm: "offscreen", audience: "model", lostOn: ["turn-end", "idle", "offscreen-close", "browser-restart"],
-    describe: "The run's kept Python namespace: the live names and their types, shared across the run's cells until the run ends or its worker dies.",
+    id: "python.run-namespace", scope: "run", realm: "offscreen", audience: "model", lostOn: ["idle", "offscreen-close", "browser-restart"],
+    describe: "The run's Python namespace: the live names and their types, shared across the run's cells and turns until its session is released or archived, or its worker is reaped or dies.",
     read: ({ runId }) => runId ? runNsVars.get(runId) : undefined,
 });
 // The principals whose worker was handed a tier 3 library (an inside run's `libraries`, or a library op): the ones a
@@ -122,11 +122,14 @@ const libraryPrincipals = new Set<string>();   // state: plumbing — which live
 // to keep it. One timer per idle worker, cleared when the principal posts again.
 const reapTimers = new Map<string, ReturnType<typeof setTimeout>>();   // state: plumbing — one idle clock per worker
 const keptPrincipals = new Set<string>();   // state: plumbing — `run:<id>` workers whose live turn asked to keep them
-// Runs whose turn `PY_DELETE_RUN` ended: a keep naming one arms nothing unless its cell says its turn is live again (a
+// Runs whose turn `PY_END_TURN` (or `PY_DELETE_RUN`) ended: a keep naming one arms nothing unless its cell says its turn is live again (a
 // resumed turn of the same run id). Bounded, oldest first: a run that is never resumed leaves one short string.
 const ENDED_RUNS_MAX = 256;
 const workerUses = new Map<string, number>();   // state: plumbing — how often each principal's worker was asked for: a reap's ask sees a use inside its window
 const endedRuns = new Set<string>();
+// How long a worker holding a namespace between turns may sit idle: the person's `pythonIdleMinutes`, as the last
+// `PY_END_TURN` carried it.
+let betweenTurnsMs = DEFAULT_REAP_BETWEEN_MS;   // state: plumbing — the between-turns idle reap delay, from the service worker's last word
 defineState({
     id: "python.ended-runs", scope: "run", realm: "offscreen", audience: "human", lostOn: ["offscreen-close", "browser-restart"],
     describe: "Whether the run's turn has ended, so a keep that arrives unstamped afterwards arms nothing (py-reap.ts); bounded to the last 256 ended runs.",
@@ -236,9 +239,10 @@ function heldRun(principal: string): string | null {
 function armReap(principal: string): void {
     clearReap(principal);
     if (!workers.has(principal) || [...pending.values()].some((p) => p.principal === principal)) return;
-    const ms = reapDelay(principal, heldRun(principal) !== null, keptPrincipals.has(principal));
+    const held = heldRun(principal);
+    const ms = reapDelay(principal, held !== null, keptPrincipals.has(principal), held !== null && endedRuns.has(held), betweenTurnsMs);
     if (ms === null) return;
-    reapTimers.set(principal, setTimeout(() => { reapTimers.delete(principal); void reapWorker(principal, ms); }, ms));
+    longTimeout(ms, () => { reapTimers.delete(principal); void reapWorker(principal, ms); }, (t) => reapTimers.set(principal, t));
 }
 
 /** How long a reaped worker gets to hand over its late drops before it is terminated anyway. */
@@ -254,6 +258,7 @@ async function reapWorker(principal: string, idleMs: number): Promise<void> {
     const entry = workers.get(principal);
     if (!entry || [...pending.values()].some((p) => p.principal === principal)) return;
     const run = heldRun(principal);
+    const between = run !== null && endedRuns.has(run);
     const id = nextId++;
     const usesBefore = workerUses.get(principal) ?? 0;
     const dropped = await new Promise<PyResult["dropped"] | undefined>((resolve) => {
@@ -273,13 +278,13 @@ async function reapWorker(principal: string, idleMs: number): Promise<void> {
     clearReap(principal);   // the answer above re-armed it
     if (run) {
         runPrincipals.get(run)?.delete(principal);
-        nsLoss.set(run, { at: Date.now(), reason: "idle" });
+        nsLoss.set(run, { at: Date.now(), reason: between ? "idle-between-turns" : "idle" });
         runNsVars.delete(run);
     }
-    reportHousekeeping({ subsystem: "pyodide", kind: "reap", key: principal, ms: idleMs, detail: { live: run !== null } });
+    reportHousekeeping({ subsystem: "pyodide", kind: "reap", key: principal, ms: idleMs, detail: { live: run !== null, ...(between ? { between: true } : {}) } });
     const ofRun = principal.startsWith("run:") ? principal.slice(4) : null;
     if (ofRun && (run || dropped)) {
-        try { chrome.runtime.sendMessage({ type: "PY_REAPED", run: ofRun, live: run !== null, ...(dropped ? { dropped } : {}) }).catch(() => { /* no worker listening */ }); } catch { /* context gone */ }
+        try { chrome.runtime.sendMessage({ type: "PY_REAPED", run: ofRun, live: run !== null, ...(between ? { between: true } : {}), idleMs, ...(dropped ? { dropped } : {}) }).catch(() => { /* no worker listening */ }); } catch { /* context gone */ }
     }
 }
 
@@ -375,7 +380,7 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
             const loss = nsLoss.get(runId);
             if (loss) {
                 nsLoss.delete(runId);
-                const line = `namespace reset at ${new Date(loss.at).toISOString()}: ${loss.reason === "idle" ? "idle (python_exec keep: true holds it through long waits)" : loss.reason}`;
+                const line = `namespace reset at ${new Date(loss.at).toISOString()}: ${loss.reason === "idle" ? "idle (python_exec keep: true holds it through long waits)" : loss.reason === "idle-between-turns" ? "idle between turns" : loss.reason}`;
                 Object.assign(result, { stdout: result.stdout ? `${line}\n${result.stdout}` : line, nsReset: line });
             }
         }
@@ -545,10 +550,9 @@ chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
     // A KEEP (py-reap.ts) is a live turn's, on its own worker: only a cell of a worker-hosted run carries one.
     // Only the service worker may arm one, and only for a turn `PY_DELETE_RUN` has not ended: its cell says so with `turnLive`
     // (it checked the run was live when it sent), which a resumed turn of the same run id needs to re-open the gate.
-    if (msg.keep === true && !sender.tab && wireStamp?.run && msg.principal === `run:${wireStamp.run}` && (msg.turnLive === true || !endedRuns.has(wireStamp.run))) {
-        if (msg.turnLive === true) endedRuns.delete(wireStamp.run);
-        keptPrincipals.add(msg.principal);
-    }
+    const ownLive = !sender.tab && !!wireStamp?.run && msg.principal === `run:${wireStamp.run}`;
+    if (ownLive && msg.turnLive === true) endedRuns.delete(wireStamp!.run!);   // a cell of a live turn: the run is between turns no more
+    if (msg.keep === true && ownLive && (msg.turnLive === true || !endedRuns.has(wireStamp!.run!))) keptPrincipals.add(msg.principal);
     withStoredTables(msg.tables ?? null)
         .then((t) => "error" in t
             ? { ok: false, stdout: "", error: t.error }
@@ -565,8 +569,10 @@ chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
         .then((r: unknown) => {
             const cell = typeof msg.cell === "string" && !sender.tab && wireStamp?.run ? msg.cell : null;
             if (!cell) return;
-            let bytes = 0;
-            try { bytes = JSON.stringify(r)?.length ?? 0; } catch { /* unserialisable: size unknown */ }
+            // The result's size without a copy of it: its printed and error text, and its value when that is text.
+            const o = (r ?? {}) as { stdout?: unknown; error?: unknown; value?: unknown };
+            const len = (x: unknown) => (typeof x === "string" ? x.length : 0);
+            const bytes = len(o.stdout) + len(o.error) + len(o.value);
             try { chrome.runtime.sendMessage({ type: "PY_DONE", cell, run: wireStamp!.run, ok: (r as { ok?: boolean } | undefined)?.ok !== false, bytes }).catch(() => { /* no worker listening */ }); } catch { /* context gone */ }
         });
     return true;   // keep the channel open for the async result
@@ -690,6 +696,33 @@ chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
         sendResponse({ ok: true, ...(dropped ? { dropped } : {}) });
     });
     return true;
+});
+
+// A TURN ended; the run did not. The namespace belongs to the run, so its own `run:<id>` worker keeps its dict and
+// the names in it (and `runNsVars`, `nsLoss`) for the next turn. Everything else is the turn's: its keep ends
+// (py-reap.ts), a keep arriving later arms nothing (`endedRuns`), and the SHARED `full` worker's dict for the run is
+// dropped, since one left there is readable from another full-mode run's cell. The own worker's idle clock restarts
+// with the between-turns delay the service worker read from the settings (`ms`).
+chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
+    if (msg?.type !== "PY_END_TURN" || typeof msg.run !== "string" || !msg.run) return undefined;
+    if (sender.id !== chrome.runtime.id || sender.tab) return undefined;
+    const run = String(msg.run);
+    const own = `run:${run}`;
+    if (typeof msg.ms === "number" && Number.isFinite(msg.ms) && msg.ms >= 0) betweenTurnsMs = msg.ms;
+    endedRuns.delete(run); endedRuns.add(run);
+    if (endedRuns.size > ENDED_RUNS_MAX) endedRuns.delete(endedRuns.values().next().value as string);
+    keptPrincipals.delete(own);
+    const held = runPrincipals.get(run);
+    const others = [...(held ?? [])].filter((p) => p !== own);
+    if (held) { for (const p of others) held.delete(p); if (!held.size) runPrincipals.delete(run); }
+    for (const principal of others) {
+        const entry = workers.get(principal);
+        if (!entry) continue;
+        try { entry.w.postMessage({ id: nextId++, deleteRun: run }); } catch { /* worker gone */ }
+    }
+    armReap(own);
+    sendResponse({ ok: true });
+    return undefined;
 });
 
 // A tier 3 library was removed (READONLY_LIBRARY_MANIFEST.md, ruling D): restart every worker that was handed one, since

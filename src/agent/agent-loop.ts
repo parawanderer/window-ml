@@ -31,8 +31,8 @@ import { resolveOutputCap } from "../contract/contract-pointers";
 import { recordAppended, snapshotCurrent, type CurrentSnapshot, type RecordedMeta } from "./current-context";
 import type { RunLogEvent } from "../log/run-log";
 import { TokenStore, derefPipe, describeToken, extraBeyondModel, memoryFault, cleanLabel, nameOf, shortType, isAliasRef, parseLabel, DEREF_TOOL, type TokenKind, type TokenValue, type DerefRead } from "../pointers/token-pipe";
-import { runPipe, type PipeLimits } from "../pointers/text-pipe";
-import { fileKindSaid, fileRef, fileSections, firstRead, isTextFile, quoteName } from "../pointers/file-pointer";
+import { pageSpans, runPipe, type PipeLimits } from "../pointers/text-pipe";
+import { fileKindSaid, fileRef, fileSections, firstRead, isTextFile, LOOK_DOC_PAGES_MAX, quoteName } from "../pointers/file-pointer";
 import { FILE_PREFIX } from "../pointers/token-prefixes";
 import type { PdfDoc } from "../pdf/pdf-read";
 import { CITABLE_TOOLS } from "../tools/tool-params";
@@ -49,7 +49,9 @@ export interface ToolRunResult { result: string; elements?: unknown[]; renderIn?
     shCalls?: import("../contract").ShCallSpan[];
     /** The value-store key of the whole text `result` was clipped from; the host sets it only for a tool the worker ran
      *  itself (ToolResult.textValue). */
-    textValue?: string; }
+    textValue?: string;
+    /** the stored whole's length in characters (ToolResult.textChars) */
+    textChars?: number; }
 
 /** What `autoApprove` answers: the provenance, or it with the grants it reused, or the refusal text of a policy, or null to ask. */
 type AutoApproval = Approval | { approval: Approval; reused?: import("../contract").ReusedGrant[]; refused?: string } | null;
@@ -119,7 +121,7 @@ export interface AgentLoopDeps {
     // Mid-run STEERING (a.say()): drained at each step boundary (before the model call) — returns any user
     // messages queued since the last step, injected via pushUser so the model sees them on its next turn.
     // Omit → no steering. The queue lives in the caller's world (page handle / SW inbox).
-    drainInbox?(): (string | { text: string; origin?: PromptOrigin; images?: string[]; task?: string })[];
+    drainInbox?(): (string | { text: string; origin?: PromptOrigin; images?: string[]; task?: string; value?: string; chars?: number })[];
     pushUser?(messages: unknown[], text: string, images?: string[]): void;
     // Self-introspection (ml.chatMetaTool): resolve the run's model facts for the metadata summary.
     // World-specific (page: ml.capabilities/ml.ps/config; background: the SW's caches). The token/message
@@ -333,6 +335,9 @@ export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() =
      *  Only the background host passes it, and it reads only a value the run holds; without it a read stays on the
      *  preview, as before. Throws the store's reason for a value that is gone. */
     readText?: (key: string) => Promise<string>;
+    /** Draw pages of a stored PDF (`FilePointer.data`) as PNG data URLs, for `look` at a document; one entry per page asked,
+     *  the image or why that page would not draw. Only the background host passes it, for a value the run holds. */
+    renderPages?: (key: string, pages: number[]) => Promise<({ image: string } | { failed: string })[]>;
     /** Opt-in LIVE tool-output streaming (same flag as the streamed thinking): when set, each tool call gets a
      *  throttled `ctx.stream(text)` so a tool that supports it (exec's console.log, python_exec's print) streams
      *  its output as it runs. Off → tools return the full result at the end, unchanged. */
@@ -340,6 +345,16 @@ export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() =
     /** Where the STARTING prompt was typed (contract-run.ts). A drained steering message may carry its own,
      *  and the later one wins — `chat_metadata` reports the LAST instruction's surface, not the run's first. */
     origin?: PromptOrigin;
+}
+
+/**
+ * The line on a CUT copy that says where the rest is and how to read it: the clause in the system prompt teaches
+ * `dereference`, but the moment a model needs it is when it is holding a truncated output.
+ * @param id the pointer that holds the rest
+ * @param chars how much it holds
+ */
+function cutNote(id: string, chars: number): string {
+    return `\n[your copy is cut: @tool:${id} holds ${chars} chars of this output. Read further with dereference and a pipe (grep PATTERN, head -n N, tail -n N; lines A to B: head -n B | tail -n B-A+1) instead of running it again.]`;
 }
 
 // Live tool-output streaming: throttle the fan (a chatty loop can't flood the bus) and cap the accumulated
@@ -798,12 +813,35 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         const swap = (x: unknown) => (isRef(x) ? resolved.get(x) : x);
         return { args: { ...args, tables: typeof tables === "string" ? swap(tables) : Object.fromEntries(Object.entries(tables as Record<string, unknown>).map(([k, x]) => [k, swap(x)])) } };
     };
+    /** `look` at an ATTACHED DOCUMENT (`look({ doc: "@file:…", pages: "4" })`): the loop holds the shelf, so it draws the
+     *  pages from the file's stored bytes and hands the images down, as for an image pointer. Null when the call names no
+     *  `doc`; an error string for a file it cannot look at (unknown, a text file, a page it lacks, past the bound). */
+    const resolveLookDoc = async (args: Record<string, unknown>): Promise<{ args?: Record<string, unknown>; error?: string } | null> => {
+        if (args?.doc == null) return null;
+        if (args.selector != null || args.scope != null) return { error: "look takes a `doc` or a `selector`/`scope`, not both: a document's pages are not on the page." };
+        const r = tokenStore.files.resolve(String(args.doc));
+        if (!r.file) return { error: r.error };
+        const f = r.file;
+        if (isTextFile(f)) return { error: `${fileRef(f)} ${quoteName(f.name)} is a text file, with no pages to look at. Read it with dereference instead.` };
+        let ns: number[];
+        try { ns = pageSpans(String(args.pages ?? ""), LOOK_DOC_PAGES_MAX, "in one look; look at the rest in another call"); }
+        catch (e) { return { error: (e as Error).message }; }
+        const missing = ns.filter((n) => n > f.pages);
+        if (missing.length) return { error: `${fileRef(f)} ${quoteName(f.name)} has ${f.pages} page${f.pages === 1 ? "" : "s"}; it has no page ${missing.join(", ")}.` };
+        if (!opts.renderPages) return { error: "this run cannot draw an attached file's pages." };
+        const drawn = await opts.renderPages(f.data, ns);
+        const images: { image: string; label: string }[] = [], failed: string[] = [];
+        drawn.forEach((d, i) => { if ("image" in d) images.push({ image: d.image, label: `${fileRef(f)} page ${ns[i]}` }); else failed.push(`page ${ns[i]}: ${d.failed}`); });
+        if (!images.length) return { error: `${fileRef(f)} ${quoteName(f.name)}: no page would draw (${failed.join("; ")}).` };
+        const said = `${images.length === 1 ? "page" : "pages"} ${images.map((m) => m.label.slice(m.label.lastIndexOf(" ") + 1)).join(", ")} of ${fileRef(f)} ${quoteName(f.name)}, attached by the person`;
+        return { args: { question: args.question, _images: images, _imageLabel: said, ...(failed.length ? { _imagesFailed: failed.join("; ") } : {}) } };
+    };
     /** Rewrite a `look` at an image pointer into a look at that image, and a `python_exec` table pointer into the table;
      *  anything else passes through. A bad pointer becomes an ERROR RESULT, never a throw: the model should read the fault and correct the
      *  call, exactly as it does for `dereference`, rather than the run dying on a mistyped id. */
-    const lookArgs = (name: string, a: Record<string, unknown>, step: number): { args: Record<string, unknown> } | { error: string } => {
+    const lookArgs = async (name: string, a: Record<string, unknown>, step: number): Promise<{ args: Record<string, unknown> } | { error: string }> => {
         if (name !== "look" && name !== "python_exec") return { args: a };
-        const r = name === "look" ? resolveLookPointer(a, step) : resolveTablePointers(a, step);
+        const r = name === "look" ? (await resolveLookDoc(a)) ?? resolveLookPointer(a, step) : resolveTablePointers(a, step);
         if (!r) return { args: a };
         return r.error ? { error: r.error } : { args: r.args! };
     };
@@ -855,9 +893,12 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         // The gap since the model call returned, minus any time a human held the gate open — that wait is
         // already its own phase, and counting it here would draw the same seconds twice.
         if (turnReturnedAt != null) lastDispatchMs = Math.max(0, t0 - turnReturnedAt - (lastApproveMs ?? 0));
+        // A `_`-prefixed argument (`_image`, `_images`, `_imageLabel`, …) is the loop's alone, added below: one the model
+        // writes is dropped for EVERY tool, so no tool that reads a `_` key can be handed a forged one.
+        a = Object.fromEntries(Object.entries(a ?? {}).filter(([k]) => !k.startsWith("_")));
         try {
             if (name === DEREF_TOOL) return await derefLocally(a, step, seq);
-            const l = lookArgs(name, a, step);
+            const l = await lookArgs(name, a, step);
             if ("error" in l) return withText({ result: `Error: ${l.error}` });
             const r = await orStopped(deps.runTool(name, l.args, push, { seq, step, ...(person ? { person: true } : {}) }));
             if (r === STOPPED) { stoppedMidCall = true; return { result: STOPPED_RUNNING }; }
@@ -882,6 +923,18 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     // the loop is shared. `calls` = model turns so far.
     let promptLast = 0, genTotal = 0, modelCalls = 0;
     const usages: TokenUsage[] = [];   // every call's usage sample → runStats (cumulative in/out spend + tok/s) for chat_metadata
+    /** Mint the pointer to a task result's stored whole as it arrives through the inbox, and the line that names it
+     *  (empty when tool tokens are off, or the whole is no longer than what the model reads). */
+    const taskPointer = (task: string, value: string, chars: number, text: string, step: number): string => {
+        if (!opts.toolTokens || !opts.runHash || chars <= text.length) return "";
+        const s = ++seq;
+        const id = toolToken(opts.runHash, (opts.seqBase ?? 0) + s);
+        try {
+            opts.claimValue?.(value);
+            tokenStore.note({ id, tool: "task", kind: "text", out: text, value, label: cleanLabel(`task ${task} result`), in: JSON.stringify({ id: task }), t: Date.now(), step, seq: s });
+        } catch (e) { threw("task", "run", e); return ""; }
+        return cutNote(id, chars);
+    };
     const cancelled = (steps: number): Omit<AgentResult, "hash"> => ({ summary: "Cancelled by the caller.", steps, transcript, elements: [], cancelled: true, tokenRenders });
 
     for (let step = 1; step <= maxSteps(); step++) {
@@ -896,7 +949,12 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             const text = typeof queued === "string" ? queued : queued.text;
             // A detached call's result (ASYNC_CALLS.md, mode 1) arrives here too: no one typed it, so it has no surface or
             // client, and says which task it is.
-            if (typeof queued !== "string" && queued.task) { pushed(() => deps.pushUser?.(messages, text), { surface: null, client: null, task: queued.task }); continue; }
+            // A cut one carries its stored whole, which gets the pointer the call's own step would have minted, named on it.
+            if (typeof queued !== "string" && queued.task) {
+                const said = queued.value ? `${text}${taskPointer(queued.task, queued.value, queued.chars ?? 0, text, step)}` : text;
+                pushed(() => deps.pushUser?.(messages, said, queued.images), { surface: null, client: null, task: queued.task });
+                continue;
+            }
             if (typeof queued !== "string" && queued.origin) lastOrigin = queued.origin;
             const images = typeof queued === "string" ? undefined : queued.images;
             pushed(() => deps.pushUser?.(messages, text, images), { surface: lastOrigin?.surface ?? null, client: clientOf(lastOrigin) });
@@ -1141,7 +1199,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // server, so it has no `token` parameter for the model to opt in with either. Which would leave
             // the one kind of output pointers most exist for — large, expensive to reproduce, fetched from
             // off the machine — as the only kind that can never become one.
-            const citable = call.name !== DEREF_TOOL && (CITABLE_TOOLS.has(call.name) || !!meta?.remote || wantsToken) && !failed;
+            const citable = call.name !== DEREF_TOOL && (CITABLE_TOOLS.has(call.name) || !!meta?.remote || wantsToken || typeof tr?.textValue === "string") && !failed;
             // Seed the id from the GLOBAL seq (base + per-turn) so a multi-turn run never mints a colliding id
             // (turn 2's step 1 vs turn 1's step 1) that a citation would then resolve to the wrong, earlier step.
             // A PIPED dereference mints its own id (mintView) and has already registered it — carry that one
@@ -1189,6 +1247,8 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 const fuller = (r?.type === "python-out" || r?.type === "exec-out") ? (r.capture ?? r.stdout ?? (r.type === "exec-out" ? r.value : undefined)) : undefined;
                 const full = fuller && fuller.length > result.length ? fuller : undefined;
                 if (full) heldChars = full.length;
+                // A stored whole (fetch_url past its preview, a cut `task tail`) is not in the render capture, so its own length is what the cut line names.
+                if (!tbl && value && value === tr?.textValue && typeof tr.textChars === "number" && tr.textChars > result.length) heldChars = Math.max(heldChars ?? 0, tr.textChars);
                 // Carry the typed PAYLOADS too, not just the kind — an image pointer with no image is what
                 // `look` would resolve to, and a `latex` cast needs the symbolic string.
                 const image = tr?.image
@@ -1206,11 +1266,8 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             const embedLine = (tokenId && wantsToken && !mintedView)
                 ? `\n\n[output token @tool:${tokenId} — EMBED this exact output in your final answer with image syntax: ![label](@tool:${tokenId}:out) (use ":in" for the call/code). It expands in place; don't retype it.]`
                 : "";
-            // A CUT copy says where the rest is and how to read it, on the result itself: the clause in the system prompt
-            // teaches `dereference`, but the moment a model needs it is when it is holding a truncated output.
-            const cutLine = tokenId && !mintedView && heldChars
-                ? `\n[your copy is cut: @tool:${tokenId} holds ${heldChars} chars of this output. Read further with dereference and a pipe (grep PATTERN, head -n N, tail -n N; lines A to B: head -n B | tail -n B-A+1) instead of running it again.]`
-                : "";
+            // A CUT copy says where the rest is, on the result itself (`cutNote`).
+            const cutLine = tokenId && !mintedView && heldChars ? cutNote(tokenId, heldChars) : "";
             // The step budget, said on the last result of a step once few are left: the cap is read live (a handle or
             // Continue can raise it mid-run), so a number in the system prompt would go stale.
             const left = maxSteps() - step;

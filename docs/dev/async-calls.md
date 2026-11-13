@@ -59,9 +59,17 @@ result reaches the model through the run inbox at the next step boundary, or thr
   words. A result an `await` took between the queue and the drain is dropped from the inbox, so the model never reads
   it twice and the transcript never shows a result the model did not read. A task message has no surface or client,
   and leaves `ml.current.client` the latest person's.
-- **No task outlives its turn.** The run host's `settle` calls `endTasks`, which cancels each running task through the
-  host; a cancel that cannot reach it is logged `task`/`orphaned`. The inbox is closed first, so a result that lands
-  after is dropped.
+- **A task outlives its turn (rule 4b, slice A).** The run host's `settle` calls `closeTurnTasks`: it drops the turn's
+  sink and any await and leaves the tasks running. A result that lands with no turn live stays in the task table,
+  undelivered, and is logged `task`/`parked`; no inbox is kept between turns (`runInboxes` means "the turn is live").
+  `openTasks`, called at each turn's start after the inbox exists, queues every ended undelivered task of the run in
+  the order it ended, with its true elapsed time, and the first step's `drainInbox` reads it through `taskDrained`. A
+  result a turn queued but never drained is queued again by the next turn. `endTasks(runId, reason)` is what ends tasks
+  now: at session release (`onSessionRelease`, reason `session-release`) and at archive or delete (`sw-sessions.ts`,
+  reason `archived`/`deleted`). It cancels each running task through its executor (a cancel that cannot reach it is
+  logged `task`/`orphaned`) and drops the table, so a later result is dropped. Not built yet: durability across a
+  worker eviction (the table is worker memory), a result starting a turn, notify-only, the 60 min cap, the lifetimes
+  list and the no-tab state.
 - **The `task` tool** (`task-tool.ts`, a worker builtin offered with `ml.sh` or `python_exec`, not gated, not citable): `await` (with
   its own `timeout_ms`, capped at `TASK_AWAIT_MAX_MS`), `cancel`, `tail`. It is keyed by the loop's run id, so another
   run's id and an invented one read the same `UnknownTask`. `ml.current.tasks` is computed at the snapshot's instant by
@@ -92,14 +100,19 @@ offscreen document:
 - **The kernel is locked while a cell is detached.** A second `python_exec` of the run is REFUSED (`pyKernelBusy`), not
   queued: queued behind the worker's chain, its 120 s start bound would kill the worker and the detached cell with it.
 - **The result goes through the tool's own formatter** (`format` in `python-tool.ts`): the output cap and the hints, then
-  `finish`'s scrub. A figure cannot ride a task's text, so the line says it was not shown. `verify` is not run late.
+  `finish`'s scrub. A whole longer than the text is stored, and its key, length and figure travel with it, so the loop
+  mints a `@tool:` pointer with the step's cut line and the figure reaches the model as an image (#1730). `verify` is
+  not run late.
 - **Cancel is the interrupt first** (`interruptCell`, offscreen.ts): SIGINT into the cell's worker's buffer, and the
   worker killed after `PY_INTERRUPT_KILL_MS` (1 s) if it has not answered. The cancel says which (`pyCancelText`): names
   kept, or the sandbox restarted and the names lost. A cancel that arrives before the cell started is done when it starts,
   since the worker clears the buffer before each cell.
 - **Stop reaches an attached cell.** The run's abort interrupts it by the same `interruptCell`. Before this, nothing on
-  the Python path read the abort and a runaway cell ran to its 15 s kill. A detached cell is the turn end's to cancel
-  (`endTasks`), which also stops `PY_DELETE_RUN` waiting behind it.
+  the Python path read the abort and a runaway cell ran to its 15 s kill. Once detached, neither a Stop nor the
+  turn's end touches the cell: the model cancels it with `task cancel`, and `endTasks` does at session release. The
+  kernel lock (`detachedCells`) holds into the next turn, whose `python_exec` is refused with `pyKernelBusy`. The turn's
+  end (`PY_END_TURN`) arms the idle reap, which never fires on a worker with a running message (`armReap` and
+  `reapWorker` both check `pending`).
 - **The tail is kept in the offscreen document**, beside the worker: the last `PY_TAIL_RING_CHARS` of the cell's
   output, read by `PY_TAIL`. The service worker keeps no copy. A leased cell always streams to the document. Once
   detached, its chunks no longer reach the step's live output.
@@ -110,6 +123,18 @@ offscreen document:
 - **The messages are the service worker's alone.** `PY_STARTED`, `PY_CANCEL`, `PY_TAIL` and `PY_DONE` are not in `HANDLE_MAP`, are
   answered only for our own id with no tab, and name a cell by an id only the worker made. A `cell` on a `PY_RUN` is
   honoured only from the worker and only for the wire's own `run:<id>` principal.
+
+## A page change (rule 4a)
+
+Each executor declares where its call runs: `TaskExecutor.pageBound` (`sw-tasks.ts`; `ml.sh` and `python_exec` say `false`, absent
+means false). `webNavigation.onCommitted` (`background.ts`) calls `cancelPageTasks(runId)` for every worker-hosted run on the tab,
+which cancels the page-bound tasks through their executor, queues `[task <id> cancelled: it ran in the page this run left]` (or
+answers a waiting await with it) and records `task`/`cancelled` with reason `page-change`. A cancel the executor does not confirm leaves the task
+`orphaned` instead: the line reads `[task <id> orphaned: …, and its cancel was not confirmed]`, a waiting await gets status
+`orphaned`, and the record is `task`/`orphaned`. A runtime-bound task is left alone. The
+cancelled task's late result is dropped by `finish`'s status guards. No page-bound executor exists yet; the tests use a fake one
+(`tests/sh-lease.test.mjs`). `rekeyRunInbox` (`sw-runs.ts`) moves a live run's inbox to another tab (tasks are keyed by run id and
+follow); `senderOwnsRun` is the owner check `SET_APPROVAL` uses. The run host's `settle` still closes over the starting tab id.
 
 ## Traps
 

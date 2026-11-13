@@ -131,7 +131,13 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
    the loop-side reporting, not a second one.
 
    **4a. A page change ends the page's tasks, not the run's.** DESIGN NOTE 2026-11-12 (the async lane, assigned by the
-   coordinator; nothing built). A worker-hosted run's page changes when it navigates in its own tab or when the person moves it to
+   coordinator). BUILT 2026-11-12 as scaffolding only: `TaskExecutor.pageBound` (sw-tasks.ts; `ml.sh` and `python_exec` declare
+   `false`, absent reads as false), `cancelPageTasks(runId)` (cancels a run's page-bound tasks through their executor's cancel,
+   tells the model the fact line through the inbox or a waiting await, records `task`/`cancelled` with reason `page-change`, or
+   `orphaned` in the line, the await's status and the record when the executor does not confirm the cancel; a late result
+   of a cancelled or orphaned task is dropped), called from `webNavigation.onCommitted` (background.ts) for each run in
+   `activeRuns` on the tab, and `rekeyRunInbox(runId, tabId)` (sw-runs.ts; not wired yet: the move-run lane calls it for a move
+   between steps, and `retabRuns` moves inboxes for `tabs.onReplaced` with its own loop), with `senderOwnsRun` as the inbox's owner check. No page-bound task exists yet. A worker-hosted run's page changes when it navigates in its own tab or when the person moves it to
    another tab (`MOVE_RUN.md`). Neither ends the run (a page-hosted loop's navigation does, and is rule 4's), so rule 4
    does not apply; each detached call and subscription is
    decided by where it RUNS:
@@ -144,7 +150,10 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
      document). Each is reported to the model as a fact, as a cancel is (`[task <id> cancelled: it ran in the page
      this run left]`; `[subscription <id> ended: it watched the page this run left]`), and is a run-log record. A
      selector watch is never silently re-armed on the new document, whose elements are not the ones it was asked
-     about; the model subscribes again if it wants to.
+     about; the model subscribes again if it wants to. A cancel the executor does not confirm leaves the task
+     `orphaned`, reported as `[task <id> orphaned: it ran in the page this run left, and its cancel was not
+     confirmed]` and recorded in the run log; an orphaned page-bound task's later result never reaches the inbox
+     (ruled 2026-11-12, the coordinator).
    - **The inbox follows the run, where there is one to follow.** `runInboxes` carries the run's `tabId`, and a turn's
      `settle` deletes it with the turn's tasks. A move BETWEEN TURNS (`MOVE_RUN.md`, shape (a), the one built first)
      therefore meets no inbox and no task: rule 4 already ended them, and this rule has nothing to act on. A move
@@ -155,7 +164,13 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
    nothing that runs now. It must hold before a detached `exec` or a DOM subscription is built, and each of those PRs
    carries its red-team row: a task cancelled by a page change is reported, and never resolves against the new page.
    **4b. A detached task survives the end of its turn.** RULED 2026-11-12 (Shane: "that is what a user expects of
-   background tasks"; the coordinator's text with the async lane's additions; nothing built). This reverses rule 4, and
+   background tasks"; the coordinator's text with the async lane's additions). BUILT 2026-11-13 in part (the async
+   lane, slice A): `settle` calls `closeTurnTasks` and leaves tasks running; `endTasks` runs at session release and at
+   archive or delete; a result finished between turns is parked in the task table (not in `runInboxes`) and queued by
+   `openTasks` at the next turn's start; the kernel lock holds across turns; a Stop of the turn no longer cancels a
+   detached `ml.sh` call or cell; the `Detached` texts say the task runs on. NOT built: durability across a worker
+   eviction, the cap knob (`PY_DETACHED_MAX_MS` is still 5 min), a completion starting a turn, notify-only, the chain
+   cap, the lifetimes list and the no-tab state. This reverses rule 4, and
    the mode 1 ruling that a model answering while a build is detached ends the build, for the two executors that run
    outside the service worker: an `ml.sh` call (the host's process) and a detached `python_exec` cell (the offscreen
    document). A fetch runs IN the service worker and dies with it, so it stays turn-bound: the turn's end cancels it,
@@ -237,9 +252,10 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
    `@tool:` pointer rules for a large value. Nothing reaches the model through the inbox that could not have reached
    it as the call's return. The output of a call that runs for hours is BOUNDED AT THE EXECUTOR, not only at the
    return: the host already caps a shell call's output, and a detached cell's stdout is a fixed-size ring buffer in
-   the worker (the last N KB), never an unbounded array. The inbox carries status and tail only; the model inspects
-   more with `tail(id, { lines })` on the handle, and the full capped output is a value it can point at, as a tool's
-   large result is today.
+   the worker (the last N KB), never an unbounded array. The inbox carries status and tail, and for a cut result the stored
+   whole's key, its length and any figure, minted into a `@tool:` pointer where the loop drains it (#1730); the model
+   inspects more with `tail(id, { lines })` on the handle, and the full capped output is a value it can point at, as
+   a tool's large result is today.
 
 ## Mode 2: the push subscription
 
@@ -305,7 +321,7 @@ each of which amends the text above where it says otherwise:
   in the tool registry, dispatched in the worker with the run id from the loop, never from its arguments; a foreign
   or unknown id reads `UnknownTask`, indistinguishably.
 - **One task table for every executor** (`sw-tasks.ts`, `defineState` `run.tasks`, scope run, lost on worker
-  eviction and turn end), holding the executors' callbacks and never the script's word. Statuses: `running`,
+  eviction), holding the executors' callbacks and never the script's word. Statuses: `running`,
   `done`, `failed`, `cancelled`, `orphaned` (`expired` joins with mode 2's subscriptions); a row exists only once a
   call has detached or was started in the background, so `detached` is not a status.
 - **The inbox item is `{ text, origin: "task" }`**, injected as a user-role message at the step boundary as a steer

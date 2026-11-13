@@ -45,3 +45,21 @@ test("running agent_api_docs itself does NOT count as a streak-break", async () 
     assert.equal(ctx.docsMemory.sinceDocs, 5, "the docs tool must not increment its own streak counter");
     assert.ok(ctx.docsMemory.shown.has("type:FetchResult"), "the docs tool must not purge the shown set");
 });
+
+// --- the schema note: which arguments are checked ---
+
+test("a host-injected _ argument is never reported as unknown, and the tool still receives it", async () => {
+    let got;
+    const tool = { name: "look", description: "", parameters: { type: "object", properties: { x: { type: "string" } } }, run: (a) => { got = a; return "ran"; } };
+    const env = await executeTool(tool, { x: "a", _images: ["data:image/png;base64,AA"], _imageLabel: "shot" });
+    assert.doesNotMatch(String(env.result), /schema issue/, "no note about a parameter the model never wrote");
+    assert.deepEqual(got._images, ["data:image/png;base64,AA"], "the tool receives _images");
+    assert.equal(got._imageLabel, "shot");
+});
+
+test("a genuinely unknown non-underscore property still gets the schema note", async () => {
+    const tool = { name: "look", description: "", parameters: { type: "object", properties: { x: { type: "string" } } }, run: () => "ran" };
+    const env = await executeTool(tool, { x: "a", _images: [], extra: 1 });
+    assert.match(String(env.result), /schema issue\(s\): unknown property "extra"$/);
+    assert.doesNotMatch(String(env.result), /_images/);
+});

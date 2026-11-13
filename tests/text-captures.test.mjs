@@ -56,12 +56,14 @@ for (const path of ["readonly", "userScripts", "cdp", "none"]) {
 
 // --- the model's view is unchanged ---
 
-test("the model is handed the same fetch_url preview whether or not the whole body is stored", T, async () => {
+test("the model is handed the same fetch_url preview whether or not the whole body is stored (the stored one adds the cut line)", T, async () => {
     const calls = [{ name: "fetch_url", args: { url: NOTES } }];
     const without = await wireRun(async () => {}, { body: BIG, url: NOTES, calls });
     const withStore = await wireRun(async () => {}, { body: BIG, url: NOTES, calls, store: true });
     assert.match(without.toolResults[0] ?? "", /\[first 4000 of 1,?548,?889 chars\]/, "positive control: the preview and its note");
-    assert.equal(withStore.toolResults[0], without.toolResults[0], "the same preview, byte for byte");
+    // The stored whole adds ONE line, the cut line naming the pointer; the preview itself is untouched.
+    assert.ok(withStore.toolResults[0].startsWith(without.toolResults[0]), "the same preview, byte for byte");
+    assert.match(withStore.toolResults[0].slice(without.toolResults[0].length), /^\n\[your copy is cut: @tool:[0-9a-f]{7} holds 1548889 chars of this output\./, "then the line that names the stored whole");
 });
 
 test("the dereference tool pipes over the whole body, and its unpiped read is still sized for the context", T, async () => {

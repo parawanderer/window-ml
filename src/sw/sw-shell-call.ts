@@ -198,12 +198,13 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
         // Set once the call has detached into a task: its answer then settles the task instead of the script's await.
         let settleTask: ((a: ShAnswer) => void) | undefined;
         // The lease starts when the program does, never while the person is asked: a card waiting is not a call running.
-        const started = (h: ShellHost, id: string): void => {
+        const started = (h: ShellHost, id: string, keepOnStop: () => void): void => {
             if (ctx.lease === false) return;
             const leaseMs = r.expectMs ?? SH_LEASE_MS, startedMs = Date.now();
             timer = setTimeout(() => {
                 const settled = new Promise<TaskOutcome>((done) => { settleTask = (a) => done(taskOutcomeOf(a)); });
                 const task = detachTask(ctx.runId, { tool: "ml.sh", startedMs, leaseMs, expectMs: r.expectMs ?? null, exec: {
+                    pageBound: false,   // runs in the host's process
                     cancel: () => h.client.cancel(id).then(
                         (c) => c.signalled ? { confirmed: true, text: "cancelled: the host signalled its process group (SIGTERM, then SIGKILL after 2 s)." }
                             : { confirmed: true, text: "it had already ended." },
@@ -211,6 +212,7 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
                             : { confirmed: false, text: `the cancel did not reach the host (${(e as Error)?.message || String(e)}).` }),
                     tail: (n, asked) => h.hello.peek === true ? peekTail(h, id, n, asked === true) : null, tailAbsent: SH_TAIL_ABSENT, settled,
                 } });
+                keepOnStop();   // a Stop of the turn stops the turn, not a detached task: the model cancels it with `task cancel`
                 recordRunLog(ctx.runId, { subsystem: "shell", kind: "detached", reason: r.expectMs !== undefined ? "expected" : "default", ms: leaseMs, detail: { seq: ctx.seq, id: task, program: r.argv[0] ?? "" } });
                 resolve({ error: detachedText(task, leaseMs, r), code: "Detached", task });
             }, leaseMs);
@@ -239,8 +241,9 @@ async function peekTail(h: ShellHost, id: string, lines: number, asked: boolean)
         const d = peekDetail(p, lines, ASKED_TAIL_CHARS);
         if (!d.cut) return d.text;
         // Scrubbed before it is stored: a pointer's value is read back as it was kept.
-        const value = await storeText((await forModel(d.whole)).text, `task tail ${id}`).catch(() => undefined);
-        return value ? { text: d.text, value } : d.text;
+        const whole = (await forModel(d.whole)).text;
+        const value = await storeText(whole, `task tail ${id}`).catch(() => undefined);
+        return value ? { text: d.text, value, chars: whole.length } : d.text;
     }
     catch (e) {
         if (e instanceof HostError && e.code === "UnknownId") return "It has just ended; its result arrives on its own.";
@@ -255,7 +258,7 @@ export const SH_TAIL_ABSENT = "This host reports a call's output only when it en
 
 /**
  * The text a detached call throws in the script: which of rule 2's two cases it was (the script's own estimate missed,
- * or the default applied), the task's id and how its result arrives, that it ends with the turn, and the time limit
+ * or the default applied), the task's id and how its result arrives, that it runs on after the answer, and the time limit
  * the host still holds it to.
  * @param id the task
  * @param leaseMs how long it ran before it detached
@@ -267,7 +270,7 @@ export function detachedText(id: string, leaseMs: number, r: Pick<ShRunRequest, 
         ? `you expected ~${s(r.expectMs)} and it is still running: investigate the stall, or`
         : `no expectMs was given, so the ${s(leaseMs)} default applied and it is still running: estimate (expectMs), investigate, or`;
     return `Detached: ml.sh detached as task ${id}; ${why} use the task tool (await, tail, cancel). Its result arrives as a [task ${id} …] message. `
-        + `It is cancelled when this turn ends; the host kills it at ${s(r.timeoutMs ?? SH_HOST_TIMEOUT_MS)} (timeoutMs).`;
+        + `It keeps running after your answer, until it finishes or a cancel; a result that comes after your answer is read at the start of the next turn. The host kills it at ${s(r.timeoutMs ?? SH_HOST_TIMEOUT_MS)} (timeoutMs).`;
 }
 
 /**
@@ -290,9 +293,9 @@ export function taskOutcomeOf(a: ShAnswer): TaskOutcome {
  * One call, from its facts to its result: what `shRun` answers, or, once the call has detached, what settles its task.
  * @param ctx the step
  * @param req the checked request
- * @param started told once the program has started: where the lease begins
+ * @param started told once the program has started: where the lease begins; it is handed a function that stops the turn's Stop from cancelling the call (called when the call detaches)
  */
-async function runCall(ctx: ShCallContext, req: ShRunRequest, started: (h: ShellHost, id: string) => void): Promise<ShAnswer> {
+async function runCall(ctx: ShCallContext, req: ShRunRequest, started: (h: ShellHost, id: string, keepOnStop: () => void) => void): Promise<ShAnswer> {
     try {
         return await withShell(async (h) => {
             const cwd = h.configured.roots[0]?.path;
@@ -354,7 +357,7 @@ async function runCall(ctx: ShCallContext, req: ShRunRequest, started: (h: Shell
                     }
                     noteRan(ctx.runId, facts);
                     if (ctx.signal.aborted) onAbort();
-                    started(h, id);
+                    started(h, id, () => ctx.signal.removeEventListener("abort", onAbort));
                     done = await h.client.waitDone(id);
                     if (before) noteOperands(ctx.runId, id, before, await readOperands(h, facts));
                 } finally { ctx.signal.removeEventListener("abort", onAbort); }

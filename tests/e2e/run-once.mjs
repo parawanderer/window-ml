@@ -121,8 +121,9 @@ export function backendFromDotenv(dotenv, env = {}) {
 }
 
 /** Cloud models served as text only. Nothing a backend reports says which cloud models see (OpenWebUI marks every
- *  custom model as seeing, DeepSeek V4 Pro included), and most do, so the list is of the exceptions (Shane, 2026-11-12). */
-export const TEXT_ONLY_CLOUD = /deepseek/i;
+ *  custom model as seeing, DeepSeek V4 Pro included), and most do, so the list is of the exceptions (Shane, 2026-11-12).
+ *  DeepSeek Flash sees: on 2026-11-13 it named both colours of a two-colour image that V4 Pro answered "NO IMAGE" to. */
+export const TEXT_ONLY_CLOUD = /deepseek-v4-pro/i;
 
 /**
  * Whether the driver sees images, declared for when nothing can probe it: the extension reads this
@@ -137,6 +138,44 @@ export function declaredVision(model, env = process.env) {
     const set = (env.E2E_MODEL_VISION || "").trim().toLowerCase();
     if (set === "yes" || set === "no") return set;
     return TEXT_ONLY_CLOUD.test(model) ? "no" : "yes";
+}
+
+/**
+ * Where a run's `look` went, read from what the extension resolved when the run started (its start event's
+ * `driverSees`/`visionModel`), never re-derived here: "native" (the driver saw the pixels), "reader" (a second model
+ * described them), "none" (vision on, nothing could see), "off" (`vision:false`). A sweep from an old branch once sent
+ * every cloud driver's look to the reader, and only the analysis noticed.
+ *
+ * @param {object|null} session the run's built session (`buildSession`)
+ * @returns {{route: "native"|"reader"|"none"|"off", reader: string|null}|null} null when the start event predates the
+ *   resolved fields, or there is no session
+ */
+export function lookRoute(session) {
+    const c = session?.agentConfig;
+    if (!c) return null;
+    if (c.vision === false) return { route: "off", reader: null };
+    if (c.driverSees === undefined && c.visionModel === undefined) return null;
+    if (c.driverSees) return { route: "native", reader: null };
+    if (c.visionModel && (c.tools || []).some((t) => t.vision)) return { route: "reader", reader: c.visionModel };
+    return { route: "none", reader: null };
+}
+
+/**
+ * The line a sweep prints when a driver's look route is first seen, or differs from the last one printed for it.
+ *
+ * @param {Map<string, string>} seen driver → the route last printed, updated here
+ * @param {string|null} driver the run's driver
+ * @param {ReturnType<typeof lookRoute>} look the run's route
+ * @returns {string|null} the line, or null when there is nothing new to say
+ */
+export function lookNote(seen, driver, look) {
+    if (!driver || !look) return null;
+    const said = look.route === "reader" ? `reader ${look.reader} (the driver is not known to see)`
+        : look.route === "native" ? "native" : look.route === "off" ? "off (vision:false)" : "none (nothing resolved that sees)";
+    if (seen.get(driver) === said) return null;
+    const first = !seen.has(driver);
+    seen.set(driver, said);
+    return `  look for ${driver}: ${said}${first ? "" : " (changed)"}`;
 }
 
 export async function resolveBackendFromEnv(env = process.env) {
@@ -837,7 +876,7 @@ export async function runOnce(cfg = {}) {
                         : `[${t.kind}${t.type ? ":" + t.type : ""}] ${t.text}`).join("\n"));
         }
 
-        const out = { events, session, runMd: md, runJson: json, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, models, seedBoundaryStep, seedMs, captured, priceBodies,
+        const out = { events, session, runMd: md, runJson: json, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, models, look: lookRoute(session), seedBoundaryStep, seedMs, captured, priceBodies,
             stream: stream ?? (surface ? false : agentOptions.stream === true), ...(shellInfo ? { shell: shellInfo } : {}) };
         if (keep) {
             // The run is over and measured; the browser, the session and its gates stay live for as long as `keep` says.
