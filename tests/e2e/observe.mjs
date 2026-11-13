@@ -14,7 +14,7 @@
 // run-once.mjs, shared with the bench — one function, two CLIs, so the core never learns what a benchmark
 // is (see docs/POINTER-IDENTIFIERS.md §6).
 
-import { runOnce, resolveBackendFromEnv, DEFAULT_TASK } from "./run-once.mjs";
+import { runOnce, resolveBackendFromEnv, DEFAULT_TASK, lookNote } from "./run-once.mjs";
 import { joinLedger } from "./bench/memory-budget.mjs";
 import { writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
@@ -84,6 +84,8 @@ const main = async () => {
         const by = r.approvals.reduce((m, a) => ((m[a.decision] = (m[a.decision] || 0) + 1), m), {});
         console.log(`  approvals: ${r.approvals.length} gate(s) — ${Object.entries(by).map(([k, v]) => `${v} ${k}`).join(", ")} (policy: ${approve})`);
     }
+    const lookLine = lookNote(new Map(), r.models?.driver ?? null, r.look);
+    if (lookLine) console.log(lookLine);
     console.log(`  artifacts: ${path.relative(process.cwd(), ART)}/  (run.md, run.json, transcript.txt, events.json, step-*.png)\n`);
 };
 
