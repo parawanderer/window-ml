@@ -22,8 +22,8 @@ import { ASKED_TAIL_CHARS } from "../shell/sh-tail";
  *  tail }`), and the sentence the model reads. */
 export interface PyDetached { detached: { id: string; elapsedMs: number; tail: string; text: string } }
 
-/** The run's cell that is running detached, by run: the kernel is locked while it runs. */
-const detachedCells = new Map<string, string>();   // state: plumbing — run id → the task id of its detached cell, for its turn
+/** The run's cell that is running detached, by run: the kernel is locked while it runs, into the next turns. */
+const detachedCells = new Map<string, string>();   // state: plumbing — run id → the task id of its detached cell, until it ends (across turns)
 
 /**
  * The sentence a second python_exec reads while the run's detached cell still runs (the kernel lock), or null.
@@ -49,7 +49,7 @@ export function pyCancelText(how: CellCancel): string {
 /**
  * The text the tool call answers when its cell detaches: which of rule 2's two cases it was (or that the lease's cap,
  * not the estimate, detached it), the task's id and how its
- * result arrives, that it ends with the turn, and the ceiling the sandbox holds it to.
+ * result arrives, that it runs on after the answer, and the ceiling the sandbox holds it to.
  * @param id the task
  * @param leaseMs how long it ran attached
  * @param expectMs the model's own estimate, or null
@@ -62,7 +62,7 @@ export function pyDetachedText(id: string, leaseMs: number, expectMs: number | n
             ? `you expected ~${secs(expectMs)}, and a cell runs attached for at most ${secs(PY_LEASE_MAX_MS)}, so it is running as expected: wait for it, or`
             : `you expected ~${secs(expectMs)} and it is still running: investigate the stall, or`;
     return `Detached: python_exec detached as task ${id} after ${secs(leaseMs)}; ${why} use the task tool (await, tail, cancel). Its result arrives as a [task ${id} …] message. `
-        + `It is cancelled when this turn ends, and the sandbox ends it at ${secs(PY_DETACHED_MAX_MS)}. Until it is done or cancelled, another python_exec in this run is refused.`
+        + `It keeps running after your answer until it finishes or is cancelled, and the sandbox ends it at ${secs(PY_DETACHED_MAX_MS)}; a result that comes after your answer is read at the start of the next turn. Until it is done or cancelled, another python_exec in this run is refused.`
         + (tail ? `\nOutput so far:\n${tail}` : "");
 }
 
@@ -103,7 +103,7 @@ export interface LeasedCell<R> {
 
 /**
  * Run a leased cell: its result while attached, or, past the lease, the detached answer, its result arriving later as a
- * task. A Stop of the run interrupts it while it is attached; once detached it is the task's to cancel, and the turn's end does.
+ * task. A Stop of the run interrupts it while it is attached; once detached it is the task's to cancel (the `task` tool), and neither a Stop nor the turn's end does.
  * @param o the cell
  * @returns the result, or {@link PyDetached}
  */
