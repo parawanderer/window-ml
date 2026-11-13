@@ -8,7 +8,7 @@ import { NotInDialect, Stopped, MAX_STRING, MAX_COLLECTION, Denied, riskyRegex, 
 import { Node } from "./parser";
 import { regexSteps } from "./regex-cost";
 import { replaceSize, replaceWorstCase } from "./replace-size";
-import { isSet, isMap, isStringObject, isRegExpObject, drainIterator, isWritableTarget, ReadonlyRealm, DENIED_PROPS, isDomCollection, SAFE_CONSTRUCTORS, ANSWER_METHODS, methodAllowed, kindOf, MUTATING_METHODS, CALLABLE_ROOTS, INTRINSIC_CALLBACKS, INTRINSIC_ROOTS, COERCING_CALLBACKS, convertingArgs, ROOT_CONVERTS, CTOR_CONVERTS, CTOR_ITERABLES, convertsByIntrinsics, argWrites } from "./policy";
+import { isSet, isMap, isStringObject, isRegExpObject, drainIterator, isWritableTarget, ReadonlyRealm, DENIED_PROPS, isDomCollection, tokenListBrand, SAFE_CONSTRUCTORS, ANSWER_METHODS, methodAllowed, kindOf, MUTATING_METHODS, CALLABLE_ROOTS, INTRINSIC_CALLBACKS, INTRINSIC_ROOTS, COERCING_CALLBACKS, convertingArgs, ROOT_CONVERTS, CTOR_CONVERTS, CTOR_ITERABLES, convertsByIntrinsics, argWrites } from "./policy";
 import { PrintSwap, abridgeRow, diffSwap, jsonPathKey } from "./print";
 
 /** Per-frame set of names declared `const`, kept off the frame's own enumerable keys. */
@@ -108,6 +108,11 @@ const OWNED_COPY_NODES = 10_000;
 export class Evaluator {
     /** The realm's own bound `getComputedStyle` (set by the entry point; absent in the worker), the one bare callback besides the intrinsics. */
     ownGetComputedStyle: Function | undefined;
+    /** The brand test for a real DOMTokenList (`policy.ts` `tokenListBrand`), set by the entry point from the document's realm;
+     *  until then, this module's realm's. It decides the `tokenlist` kind and keeps a token list out of the collections copied into Arrays. */
+    isTokenList: (o: unknown) => boolean = tokenListBrand();
+    /** Whether the script has read a token list: only then does {@link printable} walk a value that has no rows to abridge. */
+    private readTokenList = false;
     // Arrows we created — the only functions we'll invoke directly. Keyed to their node+scope so a
     // DIRECT call (an IIFE) can be driven by the CALLER's driver (an await inside it still works),
     // while the bare wrapper a host method receives stays synchronous.
@@ -178,7 +183,7 @@ export class Evaluator {
      *  `String()`; anything else is refused, since the host would coerce it by running its `toString`, and an array
      *  or an object with a `toString` arrow handed `match` a backtracking pattern no check had read. */
     private regexText(v: unknown, what: string): string {
-        if (v === null || typeof v !== "object" || kindOf(v) === "string") return String(v);
+        if (v === null || typeof v !== "object" || kindOf(v, this.isTokenList) === "string") return String(v);
         throw new NotInDialect(`a regex ${what} that is not a string or a regex`);
     }
     /** The regex a host call is about to run and the text it searches, or null when it runs none: a String method
@@ -233,13 +238,13 @@ export class Evaluator {
      *  object is refused, since the host would coerce it by running its `toString`, and the text it returns (a `$'`) is
      *  what decides the size. */
     private replacementText(v: unknown): string {
-        if (v === null || typeof v !== "object" || kindOf(v) === "string") return String(v);
+        if (v === null || typeof v !== "object" || kindOf(v, this.isTokenList) === "string") return String(v);
         throw new NotInDialect("a replacement that is not a string or a function");
     }
     /** What a replacer arrow returned for one match, counted before the host adds it to the result (`replacing`): the
      *  result so far grows by the return and loses the match it replaces. */
     private replaced(rep: { chars: number }, ret: unknown, match: unknown): void {
-        if (ret !== null && typeof ret === "object" && kindOf(ret) !== "string")
+        if (ret !== null && typeof ret === "object" && kindOf(ret, this.isTokenList) !== "string")
             throw new NotInDialect("a replacer that returns an object, which the host would turn into text by running its toString");
         const len = String(ret).length;
         rep.chars += len - String(match).length;
@@ -361,7 +366,7 @@ export class Evaluator {
             if ((Array.isArray(v) || isSet(v) || isMap(v)) && !Object.hasOwn(v, Symbol.iterator)) return v;
             // `Array.from` also reads an array-like (`{ length: 3 }`): one the script built, whose length converts by its own arrows, and which has no iterator of its own.
             // The realm's own DOM collections are iterated by the host, not by the page.
-            if (arrayLike && isDomCollection(v)) return v;
+            if (arrayLike && (isDomCollection(v, this.isTokenList) || this.isTokenList(v))) return v;
             if (arrayLike && this.owned.has(v) && !Object.hasOwn(v, Symbol.iterator) && convertsByIntrinsics(v, (f) => this.ourFns.has(f as Function))) return v;
         }
         throw new NotInDialect(`${via} was given an iterable the script did not build, which would run its own Symbol.iterator`);
@@ -437,7 +442,7 @@ export class Evaluator {
         const big = () => { throw new NotInDialect("a value too large to build without asking"); };
         // A String OBJECT is a string here: `new String(…)` is a safe constructor and `ml.dereference` returns one
         // (DerefText), and while this read only `typeof obj === "string"` a pointer's text took a backtracking pattern.
-        const str = typeof obj === "string" ? obj : kindOf(obj) === "string" ? String(obj) : null;
+        const str = typeof obj === "string" ? obj : kindOf(obj, this.isTokenList) === "string" ? String(obj) : null;
         if (str !== null) {
             if (key === "repeat" && str.length * Math.max(0, Number(args[0]) || 0) > MAX_STRING) big();
             if ((key === "padStart" || key === "padEnd") && Number(args[0]) > MAX_STRING) big();
@@ -462,7 +467,7 @@ export class Evaluator {
         // the answer facade's `add` coerces. A one-level reader is charged its arguments' top level (ONE_LEVEL). A
         // keyed store hashes a string key. A string PRINTED is kept or counted, never scanned (output-clip.ts), so the
         // console is charged only what it stringifies.
-        const printing = kindOf(obj) === "console";
+        const printing = kindOf(obj, this.isTokenList) === "console";
         if (member === "ml" && DATA_MEMBERS.has(key)) { /* reads as data, charges its own work */ }
         else if (member !== null) args.forEach((a) => this.expands(a));
         else if (str === null && STORES.has(key)) { if (KEYED.has(key)) this.scans(...args); }
@@ -672,7 +677,10 @@ export class Evaluator {
      *  abridges like the system prompt. Walks plain arrays and objects only, so anything else (an element a survey
      *  returns) passes through by reference. */
     printable(v: unknown, swaps: PrintSwap[] = [], where = "the returned value", path = "$", depth = 0, budget = { n: 20_000 }): unknown {
-        if (!this.rows.size || v === null || typeof v !== "object" || depth > 6 || --budget.n < 0) return v;
+        if ((!this.rows.size && !this.readTokenList) || v === null || typeof v !== "object" || depth > 6 || --budget.n < 0) return v;
+        // A token list prints as its tokens, as it did while a member read copied it into an Array: `JSON.stringify`
+        // would give `{"0":"btn"}`. A faithful view, so no swap is recorded.
+        if (this.isTokenList(v)) return Array.from(v as Iterable<string>);
         const at = this.rows.get(v);
         if (at !== undefined) {
             // EVERY SUBSTITUTION IS RECORDED HERE, by diffing what is printed against the value. The note a reader
@@ -713,7 +721,7 @@ export class Evaluator {
         this.strictRead(obj, key);
         const v = (obj as any)?.[key];
         if (typeof v === "function") return METHOD_REF;
-        return isDomCollection(v) ? Array.from(v as ArrayLike<unknown>) : v;
+        return this.memberValue(v);
     }
 
     // read a member (NOT in call position). A function-valued read returns an
@@ -741,9 +749,15 @@ export class Evaluator {
         this.strictRead(obj, key);
         const v = (obj as any)?.[key];
         if (typeof v === "function") return METHOD_REF;
-        // Uniformly with querySelectorAll (evalCall), a collection PROPERTY (.children/.rows/.cells/…)
-        // reads as a real Array too — so `el.children.map(…)` works like `qsa('x').map(…)`.
-        return isDomCollection(v) ? Array.from(v as ArrayLike<unknown>) : v;
+        return this.memberValue(v);
+    }
+
+    /** A member's value as the script holds it. Uniformly with querySelectorAll (evalCall), a collection PROPERTY
+     *  (.children/.rows/.cells/…) reads as a real Array, so `el.children.map(…)` works like `qsa('x').map(…)`. A token list
+     *  (`classList`) stays itself, so `contains` answers; it is printed as its tokens ({@link printable}). */
+    private memberValue(v: unknown): unknown {
+        if (this.isTokenList(v)) { this.readTokenList = true; return v; }
+        return isDomCollection(v, this.isTokenList) ? Array.from(v as ArrayLike<unknown>) : v;
     }
 
     // Bind a destructuring pattern (`const {a,b} = …`, `([a,b]) => …`) MEDIATED: every extracted property goes
@@ -1170,7 +1184,7 @@ export class Evaluator {
                 if (typeof obj[key] !== "function") throw new TypeError(`${key} is not a function on the call`);
             } else if (onAnswer) {
                 if (!ANSWER_METHODS.has(key)) throw new NotInDialect(`method '${key}' not allowed`);
-            } else if (!methodAllowed(obj, key)) {
+            } else if (!methodAllowed(obj, key, this.isTokenList)) {
                 // WHICH KIND OF "no" IS THIS? The distinction decides whether a human gets interrupted.
                 //
                 // A method that EXISTS on the receiver but is not allowed here (`input.select()`,
@@ -1183,11 +1197,11 @@ export class Evaluator {
                 const missing = obj == null || typeof (obj as Record<string, unknown>)[key] !== "function";
                 if (missing) throw new TypeError(obj == null
                     ? `Cannot read properties of ${String(obj)} (reading '${key}')`
-                    : `${key} is not a function on this ${kindOf(obj) ?? "value"}`);
+                    : `${key} is not a function on this ${kindOf(obj, this.isTokenList) ?? "value"}`);
                 // Say WHAT it was called on: with the gate scoped by receiver, "not allowed" without the kind
                 // sends the reader looking for a missing name when the real answer is that the name is fine
                 // and the receiver is wrong.
-                throw new NotInDialect(`method '${key}' not allowed on ${kindOf(obj) ?? "this value"}`);
+                throw new NotInDialect(`method '${key}' not allowed on ${kindOf(obj, this.isTokenList) ?? "this value"}`);
             }
             // An in-place MUTATOR (push/sort/…) may run ONLY on a container the script itself created — never an
             // array reached off a page value. So `pageState.items.push(x)` / `.sort()` can't mutate page data.
@@ -1230,7 +1244,7 @@ export class Evaluator {
                     throw new Denied(`${key} can only write into an object or array you built — never a DOM node, a page object, or a builtin`);
                 this.notIterating(target, "write into");
             }
-            this.convertingArgsAreData(kindOf(obj), key, args);
+            this.convertingArgsAreData(kindOf(obj, this.isTokenList), key, args);
             this.preflight(obj, key, args, onMl ? "ml" : onAnswer ? "answer" : null);
             // A builtin reads its arguments whole (`JSON.stringify(c)`, `Object.values(c.program)`): a `null` field it
             // takes out of the call is a read of it. `Object.keys` reads names, never values.
@@ -1246,7 +1260,7 @@ export class Evaluator {
             const wasCoercing = this.coercingAt;
             if (COERCES_CALLBACK.has(key)) this.coercingAt = this.depth;
             const wasReplacing = this.replacing;
-            if ((key === "replace" || key === "replaceAll") && typeof args[1] === "function" && (typeof obj === "string" || kindOf(obj) === "string"))
+            if ((key === "replace" || key === "replaceAll") && typeof args[1] === "function" && (typeof obj === "string" || kindOf(obj, this.isTokenList) === "string"))
                 this.replacing = { depth: this.depth, chars: String(obj).length };
             try { out = fn.apply(obj, args); } finally { for (const h of held) this.release(h); this.coercingAt = wasCoercing; this.replacing = wasReplacing; }
             // A Map, Set or Array ITERATOR is materialised into an array when a host call returns one: a walk cannot see
@@ -1270,7 +1284,7 @@ export class Evaluator {
             // HTMLCollection, which have no .map/.filter, so `querySelectorAll('x').map(…)` throws (the
             // model forgets to spread). In this read-only dialect it's safe to just hand back a real
             // Array, so the survey runs instead of falling through to the manual gate.
-            return this.own(this.sized(isDomCollection(out) ? Array.from(out as ArrayLike<unknown>) : out));
+            return this.own(this.sized(isDomCollection(out, this.isTokenList) ? Array.from(out as ArrayLike<unknown>) : out));
         }
         // Ident(args) — only whitelisted coercion/parse builtins.
         // Judged by VALUE: the root's own function, by identity. A script that rebinds the name (`const Number = …`) has an ordinary
