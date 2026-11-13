@@ -696,7 +696,7 @@ host's `/`, or `/home`, which would shadow `/home/pyodide`):
 `/private/tmp`, so a workspace there does not collide.
 
 **A path outside every mount** fails with `PermissionError`, never `FileNotFoundError`, since the file may exist:
-`/Users/sb/other is not mounted in this sandbox; reach it through ml.sh, or ask the person to mount it.`
+`~/other is not mounted in this sandbox; reach it through ml.sh, or ask the person to mount it.`
 
 **`/files/` in an `ml.sh` argv** (chosen by Shane, 2026-11-13; replaced by H9 below, a mapping). An argv item under
 `/files/` is refused, unless that path exists on the host: `/files/ is this sandbox's; pass the file with ml.sh.put.` On
@@ -730,7 +730,7 @@ opening it, so nothing can swap a component between the check and the open. A pa
 - What may be mounted. The approval checks the RESOLVED path, so `~/x/..` or a symlink does not pass as a leaf. A
   mount at or above the person's home is refused by name, as is one at, under or above the browser profile
   (`chrome.storage.sync` holds the API key and the model filter), the archive folder or window-ml-host's config:
-  `/Users/sb is your home directory; mount a directory inside it instead.`
+  `~ is your home directory; mount a directory inside it instead.`
 - The directory replaced after approval. The host holds the mount's descriptor from approval and compares its device
   and inode on every request, so a mounted directory replaced by a symlink to `/` is refused, not followed.
 - Unmounted or disconnected during a cell. The next read fails; the cached listing and any copy in MEMFS are not
@@ -828,7 +828,7 @@ host is mounted (Shane):
 - With a host mounted, a folder in the workspace, `<workspace>/window-ml-files/`, is primary, with the same layout
   (`attached/<handle>/<name>` read-only, the rest writable). A cell's `open()` and `ml.sh` see one set of bytes, so a
   cell's write is there for the next `cp` with no sync between them. `cp`, `sed -i` and `open()` reach the uploads at
-  `/files/attached/3fa91c2/data.csv` (on disk at `/Users/sb/git/proj/window-ml-files/attached/3fa91c2/data.csv`), with
+  `/files/attached/3fa91c2/data.csv` (on disk at `~/git/proj/window-ml-files/attached/3fa91c2/data.csv`), with
   no `ml.sh.put` or read-back to teach the model; those stay as mechanisms, not as advice. Finder is the truth for the
   person; the panel is a view of the folder.
 - The browser store (MEMFS over the shelf, as ruled above) is then a capped backup, synced when convenient. A file over
@@ -843,8 +843,10 @@ host is mounted (Shane):
   host is mounted, a cell's `/files` is backed by the folder (the same bytes `ml.sh` sees), and an `ml.sh` argv maps
   it (H9 below). The folder's real path also works, since it lies inside the workspace mount; the transcript, the
   diffs and the exports write it as `/files`, so one file has one name in the record. The model is told the real path
-  in one line, for a program that prints it. Where the host cannot map an argv item (H9), it fails with
-  `/files is on disk while the host is connected: /Users/sb/git/proj/window-ml-files/x`.
+  in one line, for a program that prints it, with the home directory written as `~` (`~/git/proj/window-ml-files`;
+  Shane, 2026-11-13: model-facing text writes a path under the home as `~`, the run log keeps it raw). Where the host
+  cannot map an argv item (H9), it fails with
+  `/files is on disk while the host is connected: ~/git/proj/window-ml-files/x`.
 - The folder is ignored by git by default, through `.git/info/exclude` (the clone's own list, never a committed
   `.gitignore`), so uploads never show in `git status` or a commit unless the person moves them out. The person can
   name another folder, inside a mount.
@@ -1038,23 +1040,30 @@ refusal and gives a sentence for it:
   now.
 - While a host is connected, at `spawn` the host maps an argument the program's manifest marks as a PATH, when it
   equals `/files` or starts with `/files/`, to the same path under the folder's real path
-  (`/Users/sb/git/proj/window-ml-files/data.csv`), and the call's `cwd` likewise. The mapped path then carries the
-  facts like any other path argument: the host refuses at `spawn` a call whose manifest writes to a path in
+  (`~/git/proj/window-ml-files/data.csv` as the model sees it), and the call's `cwd` likewise. The mapped path then
+  carries the facts like any other path argument: the host refuses at `spawn` a call that WRITES a path in
   `attached/` (H6's rule, for a process), and an overwrite git cannot undo still asks.
+- Which operand is written comes from a manifest field naming it (the last operand for `cp` and `mv`, every operand
+  for `rm`), since today's `paths: "operands"` and a call-wide effect (`write-names`) do not say which position is
+  read and which is written. A program whose manifest has a writing effect and no such field has every path operand
+  treated as written, which fails closed: such a call naming a path in `attached/` is refused, even as a source.
 - An argument the manifest marks as anything else (a pattern, a message, a value) is never mapped, so `rg '/files/' .`
   searches for that text.
 - A `/files` argument the host cannot place, because the program has no manifest or the manifest does not describe
   that position, is refused with the sentence of "`/files` on the person's disk" naming the real path:
-  `/files is on disk while the host is connected: /Users/sb/git/proj/window-ml-files/data.csv`. Such a call asks
+  `/files is on disk while the host is connected: ~/git/proj/window-ml-files/data.csv`. Such a call asks
   anyway (no manifest), so the refusal costs one retry with the real path.
-- The call's record keeps both forms, the argv the model wrote and the argv the process got, in the sidebar and both
-  exports ("the log carries what the model saw").
+- The call's record keeps both forms, the argv the model wrote and the argv the process got. The model sees a mapped
+  path with the home written as `~`; the run log keeps both argvs raw, and the sidebar and both exports show both
+  ("the log carries what the model saw").
 - The alias exception of the first section is kept for a host that has a `/files` directory of its own, where the
   argument is the host's file and nothing is mapped.
 - A cell's `/files` is backed by the folder while a host is connected ("`/files` on the person's disk"), so
   `/files/x` names the same file in a cell's `open()` and in an argv.
-- Needs a `cp` manifest (`src/shell/manifests/`, operands as paths, as `mv.json` has), or the two calls above fall in
-  the refused case. That is the extension's manifest work, beside this lane.
+- Needs a `cp` manifest (`src/shell/manifests/`): operands as paths, as `mv.json` has, and the written-operand field
+  naming the last operand. Without the field the first call above is refused (its source is in `attached/`); without
+  the manifest both are. The manifest is the extension's work, beside this lane; the field is the manifest schema's
+  (`docs/spec/PROGRAM_MANIFEST.md`) and the host's reader of it.
 
 **The `ml.sh` snapshot** (H10 to H14). Settles the second disagreement: "Diffs from git" takes the snapshot with
 `git add -A` into a scratch index, which writes a blob for every changed file into the repository's object store, and
@@ -1126,10 +1135,12 @@ after `mount` (H3); a component swapped for a symlink between two requests (H4);
 `store` interrupted mid-transfer leaving the old file whole (H5); a `store` into `attached/`, a `rename` into or out of
 it, under every policy (H6); a git-undoable file edited by another process between the judgment and the write (H8); a
 `/files` argv item in each form, `=` and bare, mapped only in a manifest's path position and refused elsewhere, a
-pattern argument left alone, a write into `attached/` refused by `/files` and by its real path alike (H6, H9); the
-snapshot leaving the person's index, HEAD, stash list and object store byte-identical, with a clean filter, an fsmonitor
-and a hook configured in the repository that would each leave a mark if run (H10, H11); an ignored `.env` never entering
-a snapshot tree (H11); a page or a page-started run reaching any of the new calls.
+pattern argument left alone, a write into `attached/` refused by `/files` and by its real path alike (H6, H9); a `cp`
+out of `attached/` allowed and into it refused, and a writing manifest with no written-operand field refused when any
+operand is in `attached/` (H9); the snapshot leaving the person's index, HEAD, stash list and object store
+byte-identical, with a clean filter, an fsmonitor and a hook configured in the repository that would each leave a mark
+if run (H10, H11); an ignored `.env` never entering a snapshot tree (H11); a page or a page-started run reaching any of
+the new calls.
 
 **Open.**
 
