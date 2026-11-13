@@ -130,10 +130,12 @@ made.)
 
 ## How the model learns the form
 
-Not in the system prompt: every token there is paid on every turn (`docs/spec/PROMPT_BUDGET.md`). The `agent_api_docs`
-tool gets a `links` topic: the form, the address table, and one line per setting key with its label and place,
-generated from the table the class test checks. Whether one sentence in the prompt ("you may link to a setting as
-`[label](window-ml:setting/<key>)`") earns its cost was open question 1; measured, it does (below).
+The `agent_api_docs` tool gets a `links` topic: the form, the address table, and one line per setting key with its
+label and place, generated from the table the class test checks. The system prompt adds one sentence naming the form
+(`LINKS_CLAUSE`, after the self-introspection clause, only where `agent_api_docs` is in the toolset): "To point the
+person at one of the extension's settings, link it as `[label](window-ml:setting/<key>)`; `agent_api_docs` lists the
+keys." Every token there is paid on every turn (`docs/spec/PROMPT_BUDGET.md`), so whether it earns its cost was open
+question 1; measured, it does (below), and it ships on (Shane, 2026-11-13).
 
 ## Threat model
 
