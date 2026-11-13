@@ -8,13 +8,39 @@ import type { SentFile } from "../contract/contract-run";
 import { FETCH_PREVIEW_CHARS } from "../ml/ml-tool-factories";
 import { cleanFileName, fileId, fileOutline, fileRef, pageKinds, quoteName, textOutline, type FilePointer, type FileShelf } from "../pointers/file-pointer";
 import { ValueTooLarge, sha256Hex, type ValueFormat, type ValueRow } from "../pointers/value-store";
-import { b64ToBytes, type PdfMessage, type PdfReadReply } from "../pdf/pdf-wire";
+import { b64ToBytes, bytesToB64, type PdfMessage, type PdfReadReply, type PdfRenderReply } from "../pdf/pdf-wire";
+import { PAGE_IMAGE_SCALE } from "./sw-chat";
 import { ensureOffscreen } from "./sw-offscreen";
 
 /** Read a PDF in the offscreen document's reader (docs/dev/pdf.md): only the service worker may ask it. */
 export async function readPdfOffscreen(b64: string): Promise<PdfReadReply> {
     await ensureOffscreen();
     return await chrome.runtime.sendMessage({ type: "PDF_READ", b64 } satisfies PdfMessage);
+}
+
+/**
+ * Draw pages of a stored PDF for `look` at an attached document, one after another in the offscreen document, from
+ * the bytes `session` holds (`readStoredBytes`, which refuses a session that does not hold them).
+ * @param bytes the stored PDF's bytes
+ * @param pages the page numbers, each within the file
+ * @param render the offscreen render (a test seam)
+ * @returns per page, a PNG data URL or why it would not draw
+ */
+export async function drawStoredPages(bytes: Uint8Array, pages: number[],
+    render: (b64: string, n: number) => Promise<PdfRenderReply> = renderPdfOffscreen): Promise<({ image: string } | { failed: string })[]> {
+    const b64 = bytesToB64(bytes);
+    const out: ({ image: string } | { failed: string })[] = [];
+    for (const n of pages) {
+        const r = await render(b64, n).catch(() => null);
+        out.push(r?.ok ? { image: `data:image/png;base64,${r.pngB64}` } : { failed: r ? r.refusal : "the PDF reader did not answer" });
+    }
+    return out;
+}
+
+/** Draw one page in the offscreen document's reader at the scale a worker chat sends a page image at. */
+async function renderPdfOffscreen(b64: string, n: number): Promise<PdfRenderReply> {
+    await ensureOffscreen();
+    return await chrome.runtime.sendMessage({ type: "PDF_RENDER", b64, n, scale: PAGE_IMAGE_SCALE } satisfies PdfMessage);
 }
 
 /** What attaching needs: the reader, the held store (`storeHeld`, sw-values.ts) and the run's shelf. */

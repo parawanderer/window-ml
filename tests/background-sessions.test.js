@@ -367,6 +367,8 @@ test("a worker starting with sessions past their retention forgets them before l
     assert.equal(evicted[0].reason, "retention");
     assert.equal(evicted[0].detail.outcome, "deleted");
     assert.equal(evicted[0].detail.idleDays, 40);
+    // A session the store deletes takes its run's Python namespace with it (the namespace lives as long as the run).
+    assert.deepEqual(bg.pyDeletes.map((m) => m.run), ["0ld00001"]);
 });
 
 test("every event of a saved session reaches the store, not only the ones that changed its row", T, async () => {

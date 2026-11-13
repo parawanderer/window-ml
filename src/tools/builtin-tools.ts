@@ -5,6 +5,7 @@
 // domTools; opt in via extraTools, gated by the approval flow.
 
 import type { MlApi, JsonSchema } from "../contract";
+import { LOOK_DOC_PAGES_MAX } from "../pointers/file-pointer";
 import type { MlTool, ToolResult, ToolContext } from "../contract/contract-agent";
 import type { LocateSubstep, RenderDescriptor, VisionMemory } from "../contract/contract-render";
 import type { ServerTool } from "../contract/contract-server";
@@ -158,6 +159,18 @@ export const BOX_OVER_TEXT_TIP = "\n\n⚠ The click-point box is sitting ON page
 // @pt/@box target — for a plain selector/viewport there's no overlay to drop.
 export const VIEWS_PARAM = { type: "array", items: { type: "string", enum: ["overlay", "no-overlay"] }, description: "For an @pt:/@box: target only: which crop(s) to return. \"overlay\" (default) draws the click-point box so you see WHERE a click lands; \"no-overlay\" is a clean copy so you can READ text the box would cover. Pass both — [\"overlay\",\"no-overlay\"] — when you need to do both at once." } as const;
 
+/** The shared `doc` + `pages` parameters for both look tools: pages of an attached file, drawn from its bytes by the
+ *  run loop (agent-loop.ts, resolveLookDoc), which hands the images down as `_images`. */
+export const DOC_PARAMS = {
+    doc: { type: "string", description: "An attached file's pointer (`@file:…`) to look at its pages instead of the page; give `pages` with it." },
+    pages: { type: "string", description: `With \`doc\`: which pages, as 4, 3-5 or 3,7 (at most ${LOOK_DOC_PAGES_MAX}).` },
+} as const;
+
+/** What a `look` at an attached document tells the model about the pages it was handed (`_imageLabel`, and the pages
+ *  that would not draw). */
+export const docPagesNote = (said: string | undefined, failed: string | undefined): string =>
+    `These are ${said || "pages of an attached file"}, drawn from the file.${failed ? ` Not drawn: ${failed}.` : ""}`;
+
 /** Produce the requested crop VIEWS of a MARKED @pt/@box token from ONE viewport capture (no re-screenshot):
  *  `views` ⊆ ["overlay","no-overlay"], default ["overlay"]. Returns each as a labelled image (the caller
  *  injects them natively or hands them to a reader) plus whether the click-point box crosses page text. */
@@ -226,16 +239,27 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = READER_MAX_
                 scope: { type: "string", enum: ["viewport", "page"], description: "'viewport' (default), or 'page' to scroll+stitch the full page (only when no selector)." },
                 index: { type: "integer", description: "Which match of the selector to look at (0-based); iterate a grid with 0,1,2,…" },
                 margin: { type: "number", description: "For an @pt: token only — the crop RADIUS in px around the point (bigger = more context). Ignored for CSS selectors." },
-                views: VIEWS_PARAM
+                views: VIEWS_PARAM,
+                ...DOC_PARAMS
             }
         },
         // In: the target as a hoverable ref (hover → outline it on the page). No selector (viewport/page) → raw args.
         render: (_input, args) => targetRender(args),
-        run: async ({ selector, question, scope, index, margin, views, _image, _imageLabel, _imageDrawn }: { selector?: string; question?: string; scope?: "viewport" | "page"; index?: number; margin?: number; views?: string[]; _image?: string; _imageLabel?: string; _imageDrawn?: boolean } = {}) => {
+        run: async ({ selector, question, scope, index, margin, views, _image, _imageLabel, _imageDrawn, _images, _imagesFailed }: { selector?: string; question?: string; scope?: "viewport" | "page"; index?: number; margin?: number; views?: string[]; _image?: string; _imageLabel?: string; _imageDrawn?: boolean; _images?: { image: string; label: string }[]; _imagesFailed?: string } = {}) => {
             // An `@tool:<id>` image pointer: the LOOP resolved it and handed the captured screenshot down (it
             // owns the pointer store). Re-examining an image the run already has is not a page operation, so
             // there is nothing to screenshot — skip straight to asking the reader about those pixels.
             const host = hostOf();
+            // Pages of an attached document the LOOP drew (resolveLookDoc): the reader reads them, the page is not asked.
+            if (_images?.length) {
+                const q = question || "Describe these pages concisely: what each shows, and any figure, table or scanned text on it.";
+                const note = docPagesNote(_imageLabel, _imagesFailed);
+                try {
+                    const desc = await host.chat(`${q}\n\n${note}`, { images: _images.map((m) => m.image), model, maxTokens, numCtx: VISION_NUM_CTX }) as string;
+                    const render: RenderDescriptor = { type: "look", image: _images[0].image, model, output: desc, label: _imageLabel || "attached pages", prompt: q };
+                    return { content: `${desc}\n\n(${note})`, render };
+                } catch (e) { return `Error: ${errText(e)}`; }
+            }
             if (_image) {
                 const q = question || "Describe this image concisely — what is shown and what stands out.";
                 const note = `\n\n${pointedImageNote(_imageLabel, _imageDrawn)}`;

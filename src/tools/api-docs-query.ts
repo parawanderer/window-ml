@@ -270,7 +270,8 @@ const defaultView = (parts: ApiDocsParts, env: EnvSection[], seen?: Set<string>)
  * GRAPH_BUDGET — so a small graph comes back complete in one call and the model needn't drill again.
  * Over budget, the tail is named (with `types:[...]`) rather than expanded. Everything de-dupes.
  */
-const expand = (parts: ApiDocsParts, wantMembers: string[], wantTypes: string[], seen?: Set<string>): string => {
+const expand = (parts: ApiDocsParts, wantMembers: string[], wantTypes: string[], seen?: Set<string>,
+    absent?: ReadonlyMap<string, string>): string => {
     const typeNames = new Set(Object.keys(parts.types));
     const members = splitMembers(parts.mlApi);
     const byName = new Map(members.map(m => [m.name.toLowerCase(), m]));
@@ -323,6 +324,13 @@ const expand = (parts: ApiDocsParts, wantMembers: string[], wantTypes: string[],
     } else if (deferred.length) {
         out.push(`> Also reachable, not expanded to keep this small: ${deferred.join(", ")}. ` +
             "Fetch any with `agent_api_docs({ types: [...] })`.");
+    }
+    // A member left out on purpose says why, so the model does not take the bare miss for a wrong spelling and go
+    // looking for it under another name (MiniMax M3 tried `pythonTool` next, prompt-budget-cuts, 2026-11-12).
+    const why = absent && new Map([...absent].map(([k, v]) => [k.toLowerCase(), v]));
+    for (const req of [...missing]) {
+        const reason = why?.get(req.trim().toLowerCase());
+        if (reason) { out.push(`> ${reason}`); missing.splice(missing.indexOf(req), 1); }
     }
     if (missing.length) {
         out.push(`> Not found: ${missing.join(", ")}. ` +
@@ -385,8 +393,11 @@ const searchDocs = (parts: ApiDocsParts, term: string, env: EnvSection[], seen?:
  *              by a search. The tool resolves these live and passes them only when the view can use them.
  * @param seen  The run's within-burst dedup set (DocsMemory.shown): a chunk whose key is already in it is
  *              printed as a one-line stub instead of in full, and a full emit adds its key. Omit to disable.
+ * @param absent Members this reference leaves out on purpose, each to the sentence saying why: asked for by name, one
+ *              is answered with its sentence instead of "Not found".
  */
-export function queryApiDocs(parts: ApiDocsParts, q: ApiDocsQuery = {}, env: EnvSection[] = [], seen?: Set<string>): string {
+export function queryApiDocs(parts: ApiDocsParts, q: ApiDocsQuery = {}, env: EnvSection[] = [], seen?: Set<string>,
+    absent?: ReadonlyMap<string, string>): string {
     const search = q.search?.trim();
     const members = (q.members ?? []).filter(s => s && s.trim());
     const types = (q.types ?? []).filter(s => s && s.trim());
@@ -394,7 +405,7 @@ export function queryApiDocs(parts: ApiDocsParts, q: ApiDocsQuery = {}, env: Env
     // for three new types plus a search printed only the search's one already-seen stub. The expansion goes first
     // and marks what it printed, so the search then stubs those instead of printing them twice.
     if (members.length || types.length) {
-        const view = expand(parts, members, types, seen);
+        const view = expand(parts, members, types, seen, absent);
         return search ? `${view}\n\n${searchDocs(parts, search, searchable(parts, env), seen)}` : view;
     }
     if (search) return searchDocs(parts, search, searchable(parts, env), seen);

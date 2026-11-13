@@ -924,3 +924,82 @@ test("runVision: a handed-over run's names are used only when offered and let th
         { driverSees: true, visionModel: "anything-the-worker-chose", groundingModel: null, groundingRange: 1000 });
     assert.equal((await runVision({ driverSees: "true", visionModel: 3 }, true, null, deps())).driverSees, false);
 });
+
+// --- look at an attached document's pages (`_images`): both look tools, and worker-look without a tab's document ---
+
+const DOC_IMAGES = [{ image: "data:image/png;base64,AAA", label: "@file:abc1234 page 2" }, { image: "data:image/png;base64,BBB", label: "@file:abc1234 page 3" }];
+const DOC_SAID = '@file:abc1234 "report.pdf" pages 2, 3, attached by the person';
+
+test("docPagesNote: names the pages, and the pages that would not draw only when there are some", async () => {
+    const { docPagesNote } = await import("../src/tools/builtin-tools.ts");
+    assert.equal(docPagesNote("pages 2, 3 of @file:abc1234", undefined), "These are pages 2, 3 of @file:abc1234, drawn from the file.");
+    assert.equal(docPagesNote("pages 2, 3 of @file:abc1234", "page 4: too large"), "These are pages 2, 3 of @file:abc1234, drawn from the file. Not drawn: page 4: too large.");
+    assert.equal(docPagesNote(undefined, undefined), "These are pages of an attached file, drawn from the file.");
+    assert.equal(docPagesNote("", ""), "These are pages of an attached file, drawn from the file.");
+});
+
+test("delegated look at a document's pages: one reader call carries every image and the question with the note, and the page is not asked", async () => {
+    const chats = [];
+    const host = { chat: async (prompt, o) => { chats.push({ prompt, o }); return "A bar chart."; }, screenshot: async () => { throw new Error("no capture for a document"); } };
+    const tool = buildLookTool({ defineTool }, { model: "reader-vl", host });
+    const r = await tool.run({ question: "what does it show?", _images: DOC_IMAGES, _imageLabel: DOC_SAID });
+    assert.equal(chats.length, 1);
+    assert.deepEqual(chats[0].o.images, ["data:image/png;base64,AAA", "data:image/png;base64,BBB"]);
+    assert.equal(chats[0].o.model, "reader-vl");
+    const note = `These are ${DOC_SAID}, drawn from the file.`;
+    assert.equal(chats[0].prompt, `what does it show?\n\n${note}`);
+    assert.equal(r.content, `A bar chart.\n\n(${note})`);
+    assert.deepEqual({ type: r.render.type, image: r.render.image, model: r.render.model, output: r.render.output, label: r.render.label, prompt: r.render.prompt },
+        { type: "look", image: DOC_IMAGES[0].image, model: "reader-vl", output: "A bar chart.", label: DOC_SAID, prompt: "what does it show?" });
+});
+
+test("delegated look at a document's pages: no question gets the default one, and pages that failed are in the note", async () => {
+    const chats = [];
+    const host = { chat: async (prompt) => { chats.push(prompt); return "ok"; } };
+    const tool = buildLookTool({ defineTool }, { model: "reader-vl", host });
+    const r = await tool.run({ _images: DOC_IMAGES, _imageLabel: DOC_SAID, _imagesFailed: "page 4: the page is too large" });
+    assert.match(chats[0], /^Describe these pages concisely: what each shows, and any figure, table or scanned text on it\.\n\nThese are /);
+    assert.match(chats[0], /Not drawn: page 4: the page is too large\.$/);
+    assert.match(r.content, /\(These are .* Not drawn: page 4: the page is too large\.\)$/);
+});
+
+test("delegated look at a document's pages: a failing reader call is an error string", async () => {
+    const tool = buildLookTool({ defineTool }, { model: "reader-vl", host: { chat: async () => { throw new Error("reader down"); } } });
+    assert.match(await tool.run({ question: "q", _images: DOC_IMAGES }), /^Error: .*reader down/);
+});
+
+test("native look at a document's pages: every image is returned for the next message, with the note", async () => {
+    const tool = buildNativeLookTool({ defineTool }, { host: { screenshot: async () => { throw new Error("no capture for a document"); } } });
+    const r = await tool.run({ _images: DOC_IMAGES, _imageLabel: DOC_SAID });
+    assert.equal(r.content, `These are ${DOC_SAID}, drawn from the file. Shown to you in the next message.`);
+    assert.deepEqual(r.images, DOC_IMAGES);
+    const failed = await tool.run({ _images: DOC_IMAGES, _imageLabel: DOC_SAID, _imagesFailed: "page 4: too large" });
+    assert.equal(failed.content, `These are ${DOC_SAID}, drawn from the file. Not drawn: page 4: too large. Shown to you in the next message.`);
+});
+
+test("both look tools offer `doc` and `pages`", () => {
+    for (const tool of [buildLookTool({ defineTool }, { model: "m", host: {} }), buildNativeLookTool({ defineTool }, { host: {} })]) {
+        assert.deepEqual(Object.keys(tool.parameters.properties).filter((k) => k === "doc" || k === "pages"), ["doc", "pages"]);
+    }
+});
+
+test("worker look with `_images` and no document id runs the call; without `_images` it is still the no-document refusal", async () => {
+    const { LOOK_NO_DOCUMENT } = await import("../src/sw/worker-look.ts");
+    await onPage(async () => {
+        const w = world({ reply: "The chart rises." });
+        const env = await lookIn(w, { question: "what is shown?", _images: [{ image: png(10, 10), label: "@file:abc1234 page 2" }], _imageLabel: "page 2 of @file:abc1234" }, READER, { doc: null });
+        assert.notEqual(env.result, LOOK_NO_DOCUMENT);
+        assert.match(env.result, /^The chart rises\./);
+        assert.equal(w.chats.length, 1);
+        assert.equal(w.bg.tabMessages.length, 0, "no message reached the tab");
+        const native = await lookIn(world({ reply: "unused" }), { _images: [{ image: png(10, 10), label: "l" }], _imageLabel: "page 2" }, NATIVE, { doc: null });
+        assert.match(native.result, /^These are page 2, drawn from the file\. Shown to you in the next message\./);
+        assert.equal(native.images?.length, 1);
+        for (const doc of [null, undefined, ""]) {
+            const w2 = world({ reply: "x" });
+            const plain = await w2.wv.workerLook("run-1", 3, doc, { question: "q" }, READER, () => "https://site.example/", { raster: blankRaster() });
+            assert.equal(plain.result, LOOK_NO_DOCUMENT, `no _images, document ${JSON.stringify(doc)}`);
+            assert.equal(w2.chats.length, 0);
+        }
+    });
+});

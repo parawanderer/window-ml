@@ -6,7 +6,7 @@
 // built is refused a PDF (attached-files.ts, `filesRefusal`).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { attachFiles, attachPaste, pasteLine, PASTE_NAME } from "../src/sw/sw-attach.ts";
+import { attachFiles, attachPaste, drawStoredPages, pasteLine, PASTE_NAME } from "../src/sw/sw-attach.ts";
 import { FileShelf, fileId } from "../src/pointers/file-pointer.ts";
 import { FilesRefused, fileBlocks, checkFilesField, FILE_INLINE_MAX } from "../src/attached-files.ts";
 import { FETCH_PREVIEW_CHARS } from "../src/ml/ml-tool-factories.ts";
@@ -238,4 +238,30 @@ test("a PDF may go to an agent run with any message; a run a page built is refus
     assert.deepEqual(checkFilesField([f], "agent"), { files: [f] });
     assert.deepEqual(checkFilesField([f], "page-run"), { reason: "paper.pdf is a PDF, and this run was built by the page, which does not read one: start a run from the panel to attach it" });
     assert.deepEqual(checkFilesField([{ name: "a.txt", type: "text/plain", text: "x" }], "page-run").files.length, 1, "text still goes to a run a page built");
+});
+
+// --- drawing a stored PDF's pages for `look` at a document ---
+
+test("drawStoredPages: pages are drawn in the order asked, each ok as a PNG data URL, one render per page with the PDF's base64", async () => {
+    const bytes = new Uint8Array([37, 80, 68, 70, 45]);
+    const asked = [];
+    const out = await drawStoredPages(bytes, [3, 1, 2], async (b64, n) => { asked.push([b64, n]); return { ok: true, pngB64: `PNG${n}` }; });
+    assert.deepEqual(asked, [3, 1, 2].map((n) => [Buffer.from(bytes).toString("base64"), n]), "in order, sequentially");
+    assert.deepEqual(out, [{ image: "data:image/png;base64,PNG3" }, { image: "data:image/png;base64,PNG1" }, { image: "data:image/png;base64,PNG2" }]);
+});
+
+test("drawStoredPages: a refusal is {failed} with its sentence, a render that throws or answers nothing says the reader did not answer, and the rest still draw", async () => {
+    const out = await drawStoredPages(new Uint8Array([1, 2, 3]), [1, 2, 3, 4], async (_b64, n) => {
+        if (n === 1) return { ok: false, refusal: "page 1 is too large to draw" };
+        if (n === 2) throw new Error("port closed");
+        if (n === 3) return undefined;
+        return { ok: true, pngB64: "P4" };
+    });
+    assert.deepEqual(out, [{ failed: "page 1 is too large to draw" }, { failed: "the PDF reader did not answer" }, { failed: "the PDF reader did not answer" }, { image: "data:image/png;base64,P4" }]);
+});
+
+test("drawStoredPages: no pages draws nothing and asks nothing", async () => {
+    let n = 0;
+    assert.deepEqual(await drawStoredPages(new Uint8Array([1]), [], async () => { n++; return { ok: true, pngB64: "x" }; }), []);
+    assert.equal(n, 0);
 });
