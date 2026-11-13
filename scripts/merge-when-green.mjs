@@ -19,6 +19,11 @@
 //   … --keep-bench    # first move a worktree's bench results into the main clone (see below)
 //   … --discard       # merge even though a worktree holds work in no commit: it stays there, and goes with the worktree
 //
+// THE MERGE-WHEN-GREEN TRAP. A PR can sit BLOCKED with every reported check green because a required job never
+// produced a status at all — a job skipped by a job-level `if` can report nothing, and the ruleset then waits
+// forever on a name that is not there (2026-11-13). `judge` names the missing contexts; `--wait` reruns the run
+// ONCE to force them, and if the shape survives the branch predates the step-gated jobs and needs a rebase.
+//
 // WHAT A MERGE WOULD LEAVE BEHIND. Before the verdict it looks at each local checkout of the PR's branch and names what
 // lives only on that disk: bench sweeps and the scoreboard database under tests/e2e/artifacts/bench/ (git ignores them),
 // and uncommitted or untracked files. Both have been lost this way: a sweep's runs went with a worktree cleaned up after
@@ -284,7 +289,17 @@ export function unreadLine(u, headAt) {
     return `${u.kind} ${u.id} ${u.author}${u.own ? " (marked yours: still --read it)" : ""} at ${at(u.at)} (head ${at(headAt)}): ${u.preview}`;
 }
 
-/** The verdict from the facts gathered about a PR: `{ ok, pending, reason }`. Pure, so the rule is testable. */
+/**
+ * The required status contexts a head SHA has not reported: `required` minus the names of its check-runs and
+ * statuses. A job skipped by a job-level `if` can fail to report a status at all, and the PR then sits BLOCKED with
+ * every visible check green (2026-11-13). Pure, so the rule is testable.
+ */
+export function missingContexts(required, reported) {
+    const have = new Set(reported);
+    return (required ?? []).filter((c) => !have.has(c));
+}
+
+/** The verdict from the facts gathered about a PR: `{ ok, pending, reason, rerun? }`. Pure, so the rule is testable. */
 export function judge(f) {
     // First, and never pending: no amount of waiting lets the tool judge a change to itself.
     if (f.touchesTool?.length) return { ok: false, reason: `changes the merge tool itself (${f.touchesTool.join(", ")}): Shane merges it by hand, after reading it` };
@@ -308,6 +323,22 @@ export function judge(f) {
     if (f.stacked) return { ok: false, reason: "has PRs stacked on it: retarget them first" };
     if (f.mergeable === "UNKNOWN") return { ok: false, pending: true, reason: "GitHub has not computed mergeability yet" };
     if (f.mergeable !== "MERGEABLE") return { ok: false, reason: `not mergeable (${f.mergeable})` };
+    // MERGEABLE is not CLEAN. A PR the ruleset holds sits BLOCKED with every reported check green when a required
+    // job never reported at all — a job skipped by a job-level `if` can produce no status, which is the trap
+    // (2026-11-13). Waiting cannot fix a status that will never arrive; the waiter reruns the run once to force it.
+    if (f.mergeStateStatus === "BLOCKED") {
+        const missing = f.missingContexts ?? [];
+        if (missing.length) {
+            return {
+                ok: false, pending: true, rerun: true,
+                reason: `BLOCKED with every reported check green: missing required contexts ${missing.join(", ")} — a job skipped by a job-level if can fail to report a status at all`,
+            };
+        }
+        return {
+            ok: false,
+            reason: `BLOCKED though the tests run is green and no required context is missing: approval, or a gate this tool cannot see (mergeStateStatus BLOCKED)`,
+        };
+    }
     return { ok: true, reason: `OK (run ${f.runId} green, tests -${f.tests.removed}/+${f.tests.added} lines)` };
 }
 
@@ -346,7 +377,7 @@ function restList(path) {
 
 function facts(pr, session, read = [], awaitReview = false) {
     git("fetch", "-q", "origin");
-    const view = JSON.parse(gh("pr", "view", String(pr), "--json", "headRefName,mergeable") || "{}");
+    const view = JSON.parse(gh("pr", "view", String(pr), "--json", "headRefName,mergeable,mergeStateStatus") || "{}");
     const head = view.headRefName;
     if (!head) throw new Error(`PR #${pr} not found`);
     const sha = git("rev-parse", `origin/${head}`);
@@ -357,6 +388,17 @@ function facts(pr, session, read = [], awaitReview = false) {
         ? gh("api", `repos/${REPO}/actions/runs/${runId}/jobs?per_page=100`, "-q",
             '.jobs[] | select(.conclusion!="success" and .conclusion!="skipped") | "\\(.name)=\\(.conclusion)"').split("\n").filter(Boolean)
         : [];
+    // What the ruleset requires, and what the head has actually reported: the difference is the merge-when-green
+    // trap (a required job that never produced a status). Both lists are names only; missingContexts is the diff.
+    let requiredContexts = [];
+    try {
+        requiredContexts = JSON.parse(gh("api", `repos/${REPO}/rules/branches/main?per_page=100`, "-q",
+            '[.[] | select(.type=="required_status_checks") | .parameters.required_status_checks[] | if type=="object" then .context else . end] | unique') || "[]");
+    } catch { requiredContexts = []; }
+    const reportedContexts = [
+        ...gh("api", `repos/${REPO}/commits/${sha}/check-runs?per_page=100`, "-q", ".check_runs[].name").split("\n"),
+        ...gh("api", `repos/${REPO}/commits/${sha}/status?per_page=100`, "-q", ".statuses[].context").split("\n"),
+    ].filter(Boolean);
     const range = `origin/main...origin/${head}`;
     // REST, so every post carries the numeric id its URL fragment names and `--read` can take either form. The
     // conflicts notice, a session's own post and a post `--read` named are all filtered in pickUnread.
@@ -388,6 +430,9 @@ function facts(pr, session, read = [], awaitReview = false) {
         awaitReview, postedByOthers, awaitPosts, headAt,
         stacked: Number(gh("pr", "list", "--base", head, "--json", "number", "-q", "length")) || 0,
         mergeable: view.mergeable,
+        mergeStateStatus: view.mergeStateStatus,
+        requiredContexts,
+        missingContexts: missingContexts(requiredContexts, reportedContexts),
     };
 }
 
@@ -573,10 +618,33 @@ async function main() {
         }
     }
     if (!pr) { console.error("usage: node scripts/merge-when-green.mjs <pr> [--wait] [--merge] [--session <your session id>] [--read <comment id>] [--await-review]"); process.exit(2); }
-    let f, v;
+    let f, v, reran = false;
     for (let i = 0; ; i++) {
         f = facts(pr, session, read, awaitReview);
         v = judge(f);
+        // The merge-when-green trap: BLOCKED with every reported check green and a required context missing is a
+        // job that never reported (a job-level `if` skip, 2026-11-13). Waiting on a status that will never arrive
+        // is an indefinite hold, so the waiter reruns the run ONCE to force it. If the shape survives, the branch
+        // predates the step-gated jobs and needs a rebase — no second rerun.
+        if (v.rerun) {
+            if (reran) {
+                v = { ok: false, reason: `${v.reason}; still missing after one rerun — rebase if the branch predates the step-gated jobs` };
+                break;
+            }
+            if (!wait) {
+                v = { ok: false, pending: true, reason: `${v.reason}; run with --wait to rerun it once, or rerun the run by hand` };
+                break;
+            }
+            console.log(`${pr}: ${v.reason}; rerunning run ${f.runId} once`);
+            spawnSync("gh", ["api", "-X", "POST", `repos/${REPO}/actions/runs/${f.runId}/rerun`], { cwd: ROOT, stdio: "inherit" });
+            reran = true;
+            // The rerun resets the run to queued. Wait until GitHub says so, or the next facts() still sees
+            // `completed` and the one-shot would refuse on its own rerun's lag.
+            for (let j = 0; j < 15 && gh("api", `repos/${REPO}/actions/runs/${f.runId}`, "-q", ".status") === "completed"; j++) {
+                await new Promise((r) => setTimeout(r, 2000));
+            }
+            continue;
+        }
         if (!v.pending || !wait || i >= POLL_LIMIT) break;
         // While the run is still going, one call a minute says so; the full facts wait until it is done.
         for (; i < POLL_LIMIT; i++) {
