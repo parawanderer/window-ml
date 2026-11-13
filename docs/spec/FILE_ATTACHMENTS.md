@@ -683,15 +683,17 @@ run harder to review.
 
 **Collisions.** The sandbox owns `/files/` and Pyodide's own tree (`/tmp`, `/lib`, `/home/pyodide`, `/dev`, `/proc`).
 A mount at or under one of these is refused by name when it is approved, never shadowed:
-`/files is this sandbox's directory; the host's /files cannot be mounted at that path.` On macOS `/tmp` resolves to
+`/files is this sandbox's directory; the host's /files cannot be mounted at that path.` So is a mount above one (the
+host's `/`, or `/home`, which would shadow `/home/pyodide`):
+`/home holds this sandbox's /home/pyodide; mount a directory inside it instead.` On macOS `/tmp` resolves to
 `/private/tmp`, so a workspace there does not collide.
 
 **A path outside every mount** fails with `PermissionError`, never `FileNotFoundError`, since the file may exist:
 `/Users/sb/other is not mounted in this sandbox; reach it through ml.sh, or ask the person to mount it.`
 
 **`/files/` in an `ml.sh` argv** (chosen by Shane, 2026-11-13). An argv item under `/files/` is refused, unless that
-path exists on the host: `/files/ is this sandbox's; pass the file with ml.sh.put.` One string never means two files
-across two tools.
+path exists on the host: `/files/ is this sandbox's; pass the file with ml.sh.put.` On a host that has a `/files`
+directory the person accepts the alias: there `/files/x` is the host's file in `ml.sh` and the sandbox's in a cell.
 
 **The channel.** Pyodide has no synchronous remote backend, so a host-backed node needs one. Two routes, neither
 measured:
@@ -706,15 +708,22 @@ measured:
 
 Either way a file is fetched whole on open and pushed on close, the close hooks item 1 already has, with the listing
 cached per cell: a change the host makes during a cell is seen at the next open. A host that is not connected fails
-the open with EIO.
+the open with EIO. Every request carries an id, and a reply to a request whose wait was interrupted (Stop, a timeout)
+is discarded by that id. A push never leaves a half-written file on the person's disk: the host writes beside the file
+and renames it into place, so a Stop or a dropped connection mid-transfer leaves the old file whole.
 
 **Security** (each mount is a new surface the model reaches: e3's pass, Shane's ruling). The approval is per mount,
 not per call, so a mounted directory is read and written with no card per `open()`. The host enforces the scope
 itself: a `full` cell can forge a worker post (item 3), so the path a request claims is resolved and checked on the
-host, never taken from the worker. A page-started run never has a mount. Rows for e3, beside the list below: a request
-for a path outside every mount, by `..`, a symlink inside the mount pointing out, a hard link, a forged post, and a
-race between the check and the open on the host; a mount of a reserved prefix; a page or a page-started run reaching
-a mount.
+host, never taken from the worker. The host opens a path by walking its components from the mount's own descriptor
+(`openat` with `O_NOFOLLOW` on each component, or the platform's equivalent), never by resolving a string and then
+opening it, so nothing can swap a component between the check and the open. A page-started run never has a mount.
+A hard link inside the mount to a file outside it is the mount's file by every check the host can make (its path,
+device and inode are all inside), so the person who mounts a directory mounts what is linked into it; that is a
+limit, stated here, not a defence. Rows for e3, beside the list below: a request for a path outside every mount, by
+`..` or a symlink inside the mount pointing out; a forged post; a component swapped for a symlink between the check
+and the open; a mount at, under or above a reserved prefix; a page or a page-started run reaching a mount. The hard
+link, if it gets a row, is the one that documents the limit.
 
 **A cell's edits as diffs.** Per cell, not per write: a script may write a file several times, so the diff is the file
 at cell start against the file at cell end.
@@ -725,12 +734,14 @@ at cell start against the file at cell end.
 - A host mount: the before bytes are what the open fetched, so the diff costs nothing extra. Writes made by an `ml.sh`
   process are not seen this way; a snapshot of the workspace before the call is the host's question (an overlay
   filesystem's upper layer in a container, a copy-on-write clone on macOS, `git diff` for tracked files; guesses).
-- The model gets one line in the cell's result, never the diff: `edited a.py (+3 −1); wrote out.csv (new, 2.1 KB)`.
+- The model gets one line in the cell's result, never the diff:
+  `edited a.py (+3 −1); wrote out.csv (new, 2.1 KB); deleted old.log`.
 - The person gets a collapsed `edited 2 files` row on the step that opens to the diff, in the sidebar and both
   exports. A binary file, or one over a size cap, shows its size and hash before and after, no diff.
 
 **To measure first** (the Pyodide lane, through the coordinator): route A's Stop latency during a blocked read, the
-cost of one round trip, an `os.walk` and an `import` over a mounted real workspace, and whether the sliced wait holds
+cost of one round trip, an `os.walk` and an `import` over a mounted real workspace, opening a file of several GB
+(a workspace holds them, and a whole-file fetch needs a size cap set from this), and whether the sliced wait holds
 under the lockdown.
 
 **Initial decisions** (Shane, 2026-11-13: decided now, changed if they cause trouble).
@@ -748,6 +759,13 @@ under the lockdown.
   beyond; a larger or binary file gets its size and hash before and after. The shelf keeps a before copy only of
   files under the cap, which also bounds what it holds during a cell. The row is collapsed and has no setting to turn
   it off.
+
+**Open.**
+
+- A real host path carries the person's username (`/Users/sb/...`) into the transcript and both exports, which are
+  shared. Whether an export redacts a mount's prefix, or the person is told the paths are in it before exporting; a
+  redaction rule would be checked where `VOLATILE_FIELDS` is (`docs/dev/export.md`).
+- The size cap on a whole-file fetch, set from the measurement above.
 
 **Owners.** This text, the diff row and the provenance of a file read from a mount: the chat-page lane. The channel and
 the mount: the Pyodide lane. The host's scope check, the argv refusal and the `ml.sh` snapshot: the `ml.sh` and
