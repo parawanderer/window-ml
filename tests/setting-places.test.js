@@ -126,6 +126,24 @@ test("a window-ml:setting link in a chat reply is a button; clicking it opens Se
     assert.ok(row.classList.contains("set-marked"), "the row is marked");
 });
 
+test("after a link opened Settings, the panel's back control returns to the session the link was clicked in", async () => {
+    const w = await loadSidebarWorld({ siteLists: SITE_LISTS });
+    await w.dispatch(chatStart("lnbk", 0, "how do I let scripts run programs?"));
+    await w.dispatch(chatResult("lnbk", 0, "Turn on [Let scripts run programs](window-ml:setting/shellEnabled) first."));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    w.shadow.querySelector("button.md-addr").click();
+    await new Promise((r) => setTimeout(r, 100));
+    await w.flush();
+    assert.ok(w.shadow.querySelector('[data-setting~="shellEnabled"]'), "Settings is open");
+    const back = w.shadow.querySelector("button.tt.nav");
+    assert.equal(back.getAttribute("aria-label"), "Back", "a return, not the way to the sessions list");
+    back.click();
+    await w.flush();
+    assert.equal(w.shadow.querySelector(".set-body"), null, "Settings closed");
+    assert.ok(w.shadow.querySelector('button.md-addr[data-addr="setting/shellEnabled"]'), "the reply with its link is drawn again: the session, not the list");
+});
+
 // link-address.ts copies the Backup block's tab and id from settings.tsx (which a renderer does not import); the panel
 // itself is what the copy is held to here, so a renamed or moved block fails this rather than scrolling nowhere.
 test("clicking the backup alias opens the tab the panel draws its Backup block on, with the block the link names", async () => {

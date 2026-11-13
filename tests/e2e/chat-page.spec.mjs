@@ -60,6 +60,8 @@ test("a page's own chat appears in the extension's chat page, and can be answere
     } finally { await ext.context.close(); await fake.stop(); await site.stop(); }
 });
 
+// --- opening the chat page from another surface: the popup's buttons, a link on the HUD card (OPEN_CHAT_PAGE) ---
+
 test("the popup opens the chat page, and opening it again focuses the one that is already there, a chat open in it or not", async () => {
     const ext = await launchExtension();
     try {
@@ -88,6 +90,26 @@ test("the popup opens the chat page, and opening it again focuses the one that i
         await popup3.locator("#openChat").click();
         await expect.poll(() => ext.context.pages().filter((p) => p.url().endsWith("popup.html")).length).toBe(0);
         expect(ext.context.pages().filter((p) => p.url().startsWith(url)).length, "the open chat page is reused").toBe(1);
+    } finally { await ext.context.close(); }
+});
+
+test("a link from the HUD card (OPEN_CHAT_PAGE) sends the open chat page to the view, and the browser's Back returns it to the route it was on", async () => {
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: "http://127.0.0.1:1/", apiKey: "", apiFormat: "openai", model: "m" });
+        const url = `chrome-extension://${ext.extensionId}/chat.html`;
+        const chat = await ext.context.newPage();
+        await chat.goto(`${url}#/search`);
+        // Any extension page sends what the card sends: the worker judges the sender by its URL, which is ours.
+        const popup = await ext.context.newPage();
+        await popup.goto(`chrome-extension://${ext.extensionId}/popup.html`);
+        const resp = await popup.evaluate(() => new Promise((r) => chrome.runtime.sendMessage({ type: "OPEN_CHAT_PAGE", payload: { address: "settings/extension/advanced/shell" } }, r)));
+        expect(resp).toEqual({ data: true });
+        // The page shows Settings → Extension and may rewrite the hash to the part it draws (`#/settings/extension`).
+        await expect.poll(() => chat.url().startsWith(`${url}#/settings/extension`), { message: chat.url() }).toBe(true);
+        expect(ext.context.pages().filter((p) => p.url().startsWith(url)).length, "the open chat page is reused").toBe(1);
+        await chat.goBack();
+        await expect.poll(() => chat.url(), { message: "Back returns to where the chat page was" }).toBe(`${url}#/search`);
     } finally { await ext.context.close(); }
 });
 
