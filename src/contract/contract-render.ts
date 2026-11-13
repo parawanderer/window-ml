@@ -29,9 +29,12 @@ export const DEFAULT_GROUNDING_RANGE = 1000;
 export const VISION_NUM_CTX = 8192;
 
 /** Generated-token cap for a delegated READER's description (`look`, click/type/wait verify, `python_exec` verify). A
- *  reader that thinks (qwen3-vl) spends its tokens reasoning before it answers: at 256 it answered nothing about a chart
- *  on the 2026-10-19 panel, at 512 it described it. */
-export const READER_MAX_TOKENS = 512;
+ *  reader that thinks (qwen3-vl) spends its tokens reasoning before it answers, and the cap counts both: at 256 it
+ *  answered nothing about a chart on the 2026-10-19 panel. At 512, 43 of ~70 looks in the 2026-11-12 prompt-budget-cuts
+ *  sweep came back empty; uncapped, six describe-the-page calls took 421 to 994 tokens, about 150 of them the answer.
+ *  `think: false` did not stop qwen3-vl:30b thinking, so the room is in the cap. A reader that does not think stops at
+ *  its answer long before this. */
+export const READER_MAX_TOKENS = 2048;
 
 /** The crop transform of a raw element/region screenshot: the crop's top-left in VIEWPORT (CSS) px
  *  and the devicePixelRatio it was captured at. A pixel (px,py) in that image maps to viewport CSS

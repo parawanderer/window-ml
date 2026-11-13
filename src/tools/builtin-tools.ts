@@ -257,7 +257,7 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = READER_MAX_
                 try {
                     const desc = await host.chat(`${q}\n\n${note}`, { images: _images.map((m) => m.image), model, maxTokens, numCtx: VISION_NUM_CTX }) as string;
                     const render: RenderDescriptor = { type: "look", image: _images[0].image, model, output: desc, label: _imageLabel || "attached pages", prompt: q };
-                    return { content: `${desc}\n\n(${note})`, render };
+                    return { content: desc.trim() ? `${desc}\n\n(${note})` : `${lookReaderSaidNothing(model, true)}\n\n(${note})`, render };
                 } catch (e) { return `Error: ${errText(e)}`; }
             }
             if (_image) {
@@ -265,7 +265,7 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = READER_MAX_
                 const note = `\n\n${pointedImageNote(_imageLabel, _imageDrawn)}`;
                 try {
                     const desc = await host.chat(q + note, { images: [_image], model, maxTokens, numCtx: VISION_NUM_CTX }) as string;
-                    return { content: desc, image: _image, imageLabel: _imageLabel || "captured earlier" };
+                    return { content: desc.trim() ? desc : lookReaderSaidNothing(model), image: _image, imageLabel: _imageLabel || "captured earlier" };
                 } catch (e) { return `Error: ${errText(e)}`; }
             }
             const fullPage = scope === "page" && !selector;
@@ -327,7 +327,8 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = READER_MAX_
             // DOM legend of what's IN this crop (controls/media/boundaries/text with selectors) — bridges the
             // vision reply back to actionable selectors. Skipped for a downscaled full-page overview.
             const legend = fullPage ? "" : await legendFor(host, selector || null, margin as number, host.memory?.boundariesSeen);
-            return { content: description + pointTip + overTextTip + legend, render, ...(elements ? { elements } : {}) };
+            const said = description.trim() ? description : lookReaderSaidNothing(model);
+            return { content: said + pointTip + overTextTip + legend, render, ...(elements ? { elements } : {}) };
         }
     });
 };
@@ -1109,6 +1110,12 @@ export async function captureVerify(host: VisionHost, ctx: ToolContext | undefin
     if (!desc) return { content: `${readerSaidNothing(reader || "the reader", tok ?? undefined)}${legend}`, feedback: { reason, via: "text", text: "", prompt: question, image: crop } };
     return { content: `\n\n👁 ${areaNote} You can't see images, so this is ${reader || "the reader"}'s description:\n${desc}${clickPoint}${legend}`, feedback: { reason, via: "text", text: desc, prompt: question, image: crop } };
 }
+/** What a text-only driver reads when its look's reader answered with nothing, instead of a blank before the DOM legend
+ *  (a thinking reader can run out of tokens mid-thought): that it happened, so the model neither reads the blank as an
+ *  empty page nor takes the legend for the reader's answer. */
+export const lookReaderSaidNothing = (model: string | null, pages = false): string =>
+    `(${model || "The vision model"} returned an empty description of ${pages ? "these pages" : "this screenshot"}, so you have no reading of it. ` +
+    (pages ? "Look again with a narrower question about one page.)" : "Look again with a narrower question or a selector, or work from the DOM.)");
 /** What a text-only driver reads when its verify's reader answered with nothing (a thinking reader can spend its whole
  *  budget reasoning), instead of an empty quote: that it happened, and how to look again. */
 const readerSaidNothing = (reader: string, selector?: string): string =>
