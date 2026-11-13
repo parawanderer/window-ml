@@ -3,7 +3,9 @@
 **Status: proposed 2026-11-13, nothing built.** From Shane's words in the calm-chat-motion session (2026-11-13) and the
 points agreed there, handed to the settings-specs lane by the policies/python/desktop/manifests coordinator. Questions
 1 to 3 of the first review (`ml.config()` stays as it is; the guarded class is not a second mechanism; the default
-list) were ruled by the coordinator on 2026-11-13 as proposed, pending Shane; the rest is open. A new agent-facing
+list) were ruled by the coordinator on 2026-11-13 as proposed, pending Shane; the rest is open. Shane ruled on
+2026-11-13 that the model reads the settings through `ml.settings()`, not `ml.current.settings`: they are the person's
+global settings, and a name under `ml.current` says they belong to the run. A new agent-facing
 surface, so the threat model below is reviewed by the red team (e3, through the coordinator) before this lands.
 
 Shane: "letting the model update user settings (which probably requires a whitelist of what settings the model can
@@ -166,8 +168,8 @@ that is not a classified one.
 
 - **Stored** in `chrome.storage.local`, key `ml_model_settings`, never `sync`: like policies (`docs/dev/policies.md`,
   "Scopes and lifetime"), it is about this browser. Declared in the state registry from its first commit
-  (`defineState`, audience `model`, since the model reads what it permits), with `exposedAs: "ml.current.settings"`
-  in the same commit that serves that member, and without it before (`StateDecl`'s JSDoc, `src/state-registry.ts`:
+  (`defineState`, audience `model`, since the model reads what it permits), with `exposedAs: "ml.settings()"` in
+  the same commit that serves that member, and without it before (`StateDecl`'s JSDoc, `src/state-registry.ts`:
   absent means meant for the model and not given to it yet).
 - **Backed up.** `collectSettings` carries `ml_model_settings` in the backup's `local` half, beside
   `GLOBAL_POLICIES_KEY` and the site lists; today it carries the sync config, the global policies and the site lists
@@ -202,22 +204,23 @@ sidebar, the DevTools panel, the chat page or over the hub. The guards are the o
 - every place a run becomes one the worker built is enumerated, not sampled: `startUserRun`, the hand-over
   (`markWorkerRun`), adoption (`adoptSession` in `src/sw/sw-sessions.ts`, which hydrates a saved session's payload and
   calls `makeWorkerRun`) and the resume. On the three that are not `startUserRun` the toolset is the payload's, which
-  cannot carry `change_setting`; a test per caller asserts none yields the tool or `ml.current.settings` to a page;
-- `ml.current.settings` is added only to the snapshot the worker builds for a run it built, and an exec naming
-  `ml.current` runs in an isolated world or is refused (`src/sw/exec-routing.ts`), so a page's script never reads it;
-- there is no `ml.*` member and no `HANDLE_MAP` entry for either half, so nothing on a page can name it; the existing
-  `SET_MODEL` stays the page's only write.
+  cannot carry `change_setting`; a test per caller asserts none yields the tool or `ml.settings()` to a page;
+- `ml.settings()` exists only on the `ml` an isolated-world exec gets in a run the worker built, and an exec naming
+  it is routed as one naming `ml.current` is: in an isolated world, or refused (`src/sw/exec-routing.ts`, whose test
+  for `ml.current` grows `ml.settings`), so a page's script never reads it;
+- `injected.ts` does not define it on the page's `window.ml`, and there is no `HANDLE_MAP` entry for either half, so
+  nothing on a page can name it; the existing `SET_MODEL` stays the page's only write.
 
 ## The surface
 
-**Reading: `ml.current.settings`.** One entry per whitelisted key: `{ value, mode: "read" | "read-write", class:
-"ordinary" | "guarded" }`. Absent when the list is empty or the run is not one the worker built. The worker reads the
-whitelist and the values each time it builds an `ml.current` snapshot for an exec, so a change the person makes in
-Settings is what the next survey sees. That snapshot reaches the model only through an exec run in an isolated world:
-where no isolated world is available, an exec naming `ml.current` is refused (`src/sw/exec-routing.ts`), so on that
-setup the model reads no setting through this surface, while `change_setting`, which runs in the worker, still works
-and its result names the old value. The refusal stays a refusal when this is built: never a main-world fallback for
-`ml.current.settings`.
+**Reading: `ml.settings()`.** Returns one entry per whitelisted key: `{ value, mode: "read" | "read-write", class:
+"ordinary" | "guarded" }`; an empty object when the list is empty. Its doc says they are the person's settings for
+this browser, the same for every run, and that a change to one is a change everywhere. The worker reads the whitelist
+and the values each time an exec calls it, so a change the person makes in Settings is what the next survey sees. It
+reaches the model only through an exec run in an isolated world: where no isolated world is available, an exec naming
+`ml.settings` is refused (`src/sw/exec-routing.ts`), so on that setup the model reads no setting through this surface,
+while `change_setting`, which runs in the worker, still works and its result names the old value. The refusal stays a
+refusal when this is built: never a main-world fallback for `ml.settings()`.
 
 **Writing: one tool, `change_setting({ key, value, why })`**, a builtin declared in the tool registry
 (`defineBuiltinTool`), run in the worker. In order:
@@ -280,7 +283,7 @@ call this surface (above); what it can do is ask the model, in text, to call it.
    at all, so a run cannot grant a page `window.ml` or put a key on its own list. Shrinking the record
    (`persistUiRuns`, retention, budgets) is guarded for the same reason in the other direction: it hides what was done.
 3. **A page's run reaching it.** A page-started run, a page-built run handed to the worker, and a page's own
-   `ml.agent` never have the tool or `ml.current.settings` ("Who reaches it"). A page reading the change afterwards
+   `ml.agent` never have the tool or `ml.settings()` ("Who reaches it"). A page reading the change afterwards
    through `ml.config()` reads only what it could read before.
 4. **Forged approvals.** The card is drawn only on the extension's own surfaces and answered over the approval IPC by
    them, or over the hub by a principal holding `approve`; a page's message never answers it (the existing approval
@@ -307,7 +310,7 @@ call this surface (above); what it can do is ask the model, in text, to call it.
 
 **Red-team rows** (e3, through the coordinator), what a hostile page or an injected model must not get:
 
-- a read of any key off the whitelist, of any secret by any route, of `ml.current.settings` from a page's script or a
+- a read of any key off the whitelist, of any secret by any route, of `ml.settings()` from a page's script or a
   page-started run;
 - a write of any key off the list, of a `read` key, of a secret, or of a value outside the key's domain;
 - a guarded change in its guarded direction without a card, by an `allow` policy of any origin, a proposed policy, a
@@ -324,7 +327,7 @@ call this surface (above); what it can do is ask the model, in text, to call it.
 - a change to a `sync` key whose card does not say it applies to every browser signed in;
 - the tool or the snapshot key reaching a page-built run through any caller of `makeWorkerRun` or `markWorkerRun`:
   `startBackgroundRun`, the hand-over, `adoptSession`, a resume;
-- `ml.current.settings` served from the main world where no isolated world exists;
+- `ml.settings()` served from the main world where no isolated world exists;
 - the class test's four failures: an unclassified key, a guarded or secret key without a reason, an ordinary key with
   no domain or one outside the union, `whitelistable` true for a key with no place (`ocrNumCtx`);
 - a restore that drops `ml_model_settings`, or writes a guarded key's `read-write` without a row in the preview.

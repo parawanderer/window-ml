@@ -5,6 +5,8 @@
 //     surface uses. The text is not ours, so it is escaped first and rendered second.
 //   · POINTER LINKS resolved IN-RUN: `[the totals](@tool:abc1234)` becomes a control that goes to the step
 //     that produced it, the same gesture (and the same green pulse) a citation makes.
+//   · ADDRESS LINKS: `[Programs](window-ml:settings/extension/advanced/shell)` becomes a button that opens that view
+//     of the extension's own Settings (links.ts). It opens a view and nothing else, so it is not an egress.
 //
 // AND NOTHING ELSE. Deliberately:
 //   · No IMAGES. These surfaces are gutters and tooltips — places with no room — and a tool result could
@@ -18,6 +20,7 @@ import { resolveTokenStep, codeRanges, inCode } from "../../pointers/answer-toke
 import { mdInline } from "../format";
 import { scrollToStepSeq } from "./step-scroll";
 import { cursorTipOn } from "../ui-kit";
+import { linkTipFor, onAddressClick } from "../links";
 
 /** `[label](@tool:<id>)` — the LINK form of a citation. The id charset matches the pointer forms elsewhere
  *  (a hex id, a bare tool name); an unresolvable one is left as text by the renderer below rather than
@@ -52,9 +55,9 @@ export function splitProse(md: string): ({ text: string } | { label: string; id:
 export function Prose({ md, steps, hash }: { md: string; steps?: readonly AgentStep[]; hash?: string }) {
     const parts = splitProse(md);
     if (parts.length === 1 && "text" in parts[0])
-        return <span dangerouslySetInnerHTML={{ __html: mdInline(md) }} />;
-    return <span>{parts.map((p, i) => {
-        if ("text" in p) return <span key={i} dangerouslySetInnerHTML={{ __html: mdInline(p.text) }} />;
+        return <span onClick={onAddressClick} dangerouslySetInnerHTML={{ __html: mdInline(md, linkTipFor) }} />;
+    return <span onClick={onAddressClick}>{parts.map((p, i) => {
+        if ("text" in p) return <span key={i} dangerouslySetInnerHTML={{ __html: mdInline(p.text, linkTipFor) }} />;
         const step = steps ? resolveTokenStep(p.id, steps) : null;
         // Unresolved → the label, plainly. The model naming a pointer that is not there is worth showing as
         // what it wrote, not as a dead control or an error chip in the middle of a sentence.

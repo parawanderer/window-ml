@@ -10,8 +10,7 @@ import { FakeHost } from "../src/chat/fake-host.ts";
 import { hostServices } from "../src/chat/host-services.ts";
 import { holds, mayCommand } from "../src/chat/grants.ts";
 import { resumableHere } from "../src/chat/grants.js";
-import { KEYS_KEY, KEYS_SENDS, KEYS_SENDS_ALONE, TARGET_KEY, keyUse, knowsKeys, lastTargets, noteKeyUse, rememberTarget } from "../src/chat/view-mode.tsx";
-import { flushReadMarks, CALM_KEY, GROUP_ALL_KEY, LIST_KEY, PINNED_KEY, PINNED_MODELS_KEY, READ_KEY, calm, dropPin, installViewPrefs, listOpen, markRead, orderPins, pinned, pinnedModels, readState, setCalm, setGroupAll, setListOpen, togglePin, togglePinnedModel } from "../src/chat/view-mode.tsx";
+import { KEYS_KEY, KEYS_SENDS, KEYS_SENDS_ALONE, TARGET_KEY, keyUse, knowsKeys, lastTargets, noteKeyUse, rememberTarget, flushReadMarks, CALM_KEY, GROUP_ALL_KEY, LIST_KEY, PINNED_KEY, PINNED_MODELS_KEY, READ_KEY, calm, dropPin, installViewPrefs, listOpen, markRead, orderPins, pinned, pinnedModels, readState, setCalm, setGroupAll, setListOpen, togglePin, togglePinnedModel } from "../src/chat/view-mode.tsx";
 import { READ_MARKS_MAX, UNTIL_READ, endingSeen, hasBaseline, isUnread, throttledWriter, markSeen, readMarksFrom, readStateFrom } from "../src/chat/read-marks.ts";
 import { pinnedInOrder } from "../src/chat/pin-order.js";
 import { groupAllTools, sessionMap, view } from "../src/sidebar/store.ts";
@@ -1043,7 +1042,7 @@ test("routes (section): #/settings/extension/backup round-trips; an unknown or m
 
 test("routes (panel): every panel tab and every section it draws round-trips under settings/extension", async () => {
     const { parseRoute, formatRoute } = await import("../src/chat/route.ts");
-    const { PANEL_SECTIONS, PANEL_TABS } = await import("../src/sidebar/settings/settings-sections.ts");
+    const { PANEL_SECTIONS, PANEL_TABS } = await import("../src/contract/contract-config.ts");
     for (const panelTab of PANEL_TABS) {
         const t = { main: "settings", tab: "extension", panelTab };
         assert.equal(formatRoute(t), `#/settings/extension/${panelTab}`);
@@ -1076,13 +1075,19 @@ test("routes (panel): an unknown or misplaced panel tab or section drops to the 
     assert.equal(formatRoute({ ...ext, anchor: "backup", panelTab: "advanced" }), "#/settings/extension/backup", "the anchor wins, as the parser reads it first");
 });
 
-test("routes (setting): setting/<key> names one config key's row; an unknown key is the list", async () => {
+test("routes (setting): setting/<key> names one config key's row; a key with no row, or an unknown one, is the list", async () => {
     const { parseRoute, formatRoute } = await import("../src/chat/route.ts");
-    const { DEFAULT_CONFIG } = await import("../src/contract/contract-config.ts");
+    const { DEFAULT_CONFIG, SETTING_PLACES } = await import("../src/contract/contract-config.ts");
     for (const setting of Object.keys(DEFAULT_CONFIG)) {
+        if (!Object.hasOwn(SETTING_PLACES, setting)) {
+            assert.deepEqual(parseRoute(`#/setting/${setting}`), {}, `${setting} has no row`);
+            assert.equal(formatRoute({ setting }), "", setting);
+            continue;
+        }
         assert.equal(formatRoute({ setting }), `#/setting/${setting}`);
         assert.deepEqual(parseRoute(formatRoute({ setting })), { setting }, setting);
     }
+    assert.deepEqual(parseRoute("#/setting/ocrNumCtx"), {}, "ocrNumCtx is a config key with no row in the panel");
     assert.deepEqual(parseRoute("#/setting/autoApproveReadonly"), { setting: "autoApproveReadonly" }, "LINKS.md's example");
     assert.deepEqual(parseRoute("#/setting/apiKey"), { setting: "apiKey" }, "a secret's ROW has an address; the route carries no value");
     for (const h of ["#/setting/nope", "#/setting", "#/setting/", "#/setting/constructor", "#/setting/__proto__", "#/setting/toString"]) assert.deepEqual(parseRoute(h), {}, h);
