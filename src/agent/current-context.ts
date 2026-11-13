@@ -154,7 +154,7 @@ export interface CurrentSnapshot {
      *  this instant: `id`, `kind` (`call`), `tool`, `status` (`running`, `done`, `failed`, `cancelled`, `orphaned`),
      *  `started` (epoch ms), `elapsed_ms`, `lease_ms`, `expect_ms` (null when you gave none), `tail` (null when the
      *  executor cannot read a running call's output) and `result` (an `@tool:` pointer once done, else null). Act on
-     *  one with the `task` tool by its `id`; a task ends with the turn. Absent when the run has none.
+     *  one with the `task` tool by its `id`; a task runs on after your answer. Absent when the run has none.
      *
      *  ```js
      *  const t = ml.current.tasks;

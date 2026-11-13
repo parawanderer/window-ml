@@ -25,7 +25,7 @@ export function taskTool(define: typeof defineTool, deps?: TaskToolDeps): MlTool
         summary: "Await, cancel or tail a call that outran its lease and was detached.",
         description: "Act on a detached call by its task id (ml.current.tasks). await: wait up to timeout_ms (your estimate) for its result; " +
             "if it is still running then, you are told so and it runs on. cancel: stop it; the answer says what happened. " +
-            "tail: its latest output lines (a stream past 8 KiB is cut to its end; a pointer reads every line the peek returned). A task ends with this turn; its result also arrives on its own as a [task <id> …] message.",
+            "tail: its latest output lines (a stream past 8 KiB is cut to its end; a pointer reads every line the peek returned). A task runs on after your answer until it finishes, its deadline or a cancel. Its result arrives on its own as a [task <id> …] message, at the start of the next turn if it comes after your answer.",
         parameters: {
             type: "object",
             properties: {
