@@ -1268,6 +1268,64 @@ test("#/settings/extension/backup opens the Storage section and scrolls to Backu
     } finally { await ext.close(); }
 });
 
+// --- the extension's settings by address, from the hash and from a window-ml: link (LINKS.md) ---
+
+// The rest of the extension's settings addresses (LINKS.md, "Addresses"): a panel tab and section open as the backup
+// anchor does, and one setting's row is scrolled to and marked. The page reads its own hash for both.
+test("#/settings/extension/<tab>/<section> opens that section, and #/setting/<key> scrolls to and marks the row", async () => {
+    const ext = await launchExtension();
+    try {
+        const page = await ext.context.newPage();
+        await page.setViewportSize({ width: 1300, height: 600 });
+        const url = `chrome-extension://${ext.extensionId}/chat.html`;
+        await page.goto(`${url}#/settings/extension`);
+        await page.locator(".settings .set-search").waitFor();
+        await page.evaluate(() => localStorage.setItem("ml_set_collapsed", JSON.stringify({ shell: true })));
+        await page.goto(`${url}#/settings/extension/advanced/shell`);
+        await page.reload();
+        const shell = page.locator('details.set-section[data-section="shell"]');
+        await expect(shell).toHaveAttribute("open", "");
+        await expect(page.locator(".set-pills [role=tab][aria-selected=true]")).toHaveText("Advanced");
+
+        // A setting's address names no main view of its own: it opens Settings → Extension over the list.
+        await page.goto(`${url}#/setting/autoApproveReadonly`);
+        await page.reload();
+        const row = page.locator('.set-marked[data-setting~="autoApproveReadonly"]');
+        await expect(row).toBeVisible();
+        await expect(row).toBeInViewport();
+        await expect(page).toHaveURL(/#\/settings\/extension$/);
+        await page.close();
+    } finally { await ext.close(); }
+});
+
+// A `window-ml:` link in a reply on the extension's chat page sets the page's hash in place (LINKS.md, "What a click
+// does"), so it opens the same view the address would.
+test("a window-ml: link in a reply on the chat page opens that settings section", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const site = await startPageServer({});
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "overlay" });
+        fake.setScript([{ content: "Set it up under [Programs](window-ml:settings/extension/advanced/shell)." }]);
+        const { page: chat, errors } = await openChatPage(ext);
+        const site1 = await ext.context.newPage();
+        await site1.goto(site.url + "/");
+        await waitForMl(site1);
+        const hash = await site1.evaluate(async () => {
+            const c = window.ml.createChat({});
+            await c.chat("where do programs go?");
+            return c.hash;
+        });
+        await chat.locator(`.chat-row[data-session="local:${hash}"]`).click();
+        const link = chat.locator(".chat-main button.md-addr", { hasText: "Programs" });
+        await expect(link).toBeVisible();
+        await link.click();
+        await expect(chat.locator('details.set-section[data-section="shell"]')).toHaveAttribute("open", "");
+        await expect(chat.locator(".set-pills [role=tab][aria-selected=true]")).toHaveText("Advanced");
+        expect(errors).toEqual([]);
+    } finally { await ext.context.close(); await fake.stop(); await site.stop(); }
+});
+
 // --- `ml` in the chat page's own console (chat-console.ts) ---
 
 // The chat page is an extension page, so no injected.js puts window.ml there; chat-console.ts builds the chat and model

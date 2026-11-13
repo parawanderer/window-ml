@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { parseAddress, addressTip } from "../src/sidebar/links.ts";
+import { parseAddress, addressTip, addressHash } from "../src/sidebar/links.ts";
 import { PANEL_LAYOUT } from "../src/contract/contract-config.js";
 import { markdown, mdInline } from "../src/sidebar/format.ts";
 import { SETTING_PLACES } from "../src/contract/contract-config.ts";
@@ -40,6 +40,23 @@ test("an unknown key, tab or section, a section of another tab, or an extra part
         "settings//extension/models", "settings/extension/advanced//shell", "setting//apiKey", "settings/extension/backup/x",
         "settings/extension/models/", "/settings/extension/models", "s/x"])
         assert.equal(parseAddress(a), null, a);
+});
+
+// --- the chat page's hash for a link it opens ---
+
+// The extension's chat page opens a link by setting its own hash (`addressHash`); the router reads it with parseRoute.
+// Every address a link can name, enumerated: each one's hash names the same view the link resolved to.
+test("every address a link resolves to has a chat-page hash that names the same view", () => {
+    const addresses = ["settings/extension/backup", ...Object.keys(SETTING_PLACES).map((k) => `setting/${k}`)];
+    for (const [tab, { sections }] of Object.entries(PANEL_LAYOUT)) {
+        addresses.push(`settings/extension/${tab}`);
+        for (const section of Object.keys(sections)) addresses.push(`settings/extension/${tab}/${section}`);
+    }
+    for (const a of addresses) {
+        const r = parseAddress(a);
+        assert.ok(r, a);
+        assert.equal(addressHash(r), `#/${a}`, a);
+    }
 });
 
 // --- the tip names the view, never the label ---
