@@ -1072,13 +1072,18 @@ export class Evaluator {
                         else if (node.handler) {
                             const child = Object.create(scope);
                             if (node.param) child[node.param] = e;
-                        this.failAt = -1;   // caught: where it threw is no longer the script's failure
+                            this.failAt = -1;   // caught: where it threw is no longer the script's failure
                             try { result = yield* this.eval(node.handler, child); }
                             catch (e2) { if (e2 instanceof NotInDialect || e2 instanceof Denied) guardErr = e2; else { otherErr = e2; hasOther = true; } }
                         } else { otherErr = e; hasOther = true; }
                     }
                     if (node.finalizer) {
+                        // A throw from the finalizer is stamped where IT threw, not where the held throw did; the held
+                        // position comes back only when the finalizer finishes.
+                        const held = this.failAt;
+                        this.failAt = -1;
                         const f = yield* this.eval(node.finalizer, scope);
+                        this.failAt = held;
                         // A `return` in finally overrides a normal result/throw — but NEVER a guard denial.
                         if (!guardErr && f && typeof f === "object" && RETURN in (f as object)) return f;
                     }

@@ -1631,6 +1631,20 @@ test("a throw the script CAUGHT is not where a later failure happened", async ()
     });
 });
 
+test("a throw from a finally is placed where the finally threw, not where the throw it was holding came from", async () => {
+    const pad = "const pad = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; ";
+    const o = "const o = { g: 1, h: 2 }; ";
+    // Holding an uncaught throw, with no catch, and with a catch that threw again: each finalizer throw is its own.
+    for (const tail of ["try { JSON.parse('{bad'); } finally { o.h(1); }", "try { o.g(1); } catch (err) { JSON.parse('{bad'); } finally { o.h(1); }"]) {
+        await assert.rejects(run(pad + o + tail), (e) => {
+            assert.match(e.mlExcerpt, /o\.h▶\(1\)/, `${tail}: ${e.mlExcerpt}`);
+            return true;
+        });
+    }
+    // A finalizer that finishes leaves the held throw where it was.
+    await assert.rejects(run(pad + o + "try { o.g(1); } finally { const k = 1; }"), (e) => /o\.g▶\(1\)/.test(e.mlExcerpt));
+});
+
 // --- the TABLE FACADE kind ----------------------------------------------------------------------------------
 //
 // A real run hands the dialect a table as a FACADE (`asTable`, table-data.ts): the data plus col / select /
