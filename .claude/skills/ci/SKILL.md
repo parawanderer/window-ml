@@ -121,11 +121,12 @@ open. Adding `mobile-bundle` to the ruleset on 2026-10-06 put #365 straight into
 `mobile-bundle` row at all; a rebase onto main was the whole fix. The same applies to RENAMING a job, which
 is a remove plus an add as far as the ruleset is concerned.
 
-A CONDITIONAL job can still be required: a job that runs and is SKIPPED by its own `if:` satisfies the
-ruleset here, which is why `e2e` and `bench` are required and a docs-only PR is `CLEAN` with both
-`skipping`. That is worth re-confirming on a docs-only PR before requiring a new conditional check, rather
-than assuming — the failing shape (never reported at all) and the passing one (reported as skipped) look
-alike from the outside.
+A CONDITIONAL job can still be required — but only when the JOB runs and a STEP decides. A job skipped by
+its own `if:` can fail to report a status at all, and the PR then sits BLOCKED with every visible check green
+(2026-11-13: `build`/`e2e`/`bench`/`mobile-bundle` were step-gated to match `test`; `merge-when-green` also
+detects the shape and reruns once). A docs-only PR is `CLEAN` with those checks `skipping` only because the
+job starts and its first step echoes and exits 0. The failing shape (never reported at all) and the passing
+one (reported as skipped) look alike from the outside.
 
 **Do not run it in the foreground and wait.** Use `run_in_background: true` and carry on; the result
 arrives as a task notification. The e2e suite runs as three shards (`e2e (1/3)` … `e2e (3/3)`, each with 3 workers) plus an `e2e` job that is
