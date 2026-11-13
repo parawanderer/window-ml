@@ -831,7 +831,9 @@ host is mounted (Shane):
   is mounted and the browser copy while none is; for everything else in the workspace, the disk, which holds its only
   copy.
 - While a host is mounted the folder's real path is the name the model is given, and a cell has no `/files` alias, so
-  the transcript never shows one file under two paths at once. A bare `/files/x` in a cell or an argv then fails with
+  no one cell sees a file under two paths. Across time it does: a cell run offline names `/files/x` and a mounted one
+  names `/Users/sb/git/proj/window-ml-files/x`, and the transcript keeps each as the cell used it. A bare `/files/x`
+  in a cell or an argv then fails with
   `/files is on disk while the host is connected: /Users/sb/git/proj/window-ml-files/x`.
 - The folder is ignored by git by default, through `.git/info/exclude` (the clone's own list, never a committed
   `.gitignore`), so uploads never show in `git status` or a commit unless the person moves them out. The person can
@@ -850,9 +852,12 @@ host is mounted (Shane):
 - A conflict, the same file changed on both sides between syncs, keeps both: the disk's under its name, the browser's as
   a renamed copy (`report (browser copy).md`), and the panel says so; a live run is told through its inbox. A delete on
   one side against an edit on the other keeps the edit.
-- A change to `attached/` on disk (a process can `chmod` and write) never replaces the person's file: the backup keeps
-  the original in `attached/`, the next sync puts it back there on disk and moves the changed bytes to the writable
-  part as a renamed copy, and the panel says `data.csv was changed on disk; the original is kept`.
+- A change to `attached/` on disk (a process can `chmod` and write, and the person can edit in Finder) never replaces
+  the frozen original: the browser keeps the person's original as the version a transcript cites, and nothing on disk
+  is reverted, since the disk is primary. The panel says `data.csv was changed on disk; the original is kept in the
+  browser copy`.
+- A cited file stays frozen in the browser copy whatever happens on disk: an edit, a move or a delete there changes
+  what the next read sees, never what a transcript cites.
 - A file over the quota is never in the backup, so without the host the model's `/files` lists it as unavailable and
   opening it fails with `data.parquet is on disk only (3.2 GB, over this session's quota): connect the host to read it.`
 
@@ -875,22 +880,29 @@ the host goes gets "Unmounted or disconnected during a cell" (above): the next r
 
 **What runs free and what asks.** The scope is the mount list; a read-only mount refuses every write.
 
-- Free: reads anywhere in the mounts; writes and deletes in a read-write mount that git can undo (a tracked file with
-  no uncommitted change); anything in the uploads folder the runs made; `git status`, `git diff`, `git add`, and a
-  commit on the current branch.
+- Free: reads anywhere in the mounts, except the secrets deny-list (open, below); writes and deletes in a read-write
+  mount that git can undo (a tracked file with no uncommitted change); anything in the uploads folder the runs made;
+  `git status`, `git diff`, `git add`; and a commit on the current branch after the session's first. The first commit
+  in a session asks, since it writes into history under the person's identity; every commit the model makes carries
+  a trailer naming the run (`Window-ML-Run: <run id>`), as the repository's own commits carry an agent trailer.
 - Asks, unless a policy allows it (`docs/spec/POLICIES.md`): a delete or overwrite git cannot undo (an untracked or
   ignored file, or a tracked one with uncommitted changes); deleting the person's own uploads (`attached/`); anything
   that leaves the mounts; network access; git operations that rewrite history or reach a remote.
 - How it is enforced: a cell's writes and deletes go through the host's per-request check (above), so each is judged
-  as it is made. An `ml.sh` process is judged before it starts, by its program manifest's effects
-  (`docs/spec/SHELL.md`), since the host cannot stop a running process mid-write; its writes are then shown in its diff.
+  as it is made. An `ml.sh` process is judged before it starts, by its manifest's `effects` (`docs/spec/SHELL.md`),
+  since the host cannot stop a running process mid-write; its writes are then shown in its diff. That bounds only a
+  program whose effects on the mounts follow from its argv (`mv`, `rm`, a `cp` or `sed -i` on named paths once they
+  have manifests). A program that runs code from an argument or a file (`bash -c`, `python script.py`, `node`, `make`),
+  or whose manifest says `runs-code` or `unknown`, or that has no manifest, is in the asks category whatever its argv.
 
 **Diffs from git.** The workspace is a git repository by default, so a cell's diff and an `ml.sh` call's diff come from
 git, answering "the `ml.sh` snapshot" above. Before the call the host records the working tree as a tree object through
 a scratch index (`GIT_INDEX_FILE=<scratch> git add -A && git write-tree`, forcing in the uploads folder), which touches
 neither the person's index, HEAD nor stash list; after it, the same again, and the diff is the two trees'. Untracked
-files are included. A workspace that is not a git repository falls back to #1780's before copies for cells, and gets no
-diff for an `ml.sh` call (open).
+files are included. Ignored files outside the uploads folder are not: force-adding them would copy an `.env` or a key
+into the repository's object store and hash every build output. A delete or overwrite of an ignored file asks (above),
+and that card, kept in the transcript, is the only record of it. A workspace that is not a git repository falls back
+to #1780's before copies for cells, and gets no diff for an `ml.sh` call (open).
 
 **The files API.** The model lists, ages and clears its own files in code (use case 6), with the same names in JS and
 Python:
@@ -918,17 +930,23 @@ Python:
 **Red-team rows** (e3, through the coordinator): the sync reads and writes nothing outside the folder;
 `.git/info/exclude` is the only other file the host writes on its own; a symlink or non-regular file in the folder is
 never taken into the backup; a file over the quota is not backed up, by size or by growing after it was listed; a change
-to `attached/` on disk never replaces the person's file; a conflict keeps both copies; the git snapshot leaves the
+to `attached/` on disk never replaces the frozen original; a conflict keeps both copies; the git snapshot leaves the
 person's index, HEAD and stash list unchanged; a delete git cannot undo asks, by every route (`os.remove`,
-`ml.files.remove`, an `ml.sh` `rm` judged by its manifest); a page or a page-started run reaches neither the folder nor
-`ml.files`.
+`ml.files.remove`, an `ml.sh` `rm` judged by its manifest); an `ml.sh` program that runs code (`bash -c`, a manifest
+saying `runs-code` or `unknown`, no manifest) asks whatever its argv; the first commit in a session asks; a page or a
+page-started run reaches neither the folder nor `ml.files`.
 
 **Open.**
 
 - The folder's name (`window-ml-files/` is a proposal) and whether the person sets it per workspace.
 - Windows: how a `C:\Users\...` path appears in the sandbox's POSIX tree.
 - A workspace that is not a git repository: whether `ml.sh` calls get a diff by another snapshot.
-- Whether a commit on the current branch should ask the first time in a session.
+- Several sessions mounting one repository. Default: they share one folder; each session's browser copy stays its own.
+- Archiving or deleting a session. Default: it never deletes anything on disk.
+- A read deny-list for the repository's own secrets (`.env*`, `*.pem`, `id_*`, `*.key`). Default: a read of one asks;
+  the red-team rows cover the browser profile and the host config, not the repository.
+- Several mounts in one session. Default: one is the session's primary workspace, chosen at the first approval; cells
+  start there and the uploads folder lives there.
 - The background sync's cadence (a value to pick).
 
 **Owners.** This text, the panel's view of both copies, the sync's rules, provenance and the files API's JS side: the
