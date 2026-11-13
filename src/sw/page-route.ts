@@ -31,6 +31,15 @@ export class PageGone extends Error {
     constructor() { super(PAGE_GONE); this.name = "PageGone"; }
 }
 
+/** The sentence for a person's message sent from a tab the person moved the session off (MOVE_RUN.md). Names no site. */
+export const RUN_MOVED = "This session was moved to another tab, so this message was not sent. Continue it there, or bring it back here with \"Bring a session here\".";
+
+/** A person's message refused because it was sent from a tab the session was moved off (RUN_MOVED); a {@link PageGone},
+ *  so every refusal path that handles one handles it. */
+export class RunMoved extends PageGone {
+    constructor() { super(); this.message = RUN_MOVED; this.name = "RunMoved"; }
+}
+
 defineState({
     id: "run.builder", scope: "run", realm: "worker", audience: "human", lostOn: ["browser-restart"], heldOnly: true,
     describe: "The tab and site that built this page-built run or chat; the person's messages reach a page only there.",

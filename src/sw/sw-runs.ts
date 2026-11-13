@@ -103,8 +103,9 @@ export function startingOwnedBy(runId: unknown, tabId: number | undefined): bool
 // RESUME_RUN {runId, task} re-enters the loop from this history. In-memory only, so it's subject to
 // MV3 service-worker eviction (~30s idle) — resume works while the SW is warm (the common
 // finish-then-follow-up flow); an evicted run reports an actionable error and the caller starts fresh.
-// `moved`: the note a move between turns left for the model (move-run.ts), taken by the next turn's first call.
-export const bgRuns = new Map<string, { p: StartRunPayload; tabId: number; messages: NeutralMessage[]; sub?: import("../contract").SubcallUsage; moved?: string }>();
+// `moved`: the note a move between turns left for the model (move-run.ts), taken by the next turn's first call;
+// `leftTabs`: the tabs the person moved it off, so a message from one is told where the session went.
+export const bgRuns = new Map<string, { p: StartRunPayload; tabId: number; messages: NeutralMessage[]; sub?: import("../contract").SubcallUsage; moved?: string; leftTabs?: number[] }>();
 defineState({
     id: "run.init", scope: "session", realm: "worker", audience: "model", lostOn: ["worker-eviction"],
     describe: "What the run was started with: the task, model, step budget, tool names and what it may do without asking.",

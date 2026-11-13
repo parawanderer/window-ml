@@ -6,10 +6,14 @@ import { clearArrival, watchBetweenTurns } from "./nav-arrival";
 import { grantRunOrigin } from "./worker-tools";
 import { recordRunLog } from "./sw-run-log";
 import { toPageUi } from "./sw-side-panel";
+import { relayDebugEvent } from "./sw-debug";
 import { defineState } from "../state-registry";
 
 /** The replay ring's cap, as `bufferReplay` keeps it (sw-runs.ts). */
 const REPLAY_CAP = 400;
+
+/** What the tab a run left is told, on its card and panel. Names no site: it is said on the old tab's page. */
+export const MOVED_AWAY = "This session was moved to another tab. Continue it there, or bring it back here with \"Bring a session here\".";
 
 /** What a move answers: done, or refused with the sentence the person reads. */
 export type MoveOutcome = { moved: true } | { refused: string };
@@ -72,10 +76,16 @@ export async function moveRun(runId: string, toTabId: number): Promise<MoveOutco
     // The person choosing the tab is the consent the cross-domain gate asks for (agent-tools.md, "Variant B").
     grantRunOrigin(runId, origin);
     snap.moved = movedNote(left, { title: tab.title || url, url });
+    // Brought back to a tab it left, that tab is its own again.
+    snap.leftTabs = [...(snap.leftTabs ?? []).filter((t) => t !== toTabId), from];
     // The destination's card shows the session now, from its history, as a re-adopting page's does.
     for (const event of moveReplay(runId, from, toTabId)) toPageUi(toTabId, { type: "ML_DEBUG_TO_PAGE", event }, { frameId: 0 });
     // A run resumed onto a tab with no turn since (`adoptSession` tracks it there) is registered on the old tab: let it go.
     releaseRunTab(from, runId);
+    // The tab it left keeps the session on screen: say where it went, there only (not its replay, which a page can read).
+    const leftNote = { kind: "agent-note", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, text: MOVED_AWAY };
+    toPageUi(from, { type: "ML_DEBUG_TO_PAGE", event: leftNote });
+    relayDebugEvent(from, leftNote);
     // The old tab's page no longer holds the run, and the next turn's start judges the new tab's.
     clearArrival(runId);
     watchBetweenTurns(toTabId, runId);

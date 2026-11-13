@@ -11,7 +11,7 @@ import type { ElementContext } from "../contract";
 import type { StartRunPayload } from "../contract/contract-messages";
 import { imagesRefusal, shortHash, type AttachedFile, type PromptDisplay, type PromptOrigin, type SentFile } from "../contract/contract-run";
 import { FilesRefused, checkFilesField, cleanFiles, isPdfFile, pdfToPageRun } from "../attached-files";
-import { PageGone, pageRouteFor } from "./page-route";
+import { PageGone, RunMoved, pageRouteFor } from "./page-route";
 import { ImagesRefused } from "../image-gate";
 import { framePrompt } from "../agent/prompts";
 import { promptSurfaceOf } from "../agent/prompt-surface";
@@ -221,10 +221,17 @@ function noteSend(hash: string, turn: number, added: readonly FilePointer[]): vo
  * Say in a run's step list that a message was not sent, and why: for a surface whose send has no answer to carry it.
  * @param hash the run
  * @param why the refusal's sentence
+ * @param onTab the tab the message was typed on, when known: the note is said there
  */
-export function noteRefusedTurn(hash: string, why: string): void {
-    const tabId = bgRuns.get(hash)?.tabId ?? runInboxes.get(hash)?.tabId;
-    if (tabId != null) announce(tabId, { kind: "agent-note", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text: `Your message was not sent: ${why}` });
+export function noteRefusedTurn(hash: string, why: string, onTab?: number): void {
+    const runTab = bgRuns.get(hash)?.tabId ?? runInboxes.get(hash)?.tabId;
+    const tabId = onTab ?? runTab;
+    if (tabId == null) return;
+    const event = { kind: "agent-note", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text: `Your message was not sent: ${why}` };
+    if (tabId === runTab) { announce(tabId, event); return; }
+    // Typed on a tab the run is not on (one it was moved off): said there only, never into the run's own history.
+    toPageUi(tabId, { type: "ML_DEBUG_TO_PAGE", event });
+    relayDebugEvent(tabId, event);
 }
 
 /** A worker-built run's vision facts, for routing a later turn's images: the model it is on now, and what its build
@@ -260,7 +267,7 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
     const tabId = stored?.tabId ?? live?.tabId;
     // A run the worker drives (it built it, or took it over) is driven only from its own tab: from another, or one it no
     // longer holds, no page owns it either, so the message is refused rather than handed to the sending tab's page.
-    if (isWorkerRun(hash) && (tabId == null || (fromTabId != null && fromTabId !== tabId))) throw new PageGone();
+    if (isWorkerRun(hash) && (tabId == null || (fromTabId != null && fromTabId !== tabId))) throw fromTabId != null && stored?.leftTabs?.includes(fromTabId) ? new RunMoved() : new PageGone();
     // A run or chat a PAGE built is the page's to drive only on the tab that built it, on the site that built it, while
     // that site may use window.ml (page-route.ts): its handle keeps the history in step. Anywhere else the page the tab
     // shows did not build it, so the worker takes the run over if it holds it, and refuses the message if it does not.

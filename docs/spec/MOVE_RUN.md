@@ -119,7 +119,11 @@ the bookkeeping below. A resume of a held run on the tab it is already on stays 
    moved anyway: the gate exists to stop a PAGE sending the run elsewhere, not the person. (`@security`)
 5. **The old tab is left as it is.** Its page is not reloaded or closed. The move does not re-pin it and sends no
    `pageGone` for it; its pin was already released at `settle` if this was its last run. The next turn's `trackRun`
-   pins the new tab.
+   pins the new tab. Its card and panel still show the session, so they are told once that it moved (an `agent-note`
+   naming no site, sent to that tab's surfaces only, never its replay ring, which its page can read back), and a
+   follow-up typed there is refused with that sentence (`RunMoved`, `page-route.ts`) instead of "the page that started
+   this conversation is no longer open", said on that tab and never into the run's own history. The bgRuns entry keeps
+   the tabs it left (`leftTabs`); a run brought back to one is that tab's again.
 6. **The run log records the move** (a `tab` record naming both tab ids and the run), so the person sees where the run
    went and when.
 

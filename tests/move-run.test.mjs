@@ -254,6 +254,66 @@ test("MOVE_RUN from a page's own frame (the content script) moves nothing", T, a
     assert.equal((await runLogOf(r.bg, r.hash)).filter((e) => e.kind === "moved").length, 0);
 });
 
+// --- the tab a run was moved off: its card and panel still show the session (janitor-2 on #1717) ---
+
+/** The `agent-note`s of the run that went to one tab's surfaces since message `since`. */
+const notesOn = (r, tab, since = 0) => r.bg.tabMessages.slice(since).filter(([t, m]) => t === tab && m?.type === "ML_DEBUG_TO_PAGE" && m.event?.kind === "agent-note" && m.event.id === r.hash).map(([, m]) => m.event.text);
+/** How many model calls the run's worker has made: a turn makes at least one. (`turns()` also counts the earlier
+ *  result a move replays to the destination.) */
+const modelCalls = (r) => r.bg.calls.filter((c) => c.url.includes("/chat/completions")).length;
+/** A follow-up typed in the HUD on `tab`, as the composer sends it. */
+const followUp = (r, tab, text = "and now?") => r.bg.send({ type: "USER_RUN_ACTION", payload: { hash: r.hash, action: "send", text, surface: "hud" } }, hudOn(tab));
+
+test("the tab a run was moved off is told, once, that it moved, naming no site; the new tab is not told", T, async () => {
+    const r = await settled({ first: [] });
+    const since = r.bg.tabMessages.length;
+    await r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, hudOn(8));
+    const left = notesOn(r, 7, since);
+    assert.equal(left.length, 1, "one note on the old tab");
+    assert.match(left[0], /moved to another tab/);
+    assert.doesNotMatch(left[0], /other\.example|Other/, "it does not name where it went: it is said on the old tab's page");
+    assert.deepEqual(notesOn(r, 8, since), [], "the destination is not told it was left");
+    assert.ok(!r.bg.context.__mlRunStateForTest().replayTabs.includes(7), "and the note is not kept in a ring the old page can read back");
+});
+
+test("a follow-up typed on the tab a run was moved off is refused with where it went, said there, and starts no turn", T, async () => {
+    const r = await settled({ first: [] });
+    await r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, hudOn(8));
+    const since = r.bg.tabMessages.length;
+    const calls = modelCalls(r);
+    const res = await followUp(r, 7);
+    assert.match(res.refused ?? "", /moved to another tab/, "the refusal says the session moved");
+    assert.doesNotMatch(res.refused, /no longer open/, "not that the page is gone: it is open");
+    assert.ok(notesOn(r, 7, since).some((t) => /^Your message was not sent: .*moved to another tab/.test(t)), "said on the tab it was typed on");
+    assert.deepEqual(notesOn(r, 8, since), [], "never into the run's own tab");
+    await tick();
+    assert.equal(modelCalls(r), calls, "no turn: no model call");
+});
+
+test("control: a follow-up on the tab a run was moved TO starts its turn there", T, async () => {
+    const r = await settled({ first: [] });
+    await r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, hudOn(8));
+    const calls = modelCalls(r);
+    const res = await followUp(r, 8);
+    assert.equal(res.refused, undefined);
+    assert.ok(await until(() => modelCalls(r) > calls), "the turn ran");
+});
+
+test("a run brought back to a tab it left is that tab's again; the tab it then left refuses with where it went", T, async () => {
+    const r = await settled({ first: [] });
+    await r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, hudOn(8));
+    await r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, hudOn(7));
+    assert.match((await followUp(r, 8)).refused ?? "", /moved to another tab/, "tab 8 was left");
+    const calls = modelCalls(r);
+    assert.equal((await followUp(r, 7)).refused, undefined, "tab 7 is the run's again");
+    assert.ok(await until(() => modelCalls(r) > calls), "the turn ran");
+});
+
+test("control: a follow-up from a tab the run was never on keeps the old refusal", T, async () => {
+    const r = await settled({ first: [] });
+    assert.match((await followUp(r, 10)).refused ?? "", /no longer open/);
+});
+
 // --- the chat page's and the hub's session.resume of a run held on another tab is the same move (MOVE_RUN.md) ---
 
 /** Sends one session command over the extension pages' `ml-sessions` port and waits for its answer. */

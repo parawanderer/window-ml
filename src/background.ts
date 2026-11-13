@@ -420,7 +420,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             void userRunAction(message.hash, message.action, { text: message.text, images: message.images, ...(message.files != null ? { files: message.files } : {}), surface: message.surface, maxSteps: message.maxSteps }, message.tabId)
                 .then((mine) => { if (!mine) toPage(); }, (e) => {
                     // As on USER_RUN_ACTION: a refused turn is said in the run's step list, never handed to the page.
-                    if (e instanceof ImagesRefused || e instanceof FilesRefused || e instanceof PageGone) { noteRefusedTurn(message.hash as string, e.message); return; }
+                    if (e instanceof ImagesRefused || e instanceof FilesRefused || e instanceof PageGone) { noteRefusedTurn(message.hash as string, e.message, typeof message.tabId === "number" ? message.tabId : undefined); return; }
                     toPage();
                 });
             return;
@@ -901,7 +901,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         userRunAction(p.hash, p.action, message.payload, sender.tab.id).then((outcome) => sendResponse({ data: outcome }), (e) => {
             // Images the run may not be sent (vision not known, no reader): said in the run's step list, since this
             // surface has no other place to say it, and answered as handled so the shell does not hand it to the page.
-            if (e instanceof ImagesRefused || e instanceof FilesRefused || e instanceof PageGone) { noteRefusedTurn(p.hash as string, e.message); sendResponse({ data: null, refused: e.message }); return; }
+            if (e instanceof ImagesRefused || e instanceof FilesRefused || e instanceof PageGone) { noteRefusedTurn(p.hash as string, e.message, sender.tab?.id); sendResponse({ data: null, refused: e.message }); return; }
             sendResponse({ data: null });
         });
         return true;
