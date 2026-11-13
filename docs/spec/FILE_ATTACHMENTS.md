@@ -1023,7 +1023,9 @@ configured roots (`configure`), one list, not a second one beside it.
   read-only mount is never reachable for writing through a read-write one around it. The refusal is the host's, so
   the worker's copy of the list is a convenience, not the check.
   AMENDED 2026-11-13 (host lane): nesting is refused within one session only, since sessions do not share a mount;
-  another session may mount the same or a nested path. Stated limit: the archive folder cannot be refused by path,
+  another session may mount the same or a nested path. A mount's mode bounds the session that holds it, not the
+  directory: a second session's read-write mount around another's read-only one is that session's own grant, not an
+  escape from the first. Stated limit: the archive folder cannot be refused by path,
   because the extension holds a File System Access handle with no path the host can see. The browser profile is refused
   by the known per-browser data directories, and the host's config means its state directory and `~/.config/wmlhost`.
   AMENDED 2026-11-13 (host lane): the refusal's code is `MountRefused`. A `configure` whose roots no longer contain a
@@ -1068,7 +1070,8 @@ tracked file with no uncommitted change, false otherwise, and null when `repoCon
 undo itself (a `git checkout` of the file) would run the repository's smudge filter or hooks. AMENDED 2026-11-13 (host
 lane): `stat` also returns `kind` (`file`, `dir`, `symlink`, `other`, or null when absent), `protected` (H6b's rule, so
 the worker can say why before it asks) and `hardLinked` (H5's `st_nlink > 1`); `gitUndoable` is false for a file that
-does not exist and for a path in no repository.
+does not exist and for a path in no repository. AMENDED 2026-11-13 (host lane): `ignored` is null, as `gitUndoable`
+is, when `repoConfigRunsCode` is true or null, so no host query reads such a config, and null when git cannot be asked.
 
 AMENDED 2026-11-13 (host lane): the host's own git queries (`check-ignore`, the undoability check, the snapshot) each
 spawn git with `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1` and an explicit `GIT_DIR` and `GIT_WORK_TREE`,
@@ -1171,7 +1174,12 @@ depends on `hello.tilde`: a host without it gets the raw path in that sentence, 
 fact that backs it. "Refused" is the host's and no policy changes it; "asks" is the default, which a policy may change
 either way. Rows compose: every row that applies to a request is taken, and the most restrictive decides, refused over
 asks over free (a new file in a read-only mount is refused, a new file in `attached/` is refused, a secret-looking file
-in the uploads folder asks). The host applies its refusals before the worker judges.
+in the uploads folder asks). The host applies its refusals before the worker judges. AMENDED 2026-11-13 (host lane,
+ruled by the coordinator): the one named exception to composing is the uploads folder outside `attached/`, where the
+uploads row replaces the three `gitUndoable` rows instead of composing with them. The folder is git-ignored by design,
+so `gitUndoable` is always false there, and composing would make every overwrite in the uploads folder ask, against
+the use cases of "`/files` on the person's disk". The secret, read-only, protected, hard-link, `attached/` and `basis`
+rows still compose with it.
 
 | Operation | Default | Backing fact |
 | --- | --- | --- |
