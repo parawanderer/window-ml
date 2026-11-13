@@ -1322,6 +1322,20 @@ test("a window-ml: link in a reply on the chat page opens that settings section"
         await link.click();
         await expect(chat.locator('details.set-section[data-section="shell"]')).toHaveAttribute("open", "");
         await expect(chat.locator(".set-pills [role=tab][aria-selected=true]")).toHaveText("Advanced");
+
+        // The way back from the link is to the session it was clicked in, by the browser's Back and by Settings' own
+        // back arrow, never to the list.
+        const inSession = new RegExp(`#/s/local%3A${hash}$`);
+        await chat.goBack();
+        await expect(chat.locator(".settings")).toHaveCount(0);
+        await expect(link).toBeVisible();
+        await expect(chat).toHaveURL(inSession);
+        await link.click();
+        await expect(chat.locator('details.set-section[data-section="shell"]')).toHaveAttribute("open", "");
+        await chat.getByRole("button", { name: "Close settings" }).click();
+        await expect(chat.locator(".settings")).toHaveCount(0);
+        await expect(link).toBeVisible();
+        await expect(chat).toHaveURL(inSession);
         expect(errors).toEqual([]);
     } finally { await ext.context.close(); await fake.stop(); await site.stop(); }
 });
