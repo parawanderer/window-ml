@@ -95,6 +95,8 @@ const COERCING = [
     ["element.hasAttribute", "hasAttribute", `const el = await ml.models(); const o = await ml.models(); return el.hasAttribute(o)`, `const el = await ml.models(); return el.hasAttribute("class")`, true, (d) => d.querySelector("p")],
     ["style.getPropertyValue", "getPropertyValue", `const s = await ml.models(); const o = await ml.models(); return s.getPropertyValue(o)`, `const s = await ml.models(); return s.getPropertyValue("color")`, "", (d) => d.body.style],
     ["collection.item", "item", `const c = await ml.models(); const o = await ml.models(); return c.item(o)?.tagName`, `const c = await ml.models(); return c.item(0)?.tagName`, "P", (d) => d.getElementsByTagName("p")],
+    ["tokenlist.contains", "contains", `const c = await ml.models(); const o = await ml.models(); return c.contains(o)`, `const c = await ml.models(); return c.contains("x")`, true, (d) => d.querySelector("p").classList],
+    ["tokenlist.item", "item", `const c = await ml.models(); const o = await ml.models(); return c.item(o)`, `const c = await ml.models(); return c.item(0)`, "x", (d) => d.querySelector("p").classList],
     // --- a Number receiver converts the argument too ---
     ["number toFixed", "toFixed", O + `return (5.1).toFixed(o)`, `return (5.1).toFixed(2)`, "5.10"],
     ["number toPrecision", "toPrecision", O + `return (5.1).toPrecision(o)`, `return (5.1).toPrecision(2)`, "5.1"],
