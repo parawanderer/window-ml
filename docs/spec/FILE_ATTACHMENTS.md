@@ -798,9 +798,9 @@ window-ml-host owner, through the coordinator.
 ### `/files` on the person's disk, when a host is connected (proposed 2026-11-13)
 
 PROPOSED 2026-11-13, from Shane's rulings in the coordinator's session (what `ml.sh` is for, the setup, per-platform
-mounts, the size limits, removing the disk) and in the calm-chat-motion session (the files API). Not ruled; nothing is
-built. Where it disagrees with "Host directories in the sandbox" above, this wins: the argv refusal on `/files/` goes
-away, and the `ml.sh` snapshot question is answered by git.
+mounts, the size limits, removing the disk, the browser store as primary) and the files API (Shane's). Not ruled;
+nothing is built. Where it disagrees with "Host directories in the sandbox" above, this wins: the argv refusal on
+`/files/` goes away, and the `ml.sh` snapshot question is answered by git.
 
 **Use cases** (Shane's, collected as they come; the design follows them, not the other way round):
 
@@ -814,47 +814,61 @@ away, and the `ml.sh` snapshot question is answered by git.
 5. No host connected: the model works in the virtual `/files/` of "A session's files as a directory", as ruled.
 6. Clearing space without the person: the model lists its files, finds the oldest, and deletes them in code.
 
-**The proposal: one `/files`, two backings.** It is one logical thing, shown in one files panel under one name:
+**The proposal: the browser store is primary, a folder on disk mirrors it.** `/files` exists so the model can work on
+the person's uploads, so it stays usable when the host is unavailable or dies (Shane):
 
-- With no host, it is the virtual store (MEMFS over the shelf), as ruled above.
-- With a host, it is a real folder inside the workspace, which the workspace's mount already covers, at its real path:
-  `<workspace>/window-ml-files/` (`/Users/sb/git/proj/window-ml-files/attached/3fa91c2/data.csv`), with the same
-  layout (`attached/<handle>/<name>` read-only, the rest writable). `cp`, `sed -i` and `open()` reach the same bytes,
-  with nothing to copy and no `ml.sh.put` or read-back to teach the model; those stay as mechanisms, not as advice.
-- The folder's real path is its only name while a host is connected: a cell has no `/files` alias, so the transcript
-  never shows one file under two paths. A bare `/files/x` in a cell or an argv fails with the sentence
-  `/files is on disk while the host is connected: /Users/sb/git/proj/window-ml-files/x`.
+- The browser store (MEMFS over the shelf, as ruled above) always exists, holds the uploads, and carries the quota.
+  With no host, the model works there, as today.
+- With a host connected, a folder in the workspace, `<workspace>/window-ml-files/`, is a MIRROR of it, kept in sync both
+  ways in the background, with the same layout (`attached/<handle>/<name>` read-only, the rest writable). `cp`,
+  `sed -i` and `open()` reach the uploads at a real path
+  (`/Users/sb/git/proj/window-ml-files/attached/3fa91c2/data.csv`), with no `ml.sh.put` or read-back to teach the model;
+  those stay as mechanisms, not as advice. The model works on the disk, and the folder is part of it.
+- The sync covers that folder only, never the rest of the workspace. Authority: the browser store for `/files`, the disk
+  for everything else in the workspace.
+- While a host is connected the folder's real path is the name the model is given, and a cell has no `/files` alias, so
+  the transcript never shows one file under two paths at once. A bare `/files/x` in a cell or an argv then fails with
+  `/files is mirrored on disk while the host is connected: /Users/sb/git/proj/window-ml-files/x`.
 - The folder is ignored by git by default, through `.git/info/exclude` (the clone's own list, never a committed
   `.gitignore`), so uploads never show in `git status` or a commit unless the person moves them out. The person can
   name another folder, inside a mount.
 - How the folder is mounted is per platform, whatever works there (Shane): on macOS and Linux it is an ordinary folder
-  under the workspace, so nothing special is needed; Windows is open (the path rule, above).
+  under the workspace; Windows is open (the path rule, above).
 
-**The person's files on disk.** `attached/` is written by the host with mode `0444`, and the host refuses a cell's
-write there as the virtual store does. A process `ml.sh` runs can still `chmod` and write, so the browser keeps each
-attachment's original bytes as its frozen version and compares the hash on read: a changed attachment is shown as
-changed (`data.csv was changed on disk; the original is kept`), never silently taken for the person's.
+**The sync.**
 
-**Provenance.** A disk listing cannot say who made a file, so the browser keeps the record (path, hash, made by the
-person, run R's cell N, or an `ml.sh` call), and a file on disk the record does not know reads as "made on disk".
+- Browser to disk: each acknowledged shelf write (item 3, above) is written into the folder, beside the file and renamed
+  into place.
+- Disk to browser: the host watches the folder (FSEvents on macOS, inotify on Linux) and sends each changed regular
+  file, and every `ml.sh` call's end flushes what it changed. A symlink or a non-regular file in the folder is never
+  pulled.
+- Over the quota: a file written on disk that does not fit the browser's quota is not pulled. The panel shows it as
+  "on disk only", with its size; the model's `/files` without a host lists it as unavailable, and opening it fails with
+  `data.parquet is on disk only (3.2 GB, over this session's quota): connect the host to read it.` Everything under
+  the quota mirrors.
+- A conflict, the same file changed on both sides between syncs, keeps both: the disk's under its name, the browser's as
+  a renamed copy (`report (browser copy).md`), and the panel says so; a live run is told through its inbox. A delete on
+  one side against an edit on the other keeps the edit.
+- A change to `attached/` on disk (a process can `chmod` and write) is never pulled into the person's file: the
+  browser's original stays in `attached/`, the disk's changed bytes move to the writable part as a renamed copy, and
+  the panel says `data.csv was changed on disk; the original is kept`.
+- The first sync when a host connects reconciles both sides by the same rules; there is no separate one-time copy.
 
-**A session that gains a host.** A session that started with no host and later has one copies its virtual files into
-the folder once; the disk is authoritative from then on and the virtual copy is cleared. The copy only ever goes from
-virtual to disk, never from the disk into the browser: the browser never pulls the person's disk into its storage, where
-the quota would refuse it and the person's files would exist twice.
+**Provenance.** The browser keeps the record (path, hash, made by the person, run R's cell N, or an `ml.sh` call),
+since a disk listing cannot say who made a file; a file the record does not know reads as "made on disk".
 
-**The disk removed** (the host disconnects, or the person unmounts). The files stay on the disk. The panel shows
-`/files` as unavailable, with its real path, never as empty or gone. The model's `/files` falls back to the virtual
-store, empty since the one-time copy; an upload made meanwhile lands there and is copied into the folder once the host
-is back, by the same rule. The transcript keeps the real paths, so a later read without the host says where the files
-are. A cell running when the disk goes gets "Unmounted or disconnected during a cell" (above): the next read fails.
+**The host unavailable or dead.** The browser copy is intact and the model's `/files` keeps working on it; the files on
+the disk stay there. The panel shows the mirror as disconnected, with its real path. Uploads made meanwhile land in the
+browser store and reach the folder at the next sync. The transcript keeps the real paths a run used, so a later read
+without the host says where they were. A cell running when the host goes gets "Unmounted or disconnected during a cell"
+(above): the next read through the mount fails.
 
 **Three limits, kept apart:**
 
 | Limit | Applies to | Set by |
 | --- | --- | --- |
-| The quota | the virtual backing only: what the browser's storage holds for a session's files | a DevTools Settings flag ("Lifetime and quota", above) |
-| The disk's free space | a disk-backed `/files` and every mount: no cap of ours | the disk |
+| The quota | `/files` itself: the browser store, always, whether or not a mirror exists; a file over it stays on disk only | a DevTools Settings flag ("Lifetime and quota", above) |
+| The disk's free space | the mirror folder's disk-only files and the rest of every mount: no cap of ours | the disk |
 | The fetch cap | one `open()` pulling one file into Pyodide, on either backing (`EFBIG`, "Bounded sizes" above) | the worker's memory, from the measurement |
 
 **What runs free and what asks.** The scope is the mount list; a read-only mount refuses every write.
@@ -889,17 +903,20 @@ Python:
 
 **Dropped alternatives.**
 
-- A virtual store kept beside the disk and synced to it, or a host-side copy of `/files` mapped into a container: two
-  stores need a rule for which copy is authoritative after a cell's write followed by an `ml.sh` call, and a diff that
-  sees both; one folder needs neither, and the panel lists a real folder through the host as it lists the virtual one.
+- The disk as `/files`'s only backing once a host connects, with a one-time copy from the browser and the browser copy
+  cleared: `/files` would stop working when the host is unavailable or dies, and the uploads are what the model is
+  there to work on (Shane). The mirror costs a sync and a conflict rule; that is the price of keeping them usable.
+- A host-side copy of `/files` mapped into a container at `/files`: a second mirror, and it needs a container.
 - A `/files` alias inside the cell while a host is connected: one file under two paths in the transcript and the diffs.
 - The folder in a fixed place in the home directory: it needs a mount of its own, and it is not where the person looks
   at their work.
 
-**Red-team rows** (e3, through the coordinator): `.git/info/exclude` is the only file outside the folder the host
-writes on its own; the git snapshot leaves the person's index, HEAD and stash list unchanged; an attachment changed on
-disk is never described as the person's; a delete git cannot undo asks, by every route (`os.remove`, `ml.files.remove`,
-an `ml.sh` `rm` judged by its manifest); a page or a page-started run reaches neither the folder nor `ml.files`.
+**Red-team rows** (e3, through the coordinator): the sync reads and writes nothing outside the mirror folder;
+`.git/info/exclude` is the only other file the host writes on its own; a symlink or non-regular file in the folder is
+never pulled; a file over the quota is not pulled, by size or by growing after it was listed; a change to `attached/`
+on disk never replaces the person's file; a conflict keeps both copies; the git snapshot leaves the person's index,
+HEAD and stash list unchanged; a delete git cannot undo asks, by every route (`os.remove`, `ml.files.remove`, an
+`ml.sh` `rm` judged by its manifest); a page or a page-started run reaches neither the folder nor `ml.files`.
 
 **Open.**
 
@@ -907,10 +924,11 @@ an `ml.sh` `rm` judged by its manifest); a page or a page-started run reaches ne
 - Windows: how a `C:\Users\...` path appears in the sandbox's POSIX tree.
 - A workspace that is not a git repository: whether `ml.sh` calls get a diff by another snapshot.
 - Whether a commit on the current branch should ask the first time in a session.
+- How often the background sync runs, and whether a large pull is shown as progress.
 
-**Owners.** This text, the panel's two backings, provenance and the files API's JS side: the chat-page lane. The
-mount, the fallback and the Python binding: the Pyodide lane. The host's folder, the git snapshot and the per-request
-judging: the `ml.sh` and window-ml-host owner (none live; with Shane).
+**Owners.** This text, the panel's mirror view, the sync's rules, provenance and the files API's JS side: the chat-page
+lane. The mount, the fallback and the Python binding: the Pyodide lane. The host's folder, the git snapshot and the
+per-request judging, the folder watch: the `ml.sh` and window-ml-host owner (none live; with Shane).
 
 **The person deletes or moves a file.** The files panel can delete, rename and move files in the writable part. During
 a live run the model is told the file's name through the run's inbox, the same as any other notice; a move is a delete
