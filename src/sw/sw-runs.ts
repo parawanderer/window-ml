@@ -629,10 +629,16 @@ function dropTokenStore(runId: string): void {
     tokensByRun.delete(runId); releaseSessionValues(runId, keep); dropLocalTools(runId); releaseShOutputs(runId); forgetArrivalRun(runId);
 }
 
+/** What else is released with a session, registered by modules that cannot be imported here (sw-python's Python namespace).
+ *  A `var` with no initializer: sw-python registers while this module is still loading (an import cycle through the router), and a `const` would be unreachable then. */
+var sessionReleaseHooks: ((runId: string) => void)[] | undefined;   // state: fixed — registered at module load
+/** Register something to release with every session ({@link releaseSessionTokens}). @param hook called with the session's run id */
+export function onSessionRelease(hook: (runId: string) => void): void { (sessionReleaseHooks ??= []).push(hook); }
+
 /** Release a SESSION's pointers — only when the session itself is gone (its bgRuns entry dropped, or its store pushed
  *  out by newer sessions), never at the end of a turn. Paired with every `bgRuns.delete` so the two lifetimes cannot
  *  drift apart again. The stored values those pointers named go with them: nothing can address them any more. */
-export function releaseSessionTokens(runId: string): void { tokensByRun.delete(runId); releaseSessionValues(runId); dropLocalTools(runId); releaseShOutputs(runId); forgetArrivalRun(runId); }
+export function releaseSessionTokens(runId: string): void { for (const hook of sessionReleaseHooks ?? []) hook(runId); tokensByRun.delete(runId); releaseSessionValues(runId); dropLocalTools(runId); releaseShOutputs(runId); forgetArrivalRun(runId); }
 
 // The navigation SENSOR: a committed MAIN-frame navigation on a tab that hosts a live run means its document
 // (and registered toolset) is going away → engage the barrier so the next delegated tool waits for re-adopt.

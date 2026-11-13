@@ -124,13 +124,15 @@ namespace is recreated, which is how a loss is noticed (`benchLost`).
 - **Loss:** a watchdog kill (15 s script, 120 s start), a worker crash, the offscreen document closing, an extension
   reload. The housekeeping log records pyodide kills and cold starts with a time and a reason.
 
-- **The keep's ended-run record** (`endedRuns`, declared `python.ended-runs`): the run ids `PY_DELETE_RUN` ended, so a keep that
+- **The keep's ended-run record** (`endedRuns`, declared `python.ended-runs`): the run ids `PY_END_TURN` or `PY_DELETE_RUN` ended, so a keep that
   arrives afterwards without the service worker's `turnLive` stamp arms nothing. The stamp itself is stored nowhere: the
   service worker derives it at every send from `runControllers`. **Loss:** the offscreen document closing empties the
   record (and every worker with it), so the one case left is the retry after `forgetOffscreen` re-posting a keep into a
   FRESH document; the service worker's own recheck at send (no live controller, no `keep`) is what stops it there. A
   worker eviction loses `runControllers` too, so a cell sent after it is stamped only if its run is hosted again; an
-  unhosted run's `keep` is dropped and the sandbox goes on the 5 min settled clock, its names told as lost.
+  unhosted run's `keep` is dropped and the sandbox goes on the between-turns clock (`pythonIdleMinutes`, default 10 min), its names told as lost.
+
+- **The Python namespace** (`python.run-namespace`, offscreen; `python-worker.ts` `runs` holds the dict): lifetime = the RUN, across its turns. **Lost** at session release, archive or delete (`PY_DELETE_RUN`), at the idle reap (30 min in a turn, `pythonIdleMinutes` between turns; told on the next cell and in the transcript), when its worker dies (kill, crash), and when the offscreen document closes. A turn's end does NOT lose it (`PY_END_TURN`); it drops only the shared `full` worker's dict for the run. A `keep` is turn-bound.
 
 The questions for persisting per run are in the spec's "Python state persists per run".
 

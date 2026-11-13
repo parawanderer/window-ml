@@ -493,9 +493,17 @@ ROOT C ([`docs/spec/PYTHON_DIALECT.md`](../spec/PYTHON_DIALECT.md), "The namespa
   as before. **Not** the bench (`persist`): its own `benchNs`.
 - **Injected names** (`df`, `tables`, `img`) are assigned into the dict by each cell that passes them and are not
   wiped when a later cell passes none. `RESET` never runs on a kept dict, so `_`-prefixed names persist too.
-- **Ends** with the turn: `settle()` (`sw-run-host.ts`, once per turn) and `forgetRun` (`background.ts`) call `deletePythonRun`, which
-  sends `PY_DELETE_RUN { run, principal: "run:<id>" }`; the offscreen document forwards it to that principal's worker as
-  `deleteRun`, which destroys the dict, and clears its own `runPrincipals`, `runNsVars` and `nsLoss` entries.
+- **Lives as long as the RUN, not the turn** (ruled 2026-11-13): a run id is stable across the turns of a session, and the
+  run's own worker (`run:<id>`) keeps its dict between them. `settle()` (`sw-run-host.ts`, once per turn) calls
+  `endPythonTurn`, which sends `PY_END_TURN { run, ms }` (`ms` is the `pythonIdleMinutes` setting, default 10, in ms): the
+  offscreen document posts `deleteRun` only to the OTHER principals holding a dict for the run (the shared `full` worker:
+  a dict left there is readable from another full-mode run's cell), ends the run's keep, marks it in `endedRuns` and
+  re-arms the own worker's idle clock with the between-turns delay. It keeps `runPrincipals`, `runNsVars` and `nsLoss`.
+- **Ends** at session release and archive: `deletePythonRun` sends `PY_DELETE_RUN { run, principal: "run:<id>" }`, which the
+  offscreen document forwards to every principal's worker as `deleteRun` (destroying the dict) and clears its own
+  `runPrincipals`, `runNsVars` and `nsLoss` entries. Called from `forgetRun` (`background.ts`, a deleted session), the
+  session store's eviction as deleted or archived (`sw-sessions.ts`), and `releaseSessionTokens` (`sw-runs.ts`; a hook,
+  `onSessionRelease`, since sw-python imports sw-runs). Also lost: the idle reap, a kill, the offscreen document closing.
 - **Loss is told.** `killWorker` (timeout, start timeout, crash) records `nsLoss` for every run `runPrincipals` lists on
   the killed worker, whether or not one of its cells ever returned a scope manifest; the run's next cell opens its
   stdout with `namespace reset at <ISO time>: <timeout|start-timeout|crashed>` and the result carries `nsReset`. The
@@ -516,13 +524,17 @@ browser: every worker-hosted run that ran Python kept a whole Pyodide realm. Now
 - **Idle** means no message of that principal's (a cell, a prewarm, a delete) is running or queued in its worker. The
   clock starts when the last one answers and stops when the principal posts again.
 - **How long it waits** depends on what the shut costs. A worker that holds no namespace of a live turn waits
-  `REAP_SETTLED_MS` (5 min) and loses only its warmth: the turn settled and `PY_DELETE_RUN` emptied it, or it is a
-  page's stateless principal (`reapDelay` returns the 5 min for any `page:` whatever the flags say). A worker that holds a live turn's namespace waits `REAP_LIVE_MS` (30 min); the names are
-  lost, and the run's next cell opens with `namespace reset at <time>: idle (…keep: true…)`, as after a kill. The bench
-  (`own`) and the `full` worker are never reaped.
+  `REAP_SETTLED_MS` (5 min) and loses only its warmth: it holds no namespace (`PY_DELETE_RUN` emptied it, or it never
+  defined one), or it is a page's stateless principal (`reapDelay` returns the 5 min for any `page:` whatever the flags say).
+  A worker that holds the namespace of a RUNNING turn waits `REAP_LIVE_MS` (30 min); the names are lost, and the run's
+  next cell opens with `namespace reset at <time>: idle (…keep: true…)`, as after a kill. A worker holding the namespace
+  of a run BETWEEN turns (`PY_END_TURN` seen, no cell of a live turn since: a cell stamped `turnLive` puts the run back on
+  the live clock) waits the person's `pythonIdleMinutes` (DevTools Settings, default 10; 0 never reaps it) and the next
+  cell says `idle between turns`. Either loss is also one `agent-note` line in the run's transcript (`PY_REAPED` →
+  `noteRunLine`, `sw-run-start.ts`), besides the run-log record. The bench (`own`) and the `full` worker are never reaped.
 - **A keep** is a worker-hosted turn asking, through `python_exec` `keep: true`, to hold its worker through idle gaps
   of any length (a run that works overnight). It applies only to that run's own `run:<id>` worker, holds for the
-  turn's later cells too, and ENDS WITH THE TURN: `PY_DELETE_RUN` clears it, and the worker is then on the 5 min clock.
+  turn's later cells too, and ENDS WITH THE TURN: `PY_END_TURN` clears it, and the worker is then on the between-turns clock.
   A keep never outlives its turn, so it never holds a realm for a run nobody is running. The run log records
   `python`/`keep` once per turn, so the person sees the model asked. It also ends with its SANDBOX: a kill (a
   timeout, a crash, a cancel) clears it and the next cell is told the loss; the tool's description says so. A cell that DETACHES from the loop
@@ -530,12 +542,13 @@ browser: every worker-hosted run that ran Python kept a whole Pyodide realm. Now
   does and ends with the turn or the sandbox, never later.
   What arms one is three checks: the sender is the service worker (`!sender.tab`, as for the bridges lift; `PY_DELETE_RUN`
   takes a stricter one, `sender.id` must be the extension's and no tab, since only the service worker posts it), the wire names the cell's own run, and the turn is live. The last is
-  `endedRuns` (every run `PY_DELETE_RUN` ended, bounded to 256) plus `turnLive`: the service worker stamps a keep
+  `endedRuns` (every run `PY_END_TURN` or `PY_DELETE_RUN` ended, bounded to 256) plus `turnLive`: the service worker stamps a cell
   `turnLive` only when `runControllers` still has the run, and checks again at every send, so the retry after
   `forgetOffscreen` cannot re-arm a keep after the turn's end. A resumed turn reuses the run id, which is why the
-  ended record alone cannot decide: its first keep arrives stamped and re-opens the gate.
+  ended record alone cannot decide: its first cell arrives stamped and re-opens the gate (for a keep, and for the clock).
 - **Before the shut** the worker is asked (`takeDropped`) for the callables its last cell handed to JavaScript that
-  fired since (`cell-gate.ts`); no cell will report them now. A worker that does not answer in 2 s is terminated
+  fired since (`cell-gate.ts`); no cell will report them now. (A turn's end asks nothing: the next cell, this reap or the
+  release carries them.) A worker that does not answer in 2 s is terminated
   anyway. A cell that started and finished while the worker answered also stops the reap (`workerUses` moved: a
   finished cell is no longer pending, and the worker was not idle). The offscreen sends `PY_REAPED { run, live, dropped? }`, and the run log gets `python`/`reap` (a live turn's
   namespace went) and `python`/`dropped` (`at-reap`). The housekeeping log gets `pyodide`/`reap`.

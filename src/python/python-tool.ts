@@ -92,7 +92,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
     // a page-hosted agent's cells have no run, so they stay stateless.
     const stateClause = mintVia
         ? "Names you define persist across your python_exec calls in this run (`df`/`tables`/`img` are re-bound when a " +
-          "call passes them); after a sandbox restart the output opens with `namespace reset at <time>: <reason>` and they are gone."
+          "call passes them); across turns too, until a sandbox restart or a long idle gap between turns, after which the output opens with `namespace reset at <time>: <reason>` and they are gone."
         : "Each call is STATELESS — a fresh namespace, nothing persists.";
     return ml.defineTool({
         name: "python_exec",
@@ -126,8 +126,8 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                     description: tablesDesc,
                 },
                 tableRaw: { type: "boolean", description: "Load table cells as raw STRINGS (skip the default numeric/currency auto-cast). Use only for ZIP/SKU/leading-zero IDs that casting would corrupt." },
-                // Only where names persist (a worker-hosted run): the sandbox is shut after 30 min idle (py-reap.ts).
-                ...(mintVia ? { keep: { type: "boolean", description: "Keep your names through idle gaps over 30 min (a run that waits hours between calls) until this run ends or its sandbox is killed (a timeout, a crash, a cancel), which the next cell is told as loss. Otherwise an idle sandbox is shut and its names lost." } } : {}),
+                // Only where names persist (a worker-hosted run): the sandbox is shut after 30 min idle in a turn (py-reap.ts); a keep lasts the turn.
+                ...(mintVia ? { keep: { type: "boolean", description: "Keep your names through idle gaps over 30 min (a run that waits hours between calls) until your turn ends or its sandbox is killed (a timeout, a crash, a cancel), which the next cell is told as loss. Otherwise an idle sandbox is shut and its names lost." } } : {}),
                 // Only where a cell can detach (a worker-hosted run, sw-python-task.ts): the lease it replaces.
                 ...(mintVia ? { expect_ms: { type: "number", description: `Your estimate of this cell's run time in ms. Past it, or a short default without it, the call detaches into a task. At most ${PY_LEASE_MAX_MS / 1000} s: a longer one counts as that.` } } : {}),
                 ...outputCapParams("python_exec", "Prefer returning a compact result."),
