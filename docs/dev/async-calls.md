@@ -92,7 +92,9 @@ offscreen document:
 - **The kernel is locked while a cell is detached.** A second `python_exec` of the run is REFUSED (`pyKernelBusy`), not
   queued: queued behind the worker's chain, its 120 s start bound would kill the worker and the detached cell with it.
 - **The result goes through the tool's own formatter** (`format` in `python-tool.ts`): the output cap and the hints, then
-  `finish`'s scrub. A figure cannot ride a task's text, so the line says it was not shown. `verify` is not run late.
+  `finish`'s scrub. A whole longer than the text is stored, and its key, length and figure travel with it, so the loop
+  mints a `@tool:` pointer with the step's cut line and the figure reaches the model as an image (#1730). `verify` is
+  not run late.
 - **Cancel is the interrupt first** (`interruptCell`, offscreen.ts): SIGINT into the cell's worker's buffer, and the
   worker killed after `PY_INTERRUPT_KILL_MS` (1 s) if it has not answered. The cancel says which (`pyCancelText`): names
   kept, or the sandbox restarted and the names lost. A cancel that arrives before the cell started is done when it starts,
@@ -110,6 +112,18 @@ offscreen document:
 - **The messages are the service worker's alone.** `PY_STARTED`, `PY_CANCEL`, `PY_TAIL` and `PY_DONE` are not in `HANDLE_MAP`, are
   answered only for our own id with no tab, and name a cell by an id only the worker made. A `cell` on a `PY_RUN` is
   honoured only from the worker and only for the wire's own `run:<id>` principal.
+
+## A page change (rule 4a)
+
+Each executor declares where its call runs: `TaskExecutor.pageBound` (`sw-tasks.ts`; `ml.sh` and `python_exec` say `false`, absent
+means false). `webNavigation.onCommitted` (`background.ts`) calls `cancelPageTasks(runId)` for every worker-hosted run on the tab,
+which cancels the page-bound tasks through their executor, queues `[task <id> cancelled: it ran in the page this run left]` (or
+answers a waiting await with it) and records `task`/`cancelled` with reason `page-change`. A cancel the executor does not confirm leaves the task
+`orphaned` instead: the line reads `[task <id> orphaned: …, and its cancel was not confirmed]`, a waiting await gets status
+`orphaned`, and the record is `task`/`orphaned`. A runtime-bound task is left alone. The
+cancelled task's late result is dropped by `finish`'s status guards. No page-bound executor exists yet; the tests use a fake one
+(`tests/sh-lease.test.mjs`). `rekeyRunInbox` (`sw-runs.ts`) moves a live run's inbox to another tab (tasks are keyed by run id and
+follow); `senderOwnsRun` is the owner check `SET_APPROVAL` uses. The run host's `settle` still closes over the starting tab id.
 
 ## Traps
 

@@ -132,14 +132,16 @@ export function leaseCell<R>(o: LeasedCell<R>): Promise<R | PyDetached> {
                 };
             });
             const task = detachTask(o.runId, { tool: "python_exec", startedMs, leaseMs, expectMs: o.expectMs, exec: {
+                pageBound: false,   // runs in the offscreen document
                 cancel: async () => { const how = await cancelPyCell(o.cell); if (how !== "ended") cancelled = how; return { confirmed: true, text: pyCancelText(how) }; },
                 tail: async (n, asked): Promise<string | TailAnswer | null> => {
                     const ring = await tailPyCell(o.cell);
                     if (ring === null) return "It has just ended; its result arrives on its own.";
                     const d = pyTailText(ring, n, asked ? ASKED_TAIL_CHARS : OUTPUT_CAP.exec.default);
                     if (!asked || !d.cut) return d.text;
-                    const value = await storeText((await forModel(d.whole)).text, `task tail ${o.cell}`).catch(() => undefined);
-                    return value ? { text: d.text, value } : d.text;
+                    const whole = (await forModel(d.whole)).text;
+                    const value = await storeText(whole, `task tail ${o.cell}`).catch(() => undefined);
+                    return value ? { text: d.text, value, chars: whole.length } : d.text;
                 },
                 tailAbsent: "", settled,
             } });

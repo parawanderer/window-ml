@@ -536,6 +536,54 @@ test("an output the model got whole carries no cut note", async () => {
     assert.equal(results.find((r) => r.name === "exec").result, "short");
 });
 
+// --- a worker-made textValue makes a result citable, and its textChars is what the cut line names ---
+
+const TASK_TOOLS = [...TOOLS, { name: "task", description: "", parameters: { type: "object", properties: {} } }];
+
+test("a task tail cut to its ceiling is cited: the id is minted, the key claimed, and the cut line names the id and textChars", async () => {
+    const claimed = [], store = new TokenStore();
+    const { results } = await drive(
+        [call("task", { op: "tail", id: "t000000" })],
+        () => ({ result: "tail text", textValue: "k-task-whole", textChars: 16_000 }),
+        { tools: TASK_TOOLS, tokenStore: store, claimValue: (key) => claimed.push(key) });
+    const [t] = store.all();
+    assert.ok(t, "a task result that carries a textValue gets a pointer although task is not citable");
+    assert.equal(t.value, "k-task-whole");
+    assert.deepEqual(claimed, ["k-task-whole"]);
+    assert.match(results.find((r) => r.name === "task").result, new RegExp(`\\[your copy is cut: @tool:${t.id} holds 16000 chars of this output\\.`));
+});
+
+test("a fetch_url past its preview names its stored whole on the cut line", async () => {
+    const store = new TokenStore();
+    const { results } = await drive(
+        [call("fetch_url", { url: "https://x.test/long.txt" })],
+        () => ({ result: "a".repeat(100), textValue: "k-fetch-whole", textChars: 9000 }),
+        { tokenStore: store, claimValue: () => {} });
+    const [t] = store.all();
+    assert.equal(t.value, "k-fetch-whole");
+    assert.match(results.find((r) => r.name === "fetch_url").result, new RegExp(`\\[your copy is cut: @tool:${t.id} holds 9000 chars`));
+});
+
+test("a task result with no textValue stays uncited, and a failed call with one mints nothing", async () => {
+    const store = new TokenStore();
+    const { results } = await drive(
+        [call("task", { op: "tail", id: "t000000" }), call("task", { op: "tail", id: "t000001" }, "c2")],
+        (name, args) => args.id === "t000000" ? { result: "plain tail" } : { result: "Error: the host could not read it", textValue: "k-failed", textChars: 9000 },
+        { tools: TASK_TOOLS, tokenStore: store, claimValue: () => {} });
+    assert.equal(store.all().length, 0, "no pointer for either");
+    const [plain, failed] = results.filter((r) => r.name === "task");
+    assert.equal(plain.result, "plain tail");
+    assert.doesNotMatch(failed.result, /your copy is cut/);
+});
+
+test("a textChars that is not larger than the model's copy adds no cut line", async () => {
+    const { results } = await drive(
+        [call("fetch_url", { url: "https://x.test/a.txt" })],
+        () => ({ result: "a".repeat(100), textValue: "k-same", textChars: 100 }),
+        { tokenStore: new TokenStore(), claimValue: () => {} });
+    assert.doesNotMatch(results.find((r) => r.name === "fetch_url").result, /your copy is cut/);
+});
+
 // --- what a dereference step DRAWS: the value, not the notes addressed to the model ---
 
 test("dereference: the step renders the value alone, and the model still gets the header and the citing note", async () => {
@@ -790,4 +838,55 @@ test("a read-only survey in the worker reads an attached file: its pages by pipe
     assert.match(r.result, /report\.pdf/);
     const macro = await evalReadonlyInWorker({ js: `return @file:${pdf.id}.text.length` }, { ml });
     assert.notEqual(macro.kind, "answered", "the pointer macro is @tool:'s alone; a file is read by ml.dereference");
+});
+
+// --- a detached call's cut result, arriving through the inbox, gets the pointer its step would have minted ---
+
+/** One run whose inbox yields `items` at the first step boundary; what the model was handed as user turns is returned. */
+async function driveInbox(items, opts = {}) {
+    const users = [], claimed = [], store = new TokenStore();
+    let drained = false;
+    await runAgentLoop("t", { tools: TOOLS, maxSteps: () => 2, toolTokens: true, runHash: "abcdef", tokenStore: store, claimValue: (k) => claimed.push(k), ...opts }, {
+        callModel: async () => ({ content: "done", tool_calls: [] }),
+        runTool: async () => ({ result: "" }),
+        autoApprove: () => null,
+        buildMessages: (task) => [{ role: "user", content: task }],
+        pushAssistant: (m, msg) => m.push({ role: "assistant", ...msg }),
+        pushToolResult: (m, c, result) => m.push({ role: "tool", content: result }),
+        drainInbox: () => (drained ? [] : (drained = true, items)),
+        pushUser: (m, text, images) => { users.push({ text, images }); m.push({ role: "user", content: text }); },
+    });
+    return { users, claimed, store };
+}
+
+test("a cut task result through the inbox is minted a pointer to its stored whole, the key claimed, and the cut line names it", async () => {
+    const png = "data:image/png;base64,iVBORw0KGgo=";
+    const text = "[task t1a2b3c done after 40 s: stdout:\nrow 1… [first 2000 of 9000 chars]]";
+    const { users, claimed, store } = await driveInbox([{ text, task: "t1a2b3c", value: "k-late-whole", chars: 9000, images: [png] }]);
+    const [t] = store.all();
+    assert.ok(t, "a pointer was minted");
+    assert.equal(t.value, "k-late-whole");
+    assert.deepEqual(claimed, ["k-late-whole"]);
+    assert.equal(users[0].text, `${text}\n[your copy is cut: @tool:${t.id} holds 9000 chars of this output. Read further with dereference and a pipe (grep PATTERN, head -n N, tail -n N; lines A to B: head -n B | tail -n B-A+1) instead of running it again.]`);
+    assert.deepEqual(users[0].images, [png], "the figure reaches the model with the result");
+});
+
+test("an inbox task result gets no pointer when tool tokens are off, when its whole is no longer than its text, or when it carries none", async () => {
+    const item = { text: "[task t1 done after 1 s: x]", task: "t1", value: "k", chars: 9000 };
+    const off = await driveInbox([item], { toolTokens: false });
+    assert.equal(off.users[0].text, item.text);
+    assert.equal(off.store.all().length, 0);
+    assert.deepEqual(off.claimed, [], "nothing is claimed for a pointer that was never minted");
+    const short = await driveInbox([{ ...item, chars: 5 }]);
+    assert.equal(short.users[0].text, item.text);
+    const none = await driveInbox([{ text: item.text, task: "t1" }]);
+    assert.equal(none.users[0].text, item.text);
+    assert.equal(none.store.all().length, 0);
+});
+
+test("a person's steering message carrying a value is not minted a pointer: only a task item is", async () => {
+    const { users, store, claimed } = await driveInbox([{ text: "hello", value: "k-forged", chars: 9000 }]);
+    assert.equal(users[0].text, "hello");
+    assert.equal(store.all().length, 0);
+    assert.deepEqual(claimed, []);
 });

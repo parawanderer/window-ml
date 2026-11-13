@@ -369,7 +369,7 @@ export const hydrationDone: Promise<void> = (typeof chrome !== "undefined" && ch
 // Per-run steering inbox (a.say() mid-run): the SW-side twin of the page loop's control.inbox. INJECT_MESSAGE
 // pushes here (only the owning tab may); the run's loop drains it at each step boundary (deps.drainInbox).
 // Present only while a run is live (set at start, deleted in finally).
-export const runInboxes = new Map<string, { tabId: number; queue: { id?: string; text: string; origin?: import("../contract/contract-run").PromptOrigin; images?: string[]; /** A detached call's result (sw-tasks.ts), not a person's message: only sw-tasks.ts sets it. */ task?: string }[] }>();
+export const runInboxes = new Map<string, { tabId: number; queue: { id?: string; text: string; origin?: import("../contract/contract-run").PromptOrigin; images?: string[]; /** A detached call's result (sw-tasks.ts), not a person's message: only sw-tasks.ts sets it. */ task?: string; /** That result's stored whole, cut from its text, and its length. */ value?: string; chars?: number }[] }>();
 defineState({
     id: "run.mailbox", scope: "run", realm: "worker", audience: "human", lostOn: ["worker-eviction", "turn-end"],
     describe: "Messages sent to the run that it has not read yet; it reads them at its next step.",
@@ -649,6 +649,29 @@ defineState({
         return tabId == null ? undefined : { tabId, url: tabPageUrl.get(tabId) ?? null };
     },
 });
+
+/**
+ * Move a live run's inbox to another tab, so a runtime-bound task's result reaches the run where it is now and the
+ * inbox's owner check (`senderOwnsRun`) answers for the new tab only. The tasks are keyed by run id and follow on their
+ * own. A same-tab navigation needs no re-key. Not wired into any flow: the move-run lane calls it.
+ * @param runId the run
+ * @param to the tab the run is on now
+ * @returns false when the run has no inbox (between turns: nothing to move)
+ */
+export const rekeyRunInbox = (runId: string, to: number): boolean => {
+    const inbox = runInboxes.get(runId);
+    if (!inbox) return false;
+    inbox.tabId = to;
+    return true;
+};
+
+/**
+ * Whether a message's sender may answer for a run: an extension page (no `sender.tab`) may, a tab only if it is the one
+ * the run's inbox is on.
+ * @param sender the message's sender
+ * @param runId the run the message names
+ */
+export const senderOwnsRun = (sender: { tab?: { id?: number } }, runId: string): boolean => !sender.tab || sender.tab.id === runInboxes.get(runId)?.tabId;
 
 /** A tab Chrome has handed a NEW id (`chrome.tabs.onReplaced` — a discard restored, a prerender swapped in):
  *  move everything this module files under the old one, or the run it is hosting is orphaned under an id nothing
