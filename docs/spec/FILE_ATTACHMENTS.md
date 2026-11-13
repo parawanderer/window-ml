@@ -698,9 +698,10 @@ host's `/`, or `/home`, which would shadow `/home/pyodide`):
 **A path outside every mount** fails with `PermissionError`, never `FileNotFoundError`, since the file may exist:
 `/Users/sb/other is not mounted in this sandbox; reach it through ml.sh, or ask the person to mount it.`
 
-**`/files/` in an `ml.sh` argv** (chosen by Shane, 2026-11-13). An argv item under `/files/` is refused, unless that
-path exists on the host: `/files/ is this sandbox's; pass the file with ml.sh.put.` On a host that has a `/files`
-directory the person accepts the alias: there `/files/x` is the host's file in `ml.sh` and the sandbox's in a cell.
+**`/files/` in an `ml.sh` argv** (chosen by Shane, 2026-11-13; replaced by H9 below, a mapping). An argv item under
+`/files/` is refused, unless that path exists on the host: `/files/ is this sandbox's; pass the file with ml.sh.put.` On
+a host that has a `/files` directory the person accepts the alias: there `/files/x` is the host's file in `ml.sh` and
+the sandbox's in a cell.
 
 **The channel.** Pyodide has no synchronous remote backend, so a host-backed node needs one. Two routes, neither
 measured:
@@ -799,7 +800,7 @@ under the lockdown.
 - The size cap's value, set from the measurement above.
 
 **Owners.** This text, the diff row and the provenance of a file read from a mount: the chat-page lane. The channel and
-the mount: the Pyodide lane. The host's scope check, the argv refusal and the `ml.sh` snapshot: the host lane, as
+the mount: the Pyodide lane. The host's scope check, the argv mapping and the `ml.sh` snapshot: the host lane, as
 stated in "What window-ml-host must do" below.
 
 ### `/files` on the person's disk, when a host is connected (proposed 2026-11-13)
@@ -841,7 +842,8 @@ host is mounted (Shane):
   no one cell sees a file under two paths. Across time it does: a cell run offline names `/files/x` and a mounted one
   names `/Users/sb/git/proj/window-ml-files/x`, and the transcript keeps each as the cell used it. A bare `/files/x`
   in a cell or an argv then fails with
-  `/files is on disk while the host is connected: /Users/sb/git/proj/window-ml-files/x`.
+  `/files is on disk while the host is connected: /Users/sb/git/proj/window-ml-files/x`. In an argv, H9 below maps it
+  instead where the manifest marks a path.
 - The folder is ignored by git by default, through `.git/info/exclude` (the clone's own list, never a committed
   `.gitignore`), so uploads never show in `git status` or a commit unless the person moves them out. The person can
   name another folder, inside a mount.
@@ -976,7 +978,7 @@ and the per-request judging, the folder watch: the host lane, as stated in "What
 
 RULED 2026-11-13 (Shane: "fine for now", to be changed where building shows one wrong). Nothing is built. The
 coordinator's ruling (Shane, 2026-11-13): with this ruled, one host lane opens, in its own window-ml-host clone, and
-takes the scope check (H1 to H8) first, then the argv refusal (H9), then the snapshot (H10 to H15). It states
+takes the scope check (H1 to H8) first, then the argv mapping (H9), then the snapshot (H10 to H15). It states
 as requirements on the host what the two sections above leave to "the `ml.sh` and window-ml-host owner", and settles
 three places where they and `SHELL.md` disagree (named where each is settled, and listed under "Ruled with it" at
 the end).
@@ -1024,19 +1026,33 @@ smudge filter or hooks.
   write. Without it, a file judged free as git-undoable could be edited between the judgment and the write and
   then lost.
 
-**The `/files` argv refusal** (H9). Settles the first disagreement: "Host directories in the sandbox" refuses a
-`/files/` argv item unless the host has that path, and "`/files` on the person's disk" says the refusal "goes away"
-yet gives a sentence for it. Both are kept, as one rule:
+**`/files` in an `ml.sh` argv: mapped, not refused** (H9; Shane, 2026-11-13). The commonest calls name it: copying an
+upload out of `attached/` into the writable part of `/files`, then from `/files` into the project (`cp
+/files/attached/3fa91c2/data.csv /files/data.csv`, `cp /files/data.csv src/`). Settles the first disagreement, where
+"Host directories in the sandbox" refuses a `/files/` argv item and "`/files` on the person's disk" both drops the
+refusal and gives a sentence for it:
 
 - A pointer token of any prefix stays refused on the extension side, before the call reaches the host (`sh-call`), as
   now.
-- At `spawn` the host refuses any argv item that equals `/files`, starts with `/files/`, or carries such a path after
-  its first `=` (`--out=/files/x`), with the sentence of "`/files` on the person's disk", naming the folder's real
-  path: `/files is on disk while the host is connected: /Users/sb/git/proj/window-ml-files/x`.
+- While a host is connected, at `spawn` the host maps an argument the program's manifest marks as a PATH, when it
+  equals `/files` or starts with `/files/`, to the same path under the folder's real path
+  (`/Users/sb/git/proj/window-ml-files/data.csv`), and the call's `cwd` likewise. The mapped path then carries the
+  facts like any other path argument: the host refuses at `spawn` a call whose manifest writes to a path in
+  `attached/` (H6's rule, for a process), and an overwrite git cannot undo still asks.
+- An argument the manifest marks as anything else (a pattern, a message, a value) is never mapped, so `rg '/files/' .`
+  searches for that text.
+- A `/files` argument the host cannot place, because the program has no manifest or the manifest does not describe
+  that position, is refused with the sentence of "`/files` on the person's disk" naming the real path:
+  `/files is on disk while the host is connected: /Users/sb/git/proj/window-ml-files/data.csv`. Such a call asks
+  anyway (no manifest), so the refusal costs one retry with the real path.
+- The call's record keeps both forms, the argv the model wrote and the argv the process got, in the sidebar and both
+  exports ("the log carries what the model saw").
 - The alias exception of the first section is kept for a host that has a `/files` directory of its own, where the
-  argv item is the host's file. That is the only case the sentence does not apply.
-- Named cost: a search for the text `/files/` (`rg '/files/' .`) is refused too, since the host cannot tell a pattern
-  from a path; the model writes the pattern another way (`rg '[/]files/'`).
+  argument is the host's file and nothing is mapped.
+- A cell keeps no `/files` alias while a host is connected (as above), so `/files/x` works in an argv and not in
+  `open()`; the model is told the real path for both. If models trip on that, a cell gets the same mapping later.
+- Needs a `cp` manifest (`src/shell/manifests/`, operands as paths, as `mv.json` has), or the two calls above fall in
+  the refused case. That is the extension's manifest work, beside this lane.
 
 **The `ml.sh` snapshot** (H10 to H14). Settles the second disagreement: "Diffs from git" takes the snapshot with
 `git add -A` into a scratch index, which writes a blob for every changed file into the repository's object store, and
@@ -1087,7 +1103,8 @@ asks). The host applies its refusals before the worker judges.
 | a path outside every mount, through a symlink, or after the mount was replaced | refused | H3, H4 |
 | a write through a hard link | refused | `fstat` `st_nlink` |
 | a write whose basis changed since it was judged | refused (`ChangedSinceJudged`) | `basis` |
-| a `/files` argv item | refused | H9 |
+| a `/files` path argument | mapped to the real path, then judged as it | H9, the manifest |
+| a `/files` argument the manifest does not place | refused | H9 |
 | `git status`, `git diff`, `git add` | free | the manifest, `repoConfigRunsCode` false |
 | the first commit in a session | asks | extension side |
 | later commits on the current branch | free | extension side |
@@ -1100,16 +1117,17 @@ they bound different things. The sandbox bounds WHERE a write lands; `gitUndoabl
 back. So under the sandbox a write that creates a file, or touches one git can undo, is free, and an overwrite or
 delete of one git cannot undo asks, for a cell and for an `ml.sh` call whose manifest names the path.
 
-**Red-team rows** (e3, through the coordinator; each with its pass condition above): a forged request for a path
-outside the mount, by `..`, an absolute path or a symlink component (H1, H4); a mount at, under or above each refused
-path, by its resolved path, and a mount at, under or above an existing one (H2); the mounted directory replaced by a symlink after `mount` (H3); a component swapped
-for a symlink between two requests (H4); a write through a hard link (H5); a `store` interrupted mid-transfer leaving
-the old file whole (H5); a `store` into `attached/`, a `rename` into or out of it, under every policy (H6); a
-git-undoable file edited by another process between the judgment and the write (H8); a `/files` argv item in each
-form, `=` and bare (H9); the snapshot leaving the person's index, HEAD, stash list and object store byte-identical,
-with a clean filter, an fsmonitor and a hook configured in the repository that would each leave a mark if run (H10,
-H11); an ignored `.env` never entering a snapshot tree (H11); a page or a page-started run reaching any of the new
-calls.
+**Red-team rows** (e3, through the coordinator; each with its pass condition above): a forged request for a path outside
+the mount, by `..`, an absolute path or a symlink component (H1, H4); a mount at, under or above each refused path, by
+its resolved path, and a mount at, under or above an existing one (H2); the mounted directory replaced by a symlink
+after `mount` (H3); a component swapped for a symlink between two requests (H4); a write through a hard link (H5); a
+`store` interrupted mid-transfer leaving the old file whole (H5); a `store` into `attached/`, a `rename` into or out of
+it, under every policy (H6); a git-undoable file edited by another process between the judgment and the write (H8); a
+`/files` argv item in each form, `=` and bare, mapped only in a manifest's path position and refused elsewhere, a
+pattern argument left alone, a mapped path into `attached/` refused (H9); the snapshot leaving the person's index, HEAD,
+stash list and object store byte-identical, with a clean filter, an fsmonitor and a hook configured in the repository
+that would each leave a mark if run (H10, H11); an ignored `.env` never entering a snapshot tree (H11); a page or a
+page-started run reaching any of the new calls.
 
 **Open.**
 
@@ -1119,9 +1137,9 @@ calls.
 - The git queries per request (`check-ignore`, the undoability check) cost a spawn each; whether the host batches them
   per cell or caches them by `basis` is the lane's to measure.
 
-**Ruled with it** (Shane, 2026-11-13): the three settlements, the argv refusal kept as one rule (H9), the snapshot
-writing nothing into the repository (H10), and the sandbox and `gitUndoable` both holding (the paragraph under the
-table).
+**Ruled with it** (Shane, 2026-11-13): the three settlements, the argv refusal replaced by a mapping in path positions
+(H9), the snapshot writing nothing into the repository (H10), and the sandbox and `gitUndoable` both holding (the
+paragraph under the table).
 
 **Owners.** This text: the chat-page lane, until the host lane opens. H1 to H15: the host lane, one lane in its own
 window-ml-host clone, scope check (H1 to H8) first. The worker's judging of the facts and the table's default policy:
