@@ -20,6 +20,7 @@ import type { CellCancel } from "../python/py-lease";
 import { sessionArea } from "./sw-housekeeping";
 import { defineState } from "../state-registry";
 import { DEFAULT_CONFIG } from "../contract/contract-config";
+import { dropRunInstalls, runInstalls } from "./sw-pkg-installs";
 
 // LIVE python_exec stdout streaming: maps a run's streamId (the page requestId) → its tabId, so a PY_STDOUT
 // chunk the offscreen doc forwards can be relayed to the RIGHT page. Set when a streaming PYTHON_EXEC starts,
@@ -278,6 +279,11 @@ export async function runPython(payload: any, requestId: string | undefined, cal
     // A cell inside the dialect may import the person's approved tier 3 libraries: they ride every inside run, and the
     // sandbox loads each pin once.
     if (inside) { const libraries = await dialectLibraries(); if (libraries.length) Object.assign(run, { libraries }); }
+    // The packages the run installed (python_install) ride every cell of its own worker, which unpacks the ones it lacks.
+    if (caller.wireRun && principal === `run:${caller.wireRun}` && !complete) {
+        const installs = await runInstalls(caller.wireRun).catch(() => []);
+        if (installs.length) Object.assign(run, { installs: installs.map(({ filename, sha256 }) => ({ filename, sha256 })) });
+    }
     // A keep is a LIVE turn's: checked again at every send, since the awaits above and the retry below can cross the turn's
     // end (`endPythonTurn`), and a keep landing after it would outlive its turn in the offscreen document.
     if (cell) liveCells.add(cell);
@@ -356,6 +362,7 @@ export function deletePythonRun(runId: string): void {
     if (!runId) return;
     keptRuns.delete(runId);
     void forgetPythonBridged(runId);
+    void dropRunInstalls(runId);
     try {
         chrome.runtime.sendMessage({ type: "PY_DELETE_RUN", run: runId, principal: `run:${runId}` })
             .then((res: { dropped?: { count: number; afterCell: number } } | undefined) => {

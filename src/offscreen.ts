@@ -445,13 +445,17 @@ function noteWheels(w: Worker, sent: WheelRef[], ok: boolean): void {
 const PY_INSTALL_DEADLINE_MS = 60_000;
 const candidates = new Map<string, string>();   // state: plumbing — run id → its candidate's principal, while one runs
 /** What a candidate found. */
-type InstallTest = { ok: true } | { ok: false; error: string; module?: string; missing?: string; died?: boolean };
+type InstallTest = { ok: true } | { ok: false; error: string; module?: string; missing?: string; died?: boolean; collision?: boolean };
 
-/** The candidate's cell: import each module, stop at the first failure, and say which module a missing one was. */
+/** The candidate's cell: refuse a module the standard library already names (the wheel's would be shadowed, never
+ *  imported), then import each, stop at the first failure, and say which module a missing one was. */
 function importTestCode(modules: string[]): string {
-    return `import importlib, json
+    return `import importlib, json, sys
 _r = None
 for _m in ${JSON.stringify(modules)}:
+    if _m in sys.stdlib_module_names:
+        _r = {"module": _m, "collision": True, "error": f"{_m} is a standard-library module"}
+        break
     try:
         importlib.import_module(_m)
     except ModuleNotFoundError as _e:
@@ -493,8 +497,8 @@ async function installTest(run: string, refs: WheelRef[], modules: string[]): Pr
         const r = await runInWorker(importTestCode(modules), null, true, null, false, undefined, false, true, undefined, undefined, [], principal, undefined, false, undefined, false, undefined, got) as PyResult & { installFailed?: boolean };
         if (r.ok) {
             const v = typeof r.value === "string" ? JSON.parse(r.value) : r.value;
-            const found = (typeof v === "string" ? JSON.parse(v) : v) as { module?: string; missing?: string | null; error?: string } | null;
-            return found ? { ok: false, error: String(found.error ?? "the import failed"), ...(found.module ? { module: found.module } : {}), ...(found.missing ? { missing: found.missing } : {}) } : { ok: true };
+            const found = (typeof v === "string" ? JSON.parse(v) : v) as { module?: string; missing?: string | null; error?: string; collision?: boolean } | null;
+            return found ? { ok: false, error: String(found.error ?? "the import failed"), ...(found.module ? { module: found.module } : {}), ...(found.missing ? { missing: found.missing } : {}), ...(found.collision ? { collision: true } : {}) } : { ok: true };
         }
         return { ok: false, error: String(r.error ?? "the candidate did not answer"), ...(r.installFailed ? {} : { died: true }) };
     } catch (e) {
