@@ -795,6 +795,123 @@ under the lockdown.
 the mount: the Pyodide lane. The host's scope check, the argv refusal and the `ml.sh` snapshot: the `ml.sh` and
 window-ml-host owner, through the coordinator.
 
+### `/files` on the person's disk, when a host is connected (proposed 2026-11-13)
+
+PROPOSED 2026-11-13, from Shane's rulings in the coordinator's session (what `ml.sh` is for, the setup, per-platform
+mounts, the size limits, removing the disk) and in the calm-chat-motion session (the files API). Not ruled; nothing is
+built. Where it disagrees with "Host directories in the sandbox" above, this wins: the argv refusal on `/files/` goes
+away, and the `ml.sh` snapshot question is answered by git.
+
+**Use cases** (Shane's, collected as they come; the design follows them, not the other way round):
+
+1. The typical setup. The person makes a git repository and puts the model in it. What they upload in the UI lands in
+   a folder inside that repository: scratch, "your UI-uploaded trash", not a curated shelf.
+2. Editing an attached file. The model copies the person's read-only file to a working copy and edits it, with `cp`
+   and `sed -i` through `ml.sh` or with `open()` in a cell, whichever it reaches for.
+3. Working anywhere on the disk, the way a coding agent does, with restrictions on what can happen (below). `ml.sh` is
+   for giving the model the person's disk, not a separate file-moving system beside it.
+4. Moving a file out of the uploads folder into the project: an ordinary `mv`, or a panel action.
+5. No host connected: the model works in the virtual `/files/` of "A session's files as a directory", as ruled.
+6. Clearing space without the person: the model lists its files, finds the oldest, and deletes them in code.
+
+**The proposal: one `/files`, two backings.** It is one logical thing, shown in one files panel under one name:
+
+- With no host, it is the virtual store (MEMFS over the shelf), as ruled above.
+- With a host, it is a real folder inside the workspace, which the workspace's mount already covers, at its real path:
+  `<workspace>/window-ml-files/` (`/Users/sb/git/proj/window-ml-files/attached/3fa91c2/data.csv`), with the same
+  layout (`attached/<handle>/<name>` read-only, the rest writable). `cp`, `sed -i` and `open()` reach the same bytes,
+  with nothing to copy and no `ml.sh.put` or read-back to teach the model; those stay as mechanisms, not as advice.
+- The folder's real path is its only name while a host is connected: a cell has no `/files` alias, so the transcript
+  never shows one file under two paths. A bare `/files/x` in a cell or an argv fails with the sentence
+  `/files is on disk while the host is connected: /Users/sb/git/proj/window-ml-files/x`.
+- The folder is ignored by git by default, through `.git/info/exclude` (the clone's own list, never a committed
+  `.gitignore`), so uploads never show in `git status` or a commit unless the person moves them out. The person can
+  name another folder, inside a mount.
+- How the folder is mounted is per platform, whatever works there (Shane): on macOS and Linux it is an ordinary folder
+  under the workspace, so nothing special is needed; Windows is open (the path rule, above).
+
+**The person's files on disk.** `attached/` is written by the host with mode `0444`, and the host refuses a cell's
+write there as the virtual store does. A process `ml.sh` runs can still `chmod` and write, so the browser keeps each
+attachment's original bytes as its frozen version and compares the hash on read: a changed attachment is shown as
+changed (`data.csv was changed on disk; the original is kept`), never silently taken for the person's.
+
+**Provenance.** A disk listing cannot say who made a file, so the browser keeps the record (path, hash, made by the
+person, run R's cell N, or an `ml.sh` call), and a file on disk the record does not know reads as "made on disk".
+
+**A session that gains a host.** A session that started with no host and later has one copies its virtual files into
+the folder once; the disk is authoritative from then on and the virtual copy is cleared. The copy only ever goes from
+virtual to disk, never from the disk into the browser: the browser never pulls the person's disk into its storage, where
+the quota would refuse it and the person's files would exist twice.
+
+**The disk removed** (the host disconnects, or the person unmounts). The files stay on the disk. The panel shows
+`/files` as unavailable, with its real path, never as empty or gone. The model's `/files` falls back to the virtual store, empty
+since the one-time copy; an upload made meanwhile lands there and is copied into the folder once the host is back, by
+the same rule. The transcript keeps the real paths, so a later read without the host says where the files are. A cell
+running when the disk goes gets "Unmounted or disconnected during a cell" (above): the next read fails.
+
+**Three limits, kept apart:**
+
+| Limit | Applies to | Set by |
+| --- | --- | --- |
+| The quota | the virtual backing only: what the browser's storage holds for a session's files | a DevTools Settings flag ("Lifetime and quota", above) |
+| The disk's free space | a disk-backed `/files` and every mount: no cap of ours | the disk |
+| The fetch cap | one `open()` pulling one file into Pyodide, on either backing (`EFBIG`, "Bounded sizes" above) | the worker's memory, from the measurement |
+
+**What runs free and what asks.** The scope is the mount list; a read-only mount refuses every write.
+
+- Free: reads anywhere in the mounts; writes and deletes in a read-write mount that git can undo (a tracked file with
+  no uncommitted change); anything in the uploads folder the runs made; `git status`, `git diff`, `git add`, and a
+  commit on the current branch.
+- Asks, unless a policy allows it (`docs/spec/POLICIES.md`): a delete or overwrite git cannot undo (an untracked or
+  ignored file, or a tracked one with uncommitted changes); deleting the person's own uploads (`attached/`); anything
+  that leaves the mounts; network access; git operations that rewrite history or reach a remote.
+- How it is enforced: a cell's writes and deletes go through the host's per-request check (above), so each is judged
+  as it is made. An `ml.sh` process is judged before it starts, by its program manifest's effects
+  (`docs/spec/SHELL.md`), since the host cannot stop a running process mid-write; its writes are then shown in its diff.
+
+**Diffs from git.** The workspace is a git repository by default, so a cell's diff and an `ml.sh` call's diff come from
+git, answering "the `ml.sh` snapshot" above. Before the call the host records the working tree as a tree object through
+a scratch index (`GIT_INDEX_FILE=<scratch> git add -A && git write-tree`, forcing in the uploads folder), which touches
+neither the person's index, HEAD nor stash list; after it, the same again, and the diff is the two trees'. Untracked
+files are included. A workspace that is not a git repository falls back to #1780's before copies for cells, and gets no
+diff for an `ml.sh` call (open).
+
+**The files API.** The model lists, ages and clears its own files in code (use case 6), with the same names in JS and
+Python:
+
+- `ml.files.list()` returns one row per file: path, size, who made it, created, modified, last read, and whether a
+  transcript cites it. It is a read, so the read-only dialect may call it. On a disk backing Python's `os.scandir`
+  already answers everything but who made it.
+- `ml.files.remove(paths)` deletes, judged as above: the runs' files go free, the person's ask unless a policy allows
+  it. Deleting a file the transcript cites keeps its frozen version, so the record never loses what the model read.
+- The quota refusal ("Lifetime and quota") names the way out: `... delete some with ml.files.remove, or in the files
+  panel.` The Python binding's form is the Pyodide lane's to choose.
+
+**Dropped alternatives.**
+
+- A virtual store kept beside the disk and synced to it, or a host-side copy of `/files` mapped into a container: two
+  stores need a rule for which copy is authoritative after a cell's write followed by an `ml.sh` call, and a diff that
+  sees both; one folder needs neither, and the panel lists a real folder through the host as it lists the virtual one.
+- A `/files` alias inside the cell while a host is connected: one file under two paths in the transcript and the diffs.
+- The folder in a fixed place in the home directory: it needs a mount of its own, and it is not where the person looks
+  at their work.
+
+**Red-team rows** (e3, through the coordinator): `.git/info/exclude` is the only file outside the folder the host
+writes on its own; the git snapshot leaves the person's index, HEAD and stash list unchanged; an attachment changed on
+disk is never described as the person's; a delete git cannot undo asks, by every route (`os.remove`, `ml.files.remove`,
+an `ml.sh` `rm` judged by its manifest); a page or a page-started run reaches neither the folder nor `ml.files`.
+
+**Open.**
+
+- The folder's name (`window-ml-files/` is a proposal) and whether the person sets it per workspace.
+- Windows: how a `C:\Users\...` path appears in the sandbox's POSIX tree.
+- A workspace that is not a git repository: whether `ml.sh` calls get a diff by another snapshot.
+- Whether a commit on the current branch should ask the first time in a session.
+
+**Owners.** This text, the panel's two backings, provenance and the files API's JS side: the chat-page lane. The
+mount, the fallback and the Python binding: the Pyodide lane. The host's folder, the git snapshot and the per-request
+judging: the `ml.sh` and window-ml-host owner (none live; with Shane).
+
 **The person deletes or moves a file.** The files panel can delete, rename and move files in the writable part. During
 a live run the model is told the file's name through the run's inbox, the same as any other notice; a move is a delete
 plus a new name. The delete or move is also applied to every live worker holding that session's `/files/` (the
