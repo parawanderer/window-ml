@@ -1910,7 +1910,7 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                         onChange={(e: any) => { const n = parseInt(e.target.value, 10); setField("pythonIdleMinutes", Number.isFinite(n) && n >= 0 ? n : DEFAULT_CONFIG.pythonIdleMinutes); }} />
                 </label>
                 <div class="set-hint">A run's Python names (variables, imports) last as long as the run, across its turns. Between turns the sandbox holding them is shut after this many idle minutes, and the run is told on its next cell and in its transcript. 0 never shuts it for idleness; it still ends with the session. A python_exec keep: true holds it only through its own turn.</div>
-                <label class="set-field"><span>Detached task limit (minutes)</span>
+                <label data-setting="detachedTaskMaxMin" class="set-field"><span>Detached task limit (minutes)</span>
                     <input type="number" min="1" max="60" step="1" value={c.detachedTaskMaxMin}
                         onChange={(e: any) => { const n = parseInt(e.target.value, 10); setField("detachedTaskMaxMin", Number.isFinite(n) && n >= 1 && n <= 60 ? n : DEFAULT_CONFIG.detachedTaskMaxMin); }} />
                 </label>

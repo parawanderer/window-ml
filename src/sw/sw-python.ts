@@ -430,15 +430,26 @@ export async function pythonDone(message: any, sender: chrome.runtime.MessageSen
     try { await hydrateTasks(message.run); } catch { /* no table: orphaned below */ }
     const settle = rehydratedCellTask(message.run, message.cell);
     if (!settle) { orphaned(); return; }
-    let held: unknown = null;
-    try { held = ((await chrome.runtime.sendMessage({ type: "PY_RESULT", cell: message.cell })) as { result?: unknown } | undefined)?.result ?? null; } catch { held = null; }
+    const held = await heldPyResult(message.cell);
     if (held === null) {
         // The row would otherwise run forever, with the kernel locked behind it.
         orphaned();
-        settle({ status: "failed", result: null, text: "python_exec ended while the service worker was away, and its result was no longer held; it is lost." });
+        settle({ status: "failed", result: null, text: PY_RESULT_LOST });
         return;
     }
     settle(plainPyOutcome(held));
+}
+
+/** A rebuilt cell's text when it ended and the offscreen document no longer holds its result. */
+export const PY_RESULT_LOST = "python_exec ended while the service worker was away, and its result was no longer held; it is lost.";
+
+/**
+ * The result the offscreen document holds for a leased cell that ended (`PY_RESULT`), handed over once; null when it
+ * holds none or does not answer.
+ * @param cell the cell's id
+ */
+export async function heldPyResult(cell: string): Promise<unknown> {
+    try { return ((await chrome.runtime.sendMessage({ type: "PY_RESULT", cell })) as { result?: unknown } | undefined)?.result ?? null; } catch { return null; }
 }
 
 /** What to do when a leased cell starts, by its id: the lease's start (worker-tools.ts `workerPython`). */

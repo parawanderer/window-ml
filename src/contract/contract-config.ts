@@ -408,6 +408,7 @@ export const SETTING_PLACES: Readonly<Partial<Record<keyof MlConfig, SettingPlac
     valueStoreBudgetMB: { tab: "advanced", section: "pointers" },
     autoApprovePython: { tab: "advanced", section: "python" },
     pythonIdleMinutes: { tab: "advanced", section: "python" },
+    detachedTaskMaxMin: { tab: "advanced", section: "python" },
     autoApproveSelfSource: { tab: "advanced", section: "fetch" },
     agentSeesFocus: { tab: "advanced", section: "focus" },
     shellEnabled: { tab: "advanced", section: "shell" },

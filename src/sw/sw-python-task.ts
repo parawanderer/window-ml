@@ -9,7 +9,8 @@
 // which; a Stop of the run cancels an attached cell the same way.
 
 import { detachTask, type TaskRehydrator, type TaskOutcome, type TailAnswer, type TaskExecutor } from "./sw-tasks";
-import { cancelPyCell, onPyCellStarted, tailPyCell } from "./sw-python";
+import { cancelPyCell, heldPyResult, onPyCellStarted, PY_RESULT_LOST, tailPyCell } from "./sw-python";
+import { plainPyOutcome } from "./sw-python-late";
 import { recordRunLog } from "./sw-run-log";
 import { runControllers } from "./sw-runs";
 import { forModel } from "./sw-scrub";
@@ -140,6 +141,19 @@ export const rehydratePyTask: TaskRehydrator = (runId, row) => {
         tail: pyTail(cell), tailAbsent: "", settled,
     } };
 };
+
+/**
+ * Whether a stored running cell outlived the gap, asked once before it is attached again: null while the offscreen document
+ * still runs it, else its outcome. A cell that ended while no worker listened sent its `PY_DONE` to nobody, so nothing else
+ * would settle the row. The tail is asked first: a cell that ends after it answers sends its `PY_DONE` to this worker.
+ * @param cell the cell's id
+ * @returns null (running), or the outcome: the held result formatted plainly, or (`lost`) a failure saying it is gone
+ */
+export async function probePyCell(cell: string): Promise<{ outcome: TaskOutcome; lost: boolean } | null> {
+    if (await tailPyCell(cell) !== null) return null;
+    const held = await heldPyResult(cell);
+    return held === null ? { outcome: { status: "failed", result: null, text: PY_RESULT_LOST }, lost: true } : { outcome: plainPyOutcome(held), lost: false };
+}
 
 /** What runs one leased cell. */
 export interface LeasedCell<R> {

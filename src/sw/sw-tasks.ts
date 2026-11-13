@@ -265,8 +265,8 @@ async function readBack(runId: string): Promise<void> {
     const now = Date.now();
     // Imported only when a running cell is to be attached again: sw-python-task imports this module, and both are in the
     // worker's import cycle, so neither may call the other as it loads.
-    const attachPy: TaskRehydrator | undefined = (stored as { status?: unknown; ref?: { kind?: unknown } }[]).some((r) => r?.status === "running" && r.ref?.kind === "py")
-        ? await import("./sw-python-task").then((m) => m.rehydratePyTask, () => undefined) : undefined;
+    const py: { attach: TaskRehydrator; probe: (cell: string) => Promise<{ outcome: TaskOutcome; lost: boolean } | null> } | undefined = (stored as { status?: unknown; ref?: { kind?: unknown } }[]).some((r) => r?.status === "running" && r.ref?.kind === "py")
+        ? await import("./sw-python-task").then((m) => ({ attach: m.rehydratePyTask, probe: m.probePyCell }), () => undefined) : undefined;
     for (const raw of stored as unknown[]) {
         const row = raw as Partial<StoredTask> | null;
         if (!row || typeof row !== "object" || row.v !== 1 || typeof row.id !== "string" || typeof row.tool !== "string") {
@@ -299,11 +299,18 @@ async function readBack(runId: string): Promise<void> {
             orphan("past-cap", "the service worker restarted, and this cell ran past its cap, so the sandbox ended it and its result was not kept.");
             continue;
         }
-        const live = r.ref?.kind === "py" ? attachPy?.(runId, r) : null;
+        // A cell that ended while no worker listened: its end message reached nobody, so settle it from what the sandbox holds.
+        const ended = r.ref?.kind === "py" && py ? await py.probe(r.ref.cell) : null;
+        if (mine.has(r.id)) continue;
+        const live = r.ref?.kind === "py" ? py?.attach(runId, r) : null;
         if (!live) { orphan("worker-restart", "the service worker restarted and this task could not be attached again, so its outcome is not known."); continue; }
         const t: Task = { ...base, exec: live.exec, settle: live.settle };
         mine.set(r.id, t);
         watch(runId, t);
+        if (ended) {
+            if (ended.lost) recordRunLog(runId, { level: "warn", subsystem: "task", kind: "orphaned", reason: "ended-unheard", ms: now - base.startedMs, detail: { id: r.id, tool: r.tool } });
+            live.settle(ended.outcome);
+        }
     }
     if (changed) persist(runId);
 }

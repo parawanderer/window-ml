@@ -866,6 +866,55 @@ test("hydrate: a running py row is attached again with the kernel locked, cancel
     await done(c);
 });
 
+test("hydrate: a cell that ended while no worker listened is settled at attach from the held result: parked, kernel free, PY_TAIL then PY_RESULT asked once", T, async () => {
+    const c = await detached();
+    runControllers.delete(c.runId); runInboxes.delete(c.runId);
+    evict();
+    tailAnswer = { running: false };
+    resultAnswer = { result: { ok: true, stdout: "", value: 7 } };
+    const b = sent.length;
+    await hydrateTasks(c.runId);
+    assert.deepEqual(sent.slice(b).filter((m) => m.type === "PY_TAIL" || m.type === "PY_RESULT").map((m) => m.type), ["PY_TAIL", "PY_RESULT"]);
+    await until(() => stored(c.runId)?.[0]?.status === "done");
+    assert.equal(pyKernelBusy(c.runId), null, "the kernel is not held for a cell that has ended");
+    assert.equal(stored(c.runId)[0].delivered, false, "parked for the next turn");
+    const t = await nextTurn(c.runId);
+    assert.equal(t.inbox().length, 1);
+    assert.match(t.inbox()[0].text, new RegExp(`^\\[task ${c.r.id} done after \\d+ s: 7`));
+    resultAnswer = { result: null }; tailAnswer = { running: true, text: "" };
+    await done(c);
+});
+
+test("hydrate: a cell that ended unheard with no result held is settled failed at attach and logged, not left running with the kernel locked", T, async () => {
+    const c = await detached();
+    runControllers.delete(c.runId); runInboxes.delete(c.runId);
+    evict();
+    tailAnswer = { running: false };
+    resultAnswer = { result: null };
+    await hydrateTasks(c.runId);
+    await until(() => stored(c.runId)?.[0]?.status === "failed");
+    assert.match(stored(c.runId)[0].text, /no longer held/);
+    assert.equal(pyKernelBusy(c.runId), null);
+    assert.deepEqual((await taskRecs(c.runId, "orphaned")).map((e) => e.reason), ["ended-unheard"]);
+    tailAnswer = { running: true, text: "" };
+    await done(c);
+});
+
+test("hydrate: a cell the sandbox still runs is attached and not settled: PY_RESULT is not asked", T, async () => {
+    const c = await detached();
+    runControllers.delete(c.runId); runInboxes.delete(c.runId);
+    evict();
+    tailAnswer = { running: true, text: "" };
+    resultAnswer = { result: { ok: true, stdout: "", value: 1 } };
+    const b = sent.length;
+    await hydrateTasks(c.runId);
+    assert.equal(sent.slice(b).some((m) => m.type === "PY_RESULT"), false);
+    assert.equal(stored(c.runId)[0].status, "running");
+    assert.match(pyKernelBusy(c.runId), new RegExp(c.r.id));
+    resultAnswer = { result: null };
+    await done(c);
+});
+
 test("hydrate: a running py row stored with no cap, past the ceiling and its grace, is orphaned, told to the next turn, and logged", T, async () => {
     const runId = "run-past-ceiling";
     session[keyOf(runId)] = [{ v: 1, id: "t00ee00", tool: "python_exec", startedMs: Date.now() - PY_DETACHED_MAX_MS - 61_000, leaseMs: 15_000, expectMs: null, status: "running", result: null, text: null, delivered: false, code: null, ref: { kind: "py", cell: "cell-gone" } }];
