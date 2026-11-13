@@ -78,7 +78,7 @@ export const defineTool = function<P extends Record<string, unknown> = Record<st
  *
  * @param {Object} [opts] Options object.
  * @param {string} [opts.model=null] Vision model for the description (null = the saved default).
- * @param {number} [opts.maxTokens=512] Hard cap on the description length.
+ * @param {number} [opts.maxTokens=2048] Cap on the reader's generation, its thinking included (READER_MAX_TOKENS).
  * @returns {MlTool} A tool with `name: "look"` and `capabilities: ["vision"]`.
  */
 export const lookTool = function(this: MlApi, opts: { model?: string | null; maxTokens?: number; memory?: VisionMemory } = {}): MlTool {

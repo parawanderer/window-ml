@@ -206,7 +206,7 @@ test("verify with a driver that sees attaches the image; with a text-only driver
     assert.equal(none.image, undefined);
 });
 
-test("verify gives the reader look's 512-token budget, and an empty description is said, not quoted as nothing", async () => {
+test("verify gives the reader look's token budget, and an empty description is said, not quoted as nothing", async () => {
     // A thinking reader (qwen3-vl) spent all 256 tokens reasoning and answered "" on the 2026-10-19 panel.
     const { buildPythonTool } = await import("../src/python/python-tool.ts");
     const { defineTool } = await import("../src/ml/ml-tool-factories.ts");
@@ -214,7 +214,8 @@ test("verify gives the reader look's 512-token budget, and an empty description 
     const tool = buildPythonTool({ defineTool, _queryAll: () => [], pythonExec: async () => ({ ok: true, stdout: "", value: IMG }),
         chat: async (prompt, o) => { asked.push(o); return "  "; } });
     const r = await tool.run({ code: "x", verify: true }, { driverSees: false, visionModel: "reader-vl" });
-    assert.equal(asked[0].maxTokens, 512);
+    const { READER_MAX_TOKENS } = await import("../src/contract/contract-render.ts");
+    assert.equal(asked[0].maxTokens, READER_MAX_TOKENS);
     assert.match(r.content, /reader-vl returned an empty description/);
     assert.match(r.content, /look\(\{ selector: "@tool:python_exec"/, "it says how to ask again");
     assert.doesNotMatch(r.content, /description of it:\n$/, "never an empty quote");

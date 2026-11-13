@@ -118,7 +118,7 @@ test("delegated look of an element: the fake host's run gives the model the page
     const fromFake = await buildLookTool({ defineTool }, { model: "reader-vl", host: fake }).run({ selector: "#save" });
     assert.deepEqual(fake.calls.map((c) => c[0]), ["shoot", "chat", "geo.target", "geo.legend"]);
     assert.deepEqual(fake.calls[0].slice(1), ["#save", { fullPage: false, index: 0, margin: 0 }]);
-    assert.deepEqual(fake.calls[1][2], { images: [SHOT], model: "reader-vl", maxTokens: 512, numCtx: VISION_NUM_CTX });
+    assert.deepEqual(fake.calls[1][2], { images: [SHOT], model: "reader-vl", maxTokens: READER_MAX_TOKENS, numCtx: VISION_NUM_CTX });
     assert.deepEqual(fake.calls[2][1], { selector: "#save", index: 0, scroll: false }, "the legend's box: the element where it is, not scrolled");
     assert.deepEqual(fake.calls[3][1], { box: { left: 300, top: 200, right: 420, bottom: 240 } });
 
@@ -174,8 +174,9 @@ test("click verify for a text-only driver: a point minted through geo.mint, its 
 // --- a reader that answers nothing: said, not quoted as nothing ---
 
 test("verify gives its reader look's budget, and a click or type verify whose reader answered nothing says so", async () => {
-    // A thinking reader (qwen3-vl) spent all 256 tokens reasoning and answered "" on the 2026-10-19 panel.
-    assert.equal(READER_MAX_TOKENS, 512);
+    // A thinking reader (qwen3-vl) spent all 256 tokens reasoning and answered "" on the 2026-10-19 panel, and at 512
+    // answered "" to 43 of ~70 looks in the 2026-11-12 sweep; uncapped it took up to 994 (contract-render.ts).
+    assert.equal(READER_MAX_TOKENS, 2048);
     const LEGEND = { controls: [], media: [], boundaries: [], text: [], moreControls: 0, moreMedia: 0 };
     noDom();
     const area = fakeHost({ mint: { token: "@pt:abc" }, legend: LEGEND }, "  ");
@@ -191,6 +192,23 @@ test("verify gives its reader look's budget, and a click or type verify whose re
     assert.equal(e.content, '\n\n(verify was requested, but reader-vl returned an empty description. Read the result with look({ selector: "#q" }) next.)');
 });
 
+test("a look whose reader answered nothing says so, before the DOM legend, on both of look's paths", async () => {
+    // Observed (prompt-budget-cuts, DeepSeek Flash, 2026-11-12): the driver got a blank line, then the legend, and
+    // went on as if the reader had described the page.
+    const LEGEND = { controls: [], media: [], boundaries: [], text: [], moreControls: 0, moreMedia: 0 };
+    noDom();
+    const SAID = /^\(reader-vl returned an empty description of this screenshot, so you have no reading of it\./;
+    const page = fakeHost({ view: { x: 0, y: 0, width: 1280, height: 720 }, legend: LEGEND, crossesText: false }, " \n ");
+    const r = await buildLookTool({ defineTool }, { model: "reader-vl", host: page }).run({});
+    assert.match(r.content, SAID);
+    assert.equal(r.render.output, " \n ", "the export still shows what the reader actually returned");
+    const again = fakeHost({}, "");
+    const r2 = await buildLookTool({ defineTool }, { model: "reader-vl", host: again }).run({ _image: SHOT });
+    assert.match(r2.content, SAID, "re-examining an image the run already has");
+    const fine = await buildLookTool({ defineTool }, { model: "reader-vl", host: fakeHost({}, "A blue Save button.") }).run({ _image: SHOT });
+    assert.equal(fine.content, "A blue Save button.", "an answer is passed on as it was");
+});
+
 // --- oneShotRequest: the request a host builds is the one ml.chat sends ---
 
 /** What the page's `ml.chat(prompt, o)` sends to the worker, in a page world over the built bundle. */
@@ -202,7 +220,7 @@ async function pageChatPayload(prompt, o) {
 }
 
 for (const [what, prompt, o] of [
-    ["look's delegated reader", "Describe the current page concisely — what is shown and what stands out.", { images: [SHOT], model: "reader-vl", maxTokens: 512, numCtx: VISION_NUM_CTX }],
+    ["look's delegated reader", "Describe the current page concisely — what is shown and what stands out.", { images: [SHOT], model: "reader-vl", maxTokens: READER_MAX_TOKENS, numCtx: VISION_NUM_CTX }],
     ["locate's grounding call", 'Locate "a blue button" in this image. Reply with ONLY its bounding box as four numbers x1,y1,x2,y2.', { images: [SHOT], model: "qwen-ground", maxTokens: 64, numCtx: VISION_NUM_CTX }],
     ["verify's reader", "The image is a crop of the page just AFTER a \"clicked\" action.", { images: [SHOT], model: null, maxTokens: READER_MAX_TOKENS, numCtx: VISION_NUM_CTX }],
 ]) {
