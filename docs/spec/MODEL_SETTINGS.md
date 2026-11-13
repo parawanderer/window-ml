@@ -65,28 +65,69 @@ later slice.
 
 ## Three classes of setting
 
-Every key the panel shows is in exactly one class, declared in code beside `DEFAULT_CONFIG`: the class, and for a
-guarded key its `widens(from, to)` and its reason, the one sentence its card shows. That declaration supersedes
-`RISKY_CONFIG` (`src/backup/backup-settings.ts`), which has a sentence for 12 of the 25 guarded keys today: the
-restore preview reads the same declaration, so there is one source of what a setting does.
+Every key of `DEFAULT_CONFIG` is in exactly one class, declared in code beside it: the class; for an ordinary key its
+domain; for a guarded key its `widens(from, to)`; and for a guarded or a secret key its reason, one sentence saying
+what changing it does. That declaration supersedes `RISKY_CONFIG` (`src/backup/backup-settings.ts`) for both of its
+readers:
 
-**The class test** enumerates `DEFAULT_CONFIG` and the panel's local display preferences (AGENTS.md: enumerate the
-inputs, do not sample them) and fails on:
+- a guarded change's card shows the reason (below, "The surface");
+- the restore preview's `risky` group (`groupOf`, and the sentence it prints) becomes "a `sync` key that is guarded or
+  secret", with the declaration's reason as its sentence. A secret is never on a card, but a restore still lists it
+  apart, so the five secrets (`chatUrl`, `apiKey`, `modelFilter`, `priceSnapshotUrl`, `pageApprovalDomains`) keep a
+  reason, carried over from `RISKY_CONFIG` word for word, and the `chatUrl` sentence about a backup with no API key
+  stays the restore's own.
+
+`RISKY_CONFIG` has a sentence for 17 keys today: those five and 12 of the 25 guarded keys. The restore's `risky` group
+therefore widens from 17 keys to 30, on purpose: a setting the model may not change without a card is also one a
+restore lists apart. The builder deletes `RISKY_CONFIG`, so what a setting does has one source. The restore preview's
+test is updated to the 30 keys by enumerating the declaration, not by copying the list.
+
+The domain is a closed union in the declaration's type, so a new kind of domain is a change to the type, not a new
+value:
+
+```ts
+type Domain =
+  | { kind: "boolean" }
+  | { kind: "enum"; words: readonly string[] }          // CONFIG_ENUMS' words
+  | { kind: "number"; min: number; max: number; integer?: true }
+  | { kind: "model" }                                    // on the server's list and modelFilterAllows, as setModel
+  | { kind: "hours" };                                   // electricityOffPeakHours' hour range, its parser by name
+```
+
+None of the five admits an arbitrary string, so a future `*Url`, `*Template`, `*Prompt` or `*Header` key cannot be
+declared ordinary without a new member of the union, which a reviewer sees; it is classified guarded or secret instead.
+A guarded or secret key declares no domain here: its value is validated as today (`configTypeOk`, `CONFIG_ENUMS`).
+
+**What the whitelist accepts is derived, not declared a second time.** `whitelistable(key, places)` is true when the
+key is classified, is not secret, and has a place in `places`, the table LINKS.md (merged in #1795) adds beside
+`DEFAULT_CONFIG` naming each key's tab and section in DevTools Settings. It is the one function the Settings section
+that edits the whitelist, the whitelist's validation on read, and `change_setting` all call. `places` is a parameter
+so the test can pass the real table and a table with a row added: a key with no control has no place, so it is not
+whitelistable, and the same table is what LINKS.md's test checks against the panel's `data-setting` rows, so a place
+cannot be claimed for a control that does not exist.
+
+**The class test** enumerates `DEFAULT_CONFIG` (AGENTS.md: enumerate the inputs, do not sample them) and fails on:
 
 - a key with no class, so a new setting cannot land unclassified;
-- a guarded key with no reason sentence, so no guarded card shows a change without saying what it does;
-- an ordinary key whose domain is not closed: each ordinary key declares its domain as an enum, a number range, a
-  model on the server's list, or a parsed shape, and a domain that admits an arbitrary string fails. Today the one
-  parsed shape is `electricityOffPeakHours`'s hour range, enumerated by name; a future `*Url`, `*Template`, `*Prompt`
-  or `*Header` key therefore cannot land ordinary by default, and must be classified guarded or secret;
-- a key the whitelist accepts that has no control in DevTools Settings (rule 6). `ocrNumCtx` is the fixture that proves
-  this can fail: it is classified but not whitelistable until it has a control.
+- a guarded or secret key with no reason, so no card and no restore shows a change without saying what it does;
+- an ordinary key with no domain, or with one outside the union (a type error, and the test asserts each declared
+  `kind` is one of the five, for a declaration built at run time);
+- `whitelistable` true for a key with no place. `ocrNumCtx` is the fixture: it is classified ordinary, has no control
+  in DevTools Settings today (open question 6) and no place, so with the real table it is not whitelistable, and with
+  a table given a row for it it is. The test is therefore green today and fails if `whitelistable` stops reading the
+  table.
+
+**The panel's display preferences are out of the whitelist** in this spec: `fontScale`, the code theme and its custom
+VS Code import, the output cell height, the stats toggles. They are not keys of `DEFAULT_CONFIG` (they live in
+`chrome.storage.local` and the panel's `localStorage`, read through `src/sidebar/store.ts`), the custom theme's value
+is an arbitrary JSON document, and they change only how this browser draws. Bringing them in needs a home for their
+class beside their own keys in `store.ts` and the same domain union; that is open question 5.
 
 | Class | Whitelistable | A change | Keys (the initial classification; the code's table is the truth) |
 | --- | --- | --- | --- |
 | **secret** | never | impossible | `chatUrl`, `apiKey`, `modelFilter`, `priceSnapshotUrl` (exactly `SECRET_KEYS`), and the legacy `pageApprovalDomains` (it is a site list) |
 | **guarded** | yes, by the person | always asks in the guarded direction; a policy may deny, never allow | what widens what runs unasked or what the model reaches; what sends the person's data somewhere it did not go before; what shrinks the person's record of what happened. Exactly the next table |
-| **ordinary** | yes | asks unless a policy allows it | everything else: models and their context sizes, appearance, the HUD, titling, electricity prices, `protoStream`, the panel's display preferences. `autoTitles` and `groundingEnabled` send more to the model server when turned on, and are ordinary on purpose: they reach only the server the person configured, with data already going there |
+| **ordinary** | yes | asks unless a policy allows it | everything else: models and their context sizes, appearance, the HUD, titling, electricity prices, `protoStream`. `autoTitles` and `groundingEnabled` send more to the model server when turned on, and are ordinary on purpose: they reach only the server the person configured, with data already going there |
 
 **The guarded direction is per key.** Turning `autoApproveReadonly` off narrows and is an ordinary change; turning it on
 is guarded. Each guarded key declares a `widens(from, to)` in code; a key that declares none is guarded in both
@@ -119,7 +160,16 @@ that is not a classified one.
 
 - **Stored** in `chrome.storage.local`, key `ml_model_settings`, never `sync`: like policies (`docs/dev/policies.md`,
   "Scopes and lifetime"), it is about this browser. Declared in the state registry from its first commit
-  (`defineState`, audience `model`, since the model reads what it permits).
+  (`defineState`, audience `model`, since the model reads what it permits), with `exposedAs: "ml.current.settings"`
+  in the same commit that serves that member, and without it before (`StateDecl`'s JSDoc, `src/state-registry.ts`:
+  absent means meant for the model and not given to it yet).
+- **Backed up.** `collectSettings` carries `ml_model_settings` in the backup's `local` half, beside
+  `GLOBAL_POLICIES_KEY` and the site lists; today it carries the sync config, the global policies and the site lists
+  only, so as written a restore on a new machine would leave that machine's default and lose an emptied list. An
+  install that never wrote the key is collected as the default it reads, written out, so a restore reproduces what the
+  source machine read, an emptied list included. The restore validates it as the read does (an unclassified or secret
+  key dropped and named in `dropped`), and the restore preview lists it in the `policies` group, one row per key whose
+  mode changes, a guarded key turned to `read-write` among them, since it decides what the model may do.
 - **Edited** in DevTools Settings → Permissions, one row per classified key, with a three-way choice (off, read,
   read and change) and the class shown. A secret's row has no choice and says why. The chat page's Settings → Extension
   shows the same view, as it does every other section.
@@ -140,7 +190,9 @@ sidebar, the DevTools panel, the chat page or over the hub. The guards are the o
 
 - the tool is offered only by `startUserRun`; `change_setting` joins `PROPOSAL_TOOLS`, so `pageStartPayload` drops a
   page's descriptor of that name and `withoutProposals` strips it from the stored copy of a page-built run handed to
-  the worker (`src/sw/sw-runs.ts`);
+  the worker (`src/sw/sw-runs.ts`). `change_setting` proposes nothing to store, so the builder renames the set to
+  `WORKER_ONLY_TOOLS` (and `withoutProposals` to `withoutWorkerOnly`) and rewrites its comment to "the tools only a
+  run the worker built offers: they ask the person to store or change something the model drafted";
 - every place a run becomes one the worker built is enumerated, not sampled: `startUserRun`, the hand-over
   (`markWorkerRun`), adoption (`adoptSession` in `src/sw/sw-sessions.ts`, which hydrates a saved session's payload and
   calls `makeWorkerRun`) and the resume. On the three that are not `startUserRun` the toolset is the payload's, which
@@ -267,8 +319,9 @@ call this surface (above); what it can do is ask the model, in text, to call it.
 - the tool or the snapshot key reaching a page-built run through any caller of `makeWorkerRun` or `markWorkerRun`:
   `startBackgroundRun`, the hand-over, `adoptSession`, a resume;
 - `ml.current.settings` served from the main world where no isolated world exists;
-- the class test's four failures: an unclassified key, a guarded key without a reason, an ordinary key with an open
-  string domain, a whitelistable key with no panel control (`ocrNumCtx`).
+- the class test's four failures: an unclassified key, a guarded or secret key without a reason, an ordinary key with
+  no domain or one outside the union, `whitelistable` true for a key with no place (`ocrNumCtx`);
+- a restore that drops `ml_model_settings`, or writes a guarded key's `read-write` without a row in the preview.
 
 ## Open questions
 
@@ -282,8 +335,9 @@ call this surface (above); what it can do is ask the model, in text, to call it.
    makes exact; whether a reorder counts as a change at all.
 4. **Fatigue**: the repeat-refusal is ruled by the coordinator as written in threat item 6 (pending Shane); what
    stays open is its key: the same key to the same value, or the same key at all.
-5. **Local display preferences** (`fontScale`, the code theme, the output cell height) live in `chrome.storage.local`
-   and some in the panel's `localStorage`: whether those are on the whitelist in the first slice or follow it.
+5. **Local display preferences** (`fontScale`, the code theme, the output cell height) are out of the whitelist in
+   this spec (above, "Three classes of setting"). Whether a later slice brings them in, with their class declared
+   beside their keys in `src/sidebar/store.ts` and the custom VS Code theme kept off as an open domain.
 6. **A key the panel does not show.** `ocrNumCtx` is in `DEFAULT_CONFIG` and `ml.config()` but has no control in
    DevTools Settings, so the class test keeps it off the whitelist; whether it gets a control (which the standing rule
    for a setting wants anyway) is the panel owner's call.
