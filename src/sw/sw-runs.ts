@@ -144,9 +144,9 @@ export function makeWorkerRun(runId: string): void {
 /** TEST-ONLY (`__mlEvictForTest`): forget the hand-overs held in memory, as an eviction does; storage keeps them. */
 export function dropHandedMemoryForTest(): void { handedToWorker.clear(); }
 
-/** The tools that ask the person to store something the model drafted (a policy, a program manifest): only a run the
- *  worker BUILT offers them, so a page's run never becomes a way to ask for one. */
-export const PROPOSAL_TOOLS: ReadonlySet<unknown> = new Set(["propose_policy", "propose_manifest"]);
+/** The tools that ask the person to store or install something the model asked for (a policy, a program manifest, a
+ *  Python package): only a run the worker BUILT offers them, so a page's run never becomes a way to ask for one. */
+export const PROPOSAL_TOOLS: ReadonlySet<unknown> = new Set(["propose_policy", "propose_manifest", "python_install"]);
 
 /** A run's tools without the {@link PROPOSAL_TOOLS}: what a page-built run keeps when it is handed to the worker, in every
  *  copy of it that is stored (here, and `storedP` in sw-run-host.ts). */

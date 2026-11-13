@@ -34,6 +34,7 @@ import {
 import { displaySource } from "../code-block";
 import { DiffLines } from "../code-diff";
 import { copyText } from "../copy-hash";
+import { PkgCardRender } from "../card/pkg-card-view";
 
 /** A tool's returned DOM ELEMENTS, as a hoverable list. Each row carries the same stateless
  *  `clickSelector` the model was handed, so hovering outlines the node on the page and "copy reference"
@@ -1792,6 +1793,7 @@ export function RenderPanel({ d, marks, live, failLine, ranMs, ranSince, ctx, li
                 <ClickableImg src={d.src} alt={d.label || "image"} />{d.label ? <div class="r-image-label">{d.label}</div> : null}</div>;
         }
         case "code": return <CodeRender d={d} failLine={failLine} ctx={ctx} failed={failed} />;
+        case "packages": return <PkgCardRender request={d.request} verdict={d.verdict} />;
         // The SAME grid a DataFrame gets (scroll-capped, sticky header, sort, copy-CSV, hide) — answer-render
         // already made this call for a cited df, and a fetched CSV is the same kind of object. The bare
         // alternative had no max-height, so a 200-row fetched table rendered as an unbroken wall in the step.

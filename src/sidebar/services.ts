@@ -44,8 +44,9 @@ export interface SidebarServices {
     /** answer an approval gate by the pending step's `seq`. `feedback` is a sentence that reaches the MODEL on a
      *  denial — why it was refused, so the run can try something else instead of guessing at a bare no. Ignored on an
      *  approval, where there is nothing to explain. */
-    /** Answer the gate of step `seq`, or the nested ask `ask` inside it. */
-    answerApproval(session: string, seq: number, decision: boolean, persist: boolean, feedback?: string, ask?: string): void;
+    /** Answer the gate of step `seq`, or the nested ask `ask` inside it. `files`: on approving a python_install card, the
+     *  rows it showed, which the worker compares with the rows it froze (a surface that cannot carry them denies). */
+    answerApproval(session: string, seq: number, decision: boolean, persist: boolean, feedback?: string, ask?: string, files?: import("../contract/contract-render").PkgRow[]): void;
     /** Answer a site's start card (docs/spec/SITE_ACCESS_SLICE3.md 1.1). Only the surfaces that may show the card have
      *  it: the HUD card, the overlay and the DevTools panel (Q7). Absent elsewhere, and the card is then not drawn. */
     answerStart?(requestId: string, decision: "allow" | "always" | "deny"): void;

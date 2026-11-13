@@ -2295,8 +2295,8 @@ test("_rebuildToolset rebuilds every builtin a run can delegate to the page, enu
     const base = { model: "m", driverSees: false, visionModel: "vm", groundingModel: null, groundingRange: 1000, pierceClosed: false };
     for (const d of builtinTools()) {
         const names = ml._rebuildToolset({ ...base, toolNames: [d.name] }).map(t => t.name);
-        // propose_policy, propose_manifest and task are built in the worker alone (worker-tools.ts) and never offered by a page's run: the page has no factory for them.
-        assert.deepEqual(names, d.realm === "loop" || d.name === "propose_policy" || d.name === "propose_manifest" || d.name === "task" ? [] : [d.name], `${d.name} (realm ${d.realm})`);
+        // propose_policy, propose_manifest, python_install and task are built in the worker alone (worker-tools.ts) and never offered by a page's run: the page has no factory for them.
+        assert.deepEqual(names, d.realm === "loop" || d.name === "propose_policy" || d.name === "propose_manifest" || d.name === "python_install" || d.name === "task" ? [] : [d.name], `${d.name} (realm ${d.realm})`);
     }
     // A name the registry does not declare is the site's own tool: never conjured on the new page.
     assert.equal(isBuiltinTool("my_site_tool"), false);
@@ -3855,7 +3855,7 @@ test("lookTool caps the vision generation by default (roadmap #11 wedge guard)",
     world.ml.screenshot = async () => "data:image/png;base64,SHOT";
 
     await world.ml.lookTool().run({ selector: "#x" });                 // default cap
-    assert.equal(seen[0], 512);
+    assert.equal(seen[0], require("../src/contract/contract-render.ts").READER_MAX_TOKENS);
     await world.ml.lookTool({ maxTokens: 128 }).run({ selector: "#x" }); // override
     assert.equal(seen[1], 128);
 });
