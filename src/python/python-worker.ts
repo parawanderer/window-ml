@@ -37,6 +37,10 @@ let bridgeLift: ((on: boolean) => void) | null = null;   // state: plumbing — 
 // kill that lands during the spend after a task the cell left, not after the cell's computation.
 let spendingFor = 0;   // state: plumbing — 0 when no cell is running
 let cellSeq = 0;   // state: plumbing — counts cells of this worker's one principal; dies with the worker
+// The wheels this worker has unpacked, by sha256: a run's installs reach its worker at each cell, and only the missing ones
+// are unpacked. Dies with the worker, whose site-packages dies with it; the next worker is given them again.
+const installedWheels = new Set<string>();   // state: plumbing — the sha256s unpacked into this worker's site-packages
+let sitePackages = "";   // state: plumbing — read once at boot, before the lockdown
 // The interrupt buffer the offscreen document sent (a bench Stop writes 2 into it), installed at boot. A stop written
 // while C code ran stays pending and fires on the NEXT bytecode, which would be the next script's: `clearInterrupt`
 // runs before a run touches the interpreter and again when it ends (docs/dev/python-sandbox.md, "Stopping a bench script").
@@ -47,12 +51,15 @@ function clearInterrupt(): void {
     if (interruptFlag) Atomics.store(interruptFlag, 0, 0);
 }
 
-type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown; stream?: boolean; env?: boolean; complete?: { line: number; column: number; bench?: "readonly" | "full" }; persist?: boolean; benchReset?: boolean; wire?: boolean; inside?: boolean; bridges?: boolean; run?: string | null; deleteRun?: string; takeDropped?: boolean; libraries?: DialectLibrary[]; library?: { op: "shape" | "load"; lib: DialectLibrary } };
+type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown; stream?: boolean; env?: boolean; complete?: { line: number; column: number; bench?: "readonly" | "full" }; persist?: boolean; benchReset?: boolean; wire?: boolean; inside?: boolean; bridges?: boolean; run?: string | null; deleteRun?: string; takeDropped?: boolean; libraries?: DialectLibrary[]; library?: { op: "shape" | "load"; lib: DialectLibrary }; wheels?: WheelBytes[] };
+/** A wheel the run installed (python_install, slice 4), as the offscreen document hands it over: already checked against its
+ *  sha256 and its archive checked (`pkg-archive.ts`); unpacked into site-packages before the cell when this worker lacks it. */
+type WheelBytes = { filename: string; sha256: string; bytes: ArrayBuffer };
 // `bootMs` is present ONLY on the call that paid for the cold start; `runMs` is the script itself, so the
 // two never have to be inferred from one another.
 // `prewarm` is on the first run after a pre-warm started the runtime: whether that run found it `warm` or still
 // `starting`.
-type RunResult = { ok: boolean; value?: unknown; stdout: string; stdoutDropped?: number; error?: string; ipc?: ArrayBuffer; table?: { columns: string[]; rows: (string | number | null)[][]; rowCount?: number }; render?: "latex" | "img" | "figure"; bootMs?: number; runMs?: number; bench?: BenchSession; prewarm?: "warm" | "starting"; notInDialect?: string; dropped?: { count: number; afterCell: number } };
+type RunResult = { ok: boolean; value?: unknown; stdout: string; stdoutDropped?: number; error?: string; ipc?: ArrayBuffer; table?: { columns: string[]; rows: (string | number | null)[][]; rowCount?: number }; render?: "latex" | "img" | "figure"; bootMs?: number; runMs?: number; bench?: BenchSession; prewarm?: "warm" | "starting"; notInDialect?: string; installFailed?: boolean; dropped?: { count: number; afterCell: number } };
 /** A kept-state bench namespace after a run: which one it is (`id`, new whenever it is created afresh — a
  *  reset, or the worker restarting under it) and the variables the USER has in it, prelude names excluded. */
 type BenchSession = { id: string; vars: { name: string; type: string }[] };
@@ -122,6 +129,7 @@ function getPyodide(by: "prewarm" | "run" = "run"): Promise<any> {
         // Before ANY run and before the lockdown: a package that needs the `js` bridge to import (pyarrow's
         // timezone helper) is imported here, where the bridge exists. See python-env.ts `prepare`.
         if (PY_STARTUP_PREPARE) py.runPython(PY_STARTUP_PREPARE);
+        sitePackages = String(py.runPython("import site\nsite.getsitepackages()[0]"));
         if (READONLY) {
             // The readonly worker's security model: ses `lockdown()` + the allow-list strip + the harness's
             // captured refs, once at boot, never undone. `harden()`/`unharden()` no longer gate anything —
@@ -436,6 +444,25 @@ async function complete(code: string, line: number, column: number, bench?: "rea
     return completeIn(py, code, line, column, bench ? benchNs.get(bench)?.ns : undefined);
 }
 
+/**
+ * Unpack the wheels this worker lacks into site-packages, after its lockdown, from JS: no cell runs and no `fetch` is
+ * needed (measured: notebooks/python-packages/probe-install.mjs). A wheel that fails to unpack may leave part of itself;
+ * the next cell is handed it again and unpacks it over that part.
+ * @param wheels the run's installs, in the order they were installed
+ * @returns null when every one is in place, else which one failed and why
+ */
+async function installWheels(wheels: WheelBytes[]): Promise<string | null> {
+    if (!wheels.some((w) => !installedWheels.has(w.sha256))) return null;
+    const py = await getPyodide();
+    for (const w of wheels) {
+        if (installedWheels.has(w.sha256)) continue;
+        try { py.unpackArchive(new Uint8Array(w.bytes), "wheel", { extractDir: sitePackages }); }
+        catch (e) { return `${w.filename} could not be unpacked (${String((e as Error)?.message ?? e).trim().split("\n").pop()})`; }
+        installedWheels.add(w.sha256);
+    }
+    return null;
+}
+
 // The message handler. Registered via `addEventListener` at module load — BEFORE the lockdown strips
 // `addEventListener` — so the listener lives in the browser's C++ EventTarget list, unreachable from JS
 // after the strip. Setting `self.onmessage` instead would invoke the WebIDL setter (which starts the
@@ -537,8 +564,14 @@ function onMessage(e: MessageEvent): void {
     // by those hops (the same reason a remote bash tool must stamp on its own server).
     const onStdout = msg.stream ? (chunk: string) => post({ id: msg.id, partial: true, chunk, ts: Date.now() }) : undefined;
     const onStarted = () => post({ id: msg.id, started: true });
+    // A run's installs are put in place before its cell, in a readonly worker only: a full worker serves every run.
+    const wheels = Array.isArray(msg.wheels) ? msg.wheels : [];
+    if (wheels.length && !READONLY) { post({ id: msg.id, ok: false, stdout: "", error: "Refused: installed packages go only to a run's readonly worker." }); return; }
     runChain = runChain
-        .then(() => run(msg.code, msg.image ?? null, msg.hardened !== false, msg.tables ?? null, onStdout, msg.persist === true, onStarted, msg.wire === true, msg.run ?? null, msg.id, msg.inside === true, Array.isArray(msg.libraries) ? msg.libraries : [], msg.bridges === true))
+        .then(() => installWheels(wheels))
+        .then((failed) => failed !== null
+            ? { ok: false, stdout: "", error: `Not run: a package this run installed could not be put in place: ${failed}. Nothing of the cell ran; the next cell tries again.`, installFailed: true } as RunResult
+            : run(msg.code, msg.image ?? null, msg.hardened !== false, msg.tables ?? null, onStdout, msg.persist === true, onStarted, msg.wire === true, msg.run ?? null, msg.id, msg.inside === true, Array.isArray(msg.libraries) ? msg.libraries : [], msg.bridges === true))
         .then(
             (result: RunResult) => post({ id: msg.id, ...result }, { transfer: result.ipc ? [result.ipc] : [] }),
             (err: unknown) => post({ id: msg.id, ok: false, stdout: "", error: String(err) }),

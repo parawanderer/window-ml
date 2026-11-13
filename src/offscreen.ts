@@ -29,6 +29,7 @@ import { PY_DETACHED_MAX_MS, PY_INTERRUPT_KILL_MS, ringAppend, type CellCancel }
 import { htmlToMarkdown } from "./dom/html-to-md";
 import { PNG_DATA_URL } from "./session/image-compact";
 import { defineState } from "./state-registry";
+import { mirroredWheel } from "./python/pkg-mirror-db";
 import { reapDelay, longTimeout, DEFAULT_REAP_BETWEEN_MS } from "./python/py-reap";
 import { createPdfHost } from "./pdf/pdf-host";
 import { b64ToBytes, bytesToB64, type PdfMessage, type PdfReadReply, type PdfRenderReply } from "./pdf/pdf-wire";
@@ -392,13 +393,57 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
     return w;
 }
 
+// ---- A run's installed packages (python_install, docs/plan/repl/PACKAGES_INSTALL.md, slice 4) ----
+// The service worker keeps the run's install record and sends it with every cell of the run; this document reads the
+// wheels a worker does not hold yet from the mirror (re-hashed as they are read) and hands them over with the cell, and
+// the worker unpacks them after its lockdown. Honoured only on a run's own cell, which only the service worker sends.
+/** One wheel of a run's install record, as the service worker names it. */
+type WheelRef = { filename: string; sha256: string };
+/** A wheel with its bytes, as the Python worker takes it. */
+type WheelBytes = WheelRef & { bytes: ArrayBuffer };
+// The sha256s each live worker was handed; a new worker (a respawn, a reap) has no entry, so it is handed them all.
+const wheelsIn = new WeakMap<Worker, Set<string>>();   // state: plumbing — keyed by the Worker object, gone with it
+
+/** The install record a message carries, when it is one: an array of wheel names with a 64-hex sha256. */
+function wheelRefs(v: unknown): WheelRef[] {
+    if (!Array.isArray(v)) return [];
+    return v.filter((x): x is WheelRef => !!x && typeof x.filename === "string" && typeof x.sha256 === "string" && /^[0-9a-f]{64}$/.test(x.sha256))
+        .map((x) => ({ filename: x.filename, sha256: x.sha256 }));
+}
+
+/**
+ * The wheels `w` lacks of a run's install record, with their bytes from the mirror.
+ * @param w the worker the cell goes to
+ * @param refs the run's install record
+ * @returns the wheels to hand over, or why the cell cannot run: a wheel the mirror no longer holds or whose bytes no
+ *     longer match is a defect of the mirror, and the record is left as it is so the next cell tries again
+ */
+async function wheelsForCell(w: Worker, refs: WheelRef[]): Promise<WheelBytes[] | { error: string }> {
+    const have = wheelsIn.get(w) ?? new Set<string>();
+    const out: WheelBytes[] = [];
+    for (const r of refs) {
+        if (have.has(r.sha256)) continue;
+        const blob = await mirroredWheel(r.sha256).catch(() => undefined);
+        if (!blob) return { error: `Not run: ${r.filename}, which this run installed, is no longer in the package mirror as it was approved (missing, or its bytes no longer match its sha256). That is a defect of the mirror, not of the install. Nothing of the cell ran; the next cell tries again.` };
+        out.push({ ...r, bytes: await blob.arrayBuffer() });
+    }
+    return out;
+}
+
+/** Mark wheels as handed to `w`, or take them back when the worker could not put them in place. */
+function noteWheels(w: Worker, sent: WheelRef[], ok: boolean): void {
+    if (!sent.length) return;
+    const have = wheelsIn.get(w) ?? wheelsIn.set(w, new Set()).get(w)!;
+    for (const x of sent) { if (ok) have.add(x.sha256); else have.delete(x.sha256); }
+}
+
 /**
  * @param noTimeout Run WITHOUT the watchdog. Only the workbench asks for this, and only the background lets
  *   it through (see the PYTHON_EXEC handler): a page-invoked tool keeps the cap, because a run that never
  *   ends there wedges the single Pyodide instance for every later call with nobody watching. In the bench a
  *   person is sitting in front of it, chose this, and can close the panel.
  */
-function runInWorker(code: string, image: string | null, hardened: boolean, tables: unknown, stream?: boolean, streamId?: string, env?: boolean, noTimeout?: boolean, complete?: { line: number; column: number; bench?: string }, bench?: { persist?: boolean; reset?: boolean }, transfer: ArrayBuffer[] = [], principal = hardened ? "own" : "full", wire?: WireStamp, inside = false, libraries?: { libraries?: unknown; library?: unknown }, bridges = false, cell?: string): Promise<PyResult> {
+function runInWorker(code: string, image: string | null, hardened: boolean, tables: unknown, stream?: boolean, streamId?: string, env?: boolean, noTimeout?: boolean, complete?: { line: number; column: number; bench?: string }, bench?: { persist?: boolean; reset?: boolean }, transfer: ArrayBuffer[] = [], principal = hardened ? "own" : "full", wire?: WireStamp, inside = false, libraries?: { libraries?: unknown; library?: unknown }, bridges = false, cell?: string, wheels: WheelBytes[] = []): Promise<PyResult> {
     // `hardened` is the mode (true = readonly, the locked-down sandbox); `principal` is WHOSE sandbox.
     // A readonly run gets one worker per principal so a patch one principal left cannot reach the next;
     // `full` is its own worker and is never locked.
@@ -433,7 +478,9 @@ function runInWorker(code: string, image: string | null, hardened: boolean, tabl
             ...(inside && Array.isArray(libraries?.libraries) ? { libraries: libraries.libraries } : {}),
             // The JavaScript-bridge lift for this one cell (bridge-names.ts); readonly only, a full worker has no refusal.
             ...(bridges && hardened && !inside ? { bridges: true } : {}),
-            ...(libraries?.library ? { library: libraries.library } : {}) }, transfer);
+            ...(libraries?.library ? { library: libraries.library } : {}),
+            // A run's installs (python_install): the ones this worker lacks, with their bytes (`wheelsForCell`).
+            ...(wheels.length ? { wheels } : {}) }, [...transfer, ...wheels.map((x) => x.bytes)]);
     });
 }
 
@@ -554,14 +601,28 @@ chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
     if (ownLive && msg.turnLive === true) endedRuns.delete(wireStamp!.run!);   // a cell of a live turn: the run is between turns no more
     if (msg.keep === true && ownLive && (msg.turnLive === true || !endedRuns.has(wireStamp!.run!))) keptPrincipals.add(msg.principal);
     withStoredTables(msg.tables ?? null)
-        .then((t) => "error" in t
-            ? { ok: false, stdout: "", error: t.error }
-            : runInWorker(msg.code, msg.image ?? null, msg.hardened !== false, t.tables, msg.stream, msg.streamId, msg.env, msg.noTimeout, msg.complete, { persist: msg.persist, reset: msg.benchReset }, t.transfer, String(msg.principal ?? (msg.hardened !== false ? "own" : "full")), wireStamp, msg.inside === true, { libraries: msg.libraries, library: msg.library },
+        .then(async (t) => {
+            if ("error" in t) return { ok: false, stdout: "", error: t.error };
+            const principal = String(msg.principal ?? (msg.hardened !== false ? "own" : "full"));
+            // The run's installs ride only its own readonly cell, which only the service worker sends: never a page's.
+            const refs = ownLive && msg.hardened !== false ? wheelRefs(msg.installs) : [];
+            let wheels: WheelBytes[] = [];
+            const w = refs.length ? ensureWorker(principal, true) : null;
+            if (w) {
+                const got = await wheelsForCell(w, refs);
+                if ("error" in got) return { ok: false, stdout: "", error: got.error };
+                wheels = got;
+            }
+            const sent: WheelRef[] = wheels.map(({ filename, sha256 }) => ({ filename, sha256 }));
+            const r = await runInWorker(msg.code, msg.image ?? null, msg.hardened !== false, t.tables, msg.stream, msg.streamId, msg.env, msg.noTimeout, msg.complete, { persist: msg.persist, reset: msg.benchReset }, t.transfer, principal, wireStamp, msg.inside === true, { libraries: msg.libraries, library: msg.library },
                 // Only the service worker may lift a cell's bridge refusal: a content script is an extension context too.
                 msg.bridges === true && !sender.tab,
                 // A LEASED cell (py-lease.ts): only the service worker leases, and only a worker-hosted run's own cell.
-                typeof msg.cell === "string" && !sender.tab && wireStamp?.run && msg.principal === `run:${wireStamp.run}` ? msg.cell : undefined)
-                .then((r) => storeReturnedTable(r, msg.valueBudget)))
+                typeof msg.cell === "string" && !sender.tab && wireStamp?.run && msg.principal === `run:${wireStamp.run}` ? msg.cell : undefined,
+                wheels);
+            if (w) noteWheels(w, sent, !(r as { installFailed?: boolean }).installFailed);
+            return storeReturnedTable(r, msg.valueBudget);
+        })
         .then((r) => { sendResponse(r); return r; }, (e) => { const r = { ok: false, stdout: "", error: String(e) }; sendResponse(r); return r; })
         // A LEASED cell's end is also told by its id, apart from the reply: when the service worker that sent the cell has
         // died (past the per-event cap, a crash), the reply goes nowhere, and only this message wakes a new one, which logs
