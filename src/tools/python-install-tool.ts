@@ -26,7 +26,7 @@ export function pythonInstallTool(define: typeof defineTool, deps?: PythonInstal
         name: "python_install",
         summary: "Asks the person to install a PyPI package into python_exec's sandbox.",
         description: "Ask the person to install a package from PyPI, with its dependencies, into the sandbox python_exec cells run in. " +
-            "They see every file it would download with its hash before anything is fetched, or why it cannot be installed. " +
+            "Checking the request sends the package's name to PyPI; the person then sees every file it would download, with its hash, before any is downloaded, or why it cannot be installed. " +
             "Ask for one package per call; a package the sandbox already has needs no install.",
         parameters: {
             type: "object",
