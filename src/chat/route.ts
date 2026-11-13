@@ -10,8 +10,7 @@
 // link cannot disagree about what an address means.
 
 import type { SettingsAnchor, SettingsTab } from "./settings-page";
-import { DEFAULT_CONFIG } from "../contract/contract-config";
-import { PANEL_SECTIONS, PANEL_TABS, type PanelTab } from "../sidebar/settings/settings-sections";
+import { PANEL_SECTIONS, PANEL_TABS, SETTING_PLACES, type PanelTab } from "../contract/contract-config";
 
 /** The views a URL can name. */
 export type MainRoute = "search" | "settings" | "attention";
@@ -36,9 +35,9 @@ const TABS: readonly SettingsTab[] = ["page", "runtimes", "devices", "extension"
 /** The anchors each tab knows; one a tab does not list is dropped. */
 const ANCHORS: Partial<Record<SettingsTab, readonly SettingsAnchor[]>> = { extension: ["backup"] };
 
-/** A config key an address may name. Every `DEFAULT_CONFIG` key for now; the setting-place table narrows it to the
- *  keys with a row (LINKS.md). */
-const isSettingKey = (k: string): boolean => Object.hasOwn(DEFAULT_CONFIG, k);
+/** A config key an address may name: one with a row in the DevTools Settings panel (`SETTING_PLACES`, LINKS.md). A
+ *  key with no row (`ocrNumCtx`) has nowhere to open, so its address is the list. */
+const isSettingKey = (k: string): boolean => Object.hasOwn(SETTING_PLACES, k);
 
 /** The route a hash names. Anything it does not know is the list, never an error: an old or mistyped link still opens the page. */
 export function parseRoute(hash: string): Route {

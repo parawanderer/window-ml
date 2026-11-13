@@ -562,7 +562,7 @@ test("settings: the wire format is a THREE-state control, defaulting to auto", a
 // --- the sections an address may name: settings-sections.ts against what each tab draws ----------------------
 
 test("settings: PANEL_SECTIONS names every section the view defines, once, and nothing else", async () => {
-    const { PANEL_SECTIONS } = await import("../src/sidebar/settings/settings-sections.ts");
+    const { PANEL_SECTIONS } = await import("../src/contract/contract-config.ts");
     const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "../src/sidebar/settings/settings.tsx"), "utf8");
     const defined = [...src.matchAll(/<Section id="([^"]+)"/g)].map((m) => m[1]).sort();
     const listed = Object.values(PANEL_SECTIONS).flat().sort();
@@ -571,7 +571,7 @@ test("settings: PANEL_SECTIONS names every section the view defines, once, and n
 });
 
 test("settings: each tab draws the sections PANEL_SECTIONS lists for it, in order, so a section address opens the right tab", async () => {
-    const { PANEL_SECTIONS, PANEL_TABS } = await import("../src/sidebar/settings/settings-sections.ts");
+    const { PANEL_SECTIONS, PANEL_TABS } = await import("../src/contract/contract-config.ts");
     const w = await loadSidebarWorld();
     await openSettings(w);
     const buttons = [...w.shadow.querySelectorAll(".set-tab")];
@@ -586,7 +586,7 @@ test("settings: each tab draws the sections PANEL_SECTIONS lists for it, in orde
 });
 
 test("settings: Permissions draws the sections PANEL_SECTIONS lists for it, in order, once a site waits and its lists, policies and host grants have loaded", async () => {
-    const { PANEL_SECTIONS } = await import("../src/sidebar/settings/settings-sections.ts");
+    const { PANEL_SECTIONS } = await import("../src/contract/contract-config.ts");
     const waiting = { origin: "https://asker.example", domain: "asker.example", kind: "access", agents: false, at: 1, state: "pending", asks: 1, allowed: false };
     const w = await loadSidebarWorld({
         siteLists: { always: [], session: [], denied: [], agents: {}, selfApprove: [] },

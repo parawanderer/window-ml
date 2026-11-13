@@ -346,13 +346,10 @@ export const DEFAULT_CONFIG: MlConfig = {
     groundingRange: DEFAULT_GROUNDING_RANGE,
 };
 
-/** A tab of the DevTools Settings panel (`SETTINGS_TABS`, sidebar/settings/settings.tsx). */
-export type SettingsPanelTab = "connection" | "models" | "appearance" | "advanced" | "permissions";
-
 /** Where one setting is edited in the DevTools Settings panel: its tab, and the collapsible section holding its row
  *  (absent on a tab with no sections). */
 export interface SettingPlace {
-    tab: SettingsPanelTab;
+    tab: PanelTab;
     section?: string;
 }
 
@@ -507,9 +504,13 @@ export type AccessAnswer =
     | { state: "denied" }
     | { state: "refused"; reason: string };
 
-/** The DevTools Settings panel's tabs, in order, with each one's sections by id and title.
- *  tests/setting-places.test.js renders the panel and fails when this and what it draws disagree. */
-export const PANEL_LAYOUT: Readonly<Record<SettingsPanelTab, { label: string; sections: Readonly<Record<string, string>> }>> = {
+/** One tab of the DevTools Settings panel and its collapsible sections, by `Section` id and title. */
+interface PanelTabLayout {
+    label: string;
+    sections: Readonly<Record<string, string>>;
+}
+
+const layout = {
     connection: { label: "Connection", sections: {} },
     models: { label: "Models", sections: {
         defaults: "Defaults", modelFilter: "Model access filter", utility: "Utility model", embeddings: "Embeddings",
@@ -527,4 +528,23 @@ export const PANEL_LAYOUT: Readonly<Record<SettingsPanelTab, { label: string; se
         waitingrequests: "Waiting for an answer", siteapprovals: "Sites that may use window.ml",
         policies: "Policies", whitelist: "Sites that approve their own actions",
         hostaccess: "Site access (agent fetches)" } },
-};
+} satisfies Record<string, PanelTabLayout>;
+
+/** A tab of the DevTools Settings panel (`SETTINGS_TABS`, sidebar/settings/settings.tsx). */
+export type PanelTab = keyof typeof layout;
+
+/** The DevTools Settings panel's tabs, in order, with each one's sections by id and title, in the order the view draws
+ *  them: what a `window-ml:` link and the chat page's `settings/extension/…` hash may name. The one table of it;
+ *  `PANEL_TABS` and `PANEL_SECTIONS` are views of it. tests/setting-places.test.js and tests/sidebar-settings.test.js
+ *  render the panel and fail when this and what it draws disagree. */
+export const PANEL_LAYOUT: Readonly<Record<PanelTab, PanelTabLayout>> = layout;
+
+/** The panel's tabs, in the order it shows them. */
+export const PANEL_TABS = Object.keys(PANEL_LAYOUT) as readonly PanelTab[];
+
+/** The section ids each panel tab draws, in order. */
+export const PANEL_SECTIONS: Readonly<Record<PanelTab, readonly string[]>> = (() => {
+    const out = {} as Record<PanelTab, readonly string[]>;
+    for (const t of PANEL_TABS) out[t] = Object.keys(PANEL_LAYOUT[t].sections);
+    return out;
+})();

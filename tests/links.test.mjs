@@ -35,7 +35,10 @@ test("an unknown key, tab or section, a section of another tab, or an extra part
     for (const a of ["setting/nope", "setting/ocrNumCtx", "setting/constructor", "setting/__proto__", "setting/",
         "settings/extension/nope", "settings/extension/advanced/nope", "settings/extension/models/shell",
         "settings/extension/advanced/shell/more", "settings/extension", "settings", "settings/devices",
-        "setting/apiKey/x", "s/local:3fa91c2e", "search", "attention", ""])
+        "setting/apiKey/x", "s/local:3fa91c2e", "search", "attention", "",
+        // parseRoute drops empty parts and trailing ones and falls back to a wider view; a link does not
+        "settings//extension/models", "settings/extension/advanced//shell", "setting//apiKey", "settings/extension/backup/x",
+        "settings/extension/models/", "/settings/extension/models", "s/x"])
         assert.equal(parseAddress(a), null, a);
 });
 
