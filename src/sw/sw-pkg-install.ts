@@ -1,4 +1,4 @@
-// sw-pkg-install.ts — `python_install` in the worker: the verdict against the core's own lock before anything is fetched, the card it freezes, and the person's answer judged against that card.
+// sw-pkg-install.ts — `python_install` in the worker: the verdict against the core's own lock and PyPI's index before any file is downloaded, the card it freezes, and the person's answer judged against that card.
 
 // docs/plan/repl/PACKAGES_INSTALL.md, slices 2 and 3. The verdict reads PyPI's index on the precheck, before approval
 // (ruled 2026-11-12: one card; the name canonicalized before any request, the requests capped per call and per run, each
