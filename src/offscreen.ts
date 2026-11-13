@@ -437,6 +437,75 @@ function noteWheels(w: Worker, sent: WheelRef[], ok: boolean): void {
     for (const x of sent) { if (ok) have.add(x.sha256); else have.delete(x.sha256); }
 }
 
+// ---- An install's CANDIDATE (PACKAGES_INSTALL.md, slice 4, items 2 and 4) ----
+// The import is tested in a fresh readonly worker, never in the run's own: it is handed the run's installs and the new
+// wheels after its lockdown, imports each new distribution's top-level modules in a hardened cell, and is terminated
+// whatever the answer. A rollback is dropping it: the run's worker was never touched.
+/** From the candidate's spawn to its answer; past it the candidate is killed and the install fails (ruled 2026-11-13). */
+const PY_INSTALL_DEADLINE_MS = 60_000;
+const candidates = new Map<string, string>();   // state: plumbing — run id → its candidate's principal, while one runs
+/** What a candidate found. */
+type InstallTest = { ok: true } | { ok: false; error: string; module?: string; missing?: string; died?: boolean };
+
+/** The candidate's cell: import each module, stop at the first failure, and say which module a missing one was. */
+function importTestCode(modules: string[]): string {
+    return `import importlib, json
+_r = None
+for _m in ${JSON.stringify(modules)}:
+    try:
+        importlib.import_module(_m)
+    except ModuleNotFoundError as _e:
+        _r = {"module": _m, "missing": _e.name, "error": f"{type(_e).__name__}: {_e}"}
+        break
+    except BaseException as _e:
+        _r = {"module": _m, "error": f"{type(_e).__name__}: {_e}"}
+        break
+json.dumps(_r)`;
+}
+
+/** Terminate a candidate with no housekeeping record: it is not a run's sandbox, and nothing of it is lost. */
+function dropCandidate(principal: string): void {
+    const entry = workers.get(principal);
+    if (entry) { try { entry.w.terminate(); } catch { /* already gone */ } }
+    workers.delete(principal);
+    clearReap(principal);
+    workerUses.delete(principal);
+    respawned.delete(principal);
+}
+
+/**
+ * Test an install in a candidate: the run's earlier installs and the new wheels unpacked after its lockdown, then
+ * `modules` imported in a hardened cell.
+ * @param run the run
+ * @param refs every wheel the candidate holds: the run's record, then the new ones
+ * @param modules the new distributions' top-level modules
+ * @returns passed, or why not; `died` when the interpreter did not survive it (a trap, memory, the deadline, Stop)
+ */
+async function installTest(run: string, refs: WheelRef[], modules: string[]): Promise<InstallTest> {
+    if (candidates.has(run)) return { ok: false, error: "another install of this run is being tested" };
+    const principal = `install:${run}:${nextId++}`;
+    candidates.set(run, principal);
+    const deadline = setTimeout(() => killWorker(principal, "install-deadline"), PY_INSTALL_DEADLINE_MS);
+    try {
+        const w = ensureWorker(principal, true);
+        const got = await wheelsForCell(w, refs);
+        if ("error" in got) return { ok: false, error: got.error };
+        const r = await runInWorker(importTestCode(modules), null, true, null, false, undefined, false, true, undefined, undefined, [], principal, undefined, false, undefined, false, undefined, got) as PyResult & { installFailed?: boolean };
+        if (r.ok) {
+            const v = typeof r.value === "string" ? JSON.parse(r.value) : r.value;
+            const found = (typeof v === "string" ? JSON.parse(v) : v) as { module?: string; missing?: string | null; error?: string } | null;
+            return found ? { ok: false, error: String(found.error ?? "the import failed"), ...(found.module ? { module: found.module } : {}), ...(found.missing ? { missing: found.missing } : {}) } : { ok: true };
+        }
+        return { ok: false, error: String(r.error ?? "the candidate did not answer"), ...(r.installFailed ? {} : { died: true }) };
+    } catch (e) {
+        return { ok: false, error: String((e as Error)?.message ?? e), died: true };
+    } finally {
+        clearTimeout(deadline);
+        candidates.delete(run);
+        dropCandidate(principal);
+    }
+}
+
 /**
  * @param noTimeout Run WITHOUT the watchdog. Only the workbench asks for this, and only the background lets
  *   it through (see the PYTHON_EXEC handler): a page-invoked tool keeps the cap, because a run that never
@@ -567,6 +636,18 @@ chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
     // Start the runtime ahead of a run that is likely to need it (see the background's PYTHON_PREWARM). No
     // watchdog: nothing waits on it, and a run that later waits on a start that hangs arms its own. Prewarm
     // carries the same principal + mode as the run it is warming for, so it warms THAT principal's worker.
+    // An install's candidate (python_install, slice 4) and its Stop: only the service worker sends either.
+    if (msg?.type === "PY_INSTALL_TEST" && !sender.tab && typeof msg.run === "string" && msg.run) {
+        const modules = Array.isArray(msg.modules) ? msg.modules.filter((m: unknown): m is string => typeof m === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(m)) : [];
+        installTest(msg.run, wheelRefs(msg.wheels), modules).then(sendResponse, (e) => sendResponse({ ok: false, error: String(e), died: true }));
+        return true;
+    }
+    if (msg?.type === "PY_INSTALL_STOP" && !sender.tab && typeof msg.run === "string") {
+        const principal = candidates.get(msg.run);
+        if (principal) killWorker(principal, "stopped");
+        sendResponse({ ok: true, stopped: !!principal });
+        return;
+    }
     if (msg?.type === "PY_PREWARM") {
         const principal = String(msg.principal ?? "own");
         const w = ensureWorker(principal, msg.hardened !== false);

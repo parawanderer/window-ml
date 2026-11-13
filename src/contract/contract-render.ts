@@ -250,7 +250,7 @@ export interface TokenRender { id: string; tool: string; render?: RenderDescript
  *  - `no-metadata`: the release's requirements are not known (an older release, whose metadata the index did not give).
  *  - `index-error`: the index could not be read (a failed request, an answer too large or not JSON).
  *  - `lookup-cap`: the run has made all the index requests it may (`INDEX_BOUNDS.perRun`). */
-export type VerdictReason = "no-build" | "python-version" | "lock-too-old" | "not-on-index" | "too-large" | "malformed" | "no-metadata" | "index-error" | "lookup-cap";
+export type VerdictReason = "no-build" | "python-version" | "lock-too-old" | "not-on-index" | "too-large" | "malformed" | "no-metadata" | "index-error" | "lookup-cap" | "not-shipped";
 
 /** One file the install would fetch, as the card shows it and the answer carries it back. `size` is `null` for a lock
  *  file (the lock states no size; the card reads "in the core"). `source` is `mirror` for a PyPI file whose bytes an

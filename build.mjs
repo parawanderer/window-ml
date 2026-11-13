@@ -14,6 +14,7 @@ import { writeBuildInfo } from "./scripts/gen-build-info.mjs";
 import { writeSchema } from "./scripts/gen-export-schema.mjs";
 import { writeIsolatedKit } from "./scripts/gen-isolated-kit.mjs";
 import { writeCoreEnv } from "./scripts/gen-core-env.mjs";
+import { writePkgShipped } from "./scripts/gen-pkg-shipped.mjs";
 import { buildWeb } from "./scripts/build-web.mjs";
 
 // output name (dist/<name>.js)  ->  source entry
@@ -231,6 +232,9 @@ writeIsolatedKit();
 // core-env.gen.ts — the pinned core's wheel tags and marker environment python_install judges PyPI wheels against,
 // from the package oracle's env.json (gen-core-env.mjs). Gitignored too.
 writeCoreEnv();
+// pkg-shipped.gen.ts — the lock files the extension ships (the pyodide-wheels/ the copy below takes), which python_install's
+// card counts as in the core (gen-pkg-shipped.mjs). Gitignored too.
+writePkgShipped();
 // docs/spec/export.schema.json — the JSON export contract in a language-neutral form, lifted from
 // export-schema.ts. CHECKED IN (not gitignored like the two above): it is a published spec people link to
 // and generate parsers from, so it has to exist in the repo, and `tests/export-schema.test.mjs` fails if
