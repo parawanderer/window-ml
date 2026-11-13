@@ -446,3 +446,47 @@ test("sed: named in the dialect's own advertised verb list", async () => {
     assert.ok(PIPE_CMDS.includes("sed"));
     assert.match(PIPE_SYNTAX, /sed s\/PATTERN\/REPLACEMENT\//);
 });
+
+// --- pageSpans: the page list shared by the `pages` verb and `look` at a document ---
+
+test("pageSpans: a page, a range and a list come back as sorted unique numbers", async () => {
+    const { pageSpans } = await import("../src/pointers/text-pipe.ts");
+    assert.deepEqual(pageSpans("3", 8, "x"), [3]);
+    assert.deepEqual(pageSpans("3-5", 8, "x"), [3, 4, 5]);
+    assert.deepEqual(pageSpans("3,7-9", 8, "x"), [3, 7, 8, 9]);
+    assert.deepEqual(pageSpans("9,2-3,3", 8, "x"), [2, 3, 9], "sorted, and a page named twice comes once");
+});
+
+test("pageSpans: a space separates like a comma, and one around a dash is dropped", async () => {
+    const { pageSpans } = await import("../src/pointers/text-pipe.ts");
+    assert.deepEqual(pageSpans("3 7", 8, "x"), [3, 7]);
+    assert.deepEqual(pageSpans("3 - 5", 8, "x"), [3, 4, 5]);
+    assert.deepEqual(pageSpans(" 1, 2  3 ", 8, "x"), [1, 2, 3]);
+});
+
+test("pageSpans: empty input, a bad part, page 0 and a backwards range are refused with the verb's sentences", async () => {
+    const { pageSpans } = await import("../src/pointers/text-pipe.ts");
+    assert.throws(() => pageSpans("", 8, "x"), /needs page numbers/);
+    assert.throws(() => pageSpans("   ", 8, "x"), /needs page numbers/);
+    for (const bad of ["a", "1-", "-3", "1..3", "1-2-3", "1;2"]) assert.throws(() => pageSpans(bad, 8, "x"), /can't read/, bad);
+    assert.throws(() => pageSpans("0", 8, "x"), /numbered from 1/);
+    assert.throws(() => pageSpans("0-3", 8, "x"), /numbered from 1/);
+    assert.throws(() => pageSpans("5-3", 8, "x"), /`pages 5-3` runs backwards: write pages 3-5/);
+});
+
+test("pageSpans: more than max pages is refused with `over` closing the sentence, counted over the whole list", async () => {
+    const { pageSpans } = await import("../src/pointers/text-pipe.ts");
+    assert.equal(pageSpans("1-8", 8, "x").length, 8, "exactly max is allowed");
+    assert.throws(() => pageSpans("1-9", 8, "in one look; look at the rest in another call"), (e) => e.message === "`pages` selects at most 8 pages in one look; look at the rest in another call.");
+    assert.throws(() => pageSpans("1-4,10-14", 8, "x"), /at most 8 pages x\.$/);
+    assert.throws(() => pageSpans("1-999999", 8, "x"), /at most 8 pages/, "refused before any number is gathered");
+});
+
+test("the `pages` verb still reads its list through pageSpans: same sentences, its own bound of 50 and its own tail", () => {
+    const book = Array.from({ length: 60 }, (_, i) => `<page n="${i + 1}">\nrev ${i + 1}\n</page>`).join("\n");
+    assert.equal(runPipe(book, "pages 9,2-3 | grep rev"), "rev 2\nrev 3\nrev 9");
+    assert.equal(runPipe(book, "pages 2 - 4 6 | grep -c rev"), "4");
+    assert.throws(() => runPipe(book, "pages"), /needs page numbers/);
+    assert.throws(() => runPipe(book, "pages 5-2"), /runs backwards: write pages 2-5/);
+    assert.throws(() => runPipe(book, "pages 1-51"), (e) => e.message === "`pages` selects at most 50 pages in one stage; read them in parts.");
+});

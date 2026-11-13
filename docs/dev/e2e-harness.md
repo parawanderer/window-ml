@@ -578,6 +578,9 @@ thing. The parts:
 - **Real model:** point the extension at a real backend with `E2E_BACKEND=<chatUrl>
   E2E_MODEL=<id> E2E_KEY=<bearer>` (the observer also accepts `USE_ENV=1` to read
   `OPENWEBUI_URL/KEY/MODEL` + `OPENWEBUI_UTILITY_MODEL`/`OPENWEBUI_VISION_MODEL` from `.env`).
+  A real driver is declared as seeing images (`defaultModelVision`, read only when Ollama cannot report the
+  model's capabilities, so in practice for a cloud model) unless it matches `TEXT_ONLY_CLOUD` (DeepSeek V4 Pro);
+  `E2E_MODEL_VISION=yes|no` overrides it. Undeclared, a cloud driver's `look` went to the vision reader.
   Warm-up fires a 1-token completion before the timed window so the ~20GB cold load doesn't
   pollute timings (Ollama's keep-alive TTL keeps it warm between runs — only the first pays it).
 

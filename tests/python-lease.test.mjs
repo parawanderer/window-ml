@@ -8,6 +8,11 @@
 
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+
+// A real value store (fake-indexeddb): a cut late result's whole is stored where its pointer reads it.
+const { IDBFactory } = createRequire(import.meta.url)("fake-indexeddb");
+globalThis.indexedDB = new IDBFactory();
 
 const T = { timeout: 20000 };
 const EXT = "ext-id";
@@ -42,7 +47,7 @@ globalThis.chrome = {
 };
 const { leaseCell, pyKernelBusy, pyDetachedText, pyTailText, pyCancelText } = await import("../src/sw/sw-python-task.ts");
 const { pythonStarted, pythonDone, runPython } = await import("../src/sw/sw-python.ts");
-const { taskAction, endTasks, openTasks, taskDrained } = await import("../src/sw/sw-tasks.ts");
+const { taskAction, endTasks, openTasks, taskDrained, cancelPageTasks } = await import("../src/sw/sw-tasks.ts");
 const { runControllers, runInboxes } = await import("../src/sw/sw-runs.ts");
 const { runLog } = await import("../src/sw/sw-run-log.ts");
 const { ringAppend, PY_LEASE_MS, PY_LEASE_MAX_MS, PY_DETACHED_MAX_MS, PY_INTERRUPT_KILL_MS } = await import("../src/python/py-lease.ts");
@@ -56,8 +61,8 @@ const sentOf = (type) => sent.filter((m) => m.type === type);
 let n = 0;
 /**
  * One leased cell in a live run: its call is a promise the test settles, its inbox is open, a controller is registered.
- * `late` formats the result the way python_exec's does (a stub that quotes it).
- * @param o expectMs, and the run's id
+ * `late` formats the result the way python_exec's does (a stub that quotes it); `carry` adds the outcome's whole or image.
+ * @param o expectMs, the run's id, and `carry`
  */
 function cell(o = {}) {
     n++;
@@ -73,7 +78,7 @@ function cell(o = {}) {
     let detaches = 0;
     const answer = leaseCell({
         runId, cell: id, ...(o.seq !== undefined ? { seq: o.seq } : {}), expectMs: o.expectMs ?? null, call, onDetach: () => { detaches++; },
-        late: async (r) => { lates.push(r); return { status: "done", text: `out: ${r.out}`, result: null }; },
+        late: async (r) => { lates.push(r); return { status: "done", text: `out: ${r.out}`, result: null, ...(o.carry?.(r) ?? {}) }; },
     });
     return { runId, id, ctl, answer, resolve: ok, reject: err, lates, detaches: () => detaches, inbox: () => runInboxes.get(runId).queue,
         start: () => pythonStarted({ type: "PY_STARTED", cell: id }, OFFSCREEN) };
@@ -223,6 +228,50 @@ test("a result after detach goes through `late` and reaches the inbox as [task <
     assert.match(await waiting, new RegExp(`^task ${d.r.id} done after \\d+ s: out: 7$`));
     assert.deepEqual(d.inbox(), [], "an awaited result is not also queued");
     await done(d);
+});
+
+test("a cut late result's whole is scrubbed and stored, and the inbox carries its key, its length and its figure", T, async () => {
+    const { readStoredText, claimValue } = await import("../src/sw/sw-values.ts");
+    const png = "data:image/png;base64,iVBORw0KGgo=";
+    const whole = `${"row\n".repeat(2000)}at http://host/api/chat/completions end`;
+    const c = await detached({ carry: () => ({ whole, image: png }) });
+    c.resolve({ out: "cut" });
+    await until(() => c.inbox().length > 0);
+    const [item] = c.inbox();
+    assert.equal(typeof item.value, "string", "the stored whole's key rides the inbox item");
+    assert.equal(item.images?.[0], png, "the figure rides it as the call's own return would carry it");
+    await claimValue(item.value, c.runId);
+    const stored = await readStoredText(item.value, c.runId);
+    assert.equal(item.chars, stored.length);
+    assert.ok(stored.includes("end") && stored.length > item.text.length, "the store holds the whole, past the text");
+    assert.ok(!stored.includes("http://host"), "the stored whole is scrubbed before it is stored");
+    await done(c);
+});
+
+test("an await of a cut late result answers its text with the stored whole's key and length, and its figure", T, async () => {
+    const png = "data:image/png;base64,iVBORw0KGgo=";
+    const d = await detached({ carry: () => ({ whole: "w".repeat(9000), image: png }) });
+    const waiting = taskAction(d.runId, { op: "await", id: d.r.id, timeout_ms: 5000 });
+    await sleep(20);
+    d.resolve({ out: "7" });
+    const a = await waiting;
+    assert.equal(typeof a, "object", JSON.stringify(a));
+    assert.match(a.content, new RegExp(`^task ${d.r.id} done after \\d+ s: out: 7$`));
+    assert.equal(a.textChars, 9000);
+    assert.equal(typeof a.textValue, "string");
+    assert.equal(a.image, png);
+    const again = await taskAction(d.runId, { op: "await", id: d.r.id });
+    assert.equal(again.textValue, a.textValue, "an await after the end answers the same");
+    await done(d);
+});
+
+test("a late whole no longer than its text is not stored: the answer is the text alone", T, async () => {
+    const c = await detached({ carry: () => ({ whole: "out" }) });
+    c.resolve({ out: "a much longer text than the whole" });
+    await until(() => c.inbox().length > 0);
+    assert.equal(c.inbox()[0].value, undefined);
+    assert.equal(c.inbox()[0].images, undefined);
+    await done(c);
 });
 
 test("a call that rejects after detach is a failed task whose text carries the error", T, async () => {
@@ -455,7 +504,7 @@ test("a page-hosted run's python_exec does not lease: no formatter, no expectMs,
     assert.equal(seen.opts.expectMs, undefined);
 });
 
-test("a late result is the formatter's text: done, or failed for a Python error, with no pointer", async () => {
+test("a late result is the formatter's text: done, or failed for a Python error; the pointer is minted where it is read, not here", async () => {
     const { tool, seen } = await pyTool();
     await tool.run({ code: "x" });
     const ok = await seen.opts.late({ ok: true, stdout: "hi\n", value: 42 });
@@ -468,21 +517,23 @@ test("a late result is the formatter's text: done, or failed for a Python error,
     assert.match(bad.text, /Python error: ZeroDivisionError/);
 });
 
-test("a late result cut at the output limit says so, and that no pointer to the rest exists; an uncut one does not", async () => {
+test("a late result cut at the output limit carries the fuller capture it was cut from; an uncut one carries nothing longer", async () => {
     const { tool, seen } = await pyTool();
     await tool.run({ code: "x" });
     const big = await seen.opts.late({ ok: true, stdout: "y".repeat(200_000), value: null });
-    assert.match(big.text, /Cut at the output limit; no pointer to the rest exists for a task's result\./);
+    assert.ok(big.whole && big.whole.length > big.text.length, "the whole the pointer reads is longer than the text the model reads");
     const small = await seen.opts.late({ ok: true, stdout: "y", value: 1 });
-    assert.doesNotMatch(small.text, /Cut at the output limit/);
+    assert.ok(!small.whole || small.whole.length <= small.text.length, "nothing past the text when the cap cut nothing");
 });
 
-test("a late figure is named as not shown, never as an image that came back", async () => {
+test("a late figure carries its image, said as the call's own return says it", async () => {
     const { tool, seen } = await pyTool();
     await tool.run({ code: "x" });
-    const fig = await seen.opts.late({ ok: true, stdout: "", value: "data:image/png;base64,iVBORw0KGgo=", render: "figure" });
-    assert.match(fig.text, /1 figure, not shown \(a task's result carries text only\)\./);
-    assert.doesNotMatch(fig.text, /came back as an image|Returned an image/);
+    const png = "data:image/png;base64,iVBORw0KGgo=";
+    const fig = await seen.opts.late({ ok: true, stdout: "", value: png, render: "figure" });
+    assert.equal(fig.image, png);
+    assert.match(fig.text, /came back as an image/);
+    assert.doesNotMatch(fig.text, /not shown/);
 });
 
 // --- a cell whose worker died: PY_DONE logs it as orphaned ---
@@ -552,4 +603,18 @@ test("build.mjs refuses a __PY_LEASE_MS__ or __PY_DETACHED_MAX_MS__ that is not 
             assert.match(r.stderr, new RegExp(`${name} must be a positive integer of milliseconds`));
         } finally { rmSync(out, { recursive: true, force: true }); }
     }
+});
+
+// --- a page change ends the page's tasks, not the run's (ASYNC_CALLS.md rule 4a) ---
+
+test("a page change leaves a detached cell running (runtime-bound): no PY_CANCEL, and its late result still reaches the inbox", T, async () => {
+    const c = await detached();
+    const before = sentOf("PY_CANCEL").length;
+    await cancelPageTasks(c.runId);
+    assert.equal(sentOf("PY_CANCEL").length, before, "the offscreen document was asked to cancel a runtime-bound cell");
+    assert.deepEqual(c.inbox(), []);
+    c.resolve({ out: "after the page changed" });
+    await until(() => c.inbox().length > 0);
+    assert.match(c.inbox()[0].text, new RegExp(`^\\[task ${c.r.id} done after \\d+ s: out: after the page changed\\]$`));
+    await done(c);
 });

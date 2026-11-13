@@ -82,6 +82,20 @@ test("with \"Let sites ask\" on, the stub is registered for every http(s) page b
     assert.deepEqual(r?.matches, ["http://*/*", "https://*/*"], "on again");
 });
 
+test("allowing another site with \"Let sites ask\" on updates both registrations in place: no unregister, and the stub's excludeMatches names the new origin", T, async () => {
+    const bg = worker({ local: { ml_site_always: [ALLOWED] }, config: { siteRequests: true } });
+    await flush(20);
+    bg.scriptingCalls.length = 0;
+    bg.setLocal({ ml_site_always: [ALLOWED, OTHER] });
+    await flush(20);
+    const calls = plain(bg.scriptingCalls);
+    const updated = calls.filter(([k]) => k === "updateContentScripts").flatMap(([, list]) => list.map((r) => r.id));
+    assert.ok(updated.includes("ml-main-ask") && updated.includes("ml-main-lasting"), `both updated in place: ${JSON.stringify(calls)}`);
+    assert.deepEqual(calls.filter(([k]) => k === "unregisterContentScripts"), [], "no id is unregistered, so no load lands in a gap");
+    assert.deepEqual([...plain(bg.registered.get("ml-main-ask")).excludeMatches].sort(), ["https://ok.example:443/*", "https://unknown.example:443/*"]);
+    assert.ok(plain(bg.registered.get("ml-main-lasting")).matches.includes("https://unknown.example:443/*"));
+});
+
 test("marking, allowing and unmarking a site move it between the stub's registration and the full one", T, async () => {
     const bg = worker();
     await flush(20);

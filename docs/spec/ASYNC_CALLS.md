@@ -118,7 +118,8 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
    deadline kill. A fetch: its abort. `exec`'s main-world eval CANNOT be interrupted once running; cancel there only
    stops awaiting it, and the result says so rather than implying the JavaScript stopped. CORRECTED the same day: an `exec` that ran through the debugger (an isolated world, or a CDP main-world eval) IS interruptible by `Runtime.terminateExecution`, measured: the script stops about 100 ms later, the page's state survives including the writes made before the loop, timers resume and the context still evaluates; the pending evaluate rejects with a bare "Internal error" when the script had not yet awaited, and NEVER settles once it had (the exec wrapper's common case), so the cancel settles on its own deadline, never on the evaluate, and reports "terminated" from having sent the command plus a fresh evaluate answering. "Cannot interrupt, no longer awaited" stays only for the userScripts main world, which has no debugger. A cancel's effect is a
    fact in the result, never a promise.
-4. **A detached call never outlives its run.** The run's end (an answer, the step cap, Stop, a navigation that kills a
+4. **A detached call never outlives its run.** REVERSED 2026-11-12 (Shane) for `ml.sh` and `python_exec` by rule 4b
+   below: the end of a turn no longer ends their tasks. A fetch keeps this rule. The run's end (an answer, the step cap, Stop, a navigation that kills a
    page-hosted loop) cancels every detached call of that run by its executor's cancel, and what cannot be cancelled is
    reported as an orphan, the way the shell's status already reports its orphan list. A detached cell holds its
    worker as a running message does (the reap's "idle" is no message running or queued), so no clock reaps it, and
@@ -130,7 +131,13 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
    the loop-side reporting, not a second one.
 
    **4a. A page change ends the page's tasks, not the run's.** DESIGN NOTE 2026-11-12 (the async lane, assigned by the
-   coordinator; nothing built). A worker-hosted run's page changes when it navigates in its own tab or when the person moves it to
+   coordinator). BUILT 2026-11-12 as scaffolding only: `TaskExecutor.pageBound` (sw-tasks.ts; `ml.sh` and `python_exec` declare
+   `false`, absent reads as false), `cancelPageTasks(runId)` (cancels a run's page-bound tasks through their executor's cancel,
+   tells the model the fact line through the inbox or a waiting await, records `task`/`cancelled` with reason `page-change`, or
+   `orphaned` in the line, the await's status and the record when the executor does not confirm the cancel; a late result
+   of a cancelled or orphaned task is dropped), called from `webNavigation.onCommitted` (background.ts) for each run in
+   `activeRuns` on the tab, and `rekeyRunInbox(runId, tabId)` (sw-runs.ts; not wired yet: the move-run lane calls it for a move
+   between steps, and `retabRuns` moves inboxes for `tabs.onReplaced` with its own loop), with `senderOwnsRun` as the inbox's owner check. No page-bound task exists yet. A worker-hosted run's page changes when it navigates in its own tab or when the person moves it to
    another tab (`MOVE_RUN.md`). Neither ends the run (a page-hosted loop's navigation does, and is rule 4's), so rule 4
    does not apply; each detached call and subscription is
    decided by where it RUNS:
@@ -143,7 +150,10 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
      document). Each is reported to the model as a fact, as a cancel is (`[task <id> cancelled: it ran in the page
      this run left]`; `[subscription <id> ended: it watched the page this run left]`), and is a run-log record. A
      selector watch is never silently re-armed on the new document, whose elements are not the ones it was asked
-     about; the model subscribes again if it wants to.
+     about; the model subscribes again if it wants to. A cancel the executor does not confirm leaves the task
+     `orphaned`, reported as `[task <id> orphaned: it ran in the page this run left, and its cancel was not
+     confirmed]` and recorded in the run log; an orphaned page-bound task's later result never reaches the inbox
+     (ruled 2026-11-12, the coordinator).
    - **The inbox follows the run, where there is one to follow.** `runInboxes` carries the run's `tabId`, and a turn's
      `settle` deletes it with the turn's tasks. A move BETWEEN TURNS (`MOVE_RUN.md`, shape (a), the one built first)
      therefore meets no inbox and no task: rule 4 already ended them, and this rule has nothing to act on. A move
@@ -153,6 +163,81 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
    Today no page-bound task exists (only `ml.sh` and `python_exec` detach, and mode 2 is unbuilt), so the rule changes
    nothing that runs now. It must hold before a detached `exec` or a DOM subscription is built, and each of those PRs
    carries its red-team row: a task cancelled by a page change is reported, and never resolves against the new page.
+   **4b. A detached task survives the end of its turn.** RULED 2026-11-12 (Shane: "that is what a user expects of
+   background tasks"; the coordinator's text with the async lane's additions; nothing built). This reverses rule 4, and
+   the mode 1 ruling that a model answering while a build is detached ends the build, for the two executors that run
+   outside the service worker: an `ml.sh` call (the host's process) and a detached `python_exec` cell (the offscreen
+   document). A fetch runs IN the service worker and dies with it, so it stays turn-bound: the turn's end cancels it,
+   as rule 4 says. Built after the Python namespace change (a run's namespace lives per run, not per turn), without
+   which a cell could not outlive the `settle` that drops its worker's state.
+   - **When a task ends.** At its deadline, on its cancel, at session release (`releaseSessionTokens`) and at
+     archive, and a page-bound one on a page change (rule 4a, unchanged). `settle` no longer calls `endTasks`, and it
+     keeps the run's inbox while a task of the run is pending. An `ml.sh` call's owner is the run, so its lease
+     outlives the turn and ends with the run. A detached cell keeps the kernel locked until it ends, so the next
+     turn's `python_exec` is refused with `pyKernelBusy` while it runs, as within a turn.
+   - **The cap.** `PY_DETACHED_MAX_MS` (5 min) was set by the service worker's eviction (`docs/dev/async-calls.md`:
+     a pending reply keeps the worker alive only to about 345 s), not by the work. With the durable path below,
+     a detached task is bounded by its own deadline under one cap, a DevTools Settings knob (the settings rule).
+     Default 60 min (RULED 2026-11-12, Shane: tune it later if it is wrong).
+   - **Durable, filed by run and session.** Between turns nothing keeps the service worker alive: with nothing
+     pending it is evicted at about 65 s. So the task table and a parked result are durable (`chrome.storage.session`
+     or IndexedDB), filed by run and session, and declared through `defineState` from the first commit. `state.md`
+     is read first, so the parked result is the run inbox persisted, never a second copy of it. The pending
+     `sendMessage` reply stays the in-turn path. Past it, the executor delivers its end as a FRESH message (`PY_DONE`
+     by cell id from the offscreen document; the host's own message for `ml.sh`), which starts a new worker; that
+     worker rehydrates the task's row and parks the result. This replaces the mode 1 ruling that `PY_DONE` by cell
+     id is not built.
+   - **A finished task starts a turn, by default.** CORRECTED 2026-11-12 (Shane: that is how they use and like
+     Claude Code). A completion arriving while a turn runs parks in the inbox for that turn, as today. One arriving
+     with no turn running starts a turn whose first step reads the inbox, through the same checks as any inbox item
+     (rule 6); completions arriving before that first step coalesce into the one turn, and so does a person's
+     message sent in the meantime. The transcript marks the turn as started by task `<id>` with a system line (as
+     `takeArchiveNotice` does), so a person sees why the model spoke. The turn is the run's own, on its session and
+     tab, under the run's existing step and token budgets and approvals. It is a user-started run's turn, not a
+     page-started one, so the origin gate is unchanged; it still never runs on a page we own (`AGENT_START_PAGE`).
+     A run archived or released first has no task left to finish: both end its tasks (above), so a result that
+     still arrives is dropped, with a run-log record, and starts nothing. A run moved first starts the turn on its
+     CURRENT tab, since the inbox follows the run (rule 4a). A run whose tab is gone keeps its runtime-bound tasks
+     (the kernel and the host do not live in the tab), and a result parks with a run-log record; no turn starts by
+     itself on a run with no tab, and the parked result is read at the run's next turn once the person brings the
+     session to a tab (`adoptSession`).
+   - **A session with no tab shows it** (Shane, 2026-11-12: "the UI should indicate this weird state clearly"). A run
+     with no tab that still has a runtime-bound task running, or a parked result, is shown as such on the CHAT PAGE
+     (and the phone app, which draws the same views): it is the surface that keeps finished sessions, and a run with
+     no tab has no sidebar to show anything in. Recommended shape, refined with the chat-page lane when built: the
+     session's card in the chat page's session list carries a state mark with the count (`background: 2 running`,
+     `1 result waiting`), distinct from the running and idle marks; opening the session shows a banner saying it has
+     no tab, what is running or waiting, and that a result is read at the next turn once the session is brought to a
+     tab, with the bring-here action beside it (`MOVE_RUN.md`). The sidebar shows the same mark only on a session it
+     lists while some other tab is open. The HUD mark above covers a run that has a tab. The state is read from the
+     durable task table, never a second copy, and clears when the task ends and its result is read. OPEN, a pointer
+     only: whether a parked result reaches someone with the app closed (`NOTIFICATIONS.md`). Owners when built: the
+     async lane supplies the state; the chat-page lane draws the session views (its design language, the calm view
+     and mobile in one change), as with the task line.
+   - **Notify-only is a setting.** A durable per-config flag in DevTools Settings (the settings rule; the popup is
+     optional) switches every run to notify-only: a completion with no turn running parks, the person sees a
+     transcript system line and a HUD mark, and the model reads it at the next turn the person starts. The
+     subscription path (mode 2, "a detached call's completion") is unchanged by either setting.
+   - **A chain of started turns is capped.** RULED 2026-11-12 (Shane, both numbers). A started turn can detach a
+     task whose completion starts the next, so turns can follow one another with no person's message between them.
+     The turns started in a row by task completions, with no message from the person between them, are capped (one
+     knob, beside the cap above; default 5); at the cap, a completion parks and notifies as on notify-only.
+   - **What the model is told: every lifetime, in one place** (Shane, 2026-11-12: the model should know how long
+     each thing in its sandbox lasts, so it never counts on one that is gone). The prompt (or the tool descriptions
+     it already reads) states, in one short list, how long each thing the model can keep lasts and what ends it:
+     Python variables (the run, per the namespace ruling; ended by a kernel death and by the idle reap after its
+     time between turns); `/files/` (the session; `FILE_ATTACHMENTS.md`); `@tool:` values (as `docs/dev/state.md`
+     records them, including what a worker eviction loses); a detached `ml.sh` call or cell (past the answer, to its
+     deadline under the 60 min cap); a fetch (the turn); a page-bound task (the page). The `Detached` text says the
+     task runs on after the answer and its result starts or reaches the next turn, replacing the line that says the
+     answer ends it. Each figure in the list is read from the constant that enforces it, never typed twice, and a row
+     fails when the two differ. The list is measured against the prompt budget (`docs/spec/PROMPT_BUDGET.md`) and
+     goes through the next prompt review.
+   - **Bounds** (e3's rows, rule 10, on the building branch): a task never delivers to another run or another
+     session; no task completion starts a turn for a run other than its own; a completion on notify-only never starts
+     a turn; a started turn runs on no page we own; a parked result is delivered only to its own run, on its own session, at that run's next turn; a run
+     archived or released first drops it, and the drop is a run-log record; the per-task deadline and the cap hold
+     between turns; session release ends every task of the session; a page reaches no parked result.
 5. **The handle is the run's.** It is answered only for the run that made it, from that run's own tab or the service
    worker, with the sender checks the inbox already has; a page cannot await, cancel or read another run's call. A
    detached call, its wake and its collection are records in the run log (`python`/`detached`, `shell`/`detached`,
@@ -161,9 +246,10 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
    `@tool:` pointer rules for a large value. Nothing reaches the model through the inbox that could not have reached
    it as the call's return. The output of a call that runs for hours is BOUNDED AT THE EXECUTOR, not only at the
    return: the host already caps a shell call's output, and a detached cell's stdout is a fixed-size ring buffer in
-   the worker (the last N KB), never an unbounded array. The inbox carries status and tail only; the model inspects
-   more with `tail(id, { lines })` on the handle, and the full capped output is a value it can point at, as a tool's
-   large result is today.
+   the worker (the last N KB), never an unbounded array. The inbox carries status and tail, and for a cut result the stored
+   whole's key, its length and any figure, minted into a `@tool:` pointer where the loop drains it (#1730); the model
+   inspects more with `tail(id, { lines })` on the handle, and the full capped output is a value it can point at, as
+   a tool's large result is today.
 
 ## Mode 2: the push subscription
 
@@ -237,7 +323,8 @@ each of which amends the text above where it says otherwise:
   model saw, labelled). Only `sw-tasks.ts` sets that origin; a steer cannot claim it.
 - **The run's end is the turn's end** (`settle`), as rule 4 says and as the keep does: a model that answers while a
   build is detached ends the build, and the `Detached` text says so in one line. A session continue does not keep a
-  task.
+  task. REVERSED 2026-11-12 (Shane) for `ml.sh` and `python_exec` by rule 4b: their tasks survive the
+  turn and a result with no turn running parks in the inbox.
 - **`ml.current.tasks` is computed at the snapshot's instant** (`withTasks` beside `withPolicies`, at both assembly
   sites), `elapsed_ms` from the snapshot's clock, the tail read through the row's bounded, scrubbed `tail()`; no row
   is kept live. RE-RULED the same hour on the lane's correction: a Python cell has no `ml.current` today (the

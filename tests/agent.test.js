@@ -249,6 +249,42 @@ test("agent_api_docs: a bad pipe stage is an actionable message, never a lost st
     assert.ok(!out.includes("Opening the HUD"), "and not the whole reference back as if nothing happened");
 });
 
+test("agent_api_docs: a console-only member asked for by name says why it is absent, per the run's toolset", async () => {
+    // Observed (prompt-budget-cuts, MiniMax M3, 2026-11-12): the page's title named ml.pythonExec, the bare
+    // "Not found: pythonExec" sent the model on to `pythonTool`, and the run had no python_exec at all.
+    const { AGENT_HIDDEN } = await import("../scripts/gen-api-docs.mjs");
+    const { agentHiddenWhy } = await import("../src/tools/api-docs-tool.ts");
+    assert.deepStrictEqual([...agentHiddenWhy().keys()].sort(), [...AGENT_HIDDEN].sort(), "a reason for every hidden member");
+    const { ml } = loadDomWorld("<p>hi</p>");
+    const tool = ml.domTools.find(t => t.name === "agent_api_docs");
+    const ask = (tools) => tool.run({ members: ["pythonExec", "step"] }, { hasTool: (n) => tools.includes(n) });
+    const without = await ask(["exec"]), withPy = await ask(["exec", "python_exec"]);
+    assert.match(without, /ml\.pythonExec is the console's method[^\n]*not given the `python_exec` tool/);
+    assert.match(withPy, /ml\.pythonExec is the console's method[^\n]*with the `python_exec` tool/);
+    for (const out of [without, withPy]) {
+        assert.match(out, /ml\.step is the console's/);
+        assert.doesNotMatch(out, /Not found/, "neither name is reported as a miss");
+    }
+    // A tool-backed member keeps its own sentence (ml-member-tools.ts) on the same path.
+    assert.match(await tool.run({ members: ["answer"] }, { hasTool: () => false }), /ml\.answer is not part of this run/);
+});
+
+test("agent_api_docs: a piped call neither marks sections seen nor greps their stubs", async () => {
+    // Observed (prompt-budget-cuts, MiniMax M3, 2026-11-12): three grep'd calls saw a few lines each, then the plain
+    // call answered `[intro already seen]` for an intro the model had never read. The burst memory recorded what the
+    // reply was BUILT from, not what the pipe let through.
+    const { ml } = loadDomWorld("<p>hi</p>");
+    const tool = ml.domTools.find(t => t.name === "agent_api_docs");
+    const ctx = { docsMemory: { shown: new Set(), sinceDocs: 0 } };
+    await tool.run({ pipe: "grep -i screenshot" }, ctx);
+    const whole = await tool.run({}, ctx);
+    assert.ok(!whole.includes("already seen"), "nothing a pipe filtered out counts as shown");
+    assert.ok(whole.includes("devtools console"), "the intro is printed in full");
+    // The other order: once a section is shown, a pipe still greps its text, not its one-line stub.
+    const piped = await tool.run({ pipe: "grep -i 'devtools console'" }, ctx);
+    assert.match(piped, /devtools console/i, "the pipe reads the reference itself");
+});
+
 test("agent_api_docs is CITABLE, so its output can be named by a pointer and read back later", async () => {
     // The other half of the same gap: with a `token` the result mints an @tool:<id>, so `dereference` can pipe
     // it on a LATER step instead of only at the moment of the call.

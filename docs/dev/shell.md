@@ -228,11 +228,12 @@ the hub, `tail` stays null and the task tool says `SH_TAIL_ABSENT`; the worker n
   tails, and keep the 500-character cap.
 - **How many bytes are asked for a `task tail`** (`peekBytesFor`): 240 per line plus one line, never under the host's 4096
   default, never over its 512 KiB ceiling (200 lines asks 48,240).
-- **A cut asked tail is stored, but not yet a value the model can point at.** When the 8 KiB ceiling cut a stream,
-  `peekTail` scrubs the whole peeked text (every peeked line of both streams, labelled) and stores it with `storeText`,
-  and `taskAction` answers `{ content, textValue }`. The loop does not mint a `@tool:` pointer for it: `task` is
-  `citable: false`, so the mint block never runs and the model reads the cut with no id to name (`HELD_BACK.md` row 16,
-  open until the pointer mint for task results). With no value store the tail is the text alone.
+- **A cut asked tail is a value it can point at.** When the 8 KiB ceiling cut a stream, `peekTail` scrubs the whole peeked
+  text (every peeked line of both streams, labelled) and stores it with `storeText`; `taskAction` answers
+  `{ content, textValue, textChars }`. `task` is not a citable tool, but a worker-made `textValue` makes a result
+  citable, so the loop mints the `@tool:` pointer, claims the value for the run, and appends the cut line naming the id
+  and `textChars`, exactly as for `fetch_url` past its preview (`docs/dev/pointers.md`). With no value store the tail is
+  the text alone.
 - **The text is model-facing**: `taskAction` runs it through `forModel` like any tool result, and the markers `peekText`
   adds (the ellipsis, "(start of the line cut)") have no run of two spaces. A `peek` failure sentence is scrubbed before
   it is cut to 120 characters, so the cut cannot leave the front of a key. `UnknownId` (the call ended between the

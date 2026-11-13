@@ -71,7 +71,9 @@ runs it was not given, not that it sees nothing:
 
 - **The main-world script is a content script**, registered by the worker with
   `chrome.scripting.registerContentScripts({ world: "MAIN", runAt: "document_start", matches })` for the visible
-  origins, and re-registered when the list changes. No `<script src="chrome-extension://...">` tag, so `injected.js`
+  origins, and updated in place (`updateContentScripts`, the whole registration) when the list changes, so no page
+  load falls in a gap with nothing registered (#1693; before it, an unregister and a register left 41 of 60 loads at a
+  0 ms reload without window.ml). No `<script src="chrome-extension://...">` tag, so `injected.js`
   leaves the web-accessible list. Match patterns cannot name a port, so the script checks `location.origin` against the
   exact origin and stops, and the relay checks the sender's origin again.
 - **The sidebar files** stay web-accessible (the overlay iframe needs them) with `use_dynamic_url: true`. As built: a
