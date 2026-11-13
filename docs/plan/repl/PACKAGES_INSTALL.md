@@ -287,9 +287,14 @@ The design:
    "Nothing was installed; the downloaded files stay in the mirror."
 5. **Checks before unpack**, in JS, on bytes already checked against the card. Every archive entry has a relative path
    with no `..`, is a regular file (no symlink), and lies under one of the wheel's top-level names, its `.dist-info`, or
-   `.data/purelib` or `.data/platlib` (any other `.data/` entry refuses). No `.pth`, no `sitecustomize`, no
-   `usercustomize`. RECORD lists exactly the entries. The uncompressed total is bounded (proposed: 8 times the file and
-   512 MB per call). No top-level name may be one the standard library, a lock package's `imports`, the dialect
+   `.data/purelib` or its own `.data/` directory. AMENDED 2026-11-13 (ruled, on measurement): `.data/` is inert, not
+   refused, since `unpackArchive` leaves `<dist>.data/` as it is in site-packages, purelib and platlib included, where
+   nothing under it can be imported (measured on fonttools); fonttools and sympy, both shipped, carry `.data/data` man
+   pages the first rule refused. No `.pth` anywhere, `.data/` included; no `sitecustomize`, no `usercustomize`. RECORD
+   lists exactly the entries. A standard-library name is refused in the candidate instead, against
+   `sys.stdlib_module_names` before any import (AMENDED 2026-11-13: the worker holds no stdlib list), and reaches the
+   person as the candidate's verdict. The uncompressed total is bounded (proposed: 8 times the file and 512 MB per
+   call). No top-level name may be one the standard library, a lock package's `imports`, the dialect
    (`DIALECT_MODULES`), the harness (`_ml_*`), `pyodide`, `pyodide_js`, `js` or `micropip` already provides, or one
    another distribution in the run's record took, since two files would write one path. New refusals: `bad-archive`,
    `name-collision`, `too-large`.
@@ -353,16 +358,21 @@ AS BUILT (slice 4), with what the ruling of 2026-11-13 and the measurements chan
   `python.run-installs`). The record rides every readonly cell of the run; the offscreen document hands the worker the
   wheels it lacks (`wheelsForCell`) and the worker unpacks them after its lockdown (`installWheels`). Run log:
   `python/pkg-install`.
-- Departure from item 5, measured: `<dist>.data/` is INERT, not refused. `unpackArchive` leaves it where it is in
-  site-packages, purelib and platlib included (fonttools' `.data/data/share/man/man1/ttx.1`), and a directory of that
-  name imports nothing; fonttools and sympy, both shipped, carry `.data/data` man pages the cleared rule refused. A
-  `.pth` anywhere is still refused, and `tests/pkg-archive.test.mjs` runs the check over every shipped wheel.
-- Departure from item 5: a standard-library name is refused in the candidate, against `sys.stdlib_module_names`, before
-  any import; the worker holds no stdlib list. The lock's import names, the dialect's modules and the run's earlier
-  installs are refused before unpack.
-- Found: `unpackArchive` checks each entry's CRC-32 (Python's `zipfile`), so a corrupted entry fails the unpack.
-- Item 7, the platform scan, is not in this slice: asked of the coordinator as its own follow-up (4b). Until it lands, a
-  failed import's reason is the import's own last line.
+- Departure from item 5, measured and ruled 2026-11-13: `<dist>.data/` is INERT, not refused. `unpackArchive` leaves it
+  where it is in site-packages, purelib and platlib included (fonttools' `.data/data/share/man/man1/ttx.1`), and a
+  directory of that name imports nothing; fonttools and sympy, both shipped, carry `.data/data` man pages the cleared
+  rule refused. A `.pth` anywhere is still refused. `tests/pkg-archive.test.mjs` runs the check over every shipped
+  wheel, and a red-team row in `tests/pkg-install-py.test.mjs` unpacks `.data/purelib` and `.data/scripts` entries named
+  `json` and `six` and asserts neither is importable from there and no `.data` directory is on `sys.path`.
+- Departure from item 5, ruled 2026-11-13: a standard-library name is refused in the candidate, against
+  `sys.stdlib_module_names`, before any import; the worker holds no stdlib list, so the refusal reaches the person as
+  the candidate's verdict ("Not installed: importing <name> failed: <name> is a standard-library module"). The lock's
+  import names, the dialect's modules and the run's earlier installs are refused before unpack.
+- Found: `unpackArchive` checks each entry's CRC-32 (Python's `zipfile`), so a corrupted entry fails the unpack; a
+  red-team row in `tests/pkg-install-py.test.mjs` asserts it, and in the run's worker such a failure fails the cell
+  before it runs.
+- Item 7, the platform scan, is slice 4b, its own PR (ruled 2026-11-13: the scan is a note and never a refusal, so slice
+  4's safety does not rest on it). Until it lands, a failed import's reason is the import's own last line.
 
 **Slice 5, policy-store wiring.** The four facts (`name`, `version`, `source`, `sha256`) reach the policy realm as a
 call's facts. A policy can then allow or deny an install where the card would otherwise ask, and the policy page
