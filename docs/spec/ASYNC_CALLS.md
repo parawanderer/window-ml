@@ -164,7 +164,13 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
    nothing that runs now. It must hold before a detached `exec` or a DOM subscription is built, and each of those PRs
    carries its red-team row: a task cancelled by a page change is reported, and never resolves against the new page.
    **4b. A detached task survives the end of its turn.** RULED 2026-11-12 (Shane: "that is what a user expects of
-   background tasks"; the coordinator's text with the async lane's additions; nothing built). This reverses rule 4, and
+   background tasks"; the coordinator's text with the async lane's additions). BUILT 2026-11-13 in part (the async
+   lane, slice A): `settle` calls `closeTurnTasks` and leaves tasks running; `endTasks` runs at session release and at
+   archive or delete; a result finished between turns is parked in the task table (not in `runInboxes`) and queued by
+   `openTasks` at the next turn's start; the kernel lock holds across turns; a Stop of the turn no longer cancels a
+   detached `ml.sh` call or cell; the `Detached` texts say the task runs on. NOT built: durability across a worker
+   eviction, the cap knob (`PY_DETACHED_MAX_MS` is still 5 min), a completion starting a turn, notify-only, the chain
+   cap, the lifetimes list and the no-tab state. This reverses rule 4, and
    the mode 1 ruling that a model answering while a build is detached ends the build, for the two executors that run
    outside the service worker: an `ml.sh` call (the host's process) and a detached `python_exec` cell (the offscreen
    document). A fetch runs IN the service worker and dies with it, so it stays turn-bound: the turn's end cancels it,
@@ -315,7 +321,7 @@ each of which amends the text above where it says otherwise:
   in the tool registry, dispatched in the worker with the run id from the loop, never from its arguments; a foreign
   or unknown id reads `UnknownTask`, indistinguishably.
 - **One task table for every executor** (`sw-tasks.ts`, `defineState` `run.tasks`, scope run, lost on worker
-  eviction and turn end), holding the executors' callbacks and never the script's word. Statuses: `running`,
+  eviction), holding the executors' callbacks and never the script's word. Statuses: `running`,
   `done`, `failed`, `cancelled`, `orphaned` (`expired` joins with mode 2's subscriptions); a row exists only once a
   call has detached or was started in the background, so `detached` is not a status.
 - **The inbox item is `{ text, origin: "task" }`**, injected as a user-role message at the step boundary as a steer

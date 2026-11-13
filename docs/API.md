@@ -73,7 +73,7 @@ list. See [CLOUD-MODELS.md](CLOUD-MODELS.md).
 | `ml.createChat(options?)` | Multi-turn history object (below). |
 | `ml.models()` | Available model ids on the server. |
 | `ml.getModel()` / `ml.setModel(id)` | Read / persistently switch the default model. `setModel` validates against the server list and syncs the popup. |
-| `ml.config()` | Read the non-secret config the page may see: `model`, `ocrModel`, `apiFormat`, and the utility-model fields (`utilityModel`, `utilityNumCtx`, `utilityForceCpu`). Never the URL or key. |
+| `ml.config()` | Read the non-secret config the page may see. Models: `model`, `defaultModelVision`, `ocrModel`, `ocrNumCtx`, `apiFormat`, `utilityModel`, `utilityNumCtx`, `utilityForceCpu`. Approvals: `autoApproveReadonly`, `autoApprovePython`, `autoApproveSelfSource`, `pageApprovalAllowed` (whether this page's own origin may run its own approval gate). Tools and reach: `serverToolsOff`, `commanderServerTools`, `selfIntrospection`, `pierceClosedShadow`, `cdp`, `groundingEnabled`, `groundingModel`, `groundingRange`, `debugMode`. Never the URL, the key or the model filter. |
 | `ml.ps()` | Models loaded in VRAM: `[{ model, vramGB, expiresAt }]`. |
 | `ml.unload(model?)` | Evict a model from VRAM (`keep_alive: 0`); no argument = evict all. |
 | `ml.read(image, { model?, prompt? })` | OCR — transcribe baked-in text from an `<img>` or URL to a plain string, using the configured OCR (vision) model. See [OCR](#ocr). |
