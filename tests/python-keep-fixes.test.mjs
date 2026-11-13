@@ -166,14 +166,14 @@ test("a cell that starts and finishes inside the reap's ask stops the reap; a re
 
 // --- the service worker's half ---
 
-test("a keep leaves the service worker stamped turnLive, and a call without keep carries neither", { timeout: 30000 }, async () => {
+test("a keep leaves the service worker with keep and turnLive; a call without keep carries turnLive (its turn is live) and no keep", { timeout: 30000 }, async () => {
     const { wireRun } = await import("./ml-wire-harness.mjs");
     const calls = [
         { name: "python_exec", args: { code: "x = 1", keep: true } },
         { name: "python_exec", args: { code: "x" } },
     ];
     const { pyRuns } = await wireRun(async () => {}, { calls });
-    assert.deepEqual(pyRuns.map((m) => [m.keep ?? null, m.turnLive ?? null]), [[true, true], [null, null]]);
+    assert.deepEqual(pyRuns.map((m) => [m.keep ?? null, m.turnLive ?? null]), [[true, true], [null, true]]);
 });
 
 // --- what the keep promises ---
@@ -182,7 +182,7 @@ test("every copy of the keep's promise names the kill clause: the tool descripti
     const { buildPythonTool } = await import("../src/python/python-tool.ts");
     const { defineTool } = await import("../src/ml/ml-tool-factories.ts");
     const tool = buildPythonTool({ defineTool, _queryAll: () => [], pythonExec: async () => ({ ok: true, stdout: "" }), _mintToken: async () => "@pt:abcdef12" });
-    assert.match(tool.parameters.properties.keep.description, /until this run ends or its sandbox is killed \(a timeout, a crash, a cancel\), which the next cell is told as loss/);
+    assert.match(tool.parameters.properties.keep.description, /until your turn ends or its sandbox is killed \(a timeout, a crash, a cancel\), which the next cell is told as loss/);
     const { readFileSync } = await import("node:fs");
     assert.match(readFileSync(new URL("../src/contract.ts", import.meta.url), "utf8"), /until its turn ends or its sandbox is killed \(a timeout, a crash, a cancel\), which the next cell is told as loss/);
 });
