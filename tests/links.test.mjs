@@ -4,7 +4,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { parseAddress, addressTip, addressHash } from "../src/sidebar/links.ts";
+import { parseAddress, addressTip, addressHash, onAddressClick } from "../src/sidebar/links.ts";
+import { installServices, services } from "../src/sidebar/services.ts";
 import { PANEL_LAYOUT } from "../src/contract/contract-config.js";
 import { markdown, mdInline } from "../src/sidebar/format.ts";
 import { SETTING_PLACES } from "../src/contract/contract-config.ts";
@@ -126,6 +127,74 @@ test("a reply with a link, read by an older build, showed the literal text; this
     const now = markdown(UPGRADE.withLink.text, { math: true, addr });
     assert.match(now, /<button[^>]+data-addr="setting\/shellEnabled"[^>]*>Let scripts run programs<\/button>/);
     assert.match(now, /<blockquote><p>\[quoted\]\(window-ml:setting\/apiKey\)<\/p><\/blockquote>/, "the quoted one stays text");
+});
+
+// --- the click: a parsed route, or nothing at all ---
+
+// A link opens a view; it never acts (links.ts's header). The render half (a destination is a button, never an `<a
+// href>`) and the hash half (`addressHash` names the view its address parsed to) are pinned above and in "every address
+// a link resolves to has a chat-page hash"; this is the CLICK half, which nothing drove before: the handler parses the
+// button's attribute again and hands the page a route, so a destination that is not one — a query, a fragment, another
+// scheme, a traversing path — opens nothing, and a click is swallowed without opening anything at all where the surface
+// cannot open a panel view.
+//
+// MEASURED AT 7de62b0d: green (19/19). Mutations, each alone and reverted: `onAddressClick` calling
+// `services().openAddress?.(address)` (the button's own attribute instead of `resolveLink(address)?.route`) reds this
+// row on "the click opened something other than the parsed route", with every other row green; `format.ts`'s
+// `window-ml:` arm drawing `<a class="md-link tt" href="${address}">` reds this row on its first destination (and the
+// lane's three render rows). The hash half is a lexical guard here; the equality it rests on (each address's hash
+// naming the same view) is pinned by "every address a link resolves to has a chat-page hash that names the same view"
+// above, which a route-to-hash mutation reds there.
+
+test("a window-ml: destination never becomes an <a href>, and a click opens the parsed route or nothing at all", async () => {
+    const before = services();
+    const opened = [];
+    let prevented = 0;
+    installServices({ ...before, openAddress: (r) => opened.push(r) });
+    const click = (dataAddr, target) => onAddressClick({
+        target: target ?? { closest: () => ({ getAttribute: () => dataAddr }) },
+        preventDefault: () => { prevented++; },
+    });
+    try {
+        // Every destination shape a model can write reaches the chat page's own `addr`: none of them is an anchor.
+        for (const d of ["setting/apiKey", "settings/extension/advanced/shell", "javascript:alert(1)", "data:text/html,x",
+            "setting/apiKey?x=1", "setting/apiKey#frag", "//evil.example/setting/apiKey", "setting/../apiKey", "setting/%2e%2e/x"]) {
+            const html = markdown(`[go](window-ml:${d})`, { addr });
+            assert.doesNotMatch(html, /<a\b/, `a window-ml:${d} destination became an anchor`);
+            if (!parseAddress(d)) assert.doesNotMatch(html, /md-addr/, `an unresolvable window-ml:${d} was drawn as a link`);
+        }
+        // A click on a link's inner element (the label's <strong>) opens the ROUTE the grammar parsed, not the text.
+        const inner = { closest: (sel) => (sel === "button.md-addr" ? { getAttribute: () => "settings/extension/advanced/shell" } : null) };
+        assert.equal(click("unused", inner), true, "the click was not recognised as a link's");
+        assert.equal(prevented, 1, "the click was not swallowed");
+        assert.deepEqual(opened, [{ tab: "advanced", section: "shell" }], "the click opened something other than the parsed route");
+        // A button whose attribute is not an address the grammar accepts opens NOTHING: no query, fragment, scheme or
+        // traversing path is handed on, and the raw string never leaves the handler.
+        for (const d of ["javascript:alert(1)", "settings/extension/advanced/shell?x=1", "setting/apiKey#frag",
+            "settings/extension/../shell", "settings/extension/advanced/shell%00", "//evil.example/x", "setting/"]) {
+            opened.length = 0;
+            assert.equal(click(d), true, `${JSON.stringify(d)} was not recognised as a link's`);
+            assert.deepEqual(opened, [], `a click on data-addr ${JSON.stringify(d)} opened something`);
+        }
+        // A button with an EMPTY address is no link at all (`if (!address) return false`): nothing opens, and — a
+        // `<button type="button">` having no default action — leaving the click alone is safe.
+        opened.length = 0;
+        assert.equal(click(""), false);
+        assert.deepEqual(opened, [], "a click on an empty data-addr opened something");
+        // A click that is not on a link is left alone.
+        assert.equal(onAddressClick({ target: { closest: () => null }, preventDefault: () => { throw new Error("preventDefault on a non-link"); } }), false);
+        // A window-ml: destination is never a hash the page acts on beyond its own: no query, fragment or scheme in it.
+        for (const [key, place] of Object.entries(SETTING_PLACES)) {
+            const h = addressHash({ ...place, setting: key });
+            assert.match(h, /^#\/[A-Za-z0-9_/-]+$/, `addressHash(setting/${key}) = ${h}`);
+        }
+        // On a surface without `openAddress` (a transcript drawn elsewhere), the click opens nothing, though it is still
+        // swallowed rather than left to the browser.
+        installServices({ ...before, openAddress: undefined });
+        opened.length = 0;
+        assert.equal(click("setting/apiKey"), true);
+        assert.deepEqual(opened, []);
+    } finally { installServices(before); }
 });
 
 // --- what agent_api_docs tells the model ---
