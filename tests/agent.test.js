@@ -3819,7 +3819,7 @@ test("lookTool caps the vision generation by default (roadmap #11 wedge guard)",
     world.ml.screenshot = async () => "data:image/png;base64,SHOT";
 
     await world.ml.lookTool().run({ selector: "#x" });                 // default cap
-    assert.equal(seen[0], 512);
+    assert.equal(seen[0], require("../src/contract/contract-render.ts").READER_MAX_TOKENS);
     await world.ml.lookTool({ maxTokens: 128 }).run({ selector: "#x" }); // override
     assert.equal(seen[1], 128);
 });
