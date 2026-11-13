@@ -21,8 +21,8 @@ test("each factory-made tool a subset may name comes from the factory that makes
 // --- whether a cloud driver sees images ---
 
 test("declaredVision: a cloud driver sees unless it is on the text-only list", () => {
-    for (const m of ["openrouter.minimax/minimax-m3", "litellm.google/gemini-flash-latest", "ui.minimax-m3"]) assert.equal(declaredVision(m, {}), "yes", m);
-    for (const m of ["deepseek.deepseek-v4-pro", "deepseek.deepseek-flash", "ui.deepseek-v4-pro"]) assert.equal(declaredVision(m, {}), "no", m);
+    for (const m of ["openrouter.minimax/minimax-m3", "litellm.google/gemini-flash-latest", "ui.minimax-m3", "deepseek.deepseek-flash"]) assert.equal(declaredVision(m, {}), "yes", m);
+    for (const m of ["deepseek.deepseek-v4-pro", "ui.deepseek-v4-pro"]) assert.equal(declaredVision(m, {}), "no", m);
 });
 
 test("declaredVision: E2E_MODEL_VISION overrides the list either way, and anything else leaves it", () => {
