@@ -64,7 +64,8 @@ import { autoApprovePython } from "../agent/auto-approve";
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
 import { PROPOSAL_TOOLS, withoutProposals, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
-import { claimValue, runMayClaim, valueHolders, readStoredColumns, readStoredText, withHeldValuesOnly } from "./sw-values";
+import { drawStoredPages } from "./sw-attach";
+import { claimValue, runMayClaim, valueHolders, readStoredBytes, readStoredColumns, readStoredText, withHeldValuesOnly } from "./sw-values";
 import { isoServer, type IsoDeps } from "./iso-channel";
 import { shPut, shRead, shRun, takeShSpans } from "./sw-shell-call";
 import { focusLineFor } from "./sw-focus";
@@ -654,14 +655,19 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             if (payload.renderOnly || payload.precheck || payload.readonlyTry) payload = { ...payload, args: lookPreviewArgs(payload.args) };
             else {
                 noteLocalStep(runId, payload.name);
-                await navBarrier.whenReady(tabId);
-                const doc = await topDocument(tabId);
+                // Pages of an attached document (the loop drew them, `_images`) are not on the tab: nothing to wait for.
+                const pages = payload.name === "look" && Array.isArray(payload.args?._images);
+                if (!pages) await navBarrier.whenReady(tabId);
+                const doc = pages ? null : await topDocument(tabId);
                 const vision = await visionFacts();
                 return payload.name === "look"
                     ? workerLook(runId, tabId, doc, payload.args, vision, tabUrl)
                     : workerLocate(runId, tabId, doc, payload.args, vision, tabUrl);
             }
         }
+        // An attached document's drawn pages never go to the page: its run's `look` is the worker's (files are on worker-built runs only).
+        if (payload.name === "look" && payload.args?._images && !payload.renderOnly && !payload.precheck && !payload.readonlyTry)
+            return { result: "Error: an attached file's pages are looked at only by a run the browser started, which this one is not." };
         // To the page. The call itself of a run whose vision is the worker's is told so (its verify comes back as a
         // request), and what the page answers is held to that (`withoutPageVision`).
         const toPage = async (pin?: string): Promise<unknown> => {
@@ -1604,6 +1610,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 claimValue: (key) => claimValue(key, runId, runMayClaim(byWorker() ? null : pageValueSession(tabId))),
                 // The whole of a stored text the run's pointer names, for the dereference tool. Only a value this run holds.
                 readText: (key) => readStoredText(key, runId),
+                // Pages of an attached PDF this run holds, drawn for `look` at a document. Only a value this run holds.
+                renderPages: async (key, pages) => drawStoredPages(await readStoredBytes(key, runId), pages),
                 tryReadonly: p.autoApproveReadonly || p.autoApprovePython ? async (name, args, live) => {
                     // A run held on its page (nav-arrival.ts) surveys nothing there, and runs no cell: the call goes on to its hold.
                     await arrivalSettled(tabId);

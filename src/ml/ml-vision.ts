@@ -13,7 +13,7 @@
 // CORS taints the canvas, so pixel readback fails even for something already rendered on screen.
 
 import { makeBackgroundTaskPromise } from "../bridge";
-import { VIEWS_PARAM, targetRender, lookViews, BOX_OVER_TEXT_TIP, legendFor, pointedImageNote } from "../tools/builtin-tools";
+import { VIEWS_PARAM, DOC_PARAMS, docPagesNote, targetRender, lookViews, BOX_OVER_TEXT_TIP, legendFor, pointedImageNote } from "../tools/builtin-tools";
 import type { MlApi } from "../contract";
 import type { MlPublicConfig } from "../contract/contract-config";
 import { visionAnswer, type VisionAnswer } from "../image-gate";
@@ -477,12 +477,15 @@ export function buildNativeLookTool(ml: Pick<MlApi, "defineTool"> & Partial<MlAp
                 scope: { type: "string", enum: ["viewport", "page"], description: "'viewport' (default), or 'page' to scroll+stitch the full page (only when no selector)." },
                 index: { type: "integer", description: "Which match of the selector to look at (0-based); iterate a grid with 0,1,2,…" },
                 margin: { type: "number", description: "For an @pt: token only — the crop RADIUS in px around the point (bigger = more context). Ignored for CSS selectors." },
-                views: VIEWS_PARAM
+                views: VIEWS_PARAM,
+                ...DOC_PARAMS
             }
         },
         // In: the target as a hoverable ref (hover → outline it on the page). No selector → raw args.
         render: (_input, args) => targetRender(args),
-        run: async ({ selector, scope, index, margin, views, _image, _imageLabel, _imageDrawn }: { selector?: string; scope?: "viewport" | "page"; index?: number; margin?: number; views?: string[]; _image?: string; _imageLabel?: string; _imageDrawn?: boolean } = {}): Promise<string | ToolResult> => {
+        run: async ({ selector, scope, index, margin, views, _image, _imageLabel, _imageDrawn, _images, _imagesFailed }: { selector?: string; scope?: "viewport" | "page"; index?: number; margin?: number; views?: string[]; _image?: string; _imageLabel?: string; _imageDrawn?: boolean; _images?: { image: string; label: string }[]; _imagesFailed?: string } = {}): Promise<string | ToolResult> => {
+            // Pages of an attached document the LOOP drew (resolveLookDoc): shown to the driver, one image a page.
+            if (_images?.length) return { content: `${docPagesNote(_imageLabel, _imagesFailed)} Shown to you in the next message.`, images: _images };
             // An `@tool:` image pointer the LOOP resolved (it owns the store): show the driver those pixels. Without this
             // the pointer went to the page as a CSS selector and failed to match.
             if (_image) return { content: `${pointedImageNote(_imageLabel, _imageDrawn)} Shown to you in the next message.`, image: _image, imageLabel: _imageLabel || "an earlier image" };
