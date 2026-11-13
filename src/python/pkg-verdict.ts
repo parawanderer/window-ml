@@ -14,6 +14,7 @@
 
 import { canonicalName, evaluateMarker, parseRequirement } from "./pkg-pep508";
 import { cmpVersion, parseSpecifierSet, parseVersion, sameVersion, specifierSetContains, type Pep440SpecifierSet } from "./pkg-pep440";
+import { VerdictReason } from "../contract/contract-render";
 
 /** The bounds of one verdict. The real closures, from the pinned top-2,000 index snapshot and the 10,000-project
  *  probe: at most 116 packages and 127 MB of wheels (teradatasql), 1,320 requirements in one release, 224 files in one
@@ -43,11 +44,13 @@ export const VERDICT_BOUNDS = {
     work: 65_536,
 } as const;
 
-/** One package of the core's lock (pyodide-lock.json): the version it pins, its file, its dependencies. */
+/** One package of the core's lock (pyodide-lock.json): the version it pins, its file, its dependencies, and the
+ *  file's sha256 as the lock states it (what the install card shows for a lock row). */
 export interface LockEntry {
     version: string;
     file: string;
     depends: readonly string[];
+    sha256?: string;
 }
 
 /** What the core is, from the core itself (trusted): its tags, marker environment, Python, lock, and what is loaded. */
@@ -91,24 +94,8 @@ export interface IndexProject {
 /** A synchronous lookup by canonical name; `undefined` when the index has no such project. */
 export type IndexView = (canonical: string) => IndexProject | undefined;
 
-/** Why a package cannot be installed. `at` names the package. */
-export type VerdictReason =
-    /** No file the core accepts: native wheels for other platforms, an sdist, or nothing. */
-    | "no-build"
-    /** The release's `requires_python` excludes the core's Python. */
-    | "python-version"
-    /** A lock package outside a range asked of it, which no release inside the range can replace (or is loaded). */
-    | "lock-too-old"
-    /** The index has no such project, or no such release. */
-    | "not-on-index"
-    /** A bound of `VERDICT_BOUNDS` was passed. */
-    | "too-large"
-    /** A name, version, specifier, requirement or marker that does not parse or cannot be evaluated. */
-    | "malformed"
-    /** The release's requirements are not known (an older release, whose metadata the index did not give). */
-    | "no-metadata";
-
-/** One file an install would fetch: from the core's lock, or from PyPI (with the digest the index gave). */
+/** One file an install would fetch: from the core's lock (with the lock's digest, when its entry has one), or from PyPI
+ *  (with the digest and size the index gave). */
 export interface VerdictFile {
     name: string;
     version: string;
@@ -391,7 +378,7 @@ function decide(request: { name: string; version?: string }, core: CoreFacts, in
             const ranges = asked.get(node.name) ?? [];
             charge(ranges.length, node.name);
             if (ranges.every((r) => specifierSetContains(r, node.entry.version))) {
-                files.push({ name: node.name, version: node.entry.version, filename: node.entry.file, source: "lock" });
+                files.push({ name: node.name, version: node.entry.version, filename: node.entry.file, source: "lock", ...(node.entry.sha256 !== undefined ? { sha256: node.entry.sha256 } : {}) });
                 continue;
             }
             // Each range alone had a replacement; the one installed must sit inside all of them.

@@ -270,6 +270,9 @@ export interface SetApprovalPayload {
     persist?: boolean;
     /** The NESTED ask inside step `seq` this answers (src/sw/sw-asks.ts); absent for the step's own gate. */
     ask?: string;
+    /** On approving a python_install card: the rows it showed (src/python/pkg-card.ts). The worker approves only when
+     *  they equal the rows it froze, field by field; absent or different, the answer is a denial. */
+    files?: import("./contract-render").PkgRow[] | null;
 }
 
 /** CANCEL_RUN payload — abort a background-hosted run by id (the HUD's "Cancel agent run"). Harmless

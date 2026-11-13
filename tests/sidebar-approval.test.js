@@ -901,3 +901,103 @@ test("focus mode hides the raw toggle and the model pill, and KEEPS the copy but
     assert.equal(copyRules.length, 1, "exactly one rule touches the copy button");
     assert.match(copyRules[0], /\.msg\.user\b/, "and it is scoped to the user's bubble, so a reply keeps its copy");
 });
+
+// --- python_install's card from the client side: what it draws, and what its approval carries back -------
+
+// The client half: the card the gate decision draws, and the rows decideGate (pkgCardRows) puts on the
+// approval. The worker-side suites (python-install, pkg-card) post SET_APPROVAL themselves, so only these
+// rows notice a field renamed or a refusal drawn as approvable.
+const PKG_ROWS = [
+    { name: "attrs", version: "26.1.0", filename: "attrs-26.1.0-py3-none-any.whl", source: "lock", size: null, sha256: "b5f2e20d25fbeb55950af8cda6b5ef71d47e60872587d11ab6b6425b0d7c2c92" },
+    { name: "six", version: "1.17.0", filename: "six-1.17.0-py2.py3-none-any.whl", source: "lock", size: null, sha256: "c6681057bd87fdec57e811b8e4007bad38deea284052817fa400d542c6423e2d" },
+];
+const pkgStep = (hash, verdict) => agentStep(hash, 1, {
+    seq: 1, pending: true, awaitingApproval: true, tool: "python_install", arguments: { name: "attrs" },
+    renderIn: { type: "packages", request: { name: "attrs" }, verdict },
+});
+const PKG_OK = { ok: true, files: PKG_ROWS, loaded: [], totalBytes: 0 };
+const PKG_REFUSED = { ok: false, reason: "not-on-index", at: "attrs" };
+
+/** Each drawn row as [filename, sha256], in order. */
+const drawnRows = (root) => [...root.querySelectorAll(".pkg-row")].map((r) => [r.querySelector(".pkg-file").textContent, r.querySelector(".pkg-sha").textContent]);
+
+for (const surface of ["sidebar step", "HUD card"]) {
+    /** A world showing a python_install gate on `surface`, its root, and what the app posts to the shell. */
+    const pkgWorld = async (hash, verdict) => {
+        const w = await loadSidebarWorld();
+        if (surface === "HUD card") await w.raw({ __mlSidebarSurface: "card" });
+        await w.dispatch(agentStart(hash, "install attrs"));
+        await w.dispatch(pkgStep(hash, verdict));
+        if (surface === "sidebar step") { w.shadow.querySelector(".row").click(); }
+        await w.flush();
+        const posted = [];
+        w.window.postMessage = (d) => posted.push(d);
+        const root = surface === "HUD card" ? w.window.document : w.shadow;
+        return { w, root, posted, approvals: () => posted.filter((m) => m.__mlSidebarApp === "approval") };
+    };
+    const footSel = surface === "HUD card" ? ".card-foot" : ".astep-approve";
+
+    test(`python_install (${surface}): the card draws every file with its full sha256, and Approve posts exactly those rows as files`, async () => {
+        const { root, approvals } = await pkgWorld(`pkok-${surface[0]}`, PKG_OK);
+        assert.deepEqual(drawnRows(root), PKG_ROWS.map((r) => [r.filename, r.sha256]), "each file, in order, with its whole 64-hex digest");
+        const approve = [...root.querySelectorAll(`${footSel} .appr-btn.yes`)].find((b) => !b.classList.contains("remember"));
+        assert.ok(approve, "an approvable card offers Approve");
+        approve.click();
+        const [msg] = approvals();
+        assert.ok(msg && msg.decision === true, "Approve posts an approval");
+        assert.deepEqual(msg.files, PKG_ROWS, "the approval carries the rows the card drew, field for field");
+    });
+
+    test(`python_install (${surface}): Deny on an approvable card posts no files`, async () => {
+        const { root, approvals } = await pkgWorld(`pkdn-${surface[0]}`, PKG_OK);
+        root.querySelector(`${footSel} .appr-btn.no:not(.appr-deny-more)`).click();
+        const [msg] = approvals();
+        assert.ok(msg && msg.decision === false, "Deny posts a denial");
+        assert.equal("files" in msg, false, "a denial carries no rows");
+    });
+
+    test(`python_install (${surface}): a refused card says why, and its footer offers Dismiss alone, which denies`, async () => {
+        const { root, approvals } = await pkgWorld(`pkrf-${surface[0]}`, PKG_REFUSED);
+        assert.ok(root.querySelector(".pkg-card.pkg-refused"), "the refusal is drawn");
+        assert.equal(root.querySelector(".pkg-refused .pkg-reason").textContent, "not-on-index");
+        assert.equal(root.querySelectorAll(".pkg-row").length, 0, "and no file rows");
+        assert.equal(root.querySelector(`${footSel} .appr-btn.yes`), null, "no approving control at all");
+        const buttons = [...root.querySelectorAll(`${footSel} .appr-btn`)];
+        assert.deepEqual(buttons.map((b) => b.getAttribute("aria-label")), ["Dismiss"], "Dismiss is the only button");
+        buttons[0].click();
+        const [msg] = approvals();
+        assert.ok(msg && msg.decision === false, "Dismiss denies");
+        assert.equal("files" in msg, false);
+    });
+}
+
+test("python_install (HUD card): Enter on a refused card approves nothing, and Esc dismisses it", async () => {
+    const w = await loadSidebarWorld();
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.dispatch(agentStart("pkenter", "install attrs"));
+    await w.dispatch(pkgStep("pkenter", PKG_REFUSED));
+    await w.flush();
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    w.window.dispatchEvent(new w.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await w.flush();
+    assert.deepEqual(posted.filter((m) => m.__mlSidebarApp === "approval"), [], "Enter posts no decision on a refusal");
+    w.window.dispatchEvent(new w.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    const msgs = posted.filter((m) => m.__mlSidebarApp === "approval");
+    assert.equal(msgs.length, 1);
+    assert.equal(msgs[0].decision, false, "Esc dismisses");
+});
+
+test("python_install (HUD card): Enter on an approvable card approves with the drawn rows", async () => {
+    const w = await loadSidebarWorld();
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.dispatch(agentStart("pkenterok", "install attrs"));
+    await w.dispatch(pkgStep("pkenterok", PKG_OK));
+    await w.flush();
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    w.window.dispatchEvent(new w.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    const [msg] = posted.filter((m) => m.__mlSidebarApp === "approval");
+    assert.ok(msg && msg.decision === true);
+    assert.deepEqual(msg.files, PKG_ROWS);
+});

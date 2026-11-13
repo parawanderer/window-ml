@@ -4525,3 +4525,31 @@ html[data-calm] .task-say > .task-dev, html[data-focus] .task-say > .task-dev { 
     .mmd { transition: none; }
     .mmd[data-mmd-arrive] .mmd-img { animation: none; }
 }
+
+/* --- python_install's card: the files an install would fetch, each with its full sha256 (pkg-card-view.tsx) --- */
+/** python_install's card: a head line, one row per file, the download total. */
+.pkg-card { display: flex; flex-direction: column; gap: 6px; font-size: .92em; }
+/* The card's first line: what was asked and how many files it comes to, or why it cannot be installed. */
+.pkg-head { line-height: 1.4; }
+/* The rows, scrolled when a closure is long so the footer stays in reach. */
+.pkg-rows { display: flex; flex-direction: column; gap: 4px; max-height: 18em; overflow: auto; }
+/* One file: its name, version, file, size and source on a line, the full sha256 under them. */
+.pkg-row { display: grid; grid-template-columns: auto auto 1fr auto auto; gap: 2px 8px; padding: 4px 6px;
+    border: 1px solid var(--border); border-radius: 6px; background: var(--bg); align-items: baseline; }
+/* A package row's project name, in bold so a look-alike stands out beside its file name. */
+.pkg-name { font-weight: 600; overflow-wrap: anywhere; }
+/* A package row's version, size and source: dim, kept on one line each. */
+.pkg-version, .pkg-size, .pkg-source { color: var(--fg-dim); white-space: nowrap; }
+/* A package row's wheel file name, monospaced and wrapped anywhere rather than cut. */
+.pkg-file { font-family: var(--mono, ui-monospace, monospace); font-size: .9em; overflow-wrap: anywhere; }
+/* The hash, never truncated: wraps rather than ellipsis, so every digit is on screen. */
+.pkg-sha { grid-column: 1 / -1; font-family: var(--mono, ui-monospace, monospace); font-size: .85em; color: var(--fg-dim); overflow-wrap: anywhere; }
+/* The characters a field hid (a control, bidi or invisible one), listed beside it as `\u{XXXX}`. */
+.pkg-escaped { margin-left: 4px; padding: 0 3px; border-radius: 3px; font-family: var(--mono, ui-monospace, monospace); font-size: .85em;
+    color: var(--warn); outline: 1px solid var(--warn); }
+/* The download total, and the packages the sandbox already has. */
+.pkg-total, .pkg-loaded { color: var(--fg-dim); }
+/* One already-loaded package's name, escaped like every other field of the card. */
+.pkg-loaded-name { color: inherit; }
+/* A refused card: why the package cannot be installed, and the reason's code under it. */
+.pkg-refused .pkg-reason { font-family: var(--mono, ui-monospace, monospace); font-size: .85em; color: var(--fg-dim); }
