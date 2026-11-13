@@ -1131,7 +1131,7 @@ refusal and gives a sentence for it:
   naming the last operand. It is H9's second step, in the host lane after the mapping: the manifest, the field in both
   readers (`describeCall` in `program-manifest.ts` and the host's `manifest.rs`, per `docs/spec/PROGRAM_MANIFEST.md`)
   and the vectors (`VECTOR_PIN` moves on both sides), with fail-first adversarial rows and e3's pass, since it is a new
-  agent write path. Until it lands, both `cp` calls above are refused with the real-path sentence.
+  agent write path. It landed in #1873 and window-ml-host#43; before them, both `cp` calls above were refused with the real-path sentence.
 - AMENDED 2026-11-13 (host lane), as built:
   - `writtenOperands: "last"` is the field (`PROGRAM_MANIFEST.md`), on `cp` only. `mv` carries none: its sources are
     removed, so every operand is written, and `mv` out of `attached/` stays refused as the table says (the sentence
@@ -1152,7 +1152,15 @@ refusal and gives a sentence for it:
     used; an absent `role` reads as read.
   - So does a written path the program walks (`rm -r`, `cp -R`, every `mv` operand) that holds a held `attached/`
     beneath it: `rm -r /files` and `cp -R x/attached /files/` would change `attached/` without naming it. Named cost:
-    `mv notes.txt /files/` is refused, and `mv notes.txt /files/notes.txt` runs.
+    `mv notes.txt /files/` is refused, and `mv notes.txt /files/notes.txt` runs. The refusal teaches that retry, naming
+    the path as the call wrote it, and the step's result shows it: `/files/ holds attached/, which a recursive write
+    there could change: name the file instead, as in mv notes.txt /files/notes.txt rather than mv notes.txt /files/`.
+  - A `/files` token in an argument that is not a `pathArgs` entry, with `spawn.files` set, passes through the host
+    literally: never mapped, never refused. A stated trust beside H3's: the host holds no description of the call, so
+    it cannot tell a pattern (`rg '/files/' .`, which must reach `rg` as written) from a path the manifest did not
+    place, and the worker's refusal before `spawn` is the check. A token that slips past reaches the program as the
+    literal `/files/…`, which names nothing on the host's disk unless the host has a `/files` of its own (the alias
+    exception above).
   - No session mounts an uploads folder until H16, so no call sends `files` yet and `/files` stays the browser
     sandbox's in an argv.
 
@@ -1216,7 +1224,7 @@ rows still compose with it.
 | the same when git cannot be asked | asks | `gitUndoable` null |
 | a new file | free | `exists` false |
 | anything in the uploads folder outside `attached/` | free | `inUploads` |
-| delete in `attached/` | asks | `inAttached` |
+| delete in `attached/` (a cell's `remove`; a process's delete there, `rm` through `ml.sh`, is refused at `spawn` with `InAttached`, H9: a process's walk cannot be judged per file) | asks | `inAttached` |
 | write into, or rename in or out of, `attached/` | refused | `inAttached` |
 | a path outside every mount, through a symlink, or after the mount was replaced | refused | H3, H4 |
 | a write through a hard link | refused | `fstat` `st_nlink` |
