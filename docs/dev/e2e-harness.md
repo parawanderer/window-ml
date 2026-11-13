@@ -586,6 +586,10 @@ thing. The parts:
   A real driver is declared as seeing images (`defaultModelVision`, read only when Ollama cannot report the
   model's capabilities, so in practice for a cloud model) unless it matches `TEXT_ONLY_CLOUD` (DeepSeek V4 Pro);
   `E2E_MODEL_VISION=yes|no` overrides it. Undeclared, a cloud driver's `look` went to the vision reader.
+  Where a run's `look` actually went is read from its start event (`lookRoute` in run-once.mjs: native, reader,
+  none or off): observe prints it after the run, a sweep prints it the first time each driver's route is seen and
+  again if it changes, and each cell saves it as `look`. A sweep from a branch older than the declaration shows
+  `reader` in its first cell.
   Warm-up fires a 1-token completion before the timed window so the ~20GB cold load doesn't
   pollute timings (Ollama's keep-alive TTL keeps it warm between runs — only the first pays it).
 

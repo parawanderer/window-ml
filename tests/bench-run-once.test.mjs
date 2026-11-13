@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { FACTORY_TOOLS, declaredVision } from "../tests/e2e/run-once.mjs";
+import { FACTORY_TOOLS, declaredVision, lookRoute, lookNote } from "../tests/e2e/run-once.mjs";
 import * as factories from "../src/ml/ml-tool-factories.ts";
 
 // --- tools a subset gets from a factory ---
@@ -29,4 +29,33 @@ test("declaredVision: E2E_MODEL_VISION overrides the list either way, and anythi
     assert.equal(declaredVision("deepseek.deepseek-v4-pro", { E2E_MODEL_VISION: "yes" }), "yes");
     assert.equal(declaredVision("openrouter.minimax/minimax-m3", { E2E_MODEL_VISION: " NO " }), "no");
     assert.equal(declaredVision("openrouter.minimax/minimax-m3", { E2E_MODEL_VISION: "maybe" }), "yes");
+});
+
+// --- where a run's look went ---
+
+/** A built session whose start event resolved `config`. */
+const sess = (config) => ({ agentConfig: { tools: [{ name: "look", vision: true }], vision: null, ...config } });
+
+test("lookRoute: each resolved start config names its route, and a start event without the resolved fields names none", () => {
+    assert.deepEqual(lookRoute(sess({ driverSees: true, visionModel: "m" })), { route: "native", reader: null });
+    assert.deepEqual(lookRoute(sess({ driverSees: false, visionModel: "qwen3-vl:30b" })), { route: "reader", reader: "qwen3-vl:30b" });
+    assert.deepEqual(lookRoute(sess({ driverSees: false, visionModel: null, tools: [] })), { route: "none", reader: null });
+    // a reader named but no vision tool wired (a tools subset) is no route to it
+    assert.deepEqual(lookRoute(sess({ driverSees: false, visionModel: "qwen3-vl:30b", tools: [{ name: "findByText" }] })), { route: "none", reader: null });
+    assert.deepEqual(lookRoute(sess({ vision: false, driverSees: false, visionModel: null })), { route: "off", reader: null });
+    assert.equal(lookRoute(sess({})), null);
+    assert.equal(lookRoute({}), null);
+    assert.equal(lookRoute(null), null);
+});
+
+test("lookNote: says a driver's route once, again only when it changes, and never for an unknown route", () => {
+    const seen = new Map();
+    const reader = { route: "reader", reader: "qwen3-vl:30b" };
+    assert.equal(lookNote(seen, "deepseek.deepseek-flash", reader), "  look for deepseek.deepseek-flash: reader qwen3-vl:30b (the driver is not known to see)");
+    assert.equal(lookNote(seen, "deepseek.deepseek-flash", reader), null);
+    assert.equal(lookNote(seen, "deepseek.deepseek-flash", { route: "native", reader: null }), "  look for deepseek.deepseek-flash: native (changed)");
+    assert.equal(lookNote(seen, "gemma4:31b", { route: "off", reader: null }), "  look for gemma4:31b: off (vision:false)");
+    assert.equal(lookNote(seen, "x", { route: "none", reader: null }), "  look for x: none (nothing resolved that sees)");
+    assert.equal(lookNote(seen, "y", null), null);
+    assert.equal(lookNote(seen, null, reader), null);
 });
