@@ -15,9 +15,9 @@
 //     finds no reader in it. The row was green under both mutations below, i.e. it could not fail.
 //   * "an `_image` that is a URL never reaches a backend". Unreachable from the model now that the strip is universal, and
 //     whether a BACKEND fetches a model-chosen URL is a live-backend probe, which Shane ruled out for now.
-// The only readers of the three keys are `look` (builtin-tools.ts:248, ml-vision.ts:486) and the delegated-look path that
-// reads `_images` off the payload it built itself (sw-run-host.ts:638-648) — A measures the first, and the second is the
-// worker's own payload.
+// The readers of the keys are `look` (builtin-tools.ts:248, ml-vision.ts:486) and the delegated look's worker path
+// (sw-run-host.ts:638 and :648, worker-look.ts:83) — and what all of them read is the LOOP's payload (agent-loop.ts:825),
+// not one the delegated path builds: A measures the first, and the second reads what the loop already stripped.
 //
 // MUTATION PER ROW (notes, not committed changes — apply one, watch its row go red, revert), measured at 5e6ae0d8:
 //   A, B  agent-loop.ts `runTool`'s strip disabled (`a = { ...(a ?? {}) }`): A red (2.6 ms), B red (10.4 ms).
@@ -73,7 +73,9 @@ test("a model-written _image, _images, _imageLabel or _imageDrawn never reaches 
     const r = await drive([call("look", { question: "what does it show?", doc: `@file:${s.pdf.id}`, pages: "2", ...SMUGGLED })], () => ({ result: "looked" }), s.opts);
     const args = r.got.find((g) => g.name === "look").args;
     assert.deepEqual(args._images.map((m) => m.image), ["data:image/png;base64,P2"], "the loop's drawn page did not arrive");
-    assert.equal(args._imagesLabelText, undefined);
+    // The key set that reaches look, whole: the loop's `_images`/`_imageLabel` and the model's `question`, nothing else.
+    // An absent-key assertion is a pin only if the key exists somewhere to be written, so this pins the SET.
+    assert.deepEqual(Object.keys(args).sort(), ["_imageLabel", "_images", "question"], `the keys that reached look: ${Object.keys(args).join(", ")}`);
     assert.match(String(args._imageLabel), /^page 2 of @file:/, "the label is the loop's, not the model's");
     assert.ok(!JSON.stringify(args).includes("RU5FTVkg"), "the model's forged image reached look beside the real one");
     assert.deepEqual(s.asks, [{ key: "k-data", pages: [2] }]);
