@@ -47,7 +47,7 @@ import { lookPreviewArgs, workerLook } from "./worker-look";
 import { workerLocate } from "./worker-locate";
 import { runVision, workerWroteVision, type RunVision } from "./run-vision";
 import { withUserWatches } from "./sw-shared-watches";
-import { endTasks, openTasks, taskDrained, withTasks } from "./sw-tasks";
+import { closeTurnTasks, openTasks, taskDrained, withTasks } from "./sw-tasks";
 import { routeExec, execNames, surveyMayEnterPage, withoutWorld, worldCardNote, type ExecRoute } from "./exec-routing";
 import { defaultExecWorld } from "../contract/contract-config";
 import { outputCapPrecheck } from "../contract/contract-pointers";
@@ -708,7 +708,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     // Undoes what this turn registered: run when the turn settles, and when its setup throws before the loop starts.
     let unhostAsks: (() => void) | undefined;   // set once the run's steps may raise nested asks (sw-asks.ts)
     let unwatchArrivals: (() => void) | undefined;   // set once the run judges its tab's arrivals (nav-arrival.ts)
-    const settle = (): void => { unhostAsks?.(); unwatchArrivals?.(); if (unwatchArrivals) watchBetweenTurns(tabId, runId); cancelReasons.delete(runId); noteRunEnd(runId); dropActs(runId); runControllers.delete(runId); runInboxes.delete(runId); void endTasks(runId); untrackRun(tabId, runId); deleteRun(runId); endPythonTurn(runId); releaseDebugger(tabId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); the turn's end: the run's Python namespace stays, the shared full worker's dict goes
+    const settle = (): void => { unhostAsks?.(); unwatchArrivals?.(); if (unwatchArrivals) watchBetweenTurns(tabId, runId); cancelReasons.delete(runId); noteRunEnd(runId); dropActs(runId); runControllers.delete(runId); runInboxes.delete(runId); closeTurnTasks(runId); untrackRun(tabId, runId); deleteRun(runId); endPythonTurn(runId); releaseDebugger(tabId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); the turn's end: the run's Python namespace stays, the shared full worker's dict goes
     /** Ends the run's session on every surface when the setup throws after its start event went out; set once the fan exists. */
     let endSession: ((error: string) => void) | undefined;
     try {

@@ -167,8 +167,12 @@ export async function executeTool(tool: MlTool, args: Record<string, unknown>, c
     // citable ones when tool tokens are on (run-assembly.ts). A tool that runs in the PAGE validates against its
     // own copy, so without this the model was told "unknown property" for a parameter it was given (GPT-6 Luna,
     // 2026-10-09). Neither reaches the tool: the title is taken below, the token by the loop.
+    // A `_`-prefixed argument (`_images`, `_imageLabel`, `_image`) is the HOST's, injected after the model spoke: the
+    // loop strips any `_` key the model writes (agent-loop.ts), so one that reaches here is never the model's and
+    // must not be reported to it as unknown. It is dropped from what is VALIDATED only; the tool still receives it.
     const { [CALL_TITLE]: _title, ...checked } = args;
     if (CITABLE_TOOLS.has(tool.name)) delete checked.token;
+    for (const k of Object.keys(checked)) if (k.startsWith("_")) delete checked[k];
     const issues = validateArgs(tool.parameters, checked);
     if (issues.some(s => s.startsWith("missing required"))) {
         // "Error:" so the sidebar's toolFailed marks the step failed (red dot), not green — it never ran.

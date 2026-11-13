@@ -41,8 +41,8 @@ globalThis.chrome = {
 };
 const { shRun, detachedText, SH_TAIL_ABSENT } = await import("../src/sw/sw-shell-call.ts");
 const { SH_LEASE_MS, SH_HOST_TIMEOUT_MS } = await import("../src/shell/sh-call.ts");
-const { taskAction, endTasks, withTasks, openTasks, taskDrained, detachTask, cancelPageTasks } = await import("../src/sw/sw-tasks.ts");
-const { runInboxes, rekeyRunInbox, senderOwnsRun } = await import("../src/sw/sw-runs.ts");
+const { taskAction, endTasks, closeTurnTasks, withTasks, openTasks, taskDrained, detachTask, cancelPageTasks } = await import("../src/sw/sw-tasks.ts");
+const { runInboxes, rekeyRunInbox, senderOwnsRun, releaseSessionTokens } = await import("../src/sw/sw-runs.ts");
 const { runLog } = await import("../src/sw/sw-run-log.ts");
 const { TokenStore } = await import("../src/pointers/token-pipe.ts");
 const { builtinTool } = await import("../src/tools/tool-registry.ts");
@@ -113,7 +113,9 @@ test("a call past its expectMs detaches: the script's await answers Detached wit
     assert.match(r.task, TASK_ID);
     assert.match(r.error, /you expected ~0 s/, "the predicted case, in its own words");
     assert.match(r.error, new RegExp(`task ${r.task}`));
-    assert.match(r.error, /cancelled when this turn ends/);
+    assert.match(r.error, /keeps running after your answer/);
+    assert.match(r.error, /read at the start of the next turn/);
+    assert.doesNotMatch(r.error, /turn ends/, "the turn no longer ends the task");
     assert.ok(!host.names().includes("cancel"), "a detach must never cancel the call");
     assert.deepEqual(run.inbox(), [], "nothing is in the inbox while it runs");
     host.finish();
@@ -128,7 +130,7 @@ test("a call past its expectMs detaches: the script's await answers Detached wit
     await endTasks("run-slow");
 });
 
-test("a result that settles during the turn's last model call is never drawn: the loop never drained it, and the turn's end drops it", T, async () => {
+test("a result that settles during the turn's last model call is never drawn by that turn: the loop never drained it, and it waits for the next", T, async () => {
     const host = slowHost();
     const run = liveRun("run-last-call");
     const r = await shRun(ctxFor("run-last-call"), [["ls"], { expectMs: 30 }]);
@@ -136,8 +138,11 @@ test("a result that settles during the turn's last model call is never drawn: th
     await until(() => run.inbox().length > 0);
     assert.equal(run.inbox()[0].task, r.task, "positive control: it was queued");
     runInboxes.delete("run-last-call");   // the turn ends: the run host closes the inbox, then settles
-    await endTasks("run-last-call");
+    closeTurnTasks("run-last-call");
     assert.deepEqual(run.fanned, [], "the transcript would show a result the model never read");
+    const next = liveRun("run-last-call");   // the next turn
+    assert.equal(next.inbox().length, 1, "the undrained result is queued again");
+    await endTasks("run-last-call");
 });
 
 test("the Detached text says which case it was: the script's own estimate, or the default, and the host's time limit", () => {
@@ -492,20 +497,119 @@ test("task is a builtin the worker runs, offered nothing outside the run: not ga
     assert.deepEqual({ gated: t.gated, citable: t.citable, realm: t.realm, cardLine: t.cardLine }, { gated: false, citable: false, realm: "worker", cardLine: null });
 });
 
-// --- the turn's end: no task outlives it ---
+// --- the turn's end leaves a task running; session release and archive end it (rule 4b) ---
 
-test("the turn's end cancels a running task on the host, and its result is never injected afterwards", T, async () => {
+/** Settle a turn as the run host does: close the inbox, then `closeTurnTasks`. */
+const settleTurn = (runId) => { runInboxes.delete(runId); closeTurnTasks(runId); };
+
+test("the turn's end leaves a running task running: the host is not asked to cancel, and the task is still addressable", T, async () => {
     const host = slowHost();
     const run = liveRun("run-end");
     const r = await shRun(ctxFor("run-end"), [["ls"], { expectMs: 30 }]);
-    const inbox = run.inbox();
-    runInboxes.delete("run-end");   // the run host closes the inbox first, then settles
+    settleTurn("run-end");
+    await new Promise((res) => setTimeout(res, 50));
+    assert.equal(host.calls.filter((c) => c.call === "cancel" && c.args.id).length, 0, "the turn's end cancelled the call");
+    assert.match(await taskAction("run-end", { op: "tail", id: r.task }), /^(?!UnknownTask)/, "the task left the table at the turn's end");
+    assert.deepEqual(run.fanned, []);
+    host.finish();
     await endTasks("run-end");
-    assert.equal(host.calls.filter((c) => c.call === "cancel" && c.args.id).length, 1, "the turn ended with the call still running on the host");
-    await new Promise((res) => setTimeout(res, 100));
-    assert.deepEqual(inbox, [], "a result arrived in the ended turn's inbox");
-    assert.deepEqual(run.fanned, [], "an ended turn's surfaces were told of a result");
-    assert.match(await taskAction("run-end", { op: "await", id: r.task }), /^UnknownTask/, "the task outlived its turn");
+});
+
+test("a result that arrives between turns is parked, not queued, and logged; the next turn queues it once, with its true elapsed time, and it is delivered once", T, async () => {
+    const host = slowHost();
+    const run = liveRun("run-park");
+    const r = await shRun(ctxFor("run-park"), [["ls"], { expectMs: 30 }]);
+    settleTurn("run-park");
+    host.finish();
+    await until(async () => true);
+    await new Promise((res) => setTimeout(res, 150));
+    assert.equal(runInboxes.has("run-park"), false, "an inbox was kept between turns");
+    assert.deepEqual(run.fanned, [], "a closed turn's surfaces were told");
+    const recs = (await runLog.forRun("run-park")).filter((e) => e.subsystem === "task" && e.kind === "parked");
+    assert.equal(recs.length, 1, "the parked result is a run-log record");
+    await new Promise((res) => setTimeout(res, 1200));   // time passes between turns; the text keeps the end time, not the read time
+    const next = liveRun("run-park");
+    assert.equal(next.inbox().length, 1);
+    assert.equal(next.inbox()[0].task, r.task);
+    assert.match(next.inbox()[0].text, /^\[task t[0-9a-f]{6} done after 0 s: /, "the elapsed time is the task's, not the wait for the next turn");
+    assert.equal(taskDrained("run-park", r.task, next.inbox()[0].text), true);
+    assert.equal(taskDrained("run-park", r.task, "again"), false, "delivered twice");
+    assert.equal(next.fanned.length, 1);
+    const third = liveRun("run-park");
+    assert.deepEqual(third.inbox(), [], "a delivered result was queued again");
+    await endTasks("run-park");
+});
+
+test("a parked result an await already took is not queued into the next turn", T, async () => {
+    const host = slowHost();
+    liveRun("run-park-awaited");
+    const r = await shRun(ctxFor("run-park-awaited"), [["ls"], { expectMs: 30 }]);
+    settleTurn("run-park-awaited");
+    host.finish();
+    await new Promise((res) => setTimeout(res, 150));
+    liveRun("run-park-awaited");   // turn two opens: the result is queued
+    runInboxes.get("run-park-awaited").queue.length = 0;
+    settleTurn("run-park-awaited");
+    assert.match(await taskAction("run-park-awaited", { op: "await", id: r.task }), /done:/);
+    const third = liveRun("run-park-awaited");
+    assert.deepEqual(third.inbox(), [], "an await took it, and it was queued again");
+    await endTasks("run-park-awaited");
+});
+
+test("session release cancels a running task on the host with reason session-release; its late result is dropped, never parked or queued", T, async () => {
+    const host = slowHost();
+    liveRun("run-release");
+    await shRun(ctxFor("run-release"), [["ls"], { expectMs: 30 }]);
+    settleTurn("run-release");
+    await endTasks("run-release");   // what onSessionRelease runs
+    assert.equal(host.calls.filter((c) => c.call === "cancel" && c.args.id).length, 1, "release left the call running");
+    await new Promise((res) => setTimeout(res, 150));
+    const recs = (await runLog.forRun("run-release")).filter((e) => e.subsystem === "task");
+    assert.deepEqual(recs.map((e) => [e.kind, e.reason]), [["cancelled", "session-release"]], "no parked record, and the reason is the release's");
+    const next = liveRun("run-release");
+    assert.deepEqual(next.inbox(), [], "a result of an ended session reached a later turn");
+    await endTasks("run-release");
+});
+
+test("archive ends a running task with reason archived, and the releaseSessionTokens hook ends it too", T, async () => {
+    const host = slowHost();
+    liveRun("run-archive");
+    await shRun(ctxFor("run-archive"), [["ls"], { expectMs: 30 }]);
+    settleTurn("run-archive");
+    await endTasks("run-archive", "archived");
+    assert.equal(host.calls.filter((c) => c.call === "cancel" && c.args.id).length, 1);
+    const recs = (await runLog.forRun("run-archive")).filter((e) => e.subsystem === "task");
+    assert.deepEqual(recs.map((e) => [e.kind, e.reason]), [["cancelled", "archived"]]);
+    const host2 = slowHost();
+    liveRun("run-hook");
+    await shRun(ctxFor("run-hook"), [["ls"], { expectMs: 30 }]);
+    settleTurn("run-hook");
+    releaseSessionTokens("run-hook");
+    await until(() => host2.calls.some((c) => c.call === "cancel" && c.args.id));
+    assert.match(await taskAction("run-hook", { op: "await", id: "t000000" }), /^UnknownTask/);
+});
+
+test("a Stop after the call detached does not cancel it; a Stop before it detaches does", T, async () => {
+    const host = slowHost();
+    liveRun("run-stop-late");
+    const ctl = new AbortController();
+    const r = await shRun(ctxFor("run-stop-late", { signal: ctl.signal }), [["ls"], { expectMs: 30 }]);
+    assert.equal(r.code, "Detached");
+    ctl.abort();
+    await new Promise((res) => setTimeout(res, 80));
+    assert.equal(host.calls.filter((c) => c.call === "cancel" && c.args.id).length, 0, "a Stop cancelled a detached call");
+    host.finish();
+    await endTasks("run-stop-late");
+
+    const host2 = slowHost();
+    liveRun("run-stop-early");
+    const ctl2 = new AbortController();
+    const p = shRun(ctxFor("run-stop-early", { signal: ctl2.signal }), [["ls"], { expectMs: 60_000 }]);
+    await until(() => host2.calls.some((c) => c.call === "start"));
+    ctl2.abort();
+    await until(() => host2.calls.some((c) => c.call === "cancel" && c.args.id));
+    await p;
+    await endTasks("run-stop-early");
 });
 
 test("a task whose cancel cannot reach the host is reported as an orphan, not as cancelled", T, async () => {
@@ -516,7 +620,7 @@ test("a task whose cancel cannot reach the host is reported as an orphan, not as
     const { runLog } = await import("../src/sw/sw-run-log.ts");
     await endTasks("run-orphan");
     const recs = (await runLog.forRun("run-orphan")).filter((e) => e.subsystem === "task");
-    assert.deepEqual(recs.map((e) => [e.kind, e.reason, e.level]), [["orphaned", "turn-end", "warn"]], "a cancel that never reached the host was reported as one");
+    assert.deepEqual(recs.map((e) => [e.kind, e.reason, e.level]), [["orphaned", "session-release", "warn"]], "a cancel that never reached the host was reported as one");
 });
 
 // --- ml.current.tasks: the run's own rows, read at the snapshot's instant ---
