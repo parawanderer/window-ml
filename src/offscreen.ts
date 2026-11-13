@@ -29,7 +29,7 @@ import { PY_DETACHED_MAX_MS, PY_INTERRUPT_KILL_MS, ringAppend, type CellCancel }
 import { htmlToMarkdown } from "./dom/html-to-md";
 import { PNG_DATA_URL } from "./session/image-compact";
 import { defineState } from "./state-registry";
-import { reapDelay, DEFAULT_REAP_BETWEEN_MS } from "./python/py-reap";
+import { reapDelay, longTimeout, DEFAULT_REAP_BETWEEN_MS } from "./python/py-reap";
 import { createPdfHost } from "./pdf/pdf-host";
 import { b64ToBytes, bytesToB64, type PdfMessage, type PdfReadReply, type PdfRenderReply } from "./pdf/pdf-wire";
 
@@ -242,7 +242,7 @@ function armReap(principal: string): void {
     const held = heldRun(principal);
     const ms = reapDelay(principal, held !== null, keptPrincipals.has(principal), held !== null && endedRuns.has(held), betweenTurnsMs);
     if (ms === null) return;
-    reapTimers.set(principal, setTimeout(() => { reapTimers.delete(principal); void reapWorker(principal, ms); }, ms));
+    longTimeout(ms, () => { reapTimers.delete(principal); void reapWorker(principal, ms); }, (t) => reapTimers.set(principal, t));
 }
 
 /** How long a reaped worker gets to hand over its late drops before it is terminated anyway. */

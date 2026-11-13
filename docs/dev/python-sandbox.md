@@ -532,6 +532,8 @@ browser: every worker-hosted run that ran Python kept a whole Pyodide realm. Now
   the live clock) waits the person's `pythonIdleMinutes` (DevTools Settings, default 10; 0 never reaps it) and the next
   cell says `idle between turns`. Either loss is also one `agent-note` line in the run's transcript (`PY_REAPED` →
   `noteRunLine`, `sw-run-start.ts`), besides the run-log record. The bench (`own`) and the `full` worker are never reaped.
+  The clock is set through `longTimeout` (`py-reap.ts`), in steps of at most `MAX_TIMER_MS` (2^31-1 ms): a setting of
+  35792 minutes or more would otherwise wrap inside `setTimeout` and reap at once.
 - **A keep** is a worker-hosted turn asking, through `python_exec` `keep: true`, to hold its worker through idle gaps
   of any length (a run that works overnight). It applies only to that run's own `run:<id>` worker, holds for the
   turn's later cells too, and ENDS WITH THE TURN: `PY_END_TURN` clears it, and the worker is then on the between-turns clock.

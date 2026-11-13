@@ -31,6 +31,21 @@ export const REAP_LIVE_MS = 30 * 60_000;
 /** How long a worker holding a namespace between turns may sit idle by default (the `pythonIdleMinutes` setting, 10). */
 export const DEFAULT_REAP_BETWEEN_MS = 10 * 60_000;
 
+/** The longest delay `setTimeout` keeps: a longer one wraps and fires at once (2^31-1 ms, about 24.8 days). */
+export const MAX_TIMER_MS = 2 ** 31 - 1;
+
+/**
+ * Call `fire` once `ms` has passed, in `setTimeout` steps no longer than {@link MAX_TIMER_MS}, so a delay past it (a
+ * `pythonIdleMinutes` of 35792 or more) waits its full length instead of firing at once.
+ * @param ms the delay
+ * @param fire called once at the end
+ * @param onStep handed each step's timer as it is set, so the caller clears the current one
+ */
+export function longTimeout(ms: number, fire: () => void, onStep: (t: ReturnType<typeof setTimeout>) => void): void {
+    const step = Math.min(ms, MAX_TIMER_MS);
+    onStep(setTimeout(() => (ms > MAX_TIMER_MS ? longTimeout(ms - MAX_TIMER_MS, fire, onStep) : fire()), step));
+}
+
 /**
  * How long a principal's idle worker waits before it is shut, or null when it is never shut for idleness.
  * @param principal whose worker: `run:<id>`, `page:<tabId>`, `own` or `full`

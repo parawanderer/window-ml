@@ -7,7 +7,7 @@
 // idle reap".
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
-import { REAP_SETTLED_MS, REAP_LIVE_MS, DEFAULT_REAP_BETWEEN_MS, reapDelay } from "../src/python/py-reap.ts";
+import { REAP_SETTLED_MS, REAP_LIVE_MS, DEFAULT_REAP_BETWEEN_MS, MAX_TIMER_MS, reapDelay } from "../src/python/py-reap.ts";
 
 mock.timers.enable({ apis: ["setTimeout"] });
 
@@ -273,6 +273,40 @@ test("a delay of 0 never reaps a namespace between turns for idleness", async ()
     await endTurn("e6", 0);
     mock.timers.tick(DAY);
     await settle();
+    assert.equal(w.terminated, false);
+});
+
+test("a delay past setTimeout's limit waits its full length: 35792 minutes does not wrap and fire at once", async () => {
+    const ms = 35792 * 60_000;   // the first whole-minute setting past 2^31-1 ms
+    assert.ok(ms > MAX_TIMER_MS && 35791 * 60_000 <= MAX_TIMER_MS);
+    const { w } = await turnCell("e6b", { turnLive: true });
+    await endTurn("e6b", ms);
+    mock.timers.tick(1);
+    await settle();
+    assert.equal(w.terminated, false, "the timer did not wrap to an immediate fire");
+    mock.timers.tick(MAX_TIMER_MS - 1);   // to the first step's end exactly: the mock dates a timer set in a tick from the tick's end
+    await settle();
+    assert.equal(w.terminated, false, "still waiting past the first step");
+    mock.timers.tick(ms - MAX_TIMER_MS - 1);
+    await settle();
+    assert.equal(w.terminated, false, "1 ms short of the delay");
+    mock.timers.tick(1);
+    await settle();
+    await answerReap(w);
+    assert.equal(w.terminated, true);
+    assert.deepEqual(reapedOf("e6b").map((m) => m.idleMs), [ms]);
+});
+
+test("a cell during a long delay's second step clears it: the worker is not shut on the old clock", async () => {
+    const ms = 2 * MAX_TIMER_MS - 10;   // two steps
+    const { w } = await turnCell("e6c", { turnLive: true });
+    await endTurn("e6c", ms);
+    mock.timers.tick(MAX_TIMER_MS + 5);
+    await settle();
+    await turnCell("e6c");   // a cell of no live turn: the worker stays on the between-turns clock, restarted
+    mock.timers.tick(MAX_TIMER_MS);   // past the first clock's end, short of the restarted one's
+    await settle();
+    assert.equal(w.posts.at(-1).takeDropped, undefined, "the first clock's later step was cleared: no reap was asked");
     assert.equal(w.terminated, false);
 });
 
