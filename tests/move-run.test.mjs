@@ -299,6 +299,15 @@ test("control: a follow-up on the tab a run was moved TO starts its turn there",
     assert.ok(await until(() => modelCalls(r) > calls), "the turn ran");
 });
 
+test("after a turn on the tab a run was moved to, a follow-up on the tab it left is still told where it went", T, async () => {
+    const r = await settled({ first: [] });
+    await r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, hudOn(8));
+    await nextTurn(r);   // the turn's end writes the run's snapshot again
+    const res = await followUp(r, 7);
+    assert.match(res.refused ?? "", /moved to another tab/);
+    assert.doesNotMatch(res.refused, /no longer open/);
+});
+
 test("a run brought back to a tab it left is that tab's again; the tab it then left refuses with where it went", T, async () => {
     const r = await settled({ first: [] });
     await r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, hudOn(8));

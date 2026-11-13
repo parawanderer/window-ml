@@ -21,7 +21,7 @@ import { AGENT_START_PAGE, DEFAULT_CONFIG, modelFilterAllows } from "../contract
 import type { NeutralMessage } from "../contract/contract-chat";
 import { cleanTitle, titleMessages } from "../session/session-title";
 import { defineState } from "../state-registry";
-import { bgRuns, makeWorkerRun, trackRun, untrackRun } from "./sw-runs";
+import { bgRuns, keptOnRebuild, makeWorkerRun, trackRun, untrackRun } from "./sw-runs";
 import { moveRun } from "./move-run";
 import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
 import { isExtensionSender } from "./sw-site-access";
@@ -440,9 +440,9 @@ export function configureSessionCommands(run: RunDeps): void {
             // Put the run back where a resume looks for it. `RESUME_RUN` reads `bgRuns` and nothing else, and it is
             // worker MEMORY: a run that settled yesterday is not in it, which is the whole reason a saved session
             // keeps its own copy. Hydrating here means the resume path itself needs no second source.
-            bgRuns.set(hash, { p: history.payload, tabId, messages: history.messages, ...(history.sub ? { sub: history.sub } : {}) });
+            bgRuns.set(hash, { p: history.payload, tabId, messages: history.messages, ...(history.sub ? { sub: history.sub } : {}), ...keptOnRebuild(hash) });
             // From here on the WORKER drives it: its next turn is started from here, never by the page it sits on.
-            bgRuns.set(hash, { p: history.payload, tabId, messages: history.messages, ...(history.sub ? { sub: history.sub } : {}) });
+            bgRuns.set(hash, { p: history.payload, tabId, messages: history.messages, ...(history.sub ? { sub: history.sub } : {}), ...keptOnRebuild(hash) });
             makeWorkerRun(hash);
             const rebuild = bgRuns.get(hash)!.p.rebuild;
             trackRun(tabId, hash, rebuild);

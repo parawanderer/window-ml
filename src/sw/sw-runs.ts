@@ -106,6 +106,16 @@ export function startingOwnedBy(runId: unknown, tabId: number | undefined): bool
 // `moved`: the note a move between turns left for the model (move-run.ts), taken by the next turn's first call;
 // `leftTabs`: the tabs the person moved it off, so a message from one is told where the session went.
 export const bgRuns = new Map<string, { p: StartRunPayload; tabId: number; messages: NeutralMessage[]; sub?: import("../contract").SubcallUsage; moved?: string; leftTabs?: number[] }>();
+/**
+ * What a rebuilt `bgRuns` entry keeps of the one it replaces: the tabs the person moved the run off (move-run.ts), which
+ * a turn's snapshot, a durable checkpoint and a resume onto the run's own tab would otherwise drop.
+ * @param runId the run
+ * @returns `{ leftTabs }`, or nothing when the run never moved
+ */
+export const keptOnRebuild = (runId: string): { leftTabs?: number[] } => {
+    const left = bgRuns.get(runId)?.leftTabs;
+    return left?.length ? { leftTabs: left } : {};
+};
 defineState({
     id: "run.init", scope: "session", realm: "worker", audience: "model", lostOn: ["worker-eviction"],
     describe: "What the run was started with: the task, model, step budget, tool names and what it may do without asking.",
@@ -227,7 +237,7 @@ export function withoutWorkerSession<T extends { hint?: { session?: unknown } | 
 // ~30s idle) can rehydrate an in-flight run instead of losing it. Storage holds ONLY running runs — deleted
 // the moment a run settles; the in-memory bgRuns above additionally keeps COMPLETED runs for a follow-up
 // RESUME (still eviction-bound, as before). Snapshot shape == a bgRuns entry.
-type BgRunSnap = { p: StartRunPayload; tabId: number; messages: NeutralMessage[]; sub?: import("../contract").SubcallUsage; version?: string; ts?: number };
+type BgRunSnap = { p: StartRunPayload; tabId: number; messages: NeutralMessage[]; sub?: import("../contract").SubcallUsage; leftTabs?: number[]; version?: string; ts?: number };
 
 const BGRUN_KEY = (runId: string): string => `ml_bgrun_${runId}`;
 

@@ -63,7 +63,7 @@ import { grantRunFetch, grantRunOrigin, runOriginGranted, runOrigins, runFetchCo
 import { autoApprovePython } from "../agent/auto-approve";
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
 import { takeMovedNote } from "./move-run";
-import { PROPOSAL_TOOLS, withoutProposals, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart } from "./sw-runs";
+import { PROPOSAL_TOOLS, withoutProposals, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, keptOnRebuild, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { claimValue, runMayClaim, valueHolders, readStoredColumns, readStoredText, withHeldValuesOnly } from "./sw-values";
 import { isoServer, type IsoDeps } from "./iso-channel";
@@ -716,7 +716,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         if (p.crossPage !== false) trackRun(tabId, runId, p.rebuild);
         // Durable resume: snapshot the run NOW (before the first step) + after each step (the checkpoint dep),
         // so an SW evicted mid-run rehydrates from storage. Cleared when the run settles (finally).
-        persistRun(runId, { p: storedP(), tabId, messages: resumeMessages || [], sub: snapSub() });
+        persistRun(runId, { p: storedP(), tabId, messages: resumeMessages || [], sub: snapSub(), ...keptOnRebuild(runId) });
         // `remote` has to survive into the loop's ToolMeta: it is what makes a remote tool's output CITABLE
         // (`meta?.remote` in agent-loop), and it cannot be recovered from the name — the name is generated
         // from the server's own bundle, so no hardcoded list can hold it. Dropping it here made the whole
@@ -2000,7 +2000,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     } catch { return false; }
                 },
                 checkpoint: (messages) => {
-                    persistRun(runId, { p: storedP(), tabId, messages, sub: snapSub() });   // durable resume snapshot per step
+                    persistRun(runId, { p: storedP(), tabId, messages, sub: snapSub(), ...keptOnRebuild(runId) });   // durable resume snapshot per step
                     // And the same history where a SAVED session keeps it. The snapshot above dies with the run
                     // (it is deleted on settle, and is stale after five minutes); this one lives as long as the
                     // session does, which is what `session.resume` needs from a run that ended yesterday.
@@ -2069,7 +2069,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 // vanished from the sidebar/panel (and scrambled the export's chat-log order).
                 // A run handed to the worker while this turn ran stays the worker's (`storedP`).
                 const resumeP = { ...storedP(), stepBase: stepBase + runMaxStep, seqBase: seqBase + runMaxSeq };
-                bgRuns.set(runId, { p: resumeP, tabId, messages, sub: snapSub() });
+                bgRuns.set(runId, { p: resumeP, tabId, messages, sub: snapSub(), ...keptOnRebuild(runId) });
                 // The same snapshot `bgRuns` holds, where it outlives the run: `resumeP` so a later turn continues
                 // AFTER this one's steps rather than colliding with them.
                 saveRunHistory(runId, { messages, payload: resumeP, sub: snapSub() });

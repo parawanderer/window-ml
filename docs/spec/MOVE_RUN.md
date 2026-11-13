@@ -123,7 +123,10 @@ the bookkeeping below. A resume of a held run on the tab it is already on stays 
    naming no site, sent to that tab's surfaces only, never its replay ring, which its page can read back), and a
    follow-up typed there is refused with that sentence (`RunMoved`, `page-route.ts`) instead of "the page that started
    this conversation is no longer open", said on that tab and never into the run's own history. The bgRuns entry keeps
-   the tabs it left (`leftTabs`); a run brought back to one is that tab's again.
+   the tabs it left (`leftTabs`); a run brought back to one is that tab's again. Every rewrite of the entry keeps
+   them (`keptOnRebuild`: the turn's snapshot, the durable checkpoint, a resume onto the run's own tab). A saved
+   session's history does not carry them: once the worker no longer holds the run, a message from a tab it left is
+   refused as before ("no longer open").
 6. **The run log records the move** (a `tab` record naming both tab ids and the run), so the person sees where the run
    went and when.
 
