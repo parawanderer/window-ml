@@ -10,7 +10,7 @@ import { checkProposals } from "./policy-proposal";
 import { proposePolicyTool } from "../tools/propose-policy-tool";
 import { proposeManifestTool } from "../tools/propose-manifest-tool";
 import { taskTool } from "../tools/task-tool";
-import { taskAction } from "./sw-tasks";
+import { detachedCapMs, taskAction } from "./sw-tasks";
 import { proposalOutcome } from "./sw-manifest-proposal";
 import { isLibraryDraft, libraryOutcome } from "./sw-library-proposal";
 import type { FetchLlmPayload, FetchResult, MlApi, MlTool, ShotBox, SubcallUsage, TokenUsage } from "../contract";
@@ -387,6 +387,8 @@ async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; 
     // A LEASED cell: the tool handed its own formatter (`late`) for a result that arrives after the call detached. Its id
     // is the stream's: one this worker made, which nothing outside it can name.
     const leased = typeof opts.late === "function";
+    // The person's cap on a detached task (DevTools Settings), read at the call and sent with the cell.
+    const detachedMaxMs = leased ? await detachedCapMs() : undefined;
     let attached = true;
     const onStdout = opts.onStdout && ((chunk: string, ts?: number) => { if (attached) opts.onStdout!(chunk, ts); });
     const call = runPython({
@@ -401,7 +403,7 @@ async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; 
         ...(onStdout ? { stream: onStdout } : {}),
         ...(ctx.pyCall?.inside ? { inside: true } : {}),
         ...(ctx.pyCall?.bridges ? { bridges: true } : {}),
-        ...(leased ? { cell: requestId } : {}),
+        ...(leased ? { cell: requestId, detachedMaxMs } : {}),
     });
     // What the cell answered, as the tool reads it. A late one's (once detached) is read with the call's grant gone, so
     // what it needs from the run is taken now.
@@ -410,7 +412,7 @@ async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; 
     if (!leased) return shape(await call);
     const expectMs = typeof opts.expectMs === "number" && Number.isFinite(opts.expectMs) && opts.expectMs > 0 ? Math.floor(opts.expectMs) : null;
     const late = opts.late!;
-    const r = await leaseCell({ runId: ctx.runId, cell: requestId, ...(pyCall?.step ? { seq: pyCall.step.seq } : {}), expectMs, call, onDetach: () => { attached = false; },
+    const r = await leaseCell({ runId: ctx.runId, cell: requestId, ...(pyCall?.step ? { seq: pyCall.step.seq } : {}), expectMs, ...(detachedMaxMs !== undefined ? { detachedMaxMs } : {}), call, onDetach: () => { attached = false; },
         late: async (x) => { let res: Record<string, unknown>; try { res = shape(x); } catch (e) { return { status: "failed", text: (e as Error)?.message || String(e), result: null }; } return late(res); } });
     return (r as PyDetached).detached ? r as PyDetached : shape(r as Awaited<typeof call>);
 }

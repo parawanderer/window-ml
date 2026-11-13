@@ -953,7 +953,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     }
     if (message.type === "PY_STDOUT") { relayPyStdout(message); return false; }
     if (message.type === "PY_STARTED") { pythonStarted(message, sender); return false; }
-    if (message.type === "PY_DONE") { pythonDone(message, sender); return false; }
+    if (message.type === "PY_DONE") { void pythonDone(message, sender); return false; }
     if (message.type === "PY_REAPED") { pythonReaped(message, sender, noteRunLine); return false; }
     if (message.type === "SERVER_TOOL_EXEC") {
         // Run ONE OpenWebUI-configured tool. CHOKE POINT, and a real one: the fetch spends the user's API

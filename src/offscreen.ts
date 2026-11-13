@@ -25,7 +25,7 @@ export const BENCH_STOP_KILL_MS = 1000;
 export const BENCH_STOP_KILLED = "Stopped by restarting the sandbox: it did not answer the interrupt, so its variables are gone.";
 
 import { ValueStore } from "./pointers/value-store";
-import { PY_DETACHED_MAX_MS, PY_INTERRUPT_KILL_MS, ringAppend, type CellCancel } from "./python/py-lease";
+import { PY_DETACHED_MAX_MS, PY_INTERRUPT_KILL_MS, clampDetachedMs, ringAppend, type CellCancel } from "./python/py-lease";
 import { htmlToMarkdown } from "./dom/html-to-md";
 import { PNG_DATA_URL } from "./session/image-compact";
 import { defineState } from "./state-registry";
@@ -141,7 +141,7 @@ type WireStamp = { client: string; run: string | null };
 // `cell` names a worker-hosted run's LEASED cell (the service worker's id for it, py-lease.ts): its start is told to the
 // service worker, its cap is the detached ceiling, its output is kept in `ring` for `task tail`, and a cancel reaches it
 // by that id. `stopOnStart` is a cancel that came before the cell started, done when it does.
-const pending = new Map<number, { resolve: (r: PyResult) => void; timer: ReturnType<typeof setTimeout>; streamId?: string; armOnStart?: boolean; principal: string; wire?: WireStamp; spending?: boolean; bench?: boolean; started?: boolean; stopping?: boolean; cell?: string; ring?: string; stopOnStart?: () => void }>();   // state: plumbing
+const pending = new Map<number, { resolve: (r: PyResult) => void; timer: ReturnType<typeof setTimeout>; streamId?: string; armOnStart?: boolean; principal: string; wire?: WireStamp; spending?: boolean; bench?: boolean; started?: boolean; stopping?: boolean; cell?: string; detachedMaxMs?: number; ring?: string; stopOnStart?: () => void }>();   // state: plumbing
 // THE `ml` WIRE (ML_WIRE.md): which worker a client handle's answers go back to. The handle is this
 // document's to stamp — the worker never sees it (LANE_1_PR2_DESIGN.md "Who stamps the handle"). An
 // `ask` first answer is NOT relayed down: the cell's `send` stays pending until the later `ML_ANSWER`
@@ -334,7 +334,9 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
             // it to the detached ceiling instead of the 15 s, which the lease replaces.
             if (entry?.cell !== undefined && !entry.stopping) {
                 clearTimeout(entry.timer);
-                entry.timer = killAfter(e.data.id, PY_DETACHED_MAX_MS, `The Python cell ran past ${PY_DETACHED_MAX_MS / 60_000} min and the sandbox was terminated; this run's names are lost.`, "timeout");
+                // The worker's cap (the person's `detachedTaskMaxMin`), clamped to the ceiling; absent, the ceiling.
+                const cap = clampDetachedMs(entry.detachedMaxMs);
+                entry.timer = killAfter(e.data.id, cap, `The Python cell ran past ${cap % 60_000 === 0 ? `${cap / 60_000} min` : `${Math.round(cap / 1000)} s`} and the sandbox was terminated; this run's names are lost.`, "timeout");
                 try { chrome.runtime.sendMessage({ type: "PY_STARTED", cell: entry.cell }).catch(() => { /* no worker listening */ }); } catch { /* context gone */ }
             } else if (entry?.armOnStart && !entry.stopping) {
                 clearTimeout(entry.timer);
@@ -398,7 +400,7 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
  *   ends there wedges the single Pyodide instance for every later call with nobody watching. In the bench a
  *   person is sitting in front of it, chose this, and can close the panel.
  */
-function runInWorker(code: string, image: string | null, hardened: boolean, tables: unknown, stream?: boolean, streamId?: string, env?: boolean, noTimeout?: boolean, complete?: { line: number; column: number; bench?: string }, bench?: { persist?: boolean; reset?: boolean }, transfer: ArrayBuffer[] = [], principal = hardened ? "own" : "full", wire?: WireStamp, inside = false, libraries?: { libraries?: unknown; library?: unknown }, bridges = false, cell?: string): Promise<PyResult> {
+function runInWorker(code: string, image: string | null, hardened: boolean, tables: unknown, stream?: boolean, streamId?: string, env?: boolean, noTimeout?: boolean, complete?: { line: number; column: number; bench?: string }, bench?: { persist?: boolean; reset?: boolean }, transfer: ArrayBuffer[] = [], principal = hardened ? "own" : "full", wire?: WireStamp, inside = false, libraries?: { libraries?: unknown; library?: unknown }, bridges = false, cell?: string, detachedMaxMs?: number): Promise<PyResult> {
     // `hardened` is the mode (true = readonly, the locked-down sandbox); `principal` is WHOSE sandbox.
     // A readonly run gets one worker per principal so a patch one principal left cannot reach the next;
     // `full` is its own worker and is never locked.
@@ -418,7 +420,9 @@ function runInWorker(code: string, image: string | null, hardened: boolean, tabl
         // START bound, and the worker's `started` (the user's cell is about to run) swaps in the script's cap.
         const timer = noTimeout || complete || bench?.reset ? (0 as unknown as ReturnType<typeof setTimeout>)
             : killAfter(id, PY_START_TIMEOUT_MS, `The Python sandbox did not start within ${PY_START_TIMEOUT_MS / 1000}s and was terminated.`, "start-timeout");
-        pending.set(id, { resolve, timer, streamId, armOnStart: !(noTimeout || complete || bench?.reset), principal, wire, ...(bench?.persist && principal === "own" ? { bench: true } : {}), ...(cell !== undefined ? { cell, ring: "" } : {}) });   // streamId → the background can key live stdout chunks
+        pending.set(id, { resolve, timer, streamId, armOnStart: !(noTimeout || complete || bench?.reset), principal, wire, ...(bench?.persist && principal === "own" ? { bench: true } : {}),
+            // The cap (the person's `detachedTaskMaxMin`, from the worker) is kept only for a leased cell: `cell` is the worker's alone.
+            ...(cell !== undefined ? { cell, ring: "", ...(detachedMaxMs !== undefined ? { detachedMaxMs } : {}) } : {}) });   // streamId → the background can key live stdout chunks
         // The worker creates the run's dict BEFORE the cell runs, so the principal is recorded at the post, not only from
         // a returned manifest: a cell that throws or is killed still leaves a dict the delete must reach.
         if (wire?.run) (runPrincipals.get(wire.run) ?? runPrincipals.set(wire.run, new Set()).get(wire.run)!).add(principal);
@@ -560,7 +564,9 @@ chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
                 // Only the service worker may lift a cell's bridge refusal: a content script is an extension context too.
                 msg.bridges === true && !sender.tab,
                 // A LEASED cell (py-lease.ts): only the service worker leases, and only a worker-hosted run's own cell.
-                typeof msg.cell === "string" && !sender.tab && wireStamp?.run && msg.principal === `run:${wireStamp.run}` ? msg.cell : undefined)
+                typeof msg.cell === "string" && !sender.tab && wireStamp?.run && msg.principal === `run:${wireStamp.run}` ? msg.cell : undefined,
+                // The cap rides with the cell: `runInWorker` keeps it only for a cell, so a tab's PY_RUN naming one has none.
+                msg.detachedMaxMs)
                 .then((r) => storeReturnedTable(r, msg.valueBudget)))
         .then((r) => { sendResponse(r); return r; }, (e) => { const r = { ok: false, stdout: "", error: String(e) }; sendResponse(r); return r; })
         // A LEASED cell's end is also told by its id, apart from the reply: when the service worker that sent the cell has
@@ -573,6 +579,8 @@ chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
             const o = (r ?? {}) as { stdout?: unknown; error?: unknown; value?: unknown };
             const len = (x: unknown) => (typeof x === "string" ? x.length : 0);
             const bytes = len(o.stdout) + len(o.error) + len(o.value);
+            // Kept for a worker that was evicted meanwhile and asks (`PY_RESULT`), whose reply this one's went nowhere.
+            holdResult(cell, r);
             try { chrome.runtime.sendMessage({ type: "PY_DONE", cell, run: wireStamp!.run, ok: (r as { ok?: boolean } | undefined)?.ok !== false, bytes }).catch(() => { /* no worker listening */ }); } catch { /* context gone */ }
         });
     return true;   // keep the channel open for the async result
@@ -635,11 +643,45 @@ export function interruptCell(cell: string): Promise<CellCancel> {
     });
 }
 
-// A LEASED cell's cancel and tail (py-lease.ts), by the service worker's id for it. Only the service worker sends either;
+/** The most results of leased cells kept for a service worker that comes back for them, and for how long. */
+export const HELD_RESULTS_MAX = 8, HELD_RESULT_MS = 10 * 60_000;
+/** A leased cell's result, kept so a service worker started since it was sent can fetch it (`PY_RESULT`): the last few,
+ *  dropped after ten minutes, forgotten once handed over. The oldest goes first. */
+const heldResults = new Map<string, { at: number; result: unknown }>();   // state: plumbing — bounded by HELD_RESULTS_MAX and HELD_RESULT_MS
+
+/** Keep a leased cell's result. */
+function holdResult(cell: string, result: unknown): void {
+    pruneResults();
+    heldResults.delete(cell);
+    heldResults.set(cell, { at: Date.now(), result });
+    while (heldResults.size > HELD_RESULTS_MAX) heldResults.delete(heldResults.keys().next().value!);
+}
+
+/** Drop what is older than HELD_RESULT_MS. */
+function pruneResults(): void {
+    const now = Date.now();
+    for (const [k, v] of heldResults) if (now - v.at > HELD_RESULT_MS) heldResults.delete(k);
+}
+
+/** A held result, once: null when there is none (never held, handed over already, or too old). */
+function takeResult(cell: string): unknown {
+    pruneResults();
+    const h = heldResults.get(cell);
+    if (!h) return null;
+    heldResults.delete(cell);
+    return h.result;
+}
+
+// A LEASED cell's cancel, tail and result (py-lease.ts), by the service worker's id for it. Only the service worker sends any;
 // the id is its own, never a page's, and naming a cell that is not running answers that it ended.
 chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
-    if (msg?.type !== "PY_CANCEL" && msg?.type !== "PY_TAIL") return undefined;
+    if (msg?.type !== "PY_CANCEL" && msg?.type !== "PY_TAIL" && msg?.type !== "PY_RESULT") return undefined;
     if (sender.id !== chrome.runtime.id || sender.tab || typeof msg.cell !== "string") return undefined;
+    if (msg.type === "PY_RESULT") {
+        // Once: the result is forgotten as it is handed over.
+        sendResponse({ result: takeResult(msg.cell) });
+        return undefined;
+    }
     if (msg.type === "PY_TAIL") {
         const entry = [...pending.values()].find((p) => p.cell === msg.cell);
         sendResponse(entry ? { running: true, text: entry.ring ?? "" } : { running: false });
