@@ -827,7 +827,9 @@ host is mounted (Shane):
   the quota lives on disk and is not backed up; the panel shows it with its size.
 - With no host present, or when the host dies, the browser copy is the working store and the model works there, as
   today. The changes made meanwhile sync forward into the folder when the host returns.
-- The sync covers that folder only, never the rest of the workspace; the disk is the only copy of everything else.
+- The sync covers that folder only, never the rest of the workspace. Authority: for `/files`, the folder while a host
+  is mounted and the browser copy while none is; for everything else in the workspace, the disk, which holds its only
+  copy.
 - While a host is mounted the folder's real path is the name the model is given, and a cell has no `/files` alias, so
   the transcript never shows one file under two paths at once. A bare `/files/x` in a cell or an argv then fails with
   `/files is on disk while the host is connected: /Users/sb/git/proj/window-ml-files/x`.
@@ -840,7 +842,9 @@ host is mounted (Shane):
 **The sync.**
 
 - Disk to browser, while mounted: the host watches the folder (FSEvents on macOS, inotify on Linux) and the backup
-  takes each changed regular file under the quota, in the background. A symlink or a non-regular file is never taken.
+  takes each changed regular file under the quota, in the background, and every `ml.sh` call's end flushes what it
+  changed. A symlink or a non-regular file is never taken. The backup may be out of date between syncs; that is
+  accepted (Shane).
 - Browser to disk, when the host returns: what changed in the browser copy while it was the working store is written
   into the folder, beside each file and renamed into place.
 - A conflict, the same file changed on both sides between syncs, keeps both: the disk's under its name, the browser's as
@@ -925,7 +929,7 @@ person's index, HEAD and stash list unchanged; a delete git cannot undo asks, by
 - Windows: how a `C:\Users\...` path appears in the sandbox's POSIX tree.
 - A workspace that is not a git repository: whether `ml.sh` calls get a diff by another snapshot.
 - Whether a commit on the current branch should ask the first time in a session.
-- How often the background sync runs, and whether a large pull is shown as progress.
+- The background sync's cadence (a value to pick).
 
 **Owners.** This text, the panel's view of both copies, the sync's rules, provenance and the files API's JS side: the
 chat-page lane. The mount, the fallback and the Python binding: the Pyodide lane. The host's folder, the git snapshot
