@@ -1697,7 +1697,9 @@
                             "not-on-index",
                             "too-large",
                             "malformed",
-                            "no-metadata"
+                            "no-metadata",
+                            "index-error",
+                            "lookup-cap"
                           ]
                         },
                         "at": {
@@ -2398,7 +2400,9 @@
                             "not-on-index",
                             "too-large",
                             "malformed",
-                            "no-metadata"
+                            "no-metadata",
+                            "index-error",
+                            "lookup-cap"
                           ]
                         },
                         "at": {
@@ -2952,7 +2956,7 @@
     },
     "PkgRow": {
       "type": "object",
-      "description": "One file the install would fetch, as the card shows it and the answer carries it back. `size` is `null` for a lock file (the lock states no size; the card reads \"in the core\"). Every field is shown in full, `sha256` included.",
+      "description": "One file the install would fetch, as the card shows it and the answer carries it back. `size` is `null` for a lock file (the lock states no size; the card reads \"in the core\"). `source` is `mirror` for a PyPI file whose bytes an earlier approval already downloaded and checked: it is not downloaded again. Every field is shown in full, `sha256` included.",
       "properties": {
         "name": {
           "type": "string"
@@ -2967,7 +2971,8 @@
           "type": "string",
           "enum": [
             "lock",
-            "pypi"
+            "pypi",
+            "mirror"
           ]
         },
         "size": {

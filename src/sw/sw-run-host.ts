@@ -84,7 +84,7 @@ import { adoptOnTab } from "./adopt-run";
 import { approvalFor, cancelReasons, gatePageTurn, noteRunEnd, noteRunStart, personClaimed } from "./sw-start-approval";
 import { pageTurnText } from "../agent-start";
 import { toPageUi } from "./sw-side-panel";
-import { checkInstall, installRequest, judgeAnswer, noteInstallOutcome, type PkgCheck } from "./sw-pkg-install";
+import { checkInstall, fetchApproved, installRequest, judgeAnswer, noteInstallOutcome, type PkgCheck } from "./sw-pkg-install";
 
 // The model-facing cap cdpEval clips its console to (exec's default per-slot cap) — the UI keeps far more, so
 // `seen` marks where the model's copy stopped, exactly like the main-world exec path.
@@ -1821,7 +1821,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     if (tool === "python_install" && offersInstall()) {
                         const r = installRequest(args);
                         if (typeof r !== "string") {
-                            pkg = await checkInstall(r).catch(() => undefined);
+                            // Each index request is in the run log, so the person can see which names left the machine.
+                            pkg = await checkInstall(r, runId, (url) => recordRunLog(runId, { subsystem: "python", kind: "pkg-index", detail: { tool, url } })).catch(() => undefined);
                             if (pkg) {
                                 renderIn = { type: "packages", ecosystem: "pypi", request: pkg.request, verdict: pkg.card };
                                 recordRunLog(runId, { subsystem: "python", kind: "pkg-card", reason: pkg.card.ok ? "ok" : pkg.card.reason, detail: { tool, files: pkg.card.ok ? pkg.card.files.length : 0 } });
@@ -1868,7 +1869,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                                 // A package card stands only on the rows it showed: anything else approving it is a denial.
                                 if (tool === "python_install" && (decision === true || (typeof decision === "object" && !!decision && decision.approved && !decision.cancelled))) {
                                     const j = pkg && offersInstall() ? judgeAnswer(pkg, typeof decision === "object" ? decision.files : undefined) : { ok: false as const, reason: "no-check", why: "the run does not offer python_install, or its card could not be checked" };
-                                    if (j.ok) noteInstallOutcome(runId, args, "Approved, but this build does not install packages yet: nothing was downloaded or installed.");
+                                    if (j.ok) { const check = pkg; if (check) noteInstallOutcome(runId, args, fetchApproved(check).catch(() => "Not installed: the download failed.")); }
                                     else {
                                         recordRunLog(runId, { level: "warn", subsystem: "python", kind: "pkg-card-mismatch", reason: j.reason, detail: { tool, seq: gateSeq ?? seqBase, why: j.why } });
                                         decision = { approved: false, source: "user", feedback: "The approval did not carry the files the card showed, so it counts as a denial." };
