@@ -682,11 +682,11 @@ most file access (`pandas.read_csv`, `numpy.load`, `sqlite3`, `zipfile`, `shutil
 an `@file:` is a frozen version ("Mutable, frozen when cited"), which a live path is not. `@file:` stays the handle a
 tool takes and the transcript cites; a path is what `open()` takes.
 
-**A host directory keeps its real path.** A directory the person approves (the `ml.sh` workspace, say) is mounted at
-the absolute path it has on the host, resolved with the host's realpath so a symlink is not a second name:
-`/Users/sb/git/window-ml/README.md` is that path in the cell, in `ml.sh` and in the transcript. Renaming it to a
-mount point (`/workspace/`) was considered and dropped: the person knows their own paths, and a renamed one makes a
-run harder to review.
+**A host directory keeps its real path.** A directory the person approves (the `ml.sh` workspace, say) is mounted at the
+absolute path it has on the host, resolved with the host's realpath so a symlink is not a second name:
+`/Users/sb/git/window-ml/README.md` is that path in the cell and in `ml.sh`; the transcript writes it
+`~/git/window-ml/README.md`, with the raw path beside it in the run log. Renaming it to a mount point (`/workspace/`)
+was considered and dropped: the person knows their own paths, and a renamed one makes a run harder to review.
 
 **Collisions.** The sandbox owns `/files/` and Pyodide's own tree (`/tmp`, `/lib`, `/home/pyodide`, `/dev`, `/proc`).
 A mount at or under one of these is refused by name when it is approved, never shadowed:
@@ -842,13 +842,17 @@ host is mounted (Shane):
   copy.
 - `/files` is the name the model uses, with a host or without one (Shane, 2026-11-13, replacing "the real path is the
   name the model is given"): without a host it is the only path there is, so a run reads the same either way. While a
-  host is mounted, a cell's `/files` is backed by the folder (the same bytes `ml.sh` sees), and an `ml.sh` argv maps
-  it (H9 below). The folder's real path also works, since it lies inside the workspace mount; the transcript, the
-  diffs and the exports write it as `/files`, so one file has one name in the record. The model is told the real path
-  in one line, for a program that prints it, with the home directory written as `~` (`~/git/proj/window-ml-files`;
-  Shane, 2026-11-13: model-facing text writes a path under the home as `~`, the run log keeps it raw). Where the host
-  cannot map an argv item (H9), it fails with
-  `/files is on disk while the host is connected: ~/git/proj/window-ml-files/x`.
+  host is mounted, a cell's `/files` is backed by the folder (the same bytes `ml.sh` sees), and an `ml.sh` argv maps it
+  (H9 below). The folder's real path also works, since it lies inside the workspace mount; the transcript, the diffs and
+  the exports write it as `/files`, so one file has one name in the record. The model is told the real path in one line,
+  for a program that prints it, with the home directory written as `~` (`~/git/proj/window-ml-files`; Shane, 2026-11-13:
+  model-facing text writes a path under the home as `~`, the run log keeps it raw). The rule for which form
+  (coordinator, 2026-11-13): `~` is written only where its consumer expands it. `ml.sh`'s argv and cwd expand a leading
+  `~` on a host with `hello.tilde`, so a path the model is to reuse in `ml.sh` (H9's refusal sentence, a mapped-path
+  mention) is written as `~`. A path the model is to reuse in a cell (the mount list, a cell's own error or result
+  naming a mounted path) stays raw, since nothing expands `~` in `open()`. Prose that names a path without expecting
+  reuse writes `~`. Where the host cannot map an argv item (H9), it fails with `/files is on disk while the host is
+  connected: ~/git/proj/window-ml-files/x`.
 - The folder is ignored by git by default, through `.git/info/exclude` (the clone's own list, never a committed
   `.gitignore`), so uploads never show in `git status` or a commit unless the person moves them out. The person can
   name another folder, inside a mount.
@@ -881,7 +885,7 @@ since a disk listing cannot say who made a file; a file the record does not know
 **The host unavailable or dead.** The files on the disk stay there, and the browser copy becomes the working store:
 the model's `/files` keeps working on what was backed up. The panel shows the folder as disconnected, with its real
 path, never as empty or gone. Uploads and writes made meanwhile sync forward when the host returns (above). The
-transcript keeps the real paths a run used, so a later read without the host says where they were. A cell running when
+run log keeps the raw paths a run used, so a later read without the host says where they were. A cell running when
 the host goes gets "Unmounted or disconnected during a cell" (above): the next read through the mount fails.
 
 **Sessions and mounts** (decided, Shane, 2026-11-13):
@@ -1106,7 +1110,8 @@ nothing into the repository.
 - H14. The diff's file list is what the call's end flushes to the browser backup ("The sync").
 
 **Telling an old host apart** (H15). `hello` gains `mounts: true` and `snapshot: true`. Their absence means an older
-host: the worker treats mounts and diffs as unavailable, never probes by calling.
+host: the worker treats mounts and diffs as unavailable, never probes by calling. The `~` form in H9's sentence
+depends on `hello.tilde`: a host without it gets the raw path in that sentence, so the retry it teaches works on both.
 
 **What runs free, what asks, what is refused.** The default policy's rows, each with the fact that backs it. "Refused"
 is the host's and no policy changes it; "asks" is the default, which a policy may change either way. Rows compose:
@@ -1146,8 +1151,9 @@ delete of one git cannot undo asks, for a cell and for an `ml.sh` call whose man
 **Red-team rows** (e3, through the coordinator, 2026-11-13; each a test that fails first, with its pass condition):
 
 - The scope (H1, H4). A forged request for a path outside the mount, by `..`, a symlink component or an absolute path,
-  enumerated per platform: `/etc/passwd`, `C:\x`, `C:/x`, `\\?\C:\x`, `//server/share/x`, a `..\` component on
-  Windows, an interior NUL, a path of only `...`; each refused as not relative.
+  enumerated per platform: `/etc/passwd`, `C:\x`, `C:/x`, `\\?\C:\x`, `//server/share/x`, a `..\` component on Windows,
+  an interior NUL, a path of only `..` components; the absolute forms refused as not relative, `..` as escaping the
+  mount.
 - A forged post (H1, H7). A worker post from a `full` cell gets an answer computed from the held descriptor only; any
   fact field it carries (`basis`, `inMount`, `mode`, `gitUndoable`, `secret`, `exists`) is ignored.
 - Mount ids are not a capability (H1, H3). A request naming a mount another session made is refused, unmounting
