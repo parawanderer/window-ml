@@ -165,8 +165,9 @@ and its result names the old value. The refusal stays a refusal when this is bui
 (`defineBuiltinTool`), run in the worker. In order:
 
 1. Refused, with no card, when the key is off the list or `read`, or when the value fails the key's own validation:
-   its type (`configTypeOk`, module-private in `src/backup/backup-settings.ts` today), its words (`CONFIG_ENUMS`), its range, a model name off the server's list or the filter,
-   a string over a cap. The model is told why in one sentence.
+   its type (`configTypeOk`, module-private in `src/backup/backup-settings.ts` today), its words (`CONFIG_ENUMS`), its
+   range, a model name off the server's list or the filter, a string over a cap. The model is told why in one
+   sentence.
 2. Judged as the `setting` consumer: `judgeCall(runId, "setting", facts)`. A `deny` refuses with the policy named
    (`POLICIES.md`, "always reject is a policy"). An unloaded store asks.
 3. An `allow` writes the change, unless the change is guarded, which asks.
