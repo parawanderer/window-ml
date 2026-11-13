@@ -36,7 +36,7 @@ export function answerMediaShape(els: Element[], show?: "inline" | "highlight"):
 export type ShadowResolve = (selector: string) => Promise<{ line: string }[] | null>;
 import { truncate, clipOut, clipValue, errText, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, closedShadowHosts, frameHostOf, selectorError, isCspEvalBlocked, firstHopSealed, isSealedHost } from "../dom/dom";
 import { expandPointers, execCodeIn } from "../pointers/pointer-macro";   // `@tool:` fantasy syntax → a real dereference call
-import { execErrorLine, evalWrapper, asyncWrapper } from "./exec-trace";       // a stack frame → the model's own line number
+import { execErrorLine, execErrorExcerpt, evalWrapper, asyncWrapper } from "./exec-trace";       // a stack frame → the model's own line number
 import { runPipe, pipeHint, PIPE_SYNTAX, PIPE_REF } from "../pointers/text-pipe";
 import { outputCapParams, retryParams } from "./tool-params";
 import { DEREF_TOOL, type DerefRead } from "../pointers/token-pipe";
@@ -666,7 +666,11 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     const at = await execErrorLine((failed as Error)?.stack, wrapKind, wrapParams, js.split("\n").length);
                     // Told to the MODEL too, not only drawn: it is retrying this code, and "line 12" is the
                     // difference between a targeted fix and a rewrite.
+                    // On a long line (a script sent as one line, say) the number alone does not say where, so a
+                    // piece of the line comes with it.
+                    const piece = at != null ? await execErrorExcerpt((failed as Error)?.stack, wrapKind, wrapParams, js) : null;
                     const where = at != null ? ` (line ${at})` : "";
+                    const there = piece ? `\nat: ${piece}` : "";
                     // STRICT-PAGE eval BLOCK (CSP omits 'unsafe-eval' / Trusted Types): the eval was refused at
                     // COMPILE time — nothing ran. Signal the executor to re-run the SAME (approved) source via
                     // CDP `Runtime.evaluate` (debugger, CSP-exempt). The background decides — run it (cdp on +
@@ -681,7 +685,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     const hint = arrayish
                         ? " — querySelectorAll / .children / getElementsBy* return a NodeList/HTMLCollection, not an Array. Wrap it first: [...document.querySelectorAll('…')].map(…) or Array.from(…)."
                         : "";
-                    return timed({ content: labelled(`Error: ${msg}${where}${hint}`), render: execRender(undefined, `${msg}${where}${hint}`, at) });
+                    return timed({ content: labelled(`Error: ${msg}${where}${hint}${there}`), render: execRender(undefined, `${msg}${where}${hint}${there}`, at) });
                 }
 
                 // DOM node results come back hoverable (see the loop's envelope).

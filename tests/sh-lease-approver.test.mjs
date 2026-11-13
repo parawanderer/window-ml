@@ -17,7 +17,7 @@ test("the ml.sh bench approver denies every nested ask, every other gated tool, 
         { tool: "arrival-ask", askId: "a3" },
         { tool: "python_exec", arguments: { mode: "full" } },
         { tool: "python_exec", arguments: { mode: "readonly" } },
-        { tool: "propose_manifest" }, { tool: "fetch_url" }, { tool: "click" }, { tool: "type" },
+        { tool: "propose_manifest" }, { tool: "python_install" }, { tool: "fetch_url" }, { tool: "click" }, { tool: "type" },
         {}, null, undefined, { tool: "EXEC" },
     ];
     for (const g of denied) assert.equal(shLeaseDecide(g), false, JSON.stringify(g));

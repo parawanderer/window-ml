@@ -141,7 +141,7 @@ function linkTip(url: string): string {
  * drawing cache (src/mermaid/); `diagrams` names a STATIC document's theme (the PDF), where a drawn fence is its image
  * alone and an undrawn one stays code.
  */
-export function markdown(src: string, opts: { math?: boolean; diagrams?: "light" | "dark" } = {}): string {
+export function markdown(src: string, opts: { math?: boolean; diagrams?: "light" | "dark"; addr?: (address: string) => string | null } = {}): string {
     const codeBlocks: string[] = [];
     // Pull fenced code from the RAW source first (highlighted, not double-escaped),
     // stashed behind an ASCII placeholder restored at the end.
@@ -182,7 +182,11 @@ export function markdown(src: string, opts: { math?: boolean; diagrams?: "light"
         .replace(/(?<![A-Za-z0-9_])__([\s\S]+?)__(?![A-Za-z0-9_])/g, (_m, c: string) => `<strong>${emph(c)}</strong>`)
         .replace(/(?<![*\w])\*(?!\s)([\s\S]+?)(?<!\s)\*(?![*\w])/g, (_m, c: string) => `<em>${emph(c)}</em>`)
         .replace(/(?<![_\w])_(?!\s)([\s\S]+?)(?<!\s)_(?![_\w])/g, (_m, c: string) => `<em>${emph(c)}</em>`);
-    const inline = (t: string): string => {
+    // `opts.addr` is given only for the MODEL'S OWN reply (docs/spec/LINKS.md, threat 4): a `window-ml:` link there
+    // becomes a button naming its address, which `onAddressClick` (links.ts) parses again and opens; `addr` says
+    // whether it resolves here and with what tip, and null leaves the label. Inside a `>` quote, and everywhere
+    // `addr` is absent (a tool's output, a description), it stays the text it was written as.
+    const inline = (t: string, quoted = false): string => {
         // Stash inline code AND links FIRST, so the emphasis pass never mangles their contents — a `*`/`_`
         // inside `<code>` or a URL (e.g. `…/foo_bar_baz`) must stay literal. Link TEXT is still emph'd. (Content
         // is HTML-escaped upstream, so the stashed HTML is safe.)
@@ -190,6 +194,11 @@ export function markdown(src: string, opts: { math?: boolean; diagrams?: "light"
         const stash = (html: string): string => { spans.push(html); return `@@IS${spans.length - 1}@@`; };
         const staged = t
             .replace(/`([^`]+)`/g, (_, c: string) => stash(`<code>${c}</code>`))
+            .replace(/(?<!!)\[([^\]]+)\]\(window-ml:([A-Za-z0-9_/-]+)\)/g, (m: string, txt: string, address: string) => {
+                const tip = opts.addr && !quoted ? opts.addr(address) : null;
+                if (tip === null) return opts.addr && !quoted ? emph(txt) : m;
+                return stash(`<button type="button" class="md-link md-addr tt" data-addr="${address}" data-tip="${escapeHtml(tip)}">${emph(txt)}</button>`);
+            })
             .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, (_, txt: string, url: string) =>
                 stash(`<a class="md-link tt" href="${url}" target="_blank" rel="noopener" data-tip="${linkTip(url)}">${emph(txt)}</a>`));
         return emph(staged).replace(/@@IS(\d+)@@/g, (_, i: string) => spans[+i]);
@@ -295,7 +304,7 @@ export function markdown(src: string, opts: { math?: boolean; diagrams?: "light"
                 const paras: string[] = []; let cur: string[] = [];
                 for (const ql of q) { if (ql.trim()) cur.push(ql); else if (cur.length) { paras.push(cur.join(" ")); cur = []; } }
                 if (cur.length) paras.push(cur.join(" "));
-                out.push(`<blockquote>${paras.map(p => `<p>${inline(p)}</p>`).join("")}</blockquote>`);
+                out.push(`<blockquote>${paras.map(p => `<p>${inline(p, true)}</p>`).join("")}</blockquote>`);
             }
             else if (!line.trim()) { /* blank between top-level blocks — nothing to emit */ }
             else { out.push(`<p>${inline(line)}</p>`); }
@@ -327,11 +336,11 @@ export const rollupStatus = (s: Session): Status =>
 /** The same renderer, unwrapped for a run of text that sits INSIDE a line rather than being its own
  *  paragraph (a margin note beside a line of code). One `<p>` is peeled off; anything with real block
  *  structure keeps it, since stripping only the opening tag would leave unbalanced markup. */
-export function mdInline(src: string): string {
+export function mdInline(src: string, addr?: (address: string) => string | null): string {
     // MATH ON, like the answer renderer: a note about code is exactly where a formula belongs ("sums
     // $\\sum q_i$ per rep" says it once instead of in a sentence), and a `$…$` left unrendered in a
     // margin is worse than not offering it at all.
-    const html = markdown(src, { math: true });
+    const html = markdown(src, { math: true, addr });
     const m = html.match(/^<p>((?:(?!<\/p>)[\s\S])*)<\/p>\s*$/);
     return m ? m[1] : html;
 }

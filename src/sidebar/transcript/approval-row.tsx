@@ -39,7 +39,7 @@ export function approvalMechanics({ grants, arrival }: { grants: boolean; arriva
  * to something you read once. A dialog costs nothing until it is asked for and nothing after it is dismissed. The
  * control is deliberately not a warning colour: nothing is wrong, there is simply more to know.
  */
-export function ApprovalRow({ grants, decide, arrival }: { grants: boolean; decide: (ok: boolean, persist?: boolean, feedback?: string) => void; arrival?: "ask" | "deny" }) {
+export function ApprovalRow({ grants, decide, arrival, dismissOnly }: { grants: boolean; decide: (ok: boolean, persist?: boolean, feedback?: string) => void; arrival?: "ask" | "deny"; dismissOnly?: boolean }) {
     const [why, setWhy] = useState(false);
     const [saying, setSaying] = useState(false);
     const note = useRef<HTMLTextAreaElement>(null);
@@ -55,7 +55,9 @@ export function ApprovalRow({ grants, decide, arrival }: { grants: boolean; deci
                     the chevron is where the rarer, wordier one lives. A bare refusal tells the model nothing, so it
                     guesses — often by trying the same thing a slightly different way. A sentence is what turns a
                     denial into a redirection, and the contract has carried `feedback` the whole time. */}
-                {arrival === "deny" ? <>
+                {/* A card that can only be refused (a python_install the verdict refused) offers no approving control. */}
+                {dismissOnly ? <button class="appr-btn no pkg-dismiss" aria-label="Dismiss" onClick={() => decide(false)}>Dismiss</button>
+                : arrival === "deny" ? <>
                     <button class="appr-btn no" onClick={() => decide(false)}>End run</button>
                     <button class="appr-btn yes" onClick={() => decide(true)}>Go back</button>
                 </> : <>

@@ -168,12 +168,59 @@ reason and the package it names, with no Approve. It goes through the existing a
 tooltip. What a hostile page or index must not get from it is e3's red-team pass, run before it lands: a card whose
 text the index wrote, a filename that renders as something else, a hash the card truncates.
 
+AS BUILT (slice 2), with its departures, each ruled by the coordinator on 2026-11-12:
+
+- The tool is `python_install` (`src/tools/python-install-tool.ts`), declared in the tool registry, gated, run in the
+  worker and one of `PROPOSAL_TOOLS`. It is offered to no run until slice 4 (`OFFER_PYTHON_INSTALL` in
+  `sw-run-start.ts`), because before it an approved card installs nothing.
+- No network: the index view is the lock alone, so a package the core does not ship is refused as `not-on-index`.
+  The lock rows carry the lock's own sha256 (`LockEntry.sha256`); a lock file has no size, and the card says "in the
+  core". The platform scan's note waits for PyPI rows (slice 3).
+- The card is its own `RenderDescriptor`, `{ type: "packages", ecosystem: "pypi", request, verdict }`
+  (`pkg-card-view.tsx`). Index text is drawn as text nodes; a control, bidi or invisible character is replaced by U+FFFD
+  and listed beside its field as `\u{XXXX}`.
+- The answer carries the rows: `SET_APPROVAL` gains `files`, rebuilt field by field (`approvalPayload`,
+  `rowsFromAnswer`), and the worker approves only when they equal the rows it froze at card time (`judgeAnswer`). Any
+  other approval is a denial, with a run-log warn `python/pkg-card-mismatch`. The chat page, the phone and the hub
+  answer through `approval.answer`, which carries no rows, so from there a package card can only be denied; carrying
+  them is a `@hub-compat` change, open.
+- A refused card's footer is Dismiss alone (`.appr-btn.no.pkg-dismiss`), and the worker refuses an approval of a
+  refused check regardless.
+
 **Slice 3, the mirror and the download.** The mirror stores, locally, the pinned core's whole lock and the wheels a
 person has approved, keyed by sha256. The lock is never a network read, and PyPI is the one gated network read. Every
 downloaded byte is checked against the hash on the card before it is stored or loaded. A mismatch refuses, and nothing
 is kept. Where the mirror lives (OPFS or IndexedDB) and how it meets the state registry are slice 3's to decide in its
 PR, after `docs/dev/state.md`. This slice is e3's red-team pass too: redirects, a body larger than its stated size, and
 a second request for the same hash.
+
+AS BUILT (slice 3), with the rulings of 2026-11-12 (the coordinator; the one-card ruling confirmed by Shane the same day):
+
+- ONE card, with the index read before approval. `pypi.org/pypi/<name>/json` is read on python_install's precheck
+  inside a run, never on a page's say-so or from the popup or Settings. Bounded against names used as a channel to the
+  network: a name that is not a PEP 508 project name, or longer than `VERDICT_BOUNDS.name`, is refused with no request
+  (`lookupName`); a lock name resolves to the lock with no request; at most `INDEX_BOUNDS.requests` per call and
+  `INDEX_BOUNDS.perRun` per run (refusal `lookup-cap`; the count is in worker memory, so an eviction after ~30 s idle
+  resets it, which a loop of calls cannot cause: ruled to stand); every request is a run-log record `python/pkg-index` naming the
+  URL. The verdict's view stays synchronous: `resolveVerdict` (`pkg-index.ts`) reruns it over what has been fetched
+  until it asks for nothing new.
+- The core's tags, marker environment and Python are `core-env.gen.ts` (generated at build, gitignored), written by
+  `scripts/gen-core-env.mjs` from the oracle's `env.json`, so one pin bump regenerates both; a test fails when it
+  names another core than `tools/pyodide-dist.json`.
+- A file is kept from an answer only with a 64-hex sha256, a positive integer size and a URL on
+  `files.pythonhosted.org` (https, default port, no credentials, query or fragment) ending in its own filename. The
+  URLs stay with the frozen check, keyed by digest and filename, and are never on the card or in the answer.
+- The mirror is IndexedDB `ml-pkg-mirror` (store `wheels`, by sha256), declared as `packages.mirror`: not
+  `ml-values`, whose budget evicts per session, while approved wheels are global. It holds approved BYTES, not an
+  approved install: a held wheel still goes through the card, as `source: "mirror"`, left out of the download total.
+  The lock is not mirrored: it ships in the extension (`dist/pyodide`) and is never a network read.
+- After approval (`fetchApproved`, `ensureWheel` in `sw-pkg-mirror.ts`): no credentials, no redirect followed; the body
+  is counted as it streams and dropped past the card's size; its sha256 is computed over those bytes and must equal the
+  card's, as must the size, before anything is stored. Two requests for one digest share one download; a held digest is
+  never fetched. The tool reports what was downloaded and that nothing was installed (slice 4).
+- New refusals: `index-error` (the index could not be read) and `lookup-cap`.
+- Not yet: a release other than the latest is looked up by its own answer only when the request names it, so a lock
+  package replaced by an older release still gives `no-metadata`; clearing the mirror is a later Settings row.
 
 **Slice 4, install and rollback.** A readonly worker loads its packages before the lockdown (`python-worker.ts`), so
 an install cannot happen inside a locked-down worker. Where the approved set is loaded (a fresh worker that loads it
