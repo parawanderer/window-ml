@@ -828,9 +828,9 @@ host is mounted (Shane):
 - With a host mounted, a folder in the workspace, `<workspace>/window-ml-files/`, is primary, with the same layout
   (`attached/<handle>/<name>` read-only, the rest writable). A cell's `open()` and `ml.sh` see one set of bytes, so a
   cell's write is there for the next `cp` with no sync between them. `cp`, `sed -i` and `open()` reach the uploads at
-  a real path (`/Users/sb/git/proj/window-ml-files/attached/3fa91c2/data.csv`), with no `ml.sh.put` or read-back to
-  teach the model; those stay as mechanisms, not as advice. Finder is the truth for the person; the panel is a view of
-  the folder.
+  `/files/attached/3fa91c2/data.csv` (on disk at `/Users/sb/git/proj/window-ml-files/attached/3fa91c2/data.csv`), with
+  no `ml.sh.put` or read-back to teach the model; those stay as mechanisms, not as advice. Finder is the truth for the
+  person; the panel is a view of the folder.
 - The browser store (MEMFS over the shelf, as ruled above) is then a capped backup, synced when convenient. A file over
   the quota lives on disk and is not backed up; the panel shows it with its size.
 - With no host present, or when the host dies, the browser copy is the working store and the model works there, as
@@ -838,12 +838,13 @@ host is mounted (Shane):
 - The sync covers that folder only, never the rest of the workspace. Authority: for `/files`, the folder while a host
   is mounted and the browser copy while none is; for everything else in the workspace, the disk, which holds its only
   copy.
-- While a host is mounted the folder's real path is the name the model is given, and a cell has no `/files` alias, so
-  no one cell sees a file under two paths. Across time it does: a cell run offline names `/files/x` and a mounted one
-  names `/Users/sb/git/proj/window-ml-files/x`, and the transcript keeps each as the cell used it. A bare `/files/x`
-  in a cell or an argv then fails with
-  `/files is on disk while the host is connected: /Users/sb/git/proj/window-ml-files/x`. In an argv, H9 below maps it
-  instead where the manifest marks a path.
+- `/files` is the name the model uses, with a host or without one (Shane, 2026-11-13, replacing "the real path is the
+  name the model is given"): without a host it is the only path there is, so a run reads the same either way. While a
+  host is mounted, a cell's `/files` is backed by the folder (the same bytes `ml.sh` sees), and an `ml.sh` argv maps
+  it (H9 below). The folder's real path also works, since it lies inside the workspace mount; the transcript, the
+  diffs and the exports write it as `/files`, so one file has one name in the record. The model is told the real path
+  in one line, for a program that prints it. Where the host cannot map an argv item (H9), it fails with
+  `/files is on disk while the host is connected: /Users/sb/git/proj/window-ml-files/x`.
 - The folder is ignored by git by default, through `.git/info/exclude` (the clone's own list, never a committed
   `.gitignore`), so uploads never show in `git status` or a commit unless the person moves them out. The person can
   name another folder, inside a mount.
@@ -942,7 +943,8 @@ Python:
 - The disk as the only copy once a host connects, with the browser copy cleared: `/files` would stop working when the
   host is unavailable or dies, and the uploads are what the model is there to work on.
 - A host-side copy of `/files` mapped into a container at `/files`: a second mirror, and it needs a container.
-- A `/files` alias inside the cell while a host is connected: one file under two paths in the transcript and the diffs.
+- No `/files` alias in a cell while a host is connected: dropped on 2026-11-13 (Shane), since `/files` is the only
+  path without a host. The two-names objection is met by writing the real path as `/files` in the record.
 - The folder in a fixed place in the home directory: it needs a mount of its own, and it is not where the person looks
   at their work.
 
@@ -1049,8 +1051,8 @@ refusal and gives a sentence for it:
   exports ("the log carries what the model saw").
 - The alias exception of the first section is kept for a host that has a `/files` directory of its own, where the
   argument is the host's file and nothing is mapped.
-- A cell keeps no `/files` alias while a host is connected (as above), so `/files/x` works in an argv and not in
-  `open()`; the model is told the real path for both. If models trip on that, a cell gets the same mapping later.
+- A cell's `/files` is backed by the folder while a host is connected ("`/files` on the person's disk"), so
+  `/files/x` names the same file in a cell's `open()` and in an argv.
 - Needs a `cp` manifest (`src/shell/manifests/`, operands as paths, as `mv.json` has), or the two calls above fall in
   the refused case. That is the extension's manifest work, beside this lane.
 
@@ -1124,10 +1126,10 @@ after `mount` (H3); a component swapped for a symlink between two requests (H4);
 `store` interrupted mid-transfer leaving the old file whole (H5); a `store` into `attached/`, a `rename` into or out of
 it, under every policy (H6); a git-undoable file edited by another process between the judgment and the write (H8); a
 `/files` argv item in each form, `=` and bare, mapped only in a manifest's path position and refused elsewhere, a
-pattern argument left alone, a mapped path into `attached/` refused (H9); the snapshot leaving the person's index, HEAD,
-stash list and object store byte-identical, with a clean filter, an fsmonitor and a hook configured in the repository
-that would each leave a mark if run (H10, H11); an ignored `.env` never entering a snapshot tree (H11); a page or a
-page-started run reaching any of the new calls.
+pattern argument left alone, a write into `attached/` refused by `/files` and by its real path alike (H6, H9); the
+snapshot leaving the person's index, HEAD, stash list and object store byte-identical, with a clean filter, an fsmonitor
+and a hook configured in the repository that would each leave a mark if run (H10, H11); an ignored `.env` never entering
+a snapshot tree (H11); a page or a page-started run reaching any of the new calls.
 
 **Open.**
 
