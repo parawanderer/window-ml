@@ -1,6 +1,6 @@
 # Moving a run to another tab
 
-**Status: design note, nothing built.** Written 2026-11-12 by the async lane, assigned by the coordinator as the lane
+**Status: shape (a) built in the worker (`move-run.ts`), with its two callers; shape (b) open.** Written 2026-11-12 by the async lane, assigned by the coordinator as the lane
 closest to it. Shane confirmed the decisions below in the coordinator's session on 2026-11-12 (a move, not a fork; the
 same runtime only; started only by the person). The build is the `[window-ml move-run]` lane's, started after this note
 and the page-health change land; the chat page's "move to tab…" entry is the Chat Page lane's afterwards. Revised the
@@ -30,7 +30,8 @@ that URL opens. The person has already done the navigating: the run should follo
   a tab of another runtime (another browser, through the hub) is out of scope until this one exists.
 - **Started only by the person**, from one of two surfaces they own:
   - **The HUD on the destination page** (the off-mode card and its composer, `hud-card.tsx`): "bring a session here",
-    listing this browser's paused and finished sessions (shape (a) below).
+    listing this browser's paused and finished sessions (shape (a) below): all of them, this tab's site's first
+    (Shane, 2026-11-12).
   - **The chat page**: a session's "move to tab…", picking from the runtime's open tabs (`tab-tree.ts`).
 
   Never by the model (no tool moves a run), and never by a page.
@@ -43,8 +44,10 @@ over it, about a hundred uses. Re-keying a map does not redirect a turn that is 
 EVERY turn, deletes the run's inbox, ends its tasks (`endTasks`) and the turn's Python state (`endPythonTurn`; the run's own namespace stays, it lives per run). So:
 
 - **(a) A move BETWEEN TURNS. Ships first.** The run is paused or finished; its in-memory `bgRuns` entry's tab is re-homed, and
-  its next turn is hosted on the new tab from the start. It is cheap, and it covers both headline cases and the crash
-  case: a dead tab's turn ends (the page-health work), and the person brings the session to a live tab.
+  its next turn is hosted on the new tab from the start. It is cheap, and it covers both headline cases. It covers the
+  crash case once the turn has ended: on a crashed tab a page tool fails at once (`PageUnreachable`, "crashed") and the
+  run goes on, so the turn ends when the model stops calling page tools or the person stops the run, and the person
+  then brings the session to a live tab.
 - **(b) A move BETWEEN STEPS of a running turn.** Needs `hostRun`'s tab to become a mutable cell that every send reads
   at the moment it sends, and the inbox re-keyed. An open item, not built in the first PR.
 
@@ -80,7 +83,10 @@ The re-keying is PER RUN, between two LIVE tabs. `chrome.tabs.onReplaced` is not
 (`retabRuns` in `sw-runs.ts` moves every run under the tab, with the replay ring, `readoptPageInfo` and `tabPageUrl`;
 `background.ts` moves `fetchConsent`, `credFetchGrants` and `debugBuffer`; `moveTabKey` in `tab-replaced.ts` OVERWRITES
 the destination's entry), and it also calls `sessionServer.pageGone` and `navBarrier.forget`, which are wrong for an old
-tab that stays open. A move needs its own per-run function:
+tab that stays open. A move needs its own per-run function, `moveRun` (`move-run.ts`). It has two callers, and both run the same checks and
+write the same record: the HUD's `MOVE_RUN`, and `session.resume` (`session-commands.ts` → `adoptSession` in
+`sw-sessions.ts`) when this worker holds the run on ANOTHER tab, which before this hosted it on the new tab with none of
+the bookkeeping below. A resume of a held run on the tab it is already on stays a resume, not a move:
 
 1. **Re-home one run.** Between turns a move changes exactly these, and nothing else filed under the old tab moves or
    is overwritten under the new one:
@@ -96,9 +102,10 @@ tab that stays open. A move needs its own per-run function:
    - a page-built run's `@tool:` values, through `makeWorkerRun` (above).
 
    There is no tracking entry to move: `untrackRun` removed the run at `settle`. The per-tab grants stay where they are.
-2. **The model is told** in the next turn's messages, since a settled run has no inbox: `[the person moved this run to
-   tab "<title>" (<url>); the previous page's state is not carried]`. Without it the model acts on a page it thinks it
-   is still on.
+2. **The model is told** in the next turn's messages, since a settled run has no inbox: a SYSTEM message, once, before
+   the turn's first step, as the archive's notice is (`takeArchiveNotice`), so it never reads as the person's words:
+   `[the person moved this run from tab "<old title>" (<old url>) to tab "<title>" (<url>); the previous page's state
+   is not carried]`. Without it the model acts on a page it thinks it is still on.
 3. **The destination need not be approved for `window.ml`.** A run the person starts works on any page; the
    worker-hosted path the hand-over already uses (`nav-handover.ts`) covers a site that may not use it, with the
    isolated-world routing `exec` already has (`exec-routing.ts`).
@@ -112,7 +119,14 @@ tab that stays open. A move needs its own per-run function:
    moved anyway: the gate exists to stop a PAGE sending the run elsewhere, not the person. (`@security`)
 5. **The old tab is left as it is.** Its page is not reloaded or closed. The move does not re-pin it and sends no
    `pageGone` for it; its pin was already released at `settle` if this was its last run. The next turn's `trackRun`
-   pins the new tab.
+   pins the new tab. Its card and panel still show the session, so they are told once that it moved (an `agent-note`
+   naming no site, sent to that tab's surfaces only, never its replay ring, which its page can read back), and a
+   follow-up typed there is refused with that sentence (`RunMoved`, `page-route.ts`) instead of "the page that started
+   this conversation is no longer open", said on that tab and never into the run's own history. The bgRuns entry keeps
+   the tabs it left (`leftTabs`); a run brought back to one is that tab's again. Every rewrite of the entry keeps
+   them (`keptOnRebuild`: the turn's snapshot, the durable checkpoint, a resume onto the run's own tab). A saved
+   session's history does not carry them: once the worker no longer holds the run, a message from a tab it left is
+   refused as before ("no longer open").
 6. **The run log records the move** (a `tab` record naming both tab ids and the run), so the person sees where the run
    went and when.
 
@@ -145,5 +159,6 @@ to the old id and nowhere else, until shape (b).
 
 - Shape (b), a move between steps of a running turn: `hostRun`'s tab as a mutable cell, the inbox re-keyed, and rule
   4a's cancels.
-- Whether "bring a session here" lists only this tab's site's sessions or all of them.
+- Whether a crash ends the turn, or offers a move (the hook: the crashed branch in `delegate-send.ts` and
+  `page-reachable.ts`'s watch). To be decided on how models behave against the failing tool.
 - A move between runtimes (another browser through the hub), after this exists.

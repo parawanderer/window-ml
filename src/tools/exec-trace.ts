@@ -17,10 +17,17 @@
  *  and the same frame can mention `<anonymous>` more than once (`eval at <anonymous> (…), <anonymous>:3:6`),
  *  so it is the LAST match on the line that locates the code. */
 export function rawEvalLine(stack: string | undefined): number | null {
+    return rawEvalPos(stack)?.line ?? null;
+}
+
+/** The same frame as {@link rawEvalLine}, with its 1-based column.
+ * @param stack the error's stack
+ * @returns the line and column, or null when the stack has no frame in the evaluated source */
+export function rawEvalPos(stack: string | undefined): { line: number; col: number } | null {
     if (!stack) return null;
     for (const frame of stack.split("\n").slice(1)) {
-        const all = [...frame.matchAll(/<anonymous>:(\d+):\d+/g)];
-        if (all.length) return Number(all[all.length - 1][1]);
+        const all = [...frame.matchAll(/<anonymous>:(\d+):(\d+)/g)];
+        if (all.length) { const m = all[all.length - 1]; return { line: Number(m[1]), col: Number(m[2]) }; }
     }
     return null;
 }
@@ -86,6 +93,88 @@ export async function evalLineOffset(kind: "eval" | "async", params: string[]): 
     }
     offsets.set(key, measured);
     return measured;
+}
+
+// The column shift is only on line 1, where the fast path's wrapper prepends `void (__mlRan = true);` to the source.
+// Measured the same way as the line offset, and memoised beside it.
+const colOffsets = new Map<string, number | null>();   // state: cache
+/** A probe on line 1 whose error is constructed at column 7 (the `new`), where V8 places the frame. */
+const COL_PROBE = "throw new Error('ml-probe');";
+
+/**
+ * How many columns the wrapper adds to LINE 1 of the source, measured by throwing from a known column inside the
+ * real construct.
+ * @param kind which wrapper the call used
+ * @param params the parameter list the call used
+ * @returns the shift, or null when the probe could not be measured (then no column on line 1 is trusted)
+ */
+export async function evalColOffset(kind: "eval" | "async", params: string[]): Promise<number | null> {
+    const key = `${kind}:${params.length}`;
+    if (colOffsets.has(key)) return colOffsets.get(key) ?? null;
+    let measured: number | null = null;
+    try {
+        if (kind === "eval") evalWrapper(params)(...params.map(() => undefined)).run(COL_PROBE);
+        else await asyncWrapper(params, COL_PROBE)(...params.map(() => undefined));
+    } catch (e) {
+        const at = rawEvalPos((e as Error)?.stack);
+        if (at) measured = at.col - 7;
+    }
+    colOffsets.set(key, measured);
+    return measured;
+}
+
+/** A line longer than this gets a piece of itself in the error: past it, a line number no longer says where. */
+const EXCERPT_FROM = 100;
+/** How much of the line the piece keeps on each side of the failure. */
+const EXCERPT_SIDE = 40;
+
+/**
+ * Where on a LONG line a failure is, as a short piece of the line with `▶` before the failing spot. Models read
+ * tokens, not characters, so a column number is no use to them; the code around it is. A short line needs nothing
+ * past its number.
+ * @param line the source line that failed
+ * @param col its 1-based column
+ * @returns the piece, or null for a short line or a column outside it
+ */
+export function lineExcerpt(line: string, col: number): string | null {
+    if (line.length <= EXCERPT_FROM || col < 1 || col > line.length) return null;
+    const i = col - 1, start = Math.max(0, i - EXCERPT_SIDE), end = Math.min(line.length, i + EXCERPT_SIDE);
+    const piece = `${line.slice(start, i)}▶${line.slice(i, end)}`.replace(/\s+/g, " ").trim();
+    return `${start > 0 ? "…" : ""}${piece}${end < line.length ? "…" : ""}`;
+}
+
+/**
+ * The piece of the model's own line that failed, for a long line ({@link lineExcerpt}); null whenever the column
+ * cannot be known, for the reason {@link execErrorLine} gives a null line.
+ * @param stack the error's stack
+ * @param kind which wrapper the call used
+ * @param params the parameter list the call used
+ * @param src the model's source
+ * @returns the piece, or null
+ */
+export async function execErrorExcerpt(
+    stack: string | undefined, kind: "eval" | "async", params: string[], src: string,
+): Promise<string | null> {
+    const raw = rawEvalPos(stack);
+    if (!raw) return null;
+    const lines = src.split("\n");
+    const line = raw.line - await evalLineOffset(kind, params);
+    if (line < 1 || line > lines.length) return null;
+    let col = raw.col;
+    if (line === 1) { const shift = await evalColOffset(kind, params); if (shift == null) return null; col -= shift; }
+    return lineExcerpt(lines[line - 1], col);
+}
+
+/**
+ * Where a read-only survey threw, as the interpreter stamped it on the error (`mlLine`, `mlExcerpt`): the suffix the
+ * error text carries, and the line for the rendered code.
+ * @param e what the survey threw
+ * @returns the line (or null) and the text to append to the error's message
+ */
+export function surveyWhere(e: unknown): { at: number | null; where: string } {
+    const { mlLine, mlExcerpt } = (e ?? {}) as { mlLine?: number; mlExcerpt?: string };
+    const at = mlLine || null;
+    return { at, where: `${at ? ` (line ${at})` : ""}${at && mlExcerpt ? `\nat: ${mlExcerpt}` : ""}` };
 }
 
 /** The model's own line for a failure, or null when it cannot be known. Null is the honest answer: a wrong

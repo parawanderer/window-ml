@@ -28,6 +28,7 @@
 import { boundedLines } from "./agent/output-clip";
 import type { CurrentSnapshot } from "./agent/current-context";   // a TYPE: erased, so it adds nothing at runtime
 import { NotInDialect, Denied, NeedsPage } from "./readonly-exec/limits";
+import { lineExcerpt } from "./tools/exec-trace";
 import { tokenize } from "./readonly-exec/tokenizer";
 import { Parser } from "./readonly-exec/parser";
 import { DENIED_PROPS, ReadonlyRealm, mlFacade, tokenListBrand } from "./readonly-exec/policy";
@@ -155,6 +156,13 @@ export async function evalReadonly(code: string, doc: Document | null, ml?: unkn
         // read the line off a real stack. It is answered here now, so the line has to come from here.
         if (!(e instanceof NotInDialect) && !(e instanceof Denied) && e instanceof Error && ev.line) {
             (e as Error & { mlLine?: number }).mlLine = ev.line;
+            // On a long line, the piece of it that threw (exec-trace.ts, `lineExcerpt`): a model reads tokens, so
+            // a column would not tell it where; the code around the spot does.
+            if (ev.failAt >= 0) {
+                const start = code.lastIndexOf("\n", ev.failAt - 1) + 1, end = code.indexOf("\n", ev.failAt);
+                const piece = lineExcerpt(code.slice(start, end < 0 ? code.length : end), ev.failAt - start + 1);
+                if (piece) (e as Error & { mlExcerpt?: string }).mlExcerpt = piece;
+            }
         }
         throw e;
     }

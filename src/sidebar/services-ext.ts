@@ -4,7 +4,8 @@
 // content-script shell, or panel.ts) over `postMessage`. The parent can prove a message came from this extension
 // iframe, which is what makes an approval posted this way unforgeable by the page.
 import { hintSession } from "../contract/contract-run";
-import { config, sessionMap, view } from "./store";
+import { config, sessionMap, surface, view } from "./store";
+import type { PanelRoute } from "./links";
 import { bareHash, type SidebarServices, type SideCallRequest, type SideCallResult } from "./services";
 import { residentNow } from "./resource/panel-facts";
 import { downloadBlob } from "./export/download";
@@ -71,6 +72,15 @@ export const extensionServices: SidebarServices = {
     continueSession: (hash, maxSteps) => toHost({ __mlSidebarApp: "continueRun", hash, ...(maxSteps ? { maxSteps } : {}) }),
     // This frame is attached to the tab the run is in: if it were gone, so would this panel be.
     canContinue: () => true,
+    // Straight to the worker, which proves the sender is this extension frame and moves to the tab the frame sits in.
+    bringable: () => new Promise((resolve) => {
+        try { chrome.runtime.sendMessage({ type: "LIST_BRINGABLE" }, (resp: { data?: unknown } | undefined) => resolve(Array.isArray(resp?.data) ? resp.data : [])); }
+        catch { resolve([]); }
+    }),
+    bringHere: (hash) => new Promise((resolve) => {
+        try { chrome.runtime.sendMessage({ type: "MOVE_RUN", payload: { runId: hash } }, (resp: { data?: unknown; error?: string } | undefined) => resolve(resp?.data ? { ok: true } : { error: resp?.error || "The session was not brought here." })); }
+        catch (e) { resolve({ error: (e as Error)?.message || String(e) }); }
+    }),
     stillLive: () => true,   // this panel is attached to the tab that holds the run; its reduction IS the runtime's
     // This panel polls the box itself, so it has the reading; `residentNow` answers `undefined` until the
     // first /api/ps lands, which is the right answer rather than "cold".
@@ -101,6 +111,12 @@ export const extensionServices: SidebarServices = {
     // Loaded on the click, not with this file: Settings is the whole settings view, and what loads the services
     // (the code-block tools under Node, among others) must not pull it in.
     findSetting: (query) => { void import("./settings/settings").then((m) => { m.searchSettings(query); view.value = { name: "settings" }; }); },
+    // The HUD card is this same app in its own frame, and draws no Settings: there a link is its label until a click
+    // can open the chat page at that view (docs/spec/LINKS.md). Read per render, since the surface is set by message.
+    get openAddress() {
+        return surface.value === "card" ? null
+            : (route: PanelRoute) => { void import("./settings/settings").then((m) => m.openPanelRoute(route)); };
+    },
     savePref: (key, value) => { try { chrome.storage.local.set({ [key]: value }); } catch { /* no chrome in a bare render */ } },
     saveFile: (name, data) => downloadBlob(name, data),
     // Print from a REAL browser tab via the background, NOT this frame: `window.print()` is suppressed for a frame

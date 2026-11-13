@@ -11,6 +11,7 @@
 
 import { useLayoutEffect, useRef } from "preact/hooks";
 import { markdown } from "../format";
+import { linkTipFor, onAddressClick } from "../links";
 import { cssDurationMs } from "../use-close";
 import { closeStreaming } from "./stream-close";
 import { splitAnswer } from "../../pointers/answer-tokens";
@@ -107,7 +108,7 @@ export function StreamingMd({ content, live }: { content: string; live: boolean 
     // state: ui (which word of THIS bubble appeared when; dies with the bubble, and a redraw then shows it at once)
     const starts = useRef<number[]>([]);
     const { md, restore } = setAsideTokens(live ? closeStreaming(content) : content);
-    const html = restore(markdown(md, { math: true }));
+    const html = restore(markdown(md, { math: true, addr: linkTipFor }));
     useLayoutEffect(() => {
         const el = ref.current;
         if (!el) return;
@@ -117,5 +118,5 @@ export function StreamingMd({ content, live }: { content: string; live: boolean 
     }, [html, live]);
     // `md-live`: a ```mermaid fence that closes in here closes in front of the reader, so it is drawn with its states
     // (mermaid-client.ts); anywhere else it simply appears drawn.
-    return <div class={live ? "md md-live" : "md"} ref={ref} />;
+    return <div class={live ? "md md-live" : "md"} ref={ref} onClick={onAddressClick} />;
 }
