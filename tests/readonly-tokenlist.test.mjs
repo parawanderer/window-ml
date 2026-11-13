@@ -1,6 +1,8 @@
 // readonly-tokenlist.test.mjs — a DOMTokenList (`classList`, `relList`, `sandbox`, …) in the read-only dialect: its
-// read-only half answers, every route to a mutator stays out, and the kind is a brand a page cannot claim. (jsdom has
-// no `sandbox` on an iframe; `<output>`'s `htmlFor` stands in for the third interface member.)
+// read-only half answers, every route to a mutator stays out, and the kind is a brand a page cannot claim when the brand
+// was captured at `document_start`; a late injection into a page that replaced `DOMTokenList` first is accepted, not
+// defended (docs/dev/readonly-exec.md). (jsdom has no `sandbox` on an iframe; `<output>`'s `htmlFor` stands in for the
+// third interface member.)
 //
 // Bench evidence: seven runs of the disabled-controls task (deepseek-flash, gemini-flash) wrote
 // `all.filter(e => e.matches(':disabled') || e.classList.contains('disabled'))` and got "contains is not a function on

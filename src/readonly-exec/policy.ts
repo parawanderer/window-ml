@@ -38,8 +38,13 @@ function tokenListLength(ctor: unknown): ((this: unknown) => unknown) | undefine
     return proto !== null && typeof proto === "object" ? Object.getOwnPropertyDescriptor(proto, "length")?.get : undefined;
 }
 
-// Captured when this module loads, which on a page is the registered MAIN-world script at document_start, before the
-// page's own scripts could replace `DOMTokenList`. The worker has none, and has no DOM to hold a token list either.
+// Captured when this module loads. Through the registered MAIN-world script (`document_start`, an approved origin) that is
+// before the page's own scripts. But the worker also injects the page scripts into a page that has ALREADY run
+// (`injectPageScripts`, sw-presence.ts: a page restored after a reload, a site approved while open, a run started on
+// one), and then this is whatever `DOMTokenList` the page left: no pristine intrinsic survives a page that already ran.
+// A page that replaced it can make its own objects read as token lists, so their `contains`/`item` run with converted
+// string arguments, and can break the survey (every object a `tokenlist`, `document` included). That is accepted, not
+// defended (docs/dev/readonly-exec.md, "A token list keeps its kind"). The worker has none, and has no DOM to hold one.
 const TOKEN_LIST_LENGTH = tokenListLength((globalThis as { DOMTokenList?: unknown }).DOMTokenList);
 
 /** The brand test for a real DOMTokenList, of any realm: BORROWS the interface's own `length` getter, whose receiver check
@@ -47,7 +52,8 @@ const TOKEN_LIST_LENGTH = tokenListLength((globalThis as { DOMTokenList?: unknow
  *  `DOMTokenList.prototype`, a `Symbol.toStringTag` claim) and never runs the object's own members. The getter is this
  *  module's realm's; only a realm with NO `DOMTokenList` of its own (a test under Node, holding a jsdom document) takes
  *  it from `view`, the document's window, read before the survey starts. A browser realm with a document always has its
- *  own, so a page's replaced `window.DOMTokenList` is never consulted. */
+ *  own, so the getter is never re-read from the page's `window` during a survey. All of this holds for the getter
+ *  captured at `document_start`; on a late injection the captured one may be the page's (`TOKEN_LIST_LENGTH`). */
 export function tokenListBrand(view?: unknown): (o: unknown) => boolean {
     const get = TOKEN_LIST_LENGTH ?? (view !== null && typeof view === "object" ? tokenListLength((view as { DOMTokenList?: unknown }).DOMTokenList) : undefined);
     if (!get) return () => false;
