@@ -180,6 +180,19 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      # The whole suite, so it needs what `test` needs: the restricted-mode core and the boot's wheels. Without
+      # this the python sandbox suite fails on `No module named 'numpy'` and friends — 483 rows on 2026-11-13,
+      # any time this job actually ran (it is triggered by a `tests.yml` change too). Cached exactly as `test`.
+      - name: Cache pyodide wheels
+        id: pyocache
+        uses: actions/cache@v6
+        with:
+          path: |
+            pyodide-wheels
+            pyodide-core
+          key: pyodide-wheels-${{ hashFiles('package-lock.json', 'src/python/python-env.ts', 'tools/pyodide-dist.json') }}
+      - if: steps.pyocache.outputs.cache-hit != 'true'
+        run: npm run fetch-pyodide
       # The pinned tag's published binaries, checksum-verified and run once before anything trusts them
       # (scripts/fetch-hub.mjs). Cached by the tag, so the release is downloaded when the pin moves and not before.
       - name: Cache the hub binary
@@ -467,25 +480,40 @@ jobs:
 
   build:
     # Never skipped on main: `pages` publishes from its artifact.
+    #
+    # THE STEPS ARE GATED, NOT THE JOB — the `test` job's lesson, applied to every required check. A job
+    # skipped by a job-level `if` can fail to report a status at all, and the PR then sits BLOCKED with every
+    # visible check green and nothing saying which gate is missing (a lane reran the run by hand,
+    # 2026-11-13). A job that starts and does nothing reports `success` under its own required name, which
+    # is what the ruleset needs to see. The runner cost is one allocation and an echo.
     needs: changes
-    if: github.ref == 'refs/heads/main' || needs.changes.outputs.code == 'true'
+    env:
+      CODE: ${{ needs.changes.outputs.code }}
+      ON_MAIN: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - if: env.ON_MAIN != 'true' && env.CODE != 'true'
+        run: echo "Only prose changed, so this job runs nothing."
+      - if: env.ON_MAIN == 'true' || env.CODE == 'true'
+        uses: actions/checkout@v7
+      - if: env.ON_MAIN == 'true' || env.CODE == 'true'
+        uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm ci
+      - if: env.ON_MAIN == 'true' || env.CODE == 'true'
+        run: npm ci
       # The gradient renderer's shaders, through Khronos's reference compiler as GLSL ES 3.00: the browser-free check
       # (scripts/check-glsl.mjs). The e2e spec compiles them again in Chromium.
       - name: The shaders type-check
+        if: env.ON_MAIN == 'true' || env.CODE == 'true'
         run: |
           sudo apt-get install -y --no-install-recommends glslang-tools
           node --import tsx scripts/check-glsl.mjs
       # The artifact must include the python_exec runtime (dist/pyodide/) or the loaded extension
       # can't run python_exec — build.mjs copies pyodide-wheels/ in, so fetch them first.
       - name: Cache pyodide wheels
+        if: env.ON_MAIN == 'true' || env.CODE == 'true'
         id: pyocache
         uses: actions/cache@v6
         with:
@@ -493,17 +521,20 @@ jobs:
             pyodide-wheels
             pyodide-core
           key: pyodide-wheels-${{ hashFiles('package-lock.json', 'src/python/python-env.ts', 'tools/pyodide-dist.json') }}
-      - if: steps.pyocache.outputs.cache-hit != 'true'
+      - if: (env.ON_MAIN == 'true' || env.CODE == 'true') && steps.pyocache.outputs.cache-hit != 'true'
         run: npm run fetch-pyodide
-      - run: npm run build
-      - uses: actions/upload-artifact@v7
+      - if: env.ON_MAIN == 'true' || env.CODE == 'true'
+        run: npm run build
+      - if: env.ON_MAIN == 'true' || env.CODE == 'true'
+        uses: actions/upload-artifact@v7
         with:
           name: window-ml-extension
           path: dist/
       # The hosted client (dist-app/): the same standalone client, with a manifest, icons and a service worker, so a
       # phone can put it on its home screen and open it offline. It is uploaded on every run as a Pages artifact, and
       # published by the job below only from main.
-      - uses: actions/upload-pages-artifact@v5
+      - if: env.ON_MAIN == 'true' || env.CODE == 'true'
+        uses: actions/upload-pages-artifact@v5
         with:
           path: dist-app/
 
@@ -626,15 +657,20 @@ jobs:
           path: test-results/
           retention-days: 7
 
-  # ONE `e2e` status for the three shards, so a PR still has a single e2e check to read (and to require, if the
-  # branch is ever protected). Skipped with the shards when no code changed; red if any shard was not green.
+  # ONE `e2e` status for the three shards, so a PR still has a single e2e check to read (and to require). It
+  # ALWAYS runs and reports under its own name — the `build` job's step-gating rule — and the STEP decides:
+  # `always()` so a red shard cannot skip the gate, the code check so a docs-only change does not demand shards.
   e2e:
     needs: [changes, e2e-shard]
-    if: always() && needs.changes.outputs.code == 'true'
+    if: always()
     runs-on: ubuntu-24.04
     steps:
       - name: All shards passed
         run: |
+          if [ "${{ needs.changes.outputs.code }}" != "true" ]; then
+            echo "Only prose changed, so there are no shards to gate."
+            exit 0
+          fi
           echo "shards: ${{ needs.e2e-shard.result }}"
           test "${{ needs.e2e-shard.result }}" = "success"
 
@@ -648,22 +684,31 @@ jobs:
   # 1.00, one that cites 0.00, one whose re-emission is in a SEEDED turn 0.00); check-calibration.mjs
   # asserts exactly those. Deterministic — fake-LLM, no model, no key. Headful under xvfb like the e2e job.
   bench:
+    # The `build` job's step-gating rule: always report under this required name, gate the STEPS.
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    env:
+      CODE: ${{ needs.changes.outputs.code }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - if: env.CODE != 'true'
+        run: echo "Only prose changed, so this job runs nothing."
+      - if: env.CODE == 'true'
+        uses: actions/checkout@v7
+      - if: env.CODE == 'true'
+        uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm ci
+      - if: env.CODE == 'true'
+        run: npm ci
       - name: Install Playwright Chromium
+        if: env.CODE == 'true'
         run: npx playwright install --with-deps chromium
       - name: Calibrate the bench
+        if: env.CODE == 'true'
         run: xvfb-run -a npm run bench:calibrate
       - name: Upload the sweep
-        if: always()
+        if: env.CODE == 'true' && always()
         uses: actions/upload-artifact@v7
         with:
           name: bench-smoke-sweep
@@ -689,23 +734,34 @@ jobs:
   # (checked: it bundles with `mobile/android` absent), so it is cheap enough to run on every change the bundle is
   # built from, and cheap enough to be a required check in a way the native build never was.
   mobile-bundle:
+    # The `build` job's step-gating rule: always report under this required name, gate the STEPS.
     needs: changes
-    if: needs.changes.outputs.phone == 'true'
+    env:
+      PHONE: ${{ needs.changes.outputs.phone }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - if: env.PHONE != 'true'
+        run: echo "Nothing the phone's bundle is built from changed, so this job runs nothing."
+      - if: env.PHONE == 'true'
+        uses: actions/checkout@v7
+      - if: env.PHONE == 'true'
+        uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm ci
-      - run: npm ci
+      - if: env.PHONE == 'true'
+        run: npm ci
+      - if: env.PHONE == 'true'
+        run: npm ci
         working-directory: mobile
       # The page the WebView loads: `sync-embed` writes it into a generated module the app imports, so without it the
       # bundle is of a different app than the one that ships.
-      - run: node scripts/build-web.mjs
-      - run: node mobile/scripts/sync-embed.mjs
+      - if: env.PHONE == 'true'
+        run: node scripts/build-web.mjs
+      - if: env.PHONE == 'true'
+        run: node mobile/scripts/sync-embed.mjs
       - name: Bundle the JS the release build would
+        if: env.PHONE == 'true'
         run: npx expo export:embed --platform android --dev false --entry-file index.ts
              --bundle-output "$RUNNER_TEMP/android.bundle" --assets-dest "$RUNNER_TEMP/android-assets"
         working-directory: mobile

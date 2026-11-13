@@ -5,11 +5,11 @@ import assert from "node:assert";
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { judge, testLineCounts, deletedTests, diskOnly, keepBench, agentMarker, isOwnPost, postKey, pickUnread, postedByOthersAfter, awaitCount, unreadLine, localImports, pinPlan, PIN_SUPPORT, touchesTool, diffPaths } from "../scripts/merge-when-green.mjs";
+import { judge, testLineCounts, deletedTests, diskOnly, keepBench, agentMarker, isOwnPost, postKey, pickUnread, postedByOthersAfter, awaitCount, unreadLine, localImports, pinPlan, PIN_SUPPORT, touchesTool, diffPaths, missingContexts } from "../scripts/merge-when-green.mjs";
 
 // --- the rule: green pipeline, no test removed, nothing unread ---
 
-const green = { sha: "abcdef0123", runId: "1", runStatus: "completed", badJobs: [], deletedTestFiles: 0, tests: { removed: 0, added: 2 }, reviews: 0, inlineComments: 0, stacked: 0, mergeable: "MERGEABLE", headAt: "2026-11-07T12:03:15Z" };
+const green = { sha: "abcdef0123", runId: "1", runStatus: "completed", badJobs: [], deletedTestFiles: 0, tests: { removed: 0, added: 2 }, reviews: 0, inlineComments: 0, stacked: 0, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", headAt: "2026-11-07T12:03:15Z" };
 
 test("a green PR that adds tests and has no reviews is OK", () => {
     const v = judge(green);
@@ -36,6 +36,47 @@ test("every way the rule fails says why, and only CI still running is pending", 
         assert.match(v.reason, reason);
         assert.equal(!!v.pending, pending, `pending for ${JSON.stringify(patch)}`);
     }
+});
+
+// --- the merge-when-green trap: BLOCKED with every reported check green and a required context missing ---
+
+test("BLOCKED with every reported check green and a required context missing is pending and asks for one rerun", () => {
+    // The gap `mergeable` alone cannot see: MERGEABLE + BLOCKED, the run completed, every reported job green, and
+    // `build` never produced a status (a job skipped by a job-level `if`, 2026-11-13). Waiting cannot fix a status
+    // that will never arrive.
+    const v = judge({ ...green, mergeStateStatus: "BLOCKED", missingContexts: ["build"], requiredContexts: ["changes", "build"] });
+    assert.equal(v.ok, false);
+    assert.equal(v.pending, true);
+    assert.equal(v.rerun, true);
+    assert.match(v.reason, /BLOCKED with every reported check green: missing required contexts build/);
+    assert.match(v.reason, /job-level if/);
+});
+
+test("BLOCKED with every required context reported is not a rerun: approval or a gate this tool cannot see", () => {
+    const v = judge({ ...green, mergeStateStatus: "BLOCKED", missingContexts: [], requiredContexts: ["build"] });
+    assert.equal(v.ok, false);
+    assert.equal(!!v.pending, false);
+    assert.equal(!!v.rerun, false);
+    assert.match(v.reason, /BLOCKED though the tests run is green and no required context is missing/);
+    // With no ruleset read at all the tool still refuses, and still does not invent a missing name to rerun on.
+    const blind = judge({ ...green, mergeStateStatus: "BLOCKED" });
+    assert.equal(blind.ok, false);
+    assert.equal(!!blind.pending, false);
+    assert.equal(!!blind.rerun, false);
+});
+
+test("missingContexts is required minus what the head reported: a skipped job that never reported is the gap", () => {
+    assert.deepEqual(missingContexts(["changes", "build", "e2e"], ["changes", "e2e", "e2e (1/3)", "tools"]), ["build"]);
+    assert.deepEqual(missingContexts(["build"], ["build", "build"]), [], "a reported name counts however often it appears");
+    assert.deepEqual(missingContexts([], ["build"]), [], "nothing required, nothing missing");
+    assert.deepEqual(missingContexts(undefined, ["build"]), [], "an unread ruleset invents no missing name");
+    assert.deepEqual(missingContexts(["build"], []), ["build"]);
+});
+
+test("facts counts through missingContexts: the call site is the one expression the trap's rule is, not a second copy", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const src = await readFile(new URL("../scripts/merge-when-green.mjs", import.meta.url), "utf8");
+    assert.match(src, /missingContexts: missingContexts\(/);
 });
 
 test("--await-review: a green PR with no post by anyone else is pending, not OK; a post by another makes it the unread rule; a read one is OK", () => {
