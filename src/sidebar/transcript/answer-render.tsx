@@ -11,6 +11,7 @@ import type { AnswerSegment } from "../../pointers/answer-tokens";
 import type { Session, AgentStep } from "../store";
 import { focusMode } from "../store";
 import { pretty, markdown, inlineMarkdown } from "../format";
+import { linkTipFor, onAddressClick } from "../links";
 import { reveal } from "./transcript-window";
 import { IconChevron, IconEye, IconCheck } from "../icons";
 import { ClickableImg, SheetChip, cursorTipOn } from "../ui-kit";
@@ -268,8 +269,8 @@ function TokBlock({ node, label, tip, name, onJump }: { node: ComponentChildren;
  *  @gallery embedded code {"text": "The script:\n\n![the script that counted](@tool:abcdef5:in)\n\nThat is all.", "run": {"hash": "g2", "steps": [{"seq": 1, "step": 1, "tool": "python_exec", "token": "abcdef5", "result": "42", "renderIn": {"type": "python-in", "mode": "script", "code": "q = [1, 2, 3]\nreturn sum(q) * 7"}}]}}
  */
 export function AnswerBody({ text, run, cls = "card-answer", scope }: { text: string; run: Session; cls?: string; scope?: readonly AgentStep[] }) {
-    const mdHtml = (t: string) => ({ __html: markdown(t, { math: true }) });
-    if (!hasTokens(text, aliasOf(run))) return <div class={`${cls} md`} dangerouslySetInnerHTML={mdHtml(text)} />;
+    const mdHtml = (t: string) => ({ __html: markdown(t, { math: true, addr: linkTipFor }) });
+    if (!hasTokens(text, aliasOf(run))) return <div class={`${cls} md`} onClick={onAddressClick} dangerouslySetInnerHTML={mdHtml(text)} />;
     const segs = splitAnswer(text, aliasOf(run));
     // A citation is STANDALONE (a display block) when it sits ALONE on its own source line — only whitespace
     // between it and a newline/boundary on each side. A citation that SHARES its line with prose
@@ -296,7 +297,7 @@ export function AnswerBody({ text, run, cls = "card-answer", scope }: { text: st
         toks.push({ seg, standalone: standaloneAt(i) });
         src += `${toks.length - 1}`;
     });
-    return <div class={`${cls} md answer-rendered`}>{hydrateAnswer(markdown(src, { math: true }), toks, run, scope)}</div>;
+    return <div class={`${cls} md answer-rendered`} onClick={onAddressClick}>{hydrateAnswer(markdown(src, { math: true, addr: linkTipFor }), toks, run, scope)}</div>;
 }
 
 // Splice real <TokenRef> components into rendered answer markdown at the sentinel positions its tokens left

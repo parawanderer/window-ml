@@ -558,6 +558,14 @@ and GitHub keeps at most ONE queued run per group, so a third arrival cancels th
 back to back left two main commits with a run cancelled before a single job started — CI going silent rather than
 red, which is the failure the conflict guard below exists for, in another costume.
 
+**A required job that never reports is an indefinite BLOCKED, and both halves of the fix landed 2026-11-13.** The
+source fix is step-gating in `tests.yml` itself (`build`, `e2e`, `bench`, `mobile-bundle` follow the `test` job's
+lesson: the STEPS carry the `if`, so the job starts and reports `success` under its own required name instead of
+vanishing). The safety net is `merge-when-green`: it reads `mergeStateStatus` beside `mergeable`, names the
+required contexts a head has not reported, and `--wait` reruns the run once to force them — after which a surviving
+shape means the branch predates the step-gated jobs and needs a rebase. A PR that touches the tool is still Shane's
+merge.
+
 **A PR THAT CONFLICTS WITH ITS BASE HAS NO CHECKS AT ALL**, which is worse than red ones: a `pull_request` run is
 built against the MERGE COMMIT, so while there is none there is no run, and every push to that branch looks untested
 rather than failing. It happens to branches nobody touched — something lands on main and a PR becomes conflicting on
