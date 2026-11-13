@@ -293,11 +293,11 @@ The design:
    pages the first rule refused. No `.pth` anywhere, `.data/` included; no `sitecustomize`, no `usercustomize`. RECORD
    lists exactly the entries. A standard-library name is refused in the candidate instead, against
    `sys.stdlib_module_names` before any import (AMENDED 2026-11-13: the worker holds no stdlib list), and reaches the
-   person as the candidate's verdict. The uncompressed total is bounded (proposed: 8 times the file and 512 MB per
-   call). No top-level name may be one the standard library, a lock package's `imports`, the dialect
-   (`DIALECT_MODULES`), the harness (`_ml_*`), `pyodide`, `pyodide_js`, `js` or `micropip` already provides, or one
-   another distribution in the run's record took, since two files would write one path. New refusals: `bad-archive`,
-   `name-collision`, `too-large`.
+   person as the candidate's verdict. The uncompressed total is bounded (ruled 2026-11-13: 8 times the file and 512 MB
+   per call). No top-level name may be one the standard library (checked in the candidate, above), a lock package's
+   `imports`, the dialect (`DIALECT_MODULES`), the harness (`_ml_*`), `pyodide`, `pyodide_js`, `js` or `micropip`
+   already provides, or one another distribution in the run's record took, since two files would write one path. New
+   refusals: `bad-archive`, `name-collision`, `too-large`.
 6. **An undeclared dependency.** When the candidate's import raises `ModuleNotFoundError` naming a module no file of the
    closure provides, the call fails as in (4) and its result names that module: "importing `<module>` needs `<name>`,
    which none of the approved files provide. Ask python_install for the package that provides it; the files approved
