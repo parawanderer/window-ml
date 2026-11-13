@@ -226,6 +226,20 @@ calls them yet: the `/files` bridge a cell's `open()` goes through is the next s
 - `storeWhole` discards its store when a chunk fails, so the host's temp file goes with it. A store's commit has no
   `replace`: whether it replaces is decided by the basis.
 
+### `/files` in an argv (H9)
+
+While `/files` is a folder on the host's disk, the host maps it in an `ml.sh` argv; nothing passes it yet, since no
+session mounts an uploads folder before H16.
+
+- `planSpawn(req, { files: { mount, session, shown } })` sends `spawn.files`, only when `hostMapsFiles(hello)`.
+  The host maps the `pathArgs` entries and the cwd that are `/files` or under it, and lists each mapping in the facts'
+  `files`. The card shows both forms (`filesLines`), and so does the line under a call that ran without asking.
+- A call whose manifest does not place a `/files` argument gets `plan.filesRefusal`, which names the real path to retry
+  with. That covers no manifest, or a parse the manifest does not describe. Placing is the parse with the version check
+  left out (`filesPlaced`): at plan time the host has not reported the version yet, and the version moves no argument.
+- Every path argument carries `role` (`describeCall`, `writtenOperands`), and a written one is sent as `role: "write"`
+  whatever `/files` is. The host refuses one that resolves into an `attached/` folder (`InAttached`) by either name.
+
 ## Detached calls (ASYNC_CALLS.md, mode 1)
 
 A call that runs past its lease detaches into a task: [`async-calls.md`](async-calls.md) is how that is built (the

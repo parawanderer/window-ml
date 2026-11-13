@@ -13,6 +13,7 @@ Per program, subcommand and flag:
 | --- | --- | --- |
 | `effects` | in the shared algebra ([`EFFECTS.md`](EFFECTS.md)): `read(fs)`, `write(fs)`, `write-names(fs)` (the program creates, removes or renames an ENTRY at the path rather than writing bytes into it in place: `mkdir`, `rm`, `mv`, and every editor that writes a temp file and renames it over the target, `sed -i`, `perl -i`, npm's `write-file-atomic`; added 2026-10-19 so that the atomic-rename rule in [`SHELL.md`](SHELL.md) is claimable), `exec(process)`, `read(net(host))` or `write(net(host))`; `unknown` for a flag it does not know | the free tier and every policy read it |
 | `paths` | which arguments are paths, so the host can `realpath` them and judge `inRoot` and `secret` | an argument the manifest does not mark is not a path the host can vouch for, and the call asks |
+| `writtenOperands` | `"last"` on a command whose operands are paths: only the last path operand is written (`cp a b dir`), the others read; absent, a command whose effects write writes EVERY path operand, which fails closed (2026-11-13, [`FILE_ATTACHMENTS.md`](FILE_ATTACHMENTS.md) H9) | each path argument's `role` says read or write, so the host can refuse a write into `attached/` at `spawn` while a copy out of it runs |
 | `operands` | where the program's operands start, and whether it honours `--` or `--end-of-options` | a value from a variable that starts with `-` is an option to the program; the host puts the terminator there |
 | `runner` | the flags that start other programs (`find -exec`, `xargs`, `git -c core.pager`, `npm run`, `env`) | never free on the program's own word |
 | `echoes` | whether it prints its environment or its inputs (`env`, `printenv`, `set`, `curl -v`) | a secret in the env reaches stdout; refused with a secret present, scrubbed otherwise |
@@ -36,6 +37,10 @@ A delete, a rename and a create of a directory entry are `write-names` on the op
 - `pathspecs` (git): an operand starting with `:` is pathspec magic (`:/x` is relative to the repository root), and one holding `*`, `?`, `[` or `\` is a glob git expands to every match (or an escape: `a\*` names `a*`); neither is one path the host can resolve: `unknown`. Found by the red-team pass on #990 (2026-10-22): `git rm *.ts` removed a secret among its matches under a claim that named only `*.ts`. `--icase-pathspecs` is `unknown` for the same reason: on a case-sensitive host `Secret.ts` matches `secret.ts`, a name the host never resolved (red-team recheck, 2026-10-22). A repository with `core.ignoreCase=true` does the same without the flag; that is not caught yet.
 
 A nested `rm` inside a root stays free under `host-sandbox` (ruled 2026-10-22): the built-in default is one algebra over effects, as it is for `find -delete` and for overwriting a file with `>`, never a per-program exception, so deleting a top-level name, a root, a secret or anything outside the roots asks and a nested delete does not; a person who wants stricter or wider writes a policy, and stored policies are judged before the built-in.
+
+### `cp` (2026-11-13)
+
+`src/shell/manifests/cp.json`: `read` of the sources and `write` plus `write-names` of the destination (`writtenOperands: "last"`; it overwrites in place or creates the entry), with the flags GNU and BSD share (`-f -i -n -p -v`, `-R`/`-r` walking the sources). `-a`, `-t`, `-L`/`-P`/`-H` and every long option differ between the two or change what is copied, so they are not listed and the call is `unknown`. `mv` keeps no `writtenOperands`: its sources are removed, so every operand is written, and an `mv` out of `attached/` stays refused ([`FILE_ATTACHMENTS.md`](FILE_ATTACHMENTS.md) H9).
 
 ### `gh` (the GitHub CLI; 2026-11-08)
 
