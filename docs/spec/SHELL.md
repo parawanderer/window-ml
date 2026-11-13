@@ -207,7 +207,10 @@ extension can do is make it one paste.
 5. A refusal of ml.sh (and of `/files`, which needs the same host) for want of a host says where the person installs it:
    "Settings, Extension, Advanced, Programs (ml.sh)", as text; where the renderer draws the link form
    ([`LINKS.md`](LINKS.md)) it is `[Programs (ml.sh)](window-ml:settings/extension/advanced/shell)`. `agent_api_docs` says the
-   same in one line. The refusal carries no command: the model never tells a person to paste something.
+   same in one line, and a section of `agent_api_docs` ("Running programs on the person's machine (ml.sh), and setting it up", found
+   by searching `ml.sh`, `process host` or `install`) tells a model with no `ml.sh` to point the person at Settings and to write
+   the link itself: a link inside a tool result is never a button (LINKS.md), so the refusal carries the words and the address
+   in backticks, not link syntax. The refusal carries no command: the model never tells a person to paste something.
 
 **Threat items.**
 

@@ -178,7 +178,7 @@ async function connect(cfg: ShellSettings, key: string): Promise<ShellHost> {
 
 /** What a port that would not start says, turned into what to do about it. */
 function notInstalledText(why: string | undefined): string {
-    return `The process host is not installed or would not start (${why || "no answer"}). The person installs it from Settings, Extension, Advanced, Programs (ml.sh), which shows the one line to paste.`;
+    return `The process host is not installed or would not start (${why || "no answer"}). The person installs it from Settings, Extension, Advanced, Programs (ml.sh) (\`settings/extension/advanced/shell\`), which shows the one line to paste.`;
 }
 
 /** The port is in use: restart its idle clock. */
