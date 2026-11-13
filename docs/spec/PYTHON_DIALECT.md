@@ -327,8 +327,10 @@ survey could not do and which answers the manifest spec's "granularity of a refu
    record that already exists for Pyodide kills and cold starts, and `ml.current.env` lists the live names with their
    types and shapes (the scope manifest in [`PERSISTENT_RUNTIME_SPEC.md`](PERSISTENT_RUNTIME_SPEC.md)). A run is told;
    it is never handed a silently empty namespace.
-4. **Memory.** The namespace is one dict in the one shared interpreter, deleted at run end, with a memory eviction that
-   triggers the loss message above rather than a quiet reset.
+4. **Memory.** The namespace is one dict, deleted when the run's session is released or archived (RULED 2026-11-13: it
+   lives per RUN, across the run's turns, not per turn; the run id is stable across them), with an idle reap between
+   turns (`pythonIdleMinutes`, default 10) and a memory eviction that trigger the loss message above, and a line in the
+   run's transcript, rather than a quiet reset. A turn's end drops only the shared `full` worker's dict for the run.
 5. **Approval.** Dissolved with 1: state is data, and capability exists only at the call, judged per call.
 
 **JS values reach Python the same way.** No `vars` parameter: `ml.state` read from Python through the callback, by

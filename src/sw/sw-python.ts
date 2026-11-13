@@ -6,7 +6,7 @@ import { senderTrust, tabGrants } from "./sw-consent";
 import { isExtensionSender } from "./sw-site-access";
 import { recordHousekeeping } from "./sw-housekeeping";
 import { ensureOffscreen, forgetOffscreen } from "./sw-offscreen";
-import { activeRuns, execReads, isWorkerRun, pageValueSession, runControllers } from "./sw-runs";
+import { activeRuns, execReads, isWorkerRun, onSessionRelease, pageValueSession, runControllers } from "./sw-runs";
 import { valueHolders, budgetBytes as valueBudgetBytes, claimValue } from "./sw-values";
 import { PY_PACKAGE_LOADS } from "../python/python-env";
 import { defineJob } from "../job-registry";
@@ -19,6 +19,7 @@ import type { DialectLibrary } from "../python/python-dialect-run";
 import type { CellCancel } from "../python/py-lease";
 import { sessionArea } from "./sw-housekeeping";
 import { defineState } from "../state-registry";
+import { DEFAULT_CONFIG } from "../contract/contract-config";
 
 // LIVE python_exec stdout streaming: maps a run's streamId (the page requestId) → its tabId, so a PY_STDOUT
 // chunk the offscreen doc forwards can be relayed to the RIGHT page. Set when a streaming PYTHON_EXEC starts,
@@ -28,13 +29,13 @@ import { defineState } from "../state-registry";
  *  Python bench — which is not reachable that way and is broadcast to instead. Both callers ask for the same
  *  worker tee; only the last hop differs. */
 // Runs whose current turn asked to keep its Python worker (py-reap.ts): the run log says so once per turn.
-const keptRuns = new Set<string>();   // state: plumbing — cleared when the turn ends (deletePythonRun)
+const keptRuns = new Set<string>();   // state: plumbing — cleared when the turn ends (endPythonTurn) or the session is released (deletePythonRun)
 // Runs one of whose cells ran with the JavaScript bridges lifted (bridge-names.ts): the namespace, which outlives an
 // evicted worker, can hold what that cell took, so the mark is kept in storage.session beside this worker's copy.
 const BRIDGED_KEY = "ml_py_bridged";
 const bridgedRuns = new Set<string>();   // state: python.bridged — this worker's copy of BRIDGED_KEY
 defineState({
-    id: "python.bridged", scope: "run", realm: "worker", audience: "human", lostOn: ["turn-end", "browser-restart"],
+    id: "python.bridged", scope: "run", realm: "worker", audience: "human", lostOn: ["browser-restart"],
     describe: "Whether a cell of the run ran with the browser's JavaScript reachable, so later cells' approval cards say what it may have kept.",
     read: async ({ runId }) => (runId && await pythonRunBridged(runId)) || undefined,
 });
@@ -273,15 +274,17 @@ export async function runPython(payload: any, requestId: string | undefined, cal
     // The lift, only for the exact code the person approved, and only outside the dialect (an inside cell needs none).
     const bridges = outside && caller.bridges === true && !!caller.pyCodeOk?.(String(payload?.code ?? ""));
     if (keep && !keptRuns.has(caller.wireRun!)) { keptRuns.add(caller.wireRun!); recordRunLog(caller.wireRun!, { subsystem: "python", kind: "keep" }); }
-    const run = { type: "PY_RUN", principal, ...(wire ? { wire: { client: wire.handle, run: caller.wireRun ?? null } } : {}), ...(valueBudget ? { valueBudget } : {}), code: payload?.code, image: payload?.image ?? null, hardened: true, tables: payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}), ...(inside ? { inside: true } : {}), ...(keep ? { keep: true, turnLive: true } : {}), ...(bridges ? { bridges: true } : {}), ...(cell ? { cell } : {}) };
+    const run = { type: "PY_RUN", principal, ...(wire ? { wire: { client: wire.handle, run: caller.wireRun ?? null } } : {}), ...(valueBudget ? { valueBudget } : {}), code: payload?.code, image: payload?.image ?? null, hardened: true, tables: payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}), ...(inside ? { inside: true } : {}), ...(keep ? { keep: true } : {}), ...(bridges ? { bridges: true } : {}), ...(cell ? { cell } : {}) };
     // A cell inside the dialect may import the person's approved tier 3 libraries: they ride every inside run, and the
     // sandbox loads each pin once.
     if (inside) { const libraries = await dialectLibraries(); if (libraries.length) Object.assign(run, { libraries }); }
     // A keep is a LIVE turn's: checked again at every send, since the awaits above and the retry below can cross the turn's
-    // end (`deletePythonRun`), and a keep landing after it would outlive its turn in the offscreen document.
+    // end (`endPythonTurn`), and a keep landing after it would outlive its turn in the offscreen document.
     if (cell) liveCells.add(cell);
     const attempt = () => ensureOffscreen().then(() => {
-        if (keep && !runControllers.has(caller.wireRun!)) { delete (run as { keep?: boolean }).keep; delete (run as { turnLive?: boolean }).turnLive; }
+        // Every cell of a worker-hosted run says whether its turn is live, so the offscreen document knows the run is not between turns.
+        if (caller.wireRun && runControllers.has(caller.wireRun)) Object.assign(run, { turnLive: true });
+        else { delete (run as { keep?: boolean }).keep; delete (run as { turnLive?: boolean }).turnLive; }
         return chrome.runtime.sendMessage(run);
     });
     try {
@@ -322,8 +325,27 @@ function pyCodeGranted(tabId: number | undefined, outside: boolean, code: string
 }
 
 /**
- * ROOT C: tell the offscreen host to drop a run's kept Python namespace when the run closes or is archived
- * (docs/spec/PYTHON_DIALECT.md, "The namespace"). Fire-and-forget: a namespace left behind costs memory, not
+ * A TURN of a worker-hosted run ended (the run lives on): tell the offscreen host (`PY_END_TURN`). The run's own
+ * Python worker keeps its namespace for the next turn, idle-reaped after `pythonIdleMinutes`; the turn's keep ends;
+ * the shared `full` worker's dict for the run is dropped (ROOT C: another full-mode run's cell could read it).
+ * Fire-and-forget, like {@link deletePythonRun}.
+ * @param runId the run whose turn ended
+ */
+export function endPythonTurn(runId: string): void {
+    if (!runId) return;
+    keptRuns.delete(runId);
+    void (async () => {
+        let minutes: unknown = DEFAULT_CONFIG.pythonIdleMinutes;
+        try { minutes = (await chrome.storage.sync.get({ pythonIdleMinutes: DEFAULT_CONFIG.pythonIdleMinutes }))?.pythonIdleMinutes; } catch { /* default */ }
+        const n = Number(minutes);
+        const ms = Math.round((Number.isFinite(n) && n >= 0 ? n : DEFAULT_CONFIG.pythonIdleMinutes) * 60_000);
+        try { await chrome.runtime.sendMessage({ type: "PY_END_TURN", run: runId, ms }); } catch { /* no offscreen listening: the worker is gone with its Map */ }
+    })();
+}
+
+/**
+ * ROOT C: tell the offscreen host to drop a run's Python namespace when its session is released or archived or the run
+ * is deleted (docs/spec/PYTHON_DIALECT.md, "The namespace"). NOT at a turn's end ({@link endPythonTurn}). Fire-and-forget: a namespace left behind costs memory, not
  * correctness, and a run ending must never wait on the sandbox. The offscreen forwards it as `deleteRun` to every
  * worker that holds a dict for the run, the shared `full` worker included (it keeps which, `runPrincipals`).
  * Callables the run's last cell handed to JavaScript that fired after its result come back in the answer, since no
@@ -344,6 +366,9 @@ export function deletePythonRun(runId: string): void {
     } catch { /* context gone */ }
 }
 
+// A session released (its bgRuns entry purged, deleted, or pushed out of the token store) ends its Python namespace.
+onSessionRelease(deletePythonRun);
+
 /**
  * A tier 3 library was removed: restart every Python worker that was handed one (READONLY_LIBRARY_MANIFEST.md, ruling
  * D), since a loaded module stays importable until its realm dies. No offscreen document means no worker holds one.
@@ -362,11 +387,17 @@ export async function dropPythonLibraries(): Promise<number> {
  * cell will report now. Only from our own documents: a page could write another run's log.
  * @param message `{ run, live, dropped? }`
  * @param sender who sent it
+ * @param tell shows the run's transcript one line (a worker note), when the reap lost the run's namespace
  */
-export function pythonReaped(message: any, sender: chrome.runtime.MessageSender): void {
+export function pythonReaped(message: any, sender: chrome.runtime.MessageSender, tell?: (run: string, text: string) => void): void {
     if (!isExtensionSender(sender) || typeof message?.run !== "string" || !message.run) return;
     const run = message.run as string;
-    if (message.live === true) recordRunLog(run, { subsystem: "python", kind: "reap", reason: "idle" });
+    if (message.live === true) {
+        recordRunLog(run, { subsystem: "python", kind: "reap", reason: message.between === true ? "idle-between-turns" : "idle" });
+        // The person sees it where the run is, not only in the log: the names the model defined are gone.
+        const min = Math.max(1, Math.round((Number(message.idleMs) || 0) / 60_000));
+        tell?.(run, `Python namespace dropped after ${min} min idle${message.between === true ? " between turns" : ""}: names from earlier python_exec cells are gone.`);
+    }
     const dropped = message.dropped as { count?: unknown; afterCell?: unknown } | undefined;
     if (dropped && typeof dropped.count === "number" && dropped.count > 0) recordRunLog(run, { subsystem: "python", kind: "dropped", reason: "at-reap", detail: { count: dropped.count, afterCell: Number(dropped.afterCell) || 0 } });
 }

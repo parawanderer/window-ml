@@ -2,7 +2,7 @@
 
 **Status: slices 1 and 2 built (2026-10-28/29); slice 3 under way: the held rows, the `@file:` pointer, the `pages`
 verb, attaching a PDF to an agent run, and every attachment to a worker-built run (any message) and a long paste as
-pointers, and `ml.dereference` of `@file:`, are built; `look` at a document, Python's `files`, the files panel and
+pointers, `ml.dereference` of `@file:` and `look` at a document are built; Python's `files`, the files panel and
 upload progress are next (Shane and the calm-chat-motion session); a session's files as a directory `/files/` is ruled,
 not built (2026-11-12).** The order is
 three slices, each landing on its own: text files, then PDFs, then documents as `@file:` pointers in agent runs. Slice
@@ -294,7 +294,7 @@ requires the adversarial tests in readonly-exec.md ("The rule for extending the 
 **Built (2026-10-30, the reading side).** file-pointer.ts: the pointer, `cleanFileName`, the outline, the sections and
 the `FileShelf` a run's `TokenStore` holds files on; the `pages` verb (`PIPE_PAGES_MAX`, 50 a stage); `derefLocally`'s
 `@file:` branch and the inventory's files. The outline says `Read with dereference(@file:…, pipe "pages 1-3")` only:
-`look` with a document target is not built. Nothing notes a file on the shelf yet: attaching a PDF to an agent run,
+`look` with a document target was not built then (since 2026-11-12, below). Nothing notes a file on the shelf yet: attaching a PDF to an agent run,
 which mints the pointer and stores its rows, is the next change. `ml.dereference` refused `@file:` with a sentence then
 (read since 2026-11-12, below).
 
@@ -319,6 +319,15 @@ stored text is not read whole there. The pointer macro stays `@tool:`'s alone. H
 pages are rendered from the stored bytes by pdf.js in the offscreen document, then go down the existing vision path
 (native when the model sees, delegated to the reader otherwise). Bounded per call like a full-page look (eight
 screens): open, a figure of about four pages.
+
+**Built (2026-11-12, `look` at a document).** The run loop resolves `doc` on the run's shelf, reads `pages` with the
+`pages` verb's parser (`pageSpans`), and draws them from the stored bytes in the offscreen document at the worker chat's
+page scale, one PNG a page, at most `LOOK_DOC_PAGES_MAX` (8) a call; a page that will not draw is named beside those that
+did. The native `look` shows them as one image a page, the delegated one asks the reader with all of them. Refused, each
+with a sentence: an unknown file, a text file, a page past the file's count, more than eight, `doc` with `selector` or
+`scope`, a run with no renderer (a page-built run, whose shelf is empty anyway). The outline names it: `see a page with
+look(doc @file:…, pages "N")`, N the first figure or scanned page, else 1. Held back: the math sentence (open, below),
+and saying in the outline whether the run has a `look` at all.
 
 **A paged document, not a PDF type.** The stored value is a list of pages, each with text and an optional render
 recipe. A PDF is the first producer; a very tall image or a long screenshot can be cut into pages the way a full-page
@@ -585,21 +594,19 @@ lane's read of this spec):
 
 **The mount** (the Pyodide lane's conditions, measured in Node against `pyodide-core/`, not in a browser worker):
 
-1. MEMFS, loaded from the shelf when the interpreter starts as an eager listing whose nodes are zero-copy views of
-   the transferred buffers (`node.contents = new Uint8Array(buffer)`): start-up costs one times the directory's size,
-   held as ArrayBuffers, with no wasm growth (measured: a 50 MB file added nothing beyond its buffer). Loading a
-   file's bytes on its first open was measured too and works on every read path, but saves nothing, since the bytes
-   are already in the worker by then; if it is ever built, `O_TRUNC` truncates before the open hook runs, so `open('w')`
-   needs a `setattr` wrapper or it restores the old bytes. A truly lazy mount, nothing held until a file is opened,
-   needs a synchronous channel (`FS.createLazyFile` uses synchronous XHR; WORKERFS over posted Blobs is unmeasured,
-   needs `FileReaderSync`, which the lockdown does not allow, and fails a write with EIO, not EROFS); it is not
-   proposed. A cell still
-   raises the cost: reading a whole file grows wasm memory by its size, `mmap` copies into the heap, and a copy out of
-   `attached/` is a new node, so item 6's three times bounds the worst case. With Emscripten's JS-side
-   `FS.trackingDelegate`
-   (`onCloseFile`, `onWriteToFile`) seeing every close, raw `os.open`/`os.write`/`os.close` included. No
-   Atomics-backed FS: Pyodide ships no synchronous remote backend, `Atomics.wait` would block the interrupt buffer so
-   Stop would fall through to the kill, and it would save almost nothing on a terminate. The hooks live on the
+1. MEMFS, loaded from the shelf when the interpreter starts as an eager listing whose nodes are zero-copy views of the
+   transferred buffers (`node.contents = new Uint8Array(buffer)`): start-up costs one times the directory's size, held
+   as ArrayBuffers, with no wasm growth (measured: a 50 MB file added nothing beyond its buffer). Loading a file's bytes
+   on its first open was measured too and works on every read path, but saves nothing, since the bytes are already in
+   the worker by then; if it is ever built, `O_TRUNC` truncates before the open hook runs, so `open('w')` needs a
+   `setattr` wrapper or it restores the old bytes. A truly lazy mount, nothing held until a file is opened, needs a
+   synchronous channel (`FS.createLazyFile` uses synchronous XHR; WORKERFS over posted Blobs is unmeasured, needs
+   `FileReaderSync`, which the lockdown does not allow, and fails a write with EIO, not EROFS); it is not proposed. A
+   cell still raises the cost: reading a whole file grows wasm memory by its size, `mmap` copies into the heap, and a
+   copy out of `attached/` is a new node, so item 6's three times bounds the worst case. Emscripten's JS-side
+   `FS.trackingDelegate` (`onCloseFile`, `onWriteToFile`) sees every close, raw `os.open`/`os.write`/`os.close`
+   included. No Atomics-backed FS: Pyodide ships no synchronous remote backend, `Atomics.wait` would block the interrupt
+   buffer so Stop would fall through to the kill, and it would save almost nothing on a terminate. The hooks live on the
    Module/FS object, which the lockdown seals from cells (`PYODIDE_JS_SEAL`); they stay synchronous.
 2. `/files/attached/` is its own mount whose write operations fail with EROFS (open for writing, chmod, unlink,
    create, mkdir, utime; rename across it is EXDEV, rmdir of it EBUSY). File modes do not hold: a cell's own
