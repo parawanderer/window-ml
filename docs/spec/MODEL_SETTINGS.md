@@ -20,11 +20,11 @@ whose "deleting the person's files asks unless a policy allows it" is the rule r
 
 "Something like this already" is real, and it is not a whitelist the person controls:
 
-- **`ml.config()` returns a fixed subset**, `publicConfig()` in `src/contract/contract-config.ts`: 20 keys
+- **`ml.config()` returns a fixed subset**, `publicConfig()` in `src/contract/contract-config.ts`: 21 keys
   (`model`, `ocrModel`, `ocrNumCtx`, `apiFormat`, `defaultModelVision`, the three utility-model keys,
   `autoApproveReadonly`, `autoApprovePython`, `autoApproveSelfSource`, `serverToolsOff`, `commanderServerTools`,
-  `selfIntrospection`, `pierceClosedShadow`, `cdp`, the three grounding keys, `debugMode`) plus the computed
-  `pageApprovalAllowed`. (`MlPublicConfig` also names `labelMatch`, which `publicConfig()` does not return.) It is
+  `selfIntrospection`, `pierceClosedShadow`, `cdp`, the three grounding keys, `debugMode`, `labelMatch`) plus the
+  computed `pageApprovalAllowed`. `MlPublicConfig` names the same keys (`tests/api-docs.test.mjs`). It is
   the `GET_CONFIG` message (`src/background.ts`), the same view the worker hands its own run assembly (`workerMl`).
 - **The model reads it free.** `config` is in `ML_READONLY_METHODS` (`src/readonly-exec/policy.ts`), so a read-only
   survey calls `ml.config()` with no card. So does any script on an approved origin.
