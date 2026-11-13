@@ -40,12 +40,25 @@ fs.readFileSync = function (p, ...rest) {
 };
 
 
-/** The harness refuses every chrome-extension:// fetch; the worker reads the lock from one, so serve it from the context's fetch. */
+/** What pypi.org answers in these tests: a project the lock lacks is a 404 unless a test serves it. Keyed by URL; a value is the JSON body, or null for a 404. */
+let pypi = new Map();
+/** What files.pythonhosted.org answers: the wheel's bytes by URL; anything else is a 404. */
+let wheels = new Map();
+/** Every URL requested from files.pythonhosted.org, in order. */
+let wheelGets = [];
+const NOT_FOUND = { ok: false, status: 404, headers: { get: () => null }, body: null, text: async () => "", json: async () => { throw new Error("404"); } };
+const jsonBody = (obj) => { const t = JSON.stringify(obj); return { ok: true, status: 200, headers: { get: () => "application/json" }, body: new Response(t).body, text: async () => t, json: async () => obj, arrayBuffer: async () => new TextEncoder().encode(t).buffer }; };
+
+/** The harness refuses every chrome-extension:// fetch; the worker reads the lock from one, so serve it from the context's fetch. pypi.org is served from `pypi`. */
 function serveLock(bg) {
     const real = bg.context.fetch;
-    bg.context.fetch = async (url, ...rest) => (String(url) === LOCK_URL
-        ? { ok: true, status: 200, url: String(url), headers: { get: () => "application/json" }, text: async () => LOCK_TEXT, json: async () => JSON.parse(LOCK_TEXT) }
-        : real(url, ...rest));
+    bg.context.fetch = async (url, ...rest) => {
+        const u = String(url);
+        if (u === LOCK_URL) return { ok: true, status: 200, url: u, headers: { get: () => "application/json" }, text: async () => LOCK_TEXT, json: async () => JSON.parse(LOCK_TEXT) };
+        if (u.startsWith("https://pypi.org/")) { const v = pypi.get(u); return v === undefined || v === null ? NOT_FOUND : typeof v === "number" ? { ...NOT_FOUND, status: v } : jsonBody(v); }
+        if (u.startsWith("https://files.pythonhosted.org/")) { wheelGets.push(u); const b = wheels.get(u); return b ? new Response(b) : NOT_FOUND; }
+        return real(url, ...rest);
+    };
 }
 
 const call = (args, name = "python_install") => ({ name, args });
@@ -54,8 +67,11 @@ const call = (args, name = "python_install") => ({ name, args });
  * A worker-built run on tab 7 whose model makes `calls` in turn. `answer(card, send)` is the person: it gets the
  * emitted step (its renderIn) and a `send(decision, files)` that posts SET_APPROVAL; it defaults to denying.
  */
-async function installRun(calls, { answer = (_ev, send) => send(false), offered = true } = {}) {
+async function installRun(calls, { answer = (_ev, send) => send(false), offered = true, index = new Map(), files = new Map() } = {}) {
     offer = offered;
+    pypi = index;
+    wheels = files;
+    wheelGets = [];
     const idb = new IDBFactory();
     const cards = [];
     let n = 0, bg;
@@ -95,7 +111,7 @@ async function installRun(calls, { answer = (_ev, send) => send(false), offered 
     const results = last.body.messages.filter((m) => m.role === "tool").map((m) => String(m.content));
     const offeredNames = bg.calls.filter((c) => c.url.includes("/chat/completions")).flatMap((c) => (c.body.tools ?? []).map((t) => t.function?.name ?? t.name));
     const log = JSON.parse(JSON.stringify((await bg.context.__mlRunLog.all()).filter((r) => r.run === hash)));
-    return { bg, hash, cards, results, offeredNames, mismatches: log.filter((r) => r.kind === "pkg-card-mismatch"), pkgCards: log.filter((r) => r.kind === "pkg-card") };
+    return { bg, hash, cards, results, offeredNames, mismatches: log.filter((r) => r.kind === "pkg-card-mismatch"), pkgCards: log.filter((r) => r.kind === "pkg-card"), indexLogs: log.filter((r) => r.kind === "pkg-index") };
 }
 
 const rowsOf = (card) => JSON.parse(JSON.stringify(card.renderIn.verdict.files));
@@ -138,7 +154,8 @@ test("approving with exactly the card's rows is approved, and the tool says noth
     const r = await installRun([ATTRS], { answer: approveWith() });
     assert.deepEqual(r.mismatches, []);
     assert.equal(r.results.length, 1);
-    assert.equal(r.results[0], "Approved, but this build does not install packages yet: nothing was downloaded or installed.");
+    // A lock row is not downloaded: the approval has nothing to fetch, and nothing is installed in this build.
+    assert.equal(r.results[0], "Approved: nothing to download. This build does not install packages yet, so nothing was installed.");
 });
 
 test("approving with no files is a denial: the model reads the feedback and the log says files absent", { ...T, skip: SKIP }, async () => {
@@ -167,7 +184,7 @@ test("a several-row closure is approved on its exact rows", { ...T, skip: SKIP }
     const r = await installRun([MANY], { answer: approveWith() });
     assert.equal(rowsOf(r.cards[0]).length, 4);
     assert.deepEqual(r.mismatches, []);
-    assert.match(r.results[0], /^Approved, but this build does not install packages yet/);
+    assert.match(r.results[0], /^Approved: nothing to download\. This build does not install packages yet, so nothing was installed\.$/);
 });
 
 const FLIP = (h) => (h[0] === "0" ? "1" : "0") + h.slice(1);
@@ -208,7 +225,7 @@ for (const [what, f] of Object.entries(MALFORMED)) {
 
 // --- a refused card ---
 
-test("a package the lock lacks raises a refusal card; approving it, even with files [], is denied as a refusal", { ...T, skip: SKIP }, async () => {
+test("a package the lock lacks raises a refusal card when PyPI 404s; approving it, even with files [], is denied as a refusal", { ...T, skip: SKIP }, async () => {
     const r = await installRun([call({ name: "tabulate" })], { answer: (_c, send) => send(true, []) });
     const v = r.cards[0].renderIn.verdict;
     assert.equal(r.cards[0].renderIn.type, "packages");
@@ -220,11 +237,82 @@ test("a package the lock lacks raises a refusal card; approving it, even with fi
     assert.equal(judgeOf(r, []).reason, "refusal");
 });
 
+test("every index request is a python/pkg-index run-log record with the tool and the URL; a lock package makes none", { ...T, skip: SKIP }, async () => {
+    const r = await installRun([call({ name: "Tabulate" })]);
+    assert.equal(r.indexLogs.length, 1);
+    assert.equal(r.indexLogs[0].subsystem, "python");
+    assert.deepEqual(r.indexLogs[0].detail, { tool: "python_install", url: "https://pypi.org/pypi/tabulate/json" });
+    const lock = await installRun([ATTRS]);
+    assert.deepEqual(lock.indexLogs, []);
+});
+
+test("a name that is not a project name gets an error and no card and no index request", { ...T, skip: SKIP }, async () => {
+    const r = await installRun([call({ name: "../etc/passwd" }), call({ name: "a b" })]);
+    assert.equal(r.cards.length, 0);
+    assert.deepEqual(r.indexLogs, []);
+    assert.match(r.results[0], /^Error: invalid arguments for "python_install": "name" must be a project name/);
+    assert.match(r.results[1], /nothing was looked up/);
+});
+
 test("denying a refusal card is an ordinary denial with no mismatch warn", { ...T, skip: SKIP }, async () => {
     const r = await installRun([call({ name: "tabulate" })], { answer: (_c, send) => send(false) });
     assert.match(r.results[0], /^Denied by the user\./);
     assert.ok(!r.results[0].includes(DENIAL));
     assert.deepEqual(r.mismatches, []);
+});
+
+test("an index that answers 500 raises an index-error refusal card", { ...T, skip: SKIP }, async () => {
+    const r = await installRun([call({ name: "tabulate" })], { index: new Map([["https://pypi.org/pypi/tabulate/json", 500]]) });
+    assert.equal(r.cards[0].renderIn.verdict.ok, false);
+    assert.equal(r.cards[0].renderIn.verdict.reason, "index-error");
+});
+
+test("an answer that is not the project's is read as not on the index", { ...T, skip: SKIP }, async () => {
+    const r = await installRun([call({ name: "tabulate" })], { index: new Map([["https://pypi.org/pypi/tabulate/json", { info: "not a project" }]]) });
+    assert.equal(r.cards[0].renderIn.verdict.ok, false);
+    assert.equal(r.cards[0].renderIn.verdict.reason, "not-on-index");
+});
+
+// --- an approved PyPI row is downloaded through the run ---
+
+// A pure wheel the lock lacks, served by pypi.org and files.pythonhosted.org: the approval's download is what the tool reports.
+const WHEEL = new TextEncoder().encode("a wheel's bytes, standing in for a zip");
+const WHEEL_SHA = (await import("node:crypto")).createHash("sha256").update(WHEEL).digest("hex");
+const WHEEL_FN = "tabulate-0.9.0-py3-none-any.whl";
+const WHEEL_URL = `https://files.pythonhosted.org/packages/ab/cd/${WHEEL_FN}`;
+const WHEEL_FILE = { filename: WHEEL_FN, size: WHEEL.byteLength, digests: { sha256: WHEEL_SHA }, url: WHEEL_URL, yanked: false };
+const TABULATE = new Map([["https://pypi.org/pypi/tabulate/json", { info: { name: "tabulate", version: "0.9.0", requires_python: null, requires_dist: null }, urls: [WHEEL_FILE], releases: { "0.9.0": [WHEEL_FILE] } }]]);
+
+test("approving a card with a PyPI row downloads it through the run, and the tool says it downloaded and checked the file", { ...T, skip: SKIP }, async () => {
+    const r = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]) });
+    const v = r.cards[0].renderIn.verdict;
+    assert.equal(v.ok, true);
+    assert.deepEqual(v.files.map((f) => [f.source, f.sha256, f.size]), [["pypi", WHEEL_SHA, WHEEL.byteLength]]);
+    assert.deepEqual(r.mismatches, []);
+    assert.equal(r.results[0], "Approved: downloaded and checked 1 file. This build does not install packages yet, so nothing was installed.");
+});
+
+test("asking again in the same run raises a card whose row the mirror holds, and approving it downloads nothing", { ...T, skip: SKIP }, async () => {
+    const TAB = call({ name: "tabulate" });
+    const r = await installRun([TAB, TAB], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]) });
+    assert.equal(r.cards.length, 2);
+    assert.deepEqual(r.cards[0].renderIn.verdict.files.map((f) => f.source), ["pypi"]);
+    assert.deepEqual(r.cards[1].renderIn.verdict.files.map((f) => [f.source, f.sha256]), [["mirror", WHEEL_SHA]]);
+    assert.deepEqual(r.mismatches, []);
+    assert.equal(r.results[0], "Approved: downloaded and checked 1 file. This build does not install packages yet, so nothing was installed.");
+    assert.equal(r.results[1], "Approved: 1 already held. This build does not install packages yet, so nothing was installed.");
+    assert.deepEqual(wheelGets, [WHEEL_URL]);
+});
+
+test("a download whose bytes are not the card's is reported as not installed, naming the file", { ...T, skip: SKIP }, async () => {
+    const other = new Uint8Array(WHEEL.byteLength).fill(120);
+    const r = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, other]]) });
+    assert.equal(r.results[0], `Not installed: ${WHEEL_FN} could not be downloaded as approved (${WHEEL_FN} does not match the sha256 the card showed). Nothing of it was kept.`);
+});
+
+test("a download that is refused is reported as not installed, and the run goes on", { ...T, skip: SKIP }, async () => {
+    const r = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE });
+    assert.ok(r.results[0].startsWith(`Not installed: ${WHEEL_FN} could not be downloaded as approved (the download answered 404)`), r.results[0]);
 });
 
 // --- bad arguments and an unoffered tool never raise a card ---
