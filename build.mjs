@@ -129,6 +129,10 @@ if (!/^[1-9][0-9]*$/.test(DEFINES.__PY_LEASE_MS__))
 DEFINES.__PY_DETACHED_MAX_MS__ ??= "300000";
 if (!/^[1-9][0-9]*$/.test(DEFINES.__PY_DETACHED_MAX_MS__))
     throw new Error(`__PY_DETACHED_MAX_MS__ must be a positive integer of milliseconds, got ${DEFINES.__PY_DETACHED_MAX_MS__}`);
+// The links sentence (src/agent/prompts.ts `LINKS_CLAUSE`): off unless a bench variant says `--define __ML_LINKS_SENTENCE__='"on"'`.
+DEFINES.__ML_LINKS_SENTENCE__ ??= JSON.stringify("off");
+if (![JSON.stringify("on"), JSON.stringify("off")].includes(DEFINES.__ML_LINKS_SENTENCE__))
+    throw new Error(`__ML_LINKS_SENTENCE__ must be "on" or "off", got ${DEFINES.__ML_LINKS_SENTENCE__}`);
 
 // Core (injected/content/background/popup/sidebar-shell) is left UNminified so
 // injected.js stays readable when inspected in devtools. The sidebar app is a

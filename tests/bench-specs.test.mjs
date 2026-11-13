@@ -145,3 +145,49 @@ test("tools-into-js's arms are fetch_url, exec and both, each with answer and no
     for (const t of spec.tasks) assert.equal(t.regression.included, false, `${t.id} measures a reduced toolset`);
 });
 
+
+// --- links-prompt: a link to the place passes, a wrong, broken or bare one does not, and the arms differ only in the sentence ---
+
+test("links-prompt passes a link to the setting's row or its section, in the shapes a model writes them", async () => {
+    const spec = await load("links-prompt");
+    assert.equal(scores(task(spec, "api-key"), "Paste it in [API key](window-ml:setting/apiKey)."), true);
+    assert.equal(scores(task(spec, "api-key"), "Under [Settings → Connection](window-ml:settings/extension/connection)."), true);
+    assert.equal(scores(task(spec, "shell"), "Turn on [Programs (ml.sh)](window-ml:settings/extension/advanced/shell), then pick a folder."), true);
+    assert.equal(scores(task(spec, "shell"), "1. Open [this](window-ml:setting/shellRoots)\n2. Add a root."), true);
+    assert.equal(scores(task(spec, "readonly"), "Untick [auto-approve](window-ml:setting/autoApproveReadonly)."), true);
+    assert.equal(scores(task(spec, "backup"), "Use [Backup and restore](window-ml:settings/extension/backup)."), true);
+});
+
+test("links-prompt rejects a link to the wrong place, one that does not resolve, and the form outside a Markdown link", async () => {
+    const spec = await load("links-prompt");
+    assert.equal(scores(task(spec, "api-key"), "Open Settings → Connection and paste your key."), false);
+    assert.equal(scores(task(spec, "api-key"), "See [models](window-ml:settings/extension/models)."), false);
+    assert.equal(scores(task(spec, "api-key"), "See [key](window-ml:setting/api_key)."), false);
+    assert.equal(scores(task(spec, "api-key"), "Use `window-ml:setting/apiKey` in Settings."), false);
+    assert.equal(scores(task(spec, "api-key"), "[API key](window-ml:setting/apiKey?x=1)"), false);
+    assert.equal(scores(task(spec, "shell"), "See [Advanced](window-ml:settings/extension/advanced/cdp)."), false);
+    assert.equal(scores(task(spec, "readonly"), "See [Python](window-ml:setting/autoApprovePython)."), false);
+    assert.equal(scores(task(spec, "backup"), "See [Storage](window-ml:settings/extension/appearance/general)."), false);
+});
+
+test("links-prompt's control passes the page's code with no link, and fails on a link or a missing code", async () => {
+    const spec = await load("links-prompt");
+    assert.equal(scores(task(spec, "control"), "CROSSPAGE-4471"), true);
+    assert.equal(scores(task(spec, "control"), "CROSSPAGE-4471. You can change [the model](window-ml:setting/model)."), false);
+    assert.equal(scores(task(spec, "control"), "There is no code on this page."), false);
+});
+
+test("links-prompt's arms set only the links sentence, both explicitly, and no task is in the regression suite", async () => {
+    const spec = await load("links-prompt");
+    assert.deepEqual(spec.dimensions.sentence, ["off", "on"]);
+    for (const sentence of spec.dimensions.sentence)
+        assert.deepEqual(spec.apply({ model: "m", sentence }), { backend: { model: "m" }, defines: { __ML_LINKS_SENTENCE__: JSON.stringify(sentence) }, surface: "hud" });
+    assert.equal(spec.apply({ model: "fake", sentence: "on" }).backend, undefined, "the dry run's cells stay on the fake");
+    for (const t of spec.tasks) assert.equal(t.regression.included, false);
+});
+
+test("links-prompt's task texts do not hold the answer: no address, key or section name a task asks for", async () => {
+    const spec = await load("links-prompt");
+    for (const t of spec.tasks)
+        assert.doesNotMatch(t.task, /window-ml:|apiKey|shellEnabled|autoApproveReadonly|Connection|Programs|JavaScript|Backup and restore/, t.id);
+});
