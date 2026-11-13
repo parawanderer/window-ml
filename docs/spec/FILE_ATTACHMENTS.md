@@ -594,8 +594,8 @@ lane's read of this spec):
    synchronous channel (`FS.createLazyFile` uses synchronous XHR; WORKERFS over posted Blobs is unmeasured, needs
    `FileReaderSync`, which the lockdown does not allow, and fails a write with EIO, not EROFS); it is not proposed. A
    cell still raises the cost: reading a whole file grows wasm memory by its size, `mmap` copies into the heap, and a
-   copy out of `attached/` is a new node, so item 6's three times bounds the worst case. With Emscripten's JS-side
-   `FS.trackingDelegate` (`onCloseFile`, `onWriteToFile`) seeing every close, raw `os.open`/`os.write`/`os.close`
+   copy out of `attached/` is a new node, so item 6's three times bounds the worst case. Emscripten's JS-side
+   `FS.trackingDelegate` (`onCloseFile`, `onWriteToFile`) sees every close, raw `os.open`/`os.write`/`os.close`
    included. No Atomics-backed FS: Pyodide ships no synchronous remote backend, `Atomics.wait` would block the interrupt
    buffer so Stop would fall through to the kill, and it would save almost nothing on a terminate. The hooks live on the
    Module/FS object, which the lockdown seals from cells (`PYODIDE_JS_SEAL`); they stay synchronous.
