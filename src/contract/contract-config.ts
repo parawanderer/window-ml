@@ -346,6 +346,77 @@ export const DEFAULT_CONFIG: MlConfig = {
     groundingRange: DEFAULT_GROUNDING_RANGE,
 };
 
+/** Where one setting is edited in the DevTools Settings panel: its tab, and the collapsible section holding its row
+ *  (absent on a tab with no sections). */
+export interface SettingPlace {
+    tab: PanelTab;
+    section?: string;
+}
+
+/**
+ * Where each setting's row is in the DevTools Settings panel, by config key, so a `window-ml:setting/<key>` link
+ * (docs/spec/LINKS.md) can open that row. A key with no control in the panel has no place: `ocrNumCtx`, and the
+ * legacy self-approval setting, which the panel's list of origins replaced (site-access.ts). The row
+ * carries `data-setting="<key>"`; tests/setting-places.test.mjs renders the panel and checks the two agree.
+ */
+export const SETTING_PLACES: Readonly<Partial<Record<keyof MlConfig, SettingPlace>>> = {
+    chatUrl: { tab: "connection" },
+    apiKey: { tab: "connection" },
+    apiFormat: { tab: "connection" },
+    model: { tab: "models", section: "defaults" },
+    ocrModel: { tab: "models", section: "defaults" },
+    defaultModelVision: { tab: "models", section: "defaults" },
+    agentStepMaxTokens: { tab: "models", section: "defaults" },
+    modelFilter: { tab: "models", section: "modelFilter" },
+    utilityModel: { tab: "models", section: "utility" },
+    utilityNumCtx: { tab: "models", section: "utility" },
+    utilityForceCpu: { tab: "models", section: "utility" },
+    autoTitles: { tab: "models", section: "utility" },
+    embeddingModel: { tab: "models", section: "embeddings" },
+    embeddingKeepAlive: { tab: "models", section: "embeddings" },
+    embeddingForceCpu: { tab: "models", section: "embeddings" },
+    groundingEnabled: { tab: "models", section: "grounding" },
+    groundingModel: { tab: "models", section: "grounding" },
+    groundingRange: { tab: "models", section: "grounding" },
+    theme: { tab: "appearance", section: "general" },
+    debugMode: { tab: "appearance", section: "devtools" },
+    listPageSessions: { tab: "appearance", section: "devtools" },
+    persistUiRuns: { tab: "appearance", section: "devtools" },
+    sessionRetentionDays: { tab: "appearance", section: "devtools" },
+    sessionStoreBudgetMB: { tab: "appearance", section: "devtools" },
+    agentStartPage: { tab: "appearance", section: "devtools" },
+    priceSnapshotUrl: { tab: "appearance", section: "spend" },
+    electricityPerKwh: { tab: "appearance", section: "spend" },
+    electricityOffPeakPerKwh: { tab: "appearance", section: "spend" },
+    electricityOffPeakHours: { tab: "appearance", section: "spend" },
+    electricityOffPeakWeekends: { tab: "appearance", section: "spend" },
+    electricityCurrency: { tab: "appearance", section: "spend" },
+    sessionArchive: { tab: "appearance", section: "storage" },
+    cardCorner: { tab: "appearance", section: "agenthud" },
+    agentHud: { tab: "appearance", section: "agenthud" },
+    agentHudInDevtools: { tab: "appearance", section: "agenthud" },
+    exportToolDefs: { tab: "appearance", section: "export" },
+    commanderServerTools: { tab: "advanced", section: "servertools" },
+    serverToolsOff: { tab: "advanced", section: "servertools" },
+    autoApproveReadonly: { tab: "advanced", section: "javascript" },
+    labelMatch: { tab: "advanced", section: "pointers" },
+    valueStoreBudgetMB: { tab: "advanced", section: "pointers" },
+    autoApprovePython: { tab: "advanced", section: "python" },
+    pythonIdleMinutes: { tab: "advanced", section: "python" },
+    autoApproveSelfSource: { tab: "advanced", section: "fetch" },
+    agentSeesFocus: { tab: "advanced", section: "focus" },
+    shellEnabled: { tab: "advanced", section: "shell" },
+    shellRoots: { tab: "advanced", section: "shell" },
+    shellSandbox: { tab: "advanced", section: "shell" },
+    shellPath: { tab: "advanced", section: "shell" },
+    selfIntrospection: { tab: "advanced", section: "introspection" },
+    protoStream: { tab: "advanced", section: "protostream" },
+    pierceClosedShadow: { tab: "advanced", section: "shadow" },
+    cdp: { tab: "advanced", section: "cdp" },
+    execDefaultWorld: { tab: "advanced", section: "cdp" },
+    siteRequests: { tab: "permissions", section: "siteapprovals" },
+};
+
 /** The world an exec asks for with its `world` argument, or the default one. */
 export type ExecWorld = "page" | "isolated";
 
@@ -432,3 +503,48 @@ export type AccessAnswer =
     | { state: "pending" }
     | { state: "denied" }
     | { state: "refused"; reason: string };
+
+/** One tab of the DevTools Settings panel and its collapsible sections, by `Section` id and title. */
+interface PanelTabLayout {
+    label: string;
+    sections: Readonly<Record<string, string>>;
+}
+
+const layout = {
+    connection: { label: "Connection", sections: {} },
+    models: { label: "Models", sections: {
+        defaults: "Defaults", modelFilter: "Model access filter", utility: "Utility model", embeddings: "Embeddings",
+        grounding: "Visual grounding" } },
+    appearance: { label: "Appearance", sections: {
+        general: "General", devtools: "DevTools", spend: "Spend", storage: "Storage", agenthud: "Agent HUD",
+        codeblocks: "Code blocks", runstats: "Run stats", export: "Export" } },
+    advanced: { label: "Advanced", sections: {
+        servertools: "Server-side tools", javascript: "JavaScript", pointers: "Output pointers", python: "Sandboxed Python",
+        fetch: "Fetching (fetch_url / ml.fetch)", focus: "Where you are (chat_metadata)", shell: "Programs (ml.sh)",
+        manifests: "Program manifests (ml.sh)", libraries: "Python libraries (read-only dialect)",
+        introspection: "The agent reading its own run (ml.current)", protostream: "Streaming wire format",
+        shadow: "Shadow DOM", cdp: "Debugger-based actions and user scripts" } },
+    permissions: { label: "Permissions", sections: {
+        waitingrequests: "Waiting for an answer", siteapprovals: "Sites that may use window.ml",
+        policies: "Policies", whitelist: "Sites that approve their own actions",
+        hostaccess: "Site access (agent fetches)" } },
+} satisfies Record<string, PanelTabLayout>;
+
+/** A tab of the DevTools Settings panel (`SETTINGS_TABS`, sidebar/settings/settings.tsx). */
+export type PanelTab = keyof typeof layout;
+
+/** The DevTools Settings panel's tabs, in order, with each one's sections by id and title, in the order the view draws
+ *  them: what a `window-ml:` link and the chat page's `settings/extension/…` hash may name. The one table of it;
+ *  `PANEL_TABS` and `PANEL_SECTIONS` are views of it. tests/setting-places.test.js and tests/sidebar-settings.test.js
+ *  render the panel and fail when this and what it draws disagree. */
+export const PANEL_LAYOUT: Readonly<Record<PanelTab, PanelTabLayout>> = layout;
+
+/** The panel's tabs, in the order it shows them. */
+export const PANEL_TABS = Object.keys(PANEL_LAYOUT) as readonly PanelTab[];
+
+/** The section ids each panel tab draws, in order. */
+export const PANEL_SECTIONS: Readonly<Record<PanelTab, readonly string[]>> = (() => {
+    const out = {} as Record<PanelTab, readonly string[]>;
+    for (const t of PANEL_TABS) out[t] = Object.keys(PANEL_LAYOUT[t].sections);
+    return out;
+})();

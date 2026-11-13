@@ -62,7 +62,8 @@ import { fetchTarget } from "./sw-fetch-url";
 import { grantRunFetch, grantRunOrigin, runOriginGranted, runOrigins, runFetchConsented, grantRunPython, takePyRefusal, pythonDialectReady } from "./worker-tools";
 import { autoApprovePython } from "../agent/auto-approve";
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
-import { PROPOSAL_TOOLS, withoutProposals, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart } from "./sw-runs";
+import { takeMovedNote } from "./move-run";
+import { PROPOSAL_TOOLS, withoutProposals, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, keptOnRebuild, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { drawStoredPages } from "./sw-attach";
 import { claimValue, runMayClaim, valueHolders, readStoredBytes, readStoredColumns, readStoredText, withHeldValuesOnly } from "./sw-values";
@@ -83,6 +84,7 @@ import { adoptOnTab } from "./adopt-run";
 import { approvalFor, cancelReasons, gatePageTurn, noteRunEnd, noteRunStart, personClaimed } from "./sw-start-approval";
 import { pageTurnText } from "../agent-start";
 import { toPageUi } from "./sw-side-panel";
+import { checkInstall, installRequest, judgeAnswer, noteInstallOutcome, type PkgCheck } from "./sw-pkg-install";
 
 // The model-facing cap cdpEval clips its console to (exec's default per-slot cap) — the UI keeps far more, so
 // `seen` marks where the model's copy stopped, exactly like the main-world exec path.
@@ -536,6 +538,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     /** Whether this run may ask the person to store a program manifest (`propose_manifest`): one the worker built, whose
      *  tools offer it (the settings turned ml.sh on when it started). Whether the host answers is the check's. */
     const offersManifests = (): boolean => p.builtBy === "worker" && byWorker() && runsInWorker(p, "propose_manifest");
+    /** Whether this run may ask the person to install a Python package (`python_install`): one the worker built, whose
+     *  tools offer it (none yet: `OFFER_PYTHON_INSTALL`, sw-run-start.ts). */
+    const offersInstall = (): boolean => p.builtBy === "worker" && byWorker() && runsInWorker(p, "python_install");
     /** `p` as the run is stored for a later turn or a worker restart: a run handed to the worker during this turn
      *  (`makeWorkerRun`) stays the worker's. `p` is the turn's start payload, written before the hand-over, and storing
      *  it as it is would give the run back to the page that built it, whose RESUME_RUN would then be honoured. Its tools
@@ -721,7 +726,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         if (p.crossPage !== false) trackRun(tabId, runId, p.rebuild);
         // Durable resume: snapshot the run NOW (before the first step) + after each step (the checkpoint dep),
         // so an SW evicted mid-run rehydrates from storage. Cleared when the run settles (finally).
-        persistRun(runId, { p: storedP(), tabId, messages: resumeMessages || [], sub: snapSub() });
+        persistRun(runId, { p: storedP(), tabId, messages: resumeMessages || [], sub: snapSub(), ...keptOnRebuild(runId) });
         // `remote` has to survive into the loop's ToolMeta: it is what makes a remote tool's output CITABLE
         // (`meta?.remote` in agent-loop), and it cannot be recovered from the name — the name is generated
         // from the server's own bundle, so no hardcoded list can hold it. Dropping it here made the whole
@@ -1138,6 +1143,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         // Only a resume the person started (`builtBy` is the worker's to set): a page naming a hash must not be told, or consume, another origin's note.
                         const gone = resumeMessages?.length && p.builtBy === "worker" ? takeArchiveNotice(runId) : undefined;
                         if (gone) { (messages as { role: string; content: string }[]).push({ role: "system", content: gone }); recordRunLog(runId, { subsystem: "policy", kind: "archive-told", reason: "archived" }); }
+                        // A run the person moved to another tab since its last turn is told so, the same way (move-run.ts).
+                        const moved = resumeMessages?.length && p.builtBy === "worker" ? takeMovedNote(runId) : undefined;
+                        if (moved) (messages as { role: string; content: string }[]).push({ role: "system", content: moved });
                     }
                     // WHAT THIS REQUEST IS FOR: an agent step, in this run's session (see RequestHint).
                     const hint: RequestHint = { use: "agent", session: hintSession(runId), ...(opts?.after ? { after: opts.after } : {}) };
@@ -1718,6 +1726,13 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         const c = await checkManifestProposal({ runId, seq: seqBase }, args);
                         return "error" in c ? c.error : null;
                     }
+                    // A package request is checked in the worker; a refusal is still a card (it says why), so only bad
+                    // arguments and a run that does not offer the tool are told to the model without one.
+                    if (name === "python_install") {
+                        if (!offersInstall()) return `Error: python_install is not offered in this run.`;
+                        const r = installRequest(args);
+                        return typeof r === "string" ? r : null;
+                    }
                     // A worker-built run's exec is checked here, never on the page: its checks need nothing of the page's, and
                     // the page is not shown a call that may run in another world. A `world` it cannot have is refused before
                     // the person is asked to approve it (a call without one is routed after approval, as before).
@@ -1786,6 +1801,19 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                             renderIn = { type: "code", text: JSON.stringify(c.request.manifest, null, 2), lang: "json", note: await draftCardNote(owner, c) };
                         } else renderIn = { type: "code", text: "", lang: "json", note: c ? `This manifest cannot be stored: ${c.error.replace(/^Error: /, "")}` : "This manifest cannot be stored: the run does not offer propose_manifest, or ml.sh is not set up." };
                     }
+                    // python_install's card: the verdict frozen here, its rows what the person approves (the resolve below).
+                    let pkg: PkgCheck | undefined;
+                    if (tool === "python_install" && offersInstall()) {
+                        const r = installRequest(args);
+                        if (typeof r !== "string") {
+                            pkg = await checkInstall(r).catch(() => undefined);
+                            if (pkg) {
+                                renderIn = { type: "packages", ecosystem: "pypi", request: pkg.request, verdict: pkg.card };
+                                recordRunLog(runId, { subsystem: "python", kind: "pkg-card", reason: pkg.card.ok ? "ok" : pkg.card.reason, detail: { tool, files: pkg.card.ok ? pkg.card.files.length : 0 } });
+                            }
+                        }
+                        if (!pkg) renderIn = { type: "code", text: "", lang: "json", note: "This package cannot be checked: the core's lock could not be read." };
+                    }
                     if (!renderIn) try {
                         const env = await sendTool({ runId, name: tool, args, renderOnly: true }) as { renderIn?: unknown };
                         renderIn = env?.renderIn;
@@ -1822,6 +1850,15 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     return new Promise<ApprovalDecision>((resolve) => {
                         pendingApprovals.set(key, {
                             resolve: (decision) => {
+                                // A package card stands only on the rows it showed: anything else approving it is a denial.
+                                if (tool === "python_install" && (decision === true || (typeof decision === "object" && !!decision && decision.approved && !decision.cancelled))) {
+                                    const j = pkg && offersInstall() ? judgeAnswer(pkg, typeof decision === "object" ? decision.files : undefined) : { ok: false as const, reason: "no-check", why: "the run does not offer python_install, or its card could not be checked" };
+                                    if (j.ok) noteInstallOutcome(runId, args, "Approved, but this build does not install packages yet: nothing was downloaded or installed.");
+                                    else {
+                                        recordRunLog(runId, { level: "warn", subsystem: "python", kind: "pkg-card-mismatch", reason: j.reason, detail: { tool, seq: gateSeq ?? seqBase, why: j.why } });
+                                        decision = { approved: false, source: "user", feedback: "The approval did not carry the files the card showed, so it counts as a denial." };
+                                    }
+                                }
                                 const ok = decision === true || (typeof decision === "object" && !!decision && decision.approved);
                                 // What a decision remembers (consents, grants) is read from the model's arguments, which can be
                                 // anything: a throw there must not leave the gate hanging, so the decision is still delivered.
@@ -2004,7 +2041,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     } catch { return false; }
                 },
                 checkpoint: (messages) => {
-                    persistRun(runId, { p: storedP(), tabId, messages, sub: snapSub() });   // durable resume snapshot per step
+                    persistRun(runId, { p: storedP(), tabId, messages, sub: snapSub(), ...keptOnRebuild(runId) });   // durable resume snapshot per step
                     // And the same history where a SAVED session keeps it. The snapshot above dies with the run
                     // (it is deleted on settle, and is stale after five minutes); this one lives as long as the
                     // session does, which is what `session.resume` needs from a run that ended yesterday.
@@ -2073,7 +2110,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 // vanished from the sidebar/panel (and scrambled the export's chat-log order).
                 // A run handed to the worker while this turn ran stays the worker's (`storedP`).
                 const resumeP = { ...storedP(), stepBase: stepBase + runMaxStep, seqBase: seqBase + runMaxSeq };
-                bgRuns.set(runId, { p: resumeP, tabId, messages, sub: snapSub() });
+                bgRuns.set(runId, { p: resumeP, tabId, messages, sub: snapSub(), ...keptOnRebuild(runId) });
                 // The same snapshot `bgRuns` holds, where it outlives the run: `resumeP` so a later turn continues
                 // AFTER this one's steps rather than colliding with them.
                 saveRunHistory(runId, { messages, payload: resumeP, sub: snapSub() });

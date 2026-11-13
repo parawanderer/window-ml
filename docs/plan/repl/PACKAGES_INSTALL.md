@@ -168,6 +168,25 @@ reason and the package it names, with no Approve. It goes through the existing a
 tooltip. What a hostile page or index must not get from it is e3's red-team pass, run before it lands: a card whose
 text the index wrote, a filename that renders as something else, a hash the card truncates.
 
+AS BUILT (slice 2), with its departures, each ruled by the coordinator on 2026-11-12:
+
+- The tool is `python_install` (`src/tools/python-install-tool.ts`), declared in the tool registry, gated, run in the
+  worker and one of `PROPOSAL_TOOLS`. It is offered to no run until slice 4 (`OFFER_PYTHON_INSTALL` in
+  `sw-run-start.ts`), because before it an approved card installs nothing.
+- No network: the index view is the lock alone, so a package the core does not ship is refused as `not-on-index`.
+  The lock rows carry the lock's own sha256 (`LockEntry.sha256`); a lock file has no size, and the card says "in the
+  core". The platform scan's note waits for PyPI rows (slice 3).
+- The card is its own `RenderDescriptor`, `{ type: "packages", ecosystem: "pypi", request, verdict }`
+  (`pkg-card-view.tsx`). Index text is drawn as text nodes; a control, bidi or invisible character is replaced by U+FFFD
+  and listed beside its field as `\u{XXXX}`.
+- The answer carries the rows: `SET_APPROVAL` gains `files`, rebuilt field by field (`approvalPayload`,
+  `rowsFromAnswer`), and the worker approves only when they equal the rows it froze at card time (`judgeAnswer`). Any
+  other approval is a denial, with a run-log warn `python/pkg-card-mismatch`. The chat page, the phone and the hub
+  answer through `approval.answer`, which carries no rows, so from there a package card can only be denied; carrying
+  them is a `@hub-compat` change, open.
+- A refused card's footer is Dismiss alone (`.appr-btn.no.pkg-dismiss`), and the worker refuses an approval of a
+  refused check regardless.
+
 **Slice 3, the mirror and the download.** The mirror stores, locally, the pinned core's whole lock and the wheels a
 person has approved, keyed by sha256. The lock is never a network read, and PyPI is the one gated network read. Every
 downloaded byte is checked against the hash on the card before it is stored or loaded. A mismatch refuses, and nothing

@@ -11,7 +11,7 @@ import type { ElementContext } from "../contract";
 import type { StartRunPayload } from "../contract/contract-messages";
 import { imagesRefusal, shortHash, type AttachedFile, type PromptDisplay, type PromptOrigin, type SentFile } from "../contract/contract-run";
 import { FilesRefused, checkFilesField, cleanFiles, isPdfFile, pdfToPageRun } from "../attached-files";
-import { PageGone, pageRouteFor } from "./page-route";
+import { PageGone, RunMoved, pageRouteFor } from "./page-route";
 import { ImagesRefused } from "../image-gate";
 import { framePrompt } from "../agent/prompts";
 import { promptSurfaceOf } from "../agent/prompt-surface";
@@ -35,6 +35,7 @@ import { noteWorkerVision } from "./run-vision";
 import { capPageContext } from "./page-answer-caps";
 import { proposePolicyTool } from "../tools/propose-policy-tool";
 import { proposeManifestTool } from "../tools/propose-manifest-tool";
+import { pythonInstallTool } from "../tools/python-install-tool";
 import { offersTask, taskTool } from "../tools/task-tool";
 import { shellTurnedOn } from "./sw-shell";
 import { defineTool } from "../ml/ml-tool-factories";
@@ -42,6 +43,10 @@ import { notePersonTurn } from "./sw-start-approval";
 import { adoptOnTab } from "./adopt-run";
 import { holdStands } from "./nav-arrival";
 import { toPageUi } from "./sw-side-panel";
+
+/** Whether a run the worker builds offers `python_install`. Off until the install step exists (docs/plan/repl/
+ *  PACKAGES_INSTALL.md, slice 4): before it, an approved card installs nothing, so offering it would only mislead. */
+export const OFFER_PYTHON_INSTALL = false;
 
 /** What a run is given when the person set no step budget: the same default `ml.agent` and `createAgent` use. */
 const DEFAULT_MAX_STEPS = 10;
@@ -96,7 +101,8 @@ async function startMinted(tabId: number, tab: chrome.tabs.Tab, url: string, ml:
     const shellOn = await getConfig().then(shellTurnedOn, () => false);
     // `task` wherever a call can detach: an ml.sh call, or a python_exec cell past its lease (sw-python-task.ts).
     const base = [...(recipe.options.tools ?? (ml as { domTools?: { name: string }[] }).domTools ?? []), ...(recipe.options.extraTools ?? [])];
-    const extraTools = [...(recipe.options.extraTools ?? []), proposePolicyTool(defineTool), ...(shellOn ? [proposeManifestTool(defineTool)] : []), ...(offersTask(shellOn, base.map((t) => t?.name)) ? [taskTool(defineTool)] : [])];
+    const extraTools = [...(recipe.options.extraTools ?? []), proposePolicyTool(defineTool), ...(shellOn ? [proposeManifestTool(defineTool)] : []), ...(offersTask(shellOn, base.map((t) => t?.name)) ? [taskTool(defineTool)] : []),
+        ...(OFFER_PYTHON_INSTALL ? [pythonInstallTool(defineTool)] : [])];
     const asm = await assembleRun(ml, recipe.task, { ...recipe.options, extraTools, ...(opts.answer ? { answer: true } : {}) });
     const rebuild = rebuildFor(asm, true, "worker");
     noteWorkerVision(runId);   // its vision facts are the worker's own (run-vision.ts)
@@ -221,8 +227,18 @@ function noteSend(hash: string, turn: number, added: readonly FilePointer[]): vo
  * Say in a run's step list that a message was not sent, and why: for a surface whose send has no answer to carry it.
  * @param hash the run
  * @param why the refusal's sentence
+ * @param onTab the tab the message was typed on, when known: the note is said there
  */
-export function noteRefusedTurn(hash: string, why: string): void { noteRunLine(hash, `Your message was not sent: ${why}`); }
+export function noteRefusedTurn(hash: string, why: string, onTab?: number): void {
+    const text = `Your message was not sent: ${why}`;
+    const runTab = bgRuns.get(hash)?.tabId ?? runInboxes.get(hash)?.tabId;
+    if (onTab == null || onTab === runTab) { noteRunLine(hash, text); return; }
+    const tabId = onTab;
+    const event = { kind: "agent-note", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text };
+    // Typed on a tab the run is not on (one it was moved off): said there only, never into the run's own history.
+    toPageUi(tabId, { type: "ML_DEBUG_TO_PAGE", event });
+    relayDebugEvent(tabId, event);
+}
 
 /**
  * Say one line in a run's step list, in the worker's own voice (an `agent-note`): for something that happened to the
@@ -268,7 +284,7 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
     const tabId = stored?.tabId ?? live?.tabId;
     // A run the worker drives (it built it, or took it over) is driven only from its own tab: from another, or one it no
     // longer holds, no page owns it either, so the message is refused rather than handed to the sending tab's page.
-    if (isWorkerRun(hash) && (tabId == null || (fromTabId != null && fromTabId !== tabId))) throw new PageGone();
+    if (isWorkerRun(hash) && (tabId == null || (fromTabId != null && fromTabId !== tabId))) throw fromTabId != null && stored?.leftTabs?.includes(fromTabId) ? new RunMoved() : new PageGone();
     // A run or chat a PAGE built is the page's to drive only on the tab that built it, on the site that built it, while
     // that site may use window.ml (page-route.ts): its handle keeps the history in step. Anywhere else the page the tab
     // shows did not build it, so the worker takes the run over if it holds it, and refuses the message if it does not.

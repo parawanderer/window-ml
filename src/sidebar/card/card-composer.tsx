@@ -17,6 +17,7 @@ import { isCloudModel } from "../model";
 import { STEP_BUDGETS } from "../../agent/step-budget";
 import { toHost } from "../parent-channel";
 import { imagesRefusal, promptLine } from "../../contract/contract-run";
+import { BringHereList } from "./card-bring";
 
 // The composer's model control: a chip showing the run's model (the per-call pick, else the default) that
 // opens a dropdown of the allowed models. Picking a row overrides the model FOR THIS RUN; the ★ persists it
@@ -129,6 +130,10 @@ export function ComposerCard() {
         files: { target: () => "agent", accepts: () => !appendTo || services().acceptsFiles(appendTo), acceptsPdf: () => !appendTo || services().acceptsPdf(appendTo), initial: () => back?.files ?? [] },
     });
     const budget = composerMaxSteps.value;   // the step budget (persists across opens)
+    // "Bring a session here" (MOVE_RUN.md): the body lists this browser's sessions instead of the task input. A new task
+    // only, and only where the surface sits in a tab (the HUD).
+    const [bringing, setBringing] = useState(false);
+    const canBring = target.mode === "new" && !!services().bringHere;
     const ref = useRef<HTMLTextAreaElement>(null);
     // Focus after a frame so the container's morph (and the shell's frame.focus) has landed.
     useEffect(() => { const id = requestAnimationFrame(() => ref.current?.focus()); return () => cancelAnimationFrame(id); }, []);
@@ -187,6 +192,7 @@ export function ComposerCard() {
                 {target.mode === "append" ? null : <ComposerModelBar />}
                 <button class="card-x" aria-label="Cancel" title="Cancel" onClick={close}>✕</button>
             </div>
+            {bringing ? <div class="card-body"><BringHereList onDone={close} onBack={() => setBringing(false)} /></div> : <>
             <div class="card-body">
                 {el ? <ElementPill ctx={el} onRemove={() => (composerElement.value = null)} /> : null}
                 <ThumbStrip imgs={att.imgs} loading={att.loading} onRemove={att.remove} />
@@ -207,6 +213,7 @@ export function ComposerCard() {
             <div class="card-foot card-cmp-foot">
                 <input ref={att.fileRef} type="file" accept={att.fileAccept} multiple style="display:none"
                     onChange={e => { att.addFiles((e.target as HTMLInputElement).files); (e.target as HTMLInputElement).value = ""; }} />
+                {canBring ? <button type="button" class="card-bring-open" onClick={() => setBringing(true)}>Bring a session here</button> : null}
                 <button class="tt cbtn" onClick={() => att.fileRef.current?.click()} aria-label={att.canFiles ? "Attach a file" : "Attach an image"}>＋<span class="tt-pop left above" role="tooltip">{att.canFiles ? "Attach an image or a text file (or paste or drop one)" : "Attach an image (or paste one)"}</span></button>
                 <span class="card-cmp-hint"><kbd class="kb">↵</kbd> send · <kbd class="kb">esc</kbd> cancel</span>
                 <span class="sp" />
@@ -226,6 +233,7 @@ export function ComposerCard() {
                 </div>
                 <button class="appr-btn yes" onClick={send} disabled={(!text.trim() && !att.imgs.length && !att.sendable.length && !el) || !!imagesRefusal(att.imgs.length)}>Send</button>
             </div>
+            </>}
         </div>
     );
 }

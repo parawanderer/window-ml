@@ -254,7 +254,7 @@ const defaultView = (parts: ApiDocsParts, env: EnvSection[], seen?: Set<string>)
         '    agent_api_docs({ search: "screenshot" })           // every section mentioning a term',
         "",
         `Types: ${Object.keys(parts.types).join(", ")}.`,
-        ...(more.length ? ["", `Also searchable by name: ${more.join(", ")} (how you are opened, your source commit, what you can read about your own setup, where runs start).`] : []),
+        ...(more.length ? ["", `Also searchable by name: ${more.join(", ")} (how you are opened, your source commit, what you can read about your own setup, the person's settings and how to link to one, where runs start).`] : []),
     ].join("\n");
     return [
         piece(seen, "preamble", "[intro already seen]", parts.preamble),

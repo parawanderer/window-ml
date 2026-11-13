@@ -44,8 +44,9 @@ export interface SidebarServices {
     /** answer an approval gate by the pending step's `seq`. `feedback` is a sentence that reaches the MODEL on a
      *  denial — why it was refused, so the run can try something else instead of guessing at a bare no. Ignored on an
      *  approval, where there is nothing to explain. */
-    /** Answer the gate of step `seq`, or the nested ask `ask` inside it. */
-    answerApproval(session: string, seq: number, decision: boolean, persist: boolean, feedback?: string, ask?: string): void;
+    /** Answer the gate of step `seq`, or the nested ask `ask` inside it. `files`: on approving a python_install card, the
+     *  rows it showed, which the worker compares with the rows it froze (a surface that cannot carry them denies). */
+    answerApproval(session: string, seq: number, decision: boolean, persist: boolean, feedback?: string, ask?: string, files?: import("../contract/contract-render").PkgRow[]): void;
     /** Answer a site's start card (docs/spec/SITE_ACCESS_SLICE3.md 1.1). Only the surfaces that may show the card have
      *  it: the HUD card, the overlay and the DevTools panel (Q7). Absent elsewhere, and the card is then not drawn. */
     answerStart?(requestId: string, decision: "allow" | "always" | "deny"): void;
@@ -73,6 +74,13 @@ export interface SidebarServices {
      * The panel says yes: it is attached to the tab that holds the run. Read during render, like `sideCalls`.
      */
     canContinue(session: string): boolean;
+    /**
+     * The sessions this browser can bring to the tab this surface sits in ("bring a session here", MOVE_RUN.md): this
+     * tab's site first. Only the HUD, which sits in a tab, has it.
+     */
+    bringable?(): Promise<{ hash: string; title: string; url: string; lastTs: number; held: boolean }[]>;
+    /** Bring one of {@link bringable} to this tab: moved when the runtime holds it, resumed here when it is saved. */
+    bringHere?(session: string): Promise<{ ok: true } | { error: string }>;
     /**
      * Would the runtime still ACT on this session? Named for the fact rather than for one action, because two
      * controls depend on it and they fail differently: stopping is REFUSED ("the session is not running"), while
@@ -117,6 +125,9 @@ export interface SidebarServices {
     /** Open this client's Settings filtered to a field ("Electricity price"), for a warning that names what to set.
      *  Null where these settings are not this surface's to change. */
     findSetting: ((query: string) => void) | null;
+    /** Open the DevTools Settings panel view a `window-ml:` link names (sidebar/links.ts, docs/spec/LINKS.md). Null
+     *  or absent where this surface cannot draw that panel, and then such a link renders as its label. */
+    openAddress?: ((route: import("./links").PanelRoute) => void) | null;
     /** persist a display preference (the bench's state, and the like) */
     savePref(key: string, value: unknown): void;
     /** Hand a finished file to the person: a download in a browser, the share sheet on a phone. The EXPORTS go
@@ -185,6 +196,7 @@ const UNAVAILABLE: SidebarServices = {
     sheetTitle: async () => null,
     priceCalls: null,
     findSetting: null,
+    openAddress: null,
     savePref() {},
     saveFile() {},
     printDoc: null,
