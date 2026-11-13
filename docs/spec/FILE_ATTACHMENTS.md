@@ -974,9 +974,9 @@ and the per-request judging, the folder watch: the host lane, as stated in "What
 
 ### What window-ml-host must do for mounts, `/files` and `ml.sh` diffs (ruled 2026-11-13)
 
-RULED 2026-11-13 (Shane: "fine for now", to be changed where building shows one wrong). Nothing is built. The coordinator's
-ruling (Shane, 2026-11-13): no host-side lane opens until this is ruled; then one lane, in its own window-ml-host
-clone, takes the scope check (H1 to H8) first, then the argv refusal (H9), then the snapshot (H10 to H15). It states
+RULED 2026-11-13 (Shane: "fine for now", to be changed where building shows one wrong). Nothing is built. The
+coordinator's ruling (Shane, 2026-11-13): with this ruled, one host lane opens, in its own window-ml-host clone, and
+takes the scope check (H1 to H8) first, then the argv refusal (H9), then the snapshot (H10 to H15). It states
 as requirements on the host what the two sections above leave to "the `ml.sh` and window-ml-host owner", and settles
 three places where they and `SHELL.md` disagree (named where each is settled, and listed under "Ruled with it" at
 the end).
