@@ -2,7 +2,7 @@
 
 **Status: proposed 2026-11-13, nothing built.** From Shane's words in the calm-chat-motion session (2026-11-13) and the
 points agreed there, handed to the settings-specs lane by the policies/python/desktop/manifests coordinator. Questions
-1 and 3 of the first review (`ml.config()` stays as it is; the guarded class is not a second mechanism) were ruled by
+1 and 2 of the first review (`ml.config()` stays as it is; the guarded class is not a second mechanism) were ruled by
 Shane on 2026-11-13 as proposed. Shane also ruled on 2026-11-13:
 
 - the model reads the settings through `ml.settings()`, not `ml.current.settings`: they are the person's global
@@ -223,8 +223,11 @@ sidebar, the DevTools panel, the chat page or over the hub. The guards are the o
 ## The surface
 
 **Reading: `ml.settings()`**, built with the first key ("Slices"). The model's one view of the settings: one entry per
-classified key, the secrets included. An entry carries a value wherever the model may read it by any route, which is
-the 20 keys `ml.config()` already returns plus the keys on the whitelist; every other entry is hidden:
+classified key with a place in `SETTING_PLACES` (a row in the panel), the secrets included: the rule that keeps a key
+off the whitelist (rule 6) also keeps it out of the entries, so every entry's doc can name where the setting lives. A
+key with no place (today `ocrNumCtx`) is read through `ml.config()` until it gets a control (open question 6). An
+entry carries a value wherever the model may read it by any route, which is the 20 keys `ml.config()` already returns
+plus the keys on the whitelist; every other entry is hidden:
 
 ```ts
 model:        { value: "qwen3:14b", mode: "read", class: "ordinary" }   // also returned by ml.config()
@@ -322,7 +325,9 @@ call this surface (above); what it can do is ask the model, in text, to call it.
    change of the same key, to any value, is refused for the rest of that run with no card and a reason naming the
    earlier decline; nothing is remembered across runs (Shane, 2026-11-13). That is run-scoped memory of the model's own
    refused call, kept with the run and gone with it: it can only refuse, never answer for the person, and it is not a
-   policy, so it is not the remembered answer rule 2 excludes. Built in the PR that adds the first guarded key.
+   policy, so it is not the remembered answer rule 2 excludes. Built in the PR that adds the first guarded key. It
+   is run state, so that commit declares it beside the run store with `defineState` (`src/state-registry.ts`,
+   `docs/dev/state.md`): not a fourth copy, and the state inspector shows it.
 7. **Propagation.** The config lives in `chrome.storage.sync`, so a change the model makes on one browser lands on
    every browser signed in to the profile, including ones the person is not looking at. The card says so (above), for
    every key in `sync`. A guarded change still writes to
@@ -334,8 +339,8 @@ call this surface (above); what it can do is ask the model, in text, to call it.
 
 **Red-team rows** (e3, through the coordinator), what a hostile page or an injected model must not get:
 
-- a read of any key off the whitelist, of any secret by any route, of `ml.settings()` from a page's script or a
-  page-started run;
+- a read of any key off the whitelist that `ml.config()` does not return, of any secret by any route, of
+  `ml.settings()` from a page's script or a page-started run;
 - a write of any key off the list, of a `read` key, of a secret, or of a value outside the key's domain;
 - a guarded change in its guarded direction without a card, by an `allow` policy of any origin, a proposed policy, a
   remembered answer or a policy file;
@@ -384,5 +389,5 @@ call this surface (above); what it can do is ask the model, in text, to call it.
 
 ## Owners
 
-Not assigned. The tool, the consumer and the store: whoever builds it, with the policies lane for the consumer. The
-Settings section: the settings panel's owner.
+Not assigned. The tool, the consumer and the store: whoever builds it, with the policies lane for the consumer. A
+Settings section for a list the person edits (open question 8) would be the settings panel's owner's.
