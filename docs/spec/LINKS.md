@@ -78,7 +78,7 @@ is told apart from an `@tool:` pointer by shape, as the pointer forms are from e
 | `settings/extension/<panelTab>/<section>` | that tab with the section open and scrolled to (`advanced/shell`, `permissions/policies`) | parsed (`route.ts`, `settings-sections.ts`); `showSettingsSection` exists |
 | `setting/<key>` | the row of one setting, by its config key: its tab, its section open, the row scrolled to and marked | parsed (`route.ts`), any `DEFAULT_CONFIG` key |
 
-The address grammar is the chat page's, minus the leading `#/`, plus the two proposed forms. One parser serves both:
+The address grammar is the chat page's, minus the leading `#/`, plus the two new forms. One parser serves both:
 `parseRoute` grows the panel tab and section, and a `window-ml:` destination is parsed by the same function, so a hash
 and a link cannot disagree about what an address means. `backup` stays an alias of `appearance/storage` with the
 Backup block as its target, so the existing link keeps working; no panel tab is named `backup`, so the third part is
@@ -94,9 +94,10 @@ Extension tab draws the same settings view.
 MODEL_SETTINGS.md, #1793, or `ml.config()`). To resolve it, each row of the panel carries
 `data-setting="<key>"`, and a table beside `DEFAULT_CONFIG` names each key's tab and section. A test enumerates
 `DEFAULT_CONFIG` and fails on a key with a panel control and no place, or a place whose row does not carry the key
-(AGENTS.md: enumerate, do not sample). A key with no control (today `ocrNumCtx`) has no address and its link renders as
-text. A link to a secret's row (`setting/apiKey`) is allowed: it opens the row, never reads the value, and "set your
-API key here" is exactly the help Shane asked for.
+(AGENTS.md: enumerate, do not sample). A key with no control (today `ocrNumCtx`) is to have no address and its link
+renders as text; until that table exists the parser is broader and accepts every `DEFAULT_CONFIG` key, `ocrNumCtx`
+included, and the table narrows it. A link to a secret's row (`setting/apiKey`) is allowed: it opens the row, never
+reads the value, and "set your API key here" is exactly the help Shane asked for.
 
 ## What a click does, by surface
 
