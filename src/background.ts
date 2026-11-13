@@ -51,6 +51,7 @@ import { addManifest, manifestView, removeManifest } from "./sw/sw-manifests";
 import { librariesReady, removeLibrary, storedLibraries } from "./sw/sw-libraries";
 import { checkDraft } from "./sw/sw-manifest-proposal";
 
+import { bringableSessions, bringHere } from "./sw/bring-here";
 import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, contextByRun, turnByRun, workerRunsStarting, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, senderOwnsRun, reconcileTabPins, startingControllers, abortStart, startingOwnedBy } from "./sw/sw-runs";
 import { cancelPageTasks } from "./sw/sw-tasks";
 import { moveTabKey } from "./sw/tab-replaced";
@@ -419,7 +420,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             void userRunAction(message.hash, message.action, { text: message.text, images: message.images, ...(message.files != null ? { files: message.files } : {}), surface: message.surface, maxSteps: message.maxSteps }, message.tabId)
                 .then((mine) => { if (!mine) toPage(); }, (e) => {
                     // As on USER_RUN_ACTION: a refused turn is said in the run's step list, never handed to the page.
-                    if (e instanceof ImagesRefused || e instanceof FilesRefused || e instanceof PageGone) { noteRefusedTurn(message.hash as string, e.message); return; }
+                    if (e instanceof ImagesRefused || e instanceof FilesRefused || e instanceof PageGone) { noteRefusedTurn(message.hash as string, e.message, typeof message.tabId === "number" ? message.tabId : undefined); return; }
                     toPage();
                 });
             return;
@@ -477,6 +478,24 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // Answered, so the surface can say "expired" for an ask this worker no longer holds (an eviction, a timeout).
         sendResponse({ data: resolveStart(p.requestId, p.decision, isExtensionSender(sender) ? undefined : sender.tab?.id ?? -1) });
         return;
+    }
+    // "Bring a session here" from the HUD (MOVE_RUN.md, shape (a)): a settled run moves to the tab the HUD sits in (a saved
+    // one this worker no longer holds is resumed there, as `session.resume` does). Only
+    // the person's own surface sends it, proved by the sender (an extension frame), and the destination is the sender's
+    // tab, never one the message names. Never in HANDLE_MAP, so no page's message is relayed here.
+    if (message.type === "MOVE_RUN") {
+        const runId = (message.payload as { runId?: unknown } | undefined)?.runId;
+        const toTabId = sender.tab?.id;
+        if (!isExtensionSender(sender) || toTabId == null || typeof runId !== "string") { sendResponse({ error: "Refused: a session is moved only from the extension's own surface in the tab it moves to." }); return; }
+        void bringHere(runId, toTabId).then((r) => sendResponse("refused" in r ? { error: r.refused } : { data: true }), (e) => sendResponse({ error: (e as Error)?.message || String(e) }));
+        return true;
+    }
+    // The sessions "bring a session here" offers in the HUD on this tab: the same sender rule as MOVE_RUN.
+    if (message.type === "LIST_BRINGABLE") {
+        const tabId = sender.tab?.id;
+        if (!isExtensionSender(sender) || tabId == null) { sendResponse({ error: "Refused: only the extension's own surface lists sessions." }); return; }
+        void Promise.resolve(chrome.tabs.get(tabId)).then((t) => sendResponse({ data: bringableSessions(tabId, t?.url || "") }), () => sendResponse({ data: [] }));
+        return true;
     }
     // A document answered open that has heard no page script (content.ts): it loaded between its origin turning visible and
     // the registration covering it (SITE_PRESENCE.md step 2). Put the scripts in when the SENDER's origin is visible now;
@@ -882,7 +901,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         userRunAction(p.hash, p.action, message.payload, sender.tab.id).then((outcome) => sendResponse({ data: outcome }), (e) => {
             // Images the run may not be sent (vision not known, no reader): said in the run's step list, since this
             // surface has no other place to say it, and answered as handled so the shell does not hand it to the page.
-            if (e instanceof ImagesRefused || e instanceof FilesRefused || e instanceof PageGone) { noteRefusedTurn(p.hash as string, e.message); sendResponse({ data: null, refused: e.message }); return; }
+            if (e instanceof ImagesRefused || e instanceof FilesRefused || e instanceof PageGone) { noteRefusedTurn(p.hash as string, e.message, sender.tab?.id); sendResponse({ data: null, refused: e.message }); return; }
             sendResponse({ data: null });
         });
         return true;

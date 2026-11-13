@@ -803,6 +803,9 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* Roomier gap BETWEEN fields inside an open section (the label→input gap stays tight at 3px), so each
    labelled control reads as its own group instead of crowding the field above it. */
 .set-section[open] { gap: 13px; }
+/* The row a `window-ml:setting/<key>` link opened (settings.tsx markRow): ringed for a few seconds, then plain. */
+.set-marked { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; animation: set-marked 6s ease-out forwards; }
+@keyframes set-marked { 0%, 70% { outline-color: var(--accent); } 100% { outline-color: transparent; } }
 /* The last section in a tab has nothing after it — drop the trailing divider + extra padding. */
 .set-body > .set-section:last-child { border-bottom: none; padding-bottom: 2px; }
 /* Permission-enable button rows (Google Sheets / Incognito) — give the button breathing room from the
@@ -2430,6 +2433,10 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
 /* A markdown link is a `.tt` trigger for its `data-tip`, and must stay an inline run of text, not the tooltip
    primitive's inline-flex box — a link that wraps across two lines would otherwise become a block. */
 .md a.md-link.tt { display: inline; }
+/* A `window-ml:` link (links.ts) is a button that reads as the same inline link. */
+.md button.md-addr, button.md-addr { display: inline; padding: 0; border: none; background: none; font: inherit; color: var(--fg);
+    text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; }
+.md button.md-addr:hover, button.md-addr:hover { text-decoration-style: solid; }
 .md code { background: var(--panel-2); border-radius: 3px; padding: 0 3px; font: 0.92em ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 /* `--code-bg`/`--code-fg` are the CODE THEME's surface colours (prefs.ts applyCodeTheme), set for any theme but
@@ -2834,6 +2841,16 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 /* Pre-flight complaint (e.g. no model configured) — a small red nudge under the task input. */
 .card-cmp-err { margin-top: 8px; color: var(--err); font-size: .85em; line-height: 1.4;
     border-left: 3px solid var(--err); padding-left: 8px; }
+/* The HUD composer's "bring a session here" list (card-bring.tsx): a session per row, its site and age on the right. */
+.card-bring { display: flex; flex-direction: column; gap: 6px; }
+.card-bring-list { display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow-y: auto; }
+.card-bring-row { width: 100%; text-align: left; background: transparent; border: none; color: inherit; font: inherit; }
+.card-bring-row:disabled { opacity: .6; cursor: progress; }
+.card-bring-meta { flex: 0 0 auto; color: var(--fg-faint); font-size: .78em; font-variant-numeric: tabular-nums; }
+.card-bring-empty { color: var(--fg-faint); font-size: .85em; padding: 6px 2px; }
+.card-bring-open, .card-bring-back { background: transparent; border: none; color: var(--fg-faint); font: inherit;
+    font-size: .82em; cursor: pointer; padding: 2px 4px; border-radius: 4px; align-self: flex-start; }
+.card-bring-open:hover, .card-bring-back:hover { color: var(--fg); background: var(--panel-2); }
 /* Step-budget segmented control — a pretty pill selector (macOS-style raised selected), NOT a bare select. */
 .card-cmp-budget { display: flex; align-items: center; gap: 8px; }
 .card-cmp-budget-label { color: var(--fg-faint); font-size: .82em; }

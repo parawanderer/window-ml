@@ -80,6 +80,7 @@ any new mechanism reports.
 | `tab` | `pinned` (`hosting`) | `autoDiscardable: false` while a run is hosted here |
 | `tab` | `released` | and let go again, which is the half that is easy to forget |
 | `tab` | `replaced` | `chrome.tabs.onReplaced` re-filed the run under a new tab id |
+| `tab` | `moved` | the person moved the run to another tab between its turns (`move-run.ts`); `detail.from` and `detail.to` are the two tab ids |
 | `tool` | `threw` (`run`/`readonly`/`auto-approve`/`precheck`/`approve`) | a tool call's dispatch threw (a page's malformed answer, an argument that cannot be read); the loop turned it into an error result, or for a step that only decides, into asking. Level `error`, the message in `key`, the tool in `detail.tool` |
 | `python` | `dropped` (`after-result`) | callables a cell handed to JavaScript (a timer, a microtask, a promise) fired after its result; the cancel had revoked them, so they ran nothing. `detail.count` of them, after cell `detail.afterCell` of the run's worker (counting from 1), reported when the run's next cell starts (`cell-gate.ts`) |
 | `python` | `dropped` (`after-last-cell`) | the same, for the turn's last cell: they fired between its result and the run's release, and are reported when its session is released or archived and its namespace is deleted (`deletePythonRun`; a turn's end deletes nothing of the run's own worker). One still armed fires later, and is reported by the run's next cell or `at-reap` |

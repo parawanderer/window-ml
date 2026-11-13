@@ -278,6 +278,26 @@ The Markdown export keeps the source. Code: `src/mermaid/`.
 - **The PDF** (`printSession`) draws every fence in the light theme first, then `markdown(…, { diagrams: "light" })`
   writes each as its `<img>` alone: no buttons and no pending block, since nothing in a printed page runs.
 
+## Links to a setting in model text
+
+`[label](window-ml:<address>)` in the model's reply opens a view of the extension's own Settings
+([LINKS.md](../spec/LINKS.md)). Slice 1 resolves the panel's addresses only: `setting/<key>`,
+`settings/extension/<panelTab>[/<section>]` and `settings/extension/backup`. Code: `src/sidebar/links.ts`.
+
+- **Only the model's own prose resolves a link.** `markdown()` draws one only when given `addr`, which the reply
+  (`reply.tsx`, `streaming-md.tsx`), the answer (`answer-render.tsx`) and `Prose` pass, and never inside a `>` quote,
+  a code span or a fence. Tool output, descriptions and the exports call `markdown()` without it, so a link a page
+  wrote stays its literal text there.
+- **A button, never an `<a href>`.** It carries `data-addr`; one click handler per container (`onAddressClick`) parses
+  the address again at click time and calls `services().openAddress`, so the HTML is never trusted as a route. A
+  surface with no `openAddress` (the chat page, for now) draws every link as its label.
+- **A row is found by `data-setting="<key>"`**, a section by `data-section="<id>"`. `SETTING_PLACES` names each
+  key's tab and section, and `PANEL_LAYOUT` each tab's sections with their titles (both contract-config.ts), for the
+  tip and for `agent_api_docs`; `PANEL_TABS` and `PANEL_SECTIONS`, which the chat page's router reads, are views of it. `tests/setting-places.test.js` renders every tab and fails when either disagrees with the panel,
+  and when a control edits neither a placed key nor something listed as not a setting.
+- **The row is found in the panel's own body** (`panelBody`), not `document`: the overlay draws Settings in a shadow
+  root. It is scrolled to and ringed (`set-marked`) for six seconds.
+
 ## Traps
 
 - **A web-accessible file has two URLs (`use_dynamic_url`).** `getURL("sidebar.html")` (or `mermaid.html`) names a

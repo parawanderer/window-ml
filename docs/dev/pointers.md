@@ -43,7 +43,10 @@ background-hosted paths with no page round-trip and no approval.
   The request is parsed and bounded (`PIPE_PAGES_MAX`, 50 pages a stage, six digits a number) before any page is
   gathered, so `pages 1-999999` costs nothing. An absent page is refused naming the pages held, never answered
   empty. The sections are written by file-pointer.ts `fileSections`, which escapes `<page`, `</page` and `</file`
-  inside a page's text, so a page cannot open a section of its own and be read as another page.
+  inside a page's text, so a page cannot open a section of its own and be read as another page. A section whose close
+  is missing ends at the next opening tag or at the end (text-pipe.ts `pages`). That reading is safe only because the
+  OPEN escape holds: a producer that escaped the closers alone would let a page's text open a section mid-page and
+  end the real one there. A new producer of paged text escapes `<page` too.
 - **`@file:` is an attached file's pointer**, beside `@tool:`. The run's `TokenStore` holds files on a separate
   `FileShelf` (file-pointer.ts): never evicted by tool outputs, and an id in its own domain (`fileId`), so a
   `@tool:` reference never resolves to a file. Two forms, told apart by shape: a minted id, and the file's own name
