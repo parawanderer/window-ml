@@ -265,9 +265,12 @@ The design:
    install record, and the offscreen document unpacks what the worker lacks, after its lockdown and before the cell
    runs. A PyPI wheel comes from the mirror, re-hashed (`mirroredWheel`), and a lock package from `dist/pyodide`,
    checked against the lock's sha256. The run's namespace is kept. A worker that was reaped, killed or respawned gets
-   the set the same way at its first cell. Rejected: swapping the candidate in, which would lose the namespace at every
-   install; and testing in the live worker, which on failure keeps the files and the side effects (measured above), so a
-   clean rollback would need a restart and lose the namespace anyway.
+   the set the same way at its first cell. When that unpack fails (the mirror's bytes no longer match their sha256, or
+   `unpackArchive` throws), the cell fails before any of it runs, and its result names the package and why; the install
+   record is unchanged, so the next cell tries again; and a mismatch is reported as a defect of the mirror (slice 3),
+   not of the install. Rejected: swapping the candidate in, which would lose the namespace at every install; and testing
+   in the live worker, which on failure keeps the files and the side effects (measured above), so a clean rollback would
+   need a restart and lose the namespace anyway.
 4. **Rollback is discarding the candidate.** What it RESTORES: nothing needs restoring, by construction. The live
    worker, its namespace, its site-packages and the run's install record are as they were before the call, because none
    of them is touched before the candidate passes. What it REFUSES TO TOUCH: the mirror's bytes (approved bytes stay;
@@ -316,6 +319,13 @@ Questions for the ruling: (Q1) the run's readonly worker only, with the `full` w
 raised by the model (the departure in 6); (Q3) the bounds: 60 s, 8 times and 512 MB; (Q4) an install per run, not per
 browser: a later run asks again and its card shows the held files as `mirror`, with no download, which is slice 3's
 "approved bytes, not an approved install".
+
+RULED 2026-11-13 (the coordinator, on #1864 at 2d3c9f23): yes to all four. (Q1) The run's readonly worker only; the
+`full` worker stays open. (Q2) The model raises the second ask with a second call, one gate per tool call, the result
+naming the exact module and that the approved files stay in the mirror. (Q3) 60 s from spawn, 8 times the file and 512
+MB per call, on one condition: before any `src/` change, the slice 4 code PR measures two workers at once in a browser
+(the live one and a candidate) against the worker's heap death, and if they cannot coexist the design comes back to the
+coordinator. (Q4) Per run, not per browser.
 
 **Slice 5, policy-store wiring.** The four facts (`name`, `version`, `source`, `sha256`) reach the policy realm as a
 call's facts. A policy can then allow or deny an install where the card would otherwise ask, and the policy page
