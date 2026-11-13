@@ -47,7 +47,7 @@ globalThis.chrome = {
 };
 const { leaseCell, pyKernelBusy, pyDetachedText, pyTailText, pyCancelText } = await import("../src/sw/sw-python-task.ts");
 const { pythonStarted, pythonDone, runPython } = await import("../src/sw/sw-python.ts");
-const { taskAction, endTasks, openTasks, taskDrained, cancelPageTasks } = await import("../src/sw/sw-tasks.ts");
+const { taskAction, endTasks, closeTurnTasks, openTasks, taskDrained, cancelPageTasks } = await import("../src/sw/sw-tasks.ts");
 const { runControllers, runInboxes } = await import("../src/sw/sw-runs.ts");
 const { runLog } = await import("../src/sw/sw-run-log.ts");
 const { ringAppend, PY_LEASE_MS, PY_LEASE_MAX_MS, PY_DETACHED_MAX_MS, PY_INTERRUPT_KILL_MS } = await import("../src/python/py-lease.ts");
@@ -187,7 +187,9 @@ test("pyDetachedText says 'you expected ~N s' with expect_ms and 'no expect_ms w
     assert.match(capped, new RegExp(`you expected ~${PY_LEASE_MAX_MS / 1000 + 1} s, and a cell runs attached for at most ${PY_LEASE_MAX_MS / 1000} s, so it is running as expected: wait for it, or use the task tool`));
     assert.doesNotMatch(capped, /stall|no expect_ms/);
     assert.match(pyDetachedText("tabc123", PY_LEASE_MAX_MS, PY_LEASE_MAX_MS, ""), /investigate the stall/, "an estimate equal to the cap ran out: a stall");
-    assert.match(withE, /cancelled when this turn ends/);
+    assert.match(withE, /keeps running after your answer/);
+    assert.match(withE, /read at the start of the next turn/);
+    assert.doesNotMatch(withE, /turn ends/, "the turn no longer ends the task");
     assert.match(withE, /the sandbox ends it at 300 s/);
     assert.doesNotMatch(withE, /Output so far/);
     const without = pyDetachedText("tabc123", PY_LEASE_MS, null, "x");
@@ -205,6 +207,15 @@ test("while a cell is detached pyKernelBusy names its task id; once the cell set
     c.resolve({ out: "x" });
     await until(() => pyKernelBusy(c.runId) === null);
     await done(c);
+});
+
+test("the kernel stays locked into the next turn: after the turn settles pyKernelBusy still names the task", T, async () => {
+    const c = await detached();
+    runInboxes.delete(c.runId); runControllers.delete(c.runId); closeTurnTasks(c.runId);   // what settle does
+    assert.match(pyKernelBusy(c.runId), new RegExp(`task ${c.r.id} is still running`));
+    c.resolve({ out: "x" });
+    await until(() => pyKernelBusy(c.runId) === null);
+    await endTasks(c.runId);
 });
 
 // --- the late result ---
@@ -372,7 +383,7 @@ test("a Stop while the cell is attached sends PY_CANCEL for it", T, async () => 
     await done(c);
 });
 
-test("a Stop after the cell detached does not send PY_CANCEL: the task is the turn's end to cancel", T, async () => {
+test("a Stop after the cell detached does not send PY_CANCEL: the task is the model's to cancel (task cancel)", T, async () => {
     const c = await detached();
     const before = sentOf("PY_CANCEL").length;
     c.ctl.abort();
@@ -383,7 +394,7 @@ test("a Stop after the cell detached does not send PY_CANCEL: the task is the tu
     await done(c);
 });
 
-test("endTasks on a run with a detached cell sends PY_CANCEL for it", T, async () => {
+test("endTasks (session release) on a run with a detached cell sends PY_CANCEL for it", T, async () => {
     const c = await detached();
     const before = sentOf("PY_CANCEL").length;
     await endTasks(c.runId);
