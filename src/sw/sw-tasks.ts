@@ -4,13 +4,13 @@
 // A call that outruns its lease is registered here by its executor (`ml.sh` today: sw-shell-call.ts) with what only the
 // executor can do (cancel it, read its tail) and a promise of how it ends. The table is the run's alone: every read and
 // every action is keyed by the run id the worker knows, never by anything a script or the model said, so another run's
-// id and an id that never existed read the same. It holds nothing past the turn: `endTasks` cancels what still runs.
+// id and an id that never existed read the same. A turn's end leaves its tasks running (`closeTurnTasks`, rule 4b): `endTasks` cancels what still runs at session release and archive.
 
 import { defineState } from "../state-registry";
 import { tableOf } from "../table/table-data";
 import type { TableLike } from "../table/table-data";
 import type { CurrentSnapshot } from "../agent/current-context";
-import { runControllers, runInboxes } from "./sw-runs";
+import { onSessionRelease, runControllers, runInboxes } from "./sw-runs";
 import { recordRunLog } from "./sw-run-log";
 import { forModel } from "./sw-scrub";
 import { storeText } from "./sw-values";
@@ -104,21 +104,46 @@ export const TASK_TAIL_MAX_LINES = 200;
 
 const tasks = new Map<string, Map<string, Task>>();
 /** Where a run's finished task is announced to its surfaces (the run host's fan), set while the run's turn is live. */
-const sinks = new Map<string, (text: string, id: string, end: TaskEnd) => void>();   // state: plumbing — the run host's fan, for the turn
+const sinks = new Map<string, (text: string, id: string, end: TaskEnd) => void>();   // state: plumbing — the run host's fan, for the live turn
 defineState({
-    id: "run.tasks", scope: "run", realm: "worker", audience: "model", lostOn: ["worker-eviction", "turn-end"],
+    id: "run.tasks", scope: "run", realm: "worker", audience: "model", lostOn: ["worker-eviction"],
     exposedAs: "ml.current.tasks",
     describe: "The run's calls that outran their lease and were detached: each one's tool, status, how long it has run, and its result once it finished.",
     read: ({ runId }) => (runId && tasks.get(runId)?.size ? rowsOf(runId, Date.now()) : undefined),
 });
 
 /**
- * Open a run's task table for its turn: a finished task is announced through `fan` as well as the inbox.
+ * Open a run's task table for its turn: a finished task is announced through `fan` as well as the inbox. A task that ended
+ * while no turn ran (parked) is queued into the turn's inbox now, in the order it ended, so the first step reads it.
+ * Call after the turn's inbox exists.
  * @param runId the run
  * @param fan the run host's announcement to its surfaces
  */
 export function openTasks(runId: string, fan: (text: string, id: string, end: TaskEnd) => void): void {
     sinks.set(runId, fan);
+    const inbox = runInboxes.get(runId);
+    if (!inbox) return;
+    const parked = [...(tasks.get(runId)?.values() ?? [])].filter((t) => t.status !== "running" && !t.delivered && t.endedMs !== undefined && t.text !== null);
+    parked.sort((a, b) => a.endedMs! - b.endedMs!);
+    for (const t of parked) inbox.queue.push(inboxItem(t));
+}
+
+/**
+ * The inbox item for an ended task: its text with the true time it ran, and what the result carries.
+ * @param t the ended task
+ */
+function inboxItem(t: Task): { text: string; task: string; value?: string; chars?: number; images?: string[] } {
+    return { text: `[task ${t.id} ${t.status} after ${secs(t.endedMs! - t.startedMs)}: ${t.text}]`, task: t.id, ...carried(t) };
+}
+
+/**
+ * The turn is over: its sink and any await are dropped, and its tasks run on (rule 4b). A result that arrives now is
+ * parked in the table, and the next turn's {@link openTasks} queues it.
+ * @param runId the run
+ */
+export function closeTurnTasks(runId: string): void {
+    sinks.delete(runId);
+    for (const t of tasks.get(runId)?.values() ?? []) t.waiter = undefined;
 }
 
 /**
@@ -139,8 +164,8 @@ export function detachTask(runId: string, spec: TaskSpec): string {
 }
 
 /**
- * A task ended: record it, then hand its result to whoever is waiting, or to the inbox. A task whose run's turn
- * already ended is not delivered anywhere: nothing is injected into a later turn or another run.
+ * A task ended: record it, then hand its result to whoever is waiting, or to the inbox. With no turn live it is
+ * parked in the table and read at the next turn; one ended by `endTasks` (session release, archive) is dropped.
  */
 async function finish(runId: string, t: Task, o: TaskOutcome): Promise<void> {
     if (t.status !== "running" || t.ending) return;
@@ -150,7 +175,7 @@ async function finish(runId: string, t: Task, o: TaskOutcome): Promise<void> {
     // Only a whole longer than the text is kept: one the cap did not cut is already all there in the text.
     const whole = o.whole && o.whole.length > o.text.length ? (await forModel(o.whole)).text : undefined;
     const value = whole ? await storeText(whole, `task ${t.id}`).catch(() => undefined) : undefined;
-    // Ended in the meantime (the turn's end cancelled it): its status is that end's.
+    // Ended in the meantime (a cancel or the session's end): its status is that end's.
     if (t.status !== "running") return;
     // All at once, after the scrub: a read in between sees a running task, never an ended one with no text.
     t.status = o.status;
@@ -164,10 +189,12 @@ async function finish(runId: string, t: Task, o: TaskOutcome): Promise<void> {
     if (tasks.get(runId)?.get(t.id) !== t) return;
     if (t.waiter) { const w = t.waiter; t.waiter = undefined; t.delivered = true; w({ ...o, text: t.text }); return; }
     const inbox = runInboxes.get(runId);
-    if (!inbox || t.delivered) return;
-    // Queued only: it is delivered, and drawn, when the loop drains it (`taskDrained`). A turn that ends first drops it,
-    // and nothing then shows a result the model never read.
-    inbox.queue.push({ text: `[task ${t.id} ${o.status} after ${secs(endedMs - t.startedMs)}: ${t.text}]`, task: t.id, ...carried(t) });
+    if (t.delivered) return;
+    // No turn is live: the result stays in the table, undelivered, and the next turn's `openTasks` queues it.
+    if (!inbox) { recordRunLog(runId, { subsystem: "task", kind: "parked", reason: o.status, ms: endedMs - t.startedMs, detail: { id: t.id, tool: t.tool } }); return; }
+    // Queued only: it is delivered, and drawn, when the loop drains it (`taskDrained`). A turn that ends first leaves it
+    // undelivered, and the next turn queues it again.
+    inbox.queue.push(inboxItem(t));
 }
 
 /**
@@ -209,11 +236,13 @@ export function taskDrained(runId: string, id: string, text: string): boolean {
 }
 
 /**
- * End a run's turn for its tasks: each still running is cancelled by its executor, and one whose cancel is not
- * confirmed is reported as an orphan. The table is dropped: no task outlives its turn.
+ * End a run's tasks for good: each still running is cancelled by its executor, and one whose cancel is not confirmed is
+ * reported as an orphan. The table is dropped, so a result that arrives later is dropped. Called at session release and
+ * archive (a turn's end is {@link closeTurnTasks}).
  * @param runId the run
+ * @param reason what ended them, for the run log: "session-release" (the default), "archived" or "deleted"
  */
-export async function endTasks(runId: string): Promise<void> {
+export async function endTasks(runId: string, reason = "session-release"): Promise<void> {
     sinks.delete(runId);
     const mine = tasks.get(runId);
     tasks.delete(runId);
@@ -222,9 +251,10 @@ export async function endTasks(runId: string): Promise<void> {
         t.waiter = undefined;
         const c = await t.exec.cancel().catch((e) => ({ confirmed: false, text: (e as Error)?.message || String(e) }));
         t.status = c.confirmed ? "cancelled" : "orphaned";
-        recordRunLog(runId, { level: "warn", subsystem: "task", kind: c.confirmed ? "cancelled" : "orphaned", reason: "turn-end", detail: { id: t.id, tool: t.tool } });
+        recordRunLog(runId, { level: "warn", subsystem: "task", kind: c.confirmed ? "cancelled" : "orphaned", reason, detail: { id: t.id, tool: t.tool } });
     }));
 }
+onSessionRelease((runId) => { void endTasks(runId); });
 
 /**
  * The run's page changed (a same-tab navigation of a worker-hosted run): each page-bound task still running is cancelled

@@ -217,3 +217,15 @@ test("ml.current's prompt signature names every top-level member and, after each
     for (const f of ["expression", "value", "error"]) assert.ok(watch?.includes(f), `UserWatch lists ${f}`);
     assert.doesNotMatch(sig, /\/\*|\*\/|import\(/, "no comment or module path leaks into the line");
 });
+
+// --- docs/API.md names what ml.config() returns ---
+
+test("docs/API.md's ml.config() row names every field publicConfig() returns, and nothing it leaves out", async () => {
+    const { publicConfig, DEFAULT_CONFIG } = await import("../src/contract/contract-config.ts");
+    const fields = Object.keys(publicConfig(DEFAULT_CONFIG, false));
+    const row = readFileSync(new URL("../docs/API.md", import.meta.url), "utf8").split("\n").find((l) => l.startsWith("| `ml.config()` |"));
+    assert.ok(row, "the ml.config() row exists");
+    const named = [...row.matchAll(/`(\w+)`/g)].map((m) => m[1]).filter((n) => n !== "ml");
+    assert.deepEqual(fields.filter((f) => !named.includes(f)), [], "a field ml.config() returns that the row does not name");
+    assert.deepEqual(named.filter((n) => !fields.includes(n)), [], "a name in the row that ml.config() does not return");
+});
