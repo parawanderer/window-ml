@@ -304,28 +304,53 @@ test("UPGRADE: a PY_RUN with no wire and no run (the old shape) runs as before: 
     await pending;
 });
 
-// --- the service worker ends a run's namespace when the run settles ---
+// --- the service worker ends a TURN at settle, and the run's namespace at release ---
 
-test("a worker-hosted run that settles sends PY_DELETE_RUN for its own run and principal", { timeout: 30000 }, async () => {
+const PAGE = { url: "chrome-extension://test/chat.html" };
+/** Delete a settled run's session the way the chat page does: the command that forgets it, then let the worker finish. */
+async function deleteSession(bg, hash) {
+    const port = bg.connect("ml-sessions", PAGE);
+    port.send({ type: "sessions" });
+    port.send({ type: "cmd", id: 1, command: { type: "session.delete", session: { runtime: "local", hash } } });
+    for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0));
+}
+
+test("a worker-hosted run that settles sends PY_END_TURN for its run with the ten minute delay, and no PY_DELETE_RUN", { timeout: 30000 }, async () => {
     let wire;
     const { bg } = await wireRun(async (w) => { wire = w; });
     assert.ok(wire?.run, "positive control: the cell ran with a run id");
-    assert.deepEqual(bg.pyDeletes.map((m) => [m.type, m.run, m.principal]), [["PY_DELETE_RUN", wire.run, `run:${wire.run}`]]);
+    await new Promise((r) => setTimeout(r, 10));
+    assert.deepEqual(bg.pyEnds.map((m) => [m.type, m.run, m.ms]), [["PY_END_TURN", wire.run, 600_000]]);
+    assert.deepEqual(bg.pyDeletes, [], "the namespace belongs to the run: a turn's end does not drop it");
 });
 
-test("a settled run whose last cell's revoked callables fired records them in its run log, after its last cell", { timeout: 30000 }, async () => {
+test("the idle knob: pythonIdleMinutes from the settings is the delay the turn's end carries, 0 included", { timeout: 30000 }, async () => {
+    for (const [minutes, ms] of [[3, 180_000], [0, 0]]) {
+        const { bg } = await wireRun(async () => {}, { configExtra: { pythonIdleMinutes: minutes } });
+        await new Promise((r) => setTimeout(r, 10));
+        assert.deepEqual(bg.pyEnds.map((m) => m.ms), [ms], `${minutes} minutes`);
+    }
+});
+
+test("the knob is in the settings schema with a ten minute default, and the DevTools Settings panel edits it", async () => {
+    const { DEFAULT_CONFIG } = await import("../src/contract/contract-config.ts");
+    assert.equal(DEFAULT_CONFIG.pythonIdleMinutes, 10);
+    const { readFileSync } = await import("node:fs");
+    const panel = readFileSync(new URL("../src/sidebar/settings/settings.tsx", import.meta.url), "utf8");
+    assert.match(panel, /setField\("pythonIdleMinutes"/, "a new flag goes in the DevTools Settings panel");
+});
+
+test("a session that is deleted drops its run's Python namespace: PY_DELETE_RUN, with the callables its last cell left recorded", { timeout: 30000 }, async () => {
     const POPUP = { url: "chrome-extension://test/popup.html" };
     const dumped = async (bg, run) => (await bg.send({ type: "DUMP_RUN_LOG", payload: { run } }, POPUP)).data.events.filter((e) => e.subsystem === "python" && e.kind === "dropped");
     let wire;
-    const { bg } = await wireRun(async (w) => { wire = w; }, { onPyDelete: () => ({ ok: true, dropped: { count: 3, afterCell: 1 } }) });
-    await new Promise((r) => setTimeout(r, 0));
+    const { bg, hash } = await wireRun(async (w) => { wire = w; }, { onPyDelete: () => ({ ok: true, dropped: { count: 3, afterCell: 1 } }) });
+    await new Promise((r) => setTimeout(r, 10));
+    assert.deepEqual(bg.pyDeletes, [], "positive control: the turn's end dropped nothing");
+    await deleteSession(bg, hash);
+    assert.deepEqual(bg.pyDeletes.map((m) => [m.type, m.run, m.principal]), [["PY_DELETE_RUN", wire.run, `run:${wire.run}`]]);
     const events = await dumped(bg, wire.run);
     assert.deepEqual(events.map((e) => [e.reason, e.detail]), [["after-last-cell", { count: 3, afterCell: 1 }]]);
-    // Positive control: a turn whose worker reports none records nothing.
-    let quiet;
-    const { bg: bg2 } = await wireRun(async (w) => { quiet = w; });
-    await new Promise((r) => setTimeout(r, 0));
-    assert.deepEqual(await dumped(bg2, quiet.run), []);
 });
 
 // --- the idle reap and the keep, the service worker's half (the clocks: python-reap.test.mjs) ---
@@ -345,6 +370,26 @@ test("PY_REAPED from the offscreen document puts the lost namespace and the late
     void bg.send(reaped, OFFSCREEN);
     await delivered();
     assert.deepEqual((await pyLog(bg, wire.run)).map((e) => [e.kind, e.reason, e.detail ?? null]), [["reap", "idle", null], ["dropped", "at-reap", { count: 2, afterCell: 4 }]]);
+});
+
+test("a reap that loses the run's namespace is a line in its transcript, between turns or not; one that loses nothing is not", { timeout: 30000 }, async () => {
+    const notes = [];
+    let wire;
+    const { bg } = await wireRun(async (w) => { wire = w; }, { onEvent: (e) => { if (e?.kind === "agent-note") notes.push(e.text); } });
+    const delivered = () => new Promise((r) => setTimeout(r, 10));
+    void bg.send({ type: "PY_REAPED", run: wire.run, live: true, between: true, idleMs: 600_000 }, { tab: { id: SITE.id, url: SITE.url }, url: SITE.url, origin: "https://site.example" });
+    await delivered();
+    assert.deepEqual(notes, [], "a page writes no run's transcript");
+    void bg.send({ type: "PY_REAPED", run: wire.run, live: false, idleMs: 300_000 }, OFFSCREEN);
+    await delivered();
+    assert.deepEqual(notes, [], "a worker that held no namespace tells the person nothing");
+    void bg.send({ type: "PY_REAPED", run: wire.run, live: true, between: true, idleMs: 600_000 }, OFFSCREEN);
+    await delivered();
+    assert.deepEqual(notes, ["Python namespace dropped after 10 min idle between turns: names from earlier python_exec cells are gone."]);
+    void bg.send({ type: "PY_REAPED", run: wire.run, live: true, idleMs: 1_800_000 }, OFFSCREEN);
+    await delivered();
+    assert.equal(notes.length, 2);
+    assert.match(notes[1], /after 30 min idle: names/);
 });
 
 test("a keep reaches PY_RUN from a worker-hosted run's python_exec, told once per turn in its run log", { timeout: 30000 }, async () => {

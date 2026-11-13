@@ -1,7 +1,7 @@
 // delegate-send.ts — the one way the worker sends a message into a run's tab and waits for the page's answer: held while the tab navigates, watched while it waits.
 
 import type { HousekeepingReport } from "../log/housekeeping";
-import { type TabState, watchWhileWaiting, PageUnreachable } from "./page-reachable";
+import { type TabState, watchWhileWaiting, PageUnreachable, PING_TIMEOUT_MS } from "./page-reachable";
 import { noteRunMechanic, navBarrier } from "./sw-runs";
 import { READOPT_TIMEOUT_MS } from "./nav-barrier";
 
@@ -12,10 +12,40 @@ import { READOPT_TIMEOUT_MS } from "./nav-barrier";
 // …and then WATCHES the tab while it waits, because the send has a third outcome besides answering and
 // rejecting: a tab the browser put to sleep in the background still has a registered receiver, so the call
 // simply sits. One measured run spent 13m57s inside a `pageInfo` here and was released by the person opening
-// the tab. `page-reachable.ts` has the reasoning; what it costs a healthy call is one `chrome.tabs.get`.
+// the tab. `page-reachable.ts` has the reasoning; what it costs a healthy call is one `chrome.tabs.get`, plus a ping
+// on a browser that reports the tab unfrozen.
 const tabState = async (tabId: number): Promise<TabState> => {
-    try { return (await chrome.tabs.get(tabId)).discarded ? "asleep" : "awake"; }
+    let tab: chrome.tabs.Tab;
+    try { tab = await chrome.tabs.get(tabId); }
     catch { return "gone"; }   // the id no longer resolves: closed, or replaced by a discard under a new id
+    if (tab.discarded) return "asleep";
+    // Measured (tests/e2e/page-health.spec.mjs, CDP Page.crash): a dead renderer leaves the tab `unloaded` and not
+    // discarded. A navigating tab reads `loading`.
+    if (tab.status === "unloaded") return "crashed";
+    // Frozen, or a browser that does not say: no ping can tell busy from frozen, so the cap decides as before.
+    if ((tab as { frozen?: boolean }).frozen !== false) return "awake";
+    return await answersPing(tabId) ? "awake" : "unresponsive";
+};
+
+/** Whether the tab's content script answers a question it answers synchronously (PRESENCE_CHECK, content.ts), so
+ *  whether the page's main thread is running at all. A refusal (no receiver: a document mid-swap) is not a missed
+ *  ping; only silence is. */
+const answersPing = (tabId: number): Promise<boolean> => new Promise<boolean>((resolve) => {
+    const t = setTimeout(() => resolve(false), PING_TIMEOUT_MS) as unknown as { unref?: () => void };
+    t.unref?.();
+    chrome.tabs.sendMessage(tabId, { type: "PRESENCE_CHECK" }, { frameId: 0 }).then(() => resolve(true), () => resolve(true));
+});
+
+/** Chrome's words for a send whose receiving document went away: a navigation, or a renderer that died. */
+export const CHANNEL_GONE = /message channel closed|Receiving end does not exist|No tab with id/i;
+
+/** After a send lost its channel, whether the tab's renderer crashed rather than navigated. Asked once and at once:
+ *  the tab already read unloaded in both measured crashes (page-health.spec.mjs C1, C2), and any wait here delays a
+ *  navigation's handling past a fast new page's re-adopt, which the barrier then refuses. A miss falls back to the
+ *  navigation path, as before. */
+const crashedAfter = async (tabId: number): Promise<boolean> => {
+    try { const t = await chrome.tabs.get(tabId); return t.status === "unloaded" && !t.discarded; }
+    catch { return false; }
 };
 
 // A barrier wait shorter than this is the ordinary cost of a page committing a navigation, and saying so every
@@ -63,6 +93,12 @@ export const delegateSend = async (tabId: number, msg: unknown, documentId?: str
     const send = async () => { await beforeSend?.(); return documentId ? chrome.tabs.sendMessage(tabId, msg, { documentId }) : chrome.tabs.sendMessage(tabId, msg); };
     try { return unadopted(await watchWhileWaiting(send(), () => tabState(tabId)), ready); }
     catch (e) {
+        // A lost channel is a navigation unless the tab says its renderer died: then every later send fails the same way,
+        // and waiting out the navigation barrier for a page that will not come is 15 s each time.
+        if (!(e instanceof PageUnreachable) && CHANNEL_GONE.test((e as Error)?.message || String(e)) && await crashedAfter(tabId)) {
+            note("unreachable", { level: "error", reason: "crashed", ms: Date.now() - held - waited });
+            throw new PageUnreachable("crashed", Date.now() - held - waited);
+        }
         if (!(e instanceof PageUnreachable) || e.state !== "asleep") {
             if (e instanceof PageUnreachable && e.state === "unadopted") throw e;
             if (e instanceof PageUnreachable) note("unreachable", { level: "error", reason: e.state, ms: e.waitedMs });

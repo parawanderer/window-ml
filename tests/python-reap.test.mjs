@@ -7,7 +7,7 @@
 // idle reap".
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
-import { REAP_SETTLED_MS, REAP_LIVE_MS } from "../src/python/py-reap.ts";
+import { REAP_SETTLED_MS, REAP_LIVE_MS, DEFAULT_REAP_BETWEEN_MS, MAX_TIMER_MS, reapDelay } from "../src/python/py-reap.ts";
 
 mock.timers.enable({ apis: ["setTimeout"] });
 
@@ -50,12 +50,18 @@ async function runCell(msg, result = {}) {
 }
 /** A turn's cell on its own worker. */
 const turnCell = (run, extra = {}) => runCell({ principal: `run:${run}`, wire: { client: `mlw-${run}-${workers.length}`, run }, ...extra });
-/** End a turn: PY_DELETE_RUN, answered by the run's worker. */
-async function endTurn(run, w) {
+/** Release a run's session: PY_DELETE_RUN, answered by the run's worker. */
+async function release(run, w) {
     const done = send({ type: "PY_DELETE_RUN", run, principal: `run:${run}` });
     await settle();
     w.reply({ id: w.posts.at(-1).id, ok: true, stdout: "" });
     return done;
+}
+/** End a turn: PY_END_TURN, which carries the between-turns delay (the setting, in ms) and asks no worker of its own. */
+async function endTurn(run, ms = DEFAULT_REAP_BETWEEN_MS) {
+    const answer = await send({ type: "PY_END_TURN", run, ms });
+    await settle();
+    return answer;
 }
 /** The reap's ask, if it was posted to `w`, answered with `dropped`; then the reap finishes. */
 async function answerReap(w, dropped) {
@@ -71,7 +77,7 @@ const reapRecords = (key) => sent.filter((m) => m.type === "HOUSEKEEPING_REPORT"
 
 test("a settled turn's worker is shut after REAP_SETTLED_MS idle, not before, and hands over its late drops", async () => {
     const { w } = await turnCell("s1");
-    await endTurn("s1", w);
+    await release("s1", w);
     mock.timers.tick(REAP_SETTLED_MS - 1);
     await settle();
     assert.equal(w.terminated, false, "not before its time");
@@ -86,7 +92,7 @@ test("a settled turn's worker is shut after REAP_SETTLED_MS idle, not before, an
 
 test("a settled turn's worker with no late drops is shut without telling the run", async () => {
     const { w } = await turnCell("s2");
-    await endTurn("s2", w);
+    await release("s2", w);
     mock.timers.tick(REAP_SETTLED_MS);
     await settle();
     await answerReap(w);
@@ -127,7 +133,7 @@ test("a cell restarts the clock: a worker used just before its time is not shut 
 
 test("a worker that never answers the reap's ask is terminated anyway", async () => {
     const { w } = await turnCell("h1");
-    await endTurn("h1", w);
+    await release("h1", w);
     mock.timers.tick(REAP_SETTLED_MS);
     await settle();
     assert.equal(w.posts.at(-1).takeDropped, true);
@@ -158,11 +164,11 @@ test("a kept turn's worker is never shut while the turn lives; the keep ends wit
     await settle();
     assert.equal(w.terminated, false, "a day idle, kept");
     assert.equal(w.posts.at(-1).takeDropped, undefined);
-    await endTurn("k1", w);
-    mock.timers.tick(REAP_SETTLED_MS);
+    await endTurn("k1");
+    mock.timers.tick(DEFAULT_REAP_BETWEEN_MS);
     await settle();
     await answerReap(w);
-    assert.equal(w.terminated, true, "the turn ended: the settled clock applies");
+    assert.equal(w.terminated, true, "the turn ended: the keep went with it, and the between-turns clock applies");
 });
 
 test("a keep holds for the turn's later cells that do not repeat it", async () => {
@@ -186,12 +192,201 @@ test("a keep is a worker-hosted turn's: on a page's principal, or naming another
 
 test("a kept turn whose next turn keeps nothing is reaped on the live clock", async () => {
     const { w } = await turnCell("k5", { keep: true });
-    await endTurn("k5", w);
-    await turnCell("k5");
+    await endTurn("k5");
+    await turnCell("k5", { turnLive: true });
     mock.timers.tick(REAP_LIVE_MS);
     await settle();
     await answerReap(w);
     assert.equal(w.terminated, true);
+});
+
+// --- the run's namespace between turns (PY_END_TURN) ---
+
+test("a turn's end leaves the run's own worker and namespace alone: no deleteRun, the next cell finds the same worker and no loss line", async () => {
+    const { w } = await turnCell("e1", { turnLive: true });
+    const posts = w.posts.length;
+    await endTurn("e1");
+    assert.equal(w.posts.length, posts, "the worker was told nothing");
+    assert.equal(w.posts.some((m) => m.deleteRun), false);
+    const { w: again, answer } = await turnCell("e1", { turnLive: true });
+    assert.equal(again, w, "the same worker, so the names the earlier turn defined are still in its dict");
+    assert.equal(answer.nsReset, undefined);
+    assert.equal(w.posts.some((m) => m.deleteRun), false);
+});
+
+test("a turn's end drops the run's dict in the shared full worker, and only there", async () => {
+    const { w: own } = await turnCell("e2", { turnLive: true });
+    const { w: full } = await runCell({ principal: "full", hardened: false, wire: { client: "mlw-e2-full", run: "e2" } });
+    assert.notEqual(own, full);
+    await endTurn("e2");
+    assert.equal(full.posts.at(-1).deleteRun, "e2", "the full worker was told to drop the run's dict");
+    assert.equal(own.posts.some((m) => m.deleteRun), false, "the run's own worker was not");
+    // The full worker holds no dict for the run any more: a kill of it now is no loss for the run.
+    full.onerror({ message: "x" });
+    const { answer } = await turnCell("e2", { turnLive: true });
+    assert.equal(answer.nsReset, undefined);
+});
+
+test("a release (PY_DELETE_RUN) after a turn's end still drops the run's own worker's dict", async () => {
+    const { w } = await turnCell("e3", { turnLive: true });
+    await endTurn("e3");
+    const done = send({ type: "PY_DELETE_RUN", run: "e3", principal: "run:e3" });
+    await settle();
+    assert.equal(w.posts.at(-1).deleteRun, "e3");
+    w.reply({ id: w.posts.at(-1).id, ok: true, stdout: "" });
+    await done;
+});
+
+test("between turns the run's worker is shut after the delay the turn's end carried, not before", async () => {
+    const { w } = await turnCell("e4", { turnLive: true });
+    await endTurn("e4", 120_000);
+    mock.timers.tick(119_999);
+    await settle();
+    assert.equal(w.terminated, false);
+    assert.equal(w.posts.at(-1).takeDropped, undefined);
+    mock.timers.tick(1);
+    await settle();
+    await answerReap(w);
+    assert.equal(w.terminated, true);
+    assert.deepEqual(reapedOf("e4").map((m) => [m.live, m.between, m.idleMs]), [[true, true, 120_000]]);
+    assert.equal(reapRecords("run:e4")[0].detail.between, true);
+    const { w: again, answer } = await turnCell("e4", { turnLive: true });
+    assert.notEqual(again, w);
+    assert.match(answer.nsReset, /^namespace reset at \S+: idle between turns$/);
+});
+
+test("the default delay is ten minutes", async () => {
+    assert.equal(DEFAULT_REAP_BETWEEN_MS, 10 * 60_000);
+    const { w } = await turnCell("e5", { turnLive: true });
+    await endTurn("e5");
+    mock.timers.tick(10 * 60_000 - 1);
+    await settle();
+    assert.equal(w.terminated, false);
+    mock.timers.tick(1);
+    await settle();
+    await answerReap(w);
+    assert.equal(w.terminated, true);
+});
+
+test("a delay of 0 never reaps a namespace between turns for idleness", async () => {
+    const { w } = await turnCell("e6", { turnLive: true });
+    await endTurn("e6", 0);
+    mock.timers.tick(DAY);
+    await settle();
+    assert.equal(w.terminated, false);
+});
+
+test("a delay past setTimeout's limit waits its full length: 35792 minutes does not wrap and fire at once", async () => {
+    const ms = 35792 * 60_000;   // the first whole-minute setting past 2^31-1 ms
+    assert.ok(ms > MAX_TIMER_MS && 35791 * 60_000 <= MAX_TIMER_MS);
+    const { w } = await turnCell("e6b", { turnLive: true });
+    await endTurn("e6b", ms);
+    mock.timers.tick(1);
+    await settle();
+    assert.equal(w.terminated, false, "the timer did not wrap to an immediate fire");
+    mock.timers.tick(MAX_TIMER_MS - 1);   // to the first step's end exactly: the mock dates a timer set in a tick from the tick's end
+    await settle();
+    assert.equal(w.terminated, false, "still waiting past the first step");
+    mock.timers.tick(ms - MAX_TIMER_MS - 1);
+    await settle();
+    assert.equal(w.terminated, false, "1 ms short of the delay");
+    mock.timers.tick(1);
+    await settle();
+    await answerReap(w);
+    assert.equal(w.terminated, true);
+    assert.deepEqual(reapedOf("e6b").map((m) => m.idleMs), [ms]);
+});
+
+test("a cell during a long delay's second step clears it: the worker is not shut on the old clock", async () => {
+    const ms = 2 * MAX_TIMER_MS - 10;   // two steps
+    const { w } = await turnCell("e6c", { turnLive: true });
+    await endTurn("e6c", ms);
+    mock.timers.tick(MAX_TIMER_MS + 5);
+    await settle();
+    await turnCell("e6c");   // a cell of no live turn: the worker stays on the between-turns clock, restarted
+    mock.timers.tick(MAX_TIMER_MS);   // past the first clock's end, short of the restarted one's
+    await settle();
+    assert.equal(w.posts.at(-1).takeDropped, undefined, "the first clock's later step was cleared: no reap was asked");
+    assert.equal(w.terminated, false);
+});
+
+test("the idle clock only runs while nothing of the principal is pending: a running cell between turns is never reaped", async () => {
+    const { w } = await turnCell("e7", { turnLive: true });
+    await endTurn("e7", 5000);
+    const posted = w.posts.length;
+    const answer = send({ type: "PY_RUN", code: "pass", hardened: true, tables: null, principal: "run:e7", wire: { client: "mlw-e7-b", run: "e7" } });
+    await settle();
+    assert.equal(w.posts.length, posted + 1);
+    mock.timers.tick(14_000);   // past the delay, inside the cell's own 15 s
+    await settle();
+    assert.equal(w.terminated, false, "the cell is still running");
+    w.reply({ id: w.posts.at(-1).id, ok: true, stdout: "" });
+    await answer;
+});
+
+test("a keep from the turn that ended does not exempt the reap, and a keep arriving after the end arms nothing", async () => {
+    const { w } = await turnCell("e8", { keep: true, turnLive: true });
+    await endTurn("e8");
+    mock.timers.tick(DEFAULT_REAP_BETWEEN_MS);
+    await settle();
+    await answerReap(w);
+    assert.equal(w.terminated, true, "the keep went with its turn");
+    // A cell of the ended turn landing late, keep and all (no turnLive: the service worker saw the turn gone).
+    const { w: late } = await turnCell("e9", { turnLive: true });
+    await endTurn("e9");
+    await turnCell("e9", { keep: true });
+    mock.timers.tick(DEFAULT_REAP_BETWEEN_MS);
+    await settle();
+    await answerReap(late);
+    assert.equal(late.terminated, true, "the late keep armed nothing");
+});
+
+test("a cell of a live turn puts the run back on the live clock", async () => {
+    const { w } = await turnCell("e10", { turnLive: true });
+    await endTurn("e10");
+    await turnCell("e10", { turnLive: true });
+    mock.timers.tick(DEFAULT_REAP_BETWEEN_MS);
+    await settle();
+    assert.equal(w.terminated, false, "a live turn is on REAP_LIVE_MS, not the between-turns delay");
+    mock.timers.tick(REAP_LIVE_MS - DEFAULT_REAP_BETWEEN_MS);
+    await settle();
+    await answerReap(w);
+    assert.equal(w.terminated, true);
+});
+
+test("PY_END_TURN is the service worker's word only", async () => {
+    const { w } = await turnCell("e11", { turnLive: true });
+    const answered = await new Promise((resolve) => {
+        let handled = false;
+        for (const fn of listeners) { if (fn({ type: "PY_END_TURN", run: "e11", ms: 1000 }, { id: "test", tab: { id: 3 } }, resolve) === true) handled = true; }
+        setImmediate(() => resolve(handled ? "handled" : "ignored"));
+    });
+    assert.equal(answered, "ignored");
+    mock.timers.tick(1000);
+    await settle();
+    assert.equal(w.terminated, false, "a tab's message re-armed nothing");
+});
+
+// --- reapDelay: every combination ---
+
+test("reapDelay: every principal kind x holdsRun x kept x betweenTurns", () => {
+    const S = REAP_SETTLED_MS, L = REAP_LIVE_MS, B = DEFAULT_REAP_BETWEEN_MS;
+    // [principal, holdsRun, kept, betweenTurns] -> delay; a hand-written table, not the rule again.
+    const table = [
+        ["run:r", false, false, false, S], ["run:r", false, false, true, S], ["run:r", false, true, false, S], ["run:r", false, true, true, S],
+        ["run:r", true, false, false, L], ["run:r", true, false, true, B], ["run:r", true, true, false, null], ["run:r", true, true, true, B],
+        ["page:7", false, false, false, S], ["page:7", false, false, true, S], ["page:7", false, true, false, S], ["page:7", false, true, true, S],
+        ["page:7", true, false, false, S], ["page:7", true, false, true, S], ["page:7", true, true, false, S], ["page:7", true, true, true, S],
+        ...["own", "full"].flatMap((p) => [false, true].flatMap((h) => [false, true].flatMap((k) => [false, true].map((b) => [p, h, k, b, null])))),
+    ];
+    assert.equal(table.length, 32);
+    for (const [p, h, k, b, want] of table) assert.equal(reapDelay(p, h, k, b), want, `${p} holds=${h} kept=${k} between=${b}`);
+    // The default for the fourth argument is "the turn is live", and the delay's default is ten minutes.
+    assert.equal(reapDelay("run:r", true, false), L);
+    assert.equal(reapDelay("run:r", true, true), null);
+    assert.equal(reapDelay("run:r", true, false, true), 10 * 60_000);
+    assert.equal(reapDelay("run:r", true, false, true, 90_000), 90_000);
+    assert.equal(reapDelay("run:r", true, false, true, 0), null, "0 is never");
 });
 
 // --- the kill during the cancel's spend (the never-yield bound's last path) ---

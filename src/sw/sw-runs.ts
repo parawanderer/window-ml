@@ -369,7 +369,7 @@ export const hydrationDone: Promise<void> = (typeof chrome !== "undefined" && ch
 // Per-run steering inbox (a.say() mid-run): the SW-side twin of the page loop's control.inbox. INJECT_MESSAGE
 // pushes here (only the owning tab may); the run's loop drains it at each step boundary (deps.drainInbox).
 // Present only while a run is live (set at start, deleted in finally).
-export const runInboxes = new Map<string, { tabId: number; queue: { id?: string; text: string; origin?: import("../contract/contract-run").PromptOrigin; images?: string[]; /** A detached call's result (sw-tasks.ts), not a person's message: only sw-tasks.ts sets it. */ task?: string }[] }>();
+export const runInboxes = new Map<string, { tabId: number; queue: { id?: string; text: string; origin?: import("../contract/contract-run").PromptOrigin; images?: string[]; /** A detached call's result (sw-tasks.ts), not a person's message: only sw-tasks.ts sets it. */ task?: string; /** That result's stored whole, cut from its text, and its length. */ value?: string; chars?: number }[] }>();
 defineState({
     id: "run.mailbox", scope: "run", realm: "worker", audience: "human", lostOn: ["worker-eviction", "turn-end"],
     describe: "Messages sent to the run that it has not read yet; it reads them at its next step.",
@@ -629,10 +629,16 @@ function dropTokenStore(runId: string): void {
     tokensByRun.delete(runId); releaseSessionValues(runId, keep); dropLocalTools(runId); releaseShOutputs(runId); forgetArrivalRun(runId);
 }
 
+/** What else is released with a session, registered by modules that cannot be imported here (sw-python's Python namespace).
+ *  A `var` with no initializer: sw-python registers while this module is still loading (an import cycle through the router), and a `const` would be unreachable then. */
+var sessionReleaseHooks: ((runId: string) => void)[] | undefined;   // state: fixed — registered at module load
+/** Register something to release with every session ({@link releaseSessionTokens}). @param hook called with the session's run id */
+export function onSessionRelease(hook: (runId: string) => void): void { (sessionReleaseHooks ??= []).push(hook); }
+
 /** Release a SESSION's pointers — only when the session itself is gone (its bgRuns entry dropped, or its store pushed
  *  out by newer sessions), never at the end of a turn. Paired with every `bgRuns.delete` so the two lifetimes cannot
  *  drift apart again. The stored values those pointers named go with them: nothing can address them any more. */
-export function releaseSessionTokens(runId: string): void { tokensByRun.delete(runId); releaseSessionValues(runId); dropLocalTools(runId); releaseShOutputs(runId); forgetArrivalRun(runId); }
+export function releaseSessionTokens(runId: string): void { for (const hook of sessionReleaseHooks ?? []) hook(runId); tokensByRun.delete(runId); releaseSessionValues(runId); dropLocalTools(runId); releaseShOutputs(runId); forgetArrivalRun(runId); }
 
 // The navigation SENSOR: a committed MAIN-frame navigation on a tab that hosts a live run means its document
 // (and registered toolset) is going away → engage the barrier so the next delegated tool waits for re-adopt.
@@ -650,6 +656,29 @@ defineState({
     },
 });
 
+/**
+ * Move a live run's inbox to another tab, so a runtime-bound task's result reaches the run where it is now and the
+ * inbox's owner check (`senderOwnsRun`) answers for the new tab only. The tasks are keyed by run id and follow on their
+ * own. A same-tab navigation needs no re-key. Not wired into any flow: the move-run lane calls it.
+ * @param runId the run
+ * @param to the tab the run is on now
+ * @returns false when the run has no inbox (between turns: nothing to move)
+ */
+export const rekeyRunInbox = (runId: string, to: number): boolean => {
+    const inbox = runInboxes.get(runId);
+    if (!inbox) return false;
+    inbox.tabId = to;
+    return true;
+};
+
+/**
+ * Whether a message's sender may answer for a run: an extension page (no `sender.tab`) may, a tab only if it is the one
+ * the run's inbox is on.
+ * @param sender the message's sender
+ * @param runId the run the message names
+ */
+export const senderOwnsRun = (sender: { tab?: { id?: number } }, runId: string): boolean => !sender.tab || sender.tab.id === runInboxes.get(runId)?.tabId;
+
 /** A tab Chrome has handed a NEW id (`chrome.tabs.onReplaced` — a discard restored, a prerender swapped in):
  *  move everything this module files under the old one, or the run it is hosting is orphaned under an id nothing
  *  will ever send again, and the restored page's CONTENT_READY finds nothing to re-adopt. The barrier is not
@@ -660,6 +689,9 @@ export const retabRuns = (from: number, to: number): number => {
     const moved = moveTabKey([activeRuns, runReplayBuffer, readoptPageInfo, tabPageUrl] as Array<Map<number, unknown>>, from, to);
     for (const runId of hosted) recordRunLog(runId, { subsystem: "tab", kind: "replaced", detail: { tab: to, wasTab: from } });
     for (const snap of bgRuns.values()) if (snap.tabId === from) snap.tabId = to;
+    // A live turn's inbox too: the person's answer to a gate and their steer are checked against its tab, and come from
+    // the new id now. The turn's own page sends still name the old one (`hostRun` closed over it; MOVE_RUN.md shape (b)).
+    for (const inbox of runInboxes.values()) if (inbox.tabId === from) inbox.tabId = to;
     navBarrier.forget(from);
     return moved;
 };

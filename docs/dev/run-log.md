@@ -72,7 +72,8 @@ any new mechanism reports.
 | `page` | `discarded` | the tab was discarded with a call outstanding; `ms` is how long before we noticed |
 | `page` | `reloaded` | reloaded in place and about to retry; a `reason` of `gone` means the reload itself failed |
 | `page` | `recovered` | the retry answered, and how long it took |
-| `page` | `unreachable` (`asleep`/`gone`/`silent`/`unadopted`) | gave up, with how long it waited (`unadopted`: the page answered after a navigation it never re-adopted the run on) |
+| `page` | `unreachable` (`asleep`/`gone`/`crashed`/`busy`/`silent`/`unadopted`) | gave up, with how long it waited (`crashed`: the renderer died; `busy`: the content script missed three pings in a row on a tab that is not frozen; `unadopted`: the page answered after a navigation it never re-adopted the run on) |
+| `page` | `no-commit` (`navigate`) | a `navigate` committed nothing within `NAV_COMMIT_MS` while the tab still held the destination as pending, so the barrier was lifted and the tab is still on the page it was leaving |
 | `cdp` | `attached` (`already`) | the debugger was attached — the banner the person saw |
 | `cdp` | `refused` (`permission`/`busy`) | "CDP not enabled", or DevTools already holds the tab |
 | `cdp` | `detached` | paired with the attach, so the two bracket how long the run held the debugger |
@@ -81,9 +82,9 @@ any new mechanism reports.
 | `tab` | `replaced` | `chrome.tabs.onReplaced` re-filed the run under a new tab id |
 | `tool` | `threw` (`run`/`readonly`/`auto-approve`/`precheck`/`approve`) | a tool call's dispatch threw (a page's malformed answer, an argument that cannot be read); the loop turned it into an error result, or for a step that only decides, into asking. Level `error`, the message in `key`, the tool in `detail.tool` |
 | `python` | `dropped` (`after-result`) | callables a cell handed to JavaScript (a timer, a microtask, a promise) fired after its result; the cancel had revoked them, so they ran nothing. `detail.count` of them, after cell `detail.afterCell` of the run's worker (counting from 1), reported when the run's next cell starts (`cell-gate.ts`) |
-| `python` | `dropped` (`after-last-cell`) | the same, for the turn's last cell: they fired between its result and the turn's end, and are reported when the turn ends and its namespace is deleted (`deletePythonRun`). One still armed then fires later, and is reported by the run's next cell or `at-reap` |
+| `python` | `dropped` (`after-last-cell`) | the same, for the turn's last cell: they fired between its result and the run's release, and are reported when its session is released or archived and its namespace is deleted (`deletePythonRun`; a turn's end deletes nothing of the run's own worker). One still armed fires later, and is reported by the run's next cell or `at-reap` |
 | `python` | `dropped` (`at-reap`) | the same, fired since the last report, handed over when the idle reap shut the run's worker (`py-reap.ts`) |
-| `python` | `reap` (`idle`) | the idle reap shut the run's worker while its turn was live: the turn's Python names are gone, and its next cell opens with the reset line |
+| `python` | `reap` (`idle`, `idle-between-turns`) | the idle reap shut the run's worker while it held the run's namespace, in a live turn (30 min) or between turns (`pythonIdleMinutes`): the run's Python names are gone, its next cell opens with the reset line, and the transcript gets one note line |
 | `python` | `keep` | the turn asked to keep its Python worker through idle gaps (`python_exec` `keep: true`); once per turn |
 | `tool` | `scrubbed` (`config-secret`) | a tool result named the server URL, the API key or the model filter and was scrubbed before the model read it; `key` holds the text as the tool wrote it |
 
@@ -114,8 +115,9 @@ debug, because a dropped record looks exactly like a mechanic that never happene
 
 So `tests/run-log.test.mjs` enumerates the names the emitters actually pass, by reading the emitter
 sources, rather than sampling them. One of them is not a literal at its emit site (`reason: e.state`
-on an unreachable page), so the guard reads those from where `TabState` is declared. Both directions
-are checked: every name emitted must survive the sanitizer, and every name the module's own convention
+on an unreachable page), so the guard reads those from the `TabState` and `PageUnreachableState`
+unions in page-reachable.ts. Both directions are checked: every name emitted must survive the
+sanitizer, and every name the module's own convention
 table lists must be one something emits.
 
 ## Deliberately not a line per probe

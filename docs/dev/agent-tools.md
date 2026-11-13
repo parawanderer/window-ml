@@ -169,7 +169,11 @@ pinned to the tab's top document once any navigation settles, and runs it throug
 page would. So the model gets the same text, image(s) or reader's words; the capture, the crops, the `views`, the stitch's
 compose, the reader's prompt and reply, and the legend's wording (from structured `legend` geometry, with the run's
 per-document `boundariesSeen`) stay in the worker, and the reader's call is the call's `subUsage`. An `@tool:` image
-pointer (`_image`) asks the page nothing at all. The run's adopt posted to the page's window names no model and no
+pointer (`_image`) asks the page nothing at all, nor does an attached document's pages (`look({ doc: "@file:…", pages
+})`): the loop holds the shelf, checks the pages against the file and `LOOK_DOC_PAGES_MAX` (8), draws them from the
+stored bytes in the offscreen document (`renderPages`, `drawStoredPages` in sw-attach.ts, read only for a run that holds
+them) and hands them down as `_images`, with no navigation wait and no document pin. The loop drops any `_`-prefixed
+argument the model writes, to any tool, before adding its own, and the run host refuses to send `_images` to a page. The run's adopt posted to the page's window names no model and no
 vision fact (`pageRebuild`, run-assembly.ts). A preview (an approval card, a pending step) still asks the page to draw
 the In label, sent the target only (`lookPreviewArgs`: `selector`, `index`), never the question. A refused call is
 `Error: ` and the host's fixed sentence, never half a result. A full-page look is bounded by the host (eight screens,
@@ -611,10 +615,17 @@ always coarse; the background-hosted loop calls `focusLineFor` directly. Both re
   released by the person opening the tab. Every send goes through `delegateSend` (delegate-send.ts), which watches
   the tab while it waits (`page-reachable.ts`): a `discarded` tab is reloaded in place and retried once (it has no
   document, so a reload costs nothing already lost), and a frozen one, which the browser labels as nothing unusual,
-  is bounded by a deliberately generous cap. A tab hosting a run is also pinned (`autoDiscardable: false`) and
+  is bounded by a deliberately generous cap. Three pages are told apart before that cap (`tests/e2e/page-health.spec.mjs`):
+  a CRASHED renderer reads `status: "unloaded"` without `discarded` and fails at once, also when its lost channel
+  would otherwise read as a navigation; a page whose main thread SPINS misses `BUSY_STRIKES` synchronous
+  `PRESENCE_CHECK` pings in a row and fails as busy, but only on a tab the browser reports `frozen: false`, since a
+  frozen tab misses them too; and a `navigate` whose destination sent nothing in `NAV_COMMIT_MS`, still the tab's
+  `pendingUrl` with no new document committed, says so and lifts the barrier, since the tab is still on the page it
+  was leaving. A tab hosting a run is also pinned (`autoDiscardable: false`) and
   released when it ends. And a tab can come back under a NEW id: `chrome.tabs.onReplaced` is the only notice, since
   no navigation commits and nothing is removed, so everything keyed by tab is re-filed there or the run is orphaned
-  under an id nothing will send again.
+  under an id nothing will send again. That includes a live turn's inbox, which the person's gate answer and steer
+  are checked against; the turn's own page sends keep the old id (`docs/spec/MOVE_RUN.md`, "Known gap").
 - **A run never starts on a page WE own.** A run that asked for an empty tab has to open some real http(s) page, and
   the three obvious candidates are all wrong: Chrome refuses an extension on `chrome://newtab` and on a top-level
   `about:blank` (an opaque origin, refused even with `<all_urls>` — both checked against the real browser), and the

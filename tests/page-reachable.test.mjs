@@ -78,3 +78,72 @@ test("each reason reads as a different thing to do about it", () => {
     // Model-facing, so no padding: AGENTS.md's rule about runs of spaces in a generated string.
     for (const s of ["gone", "asleep", "silent"]) assert.ok(!/ {2}/.test(reachabilityNote(s, 1000)), s);
 });
+
+// --- a crashed renderer and a page whose thread spins (page-health) ---
+
+// A probe that plays a scripted sequence of verdicts, then repeats the last.
+const scripted = (states) => { let i = 0; return async () => states[Math.min(i++, states.length - 1)]; };
+
+test("a crashed tab ends the wait at once, with state crashed", async () => {
+    const e = await watchWhileWaiting(never, async () => "crashed", { probeMs: 1000, capMs: PAGE_SILENCE_CAP_MS, sleep: fast })
+        .then(() => null, (x) => x);
+    assert.ok(e instanceof PageUnreachable);
+    assert.equal(e.state, "crashed");
+    assert.equal(e.waitedMs, 1000);
+});
+
+test("three unresponsive probes in a row are busy, waited 3 x probeMs", async () => {
+    let probes = 0;
+    const e = await watchWhileWaiting(never, async () => { probes++; return "unresponsive"; }, { probeMs: 4000, sleep: fast })
+        .then(() => null, (x) => x);
+    assert.ok(e instanceof PageUnreachable);
+    assert.equal(e.state, "busy");
+    assert.equal(e.waitedMs, 12000);
+    assert.equal(probes, 3);
+});
+
+test("two unresponsive probes are a strike count, not a verdict: an awake probe resets it", async () => {
+    let resolveSend;
+    const send = new Promise((r) => { resolveSend = r; });
+    const states = ["unresponsive", "unresponsive", "awake", "unresponsive", "unresponsive", "awake"];
+    let i = 0;
+    const probe = async () => { const s = states[i++]; if (i === states.length) resolveSend("ok"); return s; };
+    const v = await watchWhileWaiting(send, probe, { probeMs: 1, capMs: 10_000, sleep: fast });
+    assert.equal(v, "ok", "never 5 strikes in a row, so never busy");
+    assert.equal(i, states.length);
+});
+
+test("the busyStrikes option sets how many missed pings make a page busy", async () => {
+    const one = await watchWhileWaiting(never, scripted(["unresponsive"]), { probeMs: 10, busyStrikes: 1, sleep: fast }).then(() => null, (x) => x);
+    assert.equal(one.state, "busy");
+    assert.equal(one.waitedMs, 10);
+    const five = await watchWhileWaiting(never, scripted(["unresponsive"]), { probeMs: 10, busyStrikes: 5, sleep: fast }).then(() => null, (x) => x);
+    assert.equal(five.state, "busy");
+    assert.equal(five.waitedMs, 50);
+});
+
+test("a send that settles while the probe is still pending wins over its verdict", async () => {
+    for (const verdict of ["unresponsive", "crashed"]) {
+        let resolveSend, resolveProbe;
+        const send = new Promise((r) => { resolveSend = r; });
+        const probe = () => new Promise((r) => { resolveProbe = r; });
+        const p = watchWhileWaiting(send, probe, { probeMs: 1, busyStrikes: 1, sleep: fast });
+        for (let k = 0; k < 10 && !resolveProbe; k++) await Promise.resolve();
+        assert.ok(resolveProbe, "the probe is out");
+        resolveSend("answered");
+        await Promise.resolve();
+        resolveProbe(verdict);
+        assert.equal(await p, "answered", verdict);
+    }
+});
+
+test("reachabilityNote: crashed says crashed, busy says busy and the seconds; neither says asleep", () => {
+    const c = reachabilityNote("crashed", 1000);
+    assert.match(c, /crashed/);
+    assert.doesNotMatch(c, /asleep/);
+    const b = reachabilityNote("busy", 12000);
+    assert.match(b, /busy/);
+    assert.match(b, /12s/);
+    assert.doesNotMatch(b, /asleep/);
+    for (const [s, n] of [["crashed", 1000], ["busy", 12000]]) assert.ok(!/ {2}/.test(reachabilityNote(s, n)), s);
+});

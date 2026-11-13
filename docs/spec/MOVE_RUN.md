@@ -40,7 +40,7 @@ that URL opens. The person has already done the navigating: the run should follo
 `hostRun` (`sw-run-host.ts`) binds the run's `tabId` ONCE PER TURN: every page send (`toPage`, `delegateSend`), the
 run's inbox (`runInboxes.set`), and the turn's `settle` (`untrackRun`, `releaseDebugger`, `watchBetweenTurns`) close
 over it, about a hundred uses. Re-keying a map does not redirect a turn that is running. And `settle`, at the end of
-EVERY turn, deletes the run's inbox, ends its tasks (`endTasks`) and its Python namespace (`deletePythonRun`). So:
+EVERY turn, deletes the run's inbox, ends its tasks (`endTasks`) and the turn's Python state (`endPythonTurn`; the run's own namespace stays, it lives per run). So:
 
 - **(a) A move BETWEEN TURNS. Ships first.** The run is paused or finished; its in-memory `bgRuns` entry's tab is re-homed, and
   its next turn is hosted on the new tab from the start. It is cheap, and it covers both headline cases and the crash
@@ -119,9 +119,11 @@ tab that stays open. A move needs its own per-run function:
 ## Known gap, not caused by a move: `onReplaced` during a live turn
 
 Same cause as shape (b): a `chrome.tabs.onReplaced` while a turn runs leaves the turn sending to the removed tab id,
-since `hostRun` closed over it, and `retabRuns` never touches `runInboxes[run].tabId`, so a person's steering message
-from the restored tab is dropped by the inbox's tab check (`background.ts`). Untested today. The move-run lane writes
-the failing-first row in its own PR.
+since `hostRun` closed over it, so its next page call is refused rather than sent to the restored tab. The half that
+was the person's is closed: `retabRuns` re-keys `runInboxes[run].tabId`, so their answer to a gate (SET_APPROVAL) and
+their steer (INJECT_MESSAGE) from the restored tab reach the run (`background.ts` checks both against it; before, the
+gate was left waiting and the steer dropped). `tests/move-run.test.mjs` pins both, and that the turn's sends still go
+to the old id and nowhere else, until shape (b).
 
 ## Security
 

@@ -401,7 +401,7 @@ export const fetchTool = function(this: MlApi): MlTool {
             // itself clipped at its read cap is never kept: stored, that prefix would later read as the whole.
             const keep = (ml as MlApi & { _keepText?: KeepText })._keepText;
             const textValue = keep && !r.truncated && body.length > FETCH_PREVIEW_CHARS ? await keep(body, r.url).catch(() => undefined) : undefined;
-            return { content: buildTool(clipOut(body, FETCH_PREVIEW_CHARS)), renderIn: inRender(), ...(textValue ? { textValue } : {}) };
+            return { content: buildTool(clipOut(body, FETCH_PREVIEW_CHARS)), renderIn: inRender(), ...(textValue ? { textValue, textChars: body.length } : {}) };
         },
     });
 };

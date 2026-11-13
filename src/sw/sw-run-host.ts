@@ -8,7 +8,7 @@ import { runBackgroundAgent } from "../agent/agent-host";
 import { pythonCellInDialect, pythonOutsideWhy } from "../agent/python-dialect";
 import { namesJsBridge } from "../python/bridge-names";
 import { evalReadonlyInWorker } from "./sw-readonly";
-import { deletePythonRun, markPythonBridged, pythonRunBridged } from "./sw-python";
+import { endPythonTurn, markPythonBridged, pythonRunBridged } from "./sw-python";
 import { workerReadonlyMl, derefWhole } from "./worker-readonly-ml";
 import { pipeStages } from "../pointers/token-pipe";
 import { recordRunLog, runLog } from "./sw-run-log";
@@ -64,11 +64,13 @@ import { autoApprovePython } from "../agent/auto-approve";
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
 import { PROPOSAL_TOOLS, withoutProposals, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
-import { claimValue, runMayClaim, valueHolders, readStoredColumns, readStoredText, withHeldValuesOnly } from "./sw-values";
+import { drawStoredPages } from "./sw-attach";
+import { claimValue, runMayClaim, valueHolders, readStoredBytes, readStoredColumns, readStoredText, withHeldValuesOnly } from "./sw-values";
 import { isoServer, type IsoDeps } from "./iso-channel";
 import { shPut, shRead, shRun, takeShSpans } from "./sw-shell-call";
 import { focusLineFor } from "./sw-focus";
-import { delegateSend } from "./delegate-send";
+import { delegateSend, CHANNEL_GONE } from "./delegate-send";
+import { NAV_COMMIT_MS } from "./nav-barrier";
 import { GATED_BUILTINS } from "../tools/tool-registry";
 import { checkVerifyRequest, verifyAsked, verifyVerb, withoutPageVision, workerVerify, VERIFY_REFUSED, VERIFY_WITHHELD, type VerifyOutcome, type WorkerVerify } from "./worker-verify";
 import { topDocument } from "./worker-vision";
@@ -131,6 +133,26 @@ async function withShCalls(runId: string, seq: number | undefined, tool: () => P
 }
 
 const STREAM_EMIT_MS = 90;   // min gap between live `agent-stream` deltas — smooth enough to read, not a flood
+
+/**
+ * Wait for a `navigate`'s destination to re-adopt the run, and say whether it stalled: nothing re-adopted within
+ * NAV_COMMIT_MS, no new document committed, and the browser still holds the destination as the tab's `pendingUrl`.
+ * Then the tab is on the page it was leaving, which still holds the run, and the barrier is lifted. Anything else
+ * (a commit, a browser that reports no pendingUrl) waits out the barrier as before.
+ * @param tabId the run's tab
+ * @param sentTo the document the navigate was sent to, when known
+ * @returns where the tab is and where it was going, when it stalled
+ */
+async function navStalled(tabId: number, sentTo: string | undefined): Promise<{ from: string; to: string } | null> {
+    const ready = navBarrier.whenReady(tabId);
+    const early = await Promise.race([ready.then(() => true), new Promise<false>((r) => setTimeout(() => r(false), NAV_COMMIT_MS))]);
+    if (early || !navBarrier.isNavigating(tabId) || sentTo === undefined) { await ready; return null; }
+    const doc = navBarrier.currentDocument(tabId);
+    const tab = doc === undefined || doc === sentTo ? await chrome.tabs.get(tabId).catch(() => null) : null;
+    if (!tab?.pendingUrl) { await ready; return null; }
+    navBarrier.noteNoCommit(tabId);
+    return { from: tab.url ?? "", to: tab.pendingUrl };
+}
 
 /** The tab's main-frame document: the barrier's record of the last commit, else the browser's answer (a worker that was
  *  evicted has no record). Undefined where neither knows, and then a re-adopt is judged on the navigation alone. */
@@ -633,14 +655,19 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             if (payload.renderOnly || payload.precheck || payload.readonlyTry) payload = { ...payload, args: lookPreviewArgs(payload.args) };
             else {
                 noteLocalStep(runId, payload.name);
-                await navBarrier.whenReady(tabId);
-                const doc = await topDocument(tabId);
+                // Pages of an attached document (the loop drew them, `_images`) are not on the tab: nothing to wait for.
+                const pages = payload.name === "look" && Array.isArray(payload.args?._images);
+                if (!pages) await navBarrier.whenReady(tabId);
+                const doc = pages ? null : await topDocument(tabId);
                 const vision = await visionFacts();
                 return payload.name === "look"
                     ? workerLook(runId, tabId, doc, payload.args, vision, tabUrl)
                     : workerLocate(runId, tabId, doc, payload.args, vision, tabUrl);
             }
         }
+        // An attached document's drawn pages never go to the page: its run's `look` is the worker's (files are on worker-built runs only).
+        if (payload.name === "look" && payload.args?._images && !payload.renderOnly && !payload.precheck && !payload.readonlyTry)
+            return { result: "Error: an attached file's pages are looked at only by a run the browser started, which this one is not." };
         // To the page. The call itself of a run whose vision is the worker's is told so (its verify comes back as a
         // request), and what the page answers is held to that (`withoutPageVision`).
         const toPage = async (pin?: string): Promise<unknown> => {
@@ -681,7 +708,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     // Undoes what this turn registered: run when the turn settles, and when its setup throws before the loop starts.
     let unhostAsks: (() => void) | undefined;   // set once the run's steps may raise nested asks (sw-asks.ts)
     let unwatchArrivals: (() => void) | undefined;   // set once the run judges its tab's arrivals (nav-arrival.ts)
-    const settle = (): void => { unhostAsks?.(); unwatchArrivals?.(); if (unwatchArrivals) watchBetweenTurns(tabId, runId); cancelReasons.delete(runId); noteRunEnd(runId); dropActs(runId); runControllers.delete(runId); runInboxes.delete(runId); void endTasks(runId); untrackRun(tabId, runId); deleteRun(runId); deletePythonRun(runId); releaseDebugger(tabId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); ROOT C: drop its kept Python namespace
+    const settle = (): void => { unhostAsks?.(); unwatchArrivals?.(); if (unwatchArrivals) watchBetweenTurns(tabId, runId); cancelReasons.delete(runId); noteRunEnd(runId); dropActs(runId); runControllers.delete(runId); runInboxes.delete(runId); void endTasks(runId); untrackRun(tabId, runId); deleteRun(runId); endPythonTurn(runId); releaseDebugger(tabId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); the turn's end: the run's Python namespace stays, the shared full worker's dict goes
     /** Ends the run's session on every surface when the setup throws after its start event went out; set once the fan exists. */
     let endSession: ((error: string) => void) | undefined;
     try {
@@ -1092,7 +1119,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             }
             if (!env) return declined("the worker did not run it");
             recordRunLog(runId, { subsystem: "routing", kind: "python-inside", reason: "in-dialect", detail: { tool: "python_exec" } });
-            return { result: env.result || "", renderIn: env.renderIn, renderOut: env.renderOut, feedback: env.feedback, image: env.image, imageLabel: env.imageLabel, images: env.images, ...(env && workerEnvelopes.has(env as import("../contract").PageToolEnvelope) && typeof env.textValue === "string" ? { textValue: env.textValue } : {}) };
+            return { result: env.result || "", renderIn: env.renderIn, renderOut: env.renderOut, feedback: env.feedback, image: env.image, imageLabel: env.imageLabel, images: env.images, ...(env && workerEnvelopes.has(env as import("../contract").PageToolEnvelope) && typeof env.textValue === "string" ? { textValue: env.textValue, ...(typeof env.textChars === "number" ? { textChars: env.textChars } : {}) } : {}) };
         };
         runBackgroundAgent(
             { task: modelTask, systemPrompt: p.systemPrompt, pageContext: p.pageContext, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSelfSource: p.autoApproveSelfSource, unattended: p.unattended, toolTokens: p.toolTokens, stream: p.stream, ...(p.origin ? { origin: p.origin } : {}), runId, seqBase, tokenStore: sessionTokens(runId), labelMatch: p.labelMatch, resumeMessages, images: p.images,
@@ -1276,7 +1303,6 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         // closes and Chrome's raw "message channel closed…" error is useless to the model. RECOGNISE
                         // it as a navigation: wait for the new document to settle (re-adopt) and hand back the new
                         // page's context — actionable, and safe (no blind retry that could double-submit a form).
-                        const CHANNEL_GONE = /message channel closed|Receiving end does not exist|No tab with id/i;
                         let env: Partial<import("../contract").PageToolEnvelope>;
                         let workerMade = false;   // the worker wrote this result itself (the page could not be reached, or navigated)
                         // The document this call goes to: if the call navigates, that document stays alive a moment and
@@ -1351,10 +1377,16 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                             // of spending a look()/pageInfo turn to find out. The barrier's own timeout is the
                             // fallback (a nav that never re-adopts → whenReady resolves, no pageInfo → plain result).
                             if (env) {
-                                await navBarrier.whenReady(tabId);
+                                // A destination that has sent nothing in NAV_COMMIT_MS is said so, and the run stays where it is,
+                                // instead of a 15 s wait that ends with the model reading the old page as the new one.
+                                const stalled = await navStalled(tabId, sentTo);
+                                if (stalled) {
+                                    recordRunLog(runId, { level: "warn", subsystem: "page", kind: "no-commit", reason: "navigate", ms: NAV_COMMIT_MS, detail: { tab: tabId, tool: name } });
+                                    env.result = `Error: the navigation to ${stalled.to} did not load: nothing arrived within ${Math.round(NAV_COMMIT_MS / 1000)}s, so this tab is still on ${stalled.from}. It may still load later; check where you are (pageInfo) before acting.`;
+                                }
                                 // Where it landed may hold the run (nav-arrival.ts): the model reads the hold, or the person's answer.
-                                const arrived = await passArrival(call ? seqBase + call.seq : undefined);
-                                const info = arrived ? undefined : takeInfo();
+                                const arrived = stalled ? undefined : await passArrival(call ? seqBase + call.seq : undefined);
+                                const info = arrived || stalled ? undefined : takeInfo();
                                 if (arrived) env.result = `${env.result || ""}\n\n${arrived.text}`;
                                 if (info) env.result = `${env.result || ""}\n\nYou are now on the new page:\n${info}`;
                                 // verify → fold a view of the DESTINATION page into the result, captured on the NEW
@@ -1366,7 +1398,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                                 const verify = rawVerify === true ? "viewport" : typeof rawVerify === "string" ? rawVerify : null;
                                 // `pipe` scans the text-verify Markdown (text/text-all only) — threaded to the page.
                                 const navPipe = typeof (args as { pipe?: unknown })?.pipe === "string" ? (args as { pipe: string }).pipe : undefined;
-                                if (verify && !navBarrier.isNavigating(tabId)) {
+                                if (verify && !stalled && !navBarrier.isNavigating(tabId)) {
                                     const text = verify === "text" || verify === "text-all";
                                     const payload = verify === "text" ? { runId, verifyText: "strip" as const, verifyPipe: navPipe }
                                         : verify === "text-all" ? { runId, verifyText: "all" as const, verifyPipe: navPipe }
@@ -1545,7 +1577,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         // The page already computed the rendered In/Out slots (descriptorFor) — forward them so
                         // the sidebar shows the rich view. `image` rides along for INLINE VISION (native look):
                         // the loop injects it into the model's next turn (pushToolImages).
-                        return { result: (env?.result || `Error: the page returned nothing for tool "${name}".`) + (execNote ? `\n\n${execNote}` : ""), renderIn: env?.renderIn, renderOut: env?.renderOut, feedback: env?.feedback, image: env?.image, imageLabel: env?.imageLabel, images: env?.images, remoteMs: env?.remoteMs, ...(env && workerEnvelopes.has(env) && typeof env.textValue === "string" ? { textValue: env.textValue } : {}) };
+                        return { result: (env?.result || `Error: the page returned nothing for tool "${name}".`) + (execNote ? `\n\n${execNote}` : ""), renderIn: env?.renderIn, renderOut: env?.renderOut, feedback: env?.feedback, image: env?.image, imageLabel: env?.imageLabel, images: env?.images, remoteMs: env?.remoteMs, ...(env && workerEnvelopes.has(env) && typeof env.textValue === "string" ? { textValue: env.textValue, ...(typeof env.textChars === "number" ? { textChars: env.textChars } : {}) } : {}) };
                     } finally {
                         dropCallGrants(tabId, callKey);   // grants were for THIS approved call's sub-ops only; another run's call on the tab keeps its own
                         if (pyInWorker) grantRunPython(runId, null);
@@ -1578,6 +1610,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 claimValue: (key) => claimValue(key, runId, runMayClaim(byWorker() ? null : pageValueSession(tabId))),
                 // The whole of a stored text the run's pointer names, for the dereference tool. Only a value this run holds.
                 readText: (key) => readStoredText(key, runId),
+                // Pages of an attached PDF this run holds, drawn for `look` at a document. Only a value this run holds.
+                renderPages: async (key, pages) => drawStoredPages(await readStoredBytes(key, runId), pages),
                 tryReadonly: p.autoApproveReadonly || p.autoApprovePython ? async (name, args, live) => {
                     // A run held on its page (nav-arrival.ts) surveys nothing there, and runs no cell: the call goes on to its hold.
                     await arrivalSettled(tabId);
@@ -1990,7 +2024,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     for (const it of items) if (it.id) fanEvent({ kind: "agent-say-seen", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, sayId: it.id });
                     // Each says where it was typed, so a run steered from another surface reports THAT one.
                     // A task's result is no one's typing: it carries its id and leaves the run's latest origin standing.
-                    return items.map(it => (it.task ? { text: it.text, task: it.task } : it.origin || it.images ? { text: it.text, ...(it.origin ? { origin: it.origin } : {}), ...(it.images ? { images: it.images } : {}) } : it.text));
+                    return items.map(it => (it.task ? { text: it.text, task: it.task, ...(it.value ? { value: it.value, chars: it.chars } : {}), ...(it.images ? { images: it.images } : {}) } : it.origin || it.images ? { text: it.text, ...(it.origin ? { origin: it.origin } : {}), ...(it.images ? { images: it.images } : {}) } : it.text));
                 },
                 signal: abortCtl.signal,
                 // chat_metadata: the run's model FACTS from the SW's caches (the loop supplies the live

@@ -144,10 +144,10 @@ async function emittedNames() {
         for (const m of src.matchAll(/\bnote\(\s*"([^"]*)"/g)) out.kind.add(m[1]);
     }
     // One reason is not a literal at its emit site: an unreachable page records `reason: e.state`, whose values
-    // are the `TabState` union plus the cap's own "silent". Read them where they ARE declared, so a new state
-    // named in a shape the sanitizer refuses still fails this.
+    // are the `PageUnreachableState` union: `TabState`'s verdicts plus "busy", the cap's own "silent" and "unadopted".
+    // Read them where they ARE declared, so a new state named in a shape the sanitizer refuses still fails this.
     const reach = await readFile(new URL("../src/sw/page-reachable.ts", import.meta.url), "utf8");
-    const states = reach.match(/^export type TabState = (.*)$/m)[1] + (reach.match(/state: TabState \| "[^"]+"/)?.[0] ?? "");
+    const states = reach.match(/^export type TabState = (.*)$/m)[1] + reach.match(/^export type PageUnreachableState = (.*)$/m)[1];
     for (const lit of states.matchAll(/"([^"]*)"/g)) out.reason.add(lit[1]);
     return out;
 }

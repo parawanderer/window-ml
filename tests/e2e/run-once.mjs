@@ -120,6 +120,26 @@ export function backendFromDotenv(dotenv, env = {}) {
     };
 }
 
+/** Cloud models served as text only. Nothing a backend reports says which cloud models see (OpenWebUI marks every
+ *  custom model as seeing, DeepSeek V4 Pro included), and most do, so the list is of the exceptions (Shane, 2026-11-12).
+ *  DeepSeek Flash sees: on 2026-11-13 it named both colours of a two-colour image that V4 Pro answered "NO IMAGE" to. */
+export const TEXT_ONLY_CLOUD = /deepseek-v4-pro/i;
+
+/**
+ * Whether the driver sees images, declared for when nothing can probe it: the extension reads this
+ * (`defaultModelVision`) only when Ollama cannot report the model's capabilities, so a local model is still probed.
+ * Undeclared, a cloud driver's `look` went to the vision reader (OPENWEBUI_VISION_MODEL) and never saw the page itself.
+ *
+ * @param {string} model the driver's id
+ * @param {Record<string, string|undefined>} [env] `E2E_MODEL_VISION=yes|no` overrides the list
+ * @returns {"yes"|"no"} the declaration
+ */
+export function declaredVision(model, env = process.env) {
+    const set = (env.E2E_MODEL_VISION || "").trim().toLowerCase();
+    if (set === "yes" || set === "no") return set;
+    return TEXT_ONLY_CLOUD.test(model) ? "no" : "yes";
+}
+
 export async function resolveBackendFromEnv(env = process.env) {
     if (env.E2E_BACKEND) {
         return {
@@ -474,6 +494,8 @@ export async function runOnce(cfg = {}) {
             chatUrl: backend ? backend.chatUrl : fake.url,
             apiKey: backend?.key || "",
             model: backend ? backend.model : FAKE_MODEL,
+            // Whether a cloud driver sees (declaredVision); the fake keeps the extension's default.
+            ...(backend ? { defaultModelVision: declaredVision(backend.model) } : {}),
             // Spend (Settings > Spend): the price service, and the electricity price each call records. Unset, absent.
             ...(backend?.priceSnapshotUrl ? { priceSnapshotUrl: backend.priceSnapshotUrl } : {}),
             // A cap on each agent step's output, which the bench sets for a local model (cells.mjs BENCH_STEP_MAX_TOKENS).

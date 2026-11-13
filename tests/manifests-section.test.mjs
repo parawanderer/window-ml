@@ -116,6 +116,24 @@ test("evidenceOf branches on kind, origin and evidence: a program the person add
     assert.match(M.pinText({ manifest: { program: "x" }, pin: { ...PERSON.pin, version: "1.2.3" } }), /, version 1\.2\.3\)/);
 });
 
+// --- the runs-code warning ---
+
+test("a script entry whose manifest lacks runs-code shows the warning with its fix; adding runs-code removes it; a binary never shows it", async () => {
+    const host = await show();
+    const warn = row(host, "man-4").querySelector(".man-runs-code-warn");
+    assert.ok(warn, "SCRIPT declares only read");
+    assert.match(warn.textContent, /lacks runs-code/);
+    assert.match(warn.textContent, /refused under the sandbox, while the call still reports ok/);
+    assert.match(warn.textContent, /Add "runs-code"/);
+    for (const id of ["man-1", "man-2", "man-3"]) assert.equal(row(host, id).querySelector(".man-runs-code-warn"), null, id);
+    const prev = VIEW.workspace[0].manifests[0];
+    VIEW.workspace[0].manifests[0] = { ...SCRIPT, manifest: { ...SCRIPT.manifest, command: { ...READER, effects: ["read", "runs-code"] } } };
+    try {
+        const host2 = await show();
+        assert.equal(row(host2, "man-4").querySelector(".man-runs-code-warn"), null);
+    } finally { VIEW.workspace[0].manifests[0] = prev; }
+});
+
 // --- add and remove ---
 
 test("Add sends the manifest and where it applies, never a pin; a workspace is named by its root", async () => {
