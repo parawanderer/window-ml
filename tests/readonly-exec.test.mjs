@@ -859,6 +859,21 @@ test("ESCAPE: a return in finally CANNOT paper over a guard denial", async () =>
     await assert.rejects(run(`try { return window; } finally { return "swallowed"; }`), e => e instanceof Denied);
 });
 
+test("ESCAPE: a finally that THROWS cannot paper over a guard denial either", async () => {
+    // Held from the block, from the catch, a NotInDialect and a Denied: each must still reach the driver, whatever the
+    // finalizer throws.
+    for (const js of [
+        `try { window.alert(1); } finally { JSON.parse("{bad"); }`,
+        `try { return window; } finally { const o = { g: 1 }; o.g(); }`,
+        `try { JSON.parse("{bad"); } catch (e) { return window; } finally { JSON.parse("{bad"); }`,
+    ]) await assert.rejects(run(js), (e) => e instanceof Denied, js);
+    await assert.rejects(run(`try { return document.querySelector('#a').click(); } finally { JSON.parse("{bad"); }`), (e) => e instanceof NotInDialect);
+    // The finalizer's OWN refusal stands, held error or not.
+    await assert.rejects(run(`try { JSON.parse("{bad"); } finally { window.alert(1); }`), (e) => e instanceof Denied);
+    // Positive control, JS semantics: with no denial held, the finalizer's throw replaces the held error.
+    await assert.rejects(run(`try { JSON.parse("{bad"); } finally { const o = { g: 1 }; o.g(); }`), (e) => !(e instanceof Denied) && !(e instanceof NotInDialect) && /not a function/.test(e.message));
+});
+
 test("finally: a return in finally overrides a NORMAL result (JS semantics)", async () => {
     assert.equal((await run(`try { return 1; } finally { return 2; }`)).value, 2);
 });

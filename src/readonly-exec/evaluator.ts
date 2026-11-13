@@ -1082,7 +1082,14 @@ export class Evaluator {
                         // position comes back only when the finalizer finishes.
                         const held = this.failAt;
                         this.failAt = -1;
-                        const f = yield* this.eval(node.finalizer, scope);
+                        let f: unknown;
+                        try { f = yield* this.eval(node.finalizer, scope); }
+                        catch (e3) {
+                            // A finalizer's own throw replaces a held ERROR, as in JS, but never a held denial: that
+                            // would turn an escalation into a script error. Its own refusal stands either way.
+                            if (guardErr && !(e3 instanceof NotInDialect || e3 instanceof Denied)) { this.failAt = held; throw guardErr; }
+                            throw e3;
+                        }
                         this.failAt = held;
                         // A `return` in finally overrides a normal result/throw — but NEVER a guard denial.
                         if (!guardErr && f && typeof f === "object" && RETURN in (f as object)) return f;
