@@ -12,7 +12,7 @@ below, so nothing outside the folder imports `readonly-exec/` directly. The piec
 
 | File | Holds |
 | --- | --- |
-| `readonly-exec.ts` | `evalReadonly`: builds the root scope, parses, runs the evaluator, restores on failure, attaches the failing line |
+| `readonly-exec.ts` | `evalReadonly`: builds the root scope, parses, runs the evaluator, restores on failure, attaches the failing line and, on a long line, the piece of it the throw came from (`execErrorExcerpt`) |
 | `readonly-exec/limits.ts` | the refusals (`NotInDialect`, `Denied`, `NeedsPage`), the halting rationale and bounds (`STEP_BUDGET`, `MAX_COLLECTION`, `MAX_STORED_CELLS`, `MAX_STRING`, `MAX_CALL_DEPTH`, `PIPE_CHARS_PER_STEP`), `riskyRegex` |
 | `readonly-exec/regex-cost.ts` | `regexWork`/`regexSteps`: the bound on one regex search's backtracking over its input, and `REGEX_UNITS_PER_STEP` (the Halting row) |
 | `readonly-exec/replace-size.ts` | `replaceWorstCase`/`replaceSize`: how many characters a String `replace` will build, counted before the host builds it; the evaluator's `replaceCharge` and the pipe's `sed` both use it (the `replaceCharge` row) |

@@ -37,6 +37,7 @@ import { subcallUsage } from "../bus";
 import { defineState, readState, readableMembers } from "../state-registry";
 import { pageHostedAnswer } from "./page-run-state";
 import { type ChannelMessage, onIsolated, toIsolated } from "../page-channel";
+import { surveyWhere } from "../tools/exec-trace";
 
 /** The delegated vision-sub-call tokens `fn` spent, as a DELTA around the page-side meter (bus.ts). The
  *  background loop can't read the page's accumulator, so each delegated tool call reports its own spend and
@@ -294,10 +295,10 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
             // Same split as the page path, through the same predicate: the dialect refusing escalates, the
             // script throwing is reported. `readonly: true` is what says "this was answered without a gate".
             if (readonlyRefused(e)) return { result: "", readonly: false };
-            const at = (e as { mlLine?: number })?.mlLine ?? null;
-            const msg = `Error: ${errText(e)}${at ? ` (line ${at})` : ""}`;
+            const { at, where } = surveyWhere(e);
+            const msg = `Error: ${errText(e)}${where}`;
             const { in: renderIn } = descriptorFor(tool, { result: msg }, args);
-            return { result: msg, renderIn, renderOut: { type: "exec-out" as const, error: `${errText(e)}${at ? ` (line ${at})` : ""}`, ...(at ? { errorLine: at } : {}) }, readonly: true };
+            return { result: msg, renderIn, renderOut: { type: "exec-out" as const, error: `${errText(e)}${where}`, ...(at ? { errorLine: at } : {}) }, readonly: true };
         } finally {
             if (surveyStops.get(runId) === stop) surveyStops.delete(runId);
         }

@@ -27,6 +27,7 @@ import type { CurrentSnapshot } from "../agent/current-context";
 import type { MlTool } from "../contract/contract-agent";
 import type { RenderDescriptor } from "../contract/contract-render";
 import type { LiveOutput } from "../agent/agent-loop";
+import { surveyWhere } from "../tools/exec-trace";
 
 /** What the worker holds for one run, handed in by the host so this module stays testable without one. */
 export interface WorkerReadonlyDeps {
@@ -114,8 +115,8 @@ export async function evalReadonlyInWorker(args: Record<string, unknown>, deps: 
         if (e instanceof NotInDialect || e instanceof Denied) { out?.drop(); return { kind: "refused" }; }
         out?.settle();
         // A runtime error in the script is the model's to fix, reported with its line, exactly as the page path does.
-        const at = (e as { mlLine?: number })?.mlLine ?? null;
-        const error = `${errText(e)}${at ? ` (line ${at})` : ""}`;
+        const { at, where } = surveyWhere(e);
+        const error = `${errText(e)}${where}`;
         const { in: renderIn } = descriptorFor(deps.tool, { result: `Error: ${error}`, ...(deps.tool ? {} : { renderIn: codeIn }) }, args);
         return { kind: "answered", result: `Error: ${error}`, renderIn, renderOut: { type: "exec-out", error, ...(at ? { errorLine: at } : {}) } };
     }

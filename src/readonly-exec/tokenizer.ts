@@ -5,8 +5,9 @@ import { NotInDialect } from "./limits";
 // `ln` is the 1-based source line the token starts on. It exists for ONE purpose: when a script throws a
 // runtime error, the model is told WHERE. That used to come free, because a throwing survey escalated to the
 // approved path and `execErrorLine` read it off a real stack — but a runtime error is now answered here
-// instead of escalating, and an interpreter's stack is the INTERPRETER's, not the script's.
-export interface Tok { t: "num" | "str" | "name" | "punct" | "eof" | "template" | "regex"; v: string; ln: number; quasis?: string[]; exprs?: string[]; flags?: string; }
+// instead of escalating, and an interpreter's stack is the INTERPRETER's, not the script's. `at` is the token's
+// offset in the source, for the same purpose: on a long line, the piece of it that failed.
+export interface Tok { t: "num" | "str" | "name" | "punct" | "eof" | "template" | "regex"; v: string; ln: number; quasis?: string[]; exprs?: string[]; flags?: string; at: number; }
 
 // After these tokens a `/` begins a REGEX (an expression is expected); after a value-producing token
 // (a number/string/template, an identifier, or a closing `)`/`]`/`}`) a `/` is DIVISION. The keyword
@@ -117,13 +118,13 @@ export function tokenize(src: string): Tok[] {
             j++;   // past the closing `/`
             let flags = "";
             while (j < src.length && /[a-z]/i.test(src[j])) { flags += src[j]; j++; }
-            toks.push({ t: "regex", v: body, flags, ln: ln() }); i = j; continue;
+            toks.push({ t: "regex", v: body, flags, ln: ln(), at: i }); i = j; continue;
         }
-        if (c === "`") { const { quasis, exprs, end } = scanTemplate(src, i); toks.push({ t: "template", v: "", quasis, exprs, ln: ln() }); i = end; continue; }
+        if (c === "`") { const { quasis, exprs, end } = scanTemplate(src, i); toks.push({ t: "template", v: "", quasis, exprs, ln: ln(), at: i }); i = end; continue; }
         if (c >= "0" && c <= "9") {
             let j = i + 1;
             while (j < src.length && /[0-9.]/.test(src[j])) j++;
-            toks.push({ t: "num", v: src.slice(i, j), ln: ln() }); i = j; continue;
+            toks.push({ t: "num", v: src.slice(i, j), ln: ln(), at: i }); i = j; continue;
         }
         if (c === '"' || c === "'") {
             let j = i + 1, out = "";
@@ -135,17 +136,17 @@ export function tokenize(src: string): Tok[] {
                 } else { out += src[j]; j++; }
             }
             if (j >= src.length) throw new NotInDialect("unterminated string");
-            toks.push({ t: "str", v: out, ln: ln() }); i = j + 1; continue;
+            toks.push({ t: "str", v: out, ln: ln(), at: i }); i = j + 1; continue;
         }
         if (isIdStart(c)) {
             let j = i + 1;
             while (j < src.length && isId(src[j])) j++;
-            toks.push({ t: "name", v: src.slice(i, j), ln: ln() }); i = j; continue;
+            toks.push({ t: "name", v: src.slice(i, j), ln: ln(), at: i }); i = j; continue;
         }
         const p = PUNCT.find(x => src.startsWith(x, i));
         if (!p) throw new NotInDialect(`unexpected character '${c}'`);
-        toks.push({ t: "punct", v: p, ln: ln() }); i += p.length; continue;
+        toks.push({ t: "punct", v: p, ln: ln(), at: i }); i += p.length; continue;
     }
-    toks.push({ t: "eof", v: "", ln: ln() });
+    toks.push({ t: "eof", v: "", ln: ln(), at: i });
     return toks;
 }

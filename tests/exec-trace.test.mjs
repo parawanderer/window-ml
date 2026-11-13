@@ -7,7 +7,7 @@
 // tool is broken rather than that the number was.
 import { test } from "node:test";
 import assert from "node:assert";
-import { rawEvalLine, evalLineOffset, execErrorLine, evalWrapper, asyncWrapper } from "../src/tools/exec-trace.ts";
+import { rawEvalLine, rawEvalPos, evalLineOffset, evalColOffset, execErrorLine, execErrorExcerpt, lineExcerpt, surveyWhere, evalWrapper, asyncWrapper } from "../src/tools/exec-trace.ts";
 
 // The two wrappers tools.ts builds, the same functions.
 const runEval = (src, params = ["state"]) => evalWrapper(params)(...params.map(() => undefined)).run(src);
@@ -71,4 +71,47 @@ test("a frame from OUTSIDE the source is refused rather than pointed at", async 
 test("an unmeasurable stack is null, never a guess", async () => {
     assert.equal(await execErrorLine(undefined, "eval", ["state"], 10), null);
     assert.equal(await execErrorLine("Error: nope", "async", ["state"], 10), null);
+});
+
+// --- the piece of a long line, in place of a column ---
+
+test("a long line gets a piece of itself with ▶ at the spot; a short one gets nothing", () => {
+    const long = "a".repeat(60) + "BAD" + "b".repeat(60);
+    const piece = lineExcerpt(long, 61);
+    assert.match(piece, /^…a+▶BADb+…$/);
+    assert.ok(piece.length < long.length);
+    assert.equal(lineExcerpt("short();", 1), null, "a line number already says where on a short line");
+    assert.equal(lineExcerpt(long, 0), null, "a column outside the line is no place");
+    assert.equal(lineExcerpt(long, long.length + 1), null);
+    assert.ok(!/ {2}/.test(lineExcerpt("x".repeat(90) + "   y   " + "z".repeat(40), 92)), "no padding reaches the model");
+});
+
+test("the frame's column is read with its line", () => {
+    assert.deepEqual(rawEvalPos("Error: x\n    at eval (eval at <anonymous> (<anonymous>:1:34), <anonymous>:3:6)"), { line: 3, col: 6 });
+    assert.equal(rawEvalPos("Error: x"), null);
+});
+
+// The model's own script from the run that found this (one line, `i` unbound in the reduce), through both wrappers.
+const ONE_LINE = "const nums = ['Q1', 'Q2']; const r = ['Ada', 'East', '1', '2']; " +
+    "const q = Object.fromEntries(nums.map((n, i) => [n, Number(r[i + 2])])); const total = nums.reduce((s, n) => s + Number(r[i + 2]), 0); return total;";
+
+test("on line 1 the eval wrapper's prefix shifts the column, and the shift is MEASURED", async () => {
+    assert.ok(await evalColOffset("eval", ["state"]) > 0, "the fast path prepends its `ran` marker to line 1");
+    let e;
+    try { runEval(ONE_LINE.replace(" return total;", " total;")); } catch (err) { e = err; }
+    assert.match(await execErrorExcerpt(e.stack, "eval", ["state"], ONE_LINE), /s \+ Number\(r\[▶i \+ 2\]\)/);
+});
+
+test("the async wrapper puts the source on a line of its own, so its column is the source's", async () => {
+    assert.equal(await evalColOffset("async", ["state"]), 0);
+    let e;
+    try { await runAsync(ONE_LINE); } catch (err) { e = err; }
+    assert.match(await execErrorExcerpt(e.stack, "async", ["state"], ONE_LINE), /s \+ Number\(r\[▶i \+ 2\]\)/);
+});
+
+test("a survey's error says its line, and the piece only beside a line", () => {
+    assert.deepEqual(surveyWhere({ mlLine: 1, mlExcerpt: "…r[▶i]…" }), { at: 1, where: " (line 1)\nat: …r[▶i]…" });
+    assert.deepEqual(surveyWhere({ mlLine: 3 }), { at: 3, where: " (line 3)" });
+    assert.deepEqual(surveyWhere(new Error("x")), { at: null, where: "" });
+    assert.deepEqual(surveyWhere("a string"), { at: null, where: "" });
 });
