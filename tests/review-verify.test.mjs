@@ -153,6 +153,7 @@ const ENVELOPE = {
     cdpType: "model",           // text, x and y are printed into the result; the verify's target is checked
     verifyRequest: "plumbing",  // checkVerifyRequest
     textValue: "plumbing",      // read only off an envelope the worker made itself (sw-run-host.ts workerEnvelopes); a page's is ignored
+    textChars: "plumbing",      // beside textValue, the same gate; it only sizes the cut line the loop writes
 };
 
 test("every PageToolEnvelope field has a known destination in a worker-built run (a new field must be classified here)", () => {
