@@ -19,7 +19,7 @@ import { onSessionRelease, runControllers, runInboxes } from "./sw-runs";
 import { recordRunLog } from "./sw-run-log";
 import { forModel } from "./sw-scrub";
 import { storeText } from "./sw-values";
-import { PY_DETACHED_MAX_MS } from "../python/py-lease";
+import { clampDetachedMs } from "../python/py-lease";
 
 /** Where a task is. A detached call is `running`; `detached` is how it got here, not a status. */
 export type TaskStatus = "running" | "done" | "failed" | "cancelled" | "orphaned";
@@ -84,8 +84,9 @@ export interface TaskSpec {
     exec: TaskExecutor;
 }
 
-/** How a stored running row reaches its executor again. */
-export type TaskRef = { kind: "py"; cell: string } | { kind: "sh" };
+/** How a stored running row reaches its executor again. A cell's `capMs` is the cap its sandbox applied (the person's
+ *  `detachedTaskMaxMin`, clamped as the offscreen document clamps it), so a rebuilt worker knows when the cell was killed. */
+export type TaskRef = { kind: "py"; cell: string; capMs?: number } | { kind: "sh" };
 
 /** A task row as `chrome.storage.session` holds it, filed under `ml_tasks:<runId>`. `v` is the shape's version: a row of a
  *  version this code does not know is dropped (and logged), never read as the current shape. */
@@ -233,8 +234,8 @@ function persist(runId: string): void {
  *  imports this one (and is loaded through a cycle), so it is imported when a row needs it. */
 export type TaskRehydrator = (runId: string, row: StoredTask) => { exec: TaskExecutor; settle: (o: TaskOutcome) => void } | null;
 
-/** How long past a cell's ceiling a stored running row is still believed: its `PY_DONE` is in flight or its worker is
- *  starting. Past it the cell is gone and nobody is coming. */
+/** How long past a cell's own deadline (its start plus the cap its sandbox applied) a stored running row is still
+ *  believed: its `PY_DONE` is in flight or its worker is starting. Past it the cell is gone and nobody is coming. */
 const ORPHAN_GRACE_MS = 60_000;
 
 /**
@@ -242,7 +243,7 @@ const ORPHAN_GRACE_MS = 60_000;
  * detached), read it back from session storage. Rows of a version this code does not know are dropped and logged. A
  * running row is attached to its executor again where the executor can be found (a cell in the offscreen document, by its
  * id) and is `orphaned` where it cannot (a call whose connection to the host died with the worker, a cell past its
- * ceiling), told to the model at the next turn. An ended row comes back as it was: a parked result stays parked, a
+ * cap), told to the model at the next turn. An ended row comes back as it was: a parked result stays parked, a
  * delivered one stays delivered. Safe to call on every entry; a run with nothing stored gets an empty table.
  * @param runId the run
  */
@@ -292,8 +293,10 @@ async function readBack(runId: string): Promise<void> {
             orphan("worker-restart", "the service worker restarted and this call's connection to the host was lost, so its outcome is not known.");
             continue;
         }
-        if (r.ref?.kind === "py" && now > base.startedMs + PY_DETACHED_MAX_MS + ORPHAN_GRACE_MS) {
-            orphan("past-ceiling", "the service worker restarted, and this cell ran past the longest a detached cell may, so it is gone and its result was not kept.");
+        // The sandbox kills a cell at its start plus its cap (the kill timer arms when the cell starts, as `startedMs` is
+        // taken); a row stored without one is held to the ceiling.
+        if (r.ref?.kind === "py" && now > base.startedMs + clampDetachedMs(r.ref.capMs) + ORPHAN_GRACE_MS) {
+            orphan("past-cap", "the service worker restarted, and this cell ran past its cap, so the sandbox ended it and its result was not kept.");
             continue;
         }
         const live = r.ref?.kind === "py" ? attachPy?.(runId, r) : null;

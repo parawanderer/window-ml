@@ -14,7 +14,7 @@ import { recordRunLog } from "./sw-run-log";
 import { runControllers } from "./sw-runs";
 import { forModel } from "./sw-scrub";
 import { storeText } from "./sw-values";
-import { PY_DETACHED_MAX_MS, PY_INTERRUPT_KILL_MS, PY_LEASE_MAX_MS, PY_LEASE_MS, type CellCancel } from "../python/py-lease";
+import { clampDetachedMs, PY_DETACHED_MAX_MS, PY_INTERRUPT_KILL_MS, PY_LEASE_MAX_MS, PY_LEASE_MS, type CellCancel } from "../python/py-lease";
 import { OUTPUT_CAP } from "../contract/contract-pointers";
 import { ASKED_TAIL_CHARS } from "../shell/sh-tail";
 
@@ -192,7 +192,7 @@ export function leaseCell<R>(o: LeasedCell<R>): Promise<R | PyDetached> {
                         (e) => done({ status: "failed", text: `python_exec failed: ${(e as Error)?.message || String(e)}`, result: null }));
                 };
             });
-            const task = detachTask(o.runId, { tool: "python_exec", startedMs, leaseMs, expectMs: o.expectMs, ref: { kind: "py", cell: o.cell }, exec: {
+            const task = detachTask(o.runId, { tool: "python_exec", startedMs, leaseMs, expectMs: o.expectMs, ref: { kind: "py", cell: o.cell, capMs: clampDetachedMs(capMs) }, exec: {
                 pageBound: false,   // runs in the offscreen document
                 cancel: async () => { const how = await cancelPyCell(o.cell); if (how !== "ended") cancelled = how; return { confirmed: true, text: pyCancelText(how) }; },
                 tail: pyTail(o.cell),

@@ -658,7 +658,7 @@ test("a detached cell is written through as a v1 row with its ref; its end, then
     const c = await detached({ carry: () => ({ image: "data:image/png;base64,AAAA" }) });
     let rows = stored(c.runId);
     assert.equal(rows.length, 1);
-    assert.deepEqual({ v: rows[0].v, id: rows[0].id, tool: rows[0].tool, status: rows[0].status, delivered: rows[0].delivered, ref: rows[0].ref }, { v: 1, id: c.r.id, tool: "python_exec", status: "running", delivered: false, ref: { kind: "py", cell: c.id } });
+    assert.deepEqual({ v: rows[0].v, id: rows[0].id, tool: rows[0].tool, status: rows[0].status, delivered: rows[0].delivered, ref: rows[0].ref }, { v: 1, id: c.r.id, tool: "python_exec", status: "running", delivered: false, ref: { kind: "py", cell: c.id, capMs: PY_DETACHED_MAX_MS } }, "the ref carries the cap the sandbox applied (none given: the ceiling)");
     assert.equal(rows[0].expectMs, 30);
     assert.ok(rows[0].startedMs > 0 && rows[0].leaseMs === 30);
     c.resolve({ out: "x" });
@@ -866,20 +866,20 @@ test("hydrate: a running py row is attached again with the kernel locked, cancel
     await done(c);
 });
 
-test("hydrate: a running py row past the ceiling and its grace is orphaned, told to the next turn, and logged", T, async () => {
+test("hydrate: a running py row stored with no cap, past the ceiling and its grace, is orphaned, told to the next turn, and logged", T, async () => {
     const runId = "run-past-ceiling";
     session[keyOf(runId)] = [{ v: 1, id: "t00ee00", tool: "python_exec", startedMs: Date.now() - PY_DETACHED_MAX_MS - 61_000, leaseMs: 15_000, expectMs: null, status: "running", result: null, text: null, delivered: false, code: null, ref: { kind: "py", cell: "cell-gone" } }];
     const turn = await nextTurn(runId);
     assert.equal(pyKernelBusy(runId), null, "no kernel lock for a cell that is gone");
     assert.equal(turn.inbox().length, 1);
-    assert.match(turn.inbox()[0].text, /^\[task t00ee00 orphaned after \d+ s: .*ran past the longest a detached cell may/);
+    assert.match(turn.inbox()[0].text, /^\[task t00ee00 orphaned after \d+ s: .*ran past its cap/);
     assert.equal((await taskRecs(runId, "orphaned")).length, 1);
     assert.equal(stored(runId)[0].status, "orphaned", "the orphaning is persisted");
     runInboxes.delete(runId);
     await endTasks(runId);
 });
 
-test("hydrate: a running py row inside the ceiling but one grace over a short run is still attached (the ceiling, not the cap, bounds it)", T, async () => {
+test("hydrate: a running py row stored with no cap, inside the ceiling, is still attached", T, async () => {
     const runId = "run-inside-ceiling";
     session[keyOf(runId)] = [{ v: 1, id: "t00ff00", tool: "python_exec", startedMs: Date.now() - PY_DETACHED_MAX_MS + 5_000, leaseMs: 15_000, expectMs: null, status: "running", result: null, text: null, delivered: false, code: null, ref: { kind: "py", cell: "cell-live" } }];
     await nextTurn(runId);
@@ -887,6 +887,25 @@ test("hydrate: a running py row inside the ceiling but one grace over a short ru
     runInboxes.delete(runId);
     await endTasks(runId);
     assert.equal(pyKernelBusy(runId), null, "session release cancels the rebuilt cell and frees the kernel");
+});
+
+test("hydrate: a running py row past its OWN cap and the grace is orphaned, though well inside the ceiling", T, async () => {
+    const runId = "run-past-own-cap";
+    session[keyOf(runId)] = [{ v: 1, id: "t00cc01", tool: "python_exec", startedMs: Date.now() - 60_000 - 61_000, leaseMs: 15_000, expectMs: null, status: "running", result: null, text: null, delivered: false, code: null, ref: { kind: "py", cell: "cell-capped", capMs: 60_000 } }];
+    const turn = await nextTurn(runId);
+    assert.equal(pyKernelBusy(runId), null, "a cell its sandbox killed at a 1 min cap holds no lock for the 59 min left to the ceiling");
+    assert.match(turn.inbox()[0].text, /^\[task t00cc01 orphaned after \d+ s: .*ran past its cap/);
+    runInboxes.delete(runId);
+    await endTasks(runId);
+});
+
+test("hydrate: a running py row inside its own cap and the grace is attached", T, async () => {
+    const runId = "run-inside-own-cap";
+    session[keyOf(runId)] = [{ v: 1, id: "t00cc02", tool: "python_exec", startedMs: Date.now() - 60_000 - 30_000, leaseMs: 15_000, expectMs: null, status: "running", result: null, text: null, delivered: false, code: null, ref: { kind: "py", cell: "cell-capped-live", capMs: 60_000 } }];
+    await nextTurn(runId);
+    assert.match(pyKernelBusy(runId), /t00cc02/, "its PY_DONE may still be on its way");
+    runInboxes.delete(runId);
+    await endTasks(runId);
 });
 
 test("hydrate reads the store once for two callers at the same time, and a run with a task detached meanwhile keeps both", T, async () => {

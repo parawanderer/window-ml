@@ -200,22 +200,28 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
      only on a browser restart). `state.md` is read first, so the parked result is the run inbox persisted, never a
      second copy of it: `runInboxes` still means "a turn is live", and `openTasks` queues the stored parked rows. A row is
      `{ v: 1, id, tool, startedMs, leaseMs, expectMs, status, result, text, delivered, endedMs, code, value, chars, image,
-     ref }`, where `ref` is `{ kind: "py", cell }` or `{ kind: "sh" }`; never the executor, a waiter or the ending flag. It is
+     ref }`, where `ref` is `{ kind: "py", cell, capMs }` or `{ kind: "sh" }`; never the executor, a waiter or the ending
+     flag. It is
      written after a call detaches, after its end is recorded, when `delivered` flips (the loop drains it, an await
      answers it) and after a page change's cancel; `endTasks` removes the key; a write that fails (the quota) is caught,
      memory still holds the table, and it is a `task`/`persist-failed` record. `hydrateTasks(runId)` reads it back when
      memory holds no table, before `openTasks`, `taskAction` and `withTasks`: a row of an unknown `v` is dropped and
      logged; an ended row comes back as it was (a parked result stays parked, a delivered one delivered); a running
-     `python_exec` row is attached to its cell again by id (cancel, tail, the kernel lock) unless it is past the ceiling
-     plus 60 s, when it is `orphaned`; a running `ml.sh` row is `orphaned`, since its call's connection to the host closed
-     with the dead worker. An orphan is told to the model at the next turn (`[task <id> orphaned after N s: …]`) and
+     `python_exec` row is attached to its cell again by id (cancel, tail, the kernel lock) unless it is past its own
+     deadline plus 60 s, when it is `orphaned` (its start plus the cap its sandbox applied, which the row's `ref` carries
+     as `capMs`; the sandbox's kill timer arms at the same start); a running `ml.sh` row is `orphaned`, since its call's
+     connection to the host closed with the dead worker. An orphan is told to the model at the next turn (`[task <id> orphaned after N s: …]`) and
      logged. The pending `sendMessage` reply stays the in-turn path. Past it, the offscreen document delivers a cell's
      end as a FRESH message (`PY_DONE` by cell id), which starts a new worker; that worker hydrates the run's table, finds
      the running row for the cell, asks the offscreen document for the result (`PY_RESULT`: the last 8 leased results, 10
      minutes, handed over once, to the service worker only), formats it PLAINLY (the output cap, then the value or the
      error, and a sentence that it was formatted after the service worker restarted: the tool's own `format` closure died
      with the old worker, so casts, table notes and the panel's render are not available) and settles the row, which
-     parks it for the next turn, exactly once. No row, or no result held, is `python`/`orphaned`, as before. This
+     parks it for the next turn, exactly once. `PY_RESULT` is extension-only, as `PY_TAIL` is: it is in neither
+     `HANDLE_MAP` nor `PAGE_STARTED_TYPES` (a test asserts both), so no page can send it. The offscreen document answers
+     it only when `sender.id` is this extension's and `sender.tab` is absent, the check `PY_CANCEL` and `PY_TAIL` use: a
+     content script is an extension context too, but always carries its tab. An extension page with no tab (the popup)
+     passes the same check, and holds no cell id: the id is one the worker made (`wpy-<uuid>`, `worker-tools.ts`), which nothing outside it can name. No row, or no result held, is `python`/`orphaned`, as before. This
      replaces the mode 1 ruling that `PY_DONE` by cell id is not built. `ml.sh` has no such path: the host sends no end
      message after its port closed, so a live call keeps the worker alive through its open native port, and a worker
      that crashes orphans the call (its row says so).

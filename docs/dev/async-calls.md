@@ -136,8 +136,8 @@ offscreen document:
   before (a row with no result held is also settled `failed`, so the kernel is not locked for ever).
 - **The table is stored** (`ml_tasks:<runId>` in `chrome.storage.session`, `defineState` `run.tasks`): written through
   after a detach, an end, a delivery and a page change's cancel; removed by `endTasks`. `hydrateTasks` rebuilds it when
-  memory holds none: a running cell row is attached again by its id (cancel, tail, the kernel lock), one past the ceiling
-  plus 60 s and every running `ml.sh` row is `orphaned`, since the host's port closed with the dead worker. `sw-tasks.ts`
+  memory holds none: a running cell row is attached again by its id (cancel, tail, the kernel lock), one past its own
+  deadline plus 60 s (its start plus the cap it ran under, `ref.capMs`) and every running `ml.sh` row is `orphaned`, since the host's port closed with the dead worker. `sw-tasks.ts`
   imports `sw-python-task.ts` for the cell rebuild only when a row needs it (the two sit in one import cycle).
 - **The messages are the service worker's alone.** `PY_STARTED`, `PY_CANCEL`, `PY_TAIL`, `PY_RESULT` and `PY_DONE` are not in `HANDLE_MAP`, are
   answered only for our own id with no tab, and name a cell by an id only the worker made. A `cell` on a `PY_RUN` is
