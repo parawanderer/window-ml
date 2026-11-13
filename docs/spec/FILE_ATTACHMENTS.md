@@ -655,7 +655,94 @@ when it is made, and the cell's result names it (item 3).
 **The host's disk.** `/files/` is the browser sandbox's, never the `ml.sh` workspace's, and the two never alias: an argv
 item `/files/x` is a host path, as today. Bytes cross only as `@file:` handles: `ml.sh.put` writes one out (ruling 3),
 and a read brings a workspace file in, into `/files/` with provenance "read from disk <path>" (the async
-lane's). The model's text says it in one line: `/files/ is the browser sandbox's, not the workspace's.`
+lane's). The model's text says it in one line: `/files/ is the browser sandbox's, not the workspace's.` A proposal
+of 2026-11-13 reopens this for directories the person mounts ("Host directories in the sandbox", next).
+
+### Host directories in the sandbox, and a cell's edits as diffs (proposed 2026-11-13)
+
+PROPOSED 2026-11-13 (Shane, in the calm-chat-motion session); not ruled, waiting on the measurement below and e3's
+pass. Nothing is built. It reopens "the two never alias" above for a directory the person mounts, and item 1's "No
+Atomics-backed FS" for those mounts only.
+
+**What it is for.** Models edit files by writing a Python script that calls `open()`, not only through an edit tool.
+That should work the same on the browser sandbox's `/files/` and on the host's disk, with one syntax, and the person
+should be able to see, skippably, what each cell changed.
+
+**One filesystem, plain paths.** A cell sees `/files/` and the mounted host directories in one tree and uses ordinary
+`open()`, `os` and `pathlib` on both. A prefix inside `open()` (`open("@file:/files/x")`) was considered and dropped:
+most file access (`pandas.read_csv`, `numpy.load`, `sqlite3`, `zipfile`, `shutil`) reaches the filesystem below
+`builtins.open`, so a prefix works only if the filesystem resolves it, which makes it a mount under an odd name; and
+an `@file:` is a frozen version ("Mutable, frozen when cited"), which a live path is not. `@file:` stays the handle a
+tool takes and the transcript cites; a path is what `open()` takes.
+
+**A host directory keeps its real path.** A directory the person approves (the `ml.sh` workspace, say) is mounted at
+the absolute path it has on the host, resolved with the host's realpath so a symlink is not a second name:
+`/Users/sb/git/window-ml/README.md` is that path in the cell, in `ml.sh` and in the transcript. Renaming it to a
+mount point (`/workspace/`) was considered and dropped: the person knows their own paths, and a renamed one makes a
+run harder to review.
+
+**Collisions.** The sandbox owns `/files/` and Pyodide's own tree (`/tmp`, `/lib`, `/home/pyodide`, `/dev`, `/proc`).
+A mount at or under one of these is refused by name when it is approved, never shadowed:
+`/files is this sandbox's directory; the host's /files cannot be mounted at that path.` On macOS `/tmp` resolves to
+`/private/tmp`, so a workspace there does not collide.
+
+**A path outside every mount** fails with `PermissionError`, never `FileNotFoundError`, since the file may exist:
+`/Users/sb/other is not mounted in this sandbox; reach it through ml.sh, or ask the person to mount it.`
+
+**`/files/` in an `ml.sh` argv** (chosen by Shane, 2026-11-13). An argv item under `/files/` is refused, unless that
+path exists on the host: `/files/ is this sandbox's; pass the file with ml.sh.put.` One string never means two files
+across two tools.
+
+**The channel.** Pyodide has no synchronous remote backend, so a host-backed node needs one. Two routes, neither
+measured:
+
+- A: a sliced wait, no rebuild. The node posts a request (worker, offscreen, service worker, host) and waits on
+  `Atomics.wait` in slices of about 50 ms, checking the interrupt flag between slices and raising `KeyboardInterrupt`
+  when Stop is set. The worker already holds a shared interrupt buffer (`py.setInterruptBuffer`,
+  `src/python/python-worker.ts`). Item 1's objection, that `Atomics.wait` blocks the interrupt buffer, is to an
+  unsliced wait; that a sliced one keeps Stop working is inferred.
+- B: JSPI-suspending file syscalls, a rebuild (`docs/dev/pyodide-build.md`): Emscripten's file syscall imports become
+  suspending, so a read awaits a promise and the worker's event loop stays free. Only if A's Stop or latency is bad.
+
+Either way a file is fetched whole on open and pushed on close, the close hooks item 1 already has, with the listing
+cached per cell: a change the host makes during a cell is seen at the next open. A host that is not connected fails
+the open with EIO.
+
+**Security** (each mount is a new surface the model reaches: e3's pass, Shane's ruling). The approval is per mount,
+not per call, so a mounted directory is read and written with no card per `open()`. The host enforces the scope
+itself: a `full` cell can forge a worker post (item 3), so the path a request claims is resolved and checked on the
+host, never taken from the worker. A page-started run never has a mount. Rows for e3, beside the list below: a request
+for a path outside every mount, by `..`, a symlink inside the mount pointing out, a hard link, a forged post, and a
+race between the check and the open on the host; a mount of a reserved prefix; a page or a page-started run reaching
+a mount.
+
+**A cell's edits as diffs.** Per cell, not per write: a script may write a file several times, so the diff is the file
+at cell start against the file at cell end.
+
+- `/files/`: the shelf keeps a file's bytes from before the cell until the cell ends, instead of replacing them on the
+  first close. That copy is not a version and cannot be cited; it is dropped once the diff is made. This amends "there
+  are no versions per write" for the length of a cell only.
+- A host mount: the before bytes are what the open fetched, so the diff costs nothing extra. Writes made by an `ml.sh`
+  process are not seen this way; a snapshot of the workspace before the call is the host's question (an overlay
+  filesystem's upper layer in a container, a copy-on-write clone on macOS, `git diff` for tracked files; guesses).
+- The model gets one line in the cell's result, never the diff: `edited a.py (+3 −1); wrote out.csv (new, 2.1 KB)`.
+- The person gets a collapsed `edited 2 files` row on the step that opens to the diff, in the sidebar and both
+  exports. A binary file, or one over a size cap, shows its size and hash before and after, no diff.
+
+**To measure first** (the Pyodide lane, through the coordinator): route A's Stop latency during a blocked read, the
+cost of one round trip, an `os.walk` and an `import` over a mounted real workspace, and whether the sliced wait holds
+under the lockdown.
+
+**Open.**
+
+- The cell's directory: a ruling above starts every cell in `/files/`; `ml.sh` starts in the workspace. Whether a cell
+  starts in the workspace's real path when one is mounted, so a relative path means the same file in both.
+- How a mount is approved and shown: per session or per run, and where the person sees what is mounted.
+- The diff's size cap, and whether the person can turn the row off.
+
+**Owners.** This text, the diff row and the provenance of a file read from a mount: the chat-page lane. The channel and
+the mount: the Pyodide lane. The host's scope check, the argv refusal and the `ml.sh` snapshot: the `ml.sh` and
+window-ml-host owner, through the coordinator.
 
 **The person deletes or moves a file.** The files panel can delete, rename and move files in the writable part. During
 a live run the model is told the file's name through the run's inbox, the same as any other notice; a move is a delete
