@@ -77,6 +77,9 @@ export interface ToolResult {
      *  step mints reads the whole (docs/spec/POINTER_VALUES.md, slice 9). Only the worker stores one, and the run host
      *  takes it only from a tool the worker ran itself (sw-run-host.ts). */
     textValue?: string;
+    /** The length in characters of the whole `textValue` names, so the loop can tell the model how much its cut copy
+     *  leaves out (the cut line). Set beside `textValue`, and trusted on the same terms. */
+    textChars?: number;
 }
 
 /** What a page asks the worker to picture after an action, as plain data: the area around a point (the element's

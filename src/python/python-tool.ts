@@ -168,7 +168,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             }
             if (tableNote) tableNote += "\n";
             // How a cell's answer becomes what the model reads: the call's own return, and a detached cell's late result.
-            const format = async (r: PyExecResult, verify: boolean, late = false): Promise<string | ToolResult> => {
+            const format = async (r: PyExecResult, verify: boolean): Promise<string | ToolResult> => {
                 // Cap stdout/value/error fed back to the model so a runaway result (e.g. a
                 // string-concat blowup) can't flood the context — with a "[+N truncated]" note.
                 // Past the ceiling the model is told AFTER its clip, and the panel's last line says the same (output-clip.ts).
@@ -232,9 +232,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                 const parts = pyValueParts(v, { render: r.render, table: r.resultTable }, stringify);
                 // An image return is unambiguous → always shown (no cast needed).
                 if (parts.image) {
-                    // A late result (a detached cell's task) carries text only: the image is named, never implied to be shown.
-                    const said = late ? "1 figure, not shown (a task's result carries text only)."
-                        : r.render === "figure" ? "Your open matplotlib figure(s) came back as an image (closed now; the next call starts with none)." : "Returned an image.";
+                    const said = r.render === "figure" ? "Your open matplotlib figure(s) came back as an image (closed now; the next call starts with none)." : "Returned an image.";
                     const base = done(`${pre}${said}`, parts);
                     if (!verify) return base;
                     const seen = await verifyPyImage(ml, ctx, parts.image);
@@ -313,16 +311,19 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                 return done(`${pre}${text}${castHint}${nullWarn}`, valueOut(v));
             };
             // A worker-hosted run's cell may DETACH past its lease (sw-python-task.ts): its result then comes back later,
-            // through this same formatter, as a task's text. A figure cannot ride a task's text, so it is named instead.
-            // `verify` is not run on a late result: nothing would see the answer.
+            // through this same formatter, as a task's text, with what the step would have kept: the fuller capture a pointer
+            // holds (the task table stores it when the text was cut) and the figure. `verify` is not run on a late result:
+            // nothing would see the answer.
             const late = mintVia ? async (x: Record<string, unknown>) => {
-                const out = await format(x as unknown as PyExecResult, false, true);
+                const out = await format(x as unknown as PyExecResult, false);
                 const text = typeof out === "string" ? out : out.content;
-                // `clipOut`'s own marker: the result was cut at the output limit, and a task's result has no pointer yet.
-                const cut = /… \[first \d+ of \d+ chars\]/.test(text);
+                const render = typeof out === "string" ? undefined : out.render;
+                const py = render?.type === "python-out" ? render : undefined;
+                const whole = py ? py.capture ?? py.stdout : undefined;
+                const image = py?.image;
                 const r0 = x as { ok?: boolean };
-                return { status: r0.ok === false ? "failed" as const : "done" as const, result: null,
-                    text: cut ? `${text}\n(Cut at the output limit; no pointer to the rest exists for a task's result.)` : text };
+                return { status: r0.ok === false ? "failed" as const : "done" as const, result: null, text,
+                    ...(whole ? { whole } : {}), ...(image ? { image } : {}) };
             } : undefined;
             const r = await ml.pythonExec(code, { image: image || null, margin: typeof margin === "number" ? margin : 0, tableRaw: !!tableRaw, tables: tables || null, ...(keep === true ? { keep: true } : {}), onStdout: ctx?.stream,
                 ...(late ? { late, ...(typeof expect_ms === "number" ? { expectMs: expect_ms } : {}) } : {}) } as Parameters<MlApi["pythonExec"]>[1]);

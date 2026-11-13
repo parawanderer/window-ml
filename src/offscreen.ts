@@ -569,8 +569,10 @@ chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
         .then((r: unknown) => {
             const cell = typeof msg.cell === "string" && !sender.tab && wireStamp?.run ? msg.cell : null;
             if (!cell) return;
-            let bytes = 0;
-            try { bytes = JSON.stringify(r)?.length ?? 0; } catch { /* unserialisable: size unknown */ }
+            // The result's size without a copy of it: its printed and error text, and its value when that is text.
+            const o = (r ?? {}) as { stdout?: unknown; error?: unknown; value?: unknown };
+            const len = (x: unknown) => (typeof x === "string" ? x.length : 0);
+            const bytes = len(o.stdout) + len(o.error) + len(o.value);
             try { chrome.runtime.sendMessage({ type: "PY_DONE", cell, run: wireStamp!.run, ok: (r as { ok?: boolean } | undefined)?.ok !== false, bytes }).catch(() => { /* no worker listening */ }); } catch { /* context gone */ }
         });
     return true;   // keep the channel open for the async result
