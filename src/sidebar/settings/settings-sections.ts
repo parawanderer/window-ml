@@ -17,5 +17,5 @@ export const PANEL_SECTIONS: Record<PanelTab, readonly string[]> = {
     appearance: ["general", "devtools", "spend", "storage", "agenthud", "codeblocks", "runstats", "export"],
     advanced: ["servertools", "javascript", "pointers", "python", "fetch", "focus", "shell", "manifests", "libraries",
         "introspection", "protostream", "shadow", "cdp"],
-    permissions: ["waitingrequests", "siteapprovals", "hostaccess", "whitelist", "policies"],
+    permissions: ["waitingrequests", "siteapprovals", "policies", "whitelist", "hostaccess"],
 };

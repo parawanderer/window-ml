@@ -577,14 +577,31 @@ test("settings: each tab draws the sections PANEL_SECTIONS lists for it, in orde
     const buttons = [...w.shadow.querySelectorAll(".set-tab")];
     assert.equal(buttons.length, PANEL_TABS.length, "one tab button per panel tab");
     for (const [i, tab] of PANEL_TABS.entries()) {
-        // Permissions draws its sections only once a site waits or its lists and policies have loaded, which this world
-        // does not have; with every other tab exact and every section listed once (above), its list is the remainder.
-        if (tab === "permissions") continue;
+        if (tab === "permissions") continue;   // drawn only once its data loads: the next test
         buttons[i].click();
         await w.tick();
         const drawn = [...w.shadow.querySelectorAll("details.set-section[data-section]")].map((d) => d.dataset.section);
         assert.deepEqual(drawn, [...PANEL_SECTIONS[tab]], `${tab} (${buttons[i].textContent.trim()})`);
     }
+});
+
+test("settings: Permissions draws the sections PANEL_SECTIONS lists for it, in order, once a site waits and its lists, policies and host grants have loaded", async () => {
+    const { PANEL_SECTIONS } = await import("../src/sidebar/settings/settings-sections.ts");
+    const waiting = { origin: "https://asker.example", domain: "asker.example", kind: "access", agents: false, at: 1, state: "pending", asks: 1, allowed: false };
+    const w = await loadSidebarWorld({
+        siteLists: { always: [], session: [], denied: [], agents: {}, selfApprove: [] },
+        accessRequests: () => ({ data: { requests: [waiting] } }),
+    });
+    const real = w.window.chrome.runtime.sendMessage;
+    w.window.chrome.runtime.sendMessage = (msg, cb) => {
+        if (msg && msg.type === "POLICIES") { cb({ data: { global: [], runs: [], builtin: { label: "built-in default", source: "(c) => false" }, broken: {} } }); return; }
+        return real(msg, cb);
+    };
+    w.window.chrome.permissions = { ...w.window.chrome.permissions, getAll: (cb) => cb({ origins: [] }) };
+    await openSettings(w, "Permissions");
+    await w.flush(); await w.flush();
+    const drawn = [...w.shadow.querySelectorAll("details.set-section[data-section]")].map((d) => d.dataset.section);
+    assert.deepEqual(drawn, [...PANEL_SECTIONS.permissions]);
 });
 
 // --- what the backend exposes: the server-tool browser and the wire format -------------------------------
