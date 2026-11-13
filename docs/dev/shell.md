@@ -205,6 +205,27 @@ fact, so a person's policy written for programs reads them without throwing and 
 that ran without an ask is drawn under its step like any unasked call (`Wrote …`, `unaskedLines`). It never detaches.
 In an isolated exec, `iso-channel.ts` names `put` with its own arity of exactly two; `run` and `read` keep theirs.
 
+## A session's folders (host mounts)
+
+A chat session's host folders (FILE_ATTACHMENTS.md, "What window-ml-host must do for mounts", H1 to H8; the host's
+`mount`, `stat`, `list`, `fetch`, `store`, `remove` and `rename` in window-ml-host's PROTOCOL.md, "Mounts"). Built so
+far: the wire (`HostClient` in `host-protocol.ts`) and the worker's half of the judgement (`mount-judge.ts`). Nothing
+calls them yet: the `/files` bridge a cell's `open()` goes through is the next step.
+
+- Offered only when `hello.mounts` is exactly `true` (`hostOffersMounts`); over the hub it is `false` and the host
+  refuses every mount call. The worker never probes by calling.
+- A mount is the host's for one connection and one chat session: `session` is the worker's stamp, never a cell's, and
+  another session's mount id answers `UnknownMount`. An eviction closes the port, and the mounts go with it.
+- `stat` gives the facts and a `basis`. `judgeMount(op, facts, to?)` takes every row of the table that applies, and the
+  most restrictive wins, refused over asks over free. Inside the uploads folder but outside `attached/`, the uploads
+  row stands in for the git rows: the folder is ignored by design, so `gitUndoable` would always be false there. A
+  delete in `attached/` asks; a store or a rename there is refused by the host as well.
+- The operation carries the basis from that `stat` (`fetchWhole`, `storeWhole`, `remove`, `rename`). If the file moved
+  since, the host answers `ChangedSinceJudged`, and the worker stats again. It never sends a basis a cell gave it.
+- `EFBIG` carries `size` and `cap` in `HostError.detail`. `fetchWhole` checks the cap before it sends anything.
+- `storeWhole` discards its store when a chunk fails, so the host's temp file goes with it. A store's commit has no
+  `replace`: whether it replaces is decided by the basis.
+
 ## Detached calls (ASYNC_CALLS.md, mode 1)
 
 A call that runs past its lease detaches into a task: [`async-calls.md`](async-calls.md) is how that is built (the
