@@ -124,9 +124,10 @@ is a remove plus an add as far as the ruleset is concerned.
 A CONDITIONAL job can still be required — but only when the JOB runs and a STEP decides. A job skipped by
 its own `if:` can fail to report a status at all, and the PR then sits BLOCKED with every visible check green
 (2026-11-13: `build`/`e2e`/`bench`/`mobile-bundle` were step-gated to match `test`; `merge-when-green` also
-detects the shape and reruns once). A docs-only PR is `CLEAN` with those checks `skipping` only because the
-job starts and its first step echoes and exits 0. The failing shape (never reported at all) and the passing
-one (reported as skipped) look alike from the outside.
+detects the shape and reruns once). A docs-only PR is `CLEAN` with those checks reporting `success`, because
+the job starts and its steps exit 0 without running the suite. The failing shape is a required name that never
+reported at all — the ruleset waits on it forever. Both look like "nothing ran"; only the presence of the
+status name tells them apart.
 
 **Do not run it in the foreground and wait.** Use `run_in_background: true` and carry on; the result
 arrives as a task notification. The e2e suite runs as three shards (`e2e (1/3)` … `e2e (3/3)`, each with 3 workers) plus an `e2e` job that is
