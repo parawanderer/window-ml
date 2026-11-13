@@ -953,10 +953,13 @@ neither the folder nor `ml.files`.
 - Windows: how a `C:\Users\...` path appears in the sandbox's POSIX tree.
 - A workspace that is not a git repository: whether `ml.sh` calls get a diff by another snapshot.
 - The background sync's cadence (a value to pick).
-- Deferred (Shane): the model reading `.env` to pass a secret on to an API call. Until it is taken up, the person
-  writes scripts that read `.env` and policies that let the model run them, and no value from `.env` reaches the
-  model's text. The likely shape is `SHELL.md`'s "a text pipe over a held value": the host reads the secret, so only a
-  reduction crosses.
+- Deferred (Shane): the model reading `.env` to pass a secret on to an API call. Until it is taken up, the person writes
+  scripts that read `.env` and policies that let the model run them, and the values are assumed not to leak into the
+  model's text. The frame for later is three layers: the read gate (`SHELL.md`, exists) decides whether a secret-looking
+  file may be opened; a handle keeps the value out of the model's context when it is
+  ([`SECRET_HANDLES.md`](SECRET_HANDLES.md), the host putting the value into the child's environment or a bound request
+  header, with `SHELL.md`'s "a text pipe over a held value" beside it); and the scrub (`sw-scrub.ts`, exists for the
+  server URL and the API key) catches reflections as a backstop that lowers the rate and does not close the hole.
 
 **Owners.** This text, the panel's view of both copies, the sync's rules, provenance and the files API's JS side: the
 chat-page lane. The mount, the fallback and the Python binding: the Pyodide lane. The host's folder, the git snapshot
