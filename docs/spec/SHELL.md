@@ -178,6 +178,52 @@ never a page. The model learns which mode a call ran in from the call's result, 
   [`FILE_ATTACHMENTS.md`](FILE_ATTACHMENTS.md), "What window-ml-host must do for mounts, `/files` and `ml.sh` diffs"
   (ruled 2026-11-13), with the table of what runs free, what asks and what is refused.
 
+## Installing the host
+
+**Status: PROPOSED 2026-11-13** (host-setup lane; the coordinator clears this text as spec). Installing the host is
+three terminal steps (fetch the binary, `wmlhost install --extension-id <id>`, check Settings), and an extension can
+neither write the native messaging manifest nor start a binary, so the install cannot happen from inside. What the
+extension can do is make it one paste.
+
+**The flow.**
+
+1. Settings, "Programs (ml.sh)", while no host has answered, shows one line for this machine (`src/shell/host-install.ts`),
+   with this install's extension id in it and a "Check again". macOS (Apple silicon, Intel) and Linux (x86-64, arm64) have a
+   line; any other platform is told there is no build. The line differs by OS only in the checksum program.
+2. The line downloads `install.sh` from the host's pinned release, checks its sha256 against the one in
+   `tools/host-dist.json`, then runs it with `--extension-id`. The installer ([INSTALL.md](https://github.com/parawanderer/window-ml-host/blob/main/docs/INSTALL.md) in window-ml-host) is rendered
+   by the host's release workflow with the sha256 of the release's three archives written into it, downloads the archive
+   for the platform, stops on a mismatch, puts `wmlhost` at ONE path, `~/.local/bin/wmlhost`, runs `wmlhost install --binary` with that path (so the native messaging
+   manifest and a terminal name the same file; `wmlhost` is the one binary, and a terminal CLI would be a subcommand of it), and
+   prints what it did, the `PATH` line to add if the folder is not on it, and how to undo it (`wmlhost uninstall`, then delete the file). It needs no root.
+3. "Check again" asks the worker to say hello to the host (`SHELL_STATUS` with `probe`, extension pages only) whether or
+   not ml.sh is on: connect, hello, close; nothing is configured and nothing runs. The guide disappears once any host has
+   answered (the last hello, else a stored "a host has answered in this profile", `shell.hostSeen`). The person then turns
+   ml.sh on and names a folder, as before.
+4. The chat page's attention list carries "Programs on this machine: connect window-ml-host" (`host-not-connected`,
+   level `suggests`) under the same condition and only once a session exists, so a fresh install with nothing done is not
+   asked. Its fix opens this Settings section (the existing settings fix path); dismissing it is the attention list's own
+   per-runtime memory, so no state is added.
+5. A refusal of ml.sh (and of `/files`, which needs the same host) for want of a host says where the person installs it:
+   "Settings, Extension, Advanced, Programs (ml.sh)", as text; where the renderer draws the link form
+   ([`LINKS.md`](LINKS.md)) it is `[Programs (ml.sh)](window-ml:settings/extension/advanced/shell)`. `agent_api_docs` says the
+   same in one line. The refusal carries no command: the model never tells a person to paste something.
+
+**Threat items.**
+
+- **The shown line carries nothing a page wrote.** It is built in the extension page from three values: `chrome.runtime.id`,
+  the pinned tag and the pinned sha256 (both from `tools/host-dist.json`, committed and reviewed). Nothing from a page, a
+  message or the model reaches it; `hostInstall` refuses an id that is not 32 letters a-p.
+- **The extension id is the extension's own**, so the manifest the installer writes allows this extension and no other.
+- **The download is pinned by version and hash.** The URL names the release; the installer is checked against the pin
+  before it runs; the installer checks the archive against hashes inside itself. The pin is bumped by `fetch-host --bump`,
+  which refuses an installer that does not name the tag and every pinned archive hash. Residual trust: GitHub serving the
+  tag's immutable release, and the PR that bumps the pin. A pin without an installer shows no line.
+- **No page-started type is added.** `SHELL_STATUS` is answered for extension pages only, `probe` included; a page cannot
+  start the host, ask whether it exists, post the attention item or dismiss it (red-team rows `tests/redteam.test.js`).
+- **Starting the host without the person's act.** `probe` is the one place the host process starts while ml.sh is off, and
+  only on the press of "Check again". Nothing starts it at install, load or in the attention list's computation.
+
 ## Where the script runs
 
 **First: where it runs today.** `ml.sh` is a call from the script's realm (the worker for a read-only survey, an

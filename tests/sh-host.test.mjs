@@ -101,7 +101,8 @@ test("the host is not installed: not ready, and the status says how to install i
     const bg = loadBackground({ config: { ...base, ...ON } });
     const r = await status(bg);
     assert.deepEqual([r.data.ready, r.data.reason], [false, "not-installed"]);
-    assert.match(r.data.error, /wmlhost install --extension-id/);
+    assert.match(r.data.error, /Settings, Extension, Advanced, Programs \(ml\.sh\)/, "the refusal names the Settings section");
+    assert.doesNotMatch(r.data.error, /wmlhost install|curl|sh -c/, "and carries no command");
     assert.equal((await capabilities(bg)).shellHost, undefined);
 });
 
@@ -135,4 +136,46 @@ test("only an extension page may ask for the status: a content script's SHELL_ST
     assert.equal(r.error, "Refused");
     assert.deepEqual(bg.nativeConnects, []);
     assert.equal((await status(bg)).data.reason, "off", "positive control: the extension page is answered");
+});
+
+// --- the installer guide: "Check again" says hello, and the offer ends once a host has answered ---
+
+test("Check again with ml.sh off: one hello, nothing configured, and the host is remembered for the profile", T, async () => {
+    const host = fakeNativeHost();
+    const bg = loadBackground({ config: base, onNative: host.onNative });
+    await flush();
+    const before = (await status(bg, false)).data;
+    assert.deepEqual([before.hostSeen, before.hostAnswers], [false, undefined], "nothing asked yet: the offer stands");
+    const r = await bg.send({ type: "SHELL_STATUS", payload: { probe: true } }, { ...PAGE });
+    assert.deepEqual([r.data.hostAnswers, r.data.hostSeen, r.data.ready], [true, true, false], "answered, but ml.sh stays off");
+    assert.deepEqual(host.names(), ["hello"], "no configure, no spawn");
+    assert.equal(bg.localStore.shellHostSeen, true);
+});
+
+test("Check again with no host installed: not answered, nothing stored, the offer stands", T, async () => {
+    const bg = loadBackground({ config: base });
+    const r = await bg.send({ type: "SHELL_STATUS", payload: { probe: true } }, { ...PAGE });
+    assert.deepEqual([r.data.hostAnswers, r.data.hostSeen], [false, false]);
+    assert.equal(bg.localStore.shellHostSeen, undefined);
+});
+
+test("upgrade: a profile whose storage predates the flag has no host seen, and one that has it keeps it with no hello", T, async () => {
+    const old = loadBackground({ config: base, local: { ml_site_always: [] } });
+    await flush();
+    assert.equal((await status(old, false)).data.hostSeen, false);
+    const seen = loadBackground({ config: base, local: { shellHostSeen: true } });
+    await flush();
+    const r = (await status(seen, false)).data;
+    assert.deepEqual([r.hostSeen, r.hostAnswers], [true, undefined], "remembered, and no host process was started to find out");
+    assert.deepEqual(seen.nativeConnects, []);
+});
+
+test("a page cannot probe: SHELL_STATUS probe from a web page or content script is refused and starts nothing", T, async () => {
+    const host = fakeNativeHost();
+    const bg = loadBackground({ config: base, onNative: host.onNative });
+    for (const sender of [{ id: "test", tab: { id: 3 }, url: "https://evil.example/" }, { id: "test", tab: { id: 3 }, url: "https://evil.example/", origin: "https://evil.example" }]) {
+        const r = await bg.send({ type: "SHELL_STATUS", payload: { probe: true } }, sender);
+        assert.equal(r?.error, "Refused");
+    }
+    assert.deepEqual(bg.nativeConnects, []);
 });

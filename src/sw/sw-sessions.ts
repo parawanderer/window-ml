@@ -41,7 +41,7 @@ import { defineJob } from "../job-registry";
 import { attentionCodes, recomputeAttention, refreshBackendAttention, watchAttention } from "./sw-attention";
 import { appendSnapshot, measureEvents, summarizeStore, type StorageReport, type StorageSnapshot, type StoreBytes } from "../session/session-storage-stats";
 import { captureOwnTab, NOT_SHOWING } from "./sw-capture";
-import { shellCapabilities, refreshShell, onShellStatus, SHELL_KEYS } from "./sw-shell";
+import { shellCapabilities, refreshShell, onShellStatus, hostMissing, SHELL_KEYS } from "./sw-shell";
 
 /**
  * Ask a tab's page something, PUTTING THE CONTENT SCRIPT BACK if it is not there.
@@ -610,7 +610,11 @@ const settingsRead = readSessionSettings();
 onFolderChange(() => { sessionServer.runtimeChanged(); recomputeAttention(); });
 // `pythonMissing` reads the measured bundle check below: false until measured, so an unmeasured build is not flagged.
 let archiveKnown = false;
-watchAttention({ archiveOn: () => (archiveKnown ? archiveOn : null), onChange: () => sessionServer.runtimeChanged(), pythonMissing: () => pythonMeasured && !pythonBundled });
+watchAttention({ archiveOn: () => (archiveKnown ? archiveOn : null), onChange: () => sessionServer.runtimeChanged(), pythonMissing: () => pythonMeasured && !pythonBundled,
+    // "After the first run": a session exists. A fresh install with nothing done is not asked to set up programs.
+    hostMissing: () => hostMissing() && sessionServer.index.list().length > 0 });
+sessionServer.watch({ index: (u) => { if (u.type === "upsert") recomputeAttention(); }, stream: () => undefined });
+onShellStatus(recomputeAttention);
 // A grant made while someone is looking at the question should answer it, without polling and without a reload.
 try {
     chrome.permissions?.onAdded?.addListener(() => void refreshBlankStart());

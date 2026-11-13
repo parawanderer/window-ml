@@ -47,6 +47,10 @@ export interface ShellStatus {
     /** Why it is not ready, in words for the settings page. */
     error?: string;
     reason?: ShellUnavailable["reason"];
+    /** The last attempt to say hello to the host, in this worker: true if it answered, false if not, absent if none was made. */
+    hostAnswers?: boolean;
+    /** A host has answered in this profile at some time (stored): with `hostAnswers`, whether Settings still offers the installer. */
+    hostSeen?: boolean;
 }
 
 let current: ShellHost | null = null;   // state: declared below as "shell.host"
@@ -63,6 +67,33 @@ defineState({
     // Nothing while ml.sh is off and the host idle: a session with nothing live must read as such (the Run state panel).
     read: () => (status.enabled || inFlight || held ? { ...status, inFlight, held } : undefined),
 });
+
+const HOST_SEEN_KEY = "shellHostSeen";
+let hostSeen = false;   // state: declared below as "shell.hostSeen"
+let hostAnswers: boolean | undefined;   // state: plumbing — the last hello attempt's outcome, remeasured by the next
+const hostSeenRead: Promise<void> = (async () => {
+    try { hostSeen = (await chrome.storage.local.get(HOST_SEEN_KEY))[HOST_SEEN_KEY] === true; } catch { /* no storage (a test harness) */ }
+})();
+
+defineState({
+    id: "shell.hostSeen", scope: "browser", realm: "worker", audience: "human", lostOn: [],
+    describe: "Whether a process host has ever answered in this profile. Stored; it decides whether Settings and the attention list offer the installer.",
+    read: () => ({ hostSeen, hostAnswers }),
+});
+
+/**
+ * Whether Settings and the attention list should still offer to install the host: no host has answered, by the last
+ * attempt this worker made or, with none yet, by any earlier one in this profile.
+ */
+export const hostMissing = (): boolean => !(hostAnswers ?? hostSeen);
+
+/** A hello got an answer (or did not): remember it, and tell the status's listeners when the offer changes. */
+function noteHello(answered: boolean): void {
+    const before = hostMissing();
+    hostAnswers = answered;
+    if (answered && !hostSeen) { hostSeen = true; void chrome.storage.local.set({ [HOST_SEEN_KEY]: true }).catch(() => undefined); }
+    if (before !== hostMissing()) for (const l of statusListeners) { try { l(); } catch { /* a listener's own problem */ } }
+}
 
 /** The settings as one string: a different string is a different session. */
 const settingsKey = (s: ShellSettings): string => JSON.stringify([!!s.shellEnabled, s.shellRoots ?? [], s.shellSandbox !== false, s.shellPath ?? []]);
@@ -124,12 +155,13 @@ async function connect(cfg: ShellSettings, key: string): Promise<ShellHost> {
     if (!roots.length) return fail("no-roots", "No workspace folder is set: ml.sh runs programs only inside the folders named in Settings.");
     let port: chrome.runtime.Port;
     try { port = chrome.runtime.connectNative(HOST_NAME); }
-    catch (e) { return fail("not-installed", `The process host could not be started: ${(e as Error)?.message || e}`); }
+    catch (e) { noteHello(false); return fail("not-installed", `The process host could not be started: ${(e as Error)?.message || e}`); }
     const client = new HostClient(nativePort(port));
     client.onClosed(() => { if (current?.client === client) { current = null; setStatus({ ...status, ready: false, error: "The process host closed the connection." }); } });
     let hello: HostHello;
     try { hello = await client.hello(); }
-    catch (e) { client.close("hello failed"); return fail("not-installed", notInstalledText((e as Error)?.message)); }
+    catch (e) { client.close("hello failed"); noteHello(false); return fail("not-installed", notInstalledText((e as Error)?.message)); }
+    noteHello(true);
     if (hello?.protocol !== HOST_PROTOCOL) { client.close("protocol"); return fail("protocol", `The process host speaks protocol ${hello?.protocol}; this extension speaks ${HOST_PROTOCOL}. Update one of them.`); }
     let configured: HostConfigured;
     try {
@@ -146,7 +178,7 @@ async function connect(cfg: ShellSettings, key: string): Promise<ShellHost> {
 
 /** What a port that would not start says, turned into what to do about it. */
 function notInstalledText(why: string | undefined): string {
-    return `The process host is not installed or would not start (${why || "no answer"}). Install it with \`wmlhost install --extension-id ${chrome.runtime.id}\`.`;
+    return `The process host is not installed or would not start (${why || "no answer"}). The person installs it from Settings, Extension, Advanced, Programs (ml.sh), which shows the one line to paste.`;
 }
 
 /** The port is in use: restart its idle clock. */
@@ -181,7 +213,22 @@ export function holdOutput(delta: number): void {
 }
 
 /** The status as last measured, for the settings page. */
-export const shellStatus = (): ShellStatus => ({ ...status });
+export const shellStatus = (): ShellStatus => ({ ...status, hostSeen, ...(hostAnswers === undefined ? {} : { hostAnswers }) });
+
+/**
+ * Ask whether a host answers, whatever the settings say: connect, say hello, close. For the "Check again" the person
+ * presses in the installer guide, so ml.sh can be off and no folder set. Nothing is configured and nothing runs; extension
+ * pages only (background.ts). A port already open answers without a second one.
+ */
+export async function probeShell(): Promise<ShellStatus> {
+    await hostSeenRead;
+    if (current && !current.client.isClosed) { noteHello(true); return shellStatus(); }
+    try {
+        const client = new HostClient(nativePort(chrome.runtime.connectNative(HOST_NAME)));
+        try { await client.hello(); noteHello(true); } catch { noteHello(false); } finally { client.close("probe"); }
+    } catch { noteHello(false); }
+    return shellStatus();
+}
 
 /**
  * Measure the status now: connect and configure if the settings say so, or record why not. For the settings page and
