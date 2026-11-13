@@ -1024,10 +1024,10 @@ configured roots (`configure`), one list, not a second one beside it.
 **The facts a request carries back** (H7), so the worker can judge it: `inMount`, the mount's `mode`, `secret` (the
 host's `SECRET_PATTERNS`, the list an `ml.sh` path argument meets), `exists`, `ignored` (by git, `git check-ignore`
 under the git belt), `inUploads`, `inAttached`, `gitUndoable`, and a `basis` for an existing file: `{ dev, ino, size,
-mtimeNs, sha256 }` for a file at or under the diff cap, and `{ dev, ino, size, mtimeNs }` over it. Any fact a request itself
-carries is ignored; the host computes every answer from the mount's held descriptor. `gitUndoable` is true for a tracked
-file with no uncommitted change, false otherwise, and null when `repoConfigRunsCode` is true or null, since the undo
-itself (a `git checkout` of the file) would run the repository's smudge filter or hooks.
+mtimeNs, sha256 }` for a file at or under the diff cap, and `{ dev, ino, size, mtimeNs }` over it. Any fact a request
+itself carries is ignored; the host computes every answer from the mount's held descriptor. `gitUndoable` is true for a
+tracked file with no uncommitted change, false otherwise, and null when `repoConfigRunsCode` is true or null, since the
+undo itself (a `git checkout` of the file) would run the repository's smudge filter or hooks.
 
 - H8. Compare and swap. A `store`, `remove` or `rename` that the worker judged on a fact carries the `basis` it was
   judged on, and the host refuses it with `ChangedSinceJudged` when the file's basis differs at the moment of the
