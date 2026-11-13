@@ -26,6 +26,8 @@ The owner's standing rule for a session's OWN PR, nothing more:
 
 - the PR's `tests` workflow run is complete and every job succeeded or was skipped (a CANCELLED job counts as not
   green, since it prints as a failure: re-run it, do not merge past it);
+- `mergeStateStatus` is not `BLOCKED` with a required context missing — that shape is a job that never reported
+  (a job-level `if` skip), and `--wait` reruns the run once to force it; after that the fix is a rebase;
 - no test file deleted (a `*.test.*` or `*.spec.*` file or a fixture under `tests/fixtures/`; the harness and the bench's
   own code also live under `tests/`, and moving one of those is not removing a test), and no more `test(` lines removed
   than added (an edited test counts once each way);
