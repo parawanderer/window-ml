@@ -27,8 +27,44 @@ export const DENIED_PROPS = new Set([
 // method, but NOT an Array. Detected structurally (no cross-realm/global dependency; works in jsdom).
 // A table facade is ruled out FIRST: it throws on a key it does not answer to (that is its job), and `length`
 // is one, so probing its shape would trip the guard meant for a model's pandas reach.
-export const isDomCollection = (x: any): boolean =>
-    x != null && typeof x === "object" && !Array.isArray(x) && !isTable(x) && typeof x.length === "number" && typeof x.item === "function";
+// A DOMTokenList (`classList`, `relList`, `sandbox`, …) has the same shape and is ruled out by its BRAND, so it keeps the
+// `tokenlist` kind (and `contains`) instead of being copied into an Array of strings: pass the evaluation's brand.
+export const isDomCollection = (x: any, isTokenList: (o: unknown) => boolean = isTokenListHere): boolean =>
+    x != null && typeof x === "object" && !Array.isArray(x) && !isTable(x) && !isTokenList(x) && typeof x.length === "number" && typeof x.item === "function";
+
+/** The `length` getter of a realm's `DOMTokenList.prototype`, or undefined where there is none (the worker). */
+function tokenListLength(ctor: unknown): ((this: unknown) => unknown) | undefined {
+    const proto = typeof ctor === "function" ? (ctor as { prototype?: unknown }).prototype : undefined;
+    return proto !== null && typeof proto === "object" ? Object.getOwnPropertyDescriptor(proto, "length")?.get : undefined;
+}
+
+// Captured when this module loads. Through the registered MAIN-world script (`document_start`, an approved origin) that is
+// before the page's own scripts. But the worker also injects the page scripts into a page that has ALREADY run
+// (`injectPageScripts`, sw-presence.ts: a page restored after a reload, a site approved while open, a run started on
+// one), and then this is whatever `DOMTokenList` the page left: no pristine intrinsic survives a page that already ran.
+// A page that replaced it can make its own objects read as token lists, so their `contains`/`item` run with converted
+// string arguments, and can break the survey (every object a `tokenlist`, `document` included). That is accepted, not
+// defended (docs/dev/readonly-exec.md, "A token list keeps its kind"). The worker has none, and has no DOM to hold one.
+const TOKEN_LIST_LENGTH = tokenListLength((globalThis as { DOMTokenList?: unknown }).DOMTokenList);
+
+/** The brand test for a real DOMTokenList, of any realm: BORROWS the interface's own `length` getter, whose receiver check
+ *  throws on anything without the platform object's internals (a look-alike, an object whose prototype was set to
+ *  `DOMTokenList.prototype`, a `Symbol.toStringTag` claim) and never runs the object's own members. The getter is this
+ *  module's realm's; only a realm with NO `DOMTokenList` of its own (a test under Node, holding a jsdom document) takes
+ *  it from `view`, the document's window, read before the survey starts. A browser realm with a document always has its
+ *  own, so the getter is never re-read from the page's `window` during a survey. All of this holds for the getter
+ *  captured at `document_start`; on a late injection the captured one may be the page's (`TOKEN_LIST_LENGTH`). */
+export function tokenListBrand(view?: unknown): (o: unknown) => boolean {
+    const get = TOKEN_LIST_LENGTH ?? (view !== null && typeof view === "object" ? tokenListLength((view as { DOMTokenList?: unknown }).DOMTokenList) : undefined);
+    if (!get) return () => false;
+    return (o) => {
+        if (o === null || typeof o !== "object") return false;
+        try { return typeof get.call(o) === "number"; } catch { return false; }
+    };
+}
+
+/** {@link tokenListBrand} for this module's own realm: the default where no evaluation supplies one. */
+const isTokenListHere = tokenListBrand();
 
 // WHAT MAY BE CALLED, SCOPED TO WHAT IT IS CALLED ON.
 //
@@ -55,7 +91,7 @@ export const isDomCollection = (x: any): boolean =>
 // Set, and must not be mutable.
 type MethodKind =
     | "array" | "string" | "number" | "date" | "regexp" | "set" | "map" | "promise"
-    | "element" | "document" | "collection" | "style" | "console" | "table" | "embedding"
+    | "element" | "document" | "collection" | "tokenlist" | "style" | "console" | "table" | "embedding"
     | "Math" | "JSON" | "ObjectCtor" | "ArrayCtor" | "PromiseCtor" | "DateCtor" | "NumberCtor";
 
 const BY_KIND: Record<MethodKind | "*", readonly string[]> = {
@@ -99,6 +135,12 @@ const BY_KIND: Record<MethodKind | "*", readonly string[]> = {
     document: ["querySelector", "querySelectorAll", "getElementById", "getElementsByClassName",
         "getElementsByTagName", "getElementsByName", "contains", "getRootNode"],
     collection: ["item", "forEach", "keys", "values", "entries", "at"],
+    // A DOMTokenList (`classList`, `relList`, `sandbox`, `part`): its READ half. `add`/`remove`/`toggle`/`replace` change
+    // the element's attribute and stay out, so on a token list they are refused as withheld, not missing (so is `supports`,
+    // a pure read no survey has asked for, and which throws on every list but `rel`'s); `value` is a
+    // property (a write to it is refused as any write to a page object is). `keys`/`values`/`entries`/`forEach` are
+    // Array.prototype's own on this interface, and an iterator they return is drained (`drainIterator`).
+    tokenlist: ["contains", "item", "forEach", "keys", "values", "entries"],
     // CSSStyleDeclaration (getComputedStyle) — pure readers. Named property reads (`.color`) go through
     // readMember. No setProperty/removeProperty: mutation, and they throw on a computed style anyway.
     style: ["getPropertyValue", "getPropertyPriority", "item"],
@@ -157,6 +199,7 @@ export const CONVERTS: Readonly<Record<string, Readonly<Record<string, Positions
     document: { querySelector: [0], querySelectorAll: [0], getElementById: [0], getElementsByClassName: [0], getElementsByTagName: [0],
         getElementsByName: [0], getRootNode: [0] },
     collection: { item: [0], at: [0] },
+    tokenlist: { contains: [0], item: [0] },
     style: { getPropertyValue: [0], getPropertyPriority: [0], item: [0] },
     table: { col: "all", select: "all", records: "all", head: "all" },
 };
@@ -184,6 +227,7 @@ export const NO_CONVERSION: Readonly<Record<string, Readonly<Record<string, stri
     element: { getAttributeNames: NONE, contains: "takes a Node: a TypeError, never a conversion", getBoundingClientRect: NONE },
     document: { contains: "takes a Node: a TypeError, never a conversion" },
     collection: { forEach: "callback", keys: NONE, values: NONE, entries: NONE },
+    tokenlist: { forEach: "callback", keys: NONE, values: NONE, entries: NONE },
     console: { log: "recorded through printable(), never converted", info: "as log", warn: "as log", error: "as log", debug: "as log" },
     embedding: { dot: "arguments are validated as embeddings by preflight", rank: "as dot" },
     ObjectCtor: { keys: "property reads, not conversion", values: "as keys", entries: "as keys", fromEntries: "as keys", assign: "as keys" },
@@ -259,7 +303,7 @@ export function offeredMethods(kind: string): readonly string[] {
  *  Structural throughout, because `instanceof` is realm-bound and the dialect can hold a value from an
  *  iframe's realm (`ml.queryAll` pierces them). Returns null for anything unrecognised — and null means NO
  *  methods, never a fallback, so a receiver this does not understand cannot be called at all. */
-export function kindOf(obj: unknown): MethodKind | null {
+export function kindOf(obj: unknown, isTokenList: (o: unknown) => boolean = isTokenListHere): MethodKind | null {
     if (obj == null) return null;
     if (typeof obj === "string") return "string";
     if (typeof obj === "number") return "number";
@@ -301,11 +345,14 @@ export function kindOf(obj: unknown): MethodKind | null {
     // Date's internal slot, across realms too.
     if (isDate(o)) return "date";
     if (isRegExpObject(o)) return "regexp";
+    // By BRAND, before the structural `collection` it would otherwise match: a page object with a `length`, an `item`
+    // and a `contains` of its own stays a collection, whose allowlist has no `contains`.
+    if (isTokenList(o)) return "tokenlist";
     // A DOCUMENT before an element: it answers `getElementById`, which an element does not.
     if (typeof (o as { createElement?: unknown }).createElement === "function" && typeof (o as { getElementById?: unknown }).getElementById === "function") return "document";
     if (typeof (o as { nodeType?: unknown }).nodeType === "number") return "element";
     if (typeof (o as { getPropertyValue?: unknown }).getPropertyValue === "function") return "style";
-    if (isDomCollection(o)) return "collection";
+    if (isDomCollection(o, isTokenList)) return "collection";
     // The CAPTURED console — the evaluator swaps in its own recorder, so this is matched by shape rather
     // than by identity with the global (which the interpreter deliberately never holds).
     if (typeof (o as { log?: unknown }).log === "function" && typeof (o as { warn?: unknown }).warn === "function") return "console";
@@ -358,9 +405,9 @@ export function drainIterator(o: object): unknown[] | null {
 
 /** May `key` be CALLED on `obj`? The whole method gate, in one place: the receiver's kind decides, an
  *  unrecognised receiver gets nothing, and "*" holds only what is harmless everywhere. */
-export function methodAllowed(obj: unknown, key: string): boolean {
+export function methodAllowed(obj: unknown, key: string, isTokenList?: (o: unknown) => boolean): boolean {
     if (ANY_KIND.has(key)) return true;
-    const kind = kindOf(obj);
+    const kind = kindOf(obj, isTokenList);
     return kind !== null && (KIND_SETS.get(kind)?.has(key) ?? false);
 }
 

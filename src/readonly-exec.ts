@@ -30,7 +30,7 @@ import type { CurrentSnapshot } from "./agent/current-context";   // a TYPE: era
 import { NotInDialect, Denied, NeedsPage } from "./readonly-exec/limits";
 import { tokenize } from "./readonly-exec/tokenizer";
 import { Parser } from "./readonly-exec/parser";
-import { DENIED_PROPS, ReadonlyRealm, mlFacade } from "./readonly-exec/policy";
+import { DENIED_PROPS, ReadonlyRealm, mlFacade, tokenListBrand } from "./readonly-exec/policy";
 import { PrintSwap, safeStr } from "./readonly-exec/print";
 import { Evaluator, runAsync } from "./readonly-exec/evaluator";
 
@@ -135,6 +135,8 @@ export async function evalReadonly(code: string, doc: Document | null, ml?: unkn
     const ev = new Evaluator(facade, opts.stepBudget, realm);
     // The realm's OWN bound getComputedStyle, by identity: a script's `const getComputedStyle = …` shadows the NAME in its frame, never this.
     if (realm !== "worker" && typeof root.getComputedStyle === "function") ev.ownGetComputedStyle = root.getComputedStyle as Function;
+    // The DOMTokenList brand: this realm's own, or (only where this realm has none) the document's, read before the script runs.
+    if (realm !== "worker") ev.isTokenList = tokenListBrand(doc?.defaultView);
     if (opts.hidden) ev.hidden = opts.hidden;
     charge = (n) => ev.spend(n);
     if (opts.current && facade) facade.current = ev.adoptCurrent(opts.current);
