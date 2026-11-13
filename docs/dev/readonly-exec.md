@@ -252,16 +252,17 @@ left, and no pristine intrinsic survives a page that already ran: a page that re
 as token lists, so their `contains`/`item` run with converted string arguments, and can break the survey (every object a
 `tokenlist`, `document` included). Its `forEach` is then handed the evaluator's callback wrapper and can call it after
 the survey: still under the step budget, still refusing a coercing argument and `ml.current`. That is accepted, not
-defended, and red-team rows pin it. A shape-matched collection is not handed anything: `memberValue` reads it as an
-Array. Only a realm with no `DOMTokenList` of its own (a Node test holding a jsdom document) takes the document's. A
-platform object's brand check is realm-agnostic, so an iframe's token list (reached through `queryAll`) passes as an
-element does. The evaluator holds the brand (`Evaluator.isTokenList`) and hands it to `kindOf`, `methodAllowed` and
-`isDomCollection`. `contains` and `item` convert their argument (`CONVERTS`), so a page object there is refused before
-its `toString` runs. `DOMStringList` (`location.ancestorOrigins`) has the same shape and a `contains` too, and is left a
-collection: `location` is a denied property, no other one is reachable from a survey, and as an Array it answers
-`includes`. Tests: `tests/readonly-tokenlist.test.mjs`, the late injection in
-`tests/redteam-dialect-late-inject.test.mjs`, plus the token-list rows in `tests/redteam-host-callbacks.test.mjs` and
-`tests/redteam-coerce-args.test.mjs`.
+defended, and red-team rows pin it. Without the replaced `DOMTokenList`, a page object shaped like a collection is not
+handed anything: `memberValue` reads it as an Array. With it, the same shape is a `tokenlist` (`kindOf` answers before
+the collection branch) and its `forEach` gets the wrapper as above. Only a realm with no `DOMTokenList` of its own (a
+Node test holding a jsdom document) takes the document's. A platform object's brand check is realm-agnostic, so an
+iframe's token list (reached through `queryAll`) passes as an element does. The evaluator holds the brand
+(`Evaluator.isTokenList`) and hands it to `kindOf`, `methodAllowed` and `isDomCollection`. `contains` and `item` convert
+their argument (`CONVERTS`), so a page object there is refused before its `toString` runs. `DOMStringList`
+(`location.ancestorOrigins`) has the same shape and a `contains` too, and is left a collection: `location` is a denied
+property, no other one is reachable from a survey, and as an Array it answers `includes`. Tests:
+`tests/readonly-tokenlist.test.mjs`, the late injection in `tests/redteam-dialect-late-inject.test.mjs`, plus the
+token-list rows in `tests/redteam-host-callbacks.test.mjs` and `tests/redteam-coerce-args.test.mjs`.
 
 ### A missing method is not a refusal
 
