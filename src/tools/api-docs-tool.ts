@@ -23,6 +23,26 @@ import { toolDetailsSection } from "./tool-details";
 import { queryApiDocs, isDefaultQuery, withoutMembers, type ApiDocsQuery } from "./api-docs-query";
 import { hiddenMlMembers } from "../ml/ml-member-tools";
 
+/**
+ * Why each `ml` member the agent's reference leaves out (gen-api-docs.mjs `AGENT_HIDDEN`) is not in it, the sentence a
+ * model is given when it asks for one by name: a page or a console snippet names them, and a bare "Not found" sends the
+ * model looking under other names.
+ * @param hasTool whether this run's toolset has a tool by that name; absent, `python_exec` is taken to be there
+ * @returns member name → the sentence
+ */
+export function agentHiddenWhy(hasTool?: (name: string) => boolean): Map<string, string> {
+    const py = !hasTool || hasTool("python_exec")
+        ? "you run Python with the `python_exec` tool"
+        : "this run was not given the `python_exec` tool, so it has no Python";
+    return new Map([
+        ["step", "ml.step is the console's single model call for a person writing their own tool loop; "
+            + "you are already in a run, so it is not in your reference."],
+        ["ready", "ml.ready is the console's promise that window.ml has loaded; "
+            + "a run has always loaded, so it is not in your reference."],
+        ["pythonExec", `ml.pythonExec is the console's method for Python, not in your reference: ${py}.`],
+    ]);
+}
+
 /** Where `agent_api_docs` reads the two runtime facts it reports. Either may reject or return null: it says less. */
 export interface DocsSource {
     /** How the person opens the HUD on this install (GET_INVOCATION). */
@@ -243,11 +263,13 @@ export function apiDocsTool(define: typeof defineTool, src: DocsSource): MlTool 
             const mem = ctx?.docsMemory;
             if (mem) { mem.sinceDocs = 0; if (args.fresh) mem.shown.clear(); }
             // A member this run does not have (its tool is not in the toolset) is not in its reference either.
-            const parts = ctx?.hasTool ? withoutMembers(ML_API_PARTS, [...hiddenMlMembers(ctx.hasTool).keys()]) : ML_API_PARTS;
+            const absent = ctx?.hasTool ? hiddenMlMembers(ctx.hasTool) : new Map<string, string>();
+            const parts = absent.size ? withoutMembers(ML_API_PARTS, [...absent.keys()]) : ML_API_PARTS;
+            for (const [member, why] of agentHiddenWhy(ctx?.hasTool)) absent.set(member, why);
             const pipe = typeof args.pipe === "string" ? args.pipe.trim() : "";
             // A piped call skips the burst memory both ways: the model sees only what the pipe lets through, so
             // nothing counts as shown, and the pipe reads the sections themselves, never their one-line stubs.
-            const view = queryApiDocs(parts, args, env, pipe ? undefined : mem?.shown);
+            const view = queryApiDocs(parts, args, env, pipe ? undefined : mem?.shown, absent);
             // The reduction lives HERE rather than in api-docs-query.ts, which has no imports on purpose, and it
             // goes through `runPipe` rather than growing a second one: PIPE_CMDS is the single source for every
             // description of the dialect, and a private reduction in one tool is how that stops being true.
