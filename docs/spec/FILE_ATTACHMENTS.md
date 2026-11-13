@@ -781,8 +781,10 @@ under the lockdown.
 - Approving a mount. Only the person mounts, per session, until they remove it. The model can ask through an approval
   card naming the real path, with two choices, "read and write" and "read only", neither preselected; it never mounts
   one itself. A page-started run never has a mount. A read-only mount fails a write with EROFS.
-- Seeing what is mounted. The files panel has a group "From this computer", one row per mount with its mode and a
-  remove action, and the run's banner a chip per mount. The model is told the mounts and their modes in one line.
+- Seeing what is mounted. The files panel has a group "From this computer", one row per mount with its mode and a remove
+  action, and the run's banner a chip per mount. The model is told the mounts and their modes in one line. A cell's
+  mount list names each mount by its real path, unscrubbed: a cell cannot expand `~`, and a path the model cannot open
+  is worse than the username; everywhere else a path under the home is written as `~`.
 - The diff's cap. A text file of up to 1 MB on both sides gets a diff, shown to 400 changed lines with "show all"
   beyond; a larger or binary file gets its size and hash before and after. The shelf keeps a before copy only of
   files under the cap, which also bounds what it holds during a cell. The row is collapsed and has no setting to turn
