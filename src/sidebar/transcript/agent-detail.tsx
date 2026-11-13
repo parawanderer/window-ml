@@ -44,6 +44,7 @@ import { hostOf } from "../../agent-start";
 import { JsonNode, type JsonSchemaNode } from "./json-tree";
 import { LiveCall } from "./live-call";
 import { liveCallView } from "./live-call-view";
+import { isRefusedPkgCard } from "../card/pkg-card-view";
 export { JsonNode, JtKey, jtPreview, type JsonSchemaNode } from "./json-tree";
 import { RenderPanel, OutputCell, SeenSplit, RanFor, RunningFor, inLineMap, type CodeCtx } from "./render-panel";
 import { ReplyBubble } from "./reply";
@@ -625,7 +626,7 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
                         there and silently did nothing, which is worse than being told no. What was ASKED is still
                         worth reading, so only the row is replaced. */}
                     {live
-                        ? <ApprovalRow grants={!!showGrants} decide={decide} />
+                        ? <ApprovalRow grants={!!showGrants} decide={decide} dismissOnly={isRefusedPkgCard(st.renderIn)} />
                         : <span class="appr-dead">This run ended before anyone answered, so there is nothing left to approve.</span>}
                 </div>
                 : null}

@@ -1627,6 +1627,106 @@
               "properties": {
                 "type": {
                   "type": "string",
+                  "const": "packages"
+                },
+                "ecosystem": {
+                  "type": "string",
+                  "const": "pypi"
+                },
+                "request": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "additionalProperties": true
+                },
+                "verdict": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "ok": {
+                          "type": "boolean",
+                          "const": true
+                        },
+                        "files": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/$defs/PkgRow"
+                          }
+                        },
+                        "loaded": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "totalBytes": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "ok",
+                        "files",
+                        "loaded",
+                        "totalBytes"
+                      ],
+                      "additionalProperties": true
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "ok": {
+                          "type": "boolean",
+                          "const": false
+                        },
+                        "reason": {
+                          "type": "string",
+                          "enum": [
+                            "no-build",
+                            "python-version",
+                            "lock-too-old",
+                            "not-on-index",
+                            "too-large",
+                            "malformed",
+                            "no-metadata"
+                          ]
+                        },
+                        "at": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "ok",
+                        "reason",
+                        "at"
+                      ],
+                      "additionalProperties": true
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "type",
+                "ecosystem",
+                "request",
+                "verdict"
+              ],
+              "additionalProperties": true
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
                   "const": "action"
                 },
                 "verb": {
@@ -2228,6 +2328,106 @@
               "properties": {
                 "type": {
                   "type": "string",
+                  "const": "packages"
+                },
+                "ecosystem": {
+                  "type": "string",
+                  "const": "pypi"
+                },
+                "request": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "additionalProperties": true
+                },
+                "verdict": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "ok": {
+                          "type": "boolean",
+                          "const": true
+                        },
+                        "files": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/$defs/PkgRow"
+                          }
+                        },
+                        "loaded": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "totalBytes": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "ok",
+                        "files",
+                        "loaded",
+                        "totalBytes"
+                      ],
+                      "additionalProperties": true
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "ok": {
+                          "type": "boolean",
+                          "const": false
+                        },
+                        "reason": {
+                          "type": "string",
+                          "enum": [
+                            "no-build",
+                            "python-version",
+                            "lock-too-old",
+                            "not-on-index",
+                            "too-large",
+                            "malformed",
+                            "no-metadata"
+                          ]
+                        },
+                        "at": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "ok",
+                        "reason",
+                        "at"
+                      ],
+                      "additionalProperties": true
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "type",
+                "ecosystem",
+                "request",
+                "verdict"
+              ],
+              "additionalProperties": true
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
                   "const": "action"
                 },
                 "verb": {
@@ -2747,6 +2947,46 @@
       "required": [
         "kind",
         "label"
+      ],
+      "additionalProperties": true
+    },
+    "PkgRow": {
+      "type": "object",
+      "description": "One file the install would fetch, as the card shows it and the answer carries it back. `size` is `null` for a lock file (the lock states no size; the card reads \"in the core\"). Every field is shown in full, `sha256` included.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "filename": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "lock",
+            "pypi"
+          ]
+        },
+        "size": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "sha256": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "filename",
+        "source",
+        "size",
+        "sha256"
       ],
       "additionalProperties": true
     },

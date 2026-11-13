@@ -9,6 +9,8 @@ import { judgeCall, fetchFacts, runPolicies } from "./sw-policies";
 import { checkProposals } from "./policy-proposal";
 import { proposePolicyTool } from "../tools/propose-policy-tool";
 import { proposeManifestTool } from "../tools/propose-manifest-tool";
+import { pythonInstallTool } from "../tools/python-install-tool";
+import { installOutcome } from "./sw-pkg-install";
 import { taskTool } from "../tools/task-tool";
 import { detachedCapMs, taskAction } from "./sw-tasks";
 import { proposalOutcome } from "./sw-manifest-proposal";
@@ -462,5 +464,6 @@ export function buildWorkerTools(runId: string, tabId: number, tabUrl: () => str
         : n === "propose_policy" ? proposePolicyTool(defineTool, { check: checkProposals, added: (q) => runPolicies(runId).find((r) => r.consumer === q.consumer && r.source === q.source && r.effect === q.effect)?.label })
         : n === "task" ? taskTool(defineTool, { act: (a) => taskAction(runId, a) })
         : n === "propose_manifest" ? proposeManifestTool(defineTool, { outcome: (a) => isLibraryDraft(a) ? libraryOutcome(runId, a) : proposalOutcome(runId, a) })
+        : n === "python_install" ? pythonInstallTool(defineTool, { outcome: (a) => installOutcome(runId, a) })
         : null)).filter((t): t is MlTool => !!t);
 }

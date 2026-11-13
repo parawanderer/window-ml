@@ -36,6 +36,7 @@ const buildLabel = (): string => `${BUILD_INFO.shortCommit}${(BUILD_INFO as { di
 import { annotatedConfig, resolveModel, shownModel } from "../model";
 import { askOutcomeLines, unaskedCalls, unaskedLines } from "../../shell/sh-call";
 import { putSubject } from "../../shell/sh-put";
+import { shownText } from "../../python/pkg-card";
 
 type Sidecar = { name: string; bytes: Uint8Array };
 
@@ -437,6 +438,18 @@ function writeAgent(s: Session, d: Sink): void {
             renderedIn = true;
         } else if (st.renderIn && st.renderIn.type === "code") {
             d.block("In", st.renderIn.format ? beautifyJs(st.renderIn.text) : st.renderIn.text, st.renderIn.lang || "javascript");
+            renderedIn = true;
+        } else if (st.renderIn && st.renderIn.type === "packages") {
+            // python_install's card as the person saw it: every file with its full sha256, index text escaped as on the
+            // card (a hidden character shows as U+FFFD, and the export lists it), or the refusal and where it stopped.
+            const ri = st.renderIn, v = ri.verdict;
+            const esc = (t: string): string => { const s = shownText(t); return s.hidden.length ? `${s.text} [${s.hidden.join(" ")}]` : s.text; };
+            const asked = esc(ri.request.version ? `${ri.request.name}==${ri.request.version}` : ri.request.name);
+            if (v.ok) {
+                d.inline("Install", asked, { code: true });
+                d.table(["name", "version", "file", "size", "source", "sha256"], v.files.map((r) => [esc(r.name), esc(r.version), esc(r.filename), r.size === null ? "in the core" : r.size, r.source, r.sha256]));
+                d.note(`${v.totalBytes.toLocaleString("en-US")} bytes to download${v.loaded.length ? `; already loaded: ${v.loaded.map(esc).join(", ")}` : ""}`, true);
+            } else d.inline("Install refused", `${asked}: ${v.reason} at ${esc(v.at)}`, { code: true });
             renderedIn = true;
         } else if (st.renderIn && st.renderIn.type === "action" && st.renderIn.ask) {
             // fetch `ask` mode: a clean In — the URL, the FULL question, and who answered it + the tokens spent

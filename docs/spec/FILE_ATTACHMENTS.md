@@ -682,11 +682,11 @@ most file access (`pandas.read_csv`, `numpy.load`, `sqlite3`, `zipfile`, `shutil
 an `@file:` is a frozen version ("Mutable, frozen when cited"), which a live path is not. `@file:` stays the handle a
 tool takes and the transcript cites; a path is what `open()` takes.
 
-**A host directory keeps its real path.** A directory the person approves (the `ml.sh` workspace, say) is mounted at
-the absolute path it has on the host, resolved with the host's realpath so a symlink is not a second name:
-`/Users/sb/git/window-ml/README.md` is that path in the cell, in `ml.sh` and in the transcript. Renaming it to a
-mount point (`/workspace/`) was considered and dropped: the person knows their own paths, and a renamed one makes a
-run harder to review.
+**A host directory keeps its real path.** A directory the person approves (the `ml.sh` workspace, say) is mounted at the
+absolute path it has on the host, resolved with the host's realpath so a symlink is not a second name:
+`/Users/sb/git/window-ml/README.md` is that path in the cell and in `ml.sh`; the transcript writes it
+`~/git/window-ml/README.md`, with the raw path beside it in the run log. Renaming it to a mount point (`/workspace/`)
+was considered and dropped: the person knows their own paths, and a renamed one makes a run harder to review.
 
 **Collisions.** The sandbox owns `/files/` and Pyodide's own tree (`/tmp`, `/lib`, `/home/pyodide`, `/dev`, `/proc`).
 A mount at or under one of these is refused by name when it is approved, never shadowed:
@@ -696,11 +696,12 @@ host's `/`, or `/home`, which would shadow `/home/pyodide`):
 `/private/tmp`, so a workspace there does not collide.
 
 **A path outside every mount** fails with `PermissionError`, never `FileNotFoundError`, since the file may exist:
-`/Users/sb/other is not mounted in this sandbox; reach it through ml.sh, or ask the person to mount it.`
+`~/other is not mounted in this sandbox; reach it through ml.sh, or ask the person to mount it.`
 
-**`/files/` in an `ml.sh` argv** (chosen by Shane, 2026-11-13). An argv item under `/files/` is refused, unless that
-path exists on the host: `/files/ is this sandbox's; pass the file with ml.sh.put.` On a host that has a `/files`
-directory the person accepts the alias: there `/files/x` is the host's file in `ml.sh` and the sandbox's in a cell.
+**`/files/` in an `ml.sh` argv** (chosen by Shane, 2026-11-13; replaced by H9 below, a mapping). An argv item under
+`/files/` is refused, unless that path exists on the host: `/files/ is this sandbox's; pass the file with ml.sh.put.` On
+a host that has a `/files` directory the person accepts the alias: there `/files/x` is the host's file in `ml.sh` and
+the sandbox's in a cell.
 
 **The channel.** Pyodide has no synchronous remote backend, so a host-backed node needs one. Two routes, neither
 measured:
@@ -729,7 +730,7 @@ opening it, so nothing can swap a component between the check and the open. A pa
 - What may be mounted. The approval checks the RESOLVED path, so `~/x/..` or a symlink does not pass as a leaf. A
   mount at or above the person's home is refused by name, as is one at, under or above the browser profile
   (`chrome.storage.sync` holds the API key and the model filter), the archive folder or window-ml-host's config:
-  `/Users/sb is your home directory; mount a directory inside it instead.`
+  `~ is your home directory; mount a directory inside it instead.`
 - The directory replaced after approval. The host holds the mount's descriptor from approval and compares its device
   and inode on every request, so a mounted directory replaced by a symlink to `/` is refused, not followed.
 - Unmounted or disconnected during a cell. The next read fails; the cached listing and any copy in MEMFS are not
@@ -780,8 +781,10 @@ under the lockdown.
 - Approving a mount. Only the person mounts, per session, until they remove it. The model can ask through an approval
   card naming the real path, with two choices, "read and write" and "read only", neither preselected; it never mounts
   one itself. A page-started run never has a mount. A read-only mount fails a write with EROFS.
-- Seeing what is mounted. The files panel has a group "From this computer", one row per mount with its mode and a
-  remove action, and the run's banner a chip per mount. The model is told the mounts and their modes in one line.
+- Seeing what is mounted. The files panel has a group "From this computer", one row per mount with its mode and a remove
+  action, and the run's banner a chip per mount. The model is told the mounts and their modes in one line. A cell's
+  mount list names each mount by its real path, unscrubbed: a cell cannot expand `~`, and a path the model cannot open
+  is worse than the username; everywhere else a path under the home is written as `~`.
 - The diff's cap. A text file of up to 1 MB on both sides gets a diff, shown to 400 changed lines with "show all"
   beyond; a larger or binary file gets its size and hash before and after. The shelf keeps a before copy only of
   files under the cap, which also bounds what it holds during a cell. The row is collapsed and has no setting to turn
@@ -799,8 +802,8 @@ under the lockdown.
 - The size cap's value, set from the measurement above.
 
 **Owners.** This text, the diff row and the provenance of a file read from a mount: the chat-page lane. The channel and
-the mount: the Pyodide lane. The host's scope check, the argv refusal and the `ml.sh` snapshot: the `ml.sh` and
-window-ml-host owner, through the coordinator.
+the mount: the Pyodide lane. The host's scope check, the argv mapping and the `ml.sh` snapshot: the host lane, as
+stated in "What window-ml-host must do" below.
 
 ### `/files` on the person's disk, when a host is connected (proposed 2026-11-13)
 
@@ -827,9 +830,9 @@ host is mounted (Shane):
 - With a host mounted, a folder in the workspace, `<workspace>/window-ml-files/`, is primary, with the same layout
   (`attached/<handle>/<name>` read-only, the rest writable). A cell's `open()` and `ml.sh` see one set of bytes, so a
   cell's write is there for the next `cp` with no sync between them. `cp`, `sed -i` and `open()` reach the uploads at
-  a real path (`/Users/sb/git/proj/window-ml-files/attached/3fa91c2/data.csv`), with no `ml.sh.put` or read-back to
-  teach the model; those stay as mechanisms, not as advice. Finder is the truth for the person; the panel is a view of
-  the folder.
+  `/files/attached/3fa91c2/data.csv` (on disk at `~/git/proj/window-ml-files/attached/3fa91c2/data.csv`), with
+  no `ml.sh.put` or read-back to teach the model; those stay as mechanisms, not as advice. Finder is the truth for the
+  person; the panel is a view of the folder.
 - The browser store (MEMFS over the shelf, as ruled above) is then a capped backup, synced when convenient. A file over
   the quota lives on disk and is not backed up; the panel shows it with its size.
 - With no host present, or when the host dies, the browser copy is the working store and the model works there, as
@@ -837,11 +840,19 @@ host is mounted (Shane):
 - The sync covers that folder only, never the rest of the workspace. Authority: for `/files`, the folder while a host
   is mounted and the browser copy while none is; for everything else in the workspace, the disk, which holds its only
   copy.
-- While a host is mounted the folder's real path is the name the model is given, and a cell has no `/files` alias, so
-  no one cell sees a file under two paths. Across time it does: a cell run offline names `/files/x` and a mounted one
-  names `/Users/sb/git/proj/window-ml-files/x`, and the transcript keeps each as the cell used it. A bare `/files/x`
-  in a cell or an argv then fails with
-  `/files is on disk while the host is connected: /Users/sb/git/proj/window-ml-files/x`.
+- `/files` is the name the model uses, with a host or without one (Shane, 2026-11-13, replacing "the real path is the
+  name the model is given"): without a host it is the only path there is, so a run reads the same either way. While a
+  host is mounted, a cell's `/files` is backed by the folder (the same bytes `ml.sh` sees), and an `ml.sh` argv maps it
+  (H9 below). The folder's real path also works, since it lies inside the workspace mount; the transcript, the diffs and
+  the exports write it as `/files`, so one file has one name in the record. The model is told the real path in one line,
+  for a program that prints it, with the home directory written as `~` (`~/git/proj/window-ml-files`; Shane, 2026-11-13:
+  model-facing text writes a path under the home as `~`, the run log keeps it raw). The rule for which form
+  (coordinator, 2026-11-13): `~` is written only where its consumer expands it. `ml.sh`'s argv and cwd expand a leading
+  `~` on a host with `hello.tilde`, so a path the model is to reuse in `ml.sh` (H9's refusal sentence, a mapped-path
+  mention) is written as `~`. A path the model is to reuse in a cell (the mount list, a cell's own error or result
+  naming a mounted path) stays raw, since nothing expands `~` in `open()`. Prose that names a path without expecting
+  reuse writes `~`. Where the host cannot map an argv item (H9), it fails with `/files is on disk while the host is
+  connected: ~/git/proj/window-ml-files/x`.
 - The folder is ignored by git by default, through `.git/info/exclude` (the clone's own list, never a committed
   `.gitignore`), so uploads never show in `git status` or a commit unless the person moves them out. The person can
   name another folder, inside a mount.
@@ -874,7 +885,7 @@ since a disk listing cannot say who made a file; a file the record does not know
 **The host unavailable or dead.** The files on the disk stay there, and the browser copy becomes the working store:
 the model's `/files` keeps working on what was backed up. The panel shows the folder as disconnected, with its real
 path, never as empty or gone. Uploads and writes made meanwhile sync forward when the host returns (above). The
-transcript keeps the real paths a run used, so a later read without the host says where they were. A cell running when
+run log keeps the raw paths a run used, so a later read without the host says where they were. A cell running when
 the host goes gets "Unmounted or disconnected during a cell" (above): the next read through the mount fails.
 
 **Sessions and mounts** (decided, Shane, 2026-11-13):
@@ -940,7 +951,8 @@ Python:
 - The disk as the only copy once a host connects, with the browser copy cleared: `/files` would stop working when the
   host is unavailable or dies, and the uploads are what the model is there to work on.
 - A host-side copy of `/files` mapped into a container at `/files`: a second mirror, and it needs a container.
-- A `/files` alias inside the cell while a host is connected: one file under two paths in the transcript and the diffs.
+- No `/files` alias in a cell while a host is connected: dropped on 2026-11-13 (Shane), since `/files` is the only
+  path without a host. The two-names objection is met by writing the real path as `/files` in the record.
 - The folder in a fixed place in the home directory: it needs a mount of its own, and it is not where the person looks
   at their work.
 
@@ -970,7 +982,246 @@ neither the folder nor `ml.files`.
 
 **Owners.** This text, the panel's view of both copies, the sync's rules, provenance and the files API's JS side: the
 chat-page lane. The mount, the fallback and the Python binding: the Pyodide lane. The host's folder, the git snapshot
-and the per-request judging, the folder watch: the `ml.sh` and window-ml-host owner (none live; with Shane).
+and the per-request judging, the folder watch: the host lane, as stated in "What window-ml-host must do" below.
+
+### What window-ml-host must do for mounts, `/files` and `ml.sh` diffs (ruled 2026-11-13)
+
+RULED 2026-11-13 (Shane: "fine for now", to be changed where building shows one wrong). Nothing is built. The
+coordinator's ruling (Shane, 2026-11-13): with this ruled, one host lane opens, in its own window-ml-host clone, and
+takes the scope check (H1 to H8) first, then the argv mapping (H9), then the snapshot (H10 to H14) and the `hello` flags
+(H15). It states as requirements on the host what the two sections above leave to "the `ml.sh` and window-ml-host
+owner", and settles three places where they and `SHELL.md` disagree (named where each is settled, and listed under
+"Ruled with it" at the end).
+
+**One judge.** The host enforces the scope and the hard refusals, which no policy can lift, and resolves the facts. The
+worker judges free or asks with the built-in default policy and the person's policies over those facts, as it already
+does for an `ml.sh` call (`SHELL.md`, "Policies": a policy is a function over the facts the host resolved). A cell's
+file request and an `ml.sh` call are judged by one mechanism over one list of facts. The mounts are the host's
+configured roots (`configure`), one list, not a second one beside it.
+
+**The scope check** (what a cell's `open()` through a mount reaches; "Host directories in the sandbox", "Security").
+
+- H1. New host calls, each on a mount the host already holds: `mount`, `unmount`, `list`, `fetch` (read a file whole),
+  `store` (write a file whole), `remove` and `rename`. Every path in a request is relative to a mount and resolved on
+  the host; a path the worker resolved is never trusted, since a `full` cell can forge a worker post.
+- H2. `mount` refuses, by the resolved path and with the sentences above: a path at, under or above a reserved prefix
+  (`/files`, `/tmp`, `/lib`, `/home/pyodide`, `/dev`, `/proc`); the home directory or above; a path at, under or above
+  the browser profile, the archive folder or the host's own config; a path at, under or above an existing mount, so a
+  read-only mount is never reachable for writing through a read-write one around it. The refusal is the host's, so
+  the worker's copy of the list is a convenience, not the check.
+- H3. The host holds each mount's directory descriptor from `mount` and compares its device and inode on every request;
+  a mismatch refuses the request and reports the mount as replaced.
+- H4. A path is opened by walking its components from that descriptor with no symlink followed. `fsx::open_beneath`
+  does this today (`openat2` with `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS` on Linux, a per-component `O_NOFOLLOW` walk
+  elsewhere), but read-only and from a path; it is extended to start from the held descriptor and to open for writing.
+  A symlink component anywhere in the path is refused this round, including one that points inside the mount (open,
+  below).
+- H5. `store` writes beside the file and renames into place, so a Stop or a dropped connection leaves the old file
+  whole. A write through a descriptor whose `fstat` shows `st_nlink > 1` is refused; a read of one is allowed. A write
+  to a read-only mount fails with `EROFS`; a `fetch` over the fetch cap fails with `EFBIG` and carries the size.
+- H6. In the uploads folder, a `store` into `attached/`, and a `rename` into or out of it, are refused by the host
+  whatever a policy says, `attached/` being matched by its device and inode, never by name (APFS is case-insensitive, so
+  `Attached/` is the same directory); a `remove` there is judged (it asks by default, the person's uploads). This is a
+  hard refusal because `attached/` is the person's frozen originals and no policy the model can ask for should make it
+  writable.
+
+**The facts a request carries back** (H7), so the worker can judge it: `inMount`, the mount's `mode`, `secret` (the
+host's `SECRET_PATTERNS`, the list an `ml.sh` path argument meets), `exists`, `ignored` (by git, `git check-ignore`
+under the git belt), `inUploads`, `inAttached`, `gitUndoable`, and a `basis` for an existing file: `{ dev, ino, size,
+mtimeNs, sha256 }` for a file at or under the diff cap, and `{ dev, ino, size, mtimeNs }` over it. Any fact a request
+itself carries is ignored; the host computes every answer from the mount's held descriptor. `gitUndoable` is true for a
+tracked file with no uncommitted change, false otherwise, and null when `repoConfigRunsCode` is true or null, since the
+undo itself (a `git checkout` of the file) would run the repository's smudge filter or hooks.
+
+- H8. Compare and swap. A `store`, `remove` or `rename` that the worker judged on a fact carries the `basis` it was
+  judged on, and the host refuses it with `ChangedSinceJudged` when the file's basis differs at the moment of the
+  write, including when the file was deleted (never silently recreated) or replaced by a directory. Without it, a file
+  judged free as git-undoable could be edited between the judgment and the write and then lost. The `sha256` is there
+  because an in-place edit that keeps the size and restores the mtime defeats the other four (e3, 2026-11-13). Decided:
+  over the diff cap the basis has no hash, so such an edit goes unseen, and the card for a write or delete of such a
+  file says it was judged by size and modification time.
+
+**`/files` in an `ml.sh` argv: mapped, not refused** (H9; Shane, 2026-11-13). The commonest calls name it: copying an
+upload out of `attached/` into the writable part of `/files`, then from `/files` into the project (`cp
+/files/attached/3fa91c2/data.csv /files/data.csv`, `cp /files/data.csv src/`). Settles the first disagreement, where
+"Host directories in the sandbox" refuses a `/files/` argv item and "`/files` on the person's disk" both drops the
+refusal and gives a sentence for it:
+
+- A pointer token of any prefix stays refused on the extension side, before the call reaches the host (`sh-call`), as
+  now.
+- While a host is connected, at `spawn` the host maps an argument the program's manifest marks as a PATH, when it
+  equals `/files` or starts with `/files/`, to the same path under the folder's real path
+  (`~/git/proj/window-ml-files/data.csv` as the model sees it), and the call's `cwd` likewise. The mapped path then
+  carries the facts like any other path argument: the host refuses at `spawn` a call that WRITES a path in
+  `attached/` (H6's rule, for a process), and an overwrite git cannot undo still asks.
+- Which operand is written comes from a manifest field naming it (the last operand for `cp` and `mv`, every operand
+  for `rm`), since today's `paths: "operands"` and a call-wide effect (`write-names`) do not say which position is
+  read and which is written. A program whose manifest has a writing effect and no such field has every path operand
+  treated as written, which fails closed: such a call naming a path in `attached/` is refused, even as a source.
+- An argument the manifest marks as anything else (a pattern, a message, a value) is never mapped, so `rg '/files/' .`
+  searches for that text.
+- An option with a value (`--out=/files/x`, `-Dkey=/files/x`) is split the way the manifest's flag description says
+  (`valueIsPath`, a path argument's `split`). An item the manifest does not place is checked at its start and after its
+  FIRST `=` only, as a stated rule: named cost, a `/files` path after a second `=` (`--set=a=/files/x`) is not seen,
+  reaches the program as written and names nothing on the disk.
+- The folder's real path is an ordinary path argument, allowed like any other in the mount, so `cp` from its
+  `attached/` and `mv` out of the folder work by either name (e3's positive row: a host that refused anything naming
+  the uploads folder would break use cases 2 to 4).
+- A `/files` argument the host cannot place, because the program has no manifest or the manifest does not describe
+  that position, is refused with the sentence of "`/files` on the person's disk" naming the real path:
+  `/files is on disk while the host is connected: ~/git/proj/window-ml-files/data.csv`. Such a call asks
+  anyway (no manifest), so the refusal costs one retry with the real path.
+- The call's record keeps both forms, the argv the model wrote and the argv the process got. The model sees a mapped
+  path with the home written as `~`; the run log keeps both argvs raw, and the sidebar and both exports show both
+  ("the log carries what the model saw").
+- The alias exception of the first section is kept for a host that has a `/files` directory of its own, where the
+  argument is the host's file and nothing is mapped.
+- A cell's `/files` is backed by the folder while a host is connected ("`/files` on the person's disk"), so
+  `/files/x` names the same file in a cell's `open()` and in an argv.
+- Needs a `cp` manifest (`src/shell/manifests/`): operands as paths, as `mv.json` has, and the written-operand field
+  naming the last operand. It is H9's second step, in the host lane after the mapping: the manifest, the field in both
+  readers (`describeCall` in `program-manifest.ts` and the host's `manifest.rs`, per `docs/spec/PROGRAM_MANIFEST.md`)
+  and the vectors (`VECTOR_PIN` moves on both sides), with fail-first adversarial rows and e3's pass, since it is a new
+  agent write path. Until it lands, both `cp` calls above are refused with the real-path sentence.
+
+**The `ml.sh` snapshot** (H10 to H14). Settles the second disagreement: "Diffs from git" takes the snapshot with
+`git add -A` into a scratch index, which writes a blob for every changed file into the repository's object store, and
+its own red-team row says `.git/info/exclude` is the only other file the host writes. The snapshot below writes
+nothing into the repository.
+
+- H10. Before and after each `ml.sh` call in a git workspace, the host builds a tree with a scratch `GIT_INDEX_FILE`
+  (a copy of the person's index, for its stat cache) and a private `GIT_OBJECT_DIRECTORY`, both in the host's own
+  directory, with the repository's object directory as an alternate (`GIT_ALTERNATE_OBJECT_DIRECTORIES`). The person's
+  index, HEAD, stash list and object store are unchanged; the private directory is deleted when the diff is made.
+- H11. Changed files are hashed with `git hash-object -w --no-filters --stdin-paths` and entered with
+  `git update-index --index-info`, never `git add` or `update-index --add`, which run a clean filter. Every git spawn
+  carries the git belt (`core.fsmonitor=false`, `core.pager=cat`, `GIT_OPTIONAL_LOCKS=0`), so no filter, textconv,
+  fsmonitor or hook runs. Untracked files are included; ignored files are not, except the uploads folder. The snapshot
+  runs whatever `repoConfigRunsCode` says: the belt, `--no-filters`, `--no-ext-diff` and `--no-textconv` leave no path
+  by which the repository's config runs a program, and the e3 row with a clean filter, an fsmonitor and a hook
+  configured is the pass condition for that case too.
+- H12. Bounds: no file over the diff cap (1 MB, "The diff's cap") goes into the tree; it is compared by size and
+  sha256 instead. The walk stops at `WALK_CAP` (20 000) entries; past that the call's diff is null with the reason.
+- H13. The diff is `git diff-tree --no-ext-diff --no-textconv` of the two trees. Its body goes out as held output (a
+  pointer, as stdout does), and `done` carries the summary line (`edited a.py (+3 −1); deleted old.log`). A change is
+  reported as "changed during this call", never attributed to the call's process, since another process may have
+  written meanwhile. An orphaned call's snapshot reports through `status`/`ended`, as `protectedChanged` does. A
+  workspace that is not a git repository gets a null diff (open, as in the section above).
+- H14. The diff's file list is what the call's end flushes to the browser backup ("The sync").
+
+**Telling an old host apart** (H15). `hello` gains `mounts: true` and `snapshot: true`. Their absence means an older
+host: the worker treats mounts and diffs as unavailable, never probes by calling. The `~` form in H9's sentence
+depends on `hello.tilde`: a host without it gets the raw path in that sentence, so the retry it teaches works on both.
+
+**What runs free, what asks, what is refused.** The default policy's rows, each with the fact that backs it. "Refused"
+is the host's and no policy changes it; "asks" is the default, which a policy may change either way. Rows compose:
+every row that applies to a request is taken, and the most restrictive decides, refused over asks over free (a new file
+in a read-only mount is refused, a new file in `attached/` is refused, a secret-looking file in the uploads folder
+asks). The host applies its refusals before the worker judges.
+
+| Operation | Default | Backing fact |
+| --- | --- | --- |
+| read in a mount | free | `inMount` |
+| read of a file that looks like a secret | asks | `secret` |
+| any write to a read-only mount | refused (`EROFS`) | `mode` |
+| write or delete of a file git can undo | free | `gitUndoable` true |
+| write or delete of a file git cannot undo (untracked, ignored, uncommitted changes) | asks | `gitUndoable` false |
+| the same when git cannot be asked | asks | `gitUndoable` null |
+| a new file | free | `exists` false |
+| anything in the uploads folder outside `attached/` | free | `inUploads` |
+| delete in `attached/` | asks | `inAttached` |
+| write into, or rename in or out of, `attached/` | refused | `inAttached` |
+| a path outside every mount, through a symlink, or after the mount was replaced | refused | H3, H4 |
+| a write through a hard link | refused | `fstat` `st_nlink` |
+| a write whose basis changed since it was judged | refused (`ChangedSinceJudged`) | `basis` |
+| a `/files` path argument | mapped to the real path, then judged as it | H9, the manifest |
+| a `/files` argument the manifest does not place | refused | H9 |
+| `git status`, `git diff`, `git add` | free | the manifest, `repoConfigRunsCode` false |
+| the first commit in a session | asks | extension side |
+| later commits on the current branch | free | extension side |
+
+The `Window-ML-Run:` commit trailer and the first-commit-in-session state are the extension's, not the host's.
+
+Settles the third disagreement: `SHELL.md`'s "the sandbox widens the free tier" makes a sandboxed write inside the
+roots free, and "`/files` on the person's disk" makes a delete git cannot undo ask. The proposal: both hold, because
+they bound different things. The sandbox bounds WHERE a write lands; `gitUndoable` bounds whether it can be taken
+back. So under the sandbox a write that creates a file, or touches one git can undo, is free, and an overwrite or
+delete of one git cannot undo asks, for a cell and for an `ml.sh` call whose manifest names the path.
+
+**Red-team rows** (e3, through the coordinator, 2026-11-13; each a test that fails first, with its pass condition):
+
+- The scope (H1, H4). A forged request for a path outside the mount, by `..`, a symlink component or an absolute path,
+  enumerated per platform: `/etc/passwd`, `C:\x`, `C:/x`, `\\?\C:\x`, `//server/share/x`, a `..\` component on Windows,
+  an interior NUL, a path of only `..` components; the absolute forms refused as not relative, `..` as escaping the
+  mount.
+- A forged post (H1, H7). A worker post from a `full` cell gets an answer computed from the held descriptor only; any
+  fact field it carries (`basis`, `inMount`, `mode`, `gitUndoable`, `secret`, `exists`) is ignored.
+- Mount ids are not a capability (H1, H3). A request naming a mount another session made is refused, unmounting
+  another session's mount is refused, and a request on an unmounted mount is refused even with its old id.
+- What may be mounted (H2). A mount at, under or above each refused path, by its resolved path, and at, under or above
+  an existing mount.
+- The mount replaced (H3). The mounted directory replaced by another real directory on the same device, so only the
+  inode comparison can refuse it; the replacement report reaches the person.
+- The race (H4). A component swapped for a symlink between two requests, and inside one: a rename loop swapping a
+  component for a symlink to an outside directory against one long `fetch` or `store` never reads or writes outside
+  the mount.
+- `list` never traverses a symlinked entry (it is listed as a symlink), refuses `..` or an absolute input, and lists
+  only the mount's own entries.
+- `rename` with a source or target outside this mount, or in another mount, is refused, never degraded to a copy and
+  a delete.
+- Writes (H5). A write through a hard link is refused. A write to a read-only mount under a policy allowing everything
+  gets `EROFS` from the host, with nothing created beside the target or under a temporary name. A `store` interrupted
+  mid-transfer leaves the old file whole. A symlink or hard link planted at the temporary name is not written through
+  and the target is untouched; no temporary file remains after a success, a failure or a Stop.
+- A `fetch` past the cap answers `EFBIG` with the size, without the host reading the file (H5).
+- `attached/` (H6). A `store` into it and a `rename` into or out of it are refused under every policy and under every
+  case variant of every component; a write into it is refused by `/files` and by its real path alike.
+- The facts are true on a fixture repository (H7). `gitUndoable` true only for a tracked file with no uncommitted
+  change, false for a modified, an untracked and an ignored one; `secret` true for `.env` and an `id_rsa`-shaped name
+  from the `ml.sh` list; `ignored` true for a `.gitignore`d file and false for a re-included one; `exists` false for a
+  new file.
+- Compare and swap (H8). A git-undoable file edited by another process between the judgment and the write, including the
+  cap's boundary both ways: a file AT the cap has a sha256 in its basis and a same-size, same-mtime edit to it is
+  `ChangedSinceJudged`, while a file OVER the cap is judged by size and mtime and its card says so; the file deleted
+  (refused with `ChangedSinceJudged`, not recreated); the file replaced by a directory.
+- The argv mapping (H9). A `/files` item in each form, bare and after `=`, mapped only in a manifest's path position
+  and refused where the manifest does not place it; a pattern argument left alone; an option split as its manifest
+  says; a `cp` out of `attached/` allowed and into it refused; a writing manifest with no written-operand field refused
+  when any operand is in `attached/`. Positive: the folder's real path as an argv item works for `cp` from `attached/`
+  and `mv` out of the folder.
+- The snapshot writes nothing into the repository (H10, H11). The person's index, HEAD, stash list and object store
+  stay byte-identical, with a clean filter, an fsmonitor and a hook configured that would each leave a mark if run.
+  The scratch index and the private object directory live outside the worktree and are gone after the diff; a build
+  that drops `GIT_OBJECT_DIRECTORY` turns this row red.
+- What the snapshot takes (H11). An ignored `.env` never enters a tree; an ignored file inside the uploads folder does;
+  an untracked file the call creates appears in the after-tree.
+- Bounds (H12). A workspace with a FIFO, a socket and an unreadable file snapshots within budget and lists them as not
+  captured, never opening them. A changed file over the cap is reported by size and sha256, never its body; a file
+  under the cap whose only change is its mtime is not reported.
+- The report (H13). The body goes out as a held pointer and `done` carries only the summary line; a change by another
+  process reads "changed during this call", unattributed.
+- An old host (H15). With a `hello` carrying neither field the worker sends no `mount`, `fetch`, `store`, `list`,
+  `remove`, `rename` or snapshot call and no probe; `mounts: "yes"`, `1` or `{}` read as absent.
+- Pages, four ways. Each new message type is refused at the router from a page, the host seeing nothing; a
+  page-started run cannot mount or have a cell's calls made for it; an approved exec in the page's world cannot reach
+  them through the dialect; each type is absent from `HANDLE_MAP`, `PAGE_STARTED_TYPES` and `RUN_CONTROL_TYPES`,
+  enumerated.
+
+**Open.**
+
+- A symlink inside a mount that points inside it (a repository's `node_modules/.bin`): refused this round by H4; whether
+  to follow one whose target resolves inside the same mount is a later question. So is a mount nested in another,
+  refused by H2, with one mode followed through the nesting.
+- The git queries per request (`check-ignore`, the undoability check) cost a spawn each; whether the host batches them
+  per cell or caches them by `basis` is the lane's to measure.
+
+**Ruled with it** (Shane, 2026-11-13): the three settlements, the argv refusal replaced by a mapping in path positions
+(H9), the snapshot writing nothing into the repository (H10), and the sandbox and `gitUndoable` both holding (the
+paragraph under the table).
+
+**Owners.** This text: the chat-page lane, until the host lane opens. H1 to H15: the host lane, one lane in its own
+window-ml-host clone, scope check (H1 to H8) first. The worker's judging of the facts and the table's default policy:
+the `ml.sh` extension side (`docs/dev/shell.md`).
 
 **The person deletes or moves a file.** The files panel can delete, rename and move files in the writable part. During
 a live run the model is told the file's name through the run's inbox, the same as any other notice; a move is a delete

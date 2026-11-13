@@ -7,6 +7,7 @@
 // The page is the real page geometry (page-geometry.ts `answerGeometry`) over a jsdom document, answering the worker's
 // RUN_TOOL_IN_PAGE as a message (JSON-cloned on the way). The tool bodies are the real look and locate, run once over
 // this host and once over the page's own host on the same page: the model must be given the same text.
+import { READER_MAX_TOKENS } from "../src/contract/contract-render.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -403,7 +404,7 @@ test("delegated look of an element in the worker: the reader's words and the leg
         assert.equal(env.image, undefined, "no image for a driver that cannot see");
         assert.equal(w.chats.length, 1);
         assert.equal(w.chats[0].model, "reader-vl");
-        assert.equal(w.chats[0].max_tokens, 512);
+        assert.equal(w.chats[0].max_tokens, READER_MAX_TOKENS);
         assert.equal(env.subUsage?.calls, 1, "the reader's call is the call's spend");
         assertOnlyGeometry(w.bg, ["reader-vl", "is it blue", "Describe", "A blue Save button."]);
     });

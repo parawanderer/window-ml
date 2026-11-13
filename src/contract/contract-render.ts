@@ -29,9 +29,12 @@ export const DEFAULT_GROUNDING_RANGE = 1000;
 export const VISION_NUM_CTX = 8192;
 
 /** Generated-token cap for a delegated READER's description (`look`, click/type/wait verify, `python_exec` verify). A
- *  reader that thinks (qwen3-vl) spends its tokens reasoning before it answers: at 256 it answered nothing about a chart
- *  on the 2026-10-19 panel, at 512 it described it. */
-export const READER_MAX_TOKENS = 512;
+ *  reader that thinks (qwen3-vl) spends its tokens reasoning before it answers, and the cap counts both: at 256 it
+ *  answered nothing about a chart on the 2026-10-19 panel. At 512, 43 of ~70 looks in the 2026-11-12 prompt-budget-cuts
+ *  sweep came back empty; uncapped, six describe-the-page calls took 421 to 994 tokens, about 150 of them the answer.
+ *  `think: false` did not stop qwen3-vl:30b thinking, so the room is in the cap. A reader that does not think stops at
+ *  its answer long before this. */
+export const READER_MAX_TOKENS = 2048;
 
 /** The crop transform of a raw element/region screenshot: the crop's top-left in VIEWPORT (CSS) px
  *  and the devicePixelRatio it was captured at. A pixel (px,py) in that image maps to viewport CSS
@@ -210,6 +213,10 @@ export type RenderDescriptor = (
     // place that failure is visible; and the winning rung says whether the Markdown is the SITE's authored
     // text or our own reduction of its markup. Present only on the POST-call render (the approval card's
     // `render()` runs before any rung has been tried).
+    // python_install's card (src/python/pkg-card.ts): every file the install would fetch, each with its full sha256, or
+    // why it cannot be installed. Drawn as rows, never as a code note; the worker approves only an answer carrying
+    // exactly these rows. Index text in it is untrusted: a renderer escapes it (`shownText`).
+    | { type: "packages"; ecosystem: "pypi"; request: { name: string; version?: string }; verdict: PkgCard }
     | { type: "action"; verb: string; kind?: string; target?: string; selector?: string; input?: string; note?: string; crossOrigin?: string; offMachine?: string; asYou?: string; ask?: string; answeredBy?: string; tokens?: number; askBody?: string; askBodyLang?: string; askBodyTruncated?: boolean; pipe?: string; attempts?: FetchAttempt[]; resolvedBy?: FetchAttempt["strategy"] }
 );
 
@@ -232,3 +239,29 @@ export interface ToolRenderInput {
 /** INTERNAL: a citable step's render + raw result, carried out of the loop so the outputs resolver can build
  *  {@link AgentOutput}s from the tokens the answer actually cites. */
 export interface TokenRender { id: string; tool: string; render?: RenderDescriptor; result?: string }
+
+/** Why a package cannot be installed (python_install's verdict, src/python/pkg-verdict.ts). `at` names the package.
+ *  - `no-build`: no file the core accepts (native wheels for other platforms, an sdist, or nothing).
+ *  - `python-version`: the release's `requires_python` excludes the core's Python.
+ *  - `lock-too-old`: a lock package outside a range asked of it, which no release inside the range can replace (or is loaded).
+ *  - `not-on-index`: the index has no such project, or no such release.
+ *  - `too-large`: a bound of `VERDICT_BOUNDS` was passed.
+ *  - `malformed`: a name, version, specifier, requirement or marker that does not parse or cannot be evaluated.
+ *  - `no-metadata`: the release's requirements are not known (an older release, whose metadata the index did not give). */
+export type VerdictReason = "no-build" | "python-version" | "lock-too-old" | "not-on-index" | "too-large" | "malformed" | "no-metadata";
+
+/** One file the install would fetch, as the card shows it and the answer carries it back. `size` is `null` for a lock
+ *  file (the lock states no size; the card reads "in the core"). Every field is shown in full, `sha256` included. */
+export interface PkgRow {
+    name: string;
+    version: string;
+    filename: string;
+    source: "lock" | "pypi";
+    size: number | null;
+    sha256: string;
+}
+
+/** What the card draws: the rows of an installable closure and the packages already loaded, or the refusal. */
+export type PkgCard =
+    | { ok: true; files: PkgRow[]; loaded: string[]; totalBytes: number }
+    | { ok: false; reason: VerdictReason; at: string };

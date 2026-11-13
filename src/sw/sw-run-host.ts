@@ -83,6 +83,7 @@ import { adoptOnTab } from "./adopt-run";
 import { approvalFor, cancelReasons, gatePageTurn, noteRunEnd, noteRunStart, personClaimed } from "./sw-start-approval";
 import { pageTurnText } from "../agent-start";
 import { toPageUi } from "./sw-side-panel";
+import { checkInstall, installRequest, judgeAnswer, noteInstallOutcome, type PkgCheck } from "./sw-pkg-install";
 
 // The model-facing cap cdpEval clips its console to (exec's default per-slot cap) — the UI keeps far more, so
 // `seen` marks where the model's copy stopped, exactly like the main-world exec path.
@@ -536,6 +537,9 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     /** Whether this run may ask the person to store a program manifest (`propose_manifest`): one the worker built, whose
      *  tools offer it (the settings turned ml.sh on when it started). Whether the host answers is the check's. */
     const offersManifests = (): boolean => p.builtBy === "worker" && byWorker() && runsInWorker(p, "propose_manifest");
+    /** Whether this run may ask the person to install a Python package (`python_install`): one the worker built, whose
+     *  tools offer it (none yet: `OFFER_PYTHON_INSTALL`, sw-run-start.ts). */
+    const offersInstall = (): boolean => p.builtBy === "worker" && byWorker() && runsInWorker(p, "python_install");
     /** `p` as the run is stored for a later turn or a worker restart: a run handed to the worker during this turn
      *  (`makeWorkerRun`) stays the worker's. `p` is the turn's start payload, written before the hand-over, and storing
      *  it as it is would give the run back to the page that built it, whose RESUME_RUN would then be honoured. Its tools
@@ -1720,6 +1724,13 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         const c = await checkManifestProposal({ runId, seq: seqBase }, args);
                         return "error" in c ? c.error : null;
                     }
+                    // A package request is checked in the worker; a refusal is still a card (it says why), so only bad
+                    // arguments and a run that does not offer the tool are told to the model without one.
+                    if (name === "python_install") {
+                        if (!offersInstall()) return `Error: python_install is not offered in this run.`;
+                        const r = installRequest(args);
+                        return typeof r === "string" ? r : null;
+                    }
                     // A worker-built run's exec is checked here, never on the page: its checks need nothing of the page's, and
                     // the page is not shown a call that may run in another world. A `world` it cannot have is refused before
                     // the person is asked to approve it (a call without one is routed after approval, as before).
@@ -1788,6 +1799,19 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                             renderIn = { type: "code", text: JSON.stringify(c.request.manifest, null, 2), lang: "json", note: await draftCardNote(owner, c) };
                         } else renderIn = { type: "code", text: "", lang: "json", note: c ? `This manifest cannot be stored: ${c.error.replace(/^Error: /, "")}` : "This manifest cannot be stored: the run does not offer propose_manifest, or ml.sh is not set up." };
                     }
+                    // python_install's card: the verdict frozen here, its rows what the person approves (the resolve below).
+                    let pkg: PkgCheck | undefined;
+                    if (tool === "python_install" && offersInstall()) {
+                        const r = installRequest(args);
+                        if (typeof r !== "string") {
+                            pkg = await checkInstall(r).catch(() => undefined);
+                            if (pkg) {
+                                renderIn = { type: "packages", ecosystem: "pypi", request: pkg.request, verdict: pkg.card };
+                                recordRunLog(runId, { subsystem: "python", kind: "pkg-card", reason: pkg.card.ok ? "ok" : pkg.card.reason, detail: { tool, files: pkg.card.ok ? pkg.card.files.length : 0 } });
+                            }
+                        }
+                        if (!pkg) renderIn = { type: "code", text: "", lang: "json", note: "This package cannot be checked: the core's lock could not be read." };
+                    }
                     if (!renderIn) try {
                         const env = await sendTool({ runId, name: tool, args, renderOnly: true }) as { renderIn?: unknown };
                         renderIn = env?.renderIn;
@@ -1824,6 +1848,15 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     return new Promise<ApprovalDecision>((resolve) => {
                         pendingApprovals.set(key, {
                             resolve: (decision) => {
+                                // A package card stands only on the rows it showed: anything else approving it is a denial.
+                                if (tool === "python_install" && (decision === true || (typeof decision === "object" && !!decision && decision.approved && !decision.cancelled))) {
+                                    const j = pkg && offersInstall() ? judgeAnswer(pkg, typeof decision === "object" ? decision.files : undefined) : { ok: false as const, reason: "no-check", why: "the run does not offer python_install, or its card could not be checked" };
+                                    if (j.ok) noteInstallOutcome(runId, args, "Approved, but this build does not install packages yet: nothing was downloaded or installed.");
+                                    else {
+                                        recordRunLog(runId, { level: "warn", subsystem: "python", kind: "pkg-card-mismatch", reason: j.reason, detail: { tool, seq: gateSeq ?? seqBase, why: j.why } });
+                                        decision = { approved: false, source: "user", feedback: "The approval did not carry the files the card showed, so it counts as a denial." };
+                                    }
+                                }
                                 const ok = decision === true || (typeof decision === "object" && !!decision && decision.approved);
                                 // What a decision remembers (consents, grants) is read from the model's arguments, which can be
                                 // anything: a throw there must not leave the gate hanging, so the decision is still delivered.
