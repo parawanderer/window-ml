@@ -1,9 +1,10 @@
 # Spec (proposed): settings the model can see and change
 
 **Status: proposed 2026-11-13, nothing built.** From Shane's words in the calm-chat-motion session (2026-11-13) and the
-points agreed there, handed to the settings-specs lane by the policies/python/desktop/manifests coordinator. Not
-ruled. A new agent-facing surface, so the threat model below is reviewed by the red team (e3, through the coordinator)
-before this lands.
+points agreed there, handed to the settings-specs lane by the policies/python/desktop/manifests coordinator. Questions
+1 to 3 of the first review (`ml.config()` stays as it is; the guarded class is not a second mechanism; the default
+list) were ruled by the coordinator on 2026-11-13 as proposed, pending Shane; the rest is open. A new agent-facing
+surface, so the threat model below is reviewed by the red team (e3, through the coordinator) before this lands.
 
 Shane: "letting the model update user settings (which probably requires a whitelist of what settings the model can
 even see and update. I think we have something like this already. But it's part of this whole idea that there honestly
@@ -42,9 +43,13 @@ for the model, with writes.
    only keys on it; a key off it is neither readable nor writable through this surface, and the refusal for a key off
    the list reads the same as for a key that does not exist.
 2. **A change asks unless a policy allows it**, through the policy store (`POLICIES.md`), as a new consumer `setting`.
-   One mechanism: no second store, no per-setting "always allow" button, no remembered answer of its own.
+   One mechanism: no second store, no per-setting "always allow" button, no remembered answer of its own. (The
+   fatigue refusal under "Threat model" is run-scoped memory of the model's own refused call, not an answer: it never
+   lets a change through.)
 3. **A guarded change always asks**, whatever a policy says (below, "Three classes of setting"). Precedent: a
    credentialed fetch asks regardless of policy (`POLICIES.md`, "Scopes"). A policy may still DENY a guarded change.
+   This is not a second mechanism: the same consumer, the same store and the same judge, and the guarded class is an
+   answer the judge cannot free, as a credentialed fetch is (ruled by the coordinator, 2026-11-13, pending Shane).
 4. **A page-started run never reaches it**: not the reads, not the tool, not the card (below, "Who reaches it").
 5. **Secrets are never whitelistable**, and neither are the stores that decide what the model may do (the whitelist
    itself, policies, site lists).
@@ -54,8 +59,9 @@ for the model, with writes.
 `ml.config()` is not changed by this spec. Its 20 keys stay readable by the model and by approved pages whatever the
 whitelist says, because a page on an approved origin can call it itself and the worker cannot tell the model's call
 from the page's (the sender is the tab either way). Rule 1 governs the new surface; the Settings section that edits the
-whitelist marks those 20 keys "readable by approved sites and the model regardless". Whether `ml.config()` should
-narrow instead is an open question below.
+whitelist marks those 20 keys "readable by approved sites and the model regardless" (ruled by the coordinator,
+2026-11-13, pending Shane). Narrowing an isolated-world exec's `ml.config()` to the whitelist is open question 1, a
+later slice.
 
 ## Three classes of setting
 
@@ -80,7 +86,7 @@ directions, so a missing declaration fails closed.
 | `pierceClosedShadow`, `cdp` | on | what a run reaches in a page, trusted input |
 | `execDefaultWorld` | both | which world a script runs in decides what the page sees of it (`src/sw/exec-routing.ts`) |
 | `agentStartPage` | both | a URL every blank run navigates to: an exfiltration channel the fetch gate never sees (threat model, item 1) |
-| `apiFormat` | both | changes how every request to the server is written; a wrong value cuts the run off from its own model |
+| `apiFormat` | both | changes how every request to the server is written. Guarded to protect the person from a broken connection, not from the model: a wrong value cuts every run off from its model, and the run that made the change cannot change it back |
 | `serverToolsOff`, `commanderServerTools` | a tool turned on | which server-side tools a run is given |
 | `agentSeesFocus`, `selfIntrospection` | on | what the model is told about the person and its own run |
 | `debugMode` | both | decides whether a page's `ml.agent` runs in the worker's loop or the page's (`MlPublicConfig`'s JSDoc) |
@@ -104,8 +110,10 @@ that is not a classified one.
 - **Edited** in DevTools Settings → Permissions, one row per classified key, with a three-way choice (off, read,
   read and change) and the class shown. A secret's row has no choice and says why. The chat page's Settings → Extension
   shows the same view, as it does every other section.
-- **Default** (proposed, open question 2): the ordinary keys `read-write`, the guarded keys off, so a fresh install lets
-  the model help with the harmless settings, each change still on a card, and the person opts in to the rest.
+- **Default**: the ordinary keys `read-write`, the guarded keys off, so a fresh install lets the model help with the
+  harmless settings, each change still on a card, and the person opts in to the rest. Proposed on Shane's "no reason
+  the model can't help" and ruled by the coordinator (2026-11-13, pending Shane); the alternative, an empty list until
+  the person adds keys, stays open question 2 until Shane says.
 - **Upgrade.** An install from before this has no `ml_model_settings`, and reads the default. A build from before this
   ignores the key. A stored entry naming a key that is not classified, or a secret, is dropped on read and not repaired
   (as `validList` drops a malformed policy). Tests: a fixture of an empty storage read by the new code, and a fixture of
@@ -154,6 +162,7 @@ words:
 > The agent wants to change **Auto-approve read-only surveys** from `off` to `on`.
 > This runs read-only page surveys without asking. *(the `RISKY_CONFIG` text, for a guarded key)*
 > The agent says: "…" *(`why`, at most 280 characters)*
+> This applies to every browser signed in to this profile. *(for a key in `chrome.storage.sync`)*
 > [Allow] [Deny, with a note]
 
 Two answers, as every card (`POLICIES.md`, "Widening is a policy, never a button on a card"). A card for a guarded
@@ -197,7 +206,16 @@ call this surface (above); what it can do is ask the model, in text, to call it.
    person approves, a reply). No secret is ever on the list; the person putting a key on the list for `read` is the
    person accepting that the model knows its value. Error text from a refused write goes through `sw-scrub.ts`.
 6. **Fatigue.** A model asking again and again for the same change. Open (question 4): the lean is that a denied change
-   of the same key to the same value within a run is refused without a card, telling the model it was denied.
+   of the same key to the same value within a run is refused without a card, telling the model it was denied. That is
+   run-scoped memory of the model's own refused call, kept with the run and gone with it: it can only refuse, never
+   answer for the person, and it is not a policy, so it is not the remembered answer rule 2 excludes.
+7. **Propagation.** The config lives in `chrome.storage.sync`, so a change the model makes on one browser lands on
+   every browser signed in to the profile, including ones whose own whitelist does not name the key and ones the
+   person is not looking at. The card says so (above), for every key in `sync`. A guarded change still writes to
+   `sync`, not to this browser only: a browser-local override of a synced key would be a fourth copy of the config
+   (`docs/dev/state.md`), with the questions every other copy raised about which one wins. The card is the control; a
+   person who wants a setting to differ per browser has no way to say so today, with or without this spec. Display
+   preferences in `chrome.storage.local` stay on this browser.
 
 **Red-team rows** (e3, through the coordinator), what a hostile page or an injected model must not get:
 
@@ -209,15 +227,17 @@ call this surface (above); what it can do is ask the model, in text, to call it.
 - a change to the whitelist, a policy, a site list or the self-approval list through `change_setting`;
 - a card answered by a page's message, or an answer applied to a different value than the card showed;
 - `agentStartPage` set to a host a `fetch` `deny` covers;
+- a change to a `sync` key whose card does not say it applies to every browser signed in;
 - the tool or the snapshot key reaching a page-built run through `startBackgroundRun`, `markWorkerRun` or a resume;
 - an unclassified key in `DEFAULT_CONFIG` (the class test).
 
 ## Open questions
 
-1. **`ml.config()` and the whitelist.** Keep the 20 keys readable regardless (this spec's proposal: the page can read
-   them anyway, and narrowing them would break `ml.agent`'s own vision wiring), or narrow what a model's run reads of
-   `ml.config()` to the whitelist where the worker can tell the call is the model's (an isolated-world exec).
-2. **The default list**: ordinary keys `read-write` (proposed, on Shane's "no reason the model can't help"), or empty
+1. **Narrowing `ml.config()` for the model** (a later slice; the first ruled the 20 keys readable regardless, since
+   the page can read them anyway and narrowing them would break `ml.agent`'s own vision wiring): narrow what a model's
+   run reads of `ml.config()` to the whitelist where the worker can tell the call is the model's (an isolated-world
+   exec).
+2. **The default list**: ordinary keys `read-write` (ruled by the coordinator as proposed, pending Shane), or empty
    until the person adds keys.
 3. **Per-key `widens` for lists** (`shellRoots`, `serverToolsOff`): a set comparison, which the declaration in code
    makes exact; whether a reorder counts as a change at all.
