@@ -204,6 +204,7 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
             timer = setTimeout(() => {
                 const settled = new Promise<TaskOutcome>((done) => { settleTask = (a) => done(taskOutcomeOf(a)); });
                 const task = detachTask(ctx.runId, { tool: "ml.sh", startedMs, leaseMs, expectMs: r.expectMs ?? null, exec: {
+                    pageBound: false,   // runs in the host's process
                     cancel: () => h.client.cancel(id).then(
                         (c) => c.signalled ? { confirmed: true, text: "cancelled: the host signalled its process group (SIGTERM, then SIGKILL after 2 s)." }
                             : { confirmed: true, text: "it had already ended." },

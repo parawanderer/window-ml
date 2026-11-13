@@ -132,6 +132,7 @@ export function leaseCell<R>(o: LeasedCell<R>): Promise<R | PyDetached> {
                 };
             });
             const task = detachTask(o.runId, { tool: "python_exec", startedMs, leaseMs, expectMs: o.expectMs, exec: {
+                pageBound: false,   // runs in the offscreen document
                 cancel: async () => { const how = await cancelPyCell(o.cell); if (how !== "ended") cancelled = how; return { confirmed: true, text: pyCancelText(how) }; },
                 tail: async (n, asked): Promise<string | TailAnswer | null> => {
                     const ring = await tailPyCell(o.cell);

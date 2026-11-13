@@ -52,7 +52,8 @@ import { librariesReady, removeLibrary, storedLibraries } from "./sw/sw-librarie
 import { checkDraft } from "./sw/sw-manifest-proposal";
 
 import { bringableSessions, bringHere } from "./sw/bring-here";
-import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, contextByRun, turnByRun, workerRunsStarting, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, reconcileTabPins, startingControllers, abortStart, startingOwnedBy } from "./sw/sw-runs";
+import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, contextByRun, turnByRun, workerRunsStarting, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, senderOwnsRun, reconcileTabPins, startingControllers, abortStart, startingOwnedBy } from "./sw/sw-runs";
+import { cancelPageTasks } from "./sw/sw-tasks";
 import { moveTabKey } from "./sw/tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
 import { startBackgroundRun, delegateStreams, hostRun, WORKER_RUN_REFUSED } from "./sw/sw-run-host";
@@ -201,6 +202,8 @@ if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
         // And every live run on the tab judges the page it arrived on (nav-arrival.ts); the re-adopt waits for that too.
         if (d.frameId === 0) void judgeArrival(d.tabId, d.url);
         if (d.frameId === 0 && activeRuns.has(d.tabId)) navBarrier.noteNavigating(d.tabId);
+        // A worker-hosted run's page changed: the tasks that ran in the old page end, the runtime's go on (ASYNC_CALLS.md 4a).
+        if (d.frameId === 0) for (const runId of activeRuns.get(d.tabId) ?? []) void cancelPageTasks(runId);
         // After noteNavigating, which takes the document being left from the barrier: a re-adopt from it is refused.
         if (d.frameId === 0 && typeof d.documentId === "string") navBarrier.noteDocument(d.tabId, d.documentId);
     });
@@ -460,7 +463,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // A content script answers only for the run ITS tab hosts. The overlay on another tab can be shown a run's id
         // by that tab's page (an event under a session the worker never spoke for there), and a person's click on it
         // must not reach the real gate elsewhere. The DevTools panel is an extension page (no `sender.tab`).
-        if (sender.tab && sender.tab.id !== runInboxes.get(p?.runId)?.tabId) return;
+        if (!senderOwnsRun(sender, p?.runId)) return;
         // A nested ask is named by its id beside the seq; a malformed one names no gate, not even the step's own.
         const key = approvalKey(p.runId, p.seq, p.ask);
         if (key) resolveApproval(key, p.decision ? { approved: true, source: "user", persist: p.persist } : { approved: false, feedback: p.feedback, source: "user" });
