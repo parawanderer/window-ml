@@ -1,6 +1,6 @@
 // site-instructions.ts — what of a page-built run's system prompt the SITE wrote, for the start card to show.
 
-import { AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, tooltokensClause, DEREF_CLAUSE, shadowClause, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, currentClause } from "./prompts";
+import { AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, tooltokensClause, shadowClause, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, currentClause } from "./prompts";
 
 /** The marker `assembleRun` writes before a run's `systemAppend`. */
 const NOTES_MARKER = "\n\nTask-specific notes:\n";
@@ -19,7 +19,7 @@ const NOTES_MARKER = "\n\nTask-specific notes:\n";
 export function siteInstructions(systemPrompt: unknown, toolNames: readonly string[]): string {
     let rest = typeof systemPrompt === "string" ? systemPrompt : "";
     const clauses = [
-        CALL_TITLE_CLAUSE, VISION_CLAUSE, tooltokensClause(true), tooltokensClause(false), DEREF_CLAUSE,
+        CALL_TITLE_CLAUSE, VISION_CLAUSE, tooltokensClause(true), tooltokensClause(false),
         shadowClause(toolNames, true), shadowClause(toolNames, false), IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE,
         PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, currentClause(true), currentClause(false), UNATTENDED_CLAUSE,
         NAV_OFF_CLAUSE,

@@ -28,10 +28,10 @@ import { defineBench } from "../spec";
  * seed whose code was the literal data read as made up to a careful model ("the captured numbers were fabricated"),
  * which then declined to use them, and that honest suspicion scored as a failure.
  */
-export const READ_SALES = `(() => { const t = document.querySelector("#sales"); return [...t.rows].map((r) => [...r.cells].map((c) => c.textContent.trim()).join(",")).join("\\n"); })()`;
+const READ_SALES = `(() => { const t = document.querySelector("#sales"); return [...t.rows].map((r) => [...r.cells].map((c) => c.textContent.trim()).join(",")).join("\\n"); })()`;
 /** How much of that output the seeded turn KEEPS in context: the header and about two rows. The rest is behind the cut
  *  note's pointer, so the measured turn cannot total it from what it already holds and has to read it back. */
-export const SEED_KEEPS = 120;
+const SEED_KEEPS = 120;
 
 export default defineBench({
     name: "pointer-ids",

@@ -50,7 +50,6 @@ import { answerCall, type AnswerArgs, type AnswerSelection } from "../pointers/a
 
 import { apiDocsTool, pageDocsSource } from "./api-docs-tool";
 import { EXEC_SHORT, pageWorldRefusal } from "./tool-details";
-import { cutOr } from "../agent/prompt-variant";
 
 /**
  * Wrap a pre-resolved pointer read as the SAME value the asynchronous `ml.dereference` returns.
@@ -89,19 +88,21 @@ export function sealedDescribe(selector: string, matches: { line: string }[] | n
 const firstOfNote = (selector: string, count: number): string =>
     count > 1 ? `⚠ "${selector}" matched ${count} elements — using the FIRST (#0). Narrow it (an id, or :nth-of-type(N)), or countMatches to list them.\n\n` : "";
 
-// A hint (only when `exec` is wired — a smarter model can act on it, a weaker one ignores it and just keeps
-// calling the tool) that this tool's job can be COMPOSED as a read-only exec survey when you need a filter the
-// tool doesn't offer — using the same expertise as read-only primitives (auto-approves, no gate). One terse line.
-const composeHint = (ctx?: ToolContext): string =>
-    cutOr(false, ctx?.hasTool("exec"))
-        ? "\n\n(For a custom filter, compose it in a read-only exec survey: `ml.queryAll(sel).map(el => ml.a11y(el))` gives { role, name, state, selector } per element — .filter/.map it, then act on `.selector`. Auto-approves, no prompt.)"
-        : "";
-
-/** The compose hint as the `cuts` experiment places it: once, in `interactives`' description, when `exec` is wired
- *  (run-assembly.ts), instead of in every findByText/interactives result. */
+/** The compose hint: said once, in `interactives`' description when `exec` is wired (run-assembly.ts), where it used
+ *  to ride on every findByText/interactives result (docs/spec/PROMPT_BUDGET.md, the panel-bloat cuts). */
 export const COMPOSE_NOTE =
     " A filter this tool lacks: a read-only exec survey, `ml.queryAll(sel).map(el => ml.a11y(el))` (role, name, state, " +
     "selector per element).";
+
+/**
+ * A run's toolset with {@link COMPOSE_NOTE} on `interactives`' description, when the run has `exec` to compose with.
+ * @param toolset the run's tools
+ * @param hasExec whether `exec` is wired; by default, whether the toolset holds it
+ * @returns the toolset, `interactives` carrying the note when exec is wired
+ */
+export function withComposeNote<T extends { name: string; description: string }>(toolset: T[], hasExec = toolset.some((t) => t.name === "exec")): T[] {
+    return hasExec ? toolset.map((t) => (t.name === "interactives" ? { ...t, description: t.description + COMPOSE_NOTE } : t)) : toolset;
+}
 
 // Appended to a page-SCANNING tool's output: the CLOSED shadow roots a selector scan couldn't enter, so the
 // model knows a target it can't find may be sealed inside one. The workaround is conditional on `locate`
@@ -170,7 +171,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     els.push(el);
                     if (els.length >= limit) break;
                 }
-                const shadowNote = shadowScanNote(ctx) + composeHint(ctx);
+                const shadowNote = shadowScanNote(ctx);
                 return els.length ? { content: out.join("\n") + shadowNote, elements: els } : `No elements contain "${text}".${shadowNote}`;
             }
         }),
@@ -277,7 +278,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                         els.push(it.el);
                     }
                 }
-                const shadowNote = shadowScanNote(ctx) + composeHint(ctx);
+                const shadowNote = shadowScanNote(ctx);
                 if (!els.length) return (contains ? `No interactive controls with a name containing "${contains}". Try again without \`contains\` to list everything.` : "No interactive controls found.") + shadowNote;
                 return { content: note + out.join("\n") + shadowNote, elements: els };
             }
@@ -711,14 +712,9 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
         T({
             name: "pageInfo",
             summary: "Reports the page URL, title, and size.",
-            description: cutOr("The page you are on NOW: URL, title, language, date/time, locale, and whether it publishes a " +
+            description: "The page you are on NOW: URL, title, language, date/time, locale, and whether it publishes a " +
                 "Markdown version of itself (on a docs page, fetching that beats surveying the DOM). Your first message " +
                 "carries the START page's context; call this after a navigation.",
-                "Where and when you are: the page URL, title, language, and the current " +
-                "date/time + locale/timezone. Use it to ground time-relative tasks (what counts as " +
-                "'today'?) and to confirm the site and language before matching text. It also reports " +
-                "whether this page publishes a clean MARKDOWN version of itself — on a docs page, fetching " +
-                "that is far cheaper and cleaner than surveying the rendered DOM."),
             parameters: { type: "object", properties: {} },
             run: (_args: unknown, ctx?: ToolContext): string => pageContext(n => !!ctx?.hasTool(n))
         }),
@@ -870,19 +866,14 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
 export function buildDereferenceTool(defineTool: (tool?: Partial<MlTool>) => MlTool): MlTool {
     return defineTool({
         name: DEREF_TOOL,
-        description: cutOr("Read an output this run already produced, by its pointer, instead of re-running a tool or retyping a value. Free, changes nothing, and reads MORE than the truncated copy you were shown. " +
+        description: "Read an output this run already produced, by its pointer, instead of re-running a tool or retyping a value. Free, changes nothing, and reads MORE than the truncated copy you were shown. " +
             "Reading a builtin by NAME ('python_exec') resolves to its latest call and replies with that call's stable @tool:<id>, which you can cite. " +
             "A `pipe`d read gets its own pointer, so you can cite the reduction. " + PIPE_REF +
             " The reply says what the value is and when it was captured (a pointer is a snapshot).",
-            "Read an output this run already produced, by its @tool:<id> pointer — instead of re-running a tool or retyping a value. Free, changes nothing, and can read MORE than the truncated copy you were shown. " +
-            "BINDING: reading a builtin by NAME ('python_exec') resolves to its LATEST call and replies with that call's STABLE @tool:<id> — so if you didn't ask for a token when you ran it but now want to keep or show the output, read it here and you get a pinned id you can cite. The name is a moving target (it follows the newest call); the id is not. " +
-            "BY YOUR OWN LABEL: if you named an output when you ran it (`token: \"the sales table\"`), read it back with @tool:\"the sales table\" — quoted. That is the handle worth using, because you chose it and will remember it; a hex id you have to copy exactly. Quoting is what makes it unambiguous, so a label may safely read like a tool name. " +
-            "A `pipe`d read is itself given a pointer, so you can cite the REDUCTION you just made rather than the whole output. Optional `pipe` reduces the value first. " + PIPE_REF +
-            " The reply says what the value is and when it was captured (a pointer is a snapshot — the page may have changed since)."),
         parameters: {
             type: "object",
             properties: {
-                token: { type: "string", description: cutOr("OMIT IT to list every pointer this session holds; do that instead of guessing an id. Otherwise an @tool:<id> (the hex id alone is fine), a builtin's NAME for its latest call ('python_exec'), or your own label, quoted: @tool:\"the sales table\" (escape a \" inside it as \\\"). Add ':in' to read the call instead of the result.", "OMIT IT to list every pointer this session holds (what it is, what you called it, how far back) — do that instead of guessing an id. Otherwise the pointer, in any of three forms: an @tool:<id> you were given (the hex id alone is fine); a builtin's NAME for its latest call, e.g. 'python_exec'; or YOUR OWN LABEL for an output, QUOTED — @tool:\"the sales table\" — which is usually the one you'll actually remember, since you chose it. Escape any \" inside the label as \\\". Add ':in' to read the call/code instead of the result.") },
+                token: { type: "string", description: "OMIT IT to list every pointer this session holds; do that instead of guessing an id. Otherwise an @tool:<id> (the hex id alone is fine), a builtin's NAME for its latest call ('python_exec'), or your own label, quoted: @tool:\"the sales table\" (escape a \" inside it as \\\"). Add ':in' to read the call instead of the result." },
                 pipe: { type: "string", description: "Optional reduction, e.g. 'schema', 'keys', 'head 20', 'grep error', '.rows | head 5'. Omit to read the whole value. Start with 'schema' or 'keys' on anything large." },
             },
             // No `required`: calling with NO arguments is the inventory read — "what pointers do I have?" —
