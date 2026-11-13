@@ -46,7 +46,10 @@ import pandas as pd
 from scipy.stats import fisher_exact
 import wmlnb
 
-HERE = wmlnb.ROOT / "notebooks" / "bench"
+# The checkout this notebook runs in (the kernel's cwd), not wmlnb.ROOT: a worktree borrowing the clone's venv has its
+# ROOT in the clone, and its pinned data would be read from (and written to) there.
+TOP = Path(subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True).stdout.strip())
+HERE = TOP / "notebooks" / "bench"
 SWEEP = "links-prompt"
 EXTRACT = HERE / "data" / "links-prompt" / "runs.json"
 pd.set_option("display.width", 180)
@@ -80,11 +83,8 @@ def links_in(text):
 
 
 def resolve(addresses):
-    # From the checkout this notebook runs in (the kernel's cwd), which holds the parser; wmlnb.ROOT is wherever the venv
-    # was installed from, which a worktree borrowing the clone's venv does not share.
-    here = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True).stdout.strip()
     out = subprocess.run(["node", "--import", "tsx", "--input-type=module", "-e", RESOLVE_JS],
-                         input=json.dumps(sorted(addresses)), capture_output=True, text=True, cwd=here, check=True)
+                         input=json.dumps(sorted(addresses)), capture_output=True, text=True, cwd=TOP, check=True)
     return json.loads(out.stdout)
 
 
@@ -206,6 +206,37 @@ The control task asks for a code on the page. Any link there is noise the senten
 code("""
 ctl = ok[ok.task == "control"]
 ctl.groupby(["model", "sentence"]).agg(runs=("linked", "size"), linked=("linked", "sum"), passed=("passed", "sum")).unstack("sentence")
+""")
+
+md("""
+### The control, run again
+
+The first sweep's control failed 5 of 20 times with the sentence and 0 of 20 without, none of them by linking. It was run
+again (`--only task=control --repeats 4`, at the commit that ships the sentence; both arms still set the constant), and
+the sweep moved the first runs to its `history/`. Pinned separately, so `runs.json` keeps the first sweep.
+""")
+
+code("""
+RERUN = HERE / "data" / "links-prompt" / "control-rerun.json"
+
+def read_control_rerun():
+    rows = []
+    for cell in sorted((wmlnb.find_sweep(SWEEP) / "control").glob("*/r*/cell.json")):
+        c = json.loads(cell.read_text()); m = c.get("measurement") or {}
+        answer = m.get("finalAnswer") or m.get("answer") or ""
+        rows.append({"model": c["combo"]["model"], "sentence": c["combo"]["sentence"], "repeat": c["repeat"],
+                     "passed": bool(m.get("succeeded")), "error": bool(m.get("error")), "linked": bool(links_in(answer)),
+                     "answer": answer})
+    return rows
+
+rerun = pd.DataFrame(wmlnb.extract(RERUN, read_control_rerun, source={"sweep": SWEEP, "task": "control", "rerun": True}))
+both = pd.concat([ctl.assign(run="first")[["run", "model", "sentence", "passed", "linked"]],
+                  rerun[~rerun.error].assign(run="again")[["run", "model", "sentence", "passed", "linked"]]])
+both.groupby(["run", "sentence"]).agg(runs=("passed", "size"), failed=("passed", lambda x: int((~x).sum())), linked=("linked", "sum")).unstack("run")
+""")
+
+code("""
+rerun[~rerun.passed][["model", "sentence", "answer"]].assign(answer=lambda d: d.answer.str.slice(0, 80))
 """)
 
 md("""

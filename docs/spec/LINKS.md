@@ -193,9 +193,10 @@ checklist, landing in the builder's PR as its own file (rule 10).
    alone to 55/80 with the sentence (Fisher two-sided p = 0.036). The gain is in the models that can link at all but do
    not look for the form: DeepSeek Flash 9 → 15 of 16, GPT-6 Luna 8 → 14 (the API key's question 0 → 4 of 4), Gemma 4
    31B 9 → 12. Qwen 3.8 Flash already links from the docs (14 → 13) and Gemma 4 E4B links in neither arm (1 and 1). No
-   run in either arm put a link in the control's answer, but the control failed 5 of 20 times with the sentence and 0
-   of 20 without (Gemma 4 E4B answering `[]` or the code in lower case, Qwen writing an en dash or `CROSSPACE`), for no
-   reason the sentence explains; a re-run of the control alone settles whether it is chance. The cost is 36 to 40 prompt tokens a call by each model's
+   run in either arm put a link in the control's answer. The control failed 5 of 20 times with the sentence and 0 of
+   20 without (Gemma 4 E4B answering `[]` or the code in lower case, Qwen writing an en dash or `CROSSPACE`); run again,
+   it failed 2 of 20 in each arm, every one Gemma 4 E4B answering off the task, and still no link: chance and E4B's
+   noise, not the sentence. The cost is 36 to 40 prompt tokens a call by each model's
    tokenizer, about 150 to 180 a run on these tasks. Three links in the sentence's arm, none in the other, mixed the two
    forms (`setting/advanced/shell`) and render as their label: the sentence's `setting/<key>` reads to some models as a
    path. Without the sentence, a run that linked had read `agent_api_docs` first (41 of 41), and 22 of 80 never read it.
