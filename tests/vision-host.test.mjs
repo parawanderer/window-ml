@@ -192,7 +192,7 @@ test("verify gives its reader look's budget, and a click or type verify whose re
     assert.equal(e.content, '\n\n(verify was requested, but reader-vl returned an empty description. Read the result with look({ selector: "#q" }) next.)');
 });
 
-test("a look whose reader answered nothing says so, before the DOM legend, on both of look's paths", async () => {
+test("a look whose reader answered nothing says so, before the DOM legend, on each of look's three paths", async () => {
     // Observed (prompt-budget-cuts, DeepSeek Flash, 2026-11-12): the driver got a blank line, then the legend, and
     // went on as if the reader had described the page.
     const LEGEND = { controls: [], media: [], boundaries: [], text: [], moreControls: 0, moreMedia: 0 };
@@ -207,6 +207,14 @@ test("a look whose reader answered nothing says so, before the DOM legend, on bo
     assert.match(r2.content, SAID, "re-examining an image the run already has");
     const fine = await buildLookTool({ defineTool }, { model: "reader-vl", host: fakeHost({}, "A blue Save button.") }).run({ _image: SHOT });
     assert.equal(fine.content, "A blue Save button.", "an answer is passed on as it was");
+    // Pages of an attached document: the sentence names the pages, and the note on where they came from stays.
+    const PAGES = [{ image: SHOT, label: "@file:f1 page 1" }];
+    const doc = await buildLookTool({ defineTool }, { model: "reader-vl", host: fakeHost({}, "") }).run({ _images: PAGES, _imageLabel: "report.pdf" });
+    assert.match(doc.content, /^\(reader-vl returned an empty description of these pages, so you have no reading of it\./);
+    assert.match(doc.content, /report\.pdf/, "the note on the pages is kept");
+    assert.equal(doc.render.output, "", "the export still shows what the reader actually returned");
+    const read = await buildLookTool({ defineTool }, { model: "reader-vl", host: fakeHost({}, "Page 1: a revenue table.") }).run({ _images: PAGES, _imageLabel: "report.pdf" });
+    assert.match(read.content, /^Page 1: a revenue table\.\n\n\(/, "an answer is passed on as it was, then the note");
 });
 
 // --- oneShotRequest: the request a host builds is the one ml.chat sends ---
