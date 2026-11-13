@@ -984,10 +984,10 @@ and the per-request judging, the folder watch: the host lane, as stated in "What
 
 RULED 2026-11-13 (Shane: "fine for now", to be changed where building shows one wrong). Nothing is built. The
 coordinator's ruling (Shane, 2026-11-13): with this ruled, one host lane opens, in its own window-ml-host clone, and
-takes the scope check (H1 to H8) first, then the argv mapping (H9), then the snapshot (H10 to H15). It states
-as requirements on the host what the two sections above leave to "the `ml.sh` and window-ml-host owner", and settles
-three places where they and `SHELL.md` disagree (named where each is settled, and listed under "Ruled with it" at
-the end).
+takes the scope check (H1 to H8) first, then the argv mapping (H9), then the snapshot (H10 to H14) and the `hello` flags
+(H15). It states as requirements on the host what the two sections above leave to "the `ml.sh` and window-ml-host
+owner", and settles three places where they and `SHELL.md` disagree (named where each is settled, and listed under
+"Ruled with it" at the end).
 
 **One judge.** The host enforces the scope and the hard refusals, which no policy can lift, and resolves the facts. The
 worker judges free or asks with the built-in default policy and the person's policies over those facts, as it already
@@ -1016,21 +1016,25 @@ configured roots (`configure`), one list, not a second one beside it.
   whole. A write through a descriptor whose `fstat` shows `st_nlink > 1` is refused; a read of one is allowed. A write
   to a read-only mount fails with `EROFS`; a `fetch` over the fetch cap fails with `EFBIG` and carries the size.
 - H6. In the uploads folder, a `store` into `attached/`, and a `rename` into or out of it, are refused by the host
-  whatever a policy says; a `remove` there is judged (it asks by default, the person's uploads). This is a hard
-  refusal because `attached/` is the person's frozen originals and no policy the model can ask for should make it
+  whatever a policy says, `attached/` being matched by its device and inode, never by name (APFS is case-insensitive, so
+  `Attached/` is the same directory); a `remove` there is judged (it asks by default, the person's uploads). This is a
+  hard refusal because `attached/` is the person's frozen originals and no policy the model can ask for should make it
   writable.
 
 **The facts a request carries back** (H7), so the worker can judge it: `inMount`, the mount's `mode`, `secret` (the
 host's `SECRET_PATTERNS`, the list an `ml.sh` path argument meets), `exists`, `ignored` (by git, `git check-ignore`
-under the git belt), `inUploads`, `inAttached`, `gitUndoable`, and a `basis` of `{ dev, ino, size, mtimeNs }` for an
-existing file. `gitUndoable` is true for a tracked file with no uncommitted change, false otherwise, and null when
-`repoConfigRunsCode` is true or null, since the undo itself (a `git checkout` of the file) would run the repository's
-smudge filter or hooks.
+under the git belt), `inUploads`, `inAttached`, `gitUndoable`, and a `basis` for an existing file: `{ dev, ino, size,
+mtimeNs, sha256 }` for a file under the diff cap, and `{ dev, ino, size, mtimeNs }` over it. Any fact a request itself
+carries is ignored; the host computes every answer from the mount's held descriptor. `gitUndoable` is true for a tracked
+file with no uncommitted change, false otherwise, and null when `repoConfigRunsCode` is true or null, since the undo
+itself (a `git checkout` of the file) would run the repository's smudge filter or hooks.
 
 - H8. Compare and swap. A `store`, `remove` or `rename` that the worker judged on a fact carries the `basis` it was
   judged on, and the host refuses it with `ChangedSinceJudged` when the file's basis differs at the moment of the
-  write. Without it, a file judged free as git-undoable could be edited between the judgment and the write and
-  then lost.
+  write, including when the file was deleted (never silently recreated) or replaced by a directory. Without it, a file
+  judged free as git-undoable could be edited between the judgment and the write and then lost. The `sha256` is there
+  because an in-place edit that keeps the size and restores the mtime defeats the other four (e3, 2026-11-13); over
+  the diff cap the basis has no hash, and such an edit goes unseen: the accepted limitation.
 
 **`/files` in an `ml.sh` argv: mapped, not refused** (H9; Shane, 2026-11-13). The commonest calls name it: copying an
 upload out of `attached/` into the writable part of `/files`, then from `/files` into the project (`cp
@@ -1051,6 +1055,13 @@ refusal and gives a sentence for it:
   treated as written, which fails closed: such a call naming a path in `attached/` is refused, even as a source.
 - An argument the manifest marks as anything else (a pattern, a message, a value) is never mapped, so `rg '/files/' .`
   searches for that text.
+- An option with a value (`--out=/files/x`, `-Dkey=/files/x`) is split the way the manifest's flag description says
+  (`valueIsPath`, a path argument's `split`). An item the manifest does not place is checked at its start and after its
+  FIRST `=` only, as a stated rule: named cost, a `/files` path after a second `=` (`--set=a=/files/x`) is not seen,
+  reaches the program as written and names nothing on the disk.
+- The folder's real path is an ordinary path argument, allowed like any other in the mount, so `cp` from its
+  `attached/` and `mv` out of the folder work by either name (e3's positive row: a host that refused anything naming
+  the uploads folder would break use cases 2 to 4).
 - A `/files` argument the host cannot place, because the program has no manifest or the manifest does not describe
   that position, is refused with the sentence of "`/files` on the person's disk" naming the real path:
   `/files is on disk while the host is connected: ~/git/proj/window-ml-files/data.csv`. Such a call asks
@@ -1131,19 +1142,62 @@ they bound different things. The sandbox bounds WHERE a write lands; `gitUndoabl
 back. So under the sandbox a write that creates a file, or touches one git can undo, is free, and an overwrite or
 delete of one git cannot undo asks, for a cell and for an `ml.sh` call whose manifest names the path.
 
-**Red-team rows** (e3, through the coordinator; each with its pass condition above): a forged request for a path outside
-the mount, by `..`, an absolute path or a symlink component (H1, H4); a mount at, under or above each refused path, by
-its resolved path, and a mount at, under or above an existing one (H2); the mounted directory replaced by a symlink
-after `mount` (H3); a component swapped for a symlink between two requests (H4); a write through a hard link (H5); a
-`store` interrupted mid-transfer leaving the old file whole (H5); a `store` into `attached/`, a `rename` into or out of
-it, under every policy (H6); a git-undoable file edited by another process between the judgment and the write (H8); a
-`/files` argv item in each form, `=` and bare, mapped only in a manifest's path position and refused elsewhere, a
-pattern argument left alone, a write into `attached/` refused by `/files` and by its real path alike (H6, H9); a `cp`
-out of `attached/` allowed and into it refused, and a writing manifest with no written-operand field refused when any
-operand is in `attached/` (H9); the snapshot leaving the person's index, HEAD, stash list and object store
-byte-identical, with a clean filter, an fsmonitor and a hook configured in the repository that would each leave a mark
-if run (H10, H11); an ignored `.env` never entering a snapshot tree (H11); a page or a page-started run reaching any of
-the new calls.
+**Red-team rows** (e3, through the coordinator, 2026-11-13; each a test that fails first, with its pass condition):
+
+- The scope (H1, H4). A forged request for a path outside the mount, by `..`, a symlink component or an absolute path,
+  enumerated per platform: `/etc/passwd`, `C:\x`, `C:/x`, `\\?\C:\x`, `//server/share/x`, a `..\` component on
+  Windows, an interior NUL, a path of only `...`; each refused as not relative.
+- A forged post (H1, H7). A worker post from a `full` cell gets an answer computed from the held descriptor only; any
+  fact field it carries (`basis`, `inMount`, `mode`, `gitUndoable`, `secret`, `exists`) is ignored.
+- Mount ids are not a capability (H1, H3). A request naming a mount another session made is refused, unmounting
+  another session's mount is refused, and a request on an unmounted mount is refused even with its old id.
+- What may be mounted (H2). A mount at, under or above each refused path, by its resolved path, and at, under or above
+  an existing mount.
+- The mount replaced (H3). The mounted directory replaced by another real directory on the same device, so only the
+  inode comparison can refuse it; the replacement report reaches the person.
+- The race (H4). A component swapped for a symlink between two requests, and inside one: a rename loop swapping a
+  component for a symlink to an outside directory against one long `fetch` or `store` never reads or writes outside
+  the mount.
+- `list` never traverses a symlinked entry (it is listed as a symlink), refuses `..` or an absolute input, and lists
+  only the mount's own entries.
+- `rename` with a source or target outside this mount, or in another mount, is refused, never degraded to a copy and
+  a delete.
+- Writes (H5). A write through a hard link is refused. A write to a read-only mount under a policy allowing everything
+  gets `EROFS` from the host, with nothing created beside the target or under a temporary name. A `store` interrupted
+  mid-transfer leaves the old file whole. A symlink or hard link planted at the temporary name is not written through
+  and the target is untouched; no temporary file remains after a success, a failure or a Stop.
+- A `fetch` past the cap answers `EFBIG` with the size, without the host reading the file (H5).
+- `attached/` (H6). A `store` into it and a `rename` into or out of it are refused under every policy and under every
+  case variant of every component; a write into it is refused by `/files` and by its real path alike.
+- The facts are true on a fixture repository (H7). `gitUndoable` true only for a tracked file with no uncommitted
+  change, false for a modified, an untracked and an ignored one; `secret` true for `.env` and an `id_rsa`-shaped name
+  from the `ml.sh` list; `ignored` true for a `.gitignore`d file and false for a re-included one; `exists` false for a
+  new file.
+- Compare and swap (H8). A git-undoable file edited by another process between the judgment and the write, including
+  an edit that keeps the size and restores the mtime under the diff cap; the file deleted (refused with
+  `ChangedSinceJudged`, not recreated); the file replaced by a directory.
+- The argv mapping (H9). A `/files` item in each form, bare and after `=`, mapped only in a manifest's path position
+  and refused where the manifest does not place it; a pattern argument left alone; an option split as its manifest
+  says; a `cp` out of `attached/` allowed and into it refused; a writing manifest with no written-operand field refused
+  when any operand is in `attached/`. Positive: the folder's real path as an argv item works for `cp` from `attached/`
+  and `mv` out of the folder.
+- The snapshot writes nothing into the repository (H10, H11). The person's index, HEAD, stash list and object store
+  stay byte-identical, with a clean filter, an fsmonitor and a hook configured that would each leave a mark if run.
+  The scratch index and the private object directory live outside the worktree and are gone after the diff; a build
+  that drops `GIT_OBJECT_DIRECTORY` turns this row red.
+- What the snapshot takes (H11). An ignored `.env` never enters a tree; an ignored file inside the uploads folder does;
+  an untracked file the call creates appears in the after-tree.
+- Bounds (H12). A workspace with a FIFO, a socket and an unreadable file snapshots within budget and lists them as not
+  captured, never opening them. A changed file over the cap is reported by size and sha256, never its body; a file
+  under the cap whose only change is its mtime is not reported.
+- The report (H13). The body goes out as a held pointer and `done` carries only the summary line; a change by another
+  process reads "changed during this call", unattributed.
+- An old host (H15). With a `hello` carrying neither field the worker sends no `mount`, `fetch`, `store`, `list`,
+  `remove`, `rename` or snapshot call and no probe; `mounts: "yes"`, `1` or `{}` read as absent.
+- Pages, four ways. Each new message type is refused at the router from a page, the host seeing nothing; a
+  page-started run cannot mount or have a cell's calls made for it; an approved exec in the page's world cannot reach
+  them through the dialect; each type is absent from `HANDLE_MAP`, `PAGE_STARTED_TYPES` and `RUN_CONTROL_TYPES`,
+  enumerated.
 
 **Open.**
 
