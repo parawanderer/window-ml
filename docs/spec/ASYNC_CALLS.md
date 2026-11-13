@@ -321,7 +321,7 @@ each of which amends the text above where it says otherwise:
   in the tool registry, dispatched in the worker with the run id from the loop, never from its arguments; a foreign
   or unknown id reads `UnknownTask`, indistinguishably.
 - **One task table for every executor** (`sw-tasks.ts`, `defineState` `run.tasks`, scope run, lost on worker
-  eviction and turn end), holding the executors' callbacks and never the script's word. Statuses: `running`,
+  eviction), holding the executors' callbacks and never the script's word. Statuses: `running`,
   `done`, `failed`, `cancelled`, `orphaned` (`expired` joins with mode 2's subscriptions); a row exists only once a
   call has detached or was started in the background, so `detached` is not a status.
 - **The inbox item is `{ text, origin: "task" }`**, injected as a user-role message at the step boundary as a steer
