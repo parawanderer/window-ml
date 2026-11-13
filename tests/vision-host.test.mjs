@@ -212,6 +212,8 @@ test("a look whose reader answered nothing says so, before the DOM legend, on ea
     const doc = await buildLookTool({ defineTool }, { model: "reader-vl", host: fakeHost({}, "") }).run({ _images: PAGES, _imageLabel: "report.pdf" });
     assert.match(doc.content, /^\(reader-vl returned an empty description of these pages, so you have no reading of it\./);
     assert.match(doc.content, /report\.pdf/, "the note on the pages is kept");
+    assert.match(doc.content, /Look again with a narrower question about one page\.\)/, "a document's pages get advice that can reach them");
+    assert.doesNotMatch(doc.content, /selector|DOM/, "a selector and the DOM are the page's, not the document's");
     assert.equal(doc.render.output, "", "the export still shows what the reader actually returned");
     const read = await buildLookTool({ defineTool }, { model: "reader-vl", host: fakeHost({}, "Page 1: a revenue table.") }).run({ _images: PAGES, _imageLabel: "report.pdf" });
     assert.match(read.content, /^Page 1: a revenue table\.\n\n\(/, "an answer is passed on as it was, then the note");
