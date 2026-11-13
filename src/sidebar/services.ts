@@ -75,6 +75,13 @@ export interface SidebarServices {
      */
     canContinue(session: string): boolean;
     /**
+     * The sessions this browser can bring to the tab this surface sits in ("bring a session here", MOVE_RUN.md): this
+     * tab's site first. Only the HUD, which sits in a tab, has it.
+     */
+    bringable?(): Promise<{ hash: string; title: string; url: string; lastTs: number; held: boolean }[]>;
+    /** Bring one of {@link bringable} to this tab: moved when the runtime holds it, resumed here when it is saved. */
+    bringHere?(session: string): Promise<{ ok: true } | { error: string }>;
+    /**
      * Would the runtime still ACT on this session? Named for the fact rather than for one action, because two
      * controls depend on it and they fail differently: stopping is REFUSED ("the session is not running"), while
      * answering an approval is not refused at all — `approval.answer` resolves a gate the runtime no longer holds
@@ -118,6 +125,9 @@ export interface SidebarServices {
     /** Open this client's Settings filtered to a field ("Electricity price"), for a warning that names what to set.
      *  Null where these settings are not this surface's to change. */
     findSetting: ((query: string) => void) | null;
+    /** Open the DevTools Settings panel view a `window-ml:` link names (sidebar/links.ts, docs/spec/LINKS.md). Null
+     *  or absent where this surface cannot draw that panel, and then such a link renders as its label. */
+    openAddress?: ((route: import("./links").PanelRoute) => void) | null;
     /** persist a display preference (the bench's state, and the like) */
     savePref(key: string, value: unknown): void;
     /** Hand a finished file to the person: a download in a browser, the share sheet on a phone. The EXPORTS go
@@ -186,6 +196,7 @@ const UNAVAILABLE: SidebarServices = {
     sheetTitle: async () => null,
     priceCalls: null,
     findSetting: null,
+    openAddress: null,
     savePref() {},
     saveFile() {},
     printDoc: null,

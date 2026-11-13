@@ -12,6 +12,7 @@ import type { ExtendProfile } from "../../contract/contract-chat";
 import { view } from "../store";
 import type { Session, Turn, Status, AgentStep } from "../store";
 import { pretty, truncate, collapsedPreview, markdown } from "../format";
+import { linkTipFor, onAddressClick } from "../links";
 import { annotatedConfig, turnProfile } from "../model";
 import { IconAgent, IconChevron, IconPlay } from "../icons";
 import { cursorTipOn, openCtxMenu, Dot, Stamp, TagBadge, CopyBtn, CopyModel, Code } from "../ui-kit";
@@ -222,7 +223,7 @@ export function ReplyBubble({ content, status, model, profile, ts, reasoning = n
                                 ? <AnswerBody text={content} run={tokenRun} cls="asst-answer" scope={tokenScope} />
                                 : streamed.current
                                     ? <StreamingMd content={content} live={!!streaming} />
-                                    : <div class="md" dangerouslySetInnerHTML={{ __html: markdown(content, { math: true }) }} />}
+                                    : <div class="md" onClick={onAddressClick} dangerouslySetInnerHTML={{ __html: markdown(content, { math: true, addr: linkTipFor }) }} />}
             </div>
             {/* Bottom-of-answer tool outputs — SAME ResultBlock the HUD card renders (parity). Only on the
                 run's latest answer (s.answer is single-valued) and only in the normal, expanded view. */}

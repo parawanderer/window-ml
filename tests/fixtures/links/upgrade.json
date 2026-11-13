@@ -1,0 +1,11 @@
+{
+  "_what": "What the build before window-ml: links (origin/main bc3ae986, src/sidebar/format.ts) drew for two replies, recorded by running its markdown(text, { math: true }). before: a reply written before links existed. withLink: a reply written by a model that knows the form, as an older build reads it.",
+  "before": {
+    "text": "It is **4**. See [the docs](https://example.com/a_b) and `x_y`.\n\n> quoted [text](https://example.com)\n\n- one\n- two",
+    "oldHtml": "<p>It is <strong>4</strong>. See <a class=\"md-link tt\" href=\"https://example.com/a_b\" target=\"_blank\" rel=\"noopener\" data-tip=\"Opens example.com/a_b in a new tab\">the docs</a> and <code>x_y</code>.</p><blockquote><p>quoted <a class=\"md-link tt\" href=\"https://example.com\" target=\"_blank\" rel=\"noopener\" data-tip=\"Opens example.com in a new tab\">text</a></p></blockquote><ul><li>one</li><li>two</li></ul>"
+  },
+  "withLink": {
+    "text": "Turn on [Let scripts run programs](window-ml:setting/shellEnabled) first.\n\n> [quoted](window-ml:setting/apiKey)",
+    "oldHtml": "<p>Turn on [Let scripts run programs](window-ml:setting/shellEnabled) first.</p><blockquote><p>[quoted](window-ml:setting/apiKey)</p></blockquote>"
+  }
+}
