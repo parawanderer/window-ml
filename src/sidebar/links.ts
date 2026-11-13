@@ -19,7 +19,8 @@ export interface PanelRoute {
 }
 
 /** Settings → Storage → Backup and restore: what the `settings/extension/backup` alias opens. Mirrors
- *  `BACKUP_TAB`/`BACKUP_BLOCK_ID` in settings.tsx, which this file does not import so a renderer stays light. */
+ *  `BACKUP_TAB`/`BACKUP_BLOCK_ID` in settings.tsx, which this file does not import so a renderer stays light;
+ *  tests/setting-places.test.js holds the copy to the panel it draws. */
 const BACKUP: PanelRoute = { tab: "appearance", section: "storage", target: "set-backup" };
 
 const isTab = (t: string): t is SettingsPanelTab => Object.prototype.hasOwnProperty.call(PANEL_LAYOUT, t);

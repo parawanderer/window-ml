@@ -126,6 +126,26 @@ test("a window-ml:setting link in a chat reply is a button; clicking it opens Se
     assert.ok(row.classList.contains("set-marked"), "the row is marked");
 });
 
+// links.ts copies the Backup block's tab and id from settings.tsx (which a renderer does not import); the panel
+// itself is what the copy is held to here, so a renamed or moved block fails this rather than scrolling nowhere.
+test("clicking the backup alias opens the tab the panel draws its Backup block on, with the block the link names", async () => {
+    const { parseAddress } = await import("../src/sidebar/links.ts");
+    const { target } = parseAddress("settings/extension/backup");
+    const w = await loadSidebarWorld({ siteLists: SITE_LISTS });
+    await w.dispatch(chatStart("lnb", 0, "how do I back up?"));
+    await w.dispatch(chatResult("lnb", 0, "Open [Backup and restore](window-ml:settings/extension/backup)."));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    w.shadow.querySelector('button.md-addr[data-addr="settings/extension/backup"]').click();
+    await new Promise((r) => setTimeout(r, 100));
+    await w.flush();
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(w.shadow.querySelector(".set-tab.on")?.textContent.trim(), "Appearance");
+    const block = w.shadow.querySelector(`#${target}`);
+    assert.equal(block?.getAttribute("aria-label"), "Backup and restore", "the link's target is the panel's Backup block, drawn");
+    assert.ok(block.closest('[data-section="storage"]').open, "its Storage section is open");
+});
+
 test("an unresolved window-ml address in a reply renders as its label, with no button", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(chatStart("lnu", 0, "q"));
