@@ -212,8 +212,10 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
      as `capMs`; the sandbox's kill timer arms at the same start). Before it is attached, the cell is asked once whether
      it outlived the gap (`PY_TAIL`, then `PY_RESULT` when it has ended): a cell that ended while no worker listened sent
      its `PY_DONE` to nobody, so its row is settled there from the held result, or `failed` and logged
-     (`task`/`orphaned`, `ended-unheard`) when none is held. The tail is asked first: a cell that ends after it answers
-     sends its `PY_DONE` to this worker. A running `ml.sh` row is `orphaned`, since its call's
+     (`task`/`orphaned`, `ended-unheard`) when none is held, with the lost-result text ("its result was no longer held;
+     it is lost"), not the past-cap one, since the cell ran past nothing. The tail is asked first: a cell that ends after
+     it answers sends its `PY_DONE` to this worker, while a `PY_RESULT` asked first could miss a result that lands
+     between the two asks. RULED 2026-11-13 (the coordinator, #1854 review): both choices stand. A running `ml.sh` row is `orphaned`, since its call's
      connection to the host closed with the dead worker. An orphan is told to the model at the next turn (`[task <id> orphaned after N s: …]`) and
      logged. The pending `sendMessage` reply stays the in-turn path. Past it, the offscreen document delivers a cell's
      end as a FRESH message (`PY_DONE` by cell id), which starts a new worker; that worker hydrates the run's table, finds
