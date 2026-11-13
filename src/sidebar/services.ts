@@ -117,6 +117,9 @@ export interface SidebarServices {
     /** Open this client's Settings filtered to a field ("Electricity price"), for a warning that names what to set.
      *  Null where these settings are not this surface's to change. */
     findSetting: ((query: string) => void) | null;
+    /** Open the DevTools Settings panel view a `window-ml:` link names (sidebar/links.ts, docs/spec/LINKS.md). Null
+     *  or absent where this surface cannot draw that panel, and then such a link renders as its label. */
+    openAddress?: ((route: import("./links").PanelRoute) => void) | null;
     /** persist a display preference (the bench's state, and the like) */
     savePref(key: string, value: unknown): void;
     /** Hand a finished file to the person: a download in a browser, the share sheet on a phone. The EXPORTS go
@@ -185,6 +188,7 @@ const UNAVAILABLE: SidebarServices = {
     sheetTitle: async () => null,
     priceCalls: null,
     findSetting: null,
+    openAddress: null,
     savePref() {},
     saveFile() {},
     printDoc: null,

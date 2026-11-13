@@ -22,6 +22,7 @@ import { runPipe, pipeHint, PIPE_REF } from "../pointers/text-pipe";
 import { toolDetailsSection } from "./tool-details";
 import { queryApiDocs, isDefaultQuery, withoutMembers, type ApiDocsQuery } from "./api-docs-query";
 import { hiddenMlMembers } from "../ml/ml-member-tools";
+import { DEFAULT_CONFIG, PANEL_LAYOUT, SETTING_PLACES, publicConfig } from "../contract/contract-config";
 
 /**
  * Why each `ml` member the agent's reference leaves out (gen-api-docs.mjs `AGENT_HIDDEN`) is not in it, the sentence a
@@ -162,6 +163,45 @@ const sourceSection = (): string => {
         ...lines].join("\n");
 };
 
+/**
+ * The "your settings, and linking the person to one" section of agent_api_docs: the `window-ml:` link form and every
+ * setting by its place in the Settings panel (docs/spec/LINKS.md), generated from the table the panel is tested
+ * against. Found by name or by `search`; the default view only names it, so a run pays for it only when it asks.
+ * @returns a markdown section
+ */
+export function settingsLinksSection(): string {
+    // What `ml.config()` returns, from the function that builds it, so this line cannot drift from it.
+    const readable = Object.keys(publicConfig(DEFAULT_CONFIG, false)).filter((k) => k in DEFAULT_CONFIG);
+    const keysAt = new Map<string, string[]>();
+    for (const [key, place] of Object.entries(SETTING_PLACES)) {
+        const at = `${place!.tab}/${place!.section ?? ""}`;
+        keysAt.set(at, [...(keysAt.get(at) ?? []), key]);
+    }
+    const lines = [
+        "## Your settings, and linking the person to one", "",
+        "The person changes the extension's settings in its Settings panel. To point them at one, put a Markdown link " +
+        "in your reply: `[label](window-ml:<address>)`. Where they read your reply in the sidebar or the DevTools panel " +
+        "it is a button that opens Settings there and marks the row; anywhere else it shows as its label. A link only " +
+        "opens the view: it changes nothing and reads nothing. It works in your own prose, not inside code or a quote.", "",
+        "Addresses:",
+        "- `setting/<key>`: one setting's row, by its config key (listed below).",
+        "- `settings/extension/<tab>`, `settings/extension/<tab>/<section>`: a tab of Settings, or a section of it (below).",
+        "- `settings/extension/backup`: Backup and restore.", "",
+        `Values: \`ml.config()\` returns ${readable.map((k) => `\`${k}\``).join(", ")}. You cannot read any other ` +
+        "setting's value, so do not say whether one is on or off: link to it and let the person look.", "",
+        "Every setting, by tab and section (address in brackets, then the config keys there):",
+    ];
+    for (const [tab, { label, sections }] of Object.entries(PANEL_LAYOUT)) {
+        const own = keysAt.get(`${tab}/`);
+        lines.push(`- ${label} (\`settings/extension/${tab}\`)${own ? `: ${own.join(", ")}` : ""}`);
+        for (const [id, title] of Object.entries(sections)) {
+            const keys = keysAt.get(`${tab}/${id}`);
+            lines.push(`  - ${title} (\`settings/extension/${tab}/${id}\`)${keys ? `: ${keys.join(", ")}` : ""}`);
+        }
+    }
+    return lines.join("\n");
+}
+
 /** The `agent_api_docs({ diff: true })` section: this build's EXACT uncommitted diff (captured at build time,
  *  the extension can't run git live). Kept behind an explicit arg — it's large and rarely needed. */
 const dirtyDiffSection = (): string => {
@@ -255,6 +295,7 @@ export function apiDocsTool(define: typeof defineTool, src: DocsSource): MlTool 
                     { name: "Opening the HUD", body: await invocationSection(src) },
                     { name: "My source", body: sourceSection() },
                     { name: "Reading your own setup", body: await selfIntrospectionSection(src) },
+                    { name: "Your settings", body: settingsLinksSection() },
                 ].filter(e => e.body)
                 : [];
             // Within-burst dedup: this call IS the docs streak, so reset the leniency counter; `fresh`
