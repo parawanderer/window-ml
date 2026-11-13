@@ -22,7 +22,7 @@ function Row({ r }: { r: PkgRow }) {
             <Field cls="pkg-version" text={r.version} />
             <Field cls="pkg-file" text={r.filename} />
             <span class="pkg-size">{r.size === null ? "in the core" : formatBytes(r.size)}</span>
-            <span class="pkg-source">{r.source === "lock" ? "Pyodide" : "PyPI"}</span>
+            <span class="pkg-source">{r.source === "lock" ? "Pyodide" : r.source === "mirror" ? "PyPI, held" : "PyPI"}</span>
             <span class="pkg-sha">{r.sha256}</span>
         </div>
     );
@@ -37,6 +37,8 @@ const REFUSED: Record<string, string> = {
     "too-large": "is too large to install",
     "malformed": "has metadata that does not check out",
     "no-metadata": "does not say what it depends on",
+    "index-error": "could not be looked up on PyPI",
+    "lookup-cap": "was not looked up: this run has made all the PyPI lookups it may",
 };
 
 /**
@@ -54,11 +56,12 @@ export function PkgCardRender({ request, verdict }: { request: { name: string; v
             </div>
         );
     }
+    const held = verdict.files.filter((r) => r.source === "mirror").length;
     return (
         <div class="pkg-card">
             <div class="pkg-head">Install <Field cls="pkg-asked" text={asked} />: {verdict.files.length} {verdict.files.length === 1 ? "file" : "files"}, each checked against its hash.</div>
             <div class="pkg-rows">{verdict.files.map((r, i) => <Row key={i} r={r} />)}</div>
-            <div class="pkg-total">{verdict.totalBytes ? `${formatBytes(verdict.totalBytes)} to download` : "Nothing to download: every file is in the core"}</div>
+            <div class="pkg-total">{verdict.totalBytes ? `${formatBytes(verdict.totalBytes)} to download` : held ? "Nothing to download: every file is in the core or already held" : "Nothing to download: every file is in the core"}{held ? `; ${held} already held, not downloaded again` : ""}</div>
             {verdict.loaded.length ? <div class="pkg-loaded">Already loaded: {verdict.loaded.map((n, i) => <>{i ? ", " : ""}<Field cls="pkg-loaded-name" text={n} /></>)}</div> : null}
         </div>
     );
