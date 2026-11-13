@@ -293,7 +293,7 @@ The Markdown export keeps the source. Code: `src/mermaid/`.
   surface with no `openAddress` (the chat page, for now) draws every link as its label.
 - **A row is found by `data-setting="<key>"`**, a section by `data-section="<id>"`. `SETTING_PLACES` names each
   key's tab and section, and `PANEL_LAYOUT` each tab's sections with their titles (both contract-config.ts), for the
-  tip and for `agent_api_docs`. `tests/setting-places.test.js` renders every tab and fails when either disagrees with the panel,
+  tip and for `agent_api_docs`; `PANEL_TABS` and `PANEL_SECTIONS`, which the chat page's router reads, are views of it. `tests/setting-places.test.js` renders every tab and fails when either disagrees with the panel,
   and when a control edits neither a placed key nor something listed as not a setting.
 - **The row is found in the panel's own body** (`panelBody`), not `document`: the overlay draws Settings in a shadow
   root. It is scrolled to and ringed (`set-marked`) for six seconds.
