@@ -10,8 +10,7 @@ import { FakeHost } from "../src/chat/fake-host.ts";
 import { hostServices } from "../src/chat/host-services.ts";
 import { holds, mayCommand } from "../src/chat/grants.ts";
 import { resumableHere } from "../src/chat/grants.js";
-import { KEYS_KEY, KEYS_SENDS, KEYS_SENDS_ALONE, TARGET_KEY, keyUse, knowsKeys, lastTargets, noteKeyUse, rememberTarget } from "../src/chat/view-mode.tsx";
-import { flushReadMarks, CALM_KEY, GROUP_ALL_KEY, LIST_KEY, PINNED_KEY, PINNED_MODELS_KEY, READ_KEY, calm, dropPin, installViewPrefs, listOpen, markRead, orderPins, pinned, pinnedModels, readState, setCalm, setGroupAll, setListOpen, togglePin, togglePinnedModel } from "../src/chat/view-mode.tsx";
+import { KEYS_KEY, KEYS_SENDS, KEYS_SENDS_ALONE, TARGET_KEY, keyUse, knowsKeys, lastTargets, noteKeyUse, rememberTarget, flushReadMarks, CALM_KEY, GROUP_ALL_KEY, LIST_KEY, PINNED_KEY, PINNED_MODELS_KEY, READ_KEY, calm, dropPin, installViewPrefs, listOpen, markRead, orderPins, pinned, pinnedModels, readState, setCalm, setGroupAll, setListOpen, togglePin, togglePinnedModel } from "../src/chat/view-mode.tsx";
 import { READ_MARKS_MAX, UNTIL_READ, endingSeen, hasBaseline, isUnread, throttledWriter, markSeen, readMarksFrom, readStateFrom } from "../src/chat/read-marks.ts";
 import { pinnedInOrder } from "../src/chat/pin-order.js";
 import { groupAllTools, sessionMap, view } from "../src/sidebar/store.ts";
@@ -1037,6 +1036,76 @@ test("routes (section): #/settings/extension/backup round-trips; an unknown or m
     assert.equal(formatRoute({ main: "settings", anchor: "backup" }), "#/settings");
     assert.equal(formatRoute({ main: "search", tab: "extension", anchor: "backup" }), "#/search");
     for (const h of ["#/settings", "#/settings/devices", "#/search", "#/attention", "#/s/laptop%3A3f9a0c21", ""]) assert.equal(formatRoute(parseRoute(h)), h, h);
+});
+
+// --- the extension's settings by address: a panel tab, a section, one setting (LINKS.md, "Addresses") ---
+
+test("routes (panel): every panel tab and every section it draws round-trips under settings/extension", async () => {
+    const { parseRoute, formatRoute } = await import("../src/chat/route.ts");
+    const { PANEL_SECTIONS, PANEL_TABS } = await import("../src/contract/contract-config.ts");
+    for (const panelTab of PANEL_TABS) {
+        const t = { main: "settings", tab: "extension", panelTab };
+        assert.equal(formatRoute(t), `#/settings/extension/${panelTab}`);
+        assert.deepEqual(parseRoute(formatRoute(t)), t, panelTab);
+        for (const section of PANEL_SECTIONS[panelTab]) {
+            const r = { ...t, section };
+            assert.equal(formatRoute(r), `#/settings/extension/${panelTab}/${section}`);
+            assert.deepEqual(parseRoute(formatRoute(r)), r, `${panelTab}/${section}`);
+        }
+    }
+    assert.deepEqual(parseRoute("#/settings/extension/advanced/shell"), { main: "settings", tab: "extension", panelTab: "advanced", section: "shell" }, "LINKS.md's example");
+    assert.deepEqual(parseRoute("#/settings/extension/permissions/policies"), { main: "settings", tab: "extension", panelTab: "permissions", section: "policies" }, "LINKS.md's other example");
+});
+
+test("routes (panel): an unknown or misplaced panel tab or section drops to the address above it; backup stays the anchor", async () => {
+    const { parseRoute, formatRoute } = await import("../src/chat/route.ts");
+    const ext = { main: "settings", tab: "extension" };
+    assert.deepEqual(parseRoute("#/settings/extension/backup"), { ...ext, anchor: "backup" }, "the old anchor is unchanged: no panel tab is named backup");
+    assert.deepEqual(parseRoute("#/settings/extension/nope"), ext, "an unknown panel tab is the Extension tab");
+    assert.deepEqual(parseRoute("#/settings/extension/advanced/nope"), { ...ext, panelTab: "advanced" }, "an unknown section is its panel tab");
+    assert.deepEqual(parseRoute("#/settings/extension/advanced/policies"), { ...ext, panelTab: "advanced" }, "a section of ANOTHER panel tab is dropped");
+    assert.deepEqual(parseRoute("#/settings/extension/advanced/shell/extra"), { ...ext, panelTab: "advanced", section: "shell" }, "trailing parts are ignored");
+    assert.deepEqual(parseRoute("#/settings/devices/advanced/shell"), { main: "settings", tab: "devices" }, "a panel tab exists only under Extension");
+    assert.deepEqual(parseRoute("#/settings/extension/constructor"), ext, "an Object.prototype name is not a panel tab");
+    assert.deepEqual(parseRoute("#/settings/extension/advanced/constructor"), { ...ext, panelTab: "advanced" }, "…nor a section");
+    assert.equal(formatRoute({ main: "settings", tab: "devices", panelTab: "advanced", section: "shell" }), "#/settings/devices", "never written under a tab other than Extension");
+    assert.equal(formatRoute({ ...ext, panelTab: "advanced", section: "policies" }), "#/settings/extension/advanced", "a section is written only under its own panel tab");
+    assert.equal(formatRoute({ ...ext, panelTab: "nope", section: "shell" }), "#/settings/extension");
+    assert.equal(formatRoute({ ...ext, section: "shell" }), "#/settings/extension", "a section with no panel tab is not written");
+    assert.equal(formatRoute({ ...ext, anchor: "backup", panelTab: "advanced" }), "#/settings/extension/backup", "the anchor wins, as the parser reads it first");
+});
+
+test("routes (setting): setting/<key> names one config key's row; a key with no row, or an unknown one, is the list", async () => {
+    const { parseRoute, formatRoute } = await import("../src/chat/route.ts");
+    const { DEFAULT_CONFIG, SETTING_PLACES } = await import("../src/contract/contract-config.ts");
+    for (const setting of Object.keys(DEFAULT_CONFIG)) {
+        if (!Object.hasOwn(SETTING_PLACES, setting)) {
+            assert.deepEqual(parseRoute(`#/setting/${setting}`), {}, `${setting} has no row`);
+            assert.equal(formatRoute({ setting }), "", setting);
+            continue;
+        }
+        assert.equal(formatRoute({ setting }), `#/setting/${setting}`);
+        assert.deepEqual(parseRoute(formatRoute({ setting })), { setting }, setting);
+    }
+    assert.deepEqual(parseRoute("#/setting/ocrNumCtx"), {}, "ocrNumCtx is a config key with no row in the panel");
+    assert.deepEqual(parseRoute("#/setting/autoApproveReadonly"), { setting: "autoApproveReadonly" }, "LINKS.md's example");
+    assert.deepEqual(parseRoute("#/setting/apiKey"), { setting: "apiKey" }, "a secret's ROW has an address; the route carries no value");
+    for (const h of ["#/setting/nope", "#/setting", "#/setting/", "#/setting/constructor", "#/setting/__proto__", "#/setting/toString"]) assert.deepEqual(parseRoute(h), {}, h);
+    assert.equal(formatRoute({ setting: "nope" }), "");
+    assert.equal(formatRoute({ setting: "nope", session: "laptop:x" }), "#/s/laptop%3Ax", "an unknown key falls through to what else is on screen");
+    assert.equal(formatRoute({ main: "search", setting: "apiKey" }), "#/search", "a main view is drawn over it");
+});
+
+test("routes (link addresses): every address in LINKS.md's table, read as a window-ml: destination is, round-trips", async () => {
+    const { parseRoute, formatRoute } = await import("../src/chat/route.ts");
+    // A `window-ml:` link is parsed as parseRoute("#/" + address) (LINKS.md); these are the table's rows and examples.
+    for (const a of ["s/hub:box-2:3fa91c2e", "search", "attention", "settings", "settings/devices", "settings/extension", "settings/extension/backup",
+        "settings/extension/advanced", "settings/extension/advanced/shell", "settings/extension/permissions/policies", "setting/autoApproveReadonly"]) {
+        const r = parseRoute("#/" + a);
+        assert.notDeepEqual(r, {}, a);
+        assert.deepEqual(parseRoute(formatRoute(r)), r, a);
+    }
+    assert.deepEqual(parseRoute("#/s/hub:box-2:3fa91c2e"), { session: "hub:box-2:3fa91c2e" }, "the key stays whole; whoever splits it splits on the LAST colon");
 });
 
 test("deviceItems: an iPhone or iPad reading the hosted client in a tab is offered the home screen, once", async () => {

@@ -180,9 +180,10 @@ export function settingsLinksSection(): string {
     const lines = [
         "## Your settings, and linking the person to one", "",
         "The person changes the extension's settings in its Settings panel. To point them at one, put a Markdown link " +
-        "in your reply: `[label](window-ml:<address>)`. Where they read your reply in the sidebar or the DevTools panel " +
-        "it is a button that opens Settings there and marks the row; anywhere else it shows as its label. A link only " +
-        "opens the view: it changes nothing and reads nothing. It works in your own prose, not inside code or a quote.", "",
+        "in your reply: `[label](window-ml:<address>)`. In the sidebar or the DevTools panel it is a button that opens " +
+        "Settings there and marks the row; on the HUD card or the chat page it shows as its label; in an export, and " +
+        "inside code or a quote, it stays the Markdown you wrote. A link only opens the view: it changes nothing and " +
+        "reads nothing.", "",
         "Addresses:",
         "- `setting/<key>`: one setting's row, by its config key (listed below).",
         "- `settings/extension/<tab>`, `settings/extension/<tab>/<section>`: a tab of Settings, or a section of it (below).",

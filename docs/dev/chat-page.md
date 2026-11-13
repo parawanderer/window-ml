@@ -26,6 +26,15 @@ anchor (`#/settings/extension/backup`) names a block inside a tab; `settingsAnch
 which opens the section through its persisted collapsed state and scrolls to the block once. An unknown anchor is
 dropped.
 
+The grammar also names the extension's own settings, for `window-ml:` links (`docs/spec/LINKS.md`): a panel tab
+(`#/settings/extension/<panelTab>`), one of its sections (`…/<panelTab>/<section>`), and one setting's row
+(`#/setting/<key>`, a key with a row in the panel: `SETTING_PLACES`). The tabs and sections are `PANEL_LAYOUT`
+(contract-config.ts), which tests/sidebar-settings.test.js and tests/setting-places.test.js hold to what the view draws.
+An unknown section drops to its panel tab, an unknown panel tab to Extension, an unknown key or one with no row to the
+list. A `window-ml:` link is parsed by the same `parseRoute` (links.ts), which accepts only an address that formats
+back to itself, so a link never falls back to a wider view. The parser names these
+addresses; the chat page does not yet open a panel tab, a section or a row from its own hash.
+
 A new session starts on THIS client's own runtime when it has one (`startableOn`, new-session.tsx), and only then on the
 first in the host's list. Which runtime is "this client" is the host's answer (`SessionHost.isLocal`; `LocalHost` says
 yes for its worker, `CompositeHost` asks the host that owns the runtime), never a field a runtime reports about itself:

@@ -647,6 +647,20 @@ reach it through the factory's closure, so a JsProxy there would be one in the n
 harness's references captured before any cell ran, never the importable `json`/`base64`, which a cell may patch.
 Tested under real CPython against a fake transport: `tests/ml-facade.test.mjs`.
 
+## Installing a package (`python_install`, slice 2 of docs/plan/repl/PACKAGES_INSTALL.md)
+
+Not offered to any run yet (`OFFER_PYTHON_INSTALL`, `sw-run-start.ts`): the card exists, the install does not.
+
+- **The verdict is decided in the worker before anything is fetched** (`sw-pkg-install.ts` `checkInstall`), against the
+  lock the extension ships (`pyodide/pyodide-lock.json`, read once per worker) and the start-up packages' closure as
+  already loaded. The index view is the lock alone until slice 3, so a package the core does not ship is `not-on-index`.
+- **The card's rows are frozen when the card is raised** (`sw-run-host.ts`, the gate's closure) and the answer must
+  carry them back (`SET_APPROVAL.files`). `judgeAnswer` compares them field by field; absent, malformed or different
+  rows turn the approval into a denial and log `python/pkg-card-mismatch`. So a surface that cannot carry the rows
+  (`approval.answer`: the chat page, the phone, the hub) can only deny a package card.
+- **Index text is hostile.** Every string on the card goes through `shownText` (`pkg-card.ts`): text nodes only, with
+  control, bidi and invisible characters replaced and listed beside their field. The export does the same.
+
 ## Traps
 
 - **A worker-hosted run keeps one namespace across its cells; every other call is stateless** (a page's `ml.pythonExec`, a page-hosted agent).

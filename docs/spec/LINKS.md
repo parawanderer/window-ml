@@ -77,11 +77,11 @@ is told apart from an `@tool:` pointer by shape, as the pointer forms are from e
 | `settings` | Settings | `#/settings` |
 | `settings/<tab>` | a tab of the chat page's Settings (`page`, `runtimes`, `devices`, `extension`, `housekeeping`) | `#/settings/<tab>` |
 | `settings/extension/backup` | Backup and restore | the one anchor |
-| `settings/extension/<panelTab>` | a tab of the extension's settings view (`connection`, `models`, `appearance`, `advanced`, `permissions`) | **proposed** |
-| `settings/extension/<panelTab>/<section>` | that tab with the section open and scrolled to (`advanced/shell`, `permissions/policies`) | **proposed**; `showSettingsSection` exists |
-| `setting/<key>` | the row of one setting, by its config key: its tab, its section open, the row scrolled to and marked | **proposed** |
+| `settings/extension/<panelTab>` | a tab of the extension's settings view (`connection`, `models`, `appearance`, `advanced`, `permissions`) | parsed (`route.ts`) |
+| `settings/extension/<panelTab>/<section>` | that tab with the section open and scrolled to (`advanced/shell`, `permissions/policies`) | parsed (`route.ts`, from `PANEL_LAYOUT`); `showSettingsSection` exists |
+| `setting/<key>` | the row of one setting, by its config key: its tab, its section open, the row scrolled to and marked | parsed (`route.ts`), a key with a row (`SETTING_PLACES`) |
 
-The address grammar is the chat page's, minus the leading `#/`, plus the two proposed forms. One parser serves both:
+The address grammar is the chat page's, minus the leading `#/`, plus the two new forms. One parser serves both:
 `parseRoute` grows the panel tab and section, and a `window-ml:` destination is parsed by the same function, so a hash
 and a link cannot disagree about what an address means. `backup` stays an alias of `appearance/storage` with the
 Backup block as its target, so the existing link keeps working; no panel tab is named `backup`, so the third part is
@@ -97,9 +97,10 @@ Extension tab draws the same settings view.
 MODEL_SETTINGS.md, #1793, or `ml.config()`). To resolve it, each row of the panel carries
 `data-setting="<key>"`, and a table beside `DEFAULT_CONFIG` names each key's tab and section. A test enumerates
 `DEFAULT_CONFIG` and fails on a key with a panel control and no place, or a place whose row does not carry the key
-(AGENTS.md: enumerate, do not sample). A key with no control (today `ocrNumCtx`) has no address and its link renders as
-text. A link to a secret's row (`setting/apiKey`) is allowed: it opens the row, never reads the value, and "set your
-API key here" is exactly the help Shane asked for.
+(AGENTS.md: enumerate, do not sample). A key with no control (today `ocrNumCtx`) has no place, so no address, and
+its link renders as text: the parser accepts exactly the keys with a place (`SETTING_PLACES`). A link to a secret's
+row (`setting/apiKey`) is allowed: it opens the row, never reads the value, and "set your API key here" is exactly the
+help Shane asked for.
 
 ## What a click does, by surface
 

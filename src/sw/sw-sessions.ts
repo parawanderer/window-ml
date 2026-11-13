@@ -21,7 +21,8 @@ import { AGENT_START_PAGE, DEFAULT_CONFIG, modelFilterAllows } from "../contract
 import type { NeutralMessage } from "../contract/contract-chat";
 import { cleanTitle, titleMessages } from "../session/session-title";
 import { defineState } from "../state-registry";
-import { bgRuns, makeWorkerRun, trackRun, untrackRun } from "./sw-runs";
+import { bgRuns, keptOnRebuild, makeWorkerRun, trackRun, untrackRun } from "./sw-runs";
+import { moveRun } from "./move-run";
 import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
 import { isExtensionSender } from "./sw-site-access";
 import { fileChunks } from "./sw-file-chunks";
@@ -33,6 +34,7 @@ import { ensureOffscreen } from "./sw-offscreen";
 import { readPdfOffscreen } from "./sw-attach";
 import type { PdfMessage } from "../pdf/pdf-wire";
 import { pythonBundlePresent, deletePythonRun } from "./sw-python";
+import { endTasks } from "./sw-tasks";
 import { recordHousekeeping, senderOrigin } from "./sw-housekeeping";
 import { archiveCall, lastFolderReport, onFolderChange, scheduleFolderSync, syncFolder } from "./sw-archive";
 import { archiveCompactionJob, archiveImageCompactor, compactionJob, imageCompactor } from "./sw-image-compact";
@@ -420,12 +422,28 @@ export function configureSessionCommands(run: RunDeps): void {
         ...(sessionStore ? { storedEvents: (hash: string) => sessionStore.read(hash) } : {}),
         adoptSession: async (tabId, hash, history) => {
             if (history.kind !== "agent" || !history.payload) return "none";
+            // A run this worker holds on ANOTHER tab is MOVED there (MOVE_RUN.md), with the same checks and record as the HUD's
+            // move, never hosted a second time: its memory is fresher than the saved history, so that is not read back.
+            // On its own tab it is resumed as before.
+            const held = bgRuns.get(hash);
+            if (held && held.tabId !== tabId) {
+                const rebuild = held.p.rebuild;
+                if (!rebuild) return "none";
+                trackRun(tabId, hash, rebuild);
+                const reply = await run.adoptOnTab(tabId, hash, rebuild);
+                if (reply.error) { untrackRun(tabId, hash); return "unanswered" in reply && reply.unanswered ? "no-answer" : "none"; }
+                const moved = await moveRun(hash, tabId);
+                if ("refused" in moved) { untrackRun(tabId, hash); return "none"; }
+                // The budget a resume names rides on the payload, as for a saved session below.
+                if (history.payload.maxSteps !== held.p.maxSteps) held.p = { ...held.p, maxSteps: history.payload.maxSteps };
+                return "adopted";
+            }
             // Put the run back where a resume looks for it. `RESUME_RUN` reads `bgRuns` and nothing else, and it is
             // worker MEMORY: a run that settled yesterday is not in it, which is the whole reason a saved session
             // keeps its own copy. Hydrating here means the resume path itself needs no second source.
-            bgRuns.set(hash, { p: history.payload, tabId, messages: history.messages, ...(history.sub ? { sub: history.sub } : {}) });
+            bgRuns.set(hash, { p: history.payload, tabId, messages: history.messages, ...(history.sub ? { sub: history.sub } : {}), ...keptOnRebuild(hash) });
             // From here on the WORKER drives it: its next turn is started from here, never by the page it sits on.
-            bgRuns.set(hash, { p: history.payload, tabId, messages: history.messages, ...(history.sub ? { sub: history.sub } : {}) });
+            bgRuns.set(hash, { p: history.payload, tabId, messages: history.messages, ...(history.sub ? { sub: history.sub } : {}), ...keptOnRebuild(hash) });
             makeWorkerRun(hash);
             const rebuild = bgRuns.get(hash)!.p.rebuild;
             trackRun(tabId, hash, rebuild);
@@ -553,7 +571,7 @@ export const sessionStore = (() => {
             onEvicted: (e) => {
                 // Deleted, or moved to the archive: its run policies go with it (POLICIES.md, "Scopes"). An archived
                 // session that comes back starts with none. `kept` (the move failed) leaves them.
-                if (e.outcome === "deleted" || e.outcome === "archived") { forgetRunPolicies(e.hash, e.outcome); deletePythonRun(e.hash); }   // and its Python namespace
+                if (e.outcome === "deleted" || e.outcome === "archived") { forgetRunPolicies(e.hash, e.outcome); deletePythonRun(e.hash); void endTasks(e.hash, e.outcome); }   // and its Python namespace and its detached tasks
                 recordHousekeeping({
                     subsystem: "sessions", kind: e.outcome === "kept" ? "archive-failed" : "evict", reason: e.reason, key: e.hash, bytes: e.bytes,
                     detail: { outcome: e.outcome, idleDays: Math.floor(e.idleMs / DAY_MS), ...(e.error ? { error: e.error } : {}) },

@@ -2,15 +2,16 @@
 // says so, and the one click handler that opens it through `services().openAddress` (docs/spec/LINKS.md).
 //
 // A link opens a view; it never acts. The grammar here is the DevTools Settings panel's part of the chat page's
-// addresses (src/chat/route.ts): `settings/extension/<panelTab>[/<section>]`, `settings/extension/backup` and
-// `setting/<key>`. It is parsed locally until `parseRoute` learns those forms, then this file calls it instead.
+// addresses, parsed by its parser (`parseRoute`, src/chat/route.ts): `settings/extension/<panelTab>[/<section>]`,
+// `settings/extension/backup` and `setting/<key>`, so a link and a hash cannot disagree about what an address means.
 
-import { PANEL_LAYOUT, SETTING_PLACES, type MlConfig, type SettingsPanelTab } from "../contract/contract-config";
+import { PANEL_LAYOUT, SETTING_PLACES, type MlConfig, type PanelTab } from "../contract/contract-config";
+import { formatRoute, parseRoute } from "../chat/route";
 import { services } from "./services";
 
 /** A view of the DevTools Settings panel a link can open: a tab, a section open on it, or one setting's row. */
 export interface PanelRoute {
-    tab: SettingsPanelTab;
+    tab: PanelTab;
     section?: string;
     /** the config key whose row is scrolled to and marked */
     setting?: keyof MlConfig;
@@ -19,31 +20,26 @@ export interface PanelRoute {
 }
 
 /** Settings → Storage → Backup and restore: what the `settings/extension/backup` alias opens. Mirrors
- *  `BACKUP_TAB`/`BACKUP_BLOCK_ID` in settings.tsx, which this file does not import so a renderer stays light. */
+ *  `BACKUP_TAB`/`BACKUP_BLOCK_ID` in settings.tsx, which this file does not import so a renderer stays light;
+ *  tests/setting-places.test.js holds the copy to the panel it draws. */
 const BACKUP: PanelRoute = { tab: "appearance", section: "storage", target: "set-backup" };
-
-const isTab = (t: string): t is SettingsPanelTab => Object.prototype.hasOwnProperty.call(PANEL_LAYOUT, t);
-const has = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k);
 
 /**
  * The panel view an address names, or null for anything this grammar does not know. Null is final for a link: the
- * model naming a place that is not there renders as its label. No query, fragment or extra part is accepted.
+ * model naming a place that is not there renders as its label. `parseRoute` falls back to a wider view for what it
+ * does not know (an old URL still opens the page); a link does not, so an address is accepted only when it is
+ * exactly the one its route formats back to: no query, fragment, unknown part or extra part.
  * @param address what follows `window-ml:`
  */
 export function parseAddress(address: string): PanelRoute | null {
     if (!/^[A-Za-z0-9_/-]+$/.test(address)) return null;
-    const parts = address.split("/");
-    if (parts[0] === "setting" && parts.length === 2) {
-        const key = parts[1];
-        const place = has(SETTING_PLACES, key) ? SETTING_PLACES[key as keyof MlConfig] : undefined;
-        return place ? { ...place, setting: key as keyof MlConfig } : null;
-    }
-    if (parts[0] !== "settings" || parts[1] !== "extension") return null;
-    if (parts.length === 3 && parts[2] === "backup") return { ...BACKUP };
-    const [, , tab, section] = parts;
-    if (parts.length < 3 || parts.length > 4 || !isTab(tab)) return null;
-    if (section === undefined) return { tab };
-    return has(PANEL_LAYOUT[tab].sections, section) ? { tab, section } : null;
+    const hash = `#/${address}`;
+    const r = parseRoute(hash);
+    if (formatRoute(r) !== hash) return null;
+    if (r.setting) return { ...SETTING_PLACES[r.setting as keyof MlConfig]!, setting: r.setting as keyof MlConfig };
+    if (r.anchor === "backup") return { ...BACKUP };
+    if (!r.panelTab) return null;
+    return r.section ? { tab: r.panelTab, section: r.section } : { tab: r.panelTab };
 }
 
 /**

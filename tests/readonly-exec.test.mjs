@@ -442,11 +442,10 @@ test("Set/Map: reads + mutators (has/get/add/set/delete/clear) work on a contain
 test("adversarial (Set/Map mutators): add/set/delete/clear only touch a container YOU built — never off the page", async () => {
     const doc = world();
     doc.body.className = "a b";
-    // classList reaches the script as an array of class names, so `add`/`remove` are not methods on what it
-    // is holding — they fail as missing rather than as refused. The CLAIM is the line below either way, and
-    // it is the one that matters: the page did not change.
-    await assert.rejects(run(`document.body.classList.add('evil'); 1`, doc), refused);
-    await assert.rejects(run(`document.body.classList.remove('a'); 1`, doc), refused);
+    // classList reaches the script as itself (the `tokenlist` kind, tests/readonly-tokenlist.test.mjs), whose
+    // allowlist has no `add`/`remove`: they are withheld, so refused. The page did not change.
+    await assert.rejects(run(`document.body.classList.add('evil'); 1`, doc), outOfDialect);
+    await assert.rejects(run(`document.body.classList.remove('a'); 1`, doc), outOfDialect);
     assert.equal(doc.body.className, "a b");   // untouched
     // A Set/Map hung on a page object is reached via a property read → NOT owned → mutators Denied.
     doc.appSet = new Set([1, 2]);
@@ -859,6 +858,32 @@ test("ESCAPE: a return in finally CANNOT paper over a guard denial", async () =>
     await assert.rejects(run(`try { return window; } finally { return "swallowed"; }`), e => e instanceof Denied);
 });
 
+test("ESCAPE: a finally that THROWS cannot paper over a guard denial either", async () => {
+    // Held from the block, from the catch, a NotInDialect and a Denied: each must still reach the driver, whatever the
+    // finalizer throws.
+    for (const js of [
+        `try { window.alert(1); } finally { JSON.parse("{bad"); }`,
+        `try { return window; } finally { const o = { g: 1 }; o.g(); }`,
+        `try { JSON.parse("{bad"); } catch (e) { return window; } finally { JSON.parse("{bad"); }`,
+    ]) await assert.rejects(run(js), (e) => e instanceof Denied, js);
+    await assert.rejects(run(`try { return document.querySelector('#a').click(); } finally { JSON.parse("{bad"); }`), (e) => e instanceof NotInDialect);
+    // The finalizer's OWN refusal stands, held error or not.
+    await assert.rejects(run(`try { JSON.parse("{bad"); } finally { window.alert(1); }`), (e) => e instanceof Denied);
+    // Positive control, JS semantics: with no denial held, the finalizer's throw replaces the held error.
+    await assert.rejects(run(`try { JSON.parse("{bad"); } finally { const o = { g: 1 }; o.g(); }`), (e) => !(e instanceof Denied) && !(e instanceof NotInDialect) && /not a function/.test(e.message));
+});
+
+test("ESCAPE: a finally that throws its OWN refusal while the try holds one: the finalizer's refusal is the one that escalates", async () => {
+    // Both are refusals, so either escalates; the later one is what the person is asked about, as JS would report the
+    // finally's throw. A refusal carries no line (it is about the script's shape), so neither carries mlLine.
+    const nid = await run(`try { return window; } finally { document.querySelector('#a').click(); }`).catch((e) => e);
+    assert.ok(nid instanceof NotInDialect, `the finalizer's NotInDialect, not the held Denied: ${nid}`);
+    assert.equal(nid.mlLine, undefined);
+    const den = await run(`try { document.querySelector('#a').click(); } finally { return window; }`).catch((e) => e);
+    assert.ok(den instanceof Denied, `the finalizer's Denied, not the held NotInDialect: ${den}`);
+    assert.equal(den.mlLine, undefined);
+});
+
 test("finally: a return in finally overrides a NORMAL result (JS semantics)", async () => {
     assert.equal((await run(`try { return 1; } finally { return 2; }`)).value, 2);
 });
@@ -1026,11 +1051,10 @@ test("the answer methods did NOT leak globally — remove()/dump() on any other 
 test("the owned-mutation guard is INTACT — add/clear on a page object stay Denied (only the answer facade is exempt)", async () => {
     // classList.add is reached off a page node, not the answer facade → still refused. Proves `!onAnswer` only
     // exempted the answer facade, not `add`/`clear` everywhere.
-    // `classList` materialises as an array of class names in the dialect, so `add` is not even a method on
-    // what the script is holding — it fails as a missing method rather than as a refusal. Either way the
-    // guard's claim is the same one, and it is asserted directly: the page did not change.
+    // `classList` is the `tokenlist` kind, whose allowlist withholds `add`, so it is refused before the ownership
+    // gate is even asked. The guard's claim is asserted directly: the page did not change.
     const doc = world();
-    await assert.rejects(runAns(`document.body.classList.add("x")`, new AnswerSet(), doc), refused);
+    await assert.rejects(runAns(`document.body.classList.add("x")`, new AnswerSet(), doc), outOfDialect);
     assert.equal(doc.body.classList.contains("x"), false, "the page was not mutated — which is the claim");
     // And a Set the SCRIPT built still takes the ownership route, so the gate that governs real mutation is
     // untouched: allowed on your own container, and the name is meaningful there rather than missing.
@@ -1602,6 +1626,47 @@ test("a runtime throw reports the LINE it happened on — an interpreter has no 
     // A REFUSAL carries none: it is about the script's shape, it escalates to a human, and a line number
     // there would be answering a question nobody asked.
     await assert.rejects(run(`while (true) {}`), (e) => outOfDialect(e) && e.mlLine === undefined);
+});
+
+test("on a LONG line, a runtime throw also carries the piece of the line it came out of", async () => {
+    // Observed (prompt-budget-cuts, MiniMax M3, 2026-11-12): the whole script on one line, so "(line 1)" said nothing.
+    // A column would not help a model, which reads tokens; the code around the spot does. Two calls on the line, and
+    // only the second fails, so the marker must sit on that one. (An unbound name is a refusal here, not a throw, and
+    // a member read of nothing is `undefined`; what throws at run time is a call.)
+    const pad = "const pad = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; ";
+    await assert.rejects(run(pad + "const o = { g: 1 }; const a = JSON.stringify(1); const b = o.g(2); return [a, b, pad.length, pad.slice(1)];"), (e) => {
+        assert.equal(e.mlLine, 1);
+        assert.match(e.mlExcerpt, /const b = o\.g▶\(2\)/, "the marker at the call that failed, not the one before it");
+        assert.match(e.mlExcerpt, /^….*…$/, "cut on both sides, and says so");
+        return true;
+    });
+    // A host method that throws points at its call too.
+    await assert.rejects(run(pad + "return JSON.parse('{bad');"), (e) => /JSON\.parse▶\('\{bad'\)/.test(e.mlExcerpt));
+    // A short line needs nothing past its number.
+    await assert.rejects(run("const o = { g: 1 };\nreturn o.g(2);"), (e) => e.mlLine === 2 && e.mlExcerpt === undefined);
+});
+
+test("a throw the script CAUGHT is not where a later failure happened", async () => {
+    const pad = "const pad = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; ";
+    const js = pad + "let a = 0; try { a = JSON.parse('{bad'); } catch (err) { a = 1; } const o = { g: 1 }; return o.g(a);";
+    await assert.rejects(run(js), (e) => {
+        assert.match(e.mlExcerpt, /o\.g▶\(a\)/, "the uncaught failure, not the caught JSON.parse");
+        return true;
+    });
+});
+
+test("a throw from a finally is placed where the finally threw, not where the throw it was holding came from", async () => {
+    const pad = "const pad = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; ";
+    const o = "const o = { g: 1, h: 2 }; ";
+    // Holding an uncaught throw, with no catch, and with a catch that threw again: each finalizer throw is its own.
+    for (const tail of ["try { JSON.parse('{bad'); } finally { o.h(1); }", "try { o.g(1); } catch (err) { JSON.parse('{bad'); } finally { o.h(1); }"]) {
+        await assert.rejects(run(pad + o + tail), (e) => {
+            assert.match(e.mlExcerpt, /o\.h▶\(1\)/, `${tail}: ${e.mlExcerpt}`);
+            return true;
+        });
+    }
+    // A finalizer that finishes leaves the held throw where it was.
+    await assert.rejects(run(pad + o + "try { o.g(1); } finally { const k = 1; }"), (e) => /o\.g▶\(1\)/.test(e.mlExcerpt));
 });
 
 // --- the TABLE FACADE kind ----------------------------------------------------------------------------------

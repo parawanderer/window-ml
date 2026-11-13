@@ -58,7 +58,7 @@ export const extensionServices: SidebarServices = {
     sideCalls: () => !!config.value.utilityModel.trim(),
     bench: true,
     // The shell forwards it to the background as SET_APPROVAL, having checked it came from this iframe.
-    answerApproval: (hash, seq, decision, persist, feedback, ask) => toHost({ __mlSidebarApp: "approval", hash, seq, decision, persist, feedback, ...(ask !== undefined ? { ask } : {}) }),
+    answerApproval: (hash, seq, decision, persist, feedback, ask, files) => toHost({ __mlSidebarApp: "approval", hash, seq, decision, persist, feedback, ...(ask !== undefined ? { ask } : {}), ...(files !== undefined ? { files } : {}) }),
     // The shell, or the DevTools panel, forwards it as SET_START_APPROVAL, having checked it came from this frame.
     answerStart: (requestId, decision) => toHost({ __mlSidebarApp: "startDecision", requestId, decision }),
     // A post to the page, which answers nothing: what goes wrong from there shows in the run itself.
@@ -72,6 +72,15 @@ export const extensionServices: SidebarServices = {
     continueSession: (hash, maxSteps) => toHost({ __mlSidebarApp: "continueRun", hash, ...(maxSteps ? { maxSteps } : {}) }),
     // This frame is attached to the tab the run is in: if it were gone, so would this panel be.
     canContinue: () => true,
+    // Straight to the worker, which proves the sender is this extension frame and moves to the tab the frame sits in.
+    bringable: () => new Promise((resolve) => {
+        try { chrome.runtime.sendMessage({ type: "LIST_BRINGABLE" }, (resp: { data?: unknown } | undefined) => resolve(Array.isArray(resp?.data) ? resp.data : [])); }
+        catch { resolve([]); }
+    }),
+    bringHere: (hash) => new Promise((resolve) => {
+        try { chrome.runtime.sendMessage({ type: "MOVE_RUN", payload: { runId: hash } }, (resp: { data?: unknown; error?: string } | undefined) => resolve(resp?.data ? { ok: true } : { error: resp?.error || "The session was not brought here." })); }
+        catch (e) { resolve({ error: (e as Error)?.message || String(e) }); }
+    }),
     stillLive: () => true,   // this panel is attached to the tab that holds the run; its reduction IS the runtime's
     // This panel polls the box itself, so it has the reading; `residentNow` answers `undefined` until the
     // first /api/ps lands, which is the right answer rather than "cold".

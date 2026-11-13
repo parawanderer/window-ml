@@ -7,7 +7,7 @@ import { useGoneOnScrollOrBlur, underPointer } from "./pointer-gone";
 import type { ComponentChildren } from "preact";
 import { useState, useEffect, useRef } from "preact/hooks";
 import { signal } from "@preact/signals";
-import type { AnswerMedia } from "../contract/contract-render";
+import type { AnswerMedia, PkgRow } from "../contract/contract-render";
 import type { Status, AgentStep } from "./store";
 import { codeLineNumbers } from "./store";
 import { shortStamp, fullStamp, pretty, truncate, mdInline } from "./format";
@@ -18,6 +18,7 @@ import { watchTrigger } from "./tooltip-layer";
 import { IconCopy, IconCheck, IconSheet } from "./icons";
 import { useCopy } from "./copy-hash";
 import { CodeProps, CodeBlock } from "./code-block";
+import { pkgCardRows } from "./card/pkg-card-view";
 
 export const DOT_TIP: Record<Status, string> = {
     pending: "In flight — waiting for the model to respond.",
@@ -218,8 +219,8 @@ export const tokenHover = (s?: string): { onPointerEnter?: () => void; onPointer
 // (e.source === frame.contentWindow, unforgeable by the page) — forwards it to the background as
 // SET_APPROVAL. That authentication is the whole point: the decision is made HERE and the page can't
 // spoof it. Keyed by the run hash + the step's seq.
-export const sendApproval = (hash: string, seq: number, decision: boolean, persist = false, feedback?: string, ask?: string) =>
-    services().answerApproval(hash, seq, decision, persist, feedback, ask);
+export const sendApproval = (hash: string, seq: number, decision: boolean, persist = false, feedback?: string, ask?: string, files?: PkgRow[]) =>
+    services().answerApproval(hash, seq, decision, persist, feedback, ask, files);
 
 // The "https://host/*" host-permission pattern a step needs granted before it can run: a fetch_url's URL
 // (the background SW fetch needs the host) OR a navigate's destination (a cross-origin nav must RE-INJECT the
@@ -244,7 +245,8 @@ export async function decideGate(st: AgentStep, hash: string, seq: number, ok: b
         const access = services().hostAccess;
         if (pat && access) await access.request(pat);   // dismissed or unsupported → the fetch returns the actionable error
     }
-    sendApproval(hash, seq, ok, persist, feedback);
+    // A python_install card's approval carries the rows the person was shown; the worker approves only those rows.
+    sendApproval(hash, seq, ok, persist, feedback, undefined, ok ? pkgCardRows(st.renderIn) : undefined);
 }
 
 /** A tooltip that FOLLOWS THE CURSOR, for a trigger that is wide. The static `.tt`/`.tt-pop` layer anchors to

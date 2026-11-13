@@ -559,6 +559,51 @@ test("settings: the wire format is a THREE-state control, defaulting to auto", a
     assert.equal(w.syncStore.protoStream, "on");
 });
 
+// --- the sections an address may name: PANEL_LAYOUT against what each tab draws ----------------------------
+
+test("settings: PANEL_SECTIONS names every section the view defines, once, and nothing else", async () => {
+    const { PANEL_SECTIONS } = await import("../src/contract/contract-config.ts");
+    const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "../src/sidebar/settings/settings.tsx"), "utf8");
+    const defined = [...src.matchAll(/<Section id="([^"]+)"/g)].map((m) => m[1]).sort();
+    const listed = Object.values(PANEL_SECTIONS).flat().sort();
+    assert.ok(defined.length > 20, `the scan found the sections (${defined.length})`);
+    assert.deepEqual(listed, defined, "a section added to the view needs its row in PANEL_LAYOUT (contract-config.ts), and a removed one leaves it");
+});
+
+test("settings: each tab draws the sections PANEL_SECTIONS lists for it, in order, so a section address opens the right tab", async () => {
+    const { PANEL_SECTIONS, PANEL_TABS } = await import("../src/contract/contract-config.ts");
+    const w = await loadSidebarWorld();
+    await openSettings(w);
+    const buttons = [...w.shadow.querySelectorAll(".set-tab")];
+    assert.equal(buttons.length, PANEL_TABS.length, "one tab button per panel tab");
+    for (const [i, tab] of PANEL_TABS.entries()) {
+        if (tab === "permissions") continue;   // drawn only once its data loads: the next test
+        buttons[i].click();
+        await w.tick();
+        const drawn = [...w.shadow.querySelectorAll("details.set-section[data-section]")].map((d) => d.dataset.section);
+        assert.deepEqual(drawn, [...PANEL_SECTIONS[tab]], `${tab} (${buttons[i].textContent.trim()})`);
+    }
+});
+
+test("settings: Permissions draws the sections PANEL_SECTIONS lists for it, in order, once a site waits and its lists, policies and host grants have loaded", async () => {
+    const { PANEL_SECTIONS } = await import("../src/contract/contract-config.ts");
+    const waiting = { origin: "https://asker.example", domain: "asker.example", kind: "access", agents: false, at: 1, state: "pending", asks: 1, allowed: false };
+    const w = await loadSidebarWorld({
+        siteLists: { always: [], session: [], denied: [], agents: {}, selfApprove: [] },
+        accessRequests: () => ({ data: { requests: [waiting] } }),
+    });
+    const real = w.window.chrome.runtime.sendMessage;
+    w.window.chrome.runtime.sendMessage = (msg, cb) => {
+        if (msg && msg.type === "POLICIES") { cb({ data: { global: [], runs: [], builtin: { label: "built-in default", source: "(c) => false" }, broken: {} } }); return; }
+        return real(msg, cb);
+    };
+    w.window.chrome.permissions = { ...w.window.chrome.permissions, getAll: (cb) => cb({ origins: [] }) };
+    await openSettings(w, "Permissions");
+    await w.flush(); await w.flush();
+    const drawn = [...w.shadow.querySelectorAll("details.set-section[data-section]")].map((d) => d.dataset.section);
+    assert.deepEqual(drawn, [...PANEL_SECTIONS.permissions]);
+});
+
 // --- what the backend exposes: the server-tool browser and the wire format -------------------------------
 
 // Reuses the SAME ToolDefsView an agent run's "agent options" block uses for its local toolset, so a remote

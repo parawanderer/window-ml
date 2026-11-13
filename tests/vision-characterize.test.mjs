@@ -16,6 +16,7 @@
 // jsdom has no layout and no canvas, so rects are set per element, and the canvas is a recorder: every image it produces
 // is a token whose recipe (which image it was drawn from, which source rect) the tests read back. That is how "the model
 // saw the viewport capture cropped to this rect at this pixel ratio" is asserted without pixels.
+import { READER_MAX_TOKENS } from "../src/contract/contract-render.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -418,7 +419,7 @@ test("delegated look: the worker captures and calls the run's reader; the driver
         assert.equal(w.subs().length, 1);
         const [call] = w.subs();
         assert.equal(call.body.model, "reader-vl", "the resolved reader (the config's OCR model)");
-        assert.equal(call.body.max_tokens, 512);
+        assert.equal(call.body.max_tokens, READER_MAX_TOKENS);
         assert.equal(promptOf(call.body), "Describe the current page concisely — what is shown and what stands out.\n\nThen list a few EXACT on-screen text strings (quoted, verbatim — labels, badges, prices, delivery text) I could search for with findByText to locate the key items.");
         assert.equal(call.body.hint.session, `wml-${w.hash}`, "labelled as the run's own sub-call");
         assert.deepEqual(imagesIn(call.body), [PNG_VIEWPORT], "the reader sees the raw capture");
@@ -545,7 +546,7 @@ test("click verify of a worker-built run, delegated: the worker asks the reader 
         const [call] = w.subs();
         assert.equal(w.subs().length, 1);
         assert.equal(call.body.model, "reader-vl");
-        assert.equal(call.body.max_tokens, 512);
+        assert.equal(call.body.max_tokens, READER_MAX_TOKENS);
         assert.equal(promptOf(call.body), 'The image is a crop of the page just AFTER a "clicked" action; the target is at the exact CENTRE. Describe what is now shown there and around it — especially anything that CHANGED (a menu/panel/result that appeared, a new field value, a navigation).');
         assert.deepEqual(recipe(w.wimages, imagesIn(call.body)[0]).draws, [["VIEWPORT", 210, 70, 300, 300, 0, 0, 300, 300]]);
         assert.equal(call.body.hint.session, `wml-${w.hash}`, "labelled as the run's own sub-call");
@@ -622,7 +623,7 @@ test("wait verify of a worker-built run, delegated: the reader describes the who
         const [call] = w.subs();
         assert.equal(promptOf(call.body), "The image is a screenshot of the page after it settled following a wait. Describe the current state — especially anything that just finished loading or changed.");
         assert.deepEqual(imagesIn(call.body), [PNG_VIEWPORT], "the capture itself, uncropped");
-        assert.equal(call.body.max_tokens, 512);
+        assert.equal(call.body.max_tokens, READER_MAX_TOKENS);
         assert.equal(seenByDriver(w).text, "Waited 10ms.\n\n👁 The page settled — here's the current viewport. You can't see images, so this is reader-vl's description:\nSettled." + LEGEND_LINE);
     } finally { w.page.close(); }
 });
@@ -651,7 +652,7 @@ test("the navigate verify ring-back (verifyViewport), which the page still answe
         assert.equal(call.messages[0].content, "The image is a screenshot of the page after it settled following a wait. Describe the current state — especially anything that just finished loading or changed.",
             "a navigate verify reuses the wait verify's prompt");
         assert.deepEqual(call.messages[0].images, [VIEWPORT]);
-        assert.equal(call.maxTokens, 512);
+        assert.equal(call.maxTokens, READER_MAX_TOKENS);
         assert.deepEqual(plain(env), { result: "\n\n👁 The page settled — here's the current viewport. You can't see images, so this is reader-vl's description:\nThe new page.",
             feedback: { reason: "after wait", via: "text", text: "The new page.", prompt: call.messages[0].content, image: VIEWPORT } });
     } finally { w.page.close(); }
