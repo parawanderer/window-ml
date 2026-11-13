@@ -10,9 +10,9 @@
 //
 // Every position below was measured RUNNING the page's function before the fix, and each asserts the function never
 // ran, that the survey is refused, and that the refusal names the method (the ruled shape — a caller reading the
-// refusal must know which call was the problem). Twenty rows over NINETEEN admitted names, because `collection`
-// admits one name on two host receivers (`querySelectorAll` and `getElementsByTagName`); nothing else in `BY_KIND`
-// hands an argument to the host to be called. Five more rows cover the ACQUISITION channels: the function need not
+// refusal must know which call was the problem). Twenty-one rows over TWENTY admitted names, because `collection`
+// admits one name on two host receivers (`querySelectorAll` and `getElementsByTagName`); `tokenlist.forEach` (`classList`)
+// is the twentieth; nothing else in `BY_KIND` hands an argument to the host to be called. Five more rows cover the ACQUISITION channels: the function need not
 // arrive from `ml.models()` itself, because an admitted method's return and a `for…of` binding over the page's array
 // or its `Object.values` hand it back unwrapped (an index read and a spread are inert). The three shapes already
 // refused name no method: they assert the defence that exists. One control row shows a function written IN the script
@@ -28,7 +28,7 @@ import assert from "node:assert";
 import { JSDOM } from "jsdom";
 import { evalReadonly } from "../src/readonly-exec.ts";
 
-const doc = () => new JSDOM("<!doctype html><body><p>hi</p><p>there</p></body>").window.document;
+const doc = () => new JSDOM("<!doctype html><body class=\"a b\"><p>hi</p><p>there</p></body>").window.document;
 
 /** Run `js` against an `ml` whose one member hands back `value`; returns what the cell produced. */
 const run = (js, value) => evalReadonly(js, doc(), { models: async () => value }, undefined, {});
@@ -58,6 +58,7 @@ const CALLBACKS = [
     ["Map.forEach", "const f = await ml.models(); const m = new Map([[\"a\", 1]]); return m.forEach(f)", "forEach"],
     ["collection.forEach (querySelectorAll)", `const f = await ml.models(); return document.querySelectorAll("p").forEach(f)`, "forEach"],
     ["collection.forEach (getElementsByTagName)", `const f = await ml.models(); return document.getElementsByTagName("p").forEach(f)`, "forEach"],
+    ["tokenlist.forEach (classList)", `const f = await ml.models(); return document.body.classList.forEach(f)`, "forEach"],
     ["JSON.stringify", "const f = await ml.models(); return JSON.stringify([1, 2], f)", "stringify"],
     ["JSON.parse", "const f = await ml.models(); return JSON.parse('{\"a\":1}', f)", "parse"],
 ];
@@ -162,6 +163,7 @@ test("CONTROL: a function written in the survey still works in every position th
     assert.deepEqual(await v(`const a = []; const m = new Map([["a", 1]]); m.forEach((v, k) => a.push(k + v)); return a`), ["a1"], "Map.forEach");
     assert.deepEqual(await v(`const a = []; document.querySelectorAll("p").forEach((p) => a.push(p.textContent)); return a`), ["hi", "there"], "collection.forEach (querySelectorAll)");
     assert.deepEqual(await v(`const a = []; document.getElementsByTagName("p").forEach((p) => a.push(p.textContent)); return a`), ["hi", "there"], "collection.forEach (getElementsByTagName)");
+    assert.deepEqual(await v(`const a = []; document.body.classList.forEach((t) => a.push(t)); return a`), ["a", "b"], "tokenlist.forEach (classList)");
     assert.equal(await v(`return JSON.stringify([1, 2], (k, x) => (typeof x === "number" ? x + 1 : x))`), "[2,3]", "JSON.stringify");
     assert.deepEqual(await v(`return JSON.parse('{"a":1}', (k, x) => (typeof x === "number" ? x + 1 : x))`), { a: 2 }, "JSON.parse");
     assert.equal(await v(`return "ab".replace("a", () => "z")`), "zb", "replace");
