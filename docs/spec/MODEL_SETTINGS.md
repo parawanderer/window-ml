@@ -89,7 +89,7 @@ value:
 type Domain =
   | { kind: "boolean" }
   | { kind: "enum"; words: readonly string[] }          // CONFIG_ENUMS' words
-  | { kind: "number"; min: number; max: number; integer?: true }
+  | { kind: "number"; min: number; max?: number; integer?: true }   // no max: unbounded above
   | { kind: "model" }                                    // on the server's list and modelFilterAllows, as setModel
   | { kind: "hours" };                                   // electricityOffPeakHours' hour range, its parser by name
 ```
@@ -104,7 +104,13 @@ key is classified, is not secret, and has a place in `places`, the table LINKS.m
 that edits the whitelist, the whitelist's validation on read, and `change_setting` all call. `places` is a parameter
 so the test can pass the real table and a table with a row added: a key with no control has no place, so it is not
 whitelistable, and the same table is what LINKS.md's test checks against the panel's `data-setting` rows, so a place
-cannot be claimed for a control that does not exist.
+cannot be claimed for a control that does not exist. Neither the table nor the `data-setting` rows exist in `src/`
+yet (LINKS.md calls `setting/<key>` proposed and gives the rows to the settings panel's owner): they land in the first
+commit of LINKS.md's builder, and this spec's whitelist is built after it. Until then `whitelistable` is false for
+every key, so there is no window in which the test is red.
+
+A `number` domain with no `max` is unbounded above: `pythonIdleMinutes`, `sessionRetentionDays` and
+`sessionStoreBudgetMB` are at least 0 with no ceiling in DevTools Settings today.
 
 **The class test** enumerates `DEFAULT_CONFIG` (AGENTS.md: enumerate the inputs, do not sample them) and fails on:
 
