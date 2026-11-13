@@ -844,10 +844,10 @@ virtual to disk, never from the disk into the browser: the browser never pulls t
 the quota would refuse it and the person's files would exist twice.
 
 **The disk removed** (the host disconnects, or the person unmounts). The files stay on the disk. The panel shows
-`/files` as unavailable, with its real path, never as empty or gone. The model's `/files` falls back to the virtual store, empty
-since the one-time copy; an upload made meanwhile lands there and is copied into the folder once the host is back, by
-the same rule. The transcript keeps the real paths, so a later read without the host says where the files are. A cell
-running when the disk goes gets "Unmounted or disconnected during a cell" (above): the next read fails.
+`/files` as unavailable, with its real path, never as empty or gone. The model's `/files` falls back to the virtual
+store, empty since the one-time copy; an upload made meanwhile lands there and is copied into the folder once the host
+is back, by the same rule. The transcript keeps the real paths, so a later read without the host says where the files
+are. A cell running when the disk goes gets "Unmounted or disconnected during a cell" (above): the next read fails.
 
 **Three limits, kept apart:**
 
