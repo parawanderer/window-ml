@@ -282,7 +282,8 @@ The Markdown export keeps the source. Code: `src/mermaid/`.
 
 `[label](window-ml:<address>)` in the model's reply opens a view of the extension's own Settings
 ([LINKS.md](../spec/LINKS.md)). Slice 1 resolves the panel's addresses only: `setting/<key>`,
-`settings/extension/<panelTab>[/<section>]` and `settings/extension/backup`. Code: `src/sidebar/links.ts`.
+`settings/extension/<panelTab>[/<section>]` and `settings/extension/backup`. Code: `src/sidebar/links.ts`, and the
+grammar in `src/link-address.ts`, which the worker shares.
 
 - **Only the model's own prose resolves a link.** `markdown()` draws one only when given `addr`, which the reply
   (`reply.tsx`, `streaming-md.tsx`), the answer (`answer-render.tsx`) and `Prose` pass, and never inside a `>` quote,
@@ -291,6 +292,10 @@ The Markdown export keeps the source. Code: `src/mermaid/`.
 - **A button, never an `<a href>`.** It carries `data-addr`; one click handler per container (`onAddressClick`) parses
   the address again at click time and calls `services().openAddress`, so the HTML is never trusted as a route. A
   surface with no `openAddress` (the chat page, for now) draws every link as its label.
+- **On the HUD card, which draws no Settings, the worker opens the chat page at the address** (`OPEN_CHAT_PAGE`,
+  `sw-open-chat.ts`), or focuses it where it is open; the popup's two buttons go the same way. The message is not in
+  `HANDLE_MAP` and is refused from anything but an extension page, by the sender's URL: the card is our iframe in a
+  page tab, so `sender.tab` says nothing. The URL is `chat.html` and the hash of an address `parseAddress` accepts.
 - **A row is found by `data-setting="<key>"`**, a section by `data-section="<id>"`. `SETTING_PLACES` names each
   key's tab and section, and `PANEL_LAYOUT` each tab's sections with their titles (both contract-config.ts), for the
   tip and for `agent_api_docs`; `PANEL_TABS` and `PANEL_SECTIONS`, which the chat page's router reads, are views of it. `tests/setting-places.test.js` renders every tab and fails when either disagrees with the panel,

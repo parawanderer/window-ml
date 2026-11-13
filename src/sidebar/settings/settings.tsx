@@ -35,7 +35,7 @@ import { ManifestsSectionBody } from "./manifests-section";
 import { LibrariesSectionBody } from "./libraries-section";
 import { RequestRows, answerRequest, useWaitingRequests } from "./requests-section";
 import { Lbl } from "./settings-label";
-import type { PanelRoute } from "../links";
+import type { PanelRoute } from "../../link-address";
 
 /** The chart-window lengths the picker offers by name. The scrub strip can set others by drag, which is
  *  why the select needs to know which values it already has an option for. */

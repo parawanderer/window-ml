@@ -3,16 +3,13 @@
 // model's own prose. No separate red-team pass was ruled for links (no new agent tool, ml.* member or page-started
 // message); these are the builder's checklist.
 //
-// Rows not built in slice 1, each with its reason:
-//   · "a page reaching the open-the-chat-page message": slice 1 adds no message. Session, search and attention
-//     addresses are not resolved by the sidebar yet (parseAddress returns null for them, tested below), so there is
-//     no message to reach. The row lands with the slice that adds that message.
+// Rows not built, each with its reason:
 //   · "an address starting, resuming or sending in a session": no session address resolves in slice 1 (below), and
 //     a resolved route has only the fields that name a view (below).
 
 const { test, after } = require("node:test");
 const assert = require("node:assert");
-const { closeSidebarWorlds, loadSidebarWorld } = require("./helpers");
+const { closeSidebarWorlds, loadSidebarWorld, loadBackground } = require("./helpers");
 const { agentStart, agentStep, agentResult, chatStart, chatResult, openRun } = require("./sidebar-helpers");
 
 after(closeSidebarWorlds);
@@ -23,7 +20,8 @@ const LINK = "[set your key](window-ml:setting/apiKey)";
 
 test("no markdown() option makes a window-ml destination an <a>", async () => {
     const { markdown } = await import("../src/sidebar/format.ts");
-    const { parseAddress, addressTip } = await import("../src/sidebar/links.ts");
+    const { addressTip } = await import("../src/sidebar/links.ts");
+    const { parseAddress } = await import("../src/link-address.ts");
     const addr = (a) => { const r = parseAddress(a); return r ? addressTip(r) : null; };
     for (const opts of [{}, { math: true }, { addr }, { math: true, addr }, { diagrams: "light" }, { addr: () => "x" }])
         for (const src of [LINK, `- ${LINK}`, `| a |\n| - |\n| ${LINK} |`, `# ${LINK}`, `**${LINK}**`])
@@ -32,7 +30,7 @@ test("no markdown() option makes a window-ml destination an <a>", async () => {
 
 test("an address with a query, a fragment or any character outside the grammar parses to nothing and stays text", async () => {
     const { markdown } = await import("../src/sidebar/format.ts");
-    const { parseAddress } = await import("../src/sidebar/links.ts");
+    const { parseAddress } = await import("../src/link-address.ts");
     const addr = () => "tip";
     for (const a of ["setting/apiKey?reveal=1", "setting/apiKey#x", "setting/apiKey%2F", "setting/apiKey\"onclick=\"x", "setting/api Key", "../setting/apiKey"]) {
         assert.equal(parseAddress(a), null, a);
@@ -41,7 +39,7 @@ test("an address with a query, a fragment or any character outside the grammar p
 });
 
 test("a resolved route names a view and has no field that acts", async () => {
-    const { parseAddress } = await import("../src/sidebar/links.ts");
+    const { parseAddress } = await import("../src/link-address.ts");
     const { PANEL_LAYOUT } = await import("../src/contract/contract-config.ts");
     const { SETTING_PLACES } = await import("../src/contract/contract-config.ts");
     const addresses = [
@@ -94,4 +92,20 @@ test("clicking a button whose data-addr was tampered with to an unknown address 
     await new Promise((r) => setTimeout(r, 50));
     await w.flush();
     assert.equal(w.shadow.querySelector(".set-body"), null, "Settings did not open: the click parses the address again");
+});
+
+// --- a page reaching the open-the-chat-page message ---
+
+test("OPEN_CHAT_PAGE is no page's: not in HANDLE_MAP, not page-started, and the worker refuses a page's content script", async () => {
+    const { HANDLE_MAP, PAGE_STARTED_TYPES, PAGE_UNGATED_TYPES } = require("../src/page-relay.ts");
+    const mapped = Object.entries(HANDLE_MAP).flatMap(([k, v]) => [k, v.type, v.responseType]);
+    assert.ok(!mapped.some((t) => /OPEN_CHAT/.test(t)), "no relay entry reaches it");
+    assert.ok(!PAGE_STARTED_TYPES.has("OPEN_CHAT_PAGE") && !PAGE_UNGATED_TYPES.has("OPEN_CHAT_PAGE"));
+    // An approved origin's content script, the most a page's own code can be as a sender (`siteGate: false` approves it).
+    const bg = loadBackground({ config: {} });
+    for (const url of ["https://example.com/", "http://127.0.0.1/", "file:///x.html"]) {
+        const sender = { url, origin: new URL(url).origin, tab: { id: 9, url }, frameId: 0 };
+        assert.deepEqual(await bg.send({ type: "OPEN_CHAT_PAGE", payload: { address: "settings/extension/backup" } }, sender), { error: "refused" }, url);
+    }
+    assert.equal(bg.tabsCreated.length + bg.tabsUpdated.length, 0, "nothing opened or focused");
 });

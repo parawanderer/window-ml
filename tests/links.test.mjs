@@ -1,10 +1,12 @@
-// links.test.mjs — `[label](window-ml:<address>)` in the model's prose (src/sidebar/links.ts, docs/spec/LINKS.md):
-// the panel's address grammar, the tip, how markdown() draws a link, and the upgrade from a build without links.
+// links.test.mjs — `[label](window-ml:<address>)` in the model's prose (src/sidebar/links.ts, src/link-address.ts,
+// docs/spec/LINKS.md): the panel's address grammar, the tip, how markdown() draws a link, and the upgrade from a build
+// without links.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { parseAddress, addressTip } from "../src/sidebar/links.ts";
+import { addressTip } from "../src/sidebar/links.ts";
+import { parseAddress } from "../src/link-address.js";
 import { PANEL_LAYOUT } from "../src/contract/contract-config.js";
 import { markdown, mdInline } from "../src/sidebar/format.ts";
 import { SETTING_PLACES } from "../src/contract/contract-config.ts";
@@ -40,6 +42,13 @@ test("an unknown key, tab or section, a section of another tab, or an extra part
         "settings//extension/models", "settings/extension/advanced//shell", "setting//apiKey", "settings/extension/backup/x",
         "settings/extension/models/", "/settings/extension/models", "s/x"])
         assert.equal(parseAddress(a), null, a);
+});
+
+test("formatAddress is parseAddress's inverse on every address that parses", async () => {
+    const { formatAddress } = await import("../src/link-address.ts");
+    const addresses = [...Object.keys(SETTING_PLACES).map((k) => `setting/${k}`), "settings/extension/backup",
+        ...Object.entries(PANEL_LAYOUT).flatMap(([t, { sections }]) => [`settings/extension/${t}`, ...Object.keys(sections).map((s) => `settings/extension/${t}/${s}`)])];
+    for (const a of addresses) assert.equal(formatAddress(parseAddress(a)), a, a);
 });
 
 // --- the tip names the view, never the label ---
