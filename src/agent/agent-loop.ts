@@ -31,8 +31,8 @@ import { resolveOutputCap } from "../contract/contract-pointers";
 import { recordAppended, snapshotCurrent, type CurrentSnapshot, type RecordedMeta } from "./current-context";
 import type { RunLogEvent } from "../log/run-log";
 import { TokenStore, derefPipe, describeToken, extraBeyondModel, memoryFault, cleanLabel, nameOf, shortType, isAliasRef, parseLabel, DEREF_TOOL, type TokenKind, type TokenValue, type DerefRead } from "../pointers/token-pipe";
-import { runPipe, type PipeLimits } from "../pointers/text-pipe";
-import { fileKindSaid, fileRef, fileSections, firstRead, isTextFile, quoteName } from "../pointers/file-pointer";
+import { pageSpans, runPipe, type PipeLimits } from "../pointers/text-pipe";
+import { fileKindSaid, fileRef, fileSections, firstRead, isTextFile, LOOK_DOC_PAGES_MAX, quoteName } from "../pointers/file-pointer";
 import { FILE_PREFIX } from "../pointers/token-prefixes";
 import type { PdfDoc } from "../pdf/pdf-read";
 import { CITABLE_TOOLS } from "../tools/tool-params";
@@ -335,6 +335,9 @@ export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() =
      *  Only the background host passes it, and it reads only a value the run holds; without it a read stays on the
      *  preview, as before. Throws the store's reason for a value that is gone. */
     readText?: (key: string) => Promise<string>;
+    /** Draw pages of a stored PDF (`FilePointer.data`) as PNG data URLs, for `look` at a document; one entry per page asked,
+     *  the image or why that page would not draw. Only the background host passes it, for a value the run holds. */
+    renderPages?: (key: string, pages: number[]) => Promise<({ image: string } | { failed: string })[]>;
     /** Opt-in LIVE tool-output streaming (same flag as the streamed thinking): when set, each tool call gets a
      *  throttled `ctx.stream(text)` so a tool that supports it (exec's console.log, python_exec's print) streams
      *  its output as it runs. Off → tools return the full result at the end, unchanged. */
@@ -810,12 +813,35 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         const swap = (x: unknown) => (isRef(x) ? resolved.get(x) : x);
         return { args: { ...args, tables: typeof tables === "string" ? swap(tables) : Object.fromEntries(Object.entries(tables as Record<string, unknown>).map(([k, x]) => [k, swap(x)])) } };
     };
+    /** `look` at an ATTACHED DOCUMENT (`look({ doc: "@file:…", pages: "4" })`): the loop holds the shelf, so it draws the
+     *  pages from the file's stored bytes and hands the images down, as for an image pointer. Null when the call names no
+     *  `doc`; an error string for a file it cannot look at (unknown, a text file, a page it lacks, past the bound). */
+    const resolveLookDoc = async (args: Record<string, unknown>): Promise<{ args?: Record<string, unknown>; error?: string } | null> => {
+        if (args?.doc == null) return null;
+        if (args.selector != null || args.scope != null) return { error: "look takes a `doc` or a `selector`/`scope`, not both: a document's pages are not on the page." };
+        const r = tokenStore.files.resolve(String(args.doc));
+        if (!r.file) return { error: r.error };
+        const f = r.file;
+        if (isTextFile(f)) return { error: `${fileRef(f)} ${quoteName(f.name)} is a text file, with no pages to look at. Read it with dereference instead.` };
+        let ns: number[];
+        try { ns = pageSpans(String(args.pages ?? ""), LOOK_DOC_PAGES_MAX, "in one look; look at the rest in another call"); }
+        catch (e) { return { error: (e as Error).message }; }
+        const missing = ns.filter((n) => n > f.pages);
+        if (missing.length) return { error: `${fileRef(f)} ${quoteName(f.name)} has ${f.pages} page${f.pages === 1 ? "" : "s"}; it has no page ${missing.join(", ")}.` };
+        if (!opts.renderPages) return { error: "this run cannot draw an attached file's pages." };
+        const drawn = await opts.renderPages(f.data, ns);
+        const images: { image: string; label: string }[] = [], failed: string[] = [];
+        drawn.forEach((d, i) => { if ("image" in d) images.push({ image: d.image, label: `${fileRef(f)} page ${ns[i]}` }); else failed.push(`page ${ns[i]}: ${d.failed}`); });
+        if (!images.length) return { error: `${fileRef(f)} ${quoteName(f.name)}: no page would draw (${failed.join("; ")}).` };
+        const said = `${images.length === 1 ? "page" : "pages"} ${images.map((m) => m.label.slice(m.label.lastIndexOf(" ") + 1)).join(", ")} of ${fileRef(f)} ${quoteName(f.name)}, attached by the person`;
+        return { args: { question: args.question, _images: images, _imageLabel: said, ...(failed.length ? { _imagesFailed: failed.join("; ") } : {}) } };
+    };
     /** Rewrite a `look` at an image pointer into a look at that image, and a `python_exec` table pointer into the table;
      *  anything else passes through. A bad pointer becomes an ERROR RESULT, never a throw: the model should read the fault and correct the
      *  call, exactly as it does for `dereference`, rather than the run dying on a mistyped id. */
-    const lookArgs = (name: string, a: Record<string, unknown>, step: number): { args: Record<string, unknown> } | { error: string } => {
+    const lookArgs = async (name: string, a: Record<string, unknown>, step: number): Promise<{ args: Record<string, unknown> } | { error: string }> => {
         if (name !== "look" && name !== "python_exec") return { args: a };
-        const r = name === "look" ? resolveLookPointer(a, step) : resolveTablePointers(a, step);
+        const r = name === "look" ? (await resolveLookDoc(a)) ?? resolveLookPointer(a, step) : resolveTablePointers(a, step);
         if (!r) return { args: a };
         return r.error ? { error: r.error } : { args: r.args! };
     };
@@ -867,9 +893,12 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         // The gap since the model call returned, minus any time a human held the gate open — that wait is
         // already its own phase, and counting it here would draw the same seconds twice.
         if (turnReturnedAt != null) lastDispatchMs = Math.max(0, t0 - turnReturnedAt - (lastApproveMs ?? 0));
+        // A `_`-prefixed argument (`_image`, `_images`, `_imageLabel`, …) is the loop's alone, added below: one the model
+        // writes is dropped for EVERY tool, so no tool that reads a `_` key can be handed a forged one.
+        a = Object.fromEntries(Object.entries(a ?? {}).filter(([k]) => !k.startsWith("_")));
         try {
             if (name === DEREF_TOOL) return await derefLocally(a, step, seq);
-            const l = lookArgs(name, a, step);
+            const l = await lookArgs(name, a, step);
             if ("error" in l) return withText({ result: `Error: ${l.error}` });
             const r = await orStopped(deps.runTool(name, l.args, push, { seq, step, ...(person ? { person: true } : {}) }));
             if (r === STOPPED) { stoppedMidCall = true; return { result: STOPPED_RUNNING }; }

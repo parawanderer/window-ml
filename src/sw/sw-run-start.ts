@@ -224,14 +224,25 @@ function noteSend(hash: string, turn: number, added: readonly FilePointer[]): vo
  * @param onTab the tab the message was typed on, when known: the note is said there
  */
 export function noteRefusedTurn(hash: string, why: string, onTab?: number): void {
+    const text = `Your message was not sent: ${why}`;
     const runTab = bgRuns.get(hash)?.tabId ?? runInboxes.get(hash)?.tabId;
-    const tabId = onTab ?? runTab;
-    if (tabId == null) return;
-    const event = { kind: "agent-note", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text: `Your message was not sent: ${why}` };
-    if (tabId === runTab) { announce(tabId, event); return; }
+    if (onTab == null || onTab === runTab) { noteRunLine(hash, text); return; }
+    const tabId = onTab;
+    const event = { kind: "agent-note", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text };
     // Typed on a tab the run is not on (one it was moved off): said there only, never into the run's own history.
     toPageUi(tabId, { type: "ML_DEBUG_TO_PAGE", event });
     relayDebugEvent(tabId, event);
+}
+
+/**
+ * Say one line in a run's step list, in the worker's own voice (an `agent-note`): for something that happened to the
+ * run with no turn running to say it, such as the idle reap of its Python namespace. Nothing when the run has no tab.
+ * @param hash the run
+ * @param text the line
+ */
+export function noteRunLine(hash: string, text: string): void {
+    const tabId = bgRuns.get(hash)?.tabId ?? runInboxes.get(hash)?.tabId;
+    if (tabId != null) announce(tabId, { kind: "agent-note", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text });
 }
 
 /** A worker-built run's vision facts, for routing a later turn's images: the model it is on now, and what its build

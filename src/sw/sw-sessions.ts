@@ -33,7 +33,7 @@ import { planImages } from "../image-gate";
 import { ensureOffscreen } from "./sw-offscreen";
 import { readPdfOffscreen } from "./sw-attach";
 import type { PdfMessage } from "../pdf/pdf-wire";
-import { pythonBundlePresent } from "./sw-python";
+import { pythonBundlePresent, deletePythonRun } from "./sw-python";
 import { recordHousekeeping, senderOrigin } from "./sw-housekeeping";
 import { archiveCall, lastFolderReport, onFolderChange, scheduleFolderSync, syncFolder } from "./sw-archive";
 import { archiveCompactionJob, archiveImageCompactor, compactionJob, imageCompactor } from "./sw-image-compact";
@@ -570,7 +570,7 @@ export const sessionStore = (() => {
             onEvicted: (e) => {
                 // Deleted, or moved to the archive: its run policies go with it (POLICIES.md, "Scopes"). An archived
                 // session that comes back starts with none. `kept` (the move failed) leaves them.
-                if (e.outcome === "deleted" || e.outcome === "archived") forgetRunPolicies(e.hash, e.outcome);
+                if (e.outcome === "deleted" || e.outcome === "archived") { forgetRunPolicies(e.hash, e.outcome); deletePythonRun(e.hash); }   // and its Python namespace
                 recordHousekeeping({
                     subsystem: "sessions", kind: e.outcome === "kept" ? "archive-failed" : "evict", reason: e.reason, key: e.hash, bytes: e.bytes,
                     detail: { outcome: e.outcome, idleDays: Math.floor(e.idleMs / DAY_MS), ...(e.error ? { error: e.error } : {}) },

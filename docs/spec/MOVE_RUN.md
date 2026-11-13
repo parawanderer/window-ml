@@ -41,7 +41,7 @@ that URL opens. The person has already done the navigating: the run should follo
 `hostRun` (`sw-run-host.ts`) binds the run's `tabId` ONCE PER TURN: every page send (`toPage`, `delegateSend`), the
 run's inbox (`runInboxes.set`), and the turn's `settle` (`untrackRun`, `releaseDebugger`, `watchBetweenTurns`) close
 over it, about a hundred uses. Re-keying a map does not redirect a turn that is running. And `settle`, at the end of
-EVERY turn, deletes the run's inbox, ends its tasks (`endTasks`) and its Python namespace (`deletePythonRun`). So:
+EVERY turn, deletes the run's inbox, ends its tasks (`endTasks`) and the turn's Python state (`endPythonTurn`; the run's own namespace stays, it lives per run). So:
 
 - **(a) A move BETWEEN TURNS. Ships first.** The run is paused or finished; its in-memory `bgRuns` entry's tab is re-homed, and
   its next turn is hosted on the new tab from the start. It is cheap, and it covers both headline cases. It covers the

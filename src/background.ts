@@ -63,7 +63,7 @@ import { panelWaits } from "./sw/sw-badge";   // the toolbar badge: what is wait
 import { AGENT_LEVEL_TYPES, PAGE_STARTED_TYPES, PAGE_UNGATED_TYPES, RUN_CONTROL_TYPES } from "./page-relay";
 import type { SiteRunEvent } from "./contract/contract-debug";
 import { START_REFUSED } from "./agent-start";
-import { startUserRun, userRunAction, steerRun, noteRefusedTurn } from "./sw/sw-run-start";
+import { startUserRun, userRunAction, steerRun, noteRefusedTurn, noteRunLine } from "./sw/sw-run-start";
 import { ImagesRefused } from "./image-gate";
 import { FilesRefused, cleanFiles, isPdfFile, pdfToPageRun, textFiles } from "./attached-files";
 import { adoptOnTab } from "./sw/adopt-run";
@@ -973,7 +973,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     if (message.type === "PY_STDOUT") { relayPyStdout(message); return false; }
     if (message.type === "PY_STARTED") { pythonStarted(message, sender); return false; }
     if (message.type === "PY_DONE") { pythonDone(message, sender); return false; }
-    if (message.type === "PY_REAPED") { pythonReaped(message, sender); return false; }
+    if (message.type === "PY_REAPED") { pythonReaped(message, sender, noteRunLine); return false; }
     if (message.type === "SERVER_TOOL_EXEC") {
         // Run ONE OpenWebUI-configured tool. CHOKE POINT, and a real one: the fetch spends the user's API
         // key, and the tool it runs is caller-chosen — a hostile page reaching this handler directly could
@@ -1517,7 +1517,7 @@ configureSessionCommands({
     forgetRun: (hash) => {
         if (runControllers.has(hash)) return;   // never a live run: the command refuses those first
         bgRuns.delete(hash); hydratedRuns.delete(hash); releaseSessionTokens(hash);
-        deleteRun(hash); forgetRunModel(hash); forgetRunPolicies(hash); deletePythonRun(hash); void forgetPageBuilt(hash);
+        deleteRun(hash); forgetRunModel(hash); forgetRunPolicies(hash); void forgetPageBuilt(hash);
     },
 });
 
