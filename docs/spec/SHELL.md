@@ -174,6 +174,9 @@ never a page. The model learns which mode a call ran in from the call's result, 
   host's walk are also denied at the kernel level unless the call explicitly named them and was approved (`allow_read`
   in `sandbox.rs`), so an interpreted script (`node scripts/tool.mjs`, `python3 scripts/tool.py`) cannot read `.env`
   behind its declared `argv` operands.
+- **Mounts, the `/files` argv refusal and a call's diff** are stated as requirements on the host in
+  [`FILE_ATTACHMENTS.md`](FILE_ATTACHMENTS.md), "What window-ml-host must do for mounts, `/files` and `ml.sh` diffs"
+  (proposed), with the table of what runs free, what asks and what is refused.
 
 ## Where the script runs
 

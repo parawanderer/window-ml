@@ -799,8 +799,8 @@ under the lockdown.
 - The size cap's value, set from the measurement above.
 
 **Owners.** This text, the diff row and the provenance of a file read from a mount: the chat-page lane. The channel and
-the mount: the Pyodide lane. The host's scope check, the argv refusal and the `ml.sh` snapshot: the `ml.sh` and
-window-ml-host owner, through the coordinator.
+the mount: the Pyodide lane. The host's scope check, the argv refusal and the `ml.sh` snapshot: the host lane, as
+stated in "What window-ml-host must do" below.
 
 ### `/files` on the person's disk, when a host is connected (proposed 2026-11-13)
 
@@ -970,7 +970,152 @@ neither the folder nor `ml.files`.
 
 **Owners.** This text, the panel's view of both copies, the sync's rules, provenance and the files API's JS side: the
 chat-page lane. The mount, the fallback and the Python binding: the Pyodide lane. The host's folder, the git snapshot
-and the per-request judging, the folder watch: the `ml.sh` and window-ml-host owner (none live; with Shane).
+and the per-request judging, the folder watch: the host lane, as stated in "What window-ml-host must do" below.
+
+### What window-ml-host must do for mounts, `/files` and `ml.sh` diffs (proposed 2026-11-13)
+
+PROPOSED 2026-11-13; for Shane's ruling, with e3's rows through the coordinator. Nothing is built. The coordinator's
+ruling (Shane, 2026-11-13): no host-side lane opens until this is ruled; then one lane, in its own window-ml-host
+clone, takes the scope check (H1 to H8) first, then the argv refusal (H9), then the snapshot (H10 to H15). It states
+as requirements on the host what the two sections above leave to "the `ml.sh` and window-ml-host owner", and settles
+three places where they and `SHELL.md` disagree (named where each is settled, and listed under "For Shane" at the
+end).
+
+**One judge.** The host enforces the scope and the hard refusals, which no policy can lift, and resolves the facts. The
+worker judges free or asks with the built-in default policy and the person's policies over those facts, as it already
+does for an `ml.sh` call (`SHELL.md`, "Policies": a policy is a function over the facts the host resolved). A cell's
+file request and an `ml.sh` call are judged by one mechanism over one list of facts. The mounts are the host's
+configured roots (`configure`), one list, not a second one beside it.
+
+**The scope check** (what a cell's `open()` through a mount reaches; "Host directories in the sandbox", "Security").
+
+- H1. New host calls, each on a mount the host already holds: `mount`, `unmount`, `list`, `fetch` (read a file whole),
+  `store` (write a file whole), `remove` and `rename`. Every path in a request is relative to a mount and resolved on
+  the host; a path the worker resolved is never trusted, since a `full` cell can forge a worker post.
+- H2. `mount` refuses, by the resolved path and with the sentences above: a path at, under or above a reserved prefix
+  (`/files`, `/tmp`, `/lib`, `/home/pyodide`, `/dev`, `/proc`); the home directory or above; a path at, under or above
+  the browser profile, the archive folder or the host's own config. The refusal is the host's, so the worker's copy of
+  the list is a convenience, not the check.
+- H3. The host holds each mount's directory descriptor from `mount` and compares its device and inode on every request;
+  a mismatch refuses the request and reports the mount as replaced.
+- H4. A path is opened by walking its components from that descriptor with no symlink followed. `fsx::open_beneath`
+  does this today (`openat2` with `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS` on Linux, a per-component `O_NOFOLLOW` walk
+  elsewhere), but read-only and from a path; it is extended to start from the held descriptor and to open for writing.
+  A symlink component anywhere in the path is refused this round, including one that points inside the mount (open,
+  below).
+- H5. `store` writes beside the file and renames into place, so a Stop or a dropped connection leaves the old file
+  whole. A write through a descriptor whose `fstat` shows `st_nlink > 1` is refused; a read of one is allowed. A write
+  to a read-only mount fails with `EROFS`; a `fetch` over the fetch cap fails with `EFBIG` and carries the size.
+- H6. In the uploads folder, a `store` into `attached/`, and a `rename` into or out of it, are refused by the host
+  whatever a policy says; a `remove` there is judged (it asks by default, the person's uploads). This is a hard
+  refusal because `attached/` is the person's frozen originals and no policy the model can ask for should make it
+  writable.
+
+**The facts a request carries back** (H7), so the worker can judge it: `inMount`, the mount's `mode`, `secret` (the
+host's `SECRET_PATTERNS`, the list an `ml.sh` path argument meets), `exists`, `ignored` (by git, `git check-ignore`
+under the git belt), `inUploads`, `inAttached`, `gitUndoable`, and a `basis` of `{ dev, ino, size, mtimeNs }` for an
+existing file. `gitUndoable` is true for a tracked file with no uncommitted change, false otherwise, and null when
+`repoConfigRunsCode` is true or null, since asking git would run the repository's config.
+
+- H8. Compare and swap. A `store`, `remove` or `rename` that the worker judged on a fact carries the `basis` it was
+  judged on, and the host refuses it with `ChangedSinceJudged` when the file's basis differs at the moment of the
+  write. Without it, a file judged free as git-undoable could be edited between the judgment and the write and
+  then lost.
+
+**The `/files` argv refusal** (H9). Settles the first disagreement: "Host directories in the sandbox" refuses a
+`/files/` argv item unless the host has that path, and "`/files` on the person's disk" says the refusal "goes away"
+yet gives a sentence for it. Both are kept, as one rule:
+
+- A pointer token of any prefix stays refused on the extension side, before the call reaches the host (`sh-call`), as
+  now.
+- At `spawn` the host refuses any argv item that equals `/files`, starts with `/files/`, or carries such a path after
+  its first `=` (`--out=/files/x`), with the sentence of "`/files` on the person's disk", naming the folder's real
+  path: `/files is on disk while the host is connected: /Users/sb/git/proj/window-ml-files/x`.
+- The alias exception of the first section is kept for a host that has a `/files` directory of its own, where the
+  argv item is the host's file. That is the only case the sentence does not apply.
+- Named cost: a search for the text `/files/` (`rg '/files/' .`) is refused too, since the host cannot tell a pattern
+  from a path; the model writes the pattern another way (`rg '[/]files/'`).
+
+**The `ml.sh` snapshot** (H10 to H14). Settles the second disagreement: "Diffs from git" takes the snapshot with
+`git add -A` into a scratch index, which writes a blob for every changed file into the repository's object store, and
+its own red-team row says `.git/info/exclude` is the only other file the host writes. The snapshot below writes
+nothing into the repository.
+
+- H10. Before and after each `ml.sh` call in a git workspace, the host builds a tree with a scratch `GIT_INDEX_FILE`
+  (a copy of the person's index, for its stat cache) and a private `GIT_OBJECT_DIRECTORY`, both in the host's own
+  directory, with the repository's object directory as an alternate (`GIT_ALTERNATE_OBJECT_DIRECTORIES`). The person's
+  index, HEAD, stash list and object store are unchanged; the private directory is deleted when the diff is made.
+- H11. Changed files are hashed with `git hash-object -w --no-filters --stdin-paths` and entered with
+  `git update-index --index-info`, never `git add` or `update-index --add`, which run a clean filter. Every git spawn
+  carries the git belt (`core.fsmonitor=false`, `core.pager=cat`, `GIT_OPTIONAL_LOCKS=0`), so no filter, textconv,
+  fsmonitor or hook runs. Untracked files are included; ignored files are not, except the uploads folder.
+- H12. Bounds: no file over the diff cap (1 MB, "The diff's cap") goes into the tree; it is compared by size and
+  sha256 instead. The walk stops at `WALK_CAP` (20 000) entries; past that the call's diff is null with the reason.
+- H13. The diff is `git diff-tree --no-ext-diff --no-textconv` of the two trees. Its body goes out as held output (a
+  pointer, as stdout does), and `done` carries the summary line (`edited a.py (+3 −1); deleted old.log`). A change is
+  reported as "changed during this call", never attributed to the call's process, since another process may have
+  written meanwhile. An orphaned call's snapshot reports through `status`/`ended`, as `protectedChanged` does. A
+  workspace that is not a git repository gets a null diff (open, as in the section above).
+- H14. The diff's file list is what the call's end flushes to the browser backup ("The sync").
+
+**Telling an old host apart** (H15). `hello` gains `mounts: true` and `snapshot: true`. Their absence means an older
+host: the worker treats mounts and diffs as unavailable, never probes by calling.
+
+**What runs free, what asks, what is refused.** The default policy's rows, each with the fact that backs it. "Refused"
+is the host's and no policy changes it; "asks" is the default, which a policy may change either way.
+
+| Operation | Default | Backing fact |
+| --- | --- | --- |
+| read in a mount | free | `inMount` |
+| read of a file that looks like a secret | asks | `secret` |
+| any write to a read-only mount | refused (`EROFS`) | `mode` |
+| write or delete of a file git can undo | free | `gitUndoable` true |
+| write or delete of a file git cannot undo (untracked, ignored, uncommitted changes) | asks | `gitUndoable` false |
+| the same when git cannot be asked | asks | `gitUndoable` null |
+| a new file | free | `exists` false |
+| anything in the uploads folder outside `attached/` | free | `inUploads` |
+| delete in `attached/` | asks | `inAttached` |
+| write into, or rename in or out of, `attached/` | refused | `inAttached` |
+| a path outside every mount, through a symlink, or after the mount was replaced | refused | H3, H4 |
+| a write through a hard link | refused | `fstat` `st_nlink` |
+| a write whose basis changed since it was judged | refused (`ChangedSinceJudged`) | `basis` |
+| a `/files` argv item | refused | H9 |
+| `git status`, `git diff`, `git add` | free | the manifest, `repoConfigRunsCode` false |
+| the first commit in a session | asks | extension side |
+| later commits on the current branch | free | extension side |
+
+The `Window-ML-Run:` commit trailer and the first-commit-in-session state are the extension's, not the host's.
+
+Settles the third disagreement: `SHELL.md`'s "the sandbox widens the free tier" makes a sandboxed write inside the
+roots free, and "`/files` on the person's disk" makes a delete git cannot undo ask. The proposal: both hold, because
+they bound different things. The sandbox bounds WHERE a write lands; `gitUndoable` bounds whether it can be taken
+back. So under the sandbox a write that creates a file, or touches one git can undo, is free, and an overwrite or
+delete of one git cannot undo asks, for a cell and for an `ml.sh` call whose manifest names the path.
+
+**Red-team rows** (e3, through the coordinator; each with its pass condition above): a forged request for a path
+outside the mount, by `..`, an absolute path or a symlink component (H1, H4); a mount at, under or above each refused
+path, by its resolved path (H2); the mounted directory replaced by a symlink after `mount` (H3); a component swapped
+for a symlink between two requests (H4); a write through a hard link (H5); a `store` interrupted mid-transfer leaving
+the old file whole (H5); a `store` into `attached/`, a `rename` into or out of it, under every policy (H6); a
+git-undoable file edited by another process between the judgment and the write (H8); a `/files` argv item in each
+form, `=` and bare (H9); the snapshot leaving the person's index, HEAD, stash list and object store byte-identical,
+with a clean filter, an fsmonitor and a hook configured in the repository that would each leave a mark if run (H10,
+H11); an ignored `.env` never entering a snapshot tree (H11); a page or a page-started run reaching any of the new
+calls.
+
+**Open.**
+
+- A symlink inside a mount that points inside it (a repository's `node_modules/.bin`): refused this round by H4; whether
+  to follow one whose target resolves inside the same mount is a later question.
+- The git queries per request (`check-ignore`, the undoability check) cost a spawn each; whether the host batches them
+  per cell or caches them by `basis` is the lane's to measure.
+
+**For Shane.** The three settlements: the argv refusal kept as one rule (H9), the snapshot writing nothing into the
+repository (H10), and the sandbox and `gitUndoable` both holding (the paragraph under the table).
+
+**Owners.** This text: the chat-page lane, until the host lane opens. H1 to H15: the host lane, one lane in its own
+window-ml-host clone, scope check (H1 to H8) first. The worker's judging of the facts and the table's default policy:
+the `ml.sh` extension side (`docs/dev/shell.md`).
 
 **The person deletes or moves a file.** The files panel can delete, rename and move files in the writable part. During
 a live run the model is told the file's name through the run's inbox, the same as any other notice; a move is a delete
