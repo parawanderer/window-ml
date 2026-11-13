@@ -41,7 +41,6 @@ commit. A row leaves this list when its fix merges.
 | 1 | Context overflow (`agent-loop.ts`, `ml-agent-run.ts:570`) | The oldest context, dropped by the backend past `num_ctx` | Nothing; `chat_metadata` reports fill only if asked | None |
 | 2 | Generation cap (`sw-llm.ts:284,977,1155`; `READER_MAX_TOKENS` `contract-render.ts:34`) | The rest of a reply cut at `max_tokens`; `finish_reason: "length"` and `done_reason` are never read | Nothing; a cut `look` description reads as complete | None |
 | 3 | Pointer loss (`sw-runs.ts:573-602`, `token-pipe.ts:192-211,344-366`) | Every value, on worker eviction; the oldest past `TokenStore.CAP` 200 or `MAX_TOKEN_SESSIONS` 24 | "Nothing has been captured", or "does not exist … you may be inventing the id" | Re-run the tool (said only for the empty store) |
-| 4 | `fetch_url` preview (`ml-tool-factories.ts:202,404`; `agent-loop.ts:1146-1168`) | Past 4000 chars | The amount | The full body is under a pointer the result never names |
 | 5 | `toolTokens` off (`agent-loop.ts:1109`; `ml-agent-run.ts:108`) | Past 500 (exec) or 2000 (python_exec) chars, kept nowhere | The amount | Re-run narrower, or a larger `maxChars` with approval; neither is named |
 | 6 | Pointer cap `UI_OUT_CAP` 12000 (`contract-chat.ts:148`; `agent-loop.ts:1168-1170`) | Past 12000 chars, kept nowhere | The cut line says the pointer "holds N chars", which reads as the whole output | Re-run narrower; not said |
 | 7 | Python page tables (`dom.ts:1127,1166-1194`; `ml-python.ts:250-269`) | Rows past 5000, columns past 200 | Nothing | None |
@@ -53,7 +52,6 @@ commit. A row leaves this list when its fix merges.
 | 13 | `ml.sh` host cut (`sh-call.ts:533,597-610`) | Past the host's capture bound; `size` is what was kept | Only the `truncated` field | None for the cut part |
 | 14 | Chat images (`sw-chat.ts:33,172`) | Images past 8 in a turn | Nothing, to the model or the person | None |
 | 15 | Delegated page answers (`page-answer-caps.ts:145-172`; `worker-media.ts:56`) | Columns past 2000, cells past 100k chars, media past 4 MB | Only text and image drops get a note | None |
-| 16 | Asked `task tail` past `ASKED_TAIL_CHARS` (`sw-tasks.ts:206`; `agent-loop.ts:1144,1159-1197` at e9bf2552) | The rest of the peeked lines; their scrubbed whole is stored as `textValue` | The cut (an ellipsis) | None: `task` is `citable: false`, so no `@tool:` id is minted and `heldChars` is never set, so no cut line names one (added 2026-11-12) |
 
 PDF attachments are not wired yet. When they are, a page sent as text without its image says what the measurements
 saw (a figure, drawn paths, broken glyphs) and how to look at the page: `FILE_ATTACHMENTS.md`.
