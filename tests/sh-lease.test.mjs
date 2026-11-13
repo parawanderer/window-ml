@@ -41,8 +41,9 @@ globalThis.chrome = {
 };
 const { shRun, detachedText, SH_TAIL_ABSENT } = await import("../src/sw/sw-shell-call.ts");
 const { SH_LEASE_MS, SH_HOST_TIMEOUT_MS } = await import("../src/shell/sh-call.ts");
-const { taskAction, endTasks, withTasks, openTasks, taskDrained } = await import("../src/sw/sw-tasks.ts");
-const { runInboxes } = await import("../src/sw/sw-runs.ts");
+const { taskAction, endTasks, withTasks, openTasks, taskDrained, detachTask, cancelPageTasks } = await import("../src/sw/sw-tasks.ts");
+const { runInboxes, rekeyRunInbox, senderOwnsRun } = await import("../src/sw/sw-runs.ts");
+const { runLog } = await import("../src/sw/sw-run-log.ts");
 const { TokenStore } = await import("../src/pointers/token-pipe.ts");
 const { builtinTool } = await import("../src/tools/tool-registry.ts");
 
@@ -584,4 +585,113 @@ test("the task line reads under a second as \"<1 s\", never \"0 s\"", async () =
     const { taskLineText } = await import("../src/sidebar/transcript/task-line.tsx");
     assert.equal(taskLineText("t1", { status: "done", ms: 300, code: 0 }), "✓ task t1 finished · <1 s · exit 0");
     assert.equal(taskLineText("t1", { status: "done", ms: 1600, code: 0 }), "✓ task t1 finished · 2 s · exit 0");
+});
+
+// --- a page change ends the page's tasks, not the run's (ASYNC_CALLS.md rule 4a) ---
+
+/** A task whose executor the test owns and which declares where it runs: `pageBound` true is a detached exec's kind. */
+function ownedTask(runId, pageBound, confirmed = true) {
+    let end;
+    const settled = new Promise((r) => { end = r; });
+    const seen = { cancel: 0 };
+    const id = detachTask(runId, { tool: pageBound ? "exec" : "ml.sh", startedMs: Date.now(), leaseMs: 15_000, expectMs: null,
+        exec: { pageBound, cancel: async () => { seen.cancel++; return { confirmed, text: "cancelled by the test" }; }, tail: () => null, tailAbsent: "no tail", settled } });
+    return { id, seen, end: (text) => end({ status: "done", text, result: null }) };
+}
+
+test("a page change cancels a page-bound task by its executor's cancel, tells the model the fact, and records it", T, async () => {
+    const run = liveRun("run-pg-cancel");
+    const t = ownedTask("run-pg-cancel", true);
+    await cancelPageTasks("run-pg-cancel");
+    assert.equal(t.seen.cancel, 1);
+    assert.deepEqual(run.inbox().map((m) => ({ text: m.text, task: m.task })), [{ text: `[task ${t.id} cancelled: it ran in the page this run left]`, task: t.id }]);
+    const rec = (await runLog.forRun("run-pg-cancel")).filter((e) => e.subsystem === "task" && e.kind === "cancelled");
+    assert.equal(rec.length, 1);
+    assert.equal(rec[0].reason, "page-change");
+    assert.equal(rec[0].detail.id, t.id);
+    assert.match(await taskAction("run-pg-cancel", { op: "await", id: t.id }), /cancelled/);
+    await endTasks("run-pg-cancel");
+});
+
+test("a page change leaves a runtime-bound ml.sh task running, and its late result still reaches the inbox", T, async () => {
+    const host = slowHost();
+    const run = liveRun("run-pg-sh");
+    const r = await shRun(ctxFor("run-pg-sh"), [["ls"], { expectMs: 60 }]);
+    assert.equal(r.code, "Detached", JSON.stringify(r).slice(0, 300));
+    await cancelPageTasks("run-pg-sh");
+    assert.equal(host.calls.filter((c) => c.call === "cancel").length, 0, "the host was asked to cancel a runtime-bound call");
+    assert.deepEqual(run.inbox(), [], "a fact was told about a task that kept running");
+    host.finish();
+    await until(() => run.inbox().length > 0);
+    assert.match(run.inbox()[0].text, new RegExp(`^\\[task ${r.task} done after`));
+    await endTasks("run-pg-sh");
+});
+
+test("a cancelled page-bound task never resolves later: its late result is dropped, not queued against the new page", T, async () => {
+    const run = liveRun("run-pg-late");
+    const t = ownedTask("run-pg-late", true);
+    await cancelPageTasks("run-pg-late");
+    t.end("the OLD page's answer");
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(run.inbox().length, 1, "only the cancel fact is queued");
+    assert.doesNotMatch(run.inbox()[0].text, /OLD page/);
+    const rows = (await withTasks({ run: { id: "h", model: null, step: 1, maxSteps: 8, startedTs: 0 }, messages: [], meta: [], log: Object.assign([], { text: "" }) }, "run-pg-late")).tasks.rows;
+    assert.equal(rows[0][3], "cancelled");
+    assert.equal(rows[0][9], null);
+    await endTasks("run-pg-late");
+});
+
+test("an await on a page-bound task is answered with the cancel fact when the page changes, and nothing is also queued", T, async () => {
+    const run = liveRun("run-pg-await");
+    const t = ownedTask("run-pg-await", true);
+    const waiting = taskAction("run-pg-await", { op: "await", id: t.id, timeout_ms: 5000 });
+    await new Promise((r) => setTimeout(r, 20));
+    await cancelPageTasks("run-pg-await");
+    assert.match(await waiting, new RegExp(`^task ${t.id} cancelled after \\d+ s: it ran in the page this run left$`));
+    assert.deepEqual(run.inbox(), []);
+    await endTasks("run-pg-await");
+});
+
+test("a page-bound cancel the executor does not confirm leaves the task orphaned: the line, the record and a waiting await all say so", T, async () => {
+    const run = liveRun("run-pg-orphan");
+    const t = ownedTask("run-pg-orphan", true, false);
+    await cancelPageTasks("run-pg-orphan");
+    assert.deepEqual(run.inbox().map((m) => m.text), [`[task ${t.id} orphaned: it ran in the page this run left, and its cancel was not confirmed]`]);
+    const rec = (await runLog.forRun("run-pg-orphan")).filter((e) => e.subsystem === "task");
+    assert.deepEqual(rec.map((e) => [e.kind, e.reason]), [["orphaned", "page-change"]]);
+    t.end("the OLD page's answer");
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(run.inbox().length, 1, "an orphaned page-bound task's late result reached the inbox");
+    await endTasks("run-pg-orphan");
+
+    liveRun("run-pg-orphan-await");
+    const u = ownedTask("run-pg-orphan-await", true, false);
+    const waiting = taskAction("run-pg-orphan-await", { op: "await", id: u.id, timeout_ms: 5000 });
+    await new Promise((r) => setTimeout(r, 20));
+    await cancelPageTasks("run-pg-orphan-await");
+    const answer = await waiting;
+    assert.match(answer, /orphaned/, answer);
+    assert.doesNotMatch(answer, new RegExp(`^task ${u.id} cancelled`), "the await read cancelled while the table reads orphaned");
+    await endTasks("run-pg-orphan-await");
+});
+
+// --- the inbox follows the run to a new tab ---
+
+test("rekeyRunInbox moves a live run's inbox to the new tab: a late result lands under it, the sender check accepts the new tab and refuses the old", T, async () => {
+    const host = slowHost();
+    const run = liveRun("run-rekey");                  // on tab 7
+    const r = await shRun(ctxFor("run-rekey"), [["ls"], { expectMs: 60 }]);
+    assert.equal(r.code, "Detached");
+    assert.equal(senderOwnsRun({ tab: { id: 7 } }, "run-rekey"), true);
+    assert.equal(rekeyRunInbox("run-rekey", 9), true);
+    assert.equal(runInboxes.get("run-rekey").tabId, 9);
+    assert.equal(senderOwnsRun({ tab: { id: 9 } }, "run-rekey"), true);
+    assert.equal(senderOwnsRun({ tab: { id: 7 } }, "run-rekey"), false, "the old tab still answers for the run");
+    assert.equal(senderOwnsRun({}, "run-rekey"), true, "an extension page has no tab and is not refused");
+    host.finish();
+    await until(() => run.inbox().length > 0);
+    assert.equal(runInboxes.get("run-rekey").queue, run.inbox(), "the result went to the re-keyed inbox itself");
+    assert.match(run.inbox()[0].text, new RegExp(`^\\[task ${r.task} done`));
+    assert.equal(rekeyRunInbox("no-such-run", 9), false);
+    await endTasks("run-rekey");
 });

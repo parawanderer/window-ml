@@ -47,7 +47,7 @@ globalThis.chrome = {
 };
 const { leaseCell, pyKernelBusy, pyDetachedText, pyTailText, pyCancelText } = await import("../src/sw/sw-python-task.ts");
 const { pythonStarted, pythonDone, runPython } = await import("../src/sw/sw-python.ts");
-const { taskAction, endTasks, openTasks, taskDrained } = await import("../src/sw/sw-tasks.ts");
+const { taskAction, endTasks, openTasks, taskDrained, cancelPageTasks } = await import("../src/sw/sw-tasks.ts");
 const { runControllers, runInboxes } = await import("../src/sw/sw-runs.ts");
 const { runLog } = await import("../src/sw/sw-run-log.ts");
 const { ringAppend, PY_LEASE_MS, PY_LEASE_MAX_MS, PY_DETACHED_MAX_MS, PY_INTERRUPT_KILL_MS } = await import("../src/python/py-lease.ts");
@@ -603,4 +603,18 @@ test("build.mjs refuses a __PY_LEASE_MS__ or __PY_DETACHED_MAX_MS__ that is not 
             assert.match(r.stderr, new RegExp(`${name} must be a positive integer of milliseconds`));
         } finally { rmSync(out, { recursive: true, force: true }); }
     }
+});
+
+// --- a page change ends the page's tasks, not the run's (ASYNC_CALLS.md rule 4a) ---
+
+test("a page change leaves a detached cell running (runtime-bound): no PY_CANCEL, and its late result still reaches the inbox", T, async () => {
+    const c = await detached();
+    const before = sentOf("PY_CANCEL").length;
+    await cancelPageTasks(c.runId);
+    assert.equal(sentOf("PY_CANCEL").length, before, "the offscreen document was asked to cancel a runtime-bound cell");
+    assert.deepEqual(c.inbox(), []);
+    c.resolve({ out: "after the page changed" });
+    await until(() => c.inbox().length > 0);
+    assert.match(c.inbox()[0].text, new RegExp(`^\\[task ${c.r.id} done after \\d+ s: out: after the page changed\\]$`));
+    await done(c);
 });

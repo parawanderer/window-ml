@@ -18,6 +18,9 @@ import { storeText } from "./sw-values";
 /** Where a task is. A detached call is `running`; `detached` is how it got here, not a status. */
 export type TaskStatus = "running" | "done" | "failed" | "cancelled" | "orphaned";
 
+/** What a waiting await is answered with: an executor's outcome, or a page change's cancel the executor did not confirm. */
+type AwaitAnswer = Omit<TaskOutcome, "status"> & { status: TaskOutcome["status"] | "orphaned" };
+
 /** How a task ended, as its executor reports it: the text the model reads (scrubbed here) and the result's pointer. */
 export interface TaskOutcome {
     status: "done" | "failed" | "cancelled";
@@ -39,6 +42,12 @@ export interface TaskEnd { status: TaskStatus; ms: number; code: number | null }
 
 /** What only the executor can do for a task it registered. */
 export interface TaskExecutor {
+    /**
+     * Where the call RUNS (ASYNC_CALLS.md rule 4a): true when it runs in the page the run is on (a detached `exec`, a DOM or
+     * selector subscription), so a page change ends it; false when it runs on the runtime (`ml.sh`, `python_exec`, a fetch),
+     * which a page change leaves running. Each executor kind declares it; absent reads as false.
+     */
+    pageBound?: boolean;
     /** Cancel the call; resolves to what happened, in words (a cancel's effect is a fact, never a promise). */
     cancel(): Promise<{ confirmed: boolean; text: string }>;
     /**
@@ -80,8 +89,9 @@ interface Task extends Omit<TaskSpec, "exec"> {
     value?: string;
     chars?: number;
     image?: string;
-    /** An await waiting on it now: answered instead of the inbox. */
-    waiter?: (o: TaskOutcome) => void;
+    /** An await waiting on it now: answered instead of the inbox, by its end or by a page change's cancel (which can
+     *  leave it orphaned). */
+    waiter?: (o: AwaitAnswer) => void;
     /** Its end is being recorded (the scrub is async): a second end is ignored, and it still reads as running. */
     ending?: boolean;
     exec: TaskExecutor;
@@ -216,6 +226,31 @@ export async function endTasks(runId: string): Promise<void> {
     }));
 }
 
+/**
+ * The run's page changed (a same-tab navigation of a worker-hosted run): each page-bound task still running is cancelled
+ * through its executor's cancel, and the model is told as a fact, through the inbox as a cancel's result is (or to an await
+ * waiting on it). A runtime-bound task is not touched. The cancelled task's late result is dropped (`finish` ignores a task
+ * that is not running), so nothing it started in the old page resolves against the new one.
+ * @param runId the run whose page changed
+ */
+export async function cancelPageTasks(runId: string): Promise<void> {
+    const mine = tasks.get(runId);
+    if (!mine) return;
+    await Promise.all([...mine.values()].filter((t) => t.status === "running" && t.exec.pageBound === true).map(async (t) => {
+        const c = await t.exec.cancel().catch((e) => ({ confirmed: false, text: (e as Error)?.message || String(e) }));
+        // Ended or cancelled while the cancel was in flight: that end's status stands.
+        if (t.status !== "running") return;
+        const text = c.confirmed ? "it ran in the page this run left" : "it ran in the page this run left, and its cancel was not confirmed";
+        t.status = c.confirmed ? "cancelled" : "orphaned";
+        t.endedMs = Date.now();
+        t.text = text;
+        recordRunLog(runId, { level: "warn", subsystem: "task", kind: c.confirmed ? "cancelled" : "orphaned", reason: "page-change", ms: t.endedMs - t.startedMs, detail: { id: t.id, tool: t.tool } });
+        if (tasks.get(runId)?.get(t.id) !== t) return;
+        if (t.waiter) { const w = t.waiter; t.waiter = undefined; t.delivered = true; w({ status: t.status, text, result: null }); return; }
+        runInboxes.get(runId)?.queue.push({ text: `[task ${t.id} ${t.status}: ${text}]`, task: t.id });
+    }));
+}
+
 /** Whole seconds, for the model's text. */
 const secs = (ms: number): string => `${Math.round(ms / 1000)} s`;
 
@@ -253,7 +288,7 @@ export async function taskAction(runId: string, args: Record<string, unknown>): 
         const expect = Number.isFinite(given) && given > 0 ? Math.min(Math.floor(given), TASK_AWAIT_MAX_MS) : null;
         const wait = expect ?? t.leaseMs;
         const signal = runControllers.get(runId)?.signal;
-        const o = await new Promise<TaskOutcome | null>((resolve) => {
+        const o = await new Promise<AwaitAnswer | null>((resolve) => {
             const timer = setTimeout(() => { t.waiter = undefined; resolve(null); }, wait);
             const onAbort = () => { clearTimeout(timer); t.waiter = undefined; resolve(null); };
             signal?.addEventListener("abort", onAbort, { once: true });

@@ -247,6 +247,8 @@ export async function approveOrigin(sw, origin, { agents = "always" } = {}) {
         // ONE write: each site-access change runs its own syncPresence, which unregisters and re-registers the page
         // scripts, so a second write re-opens a gap after the wait below has returned, and a page opened in it reads as
         // hidden (open() in site-access.spec.mjs then waits for a gate that never closes).
+        // (Since #1693 syncPresence updates the registrations in place and that gap is no longer reachable; the one
+        // write stays.)
         /** @type {Record<string, unknown>} */
         const patch = {};
         if (!list.includes(o)) patch.ml_site_always = [...list, o];

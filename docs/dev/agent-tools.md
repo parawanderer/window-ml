@@ -611,7 +611,13 @@ always coarse; the background-hosted loop calls `focusLineFor` directly. Both re
   released by the person opening the tab. Every send goes through `delegateSend` (delegate-send.ts), which watches
   the tab while it waits (`page-reachable.ts`): a `discarded` tab is reloaded in place and retried once (it has no
   document, so a reload costs nothing already lost), and a frozen one, which the browser labels as nothing unusual,
-  is bounded by a deliberately generous cap. A tab hosting a run is also pinned (`autoDiscardable: false`) and
+  is bounded by a deliberately generous cap. Three pages are told apart before that cap (`tests/e2e/page-health.spec.mjs`):
+  a CRASHED renderer reads `status: "unloaded"` without `discarded` and fails at once, also when its lost channel
+  would otherwise read as a navigation; a page whose main thread SPINS misses `BUSY_STRIKES` synchronous
+  `PRESENCE_CHECK` pings in a row and fails as busy, but only on a tab the browser reports `frozen: false`, since a
+  frozen tab misses them too; and a `navigate` whose destination sent nothing in `NAV_COMMIT_MS`, still the tab's
+  `pendingUrl` with no new document committed, says so and lifts the barrier, since the tab is still on the page it
+  was leaving. A tab hosting a run is also pinned (`autoDiscardable: false`) and
   released when it ends. And a tab can come back under a NEW id: `chrome.tabs.onReplaced` is the only notice, since
   no navigation commits and nothing is removed, so everything keyed by tab is re-filed there or the run is orphaned
   under an id nothing will send again. That includes a live turn's inbox, which the person's gate answer and steer

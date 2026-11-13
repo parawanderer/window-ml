@@ -68,7 +68,8 @@ import { claimValue, runMayClaim, valueHolders, readStoredColumns, readStoredTex
 import { isoServer, type IsoDeps } from "./iso-channel";
 import { shPut, shRead, shRun, takeShSpans } from "./sw-shell-call";
 import { focusLineFor } from "./sw-focus";
-import { delegateSend } from "./delegate-send";
+import { delegateSend, CHANNEL_GONE } from "./delegate-send";
+import { NAV_COMMIT_MS } from "./nav-barrier";
 import { GATED_BUILTINS } from "../tools/tool-registry";
 import { checkVerifyRequest, verifyAsked, verifyVerb, withoutPageVision, workerVerify, VERIFY_REFUSED, VERIFY_WITHHELD, type VerifyOutcome, type WorkerVerify } from "./worker-verify";
 import { topDocument } from "./worker-vision";
@@ -131,6 +132,26 @@ async function withShCalls(runId: string, seq: number | undefined, tool: () => P
 }
 
 const STREAM_EMIT_MS = 90;   // min gap between live `agent-stream` deltas — smooth enough to read, not a flood
+
+/**
+ * Wait for a `navigate`'s destination to re-adopt the run, and say whether it stalled: nothing re-adopted within
+ * NAV_COMMIT_MS, no new document committed, and the browser still holds the destination as the tab's `pendingUrl`.
+ * Then the tab is on the page it was leaving, which still holds the run, and the barrier is lifted. Anything else
+ * (a commit, a browser that reports no pendingUrl) waits out the barrier as before.
+ * @param tabId the run's tab
+ * @param sentTo the document the navigate was sent to, when known
+ * @returns where the tab is and where it was going, when it stalled
+ */
+async function navStalled(tabId: number, sentTo: string | undefined): Promise<{ from: string; to: string } | null> {
+    const ready = navBarrier.whenReady(tabId);
+    const early = await Promise.race([ready.then(() => true), new Promise<false>((r) => setTimeout(() => r(false), NAV_COMMIT_MS))]);
+    if (early || !navBarrier.isNavigating(tabId) || sentTo === undefined) { await ready; return null; }
+    const doc = navBarrier.currentDocument(tabId);
+    const tab = doc === undefined || doc === sentTo ? await chrome.tabs.get(tabId).catch(() => null) : null;
+    if (!tab?.pendingUrl) { await ready; return null; }
+    navBarrier.noteNoCommit(tabId);
+    return { from: tab.url ?? "", to: tab.pendingUrl };
+}
 
 /** The tab's main-frame document: the barrier's record of the last commit, else the browser's answer (a worker that was
  *  evicted has no record). Undefined where neither knows, and then a re-adopt is judged on the navigation alone. */
@@ -1276,7 +1297,6 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         // closes and Chrome's raw "message channel closed…" error is useless to the model. RECOGNISE
                         // it as a navigation: wait for the new document to settle (re-adopt) and hand back the new
                         // page's context — actionable, and safe (no blind retry that could double-submit a form).
-                        const CHANNEL_GONE = /message channel closed|Receiving end does not exist|No tab with id/i;
                         let env: Partial<import("../contract").PageToolEnvelope>;
                         let workerMade = false;   // the worker wrote this result itself (the page could not be reached, or navigated)
                         // The document this call goes to: if the call navigates, that document stays alive a moment and
@@ -1351,10 +1371,16 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                             // of spending a look()/pageInfo turn to find out. The barrier's own timeout is the
                             // fallback (a nav that never re-adopts → whenReady resolves, no pageInfo → plain result).
                             if (env) {
-                                await navBarrier.whenReady(tabId);
+                                // A destination that has sent nothing in NAV_COMMIT_MS is said so, and the run stays where it is,
+                                // instead of a 15 s wait that ends with the model reading the old page as the new one.
+                                const stalled = await navStalled(tabId, sentTo);
+                                if (stalled) {
+                                    recordRunLog(runId, { level: "warn", subsystem: "page", kind: "no-commit", reason: "navigate", ms: NAV_COMMIT_MS, detail: { tab: tabId, tool: name } });
+                                    env.result = `Error: the navigation to ${stalled.to} did not load: nothing arrived within ${Math.round(NAV_COMMIT_MS / 1000)}s, so this tab is still on ${stalled.from}. It may still load later; check where you are (pageInfo) before acting.`;
+                                }
                                 // Where it landed may hold the run (nav-arrival.ts): the model reads the hold, or the person's answer.
-                                const arrived = await passArrival(call ? seqBase + call.seq : undefined);
-                                const info = arrived ? undefined : takeInfo();
+                                const arrived = stalled ? undefined : await passArrival(call ? seqBase + call.seq : undefined);
+                                const info = arrived || stalled ? undefined : takeInfo();
                                 if (arrived) env.result = `${env.result || ""}\n\n${arrived.text}`;
                                 if (info) env.result = `${env.result || ""}\n\nYou are now on the new page:\n${info}`;
                                 // verify → fold a view of the DESTINATION page into the result, captured on the NEW
@@ -1366,7 +1392,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                                 const verify = rawVerify === true ? "viewport" : typeof rawVerify === "string" ? rawVerify : null;
                                 // `pipe` scans the text-verify Markdown (text/text-all only) — threaded to the page.
                                 const navPipe = typeof (args as { pipe?: unknown })?.pipe === "string" ? (args as { pipe: string }).pipe : undefined;
-                                if (verify && !navBarrier.isNavigating(tabId)) {
+                                if (verify && !stalled && !navBarrier.isNavigating(tabId)) {
                                     const text = verify === "text" || verify === "text-all";
                                     const payload = verify === "text" ? { runId, verifyText: "strip" as const, verifyPipe: navPipe }
                                         : verify === "text-all" ? { runId, verifyText: "all" as const, verifyPipe: navPipe }
