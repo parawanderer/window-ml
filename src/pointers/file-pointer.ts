@@ -14,6 +14,8 @@ import { FILE_PREFIX } from "./token-prefixes";
 export const FILE_NAME_MAX = 120;
 /** Characters of the first page's text (a text file's opening) the outline previews. */
 export const FILE_PREVIEW_CHARS = 800;
+/** Pages one `look` at an attached document draws: about the eight screens a full-page look is held to. */
+export const LOOK_DOC_PAGES_MAX = 8;
 
 /** An attached file as a run holds it. The bytes and the read document are value-store rows (held for the run's
  *  session), named here by key; everything else is what the outline and a refusal say about it. */
@@ -116,7 +118,7 @@ export const firstPages = (f: Pick<FilePointer, "read">): string => (f.read > 1 
 
 /**
  * What the model is given up front for an attached PDF, in place of its content: the pointer, the name, who it came
- * from, its size, which pages need eyes, how to read it, and the first page's opening.
+ * from, its size, which pages need eyes, how to read and look at it, and the first page's opening.
  * @param f the file
  * @param doc the read document, for the preview
  * @param first the earlier file by the same name, when there is one
@@ -131,7 +133,10 @@ export function fileOutline(f: FilePointer, doc: PdfDoc, first?: FilePointer): {
         f.figures.length ? pagesSay(f.figures, "has a figure", "have figures") : "",
         f.scans.length ? pagesSay(f.scans, "is scanned", "are scanned") : "",
     ].filter(Boolean).join("; ");
-    lines.push(`${kinds ? `${kinds[0].toUpperCase()}${kinds.slice(1)}. ` : ""}Read with dereference(${fileRef(f)}, pipe "pages ${firstPages(f)}").`);
+    // A page that needs eyes is looked at, and the outline names the first one so the call is written for it.
+    const needs = [...f.figures, ...f.scans];
+    const see = needs.length ? Math.min(...needs) : 1;
+    lines.push(`${kinds ? `${kinds[0].toUpperCase()}${kinds.slice(1)}. ` : ""}Read with dereference(${fileRef(f)}, pipe "pages ${firstPages(f)}"); see a page with look(doc ${fileRef(f)}, pages "${see}").`);
     const page = doc.pages.find((p) => p.text.trim());
     if (page) {
         const flat = page.text.replace(/\s+/g, " ").trim();

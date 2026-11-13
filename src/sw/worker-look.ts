@@ -68,8 +68,10 @@ export async function runOnWorkerVision(runId: string, tabId: number, documentId
  * Run one `look` call of a run in the worker, over a vision host pinned to `documentId`.
  * @param runId the run (its vision memory, its sub-call spend)
  * @param tabId the run's tab
- * @param documentId the tab's top-frame document the call is about (null: none known, nothing is looked at)
- * @param args the model's arguments (an `@tool:` image pointer already resolved to `_image` by the loop)
+ * @param documentId the tab's top-frame document the call is about (null: none known, nothing is looked at, unless the call
+ *   is at an attached document's pages)
+ * @param args the model's arguments (an `@tool:` image pointer already resolved to `_image`, a document's pages drawn as
+ *   `_images`, by the loop)
  * @param vision whether the driver sees (native look) and the run's reader (delegated look)
  * @param tabUrl the tab's URL, for the run's worker state
  * @param opts the host's test seams
@@ -77,10 +79,12 @@ export async function runOnWorkerVision(runId: string, tabId: number, documentId
  */
 export async function workerLook(runId: string, tabId: number, documentId: string | null | undefined, args: Record<string, unknown>,
     vision: { driverSees: boolean; visionModel: string | null }, tabUrl: () => string, opts: WorkerVisionHostOpts = {}): Promise<PageToolEnvelope> {
-    if (!documentId) return { result: LOOK_NO_DOCUMENT };
+    // Pages of an attached document the loop drew (`_images`) are not on the tab, so no document pins them.
+    const pages = Array.isArray(args._images);
+    if (!documentId && !pages) return { result: LOOK_NO_DOCUMENT };
     // A run with neither a driver that sees nor a reader has no `look`: nothing is captured for it.
     if (!vision.driverSees && !vision.visionModel) return { result: LOOK_NO_VISION };
     const ml = { defineTool } as unknown as MlApi;
-    return runOnWorkerVision(runId, tabId, documentId, args,
+    return runOnWorkerVision(runId, tabId, documentId ?? "", args,
         (host) => (vision.driverSees ? buildNativeLookTool(ml, { host }) : buildLookTool(ml, { model: vision.visionModel, host })), tabUrl, opts);
 }

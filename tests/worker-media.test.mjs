@@ -499,7 +499,7 @@ test("python_exec offers keep only where names persist, and passes it on", T, as
     const worker = build({ _mintToken: async () => "@pt:abcdef12" });
     const page = build({});
     assert.equal(worker.parameters.properties.keep?.type, "boolean");
-    assert.match(worker.parameters.properties.keep.description, /until this run ends/);
+    assert.match(worker.parameters.properties.keep.description, /until your turn ends/);
     assert.equal(page.parameters.properties.keep, undefined, "a page-hosted run has no names to keep");
     await worker.run({ code: "x", keep: true });
     await worker.run({ code: "x" });
