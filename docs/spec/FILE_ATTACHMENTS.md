@@ -994,8 +994,9 @@ configured roots (`configure`), one list, not a second one beside it.
   the host; a path the worker resolved is never trusted, since a `full` cell can forge a worker post.
 - H2. `mount` refuses, by the resolved path and with the sentences above: a path at, under or above a reserved prefix
   (`/files`, `/tmp`, `/lib`, `/home/pyodide`, `/dev`, `/proc`); the home directory or above; a path at, under or above
-  the browser profile, the archive folder or the host's own config. The refusal is the host's, so the worker's copy of
-  the list is a convenience, not the check.
+  the browser profile, the archive folder or the host's own config; a path at, under or above an existing mount, so a
+  read-only mount is never reachable for writing through a read-write one around it. The refusal is the host's, so
+  the worker's copy of the list is a convenience, not the check.
 - H3. The host holds each mount's directory descriptor from `mount` and compares its device and inode on every request;
   a mismatch refuses the request and reports the mount as replaced.
 - H4. A path is opened by walking its components from that descriptor with no symlink followed. `fsx::open_beneath`
@@ -1015,7 +1016,8 @@ configured roots (`configure`), one list, not a second one beside it.
 host's `SECRET_PATTERNS`, the list an `ml.sh` path argument meets), `exists`, `ignored` (by git, `git check-ignore`
 under the git belt), `inUploads`, `inAttached`, `gitUndoable`, and a `basis` of `{ dev, ino, size, mtimeNs }` for an
 existing file. `gitUndoable` is true for a tracked file with no uncommitted change, false otherwise, and null when
-`repoConfigRunsCode` is true or null, since asking git would run the repository's config.
+`repoConfigRunsCode` is true or null, since the undo itself (a `git checkout` of the file) would run the repository's
+smudge filter or hooks.
 
 - H8. Compare and swap. A `store`, `remove` or `rename` that the worker judged on a fact carries the `basis` it was
   judged on, and the host refuses it with `ChangedSinceJudged` when the file's basis differs at the moment of the
@@ -1048,7 +1050,10 @@ nothing into the repository.
 - H11. Changed files are hashed with `git hash-object -w --no-filters --stdin-paths` and entered with
   `git update-index --index-info`, never `git add` or `update-index --add`, which run a clean filter. Every git spawn
   carries the git belt (`core.fsmonitor=false`, `core.pager=cat`, `GIT_OPTIONAL_LOCKS=0`), so no filter, textconv,
-  fsmonitor or hook runs. Untracked files are included; ignored files are not, except the uploads folder.
+  fsmonitor or hook runs. Untracked files are included; ignored files are not, except the uploads folder. The snapshot
+  runs whatever `repoConfigRunsCode` says: the belt, `--no-filters`, `--no-ext-diff` and `--no-textconv` leave no path
+  by which the repository's config runs a program, and the e3 row with a clean filter, an fsmonitor and a hook
+  configured is the pass condition for that case too.
 - H12. Bounds: no file over the diff cap (1 MB, "The diff's cap") goes into the tree; it is compared by size and
   sha256 instead. The walk stops at `WALK_CAP` (20 000) entries; past that the call's diff is null with the reason.
 - H13. The diff is `git diff-tree --no-ext-diff --no-textconv` of the two trees. Its body goes out as held output (a
@@ -1062,7 +1067,10 @@ nothing into the repository.
 host: the worker treats mounts and diffs as unavailable, never probes by calling.
 
 **What runs free, what asks, what is refused.** The default policy's rows, each with the fact that backs it. "Refused"
-is the host's and no policy changes it; "asks" is the default, which a policy may change either way.
+is the host's and no policy changes it; "asks" is the default, which a policy may change either way. Rows compose:
+every row that applies to a request is taken, and the most restrictive decides, refused over asks over free (a new file
+in a read-only mount is refused, a new file in `attached/` is refused, a secret-looking file in the uploads folder
+asks). The host applies its refusals before the worker judges.
 
 | Operation | Default | Backing fact |
 | --- | --- | --- |
@@ -1094,7 +1102,7 @@ delete of one git cannot undo asks, for a cell and for an `ml.sh` call whose man
 
 **Red-team rows** (e3, through the coordinator; each with its pass condition above): a forged request for a path
 outside the mount, by `..`, an absolute path or a symlink component (H1, H4); a mount at, under or above each refused
-path, by its resolved path (H2); the mounted directory replaced by a symlink after `mount` (H3); a component swapped
+path, by its resolved path, and a mount at, under or above an existing one (H2); the mounted directory replaced by a symlink after `mount` (H3); a component swapped
 for a symlink between two requests (H4); a write through a hard link (H5); a `store` interrupted mid-transfer leaving
 the old file whole (H5); a `store` into `attached/`, a `rename` into or out of it, under every policy (H6); a
 git-undoable file edited by another process between the judgment and the write (H8); a `/files` argv item in each
@@ -1106,7 +1114,8 @@ calls.
 **Open.**
 
 - A symlink inside a mount that points inside it (a repository's `node_modules/.bin`): refused this round by H4; whether
-  to follow one whose target resolves inside the same mount is a later question.
+  to follow one whose target resolves inside the same mount is a later question. So is a mount nested in another,
+  refused by H2, with one mode followed through the nesting.
 - The git queries per request (`check-ignore`, the undoability check) cost a spawn each; whether the host batches them
   per cell or caches them by `basis` is the lane's to measure.
 
