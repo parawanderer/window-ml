@@ -23,6 +23,11 @@ defineState({
     describe: "That the person moved the run to another tab since its last turn, which its next turn tells the model.",
     read: ({ runId }) => (runId ? bgRuns.get(runId)?.moved : undefined),
 });
+defineState({
+    id: "run.leftTabs", scope: "session", realm: "worker", audience: "human", lostOn: ["worker-eviction", "browser-restart"],
+    describe: "The tabs the person moved the run off, so a message typed on one is told the session moved. A turn's checkpoint keeps them through an eviction mid-turn; between turns, and in a saved session, they are lost.",
+    read: ({ runId }) => (runId ? bgRuns.get(runId)?.leftTabs : undefined),
+});
 
 /**
  * The note the model reads at the start of a moved run's next turn: the tab it left and the one it is on now. A system

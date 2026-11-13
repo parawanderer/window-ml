@@ -308,6 +308,31 @@ test("after a turn on the tab a run was moved to, a follow-up on the tab it left
     assert.doesNotMatch(res.refused, /no longer open/);
 });
 
+test("a worker restored from the checkpoint of a moved run's turn still tells the tab it left where it went", T, async () => {
+    const r = await settled({ first: [] });
+    await r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, hudOn(8));
+    // The turn's last checkpoint as storage was given it: the key is deleted when the turn settles.
+    const key = `ml_bgrun_${r.hash}`;
+    let snap;
+    Object.defineProperty(r.bg.localStore, key, { configurable: true, enumerable: true, get: () => snap, set: (v) => { snap = structuredClone(v); } });
+    r.script.unshift(exec);
+    await nextTurn(r);
+    assert.ok(snap, "the turn on the new tab checkpoints the run");
+    assert.equal(snap.tabId, 8);
+    assert.deepEqual(snap.leftTabs, [7], "the checkpoint carries the tab it left");
+    // The worker is evicted mid-turn: a new one restores the run from that checkpoint alone.
+    const bg = loadBackground({
+        config: { chatUrl: "http://host/api/chat/completions", apiKey: "k", model: "m", apiFormat: "openai", debugMode: "off" },
+        local: { [key]: snap },
+        openTabs: [{ id: 7, windowId: 3, active: false, url: SITE_URL, title: "Site" }, { id: 8, windowId: 3, active: true, url: OTHER_URL, title: "Other" }],
+        onFetch: async () => jsonResponse({ data: [] }),
+    });
+    assert.ok(await until(() => bg.context.__mlRunStateForTest().bgRuns.includes(r.hash)), "the run is restored");
+    const res = await bg.send({ type: "USER_RUN_ACTION", payload: { hash: r.hash, action: "send", text: "and now?", surface: "hud" } }, hudOn(7));
+    assert.match(res.refused ?? "", /moved to another tab/);
+    assert.doesNotMatch(res.refused, /no longer open/);
+});
+
 test("a run brought back to a tab it left is that tab's again; the tab it then left refuses with where it went", T, async () => {
     const r = await settled({ first: [] });
     await r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, hudOn(8));
