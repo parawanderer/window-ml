@@ -165,11 +165,18 @@ test("prompt-budget-cuts/pipe-log accepts the FATAL line's code with no navigati
     } finally { await site.stop(); }
 });
 
-test("prompt-budget-cuts/disabled-controls accepts every disabled button and no enabled one, and the page's buttons are the predicate's", async () => {
+test("prompt-budget-cuts/disabled-controls accepts every disabled button, an enabled one only when called enabled, and the page's buttons are the predicate's", async () => {
     const t = task(await load("prompt-budget-cuts"), "disabled-controls");
     assert.ok(scores(t, "Archive, Export, Merge, Rebase, Transfer, Lock and Purge are disabled."));
+    // The shapes rep2's runs wrote, every one right: the old predicate failed each for naming the enabled four.
+    assert.ok(scores(t, "Archive, Export, Merge, Rebase, Transfer, Lock, Purge; Save is enabled."), "an enabled one called enabled");
+    assert.ok(scores(t, "Seven buttons are disabled: **Archive, Export, Merge, Rebase, Transfer, Lock, Purge** (the enabled ones are Save, Share, Rename, Duplicate)."));
+    assert.ok(scores(t, "Disabled: **Archive, Export, Merge, Rebase, Transfer, Lock, Purge** (7 of 11 buttons; the other four — Save, Share, Rename, Duplicate — are enabled)."));
+    assert.ok(scores(t, "Disabled (7): Archive, Export, Merge, Rebase, Transfer, Lock, Purge.\nEnabled (4): Save, Share, Rename, Duplicate."));
     assert.ok(!scores(t, "Archive, Export, Merge, Rebase, Transfer and Lock."), "one missing");
-    assert.ok(!scores(t, "Archive, Export, Merge, Rebase, Transfer, Lock, Purge; Save is enabled."), "an enabled one named");
+    assert.ok(!scores(t, "Disabled: Save, Archive, Export, Merge, Rebase, Transfer, Lock, Purge."), "an enabled one called disabled");
+    assert.ok(!scores(t, "Disabled: Archive, Export, Merge, Rebase, Transfer, Lock. Enabled: Save, Share, Rename, Duplicate, Purge."), "a disabled one called enabled");
+    assert.ok(!scores(t, "All of them are disabled: Save, Archive, Export, Share, Merge, Rebase, Rename, Transfer, Lock, Duplicate, Purge."), "all of them");
     const { startPageServer } = await import("../examples/cross-page/serve.mjs");
     const site = await startPageServer();
     try {

@@ -123,7 +123,16 @@ export default defineBench({
             regression: NOT_YET,
             start: "/controls",
             task: "Which buttons on this page are disabled? Name every one.",
-            succeeded: ({ answer }) => CONTROLS.every(([n, off]) => new RegExp(`\\b${n}\\b`).test(answer) === off),
+            // A model that also lists the enabled ones ("Enabled: Save, Share, ...") is right: an enabled button counts
+            // against the answer only in a sentence that never says "enabled", and a disabled one counts only where
+            // it comes before any "enabled" in its sentence. Naming the enabled ones failed 21 of 38 correct runs.
+            succeeded: ({ answer }) => {
+                const sentences = answer.split(/[.;\n]/);
+                const named = (n: string | boolean, s: string) => new RegExp(`\\b${n}\\b`).test(s);
+                return CONTROLS.every(([n, off]) => off
+                    ? sentences.some((s) => named(n, s.split(/\benabled\b/i)[0]))
+                    : sentences.every((s) => !named(n, s) || /\benabled\b/i.test(s)));
+            },
         },
         {
             // `pageInfo` after a navigation: the first turn's context is the START page's.
