@@ -48,6 +48,9 @@ export function judgeMount(op: MountOp, facts: HostMountFacts, to?: HostMountFac
             if (!to) row("refused", "the target was not looked at", "to");
             else {
                 if (!to.inMount) row("refused", "the target is outside the mount", "inMount");
+                // A rename never crosses mounts (it would be a copy and a delete), and the target's mount bounds it too.
+                if (to.mount !== facts.mount) row("refused", "the target is in another mount", "mount");
+                if (to.mode === "ro") row("refused", "the target's folder is mounted read-only", "mode");
                 if (to.exists) row("refused", "the target exists: a rename never replaces a file", "exists");
                 if (to.inAttached) row("refused", "attached/ holds the uploads as they were given", "inAttached");
                 if (to.protected) row("refused", "the target is a protected name", "protected");
