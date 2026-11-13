@@ -174,6 +174,17 @@ test("any other ml member throws a sentence naming what the isolated world has; 
     assert.equal((await runWrapped("(typeof ml.then)", { reads: [] })).out.v, "undefined", "awaiting ml does not throw");
 });
 
+test("a throw in the isolated world reaches the model as its message alone: no frames, no path of the extension's files", async () => {
+    const thrown = { "new Error('boom')": "Error: boom", "new TypeError('x is not a function')": "TypeError: x is not a function", "'a bare string'": "a bare string", "({ toString() { throw 1 } })": "a value that cannot be printed" };
+    for (const [expr, want] of Object.entries(thrown)) {
+        const { out } = await runWrapped(`{ throw ${expr} }`, { reads: [] });
+        assert.equal(out.threw, want, expr);
+        assert.doesNotMatch(out.threw, /\n|\bat \S|\//, `${expr}: ${out.threw}`);
+    }
+    const nested = (await runWrapped("{ const f = () => g(); const g = () => { throw new RangeError('deep') }; f() }", { reads: [] })).out.threw;
+    assert.equal(nested, "RangeError: deep", "a throw several calls down is still one line");
+});
+
 // --- the read-only helpers in the isolated world: the page's own functions, over the shared DOM ---
 
 /** A jsdom page as the world: the wrapper runs in its window, so the helpers read its DOM. */
@@ -437,6 +448,20 @@ test("a CDP world created after the tab moved on is never evaluated in: the exec
     assert.equal(w.calls.filter(([m, p]) => m === "Runtime.evaluate" && p.contextId === 11).length, 0, "nothing was evaluated in it");
     assert.equal(toPage.length, 1, "only the first, plain script reached the page");
     assert.match(results[1], /navigated before it started/);
+});
+
+test("an exception CDP reports outside the wrapper reaches the model as its message, never V8's frames", T, async () => {
+    const w = cdpWorld();
+    const inner = w.onDebuggerCommand;
+    const { results } = await isoRun([FIRST, "window.b = 1; return @tool:exec.length"], {
+        cdp: true, onBg: (bg) => { w.bg = bg; },
+        onDebuggerCommand: async (method, params) => {
+            if (method === "Runtime.evaluate" && params.contextId === 11) return { exceptionDetails: { text: "Uncaught", exception: { description: "ReferenceError: q is not defined\n    at <anonymous>:1:5\n    at chrome-extension://abcdef/background.js:12:3" } } };
+            return inner(method, params);
+        },
+    });
+    assert.match(results[1], /The exec threw: ReferenceError: q is not defined/);
+    assert.doesNotMatch(results[1], /chrome-extension:|<anonymous>:1:5/, results[1]);
 });
 
 // --- a script ending on an expression returns its value, as in the page's world ---
