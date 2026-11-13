@@ -1026,12 +1026,15 @@ configured roots (`configure`), one list, not a second one beside it.
   another session may mount the same or a nested path. Stated limit: the archive folder cannot be refused by path,
   because the extension holds a File System Access handle with no path the host can see. The browser profile is refused
   by the known per-browser data directories, and the host's config means its state directory and `~/.config/wmlhost`.
+  AMENDED 2026-11-13 (host lane): the refusal's code is `MountRefused`. A `configure` whose roots no longer contain a
+  mount drops it, since the roots are the ceiling it was checked against; the connection closing drops every mount.
 - H3. The host holds each mount's directory descriptor from `mount` and compares its device and inode on every request;
   a mismatch refuses the request and reports the mount as replaced.
   AMENDED 2026-11-13 (host lane): the id plus the session string is checked on every request. A host port cannot tell
   sessions apart, so the worker that stamps the session is the real check, and this is a stated trust: a forged post
   from a `full` cell is still refused on the facts (H1, H7, H8), and the session stamp is the worker's, never the
-  cell's.
+  cell's. AMENDED 2026-11-13 (host lane): the codes are `MountReplaced`, and `UnknownMount` for an id that is not the
+  session's, worded as for an id that does not exist, so it tells nothing of another session's mounts.
 - H4. A path is opened by walking its components from that descriptor with no symlink followed. `fsx::open_beneath`
   does this today (`openat2` with `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS` on Linux, a per-component `O_NOFOLLOW` walk
   elsewhere), but read-only and from a path; it is extended to start from the held descriptor and to open for writing.
@@ -1041,7 +1044,9 @@ configured roots (`configure`), one list, not a second one beside it.
 - H5. `store` writes beside the file and renames into place, so a Stop or a dropped connection leaves the old file
   whole. A write through a descriptor whose `fstat` shows `st_nlink > 1` is refused; a read of one is allowed. A write
   to a read-only mount fails with `EROFS`; a `fetch` over the call's cap fails with `EFBIG` and carries the size.
-  AMENDED 2026-11-13 (host lane): the cap is per call (H1) and the size is checked before any byte is read.
+  AMENDED 2026-11-13 (host lane): the cap is per call (H1) and the size is checked before any byte is read. The
+  hard-link refusal's code is `HardLinked`, and `EFBIG` carries the cap beside the size. A replaced file keeps its
+  permission bits (`0777` of its mode), and a new one gets `0666` less the umask, as `put` gives it.
 - H6. In the uploads folder, a `store` into `attached/`, and a `rename` into or out of it, are refused by the host
   whatever a policy says, `attached/` being matched by its device and inode, never by name (APFS is case-insensitive, so
   `Attached/` is the same directory); a `remove` there is judged (it asks by default, the person's uploads). This is a
@@ -1060,7 +1065,10 @@ under the git belt), `inUploads`, `inAttached`, `gitUndoable`, and a `basis` for
 mtimeNs, sha256 }` for a file at or under the diff cap, and `{ dev, ino, size, mtimeNs }` over it. Any fact a request
 itself carries is ignored; the host computes every answer from the mount's held descriptor. `gitUndoable` is true for a
 tracked file with no uncommitted change, false otherwise, and null when `repoConfigRunsCode` is true or null, since the
-undo itself (a `git checkout` of the file) would run the repository's smudge filter or hooks.
+undo itself (a `git checkout` of the file) would run the repository's smudge filter or hooks. AMENDED 2026-11-13 (host
+lane): `stat` also returns `kind` (`file`, `dir`, `symlink`, `other`, or null when absent), `protected` (H6b's rule, so
+the worker can say why before it asks) and `hardLinked` (H5's `st_nlink > 1`); `gitUndoable` is false for a file that
+does not exist and for a path in no repository.
 
 AMENDED 2026-11-13 (host lane): the host's own git queries (`check-ignore`, the undoability check, the snapshot) each
 spawn git with `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1` and an explicit `GIT_DIR` and `GIT_WORK_TREE`,
@@ -1180,6 +1188,7 @@ in the uploads folder asks). The host applies its refusals before the worker jud
 | write into, or rename in or out of, `attached/` | refused | `inAttached` |
 | a path outside every mount, through a symlink, or after the mount was replaced | refused | H3, H4 |
 | a write through a hard link | refused | `fstat` `st_nlink` |
+| a write to a protected name of the root, or under any `.git` (AMENDED 2026-11-13, host lane: H6b) | refused (`Protected`) | `protected` |
 | a write whose basis changed since it was judged | refused (`ChangedSinceJudged`) | `basis` |
 | a `/files` path argument | mapped to the real path, then judged as it | H9, the manifest |
 | a `/files` argument the manifest does not place | refused | H9 |
@@ -1265,8 +1274,9 @@ delete of one git cannot undo asks, for a cell and for an `ml.sh` call whose man
 **Open.**
 
 - A symlink inside a mount that points inside it (a repository's `node_modules/.bin`): refused this round by H4; whether
-  to follow one whose target resolves inside the same mount is a later question. So is a mount nested in another,
-  refused by H2, with one mode followed through the nesting.
+  to follow one whose target resolves inside the same mount is a later question. So is a mount nested in another
+  of the same session, refused by H2, with one mode followed through the nesting. AMENDED 2026-11-13 (host lane):
+  nesting across sessions is allowed (H2), so only the same-session case stays open.
 - The git queries per request (`check-ignore`, the undoability check) cost a spawn each; whether the host batches them
   per cell or caches them by `basis` is the lane's to measure.
 - AMENDED 2026-11-13 (host lane), for H10 to H14, owner the host lane, each measured first: H12's before-hash of files
