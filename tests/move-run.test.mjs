@@ -62,10 +62,10 @@ const hudOn = (tabId) => ({ tab: { id: tabId, url: SITE_URL }, url: HUD_URL, fra
 /** Waits until `done()` holds, for at most `cap` macrotasks. */
 async function until(done, cap = 4000) { for (let i = 0; i < cap && !done(); i++) await tick(); return done(); }
 
-// --- onReplaced during a live turn: what the person sends from the restored tab (MOVE_RUN.md, "Known gap") ---
+// --- onReplaced during a live turn: the turn follows the restored tab (MOVE_RUN.md, shape (b), slice 1) ---
 // `retabRuns` (sw-runs.ts) re-files the live turn's `runInboxes` entry with the tab's maps and the run's snapshot: the
-// person's answer (SET_APPROVAL) and steer (INJECT_MESSAGE) are checked against its `tabId`. The turn's own page sends
-// are NOT redirected: `hostRun` closed over the old id, and following the tab mid-turn is MOVE_RUN.md shape (b), open.
+// person's answer (SET_APPROVAL) and steer (INJECT_MESSAGE) are checked against its `tabId`, and `rekeyRunInbox` re-points
+// the turn's TAB CELL, so its own page sends follow the tab too (MOVE_RUN.md, shape (b), slice 1).
 
 test("control: the person's answer to a gate from the run's own tab reaches the gate", T, async () => {
     const r = await start({ onAsk: (ev, bg) => void bg.send({ type: "SET_APPROVAL", payload: { runId: ev.id, seq: ev.seq, decision: true } }, shellOn(7)) });
@@ -74,8 +74,7 @@ test("control: the person's answer to a gate from the run's own tab reaches the 
 });
 
 test("the person's answer to a gate from the tab after it was REPLACED under a new id reaches the gate", T, async () => {
-    // A DENY, so what the model reads is the gate's own answer: an approve would pass the gate and then meet the turn's
-    // send to the old id, refused (the last test here).
+    // A DENY, so what the model reads is the gate's own answer, not the page's.
     const r = await start({ onAsk: (ev, bg) => { bg.replaceTab(7, 70); void bg.send({ type: "SET_APPROVAL", payload: { runId: ev.id, seq: ev.seq, decision: false } }, shellOn(70)); } });
     assert.ok(await until(r.ended), "the run ends: the gate was answered, not left waiting");
     assert.match(r.results()[0] ?? "", /^Denied by the user/, "the model read the person's answer");
@@ -101,7 +100,7 @@ test("a steer from the HUD on the tab after it was REPLACED under a new id, whil
     assert.ok(await until(r.ended));
 });
 
-test("a live turn's page call after the replace goes to the old id and is refused, never to the new tab (shape (b) is open)", T, async () => {
+test("a live turn's page call after the replace goes to the new id, and nothing more to the old one", T, async () => {
     const gone = new Set();
     let replaced = false;
     const r = await start({
@@ -110,12 +109,26 @@ test("a live turn's page call after the replace goes to the old id and is refuse
         onExec: async (bg) => { if (!replaced) { bg.replaceTab(7, 70); gone.add(7); replaced = true; } return { result: "ran" }; },
     });
     assert.ok(await until(r.ended), "the run ends");
-    const res = r.results();
-    assert.equal(res.length, 2, "both calls reached the model");
-    assert.equal(res[0], "ran", "the call before the replace ran");
-    assert.match(res[1], /^Error: /, "the call after it was refused, not run anywhere");
-    const toNew = r.bg.tabMessages.filter(([t, m]) => t === 70 && m?.type === "RUN_TOOL_IN_PAGE");
-    assert.equal(toNew.length, 0, "nothing of the turn was sent to the replacement tab");
+    assert.deepEqual(r.results(), ["ran", "ran"], "the call after the replace ran on the restored tab");
+    const execs = (t) => r.bg.tabMessages.filter(([id, m]) => id === t && m?.type === "RUN_TOOL_IN_PAGE" && m.payload?.name === "exec" && !m.payload.precheck && !m.payload.readonlyTry).length;
+    assert.equal(execs(7), 1, "the old id was sent only the call before the replace");
+    assert.equal(execs(70), 1, "the restored tab was sent the one after it");
+});
+
+test("a live turn's events after the replace reach the restored tab, and its settle releases the restored tab", T, async () => {
+    let replaced = false;
+    const r = await start({
+        execs: 2,
+        onAsk: (ev, bg) => void bg.send({ type: "SET_APPROVAL", payload: { runId: ev.id, seq: ev.seq, decision: true } }, shellOn(replaced ? 70 : 7)),
+        onExec: async (bg) => { if (!replaced) { bg.replaceTab(7, 70); replaced = true; } return { result: "ran" }; },
+    });
+    assert.ok(await until(r.ended), "the run ends");
+    const result = r.bg.tabMessages.find(([, m]) => m?.type === "ML_DEBUG_TO_PAGE" && m.event?.kind === "agent-result" && m.event.id === r.hash);
+    assert.equal(result?.[0], 70, "the turn's end is told to the restored tab");
+    const st = r.bg.context.__mlRunStateForTest();
+    assert.ok(st.bgRuns.includes(r.hash), "the run is held between turns");
+    assert.deepEqual(st.activeRuns.filter(([, ids]) => ids.includes(r.hash)), [], "no tab still tracks the settled turn");
+    assert.ok(!st.inboxes.includes(r.hash), "its inbox went at settle");
 });
 
 // --- moving a settled run to another tab: the HUD's "bring a session here" (MOVE_RUN.md, shape (a)) ---
