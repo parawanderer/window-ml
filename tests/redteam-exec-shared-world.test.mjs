@@ -191,6 +191,36 @@ test("a strict-page exec that throws while it RUNS is not run a second time, wha
     }
 });
 
+test("a strict-page exec's error reaches the model as its message: never the frames, not even ones a page function wrote", T, async () => {
+    // On this path the error is the page's: a page function that throws sets its own stack and toString. Whatever it
+    // writes after the message, as frames, is cut in the worker.
+    const FRAMES = "\\n    at evil (https://evil.example/x.js:1:1)\\n    at chrome-extension://abcdef/background.js:9:9";
+    for (const [setup, src, want] of [
+        ["", "JSON.parse('{')", /The exec threw \(via CDP\): SyntaxError: /],
+        ["", "{ const f = () => { throw new RangeError('deep') }; f(); }", /The exec threw \(via CDP\): RangeError: deep$/],
+        [`globalThis.pageFn = () => { const e = new Error('from the page'); e.stack = 'Error: from the page${FRAMES}'; throw e; }`, "pageFn()", /The exec threw \(via CDP\): Error: from the page$/],
+        [`globalThis.pageFn = () => { const e = new Error('x'); e.toString = () => 'Error: written${FRAMES}'; throw e; }`, "pageFn()", /The exec threw \(via CDP\): Error: written$/],
+        ["globalThis.pageFn = () => { throw { toString() { throw 1; } }; }", "pageFn()", /The exec threw \(via CDP\): a value that cannot be printed$/],
+    ]) {
+        const p = cdpPage();
+        if (setup) p.run(setup);
+        const r = await cdpEval(7, "doc-7", src);
+        assert.match(r.error ?? "", want, `${src}: ${JSON.stringify(r)}`);
+        assert.doesNotMatch(r.error, /\n|^\s+at |evil\.example|chrome-extension:/m, `${src}: ${r.error}`);
+    }
+});
+
+test("an exception CDP reports for a strict-page exec reaches the model as its message, never V8's frames", T, async () => {
+    const p = cdpPage();
+    const send = globalThis.chrome.debugger.sendCommand;
+    globalThis.chrome.debugger.sendCommand = async (t, method, params) => method === "Runtime.evaluate"
+        ? { exceptionDetails: { text: "Uncaught", executionContextId: 1, exception: { description: "ReferenceError: q is not defined\n    at <anonymous>:1:5\n    at chrome-extension://abcdef/background.js:12:3" } } }
+        : send(t, method, params);
+    const r = await cdpEval(7, "doc-7", "q");
+    assert.equal(r.error, "The exec threw (via CDP): ReferenceError: q is not defined");
+    assert.ok(p, "the page was set up");
+});
+
 // --- open while the exec shares the page's world ---
 
 const SHARED = "Inherent while the exec runs in the page's realm (docs/spec/SITE_PRESENCE.md, step 1): its collector, its result string and the envelope that carries them are built with builtins the page can rewrite, and sent on a MessagePort whose postMessage is one of them, so closing one vector closes none. The model is told its console is page-writable (MAIN_CONSOLE_HEAD).";

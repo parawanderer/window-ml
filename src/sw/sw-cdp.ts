@@ -251,7 +251,8 @@ ${inner}
             const __vs = __v === undefined ? '(undefined)' : typeof __v === 'string' ? __v : (() => { try { return JSON.stringify(__v); } catch { return String(__v); } })();
             return { __mlWrapped: true, v: __vs, logs: __logs, n: __n, dropped: __d };
         } catch (e) {
-            return { __mlWrapped: true, threw: String((e && e.stack) || e), logs: __logs, n: __n, dropped: __d };
+            let __e; try { __e = String(e); } catch { __e = "a value that cannot be printed"; }
+            return { __mlWrapped: true, threw: __e, logs: __logs, n: __n, dropped: __d };
         } finally { __on = false; ${bound ? `try { delete globalThis.${BINDING}; } catch (e) {}` : ""} }
     }; })()(console)`;
     let wrapperRan = false;   // its finally deleted the global; a script that never parsed leaves it to the cleanup below
@@ -263,9 +264,12 @@ ${inner}
         let r = await evaluate(wrap(`return (${expr});`));
         if (r?.exceptionDetails && syntaxErr(r)) r = await evaluate(wrap(source));
         wrapperRan = !r?.exceptionDetails;
-        if (r?.exceptionDetails) return { error: `The exec threw (via CDP): ${r.exceptionDetails.exception?.description || r.exceptionDetails.text || "error"}` };
+        // The error's message only, never its frames: they are file paths, and on this path the page's own (a page
+        // function that throws writes its stack, and its toString). Cut here in the worker, where the page cannot reach.
+        const messageOnly = (s: string) => s.split("\n    at ")[0];
+        if (r?.exceptionDetails) return { error: `The exec threw (via CDP): ${messageOnly(r.exceptionDetails.exception?.description || r.exceptionDetails.text || "error")}` };
         const out = r?.result?.value as WrapVal | undefined;
-        if (out && out.__mlWrapped && typeof out.threw === "string") return { error: `The exec threw (via CDP): ${out.threw}`, pageShaped: true as const };
+        if (out && out.__mlWrapped && typeof out.threw === "string") return { error: `The exec threw (via CDP): ${messageOnly(out.threw)}`, pageShaped: true as const };
         const value = out && out.__mlWrapped ? (out.v ?? "(undefined)") : "(undefined)";
         // The wrapper's store is indexed by line, with its count beside it; only the lines it counted, and only strings.
         // A list with no count (the shape before the store, which the unit mocks of this result still return) is read whole.
