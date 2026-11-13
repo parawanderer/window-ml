@@ -1,7 +1,10 @@
 # Spec (proposed): links to a setting or a chat page view
 
-**Status: proposed 2026-11-13, nothing built.** From Shane's words in the calm-chat-motion session (2026-11-13),
-handed to the settings-specs lane by the policies/python/desktop/manifests coordinator. Ruled by the coordinator on
+**Status: proposed 2026-11-13; slice 1 built 2026-11-13** (the panel's addresses in the sidebar and the DevTools
+panel: the place table, `data-setting` rows, the renderer, `openAddress`; `docs/dev/sidebar.md`, "Links to a setting
+in model text"). Not built: session, search and attention addresses, the chat page's surfaces and the exports' text.
+From Shane's words in the calm-chat-motion session (2026-11-13), handed to the settings-specs lane by the
+policies/python/desktop/manifests coordinator. Ruled by the coordinator on
 2026-11-13, pending Shane: a spec of its own, one parser for hashes and links, a button and never an `<a href>`, and
 an address in the grammar for the DevTools panel's tabs with no URL of its own; the rest is open. A companion to
 docs/spec/MODEL_SETTINGS.md (proposed in #1793, the same lane), which a link does not depend on.
@@ -90,7 +93,7 @@ bookmark or share; what a link needs is a name the renderer can resolve, which t
 the extension the same address is also a real hash (`#/settings/extension/advanced/shell`), because the chat page's
 Extension tab draws the same settings view.
 
-**A setting's address is its config key**, the name the model already reads (`ml.current.settings` in
+**A setting's address is its config key**, the name the model already reads (`ml.settings()` in
 MODEL_SETTINGS.md, #1793, or `ml.config()`). To resolve it, each row of the panel carries
 `data-setting="<key>"`, and a table beside `DEFAULT_CONFIG` names each key's tab and section. A test enumerates
 `DEFAULT_CONFIG` and fails on a key with a panel control and no place, or a place whose row does not carry the key
@@ -106,6 +109,7 @@ calls only the service (the sidebar trap: session views call `services()`, never
 | Surface | A settings address | A session, search or attention address |
 | --- | --- | --- |
 | Overlay sidebar, DevTools panel | the panel's own Settings view, through `showSettingsSection`; a setting's row scrolled to and marked | opens the chat page, or focuses it where it is open, at the hash: the popup's `openChat`, moved to where the sidebar can call it through the worker (an extension-page message, never in `HANDLE_MAP`) |
+| HUD card (the Commander's) | opens the chat page, or focuses it, at the address's hash (Shane, 2026-11-13: the chat page's Settings, not the sidebar). Until that is built, the label | the same |
 | Chat page, in the extension | the hash, set in place; the page reads it on `hashchange` as today | the hash, in place |
 | Chat page, web and phone builds | the session's runtime's settings, through `ChatExtras.findSetting`'s runtime argument, where that runtime reports `localSettings` and this device can draw them; otherwise the link renders as text with a tip naming where it lives | the hash, in place |
 | Exports (Markdown, PDF, JSON) | text: the label and where it is (`Backup and restore (Settings → Storage)`); the raw link in the raw view | text: the label |
