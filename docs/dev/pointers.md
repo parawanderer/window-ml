@@ -183,7 +183,7 @@ to re-run the step, and never degrades to the preview. `onEvict` is where the ca
   result, and names it on `FetchResult.valueKey`.
 - **Text capture** (POINTER_VALUES.md, slice 9). `fetch_url`'s text path, past its 4,000-character preview, keeps the exact
   `body` the preview was cut from through `ml._keepText` (`storeText`), which only the worker's `ml` has, and returns
-  the key as `ToolResult.textValue`. `envelopeFrom` is shared with the page, so the run host forwards `textValue` only
+  the key as `ToolResult.textValue` and its length as `textChars` (a result carrying a `textValue` is citable whatever the tool, and the cut line names the id with `textChars`). `envelopeFrom` is shared with the page, so the run host forwards `textValue` only
   off an envelope `runLocalTool` returned (a per-run `WeakSet`); the loop puts it on `TokenValue.value` and claims it
   like a table's. Readers wait on `readStoredText(key, run)`, which refuses a key the run does not hold: the
   dereference tool through `opts.readText` (clipped at `UI_OUT_CAP`), and every worker-side reader through `derefWhole`

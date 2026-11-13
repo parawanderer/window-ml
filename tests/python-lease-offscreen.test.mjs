@@ -157,13 +157,13 @@ test("PY_CANCEL of a cell that is not running answers ended; a content script is
 
 test("a leased cell's end is posted as PY_DONE with its run, outcome and size; an unleased cell's is not", async () => {
     const { cell, post, w, run, answer } = await leased();
-    w.reply({ id: post.id, ok: true, stdout: "hello", value: 1 });
+    w.reply({ id: post.id, ok: true, stdout: "hello", value: "abc" });
     await answer; await tick(); await tick();
     const done = sentToWorker.find((m) => m.type === "PY_DONE" && m.cell === cell);
     assert.ok(done, "PY_DONE posted");
     assert.equal(done.run, run);
     assert.equal(done.ok, true);
-    assert.ok(done.bytes > 0);
+    assert.equal(done.bytes, 8, "the size is stdout plus a text value, counted without serialising the result");
     const before = sentToWorker.length;
     const posted = new Map(workers.map((x) => [x, x.posts.length]));
     const a2 = send({ type: "PY_RUN", code: "x", hardened: true, tables: null, principal: "page:4" });

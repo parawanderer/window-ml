@@ -139,8 +139,9 @@ export function leaseCell<R>(o: LeasedCell<R>): Promise<R | PyDetached> {
                     if (ring === null) return "It has just ended; its result arrives on its own.";
                     const d = pyTailText(ring, n, asked ? ASKED_TAIL_CHARS : OUTPUT_CAP.exec.default);
                     if (!asked || !d.cut) return d.text;
-                    const value = await storeText((await forModel(d.whole)).text, `task tail ${o.cell}`).catch(() => undefined);
-                    return value ? { text: d.text, value } : d.text;
+                    const whole = (await forModel(d.whole)).text;
+                    const value = await storeText(whole, `task tail ${o.cell}`).catch(() => undefined);
+                    return value ? { text: d.text, value, chars: whole.length } : d.text;
                 },
                 tailAbsent: "", settled,
             } });

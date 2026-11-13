@@ -121,8 +121,9 @@ export function backendFromDotenv(dotenv, env = {}) {
 }
 
 /** Cloud models served as text only. Nothing a backend reports says which cloud models see (OpenWebUI marks every
- *  custom model as seeing, DeepSeek V4 Pro included), and most do, so the list is of the exceptions (Shane, 2026-11-12). */
-export const TEXT_ONLY_CLOUD = /deepseek/i;
+ *  custom model as seeing, DeepSeek V4 Pro included), and most do, so the list is of the exceptions (Shane, 2026-11-12).
+ *  DeepSeek Flash sees: on 2026-11-13 it named both colours of a two-colour image that V4 Pro answered "NO IMAGE" to. */
+export const TEXT_ONLY_CLOUD = /deepseek-v4-pro/i;
 
 /**
  * Whether the driver sees images, declared for when nothing can probe it: the extension reads this
