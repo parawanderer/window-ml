@@ -158,7 +158,10 @@ export function isolatedWrapper(inner: string, b: IsolatedBindings, n: string, s
         const __vs = __v === undefined ? "(undefined)" : (typeof __v === "string" || __v instanceof String) ? String(__v) : (typeof Element !== "undefined" && __v instanceof Element) ? __v.outerHTML.slice(0, 2000) : (() => { try { return JSON.stringify(__v); } catch { return String(__v); } })();
         return { __mlWrapped: true, v: __vs, logs: __logs, dropped: __d };
     } catch (e) {
-        return { __mlWrapped: true, threw: (e && e.stack) || String(e), logs: __logs, dropped: __d };
+        // The error's own text, never \`e.stack\`: its frames are the extension's file paths, which the model pays for and
+        // cannot act on.
+        let __e; try { __e = String(e); } catch { __e = "a value that cannot be printed"; }
+        return { __mlWrapped: true, threw: __e, logs: __logs, dropped: __d };
     } finally { __on = false; }
 })()`;
 }
@@ -317,7 +320,8 @@ export async function runInCdpWorld(tabId: number, documentId: string, runId: st
         const [expr, body] = forms(code);
         let r = await evaluate(expr);
         if (syntaxErr(r)) r = await evaluate(body);
-        if (r?.exceptionDetails) return { error: `The exec threw: ${r.exceptionDetails.exception?.description || r.exceptionDetails.text || "error"}` };
+        // A description is V8's stack (the message, then its frames): only the message reaches the model.
+        if (r?.exceptionDetails) return { error: `The exec threw: ${(r.exceptionDetails.exception?.description || r.exceptionDetails.text || "error").split("\n    at ")[0]}` };
         const out = r?.result?.value;
         return isWrapped(out) ? unwrap(out) : { error: "The isolated exec returned nothing." };
     } catch (e) {
