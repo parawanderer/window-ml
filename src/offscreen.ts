@@ -32,6 +32,7 @@ import { defineState } from "./state-registry";
 import { reapDelay, longTimeout, DEFAULT_REAP_BETWEEN_MS } from "./python/py-reap";
 import { createPdfHost } from "./pdf/pdf-host";
 import { b64ToBytes, bytesToB64, type PdfMessage, type PdfReadReply, type PdfRenderReply } from "./pdf/pdf-wire";
+import { holdResult, takeResult } from "./python/py-held-results";
 
 // The value store, reached here rather than in the worker: stored bytes are TRANSFERRED to the worker (no copy), and the
 // one copy is the worker's, into Pyodide's memory. A returned frame's IPC comes back the same way and is written here,
@@ -641,35 +642,6 @@ export function interruptCell(cell: string): Promise<CellCancel> {
         };
         if (entry.started) go(); else entry.stopOnStart = go;
     });
-}
-
-/** The most results of leased cells kept for a service worker that comes back for them, and for how long. */
-export const HELD_RESULTS_MAX = 8, HELD_RESULT_MS = 10 * 60_000;
-/** A leased cell's result, kept so a service worker started since it was sent can fetch it (`PY_RESULT`): the last few,
- *  dropped after ten minutes, forgotten once handed over. The oldest goes first. */
-const heldResults = new Map<string, { at: number; result: unknown }>();   // state: plumbing — bounded by HELD_RESULTS_MAX and HELD_RESULT_MS
-
-/** Keep a leased cell's result. */
-function holdResult(cell: string, result: unknown): void {
-    pruneResults();
-    heldResults.delete(cell);
-    heldResults.set(cell, { at: Date.now(), result });
-    while (heldResults.size > HELD_RESULTS_MAX) heldResults.delete(heldResults.keys().next().value!);
-}
-
-/** Drop what is older than HELD_RESULT_MS. */
-function pruneResults(): void {
-    const now = Date.now();
-    for (const [k, v] of heldResults) if (now - v.at > HELD_RESULT_MS) heldResults.delete(k);
-}
-
-/** A held result, once: null when there is none (never held, handed over already, or too old). */
-function takeResult(cell: string): unknown {
-    pruneResults();
-    const h = heldResults.get(cell);
-    if (!h) return null;
-    heldResults.delete(cell);
-    return h.result;
 }
 
 // A LEASED cell's cancel, tail and result (py-lease.ts), by the service worker's id for it. Only the service worker sends any;

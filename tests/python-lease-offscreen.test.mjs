@@ -33,7 +33,8 @@ globalThis.chrome = {
         sendMessage: (m) => { sentToWorker.push(m); return Promise.resolve(undefined); },
     },
 };
-const { CELL_STOP_KILLED, HELD_RESULTS_MAX, HELD_RESULT_MS } = await import("../src/offscreen.ts");
+const { CELL_STOP_KILLED } = await import("../src/offscreen.ts");
+const { HELD_RESULTS_MAX, HELD_RESULT_MS } = await import("../src/python/py-held-results.ts");
 const { PY_DETACHED_MAX_MS, PY_INTERRUPT_KILL_MS, PY_TAIL_RING_CHARS } = await import("../src/python/py-lease.ts");
 
 const SW = { id: "test" };
