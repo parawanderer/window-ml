@@ -11,6 +11,7 @@ import { LocalBackup } from "./backup-section";
 import { signal } from "@preact/signals";
 import { useState, useEffect, useLayoutEffect, useRef } from "preact/hooks";
 import { filterSettings } from "./settings-search";
+import type { PanelTab } from "./settings-sections";
 import type { ComponentChildren } from "preact";
 import type { MlConfig, ApiFormat, Theme, DebugMode, CardCorner, AgentHud, LexicalMetric, ProtoMode } from "../../contract/contract-config";
 import type { VisionSupport } from "../../contract/contract-render";
@@ -64,7 +65,7 @@ function Section({ id, title, children }: { id: string; title: ComponentChildren
         try { localStorage.setItem(SECT_KEY, JSON.stringify(next)); } catch { /* opaque origin — skip */ }
     };
     return (
-        <details class="set-section" open={searching || !collapsedSections.value[id]} onToggle={onToggle}>
+        <details class="set-section" data-section={id} open={searching || !collapsedSections.value[id]} onToggle={onToggle}>
             <summary class="set-group">{title}</summary>
             {children}
         </details>
@@ -553,7 +554,7 @@ const SETTINGS_TABS = [
     { id: "appearance", label: "Appearance" },
     { id: "advanced", label: "Advanced" },
     { id: "permissions", label: "Permissions" },
-] as const;
+] as const satisfies readonly { id: PanelTab; label: string }[];
 type SettingsTab = typeof SETTINGS_TABS[number]["id"];
 const settingsTab = signal<SettingsTab>("connection");
 /** What the Settings search box holds. While it holds anything, every tab is drawn at once and filtered to the rows
