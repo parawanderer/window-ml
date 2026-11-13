@@ -192,12 +192,12 @@ extension can do is make it one paste.
    line; any other platform is told there is no build. The line differs by OS only in the checksum program.
 2. The line downloads `install.sh` from the host's pinned release, checks its sha256 against the one in
    `tools/host-dist.json`, then runs it with `--extension-id`. The installer ([INSTALL.md](https://github.com/parawanderer/window-ml-host/blob/main/docs/INSTALL.md) in window-ml-host) is rendered
-   by the host's release workflow with the sha256 of the release's three archives written into it, downloads the archive
+   by the host's release workflow with the sha256 of the release's four archives (one per platform above) written into it, downloads the archive
    for the platform, stops on a mismatch, puts `wmlhost` at ONE path, `~/.local/bin/wmlhost`, runs `wmlhost install --binary` with that path (so the native messaging
    manifest and a terminal name the same file; `wmlhost` is the one binary, and a terminal CLI would be a subcommand of it), and
    prints what it did, the `PATH` line to add if the folder is not on it, and how to undo it (`wmlhost uninstall`, then delete the file). It needs no root.
 3. "Check again" asks the worker to say hello to the host (`SHELL_STATUS` with `probe`, extension pages only) whether or
-   not ml.sh is on: connect, hello, close; nothing is configured and nothing runs. The guide disappears once any host has
+   not ml.sh is on: the host starts, answers hello and exits, and nothing else runs or is configured. The guide disappears once any host has
    answered (the last hello, else a stored "a host has answered in this profile", `shell.hostSeen`). The person then turns
    ml.sh on and names a folder, as before.
 4. The chat page's attention list carries "Programs on this machine: connect window-ml-host" (`host-not-connected`,
