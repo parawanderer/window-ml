@@ -133,8 +133,7 @@ made.)
 Not in the system prompt: every token there is paid on every turn (`docs/spec/PROMPT_BUDGET.md`). The `agent_api_docs`
 tool gets a `links` topic: the form, the address table, and one line per setting key with its label and place,
 generated from the table the class test checks. Whether one sentence in the prompt ("you may link to a setting as
-`[label](window-ml:setting/<key>)`") earns its cost is open question 1, for the next prompt review
-(`docs/dev/prompt-review.md`).
+`[label](window-ml:setting/<key>)`") earns its cost was open question 1; measured, it does (below).
 
 ## Threat model
 
@@ -186,7 +185,18 @@ checklist, landing in the builder's PR as its own file (rule 10).
 
 ## Open questions
 
-1. A sentence in the system prompt, or `agent_api_docs` only (above).
+1. ~~A sentence in the system prompt, or `agent_api_docs` only (above).~~ **Answered 2026-11-13: add the sentence.**
+   The `links-prompt` sweep (five models, four tasks that a link answers plus a control, four repeats, both arms; notebook
+   `notebooks/bench/links-prompt.ipynb`) found that a link to the right place rises from 41/80 runs with `agent_api_docs`
+   alone to 55/80 with the sentence (Fisher two-sided p = 0.036). The gain is in the models that can link at all but do
+   not look for the form: DeepSeek Flash 9 → 15 of 16, GPT-6 Luna 8 → 14 (the API key's question 0 → 4 of 4), Gemma 4
+   31B 9 → 12. Qwen 3.8 Flash already links from the docs (14 → 13) and Gemma 4 E4B links in neither arm (1 and 1). No
+   run in either arm put a link in the control's answer, but the control failed 5 of 20 times with the sentence and 0
+   of 20 without (Gemma 4 E4B answering `[]` or the code in lower case, Qwen writing an en dash or `CROSSPACE`), for no
+   reason the sentence explains; a re-run of the control alone settles whether it is chance. The cost is 36 to 40 prompt tokens a call by each model's
+   tokenizer, about 150 to 180 a run on these tasks. Three links in the sentence's arm, none in the other, mixed the two
+   forms (`setting/advanced/shell`) and render as their label: the sentence's `setting/<key>` reads to some models as a
+   path. Without the sentence, a run that linked had read `agent_api_docs` first (41 of 41), and 22 of 80 never read it.
 2. Whether the chat page's web and phone builds should offer "open on that browser" for a setting of a runtime they
    cannot draw, through the hub; out of scope here.
 3. Whether a step of a session (`s/<runtime:hash>/step/<n>`) is an address; the `@tool:` pointer already links a step
