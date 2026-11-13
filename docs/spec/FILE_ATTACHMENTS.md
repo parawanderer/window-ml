@@ -972,14 +972,14 @@ neither the folder nor `ml.files`.
 chat-page lane. The mount, the fallback and the Python binding: the Pyodide lane. The host's folder, the git snapshot
 and the per-request judging, the folder watch: the host lane, as stated in "What window-ml-host must do" below.
 
-### What window-ml-host must do for mounts, `/files` and `ml.sh` diffs (proposed 2026-11-13)
+### What window-ml-host must do for mounts, `/files` and `ml.sh` diffs (ruled 2026-11-13)
 
-PROPOSED 2026-11-13; for Shane's ruling, with e3's rows through the coordinator. Nothing is built. The coordinator's
+RULED 2026-11-13 (Shane: "fine for now", to be changed where building shows one wrong). Nothing is built. The coordinator's
 ruling (Shane, 2026-11-13): no host-side lane opens until this is ruled; then one lane, in its own window-ml-host
 clone, takes the scope check (H1 to H8) first, then the argv refusal (H9), then the snapshot (H10 to H15). It states
 as requirements on the host what the two sections above leave to "the `ml.sh` and window-ml-host owner", and settles
-three places where they and `SHELL.md` disagree (named where each is settled, and listed under "For Shane" at the
-end).
+three places where they and `SHELL.md` disagree (named where each is settled, and listed under "Ruled with it" at
+the end).
 
 **One judge.** The host enforces the scope and the hard refusals, which no policy can lift, and resolves the facts. The
 worker judges free or asks with the built-in default policy and the person's policies over those facts, as it already
@@ -1110,8 +1110,9 @@ calls.
 - The git queries per request (`check-ignore`, the undoability check) cost a spawn each; whether the host batches them
   per cell or caches them by `basis` is the lane's to measure.
 
-**For Shane.** The three settlements: the argv refusal kept as one rule (H9), the snapshot writing nothing into the
-repository (H10), and the sandbox and `gitUndoable` both holding (the paragraph under the table).
+**Ruled with it** (Shane, 2026-11-13): the three settlements, the argv refusal kept as one rule (H9), the snapshot
+writing nothing into the repository (H10), and the sandbox and `gitUndoable` both holding (the paragraph under the
+table).
 
 **Owners.** This text: the chat-page lane, until the host lane opens. H1 to H15: the host lane, one lane in its own
 window-ml-host clone, scope check (H1 to H8) first. The worker's judging of the facts and the table's default policy:
