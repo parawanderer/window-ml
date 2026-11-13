@@ -97,10 +97,10 @@ Extension tab draws the same settings view.
 MODEL_SETTINGS.md, #1793, or `ml.config()`). To resolve it, each row of the panel carries
 `data-setting="<key>"`, and a table beside `DEFAULT_CONFIG` names each key's tab and section. A test enumerates
 `DEFAULT_CONFIG` and fails on a key with a panel control and no place, or a place whose row does not carry the key
-(AGENTS.md: enumerate, do not sample). A key with no control (today `ocrNumCtx`) is to have no address and its link
-renders as text; until that table exists the parser is broader and accepts every `DEFAULT_CONFIG` key, `ocrNumCtx`
-included, and the table narrows it. A link to a secret's row (`setting/apiKey`) is allowed: it opens the row, never
-reads the value, and "set your API key here" is exactly the help Shane asked for.
+(AGENTS.md: enumerate, do not sample). A key with no control (today `ocrNumCtx`) has no place, so no address, and
+its link renders as text: the parser accepts exactly the keys with a place (`SETTING_PLACES`). A link to a secret's
+row (`setting/apiKey`) is allowed: it opens the row, never reads the value, and "set your API key here" is exactly the
+help Shane asked for.
 
 ## What a click does, by surface
 

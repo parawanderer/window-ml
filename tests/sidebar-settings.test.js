@@ -559,7 +559,7 @@ test("settings: the wire format is a THREE-state control, defaulting to auto", a
     assert.equal(w.syncStore.protoStream, "on");
 });
 
-// --- the sections an address may name: settings-sections.ts against what each tab draws ----------------------
+// --- the sections an address may name: PANEL_LAYOUT against what each tab draws ----------------------------
 
 test("settings: PANEL_SECTIONS names every section the view defines, once, and nothing else", async () => {
     const { PANEL_SECTIONS } = await import("../src/contract/contract-config.ts");
@@ -567,7 +567,7 @@ test("settings: PANEL_SECTIONS names every section the view defines, once, and n
     const defined = [...src.matchAll(/<Section id="([^"]+)"/g)].map((m) => m[1]).sort();
     const listed = Object.values(PANEL_SECTIONS).flat().sort();
     assert.ok(defined.length > 20, `the scan found the sections (${defined.length})`);
-    assert.deepEqual(listed, defined, "a section added to the view needs its tab in settings-sections.ts, and a removed one leaves it");
+    assert.deepEqual(listed, defined, "a section added to the view needs its row in PANEL_LAYOUT (contract-config.ts), and a removed one leaves it");
 });
 
 test("settings: each tab draws the sections PANEL_SECTIONS lists for it, in order, so a section address opens the right tab", async () => {
