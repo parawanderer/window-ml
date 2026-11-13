@@ -180,6 +180,19 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      # The whole suite, so it needs what `test` needs: the restricted-mode core and the boot's wheels. Without
+      # this the python sandbox suite fails on `No module named 'numpy'` and friends — 483 rows on 2026-11-13,
+      # any time this job actually ran (it is triggered by a `tests.yml` change too). Cached exactly as `test`.
+      - name: Cache pyodide wheels
+        id: pyocache
+        uses: actions/cache@v6
+        with:
+          path: |
+            pyodide-wheels
+            pyodide-core
+          key: pyodide-wheels-${{ hashFiles('package-lock.json', 'src/python/python-env.ts', 'tools/pyodide-dist.json') }}
+      - if: steps.pyocache.outputs.cache-hit != 'true'
+        run: npm run fetch-pyodide
       # The pinned tag's published binaries, checksum-verified and run once before anything trusts them
       # (scripts/fetch-hub.mjs). Cached by the tag, so the release is downloaded when the pin moves and not before.
       - name: Cache the hub binary
