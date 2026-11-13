@@ -44,8 +44,8 @@ for the model, with writes.
    the list reads the same as for a key that does not exist.
 2. **A change asks unless a policy allows it**, through the policy store (`POLICIES.md`), as a new consumer `setting`.
    One mechanism: no second store, no per-setting "always allow" button, no remembered answer of its own. (The
-   fatigue refusal under "Threat model" is run-scoped memory of the model's own refused call, not an answer: it never
-   lets a change through.)
+   fatigue refusal under "Threat model", item 6, is run-scoped memory of the model's own refused call, not an answer:
+   it never lets a change through. Ruled by the coordinator, 2026-11-13, pending Shane.)
 3. **A guarded change always asks**, whatever a policy says (below, "Three classes of setting"). Precedent: a
    credentialed fetch asks regardless of policy (`POLICIES.md`, "Scopes"). A policy may still DENY a guarded change.
    This is not a second mechanism: the same consumer, the same store and the same judge, and the guarded class is an
@@ -65,15 +65,28 @@ later slice.
 
 ## Three classes of setting
 
-Every key the panel shows is in exactly one class, declared in code beside `DEFAULT_CONFIG`. A test enumerates
-`DEFAULT_CONFIG` and the panel's local display preferences and fails on a key with no class (AGENTS.md: enumerate the
-inputs, do not sample them); a new setting therefore cannot land unclassified.
+Every key the panel shows is in exactly one class, declared in code beside `DEFAULT_CONFIG`: the class, and for a
+guarded key its `widens(from, to)` and its reason, the one sentence its card shows. That declaration supersedes
+`RISKY_CONFIG` (`src/backup/backup-settings.ts`), which has a sentence for 12 of the 25 guarded keys today: the
+restore preview reads the same declaration, so there is one source of what a setting does.
+
+**The class test** enumerates `DEFAULT_CONFIG` and the panel's local display preferences (AGENTS.md: enumerate the
+inputs, do not sample them) and fails on:
+
+- a key with no class, so a new setting cannot land unclassified;
+- a guarded key with no reason sentence, so no guarded card shows a change without saying what it does;
+- an ordinary key whose domain is not closed: each ordinary key declares its domain as an enum, a number range, a
+  model on the server's list, or a parsed shape, and a domain that admits an arbitrary string fails. Today the one
+  parsed shape is `electricityOffPeakHours`'s hour range, enumerated by name; a future `*Url`, `*Template`, `*Prompt`
+  or `*Header` key therefore cannot land ordinary by default, and must be classified guarded or secret;
+- a key the whitelist accepts that has no control in DevTools Settings (rule 6). `ocrNumCtx` is the fixture that proves
+  this can fail: it is classified but not whitelistable until it has a control.
 
 | Class | Whitelistable | A change | Keys (the initial classification; the code's table is the truth) |
 | --- | --- | --- | --- |
 | **secret** | never | impossible | `chatUrl`, `apiKey`, `modelFilter`, `priceSnapshotUrl` (exactly `SECRET_KEYS`), and the legacy `pageApprovalDomains` (it is a site list) |
-| **guarded** | yes, by the person | always asks in the guarded direction; a policy may deny, never allow | what widens what runs unasked or what the model reaches; what sends traffic somewhere; what shrinks the person's record of what happened. See the next table |
-| **ordinary** | yes | asks unless a policy allows it | everything else: models and their context sizes, appearance, the HUD, titling, electricity prices, `protoStream`, the panel's display preferences |
+| **guarded** | yes, by the person | always asks in the guarded direction; a policy may deny, never allow | what widens what runs unasked or what the model reaches; what sends the person's data somewhere it did not go before; what shrinks the person's record of what happened. Exactly the next table |
+| **ordinary** | yes | asks unless a policy allows it | everything else: models and their context sizes, appearance, the HUD, titling, electricity prices, `protoStream`, the panel's display preferences. `autoTitles` and `groundingEnabled` send more to the model server when turned on, and are ordinary on purpose: they reach only the server the person configured, with data already going there |
 
 **The guarded direction is per key.** Turning `autoApproveReadonly` off narrows and is an ordinary change; turning it on
 is guarded. Each guarded key declares a `widens(from, to)` in code; a key that declares none is guarded in both
@@ -125,8 +138,13 @@ Only a run the worker built (`SITE_ACCESS.md`, "Runs the user starts are built i
 sidebar, the DevTools panel, the chat page or over the hub. The guards are the ones `propose_policy` already has
 (`docs/dev/policies.md`, "A proposal from the model"):
 
-- the tool is offered only by `startUserRun`; `pageStartPayload` drops a page's descriptor of that name and
-  `markWorkerRun` strips it from a page-built run handed to the worker;
+- the tool is offered only by `startUserRun`; `change_setting` joins `PROPOSAL_TOOLS`, so `pageStartPayload` drops a
+  page's descriptor of that name and `withoutProposals` strips it from the stored copy of a page-built run handed to
+  the worker (`src/sw/sw-runs.ts`);
+- every place a run becomes one the worker built is enumerated, not sampled: `startUserRun`, the hand-over
+  (`markWorkerRun`), adoption (`adoptSession` in `src/sw/sw-sessions.ts`, which hydrates a saved session's payload and
+  calls `makeWorkerRun`) and the resume. On the three that are not `startUserRun` the toolset is the payload's, which
+  cannot carry `change_setting`; a test per caller asserts none yields the tool or `ml.current.settings` to a page;
 - `ml.current.settings` is added only to the snapshot the worker builds for a run it built, and an exec naming
   `ml.current` runs in an isolated world or is refused (`src/sw/exec-routing.ts`), so a page's script never reads it;
 - there is no `ml.*` member and no `HANDLE_MAP` entry for either half, so nothing on a page can name it; the existing
@@ -135,14 +153,19 @@ sidebar, the DevTools panel, the chat page or over the hub. The guards are the o
 ## The surface
 
 **Reading: `ml.current.settings`.** One entry per whitelisted key: `{ value, mode: "read" | "read-write", class:
-"ordinary" | "guarded" }`. Absent when the list is empty or the run is not one the worker built. Read at each snapshot,
-so a change the person makes in Settings is what the next survey sees.
+"ordinary" | "guarded" }`. Absent when the list is empty or the run is not one the worker built. The worker reads the
+whitelist and the values each time it builds an `ml.current` snapshot for an exec, so a change the person makes in
+Settings is what the next survey sees. That snapshot reaches the model only through an exec run in an isolated world:
+where no isolated world is available, an exec naming `ml.current` is refused (`src/sw/exec-routing.ts`), so on that
+setup the model reads no setting through this surface, while `change_setting`, which runs in the worker, still works
+and its result names the old value. The refusal stays a refusal when this is built: never a main-world fallback for
+`ml.current.settings`.
 
 **Writing: one tool, `change_setting({ key, value, why })`**, a builtin declared in the tool registry
 (`defineBuiltinTool`), run in the worker. In order:
 
 1. Refused, with no card, when the key is off the list or `read`, or when the value fails the key's own validation:
-   its type (`configTypeOk`), its words (`CONFIG_ENUMS`), its range, a model name off the server's list or the filter,
+   its type (`configTypeOk`, module-private in `src/backup/backup-settings.ts` today), its words (`CONFIG_ENUMS`), its range, a model name off the server's list or the filter,
    a string over a cap. The model is told why in one sentence.
 2. Judged as the `setting` consumer: `judgeCall(runId, "setting", facts)`. A `deny` refuses with the policy named
    (`POLICIES.md`, "always reject is a policy"). An unloaded store asks.
@@ -160,7 +183,7 @@ from each key's domain, which for an enum key is the whole domain).
 words:
 
 > The agent wants to change **Auto-approve read-only surveys** from `off` to `on`.
-> This runs read-only page surveys without asking. *(the `RISKY_CONFIG` text, for a guarded key)*
+> This runs read-only page surveys without asking. *(the class declaration's reason, for a guarded key)*
 > The agent says: "…" *(`why`, at most 280 characters)*
 > This applies to every browser signed in to this profile. *(for a key in `chrome.storage.sync`)*
 > [Allow] [Deny, with a note]
@@ -168,8 +191,12 @@ words:
 Two answers, as every card (`POLICIES.md`, "Widening is a policy, never a button on a card"). A card for a guarded
 change says it cannot be remembered.
 
-**The write** is a compare-and-set: it lands only if the stored value still equals `from`, the value the card showed;
-otherwise the card closes and the model is told the setting changed meanwhile. A `setting`/`changed` record goes to the
+**The write** is a compare-and-set against storage at the moment of the write: `from` is the value the worker read
+when it judged the call, which is the value the card shows; when the answer comes, the worker reads the key again and
+writes only if it still equals `from`. A change from anywhere else in between (the person in Settings, another
+browser's write arriving through `sync`) makes the answer stale: the card closes, nothing is written, and the model is
+told the setting changed meanwhile. A card already showing also closes on `chrome.storage.onChanged` for its key,
+before any answer. A `setting`/`changed` record goes to the
 run log with the key, from, to and who answered (`docs/dev/run-log.md`); the tool result tells the model the old value
 so it can say how to undo. A change takes effect as the same change made in Settings would, for this run included.
 
@@ -205,8 +232,9 @@ call this surface (above); what it can do is ask the model, in text, to call it.
 5. **Reading.** A whitelisted value reaches the model's context and, from there, anything the model writes (a fetch the
    person approves, a reply). No secret is ever on the list; the person putting a key on the list for `read` is the
    person accepting that the model knows its value. Error text from a refused write goes through `sw-scrub.ts`.
-6. **Fatigue.** A model asking again and again for the same change. Open (question 4): the lean is that a denied change
-   of the same key to the same value within a run is refused without a card, telling the model it was denied. That is
+6. **Fatigue.** A model asking again and again for the same change. A denied change of the same key to the same value
+   within a run is refused without a card, telling the model it was denied (ruled by the coordinator, pending Shane;
+   open question 4 keeps only its key). That is
    run-scoped memory of the model's own refused call, kept with the run and gone with it: it can only refuse, never
    answer for the person, and it is not a policy, so it is not the remembered answer rule 2 excludes.
 7. **Propagation.** The config lives in `chrome.storage.sync`, so a change the model makes on one browser lands on
@@ -215,7 +243,8 @@ call this surface (above); what it can do is ask the model, in text, to call it.
    `sync`, not to this browser only: a browser-local override of a synced key would be a fourth copy of the config
    (`docs/dev/state.md`), with the questions every other copy raised about which one wins. The card is the control; a
    person who wants a setting to differ per browser has no way to say so today, with or without this spec. Display
-   preferences in `chrome.storage.local` stay on this browser.
+   preferences in `chrome.storage.local` stay on this browser. Inbound is covered by the compare-and-set: a value
+   synced in from another browser while a card shows closes the card, and an answer never writes over it.
 
 **Red-team rows** (e3, through the coordinator), what a hostile page or an injected model must not get:
 
@@ -226,10 +255,19 @@ call this surface (above); what it can do is ask the model, in text, to call it.
   remembered answer or a policy file;
 - a change to the whitelist, a policy, a site list or the self-approval list through `change_setting`;
 - a card answered by a page's message, or an answer applied to a different value than the card showed;
-- `agentStartPage` set to a host a `fetch` `deny` covers;
+- `agentStartPage` set to a host a `fetch` `deny` covers, and to the same host spelled so two parsers could disagree:
+  userinfo (`https://good.example@evil.example/`), a trailing dot, an IDN and its punycode, a non-http(s) scheme
+  (`data:`, `javascript:`, `chrome-extension:`), and the host reached through a redirect a navigate would follow;
+- an ordinary change freed by the built-in default (`free()` over `unknown` effects is false: a refactor that makes it
+  true fails this row), and any change, ordinary or guarded, written while the policy store is not yet loaded;
+- a write landing over a value that changed after the card was drawn, by the person in Settings or by `sync` from
+  another browser;
 - a change to a `sync` key whose card does not say it applies to every browser signed in;
-- the tool or the snapshot key reaching a page-built run through `startBackgroundRun`, `markWorkerRun` or a resume;
-- an unclassified key in `DEFAULT_CONFIG` (the class test).
+- the tool or the snapshot key reaching a page-built run through any caller of `makeWorkerRun` or `markWorkerRun`:
+  `startBackgroundRun`, the hand-over, `adoptSession`, a resume;
+- `ml.current.settings` served from the main world where no isolated world exists;
+- the class test's four failures: an unclassified key, a guarded key without a reason, an ordinary key with an open
+  string domain, a whitelistable key with no panel control (`ocrNumCtx`).
 
 ## Open questions
 
@@ -241,11 +279,13 @@ call this surface (above); what it can do is ask the model, in text, to call it.
    until the person adds keys.
 3. **Per-key `widens` for lists** (`shellRoots`, `serverToolsOff`): a set comparison, which the declaration in code
    makes exact; whether a reorder counts as a change at all.
-4. **Fatigue**: the repeat-refusal above, or nothing.
+4. **Fatigue**: the repeat-refusal is ruled by the coordinator as written in threat item 6 (pending Shane); what
+   stays open is its key: the same key to the same value, or the same key at all.
 5. **Local display preferences** (`fontScale`, the code theme, the output cell height) live in `chrome.storage.local`
    and some in the panel's `localStorage`: whether those are on the whitelist in the first slice or follow it.
 6. **A key the panel does not show.** `ocrNumCtx` is in `DEFAULT_CONFIG` and `ml.config()` but has no control in
-   DevTools Settings; by rule 6 it is not whitelistable until it has one, which the standing rule wants anyway.
+   DevTools Settings, so the class test keeps it off the whitelist; whether it gets a control (which the standing rule
+   for a setting wants anyway) is the panel owner's call.
 7. **Settings of other surfaces**: the chat page's "This page" tab is the device's own and is not the extension's
    config; out of scope here.
 
