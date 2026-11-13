@@ -53,8 +53,10 @@ EVERY turn, deletes the run's inbox, ends its tasks (`endTasks`) and the turn's 
   1. **The tab cell, built.** `hostTurn` registers a setter for the turn (`turnTabCells`, `sw-runs.ts`) that re-points
      the turn's `tabId` binding, which every send in the turn reads as it sends, and moves what held the old tab by
      value: the arrival judge (`watchArrivals`), the CDP attach (`releaseDebugger` on the old tab), python_exec's media
-     (`pyMediaFor` reads the tab at each call). `rekeyRunInbox` is its one caller: it moves the inbox and calls the cell.
-     Its first flow is a replaced tab (`retabRuns`, below).
+     (`pyMediaFor` reads the tab at each call). A run the WORKER built registered its worker tools once, at its start,
+     and a turn finds them there: `retabWorkerRun` (`worker-tools.ts`) points them at the turn's tab at each turn's start
+     (a move between turns) and from the cell. `rekeyRunInbox` is the cell's one caller: it moves the inbox and calls the
+     cell. Its first flow is a replaced tab (`retabRuns`, below).
   2. **Moving a running turn.** `moveRun` on a run with a live turn: what is filed by tab (the tracking entry and the
      pin, the replay ring) moved for the one run, `rekeyRunInbox`, the page-bound tasks cancelled (rule 4a), and the
      model told at its next step through the inbox. Waits for slice 1.

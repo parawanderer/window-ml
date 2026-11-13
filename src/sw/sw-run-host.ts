@@ -59,7 +59,7 @@ import { withRuntime } from "./sw-current-runtime";
 import { isolationAvailable, pageApproved, runIsolatedExec } from "./sw-isolated-exec";
 import { handOverSettled } from "./nav-handover";
 import { fetchTarget } from "./sw-fetch-url";
-import { grantRunFetch, grantRunOrigin, runOriginGranted, runOrigins, runFetchConsented, grantRunPython, takePyRefusal, pythonDialectReady } from "./worker-tools";
+import { grantRunFetch, grantRunOrigin, runOriginGranted, runOrigins, runFetchConsented, grantRunPython, takePyRefusal, pythonDialectReady, retabWorkerRun } from "./worker-tools";
 import { autoApprovePython } from "../agent/auto-approve";
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
 import { takeMovedNote } from "./move-run";
@@ -724,10 +724,14 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         runInboxes.set(runId, { tabId, queue: [] });   // a.say() steering lands here while the run is live
         // The turn's TAB CELL (MOVE_RUN.md, shape (b)): every send below reads `tabId` as it sends, so re-pointing the
         // binding moves them; what holds the old tab by value is moved here. Only `rekeyRunInbox` calls it.
+        // A run the worker built registered its worker tools once, at its start: they follow the run to the tab it is on
+        // now, at this turn's start (a move between turns) and through the cell (a move or a replace during it).
+        retabWorkerRun(runId, tabId);
         turnTabCells.set(runId, (to) => {
             if (to === tabId) return;
             const from = tabId;
             tabId = to;
+            retabWorkerRun(runId, to);
             releaseDebugger(from);
             rewatchArrivals?.();
         });
