@@ -89,6 +89,7 @@ any new mechanism reports.
 | `python` | `pkg-index` | a python_install card read PyPI's index before it was raised: one record per request, made before the request, with `detail.url` (always on pypi.org) and `detail.tool`. A lock package makes none |
 | `python` | `pkg-card` (`ok`, or the refusal: `not-on-index`, `malformed`, …) | a python_install card was raised; `detail.files` is how many rows it showed, `detail.tool` the tool |
 | `python` | `pkg-card-mismatch` (`refusal`/`files-absent`/`files-malformed`/`files-differ`/`no-check`) | an approval of a python_install card was turned into a denial: the card was a refusal, or the answer did not carry the rows it showed. Level `warn`, the sentence in `detail.why`, the gate's seq in `detail.seq` |
+| `python` | `pkg-install` (`ok`, or the failure: `download`, `mirror`, `bad-archive`, `name-collision`, `too-large`, `missing`, `died`, `import`) | an approved python_install card was installed into the run, or was not and left the run as it was. Level `warn` on a failure; `detail.name` the request, `detail.ms` the time, and `detail.files`/`detail.modules` on success, `detail.module`/`detail.missing` or `detail.filename` on a failure |
 | `python` | `keep` | the turn asked to keep its Python worker through idle gaps (`python_exec` `keep: true`); once per turn |
 | `tool` | `scrubbed` (`config-secret`) | a tool result named the server URL, the API key or the model filter and was scrubbed before the model read it; `key` holds the text as the tool wrote it |
 

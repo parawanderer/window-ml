@@ -1,9 +1,9 @@
 // wheel-zip.mjs — test fixtures: a minimal zip writer, with knobs for lying archives, and a wheel built on it (tests/pkg-archive.test.mjs, tests/python-install.test.mjs).
 
-import { deflateRawSync } from "node:zlib";
+import { crc32, deflateRawSync } from "node:zlib";
 
 /**
- * @param {Array<{name:string, data?:string|Buffer, method?:number, mode?:number, flags?:number, dir?:boolean, usize?:number, madeBy?:number}>} items
+ * @param {Array<{name:string, data?:string|Buffer, method?:number, mode?:number, flags?:number, dir?:boolean, usize?:number, madeBy?:number, crc?:number}>} items
  * @param {{ zip64?: boolean, comment?: string }} [opt]
  */
 export function zip(items, opt = {}) {
@@ -16,11 +16,14 @@ export function zip(items, opt = {}) {
         const method = it.method ?? 0;
         const body = method === 8 ? deflateRawSync(raw) : raw;
         const usize = it.usize ?? raw.length;
+        // The real CRC-32 unless a test lies: Python's zipfile, which Pyodide's unpackArchive uses, checks it.
+        const crc = it.crc ?? crc32(raw);
         const lh = Buffer.alloc(30);
         lh.writeUInt32LE(0x04034b50, 0);
         lh.writeUInt16LE(20, 4);
         lh.writeUInt16LE(it.flags ?? 0, 6);
         lh.writeUInt16LE(method, 8);
+        lh.writeUInt32LE(crc >>> 0, 14);
         lh.writeUInt32LE(body.length, 18);
         lh.writeUInt32LE(usize, 22);
         lh.writeUInt16LE(name.length, 26);
@@ -30,6 +33,7 @@ export function zip(items, opt = {}) {
         c.writeUInt16LE(20, 6);
         c.writeUInt16LE(it.flags ?? 0, 8);
         c.writeUInt16LE(method, 10);
+        c.writeUInt32LE(crc >>> 0, 16);
         c.writeUInt32LE(body.length, 20);
         c.writeUInt32LE(usize, 24);
         c.writeUInt16LE(name.length, 28);

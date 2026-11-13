@@ -175,7 +175,9 @@ AS BUILT (slice 2), with its departures, each ruled by the coordinator on 2026-1
   `sw-run-start.ts`), because before it an approved card installs nothing.
 - No network: the index view is the lock alone, so a package the core does not ship is refused as `not-on-index`.
   The lock rows carry the lock's own sha256 (`LockEntry.sha256`); a lock file has no size, and the card says "in the
-  core". The platform scan's note waits for PyPI rows (slice 3).
+  core". The platform scan's note waits for PyPI rows (slice 3). CORRECTED in slice 4 (ruled 2026-11-13): "in the
+  core" held only for the lock files the extension ships, 25 of the lock's 354; a lock row is now shown only for a
+  shipped file, and any other refuses the card as `not-shipped`.
 - The card is its own `RenderDescriptor`, `{ type: "packages", ecosystem: "pypi", request, verdict }`
   (`pkg-card-view.tsx`). Index text is drawn as text nodes; a control, bidi or invisible character is replaced by U+FFFD
   and listed beside its field as `\u{XXXX}`.
@@ -213,7 +215,9 @@ AS BUILT (slice 3), with the rulings of 2026-11-12 (the coordinator; the one-car
 - The mirror is IndexedDB `ml-pkg-mirror` (store `wheels`, by sha256), declared as `packages.mirror`: not
   `ml-values`, whose budget evicts per session, while approved wheels are global. It holds approved BYTES, not an
   approved install: a held wheel still goes through the card, as `source: "mirror"`, left out of the download total.
-  The lock is not mirrored: it ships in the extension (`dist/pyodide`) and is never a network read.
+  The lock is not mirrored, and is never a network read. CORRECTED in slice 4: the lock does not ship in the
+  extension; `dist/pyodide` holds the start-up set's closure, 25 of the lock's 354 packages, and a lock package outside
+  it is refused as `not-shipped`.
 - After approval (`fetchApproved`, `ensureWheel` in `sw-pkg-mirror.ts`): no credentials, no redirect followed; the body
   is counted as it streams and dropped past the card's size; its sha256 is computed over those bytes and must equal the
   card's, as must the size, before anything is stored. Two requests for one digest share one download; a held digest is
@@ -311,9 +315,16 @@ The design:
     the candidate reaching the network, `js` or `postMessage`. An import that never returns. A fatal trap. A page
     posting a cell with an install record.
 
-Not measured: any of this in a browser worker, including two workers at once against the worker's 2.6 GB heap death; a
-lock package of the shared-library type unpacked after the lockdown; how `unpackArchive` treats `.data/`; a candidate's
-boot on a slow machine against the deadline.
+MEASURED 2026-11-13, for the Q3 condition below (`notebooks/python-packages/probe-two-workers.mjs`, headless Chromium
+with the built extension, one machine, one Chromium build): a live readonly worker holding 0 to 3,584 MB in its run
+namespace and a candidate booted beside it (4.1 to 4.8 s) both answered at every step, and the candidate allocated 512
+MB more with neither dying. What bounds a worker is its own wasm32 memory, 4 GB, with numpy refusing any one array of 2
+GB or more; the 2.6 GB figure was a JavaScript heap level measured in Node during a callback flood, not a browser limit.
+RSS was not used: the machine was swapping, and RSS did not follow the data held.
+
+Not measured: a lock package of the shared-library type unpacked after the lockdown (none can reach an install: a
+shipped lock file is loaded at boot, and an unshipped one is refused); a candidate's boot on a slow machine against the
+deadline.
 
 Questions for the ruling: (Q1) the run's readonly worker only, with the `full` worker left open; (Q2) the second ask
 raised by the model (the departure in 6); (Q3) the bounds: 60 s, 8 times and 512 MB; (Q4) an install per run, not per
@@ -327,6 +338,32 @@ MB per call, on one condition: before any `src/` change, the slice 4 code PR mea
 (the live one and a candidate) against the worker's heap death, and if they cannot coexist the design comes back to the
 coordinator. (Q4) Per run, not per browser.
 
+AS BUILT (slice 4), with what the ruling of 2026-11-13 and the measurements changed:
+
+- Ruled (A), 2026-11-13: a lock row is in the core only when its file is in `pkg-shipped.gen.ts`, generated at build
+  from the `pyodide-wheels/` the build copies into `dist/pyodide` (`scripts/gen-pkg-shipped.mjs`); any other lock row
+  refuses the card as `not-shipped`, shown as "is in Pyodide's lock, not shipped with the extension". The figure, 25
+  shipped of 354 in the lock, is the length of `SHIPPED_LOCK_FILES` against the packages of
+  `dist/pyodide/pyodide-lock.json` on the lane's clone, 2026-11-13. `tests/pkg-card.test.mjs` asserts every lock
+  package's card against the list. A shipped lock file is already in every readonly worker, so approving one installs
+  nothing.
+- The install is PyPI wheels only. `installApproved` (`sw-pkg-install.ts`) downloads, checks each new wheel
+  (`pkg-archive.ts`), tests the import in a candidate (`offscreen.ts` `installTest`, the cell `pkg-install-test.ts`),
+  and only on a pass appends to the run's record (`sw-pkg-installs.ts`, `chrome.storage.session`, state
+  `python.run-installs`). The record rides every readonly cell of the run; the offscreen document hands the worker the
+  wheels it lacks (`wheelsForCell`) and the worker unpacks them after its lockdown (`installWheels`). Run log:
+  `python/pkg-install`.
+- Departure from item 5, measured: `<dist>.data/` is INERT, not refused. `unpackArchive` leaves it where it is in
+  site-packages, purelib and platlib included (fonttools' `.data/data/share/man/man1/ttx.1`), and a directory of that
+  name imports nothing; fonttools and sympy, both shipped, carry `.data/data` man pages the cleared rule refused. A
+  `.pth` anywhere is still refused, and `tests/pkg-archive.test.mjs` runs the check over every shipped wheel.
+- Departure from item 5: a standard-library name is refused in the candidate, against `sys.stdlib_module_names`, before
+  any import; the worker holds no stdlib list. The lock's import names, the dialect's modules and the run's earlier
+  installs are refused before unpack.
+- Found: `unpackArchive` checks each entry's CRC-32 (Python's `zipfile`), so a corrupted entry fails the unpack.
+- Item 7, the platform scan, is not in this slice: asked of the coordinator as its own follow-up (4b). Until it lands, a
+  failed import's reason is the import's own last line.
+
 **Slice 5, policy-store wiring.** The four facts (`name`, `version`, `source`, `sha256`) reach the policy realm as a
 call's facts. A policy can then allow or deny an install where the card would otherwise ask, and the policy page
 lists it like any other. This is the first consumer POLICIES.md names. Widening is never a card button. A remembered
@@ -338,5 +375,11 @@ approval is a policy, written as one.
   defined.
 - Host placement: 459 of the 533 not installable in Pyodide have a native-host wheel. No placement rule is drawn until
   window-ml-host reads its own tags.
+- A lock package the extension does not ship, option (B) of 2026-11-13, for a later ruling: download it after approval
+  from the Pyodide CDN (`cdn.jsdelivr.net/pyodide/v<pin>/full/<file_name>`, the host `fetch-pyodide` already uses,
+  pinned to the lock's version), checked against the lock's sha256 and kept in the mirror. Its costs: a third network
+  host; the lock gives no file sizes, so the card shows the hash but no size and needs a per-file cap (64 MB proposed)
+  in its place; and the card's text for such a row becomes "Pyodide, to download". Option (C), shipping the whole lock,
+  is out: hundreds of MB in the extension.
 
 > Written by the packages lane (session `19f583d1-eb33-429d-bccc-727080ef9997`, model `claude-opus-5-5`).

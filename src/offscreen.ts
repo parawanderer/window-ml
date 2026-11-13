@@ -33,6 +33,7 @@ import { mirroredWheel } from "./python/pkg-mirror-db";
 import { reapDelay, longTimeout, DEFAULT_REAP_BETWEEN_MS } from "./python/py-reap";
 import { createPdfHost } from "./pdf/pdf-host";
 import { b64ToBytes, bytesToB64, type PdfMessage, type PdfReadReply, type PdfRenderReply } from "./pdf/pdf-wire";
+import { importTestCode } from "./python/pkg-install-test";
 
 // The value store, reached here rather than in the worker: stored bytes are TRANSFERRED to the worker (no copy), and the
 // one copy is the worker's, into Pyodide's memory. A returned frame's IPC comes back the same way and is written here,
@@ -446,26 +447,6 @@ const PY_INSTALL_DEADLINE_MS = 60_000;
 const candidates = new Map<string, string>();   // state: plumbing — run id → its candidate's principal, while one runs
 /** What a candidate found. */
 type InstallTest = { ok: true } | { ok: false; error: string; module?: string; missing?: string; died?: boolean; collision?: boolean };
-
-/** The candidate's cell: refuse a module the standard library already names (the wheel's would be shadowed, never
- *  imported), then import each, stop at the first failure, and say which module a missing one was. */
-function importTestCode(modules: string[]): string {
-    return `import importlib, json, sys
-_r = None
-for _m in ${JSON.stringify(modules)}:
-    if _m in sys.stdlib_module_names:
-        _r = {"module": _m, "collision": True, "error": f"{_m} is a standard-library module"}
-        break
-    try:
-        importlib.import_module(_m)
-    except ModuleNotFoundError as _e:
-        _r = {"module": _m, "missing": _e.name, "error": f"{type(_e).__name__}: {_e}"}
-        break
-    except BaseException as _e:
-        _r = {"module": _m, "error": f"{type(_e).__name__}: {_e}"}
-        break
-json.dumps(_r)`;
-}
 
 /** Terminate a candidate with no housekeeping record: it is not a run's sandbox, and nothing of it is lost. */
 function dropCandidate(principal: string): void {
