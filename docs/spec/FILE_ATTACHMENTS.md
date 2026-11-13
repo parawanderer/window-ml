@@ -718,12 +718,32 @@ itself: a `full` cell can forge a worker post (item 3), so the path a request cl
 host, never taken from the worker. The host opens a path by walking its components from the mount's own descriptor
 (`openat` with `O_NOFOLLOW` on each component, or the platform's equivalent), never by resolving a string and then
 opening it, so nothing can swap a component between the check and the open. A page-started run never has a mount.
-A hard link inside the mount to a file outside it is the mount's file by every check the host can make (its path,
-device and inode are all inside), so the person who mounts a directory mounts what is linked into it; that is a
-limit, stated here, not a defence. Rows for e3, beside the list below: a request for a path outside every mount, by
+
+- What may be mounted. The approval checks the RESOLVED path, so `~/x/..` or a symlink does not pass as a leaf. A
+  mount at or above the person's home is refused by name, as is one at, under or above the browser profile
+  (`chrome.storage.sync` holds the API key and the model filter), the archive folder or window-ml-host's config:
+  `/Users/sb is your home directory; mount a directory inside it instead.`
+- The directory replaced after approval. The host holds the mount's descriptor from approval and compares its device
+  and inode on every request, so a mounted directory replaced by a symlink to `/` is refused, not followed.
+- Unmounted or disconnected during a cell. The next read fails; the cached listing and any copy in MEMFS are not
+  served, and a close does not push.
+- Bounded sizes. An open and the before copy are bounded by a size cap (its value waits for the measurement below): a
+  file over it fails the open with `EFBIG` and a sentence naming `ml.sh`, so the worker's memory is never the limit
+  that is hit.
+- Stop between an open and its close. The host gets the file whole or not at all (the rename above), and the cell's
+  diff line says the write did not land: `a.py was not written: the cell was stopped.`
+- Hard links. A write through a descriptor whose `fstat` shows `st_nlink > 1` is refused, since it would change a file
+  outside the mount too. Reading one stays allowed, by choice: such a file is the mount's file by every check the
+  host can make (path, device and inode are all inside), so the person who mounts a directory mounts what is linked
+  into it. Multi-linked files could be refused outright; they are kept readable instead, since `cp -al` and backup
+  tools make them.
+
+Rows for e3, beside the list below, each with a pass condition above: a request for a path outside every mount, by
 `..` or a symlink inside the mount pointing out; a forged post; a component swapped for a symlink between the check
-and the open; a mount at, under or above a reserved prefix; a page or a page-started run reaching a mount. The hard
-link, if it gets a row, is the one that documents the limit.
+and the open; a mount at, under or above a reserved prefix, at or above the home, or at, under or above the profile,
+the archive folder or the host's config, by its resolved path; the mounted directory replaced after approval; a read
+or a close after an unmount or a disconnect; a file over the size cap; a Stop between an open and its close; a write
+through a hard link; a page or a page-started run reaching a mount.
 
 **A cell's edits as diffs.** Per cell, not per write: a script may write a file several times, so the diff is the file
 at cell start against the file at cell end.
@@ -759,13 +779,17 @@ under the lockdown.
   beyond; a larger or binary file gets its size and hash before and after. The shelf keeps a before copy only of
   files under the cap, which also bounds what it holds during a cell. The row is collapsed and has no setting to turn
   it off.
+- Paths in an export. A real host path carries the person's username (`/Users/sb/...`), and the exports are shared.
+  Both exports write the home directory as `~` (`~/git/window-ml/README.md`) by default, and say so in their header
+  (`the home directory is written as ~`), since an export carries what the model saw (`docs/dev/export.md`) and a
+  silent change would break that. The export can be made with the real paths instead; the run log, which is not
+  shared, keeps them. The rule is checked where `VOLATILE_FIELDS` is.
 
 **Open.**
 
-- A real host path carries the person's username (`/Users/sb/...`) into the transcript and both exports, which are
-  shared. Whether an export redacts a mount's prefix, or the person is told the paths are in it before exporting; a
-  redaction rule would be checked where `VOLATILE_FIELDS` is (`docs/dev/export.md`).
-- The size cap on a whole-file fetch, set from the measurement above.
+- Whether a mounted file's real path is kept from what the model reads (an e3 row the coordinator did not adopt). By
+  design it is not: the model is given the real path because that is what `open()` takes. For Shane.
+- The size cap's value, set from the measurement above.
 
 **Owners.** This text, the diff row and the provenance of a file read from a mount: the chat-page lane. The channel and
 the mount: the Pyodide lane. The host's scope check, the argv refusal and the `ml.sh` snapshot: the `ml.sh` and
