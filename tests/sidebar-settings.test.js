@@ -559,6 +559,34 @@ test("settings: the wire format is a THREE-state control, defaulting to auto", a
     assert.equal(w.syncStore.protoStream, "on");
 });
 
+// --- the sections an address may name: settings-sections.ts against what each tab draws ----------------------
+
+test("settings: PANEL_SECTIONS names every section the view defines, once, and nothing else", async () => {
+    const { PANEL_SECTIONS } = await import("../src/sidebar/settings/settings-sections.ts");
+    const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "../src/sidebar/settings/settings.tsx"), "utf8");
+    const defined = [...src.matchAll(/<Section id="([^"]+)"/g)].map((m) => m[1]).sort();
+    const listed = Object.values(PANEL_SECTIONS).flat().sort();
+    assert.ok(defined.length > 20, `the scan found the sections (${defined.length})`);
+    assert.deepEqual(listed, defined, "a section added to the view needs its tab in settings-sections.ts, and a removed one leaves it");
+});
+
+test("settings: each tab draws the sections PANEL_SECTIONS lists for it, in order, so a section address opens the right tab", async () => {
+    const { PANEL_SECTIONS, PANEL_TABS } = await import("../src/sidebar/settings/settings-sections.ts");
+    const w = await loadSidebarWorld();
+    await openSettings(w);
+    const buttons = [...w.shadow.querySelectorAll(".set-tab")];
+    assert.equal(buttons.length, PANEL_TABS.length, "one tab button per panel tab");
+    for (const [i, tab] of PANEL_TABS.entries()) {
+        // Permissions draws its sections only once a site waits or its lists and policies have loaded, which this world
+        // does not have; with every other tab exact and every section listed once (above), its list is the remainder.
+        if (tab === "permissions") continue;
+        buttons[i].click();
+        await w.tick();
+        const drawn = [...w.shadow.querySelectorAll("details.set-section[data-section]")].map((d) => d.dataset.section);
+        assert.deepEqual(drawn, [...PANEL_SECTIONS[tab]], `${tab} (${buttons[i].textContent.trim()})`);
+    }
+});
+
 // --- what the backend exposes: the server-tool browser and the wire format -------------------------------
 
 // Reuses the SAME ToolDefsView an agent run's "agent options" block uses for its local toolset, so a remote

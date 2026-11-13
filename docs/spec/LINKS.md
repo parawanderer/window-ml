@@ -74,9 +74,9 @@ is told apart from an `@tool:` pointer by shape, as the pointer forms are from e
 | `settings` | Settings | `#/settings` |
 | `settings/<tab>` | a tab of the chat page's Settings (`page`, `runtimes`, `devices`, `extension`, `housekeeping`) | `#/settings/<tab>` |
 | `settings/extension/backup` | Backup and restore | the one anchor |
-| `settings/extension/<panelTab>` | a tab of the extension's settings view (`connection`, `models`, `appearance`, `advanced`, `permissions`) | **proposed** |
-| `settings/extension/<panelTab>/<section>` | that tab with the section open and scrolled to (`advanced/shell`, `permissions/policies`) | **proposed**; `showSettingsSection` exists |
-| `setting/<key>` | the row of one setting, by its config key: its tab, its section open, the row scrolled to and marked | **proposed** |
+| `settings/extension/<panelTab>` | a tab of the extension's settings view (`connection`, `models`, `appearance`, `advanced`, `permissions`) | parsed (`route.ts`) |
+| `settings/extension/<panelTab>/<section>` | that tab with the section open and scrolled to (`advanced/shell`, `permissions/policies`) | parsed (`route.ts`, `settings-sections.ts`); `showSettingsSection` exists |
+| `setting/<key>` | the row of one setting, by its config key: its tab, its section open, the row scrolled to and marked | parsed (`route.ts`), any `DEFAULT_CONFIG` key |
 
 The address grammar is the chat page's, minus the leading `#/`, plus the two proposed forms. One parser serves both:
 `parseRoute` grows the panel tab and section, and a `window-ml:` destination is parsed by the same function, so a hash
