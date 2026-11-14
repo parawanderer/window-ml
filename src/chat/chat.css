@@ -763,7 +763,7 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat.calm .io-label { display: none; }
 /* No `Out:` at all while the step is waiting on a PERSON: there is no output, and "running…" over a run that is
    not running is the one thing on screen that is actually wrong. */
-.chat.calm .astep.awaiting .io + .io { display: none; }
+.chat.calm .astep.awaiting .io + .io, .chat.calm .astep.awaiting .shcalls + .io { display: none; }
 /* The approval card states it, with the buttons on it; the note under the rule states it again, and the bar at the
    top of the pane a third time (that one is hidden from the component, which knows whether the card is in view). */
 /* (`.blocked` folds away like `.dup`: see "THE LIVE LINE COMES AND GOES" below.) */
@@ -858,7 +858,7 @@ button.chat-page-go:hover { color: var(--fg); }
 
 /* ROOM BETWEEN WHAT RAN AND WHAT CAME BACK. Two `details` stacked with no gap put a result hard against the
    code that produced it, which reads as one block with a rule through it rather than as a question and answer. */
-.chat.calm .astep-body .io + .io { margin-top: 12px; }
+.chat.calm .astep-body .io + .io, .chat.calm .astep-body .io + .shcalls, .chat.calm .astep-body .shcalls + .io { margin-top: 12px; }
 
 /* THE POINTER AND THE CLOCK SHARE A LINE. `ran in 1.6s` and `@tool:a1b2c3d` are both the step's own footnotes,
    and stacked they cost two rows and an awkward gap between them for one short sentence's worth of fact. */

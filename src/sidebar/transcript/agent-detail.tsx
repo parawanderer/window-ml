@@ -571,6 +571,10 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
                             failed={stepFailed}
                             raw={<RawArgs args={args || {}} schema={paramSchema} />} rawText={rawArgsText(args || {})} />
                         : null}
+                    {/* THE PROGRAMS THIS STEP STARTED (`ml.sh`), between the code that started them and what it printed: it is the order
+                        things happened in, and it folds and unfolds with the step. A call still WAITING on you stays outside
+                        (`AskList`, below the step), where it can be answered. */}
+                    <ShCalls st={st} />
                     <IoBlock label="Out" tip="What the tool returned to the model." marks={st.streamMarks} reserve={inFlight && st.streamOutput != null}
                         /* HOW LONG IT RAN. `toolMs` is the tool's own wall clock, not the step's — a human at
                            an approval gate is the step's time and none of the machine's work. Live, it ticks
@@ -634,7 +638,6 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
             {/* NESTED ASKS: calls made while this step ran that need the person (an ml.sh from an approved exec). Below
                 the step, open or not, like the step's own gate: a card for each waiting; the answered ones are the footer below them. */}
             <AskList st={st} hash={hash ?? undefined} live={live} />
-            <ShCalls st={st} />
         </div>
     );
 }

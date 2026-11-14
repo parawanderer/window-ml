@@ -28,6 +28,13 @@ async function open(w) {
     await w.tick();
 }
 
+/** Open the exec step itself: the footer of answered calls is part of its body, so it is there once the step is open. */
+async function openStep(w) {
+    const head = [...w.shadow.querySelectorAll(".astep.tool .astep-head")].find((h) => /exec/.test(h.textContent));
+    head.click();
+    await w.tick();
+}
+
 test("a waiting ask is a card under its step that shows the call's facts, never the script, and flags what to look at twice", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("ask1", "check the repo"));
@@ -64,11 +71,13 @@ test("Approve on an ask posts its id beside the step's seq, and the card goes at
     assert.equal(w.shadow.querySelector(".astep-approve.ask.leaving .appr-btn"), null, "a card on its way out has nothing left to press");
 });
 
-test("answered calls gather in ONE footer under the step: a row each, with how it ended and the person's note, and no buttons", async () => {
+test("answered calls gather in ONE footer in the step's body: a row each, with how it ended and the person's note, and no buttons", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("ask3", "check the repo"));
     await w.dispatch(running("ask3", [ask({ state: "allowed", answeredAt: 4000 }), ask({ id: "a1123456789abcdef01234567", state: "denied", answeredAt: 9000, note: "not that branch", facts: { ...FACTS, argv: ["git", "checkout", "main"] } })]));
     await open(w);
+    assert.equal(w.shadow.querySelector(".shcalls"), null, "a collapsed step carries no footer: it folds with the step");
+    await openStep(w);
     assert.equal(w.shadow.querySelector(".astep-approve.ask"), null);
     assert.equal(w.shadow.querySelectorAll(".shcalls").length, 1, "one footer for the step, not a block per call");
     assert.match(w.shadow.querySelector(".shcalls .disc-head").textContent, /ml\.sh\s*2 calls.*2 asked.*1 denied/);
@@ -91,6 +100,7 @@ test("an allowed ask that ran says what the host applied and what protected name
         ask({ id: "a2123456789abcdef01234567", state: "allowed", answeredAt: 3000, outcome: { protectedChanged: "not a list" } }),
     ]));
     await open(w);
+    await openStep(w);
     const [ran, denied, odd] = [...w.shadow.querySelectorAll(".shc-entry")];
     const warned = [...ran.querySelectorAll(".shc-facts .warn dt")].map((d) => d.textContent);
     assert.ok(warned.includes("Sandbox applied") && warned.includes("Protected names"), "less than was asked for, and a hook appeared: both flagged");
@@ -112,6 +122,7 @@ test("a call that ran without asking is a row under the step: the command, who a
         { program: "find", durationMs: 7, unasked: { by: "policy", policy: "tidy build", argv: ["find", "build", "-name", "*.o", "-delete"], outcome } },
     ] }));
     await open(w);
+    await openStep(w);
     const rows = [...w.shadow.querySelectorAll(".shc-entry")];
     assert.equal(rows.length, 1, "a span with no unasked record draws nothing");
     assert.match(rows[0].querySelector(".shc-row").textContent, /find.*ran without asking \(the policy "tidy build"\)/);
@@ -128,6 +139,7 @@ test("a bash -c call shows its script as lines, the way it was written, not run 
     const body = "cat > demo.sh <<'EOF'\necho hi\nEOF\nchmod +x demo.sh";
     await w.dispatch(running("script1", [ask({ state: "allowed", answeredAt: 2000, facts: { ...FACTS, argv: ["bash", "-c", body] } })]));
     await open(w);
+    await openStep(w);
     const code = w.shadow.querySelector(".shc-entry .copyable-code");
     assert.equal(code.textContent.replace(/\u00a0/g, " ").split("\n").filter(Boolean).length >= 4, true, "one line per line of the script");
     assert.match(w.shadow.querySelector(".shc-entry .shc-via").textContent, /bash -c/);
@@ -150,6 +162,7 @@ test("the step's later events keep its asks: its DONE does not wipe what it aske
     await w.dispatch(running("ask5", [ask({ state: "allowed", answeredAt: 2000 })]));
     await w.dispatch(agentStep("ask5", 1, { seq: 1, tool: "exec", arguments: { js: SCRIPT }, result: "0", approval: "user" }));
     await open(w);
+    await openStep(w);
     assert.equal(w.shadow.querySelectorAll(".shc-entry").length, 1);
 });
 
