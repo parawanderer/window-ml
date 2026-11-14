@@ -46,7 +46,7 @@ export const Dot = ({ status, warn, ts, ms }: {
     <span class="tt">
         <span class={`dot ${warn ? "warn" : status}`} />
         <span class="tt-pop left" role="tooltip">
-            {warn ?? DOT_TIP[status]}
+            <span class="dot-tip-line"><span class={`tip-dot ${warn ? "warn" : status}`} aria-hidden="true" />{warn ?? DOT_TIP[status]}</span>
             {ts != null || ms != null
                 ? <span class="dot-when">{ts != null ? hhmmss(ts) : null}{ts != null && ms != null ? " · " : null}{ms != null ? <b>{fmtDur(ms)}</b> : null}</span>
                 : null}

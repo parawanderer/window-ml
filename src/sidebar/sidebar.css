@@ -1203,6 +1203,8 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
 .aturn-prose .md { flex: 1; min-width: 0; color: var(--fg); }
 .aturn-prose .asst-collapsed { flex: 1; min-width: 0; color: var(--fg-dim); }
 .aturn-prose .md > :first-child { margin-top: 0; } .aturn-prose .md > :last-child { margin-bottom: 0; }
+/* When it was said: small and faint at the row's end, as the answer's stamp is. */
+.aturn-prose .prose-stamp { flex: none; align-self: flex-end; }
 /* A thinking block (reasoning_content) reads as SECONDARY to the assistant's prose (content) —
    dim its label + preview so the two are visually distinct, per the content/reasoning split. */
 .athinking .who { color: var(--fg-dim); font-weight: 500; font-style: italic; }
@@ -1785,6 +1787,14 @@ th .help { text-decoration-color: color-mix(in srgb, var(--fg-faint) 50%, transp
 /** The FIGURES under a status tooltip's sentence — when it happened and how long it took — on their own line
  *  under a rule. A separator is a BORDER on the section it opens, never an element of its own (the same rule the
  *  event tip follows), or the two end up a pixel apart on surfaces whose font scale differs. */
+/* The state's own dot leads its sentence, so the line says which state it is before it is read. */
+.dot-tip-line { display: flex; align-items: baseline; gap: 6px; }
+.dot-tip-line .tip-dot { width: 0.67em; height: 0.67em; border-radius: 50%; flex: 0 0 auto; position: relative; top: 0.04em; }
+/* A different class from `.dot` on purpose: a test or a script that counts a step's status dots must not count its tooltip's. */
+.tip-dot.pending { background: var(--busy); animation: pulse 1s infinite; }
+.tip-dot.ok { background: var(--ok); }
+.tip-dot.err { background: var(--err); }
+.tip-dot.warn { background: var(--warn); }
 .dot-when { display: block; margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--tip-line);
     color: var(--fg-dim); font-variant-numeric: tabular-nums; }
 .dot-when b { color: var(--fg); font-weight: 600; }
