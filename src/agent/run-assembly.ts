@@ -17,8 +17,8 @@ import type { FramedFile } from "../attached-files";
 import type { StartRunPayload, RebuildConfig } from "../contract/contract-messages";
 import { promptSurfaceClause, promptSurfaceOf } from "./prompt-surface";
 import { stepBudget } from "./step-budget";
-import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, tooltokensClause, DEREF_CLAUSE, shadowClause, SHADOW_TRIGGER_TOOLS, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, LINKS_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, currentClause, HUD_PROSE_QUIET, HUD_PROSE_PROGRESS, framePrompt } from "./prompts";
-import { buildDereferenceTool } from "../tools/tools";
+import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, tooltokensClause, shadowClause, SHADOW_TRIGGER_TOOLS, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, LINKS_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, currentClause, HUD_PROSE_QUIET, HUD_PROSE_PROGRESS, framePrompt } from "./prompts";
+import { buildDereferenceTool, withComposeNote } from "../tools/tools";
 import { PAGE_CONTEXT_HEAD } from "./output-clip";
 import { withToolDetails } from "../tools/tool-details";
 import { ImagesRefused, namedNote, planImages, readerNote } from "../image-gate";
@@ -313,6 +313,8 @@ export async function assembleRun(ml: AssemblyMl, task: string, { tools = null, 
     }
     // A split tool's mechanics: a pointer into agent_api_docs, or the text itself without that tool (tool-details.ts).
     toolset = withToolDetails(toolset);
+    // The compose hint: said once in `interactives`' description instead of in every findByText/interactives result.
+    toolset = withComposeNote(toolset);
     // THE MODEL'S OWN ACCOUNT of each call, offered on every tool. Injected into the TOOLSET and not only into
     // the model-facing `toolDefs`, which matters in three places at once: the background run's descriptors are
     // built from the toolset too (so one injection covers both loops), and both the loop's `validateArgs` and the
@@ -368,7 +370,7 @@ export function composeSystemPrompt(f: PromptFacts): string {
         // Adapt the default prompt to what the toolset can actually do.
         systemPrompt += CALL_TITLE_CLAUSE;   // every tool with parameters carries it, so the instruction is unconditional
         if (f.vision) systemPrompt += VISION_CLAUSE;
-        if (f.toolTokens) systemPrompt += tooltokensClause(!!f.answer) + DEREF_CLAUSE;   // rich results carry an @tool: id — to cite verbatim, and to read back
+        if (f.toolTokens) systemPrompt += tooltokensClause(!!f.answer);   // rich results carry an @tool: id — to cite verbatim, and to read back
         // The DOM tools all pierce open shadow roots + resolve `>>>` — tell the model, plus (only when
         // exec is wired) how the notation maps to JS. Gated on a representative DOM tool being present.
         if (f.names.some(n => SHADOW_TRIGGER_TOOLS.includes(n))) {

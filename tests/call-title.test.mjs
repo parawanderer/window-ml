@@ -14,11 +14,13 @@ const schema = (props) => ({ type: "object", properties: props, required: [] });
 
 // --- the schema the model is sent ---
 
-test("every tool's schema gains the title, with the form pinned by an example", () => {
+test("every tool's schema gains the title, asking for a few words", () => {
     const out = withCallTitle(schema({ selector: { type: "string" } }));
     assert.equal(out.properties[CALL_TITLE].type, "string");
     assert.match(out.properties[CALL_TITLE].description, /few words/, "a title, not a paragraph");
-    assert.match(out.properties[CALL_TITLE].description, /"/, "…pinned by an example rather than by adjectives");
+    // It carried an example ("Count the fare cards") until the panel-bloat cut; titles did not lengthen without it
+    // (median 24 characters against 26 over 1,080 titled calls, PROMPT_BUDGET.md's panel-bloat cuts, "Call titles").
+    assert.ok(out.properties[CALL_TITLE].description.length < 60, "the description is as short as what it asks for");
     assert.ok("selector" in out.properties, "and the tool's own parameters are untouched");
 });
 
@@ -26,7 +28,7 @@ test("it is NEVER required, and never changes what the tool is told to do", () =
     const before = schema({ selector: { type: "string" } });
     before.required = ["selector"];
     assert.deepEqual(withCallTitle(before).required, ["selector"], "a model that writes none is not in error");
-    assert.match(callTitleParam().description, /changes nothing about how this runs/);
+    assert.equal(callTitleParam().description, "What this call is for, in a few words.", "it asks for a title and nothing else");
 });
 
 test("a tool that already declares `title` keeps ITS OWN, rather than being silently overwritten", () => {

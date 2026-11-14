@@ -44,8 +44,8 @@ export const EXEC_SHORT = (cap: number, ceiling: number): string =>
     "`ml`: `ml.pipe(text, \"grep x | head\")` filters any string; `ml.queryAll('host >>> inner')` pierces shadow " +
     "roots and same-origin iframes; `ml.a11y(el)` gives a control's role, name and the selector for click/type; " +
     "`ml.fetch(url)` reads another URL inline, and re-reading an approved one from a read-only survey is free; " +
-    "`state` (`ml.state`) persists across calls: stash results and helpers there and reuse them. Use exec only " +
-    "when the other tools can't answer.";
+    "`state` (`ml.state`) persists across calls: stash results and helpers there and reuse them. " +
+    "Prefer a dedicated tool when one fits; exec is for what none does (a custom filter, a computation).";
 
 /** exec's `world` parameter, as the model reads it (exec-routing.ts decides what each value does). */
 export const EXEC_WORLD_PARAM = `"page": page JS globals. "isolated": hidden from page scripts.`;
