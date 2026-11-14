@@ -11,7 +11,7 @@
 // (`sw-pkg-installs.ts`), which the run's next cell carries to its own worker. A failure changes nothing of the run.
 
 import { canonicalName } from "../python/pkg-pep508";
-import { cardFromVerdict, lockEntries, preloadedClosure, rowsFromAnswer, sameRows } from "../python/pkg-card";
+import { cardFromVerdict, lockEntries, preloadedClosure, rowsFromAnswer, sameRows, shownText } from "../python/pkg-card";
 import { type PkgCard } from "../contract/contract-render";
 import { type CoreFacts } from "../python/pkg-verdict";
 import { PY_PACKAGE_LOADS } from "../python/python-env";
@@ -159,13 +159,16 @@ export async function installApproved(check: PkgCheck, runId: string, stop?: Abo
     const modules: string[] = [];
     for (const r of fresh) {
         const blob = await mirroredWheel(r.sha256).catch(() => undefined);
-        if (!blob) { log("mirror", { filename: r.filename }); return `Not installed: ${r.filename} is not in the package mirror as it was approved. ${NOTHING_INSTALLED}`; }
+        if (!blob) { log("mirror", { filename: r.filename }); return `Not installed: ${shownText(r.filename).text} is not in the package mirror as it was approved. ${NOTHING_INSTALLED}`; }
         const c = await checkWheel(new Uint8Array(await blob.arrayBuffer()), r.filename, taken, budget);
-        if (!c.ok) { log(c.reason, { filename: r.filename }); return `Not installed: ${r.filename} ${c.why}. ${NOTHING_INSTALLED}`; }
+        if (!c.ok) { log(c.reason, { filename: r.filename }); return `Not installed: ${shownText(r.filename).text} ${c.why}. ${NOTHING_INSTALLED}`; }
         for (const n of c.topLevel) taken.add(n);
         modules.push(...c.modules);
         rows.push({ name: r.name, version: r.version, source: r.source, filename: r.filename, sha256: r.sha256, topLevel: c.topLevel });
     }
+    // The candidate imports `modules` and nothing else: a call with none would pass a test that ran nothing (a wheel of
+    // only stubs or only `.data/`), so it is refused here rather than reported as an import that works.
+    if (!modules.length) { log("nothing-importable"); return `Not installed: ${fresh.map((r) => JSON.stringify(shownText(r.filename).text)).join(", ")} ${fresh.length === 1 ? "provides" : "provide"} nothing an import statement can load. ${NOTHING_INSTALLED}`; }
     const refs = [...earlier, ...rows].map(({ filename, sha256 }) => ({ filename, sha256 }));
     const res = await test(runId, refs, modules, stop).catch((e): InstallTestResult => ({ ok: false, error: String(e), died: true }));
     if (!res.ok) {

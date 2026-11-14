@@ -5,6 +5,8 @@
 // directory, local header) so that nothing is unpacked, and nothing is trusted, until every entry has passed. Nothing
 // here inflates but RECORD, and that one under a bound.
 
+import { shownText } from "./pkg-card";
+
 /** Bounds on one wheel and one install call. */
 export const ARCHIVE_BOUNDS = {
     /** Declared uncompressed bytes of a wheel over its own byte length. */
@@ -30,6 +32,17 @@ const ALWAYS_TAKEN = new Set(["pyodide", "pyodide_js", "js", "micropip", "_pyodi
 type Entry = { name: string; dir: boolean; method: number; csize: number; usize: number; offset: number };
 
 const bad = (why: string): ArchiveRefusal => ({ ok: false, reason: "bad-archive", why });
+
+/**
+ * A name from the wheel as a refusal may quote it: in quotes, each control, bidi or invisible character shown as U+FFFD
+ * and listed after it (`pkg-card.ts` `shownText`), so the sentence the model and the person read cannot be reordered or
+ * hidden by the name it is about.
+ * @param name an entry name or the wheel's filename, as written
+ */
+function q(name: string): string {
+    const { text, hidden } = shownText(name);
+    return `${JSON.stringify(text)}${hidden.length ? ` (hiding ${hidden.join(" ")})` : ""}`;
+}
 
 /**
  * PEP 503 normalisation of a project name.
@@ -59,12 +72,12 @@ function findEnd(b: Uint8Array, dv: DataView): number {
  */
 function nameProblem(name: string): string | null {
     if (name === "") return "an entry has an empty name";
-    if (name[0] === "/") return `entry ${JSON.stringify(name)} is an absolute path`;
-    if (name.includes("\\")) return `entry ${JSON.stringify(name)} has a backslash`;
+    if (name[0] === "/") return `entry ${q(name)} is an absolute path`;
+    if (name.includes("\\")) return `entry ${q(name)} has a backslash`;
     // eslint-disable-next-line no-control-regex
-    if (/[\u0000-\u001f\u007f]/.test(name)) return `entry ${JSON.stringify(name)} has a control character`;
+    if (/[\u0000-\u001f\u007f]/.test(name)) return `entry ${q(name)} has a control character`;
     const segs = (name.endsWith("/") ? name.slice(0, -1) : name).split("/");
-    if (segs.some((s) => s === "" || s === "." || s === "..")) return `entry ${JSON.stringify(name)} has an empty, "." or ".." segment`;
+    if (segs.some((s) => s === "" || s === "." || s === "..")) return `entry ${q(name)} has an empty, "." or ".." segment`;
     return null;
 }
 
@@ -108,17 +121,17 @@ function readEntries(b: Uint8Array): Entry[] | ArchiveRefusal {
         } catch {
             return bad(`central directory entry ${i} has a name that is not UTF-8`);
         }
-        if (csize === 0xffffffff || usize === 0xffffffff || offset === 0xffffffff) return bad(`entry ${JSON.stringify(name)} needs zip64`);
-        if (flags & 0x41) return bad(`entry ${JSON.stringify(name)} is encrypted`);
-        if (method !== 0 && method !== 8) return bad(`entry ${JSON.stringify(name)} uses compression method ${method}`);
-        if (method === 0 && csize !== usize) return bad(`stored entry ${JSON.stringify(name)} declares two sizes`);
+        if (csize === 0xffffffff || usize === 0xffffffff || offset === 0xffffffff) return bad(`entry ${q(name)} needs zip64`);
+        if (flags & 0x41) return bad(`entry ${q(name)} is encrypted`);
+        if (method !== 0 && method !== 8) return bad(`entry ${q(name)} uses compression method ${method}`);
+        if (method === 0 && csize !== usize) return bad(`stored entry ${q(name)} declares two sizes`);
         if (made >>> 8 === 3) {
             const type = (ext >>> 16) & 0o170000;
-            if (type !== 0 && type !== 0o100000 && type !== 0o040000) return bad(`entry ${JSON.stringify(name)} is not a regular file or directory`);
+            if (type !== 0 && type !== 0o100000 && type !== 0o040000) return bad(`entry ${q(name)} is not a regular file or directory`);
         }
         const dir = name.endsWith("/");
-        if (dir && usize !== 0) return bad(`directory entry ${JSON.stringify(name)} has content`);
-        if (offset + 30 > cdOff) return bad(`entry ${JSON.stringify(name)} starts past the archive's data`);
+        if (dir && usize !== 0) return bad(`directory entry ${q(name)} has content`);
+        if (offset + 30 > cdOff) return bad(`entry ${q(name)} starts past the archive's data`);
         out.push({ name, dir, method, csize, usize, offset });
         p += 46 + nameLen + extra + comment;
     }
@@ -133,10 +146,10 @@ function readEntries(b: Uint8Array): Entry[] | ArchiveRefusal {
  */
 async function readEntry(b: Uint8Array, e: Entry): Promise<string | ArchiveRefusal> {
     const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
-    if (dv.getUint32(e.offset, true) !== 0x04034b50) return bad(`entry ${JSON.stringify(e.name)} has no local header`);
+    if (dv.getUint32(e.offset, true) !== 0x04034b50) return bad(`entry ${q(e.name)} has no local header`);
     const start = e.offset + 30 + dv.getUint16(e.offset + 26, true) + dv.getUint16(e.offset + 28, true);
-    if (start + e.csize > b.length) return bad(`entry ${JSON.stringify(e.name)} runs past the archive`);
-    if (e.usize > RECORD_MAX) return { ok: false, reason: "too-large", why: `${e.name} declares ${e.usize} bytes, over ${RECORD_MAX}` };
+    if (start + e.csize > b.length) return bad(`entry ${q(e.name)} runs past the archive`);
+    if (e.usize > RECORD_MAX) return { ok: false, reason: "too-large", why: `${q(e.name)} declares ${e.usize} bytes, over ${RECORD_MAX}` };
     const data = b.subarray(start, start + e.csize);
     let bytes: Uint8Array;
     if (e.method === 0) {
@@ -156,12 +169,12 @@ async function readEntry(b: Uint8Array, e: Entry): Promise<string | ArchiveRefus
                 n += value.length;
                 if (n > e.usize || n > RECORD_MAX) {
                     await r.cancel().catch(() => {});
-                    return { ok: false, reason: "too-large", why: `${e.name} inflates past its declared ${e.usize} bytes` };
+                    return { ok: false, reason: "too-large", why: `${q(e.name)} inflates past its declared ${e.usize} bytes` };
                 }
                 chunks.push(value);
             }
         } catch {
-            return bad(`entry ${JSON.stringify(e.name)} is not valid deflate data`);
+            return bad(`entry ${q(e.name)} is not valid deflate data`);
         }
         bytes = new Uint8Array(n);
         let o = 0;
@@ -170,11 +183,11 @@ async function readEntry(b: Uint8Array, e: Entry): Promise<string | ArchiveRefus
             o += c.length;
         }
     }
-    if (bytes.length !== e.usize) return bad(`entry ${JSON.stringify(e.name)} is not the size it declares`);
+    if (bytes.length !== e.usize) return bad(`entry ${q(e.name)} is not the size it declares`);
     try {
         return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     } catch {
-        return bad(`${e.name} is not UTF-8`);
+        return bad(`${q(e.name)} is not UTF-8`);
     }
 }
 
@@ -228,24 +241,24 @@ export async function checkWheel(bytes: Uint8Array, filename: string, taken: Rea
         const p = nameProblem(e.name);
         if (p) return bad(p);
         const key = (e.dir ? e.name.slice(0, -1) : e.name).toLowerCase();
-        if (seen.has(key)) return bad(`entry ${JSON.stringify(e.name)} is listed twice`);
+        if (seen.has(key)) return bad(`entry ${q(e.name)} is listed twice`);
         seen.add(key);
     }
 
     // Layout: top-level names, one dist-info, and at most its own `.data` directory.
     const distInfos = new Set<string>();
     const dataDirs = new Set<string>();
-    const rootFiles: string[] = [];
+    const importable = new Set<string>();
     const rootTop = new Set<string>();
     const files: Entry[] = [];
     for (const e of entries) {
         const segs = (e.dir ? e.name.slice(0, -1) : e.name).split("/");
         if (!e.dir) files.push(e);
-        if (e.name.toLowerCase().endsWith(".pth")) return bad(`entry ${JSON.stringify(e.name)} is a .pth file`);
+        if (e.name.toLowerCase().endsWith(".pth")) return bad(`entry ${q(e.name)} is a .pth file`);
         const rel = segs;
         if (segs[0].endsWith(".dist-info")) {
             distInfos.add(segs[0]);
-            if (!e.dir && segs.length === 1) return bad(`entry ${JSON.stringify(e.name)} is not a file under a dist-info directory`);
+            if (!e.dir && segs.length === 1) return bad(`entry ${q(e.name)} is not a file under a dist-info directory`);
             continue;
         }
         // Pyodide's `unpackArchive` leaves `<dist>.data/` as it is in site-packages, purelib and platlib included (measured on
@@ -254,38 +267,41 @@ export async function checkWheel(bytes: Uint8Array, filename: string, taken: Rea
         if (segs[0].endsWith(".data")) { dataDirs.add(segs[0]); continue; }
         if (rel.length === 1 && !e.dir) {
             const m = /^([^.]+)(\..*)?$/.exec(rel[0]);
-            if (!m || !/(\.py|\.pyi|\.so)$/.test(rel[0])) return bad(`entry ${JSON.stringify(e.name)} is not a module, a package or under one`);
-            rootFiles.push(rel[0]);
+            if (!m || !/(\.py|\.pyi|\.so)$/.test(rel[0])) return bad(`entry ${q(e.name)} is not a module, a package or under one`);
             rootTop.add(m[1]);
-        } else rootTop.add(rel[0]);
-        if (/^(sitecustomize|usercustomize)(\.|$)/i.test(rel[0])) return bad(`entry ${JSON.stringify(e.name)} is a site hook`);
+            if (!rel[0].endsWith(".pyi")) importable.add(m[1]);
+        } else {
+            rootTop.add(rel[0]);
+            importable.add(rel[0]);
+        }
+        if (/^(sitecustomize|usercustomize)(\.|$)/i.test(rel[0])) return bad(`entry ${q(e.name)} is a site hook`);
     }
     if (distInfos.size !== 1) return bad(distInfos.size === 0 ? "the wheel has no .dist-info directory" : "the wheel has more than one .dist-info directory");
     const distDir = [...distInfos][0];
     const base = distDir.slice(0, -".dist-info".length);
     const dash = base.lastIndexOf("-");
     const fields = filename.endsWith(".whl") ? filename.slice(0, -4).split("-") : [];
-    if (dash <= 0 || fields.length < 5 || fields.length > 6) return bad(`${filename} is not a wheel filename, or ${distDir} is not <name>-<version>.dist-info`);
+    if (dash <= 0 || fields.length < 5 || fields.length > 6) return bad(`${q(filename)} is not a wheel filename, or ${q(distDir)} is not <name>-<version>.dist-info`);
     const sameVer = (a: string, b2: string) => a.replace(/[-_]/g, "_").toLowerCase() === b2.replace(/[-_]/g, "_").toLowerCase();
-    if (norm(base.slice(0, dash)) !== norm(fields[0]) || !sameVer(base.slice(dash + 1), fields[1])) return bad(`${distDir} does not match the filename ${filename}`);
-    for (const d of dataDirs) if (d !== `${base}.data`) return bad(`${d} does not belong to ${distDir}`);
+    if (norm(base.slice(0, dash)) !== norm(fields[0]) || !sameVer(base.slice(dash + 1), fields[1])) return bad(`${q(distDir)} does not match the filename ${q(filename)}`);
+    for (const d of dataDirs) if (d !== `${base}.data`) return bad(`${q(d)} does not belong to ${q(distDir)}`);
 
     // RECORD lists exactly the files.
     const record = files.find((e) => e.name === `${distDir}/RECORD`);
-    if (!record) return bad(`${distDir}/RECORD is missing`);
+    if (!record) return bad(`${q(`${distDir}/RECORD`)} is missing`);
     const text = await readEntry(bytes, record);
     if (typeof text !== "string") return text;
     const listed = recordPaths(text);
     const listedSet = new Set(listed);
     if (listedSet.size !== listed.length) return bad("RECORD lists a path twice");
-    for (const e of files) if (!listedSet.has(e.name)) return bad(`${e.name} is in the archive but not in RECORD`);
+    for (const e of files) if (!listedSet.has(e.name)) return bad(`${q(e.name)} is in the archive but not in RECORD`);
     const have = new Set(files.map((e) => e.name));
-    for (const p of listed) if (!have.has(p)) return bad(`${p} is in RECORD but not in the archive`);
+    for (const p of listed) if (!have.has(p)) return bad(`${q(p)} is in RECORD but not in the archive`);
     for (const e of files) {
         if (e === record) continue;
         const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-        if (dv.getUint32(e.offset, true) !== 0x04034b50) return bad(`entry ${JSON.stringify(e.name)} has no local header`);
-        if (e.offset + 30 + dv.getUint16(e.offset + 26, true) + dv.getUint16(e.offset + 28, true) + e.csize > bytes.length) return bad(`entry ${JSON.stringify(e.name)} runs past the archive`);
+        if (dv.getUint32(e.offset, true) !== 0x04034b50) return bad(`entry ${q(e.name)} has no local header`);
+        if (e.offset + 30 + dv.getUint16(e.offset + 26, true) + dv.getUint16(e.offset + 28, true) + e.csize > bytes.length) return bad(`entry ${q(e.name)} runs past the archive`);
     }
 
     // Sizes.
@@ -303,13 +319,13 @@ export async function checkWheel(bytes: Uint8Array, filename: string, taken: Rea
     for (const n of topLevel) {
         const l = n.toLowerCase();
         if (l.startsWith("_ml_") || ALWAYS_TAKEN.has(l) || taken.has(n) || takenLower.has(l)) {
-            return { ok: false, reason: "name-collision", why: `${n} is already provided to the sandbox` };
+            return { ok: false, reason: "name-collision", why: `${q(n)} is already provided to the sandbox` };
         }
     }
 
     // Modules to import: every top-level name an import statement can spell, a namespace package (no __init__.py, as
     // mpl_toolkits is) included; a module file counts by its stem.
-    const stubOnly = (n: string) => rootFiles.some((f) => f.split(".")[0] === n) && !rootFiles.some((f) => f.split(".")[0] === n && /\.(py|so)$/.test(f));
-    const modules = [...rootTop].filter((n) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(n) && !stubOnly(n)).sort();
+    // A name only a root stub (`.pyi`) provides is not importable; one a module file or a directory also provides is.
+    const modules = [...rootTop].filter((n) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(n) && importable.has(n)).sort();
     return { ok: true, topLevel, modules, uncompressed: total, files: files.length };
 }

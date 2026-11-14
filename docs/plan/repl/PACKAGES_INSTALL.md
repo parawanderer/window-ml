@@ -344,6 +344,12 @@ The design:
     `mirroredWheel`, which re-hashes against the card's sha256, in the candidate and again in the live worker);
     `not-shipped` bypassed by case or normalisation (`shipped.has(filename)` is exact against a list generated from the
     directory the build copies, so a differing spelling is refused, the safe direction).
+    FIXED 2026-11-14 (python-packages): (i) every name a refusal quotes goes through `shownText` (`pkg-archive.ts` `q`,
+    and the card's filename in `installApproved`'s sentences); (ii) a name is importable when a module file or a directory
+    provides it, so only a name a stub ALONE provides is skipped; (iii) refused in `installApproved` for the whole call
+    (run-log reason `nothing-importable`), not per wheel, so a stub-only wheel beside its package still installs: the
+    archive row now asserts `modules: []` for such a wheel. (iv) and (v) stand as named: one tool call runs at a time per
+    run, and an extension page is the extension's own code, the boundary `PY_RUN` already has.
 
 MEASURED 2026-11-13, for the Q3 condition below (`notebooks/python-packages/probe-two-workers.mjs`, headless Chromium
 with the built extension, one machine, one Chromium build): a live readonly worker holding 0 to 3,584 MB in its run

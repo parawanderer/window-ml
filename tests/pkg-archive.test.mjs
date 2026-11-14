@@ -186,15 +186,15 @@ test("name matching is PEP 503 normalised, and the dist-info uses underscores", 
 // --- RECORD ---
 
 test("a missing RECORD is refused", async () => {
-    await refused(zip([{ name: "pkg/__init__.py" }, { name: "pkg-1.0.dist-info/METADATA" }]), "bad-archive", /RECORD is missing/);
+    await refused(zip([{ name: "pkg/__init__.py" }, { name: "pkg-1.0.dist-info/METADATA" }]), "bad-archive", /RECORD" is missing/);
 });
 test("a RECORD naming a file the archive lacks is refused", async () => {
     const dist = "pkg-1.0.dist-info";
-    await refused(wheel([["pkg/__init__.py", "x"]], { record: `pkg/__init__.py,,\n${dist}/METADATA,,\n${dist}/RECORD,,\nghost.py,,\n` }), "bad-archive", /ghost\.py is in RECORD/);
+    await refused(wheel([["pkg/__init__.py", "x"]], { record: `pkg/__init__.py,,\n${dist}/METADATA,,\n${dist}/RECORD,,\nghost.py,,\n` }), "bad-archive", /ghost\.py" is in RECORD/);
 });
 test("a RECORD that omits a file of the archive is refused", async () => {
     const dist = "pkg-1.0.dist-info";
-    await refused(wheel([["pkg/__init__.py", "x"], ["pkg/hidden.py", "x"]], { record: `pkg/__init__.py,,\n${dist}/METADATA,,\n${dist}/RECORD,,\n` }), "bad-archive", /hidden\.py is in the archive/);
+    await refused(wheel([["pkg/__init__.py", "x"], ["pkg/hidden.py", "x"]], { record: `pkg/__init__.py,,\n${dist}/METADATA,,\n${dist}/RECORD,,\n` }), "bad-archive", /hidden\.py" is in the archive/);
 });
 test("a RECORD listing a path twice is refused", async () => {
     const dist = "pkg-1.0.dist-info";
@@ -347,7 +347,10 @@ test("RED TEAM: a wheel whose files are all un-importable is refused, so no inst
         ["nothing at all", []],
     ]) {
         const r = await checkWheel(wheel(files), FN, none);
-        assert.equal(r.ok, false, `${what}: accepted with modules ${JSON.stringify(r.modules)}, so the candidate imports nothing and the install still records and reports it`);
+        // The refusal is in `installApproved`, for the whole call (tests/python-install.test.mjs): a stub-only wheel beside
+        // its package is a fine install. Here the wheel passes and says it has nothing to import.
+        assert.equal(r.ok, true, `${what}: ${JSON.stringify(r)}`);
+        assert.deepEqual(r.modules, [], `${what}: a module named, so the candidate would import one the wheel cannot load`);
     }
     // The control: one importable file is enough, and it is the one named.
     const ok = await checkWheel(wheel([["pkg-1.0.data/purelib/x.py", "x"], ["solo.py", "y"]]), FN, none);
