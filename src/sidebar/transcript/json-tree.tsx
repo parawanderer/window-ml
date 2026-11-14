@@ -21,6 +21,11 @@ export const JT_SEEN: object = Object.freeze({});
  *  mount 50,000 rows the moment you expand it. */
 export const JT_PAGE = 200;
 
+/** The highlight.js token a primitive is drawn as in the text view, so the tree takes its colour from the code theme (which sets
+ *  `.hljs-*` globally) and the two views of one value never disagree. `.jt-<type>` keeps the panel's own colour only until a
+ *  theme says otherwise. */
+const HLJS_OF: Record<string, string> = { string: "hljs-string", number: "hljs-number", boolean: "hljs-literal", null: "hljs-literal" };
+
 /** Does the cut marker sit anywhere under `v`? It is always a LAST member, so only the chain of last members is walked,
  *  and a folded container can say "cut" in its preview without drawing its children. */
 function holdsCut(v: unknown): boolean {
@@ -54,11 +59,11 @@ export interface JsonSchemaNode { description?: string; properties?: Record<stri
 // elsewhere) + a dotted underline under the field name alone (not the quotes or colon) so you can tell which keys carry docs — a debugging affordance over raw args.
 export function JtKey({ name: raw, desc, unknown }: { name: string; desc?: string; unknown?: boolean }) {
     const name = keyLabel(raw);
-    if (unknown) return <span class="tt jt-key jt-key-unknown" tabIndex={0}>{name}:<span class="tt-pop left" role="tooltip">Not in this tool's parameter schema — likely a hallucinated argument, so the tool will ignore it or error.</span></span>;
+    if (unknown) return <span class="tt jt-key jt-key-unknown" tabIndex={0}><span class="jt-key-text hljs-attr">{name}</span>:<span class="tt-pop left" role="tooltip">Not in this tool's parameter schema — likely a hallucinated argument, so the tool will ignore it or error.</span></span>;
     // The description comes from the tool's own JSON Schema, which is written in markdown — backticked
     // identifiers, mostly. Printed raw it showed the backticks, which reads as a rendering that gave up.
-    if (desc) return <span class="tt jt-key jt-key-doc" tabIndex={0}>"<span class="jt-key-name">{name.slice(1, -1)}</span>":<span class="tt-pop left" role="tooltip"><TipText md={desc} /></span></span>;
-    return <span class="jt-key">{name}:</span>;
+    if (desc) return <span class="tt jt-key jt-key-doc" tabIndex={0}><span class="jt-key-text hljs-attr">"<span class="jt-key-name">{name.slice(1, -1)}</span>"</span>:<span class="tt-pop left" role="tooltip"><TipText md={desc} /></span></span>;
+    return <span class="jt-key"><span class="jt-key-text hljs-attr">{name}</span>:</span>;
 }
 /** A key as the tree prints it: always quoted as a JSON string, so every key reads the same and one with a space,
  *  a colon or nothing in it does not read as part of the syntax around it. */
@@ -124,7 +129,7 @@ export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, 
             {label ?? (k != null ? <JtKey name={k} desc={desc} unknown={unknown} /> : null)}
             {times && isTimeField(k, v)
                 ? <span class="jt-val jt-number jt-time" {...cursorTipOn(`${new Date(v).toISOString()} (${v})`)}>{timeLabel(v)}{sep}</span>
-                : <span class={`jt-val jt-${t}`}>{typeof v === "string" ? JSON.stringify(v) : String(v)}{sep}</span>}
+                : <span class={`jt-val jt-${t} ${HLJS_OF[t] ?? ""}`}>{typeof v === "string" ? JSON.stringify(v) : String(v)}{sep}</span>}
             {trail}
         </div>;
     }

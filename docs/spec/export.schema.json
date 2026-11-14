@@ -1699,7 +1699,8 @@
                             "malformed",
                             "no-metadata",
                             "index-error",
-                            "lookup-cap"
+                            "lookup-cap",
+                            "not-shipped"
                           ]
                         },
                         "at": {
@@ -2402,7 +2403,8 @@
                             "malformed",
                             "no-metadata",
                             "index-error",
-                            "lookup-cap"
+                            "lookup-cap",
+                            "not-shipped"
                           ]
                         },
                         "at": {
