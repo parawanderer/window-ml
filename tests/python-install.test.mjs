@@ -356,6 +356,21 @@ test("a wheel whose top-level name a lock package takes is refused before any ca
     assert.deepEqual(r.pkgInstalls.map((l) => l.reason), ["name-collision"]);
 });
 
+// RED TEAM (PACKAGES_INSTALL.md, slice 4, item 10's missing shapes), measured RED at cf32fcbf on 2026-11-14: a wheel with
+// nothing importable passes `checkWheel` with `modules: []`, the candidate imports nothing and answers ok, and the call
+// is recorded and reported as "Installed … import … works" — a claim about an import that never ran, for a wheel that puts
+// nothing importable in site-packages at all (its `.data/` is inert by the ruling above).
+test("RED TEAM: a wheel that provides nothing importable is not recorded, and no result claims an import that never ran", { ...T, skip: SKIP }, async () => {
+    const inert = wheelZip([["tabulate-0.9.0.data/purelib/x.py", "x = 1\n"]], { dist: "tabulate-0.9.0.dist-info" });
+    const sha = (await import("node:crypto")).createHash("sha256").update(inert).digest("hex");
+    const file = { ...WHEEL_FILE, size: inert.byteLength, digests: { sha256: sha } };
+    const index = new Map([["https://pypi.org/pypi/tabulate/json", { info: { name: "tabulate", version: "0.9.0", requires_python: null, requires_dist: null }, urls: [file], releases: { "0.9.0": [file] } }]]);
+    const r = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index, files: new Map([[WHEEL_URL, inert]]) });
+    assert.deepEqual(r.installs, [], `recorded ${JSON.stringify(r.installs)} for a wheel with nothing to import`);
+    assert.ok(r.results[0].startsWith("Not installed"), r.results[0]);
+    assert.ok(!/works in this run's python_exec cells/.test(r.results[0]), `the result claims an import that never ran: ${r.results[0]}`);
+});
+
 test("asking again in the same run raises a card whose row the mirror holds, and approving it downloads nothing", { ...T, skip: SKIP }, async () => {
     const TAB = call({ name: "tabulate" });
     const r = await installRun([TAB, TAB], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]) });

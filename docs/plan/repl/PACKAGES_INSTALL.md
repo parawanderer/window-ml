@@ -319,6 +319,31 @@ The design:
     `numpy`, `json` or `_ml_harness`, a RECORD that lies, an archive that inflates past the bound. Import-time code in
     the candidate reaching the network, `js` or `postMessage`. An import that never returns. A fatal trap. A page
     posting a cell with an install record.
+    AMENDED 2026-11-14 (red team, e3, measured at cf32fcbf). Five shapes the list above does not name; the first three
+    are rows in `tests/pkg-archive.test.mjs` and `tests/python-install.test.mjs`, RED at that head, and each is a
+    finding rather than a pin:
+    (i) an entry name or a filename carrying a bidi, zero-width or C1 character. Every refusal echoes it as written
+    (`entry ${JSON.stringify(name)} …`), while the card's own text is made visible (`pkg-card.ts` `shownText`), so the
+    sentence that names the refused file — which the MODEL reads as the tool's result — can be reordered or hidden.
+    (ii) a root stub file that HIDES a name a package also provides: `pkg.pyi` beside `pkg/__init__.py`. `stubOnly`
+    reads the ROOT files only, so the name is dropped from `modules`, the wheel passes with nothing imported, and it is
+    recorded; its import-time code then runs for the first time in the run's OWN worker, which is the one thing items 2
+    and 4 say cannot happen.
+    (iii) a wheel with nothing importable at all (only `.data/` entries, only a stub, or an empty one): the candidate
+    answers ok having imported nothing, and the call is recorded and reported as "Installed … import … works" for an
+    import that never ran.
+    (iv) the commit does not re-check what it read before the candidate: `taken` and `earlier` are read before a test
+    that may run 60 s, and `recordInstalls` appends without re-checking, so two approvals of one run could both record
+    the same top-level name. NO UNPRIVILEGED SHAPE AT THIS HEAD (the loop runs one tool call at a time, and a run's id
+    is its own), so it is named here and not rowed.
+    (v) `PY_INSTALL_TEST` and `PY_INSTALL_STOP` honour any `run` id from any context without `sender.tab`, so an
+    extension page could start or kill another run's candidate. The boundary `PY_RUN` already has — a web page always
+    has `sender.tab` — named, not rowed.
+    Checked at cf32fcbf and NOT a shape: a PyPI row posing as a lock row (`source` is assigned only from a lock entry,
+    `pkg-verdict.ts`); the mirror's bytes swapped between the check and the candidate (every read goes through
+    `mirroredWheel`, which re-hashes against the card's sha256, in the candidate and again in the live worker);
+    `not-shipped` bypassed by case or normalisation (`shipped.has(filename)` is exact against a list generated from the
+    directory the build copies, so a differing spelling is refused, the safe direction).
 
 MEASURED 2026-11-13, for the Q3 condition below (`notebooks/python-packages/probe-two-workers.mjs`, headless Chromium
 with the built extension, one machine, one Chromium build): a live readonly worker holding 0 to 3,584 MB in its run

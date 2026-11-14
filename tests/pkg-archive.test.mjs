@@ -301,3 +301,82 @@ test("a name under .data/purelib takes no import name, so it collides with nothi
 test("structure is refused before a collision, and collision is the last check", async () => {
     await refused(wheel([["numpy/__init__.py", "x"], ["evil.pth", "x"]]), "bad-archive", /\.pth/, new Set(["numpy"]));
 });
+
+// --- RED TEAM: the import test's own inputs (PACKAGES_INSTALL.md, slice 4, item 10's missing shapes) ---
+// Item 10 names a hostile wheel's entry, symlink, `.pth`, shadowed name, lying RECORD and inflation. These three rows
+// are what it does not name, each measured RED at cf32fcbf (2026-11-14) against the code as it stands, with no mutation
+// needed: the row IS the finding.
+
+/** Characters that draw nothing or reorder the text around them: the set `pkg-card.ts` `shownText` replaces on the
+ *  card (`HIDDEN`), which the archive's own sentences never pass through. */
+const HIDDEN = new RegExp(`[\\u0000-\\u001f\\u007f-\\u009f]|${(await import("../src/agent/security.ts")).INVISIBLE.source}`, "u");
+
+// `checkWheel` returns `modules`, and only `modules` is imported in the candidate (`pkg-install-test.ts`). The rule that
+// decides is `stubOnly`: a name is skipped when a ROOT file with its stem exists and no root `.py`/`.so` does. A package
+// directory is not a root file, so a wheel that ships `pkg.pyi` beside `pkg/__init__.py` imports NOTHING in the
+// candidate, passes, and is recorded: its import-time code runs for the first time in the run's own worker, which is the
+// one thing item 2 and item 4 say cannot happen ("a PyPI package's code never runs in an unlocked realm", "rollback is
+// discarding the candidate").
+test("RED TEAM: a root stub never hides a name a package, a namespace or an extension module also provides", async () => {
+    const stub = ["pkg.pyi", "y: int\n"];
+    const importable = [
+        ["package", [["pkg/__init__.py", "x"]]],
+        ["namespace package", [["pkg/sub/__init__.py", "x"]]],
+        ["extension module", [["pkg.cpython-314-wasm32-emscripten.so", "bin"]]],
+        ["plain module", [["pkg.py", "x"]]],
+    ];
+    for (const [what, files] of importable) {
+        const r = await checkWheel(wheel([...files, stub]), FN, none);
+        assert.equal(r.ok, true, `${what}: ${JSON.stringify(r)}`);
+        assert.deepEqual(r.modules, ["pkg"], `${what}: the candidate is asked to import nothing, so a wheel whose import raises is recorded as installed`);
+    }
+    // The stub's own purpose survives: a name ONLY a stub provides is not importable, so it is not imported.
+    const only = await checkWheel(wheel([stub]), FN, none);
+    assert.deepEqual(only.modules, [], "a stub-only distribution has nothing to import");
+});
+
+// An install sets `modules: []` here, and `installTest` then answers ok without importing anything (`pkg-install-test.ts`
+// leaves `_r` None), so `installApproved` records wheel rows and reports "Installed … works". Such a wheel puts nothing
+// importable in site-packages (its `.data/` is inert by ruling), so the sentence describes an import that never ran.
+// Where the refusal belongs is the lane's call: refusing here, or refusing in `installApproved` before it records, both
+// satisfy the outcome `tests/python-install.test.mjs` asserts; this row is the one that would move with that choice.
+test("RED TEAM: a wheel whose files are all un-importable is refused, so no install is reported for an import that never ran", async () => {
+    for (const [what, files] of [
+        ["only a .data entry", [["pkg-1.0.data/purelib/x.py", "x"]]],
+        ["only a root stub", [["pkg.pyi", "y: int\n"]]],
+        ["nothing at all", []],
+    ]) {
+        const r = await checkWheel(wheel(files), FN, none);
+        assert.equal(r.ok, false, `${what}: accepted with modules ${JSON.stringify(r.modules)}, so the candidate imports nothing and the install still records and reports it`);
+    }
+    // The control: one importable file is enough, and it is the one named.
+    const ok = await checkWheel(wheel([["pkg-1.0.data/purelib/x.py", "x"], ["solo.py", "y"]]), FN, none);
+    assert.equal(ok.ok, true, JSON.stringify(ok));
+    assert.deepEqual(ok.modules, ["solo"]);
+});
+
+// Every refusal that names an entry or a filename is text a PERSON and the MODEL read (the tool's result, the run log).
+// `pkg-card.ts` `shownText` makes such a name visible on the card, and `contract-render.ts` says index text is untrusted
+// and the renderer escapes it; this path echoes the wheel's own names as written, so `�` (RLO), a zero-width space, a
+// soft hyphen or a C1 control reorders or hides the sentence that is supposed to name the file that was refused.
+test("RED TEAM: every refusal that names an entry or a filename names it made visible", async () => {
+    const RLO = "‮", ZW = "​", SH = "­", C1 = "\u0085";
+    const shapes = [
+        [".pth", () => wheel([["pkg/__init__.py", "x"]], { extra: [{ name: `pkg/${RLO}evil.pth`, data: "x" }] })],
+        ["absolute", () => wheel([["pkg/__init__.py", "x"]], { extra: [{ name: `/${RLO}abs.py`, data: "x" }] })],
+        ["backslash", () => wheel([["pkg/__init__.py", "x"]], { extra: [{ name: `pkg\\${SH}evil.py`, data: "x" }] })],
+        ["empty segment", () => wheel([["pkg/__init__.py", "x"]], { extra: [{ name: `pkg//${ZW}evil.py`, data: "x" }] })],
+        ["not a module", () => wheel([["pkg/__init__.py", "x"], [`${RLO}evil.txt`, "x"]])],
+        ["listed twice", () => wheel([["pkg/__init__.py", "x"]], { extra: [{ name: `pkg/${ZW}a.py`, data: "1" }, { name: `pkg/${ZW}a.py`, data: "2" }] })],
+        ["encrypted", () => wheel([["pkg/__init__.py", "x"]], { extra: [{ name: `pkg/${RLO}e.py`, data: "x", flags: 1 }] })],
+        ["compression method", () => wheel([["pkg/__init__.py", "x"]], { extra: [{ name: `pkg/${C1}m.py`, data: "x", method: 12 }] })],
+        ["a symlink", () => wheel([["pkg/__init__.py", "x"]], { extra: [{ name: `pkg/${RLO}s.py`, data: "x", mode: 0o120777 }] })],
+        ["not in RECORD", () => wheel([["pkg/__init__.py", "x"]], { extra: [{ name: `pkg/${ZW}h.py`, data: "x" }], record: "pkg/__init__.py,,\npkg-1.0.dist-info/METADATA,,\npkg-1.0.dist-info/RECORD,,\n" })],
+        ["the wheel's own filename", () => wheel([["pkg/__init__.py", "x"]]), `${RLO}pkg-1.0-py3-none-any.whl`],
+    ];
+    for (const [what, build, fn] of shapes) {
+        const r = await checkWheel(build(), fn ?? FN, none);
+        assert.equal(r.ok, false, `${what}: accepted, so nothing was refused to read`);
+        assert.ok(!HIDDEN.test(r.why), `${what}: the refusal carries a character that hides or reorders it — ${JSON.stringify(r.why)}`);
+    }
+});
