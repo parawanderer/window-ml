@@ -250,3 +250,18 @@ test("after the update, Check again re-reads a host that was left running: the o
     const r = await probe(bg);
     assert.deepEqual([r.hostOutdated, r.hostVersion], [undefined, pinned], "a fresh hello, not the open port's old one");
 });
+
+test("connected with ml.sh on, a host version that does not parse is unknown in the answer (the status the inspector reads is the same object)", T, async () => {
+    for (const version of ["banana-7", "0.0.1-dev<script>", "v0.0.1"]) {
+        const bg = loadBackground({ config: { ...base, ...ON }, onNative: fakeNativeHost({ version }).onNative });
+        await flush(30);
+        const r = await status(bg);   // refresh: true goes through connect
+        assert.equal(r.data.ready, true);
+        assert.equal(r.data.host.version, "unknown", version);
+        assert.equal(r.data.hostVersion, undefined);
+        assert.ok(!JSON.stringify(r).includes(JSON.stringify(version).slice(1, -1)), `the raw ${version} is not in the SHELL_STATUS answer`);
+    }
+    const ok = loadBackground({ config: { ...base, ...ON }, onNative: fakeNativeHost({ version: "0.2.0" }).onNative });
+    await flush(30);
+    assert.equal((await status(ok)).data.host.version, "0.2.0", "a parseable version is shown as parsed");
+});

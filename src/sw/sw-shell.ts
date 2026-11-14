@@ -42,7 +42,7 @@ export interface ShellStatus {
     ready: boolean;
     /** Calls will run under the OS sandbox (asked for, and available on this machine). */
     sandboxed: boolean;
-    /** `tilde`: the host expands a leading `~` in argv and cwd (`hello.tilde`). */
+    /** `version` is the PARSED form (`0.10.0`), or `"unknown"` when the host's text was not that shape: what a host sent is never kept. `tilde`: the host expands a leading `~` in argv and cwd (`hello.tilde`). */
     host?: { version: string; platform: string; sandbox: HostHello["sandbox"]; tilde?: boolean };
     roots?: HostConfigured["roots"];
     /** Why it is not ready, in words for the settings page. */
@@ -201,7 +201,7 @@ async function connect(cfg: ShellSettings, key: string): Promise<ShellHost> {
         return fail("config", `The process host refused the settings: ${(e as Error)?.message || e}`);
     }
     current = { client, hello, configured, key };
-    setStatus({ enabled, ready: true, sandboxed: configured.sandboxed, host: { version: hello.version, platform: hello.platform, sandbox: hello.sandbox, ...(hello.tilde === true ? { tilde: true } : {}) }, roots: configured.roots });
+    setStatus({ enabled, ready: true, sandboxed: configured.sandboxed, host: { version: parseHostVersion(hello.version) ? formatHostVersion(parseHostVersion(hello.version)!) : "unknown", platform: hello.platform, sandbox: hello.sandbox, ...(hello.tilde === true ? { tilde: true } : {}) }, roots: configured.roots });
     touch();
     return current;
 }

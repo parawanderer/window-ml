@@ -325,4 +325,4 @@ test, plus "a session exists". The design and its threat items: `docs/spec/SHELL
 The host-version hint rides the same state: `parseHostVersion` keeps only a strict `major.minor.patch`, `hostOutdated` compares
 it with the pin's tag by number (older only; equal, newer and unknown are no), and the worker stores the parsed version as
 `shellHostVersion` beside `shellHostSeen` (a profile without it has no hint until the next hello). `hostOutdated` and
-`pinnedHostVersion` ride `ShellStatus` as parsed strings; the `host-outdated` attention code and the guide's update wording read them.
+`pinnedHostVersion` ride `ShellStatus` as parsed strings, and `host.version` is the parsed form or `"unknown"` (the connect path too, so no answer and no inspector read carries a host's own text); the `host-outdated` attention code and the guide's update wording read them.
