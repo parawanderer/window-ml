@@ -103,7 +103,7 @@ export interface AgentLoopDeps {
     // Build the initial neutral message array (system + user(task)) — world-specific (page context).
     buildMessages(task: string): unknown[];
     // Append the assistant tool-call message / a tool-result message to the running history.
-    pushAssistant(messages: unknown[], msg: { content?: string | null; tool_calls?: ToolCall[] }): void;
+    pushAssistant(messages: unknown[], msg: { content?: string | null; tool_calls?: ToolCall[]; reasoning?: unknown }): void;
     pushToolResult(messages: unknown[], call: ToolCall, result: string): void;
     // Inline vision: after a step, inject any screenshots the step's tools captured as a user turn, so
     // the NEXT model call sees the pixels (a tool RESULT can't carry an image; a user turn can). Omit

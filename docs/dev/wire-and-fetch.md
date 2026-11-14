@@ -168,6 +168,16 @@ shows; and a new count is news on its own, so a chunk carrying only an argument 
 the URL remembered for the worker's life (`refusesLiveCount`) — a wire nicety must never cost an answer. A
 stock server that ignores it simply sends no count, and the estimate stands in.
 
+**A thinking-mode server can demand its thinking back** (DeepSeek's thinking mode through OpenWebUI: HTTP 400, "The
+reasoning_content in the thinking mode must be passed back to the API"). The loop keeps an assistant turn's thinking on that
+turn when it called tools (`NeutralMessage.reasoning`, `pushAssistant`), and `sw-llm.ts` sends it as `reasoning_content` ONLY
+after a server has asked: the first 400 that names the field is retried once with it on every such turn, and the endpoint and
+model pair is remembered (`wantsReasoning`, kept in `storage.local` as `ml_wants_reasoning`), so a backend that does not ask never
+receives a field it may reject. A turn from a transcript written before the field existed has none and is sent `""`: the server
+checks that the field is there, and nothing is invented. The hint-drop retry skips a refusal that names it, and the "request
+included images" note is not added to it. Not sent on the `ollama` format. Tests: `tests/background.test.js`, "a thinking-mode
+server wants the assistant's thinking back".
+
 **The THINKING count is the same running total, frozen while the call is still thinking** (`reasoningTokens` on
 `agent-stream` and on the turn's `TokenUsage`). Thinking comes first and the count is cumulative, so its value on
 the last chunk before any answer text or tool-call fragment arrived IS the number of thinking tokens. The check

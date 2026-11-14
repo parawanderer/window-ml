@@ -4737,6 +4737,54 @@ test("FETCH_LLM: a 400 for some other reason is not blamed on the hint", async (
     assert.deepEqual(bodies.map((b) => !!b.hint), [true, false, true, false], "the retry failed too, so the server is not marked as refusing it");
 });
 
+// --- a thinking-mode server wants the assistant's thinking back on a turn that called tools ---
+
+const DEMAND = { error: { message: "The reasoning_content in the thinking mode must be passed back to the API." } };
+const toolTurn = (extra = {}) => [
+    { role: "user", content: "list it" },
+    { role: "assistant", content: "", tool_calls: [{ id: "c1", name: "ls", arguments: {} }], ...extra },
+    { role: "tool", tool_call_id: "c1", content: "a b" },
+];
+/** A server that demands the field on any assistant turn with tool calls, as DeepSeek's thinking mode does. */
+const demanding = (bodies) => ({ body }) => {
+    bodies.push(body);
+    const bare = body.messages.some((m) => m.role === "assistant" && m.tool_calls && typeof m.reasoning_content !== "string");
+    return bare ? jsonResponse(DEMAND, 400) : jsonResponse({ choices: [{ message: { content: "ok" } }] });
+};
+
+test("FETCH_LLM: a server that demands reasoning_content is sent the turn's thinking once and then every time, and nothing else gets it", async () => {
+    const bodies = [];
+    const bg = loadBackground({ config: baseConfig(), onFetch: demanding(bodies) });
+    const payload = { messages: toolTurn({ reasoning: "the folder first" }) };
+    assert.equal((await bg.send({ type: "FETCH_LLM", payload })).data, "ok", "the refusal is answered, not shown");
+    assert.equal((await bg.send({ type: "FETCH_LLM", payload })).data, "ok");
+    assert.deepEqual(bodies.map((b) => b.messages[1].reasoning_content), [undefined, "the folder first", "the folder first"], "refused once, then sent without waiting to be refused");
+    assert.equal(bodies[0].messages[0].reasoning_content, undefined, "only the assistant turn that called tools carries it");
+    assert.equal(bodies[0].messages[2].reasoning_content, undefined);
+});
+
+test("FETCH_LLM: a server that never asks never receives reasoning_content, whatever the turn carries", async () => {
+    const bodies = [];
+    const bg = loadBackground({ config: baseConfig(), onFetch: ({ body }) => { bodies.push(body); return jsonResponse({ choices: [{ message: { content: "ok" } }] }); } });
+    await bg.send({ type: "FETCH_LLM", payload: { messages: toolTurn({ reasoning: "private" }) } });
+    assert.ok(bodies.every((b) => b.messages.every((m) => !("reasoning_content" in m))), "an OpenAI-compatible host that rejects unknown fields is never sent one");
+});
+
+test("FETCH_LLM: a transcript written before the field existed is resumed with an empty reasoning_content, and none is invented", async () => {
+    const bodies = [];
+    const bg = loadBackground({ config: baseConfig(), onFetch: demanding(bodies) });
+    const old = toolTurn();   // no `reasoning` on its turn: what the previous build stored
+    assert.equal((await bg.send({ type: "FETCH_LLM", payload: { messages: old } })).data, "ok", "it must not 400");
+    assert.equal(bodies.at(-1).messages[1].reasoning_content, "", "the field is there, empty: nothing was made up for it");
+});
+
+test("FETCH_LLM: a 400 that names reasoning_content is not blamed on the images", async () => {
+    const bg = loadBackground({ config: baseConfig(), onFetch: () => jsonResponse(DEMAND, 400) });
+    const r = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "see", images: ["data:image/png;base64,AAAA"] }] } });
+    assert.match(r.error, /reasoning_content/);
+    assert.doesNotMatch(r.error, /may not support image input/);
+});
+
 test("START_RUN: every step is an agent request in the run's session, and says it followed a tool", async () => {
     const bodies = [];
     let answered = 0;
