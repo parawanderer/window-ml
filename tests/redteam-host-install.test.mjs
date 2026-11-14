@@ -27,11 +27,6 @@
 //   D  in sw-sessions.ts, `void getConfig().then((cfg) => { if (cfg.shellEnabled === true) void refreshShell(); })`
 //      → `void probeShell();` at module load → D red in 89 ms:
 //      "the host was started by a worker load, the capabilities or the install line".
-//
-// NOTE, not a row: `pin.installer.file` is not validated the way `pin.tag` and `pin.installer.sha256` are, so a tampered
-// tools/host-dist.json could put shell syntax where the file name goes. It is committed and reviewed source, not a page,
-// a message or the model, and the sha256 check still covers whatever the URL serves; named here so the next reader
-// does not have to rediscover it.
 import { test } from "node:test";
 import assert from "node:assert";
 import { createRequire } from "node:module";

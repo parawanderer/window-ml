@@ -17,6 +17,7 @@ const base = { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", m
 const ON = { shellEnabled: true, shellRoots: ["/w/proj"] };
 const flush = async (n = 10) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
 
+const bg_status = (bg) => status(bg, false);
 const status = async (bg, refresh = true, sender = PAGE) => (await bg.send({ type: "SHELL_STATUS", payload: { refresh } }, { ...sender }));
 /** The capabilities this runtime declares to an extension page that opens the sessions port. */
 async function capabilities(bg) {
@@ -182,4 +183,11 @@ test("a page cannot probe: SHELL_STATUS probe from a web page or content script 
         assert.equal(r?.error, "Refused");
     }
     assert.deepEqual(bg.nativeConnects, []);
+});
+
+test("a worker woken by the settings page reports the stored host, not none, before its own storage read has settled", T, async () => {
+    const seen = loadBackground({ config: base, local: { shellHostSeen: true } });
+    // No flush: the first message is the one that wakes an evicted worker.
+    const r = await bg_status(seen);
+    assert.equal(r.data.hostSeen, true, "the installer guide must not draw for a person who has a host");
 });

@@ -216,6 +216,15 @@ export function holdOutput(delta: number): void {
 export const shellStatus = (): ShellStatus => ({ ...status, hostSeen, ...(hostAnswers === undefined ? {} : { hostAnswers }) });
 
 /**
+ * The status after the stored "a host has answered" flag has been read: a worker woken by a settings page after an eviction
+ * must not report no host to a person who has one. For the SHELL_STATUS answer; `shellStatus` stays synchronous for the rest.
+ */
+export async function shellStatusRead(): Promise<ShellStatus> {
+    await hostSeenRead;
+    return shellStatus();
+}
+
+/**
  * Ask whether a host answers, whatever the settings say: connect, say hello, close. For the "Check again" the person
  * presses in the installer guide, so ml.sh can be off and no folder set. Nothing is configured and nothing runs; extension
  * pages only (background.ts). A port already open answers without a second one.
@@ -235,6 +244,7 @@ export async function probeShell(): Promise<ShellStatus> {
  * the capabilities; never throws.
  */
 export async function refreshShell(): Promise<ShellStatus> {
+    await hostSeenRead;
     try { await shellHost(); } catch (e) { if (!(e instanceof ShellUnavailable) && !(e instanceof HostError)) setStatus({ ...status, ready: false, error: String((e as Error)?.message || e) }); }
     return shellStatus();
 }

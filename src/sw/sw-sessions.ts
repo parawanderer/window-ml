@@ -630,7 +630,7 @@ let archiveKnown = false;
 watchAttention({ archiveOn: () => (archiveKnown ? archiveOn : null), onChange: () => sessionServer.runtimeChanged(), pythonMissing: () => pythonMeasured && !pythonBundled,
     // "After the first run": a session exists. A fresh install with nothing done is not asked to set up programs.
     hostMissing: () => hostMissing() && sessionServer.index.list().length > 0 });
-sessionServer.watch({ index: (u) => { if (u.type === "upsert") recomputeAttention(); }, stream: () => undefined });
+sessionServer.watch({ index: (u) => { if (u.type !== "snapshot") recomputeAttention(); }, stream: () => undefined });
 onShellStatus(recomputeAttention);
 // A grant made while someone is looking at the question should answer it, without polling and without a reload.
 try {
