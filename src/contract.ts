@@ -111,7 +111,8 @@ export interface MlSh {
         protectedChangedTruncated?: true;
     }>;
     /** Read a range of an output past its head (`complete` false), by its `token`, until the agent run that made it
-     *  ends (not the program's lifetime; also gone if the host restarts or evicts it). Text comes back as `text`; binary output as `bytes` (`{ $bytes: base64 }`).
+     *  ends (not the program's lifetime; also gone if the host restarts or evicts it). Text comes back as `text`;
+     *  binary output as `bytes` (`{ $bytes: base64 }`).
      * @param token the output's `@tool:` pointer
      * @param range `offset` and `length` in bytes (default 0 and 64 KiB; at most 512 KiB) */
     read(token: string, range?: { offset?: number; length?: number }): Promise<{ offset: number; length: number; size: number; eof: boolean; text?: string; bytes?: { $bytes: string } }>;
@@ -134,9 +135,9 @@ export interface MlApi {
      *  only inside a read-only `exec` of an agent run the extension hosts; a page's `window.ml` has no `current`. */
     readonly current?: import("./agent/current-context").CurrentSnapshot;
     /** Run PROGRAMS on the person's machine, through the process host they installed: `await ml.sh.run(["git",
-     *  "status"])`, an argument list, never a shell command line (no pipes, globs or `$VAR`). A program with a manifest (`git`, `rg`, `ls`, `wc`, …) called as an
-     *  argv, `["wc", "-l", "f.txt"]` or `["ls"]`, can run without asking when its effects allow it; `["bash", "-c", …]` or
-     *  `["sh", "-c", …]` has no manifest, so it asks unless a policy covers it. There only inside an
+     *  "status"])`, an argument list, never a shell command line (no pipes, globs or `$VAR`). A program with a manifest (`git`, `rg`, `ls`, `wc`, …)
+     *  called as an argv, `["wc", "-l", "f.txt"]` or `["ls"]`, can run without asking when its effects allow it;
+     *  `["bash", "-c", …]` or `["sh", "-c", …]` has no manifest, so it asks unless a policy covers it. There only inside an
      *  approved `exec` that names `ml.sh`, of a run the extension hosts, and only when `ml.current.runtime.capabilities` reports
      *  `shellHost`; a page's `window.ml` has none. Each call is decided on what the host resolved (program, folder,
      *  paths, sandbox): a policy or the built-in default answers, or the person is asked, and the call waits. With no host
