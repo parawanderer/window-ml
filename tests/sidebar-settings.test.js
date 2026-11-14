@@ -559,6 +559,22 @@ test("settings: the wire format is a THREE-state control, defaulting to auto", a
     assert.equal(w.syncStore.protoStream, "on");
 });
 
+// UPGRADE: a stored labelMatch no build offers (a dropped metric, a hand edit) matches none of the select's
+// options, which leaves it showing a blank row. It shows the default the run will use instead.
+test("settings: label matching shows hybrid for a stored metric no build offers, and choosing one writes it", async () => {
+    const w = await loadSidebarWorld({ sync: { labelMatch: "levenshtein" } });
+    await openSettings(w, "Advanced");
+    await w.flush();
+    const sel = [...w.shadow.querySelectorAll("select")].find((e) => [...e.options].some((o) => o.value === "tokenset"));
+    assert.ok(sel, "there is a label-matching picker");
+    assert.equal(sel.value, "hybrid", "the default is what a stale value shows");
+    sel.value = "trigram";
+    sel.dispatchEvent(new w.window.Event("change", { bubbles: true }));
+    await w.flush();
+    assert.equal(w.syncStore.labelMatch, "trigram");
+    assert.equal(sel.value, "trigram");
+});
+
 // --- the sections an address may name: PANEL_LAYOUT against what each tab draws ----------------------------
 
 test("settings: PANEL_SECTIONS names every section the view defines, once, and nothing else", async () => {

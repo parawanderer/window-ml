@@ -1,6 +1,6 @@
 # Moving a run to another tab
 
-**Status: shape (a) built in the worker (`move-run.ts`), with its two callers; shape (b) open.** Written 2026-11-12 by the async lane, assigned by the coordinator as the lane
+**Status: shape (a) built in the worker (`move-run.ts`), with its two callers; shape (b) in two slices, the first (the turn's tab cell) built.** Written 2026-11-12 by the async lane, assigned by the coordinator as the lane
 closest to it. Shane confirmed the decisions below in the coordinator's session on 2026-11-12 (a move, not a fork; the
 same runtime only; started only by the person). The build is the `[window-ml move-run]` lane's, started after this note
 and the page-health change land; the chat page's "move to tab…" entry is the Chat Page lane's afterwards. Revised the
@@ -41,7 +41,9 @@ that URL opens. The person has already done the navigating: the run should follo
 `hostRun` (`sw-run-host.ts`) binds the run's `tabId` ONCE PER TURN: every page send (`toPage`, `delegateSend`), the
 run's inbox (`runInboxes.set`), and the turn's `settle` (`untrackRun`, `releaseDebugger`, `watchBetweenTurns`) close
 over it, about a hundred uses. Re-keying a map does not redirect a turn that is running. And `settle`, at the end of
-EVERY turn, deletes the run's inbox, ends its tasks (`endTasks`) and the turn's Python state (`endPythonTurn`; the run's own namespace stays, it lives per run). So:
+EVERY turn, deletes the run's inbox, lets go of its tasks (`closeTurnTasks`: a detached task runs on, and its result waits
+for the next turn, `ASYNC_CALLS.md` rule 4b) and ends the turn's Python state (`endPythonTurn`; the run's own namespace
+stays, it lives per run). So:
 
 - **(a) A move BETWEEN TURNS. Ships first.** The run is paused or finished; its in-memory `bgRuns` entry's tab is re-homed, and
   its next turn is hosted on the new tab from the start. It is cheap, and it covers both headline cases. It covers the
@@ -49,7 +51,17 @@ EVERY turn, deletes the run's inbox, ends its tasks (`endTasks`) and the turn's 
   run goes on, so the turn ends when the model stops calling page tools or the person stops the run, and the person
   then brings the session to a live tab.
 - **(b) A move BETWEEN STEPS of a running turn.** Needs `hostRun`'s tab to become a mutable cell that every send reads
-  at the moment it sends, and the inbox re-keyed. An open item, not built in the first PR.
+  at the moment it sends, and the inbox re-keyed. Two slices, in this order:
+  1. **The tab cell, built.** `hostTurn` registers a setter for the turn (`turnTabCells`, `sw-runs.ts`) that re-points
+     the turn's `tabId` binding, which every send in the turn reads as it sends, and moves what held the old tab by
+     value: the arrival judge (`watchArrivals`), the CDP attach (`releaseDebugger` on the old tab), python_exec's media
+     (`pyMediaFor` reads the tab at each call). A run the WORKER built registered its worker tools once, at its start,
+     and a turn finds them there: `retabWorkerRun` (`worker-tools.ts`) points them at the turn's tab at each turn's start
+     (a move between turns) and from the cell. `rekeyRunInbox` is the cell's one caller: it moves the inbox and calls the
+     cell. Its first flow is a replaced tab (`retabRuns`, below).
+  2. **Moving a running turn.** `moveRun` on a run with a live turn: what is filed by tab (the tracking entry and the
+     pin, the replay ring) moved for the one run, `rekeyRunInbox`, the page-bound tasks cancelled (rule 4a), and the
+     model told at its next step through the inbox. Waits for slice 1.
 
 ## What a move carries
 
@@ -59,13 +71,13 @@ nothing away from it:
 | Carried to the new tab | Already ended by the turn's `settle`, move or not | Stays behind with the old tab |
 | --- | --- | --- |
 | the transcript and the run's messages (its snapshot) | the run's inbox (`runInboxes`) | whatever the model made in the old page's world: `exec` variables, DOM edits, form input it filled |
-| the `@tool:` pointers and values of a worker-held run (`tokensByRun`, memory, as a follow-up keeps them) | its detached tasks (`endTasks`; `ASYNC_CALLS.md`, rule 4) | the per-TAB grants: `fetchConsent` and `credFetchGrants` are consent for the old tab's page and do NOT follow the run (`@security`) |
-| `ml.current` | its Python namespace (`deletePythonRun`) | a CDP attach (already released at `settle`, `releaseDebugger`) |
-| | its tracking entry and the tab's pin (`untrackRun`; the tab is unpinned and `tab`/`released` logged when it was the tab's last run) | |
-| | | point and box tokens: see below |
+| the `@tool:` pointers and values of a worker-held run (`tokensByRun`, memory, as a follow-up keeps them) | the turn's hold on its tasks (`closeTurnTasks`) | the per-TAB grants: `fetchConsent` and `credFetchGrants` are consent for the old tab's page and do NOT follow the run (`@security`) |
+| `ml.current` | the turn's Python state (`endPythonTurn`) | a CDP attach (already released at `settle`, `releaseDebugger`) |
+| its detached tasks, filed by run and still running (`ASYNC_CALLS.md`, rule 4b; none is page-bound yet, rule 4a) | its tracking entry and the tab's pin (`untrackRun`; the tab is unpinned and `tab`/`released` logged when it was the tab's last run) | |
+| the run's Python namespace (it lives per run) | | point and box tokens: see below |
 
-For shape (b) the middle column is live, so a move between steps would carry the inbox and the runtime-bound tasks,
-and cancel the page-bound ones (`ASYNC_CALLS.md`, rule 4a).
+For shape (b) the middle column is live, so a move between steps would also carry the inbox,
+and cancel the page-bound tasks (`ASYNC_CALLS.md`, rule 4a).
 
 **Point and box tokens.** A page-world `@pt`/`@box` token lives in that page's `pointRegistry` (`util.ts`); on another
 tab it does not exist and fails as "Unknown point token … may be stale" (`builtin-tools.ts`). A worker-held shot is
@@ -130,14 +142,13 @@ the bookkeeping below. A resume of a held run on the tab it is already on stays 
 6. **The run log records the move** (a `tab` record naming both tab ids and the run), so the person sees where the run
    went and when.
 
-## Known gap, not caused by a move: `onReplaced` during a live turn
+## `onReplaced` during a live turn (the tab cell's first flow)
 
-Same cause as shape (b): a `chrome.tabs.onReplaced` while a turn runs leaves the turn sending to the removed tab id,
-since `hostRun` closed over it, so its next page call is refused rather than sent to the restored tab. The half that
-was the person's is closed: `retabRuns` re-keys `runInboxes[run].tabId`, so their answer to a gate (SET_APPROVAL) and
-their steer (INJECT_MESSAGE) from the restored tab reach the run (`background.ts` checks both against it; before, the
-gate was left waiting and the steer dropped). `tests/move-run.test.mjs` pins both, and that the turn's sends still go
-to the old id and nowhere else, until shape (b).
+A `chrome.tabs.onReplaced` while a turn runs left the turn sending to the removed tab id, since `hostRun` closed over
+it, so its next page call was refused rather than sent to the restored tab. `retabRuns` now moves each live turn on
+the tab through `rekeyRunInbox`: the inbox, so the person's answer to a gate (SET_APPROVAL) and their steer
+(INJECT_MESSAGE) from the restored tab reach the run (`background.ts` checks both against it), and the turn's tab cell,
+so its next page call, its events and its settle go to the restored tab. `tests/move-run.test.mjs` pins all of it.
 
 ## Security
 
@@ -157,8 +168,7 @@ to the old id and nowhere else, until shape (b).
 
 ## Open
 
-- Shape (b), a move between steps of a running turn: `hostRun`'s tab as a mutable cell, the inbox re-keyed, and rule
-  4a's cancels.
+- Shape (b), slice 2: a move between steps of a running turn, on the tab cell (above), with rule 4a's cancels.
 - Whether a crash ends the turn, or offers a move (the hook: the crashed branch in `delegate-send.ts` and
   `page-reachable.ts`'s watch). To be decided on how models behave against the failing tool.
 - A move between runtimes (another browser through the hub), after this exists.
