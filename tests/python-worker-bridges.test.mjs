@@ -89,3 +89,20 @@ test("a lifted cell leaves the guard back in sys.modules for the next one", { sk
     await cell("import js\n_t = js.setTimeout", { bridges: true });
     assert.match(text(await cell("import sys\nprint(sys.modules['js'].setTimeout)")), REFUSED);
 });
+
+// --- RED TEAM: a wheel that fails to unpack is named in the cell's error made visible ---
+
+// `installWheels` builds the sentence a MODEL reads when a run's wheel cannot be put in place, and the filename in it is
+// the message's own (`msg.wheels`, posted by the offscreen document from the run's install record). Made visible it must
+// be: `pkg-card.ts` `shownText` is the rule for every sentence that names a wheel (tests/pkg-archive.test.mjs), and a
+// bidi, zero-width or C1 character here reorders or hides the one sentence that says which wheel failed.
+const HIDDEN = new RegExp(`[\\u0000-\\u001f\\u007f-\\u009f]|${(await import("../src/agent/security.ts")).INVISIBLE.source}`, "u");
+
+test("RED TEAM: a wheel that fails to unpack is named in the error with no character that hides or reorders it", { skip, timeout: 180000 }, async () => {
+    const r = await cell("pass", {
+        wheels: [{ filename: "tab\u202e\u200bulate-0.9.0-py3-none-any.whl", sha256: "b".repeat(64), bytes: new Uint8Array([1, 2, 3]) }],
+    });
+    assert.equal(r.ok, false, JSON.stringify(r));
+    assert.equal(r.installFailed, true, `the unpack failure is the one reported: ${JSON.stringify(r)}`);
+    assert.ok(!HIDDEN.test(String(r.error)), `the error carries a character from the filename: ${JSON.stringify(r.error)}`);
+});
