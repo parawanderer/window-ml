@@ -1383,7 +1383,7 @@ function PyOutBody({ id, d, marks, lineMap, fill }: { id: PyOutSectionId; d: Ext
         // In a cell like the output above it: a returned value can be as long as anything printed on the way
         // there, and it is the half you most often want to search — so it is capped, scrollable and
         // Ctrl+F-able by being wrapped, rather than by each section inventing its own.
-        case "value": return <ValueOut text={String(d.value)} fill={fill} seen={d.valueSeen} />;
+        case "value": return <ValueOut text={String(d.value)} fill={fill} seen={d.valueSeen} treeFirst={focusMode.value} />;
     }
 }
 
@@ -1658,12 +1658,14 @@ function markSeen(value: object, seenText: string): WeakMap<object, number> | un
 /** A tool's returned VALUE (exec, python_exec): the JSON text exactly as the model got it, plus a corner button that
  *  draws it as a collapsible JSON TREE whenever it is an object or array. A value clipped for the UI (the
  *  `… [first K of M chars]` note) still gets its tree: the part that arrived whole, closed at the cut, with a row
- *  saying where the cut was. Text stays the default, since it is what the model read and what Ctrl+F searches. */
-export function ValueOut({ text, fill, seen, after }: { text: string; fill?: boolean; /** chars the model received; absent → all */ seen?: number;
+ *  saying where the cut was. Text is the default, since it is what the model read and what Ctrl+F searches; the calm
+ *  view (`treeFirst`) opens a JSON value as the tree instead, with "text" one click away. */
+export function ValueOut({ text, fill, seen, after, treeFirst }: { text: string; fill?: boolean; /** chars the model received; absent → all */ seen?: number;
+    /** open as the tree rather than the text, when the value is JSON (the calm view's default; the toggle still flips it) */ treeFirst?: boolean;
     /** drawn inside the cell, after the value (an exec's print notes), so it scrolls and is found with it */
     after?: ComponentChildren }) {
     const partial = seen != null && seen < text.length;
-    const [asTree, setAsTree] = useState(false);
+    const [asTree, setAsTree] = useState(!!treeFirst);
     const loose = useMemo(() => parseLooseJson(text), [text]);
     // Re-parsed rather than shared with `loose`, because marking the cut mutates the value.
     const tree = useMemo(() => {
@@ -1721,7 +1723,7 @@ function ExecOutRender({ d, marks, live, ranMs, ranSince, lineMap, remoteMs }: {
             </PyOutSection> : null}
             {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
             {d.error ? <PyOutSection label="error" cls="r-py-err"><OutputCell text><ExecError text={d.error} line={d.errorLine} map={lineMap} /></OutputCell></PyOutSection> : null}
-            {d.value != null && !d.error ? <PyOutSection label="value" cls="r-py-val"><ValueOut text={d.value} seen={d.valueSeen}
+            {d.value != null && !d.error ? <PyOutSection label="value" cls="r-py-val"><ValueOut text={d.value} seen={d.valueSeen} treeFirst={focusMode.value}
                 after={d.valueNotes?.length ? <PrintNotes notes={d.valueNotes} /> : null} /></PyOutSection> : null}
             {!d.stdout ? <RanFor live={live} ms={ranMs} since={ranSince} remote={remoteMs} /> : null}
         </div>

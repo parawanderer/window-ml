@@ -1066,10 +1066,11 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat.calm .astep-body.railed { padding-left: 13px; }
 .chat.calm .aturn-prose { margin: 6px 0 14px; }
 /* A between-step remark lines up with the final answer: text flush left, the collapse chevron in the gutter (hover
-   only, as the answer's is), the time UNDER it. The panel's layout indents it past an in-row chevron. At a phone's
+   only, as the answer's is), copy and the time UNDER it, right-aligned, in the answer's own row. The panel's layout indents it past an in-row chevron. At a phone's
    width, with no gutter, the chevron joins the time at the right end of the row beneath. */
 .chat.calm .aturn-prose, .chat.calm .aturn-prose.no-toggle { position: relative; flex-direction: column; align-items: stretch; gap: 0; padding-left: 0; }
-.chat.calm .aturn-prose .prose-stamp { align-self: flex-start; margin-top: 4px; }
+.chat.calm .aturn-prose .prose-meta { margin: 6px 0 0; opacity: .55; }
+@media (hover: hover) and (pointer: fine) { .chat.calm .aturn-prose:hover > .prose-meta, .chat.calm .aturn-prose:focus-within > .prose-meta { opacity: 1; } }
 .chat.calm:not(.narrow) .aturn-prose > .prose-tri { position: absolute; top: 4px; left: -20px; margin: 0; }
 .chat.calm.narrow .aturn-prose > .prose-tri { order: 3; align-self: flex-end; margin: 0; }
 @media (hover: hover) and (pointer: fine) {
@@ -1590,6 +1591,22 @@ button.chat-page-go:hover { color: var(--fg); }
     min-height: 34px; padding: 6px 34px 6px 12px; border: 1px solid transparent; border-radius: 10px;
     background-color: var(--panel); color: var(--fg); font: inherit; font-size: .92em;
 }
+/* The paths boxes (workspace folders, program search path): the same pill as every other field, which a <textarea> was
+   not given, so it drew the browser's grey box with a square corner. Several lines, one path each, so it grows
+   downward only. */
+.chat-settings-body .set-field textarea {
+    box-sizing: border-box; width: 100%; min-height: 42px; padding: 10px 14px; border: 1px solid transparent; border-radius: 12px;
+    background-color: var(--panel); color: var(--fg); font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--code-fs, .92em);
+    line-height: 1.5; resize: vertical;
+}
+.chat-settings-body .set-field textarea::placeholder { color: var(--fg-faint); }
+.chat-settings-body .set-field textarea:focus { outline: none; border-color: var(--panel-2-hover); }
+/* THE HOST INSTALLER: the note, the line to paste and the button are three things, spaced as three. The line is a
+   rounded card like the note above it, its copy button always lit in the corner. */
+.chat-settings-body .shell-install { display: flex; flex-direction: column; gap: 12px; }
+.chat-settings-body .shell-install .code-block { border-radius: 12px; overflow: hidden; }
+.chat-settings-body .shell-install .set-hint { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin: 0 2px; }
+.chat.calm .copyable-code.corner .code-tools { opacity: 1; }
 .chat-settings-body .pol-source-input { padding: 10px 14px; border: 1px solid transparent; border-radius: 12px; background: var(--panel); }
 .chat-settings-body .pol-source-input:focus, .chat-settings-body select:focus { outline: none; border-color: var(--panel-2-hover); }
 .chat-settings-body .set-test { padding: 14px 16px; border: none; border-radius: 14px; }

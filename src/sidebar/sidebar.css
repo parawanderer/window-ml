@@ -1203,8 +1203,10 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
 .aturn-prose .md { flex: 1; min-width: 0; color: var(--fg); }
 .aturn-prose .asst-collapsed { flex: 1; min-width: 0; color: var(--fg-dim); }
 .aturn-prose .md > :first-child { margin-top: 0; } .aturn-prose .md > :last-child { margin-bottom: 0; }
-/* When it was said: small and faint at the row's end, as the answer's stamp is. */
-.aturn-prose .prose-stamp { flex: none; align-self: flex-end; }
+/* Copy and the time, on a line of their own under the prose, as under a final answer. */
+.aturn-prose { flex-wrap: wrap; }
+.aturn-prose .prose-meta { flex: 1 0 100%; margin: 4px 0 0; }
+.aturn-prose .prose-meta .sp { flex: 1; }
 /* A thinking block (reasoning_content) reads as SECONDARY to the assistant's prose (content) —
    dim its label + preview so the two are visually distinct, per the content/reasoning split. */
 .athinking .who { color: var(--fg-dim); font-weight: 500; font-style: italic; }
@@ -2226,6 +2228,8 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
 .jt-brace { color: var(--j-base); }
 /* The `,` after a member that another follows. Pulled back over the row's flex gap so it sits against its value. */
 .jt-comma { color: var(--j-base); margin-left: -4px; }
+/* …inside a scalar's own span (so a string that wraps ends its last line with it), there is no flex gap to pull back over. */
+.jt-val > .jt-comma { margin-left: 0; }
 .jt-preview { color: var(--fg-faint); font-style: italic; }
 .jt-string { color: var(--j-str); word-break: break-word; }
 .jt-number { color: var(--j-key); }
@@ -3727,6 +3731,9 @@ button.ui-step-now:hover { background: var(--panel-2); color: var(--fg); }
 /* Above a code theme's `pre code.hljs { padding: 1em }`, also where a page scopes the theme under `:root:not(…)`. */
 .code-block.copyable-code pre.code code.hljs { padding: 0; background: none; }
 .copyable-code .code-tools { top: 50%; transform: translateY(-50%); }
+/* A line that WRAPS: room on the right for the button, which sits in the corner instead of beside the first line. */
+.copyable-code.corner .code { padding: 10px 40px 10px 12px; }
+.copyable-code.corner .code-tools { top: 6px; right: 6px; transform: none; opacity: 1; }
 /* FIND IN A CODE BLOCK (Ctrl/Cmd+F with the block focused). The block is focusable for the shortcut, so a click
    must not ring it; only keyboard focus does, as on the output cell. The bar takes the toolbar's corner, so the
    toolbar steps aside while it is open. */

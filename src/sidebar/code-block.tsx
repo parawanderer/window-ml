@@ -115,16 +115,18 @@ export const CodeBlock = ({ text, lang, format, marks, lineIds, markLine, markTi
 };
 
 /** A command or snippet to paste: the code block with a copy button in its corner (the transcript's toolbar corner), for
- *  pages that hand someone a line to run, such as the bench page's held-run menu. */
-export const CopyableCode = ({ text, lang = "bash" }: { text: string; lang?: string }) => {
+ *  pages that hand someone a line to run, such as the bench page's held-run menu.
+ *  `block` is for a line long enough to WRAP, such as an installer's: the button sits in the top-right corner and stays
+ *  lit, where the one-line form centres it and (on the chat page) shows it only while the pointer is over the block. */
+export const CopyableCode = ({ text, lang = "bash", block, tip = "copy" }: { text: string; lang?: string; block?: boolean; tip?: string }) => {
     const { copied, copy } = useCopy();
     return (
-        <div class="code-block copyable-code">
+        <div class={`code-block copyable-code${block ? " corner" : ""}`}>
             <CodeBlock text={text} lang={lang} />
             <div class="code-tools">
-                <button class="icon-btn tt" aria-label="copy" onClick={() => copy(text)}>
+                <button class="icon-btn tt" aria-label={tip} onClick={() => copy(text)}>
                     {copied ? <IconCheck /> : <IconCopy />}
-                    <span class="tt-pop" role="tooltip">{copied ? "copied!" : "copy"}</span>
+                    <span class="tt-pop left" role="tooltip">{copied ? "copied!" : tip}</span>
                 </button>
             </div>
         </div>
