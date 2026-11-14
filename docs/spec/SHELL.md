@@ -189,7 +189,7 @@ extension can do is make it one paste.
 
 1. Settings, "Programs (ml.sh)", while no host has answered, shows one line for this machine (`src/shell/host-install.ts`),
    with this install's extension id in it and a "Check again". macOS (Apple silicon, Intel) and Linux (x86-64, arm64) have a
-   line; any other platform is told there is no build. The line differs by OS only in the checksum program.
+   line; any other platform is told there is no build. The line differs by OS only in the checksum program, and in Brave (which keeps its own native-messaging folder) it ends `--browser brave`.
 2. The line downloads `install.sh` from the host's pinned release, checks its sha256 against the one in
    `tools/host-dist.json`, then runs it with `--extension-id`. The installer ([INSTALL.md](https://github.com/parawanderer/window-ml-host/blob/main/docs/INSTALL.md) in window-ml-host) is rendered
    by the host's release workflow with the sha256 of the release's four archives (one per platform above) written into it, downloads the archive

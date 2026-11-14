@@ -63,7 +63,9 @@ export function ShellSectionBody({ c, setField, initial, platform: givenPlatform
     useEffect(() => {
         measure(false);
         if (!givenPlatform && typeof chrome !== "undefined" && chrome.runtime?.getPlatformInfo) {
-            chrome.runtime.getPlatformInfo().then((p) => setPlatform({ os: p.os, arch: p.arch })).catch(() => undefined);
+            // Brave keeps its own NativeMessagingHosts folder: the installer is told which browser this is.
+            const brave = (navigator as { brave?: { isBrave?: () => Promise<boolean> } }).brave?.isBrave?.().catch(() => false) ?? Promise.resolve(false);
+            Promise.all([chrome.runtime.getPlatformInfo(), brave]).then(([p, b]) => setPlatform({ os: p.os, arch: p.arch, ...(b ? { browser: "brave" as const } : {}) })).catch(() => undefined);
         }
     }, []);
     const id = typeof chrome !== "undefined" && chrome.runtime?.id ? chrome.runtime.id : "";
@@ -73,7 +75,7 @@ export function ShellSectionBody({ c, setField, initial, platform: givenPlatform
     const install: HostInstall | null = missing && platform ? hostInstall(platform, id) : null;
     return (
         <>
-            <div class="set-note">Let an approved script start <b>programs on this machine</b> with <code>ml.sh.run(["git", "status"])</code>: an argument list, never a shell command. <b>Every call asks you</b>, showing exactly what will run, in which folder, under which sandbox. Programs run through the <b>process host</b>, a separate program you install once. <b>Off by default.</b></div>
+            <div class="set-note">Let an approved script start <b>programs on this machine</b> with <code>ml.sh.run(["git", "status"])</code>: an argument list, never a shell command. It is there only inside an agent run (the HUD, the sidebar, the chat page), never in a page's own console. <b>Every call asks you</b>, showing exactly what will run, in which folder, under which sandbox. Programs run through the <b>process host</b>, a separate program you install once. <b>Off by default.</b></div>
             {install ? <HostInstallGuide install={install} answered={status?.hostAnswers} busy={checking} onCheck={probe} /> : null}
             <label data-setting="shellEnabled" class="set-check">
                 <input type="checkbox" checked={!!c.shellEnabled} onChange={(e: any) => { setField("shellEnabled", e.target.checked); setTimeout(() => measure(true), 50); }} />
