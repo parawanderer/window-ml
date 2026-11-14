@@ -595,6 +595,10 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
                         DevTools only. The HUD is a glance surface for someone driving a task and a hex handle
                         there is noise; this belongs on the surface you open when you are debugging. */}
                     {st.token && surface.value !== "card" ? <TokenChip token={st.token} /> : null}
+                    {/* THE PROGRAMS THIS STEP STARTED (`ml.sh`), as a footer of the step's own body: they are part of what the
+                        step did, so they fold and unfold with it instead of hanging under a collapsed row. A call still
+                        WAITING on you is the one thing that stays outside (`AskList`, below), where it can be answered. */}
+                    <ShCalls st={st} />
                 </div>
                 : null}
             {/* On-demand plain-English gloss for a code step — CARD's Show-work trace only (the debug panel
@@ -634,7 +638,6 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
             {/* NESTED ASKS: calls made while this step ran that need the person (an ml.sh from an approved exec). Below
                 the step, open or not, like the step's own gate: a card for each waiting; the answered ones are the footer below them. */}
             <AskList st={st} hash={hash ?? undefined} live={live} />
-            <ShCalls st={st} />
         </div>
     );
 }
