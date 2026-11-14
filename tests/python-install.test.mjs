@@ -369,6 +369,11 @@ test("RED TEAM: a wheel that provides nothing importable is not recorded, and no
     assert.deepEqual(r.installs, [], `recorded ${JSON.stringify(r.installs)} for a wheel with nothing to import`);
     assert.ok(r.results[0].startsWith("Not installed"), r.results[0]);
     assert.ok(!/works in this run's python_exec cells/.test(r.results[0]), `the result claims an import that never ran: ${r.results[0]}`);
+    // Pinned to the whole-call refusal in `installApproved`, not to any refusal: its sentence, its run-log reason, and no
+    // candidate asked at all (one asked with `modules: []` would have answered ok).
+    assert.match(r.results[0], /provides nothing an import statement can load/, r.results[0]);
+    assert.deepEqual(r.pkgInstalls.map((x) => x.reason), ["nothing-importable"], JSON.stringify(r.pkgInstalls));
+    assert.deepEqual(r.candidates, [], "the candidate was asked to import nothing, and would have answered ok");
 });
 
 test("asking again in the same run raises a card whose row the mirror holds, and approving it downloads nothing", { ...T, skip: SKIP }, async () => {

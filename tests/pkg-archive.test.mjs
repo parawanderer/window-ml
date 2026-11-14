@@ -335,20 +335,19 @@ test("RED TEAM: a root stub never hides a name a package, a namespace or an exte
     assert.deepEqual(only.modules, [], "a stub-only distribution has nothing to import");
 });
 
-// An install sets `modules: []` here, and `installTest` then answers ok without importing anything (`pkg-install-test.ts`
-// leaves `_r` None), so `installApproved` records wheel rows and reports "Installed … works". Such a wheel puts nothing
-// importable in site-packages (its `.data/` is inert by ruling), so the sentence describes an import that never ran.
-// Where the refusal belongs is the lane's call: refusing here, or refusing in `installApproved` before it records, both
-// satisfy the outcome `tests/python-install.test.mjs` asserts; this row is the one that would move with that choice.
-test("RED TEAM: a wheel whose files are all un-importable is refused, so no install is reported for an import that never ran", async () => {
+// A wheel whose files are all un-importable (a `.data/` entry only, a root stub only, nothing at all) leaves `modules`
+// empty here, and `installTest` then answers ok without importing anything: at cf32fcbf `installApproved` recorded the
+// rows and reported "Installed … works" for an import that never ran. Where the refusal belongs is the lane's call, and
+// the lane put it in `installApproved` for the WHOLE call (2ee44128), so this check still passes and names no module,
+// and a stub-only wheel beside its package still installs. `tests/python-install.test.mjs` holds the call that refuses
+// these three, and the run-log reason it records.
+test("RED TEAM: a wheel with nothing importable passes the archive check naming no module, and the call refuses it", async () => {
     for (const [what, files] of [
         ["only a .data entry", [["pkg-1.0.data/purelib/x.py", "x"]]],
         ["only a root stub", [["pkg.pyi", "y: int\n"]]],
         ["nothing at all", []],
     ]) {
         const r = await checkWheel(wheel(files), FN, none);
-        // The refusal is in `installApproved`, for the whole call (tests/python-install.test.mjs): a stub-only wheel beside
-        // its package is a fine install. Here the wheel passes and says it has nothing to import.
         assert.equal(r.ok, true, `${what}: ${JSON.stringify(r)}`);
         assert.deepEqual(r.modules, [], `${what}: a module named, so the candidate would import one the wheel cannot load`);
     }
@@ -362,6 +361,9 @@ test("RED TEAM: a wheel whose files are all un-importable is refused, so no inst
 // `pkg-card.ts` `shownText` makes such a name visible on the card, and `contract-render.ts` says index text is untrusted
 // and the renderer escapes it; this path echoes the wheel's own names as written, so `�` (RLO), a zero-width space, a
 // soft hyphen or a C1 control reorders or hides the sentence that is supposed to name the file that was refused.
+// The call's own sentences (`installApproved`) quote the same names, but a PyPI row's filename is printable ASCII only
+// (`parseWheelFilename`, /^[\x21-\x7e]+$/) and a lock row never reaches the download or test sentences, so that echo
+// cannot carry this shape at this head: the `shownText` 2ee44128 put there is defence in depth, not a live path.
 test("RED TEAM: every refusal that names an entry or a filename names it made visible", async () => {
     const RLO = "‮", ZW = "​", SH = "­", C1 = "\u0085";
     const shapes = [
