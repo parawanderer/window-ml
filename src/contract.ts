@@ -132,7 +132,8 @@ export interface MlApi {
      *  "status"])`, an argument list, never a shell command line (no pipes, globs or `$VAR`). There only inside an
      *  approved `exec` that names `ml.sh`, of a run the extension hosts, and only when `ml.current.runtime.capabilities` reports
      *  `shellHost`; a page's `window.ml` has none. Each call is decided on what the host resolved (program, folder,
-     *  paths, sandbox): a policy or the built-in default answers, or the person is asked, and the call waits. */
+     *  paths, sandbox): a policy or the built-in default answers, or the person is asked, and the call waits. With no host
+     *  answering, a call is refused naming Settings, Extension, Advanced, Programs (ml.sh), where the person installs it. */
     readonly sh?: MlSh;
     /** Curate the CURRENT run's user-facing answer (what the user sees as the result). A run-bound collection —
      *  valid only WHILE your run is executing; from the console outside a run it throws. Free to call from

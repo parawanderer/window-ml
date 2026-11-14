@@ -755,6 +755,40 @@ test("capabilities.attention: what needs a hand on this runtime, as codes, sent 
     await until(["no-model", "backend-unreachable", "python-packages-missing"]);
 });
 
+test("host-not-connected: offered only after a first session exists, and not once a host has answered", T, async () => {
+    const { fakeNativeHost } = await import("./fake-native-host.mjs");
+    const host = fakeNativeHost();
+    const bg = loadBackground({ config, onNative: host.onNative, onFetch: () => jsonResponse({ data: [{ id: "default-model" }] }) });
+    const port = bg.connect("ml-sessions", PAGE);
+    const attention = () => port.messages.filter((m) => m.type === "runtime").at(-1)?.runtime.capabilities.attention ?? [];
+    const until = async (pred) => { for (let i = 0; i < 100 && !pred(attention()); i++) await new Promise((r) => setTimeout(r, 20)); return attention(); };
+    await until((a) => a.includes("python-packages-missing"));
+    assert.ok(!attention().includes("host-not-connected"), "a fresh install with nothing done is not asked");
+
+    void bg.send({ type: "ML_DEBUG_EVENT", event: start("ffff0001") }, tab(7));
+    assert.ok((await until((a) => a.includes("host-not-connected"))).includes("host-not-connected"), "after the first run it is");
+
+    await bg.send({ type: "SHELL_STATUS", payload: { probe: true } }, { url: "chrome-extension://test/sidebar.html" });
+    assert.ok(!(await until((a) => !a.includes("host-not-connected"))).includes("host-not-connected"), "a host answered: gone");
+});
+
+test("host-not-connected goes when the last session is deleted, and is back with the next", T, async () => {
+    const bg = loadBackground({ config, onFetch: () => jsonResponse({ data: [{ id: "default-model" }] }) });
+    const port = bg.connect("ml-sessions", PAGE);
+    const attention = () => port.messages.filter((m) => m.type === "runtime").at(-1)?.runtime.capabilities.attention ?? [];
+    const until = async (pred) => { for (let i = 0; i < 100 && !pred(attention()); i++) await new Promise((r) => setTimeout(r, 20)); return attention(); };
+    void bg.send({ type: "ML_DEBUG_EVENT", event: start("ffff0002") }, tab(7));
+    assert.ok((await until((a) => a.includes("host-not-connected"))).includes("host-not-connected"));
+    // A running session cannot be deleted: finish it first.
+    void bg.send({ type: "ML_DEBUG_EVENT", event: ev("ffff0002", "agent-result", { answer: "done", steps: 1, status: "done" }) }, tab(7));
+    await new Promise((r) => setTimeout(r, 50));
+    bg.localStore["ml_session_ffff0002"] = { messages: [] };
+    port.send({ type: "cmd", id: 1, command: { type: "session.delete", session: { runtime: "local", hash: "ffff0002" } } });
+    await new Promise((r) => setTimeout(r, 50));
+    assert.deepEqual(port.messages.find((m) => m.type === "result" && m.id === 1)?.result?.ok, true, "the delete itself was accepted");
+    assert.ok(!(await until((a) => !a.includes("host-not-connected"))).includes("host-not-connected"), "no session left: a fresh install's quiet again");
+});
+
 test("HUB_RUNTIME: refused to a web page, and an unpaired browser says so to its own pages", T, async () => {
     const bg = loadBackground({ config });
     const refused = await bg.send({ type: "HUB_RUNTIME", payload: {} }, tab(3));

@@ -296,3 +296,14 @@ Settings checkbox (a user gesture), is open: it has to work from both the overla
   listener (`nativePort`). Read later, it is gone.
 - **The fake host answers synchronously enough to hide ordering bugs.** A test that depends on the port being open
   `flush()`es before asserting, as `tests/sh-host.test.mjs` does.
+
+## The installer guide
+
+Settings, "Programs (ml.sh)", offers one line that installs the host while none has answered (`hostMissing()` in
+`sw-shell.ts`: the last hello this worker made, else the stored `shellHostSeen`). The line is built by `hostInstall`
+(`src/shell/host-install.ts`) from `chrome.runtime.id` and `tools/host-dist.json`, whose `installer` key (written by
+`node scripts/fetch-host.mjs --bump <tag>` from the release's `install.sh`, after checking it names the tag and every pinned
+archive hash) is what the line's `sha256` check pins. A pin without it shows no line, so bumping to a release that
+carries `install.sh` is what turns the guide on. "Check again" sends `SHELL_STATUS` with `probe: true` (extension pages
+only), which says hello whatever ml.sh's setting is. The chat page's `host-not-connected` attention item uses the same
+test, plus "a session exists". The design and its threat items: `docs/spec/SHELL.md`, "Installing the host".
