@@ -345,10 +345,12 @@ The design:
     `not-shipped` bypassed by case or normalisation (`shipped.has(filename)` is exact against a list generated from the
     directory the build copies, so a differing spelling is refused, the safe direction).
     FIXED 2026-11-14 (python-packages): (i) every name a refusal quotes goes through `shownText` (`pkg-archive.ts` `q`,
-    and the card's filename in `installApproved`'s sentences); (ii) a name is importable when a module file or a directory
+    and, as defence in depth, the card's filename in `installApproved`'s sentences, which no file reaches at this head:
+    a PyPI filename is printable ASCII and a lock row is skipped earlier); (ii) a name is importable when a module file or a directory
     provides it, so only a name a stub ALONE provides is skipped; (iii) refused in `installApproved` for the whole call
     (run-log reason `nothing-importable`), not per wheel, so a stub-only wheel beside its package still installs: the
-    archive row now asserts `modules: []` for such a wheel. (iv) and (v) stand as named: one tool call runs at a time per
+    archive row now asserts `modules: []` for such a wheel. RESIDUAL (e3): in a mixed call, an inert wheel beside a
+    real one is recorded as installed, though it provides nothing importable and so nothing of it is tested. (iv) and (v) stand as named: one tool call runs at a time per
     run, and an extension page is the extension's own code, the boundary `PY_RUN` already has.
 
 MEASURED 2026-11-13, for the Q3 condition below (`notebooks/python-packages/probe-two-workers.mjs`, headless Chromium
