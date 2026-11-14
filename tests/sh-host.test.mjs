@@ -105,7 +105,7 @@ test("the host is not installed: not ready, and the status says how to install i
     assert.match(r.data.error, /Settings, Extension, Advanced, Programs \(ml\.sh\)/, "the refusal names the Settings section");
     assert.doesNotMatch(r.data.error, /wmlhost install|curl|sh -c/, "and carries no command");
     // The address the text carries is one the link renderer accepts: nothing else checks an address written outside agent_api_docs' settings section.
-    const { parseAddress } = await import("../src/sidebar/links.ts");
+    const { parseAddress } = await import("../src/link-address.ts");
     const address = /`(settings\/[^`]+)`/.exec(r.data.error)?.[1];
     assert.deepEqual(parseAddress(address), { tab: "advanced", section: "shell" });
     assert.equal((await capabilities(bg)).shellHost, undefined);
