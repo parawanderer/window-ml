@@ -27,11 +27,8 @@ function previewOf(e: ShEntry): string {
     return commandOf(e.argv.slice(1));
 }
 
-/** What the row's warning dot says: the facts that raised it, by name, so it still means something on a call already open or already run. */
-const flagged = (e: ShEntry): string => {
-    const lines = e.facts.filter((l) => l.warn).map((l) => `${l.label}: ${l.value}`);
-    return lines.length ? `Worth a look: ${lines.join("; ")}` : "Worth a look: this call was killed for running out of memory.";
-};
+/** What the row's warning dot says: what raised it, by name, so it still means something on a call already open or already run. */
+const flagged = (e: ShEntry): string => `Worth a look: ${e.flags.join("; ")}`;
 
 /**
  * One call: its row (status, program, the start of what it ran, how it went, how long), opening to the command, the
@@ -110,7 +107,7 @@ export function ShCalls({ st, defaultOpen, openRows }: { st: AgentStep; defaultO
     const note = (
         <>
             {parts.join(" · ")}
-            {s.warns ? <span class="shc-warn" aria-label={`${s.warns} to check`}><IconWarn />{s.warns} to check</span> : null}
+            {s.warns ? <span class="shc-warn" aria-label={`${s.warns} worth a look`}><IconWarn />{s.warns} worth a look</span> : null}
         </>
     );
     return (

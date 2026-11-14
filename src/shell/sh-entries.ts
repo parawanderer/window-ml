@@ -31,8 +31,13 @@ export interface ShEntry {
     durationMs?: number;
     /** Every fact the card had: what ran, where, under which sandbox, then what it reported. */
     facts: ShCardLine[];
-    /** Something in the facts or the verdict deserves a look: shown on the collapsed row, never only inside it. */
+    /** Something deserves a look that the person could NOT have seen when they decided: shown on the collapsed row, never
+     *  only inside it. For a call they were asked about, only what happened AFTER the answer counts (a weaker sandbox than
+     *  asked, a protected name that changed, a kill): the card's own facts were on the card they approved. A call that ran
+     *  without asking has had no review, so every warned fact counts. */
     warn: boolean;
+    /** What raised `warn`, as `label: value` lines, for the row's tooltip. */
+    flags: string[];
     /** The person's note on a denial, or why the ask ended without them. */
     note?: string;
 }
@@ -65,6 +70,12 @@ function askFacts(a: StepAsk): ShCardLine[] {
     } catch { /* facts of another shape: the entry says what it can and the raw view has the rest */ }
     return [...facts, ...askOutcomeLines(a)];
 }
+
+/** The warning a set of facts raises: `warn`, and the lines that raised it (an out-of-memory kill is one more). */
+const flagsOf = (lines: ShCardLine[], oom: boolean): { warn: boolean; flags: string[] } => {
+    const flags = [...lines.filter((l) => l.warn).map((l) => `${l.label}: ${l.value}`), ...(oom ? ["killed for running out of memory"] : [])];
+    return { warn: flags.length > 0, flags };
+};
 
 /**
  * A step's answered calls, as entries, in the order they happened: the asks the person answered and the calls that ran
@@ -101,7 +112,7 @@ export function shEntries(st: { asks?: readonly StepAsk[]; shCalls?: readonly Sh
                 program: a.kind === "put" ? "ml.sh.put" : argv.length ? programOf(argv) : a.kind,
                 argv, script: a.kind === "put" ? null : scriptOf(argv),
                 ...(span ? { durationMs: span.durationMs } : {}),
-                facts, warn: facts.some((l) => l.warn) || span?.killed === "oom",
+                facts, ...flagsOf(askOutcomeLines(a), span?.killed === "oom"),
                 ...(a.note ? { note: a.note } : {}),
             },
         });
@@ -116,7 +127,7 @@ export function shEntries(st: { asks?: readonly StepAsk[]; shCalls?: readonly Sh
                 key: `free${i}`, verdict: "ran", how: "free",
                 said: `ran without asking (${u.by === "policy" ? (u.policy ? `the policy "${u.policy}"` : "a policy") : "the built-in default"})`,
                 program: programOf(u.argv), argv: argvOf(u.argv), script: scriptOf(u.argv), durationMs: c.durationMs,
-                facts, warn: facts.some((l) => l.warn) || c.killed === "oom",
+                facts, ...flagsOf(facts, c.killed === "oom"),
             },
         });
     });

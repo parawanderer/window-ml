@@ -1451,7 +1451,7 @@ html[data-calm] .appr-deny-wrap { border-radius: 999px; color: var(--fg-dim); }
 /* How many calls the footer holds; it ticks when one joins. */
 .shc-n { margin-left: 6px; font-weight: 400; color: var(--fg-faint); }
 .shcalls > .disc > .disc-headrow .disc-note { color: var(--fg-faint); display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-/* "N to check" on the footer: some call's facts warn, said without opening it. */
+/* "N worth a look" on the footer: some call has something the person could not have seen when they decided, said without opening it. */
 .shc-warn { display: inline-flex; align-items: center; gap: 4px; color: var(--notice); }
 .shc-warn svg { width: 12px; height: 12px; }
 /* The footer's open body: one row per call, indented under the footer's chevron. */

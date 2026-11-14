@@ -73,6 +73,16 @@ test("a fact that warns, or a call killed past its memory, marks the entry", () 
     assert.equal(shEntries({ shCalls: [free(["ls"], { killed: "oom" })] })[0].warn, true);
 });
 
+test("a call the person was asked about is not flagged for what was on the card they approved; a call that ran free is", () => {
+    const facts = { argv: ["bash", "demo.sh"], program: { path: "/bin/bash", inRoot: false }, cwd: { path: "/w", inRoot: true }, env: { set: [], free: true }, secrets: [], paths: [], repo: { root: "/w", reasons: [] }, repoConfigRunsCode: false, effects: "unknown", described: false, why: ["bash has no program manifest"], runner: false, mode: "host", sandboxed: true, placement: "host-sandbox" };
+    const [asked] = shEntries({ asks: [ask("a", "allowed", { answeredAt: 2000, facts })] });
+    assert.ok(asked.facts.some((l) => l.warn), "the card's own `Does: unknown` still draws amber inside the row");
+    assert.equal(asked.warn, false, "but it is not a flag on the row: they saw it before they said yes");
+    assert.deepEqual(asked.flags, []);
+    const [killed] = shEntries({ asks: [ask("a", "allowed", { answeredAt: 2000, facts })], shCalls: [{ program: "bash", durationMs: 5, killed: "oom", endedAt: 3000 }] });
+    assert.deepEqual([killed.warn, killed.flags], [true, ["killed for running out of memory"]], "what happened after the answer is");
+});
+
 test("the summary counts calls, asked, free, denied and the ones to check", () => {
     const s = shSummary(shEntries({ asks: [ask("a", "allowed", { answeredAt: 2000 }), ask("b", "denied", { answeredAt: 3000 })], shCalls: [free(["ls"])] }));
     assert.deepEqual(s, { calls: 3, asked: 2, free: 1, denied: 1, warns: 0 });

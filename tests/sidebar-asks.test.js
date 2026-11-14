@@ -95,8 +95,8 @@ test("an allowed ask that ran says what the host applied and what protected name
     const warned = [...ran.querySelectorAll(".shc-facts .warn dt")].map((d) => d.textContent);
     assert.ok(warned.includes("Sandbox applied") && warned.includes("Protected names"), "less than was asked for, and a hook appeared: both flagged");
     assert.ok(ran.classList.contains("warn"), "and the ROW says so, not only what is inside it");
-    assert.match(ran.querySelector(".shc-row .dot-tip-line")?.textContent || "", /^Worth a look: .*Does: unknown.*Sandbox applied: .*Protected names: /, "the dot names the flagged facts instead of telling you to open a row that may already be open");
-    assert.match(w.shadow.querySelector(".shcalls .disc-head").textContent, /to check/, "and so does the footer");
+    assert.match(ran.querySelector(".shc-row .dot-tip-line")?.textContent || "", /^Worth a look: Sandbox applied: .*Protected names: /, "the dot names what raised it, and only what happened after the answer: the card's own warnings were on the card the person approved");
+    assert.match(w.shadow.querySelector(".shcalls .disc-head").textContent, /worth a look/, "and so does the footer");
     assert.match(ran.textContent, /changed during this call in \/w\/proj: \.git\/hooks\/pre-commit created/);
     assert.match(ran.textContent, /not the write roots, exec program-only that was asked for/);
     const deniedLabels = [...denied.querySelectorAll(".shc-facts dt")].map((d) => d.textContent);
