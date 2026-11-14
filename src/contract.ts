@@ -74,7 +74,8 @@ export interface JsonSchema {
  *  they are NOT part of the stable public API and may change. */
 /** `ml.sh`: programs on the person's machine, from an approved `exec`, which then runs in an isolated world rather than
  *  the page's (MlApi `sh`). A namespace, not a function: `await ml.sh.run(["cat", "notes.txt"])` takes an argv array,
- *  never a shell string. */
+ *  never a shell string. Every call starts in the first workspace folder and nothing carries over from one call to the
+ *  next (no `cd`, no state), so leave `cwd` out unless a program must run somewhere else, and give a path relative to it. */
 export interface MlSh {
     /** Run one program and wait for it, up to `expectMs` (default: a short lease, which the `Detached` error names): past that it throws `Detached` with `e.task`
      *  and runs on; its result arrives later as a `[task <id> …]` message, and the `task` tool awaits, tails or cancels
@@ -91,7 +92,7 @@ export interface MlSh {
      *  When `ml.current.runtime.capabilities` reports `shellTilde`, an argument or `cwd` that is `~` or starts with `~/`
      *  begins at the home directory; nothing else is expanded.
      * @param argv the program and its arguments, e.g. `["rg", "-n", "TODO", "src"]`
-     * @param opts `cwd` (absolute, or relative to the first workspace folder), `env` (variables to add; most make the
+     * @param opts `cwd` (default: the first workspace folder, so usually leave it out; absolute, or relative to that folder), `env` (variables to add; most make the
      *   call ask), `timeoutMs` (the host kills it then; default 120 s), `expectMs` (how long you expect it to take) */
     run(argv: string[], opts?: { cwd?: string; env?: Record<string, string>; timeoutMs?: number; expectMs?: number }): Promise<{
         code: number | null; signal: string | null; ok: boolean; timedOut: boolean; cancelled: boolean; durationMs: number;
