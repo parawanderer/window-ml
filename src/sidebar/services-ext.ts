@@ -5,7 +5,7 @@
 // iframe, which is what makes an approval posted this way unforgeable by the page.
 import { hintSession } from "../contract/contract-run";
 import { config, sessionMap, surface, view } from "./store";
-import type { PanelRoute } from "./links";
+import { formatAddress, type PanelRoute } from "../link-address";
 import { bareHash, type SidebarServices, type SideCallRequest, type SideCallResult } from "./services";
 import { residentNow } from "./resource/panel-facts";
 import { downloadBlob } from "./export/download";
@@ -111,11 +111,13 @@ export const extensionServices: SidebarServices = {
     // Loaded on the click, not with this file: Settings is the whole settings view, and what loads the services
     // (the code-block tools under Node, among others) must not pull it in.
     findSetting: (query) => { void import("./settings/settings").then((m) => { m.searchSettings(query); view.value = { name: "settings" }; }); },
-    // The HUD card is this same app in its own frame, and draws no Settings: there a link is its label until a click
-    // can open the chat page at that view (docs/spec/LINKS.md). Read per render, since the surface is set by message.
-    get openAddress() {
-        return surface.value === "card" ? null
-            : (route: PanelRoute) => { void import("./settings/settings").then((m) => m.openPanelRoute(route)); };
+    // The HUD card is this same app in its own frame, and draws no Settings: there the worker opens the chat page at
+    // that view, or focuses it where it is open (OPEN_CHAT_PAGE, docs/spec/LINKS.md). Read at the click, since the
+    // surface is set by message.
+    openAddress: (route: PanelRoute) => {
+        if (surface.value !== "card") { void import("./settings/settings").then((m) => m.openPanelRoute(route)); return; }
+        try { chrome.runtime.sendMessage({ type: "OPEN_CHAT_PAGE", payload: { address: formatAddress(route) } }); }
+        catch { /* no runtime channel: the click does nothing */ }
     },
     savePref: (key, value) => { try { chrome.storage.local.set({ [key]: value }); } catch { /* no chrome in a bare render */ } },
     saveFile: (name, data) => downloadBlob(name, data),
