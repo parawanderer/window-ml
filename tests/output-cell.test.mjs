@@ -349,6 +349,42 @@ test("value tree: text by default; the corner button draws the tree and back", a
     assert.ok(cell.querySelector("pre.code"), "and back to the text");
 });
 
+test("value tree: treeFirst (the calm view) opens a JSON value as the tree, with the text one click away", async () => {
+    const host = doc.getElementById("root");
+    render(null, host);
+    render(h(ValueOut, { text: `{"name":"qwen3","sizes":[1,2,3]}`, treeFirst: true }), host);
+    await tick();
+    const cell = host.querySelector(".r-outcell");
+    assert.ok(cell.querySelector(".jt-value .jt-node"), "the tree is what is drawn first");
+    assert.equal(cell.querySelector("pre.code"), null);
+    assert.equal(treeBtn(cell).textContent, "text", "the button offers the way back");
+    treeBtn(cell).click(); await tick();
+    assert.ok(cell.querySelector("pre.code"), "text is one click away");
+    // …and a value that is NOT JSON has no tree to prefer: it stays text, whatever the view.
+    render(null, host);
+    render(h(ValueOut, { text: "plain words", treeFirst: true }), host);
+    await tick();
+    assert.ok(host.querySelector(".r-outcell pre.code"), "a non-JSON value stays text");
+    assert.equal(host.querySelector(".jt-value"), null);
+});
+
+test("value tree: an exec's console stays text and visible beside a tree-first value", async () => {
+    const { focusMode } = await import("../src/sidebar/store.ts");
+    focusMode.value = true;
+    try {
+        const host = doc.getElementById("root");
+        render(null, host);
+        render(h(RenderPanel, { d: { type: "exec-out", stdout: "loading page\n{\"logged\":1}", value: `{"ok":true,"rows":[1,2]}` } }), host);
+        await tick();
+        const con = host.querySelector(".r-py-stdout");
+        assert.ok(con, "the console section is still there");
+        assert.match(con.textContent, /loading page/);
+        assert.match(con.textContent, /"logged":1/, "a JSON line logged to the console stays the text that was logged");
+        assert.equal(con.querySelector(".jt-value"), null, "the console is never a tree");
+        assert.ok(host.querySelector(".r-py-val .jt-value .jt-node"), "only the returned value is");
+    } finally { focusMode.value = false; }
+});
+
 test("value tree: no button for a value that is not an object or array", async () => {
     for (const text of [`42`, `"a string"`, `plain words`, `{'python': True}`]) {
         const cell = await mountValue(text);

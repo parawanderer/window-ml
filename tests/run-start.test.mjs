@@ -312,7 +312,9 @@ test("the tools the model is shown are the page's own definitions, built by the 
     // The run finishes exec's and fetch_url's descriptions with their details pointer (tool-details.ts), as here.
     const { withToolDetails } = await import("../src/tools/tool-details.ts");
     const docs = offered.has("agent_api_docs") ? [{ name: "agent_api_docs", description: "" }] : [];
-    const page = withToolDetails([...ml.domTools, ml.clickTool(), ml.typeTool(), ml.pythonTool(), ml.chatMetaTool(), ml.fetchTool(), ...docs]).slice(0, docs.length ? -1 : undefined);
+    // …and puts the compose hint on interactives when exec is wired (tools.ts `withComposeNote`).
+    const { withComposeNote } = await import("../src/tools/tools.ts");
+    const page = withComposeNote(withToolDetails([...ml.domTools, ml.clickTool(), ml.typeTool(), ml.pythonTool(), ml.chatMetaTool(), ml.fetchTool(), ...docs]), offered.has("exec")).slice(0, docs.length ? -1 : undefined);
     for (const t of page) {
         if (!offered.has(t.name)) continue;
         assert.equal(offered.get(t.name), t.description, `${t.name}: the worker shows the model the page's description`);
@@ -1921,12 +1923,11 @@ test("UPGRADE: a stored config from before the flag reads as ON: the prompt name
     assert.equal("selfIntrospection" in config, false);
     const { system, toPage, results, log } = await surveyRun(["ml.current.run.step"]);
     // With agent_api_docs, ONE sentence (Shane, 2026-10-08: most runs never need it): what it is, and where to learn it.
-    assert.match(system, /`ml\.current`, read in a read-only `exec`, is your own run as data/);
-    // DeepSeek V4 Pro and Kimi K3 summed only `estimatedTokens` until the sentence named both (2026-10-09).
-    assert.match(system, /what each costs \(`meta\[i\]\.tokens \?\? meta\[i\]\.estimatedTokens`\)/);
-    assert.match(system, /`ml\.current\.debug\.userWatches`\), and your environment \(`ml\.current\.env`: whether this site is approved, where an approved exec would run\)\. Most tasks never need it; `agent_api_docs` documents it\./);
+    assert.match(system, /`ml\.current`, in a read-only `exec`, is your own run as data \(messages and their cost, the step, the execution log, your environment, what the user shared\); `agent_api_docs` documents it\./);
+    // DeepSeek V4 Pro and Kimi K3 summed only `estimatedTokens` until the sentence named both (2026-10-09). The
+    // panel-bloat cut moved that to the docs the sentence points at (the next test holds them to it).
     // The one fact a real model got wrong with the sentence alone, without looking it up (DeepSeek V4 Pro, 2026-10-08).
-    assert.match(system, /A shared watch is re-evaluated on every read, so its value is now, and its `note` is the user's question to answer\./);
+    assert.match(system, /A shared watch \(`ml\.current\.debug\.userWatches`\) is re-evaluated on every read, so its value is now; its `note` is the user's question to answer\./);
     assert.ok(!system.includes(CURRENT_SIGNATURE), "the shape is the docs' to give");
     assert.deepEqual(toPage, [], "answered in the worker");
     assert.equal(results[0], "1", JSON.stringify({ results, log }));

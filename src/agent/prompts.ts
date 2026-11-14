@@ -53,26 +53,15 @@ export const AGENT_SYSTEM = [
 
 // Tool-aware clauses appended to AGENT_SYSTEM (only when the caller didn't
 // supply its own `system`) based on what the toolset can actually do.
-export const VISION_CLAUSE =
-    "\n\nYou have a VISION tool: use it to ORIENT (see the page) when the task or " +
-    "layout is unclear, and to VERIFY your work by looking at the result before " +
-    "declaring done — a screenshot catches what a DOM selector scoped to one form missed. " +
-    "But to JUDGE INDIVIDUAL ITEMS (e.g. which posts in a grid show a cat), look at each " +
-    "one with the item selector and an incrementing index (0,1,2,…) — a tight per-element " +
-    "crop is sharp, decisive, and bound to that exact element (answer the same selector+index " +
-    "for the ones that match). Do NOT classify items from a whole-page/grid screenshot: it is " +
-    "downscaled to mush and its verdicts are unreliable and won't map to specific elements.";
+export const VISION_CLAUSE = "\n\nYou have a VISION tool: look to orient when the layout is unclear, and at the result before declaring done. " +
+    "To judge individual items, look at each by selector and index; never classify items from a whole-page or grid " +
+    "screenshot, which is downscaled and maps to no element.";
 // Self-knowledge. Without this the model has no idea what it runs inside — asked "how do
 // I call you from the console?" it answers from pre-training. Identity only; the reference
 // itself is ~4k tokens, so it stays behind the tool.
-export const SELF_CLAUSE =
-    "\n\nYOU are the agent of window.ml, a Chrome extension that injects a `window.ml` " +
-    "scripting API into every page — this run is an `ml.agent(task)` call, so the user can " +
-    "indeed drive you from the devtools console. Asked about yourself or that API, call " +
-    "`agent_api_docs` rather than guessing. You can also reach `ml` yourself from `exec` as a " +
-    "TOOLBOX: e.g. `await ml.chat(prompt)` for a sub-LLM call (summarise/classify a blob of text " +
-    "you've gathered) or `await ml.read(el)` to OCR an image — each returns a `Promise<string>`; " +
-    "`agent_api_docs` lists the rest.";
+export const SELF_CLAUSE = "\n\nYou are window.ml's agent: this run is an `ml.agent(task)` call, so a person can drive you from the devtools " +
+    "console. `agent_api_docs` describes you and the `ml` API. In `exec`, `ml` is also a toolbox: `await " +
+    "ml.chat(prompt)` for a sub-LLM call, `await ml.read(el)` to OCR an image.";
 declare const __ML_LINKS_SENTENCE__: string | undefined;
 /** How the model learns it may link a setting (LINKS.md, open question 1): one sentence naming the `window-ml:` link
  *  form, beside agent_api_docs's "Your settings" section. Measured 2026-11-13 (notebooks/bench/links-prompt.ipynb): a
@@ -94,11 +83,10 @@ export const LINKS_CLAUSE =
  *  self-count question takes a few more calls (the model looks it up), the shared-watch question one. Without the docs
  *  there is nowhere to learn it, so the GENERATED shape and those facts stay in the prompt. */
 export const currentClause = (docs: boolean): string => docs
-    ? "\n\n`ml.current`, read in a read-only `exec`, is your own run as data: your messages and what each costs (`meta[i].tokens ?? meta[i].estimatedTokens`), this " +
-      "turn's step, the execution log, what the user shared with you (`ml.current.debug.userWatches`), and your " +
-      "environment (`ml.current.env`: whether this site is approved, where an approved exec would run). Most tasks " +
-      "never need it; `agent_api_docs` documents it. A shared watch is re-evaluated on every read, so its value is " +
-      "now, and its `note` is the user's question to answer."
+    ? "\n\n`ml.current`, in a read-only `exec`, is your own run as data (messages and their cost, the step, the " +
+      "execution log, your environment, what the user shared); `agent_api_docs` documents it. A shared watch " +
+      "(`ml.current.debug.userWatches`) is re-evaluated on every read, so its value is now; its `note` is the user's " +
+      "question to answer."
     : `\n\nYou can read YOUR OWN RUN as data: \`ml.current\` in a read-only \`exec\` is \`${CURRENT_SIGNATURE}\`, with \`meta[i]\` describing \`messages[i]\` (system prompt first; a message's size is \`tokens\` when the engine counted it, else \`estimatedTokens\`); ` +
       "`run.step` (1 on this turn's first call), `maxSteps` and `startedTs` are THIS turn's; a read holds the call making it, not its result, and a shared watch is re-evaluated on every read, so its value is now; its `note` is the user's question about it, so answer that. Use it to " +
       "check what is in your context, what a tool really returned, or what the user shared with you in " +
@@ -127,7 +115,7 @@ import { PIPE_SYNTAX } from "../pointers/text-pipe";
 /** The tool-tokens section. `answer`: the run has the `answer` tool, so an output can also go in the block under the
  *  reply; without it, an output is embedded inline only, and the prompt never names a tool the run lacks.
  *
- *  Cut from 2,748 characters (with DEREF_CLAUSE, 3,738) to about a third, measured on the bench first (prompt budget
+ *  Cut from 2,748 characters (with the reading-back section since cut, 3,738) to about a third, measured on the bench first (prompt budget
  *  step 3, docs/spec/PROMPT_BUDGET.md): 12 models, pass rate held on all. The sentence against writing rows out as a
  *  markdown table is the measured part: without it DeepSeek V4 Pro retyped tables (re-emission 0.17 → 0.46). */
 export const tooltokensClause = (answer: boolean): string =>
@@ -158,17 +146,9 @@ export const TOOLTOKENS_CLAUSE = tooltokensClause(true);
  *  to shorten: the tool and the clause arrive together, so the reference always resolves and no tool becomes
  *  unusable read cold. Detected from the SCHEMA rather than a list of names, so a new tool that takes a
  *  `pipe` is covered without anyone remembering to add it here. */
-export const PIPE_CLAUSE =
-    "\n\nTHE PIPE DIALECT. Several tools take a `pipe` that reduces text BEFORE it reaches you — read only " +
+export const PIPE_CLAUSE = "\n\nTHE PIPE DIALECT. Several tools take a `pipe` that reduces text BEFORE it reaches you — read only " +
     "the lines you need instead of the whole document. It is the same dialect everywhere it appears. " +
     PIPE_SYNTAX;
-
-/** The reading-back section: how to read a pointer, and that a cut output already has one. */
-export const DEREF_CLAUSE =
-    "\n\nREADING AN OUTPUT AGAIN. `dereference` reads a pointer: use it instead of re-running a tool or retyping a " +
-    "value. It is free and changes nothing, and its `pipe` inspects something too big for your context: `schema` or " +
-    "`keys` first, then a path like `.rows | head 5`. An output cut to fit gets a pointer even without `token`: the note " +
-    "at the cut names it. A pointer is a snapshot of when its tool ran.";
 
 /** The DOM tools that pierce shadow roots, in the order the shadow clause names them. */
 export const SHADOW_TOOLS = ["findByText", "interactives", "describeElement", "ancestors", "countMatches", "sampleText", "click", "type", "wait", "answer"] as const;
@@ -218,19 +198,11 @@ export const EXEC_COMPUTE_CLAUSE =
     "with the `exec` tool (JavaScript): gather the values and run `Array`/`.map`/`.filter`/" +
     "`.reduce`/`Math.*` to get the EXACT result before you answer. It's clunkier than a dedicated " +
     "calculator, but infinitely better than guessing — the final number must come from code, not your head.";
-export const PYTHON_CLAUSE =
-    "\n\nYou have `python_exec` — a REAL sandboxed Python (its tool description lists the available " +
-    "libraries). You are a language " +
-    "model: you predict tokens, you do NOT calculate. So NEVER work out multi-step arithmetic, " +
-    "matrix/array indexing, combinatorics, probability, date math, unit conversions, or any " +
-    "precise numeric result in your head — you will guess a plausible-looking wrong number. " +
-    "Instead WRITE A SCRIPT and run it to get the exact, deterministic answer, " +
-    "then report what it computed. Same for pixel/array/spatial work over a screenshot (pass " +
-    "`image`). The RETURN value — a SINGLE object (a DataFrame, dict, or number) — is the tool's citable " +
-    "output; `print()` only produces a stdout debug log, so a script that prints but RETURNS nothing yields " +
-    "`null` (nothing to cite). When a result is meant for the USER, prefer RETURNING a pandas DataFrame — it " +
-    "renders as a readable table. Keep purely internal/intermediate results as JSON/dicts (cheaper); if one " +
-    "turns out to be worth showing the user, return it as a DataFrame from a new cell.";
+/** The python section: compute with a script, never in your head, and RETURN the value. Appended when python_exec is wired. */
+export const PYTHON_CLAUSE = "\n\nYou have `python_exec`. You predict tokens and do NOT calculate: multi-step arithmetic, counts, date math, " +
+    "unit conversions and any other exact number come from a script you run, never from your head. Only the RETURNED " +
+    "value is the output (`print()` is a debug log, so a script that only prints gives `null`); return a DataFrame for " +
+    "a table meant for the user.";
 
 // Appended when ml.agent({ unattended: true }) — a headless/scripting run with no human to approve.
 export const UNATTENDED_CLAUSE =

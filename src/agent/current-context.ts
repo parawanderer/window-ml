@@ -126,7 +126,8 @@ export type CurrentLog = CurrentLogRecord[] & { text: string };
 export interface CurrentSnapshot {
     run: CurrentRun;
     /** The NeutralMessage[] the next model call gets, verbatim: the system prompt first, then every user and assistant
-     *  message, tool call and tool result. A COPY, so nothing a script does reaches the loop's. */
+     *  message, tool call and tool result. A COPY, so nothing a script does reaches the loop's. In an approved `exec` an
+     *  image's data URL is replaced by a stub that says how big it was (`images` keeps its length); a read-only exec reads them in place. */
     messages: NeutralMessage[];
     /** Parallel to `messages`: same length, same order. */
     meta: MessageMeta[];
@@ -293,6 +294,9 @@ export interface ExecCurrent {
     logText: string;
 }
 
+/** What stands in an approved exec's copy for an image's data URL: its size, so a script can tell a screenshot from an icon. */
+const imageStub = (url: string): string => `[image omitted: ${String(url).length} characters]`;
+
 /**
  * What an approved exec is sent for `ml.current` (the site-access work binds it, frozen, in the exec's own world).
  * @param snap the run's snapshot, as the worker made it (shared watches included)
@@ -302,7 +306,12 @@ export interface ExecCurrent {
  */
 export function currentForExec(snap: CurrentSnapshot | undefined, enabled: boolean): { value: ExecCurrent } | { error: string } | undefined {
     if (!enabled || !snap) return undefined;
-    const value: ExecCurrent = JSON.parse(JSON.stringify({ current: { ...snap, log: [...snap.log] }, logText: snap.log.text }));
+    // THE PIXELS OF AN IMAGE ARE NOT SENT. A screenshot is a data URL, and one high-resolution capture was 14 million
+    // characters: every approved exec that so much as read `ml.current.runtime` was over the cap below and refused, for a
+    // few hundred bytes of what it wanted. A script cannot do anything with the pixels, and keeps the count (`images`)
+    // and the message; the stub says how big the image was.
+    const messages = snap.messages.map((m) => m.images?.length ? { ...m, images: m.images.map(imageStub) } : m);
+    const value: ExecCurrent = JSON.parse(JSON.stringify({ current: { ...snap, messages, log: [...snap.log] }, logText: snap.log.text }));
     const chars = JSON.stringify(value).length;
     if (chars > EXEC_CURRENT_CHARS)
         return { error: `ml.current is ${chars} characters here, over the ${EXEC_CURRENT_CHARS} an approved exec is sent. Read it in a read-only exec (one that does not touch the page), where it is read in place.` };

@@ -2779,6 +2779,38 @@
             "additionalProperties": true
           }
         },
+        "files": {
+          "description": "The `/files` arguments the host mapped to the uploads folder (`HostFilesMapped`), when any were: the line shows `/files/x is /real/x`, the argv the model wrote beside the one the process got.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "index": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "string",
+                    "const": "cwd"
+                  }
+                ]
+              },
+              "from": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "index",
+              "from",
+              "to"
+            ],
+            "additionalProperties": true
+          }
+        },
         "outcome": {
           "description": "What the call reported once it ran (`ShOutcome`: where it ran, the sandbox applied, the protected names).",
           "type": "object",
