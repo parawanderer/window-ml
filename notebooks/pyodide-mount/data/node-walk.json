@@ -1,0 +1,364 @@
+{
+  "machine": {
+    "cpu": "Apple M5 Pro",
+    "cores": 15,
+    "memGB": 24,
+    "node": "v26.12.1",
+    "os": "Darwin 25.6.0",
+    "pyodide": "pyodide-core 314.0.3 (Python 3.14.0, restricted-mode fork build)",
+    "date": "2026-11-13T22:36:03.450Z"
+  },
+  "caveats": [
+    "The worker is a node:worker_threads Worker and the host a Node main thread: the channel is one postMessage hop plus a SharedArrayBuffer, not worker -> offscreen -> service worker -> wmlhost. Every figure is the sandbox side's floor; the product adds its hops.",
+    "The host answers from the real disk with node:fs in-process, synchronously inside one event-loop turn. wmlhost's native-messaging, JSON and base64 costs are not here.",
+    "Large files are sparse: the host reads zeros from holes without touching a disk, so the fetch figures are memory-copy speed, not I/O speed.",
+    "Cells run through py.runPython (not the product's wrapUserCode harness, which needs numpy/pandas): the cell gate's begin/revoke window is not opened around them.",
+    "The stop latency is stamped Python-side with time.perf_counter() (== performance.now() here, offset calibrated at boot) and host-side with Date-aligned performance.timeOrigin + now."
+  ],
+  "item": "3: os.walk over the real workspace",
+  "walk": {
+    "workspace": "/Users/sb/git/window-ml-async-ra",
+    "rows": [
+      {
+        "hidden": "(nothing)",
+        "listingCache": false,
+        "dirCache": false,
+        "hostTruth": {
+          "files": 21498,
+          "dirs": 1558
+        },
+        "pythonSaw": {
+          "files": 21498,
+          "dirs": 1558
+        },
+        "reps": 20,
+        "error": null,
+        "firstWalkMs": {
+          "n": 20,
+          "min": 346.609,
+          "median": 352.671,
+          "p90": 373.517,
+          "max": 384.383,
+          "mean": 354.899
+        },
+        "secondWalkSameCellMs": {
+          "n": 20,
+          "min": 100.334,
+          "median": 103.205,
+          "p90": 108.711,
+          "max": 111.247,
+          "mean": 104.029
+        },
+        "firstWalkRequests": {
+          "n": 20,
+          "min": 26238,
+          "median": 26238,
+          "p90": 26238,
+          "max": 26238,
+          "mean": 26238
+        },
+        "firstWalkRequestsByOp": {
+          "readdir": 1559,
+          "stat": 24645,
+          "readlink": 34
+        },
+        "secondWalkRequests": {
+          "n": 20,
+          "min": 3182,
+          "median": 3182,
+          "p90": 3182,
+          "max": 3182,
+          "mean": 3182
+        },
+        "secondWalkRequestsByOp": {
+          "readdir": 1559,
+          "readlink": 34,
+          "stat": 1589
+        },
+        "usPerEntryFirstWalk": 15.296
+      },
+      {
+        "hidden": "(nothing)",
+        "listingCache": true,
+        "dirCache": false,
+        "hostTruth": {
+          "files": 21498,
+          "dirs": 1558
+        },
+        "pythonSaw": {
+          "files": 21498,
+          "dirs": 1558
+        },
+        "reps": 20,
+        "error": null,
+        "firstWalkMs": {
+          "n": 20,
+          "min": 126.94,
+          "median": 131.273,
+          "p90": 138.519,
+          "max": 153.601,
+          "mean": 132.954
+        },
+        "secondWalkSameCellMs": {
+          "n": 20,
+          "min": 124.7,
+          "median": 127.791,
+          "p90": 132.163,
+          "max": 132.502,
+          "mean": 128.218
+        },
+        "firstWalkRequests": {
+          "n": 20,
+          "min": 1639,
+          "median": 1639,
+          "p90": 1639,
+          "max": 1639,
+          "mean": 1639
+        },
+        "firstWalkRequestsByOp": {
+          "readdir": 1559,
+          "readlink": 34,
+          "stat": 46
+        },
+        "secondWalkRequests": {
+          "n": 20,
+          "min": 1593,
+          "median": 1593,
+          "p90": 1593,
+          "max": 1593,
+          "mean": 1593
+        },
+        "secondWalkRequestsByOp": {
+          "readdir": 1559,
+          "readlink": 34
+        },
+        "usPerEntryFirstWalk": 5.694
+      },
+      {
+        "hidden": "(nothing)",
+        "listingCache": true,
+        "dirCache": true,
+        "hostTruth": {
+          "files": 21498,
+          "dirs": 1558
+        },
+        "pythonSaw": {
+          "files": 21498,
+          "dirs": 1558
+        },
+        "reps": 20,
+        "error": null,
+        "firstWalkMs": {
+          "n": 20,
+          "min": 129.279,
+          "median": 132.806,
+          "p90": 141.087,
+          "max": 153.931,
+          "mean": 134.787
+        },
+        "secondWalkSameCellMs": {
+          "n": 20,
+          "min": 35.314,
+          "median": 36.66,
+          "p90": 39.576,
+          "max": 45.831,
+          "mean": 37.271
+        },
+        "firstWalkRequests": {
+          "n": 20,
+          "min": 1639,
+          "median": 1639,
+          "p90": 1639,
+          "max": 1639,
+          "mean": 1639
+        },
+        "firstWalkRequestsByOp": {
+          "readdir": 1559,
+          "readlink": 34,
+          "stat": 46
+        },
+        "secondWalkRequests": {
+          "n": 20,
+          "min": 34,
+          "median": 34,
+          "p90": 34,
+          "max": 34,
+          "mean": 34
+        },
+        "secondWalkRequestsByOp": {
+          "readlink": 34
+        },
+        "usPerEntryFirstWalk": 5.76
+      },
+      {
+        "hidden": "node_modules,.git",
+        "listingCache": false,
+        "dirCache": false,
+        "hostTruth": {
+          "files": 2439,
+          "dirs": 185
+        },
+        "pythonSaw": {
+          "files": 2439,
+          "dirs": 185
+        },
+        "reps": 20,
+        "error": null,
+        "firstWalkMs": {
+          "n": 20,
+          "min": 38.561,
+          "median": 39.369,
+          "p90": 41.562,
+          "max": 45.04,
+          "mean": 39.787
+        },
+        "secondWalkSameCellMs": {
+          "n": 20,
+          "min": 10.364,
+          "median": 10.668,
+          "p90": 13.022,
+          "max": 13.386,
+          "mean": 11.092
+        },
+        "firstWalkRequests": {
+          "n": 20,
+          "min": 2998,
+          "median": 2998,
+          "p90": 2998,
+          "max": 2998,
+          "mean": 2998
+        },
+        "firstWalkRequestsByOp": {
+          "readdir": 186,
+          "stat": 2809,
+          "readlink": 3
+        },
+        "secondWalkRequests": {
+          "n": 20,
+          "min": 374,
+          "median": 374,
+          "p90": 374,
+          "max": 374,
+          "mean": 374
+        },
+        "secondWalkRequestsByOp": {
+          "readdir": 186,
+          "readlink": 3,
+          "stat": 185
+        },
+        "usPerEntryFirstWalk": 15.003
+      },
+      {
+        "hidden": "node_modules,.git",
+        "listingCache": true,
+        "dirCache": false,
+        "hostTruth": {
+          "files": 2439,
+          "dirs": 185
+        },
+        "pythonSaw": {
+          "files": 2439,
+          "dirs": 185
+        },
+        "reps": 20,
+        "error": null,
+        "firstWalkMs": {
+          "n": 20,
+          "min": 12.248,
+          "median": 12.963,
+          "p90": 14.409,
+          "max": 19.889,
+          "mean": 13.427
+        },
+        "secondWalkSameCellMs": {
+          "n": 20,
+          "min": 12.2,
+          "median": 12.627,
+          "p90": 15.324,
+          "max": 15.602,
+          "mean": 12.941
+        },
+        "firstWalkRequests": {
+          "n": 20,
+          "min": 189,
+          "median": 189,
+          "p90": 189,
+          "max": 189,
+          "mean": 189
+        },
+        "firstWalkRequestsByOp": {
+          "readdir": 186,
+          "readlink": 3
+        },
+        "secondWalkRequests": {
+          "n": 20,
+          "min": 189,
+          "median": 189,
+          "p90": 189,
+          "max": 189,
+          "mean": 189
+        },
+        "secondWalkRequestsByOp": {
+          "readdir": 186,
+          "readlink": 3
+        },
+        "usPerEntryFirstWalk": 4.94
+      },
+      {
+        "hidden": "node_modules,.git",
+        "listingCache": true,
+        "dirCache": true,
+        "hostTruth": {
+          "files": 2439,
+          "dirs": 185
+        },
+        "pythonSaw": {
+          "files": 2439,
+          "dirs": 185
+        },
+        "reps": 20,
+        "error": null,
+        "firstWalkMs": {
+          "n": 20,
+          "min": 12.167,
+          "median": 12.888,
+          "p90": 15.698,
+          "max": 20.453,
+          "mean": 13.579
+        },
+        "secondWalkSameCellMs": {
+          "n": 20,
+          "min": 3.148,
+          "median": 3.247,
+          "p90": 4.264,
+          "max": 4.953,
+          "mean": 3.404
+        },
+        "firstWalkRequests": {
+          "n": 20,
+          "min": 189,
+          "median": 189,
+          "p90": 189,
+          "max": 189,
+          "mean": 189
+        },
+        "firstWalkRequestsByOp": {
+          "readdir": 186,
+          "readlink": 3
+        },
+        "secondWalkRequests": {
+          "n": 20,
+          "min": 3,
+          "median": 3,
+          "p90": 3,
+          "max": 3,
+          "mean": 3
+        },
+        "secondWalkRequestsByOp": {
+          "readlink": 3
+        },
+        "usPerEntryFirstWalk": 4.912
+      }
+    ]
+  }
+}

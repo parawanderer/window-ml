@@ -41,7 +41,7 @@ globalThis.chrome = {
 };
 const { shRun, detachedText, SH_TAIL_ABSENT } = await import("../src/sw/sw-shell-call.ts");
 const { SH_LEASE_MS, SH_HOST_TIMEOUT_MS } = await import("../src/shell/sh-call.ts");
-const { taskAction, endTasks, closeTurnTasks, withTasks, openTasks, taskDrained, detachTask, cancelPageTasks } = await import("../src/sw/sw-tasks.ts");
+const { taskAction, endTasks, closeTurnTasks, withTasks, openTasks, taskDrained, detachTask, cancelPageTasks, hydrateTasks, dropAllTaskMemory } = await import("../src/sw/sw-tasks.ts");
 const { runInboxes, rekeyRunInbox, senderOwnsRun, releaseSessionTokens } = await import("../src/sw/sw-runs.ts");
 const { runLog } = await import("../src/sw/sw-run-log.ts");
 const { TokenStore } = await import("../src/pointers/token-pipe.ts");
@@ -798,4 +798,107 @@ test("rekeyRunInbox moves a live run's inbox to the new tab: a late result lands
     assert.match(run.inbox()[0].text, new RegExp(`^\\[task ${r.task} done`));
     assert.equal(rekeyRunInbox("no-such-run", 9), false);
     await endTasks("run-rekey");
+});
+
+// --- the cap (detachedTaskMaxMin) holds an ml.sh call's timeoutMs; the durable table files a call as a sh row (rule 4b, slice B) ---
+
+const spawnTimeouts = (host) => host.calls.filter((c) => c.call === "spawn").map((c) => c.args.timeoutMs);
+
+test("a call's timeoutMs is held to the person's cap; under the cap it is kept; none named is left to the host's own default", T, async () => {
+    const host = slowHost();
+    liveRun("run-cap-sh");
+    try {
+        sync.detachedTaskMaxMin = 5;
+        for (const [named, sent] of [[3_600_000, 300_000], [600_000, 300_000], [120_000, 120_000], [undefined, undefined]]) {
+            const before = spawnTimeouts(host).length;
+            const r = await shRun(ctxFor("run-cap-sh"), [["ls"], { expectMs: 20, ...(named !== undefined ? { timeoutMs: named } : {}) }]);
+            assert.equal(r.code, "Detached", JSON.stringify(r));
+            assert.equal(spawnTimeouts(host).slice(before)[0], sent, `timeoutMs ${named} -> ${sent}`);
+            if (named !== undefined) assert.match(r.error, new RegExp(`host kills it at ${sent / 1000} s`), "the text states the timeout applied");
+            else assert.match(r.error, new RegExp(`host kills it at ${SH_HOST_TIMEOUT_MS / 1000} s`));
+            host.finish();
+        }
+        sync.detachedTaskMaxMin = 0;   // invalid: the ceiling
+        const before = spawnTimeouts(host).length;
+        await shRun(ctxFor("run-cap-sh"), [["ls"], { expectMs: 20, timeoutMs: 3_600_000 }]);
+        assert.equal(spawnTimeouts(host).slice(before)[0], 3_600_000);
+        host.finish();
+        delete sync.detachedTaskMaxMin;   // the default is 60 min
+        const b2 = spawnTimeouts(host).length;
+        await shRun(ctxFor("run-cap-sh"), [["ls"], { expectMs: 20, timeoutMs: 10_000_000 }]);
+        assert.equal(spawnTimeouts(host).slice(b2)[0], 3_600_000, "SH_LIMITS.timeoutMs is the ceiling either way");
+        host.finish();
+    } finally { delete sync.detachedTaskMaxMin; await endTasks("run-cap-sh"); }
+});
+
+test("a call that cannot detach (lease:false) keeps its timeoutMs: the cap is for detached tasks", T, async () => {
+    const host = slowHost();
+    liveRun("run-cap-nolease");
+    sync.detachedTaskMaxMin = 1;
+    try {
+        const p = shRun(ctxFor("run-cap-nolease", { lease: false }), [["ls"], { timeoutMs: 600_000 }]);
+        await until(() => spawnTimeouts(host).length > 0);
+        assert.equal(spawnTimeouts(host)[0], 600_000);
+        host.finish();
+        await p;
+    } finally { delete sync.detachedTaskMaxMin; await endTasks("run-cap-nolease"); }
+});
+
+test("a detached call is written through as a sh row with no executor, and its end is written", T, async () => {
+    const host = slowHost();
+    const run = liveRun("run-sh-row");
+    const r = await shRun(ctxFor("run-sh-row"), [["ls"], { expectMs: 40 }]);
+    const key = "ml_tasks:run-sh-row";
+    const row = sessionStore[key][0];
+    assert.deepEqual({ v: row.v, id: row.id, tool: row.tool, status: row.status, ref: row.ref, expectMs: row.expectMs }, { v: 1, id: r.task, tool: "ml.sh", status: "running", ref: { kind: "sh" }, expectMs: 40 });
+    host.finish();
+    await until(() => run.inbox().length > 0);
+    assert.equal(sessionStore[key][0].status, "done");
+    assert.match(sessionStore[key][0].text, /ml\.sh exit 0/);
+    await endTasks("run-sh-row");
+    assert.equal(sessionStore[key], undefined, "session release removes the key");
+});
+
+test("hydrate: a running sh row is orphaned (its connection to the host died with the worker), told to the next turn, logged and persisted", T, async () => {
+    const runId = "run-sh-orphan";
+    dropAllTaskMemory();
+    sessionStore[`ml_tasks:${runId}`] = [{ v: 1, id: "t00sh00", tool: "ml.sh", startedMs: Date.now() - 20_000, leaseMs: 15_000, expectMs: null, status: "running", result: null, text: null, delivered: false, code: null, ref: { kind: "sh" } }];
+    runInboxes.set(runId, { tabId: 7, queue: [] });
+    await hydrateTasks(runId);
+    openTasks(runId, () => {});
+    const q = runInboxes.get(runId).queue;
+    assert.equal(q.length, 1);
+    assert.match(q[0].text, /^\[task t00sh00 orphaned after \d+ s: the service worker restarted and this call's connection to the host was lost/);
+    const recs = (await runLog.forRun(runId)).filter((e) => e.subsystem === "task" && e.kind === "orphaned");
+    assert.equal(recs.length, 1);
+    assert.equal(recs[0].reason, "worker-restart");
+    assert.equal(sessionStore[`ml_tasks:${runId}`][0].status, "orphaned");
+    assert.equal(taskDrained(runId, "t00sh00", q[0].text), true);
+    // The model can still ask about it, and cancelling an orphan reads as already ended: nothing is sent to a host.
+    assert.match(await taskAction(runId, { op: "cancel", id: "t00sh00" }), /already orphaned/);
+    // Not again into the turn after.
+    runInboxes.set(runId, { tabId: 7, queue: [] });
+    dropAllTaskMemory();
+    await hydrateTasks(runId);
+    openTasks(runId, () => {});
+    assert.deepEqual(runInboxes.get(runId).queue, []);
+    runInboxes.delete(runId);
+    await endTasks(runId);
+});
+
+test("hydrate: a sh row that ended is as it was, and a row naming no executor that can be found is orphaned rather than left running", T, async () => {
+    const runId = "run-sh-mixed";
+    dropAllTaskMemory();
+    sessionStore[`ml_tasks:${runId}`] = [
+        { v: 1, id: "t00end0", tool: "ml.sh", startedMs: 1000, leaseMs: 15_000, expectMs: null, status: "done", result: "@tool:abc1234", text: "ml.sh exit 0", delivered: true, endedMs: 4000, code: 0, ref: { kind: "sh" } },
+        { v: 1, id: "t00ref0", tool: "ml.sh", startedMs: Date.now(), leaseMs: 15_000, expectMs: null, status: "running", result: null, text: null, delivered: false, code: null },
+    ];
+    runInboxes.set(runId, { tabId: 7, queue: [] });
+    await hydrateTasks(runId);
+    openTasks(runId, () => {});
+    const q = runInboxes.get(runId).queue;
+    assert.deepEqual(q.map((i) => i.task), ["t00ref0"], "the delivered one is not queued; the unreachable one is, as an orphan");
+    assert.match(await taskAction(runId, { op: "await", id: "t00end0" }), /^task t00end0 done: ml\.sh exit 0/);
+    runInboxes.delete(runId);
+    await endTasks(runId);
 });

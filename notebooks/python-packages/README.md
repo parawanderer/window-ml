@@ -19,5 +19,7 @@ under `data/<name>/`.
   calls that fail), or one project installed and imported (`install <project>`).
 - `probe-all.mjs`, `drive.py`: the run behind pkg-imports.ipynb: one project installed and EVERY module of it
   imported (`probe-all.mjs`), over a list of pins in parallel (`drive.py`; the list is `data/pkg-imports/pins.txt`).
+- `probe-install.mjs`: what slice 4's design rests on: a lock wheel installed from its bytes before or after the
+  readonly lockdown and imported in a hardened cell, what a failed import leaves, and a candidate worker's boot.
 - `pypi.py`: PyPI reads, the static verdict, why a probe failed (`cause`), and the parallel probe driver.
 - `scan.py`: the import-time source scan of a wheel.

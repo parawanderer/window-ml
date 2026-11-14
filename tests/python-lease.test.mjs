@@ -20,6 +20,8 @@ const EXT = "ext-id";
 const sent = [];
 let cancelHow = "interrupted";
 let tailAnswer = { running: true, text: "" };
+let resultAnswer = { result: null };   // what the offscreen document answers PY_RESULT with
+let syncExtra = {};   // settings the mocked sync storage holds beyond the defaults
 let pyRunHold = null;   // set: PY_RUN answers this promise, so a cell stays in flight
 const session = {};
 globalThis.chrome = {
@@ -29,6 +31,7 @@ globalThis.chrome = {
             sent.push(JSON.parse(JSON.stringify(m)));
             if (m.type === "PY_CANCEL") return { how: cancelHow };
             if (m.type === "PY_TAIL") return tailAnswer;
+            if (m.type === "PY_RESULT") return resultAnswer;
             if (m.type === "PY_RUN" && pyRunHold) return pyRunHold;
             return { ok: true, stdout: "" };
         },
@@ -36,7 +39,7 @@ globalThis.chrome = {
     offscreen: { hasDocument: async () => true },
     storage: {
         local: { get: async () => ({}), set: async () => {}, remove: async () => {} },
-        sync: { get: async (d) => ({ ...(d ?? {}), chatUrl: "http://host/api/chat/completions", apiKey: "sk-test" }), set: async () => {} },
+        sync: { get: async (d) => ({ ...(d ?? {}), chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", ...syncExtra }), set: async () => {} },
         session: {
             get: async (k) => { const keys = typeof k === "string" ? [k] : Array.isArray(k) ? k : Object.keys(k ?? session); return Object.fromEntries(keys.filter((x) => x in session).map((x) => [x, session[x]])); },
             set: async (o) => { Object.assign(session, JSON.parse(JSON.stringify(o))); }, remove: async (k) => { for (const x of [k].flat()) delete session[x]; },
@@ -47,7 +50,9 @@ globalThis.chrome = {
 };
 const { leaseCell, pyKernelBusy, pyDetachedText, pyTailText, pyCancelText } = await import("../src/sw/sw-python-task.ts");
 const { pythonStarted, pythonDone, runPython } = await import("../src/sw/sw-python.ts");
-const { taskAction, endTasks, closeTurnTasks, openTasks, taskDrained, cancelPageTasks } = await import("../src/sw/sw-tasks.ts");
+const { taskAction, endTasks, closeTurnTasks, openTasks, taskDrained, cancelPageTasks, hydrateTasks, dropAllTaskMemory, detachedCapMs, capMinutes } = await import("../src/sw/sw-tasks.ts");
+const { dropPyTaskMemory } = await import("../src/sw/sw-python-task.ts");
+const { resetStateRegistry } = await import("../src/state-registry.ts");
 const { runControllers, runInboxes } = await import("../src/sw/sw-runs.ts");
 const { runLog } = await import("../src/sw/sw-run-log.ts");
 const { ringAppend, PY_LEASE_MS, PY_LEASE_MAX_MS, PY_DETACHED_MAX_MS, PY_INTERRUPT_KILL_MS } = await import("../src/python/py-lease.ts");
@@ -153,7 +158,8 @@ test("python/detached with no expect_ms and no seq logs { id, leaseMs } with the
 });
 
 test("an expect_ms at or over the detached ceiling still detaches, at half the ceiling, so the task keeps as long again to run", T, async () => {
-    assert.equal(PY_LEASE_MAX_MS, PY_DETACHED_MAX_MS / 2);
+    assert.equal(PY_LEASE_MAX_MS, 150_000, "the lease cap is fixed, not half the 60 min ceiling");
+    assert.equal(PY_DETACHED_MAX_MS, 3_600_000);
     for (const expectMs of [PY_DETACHED_MAX_MS, PY_DETACHED_MAX_MS * 10]) {
         const c = cell({ expectMs });
         let settled = false;
@@ -190,7 +196,9 @@ test("pyDetachedText says 'you expected ~N s' with expect_ms and 'no expect_ms w
     assert.match(withE, /keeps running after your answer/);
     assert.match(withE, /read at the start of the next turn/);
     assert.doesNotMatch(withE, /turn ends/, "the turn no longer ends the task");
-    assert.match(withE, /the sandbox ends it at 300 s/);
+    assert.match(withE, /the sandbox ends it at 60 min/, "no cap given: the ceiling");
+    assert.match(pyDetachedText("tabc123", 15_000, 45_000, "", 600_000), /the sandbox ends it at 10 min/, "the cap applied, not the ceiling");
+    assert.match(pyDetachedText("tabc123", 15_000, 45_000, "", 90_000), /the sandbox ends it at 90 s/, "a cap that is not whole minutes is in seconds");
     assert.doesNotMatch(withE, /Output so far/);
     const without = pyDetachedText("tabc123", PY_LEASE_MS, null, "x");
     assert.match(without, /no expect_ms was given, so the \d+ s default applied/);
@@ -586,7 +594,7 @@ test("PY_DONE from a tab, or without a run, logs nothing", async () => {
 
 // --- the build defines a bench cell sets ---
 
-test("__PY_LEASE_MS__ and __PY_DETACHED_MAX_MS__ set what a build ships; absent, the 15 s lease and the measured 5 min ceiling", async () => {
+test("__PY_LEASE_MS__ and __PY_DETACHED_MAX_MS__ set what a build ships; absent, the 15 s lease, the 60 min ceiling and the fixed 150 s lease cap", async () => {
     const esbuild = await import("esbuild");
     const vm = await import("node:vm");
     const entry = new URL("../src/python/py-lease.ts", import.meta.url).pathname;
@@ -596,8 +604,8 @@ test("__PY_LEASE_MS__ and __PY_DETACHED_MAX_MS__ set what a build ships; absent,
         vm.runInNewContext(out.outputFiles[0].text, { module: mod, exports: mod.exports });
         return { lease: mod.exports.PY_LEASE_MS, max: mod.exports.PY_DETACHED_MAX_MS, leaseMax: mod.exports.PY_LEASE_MAX_MS };
     };
-    assert.deepEqual(await of(), { lease: 15_000, max: 300_000, leaseMax: 150_000 }, "undefined: the shipped values");
-    assert.deepEqual(await of({ __PY_LEASE_MS__: "5000", __PY_DETACHED_MAX_MS__: "60000" }), { lease: 5000, max: 60_000, leaseMax: 30_000 }, "the lease's cap follows the ceiling's define");
+    assert.deepEqual(await of(), { lease: 15_000, max: 3_600_000, leaseMax: 150_000 }, "undefined: the shipped values");
+    assert.deepEqual(await of({ __PY_LEASE_MS__: "5000", __PY_DETACHED_MAX_MS__: "60000" }), { lease: 5000, max: 60_000, leaseMax: 30_000 }, "the lease's cap never passes half a bench build's ceiling");
 });
 
 test("build.mjs refuses a __PY_LEASE_MS__ or __PY_DETACHED_MAX_MS__ that is not a positive integer, before it builds anything", async () => {
@@ -628,4 +636,409 @@ test("a page change leaves a detached cell running (runtime-bound): no PY_CANCEL
     await until(() => c.inbox().length > 0);
     assert.match(c.inbox()[0].text, new RegExp(`^\\[task ${c.r.id} done after \\d+ s: out: after the page changed\\]$`));
     await done(c);
+});
+
+// --- the durable task table: filed under ml_tasks:<runId>, read back by a worker started since (rule 4b, slice B) ---
+
+const keyOf = (run) => `ml_tasks:${run}`;
+const stored = (run) => session[keyOf(run)];
+/** What a worker eviction does to this realm's memory: the table, the kernel lock. The stored copy stays. */
+const evict = () => { dropAllTaskMemory(); dropPyTaskMemory(); };
+/** A later turn of the run opens: an inbox, the table read back first, then opened. */
+async function nextTurn(runId) {
+    runInboxes.set(runId, { tabId: 7, queue: [] });
+    await hydrateTasks(runId);
+    const fanned = [];
+    openTasks(runId, (text, task) => fanned.push({ text, task }));
+    return { inbox: () => runInboxes.get(runId).queue, fanned };
+}
+const taskRecs = async (run, kind) => (await runLog.forRun(run)).filter((e) => e.subsystem === "task" && e.kind === kind);
+
+test("a detached cell is written through as a v1 row with its ref; its end, then its delivery, are written too", T, async () => {
+    const c = await detached({ carry: () => ({ image: "data:image/png;base64,AAAA" }) });
+    let rows = stored(c.runId);
+    assert.equal(rows.length, 1);
+    assert.deepEqual({ v: rows[0].v, id: rows[0].id, tool: rows[0].tool, status: rows[0].status, delivered: rows[0].delivered, ref: rows[0].ref }, { v: 1, id: c.r.id, tool: "python_exec", status: "running", delivered: false, ref: { kind: "py", cell: c.id, capMs: PY_DETACHED_MAX_MS } }, "the ref carries the cap the sandbox applied (none given: the ceiling)");
+    assert.equal(rows[0].expectMs, 30);
+    assert.ok(rows[0].startedMs > 0 && rows[0].leaseMs === 30);
+    c.resolve({ out: "x" });
+    await until(() => stored(c.runId)[0].status === "done");
+    rows = stored(c.runId);
+    assert.equal(rows[0].text, "out: x");
+    assert.equal(rows[0].image, "data:image/png;base64,AAAA");
+    assert.equal(typeof rows[0].endedMs, "number");
+    assert.equal(rows[0].delivered, false, "queued, not read");
+    for (const forbidden of ["exec", "waiter", "ending", "settle"]) assert.equal(forbidden in rows[0], false, `${forbidden} must never be stored`);
+    assert.equal(taskDrained(c.runId, c.r.id, c.inbox()[0].text), true);
+    assert.equal(stored(c.runId)[0].delivered, true, "delivered flips in the store when the loop drains it");
+    await done(c);
+});
+
+test("an await that answers a task marks it delivered in the store", T, async () => {
+    const c = await detached();
+    c.resolve({ out: "y" });
+    await until(() => stored(c.runId)[0].status === "done");
+    closeTurnTasks(c.runId);
+    assert.equal(stored(c.runId)[0].delivered, false);
+    await taskAction(c.runId, { op: "await", id: c.r.id });
+    assert.equal(stored(c.runId)[0].delivered, true);
+    await done(c);
+});
+
+test("endTasks removes the stored key, also when this worker holds nothing in memory", T, async () => {
+    const c = await detached();
+    assert.ok(stored(c.runId));
+    await done(c);
+    assert.equal(stored(c.runId), undefined);
+    session["ml_tasks:run-fresh-end"] = [{ v: 1, id: "t0000aa", tool: "python_exec", startedMs: 1, leaseMs: 1, expectMs: null, status: "done", result: null, text: "x", delivered: true, endedMs: 2, code: null }];
+    await endTasks("run-fresh-end");
+    assert.equal(session["ml_tasks:run-fresh-end"], undefined, "a worker started since the tasks were detached still clears the run's key");
+});
+
+test("a quota failure of the write is run-logged and memory still holds the task", T, async () => {
+    const real = chrome.storage.session.set;
+    // Only the task table's write fails: the run log lives in the same storage.
+    chrome.storage.session.set = async (o) => { if (Object.keys(o).some((k) => k.startsWith("ml_tasks:"))) throw new Error("QUOTA_BYTES quota exceeded"); return real(o); };
+    let c;
+    try { c = await detached(); } finally { chrome.storage.session.set = real; }
+    const recs = await taskRecs(c.runId, "persist-failed");
+    assert.ok(recs.length >= 1 && /quota/i.test(recs[0].detail.error), JSON.stringify(recs));
+    assert.match(await taskAction(c.runId, { op: "tail", id: c.r.id, lines: 5 }), /stdout|running/);
+    await done(c);
+});
+
+// --- the upgrade: slice A stored nothing, and a stored v1 row is read by a worker that never held it ---
+
+test("UPGRADE (a): a run with no stored table hydrates to an empty one and a turn opens normally", T, async () => {
+    const runId = "run-upgrade-a";
+    assert.equal(stored(runId), undefined);
+    const turn = await nextTurn(runId);
+    assert.deepEqual(turn.inbox(), []);
+    assert.equal(pyKernelBusy(runId), null);
+    assert.match(await taskAction(runId, { op: "await", id: "t000000" }), /^UnknownTask/);
+    runInboxes.delete(runId);
+});
+
+test("UPGRADE (b): a stored parked result is queued into the next turn once, by a FRESH module instance, and not again into the turn after", T, async () => {
+    const runId = "run-upgrade-b";
+    session[keyOf(runId)] = [{ v: 1, id: "t00b00b", tool: "python_exec", startedMs: Date.now() - 90_000, leaseMs: 15_000, expectMs: null, status: "done", result: null, text: "out: parked", delivered: false, endedMs: Date.now() - 30_000, code: null, ref: { kind: "py", cell: "cell-old" } }];
+    const open = async (tag) => {
+        // The registry refuses a second declaration of run.tasks, as the second copy of the module would make: reset it.
+        resetStateRegistry();
+        const fresh = await import(`../src/sw/sw-tasks.ts?fresh=${tag}`);
+        assert.notEqual(fresh.openTasks, openTasks, "a new instance of the module, with an empty table");
+        runInboxes.set(runId, { tabId: 7, queue: [] });
+        await fresh.hydrateTasks(runId);
+        fresh.openTasks(runId, () => {});
+        return { fresh, queue: runInboxes.get(runId).queue };
+    };
+    const one = await open("b1");
+    assert.equal(one.queue.length, 1);
+    assert.match(one.queue[0].text, /^\[task t00b00b done after 60 s: out: parked\]$/);
+    assert.equal(one.fresh.taskDrained(runId, "t00b00b", one.queue[0].text), true);
+    assert.equal(stored(runId)[0].delivered, true, "delivered is persisted when the loop drains it");
+    const two = await open("b2");
+    assert.deepEqual(two.queue, [], "the turn after does not read it again");
+    runInboxes.delete(runId);
+    await endTasks(runId);
+});
+
+test("UPGRADE (c): a row of an unknown version is dropped with a run-log record; the rows beside it are kept", T, async () => {
+    const runId = "run-upgrade-c";
+    const ok = { v: 1, id: "t00c00c", tool: "python_exec", startedMs: 1, leaseMs: 1, expectMs: null, status: "done", result: null, text: "kept", delivered: true, endedMs: 2, code: null };
+    session[keyOf(runId)] = [{ ...ok, v: 2, id: "t00d00d" }, ok];
+    const turn = await nextTurn(runId);
+    assert.deepEqual(turn.inbox(), []);
+    const recs = await taskRecs(runId, "dropped");
+    assert.equal(recs.length, 1);
+    assert.equal(recs[0].reason, "unknown-version");
+    assert.equal(recs[0].detail.v, "2");
+    assert.deepEqual(stored(runId).map((r) => r.id), ["t00c00c"], "the unknown row is gone from the store");
+    assert.match(await taskAction(runId, { op: "await", id: "t00c00c" }), /task t00c00c done: kept/);
+    assert.match(await taskAction(runId, { op: "await", id: "t00d00d" }), /^UnknownTask/);
+    runInboxes.delete(runId);
+    await endTasks(runId);
+});
+
+// --- after an eviction: PY_DONE of a cell the new worker never sent ---
+
+test("EVICTION: a stored running row, a new worker and PY_DONE: PY_RESULT is asked, the result is parked, the next turn reads it once", T, async () => {
+    const c = await detached();
+    const task = c.r.id;
+    assert.match(pyKernelBusy(c.runId), new RegExp(task));
+    runControllers.delete(c.runId); runInboxes.delete(c.runId);   // the turn is over
+    evict();
+    assert.equal(pyKernelBusy(c.runId), null, "the new worker knows nothing yet");
+    resultAnswer = { result: { ok: true, stdout: "hello\n", value: 42 } };
+    const b = sent.length;
+    await pythonDone({ type: "PY_DONE", cell: c.id, run: c.runId, ok: true, bytes: 9 }, OFFSCREEN);
+    const asked = sent.slice(b).filter((m) => m.type === "PY_RESULT");
+    assert.deepEqual(asked, [{ type: "PY_RESULT", cell: c.id }]);
+    await until(() => stored(c.runId)?.[0]?.status === "done");
+    assert.equal(stored(c.runId)[0].delivered, false, "parked, not read");
+    assert.equal(pyKernelBusy(c.runId), null, "the kernel lock is released once the cell is settled");
+    assert.equal((await orphans(c.runId)).length, 0, "it was delivered, not orphaned");
+    evict();   // and the worker may be evicted again before the next turn
+    const t1 = await nextTurn(c.runId);
+    assert.equal(t1.inbox().length, 1);
+    assert.match(t1.inbox()[0].text, new RegExp(`^\\[task ${task} done after \\d+ s: stdout:\\nhello\\n\\n42\\n\\(formatted after the service worker restarted`));
+    assert.equal(taskDrained(c.runId, task, t1.inbox()[0].text), true);
+    runInboxes.delete(c.runId);
+    const t2 = await nextTurn(c.runId);
+    assert.deepEqual(t2.inbox(), [], "exactly once");
+    resultAnswer = { result: null };
+    await done(c);
+});
+
+test("EVICTION: a failed cell's result is a failed task with the Python error; a cut stdout uses the tool's output cap", T, async () => {
+    const c = await detached();
+    runControllers.delete(c.runId); runInboxes.delete(c.runId);
+    evict();
+    resultAnswer = { result: { ok: false, stdout: "x".repeat(5000), error: "ZeroDivisionError: division by zero" } };
+    await pythonDone({ type: "PY_DONE", cell: c.id, run: c.runId, ok: false, bytes: 9 }, OFFSCREEN);
+    await until(() => stored(c.runId)?.[0]?.status === "failed");
+    const text = stored(c.runId)[0].text;
+    assert.match(text, /Python error: ZeroDivisionError: division by zero/);
+    assert.ok(text.length < 2600, `stdout was clipped to the python_exec cap, got ${text.length}`);
+    assert.match(text, /truncated|…/);
+    resultAnswer = { result: null };
+    await done(c);
+});
+
+test("EVICTION: PY_DONE for a cell with no stored row still logs python/orphaned and asks for no result", T, async () => {
+    evict();
+    const b = sent.length;
+    await pythonDone({ type: "PY_DONE", cell: "wpy-nobody-knows", run: "run-no-row", ok: true, bytes: 5 }, OFFSCREEN);
+    assert.equal((await orphans("run-no-row")).length, 1);
+    assert.equal(sent.slice(b).some((m) => m.type === "PY_RESULT"), false);
+});
+
+test("EVICTION: PY_DONE with a row but no result held logs python/orphaned and ends the row, so the kernel is not locked for ever", T, async () => {
+    const c = await detached();
+    runControllers.delete(c.runId); runInboxes.delete(c.runId);
+    evict();
+    resultAnswer = { result: null };
+    await pythonDone({ type: "PY_DONE", cell: c.id, run: c.runId, ok: true, bytes: 5 }, OFFSCREEN);
+    assert.equal((await orphans(c.runId)).length, 1);
+    await until(() => stored(c.runId)?.[0]?.status === "failed");
+    assert.match(stored(c.runId)[0].text, /no longer held/);
+    assert.equal(pyKernelBusy(c.runId), null);
+    await done(c);
+});
+
+test("EVICTION: PY_DONE from a tab, or for a cell whose row is already ended, settles nothing", T, async () => {
+    const c = await detached();
+    runControllers.delete(c.runId); runInboxes.delete(c.runId);
+    evict();
+    resultAnswer = { result: { ok: true, stdout: "", value: 1 } };
+    const b = sent.length;
+    await pythonDone({ type: "PY_DONE", cell: c.id, run: c.runId, ok: true, bytes: 1 }, { ...OFFSCREEN, tab: { id: 3, url: "https://x.example/" } });
+    assert.equal(sent.slice(b).some((m) => m.type === "PY_RESULT"), false, "a tab's PY_DONE asks for nothing");
+    assert.equal(stored(c.runId)[0].status, "running");
+    await pythonDone({ type: "PY_DONE", cell: c.id, run: c.runId, ok: true, bytes: 1 }, OFFSCREEN);
+    await until(() => stored(c.runId)[0].status === "done");
+    const asked = sent.length;
+    await pythonDone({ type: "PY_DONE", cell: c.id, run: c.runId, ok: true, bytes: 1 }, OFFSCREEN);
+    assert.equal(sent.slice(asked).some((m) => m.type === "PY_RESULT"), false, "a second PY_DONE for an ended row asks for nothing");
+    resultAnswer = { result: null };
+    await done(c);
+});
+
+test("hydrate: a running py row is attached again with the kernel locked, cancel and tail reach the cell, and a cancel marks the late result cancelled", T, async () => {
+    const c = await detached();
+    runControllers.delete(c.runId); runInboxes.delete(c.runId);
+    evict();
+    assert.equal(pyKernelBusy(c.runId), null);
+    await nextTurn(c.runId);
+    assert.match(pyKernelBusy(c.runId), new RegExp(`task ${c.r.id} is still running`), "the kernel lock is taken again");
+    tailAnswer = { running: true, text: "line1\nline2\n" };
+    assert.match(await taskAction(c.runId, { op: "tail", id: c.r.id, lines: 5 }), /line2/);
+    cancelHow = "interrupted";
+    const b = sent.length;
+    assert.match(await taskAction(c.runId, { op: "cancel", id: c.r.id }), /interrupted \(KeyboardInterrupt\)/);
+    assert.deepEqual(sent.slice(b).filter((m) => m.type === "PY_CANCEL"), [{ type: "PY_CANCEL", cell: c.id }]);
+    resultAnswer = { result: { ok: false, stdout: "", error: "KeyboardInterrupt" } };
+    await pythonDone({ type: "PY_DONE", cell: c.id, run: c.runId, ok: false, bytes: 1 }, OFFSCREEN);
+    await until(() => stored(c.runId)[0].status === "cancelled");
+    assert.match(stored(c.runId)[0].text, /^interrupted \(KeyboardInterrupt\)/);
+    assert.equal(pyKernelBusy(c.runId), null);
+    resultAnswer = { result: null }; tailAnswer = { running: true, text: "" };
+    await done(c);
+});
+
+test("hydrate: a cell that ended while no worker listened is settled at attach from the held result: parked, kernel free, PY_TAIL then PY_RESULT asked once", T, async () => {
+    const c = await detached();
+    runControllers.delete(c.runId); runInboxes.delete(c.runId);
+    evict();
+    tailAnswer = { running: false };
+    resultAnswer = { result: { ok: true, stdout: "", value: 7 } };
+    const b = sent.length;
+    await hydrateTasks(c.runId);
+    assert.deepEqual(sent.slice(b).filter((m) => m.type === "PY_TAIL" || m.type === "PY_RESULT").map((m) => m.type), ["PY_TAIL", "PY_RESULT"]);
+    await until(() => stored(c.runId)?.[0]?.status === "done");
+    assert.equal(pyKernelBusy(c.runId), null, "the kernel is not held for a cell that has ended");
+    assert.equal(stored(c.runId)[0].delivered, false, "parked for the next turn");
+    const t = await nextTurn(c.runId);
+    assert.equal(t.inbox().length, 1);
+    assert.match(t.inbox()[0].text, new RegExp(`^\\[task ${c.r.id} done after \\d+ s: 7`));
+    resultAnswer = { result: null }; tailAnswer = { running: true, text: "" };
+    await done(c);
+});
+
+test("hydrate: a cell that ended unheard with no result held is settled failed at attach and logged, not left running with the kernel locked", T, async () => {
+    const c = await detached();
+    runControllers.delete(c.runId); runInboxes.delete(c.runId);
+    evict();
+    tailAnswer = { running: false };
+    resultAnswer = { result: null };
+    await hydrateTasks(c.runId);
+    await until(() => stored(c.runId)?.[0]?.status === "failed");
+    assert.match(stored(c.runId)[0].text, /no longer held/);
+    assert.equal(pyKernelBusy(c.runId), null);
+    assert.deepEqual((await taskRecs(c.runId, "orphaned")).map((e) => e.reason), ["ended-unheard"]);
+    tailAnswer = { running: true, text: "" };
+    await done(c);
+});
+
+test("hydrate: a cell the sandbox still runs is attached and not settled: PY_RESULT is not asked", T, async () => {
+    const c = await detached();
+    runControllers.delete(c.runId); runInboxes.delete(c.runId);
+    evict();
+    tailAnswer = { running: true, text: "" };
+    resultAnswer = { result: { ok: true, stdout: "", value: 1 } };
+    const b = sent.length;
+    await hydrateTasks(c.runId);
+    assert.equal(sent.slice(b).some((m) => m.type === "PY_RESULT"), false);
+    assert.equal(stored(c.runId)[0].status, "running");
+    assert.match(pyKernelBusy(c.runId), new RegExp(c.r.id));
+    resultAnswer = { result: null };
+    await done(c);
+});
+
+test("hydrate: a running py row stored with no cap, past the ceiling and its grace, is orphaned, told to the next turn, and logged", T, async () => {
+    const runId = "run-past-ceiling";
+    session[keyOf(runId)] = [{ v: 1, id: "t00ee00", tool: "python_exec", startedMs: Date.now() - PY_DETACHED_MAX_MS - 61_000, leaseMs: 15_000, expectMs: null, status: "running", result: null, text: null, delivered: false, code: null, ref: { kind: "py", cell: "cell-gone" } }];
+    const turn = await nextTurn(runId);
+    assert.equal(pyKernelBusy(runId), null, "no kernel lock for a cell that is gone");
+    assert.equal(turn.inbox().length, 1);
+    assert.match(turn.inbox()[0].text, /^\[task t00ee00 orphaned after \d+ s: .*ran past its cap/);
+    assert.equal((await taskRecs(runId, "orphaned")).length, 1);
+    assert.equal(stored(runId)[0].status, "orphaned", "the orphaning is persisted");
+    runInboxes.delete(runId);
+    await endTasks(runId);
+});
+
+test("hydrate: a running py row stored with no cap, inside the ceiling, is still attached", T, async () => {
+    const runId = "run-inside-ceiling";
+    session[keyOf(runId)] = [{ v: 1, id: "t00ff00", tool: "python_exec", startedMs: Date.now() - PY_DETACHED_MAX_MS + 5_000, leaseMs: 15_000, expectMs: null, status: "running", result: null, text: null, delivered: false, code: null, ref: { kind: "py", cell: "cell-live" } }];
+    await nextTurn(runId);
+    assert.match(pyKernelBusy(runId), /t00ff00/);
+    runInboxes.delete(runId);
+    await endTasks(runId);
+    assert.equal(pyKernelBusy(runId), null, "session release cancels the rebuilt cell and frees the kernel");
+});
+
+test("hydrate: a running py row past its OWN cap and the grace is orphaned, though well inside the ceiling", T, async () => {
+    const runId = "run-past-own-cap";
+    session[keyOf(runId)] = [{ v: 1, id: "t00cc01", tool: "python_exec", startedMs: Date.now() - 60_000 - 61_000, leaseMs: 15_000, expectMs: null, status: "running", result: null, text: null, delivered: false, code: null, ref: { kind: "py", cell: "cell-capped", capMs: 60_000 } }];
+    const turn = await nextTurn(runId);
+    assert.equal(pyKernelBusy(runId), null, "a cell its sandbox killed at a 1 min cap holds no lock for the 59 min left to the ceiling");
+    assert.match(turn.inbox()[0].text, /^\[task t00cc01 orphaned after \d+ s: .*ran past its cap/);
+    runInboxes.delete(runId);
+    await endTasks(runId);
+});
+
+test("hydrate: a running py row inside its own cap and the grace is attached", T, async () => {
+    const runId = "run-inside-own-cap";
+    session[keyOf(runId)] = [{ v: 1, id: "t00cc02", tool: "python_exec", startedMs: Date.now() - 60_000 - 30_000, leaseMs: 15_000, expectMs: null, status: "running", result: null, text: null, delivered: false, code: null, ref: { kind: "py", cell: "cell-capped-live", capMs: 60_000 } }];
+    await nextTurn(runId);
+    assert.match(pyKernelBusy(runId), /t00cc02/, "its PY_DONE may still be on its way");
+    runInboxes.delete(runId);
+    await endTasks(runId);
+});
+
+test("hydrate reads the store once for two callers at the same time, and a run with a task detached meanwhile keeps both", T, async () => {
+    const runId = "run-two-readers";
+    session[keyOf(runId)] = [{ v: 1, id: "t00a11a", tool: "python_exec", startedMs: 1, leaseMs: 1, expectMs: null, status: "done", result: null, text: "z", delivered: true, endedMs: 2, code: null }];
+    let reads = 0;
+    const real = chrome.storage.session.get;
+    chrome.storage.session.get = async (k) => { reads++; return real(k); };
+    try { await Promise.all([hydrateTasks(runId), hydrateTasks(runId), hydrateTasks(runId)]); await hydrateTasks(runId); } finally { chrome.storage.session.get = real; }
+    assert.equal(reads, 1);
+    await endTasks(runId);
+});
+
+// --- the cap: one knob, read at the call, clamped by the offscreen document ---
+
+test("detachedTaskMaxMin: default 60; 1..60 is taken; a value outside, or not a number, reads as 60", T, async () => {
+    const { DEFAULT_CONFIG } = await import("../src/contract/contract-config.ts");
+    assert.equal(DEFAULT_CONFIG.detachedTaskMaxMin, 60);
+    assert.equal(await detachedCapMs(), 60 * 60_000);
+    for (const [v, min] of [[1, 1], [10, 10], [60, 60], [10.9, 10], [0, 60], [-5, 60], [61, 60], [1e9, 60], ["10", 60], [null, 60], [NaN, 60], [Infinity, 60]]) {
+        assert.equal(capMinutes(v), min, `capMinutes(${String(v)})`);
+        syncExtra = { detachedTaskMaxMin: v };
+        assert.equal(await detachedCapMs(), min * 60_000, `config ${String(v)}`);
+    }
+    syncExtra = {};
+});
+
+test("PY_RUN carries detachedMaxMs for a leased cell only, and the tool call reads it from the setting", T, async () => {
+    const caller = (extra = {}) => ({ ownSurface: false, untrusted: async () => false, disclose: false, tabUrl: () => "", runGated: true, pyCodeOk: () => true, ...extra });
+    const run = async (c) => { const b = sent.length; await runPython({ code: "1" }, "req", c); return sent.slice(b).find((m) => m.type === "PY_RUN"); };
+    assert.equal((await run(caller({ wireRun: "run-w", cell: "cell-cap", detachedMaxMs: 120_000 }))).detachedMaxMs, 120_000);
+    assert.equal("detachedMaxMs" in await run(caller({ wireRun: "run-w", detachedMaxMs: 120_000 })), false, "no cell: no cap");
+    assert.equal("detachedMaxMs" in await run(caller({ wireRun: "run-w", cell: "cell-cap" })), false, "no cap named: none sent");
+    // The worker's own tool call: read from the setting at the call.
+    const { buildWorkerTools, grantRunPython } = await import("../src/sw/worker-tools.ts");
+    syncExtra = { detachedTaskMaxMin: 7 };
+    try {
+        const tool = buildWorkerTools("run-cap-tool", 7, () => "https://x.example/", ["python_exec"]).find((t) => t.name === "python_exec");
+        assert.ok(tool, "python_exec is built for the run");
+        grantRunPython("run-cap-tool", { sheets: [], code: "1" });   // the person approved this exact cell
+        const b = sent.length;
+        await tool.run({ code: "1" });
+        const m = sent.slice(b).find((x) => x.type === "PY_RUN");
+        assert.ok(m, "the cell was sent");
+        assert.equal(m.detachedMaxMs, 7 * 60_000);
+    } finally { syncExtra = {}; }
+});
+
+test("a lease never reaches half the cap: with a 1 min cap an expect_ms of 10 min detaches at 30 s, and the text says 1 min", T, async () => {
+    const runId = "run-half-cap";
+    runControllers.set(runId, new AbortController());
+    runInboxes.set(runId, { tabId: 7, queue: [] });
+    const capped = leaseCell({ runId, cell: "cell-half", expectMs: 600_000, detachedMaxMs: 60_000, call: new Promise(() => {}), late: async () => ({ status: "done", text: "", result: null }) });
+    let early = false;
+    capped.then(() => { early = true; });
+    mock.timers.enable({ apis: ["setTimeout"] });
+    try {
+        pythonStarted({ type: "PY_STARTED", cell: "cell-half" }, OFFSCREEN);
+        mock.timers.tick(29_999);
+        await Promise.resolve();
+        assert.equal(early, false, "not yet at 30 s - 1 ms");
+        mock.timers.tick(1);
+    } finally { mock.timers.reset(); }
+    const r = await capped;
+    assert.ok(r.detached, "detached at half the cap");
+    assert.match(r.detached.text, /the sandbox ends it at 1 min/);
+    assert.equal((await runLog.forRun(runId)).find((e) => e.kind === "detached").detail.leaseMs, 30_000);
+    await done({ runId });
+});
+
+test("endTasks on a worker started since the cell detached reads the table first: it cancels the cell, then removes the key", T, async () => {
+    const c = await detached();
+    runControllers.delete(c.runId); runInboxes.delete(c.runId);
+    evict();
+    const b = sent.length;
+    await endTasks(c.runId);
+    assert.deepEqual(sent.slice(b).filter((m) => m.type === "PY_CANCEL"), [{ type: "PY_CANCEL", cell: c.id }], "the rebuilt cell was cancelled");
+    assert.equal(stored(c.runId), undefined);
+    assert.equal(pyKernelBusy(c.runId), null);
+});
+
+test("PY_RESULT is the service worker's alone: absent from every table a page's message can reach", async () => {
+    const { HANDLE_MAP, PAGE_STARTED_TYPES } = await import("../src/page-relay.ts");
+    const mapped = Object.entries(HANDLE_MAP).flatMap(([k, v]) => [k, v.type, v.responseType]);
+    assert.ok(!mapped.some((m) => String(m).startsWith("PY_RESULT")), "PY_RESULT is in HANDLE_MAP");
+    assert.ok(!PAGE_STARTED_TYPES.has("PY_RESULT"), "PY_RESULT is page-started");
 });
