@@ -19,6 +19,9 @@ on fetched pages. A tab, if one is needed at all, is needed later, and at a URL 
 
 - **"No tab" replaces "New tab"** as the first choice of the agent start form (`tab-picker.tsx`). The open tabs stay
   below it. A run started this way is DETACHED: it has a transcript, worker-realm tools, and no page.
+- **The start form asks for no URL** (Shane, 2026-11-14). Nobody types a URL without their bookmarks and the
+  address bar's hints; the person tells the model where to go ("to gmail") and approves its `navigate`. The URL
+  field of today's "New tab" goes with it, and `blank-start.ts`'s check moves to that approval.
 - **A detached run's tools are the worker-realm ones** (`realm: "worker"` in the tool registry): `python_exec`,
   `fetch_url`, `task`, `answer`, `agent_api_docs`, the `propose_*` tools, and the run's files. A page-realm tool is
   refused with a sentence saying the run has no page and how it gets one; it is not removed from the tool list, so the
@@ -81,18 +84,31 @@ types `| null` into `bgRuns`.
   and its replay ring; the chat page becomes the first surface that shows a run on its own, and the ring is keyed by
   run. [`CHAT_PAGE.md`](CHAT_PAGE.md) and the session index are where that lands.
 
+## When a detached run ends (Shane, 2026-11-14)
+
+A run whose tab closes BECOMES detached, as if it had started that way; it does not end there.
+
+- **It is kept for a grace period.** If the person opens it on the chat page within it, it goes on detached, and
+  gets a tab again by attach or `navigate`.
+- **If no one opens it within the grace period, or the browser closes, it is done**: everything that holds memory
+  for it is released (its Python namespace, its `@tool:` values, its inbox, its replay ring). The transcript stays
+  in the session store as for any finished run.
+- **Unless a background task of the run is still running** ([`ASYNC_CALLS.md`](ASYNC_CALLS.md)): that keeps it
+  alive, and the grace period starts when the last task ends. Today a turn's `settle` ends its tasks (`endTasks`),
+  so this needs the async lane's word on how a task that outlives its turn holds a run.
+- **The grace period outlives a worker eviction**: the detached snapshot is persisted, so an eviction is not the
+  end of the period, only the browser closing is. Its length is a constant to be measured, not guessed.
+
 ## Order
 
 1. MOVE_RUN shape (a) on main.
 2. The detached host, the snapshot form, and where its events render. "No tab" in the start form. Attach from no tab.
+   A closed tab detaches its run, with the grace period.
 3. `navigate` from the detached state, with its tests.
 4. The `ml.sh` bench, and a worker `exec` world only if it says so.
 
 ## Open
 
-- Whether a detached run's start form still offers a URL ("No tab" plus an optional first page is `navigate` asked
-  in advance).
-- Whether a run can go back to detached (its tab closed, or the person detaches it), or a closed tab still ends the
-  turn as the page-health work does.
+- Whether the person can detach a run whose tab is still open (a closed tab detaches it; above).
 - How this relates to headless runs ([`HEADLESS_AGENTS.md`](HEADLESS_AGENTS.md)): a detached run has no page at all; a
   headless one has a page no one sees.
