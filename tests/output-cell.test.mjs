@@ -462,6 +462,21 @@ test("value tree: a long array draws a page of members, then 'show more'", async
     assert.equal(cell.querySelector(".jt-more"), null);
 });
 
+// --- the value tree takes its colours from the code theme ---
+
+test("value tree: each primitive carries the highlight.js class the text view gives it, so the code theme colours both", async () => {
+    const cell = await mountValue(JSON.stringify({ ok: true, none: null, n: 3, s: "x" }));
+    treeBtn(cell).click(); await tick();
+    const has = (sel, c) => cell.querySelector(`.jt-value ${sel}`).classList.contains(c);
+    assert.ok(has(".jt-boolean", "hljs-literal"), "true is a literal");
+    assert.ok(has(".jt-null", "hljs-literal"), "null is a literal");
+    assert.ok(has(".jt-number", "hljs-number"));
+    assert.ok(has(".jt-string", "hljs-string"));
+    assert.ok(has(".jt-key-text", "hljs-attr"), "a key's name is an attribute, as in the text view");
+    assert.equal(cell.querySelector(".jt-value .jt-key").textContent, "\"ok\":", "the colon stays in the key, outside the attribute's colour");
+    assert.equal(cell.querySelector(".jt-value .jt-key-text").textContent, "\"ok\"", "the attribute colours the name alone");
+});
+
 test("output cell: dragging the grip resizes THIS cell only", async () => {
     const cell = await mount("alpha\n");
     // jsdom reports no overflow, so force the grip by simulating a drag start on a cell that has one:
