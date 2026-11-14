@@ -2,7 +2,9 @@
 
 **Status: proposed 2026-11-13; slice 1 built 2026-11-13** (the panel's addresses in the sidebar and the DevTools
 panel: the place table, `data-setting` rows, the renderer, `openAddress`; `docs/dev/sidebar.md`, "Links to a setting
-in model text"); the HUD card's links, through the worker, the same day. Not built: session, search and attention addresses, the chat page's surfaces and the exports' text.
+in model text"), on the extension's chat page (the panel's addresses from its hash and from a link in a reply), and
+on the HUD card, through the worker's `OPEN_CHAT_PAGE`. Not built: session, search and attention addresses, the web
+and phone chat pages and the exports' text.
 From Shane's words in the calm-chat-motion session (2026-11-13), handed to the settings-specs lane by the
 policies/python/desktop/manifests coordinator. Ruled by the coordinator on
 2026-11-13, pending Shane: a spec of its own, one parser for hashes and links, a button and never an `<a href>`, and

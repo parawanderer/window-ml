@@ -1,0 +1,395 @@
+{
+  "machine": {
+    "cpu": "Apple M5 Pro",
+    "cores": 15,
+    "memGB": 24,
+    "node": "v26.12.1",
+    "os": "Darwin 25.6.0",
+    "pyodide": "pyodide-core 314.0.3 (Python 3.14.0, restricted-mode fork build)",
+    "date": "2026-11-13T22:35:23.695Z"
+  },
+  "caveats": [
+    "The worker is a node:worker_threads Worker and the host a Node main thread: the channel is one postMessage hop plus a SharedArrayBuffer, not worker -> offscreen -> service worker -> wmlhost. Every figure is the sandbox side's floor; the product adds its hops.",
+    "The host answers from the real disk with node:fs in-process, synchronously inside one event-loop turn. wmlhost's native-messaging, JSON and base64 costs are not here.",
+    "Large files are sparse: the host reads zeros from holes without touching a disk, so the fetch figures are memory-copy speed, not I/O speed.",
+    "Cells run through py.runPython (not the product's wrapUserCode harness, which needs numpy/pandas): the cell gate's begin/revoke window is not opened around them.",
+    "The stop latency is stamped Python-side with time.perf_counter() (== performance.now() here, offset calibrated at boot) and host-side with Date-aligned performance.timeOrigin + now."
+  ],
+  "item": "1: Stop latency during a blocked operation",
+  "stop": {
+    "boot": {
+      "clockOff": -0.0003540000000157306,
+      "lockdown": false,
+      "pyVersion": "314.0.3"
+    },
+    "lockdown": false,
+    "sliceMs": 50,
+    "rows": [
+      {
+        "name": "open().read(), blocked at the first lookup",
+        "reps": 25,
+        "notify": false,
+        "outcomes": {
+          "KeyboardInterrupt": 25
+        },
+        "interruptWordAfterHandler": {
+          "0": 25
+        },
+        "nextCellNormal": 25,
+        "finallyOpsCompleted": 0,
+        "stopToHandlerMs": {
+          "n": 25,
+          "min": 0.078,
+          "median": 32.695,
+          "p90": 53.821,
+          "max": 60.142,
+          "mean": 31.124
+        },
+        "stopToJsDetectMs": {
+          "n": 25,
+          "min": 0.039,
+          "median": 32.618,
+          "p90": 53.702,
+          "max": 59.988,
+          "mean": 31.024
+        },
+        "failures": []
+      },
+      {
+        "name": "open().read(), lookup answered, whole-file read blocked",
+        "reps": 25,
+        "notify": false,
+        "outcomes": {
+          "KeyboardInterrupt": 25
+        },
+        "interruptWordAfterHandler": {
+          "0": 25
+        },
+        "nextCellNormal": 25,
+        "finallyOpsCompleted": 0,
+        "stopToHandlerMs": {
+          "n": 25,
+          "min": 2.435,
+          "median": 25.908,
+          "p90": 56.078,
+          "max": 60.115,
+          "mean": 28.969
+        },
+        "stopToJsDetectMs": {
+          "n": 25,
+          "min": 2.384,
+          "median": 25.847,
+          "p90": 55.964,
+          "max": 60.001,
+          "mean": 28.887
+        },
+        "failures": []
+      },
+      {
+        "name": "open().read() of 20 MB, blocked on the 3rd 4 MB chunk",
+        "reps": 25,
+        "notify": false,
+        "outcomes": {
+          "KeyboardInterrupt": 25
+        },
+        "interruptWordAfterHandler": {
+          "0": 25
+        },
+        "nextCellNormal": 25,
+        "finallyOpsCompleted": 0,
+        "stopToHandlerMs": {
+          "n": 25,
+          "min": 2.99,
+          "median": 36.784,
+          "p90": 52.489,
+          "max": 60.096,
+          "mean": 35.134
+        },
+        "stopToJsDetectMs": {
+          "n": 25,
+          "min": 2.882,
+          "median": 36.691,
+          "p90": 52.36,
+          "max": 59.982,
+          "mean": 35.035
+        },
+        "failures": []
+      },
+      {
+        "name": "os.listdir, blocked at readdir",
+        "reps": 25,
+        "notify": false,
+        "outcomes": {
+          "KeyboardInterrupt": 25
+        },
+        "interruptWordAfterHandler": {
+          "0": 25
+        },
+        "nextCellNormal": 25,
+        "finallyOpsCompleted": 0,
+        "stopToHandlerMs": {
+          "n": 25,
+          "min": 0.075,
+          "median": 28.977,
+          "p90": 57.483,
+          "max": 60.138,
+          "mean": 28.327
+        },
+        "stopToJsDetectMs": {
+          "n": 25,
+          "min": 0.024,
+          "median": 28.899,
+          "p90": 57.382,
+          "max": 60.007,
+          "mean": 28.217
+        },
+        "failures": []
+      },
+      {
+        "name": "open().read() in try/finally, blocked; the finally reads a second file (is the flag cleared once delivered?)",
+        "reps": 25,
+        "notify": false,
+        "outcomes": {
+          "KeyboardInterrupt": 25
+        },
+        "interruptWordAfterHandler": {
+          "0": 25
+        },
+        "nextCellNormal": 25,
+        "finallyOpsCompleted": 25,
+        "stopToHandlerMs": {
+          "n": 25,
+          "min": 0.493,
+          "median": 34.047,
+          "p90": 49.34,
+          "max": 54.356,
+          "mean": 30.269
+        },
+        "stopToJsDetectMs": {
+          "n": 25,
+          "min": 0.044,
+          "median": 33.54,
+          "p90": 48.959,
+          "max": 53.886,
+          "mean": 29.696
+        },
+        "failures": []
+      },
+      {
+        "name": "os.stat, blocked at the lookup",
+        "reps": 25,
+        "notify": false,
+        "outcomes": {
+          "KeyboardInterrupt": 25
+        },
+        "interruptWordAfterHandler": {
+          "0": 25
+        },
+        "nextCellNormal": 25,
+        "finallyOpsCompleted": 0,
+        "stopToHandlerMs": {
+          "n": 25,
+          "min": 0.633,
+          "median": 26.877,
+          "p90": 55.042,
+          "max": 59.294,
+          "mean": 28.774
+        },
+        "stopToJsDetectMs": {
+          "n": 25,
+          "min": 0.588,
+          "median": 26.802,
+          "p90": 54.862,
+          "max": 59.198,
+          "mean": 28.685
+        },
+        "failures": []
+      },
+      {
+        "name": "open().read(), blocked at the first lookup",
+        "reps": 25,
+        "notify": true,
+        "outcomes": {
+          "KeyboardInterrupt": 25
+        },
+        "interruptWordAfterHandler": {
+          "0": 25
+        },
+        "nextCellNormal": 25,
+        "finallyOpsCompleted": 0,
+        "stopToHandlerMs": {
+          "n": 25,
+          "min": 0.047,
+          "median": 0.067,
+          "p90": 0.097,
+          "max": 0.141,
+          "mean": 0.069
+        },
+        "stopToJsDetectMs": {
+          "n": 25,
+          "min": 0.014,
+          "median": 0.021,
+          "p90": 0.026,
+          "max": 0.032,
+          "mean": 0.021
+        },
+        "failures": []
+      },
+      {
+        "name": "open().read(), lookup answered, whole-file read blocked",
+        "reps": 25,
+        "notify": true,
+        "outcomes": {
+          "KeyboardInterrupt": 25
+        },
+        "interruptWordAfterHandler": {
+          "0": 25
+        },
+        "nextCellNormal": 25,
+        "finallyOpsCompleted": 0,
+        "stopToHandlerMs": {
+          "n": 25,
+          "min": 0.034,
+          "median": 0.049,
+          "p90": 0.101,
+          "max": 0.124,
+          "mean": 0.056
+        },
+        "stopToJsDetectMs": {
+          "n": 25,
+          "min": 0.012,
+          "median": 0.017,
+          "p90": 0.028,
+          "max": 0.032,
+          "mean": 0.019
+        },
+        "failures": []
+      },
+      {
+        "name": "open().read() of 20 MB, blocked on the 3rd 4 MB chunk",
+        "reps": 25,
+        "notify": true,
+        "outcomes": {
+          "KeyboardInterrupt": 25
+        },
+        "interruptWordAfterHandler": {
+          "0": 25
+        },
+        "nextCellNormal": 25,
+        "finallyOpsCompleted": 0,
+        "stopToHandlerMs": {
+          "n": 25,
+          "min": 0.045,
+          "median": 0.092,
+          "p90": 0.135,
+          "max": 0.144,
+          "mean": 0.092
+        },
+        "stopToJsDetectMs": {
+          "n": 25,
+          "min": 0.011,
+          "median": 0.023,
+          "p90": 0.032,
+          "max": 0.051,
+          "mean": 0.024
+        },
+        "failures": []
+      },
+      {
+        "name": "os.listdir, blocked at readdir",
+        "reps": 25,
+        "notify": true,
+        "outcomes": {
+          "KeyboardInterrupt": 25
+        },
+        "interruptWordAfterHandler": {
+          "0": 25
+        },
+        "nextCellNormal": 25,
+        "finallyOpsCompleted": 0,
+        "stopToHandlerMs": {
+          "n": 25,
+          "min": 0.041,
+          "median": 0.065,
+          "p90": 0.125,
+          "max": 0.137,
+          "mean": 0.071
+        },
+        "stopToJsDetectMs": {
+          "n": 25,
+          "min": 0.013,
+          "median": 0.02,
+          "p90": 0.029,
+          "max": 0.038,
+          "mean": 0.021
+        },
+        "failures": []
+      },
+      {
+        "name": "open().read() in try/finally, blocked; the finally reads a second file (is the flag cleared once delivered?)",
+        "reps": 25,
+        "notify": true,
+        "outcomes": {
+          "KeyboardInterrupt": 25
+        },
+        "interruptWordAfterHandler": {
+          "0": 25
+        },
+        "nextCellNormal": 25,
+        "finallyOpsCompleted": 25,
+        "stopToHandlerMs": {
+          "n": 25,
+          "min": 0.271,
+          "median": 0.446,
+          "p90": 0.799,
+          "max": 0.969,
+          "mean": 0.502
+        },
+        "stopToJsDetectMs": {
+          "n": 25,
+          "min": 0.01,
+          "median": 0.02,
+          "p90": 0.043,
+          "max": 0.078,
+          "mean": 0.025
+        },
+        "failures": []
+      },
+      {
+        "name": "os.stat, blocked at the lookup",
+        "reps": 25,
+        "notify": true,
+        "outcomes": {
+          "KeyboardInterrupt": 25
+        },
+        "interruptWordAfterHandler": {
+          "0": 25
+        },
+        "nextCellNormal": 25,
+        "finallyOpsCompleted": 0,
+        "stopToHandlerMs": {
+          "n": 25,
+          "min": 0.03,
+          "median": 0.063,
+          "p90": 0.109,
+          "max": 0.147,
+          "mean": 0.071
+        },
+        "stopToJsDetectMs": {
+          "n": 25,
+          "min": 0.011,
+          "median": 0.02,
+          "p90": 0.033,
+          "max": 0.043,
+          "mean": 0.022
+        },
+        "failures": []
+      }
+    ]
+  },
+  "late": {
+    "reps": 25,
+    "ok": 25,
+    "bad": []
+  }
+}

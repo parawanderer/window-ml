@@ -38,7 +38,7 @@ import { ChatSeesImages } from "./sees-images";
 import { DeleteConfirm, RenameDialog, SessionActions, usePeek } from "./row-menu";
 import { GearMenu, Rail, mainView, openSession } from "./nav";
 import { SearchPage } from "./search-page";
-import { SettingsPage, settingsAnchor, settingsTab } from "./settings-page";
+import { SettingsPage, settingsAnchor, settingsPlace, settingsTab } from "./settings-page";
 import { formatRoute, parseRoute } from "./route";
 import { DockFrame, type DockPanel } from "./dock";
 import type { ChatExtras } from "./extras";
@@ -74,14 +74,18 @@ function useHashRoute(): void {
             seenHash = location.hash;
             const r = parseRoute(location.hash);
             const key = r.session && parseSessionKey(r.session) ? r.session : null;
+            // One setting's row (`#/setting/<key>`) is drawn in the Extension tab of Settings, over whatever is open.
+            const main = r.main ?? (r.setting ? "settings" : undefined);
             const v = view.value;
             if (key) { if (v.name !== "detail" || v.hash !== key) view.value = { name: "detail", hash: key }; }
             // The list, or SEARCH: a session opened from search sits over it on a phone, so an address that names search
             // and no session (back from that session, or a link) closes the session to show search itself.
-            else if (!r.main || r.main === "search") { if (!r.main) pushedEntry = false; if (v.name !== "list") view.value = { name: "list" }; }
+            else if (!main || main === "search") { if (!main) pushedEntry = false; if (v.name !== "list") view.value = { name: "list" }; }
             if (r.tab) settingsTab.value = r.tab;
+            else if (r.setting) settingsTab.value = "extension";
             settingsAnchor.value = r.anchor ?? null;
-            if (mainView.value !== (r.main ?? null)) mainView.value = r.main ?? null;
+            settingsPlace.value = r.panelTab || r.setting ? { panelTab: r.panelTab, section: r.section, setting: r.setting } : null;
+            if (mainView.value !== (main ?? null)) mainView.value = main ?? null;
         };
         read();
         addEventListener("hashchange", read);
@@ -105,7 +109,7 @@ function useHashRoute(): void {
         if (location.hash === want || (!want && !location.hash)) return;
         const here = parseRoute(location.hash);
         // A step you go back from is pushed; rewriting the SAME place (an old `#s=` link, another settings tab) is not.
-        const same = formatRoute(here) === want || (here.main === "settings" && main === "settings");
+        const same = formatRoute(here) === want || ((here.main === "settings" || !!here.setting) && main === "settings");
         if (!want) { history.replaceState(null, "", location.pathname + location.search); pushedEntry = false; }
         else if (same) history.replaceState(null, "", want);
         else { history.pushState(null, "", want); pushedEntry = true; }

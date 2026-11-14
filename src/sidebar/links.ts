@@ -6,7 +6,16 @@
 
 import { PANEL_LAYOUT } from "../contract/contract-config";
 import { services } from "./services";
-import { BACKUP, parseAddress, type PanelRoute } from "../link-address";
+import { BACKUP, formatAddress, parseAddress, type PanelRoute } from "../link-address";
+
+/**
+ * The chat page's hash for a panel view, the way back from {@link parseAddress}: where the extension's chat page,
+ * which reads its own hash, sends a link it opens (docs/spec/LINKS.md, "What a click does").
+ * @param r the resolved view
+ */
+export function addressHash(r: PanelRoute): string {
+    return `#/${formatAddress(r)}`;
+}
 
 /**
  * What a link's tip says: where it goes, from the resolved address and never from the label, since link text and

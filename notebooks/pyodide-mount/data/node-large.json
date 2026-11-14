@@ -1,0 +1,657 @@
+{
+  "machine": {
+    "cpu": "Apple M5 Pro",
+    "cores": 15,
+    "memGB": 24,
+    "node": "v26.12.1",
+    "os": "Darwin 25.6.0",
+    "pyodide": "pyodide-core 314.0.3 (Python 3.14.0, restricted-mode fork build)",
+    "date": "2026-11-13T22:37:36.689Z"
+  },
+  "caveats": [
+    "The worker is a node:worker_threads Worker and the host a Node main thread: the channel is one postMessage hop plus a SharedArrayBuffer, not worker -> offscreen -> service worker -> wmlhost. Every figure is the sandbox side's floor; the product adds its hops.",
+    "The host answers from the real disk with node:fs in-process, synchronously inside one event-loop turn. wmlhost's native-messaging, JSON and base64 costs are not here.",
+    "Large files are sparse: the host reads zeros from holes without touching a disk, so the fetch figures are memory-copy speed, not I/O speed.",
+    "Cells run through py.runPython (not the product's wrapUserCode harness, which needs numpy/pandas): the cell gate's begin/revoke window is not opened around them.",
+    "The stop latency is stamped Python-side with time.perf_counter() (== performance.now() here, offset calibrated at boot) and host-side with Date-aligned performance.timeOrigin + now."
+  ],
+  "item": "5: a large file opened whole",
+  "large": {
+    "chunkSweep": [
+      {
+        "chunkBytes": 65536,
+        "reps": 20,
+        "error": null,
+        "fetch100MBms": {
+          "n": 20,
+          "min": 33.022,
+          "median": 34.779,
+          "p90": 41.155,
+          "max": 45.581,
+          "mean": 35.784
+        },
+        "requestsPerOpen": 1600,
+        "MBperS_median": 2875.324
+      },
+      {
+        "chunkBytes": 1048576,
+        "reps": 20,
+        "error": null,
+        "fetch100MBms": {
+          "n": 20,
+          "min": 9.187,
+          "median": 9.723,
+          "p90": 14.079,
+          "max": 15.862,
+          "mean": 10.678
+        },
+        "requestsPerOpen": 100,
+        "MBperS_median": 10284.759
+      },
+      {
+        "chunkBytes": 4194304,
+        "reps": 20,
+        "error": null,
+        "fetch100MBms": {
+          "n": 20,
+          "min": 7.381,
+          "median": 8.25,
+          "p90": 12.424,
+          "max": 12.56,
+          "mean": 8.868
+        },
+        "requestsPerOpen": 25,
+        "MBperS_median": 12121.733
+      },
+      {
+        "chunkBytes": 16777200,
+        "reps": 20,
+        "error": null,
+        "fetch100MBms": {
+          "n": 20,
+          "min": 7.644,
+          "median": 8.183,
+          "p90": 9.548,
+          "max": 10.018,
+          "mean": 8.391
+        },
+        "requestsPerOpen": 7,
+        "MBperS_median": 12219.742
+      }
+    ],
+    "rows": [
+      {
+        "sizeMB": 100,
+        "rep": 0,
+        "freeGBBefore": 8.755,
+        "open_fetch": {
+          "hostMs": 11.25,
+          "error": null,
+          "value": {}
+        },
+        "read_all": {
+          "hostMs": 6.79,
+          "error": null,
+          "value": {
+            "len": 104857600,
+            "ms": 5.208625000000744
+          }
+        },
+        "read_1MiB_loop": {
+          "hostMs": 2.14,
+          "error": null,
+          "value": {
+            "len": 104857600,
+            "ms": 1.4813330000000846
+          }
+        },
+        "close": {
+          "hostMs": 0.29,
+          "error": null,
+          "value": {}
+        },
+        "requests": {
+          "stat": 1,
+          "read": 25
+        }
+      },
+      {
+        "sizeMB": 100,
+        "rep": 1,
+        "freeGBBefore": 8.662,
+        "open_fetch": {
+          "hostMs": 9.7,
+          "error": null,
+          "value": {}
+        },
+        "read_all": {
+          "hostMs": 7.12,
+          "error": null,
+          "value": {
+            "len": 104857600,
+            "ms": 5.380500000000232
+          }
+        },
+        "read_1MiB_loop": {
+          "hostMs": 2.13,
+          "error": null,
+          "value": {
+            "len": 104857600,
+            "ms": 1.4839999999995968
+          }
+        },
+        "close": {
+          "hostMs": 0.27,
+          "error": null,
+          "value": {}
+        },
+        "requests": {
+          "stat": 1,
+          "read": 25
+        }
+      },
+      {
+        "sizeMB": 100,
+        "rep": 2,
+        "freeGBBefore": 8.659,
+        "open_fetch": {
+          "hostMs": 9.83,
+          "error": null,
+          "value": {}
+        },
+        "read_all": {
+          "hostMs": 7.18,
+          "error": null,
+          "value": {
+            "len": 104857600,
+            "ms": 5.5112499999996345
+          }
+        },
+        "read_1MiB_loop": {
+          "hostMs": 2.17,
+          "error": null,
+          "value": {
+            "len": 104857600,
+            "ms": 1.4830420000002675
+          }
+        },
+        "close": {
+          "hostMs": 0.26,
+          "error": null,
+          "value": {}
+        },
+        "requests": {
+          "stat": 1,
+          "read": 25
+        }
+      },
+      {
+        "sizeMB": 100,
+        "rep": 3,
+        "freeGBBefore": 8.657,
+        "open_fetch": {
+          "hostMs": 9.73,
+          "error": null,
+          "value": {}
+        },
+        "read_all": {
+          "hostMs": 7.02,
+          "error": null,
+          "value": {
+            "len": 104857600,
+            "ms": 5.391416000000149
+          }
+        },
+        "read_1MiB_loop": {
+          "hostMs": 2.15,
+          "error": null,
+          "value": {
+            "len": 104857600,
+            "ms": 1.5018329999998414
+          }
+        },
+        "close": {
+          "hostMs": 0.26,
+          "error": null,
+          "value": {}
+        },
+        "requests": {
+          "stat": 1,
+          "read": 25
+        }
+      },
+      {
+        "sizeMB": 100,
+        "rep": 4,
+        "freeGBBefore": 8.663,
+        "open_fetch": {
+          "hostMs": 9.67,
+          "error": null,
+          "value": {}
+        },
+        "read_all": {
+          "hostMs": 7.57,
+          "error": null,
+          "value": {
+            "len": 104857600,
+            "ms": 5.410458000000062
+          }
+        },
+        "read_1MiB_loop": {
+          "hostMs": 2.13,
+          "error": null,
+          "value": {
+            "len": 104857600,
+            "ms": 1.4882499999995247
+          }
+        },
+        "close": {
+          "hostMs": 0.22,
+          "error": null,
+          "value": {}
+        },
+        "requests": {
+          "stat": 1,
+          "read": 25
+        }
+      },
+      {
+        "cap": "maxFetch 10 MB on a 100 MB file",
+        "result": "OSError: [Errno 22] File too large: '/private/tmp/claude-501/-Users-sb-git-window-ml/a35fd507-c65b-41d2-a090-d4c205c60f1d/scratchpad/large/cap.bin'",
+        "error": null,
+        "requests": {
+          "stat": 1,
+          "read": 1
+        }
+      },
+      {
+        "sizeMB": 512,
+        "rep": 0,
+        "freeGBBefore": 8.687,
+        "open_fetch": {
+          "hostMs": 67.52,
+          "error": null,
+          "value": {}
+        },
+        "read_all": {
+          "hostMs": 27.96,
+          "error": null,
+          "value": {
+            "len": 536870912,
+            "ms": 26.094000000000506
+          }
+        },
+        "read_1MiB_loop": {
+          "hostMs": 8.14,
+          "error": null,
+          "value": {
+            "len": 536870912,
+            "ms": 7.417832999999874
+          }
+        },
+        "close": {
+          "hostMs": 0.29,
+          "error": null,
+          "value": {}
+        },
+        "requests": {
+          "stat": 1,
+          "read": 128
+        }
+      },
+      {
+        "sizeMB": 512,
+        "rep": 1,
+        "freeGBBefore": 8.189,
+        "open_fetch": {
+          "hostMs": 41.15,
+          "error": null,
+          "value": {}
+        },
+        "read_all": {
+          "hostMs": 28.01,
+          "error": null,
+          "value": {
+            "len": 536870912,
+            "ms": 26.22645900000009
+          }
+        },
+        "read_1MiB_loop": {
+          "hostMs": 8.14,
+          "error": null,
+          "value": {
+            "len": 536870912,
+            "ms": 7.416375000000031
+          }
+        },
+        "close": {
+          "hostMs": 0.29,
+          "error": null,
+          "value": {}
+        },
+        "requests": {
+          "stat": 1,
+          "read": 128
+        }
+      },
+      {
+        "sizeMB": 512,
+        "rep": 2,
+        "freeGBBefore": 8.193,
+        "open_fetch": {
+          "hostMs": 40.97,
+          "error": null,
+          "value": {}
+        },
+        "read_all": {
+          "hostMs": 28.34,
+          "error": null,
+          "value": {
+            "len": 536870912,
+            "ms": 26.55566699999845
+          }
+        },
+        "read_1MiB_loop": {
+          "hostMs": 8.23,
+          "error": null,
+          "value": {
+            "len": 536870912,
+            "ms": 7.477209000001039
+          }
+        },
+        "close": {
+          "hostMs": 0.28,
+          "error": null,
+          "value": {}
+        },
+        "requests": {
+          "stat": 1,
+          "read": 128
+        }
+      },
+      {
+        "sizeMB": 1024,
+        "rep": 0,
+        "freeGBBefore": 8.442,
+        "open_fetch": {
+          "hostMs": 133.62,
+          "error": null,
+          "value": {}
+        },
+        "read_all": {
+          "hostMs": 55.65,
+          "error": null,
+          "value": {
+            "len": 1073741824,
+            "ms": 54.372042000000675
+          }
+        },
+        "read_1MiB_loop": {
+          "hostMs": 15.68,
+          "error": null,
+          "value": {
+            "len": 1073741824,
+            "ms": 14.879332999999662
+          }
+        },
+        "close": {
+          "hostMs": 0.29,
+          "error": null,
+          "value": {}
+        },
+        "requests": {
+          "stat": 1,
+          "read": 256
+        }
+      },
+      {
+        "sizeMB": 1024,
+        "rep": 1,
+        "freeGBBefore": 7.442,
+        "open_fetch": {
+          "hostMs": 78.24,
+          "error": null,
+          "value": {}
+        },
+        "read_all": {
+          "hostMs": 55.14,
+          "error": null,
+          "value": {
+            "len": 1073741824,
+            "ms": 53.8946659999997
+          }
+        },
+        "read_1MiB_loop": {
+          "hostMs": 15.61,
+          "error": null,
+          "value": {
+            "len": 1073741824,
+            "ms": 14.822625000000755
+          }
+        },
+        "close": {
+          "hostMs": 0.29,
+          "error": null,
+          "value": {}
+        },
+        "requests": {
+          "stat": 1,
+          "read": 256
+        }
+      },
+      {
+        "sizeMB": 1024,
+        "rep": 2,
+        "freeGBBefore": 7.378,
+        "open_fetch": {
+          "hostMs": 86.22,
+          "error": null,
+          "value": {}
+        },
+        "read_all": {
+          "hostMs": 54.58,
+          "error": null,
+          "value": {
+            "len": 1073741824,
+            "ms": 53.32479199999973
+          }
+        },
+        "read_1MiB_loop": {
+          "hostMs": 16.31,
+          "error": null,
+          "value": {
+            "len": 1073741824,
+            "ms": 15.414124999999501
+          }
+        },
+        "close": {
+          "hostMs": 0.37,
+          "error": null,
+          "value": {}
+        },
+        "requests": {
+          "stat": 1,
+          "read": 256
+        }
+      },
+      {
+        "sizeMB": 1536,
+        "rep": 0,
+        "freeGBBefore": 7.906,
+        "open_fetch": {
+          "hostMs": 189.06,
+          "error": null,
+          "value": {}
+        },
+        "read_all": {
+          "hostMs": 141.89,
+          "error": null,
+          "value": {
+            "len": 1610612736,
+            "ms": 140.56191599999934
+          }
+        },
+        "read_1MiB_loop": {
+          "hostMs": 27.65,
+          "error": null,
+          "value": {
+            "len": 1610612736,
+            "ms": 26.76424999999938
+          }
+        },
+        "close": {
+          "hostMs": 0.44,
+          "error": null,
+          "value": {}
+        },
+        "requests": {
+          "stat": 1,
+          "read": 384
+        }
+      },
+      {
+        "sizeMB": 2047,
+        "rep": 0,
+        "freeGBBefore": 7.625,
+        "open_fetch": {
+          "hostMs": 300.55,
+          "error": null,
+          "value": {}
+        },
+        "read_all": {
+          "hostMs": 264.23,
+          "error": null,
+          "value": {
+            "len": 2146435072,
+            "ms": 262.50183300000174
+          }
+        },
+        "read_1MiB_loop": {
+          "hostMs": 80.01,
+          "error": null,
+          "value": {
+            "len": 2146435072,
+            "ms": 78.87787499999988
+          }
+        },
+        "close": {
+          "hostMs": 0.38,
+          "error": null,
+          "value": {}
+        },
+        "requests": {
+          "stat": 1,
+          "read": 512
+        }
+      },
+      {
+        "sizeMB": 2048,
+        "rep": 0,
+        "freeGBBefore": 7.672,
+        "open_fetch": {
+          "hostMs": 341.88,
+          "error": null,
+          "value": {}
+        },
+        "read_all": {
+          "hostMs": 975.4,
+          "error": null,
+          "value": {
+            "exc": "OverflowError",
+            "msg": "unbounded read returned more bytes than a Python bytes object can hold",
+            "ms": 972.8765829999979
+          }
+        },
+        "read_1MiB_loop": {
+          "hostMs": 84.77,
+          "error": null,
+          "value": {
+            "len": 2147483648,
+            "ms": 83.03741599999981
+          }
+        },
+        "close": {
+          "hostMs": 0.56,
+          "error": null,
+          "value": {}
+        },
+        "requests": {
+          "stat": 1,
+          "read": 512
+        }
+      },
+      {
+        "sizeMB": 3072,
+        "rep": 0,
+        "freeGBBefore": 8.049,
+        "open_fetch": {
+          "hostMs": 452.41,
+          "error": null,
+          "value": {}
+        },
+        "read_all": {
+          "hostMs": 631,
+          "error": null,
+          "value": {
+            "exc": "OverflowError",
+            "msg": "unbounded read returned more bytes than a Python bytes object can hold",
+            "ms": 626.760333
+          }
+        },
+        "read_1MiB_loop": {
+          "hostMs": 336.76,
+          "error": null,
+          "value": {
+            "len": 3221225472,
+            "ms": 333.8472090000017
+          }
+        },
+        "close": {
+          "hostMs": 2.82,
+          "error": null,
+          "value": {}
+        },
+        "requests": {
+          "stat": 1,
+          "read": 768
+        }
+      },
+      {
+        "sizeMB": 4096,
+        "rep": 0,
+        "freeGBBefore": 8.079,
+        "open_fetch": {
+          "hostMs": 658.01,
+          "error": null,
+          "value": {}
+        },
+        "read_all": {
+          "hostMs": 440.12,
+          "error": null,
+          "value": {
+            "exc": "MemoryError",
+            "msg": "",
+            "ms": 438.1070409999985
+          }
+        },
+        "read_1MiB_loop": {
+          "hostMs": 456.66,
+          "error": null,
+          "value": {
+            "len": 4294967296,
+            "ms": 455.07766700000116
+          }
+        },
+        "close": {
+          "hostMs": 0.7,
+          "error": null,
+          "value": {}
+        },
+        "requests": {
+          "stat": 1,
+          "read": 1024
+        }
+      }
+    ]
+  }
+}

@@ -32,8 +32,12 @@ The grammar also names the extension's own settings, for `window-ml:` links (`do
 (contract-config.ts), which tests/sidebar-settings.test.js and tests/setting-places.test.js hold to what the view draws.
 An unknown section drops to its panel tab, an unknown panel tab to Extension, an unknown key or one with no row to the
 list. A `window-ml:` link is parsed by the same `parseRoute` (links.ts), which accepts only an address that formats
-back to itself, so a link never falls back to a wider view. The parser names these
-addresses; the chat page does not yet open a panel tab, a section or a row from its own hash.
+back to itself, so a link never falls back to a wider view. The extension's chat page opens these from its own hash
+(`settingsPlace`, chat-ext.tsx): the tab and section through `showSettingsSection`, and a setting's row, found by its
+`SETTING_PLACES` entry, scrolled to and marked; `#/setting/<key>` opens Settings → Extension over the list. Not
+`openPanelRoute`, which also sets the sidebar's `view`, the chat page's own list-or-session signal. Like the backup
+anchor, the place is opened once and the address then reads `#/settings/extension`. A `window-ml:` link in a reply
+there (`openAddress`) sets the hash to the link's address (`addressHash`, links.ts), and the router does the rest.
 
 A new session starts on THIS client's own runtime when it has one (`startableOn`, new-session.tsx), and only then on the
 first in the host's list. Which runtime is "this client" is the host's answer (`SessionHost.isLocal`; `LocalHost` says
