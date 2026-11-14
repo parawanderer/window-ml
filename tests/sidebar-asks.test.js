@@ -1,6 +1,6 @@
 // sidebar-asks.test.js — a step's nested asks on the surfaces (src/sidebar/transcript/ask-card.tsx): the card shows the
-// call's resolved facts and never the script, its answer names the ask, an answered ask is a line, and the HUD card
-// answers one from the keyboard. The worker's half is tests/nested-asks.test.mjs.
+// call's resolved facts and never the script, its answer names the ask, answered calls gather in one footer under the
+// step (a row each, opening to everything), and the HUD card answers one from the keyboard. The worker's half is tests/nested-asks.test.mjs.
 
 const { test, after } = require("node:test");
 const assert = require("node:assert");
@@ -58,22 +58,29 @@ test("Approve on an ask posts its id beside the step's seq, and the card goes at
     await w.tick();
     const msg = posted.find((m) => m.__mlSidebarApp === "approval");
     assert.deepEqual([msg.hash, msg.seq, msg.decision, msg.ask, msg.persist], ["ask2", 1, true, ID, false]);
-    assert.equal(w.shadow.querySelector(".astep-approve.ask"), null, "decided here, so not drawn again while the worker answers");
+    // Decided here, so it is not a card to answer again while the worker answers. In the calm view it eases away for a beat
+    // (`leaving`), without its buttons and out of the accessibility tree; anywhere else it is simply gone.
+    assert.equal(w.shadow.querySelectorAll(".astep-approve.ask:not(.leaving)").length, 0, "decided here, so not drawn again while the worker answers");
+    assert.equal(w.shadow.querySelector(".astep-approve.ask.leaving .appr-btn"), null, "a card on its way out has nothing left to press");
 });
 
-test("an answered ask is one line under its step, with how it ended and the person's note, and no buttons", async () => {
+test("answered calls gather in ONE footer under the step: a row each, with how it ended and the person's note, and no buttons", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("ask3", "check the repo"));
     await w.dispatch(running("ask3", [ask({ state: "allowed", answeredAt: 4000 }), ask({ id: "a1123456789abcdef01234567", state: "denied", answeredAt: 9000, note: "not that branch", facts: { ...FACTS, argv: ["git", "checkout", "main"] } })]));
     await open(w);
     assert.equal(w.shadow.querySelector(".astep-approve.ask"), null);
-    const lines = [...w.shadow.querySelectorAll(".astep-ask-done")].map((l) => l.textContent);
-    assert.equal(lines.length, 2);
-    assert.match(lines[0], /git --no-pager status.*allowed after 3 s/);
-    assert.match(lines[1], /git checkout main.*denied after 8 s.*not that branch/);
+    assert.equal(w.shadow.querySelectorAll(".shcalls").length, 1, "one footer for the step, not a block per call");
+    assert.match(w.shadow.querySelector(".shcalls .disc-head").textContent, /ml\.sh\s*2 calls.*2 asked.*1 denied/);
+    const rows = [...w.shadow.querySelectorAll(".shc-entry")];
+    assert.equal(rows.length, 2);
+    assert.match(rows[0].querySelector(".shc-row").textContent, /git.*allowed after 3 s/);
+    assert.match(rows[1].querySelector(".shc-row").textContent, /git.*denied after 8 s/);
+    assert.match(rows[1].textContent, /not that branch/, "the person's note is in the row's body");
+    assert.equal(w.shadow.querySelector(".shcalls .appr-btn"), null, "an answered call has no buttons");
 });
 
-test("an allowed ask that ran says what the host applied and what protected names changed during it, flagged", async () => {
+test("an allowed ask that ran says what the host applied and what protected names changed during it, flagged on the row too", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("ask7", "install"));
     const outcome = { ran: "host-sandbox", envelope: { write: "today", exec: "any" }, asked: { write: "roots", exec: "program-only" },
@@ -84,16 +91,19 @@ test("an allowed ask that ran says what the host applied and what protected name
         ask({ id: "a2123456789abcdef01234567", state: "allowed", answeredAt: 3000, outcome: { protectedChanged: "not a list" } }),
     ]));
     await open(w);
-    const [ran, denied, odd] = [...w.shadow.querySelectorAll(".astep-ask-done")];
-    const warned = [...ran.querySelectorAll(".ask-facts .warn dt")].map((d) => d.textContent);
-    assert.deepEqual(warned, ["Sandbox applied", "Protected names"], "less than was asked for, and a hook appeared: both flagged");
+    const [ran, denied, odd] = [...w.shadow.querySelectorAll(".shc-entry")];
+    const warned = [...ran.querySelectorAll(".shc-facts .warn dt")].map((d) => d.textContent);
+    assert.ok(warned.includes("Sandbox applied") && warned.includes("Protected names"), "less than was asked for, and a hook appeared: both flagged");
+    assert.ok(ran.classList.contains("warn"), "and the ROW says so, not only what is inside it");
+    assert.match(w.shadow.querySelector(".shcalls .disc-head").textContent, /to check/, "and so does the footer");
     assert.match(ran.textContent, /changed during this call in \/w\/proj: \.git\/hooks\/pre-commit created/);
     assert.match(ran.textContent, /not the write roots, exec program-only that was asked for/);
-    assert.equal(denied.querySelector(".ask-facts"), null, "a denied call never ran: no outcome is drawn");
-    assert.ok(odd, "an outcome of another shape does not break the line");
+    const deniedLabels = [...denied.querySelectorAll(".shc-facts dt")].map((d) => d.textContent);
+    assert.ok(!deniedLabels.includes("Sandbox applied") && !deniedLabels.includes("Protected names"), "a denied call never ran: no outcome is drawn");
+    assert.ok(odd, "an outcome of another shape does not break the row");
 });
 
-test("a call that ran without asking is a line under its step: the raw argv, who allowed it, and the card's outcome lines", async () => {
+test("a call that ran without asking is a row under the step: the command, who allowed it, and the card's outcome lines", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("unask1", "tidy"));
     const outcome = { ran: "host-sandbox", envelope: { write: "today", exec: "any" }, asked: { write: "roots", exec: "program-only" }, protectedChanged: [] };
@@ -102,13 +112,25 @@ test("a call that ran without asking is a line under its step: the raw argv, who
         { program: "find", durationMs: 7, unasked: { by: "policy", policy: "tidy build", argv: ["find", "build", "-name", "*.o", "-delete"], outcome } },
     ] }));
     await open(w);
-    const lines = [...w.shadow.querySelectorAll(".astep-ask-done.unasked")];
-    assert.equal(lines.length, 1, "a span with no unasked record draws nothing");
-    assert.equal(lines[0].querySelector("code").textContent, JSON.stringify(["find", "build", "-name", "*.o", "-delete"]));
-    assert.match(lines[0].textContent, /Allowed bythe policy "tidy build"/);
-    const warned = [...lines[0].querySelectorAll(".ask-facts .warn dt")].map((d) => d.textContent);
+    const rows = [...w.shadow.querySelectorAll(".shc-entry")];
+    assert.equal(rows.length, 1, "a span with no unasked record draws nothing");
+    assert.match(rows[0].querySelector(".shc-row").textContent, /find.*ran without asking \(the policy "tidy build"\)/);
+    assert.match(rows[0].querySelector(".copyable-code").textContent, /find build -name .*\*\.o.* -delete/);
+    assert.match(rows[0].textContent, /Allowed by\s*the policy "tidy build"/);
+    const warned = [...rows[0].querySelectorAll(".shc-facts .warn dt")].map((d) => d.textContent);
     assert.deepEqual(warned, ["Sandbox applied"], "less than was asked for is flagged here as on the card");
-    assert.doesNotMatch(lines[0].textContent, /SCRIPT-TEXT/, "the facts, never the script");
+    assert.doesNotMatch(rows[0].textContent, /SCRIPT-TEXT/, "the facts, never the script");
+});
+
+test("a bash -c call shows its script as lines, the way it was written, not run together on one", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("script1", "demo"));
+    const body = "cat > demo.sh <<'EOF'\necho hi\nEOF\nchmod +x demo.sh";
+    await w.dispatch(running("script1", [ask({ state: "allowed", answeredAt: 2000, facts: { ...FACTS, argv: ["bash", "-c", body] } })]));
+    await open(w);
+    const code = w.shadow.querySelector(".shc-entry .copyable-code");
+    assert.equal(code.textContent.replace(/\u00a0/g, " ").split("\n").filter(Boolean).length >= 4, true, "one line per line of the script");
+    assert.match(w.shadow.querySelector(".shc-entry .shc-via").textContent, /bash -c/);
 });
 
 test("an ask only the external channel answers is drawn without buttons", async () => {
@@ -128,7 +150,7 @@ test("the step's later events keep its asks: its DONE does not wipe what it aske
     await w.dispatch(running("ask5", [ask({ state: "allowed", answeredAt: 2000 })]));
     await w.dispatch(agentStep("ask5", 1, { seq: 1, tool: "exec", arguments: { js: SCRIPT }, result: "0", approval: "user" }));
     await open(w);
-    assert.equal(w.shadow.querySelectorAll(".astep-ask-done").length, 1);
+    assert.equal(w.shadow.querySelectorAll(".shc-entry").length, 1);
 });
 
 test("an ask of a kind this build does not know is drawn as its facts, and still answerable", async () => {

@@ -139,7 +139,7 @@ export interface ToolStreak { kind: "streak"; tool: string; tools: string[]; tur
 function foldable(t: AgentTurnGroup): AgentStep | null {
     if (t.thought || t.tools.length !== 1) return null;
     const st = t.tools[0];
-    if (!st.tool || (st.awaitingApproval && st.pending)) return null;
+    if (!st.tool || needsPerson(st)) return null;
     if (revisionOf(st)) return null;
     return st;
 }
@@ -161,8 +161,19 @@ function foldable(t: AgentTurnGroup): AgentStep | null {
  */
 function foldableAll(t: AgentTurnGroup): boolean {
     if (t.thought) return false;
-    return !t.tools.some((st) => st.awaitingApproval && st.pending);
+    return !t.tools.some(needsPerson);
 }
+
+/**
+ * Is a person needed for this call RIGHT NOW: its own gate is waiting, or a call it is making raised an ask that is.
+ *
+ * The second half is the one that was missed. A step's own gate clears when it is approved, and the step then runs;
+ * the `ml.sh` call inside it asks again, on the step's `asks`, with the step no longer `awaitingApproval`. Looking only
+ * at the gate folded the step the moment it was approved, and the card the person had to answer next was inside a
+ * closed group. A decision is never hidden, so it stays out until it is answered.
+ */
+const needsPerson = (st: AgentStep): boolean =>
+    (!!st.awaitingApproval && !!st.pending) || !!st.asks?.some((a) => a.state === "pending");
 
 /**
  * Which SEGMENT of the transcript a turn is in — how many boundaries sit before it.
