@@ -77,6 +77,9 @@ test("answered calls gather in ONE footer under the step: a row each, with how i
     assert.match(rows[0].querySelector(".shc-row").textContent, /git.*allowed after 3 s/);
     assert.match(rows[1].querySelector(".shc-row").textContent, /git.*denied after 8 s/);
     assert.match(rows[1].textContent, /not that branch/, "the person's note is in the row's body");
+    assert.ok(rows[1].querySelector(".shc-row .dot.err.hollow"), "a denied call is a ring: it never ran, which is not the same as failing");
+    assert.match(rows[1].querySelector(".shc-row .dot-tip-line").textContent, /Denied: the call never ran.*threw Denied/);
+    assert.equal(rows[0].querySelector(".shc-row .dot.hollow"), null, "a call that ran is a disc");
     assert.equal(w.shadow.querySelector(".shcalls .appr-btn"), null, "an answered call has no buttons");
 });
 

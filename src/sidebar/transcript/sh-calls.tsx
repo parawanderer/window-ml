@@ -43,7 +43,7 @@ export function ShEntryCard({ e, defaultOpen }: { e: ShEntry; defaultOpen?: bool
     const status = e.verdict === "ran" ? "ok" : e.verdict === "denied" ? "err" : "pending";
     const label = (
         <span class={`shc-row ${e.verdict}`}>
-            <Dot status={status} warn={e.warn ? flagged(e) : undefined} />
+            <Dot status={status} warn={e.warn ? flagged(e) : undefined} hollow={e.verdict === "denied"} tip={e.verdict === "denied" ? "Denied: the call never ran. In the script, ml.sh.run threw Denied." : undefined} />
             <span class="shc-prog">{e.program}</span>
             <span class="shc-prev">{previewOf(e)}</span>
             <span class="shc-said">{e.said}</span>
