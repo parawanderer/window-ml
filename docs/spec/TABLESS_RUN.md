@@ -91,19 +91,37 @@ A run whose tab closes BECOMES detached, as if it had started that way; it does 
 - **It is kept for a grace period.** If the person opens it on the chat page within it, it goes on detached, and
   gets a tab again by attach or `navigate`.
 - **If no one opens it within the grace period, or the browser closes, it is done**: everything that holds memory
-  for it is released (its Python namespace, its `@tool:` values, its inbox, its replay ring). The transcript stays
-  in the session store as for any finished run.
+  for it is released (its Python namespace, its `@tool:` values, its inbox, its replay ring), and `endTasks` runs,
+  which is the release that cancels its cells. The transcript stays in the session store as for any finished run.
 - **Unless a background task of the run is still running** ([`ASYNC_CALLS.md`](ASYNC_CALLS.md)): that keeps it
-  alive, and the grace period starts when the last task ends. Today a turn's `settle` ends its tasks (`endTasks`),
-  so this needs the async lane's word on how a task that outlives its turn holds a run.
-- **The grace period outlives a worker eviction**: the detached snapshot is persisted, so an eviction is not the
-  end of the period, only the browser closing is. Its length is a constant to be measured, not guessed.
+  alive, and the grace period starts when the last task ends. On main this already holds for the task itself: a
+  turn's `settle` calls `closeTurnTasks`, not `endTasks`, so a task outlives its turn; tasks are keyed by run, never
+  by tab, and a tab close touches none of them. A result that lands with no turn running is parked in the task table
+  and reaches the next turn, so it waits for whoever reopens the run. Each task is capped by `detachedTaskMaxMin`.
+
+What main does NOT have (read by the async lane, main 43f88825):
+
+- **A release on a tab close.** `tabs.onRemoved` drops the tab's `activeRuns` entry and the page's own value session,
+  never the run's: today a run whose tab closes keeps everything, with no grace period and no release. The release at
+  grace expiry is a NEW trigger, beside `forgetRun`, a failed start, the install purge, token-store pressure, and
+  archive or delete.
+- **"The run has no running task", as something the worker can ask.** The task table is private (`sw-tasks.ts`). The
+  async lane builds `hasRunningTasks(runId)` (hydrating first: after an eviction the in-memory table is empty while
+  cells still run), or an `onTasksIdle(runId)` hook from `finish()` that also fires on the path where a cell finished
+  while the worker was evicted (`rehydratedCellTask`).
+- **A timer that survives eviction.** The grace period is a deadline in storage, checked when the worker wakes
+  (an alarm), never a `setTimeout`: the worker is gone after about 30 s idle and is not awake when a cell finishes.
+  The browser closing ends it because the task table (`chrome.storage.session`) and the timer go with the session.
+  Its length is a constant to be measured, not guessed.
+- **A turn started by a finished task on a run with no tab.** The async lane's next slice starts a turn when a task
+  finishes and refuses with reason `no-tab` when the run has no tab, leaving the result parked. That is right for a
+  detached run until someone reopens it; whether a reopen starts that turn is decided in that branch.
 
 ## Order
 
 1. MOVE_RUN shape (a) on main.
 2. The detached host, the snapshot form, and where its events render. "No tab" in the start form. Attach from no tab.
-   A closed tab detaches its run, with the grace period.
+   A closed tab detaches its run, with the grace period: the async lane's task predicate first, then the release.
 3. `navigate` from the detached state, with its tests.
 4. The `ml.sh` bench, and a worker `exec` world only if it says so.
 
