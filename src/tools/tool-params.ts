@@ -72,8 +72,8 @@ export const CALL_TITLE = "title";
  *
  * Deliberately short, because this rides in EVERY tool's schema on EVERY turn: a sentence here is multiplied by
  * the toolset and re-sent for the length of the run (AGENTS.md — never pad model-facing text). It carries no
- * example: dropping the one it had left titles as short (median 30 characters against 31, over 876 titled calls;
- * docs/spec/PROMPT_BUDGET.md, the panel-bloat cuts).
+ * example: dropping the one left titles no longer (median 24 characters against 26, over 1,080 titled calls;
+ * docs/spec/PROMPT_BUDGET.md, the panel-bloat cuts, "Call titles").
  */
 export function callTitleParam(): JsonSchema {
     return { type: "string", description: "What this call is for, in a few words." };
