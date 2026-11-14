@@ -35,6 +35,39 @@ test("a redraw continues each fade from where it is, and words past their fade a
     assert.equal(done.root.textContent, "alpha beta gamma", "the text itself is untouched");
 });
 
+// --- a box fades with its first word, not before it ---
+
+test("a code span or block, a quote and a table arrive with their first word instead of standing empty ahead of it", () => {
+    const starts = [];
+    const { root } = mark("<p>use <code>npm test</code> now</p><pre><code>line one\nline two</code></pre><blockquote>quoted words</blockquote>", starts, 1000);
+    const boxes = [...root.querySelectorAll(".b-in")].map((e) => e.tagName.toLowerCase());
+    assert.deepEqual(boxes, ["code", "pre", "code", "blockquote"], "each element that draws a box of its own, the pre and its code both");
+    const code = root.querySelector("p code");
+    const words = [...code.querySelectorAll(".w-in")];
+    assert.equal(code.style.animationDelay, words[0].style.animationDelay, "the box starts when ITS first word does");
+    assert.equal(root.querySelector("p").classList.contains("b-in"), false, "a paragraph draws no box, so it is left alone");
+});
+
+test("a box whose first word has finished fading is not animated again by a redraw", () => {
+    const starts = [];
+    mark("<p><code>alpha beta</code></p>", starts, 1000);
+    const later = mark("<p><code>alpha beta gamma delta</code></p>", starts, 1000 + 380 + 50);
+    assert.equal(later.root.querySelector("code").classList.contains("b-in"), false, "alpha is already visible: the box was there");
+    assert.ok(later.root.querySelectorAll(".w-in").length > 0, "the words that are new still fade");
+});
+
+test("a redraw continues a box's fade from where it is, like a word's", () => {
+    const starts = [];
+    mark("<p><code>alpha</code></p>", starts, 1000);
+    const later = mark("<p><code>alpha beta</code></p>", starts, 1100);
+    assert.equal(parseInt(later.root.querySelector("code").style.animationDelay, 10), -100, "100 ms into the fade, not restarted");
+});
+
+test("a settled reply redrawn (not live) draws its boxes at once", () => {
+    const { root } = mark("<pre><code>settled text</code></pre>", [], 1000, false);
+    assert.equal(root.querySelectorAll(".b-in").length, 0);
+});
+
 test("text that was already there when drawn (a settled reply redrawn) does not fade", () => {
     const { fading } = mark("<p>already here</p>", [], 1000, false);
     assert.deepEqual(fading, []);

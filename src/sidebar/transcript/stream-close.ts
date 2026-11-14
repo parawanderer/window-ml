@@ -11,6 +11,8 @@
 // image, and display math with no closing delimiter. Each is at most a line, and it appears the moment it is decided.
 // An unclosed single `$` needs nothing: `markdown()` draws an unmatched `$` as text.
 
+import { openFenceAt } from "../md-fence";
+
 /** The inline markers closed for a streaming reply, longest first so `**` is never read as two `*`. */
 const INLINE = ["**", "~~", "*"] as const;
 
@@ -21,19 +23,18 @@ const INLINE = ["**", "~~", "*"] as const;
 export function closeStreaming(src: string): string {
     const lines = src.split("\n");
     // A fence open at the end: everything after it is code, and closing the fence is all it needs.
-    let fenceAt = -1;
-    lines.forEach((l, i) => { if (/^\s*```/.test(l)) fenceAt = fenceAt < 0 ? i : -1; });
-    if (fenceAt >= 0) return `${lines.slice(0, fenceAt).map(String).join("\n")}${fenceAt ? "\n" : ""}${closeFenced(lines.slice(fenceAt))}`;
+    const open = openFenceAt(lines);
+    if (open) return `${lines.slice(0, open.at).join("\n")}${open.at ? "\n" : ""}${closeFenced(lines.slice(open.at), open.ch.repeat(open.n))}`;
     return closeProse(holdTail(lines).join("\n"));
 }
 
 /** An open fence and its code so far, closed. A fence line still being typed (` `` `) is not a fence yet. An open
  *  ```mermaid fence is closed as plain code (`mermaid_open`): it is a diagram only once the model closed it, and a
  *  half-written one would otherwise be sent to be drawn on every token, and fail on most. */
-function closeFenced(fenced: string[]): string {
+function closeFenced(fenced: string[], fence: string): string {
     const [head, ...rest] = fenced;
-    const opened = /^(\s*```)mermaid\s*$/.test(head) ? head.replace(/mermaid\s*$/, "mermaid_open") : head;
-    return `${[opened, ...rest].join("\n").replace(/\n$/, "")}\n\`\`\``;
+    const opened = /^(\s*(?:`{3,}|~{3,}))mermaid\s*$/.test(head) ? head.replace(/mermaid\s*$/, "mermaid_open") : head;
+    return `${[opened, ...rest].join("\n").replace(/\n$/, "")}\n${fence}`;
 }
 
 /** Drop the trailing lines nothing can draw correctly yet. */

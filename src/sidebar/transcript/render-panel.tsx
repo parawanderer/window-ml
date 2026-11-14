@@ -524,9 +524,9 @@ function tableSourceDesc(s: TableSource): { short: string; tip: string } {
 /** One input dataframe, as a section that focus mode can fold once the step has settled. Its own component
  *  because the fold has to seed a `details`' state (see `useFocusFold`) and hooks cannot live inside a map. */
 function PyInTable({ fold, label, children }: { fold: boolean; label: ComponentChildren; children: ComponentChildren }) {
-    const [open, setOpen] = useFocusFold(fold);
+    const [open, setOpen, touched] = useFocusFold(fold);
     return (
-        <details class={`r-py-table r-py-sec${fold ? " focus-fold" : ""}`} open={open}
+        <details class={`r-py-table r-py-sec${fold ? " focus-fold" : ""}${touched ? " touched" : ""}`} open={open}
             onToggle={(e: any) => setOpen(!!e.currentTarget.open)}>
             <summary class="r-py-lbl">{label}</summary>
             {children}
@@ -1325,12 +1325,16 @@ export function RanFor({ live, ms, since, remote }: { live?: boolean; ms?: numbe
  *  Re-seeded when the MODE changes and not on every render: binding `open` straight to the signal would slam
  *  a section you had just opened shut on the panel's next poll, and never re-seeding would leave the fold not
  *  applying until the step was re-mounted. */
-function useFocusFold(fold: boolean | undefined): [boolean, (v: boolean) => void] {
+function useFocusFold(fold: boolean | undefined): [boolean, (v: boolean) => void, boolean] {
     const focus = focusMode.value;
     const [open, setOpen] = useState(!(fold && focus));
+    // Whether the READER has opened or closed it since the fold was seeded: the "folded in focus mode" note explains a
+    // section that closed itself, and means nothing on one you closed with your own hand.
+    const [touched, setTouched] = useState(false);
     const seeded = useRef(focus);
-    if (seeded.current !== focus) { seeded.current = focus; if (fold) setOpen(!focus); }
-    return [open, setOpen];
+    if (seeded.current !== focus) { seeded.current = focus; if (fold) { setOpen(!focus); setTouched(false); } }
+    // A `toggle` also fires for the seed's own change, which arrives already equal to the state: only a difference is a hand.
+    return [open, (v) => { if (v !== open) setTouched(true); setOpen(v); }, touched];
 }
 
 function PyOutSection({ label, cls, children, cite, open = true, foldInFocus, actions }: { label: string; cls: string; children: ComponentChildren; cite?: "in" | "out"; open?: boolean; foldInFocus?: boolean;
@@ -1338,9 +1342,9 @@ function PyOutSection({ label, cls, children, cite, open = true, foldInFocus, ac
     // `foldInFocus` is a CLASS, not a different `open`: focus mode is a CSS-only hide everywhere else (see
     // the FOCUS MODE block), so the section keeps one real open/closed state and turning the mode off
     // restores exactly what you left. A `details` whose openness depended on the mode would forget it.
-    const [shown, setShown] = useFocusFold(foldInFocus);
+    const [shown, setShown, touched] = useFocusFold(foldInFocus);
     const isOpen = foldInFocus ? shown : open;
-    return <details class={`r-py-sec ${cls}${foldInFocus ? " focus-fold" : ""}`} open={isOpen}
+    return <details class={`r-py-sec ${cls}${foldInFocus ? " focus-fold" : ""}${touched ? " touched" : ""}`} open={isOpen}
         onToggle={(e: any) => foldInFocus && setShown(!!e.currentTarget.open)}
         {...(cite ? { "data-cite": cite } : {})}><summary class="r-py-lbl">{label}</summary>
         {/* OUTSIDE the <summary>, placed onto its line by CSS: inside it, the control's tooltip text became part of the

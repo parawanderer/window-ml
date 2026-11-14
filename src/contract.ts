@@ -80,17 +80,25 @@ export interface MlSh {
     /** Run one program and wait for it, up to `expectMs` (default: a short lease, which the `Detached` error names): past that it throws `Detached` with `e.task`
      *  and runs on; its result arrives later as a `[task <id> …]` message, and the `task` tool awaits, tails or cancels
      *  it. A non-zero exit is a result (`ok` false), not a throw; a refusal (`Denied`, `Refused`, `BadRequest`) throws
-     *  with `e.code`. Each output comes back as its first 64 KiB of text (`text`,
-     *  `complete`) and a `@tool:` pointer (`token`) to the whole. `ran` says where it ran: `host-sandbox` (writes only
-     *  inside the workspace folders, no network) or `host-plain`. A call past its memory bound is killed: `killed`
-     *  is `"oom"`, and `peakFootprint`/`memoryBound` are bytes; `cpuMs` is the CPU time it used, in milliseconds,
-     *  measured and never bounded (absent from an older host). `envelope` is the sandbox scope the host APPLIED
-     *  (`write` is `"today"` for the floor), or `null` when an older host reported nothing (unknown, never narrow);
+     *  with `e.code`. `Denied` is the person (or a policy) saying no: `e.message` is `ml.sh: the person declined` and their note when they
+     *  gave one. Uncaught, it ends the exec at that call, so what follows never runs and is never asked; catch it to carry
+     *  on without that call (`try { r = await ml.sh.run(argv) } catch (e) { if (e.code !== "Denied") throw e }`),
+     *  and treat what they wrote as an instruction. Each output comes back as its first 64 KiB of text (`text`,
+     *  `complete`) and a `@tool:` pointer (`token`) to what the host kept. `complete` false means `text` is
+     *  only that head, or a binary stream's one-line note (`read` the rest); `truncated` true means the host
+     *  stopped keeping output at its capture cap, so the pointer is cut too and `complete` is false.
+     *  `ran` says where it ran: `host-sandbox` (writes only inside the workspace folders, no network) or `host-plain`.
+     *  A call past its memory bound is killed: `killed` is `"oom"`, and `peakFootprint`/`memoryBound` are bytes;
+     *  `cpuMs` is the CPU time it used, in milliseconds, measured and never bounded (absent from an older host).
+     *  `envelope` is the sandbox scope the host APPLIED
+     *  (`write` is `"today"` when the call sent no envelope and the host applied its floor: writes only inside the
+     *  workspace folders; it is not a lease), or `null` when an older host reported nothing (unknown, never narrow);
      *  `asked` is what was sent on start, absent when nothing was. `protectedChanged` lists the protected names
      *  (`.envrc`, `.git/hooks/*`, …) that changed DURING the call, by it or by anything else, `[]` when none, or `null`
      *  when the host reported nothing (unknown, never "none"); `protectedChangedTruncated` means the list was cut.
      *  When `ml.current.runtime.capabilities` reports `shellTilde`, an argument or `cwd` that is `~` or starts with `~/`
-     *  begins at the home directory; nothing else is expanded.
+     *  begins at the home directory; nothing else is expanded. The expanded path is checked like any other: a `cwd` of
+     *  `~` is refused (`CwdOutsideRoots`) unless home is inside a workspace folder.
      * @param argv the program and its arguments, e.g. `["rg", "-n", "TODO", "src"]`
      * @param opts `cwd` (default: the first workspace folder, so usually leave it out; absolute, or relative to that folder), `env` (variables to add; most make the
      *   call ask), `timeoutMs` (the host kills it then; default 120 s), `expectMs` (how long you expect it to take) */
@@ -106,8 +114,9 @@ export interface MlSh {
         protectedChanged: { root: string; name: string; change: "created" | "modified" | "removed" }[] | null;
         protectedChangedTruncated?: true;
     }>;
-    /** Read a range of an output past its head (`complete` false), by its `token`, while the run lasts. Text comes back
-     *  as `text`; binary output as `bytes` (`{ $bytes: base64 }`).
+    /** Read a range of an output past its head (`complete` false), by its `token`, until the agent run that made it
+     *  ends (not the program's lifetime; also gone if the host restarts or evicts it, or the extension's worker
+     *  restarts). Text comes back as `text`; binary output as `bytes` (`{ $bytes: base64 }`).
      * @param token the output's `@tool:` pointer
      * @param range `offset` and `length` in bytes (default 0 and 64 KiB; at most 512 KiB) */
     read(token: string, range?: { offset?: number; length?: number }): Promise<{ offset: number; length: number; size: number; eof: boolean; text?: string; bytes?: { $bytes: string } }>;
@@ -130,8 +139,11 @@ export interface MlApi {
      *  only inside a read-only `exec` of an agent run the extension hosts; a page's `window.ml` has no `current`. */
     readonly current?: import("./agent/current-context").CurrentSnapshot;
     /** Run PROGRAMS on the person's machine, through the process host they installed: `await ml.sh.run(["git",
-     *  "status"])`, an argument list, never a shell command line (no pipes, globs or `$VAR`). There only inside an
-     *  approved `exec` that names `ml.sh`, of a run the extension hosts, and only when `ml.current.runtime.capabilities` reports
+     *  "status"])`, an argument list, never a shell command line (no pipes, globs or `$VAR`).
+     *  A program with a manifest (`git`, `rg`, `ls`, `wc`, …) called as an argv, `["wc", "-l", "f.txt"]` or
+     *  `["ls"]`, can run without asking when its effects allow it; `["bash", "-c", …]` or `["sh", "-c", …]`
+     *  has no manifest, so it asks unless a policy covers it. There only inside an approved `exec` that names
+     *  `ml.sh`, of a run the extension hosts, and only when `ml.current.runtime.capabilities` reports
      *  `shellHost`; a page's `window.ml` has none. Each call is decided on what the host resolved (program, folder,
      *  paths, sandbox): a policy or the built-in default answers, or the person is asked, and the call waits. With no host
      *  answering, a call is refused naming Settings, Extension, Advanced, Programs (ml.sh), where the person installs it. */

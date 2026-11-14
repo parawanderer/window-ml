@@ -74,10 +74,11 @@ const SPAN_STEPS_MAX = 256;
  * @param program `argv[0]` as the script wrote it
  * @param r the call's result
  * @param unasked what let it run without asking, for a call no one was asked about
+ * @param endedAt when it finished (epoch ms); now, unless a caller has the instant
  * @returns the span
  */
-export function shSpanOf(program: string, r: Pick<ShResult, "durationMs" | "peakFootprint" | "memoryBound" | "killed" | "cpuMs">, unasked?: ShUnasked): ShCallSpan {
-    return { program: program.split("/").pop() || program, durationMs: r.durationMs,
+export function shSpanOf(program: string, r: Pick<ShResult, "durationMs" | "peakFootprint" | "memoryBound" | "killed" | "cpuMs">, unasked?: ShUnasked, endedAt: number = Date.now()): ShCallSpan {
+    return { program: program.split("/").pop() || program, durationMs: r.durationMs, endedAt,
         ...(r.peakFootprint !== undefined ? { peakFootprint: r.peakFootprint } : {}),
         ...(r.memoryBound !== undefined ? { memoryBound: r.memoryBound } : {}),
         ...(r.cpuMs !== undefined ? { cpuMs: r.cpuMs } : {}),

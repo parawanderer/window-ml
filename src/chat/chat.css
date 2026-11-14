@@ -794,6 +794,10 @@ button.chat-page-go:hover { color: var(--fg); }
 }
 @starting-style { .chat.calm .pending-note { opacity: 0; height: 0; padding-top: 0; padding-bottom: 0; } }
 .chat.calm .pending-note.dup, .chat.calm .pending-note.blocked, .chat.calm .pending-note.leaving { opacity: 0; height: 0; padding-top: 0; padding-bottom: 0; }
+/* `.dup-live` is the dup that must NOT ease: the stream's own text or "thinking N tokens" appears in the same frame, so a
+   220 ms fold left two thinking lines on screen at once ("thinking ~1 tokens…" over "Thinking… (~0 tok)"). That line is
+   replaced, not folded. A running tool's `.dup` still folds: nothing is drawn in its place in the same frame. */
+.chat.calm .pending-note.dup-live { transition: none; }
 @media (prefers-reduced-motion: reduce) { .chat.calm .pending-note { --pending-out-ms: 0; transition: none; } }
 .chat.calm .pending-note .pbar { display: none; }
 .chat.calm .pending-note .fbusy { display: block; }
@@ -949,6 +953,14 @@ button.chat-page-go:hover { color: var(--fg); }
 /* `--astep-close-ms` is how this surface tells the component how long to keep the body mounted on the way out —
    the component reads it and waits, and a surface that sets nothing closes in the same tick it always has. */
 .chat.calm .astep-body { animation: chat-step-open .22s cubic-bezier(.4, 0, .2, 1); --astep-close-ms: 200; }
+/* `.handoff`: a step that has just replaced the call the model was typing out. Its body begins at the live block's last
+   height (`--handoff-h`) and eases to its own, so the reformatted code reads as the typed text settling rather than the
+   block collapsing and reopening. Cleared after 400 ms (agent-detail.tsx), so a later open eases from nothing as usual. */
+.chat.calm .astep.handoff .astep-body { animation: chat-step-handoff .26s cubic-bezier(.4, 0, .2, 1); }
+@keyframes chat-step-handoff {
+    from { height: var(--handoff-h, 0px); opacity: .55; overflow: hidden; }
+    to { height: auto; opacity: 1; overflow: hidden; }
+}
 .chat.calm .astep-body.closing { animation: chat-step-close .2s cubic-bezier(.4, 0, .2, 1) forwards; }
 /* An embedded output folds and opens on the same curve. It eases in only when OPENED AGAIN (`.opening`): one drawn
    with its answer must simply be there. */
@@ -1009,7 +1021,7 @@ button.chat-page-go:hover { color: var(--fg); }
 @keyframes chat-tool-in { from { opacity: 0; transform: translateX(-12px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
     .chat.calm .aturn.fresh { animation: none; }
-    .chat.calm .astep.tool.fresh, .chat.calm .astep.tool.fresh.pending { animation: none; }
+    .chat.calm .astep.tool.fresh, .chat.calm .astep.tool.fresh.pending, .chat.calm .astep.handoff .astep-body { animation: none; }
 }
 
 /* THE GRANT CARD IS NOT A WARNING HERE. In the panel it is a warm card because it establishes a session-long
@@ -1123,7 +1135,8 @@ button.chat-page-go:hover { color: var(--fg); }
    the stream landing as a block. The component paces them and keeps each fade going across redraws by its delay;
    this says how long one takes. Opacity only: a word that moved as it arrived would make the line it is on shimmer. */
 .chat.calm .asst-body { --word-fade-ms: 380; }
-.chat.calm .asst-body .w-in { animation: chat-word-in calc(var(--word-fade-ms) * 1ms) cubic-bezier(.3, 0, .2, 1) backwards; }
+/* A code span or block, a quote or a table (`b-in`) arrives with its first word, as the words do (`w-in`): its box is not drawn ahead of the text (streaming-md.tsx). */
+.chat.calm .asst-body .w-in, .chat.calm .asst-body .b-in { animation: chat-word-in calc(var(--word-fade-ms) * 1ms) cubic-bezier(.3, 0, .2, 1) backwards; }
 @keyframes chat-word-in { from { opacity: 0; } }
 @keyframes chat-asst-shrink { from { height: auto; opacity: 1; } to { height: 1lh; opacity: 0; } }
 @keyframes chat-asst-grow { from { height: 1lh; opacity: 0; } to { height: auto; opacity: 1; } }
@@ -2226,6 +2239,14 @@ button.chat-page-go:hover { color: var(--fg); }
    moves and the only evidence is a number changing — which is the pop. `bumped` is set by the component only
    when the tally grew (step-streak.tsx), never on the row's first paint. */
 .chat.calm .astreak-n.bumped { animation: chat-streak-bump .28s cubic-bezier(.2, .8, .2, 1); }
+/* THE ml.sh FOOTER: its count ticks as the streak's does when a call joins it, and the card you just answered eases away
+   (height, then nothing) over the same beat, so the call visibly goes into the footer instead of vanishing. */
+.chat.calm .shc-n.bumped { display: inline-block; animation: chat-streak-bump .28s cubic-bezier(.2, .8, .2, 1); }
+.chat.calm .astep-approve.ask.leaving { overflow: hidden; pointer-events: none; animation: chat-ask-leave .26s cubic-bezier(.4, 0, .2, 1) forwards; }
+@keyframes chat-ask-leave {
+    from { opacity: 1; max-height: 640px; }
+    to { opacity: 0; max-height: 0; margin-top: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; }
+}
 @keyframes chat-streak-bump {
     0% { transform: scale(1); }
     40% { transform: scale(1.14); }
@@ -2256,5 +2277,6 @@ button.chat-page-go:hover { color: var(--fg); }
     .chat.calm .astreak.grouped > .astreak-head,
     .chat.calm .astreak.forming > .astreak-head,
     .chat.calm .astreak.refolding, .chat.calm .astreak.refolding > .astreak-head,
-    .chat.calm .astreak-n.bumped { animation: none; }
+    .chat.calm .astreak-n.bumped, .chat.calm .shc-n.bumped { animation: none; }
+    .chat.calm .astep-approve.ask.leaving { animation: none; display: none; }
 }
