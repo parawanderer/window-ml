@@ -571,6 +571,10 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
                             failed={stepFailed}
                             raw={<RawArgs args={args || {}} schema={paramSchema} />} rawText={rawArgsText(args || {})} />
                         : null}
+                    {/* THE PROGRAMS THIS STEP STARTED (`ml.sh`), between the code that started them and what it printed: it is the order
+                        things happened in, and it folds and unfolds with the step. A call still WAITING on you stays outside
+                        (`AskList`, below the step), where it can be answered. */}
+                    <ShCalls st={st} />
                     <IoBlock label="Out" tip="What the tool returned to the model." marks={st.streamMarks} reserve={inFlight && st.streamOutput != null}
                         /* HOW LONG IT RAN. `toolMs` is the tool's own wall clock, not the step's — a human at
                            an approval gate is the step's time and none of the machine's work. Live, it ticks
@@ -595,10 +599,6 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
                         DevTools only. The HUD is a glance surface for someone driving a task and a hex handle
                         there is noise; this belongs on the surface you open when you are debugging. */}
                     {st.token && surface.value !== "card" ? <TokenChip token={st.token} /> : null}
-                    {/* THE PROGRAMS THIS STEP STARTED (`ml.sh`), as a footer of the step's own body: they are part of what the
-                        step did, so they fold and unfold with it instead of hanging under a collapsed row. A call still
-                        WAITING on you is the one thing that stays outside (`AskList`, below), where it can be answered. */}
-                    <ShCalls st={st} />
                 </div>
                 : null}
             {/* On-demand plain-English gloss for a code step — CARD's Show-work trace only (the debug panel
