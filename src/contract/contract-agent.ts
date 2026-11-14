@@ -229,6 +229,9 @@ export interface ShCallSpan {
     peakFootprint?: number;
     memoryBound?: number;
     killed?: "oom";
+    /** When the call finished, in epoch milliseconds (the worker's clock): what lets a surface put the calls of one step
+     *  in the order they happened, asked and unasked together. Absent from a record written before it existed. */
+    endedAt?: number;
     /** The CPU time the host measured, in milliseconds (host 0.7.0): a second fact beside memory, never bounded.
      *  Absent from an older host: absent is not zero. */
     cpuMs?: number;
