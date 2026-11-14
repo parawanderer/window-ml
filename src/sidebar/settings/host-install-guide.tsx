@@ -19,7 +19,7 @@ export function HostInstallGuide({ install, answered, busy, onCheck }: { install
     return (
         <div class="shell-install">
             <div class="set-note"><b>No process host answers yet.</b> Paste this in a terminal. It downloads window-ml-host {install.tag} from its GitHub release, checks the installer and then every download against a sha256 pinned in this extension, and registers the host for <b>this extension only</b> (id shown in the line). It needs no root and writes only <code>~/.local/bin/wmlhost</code> and Chrome's native-messaging folder. To undo it: {install.undo}.</div>
-            <CopyableCode text={install.line} />
+            <CopyableCode text={install.line} block tip="copy the install command" />
             <div class="set-hint">
                 {answered === false ? "No host answered. Run the line, then check again. " : ""}
                 <button class="test-btn" disabled={busy} onClick={onCheck}>Check again</button>

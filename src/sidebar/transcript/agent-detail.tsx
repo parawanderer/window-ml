@@ -644,12 +644,12 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
 export function TurnProse({ text, ts }: { text: string; ts?: number }) {
     const [collapsed, setCollapsed] = useState(false);
     const p = collapsedPreview(text);
-    // The time this was said, as under a final answer. `.prose-stamp` is the same `Stamp`, so the hover shows the
-    // exact instant.
-    const stamp = ts ? <span class="prose-stamp"><Stamp ts={ts} /></span> : null;
+    // The row UNDER the prose, the final answer's own: copy at the right, then the time it was said. `mrow` and
+    // `sp` are the answer's classes, so the two read as one family in every view.
+    const meta = <div class="mrow prose-meta"><span class="sp" /><CopyBtn text={text} tip="copy markdown" />{ts ? <Stamp ts={ts} /> : null}</div>;
     // Nothing to collapse (a short single-line thought that fits the preview whole) → no toggle chevron; it
     // would only mislead ("expand" reveals nothing). Just render the prose.
-    if (!p.more) return <div class="aturn-prose no-toggle"><div class="md" dangerouslySetInnerHTML={{ __html: markdown(text, { math: true }) }} />{stamp}</div>;
+    if (!p.more) return <div class="aturn-prose no-toggle"><div class="md" dangerouslySetInnerHTML={{ __html: markdown(text, { math: true }) }} />{meta}</div>;
     return (
         <div class={`aturn-prose${collapsed ? " collapsed" : ""}`}>
             <button class="who-toggle prose-tri" title={collapsed ? "expand" : "collapse"} onClick={() => setCollapsed(v => !v)}>
@@ -658,7 +658,7 @@ export function TurnProse({ text, ts }: { text: string; ts?: number }) {
             {collapsed
                 ? <span class="asst-collapsed" onClick={() => setCollapsed(false)}>{p.text}{p.more ? " …" : ""}</span>
                 : <div class="md" dangerouslySetInnerHTML={{ __html: markdown(text, { math: true }) }} />}
-            {stamp}
+            {meta}
         </div>
     );
 }
