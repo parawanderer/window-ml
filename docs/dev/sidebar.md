@@ -290,8 +290,9 @@ grammar in `src/link-address.ts`, which the worker shares.
   a code span or a fence. Tool output, descriptions and the exports call `markdown()` without it, so a link a page
   wrote stays its literal text there.
 - **A button, never an `<a href>`.** It carries `data-addr`; one click handler per container (`onAddressClick`) parses
-  the address again at click time and calls `services().openAddress`, so the HTML is never trusted as a route. A
-  surface with no `openAddress` (the chat page, for now) draws every link as its label.
+  the address again at click time and calls `services().openAddress`, so the HTML is never trusted as a route. The
+  extension's chat page opens one by setting its own hash (`chat-ext.tsx`); a surface with no `openAddress` (the web
+  and phone chat pages, for now) draws every link as its label.
 - **On the HUD card, which draws no Settings, the worker opens the chat page at the address** (`OPEN_CHAT_PAGE`,
   `sw-open-chat.ts`), or focuses it where it is open; the popup's two buttons go the same way. The message is not in
   `HANDLE_MAP` and is refused from anything but an extension page, by the sender's URL: the card is our iframe in a
