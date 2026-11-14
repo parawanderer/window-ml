@@ -354,7 +354,7 @@ as in AGENTS.md — they are all under `src/`.
   and being continued past it, where the boilerplate answer collapses into a seam naming the budget. That part
   caught a fold merging ACROSS the seam, so the divider rendered under all seven steps instead of in the middle
   of them — a plausible-looking order that nothing throws on and no finished transcript would show.
-  PART TWO turns on the ⋮ menu's "Group all tool calls" and walks the three things that rule still owes you: a
+  PART TWO turns on Settings → This page's "Group all tool calls" and walks the three things that rule still owes you: a
   mixed run becoming one row counted in CALLS and naming every tool; a pending gate standing OUTSIDE the group and
   folding in once answered; and a citation in the answer opening the group the step it names is now inside.
   It exists because a finished transcript cannot show you any of that: every clause is about the turns AROUND a

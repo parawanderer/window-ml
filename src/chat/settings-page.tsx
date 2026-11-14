@@ -15,7 +15,8 @@ import { mainView, useEscapeCloses } from "./nav";
 import type { ChatStore } from "./chat-store";
 import { RuntimeSheet } from "./runtime-sheet";
 import { ThemeSeg } from "./theme-pick";
-import { PANEL_SIZES, codeSize, panelSize, setCodeSize, setPanelSize } from "./view-mode";
+import { PANEL_SIZES, calm, codeSize, panelSize, setCodeSize, setGroupAll, setPanelSize } from "./view-mode";
+import { groupAllTools } from "../sidebar/store";
 import { CODE_SIZES } from "../native/text-size";
 import { askNotify, notifyAllowed, notifyState, type NotifyState } from "./notify";
 import { NOTIFY_WHAT, notifyDeniedNote } from "./reminders";
@@ -88,6 +89,18 @@ export function SettingsPage({ browser, housekeeping, pairing, store }: { browse
                             </div>
                             <pre class="code chat-set-sample" aria-hidden="true">{"for i in range(3):\n    print(f\"{i} hello\")"}</pre>
                             <NotifyRow />
+                            <div class="chat-set-row">
+                                <div class="chat-set-label">
+                                    <span>Group all tool calls</span>
+                                    <span class="chat-set-hint">{calm.value ? "One row per run of work, whatever the tools. What the model said stays visible." : "Only in Calm view: the detailed view shows every call."}</span>
+                                </div>
+                                <div class="chat-seg" role="radiogroup" aria-label="Group all tool calls">
+                                    {([[true, "On"], [false, "Off"]] as const).map(([v, label]) => (
+                                        <button key={label} role="radio" aria-checked={groupAllTools.value === v} disabled={!calm.value}
+                                            class={`chat-seg-opt${groupAllTools.value === v ? " on" : ""}`} onClick={() => setGroupAll(v)}>{label}</button>
+                                    ))}
+                                </div>
+                            </div>
                             <div class="chat-set-row">
                                 <div class="chat-set-label">
                                     <span>Panel text size</span>

@@ -44,12 +44,9 @@ async function open(viewport, hash = "", prefs = null) {
  *  Named because five tests are about that rule and none of them should break the day its default moves again:
  *  "group all tool calls" is ON by default now, and these are the tests of what it replaced. */
 const ORDINARY_FOLD = { "view.groupAll": false };
-/** Open the gear's READING group, where Calm view and the folding toggle live. `/^Calm view/` and not the bare
- *  string because a menu row's accessible name is its label AND its note, and the folding row's note has to say
- *  "only in Calm view" — which makes the plain name match two rows. */
+/** Open the gear menu, where Calm view is a top-level row (the folding toggle is in Settings → This page). */
 async function reading(page) {
     await page.locator(".chat-gear-btn").first().click();
-    await page.getByRole("menuitem", { name: /^Reading/ }).click();
 }
 const calmRow = (page) => page.getByRole("menuitemcheckbox", { name: /^Calm view/ });
 // The row in the session's OWN runtime group. A session waiting on you is also listed in "Needs you" at the top, so
@@ -1079,25 +1076,32 @@ test("group all tool calls: a mixed run becomes one row, a pending gate does not
     });
     await page.goto(`${server.url}#s=laptop%3A5e6f7a80`);
 
-    await page.locator(".chat-gear-btn").first().click();
-    // Under "Reading", with Calm view: the two are the coarse and fine of one choice about how much of the
-    // machinery a transcript shows, so they live under one head rather than loose at the menu's top level.
-    await page.getByRole("menuitem", { name: /^Reading/ }).click();
-    const toggle = page.getByRole("menuitemcheckbox", { name: "Group all tool calls" });
-    await expect(toggle).toHaveAttribute("aria-checked", "true");   // ON by default in the reading view
+    // In Settings → This page, with the page's other display preferences (not the ⋮ menu: it is the fine half of
+    // Calm view's choice, and a row there could not say it only applies inside calm view).
+    const openGroupAllSettings = async () => {
+        await page.locator(".chat-gear-btn").first().click();
+        await page.getByRole("menuitem", { name: "Settings" }).click();
+        await page.getByRole("tab", { name: "This page" }).click();
+    };
+    await openGroupAllSettings();
+    const row = page.getByRole("radiogroup", { name: "Group all tool calls" });
+    await expect(row.getByRole("radio", { name: "On" })).toHaveAttribute("aria-checked", "true");   // ON by default in the reading view
 
     // TURNED OFF, the ordinary rule produces no MIXED group at all — it cannot, by construction — which is what
     // the toggle is for and what makes the assertions after it mean something.
-    await toggle.click();
+    await row.getByRole("radio", { name: "Off" }).click();
+    await page.getByRole("button", { name: "Close settings" }).click();
     await expect(page.locator(".astreak-calls")).toHaveCount(0);
-    await page.locator(".chat-gear-btn").first().click();
-    await page.getByRole("menuitem", { name: /^Reading/ }).click();
-    await page.getByRole("menuitemcheckbox", { name: "Group all tool calls" }).click();
+    await openGroupAllSettings();
+    await row.getByRole("radio", { name: "On" }).click();
+    await page.getByRole("button", { name: "Close settings" }).click();
 
     // The mixed run is one row now, counted in CALLS and naming every tool, because it can no longer name one.
     // Found BY that — "N tool calls" is what a multi-tool row says and a single-tool one never does, so this
     // cannot drift onto one of the session's own same-tool groups the way `hasText: "python_exec"` did.
-    const mixed = page.locator(".astreak").filter({ hasText: /tool calls/ }).first();
+    // Picked by `look`, which only this test emits: the demo session's own first turn (a remark plus an `exec`, then
+    // two `python_exec`) folds into a "3 tool calls" row of its own, now that a turn's remark no longer blocks its calls.
+    const mixed = page.locator(".astreak").filter({ has: page.locator(".astreak-tools", { hasText: "look" }) });
     await expect(mixed.locator(".astreak-calls")).toContainText("3 tool calls");
     await expect(mixed.locator(".astreak-tools")).toHaveText("exec, look, python_exec");
 
@@ -1116,9 +1120,8 @@ test("group all tool calls: a mixed run becomes one row, a pending gate does not
     // The preference is this DEVICE's, like Calm view, and the menu says so rather than the row having to.
     // (The round trip through storage is `tests/chat-view-prefs.test.mjs`; a reload here would lose the steps
     // this test emitted, since the fake host's history lives in the page.)
-    await page.locator(".chat-gear-btn").first().click();
-    await page.getByRole("menuitem", { name: /^Reading/ }).click();
-    await expect(page.getByRole("menuitemcheckbox", { name: "Group all tool calls" })).toHaveAttribute("aria-checked", "true");
+    await openGroupAllSettings();
+    await expect(row.getByRole("radio", { name: "On" })).toHaveAttribute("aria-checked", "true");
     expect(errors).toEqual([]);
     await page.close();
 });

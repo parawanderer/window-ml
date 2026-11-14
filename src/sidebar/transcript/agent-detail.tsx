@@ -640,12 +640,15 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
 // A turn's PROSE (content) — what the model SAYS this step. Rendered like the final answer: plain
 // markdown, EXPANDED by default, no status dot / "thought" label / box. Collapsible via a subtle
 // chevron (→ a one-line preview), same affordance the answer bubble uses.
-export function TurnProse({ text }: { text: string }) {
+export function TurnProse({ text, ts }: { text: string; ts?: number }) {
     const [collapsed, setCollapsed] = useState(false);
     const p = collapsedPreview(text);
+    // The time this was said, as under a final answer. `.prose-stamp` is the same `Stamp`, so the hover shows the
+    // exact instant.
+    const stamp = ts ? <span class="prose-stamp"><Stamp ts={ts} /></span> : null;
     // Nothing to collapse (a short single-line thought that fits the preview whole) → no toggle chevron; it
     // would only mislead ("expand" reveals nothing). Just render the prose.
-    if (!p.more) return <div class="aturn-prose no-toggle"><div class="md" dangerouslySetInnerHTML={{ __html: markdown(text, { math: true }) }} /></div>;
+    if (!p.more) return <div class="aturn-prose no-toggle"><div class="md" dangerouslySetInnerHTML={{ __html: markdown(text, { math: true }) }} />{stamp}</div>;
     return (
         <div class={`aturn-prose${collapsed ? " collapsed" : ""}`}>
             <button class="who-toggle prose-tri" title={collapsed ? "expand" : "collapse"} onClick={() => setCollapsed(v => !v)}>
@@ -654,6 +657,7 @@ export function TurnProse({ text }: { text: string }) {
             {collapsed
                 ? <span class="asst-collapsed" onClick={() => setCollapsed(false)}>{p.text}{p.more ? " …" : ""}</span>
                 : <div class="md" dangerouslySetInnerHTML={{ __html: markdown(text, { math: true }) }} />}
+            {stamp}
         </div>
     );
 }
@@ -674,9 +678,9 @@ export function AgentTurn({ turn, max, hash }: { turn: AgentTurnGroup; max?: num
     const [fresh] = useState(() => !inStreak && !history && justArrived(turn.tools[turn.tools.length - 1]?.ts));
     return (
         <div class={`aturn${fresh ? " fresh" : ""}`}>
-            <div class="aturn-head"><StepPill step={turn.localStep} max={max} /></div>
+            {turn.half === "tools" ? null : <div class="aturn-head"><StepPill step={turn.localStep} max={max} /></div>}
             {turn.reasoning ? <ThoughtBlock thought={turn.reasoning} tokens={turn.reasoningTokens} /> : null}
-            {turn.thought ? <TurnProse text={turn.thought} /> : null}
+            {turn.thought ? <TurnProse text={turn.thought} ts={turn.thoughtTs} /> : null}
             {turn.tools.map((st, i) => <ToolStep key={`${st.tool}-${i}`} st={st} hash={hash} slot={i} />)}
         </div>
     );
@@ -1047,8 +1051,8 @@ export function AgentRunView({ s }: { s: Session }) {
                 // `live` is the same answer `foldStreaks` is given, and it is what lets the streak tell a fold
                 // happening IN VIEW (collapse the rows you were reading) from one drawn into a transcript you just
                 // opened (already folded, no animation).
-                ? { pos: g.step, ts: 0, weight: g.turns.length, el: <StepStreak key={`k${g.step}`} s={g} render={t => <AgentTurn key={`t${t.step}`} turn={t} max={s.maxSteps} hash={s.hash} />} /> }
-                : { pos: g.step, ts: 0, el: <AgentTurn key={`t${g.step}`} turn={g} max={s.maxSteps} hash={s.hash} /> }),
+                ? { pos: g.step, ts: 0, weight: g.turns.length, el: <StepStreak key={`k${g.step}`} s={g} render={t => <AgentTurn key={`t${t.step}${t.half ?? ""}`} turn={t} max={s.maxSteps} hash={s.hash} />} /> }
+                : { pos: g.step, ts: 0, el: <AgentTurn key={`t${g.step}${g.half ?? ""}`} turn={g} max={s.maxSteps} hash={s.hash} /> }),
         // A page-transition divider right after each SUCCESSFUL navigate turn (skip a denied/errored one — the
         // page didn't actually change). Sits at step+0.3: after the navigate group, before its next turn/answer.
         ...(s.steps || []).filter(st => st.tool === "navigate" && st.approval !== "denied" && !!st.result && !st.result.startsWith("Error") && !!navTargetOf(st))

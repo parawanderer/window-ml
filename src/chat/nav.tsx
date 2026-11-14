@@ -11,11 +11,11 @@ import type { ComponentChildren } from "preact";
 import type { RuntimeInfo, SessionKey } from "../session/session-host";
 import { IconBrain, IconCompose, IconDock, IconFold, IconGear, IconMenu, IconSearch } from "../sidebar/icons";
 import { MenuGroup, MenuItem } from "./menu";
-import { benchOpen, groupAllTools, openBench, view } from "../sidebar/store";
+import { benchOpen, openBench, view } from "../sidebar/store";
 import type { ChatStore } from "./chat-store";
 import type { ChatExtras } from "./extras";
 import { StartMenu, type StartKind } from "./new-session";
-import { calm, logOpen, pane, setCalm, setGroupAll, setListOpen, setLogOpen, setPane, setStateOpen, stateOpen } from "./view-mode";
+import { calm, logOpen, pane, setCalm, setListOpen, setLogOpen, setPane, setStateOpen, stateOpen } from "./view-mode";
 import { useDismiss } from "../sidebar/use-dismiss";
 
 /** What the MAIN pane shows instead of a session: the search page, this device's settings, or the attention list. Not
@@ -107,23 +107,11 @@ export function GearMenu({ graphsRt, benchRt, logRt, stateRt, labelled }: {
         <div class="chat-gear" ref={wrap}>
             {show ? (
                 <div class={`chat-menu chat-gear-menu${closing ? " leaving" : ""}`} role="menu" aria-label="Page menu">
-                    {/* HOW MUCH OF THE MACHINERY YOU SEE WHILE READING — the two rows that answer that, under one
-                        head. They were loose at the top level, where "Calm view" and a folding toggle read as two
-                        unrelated switches rather than the coarse and fine of one choice. The group says which
-                        view is on in its own row, so the mode is still legible without opening it. */}
-                    <MenuGroup icon={<IconBrain />} label="Reading" detail={calm.value ? "Calm" : "Detailed"}>
-                        {(sub) => <>
-                            <MenuItem sub={{ i: 0, open: sub }} icon={null} label="Calm view" note="the conversation, with the machinery one hover away"
-                                on={calm.value} onPick={pick(() => setCalm(!calm.value))} />
-                            {/* SHOWN AND DISABLED outside calm, not hidden: "is this only available in calm view?"
-                                is a question the menu should answer, and a row that vanishes answers it by making
-                                you wonder whether you imagined it. `note` carries the reason, which is what that
-                                slot is for. */}
-                            <MenuItem sub={{ i: 1, open: sub }} icon={null} label="Group all tool calls"
-                                note={calm.value ? "one row per run of work" : "only in Calm view — the detailed view is the one that shows every call"}
-                                off={!calm.value} on={groupAllTools.value} onPick={pick(() => setGroupAll(!groupAllTools.value))} />
-                        </>}
-                    </MenuGroup>
+                    {/* CALM VIEW is the one reading choice that belongs at the top level: it is the coarse switch, and
+                        its fine one ("Group all tool calls") lives in Settings → This page with the page's other
+                        display preferences, where a switch that only applies inside calm view can say so. */}
+                    <MenuItem icon={<IconBrain />} label="Calm view" note="the conversation, with the machinery one hover away"
+                        on={calm.value} onPick={pick(() => setCalm(!calm.value))} />
                     {/* THE PANELS TOGETHER, under one row. These two are a different kind of thing from the rows
                         around them: not how the page reads or what it is set to, but an extra surface opened ONTO a
                         runtime — so each needs to say which device it would open on, and neither belongs beside
