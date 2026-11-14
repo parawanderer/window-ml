@@ -4,7 +4,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 
-const { cardFromVerdict, shownText, rowsFromAnswer, sameRows, lockEntries, preloadedClosure } = await import("../src/python/pkg-card.ts");
+const { cardFromVerdict: cardOf, shownText, rowsFromAnswer, sameRows, lockEntries, preloadedClosure } = await import("../src/python/pkg-card.ts");
+const { SHIPPED_LOCK_FILES } = await import("../src/python/pkg-shipped.gen.ts");
+const { PY_PACKAGE_LOADS } = await import("../src/python/python-env.ts");
+/** Every file ships: the tests of the other rules use made-up lock file names. `not-shipped` has its own section. */
+const EVERY = { has: () => true };
+const cardFromVerdict = (v, mirrored, shipped = EVERY) => cardOf(v, mirrored, shipped);
 const { verdict, VERDICT_BOUNDS } = await import("../src/python/pkg-verdict.ts");
 const { canonicalName } = await import("../src/python/pkg-pep508.ts");
 
@@ -110,6 +115,53 @@ test("real lock: a lock package with non-preloaded dependencies gives an ok card
 test("real lock: a name not in the lock gives a not-on-index refusal", { skip: skipReal }, () => {
     const c = cardFromVerdict(verdict({ name: "definitely-not-a-package-zzz" }, realCore(), () => undefined));
     assert.deepEqual(c, { ok: false, reason: "not-on-index", at: "definitely-not-a-package-zzz" });
+});
+
+// --- not-shipped: a lock row is in the core only when the extension ships its file (ruled 2026-11-13) ---
+
+test("cardFromVerdict: a lock file the extension does not ship refuses the card as not-shipped at that package", () => {
+    const v = okVerdict([pypiFile(), lockFile({ name: "attrs", filename: "attrs-26.1.0-py3-none-any.whl" })]);
+    assert.deepEqual(cardOf(v, new Set(), new Set(["numpy.whl"])), { ok: false, reason: "not-shipped", at: "attrs" });
+    assert.equal(cardOf(v, new Set(), new Set(["attrs-26.1.0-py3-none-any.whl"])).ok, true);
+});
+
+test("cardFromVerdict: with no shipped list, every lock row refuses and a PyPI-only card does not", () => {
+    assert.deepEqual(cardOf(okVerdict([lockFile()]), new Set(), new Set()), { ok: false, reason: "not-shipped", at: "numpy" });
+    assert.equal(cardOf(okVerdict([pypiFile()]), new Set(), new Set()).ok, true);
+});
+
+// Every lock package, not a sample: the card's claim for each, from the shipped list the build generated and the start-up
+// set the sandbox loads. Expected from the package's own closure: preloaded gives no row; a closure whose files all ship
+// gives "in the core" lock rows; otherwise not-shipped at an unshipped member (the default class, asserted on its own).
+test("real lock: every lock package's card matches the shipped list", { skip: skipReal }, () => {
+    const shipped = new Set(SHIPPED_LOCK_FILES);
+    const preloaded = preloadedClosure(PY_PACKAGE_LOADS, realLock, canonicalName);
+    const core = { tags: ENV.tags, markerEnv: ENV.env, python: ENV.python, lock: realLock, preloaded };
+    const closure = (k) => { const out = new Set(), q = [k]; while (q.length) { const c = q.pop(); if (out.has(c) || !realLock.has(c)) continue; out.add(c); for (const d of realLock.get(c).depends) q.push(canonicalName(d)); } return out; };
+    const counts = { preloaded: 0, inCore: 0, notShipped: 0 };
+    for (const [k, e] of realLock) {
+        const c = cardOf(verdict({ name: k }, core, () => undefined), new Set(), shipped);
+        const missing = [...closure(k)].filter((m) => !preloaded.has(m) && !shipped.has(realLock.get(m).file));
+        if (preloaded.has(k)) {
+            counts.preloaded++;
+            assert.equal(c.ok, true, `${k}: ${JSON.stringify(c)}`);
+            assert.ok(!c.files.some((f) => canonicalName(f.name) === k), `${k} is preloaded but has a row`);
+        } else if (missing.length) {
+            counts.notShipped++;
+            assert.equal(c.ok, false, `${k} has unshipped ${missing.join(", ")} but its card is ok`);
+            assert.equal(c.reason, "not-shipped", `${k}: ${JSON.stringify(c)}`);
+            assert.ok(missing.includes(canonicalName(c.at)), `${k}: refused at ${c.at}, not one of ${missing.join(", ")}`);
+        } else {
+            counts.inCore++;
+            assert.equal(c.ok, true, `${k}: ${JSON.stringify(c)}`);
+            for (const f of c.files) { assert.equal(f.source, "lock"); assert.equal(f.size, null); assert.ok(shipped.has(f.filename), `${f.filename} not shipped`); }
+            assert.ok(c.files.some((f) => canonicalName(f.name) === k), `${k}: no row of its own (${e.file})`);
+        }
+    }
+    assert.equal(counts.preloaded + counts.inCore + counts.notShipped, realLock.size);
+    // The default: with the extension shipping its start-up closure only, most of the lock is not shipped.
+    if (shipped.size) assert.ok(counts.notShipped > counts.preloaded + counts.inCore, JSON.stringify(counts));
+    else assert.equal(counts.inCore, 0, JSON.stringify(counts));
 });
 
 // --- lockEntries ---
