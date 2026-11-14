@@ -21,6 +21,11 @@ export const JT_SEEN: object = Object.freeze({});
  *  mount 50,000 rows the moment you expand it. */
 export const JT_PAGE = 200;
 
+/** The highlight.js token a primitive is drawn as in the text view, so the tree takes its colour from the code theme (which sets
+ *  `.hljs-*` globally) and the two views of one value never disagree. `.jt-<type>` keeps the panel's own colour only until a
+ *  theme says otherwise. */
+const HLJS_OF: Record<string, string> = { string: "hljs-string", number: "hljs-number", boolean: "hljs-literal", null: "hljs-literal" };
+
 /** Does the cut marker sit anywhere under `v`? It is always a LAST member, so only the chain of last members is walked,
  *  and a folded container can say "cut" in its preview without drawing its children. */
 function holdsCut(v: unknown): boolean {
@@ -124,7 +129,7 @@ export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, 
             {label ?? (k != null ? <JtKey name={k} desc={desc} unknown={unknown} /> : null)}
             {times && isTimeField(k, v)
                 ? <span class="jt-val jt-number jt-time" {...cursorTipOn(`${new Date(v).toISOString()} (${v})`)}>{timeLabel(v)}{sep}</span>
-                : <span class={`jt-val jt-${t}`}>{typeof v === "string" ? JSON.stringify(v) : String(v)}{sep}</span>}
+                : <span class={`jt-val jt-${t} ${HLJS_OF[t] ?? ""}`}>{typeof v === "string" ? JSON.stringify(v) : String(v)}{sep}</span>}
             {trail}
         </div>;
     }
