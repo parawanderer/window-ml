@@ -3,6 +3,7 @@
 // bench's) draws the same block; ui-kit's `Code` passes in the panel's line-number setting and cursor tooltip.
 
 import { useMemo, useEffect } from "preact/hooks";
+import type { ComponentChildren } from "preact";
 import { lineMapBetween } from "../line-map";
 import { highlight, beautifyJs, htmlLines, mdInline } from "./format";
 import { useCopy } from "./copy-hash";
@@ -118,12 +119,14 @@ export const CodeBlock = ({ text, lang, format, marks, lineIds, markLine, markTi
  *  pages that hand someone a line to run, such as the bench page's held-run menu.
  *  `block` is for a line long enough to WRAP, such as an installer's: the button sits in the top-right corner and stays
  *  lit, where the one-line form centres it and (on the chat page) shows it only while the pointer is over the block. */
-export const CopyableCode = ({ text, lang = "bash", block, tip = "copy" }: { text: string; lang?: string; block?: boolean; tip?: string }) => {
+export const CopyableCode = ({ text, lang = "bash", block, tip = "copy", extra }: { text: string; lang?: string; block?: boolean; tip?: string;
+    /** a control for the toolbar, drawn beside the copy button (a view toggle) */ extra?: ComponentChildren }) => {
     const { copied, copy } = useCopy();
     return (
-        <div class={`code-block copyable-code${block ? " corner" : ""}`}>
+        <div class={`code-block copyable-code${block ? " corner" : ""}${extra ? " has-extra" : ""}`}>
             <CodeBlock text={text} lang={lang} />
             <div class="code-tools">
+                {extra}
                 <button class="icon-btn tt" aria-label={tip} onClick={() => copy(text)}>
                     {copied ? <IconCheck /> : <IconCopy />}
                     <span class="tt-pop left" role="tooltip">{copied ? "copied!" : tip}</span>

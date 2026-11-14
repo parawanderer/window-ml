@@ -202,3 +202,21 @@ test("red team: an ask drawn with a missing or empty id never posts an answer th
     }
     // positive control: a well-formed ask posts its id (the test above, "Approve on an ask posts its id")
 });
+
+test("the raw-argv toggle sits in the command block's toolbar beside copy, and swaps the block to the argv", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("raw1", "tidy"));
+    await w.dispatch(agentStep("raw1", 1, { seq: 1, approval: "user", tool: "exec", arguments: { js: SCRIPT }, result: "0", shCalls: [
+        { program: "find", durationMs: 7, unasked: { by: "policy", policy: "tidy build", argv: ["find", "build", "-name", "a b"], outcome: { ran: "host-sandbox", protectedChanged: [] } } },
+    ] }));
+    await open(w);
+    // The footer is in the step's body (open it if it is folded): which of the two a build has is not this test's concern.
+    if (!w.shadow.querySelector(".shcalls")) { [...w.shadow.querySelectorAll(".astep.tool .astep-head")].find((h) => /exec/.test(h.textContent)).click(); await w.tick(); }
+    const block = () => w.shadow.querySelector(".shc-entry .copyable-code");
+    const toggle = () => block().querySelector(".code-tools .code-tool");
+    assert.equal(toggle().textContent, "raw argv", "the toggle is in the toolbar, not under the facts");
+    toggle().click();
+    await w.tick();
+    assert.match(block().textContent, /\["find","build","-name","a b"\]/, "the block now shows the argv as the model sent it");
+    assert.equal(toggle().textContent, "command");
+});
