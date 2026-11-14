@@ -1065,6 +1065,19 @@ button.chat-page-go:hover { color: var(--fg); }
 /* An open call carries the fold rail down its left, as an open group does: room for its hit strip. */
 .chat.calm .astep-body.railed { padding-left: 13px; }
 .chat.calm .aturn-prose { margin: 6px 0 14px; }
+/* A between-step remark lines up with the final answer: text flush left, the collapse chevron in the gutter (hover
+   only, as the answer's is), the time UNDER it. The panel's layout indents it past an in-row chevron. At a phone's
+   width, with no gutter, the chevron joins the time at the right end of the row beneath. */
+.chat.calm .aturn-prose, .chat.calm .aturn-prose.no-toggle { position: relative; flex-direction: column; align-items: stretch; gap: 0; padding-left: 0; }
+.chat.calm .aturn-prose .prose-stamp { align-self: flex-start; margin-top: 4px; }
+.chat.calm:not(.narrow) .aturn-prose > .prose-tri { position: absolute; top: 4px; left: -20px; margin: 0; }
+.chat.calm.narrow .aturn-prose > .prose-tri { order: 3; align-self: flex-end; margin: 0; }
+@media (hover: hover) and (pointer: fine) {
+    .chat.calm:not(.narrow) .aturn-prose > .prose-tri { opacity: 0; transition: opacity .18s ease; }
+    .chat.calm:not(.narrow) .aturn-prose:hover > .prose-tri,
+    .chat.calm:not(.narrow) .aturn-prose > .prose-tri:focus-visible { opacity: 1; }
+    @media (prefers-reduced-motion: reduce) { .chat.calm:not(.narrow) .aturn-prose > .prose-tri { transition: none; } }
+}
 .chat.calm .msg.user { margin-bottom: 22px; }
 /* …and room ABOVE it: a reply starting immediately under your own bubble reads as one block of text
    with a shape in the middle, rather than as an answer to something. */
@@ -1886,6 +1899,19 @@ button.chat-page-go:hover { color: var(--fg); }
 .rt-models::-webkit-scrollbar-track, .tp-list::-webkit-scrollbar-track { background: transparent; }
 .rt-models::-webkit-scrollbar-thumb, .tp-list::-webkit-scrollbar-thumb { background: var(--panel-2); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
 .rt-models::-webkit-scrollbar-thumb:hover, .tp-list::-webkit-scrollbar-thumb:hover { background: var(--panel-2-hover); background-clip: padding-box; }
+/* THE LONG LIST ARRIVES AND SCROLLS SOFTLY. A hundred models in a 360px box has to scroll, so what can be made gentler
+   is how it announces that: the box fades in when the answer lands (it used to pop from one line of "Asking…" to a
+   screenful), the bottom edge fades out instead of cutting a row in half (which says "more below" without a bar), and
+   the scrollbar stays transparent until the pointer is over the list or it has focus, then eases in. The gutter is
+   reserved (`scrollbar-gutter`), so showing the bar moves nothing. The padding under the last row is what lets it
+   scroll clear of the fade. */
+.rt-models { max-height: min(360px, 55vh); scrollbar-gutter: stable; padding-bottom: 28px;
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 36px), transparent);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 36px), transparent);
+    scrollbar-color: transparent transparent; transition: scrollbar-color .3s ease; animation: rt-models-in .22s ease-out; }
+.rt-models:hover, .rt-models:focus-within { scrollbar-color: var(--panel-2) transparent; }
+@keyframes rt-models-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .rt-models { animation: none; transition: none; } }
 /* The filter over it, inset like the list. */
 .rt-filter { margin: 0 12px 8px; width: calc(100% - 24px); }
 /* How many models, beside the heading. */
@@ -1900,6 +1926,9 @@ button.chat-page-go:hover { color: var(--fg); }
 .rt-none { color: var(--fg-faint); }
 /* A model's kinds (completion, tools, vision…), dim after its id. */
 .rt-kinds { color: var(--fg-faint); font-size: .84em; }
+/* A label with a hover: the dotted underline says so, and the tip says what the label means. */
+.rt-kind { cursor: help; text-decoration: underline dotted; text-decoration-color: color-mix(in srgb, var(--fg-faint) 60%, transparent); text-underline-offset: 3px; }
+.rt-kind:hover, .rt-kind:focus-visible { color: var(--fg-dim); }
 /* The sheet itself; the Storage view inside it takes the rows' inset. */
 .rt-sheet .stor { padding: 0 12px; }
 @media (prefers-reduced-motion: reduce) { .tp-group-caret, .tp-grp-body, .tp-grp::before { transition: none; } }

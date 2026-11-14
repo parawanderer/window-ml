@@ -205,7 +205,39 @@ const revisionOf = (st: AgentStep): unknown =>
  * @param all the reader's "group all tool calls" preference — fold by adjacency rather than by tool name
  * @param breaks step positions a fold may not span: where an answer or one of the reader's own messages sits
  */
-export function foldStreaks(groups: AgentTurnGroup[], { live = false, all = false, breaks = [] as readonly number[] } = {}): (AgentTurnGroup | ToolStreak)[] {
+export function foldStreaks(groups: AgentTurnGroup[], opts: { live?: boolean; all?: boolean; breaks?: readonly number[] } = {}): (AgentTurnGroup | ToolStreak)[] {
+    return rejoin(foldHalves(splitProse(groups), opts));
+}
+
+/**
+ * A turn that SAID something and also CALLED tools, as two turns: what it said, and what it did.
+ *
+ * Prose is never folded, and a whole turn used to be refused for carrying it, which stranded that turn's calls
+ * outside the group right next to them: two rows above a group of seven, with a remark between nothing and
+ * nothing. Split, the remark stays where it is and its calls are ordinary tool-only turns, which join whatever
+ * run they sit in. The reasoning goes with the prose, since it is what led to saying it.
+ */
+function splitProse(groups: AgentTurnGroup[]): AgentTurnGroup[] {
+    return groups.flatMap((t) => t.thought && t.tools.length
+        ? [{ ...t, tools: [], half: "prose" as const }, { step: t.step, localStep: t.localStep, tools: t.tools, half: "tools" as const }]
+        : [t]);
+}
+
+/** Put back together every split whose calls did NOT fold, so a turn nothing grouped looks exactly as it did: one
+ *  box, one pill. A half that went into a streak stays where the streak put it. */
+function rejoin(items: (AgentTurnGroup | ToolStreak)[]): (AgentTurnGroup | ToolStreak)[] {
+    const out: (AgentTurnGroup | ToolStreak)[] = [];
+    for (const it of items) {
+        const prev = out[out.length - 1];
+        if (!("kind" in it) && it.half === "tools" && prev && !("kind" in prev) && prev.half === "prose" && prev.step === it.step) {
+            const { half: _h, ...whole } = prev;
+            out[out.length - 1] = { ...whole, tools: it.tools };
+        } else out.push(it);
+    }
+    return out;
+}
+
+function foldHalves(groups: AgentTurnGroup[], { live = false, all = false, breaks = [] as readonly number[] }: { live?: boolean; all?: boolean; breaks?: readonly number[] }): (AgentTurnGroup | ToolStreak)[] {
     const out: (AgentTurnGroup | ToolStreak)[] = [];
     const seg = (t: AgentTurnGroup): number => segmentOf(t.step, breaks);
     for (let i = 0; i < groups.length;) {
