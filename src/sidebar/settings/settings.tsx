@@ -1910,6 +1910,11 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                         onChange={(e: any) => { const n = parseInt(e.target.value, 10); setField("pythonIdleMinutes", Number.isFinite(n) && n >= 0 ? n : DEFAULT_CONFIG.pythonIdleMinutes); }} />
                 </label>
                 <div class="set-hint">A run's Python names (variables, imports) last as long as the run, across its turns. Between turns the sandbox holding them is shut after this many idle minutes, and the run is told on its next cell and in its transcript. 0 never shuts it for idleness; it still ends with the session. A python_exec keep: true holds it only through its own turn.</div>
+                <label data-setting="detachedTaskMaxMin" class="set-field"><span>Detached task limit (minutes)</span>
+                    <input type="number" min="1" max="60" step="1" value={c.detachedTaskMaxMin}
+                        onChange={(e: any) => { const n = parseInt(e.target.value, 10); setField("detachedTaskMaxMin", Number.isFinite(n) && n >= 1 && n <= 60 ? n : DEFAULT_CONFIG.detachedTaskMaxMin); }} />
+                </label>
+                <div class="set-hint">The longest a detached task runs before it is ended: a python_exec cell that outran its lease (the sandbox ends it) or an ml.sh call (its timeoutMs is held to this). 1 to 60; 60 is the ceiling and the default. A task keeps running after the model answers, and its result is read at the next turn.</div>
                 </Section>
 
                 <Section id="fetch" title="Fetching (fetch_url / ml.fetch)">

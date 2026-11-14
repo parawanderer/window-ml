@@ -31,6 +31,7 @@ for s in $(seq 0 500 9500); do   # one ticket per chunk; each waits until 6 work
 done
 NB_REFRESH=1 node scripts/nb.mjs run notebooks/python-packages/pypi-compat.ipynb   # after the chunks finish
 .venv/bin/python -I tests/fixtures/pkg-pep/make-cases.py
+node scripts/gen-core-env.mjs   # python_install's core tags and environment, from the new env.json
 node --import tsx --test tests/pkg-verdict.test.mjs tests/pkg-pep.test.mjs   # re-pin PROBE_TABLE, YES_BUT and the figures
 ```
 

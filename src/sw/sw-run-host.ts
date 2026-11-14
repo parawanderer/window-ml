@@ -47,7 +47,7 @@ import { lookPreviewArgs, workerLook } from "./worker-look";
 import { workerLocate } from "./worker-locate";
 import { runVision, workerWroteVision, type RunVision } from "./run-vision";
 import { withUserWatches } from "./sw-shared-watches";
-import { closeTurnTasks, openTasks, taskDrained, withTasks } from "./sw-tasks";
+import { closeTurnTasks, hydrateTasks, openTasks, taskDrained, withTasks } from "./sw-tasks";
 import { routeExec, execNames, surveyMayEnterPage, withoutWorld, worldCardNote, type ExecRoute } from "./exec-routing";
 import { defaultExecWorld } from "../contract/contract-config";
 import { outputCapPrecheck } from "../contract/contract-pointers";
@@ -84,7 +84,7 @@ import { adoptOnTab } from "./adopt-run";
 import { approvalFor, cancelReasons, gatePageTurn, noteRunEnd, noteRunStart, personClaimed } from "./sw-start-approval";
 import { pageTurnText } from "../agent-start";
 import { toPageUi } from "./sw-side-panel";
-import { checkInstall, installRequest, judgeAnswer, noteInstallOutcome, type PkgCheck } from "./sw-pkg-install";
+import { checkInstall, fetchApproved, installRequest, judgeAnswer, noteInstallOutcome, type PkgCheck } from "./sw-pkg-install";
 
 // The model-facing cap cdpEval clips its console to (exec's default per-slot cap) — the UI keeps far more, so
 // `seen` marks where the model's copy stopped, exactly like the main-world exec path.
@@ -852,8 +852,10 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             ingestSessionEvent(event, { tabId, trusted: true, hosts: byWorker() });
             if (p.crossPage !== false) bufferReplay(tabId, event);
         };
-        // A detached call's result, once the inbox carries it: drawn as the task's, never as the person's words.
-        openTasks(runId, (text, task, end) => fanEvent({ kind: "agent-task-say", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, text, task, ...end }));
+        // A detached call's result, once the inbox carries it: drawn as the task's, never as the person's words. Opened
+        // just before the loop starts, after the run's stored task table is read back (`hydrateTasks`), so a result a worker
+        // that died parked is queued into this turn's first step.
+        const openTaskTable = (): void => openTasks(runId, (text, task, end) => fanEvent({ kind: "agent-task-say", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, text, task, ...end }));
         // The run's steps may now raise nested asks: a call made from inside a running step that needs the person.
         unhostAsks = hostAsks({
             runId, unattended: !!p.unattended, routing: p.approvalRouting || "ui", signal: abortCtl.signal,
@@ -1126,7 +1128,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             recordRunLog(runId, { subsystem: "routing", kind: "python-inside", reason: "in-dialect", detail: { tool: "python_exec" } });
             return { result: env.result || "", renderIn: env.renderIn, renderOut: env.renderOut, feedback: env.feedback, image: env.image, imageLabel: env.imageLabel, images: env.images, ...(env && workerEnvelopes.has(env as import("../contract").PageToolEnvelope) && typeof env.textValue === "string" ? { textValue: env.textValue, ...(typeof env.textChars === "number" ? { textChars: env.textChars } : {}) } : {}) };
         };
-        runBackgroundAgent(
+        hydrateTasks(runId).catch(() => { /* an unreadable table starts empty */ }).then(() => { openTaskTable(); return runBackgroundAgent(
             { task: modelTask, systemPrompt: p.systemPrompt, pageContext: p.pageContext, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSelfSource: p.autoApproveSelfSource, unattended: p.unattended, toolTokens: p.toolTokens, stream: p.stream, ...(p.origin ? { origin: p.origin } : {}), runId, seqBase, tokenStore: sessionTokens(runId), labelMatch: p.labelMatch, resumeMessages, images: p.images,
               // A resumed turn follows a PERSON (a follow-up, Continue, Retry) — except a run resurrected after the
               // worker was evicted, where nobody was waited on.
@@ -1806,7 +1808,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     if (tool === "python_install" && offersInstall()) {
                         const r = installRequest(args);
                         if (typeof r !== "string") {
-                            pkg = await checkInstall(r).catch(() => undefined);
+                            // Each index request is in the run log, so the person can see which names left the machine.
+                            pkg = await checkInstall(r, runId, (url) => recordRunLog(runId, { subsystem: "python", kind: "pkg-index", detail: { tool, url } })).catch(() => undefined);
                             if (pkg) {
                                 renderIn = { type: "packages", ecosystem: "pypi", request: pkg.request, verdict: pkg.card };
                                 recordRunLog(runId, { subsystem: "python", kind: "pkg-card", reason: pkg.card.ok ? "ok" : pkg.card.reason, detail: { tool, files: pkg.card.ok ? pkg.card.files.length : 0 } });
@@ -1853,7 +1856,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                                 // A package card stands only on the rows it showed: anything else approving it is a denial.
                                 if (tool === "python_install" && (decision === true || (typeof decision === "object" && !!decision && decision.approved && !decision.cancelled))) {
                                     const j = pkg && offersInstall() ? judgeAnswer(pkg, typeof decision === "object" ? decision.files : undefined) : { ok: false as const, reason: "no-check", why: "the run does not offer python_install, or its card could not be checked" };
-                                    if (j.ok) noteInstallOutcome(runId, args, "Approved, but this build does not install packages yet: nothing was downloaded or installed.");
+                                    if (j.ok) { const check = pkg; if (check) noteInstallOutcome(runId, args, fetchApproved(check).catch(() => "Not installed: the download failed.")); }
                                     else {
                                         recordRunLog(runId, { level: "warn", subsystem: "python", kind: "pkg-card-mismatch", reason: j.reason, detail: { tool, seq: gateSeq ?? seqBase, why: j.why } });
                                         decision = { approved: false, source: "user", feedback: "The approval did not carry the files the card showed, so it counts as a denial." };
@@ -2093,7 +2096,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     return { model, contextWindow, capabilities, vramBytes, local, capacity, userFocus, ...overhead };
                 },
             },
-        )
+        ); })
             .then(async ({ result: res, messages }) => {
                 // Cancelled because its site lost the agent level (Q9): the result says so.
                 const reason = cancelReasons.get(runId);

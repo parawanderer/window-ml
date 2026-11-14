@@ -247,16 +247,20 @@ export interface TokenRender { id: string; tool: string; render?: RenderDescript
  *  - `not-on-index`: the index has no such project, or no such release.
  *  - `too-large`: a bound of `VERDICT_BOUNDS` was passed.
  *  - `malformed`: a name, version, specifier, requirement or marker that does not parse or cannot be evaluated.
- *  - `no-metadata`: the release's requirements are not known (an older release, whose metadata the index did not give). */
-export type VerdictReason = "no-build" | "python-version" | "lock-too-old" | "not-on-index" | "too-large" | "malformed" | "no-metadata";
+ *  - `no-metadata`: the release's requirements are not known (an older release, whose metadata the index did not give).
+ *  - `index-error`: the index could not be read (a failed request, an answer too large or not JSON).
+ *  - `lookup-cap`: the run has made all the index requests it may (`INDEX_BOUNDS.perRun`). */
+export type VerdictReason = "no-build" | "python-version" | "lock-too-old" | "not-on-index" | "too-large" | "malformed" | "no-metadata" | "index-error" | "lookup-cap";
 
 /** One file the install would fetch, as the card shows it and the answer carries it back. `size` is `null` for a lock
- *  file (the lock states no size; the card reads "in the core"). Every field is shown in full, `sha256` included. */
+ *  file (the lock states no size; the card reads "in the core"). `source` is `mirror` for a PyPI file whose bytes an
+ *  earlier approval already downloaded and checked: it is not downloaded again. Every field is shown in full, `sha256`
+ *  included. */
 export interface PkgRow {
     name: string;
     version: string;
     filename: string;
-    source: "lock" | "pypi";
+    source: "lock" | "pypi" | "mirror";
     size: number | null;
     sha256: string;
 }

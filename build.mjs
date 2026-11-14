@@ -13,6 +13,7 @@ import { writeApiDocs } from "./scripts/gen-api-docs.mjs";
 import { writeBuildInfo } from "./scripts/gen-build-info.mjs";
 import { writeSchema } from "./scripts/gen-export-schema.mjs";
 import { writeIsolatedKit } from "./scripts/gen-isolated-kit.mjs";
+import { writeCoreEnv } from "./scripts/gen-core-env.mjs";
 import { buildWeb } from "./scripts/build-web.mjs";
 
 // output name (dist/<name>.js)  ->  source entry
@@ -125,8 +126,8 @@ if (!/^[1-9][0-9]*$/.test(DEFINES.__SH_LEASE_MS__))
 DEFINES.__PY_LEASE_MS__ ??= "15000";
 if (!/^[1-9][0-9]*$/.test(DEFINES.__PY_LEASE_MS__))
     throw new Error(`__PY_LEASE_MS__ must be a positive integer of milliseconds, got ${DEFINES.__PY_LEASE_MS__}`);
-// And the ceiling a detached cell runs under (`PY_DETACHED_MAX_MS`), in ms: the shipped 300000 unless a cell defines it.
-DEFINES.__PY_DETACHED_MAX_MS__ ??= "300000";
+// And the ceiling a detached cell runs under (`PY_DETACHED_MAX_MS`), in ms: the shipped 3600000 (60 min) unless a cell defines it.
+DEFINES.__PY_DETACHED_MAX_MS__ ??= "3600000";
 if (!/^[1-9][0-9]*$/.test(DEFINES.__PY_DETACHED_MAX_MS__))
     throw new Error(`__PY_DETACHED_MAX_MS__ must be a positive integer of milliseconds, got ${DEFINES.__PY_DETACHED_MAX_MS__}`);
 
@@ -227,6 +228,9 @@ writeBuildInfo();
 // isolated-kit.gen.ts — the pointer value an isolated exec's `ml.dereference` returns, as one source string the worker
 // splices into that exec's wrapper (sw-isolated-exec.ts). Gitignored, like the two above.
 writeIsolatedKit();
+// core-env.gen.ts — the pinned core's wheel tags and marker environment python_install judges PyPI wheels against,
+// from the package oracle's env.json (gen-core-env.mjs). Gitignored too.
+writeCoreEnv();
 // docs/spec/export.schema.json — the JSON export contract in a language-neutral form, lifted from
 // export-schema.ts. CHECKED IN (not gitignored like the two above): it is a published spec people link to
 // and generate parsers from, so it has to exist in the repo, and `tests/export-schema.test.mjs` fails if
