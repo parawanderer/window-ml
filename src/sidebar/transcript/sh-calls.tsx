@@ -11,7 +11,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { AgentStep } from "../store";
 import { Disclosure } from "../disclosure";
 import { CopyableCode } from "../code-block";
-import { Code, Dot } from "../ui-kit";
+import { Dot } from "../ui-kit";
 import { IconWarn } from "../icons";
 import { FactList } from "./ask-card";
 import { fmtDur } from "../timestamps";
@@ -27,6 +27,9 @@ function previewOf(e: ShEntry): string {
     return commandOf(e.argv.slice(1));
 }
 
+/** What the row's warning dot says: what raised it, by name, so it still means something on a call already open or already run. */
+const flagged = (e: ShEntry): string => `Worth a look: ${e.flags.join("; ")}`;
+
 /**
  * One call: its row (status, program, the start of what it ran, how it went, how long), opening to the command, the
  * facts and the raw argv.
@@ -40,7 +43,7 @@ export function ShEntryCard({ e, defaultOpen }: { e: ShEntry; defaultOpen?: bool
     const status = e.verdict === "ran" ? "ok" : e.verdict === "denied" ? "err" : "pending";
     const label = (
         <span class={`shc-row ${e.verdict}`}>
-            <Dot status={status} warn={e.warn ? "A fact of this call needs a look: open it." : undefined} />
+            <Dot status={status} warn={e.warn ? flagged(e) : undefined} />
             <span class="shc-prog">{e.program}</span>
             <span class="shc-prev">{previewOf(e)}</span>
             <span class="shc-said">{e.said}</span>
@@ -53,12 +56,12 @@ export function ShEntryCard({ e, defaultOpen }: { e: ShEntry; defaultOpen?: bool
                 <div class="shc-body">
                     {e.note ? <div class="shc-note">“{e.note}”</div> : null}
                     {e.argv.length
-                        ? raw ? <Code text={JSON.stringify(e.argv)} lang="json" />
-                            : <CopyableCode text={e.script ?? commandOf(e.argv)} block tip={e.script != null ? "copy the script" : "copy the command"} lang="bash" />
+                        ? <CopyableCode text={raw ? JSON.stringify(e.argv) : e.script ?? commandOf(e.argv)} block lang={raw ? "json" : "bash"}
+                            tip={raw ? "copy the argv" : e.script != null ? "copy the script" : "copy the command"}
+                            extra={<button class="code-tool" aria-pressed={raw} onClick={() => setRaw((v) => !v)}>{raw ? "command" : "raw argv"}</button>} />
                         : null}
                     {e.script != null && !raw ? <div class="shc-via">run as <code>{commandOf(e.argv.slice(0, 2))} …</code></div> : null}
                     {e.facts.length ? <FactList lines={e.facts} cls="shc-facts" skipCommand /> : null}
-                    {e.argv.length ? <button class="code-tool shc-raw" aria-pressed={raw} onClick={() => setRaw((v) => !v)}>{raw ? "command" : "raw argv"}</button> : null}
                 </div>
             </Disclosure>
         </div>
@@ -104,7 +107,7 @@ export function ShCalls({ st, defaultOpen, openRows }: { st: AgentStep; defaultO
     const note = (
         <>
             {parts.join(" · ")}
-            {s.warns ? <span class="shc-warn" aria-label={`${s.warns} to check`}><IconWarn />{s.warns} to check</span> : null}
+            {s.warns ? <span class="shc-warn" aria-label={`${s.warns} worth a look`}><IconWarn />{s.warns} worth a look</span> : null}
         </>
     );
     return (

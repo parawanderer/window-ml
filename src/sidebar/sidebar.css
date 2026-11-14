@@ -1451,7 +1451,7 @@ html[data-calm] .appr-deny-wrap { border-radius: 999px; color: var(--fg-dim); }
 /* How many calls the footer holds; it ticks when one joins. */
 .shc-n { margin-left: 6px; font-weight: 400; color: var(--fg-faint); }
 .shcalls > .disc > .disc-headrow .disc-note { color: var(--fg-faint); display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-/* "N to check" on the footer: some call's facts warn, said without opening it. */
+/* "N worth a look" on the footer: some call has something the person could not have seen when they decided, said without opening it. */
 .shc-warn { display: inline-flex; align-items: center; gap: 4px; color: var(--notice); }
 .shc-warn svg { width: 12px; height: 12px; }
 /* The footer's open body: one row per call, indented under the footer's chevron. */
@@ -1492,7 +1492,6 @@ html[data-calm] .appr-deny-wrap { border-radius: 999px; color: var(--fg-dim); }
 .ask-cmd .shc-via { color: var(--fg-faint); }
 .ask-cmd .shc-via code { font: inherit; color: var(--fg-dim); }
 /* The "raw argv" / "command" toggle at the foot of an opened call: the argv exactly as the host got it. */
-.shc-raw { align-self: flex-start; }
 .astep-ask-done { font-size: 0.8em; color: var(--fg-dim); margin: 2px 0 4px; overflow-wrap: anywhere; }
 .astep-ask-done .ask-facts { font-size: 1em; margin: 2px 0 0 12px; }
 .astep-ask-done code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg); }
@@ -3784,6 +3783,8 @@ button.ui-step-now:hover { background: var(--panel-2); color: var(--fg); }
 /* A line that WRAPS: room on the right for the button, which sits in the corner instead of beside the first line. */
 .copyable-code.corner .code { padding: 10px 40px 10px 12px; }
 .copyable-code.corner .code-tools { top: 6px; right: 6px; transform: none; opacity: 1; }
+/* `.has-extra`: the toolbar also holds a control beside the copy button (the call's raw-argv toggle), so the code keeps clear of the wider corner. */
+.copyable-code.corner.has-extra .code { padding-right: 118px; }
 /* FIND IN A CODE BLOCK (Ctrl/Cmd+F with the block focused). The block is focusable for the shortcut, so a click
    must not ring it; only keyboard focus does, as on the output cell. The bar takes the toolbar's corner, so the
    toolbar steps aside while it is open. */

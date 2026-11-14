@@ -95,7 +95,8 @@ test("an allowed ask that ran says what the host applied and what protected name
     const warned = [...ran.querySelectorAll(".shc-facts .warn dt")].map((d) => d.textContent);
     assert.ok(warned.includes("Sandbox applied") && warned.includes("Protected names"), "less than was asked for, and a hook appeared: both flagged");
     assert.ok(ran.classList.contains("warn"), "and the ROW says so, not only what is inside it");
-    assert.match(w.shadow.querySelector(".shcalls .disc-head").textContent, /to check/, "and so does the footer");
+    assert.match(ran.querySelector(".shc-row .dot-tip-line")?.textContent || "", /^Worth a look: Sandbox applied: .*Protected names: /, "the dot names what raised it, and only what happened after the answer: the card's own warnings were on the card the person approved");
+    assert.match(w.shadow.querySelector(".shcalls .disc-head").textContent, /worth a look/, "and so does the footer");
     assert.match(ran.textContent, /changed during this call in \/w\/proj: \.git\/hooks\/pre-commit created/);
     assert.match(ran.textContent, /not the write roots, exec program-only that was asked for/);
     const deniedLabels = [...denied.querySelectorAll(".shc-facts dt")].map((d) => d.textContent);
@@ -201,4 +202,22 @@ test("red team: an ask drawn with a missing or empty id never posts an answer th
             assert.ok(typeof m.ask === "string" && m.ask, `id ${JSON.stringify(over.id)}: the answer named no ask, so it would resolve ${m.hash}:${m.seq}`);
     }
     // positive control: a well-formed ask posts its id (the test above, "Approve on an ask posts its id")
+});
+
+test("the raw-argv toggle sits in the command block's toolbar beside copy, and swaps the block to the argv", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("raw1", "tidy"));
+    await w.dispatch(agentStep("raw1", 1, { seq: 1, approval: "user", tool: "exec", arguments: { js: SCRIPT }, result: "0", shCalls: [
+        { program: "find", durationMs: 7, unasked: { by: "policy", policy: "tidy build", argv: ["find", "build", "-name", "a b"], outcome: { ran: "host-sandbox", protectedChanged: [] } } },
+    ] }));
+    await open(w);
+    // The footer is in the step's body (open it if it is folded): which of the two a build has is not this test's concern.
+    if (!w.shadow.querySelector(".shcalls")) { [...w.shadow.querySelectorAll(".astep.tool .astep-head")].find((h) => /exec/.test(h.textContent)).click(); await w.tick(); }
+    const block = () => w.shadow.querySelector(".shc-entry .copyable-code");
+    const toggle = () => block().querySelector(".code-tools .code-tool");
+    assert.equal(toggle().textContent, "raw argv", "the toggle is in the toolbar, not under the facts");
+    toggle().click();
+    await w.tick();
+    assert.match(block().textContent, /\["find","build","-name","a b"\]/, "the block now shows the argv as the model sent it");
+    assert.equal(toggle().textContent, "command");
 });
