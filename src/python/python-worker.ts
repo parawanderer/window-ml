@@ -20,6 +20,7 @@ import { wrapUserSetup, wrapUserScript, COMPLETE_HELPER, completeIn, RESET, inje
 import { dialectSetup, libraryLoad, libraryShape, type DialectLibrary } from "./python-dialect-run";
 import { lockdownReadonly } from "./lockdown";
 import { cellBoundary, cellDropped, onSpending } from "./cell-gate";
+import { shownText } from "./pkg-card";
 
 // Captured BEFORE the lockdown's strip removes `postMessage` from `self` (`STRIPPED_NAMES`). Every reply
 // in this file goes through `post`, never `self.postMessage` — which is gone once `lockdownReadonly` runs
@@ -457,7 +458,7 @@ async function installWheels(wheels: WheelBytes[]): Promise<string | null> {
     for (const w of wheels) {
         if (installedWheels.has(w.sha256)) continue;
         try { py.unpackArchive(new Uint8Array(w.bytes), "wheel", { extractDir: sitePackages }); }
-        catch (e) { return `${w.filename} could not be unpacked (${String((e as Error)?.message ?? e).trim().split("\n").pop()})`; }
+        catch (e) { return shownText(`${w.filename} could not be unpacked (${String((e as Error)?.message ?? e).trim().split("\n").pop()})`).text; }
         installedWheels.add(w.sha256);
     }
     return null;

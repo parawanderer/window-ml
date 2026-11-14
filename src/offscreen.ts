@@ -35,6 +35,7 @@ import { createPdfHost } from "./pdf/pdf-host";
 import { b64ToBytes, bytesToB64, type PdfMessage, type PdfReadReply, type PdfRenderReply } from "./pdf/pdf-wire";
 import { importTestCode } from "./python/pkg-install-test";
 import { holdResult, takeResult } from "./python/py-held-results";
+import { shownText } from "./python/pkg-card";
 
 // The value store, reached here rather than in the worker: stored bytes are TRANSFERRED to the worker (no copy), and the
 // one copy is the worker's, into Pyodide's memory. A returned frame's IPC comes back the same way and is written here,
@@ -428,7 +429,7 @@ async function wheelsForCell(w: Worker, refs: WheelRef[]): Promise<WheelBytes[] 
     for (const r of refs) {
         if (have.has(r.sha256)) continue;
         const blob = await mirroredWheel(r.sha256).catch(() => undefined);
-        if (!blob) return { error: `Not run: ${r.filename}, which this run installed, is no longer in the package mirror as it was approved (missing, or its bytes no longer match its sha256). That is a defect of the mirror, not of the install. Nothing of the cell ran; the next cell tries again.` };
+        if (!blob) return { error: `Not run: ${shownText(r.filename).text}, which this run installed, is no longer in the package mirror as it was approved (missing, or its bytes no longer match its sha256). That is a defect of the mirror, not of the install. Nothing of the cell ran; the next cell tries again.` };
         out.push({ ...r, bytes: await blob.arrayBuffer() });
     }
     return out;
