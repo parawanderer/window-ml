@@ -1845,6 +1845,8 @@ th .help { text-decoration-color: color-mix(in srgb, var(--fg-faint) 50%, transp
 .tip-dot.ok { background: var(--ok); }
 .tip-dot.err { background: var(--err); }
 .tip-dot.warn { background: var(--warn); }
+/* `.hollow`: a ring in the status colour instead of a disc: it did not happen (a denied call), which is not the same as it failing. */
+.dot.err.hollow, .tip-dot.err.hollow { background: transparent; box-shadow: inset 0 0 0 1.5px var(--err); animation: none; }
 .dot-when { display: block; margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--tip-line);
     color: var(--fg-dim); font-variant-numeric: tabular-nums; }
 .dot-when b { color: var(--fg); font-weight: 600; }
