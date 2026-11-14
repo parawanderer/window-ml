@@ -42,7 +42,7 @@ export interface ShellStatus {
     ready: boolean;
     /** Calls will run under the OS sandbox (asked for, and available on this machine). */
     sandboxed: boolean;
-    /** `version` is the PARSED form (`0.10.0`), or `"unknown"` when the host's text was not that shape: what a host sent is never kept. `tilde`: the host expands a leading `~` in argv and cwd (`hello.tilde`). */
+    /** `version` is the PARSED form (`0.10.0`), or `"unknown"` when the host's text was not that shape: the version a host sent is never drawn or sent on. `tilde`: the host expands a leading `~` in argv and cwd (`hello.tilde`). */
     host?: { version: string; platform: string; sandbox: HostHello["sandbox"]; tilde?: boolean };
     roots?: HostConfigured["roots"];
     /** Why it is not ready, in words for the settings page. */

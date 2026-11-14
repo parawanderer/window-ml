@@ -53,7 +53,7 @@ export type HostVersion = readonly [number, number, number];
 /**
  * A reported host version, parsed strictly: `major.minor.patch`, each one to four digits, with no prefix, suffix or
  * space. Anything else (a pre-release, a word, a number the wrong size, a non-string) is unknown, which gives no hint:
- * the raw text is never kept, drawn or sent anywhere, only this parsed form.
+ * the raw text is never stored, drawn or sent on; only this parsed form is.
  * @param raw what the host's hello said
  */
 export function parseHostVersion(raw: unknown): HostVersion | null {

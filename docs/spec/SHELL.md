@@ -214,7 +214,7 @@ extension can do is make it one paste.
 
 **Updating the host (PROPOSED 2026-11-14).** The extension never looks up a latest version; it knows the one this build
 pins. Each hello's `version` is parsed strictly (`major.minor.patch`, whole numbers, nothing else; anything unparseable is
-unknown) and only the parsed form is kept, stored beside `shell.hostSeen` and drawn. While that version is older than the
+unknown) and only the parsed form is stored (beside `shell.hostSeen`), drawn or sent on (the open port holds its hello until it closes, and the platform and sandbox it reports are drawn as before). While that version is older than the
 pinned tag, and only then (equal, newer and unknown say nothing), the Settings guide shows the same pinned line worded as an
 update ("X is installed; this build pins Y"), and the attention list carries `host-outdated` (`suggests`, the same fix path).
 Re-running the installer replaces the binary in one rename; a host left running keeps its old version until it restarts, so
