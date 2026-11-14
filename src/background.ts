@@ -53,7 +53,7 @@ import { checkDraft } from "./sw/sw-manifest-proposal";
 
 import { bringableSessions, bringHere } from "./sw/bring-here";
 import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, contextByRun, turnByRun, workerRunsStarting, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, senderOwnsRun, reconcileTabPins, startingControllers, abortStart, startingOwnedBy } from "./sw/sw-runs";
-import { cancelPageTasks } from "./sw/sw-tasks";
+import { cancelPageTasks, detachTask, resetTaskChain, type TaskOutcome } from "./sw/sw-tasks";
 import { moveTabKey } from "./sw/tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
 import { startBackgroundRun, delegateStreams, hostRun, WORKER_RUN_REFUSED } from "./sw/sw-run-host";
@@ -165,6 +165,15 @@ startValueSweeps();
 // HUD do (`userRunAction`). The harness's conversations with a UI-started run (converse.mjs, SURFACE=…) go through it.
 (globalThis as unknown as { __mlUserRunActionForTest?: unknown }).__mlUserRunActionForTest = (hash: string, action: "send" | "continue", body: { text?: string; surface?: string }, origin?: import("./contract/contract-run").PromptOrigin) => userRunAction(hash, action, body, undefined, origin);
 
+// TEST-ONLY (SW realm only): detach a task of a run by hand, as an executor does, and get its id and a function that ends
+// it with an outcome. A test of what a FINISHED task does (starts a turn, parks) needs one without driving ml.sh or Python.
+(globalThis as unknown as { __mlDetachTaskForTest?: unknown }).__mlDetachTaskForTest = (runId: string, tool = "ml.sh"): { id: string; finish: (o: Partial<TaskOutcome>) => void } => {
+    let end!: (o: TaskOutcome) => void;
+    const settled = new Promise<TaskOutcome>((res) => { end = res; });
+    const id = detachTask(runId, { tool, startedMs: Date.now(), leaseMs: 15_000, expectMs: null,
+        exec: { cancel: async () => ({ confirmed: true, text: "cancelled" }), tail: () => null, tailAbsent: "no tail", settled } });
+    return { id, finish: (o) => end({ status: "done", text: "finished", result: null, ...o }) };
+};
 // TEST-ONLY (SW realm only): the popup's "Stop all agent runs" (CANCEL_ALL_RUNS), plus every in-flight page-made model
 // call, as one call: the bench cancels a cell's run when its deadline passes (tests/e2e/run-once.mjs). Resolves how many
 // runs it stopped.
@@ -717,7 +726,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         if (sender.tab?.id != null && !isExtensionSender(sender)) { pageInject(p, sender, personClaimed(message)).then(sendResponse, () => sendResponse({ data: false })); return true; }
         const inbox = runInboxes.get(p.runId);
         const injected = !!(inbox && inbox.tabId === sender.tab?.id && typeof p.text === "string");
-        if (injected) inbox!.queue.push({ id: p.sayId, text: p.text, ...(p.origin ? { origin: p.origin } : {}) });
+        if (injected) { inbox!.queue.push({ id: p.sayId, text: p.text, ...(p.origin ? { origin: p.origin } : {}) }); resetTaskChain(p.runId); }   // the person's own word (an extension frame's): the chain of task-started turns is broken
         sendResponse({ data: injected });
         return true;
     }

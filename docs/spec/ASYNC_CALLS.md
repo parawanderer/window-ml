@@ -171,8 +171,14 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
    detached `ml.sh` call or cell; the `Detached` texts say the task runs on. Slice B: the table is durable in
    `chrome.storage.session` (`ml_tasks:<runId>`), read back by `hydrateTasks` before a turn opens it; `PY_DONE` for a
    cell a new worker never sent fetches the result from the offscreen document (`PY_RESULT`) and parks it; the cap is the
-   `detachedTaskMaxMin` setting (default 60) for both executors, and `PY_DETACHED_MAX_MS` is its 60 min ceiling. NOT
-   built: a completion starting a turn, notify-only, the chain cap, the lifetimes list and the no-tab state. This
+   `detachedTaskMaxMin` setting (default 60) for both executors, and `PY_DETACHED_MAX_MS` is its 60 min ceiling. Slice C: a
+   finished task with no turn running starts the run's next turn through the person's Continue path (`startTurnFor`,
+   `sw-tasks.ts`), unless `taskNotifyOnly` is on, `taskTurnChainMax` (default 5) turns were already started in a row, the run is
+   page-built, busy, has no tab or sits on an extension page; each parks the result and logs `task`/`not-started` with its
+   reason, and notify-only and the cap also say a transcript line. Completions that arrive while the turn starts coalesce into
+   it, and a person's message sent meanwhile is steered into it. The chain count is `ml_task_chain:<runId>` and the person's
+   next word resets it. A result for an archived or released run is dropped with a record. NOT built: the HUD mark (no per-run
+   mark for tasks exists to extend), the lifetimes list and the no-tab state on the chat page. This
    reverses rule 4, and the mode 1 ruling that a model answering while a build is detached ends the build, for the two executors that run
    outside the service worker: an `ml.sh` call (the host's process) and a detached `python_exec` cell (the offscreen
    document). A fetch runs IN the service worker and dies with it, so it stays turn-bound: the turn's end cancels it,

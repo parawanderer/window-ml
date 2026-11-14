@@ -617,7 +617,7 @@ test("a message that is not delivered (a busy steer, a resume that cannot start)
     assert.match(w.lastUser(1), new RegExp(`<file name="old\\.txt" type="text/plain" bytes="4" pointer="@file:${oldId}">`));
 });
 
-test("two sends to an idle stored run at once: the first resumes, the second reads busy, holds no file and is never announced", T, async () => {
+test("two sends to an idle stored run at once: the first resumes, the second is held and steered into that turn, with its file (rule 4b, slice C)", T, async () => {
     let hold = null, reached = false;
     const w = fileWorld({
         onTabMessage: async (_t, msg) => {
@@ -636,21 +636,23 @@ test("two sends to an idle stored run at once: the first resumes, the second rea
         for (let i = 0; i < 200 && !reached; i++) await flush(4);
         assert.ok(reached, "the first send is held in adoptOnTab");
         const second = await send(hash, { text: "two", files: [NOTES] });
-        assert.equal(second.data, "busy", "a resume is already starting: the message has nowhere to go");
-        assert.equal(await w.state(hash, "run.files"), null, "the file it attached is not on the run's shelf");
+        assert.equal(second.data, "steer", "a resume is already starting: the message is held for its turn, not refused");
     } finally { release(); }   // a failed assertion above must not leave the first send held
     assert.equal((await first).data, "turn");
     await w.waitChats(2);
-    assert.deepEqual(fanned(w.bg, "agent-say").map((s) => s.text), ["one"], "only the delivered message is announced");
-    assert.equal(w.lastUser(1), "one");
-    assert.equal(w.bg.tabMessages.filter(([, m]) => m.type === "ML_SESSION_TO_PAGE").length, 0);
+    const users = w.chats()[1].body.messages.filter((m) => m.role === "user").map((m) => String(m.content));
+    assert.equal(users.at(-2), "one");
+    assert.match(users.at(-1), /^two\b[\s\S]*<file name="notes\.txt"/, "the held message reached the same turn, with its file");
+    assert.equal(w.chats().length, 2, "one model call: the held message was read at the turn's first step");
+    assert.equal(fanned(w.bg, "agent-say").length, 2, "both are announced once the turn is hosted");
+    assert.notEqual(await w.state(hash, "run.files"), null, "the file it attached is on the run's shelf");
     // Control: once that turn has ended a send resumes normally.
     hold = null;
     for (let i = 0; i < 50; i++) await flush(4);
     assert.equal((await send(hash, { text: "three" })).data, "turn");
     await w.waitChats(3);
     assert.equal(w.lastUser(2), "three");
-    assert.equal(w.chats().length, 3, "one model call per delivered message");
+    assert.equal(w.chats().length, 3, "one model call per turn");
 });
 
 test("a run a page built is refused a PDF by name, from the panel (USER_RUN_ACTION) and DevTools (ML_SESSION_REMOTE): nothing reaches its page", T, async () => {

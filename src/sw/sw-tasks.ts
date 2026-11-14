@@ -15,7 +15,7 @@ import { DEFAULT_CONFIG } from "../contract/contract-config";
 import { tableOf } from "../table/table-data";
 import type { TableLike } from "../table/table-data";
 import type { CurrentSnapshot } from "../agent/current-context";
-import { onSessionRelease, runControllers, runInboxes } from "./sw-runs";
+import { bgRuns, isWorkerRun, onSessionRelease, runControllers, runInboxes, startingControllers } from "./sw-runs";
 import { recordRunLog } from "./sw-run-log";
 import { forModel } from "./sw-scrub";
 import { storeText } from "./sw-values";
@@ -139,7 +139,109 @@ defineState({
 });
 
 /** Forget every run's table, sink and read in memory: what a worker eviction does (the eviction test hook). The stored copy stays. */
-export function dropAllTaskMemory(): void { tasks.clear(); sinks.clear(); hydrating.clear(); }
+export function dropAllTaskMemory(): void { tasks.clear(); sinks.clear(); hydrating.clear(); chains.clear(); }
+
+// --- a finished task starts the run's next turn (rule 4b, slice C) ---
+
+/** What starts a turn for a finished task and says a line in the run's transcript: set by `sw-run-start.ts`, which this
+ *  module cannot import (the run host imports this one). Absent, a result only parks, as before slice C. */
+export interface TaskTurnHost {
+    /** Start the run's next turn through the same path as the person's "continue", announcing `line` first. Resolves true
+     *  when a turn was hosted, false when none was (the page did not answer, the run is gone). */
+    start(runId: string, taskId: string, line: string): Promise<boolean>;
+    /** One line in the run's step list, in the worker's voice; nothing when the run has no tab. */
+    say(runId: string, text: string): void;
+}
+let turnHost: TaskTurnHost | null = null;   // state: plumbing — set at load by sw-run-start.ts
+/** Register the turn starter ({@link TaskTurnHost}). */
+export function setTaskTurnHost(h: TaskTurnHost | null): void { turnHost = h; }
+
+/** How many turns finished tasks started in a row for a run, with no message from the person between them. Mirrors
+ *  `ml_task_chain:<runId>` in session storage (it spans turns, so it must outlive a worker eviction). */
+const chains = new Map<string, number>();   // state: cache — read back from `ml_task_chain:<runId>` when absent
+defineState({
+    id: "run.taskChain", scope: "run", realm: "worker", audience: "human", lostOn: ["browser-restart"],
+    describe: "How many turns finished detached tasks started for this run in a row, with no message from the person between them (the cap is the `taskTurnChainMax` setting). Kept in session storage (`ml_task_chain:<runId>`); the person's next message resets it.",
+    read: ({ runId }) => (runId ? chains.get(runId) : undefined),
+});
+const CHAIN_KEY = (runId: string): string => `ml_task_chain:${runId}`;
+
+/** The value of `taskTurnChainMax`: an integer from 1 to 20, else the default. */
+export function chainMax(v: unknown): number {
+    const n = typeof v === "number" ? Math.floor(v) : NaN;
+    return Number.isFinite(n) && n >= 1 && n <= 20 ? n : DEFAULT_CONFIG.taskTurnChainMax;
+}
+
+/** The run's chain count: memory, else the stored one (a worker started since), else 0 (a table from before slice C has none). */
+async function chainCount(runId: string): Promise<number> {
+    const mem = chains.get(runId);
+    if (mem !== undefined) return mem;
+    let n = 0;
+    try { const v = (await chrome.storage.session.get(CHAIN_KEY(runId)))?.[CHAIN_KEY(runId)]; n = typeof v === "number" && Number.isInteger(v) && v > 0 ? v : 0; } catch { /* none stored: 0 */ }
+    if (chains.get(runId) === undefined) chains.set(runId, n);
+    return chains.get(runId)!;
+}
+
+/** Set the count, in memory and (best effort) in session storage. */
+function setChain(runId: string, n: number): void {
+    chains.set(runId, n);
+    try { void Promise.resolve(chrome.storage.session.set({ [CHAIN_KEY(runId)]: n })).catch(() => { /* memory still holds it */ }); } catch { /* no storage */ }
+}
+
+/**
+ * The person spoke to the run (a message, a steer, a Continue): the chain of turns finished tasks started is broken, and the
+ * count starts again from 0. Called from `sw-run-start.ts` wherever a person's word is delivered.
+ * @param runId the run
+ */
+export function resetTaskChain(runId: string): void {
+    chains.delete(runId);
+    try { void Promise.resolve(chrome.storage.session.remove(CHAIN_KEY(runId))).catch(() => { /* nothing stored */ }); } catch { /* no storage */ }
+}
+
+/** The person's two settings for a finished task, read now. */
+async function turnPolicy(): Promise<{ notifyOnly: boolean; max: number }> {
+    let c: { taskNotifyOnly?: unknown; taskTurnChainMax?: unknown } = {};
+    try { c = (await chrome.storage.sync.get({ taskNotifyOnly: DEFAULT_CONFIG.taskNotifyOnly, taskTurnChainMax: DEFAULT_CONFIG.taskTurnChainMax })) ?? {}; } catch { /* the defaults */ }
+    return { notifyOnly: c.taskNotifyOnly === true, max: chainMax(c.taskTurnChainMax) };
+}
+
+/**
+ * A result has parked with no turn live: start the run's next turn, or say why not. Every condition is checked in one
+ * synchronous stretch that ends in the start itself (`start` registers the run as starting before it first awaits), so two
+ * results finishing together cannot both start: the second sees the first's starting turn and parks, and the turn's
+ * `openTasks` queues both.
+ * @param runId the run
+ * @param t the task that parked
+ */
+async function startTurnFor(runId: string, t: Task): Promise<void> {
+    const host = turnHost;
+    if (!host) return;
+    const why = (reason: string, level: "warn" | undefined = undefined): void => { recordRunLog(runId, { ...(level ? { level } : {}), subsystem: "task", kind: "not-started", reason, detail: { id: t.id } }); };
+    // The awaits come first: the settings, the chain count and whether the run's tab is still there.
+    const stored0 = bgRuns.get(runId);
+    const [policy, used, tab] = await Promise.all([
+        turnPolicy(), chainCount(runId),
+        stored0 ? Promise.resolve(chrome.tabs?.get?.(stored0.tabId)).then((x) => x ?? null, () => null) : Promise.resolve(null),
+    ]);
+    // From here to `host.start` nothing awaits.
+    if (tasks.get(runId)?.get(t.id) !== t) { recordRunLog(runId, { subsystem: "task", kind: "dropped", reason: "run-ended", detail: { id: t.id } }); return; }
+    if (t.delivered) return;
+    const stored = bgRuns.get(runId);
+    if (!isWorkerRun(runId)) return why("page-run");
+    if (runInboxes.has(runId) || runControllers.has(runId) || startingControllers.has(runId)) return why("busy");
+    if (!stored || !tab || stored.tabId !== stored0?.tabId) return why("no-tab");
+    // A page the extension owns hosts no run: it has no page to act on.
+    if (!/^https?:/i.test(tab.url || tab.pendingUrl || "")) return why("own-page");
+    const line = `task ${t.id} ${t.status}`;
+    if (policy.notifyOnly) { host.say(runId, `${line}; its result is read at your next message (Settings: finished tasks only notify).`); return why("notify-only"); }
+    if (used >= policy.max) { host.say(runId, `${line}; ${used} turns in a row were already started by finished tasks (the cap, Settings: taskTurnChainMax = ${policy.max}), so its result is read at your next message.`); return why("chain-cap"); }
+    setChain(runId, used + 1);
+    const started = await host.start(runId, t.id, `Turn started by task ${t.id} (${t.status} after ${secs((t.endedMs ?? Date.now()) - t.startedMs)}).`).catch(() => false);
+    if (started) { recordRunLog(runId, { subsystem: "task", kind: "turn-started", reason: t.status, detail: { id: t.id, chain: used + 1 } }); return; }
+    // No turn came of it: the count is given back, and the result stays parked for the person's next message.
+    if (chains.get(runId) === used + 1) setChain(runId, used);
+    why("start-refused", "warn");
+}
 
 /**
  * Open a run's task table for its turn: a finished task is announced through `fan` as well as the inbox. A task that ended
@@ -351,7 +453,9 @@ export function capMinutes(v: unknown): number {
  * parked in the table and read at the next turn; one ended by `endTasks` (session release, archive) is dropped.
  */
 async function finish(runId: string, t: Task, o: TaskOutcome): Promise<void> {
-    if (t.status !== "running" || t.ending) return;
+    if (t.ending) return;
+    // Ended already (its run's end, a page change's cancel): a result that comes late is dropped, and nothing starts.
+    if (t.status !== "running") { recordRunLog(runId, { subsystem: "task", kind: "dropped", reason: "late-result", detail: { id: t.id, tool: t.tool } }); return; }
     t.ending = true;
     const endedMs = Date.now();
     const text = (await forModel(o.text)).text;
@@ -359,7 +463,7 @@ async function finish(runId: string, t: Task, o: TaskOutcome): Promise<void> {
     const whole = o.whole && o.whole.length > o.text.length ? (await forModel(o.whole)).text : undefined;
     const value = whole ? await storeText(whole, `task ${t.id}`).catch(() => undefined) : undefined;
     // Ended in the meantime (a cancel or the session's end): its status is that end's.
-    if (t.status !== "running") return;
+    if (t.status !== "running") { recordRunLog(runId, { subsystem: "task", kind: "dropped", reason: "late-result", detail: { id: t.id, tool: t.tool } }); return; }
     // All at once, after the scrub: a read in between sees a running task, never an ended one with no text.
     t.status = o.status;
     t.result = o.result;
@@ -369,13 +473,15 @@ async function finish(runId: string, t: Task, o: TaskOutcome): Promise<void> {
     if (value) { t.value = value; t.chars = whole!.length; }
     if (o.image) t.image = o.image;
     recordRunLog(runId, { ...(o.status === "done" ? {} : { level: "warn" as const }), subsystem: "task", kind: "ended", reason: o.status, ms: Date.now() - t.startedMs, detail: { id: t.id, tool: t.tool } });
-    if (tasks.get(runId)?.get(t.id) !== t) return;
+    // The run ended first (release, archive, delete): no task is left to finish, and nothing starts.
+    if (tasks.get(runId)?.get(t.id) !== t) { recordRunLog(runId, { subsystem: "task", kind: "dropped", reason: "run-ended", detail: { id: t.id, tool: t.tool } }); return; }
     if (t.waiter) { const w = t.waiter; t.waiter = undefined; t.delivered = true; persist(runId); w({ ...o, text: t.text }); return; }
     persist(runId);
     const inbox = runInboxes.get(runId);
     if (t.delivered) return;
-    // No turn is live: the result stays in the table, undelivered, and the next turn's `openTasks` queues it.
-    if (!inbox) { recordRunLog(runId, { subsystem: "task", kind: "parked", reason: o.status, ms: endedMs - t.startedMs, detail: { id: t.id, tool: t.tool } }); return; }
+    // No turn is live: the result stays in the table, undelivered, and the next turn's `openTasks` queues it. By default that
+    // turn is started now (`startTurnFor`), unless the person asked only to be told, the chain is at its cap, or there is nothing to start it on.
+    if (!inbox) { recordRunLog(runId, { subsystem: "task", kind: "parked", reason: o.status, ms: endedMs - t.startedMs, detail: { id: t.id, tool: t.tool } }); void startTurnFor(runId, t).catch(() => { /* the result stays parked */ }); return; }
     // Queued only: it is delivered, and drawn, when the loop drains it (`taskDrained`). A turn that ends first leaves it
     // undelivered, and the next turn queues it again.
     inbox.queue.push(inboxItem(t));
@@ -429,6 +535,7 @@ export function taskDrained(runId: string, id: string, text: string): boolean {
  */
 export async function endTasks(runId: string, reason = "session-release"): Promise<void> {
     sinks.delete(runId);
+    resetTaskChain(runId);
     // A worker started since the tasks were detached holds none in memory: they are read back first, so a cell still running
     // is cancelled and not left to run to its ceiling with no run to take its result.
     if (!tasks.has(runId)) await hydrateTasks(runId);
