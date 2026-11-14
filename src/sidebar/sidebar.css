@@ -2275,17 +2275,18 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
 .jt-row .tri.jt-tri-space { visibility: hidden; }
 /* A time drawn as a clock time and an age; the exact value is on hover. */
 .jt-time { cursor: help; }
-.jt-key { color: var(--j-key); }
+:where(.jt-key) { color: var(--j-base); }   /* the colon; the name is `.jt-key-text` */
+:where(.jt-key-text) { color: var(--j-key); }
 .jt-brace { color: var(--j-base); }
 /* The `,` after a member that another follows. Pulled back over the row's flex gap so it sits against its value. */
 .jt-comma { color: var(--j-base); margin-left: -4px; }
 /* …inside a scalar's own span (so a string that wraps ends its last line with it), there is no flex gap to pull back over. */
-.jt-val > .jt-comma { margin-left: 0; }
+.jt-val > .jt-comma { margin-left: 0; color: var(--j-base); }   /* the value's own token class would otherwise paint it */
 .jt-preview { color: var(--fg-faint); font-style: italic; }
-.jt-string { color: var(--j-str); word-break: break-word; }
-.jt-number { color: var(--j-key); }
-.jt-boolean { color: var(--j-lit); }
-.jt-null { color: var(--j-lit); }
+:where(.jt-string) { color: var(--j-str); word-break: break-word; }
+:where(.jt-number) { color: var(--j-key); }
+:where(.jt-boolean) { color: var(--j-lit); }
+:where(.jt-null) { color: var(--j-lit); }
 /* A key the tool schema documents → dotted underline on its name only (this key has a hover tooltip with its description). */
 .jt-key-doc { cursor: help; }
 .jt-key-doc .jt-key-name { text-decoration: underline dotted; text-underline-offset: 2px; text-decoration-thickness: 1px; }

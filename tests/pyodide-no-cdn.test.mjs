@@ -83,6 +83,7 @@ test("no-cdn: scripts/test.mjs and `npm run coverage` preload the guard into eve
 /** Children launched with their own argv that load no Pyodide, each with why. Keyed by file and the argv's start. */
 const NO_PYODIDE_CHILD = {
     "python-bench-stop.test.mjs: [\"-e\", `": "the stop writer's backstop: a worker thread that writes one flag, no Pyodide",
+    "python-bench-stop.test.mjs: [\"--inpu": "the file guard's backstop: a worker thread that SIGKILLs at its budget, no Pyodide",
 };
 
 test("no-cdn: every child a Pyodide test launches with its own argv passes the guard, or is listed as loading no Pyodide", () => {
