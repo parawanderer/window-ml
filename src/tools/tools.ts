@@ -88,20 +88,24 @@ export function sealedDescribe(selector: string, matches: { line: string }[] | n
 const firstOfNote = (selector: string, count: number): string =>
     count > 1 ? `⚠ "${selector}" matched ${count} elements — using the FIRST (#0). Narrow it (an id, or :nth-of-type(N)), or countMatches to list them.\n\n` : "";
 
-/** The compose hint: said once, in `interactives`' description when `exec` is wired (run-assembly.ts), where it used
- *  to ride on every findByText/interactives result (docs/spec/PROMPT_BUDGET.md, the panel-bloat cuts). */
+/** The compose hint: said once, in `interactives`' description (or `findByText`'s, in a subset without it) when
+ *  `exec` is wired (run-assembly.ts), where it used to ride on every findByText/interactives result
+ *  (docs/spec/PROMPT_BUDGET.md, the panel-bloat cuts). */
 export const COMPOSE_NOTE =
     " A filter this tool lacks: a read-only exec survey, `ml.queryAll(sel).map(el => ml.a11y(el))` (role, name, state, " +
     "selector per element).";
 
 /**
  * A run's toolset with {@link COMPOSE_NOTE} on `interactives`' description, when the run has `exec` to compose with.
+ * A `tools` subset without `interactives` puts it on `findByText`, the other tool whose result once carried it.
  * @param toolset the run's tools
  * @param hasExec whether `exec` is wired; by default, whether the toolset holds it
- * @returns the toolset, `interactives` carrying the note when exec is wired
+ * @returns the toolset, one of those two carrying the note when exec is wired
  */
 export function withComposeNote<T extends { name: string; description: string }>(toolset: T[], hasExec = toolset.some((t) => t.name === "exec")): T[] {
-    return hasExec ? toolset.map((t) => (t.name === "interactives" ? { ...t, description: t.description + COMPOSE_NOTE } : t)) : toolset;
+    if (!hasExec) return toolset;
+    const host = toolset.some((t) => t.name === "interactives") ? "interactives" : "findByText";
+    return toolset.map((t) => (t.name === host ? { ...t, description: t.description + COMPOSE_NOTE } : t));
 }
 
 // Appended to a page-SCANNING tool's output: the CLOSED shadow roots a selector scan couldn't enter, so the

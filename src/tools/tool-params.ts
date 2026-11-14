@@ -44,10 +44,10 @@ export function retryParams(toolName: string): Record<string, JsonSchema> {
  *  tool says "the pricing table". `withBoolean` is false for a tool whose token is a label only. */
 export function citeParam(example: string, withBoolean = true): JsonSchema {
     // A BUILTIN's token arrives only in a run with tool tokens on, which is also when the prompt carries
-    // TOOLTOKENS_CLAUSE (run-assembly.ts): the handle, its label, embedding and `dereference` are said
-    // there once, so the parameter only points at it (the PIPE_CLAUSE pattern). It was the same ~450 characters on
-    // every citable tool. A SERVER tool's label-only token rides whether or not tool tokens are on, so it keeps the
-    // whole explanation.
+    // TOOLTOKENS_CLAUSE (run-assembly.ts): the handle, its label and embedding are said there once, and reading one
+    // back is `dereference`'s own description, so the parameter says only what it does. It was the same ~450
+    // characters on every citable tool. A SERVER tool's label-only token rides whether or not tool tokens are on, so
+    // it keeps the whole explanation.
     if (withBoolean) return {
         type: ["boolean", "string"] as unknown as JsonSchema["type"],
         description: `\`true\`, or a short label ("${example}"): keep a handle to this output.`,
@@ -71,8 +71,9 @@ export const CALL_TITLE = "title";
  * a CLAIM and is shown as one — quoted, never in place of the arguments it sits beside.
  *
  * Deliberately short, because this rides in EVERY tool's schema on EVERY turn: a sentence here is multiplied by
- * the toolset and re-sent for the length of the run (AGENTS.md — never pad model-facing text). The form is pinned
- * by example rather than by adjectives, which is the cheapest way to get a title instead of a paragraph.
+ * the toolset and re-sent for the length of the run (AGENTS.md — never pad model-facing text). It carries no
+ * example: dropping the one it had left titles as short (median 30 characters against 31, over 876 titled calls;
+ * docs/spec/PROMPT_BUDGET.md, the panel-bloat cuts).
  */
 export function callTitleParam(): JsonSchema {
     return { type: "string", description: "What this call is for, in a few words." };

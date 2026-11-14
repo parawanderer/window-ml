@@ -772,6 +772,9 @@ test("the exec compose hint is in interactives' description ONLY when exec is wi
     assert.match(wired[0].description, /^List controls\. A filter this tool lacks: a read-only exec survey, `ml\.queryAll\(sel\)\.map\(el => ml\.a11y\(el\)\)`/);
     assert.equal(wired[1].description, "Find text.", "said once, on interactives");
     assert.deepEqual(withComposeNote(kit), kit, "no exec, no hint: there is nothing to compose with");
+    const subset = withComposeNote([kit[1], { name: "exec", description: "Run JS." }]);
+    assert.match(subset[0].description, /^Find text\. A filter this tool lacks/, "a subset without interactives keeps the hint on findByText");
+    assert.deepEqual(withComposeNote([{ name: "exec", description: "Run JS." }]), [{ name: "exec", description: "Run JS." }], "neither tool: nothing changes");
 });
 
 test("describeElement describes the first match (+ node) and handles bad input", () => {

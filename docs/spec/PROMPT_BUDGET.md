@@ -171,11 +171,12 @@ and the pipe section without its prose. The variant, its two specs and their fix
   after one predicate fix. Tokens per run fell 42,878 to 36,673. The rerun followed #1807, so cloud drivers had
   native vision; the first sweep's look-using cells ran without it and are not pooled with it.
 - **A wrong predicate**: `disabled-controls` failed any answer that also listed the ENABLED buttons, which correct
-  answers often do. It failed 29 of the task's 74 runs across the three sweeps, every one a correct answer, and made
-  DeepSeek Flash look 7/11 against 3/11. Rescored with a predicate that counts an enabled button against the answer
-  only where it is not called enabled, every run of that task is right under both prompts. An audit of every other
-  task's failed runs found no other false negative (one glm-4.7-flash pipe-log answer wrote `4471` without its `E-`,
-  kept as wrong).
+  answers often do. It failed 29 of the task's 74 runs (all runs, every model, the three sweeps; recounted from each
+  run's `run.md` answer under both predicates), every one a correct answer (commit `0e39b318`'s "21 of 38" is a
+  miscount), and made DeepSeek Flash look 7/11 against 3/11. Rescored with a predicate that counts an enabled button
+  against the answer only where it is not called enabled, every run of that task is right under both prompts. An audit
+  of every other task's failed runs found no other false negative (one glm-4.7-flash pipe-log answer wrote `4471`
+  without its `E-`, kept as wrong).
 - **The one effect: the pipe section.** glm-4.7-flash on `pipe-log` (find the one FATAL line in a long log) went
   6/14 to 4/14, pooled. Every glm run that used a `pipe` was right under both prompts (6/6 and 3/3); under the cut
   fewer used one (6/11 to 3/11 in the rerun), and the rest asked `fetch_url`'s `ask` and got an ERROR line's code
