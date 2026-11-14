@@ -472,7 +472,9 @@ test("value tree: each primitive carries the highlight.js class the text view gi
     assert.ok(has(".jt-null", "hljs-literal"), "null is a literal");
     assert.ok(has(".jt-number", "hljs-number"));
     assert.ok(has(".jt-string", "hljs-string"));
-    assert.ok(has(".jt-key", "hljs-attr"), "a key is an attribute, as in the text view");
+    assert.ok(has(".jt-key-text", "hljs-attr"), "a key's name is an attribute, as in the text view");
+    assert.equal(cell.querySelector(".jt-value .jt-key").textContent, "\"ok\":", "the colon stays in the key, outside the attribute's colour");
+    assert.equal(cell.querySelector(".jt-value .jt-key-text").textContent, "\"ok\"", "the attribute colours the name alone");
 });
 
 test("output cell: dragging the grip resizes THIS cell only", async () => {

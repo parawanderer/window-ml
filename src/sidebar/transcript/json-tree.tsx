@@ -59,11 +59,11 @@ export interface JsonSchemaNode { description?: string; properties?: Record<stri
 // elsewhere) + a dotted underline under the field name alone (not the quotes or colon) so you can tell which keys carry docs — a debugging affordance over raw args.
 export function JtKey({ name: raw, desc, unknown }: { name: string; desc?: string; unknown?: boolean }) {
     const name = keyLabel(raw);
-    if (unknown) return <span class="tt jt-key jt-key-unknown hljs-attr" tabIndex={0}>{name}:<span class="tt-pop left" role="tooltip">Not in this tool's parameter schema — likely a hallucinated argument, so the tool will ignore it or error.</span></span>;
+    if (unknown) return <span class="tt jt-key jt-key-unknown" tabIndex={0}><span class="jt-key-text hljs-attr">{name}</span>:<span class="tt-pop left" role="tooltip">Not in this tool's parameter schema — likely a hallucinated argument, so the tool will ignore it or error.</span></span>;
     // The description comes from the tool's own JSON Schema, which is written in markdown — backticked
     // identifiers, mostly. Printed raw it showed the backticks, which reads as a rendering that gave up.
-    if (desc) return <span class="tt jt-key jt-key-doc hljs-attr" tabIndex={0}>"<span class="jt-key-name">{name.slice(1, -1)}</span>":<span class="tt-pop left" role="tooltip"><TipText md={desc} /></span></span>;
-    return <span class="jt-key hljs-attr">{name}:</span>;
+    if (desc) return <span class="tt jt-key jt-key-doc" tabIndex={0}><span class="jt-key-text hljs-attr">"<span class="jt-key-name">{name.slice(1, -1)}</span>"</span>:<span class="tt-pop left" role="tooltip"><TipText md={desc} /></span></span>;
+    return <span class="jt-key"><span class="jt-key-text hljs-attr">{name}</span>:</span>;
 }
 /** A key as the tree prints it: always quoted as a JSON string, so every key reads the same and one with a space,
  *  a colon or nothing in it does not read as part of the syntax around it. */
