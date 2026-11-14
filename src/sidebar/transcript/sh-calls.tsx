@@ -27,6 +27,12 @@ function previewOf(e: ShEntry): string {
     return commandOf(e.argv.slice(1));
 }
 
+/** What the row's warning dot says: the facts that raised it, by name, so it still means something on a call already open or already run. */
+const flagged = (e: ShEntry): string => {
+    const lines = e.facts.filter((l) => l.warn).map((l) => `${l.label}: ${l.value}`);
+    return lines.length ? `Worth a look: ${lines.join("; ")}` : "Worth a look: this call was killed for running out of memory.";
+};
+
 /**
  * One call: its row (status, program, the start of what it ran, how it went, how long), opening to the command, the
  * facts and the raw argv.
@@ -40,7 +46,7 @@ export function ShEntryCard({ e, defaultOpen }: { e: ShEntry; defaultOpen?: bool
     const status = e.verdict === "ran" ? "ok" : e.verdict === "denied" ? "err" : "pending";
     const label = (
         <span class={`shc-row ${e.verdict}`}>
-            <Dot status={status} warn={e.warn ? "A fact of this call needs a look: open it." : undefined} />
+            <Dot status={status} warn={e.warn ? flagged(e) : undefined} />
             <span class="shc-prog">{e.program}</span>
             <span class="shc-prev">{previewOf(e)}</span>
             <span class="shc-said">{e.said}</span>
