@@ -1204,13 +1204,13 @@ export function PendingNote({ s, leaving = false, rootRef }: { s: Session;
     const dup = !blocked && liveShownByTranscript(s);
     // LEAVING, it says what it said last: the run has ended and its state no longer describes a live run, so a
     // phrase read from it now would change under the fade.
-    const said = useRef<{ blocked: boolean; dup: boolean; text: ComponentChildren }>({ blocked, dup, text: null });
-    if (!leaving) said.current = { blocked, dup, text: blocked
+    const said = useRef<{ blocked: boolean; dup: boolean; live: boolean; text: ComponentChildren }>({ blocked, dup, live: false, text: null });
+    if (!leaving) said.current = { blocked, dup, live: !!(s.liveStream?.reasoning || s.liveStream?.content), text: blocked
         ? "waiting for your approval…"
         : <>{live?.label}<InlineFold text={live?.suffix ?? ""} /><InlineFold class="psteps" text={n > 0 ? ` · ${n} ${n === 1 ? "step" : "steps"}` : ""} /></> };
     const v = said.current;
     return (
-        <div ref={rootRef} class={`pending-note${v.blocked ? " blocked" : ""}${v.dup ? " dup" : ""}${leaving ? " leaving" : ""}`}>
+        <div ref={rootRef} class={`pending-note${v.blocked ? " blocked" : ""}${v.dup ? " dup" : ""}${v.dup && v.live ? " dup-live" : ""}${leaving ? " leaving" : ""}`}>
             {/* BOTH are drawn and the view picks one in CSS: the bar in the panel, where it matches the
                 instrumentation around it, and the glyph in the reading view, where a full-width rule is furniture.
                 A hidden element's animations do not run, so the one that is not shown costs nothing. */}

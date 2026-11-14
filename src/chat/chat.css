@@ -794,9 +794,10 @@ button.chat-page-go:hover { color: var(--fg); }
 }
 @starting-style { .chat.calm .pending-note { opacity: 0; height: 0; padding-top: 0; padding-bottom: 0; } }
 .chat.calm .pending-note.dup, .chat.calm .pending-note.blocked, .chat.calm .pending-note.leaving { opacity: 0; height: 0; padding-top: 0; padding-bottom: 0; }
-/* `.dup` is the one that must NOT ease: the stream's own text or "thinking N tokens" appears in the same frame, so a 220 ms fold
-   left two thinking lines on screen at once ("thinking ~1 tokens…" over "Thinking… (~0 tok)"). The line is replaced, not folded. */
-.chat.calm .pending-note.dup { transition: none; }
+/* `.dup-live` is the dup that must NOT ease: the stream's own text or "thinking N tokens" appears in the same frame, so a
+   220 ms fold left two thinking lines on screen at once ("thinking ~1 tokens…" over "Thinking… (~0 tok)"). That line is
+   replaced, not folded. A running tool's `.dup` still folds: nothing is drawn in its place in the same frame. */
+.chat.calm .pending-note.dup-live { transition: none; }
 @media (prefers-reduced-motion: reduce) { .chat.calm .pending-note { --pending-out-ms: 0; transition: none; } }
 .chat.calm .pending-note .pbar { display: none; }
 .chat.calm .pending-note .fbusy { display: block; }
