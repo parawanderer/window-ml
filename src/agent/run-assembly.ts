@@ -17,7 +17,7 @@ import type { FramedFile } from "../attached-files";
 import type { StartRunPayload, RebuildConfig } from "../contract/contract-messages";
 import { promptSurfaceClause, promptSurfaceOf } from "./prompt-surface";
 import { stepBudget } from "./step-budget";
-import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, tooltokensClause, shadowClause, SHADOW_TRIGGER_TOOLS, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, currentClause, HUD_PROSE_QUIET, HUD_PROSE_PROGRESS, framePrompt } from "./prompts";
+import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, tooltokensClause, shadowClause, SHADOW_TRIGGER_TOOLS, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, LINKS_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, currentClause, HUD_PROSE_QUIET, HUD_PROSE_PROGRESS, framePrompt } from "./prompts";
 import { buildDereferenceTool, withComposeNote } from "../tools/tools";
 import { PAGE_CONTEXT_HEAD } from "./output-clip";
 import { withToolDetails } from "../tools/tool-details";
@@ -379,7 +379,7 @@ export function composeSystemPrompt(f: PromptFacts): string {
             systemPrompt += shadowClause(f.names, f.pierceClosed) + IFRAME_CLAUSE;
             if (has("exec")) systemPrompt += SHADOW_EXEC_NOTE;
         }
-        if (has("agent_api_docs")) systemPrompt += SELF_CLAUSE;
+        if (has("agent_api_docs")) systemPrompt += SELF_CLAUSE + LINKS_CLAUSE;
         // The pipe dialect, ONCE, when anything in this toolset actually takes a `pipe`. Detected
         // from the SCHEMA rather than a list of tool names, so a new tool that grows a `pipe`
         // parameter is covered without anyone remembering this line — and a toolset with none of

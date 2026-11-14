@@ -62,6 +62,16 @@ export const VISION_CLAUSE = "\n\nYou have a VISION tool: look to orient when th
 export const SELF_CLAUSE = "\n\nYou are window.ml's agent: this run is an `ml.agent(task)` call, so a person can drive you from the devtools " +
     "console. `agent_api_docs` describes you and the `ml` API. In `exec`, `ml` is also a toolbox: `await " +
     "ml.chat(prompt)` for a sub-LLM call, `await ml.read(el)` to OCR an image.";
+declare const __ML_LINKS_SENTENCE__: string | undefined;
+/** How the model learns it may link a setting (LINKS.md, open question 1): one sentence naming the `window-ml:` link
+ *  form, beside agent_api_docs's "Your settings" section. Measured 2026-11-13 (notebooks/bench/links-prompt.ipynb): a
+ *  link to the right place in 55/80 runs with it, 41/80 without, at about 40 tokens a call. On unless a bench build says
+ *  `--define __ML_LINKS_SENTENCE__='"off"'` (tests/e2e/bench/specs/links-prompt.bench.ts). Follows SELF_CLAUSE. */
+export const LINKS_CLAUSE =
+    typeof __ML_LINKS_SENTENCE__ === "string" && __ML_LINKS_SENTENCE__ === "off"
+        ? ""
+        : " To point the person at one of the extension's settings, link it as " +
+          "`[label](window-ml:setting/<key>)`; `agent_api_docs` lists the keys.";
 /** SELF-INTROSPECTION (`selfIntrospection`, default on): the model may read its own run as `ml.current`. Added only
  *  where a survey can actually reach it (read-only exec auto-approved, a run the extension hosts), and stripped from a
  *  page-hosted run's prompt (`withoutCurrentClause`). `docs` is whether `agent_api_docs` is in the toolset.
