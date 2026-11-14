@@ -123,9 +123,8 @@ export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, 
             {label != null ? <span class="tri jt-tri-space" aria-hidden="true"><IconChevron /></span> : null}
             {label ?? (k != null ? <JtKey name={k} desc={desc} unknown={unknown} /> : null)}
             {times && isTimeField(k, v)
-                ? <span class="jt-val jt-number jt-time" {...cursorTipOn(`${new Date(v).toISOString()} (${v})`)}>{timeLabel(v)}</span>
-                : <span class={`jt-val jt-${t}`}>{typeof v === "string" ? JSON.stringify(v) : String(v)}</span>}
-            {sep}
+                ? <span class="jt-val jt-number jt-time" {...cursorTipOn(`${new Date(v).toISOString()} (${v})`)}>{timeLabel(v)}{sep}</span>
+                : <span class={`jt-val jt-${t}`}>{typeof v === "string" ? JSON.stringify(v) : String(v)}{sep}</span>}
             {trail}
         </div>;
     }
