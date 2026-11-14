@@ -1,0 +1,98 @@
+# A run that starts with no tab
+
+**Status: proposal, nothing built (2026-11-14, from Shane's idea in the window-ml-9b session; the tab invariant read
+by the `[window-ml move-run]` lane on move-run-b 0e0b6707; UNASSIGNED).** It changes a decision in
+[`CHAT_PAGE.md`](CHAT_PAGE.md) ("an agent chat needs a primary page") and extends [`MOVE_RUN.md`](MOVE_RUN.md) shape
+(a). It waits on that shape, not on shape (b).
+
+## Why
+
+The chat page's start form offers "New tab" first: a run that does not need a page yet is given one anyway, because a
+run must have a tab. That one choice is most of `blank-start.ts`, a state machine for when the browser will not let
+the extension run on the page it just opened, so the start form can raise a permission dialog for a page nobody
+asked for.
+
+Many sessions need no page at the start: work on files the person drops in, on the disk through `ml.sh`, in Python,
+on fetched pages. A tab, if one is needed at all, is needed later, and at a URL that is known only then.
+
+## The decisions
+
+- **"No tab" replaces "New tab"** as the first choice of the agent start form (`tab-picker.tsx`). The open tabs stay
+  below it. A run started this way is DETACHED: it has a transcript, worker-realm tools, and no page.
+- **A detached run's tools are the worker-realm ones** (`realm: "worker"` in the tool registry): `python_exec`,
+  `fetch_url`, `task`, `answer`, `agent_api_docs`, the `propose_*` tools, and the run's files. A page-realm tool is
+  refused with a sentence saying the run has no page and how it gets one; it is not removed from the tool list, so the
+  model learns the way to a page instead of not knowing one exists.
+- **It gets a tab two ways, and only two:**
+  1. **The person attaches it**: MOVE_RUN shape (a), a move between turns, from "no tab". From the chat page
+     ("move to tab…") or the HUD ("bring a session here"), as for any other run.
+  2. **The model calls `navigate`**, and the person approves it. No new tool: `navigate` from the detached state
+     opens a tab at the URL and attaches the run there.
+- **The run started there is a run the PERSON started**, so it works on any page, as a run started from the HUD
+  does, and the site-access lists do not apply to it ([`SITE_ACCESS.md`](SITE_ACCESS.md)).
+
+## `navigate` from the detached state
+
+It is the tool a run already uses to carry itself onto another site. The hostile case (a model steered by injected
+content asking to go to a page that then receives the run's context) is the cross-origin `navigate` the gate already
+asks about. What changes is the branch it runs, because `navigate` today assumes a page (`navigateTool`,
+`ml-tool-factories.ts`: `realm: "page"`, the target resolved against `location.href`):
+
+- **The worker runs it**, not the page: it opens the tab, waits for its load, and attaches the run.
+- **Every target is another site.** It asks every time, whatever the run's `crossOrigin` fact says, because "same
+  site" has no site to be the same as. Treating the first navigation as same-site would let it through unasked.
+- **A relative URL is refused**: nothing to resolve it against.
+- **The approval card checks the site's access before the tab opens**, the start page's `blankStart` check moved to
+  the moment it is needed.
+- **The description the model reads** gains one clause for the detached state (PROMPT_BUDGET applies).
+
+Its tests are `navigate` tests, written to fail first: from the detached state it always asks, a relative URL is
+refused, a refused approval opens no tab, and a page cannot start it (no `HANDLE_MAP` entry, as for a move).
+
+## `ml.sh` with no page
+
+`ml.sh` is reached two ways today ([`docs/dev/shell.md`](../dev/shell.md)): from an `exec` in an isolated world on a
+tab (`exec-routing.ts`), and from a full-mode `python_exec` cell over the wire (`sw-ml-wire.ts`). The second needs no
+page, so a detached run has `ml.sh` already, through Python. Its cost is that full mode always asks.
+
+Open: whether that is enough, or whether a detached run wants a worker-hosted `exec` world with `ml.sh` in it. A bench
+of disk tasks in a detached run, Python-only, answers it; nothing is built for it before that.
+
+## How it would work
+
+The tab is a hard number today, between turns as much as during them (the move-run lane's reading):
+
+- `bgRuns` and its persisted snapshot hold `tabId: number`, and the restore after an eviction skips a snapshot whose
+  `tabId` is not a number (`sw-runs.ts`). A null-tab run would vanish at the first eviction.
+- The run inbox, `activeRuns`, the replay ring, `trackRun`/`releaseRunTab`, the tab pin, the arrival watcher and
+  `startingControllers` are all keyed by tab id. The worker tools are built with the tab (`buildWorkerTools`).
+- About 120 sites that send to the page read the turn's tab binding (`sw-run-host.ts`) and expect a number.
+
+So the shape is **one DETACHED HOST behind one predicate**, not `tabId: number | null`: a sentinel host that refuses
+page-realm tools, files the run under its run id where today's maps file it under a tab, and sends UI events to the
+chat page. The nullable type would spread a guard over every one of those sites. This decision is made before anyone
+types `| null` into `bgRuns`.
+
+- **The snapshot** gains the detached form, and the restore keeps it (an UPGRADE test: an old snapshot, a number,
+  restores as before).
+- **The move from no tab**: `moveRun` (`move-run.ts`) reads the source tab and then releases it, notes the leave on
+  its card and relays a debug event to it. From a detached run those three are skipped; the rest is the move as it is.
+- **Where a detached run renders and buffers** is the one new design question. Today a run is shown by its tab's card
+  and its replay ring; the chat page becomes the first surface that shows a run on its own, and the ring is keyed by
+  run. [`CHAT_PAGE.md`](CHAT_PAGE.md) and the session index are where that lands.
+
+## Order
+
+1. MOVE_RUN shape (a) on main.
+2. The detached host, the snapshot form, and where its events render. "No tab" in the start form. Attach from no tab.
+3. `navigate` from the detached state, with its tests.
+4. The `ml.sh` bench, and a worker `exec` world only if it says so.
+
+## Open
+
+- Whether a detached run's start form still offers a URL ("No tab" plus an optional first page is `navigate` asked
+  in advance).
+- Whether a run can go back to detached (its tab closed, or the person detaches it), or a closed tab still ends the
+  turn as the page-health work does.
+- How this relates to headless runs ([`HEADLESS_AGENTS.md`](HEADLESS_AGENTS.md)): a detached run has no page at all; a
+  headless one has a page no one sees.
