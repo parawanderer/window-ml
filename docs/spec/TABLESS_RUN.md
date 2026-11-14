@@ -105,8 +105,9 @@ What main does NOT have (read by the async lane, main 43f88825):
   never the run's: today a run whose tab closes keeps everything, with no grace period and no release. The release at
   grace expiry is a NEW trigger, beside `forgetRun`, a failed start, the install purge, token-store pressure, and
   archive or delete.
-  It ships FIRST, without this spec (Shane, 2026-11-14; the async lane's): a closed tab's run with no running task
-  is released after the grace period, and the session list shows whether a session is still alive and lets the
+  It ships FIRST, without this spec (Shane, 2026-11-14; the async lane's, through `releaseSessionTokens`): a closed
+  tab's run with no running task is released after the grace period, its transcript and stored run kept (a later
+  Continue starts a fresh namespace and is told so), and the session list shows whether a session is still alive and lets the
   person stop its kernel by hand, the same release at once. This spec then changes only what the run is during
   the grace period: detached, and reopenable.
 - **"The run has no running task", as something the worker can ask.** The task table is private (`sw-tasks.ts`). The
@@ -116,7 +117,8 @@ What main does NOT have (read by the async lane, main 43f88825):
 - **A timer that survives eviction.** The grace period is a deadline in storage, checked when the worker wakes
   (an alarm), never a `setTimeout`: the worker is gone after about 30 s idle and is not awake when a cell finishes.
   The browser closing ends it because the task table (`chrome.storage.session`) and the timer go with the session.
-  Its length is a constant to be measured, not guessed.
+  Its length is a stated default, not a measured one: 10 min, the DevTools setting `closedRunGraceMin` (0 releases
+  at once); nothing yet records how soon a closed run is reopened.
 - **A turn started by a finished task on a run with no tab.** The async lane's next slice starts a turn when a task
   finishes and refuses with reason `no-tab` when the run has no tab, leaving the result parked. That is right for a
   detached run until someone reopens it; whether a reopen starts that turn is decided in that branch.
