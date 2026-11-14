@@ -56,10 +56,10 @@ test("two asked calls take their own spans, in the order they were answered", ()
     assert.deepEqual(out.map((e) => e.durationMs), [100, 900]);
 });
 
-test("a record with no stamps keeps the old order (asks, then free) and claims a duration only where the counts agree", () => {
+test("a record with no stamps is in the order the worker listed the calls, and claims a duration only where the counts agree", () => {
     const old = shEntries({ asks: [ask("a", "allowed", { answeredAt: 2000 })], shCalls: [free(["ls"]), { program: "git", durationMs: 700 }] });
-    assert.deepEqual(old.map((e) => e.program), ["git", "ls"], "the ask first, then the free call");
-    assert.equal(old[0].durationMs, 700, "one ask, one span without `unasked`: they pair");
+    assert.deepEqual(old.map((e) => e.program), ["ls", "git"], "the free call ran first, so it is first: the list of calls is the run's order, asked and free together");
+    assert.equal(old[1].durationMs, 700, "one ask, one span without `unasked`: they pair");
     const unpaired = shEntries({ asks: [ask("a", "allowed", { answeredAt: 2000 }), ask("b", "allowed", { answeredAt: 3000 })], shCalls: [{ program: "git", durationMs: 700 }] });
     assert.equal(unpaired[0].durationMs, undefined, "two asks and one span: no time is put on a call it may not belong to");
 });
@@ -76,4 +76,12 @@ test("a fact that warns, or a call killed past its memory, marks the entry", () 
 test("the summary counts calls, asked, free, denied and the ones to check", () => {
     const s = shSummary(shEntries({ asks: [ask("a", "allowed", { answeredAt: 2000 }), ask("b", "denied", { answeredAt: 3000 })], shCalls: [free(["ls"])] }));
     assert.deepEqual(s, { calls: 3, asked: 2, free: 1, denied: 1, warns: 0 });
+});
+
+test("entries follow the code's order even when a call that ran free came before the one that was asked, with or without stamps", () => {
+    const calls = [free(["ls"], { endedAt: 100 }), { program: "git", durationMs: 5, endedAt: 200 }, free(["wc"], { endedAt: 300 })];
+    const asks = [ask("a", "allowed", { answeredAt: 150 })];
+    assert.deepEqual(shEntries({ asks, shCalls: calls }).map((e) => e.program), ["ls", "git", "wc"], "stamped");
+    const bare = calls.map(({ endedAt, ...c }) => c);
+    assert.deepEqual(shEntries({ asks, shCalls: bare }).map((e) => e.program), ["ls", "git", "wc"], "unstamped");
 });
