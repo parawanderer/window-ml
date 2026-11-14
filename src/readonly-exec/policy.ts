@@ -505,6 +505,39 @@ export const ANSWER_METHODS = new Set(["add", "remove", "clear", "dump"]);
 // object the dialect can reach. Pure — it reads data and returns a type string, spending nothing.
 export const ML_READONLY_METHODS = ["getModel", "config", "models", "capabilities", "ps", "serverTools", "queryAll", "range", "a11y", "dereference", "info", "schema"] as const;
 
+/** The two `ml.sh` members a survey may call: run a program and read a held output. Everything else on `ml.sh` (`put`, which
+ *  writes) is not here, so a script naming it is not in the dialect and is put to the person whole. The worker's survey has
+ *  them, and no other realm does: a program is run by the worker, from a step it holds. */
+export const SH_READONLY_METHODS: ReadonlySet<string> = new Set(["run", "read"]);
+
+/**
+ * A fresh, plain copy of an argument handed to the host's `ml.sh`: strings, finite numbers, booleans, null, and arrays and
+ * plain objects of those, by own data properties only. A getter, a Proxy, a function, a symbol or anything else the script
+ * built is refused here, so the host reads data and never runs the script's code, and the copy is the only thing it holds.
+ * @param v the script's value
+ * @param depth how far down this is
+ */
+function plainCopy(v: unknown, depth = 0): unknown {
+    if (v === null || typeof v === "string" || typeof v === "boolean") return v;
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (depth > 4) throw new TypeError("ml.sh: an argument nests too deep");
+    if (Array.isArray(v)) return v.map((_x, i) => {
+        const d = Object.getOwnPropertyDescriptor(v, i);
+        if (!d || !("value" in d)) throw new TypeError("ml.sh: an argument has a hole or an accessor");
+        return plainCopy(d.value, depth + 1);
+    });
+    if (v !== null && typeof v === "object" && (Object.getPrototypeOf(v) === Object.prototype || Object.getPrototypeOf(v) === null)) {
+        const out: Record<string, unknown> = Object.create(null);
+        for (const k of Object.keys(v)) {
+            const d = Object.getOwnPropertyDescriptor(v, k);
+            if (!d || !("value" in d)) throw new TypeError("ml.sh: an argument has an accessor");
+            out[k] = plainCopy(d.value, depth + 1);
+        }
+        return out;
+    }
+    throw new TypeError(`ml.sh: an argument must be plain data (strings, numbers, booleans, arrays, plain objects), got ${typeof v}`);
+}
+
 /** The read-only members that read the PAGE, so a worker-side evaluation has none of them and defers to the page. */
 const PAGE_ML_METHODS: ReadonlySet<string> = new Set(["queryAll", "a11y"]);
 
@@ -674,6 +707,20 @@ export function mlFacade(ml: unknown, reused?: string[], answerFacade?: unknown,
             // it builds (a unit vector a string) is bounded by EMBED_CALL_INPUTS; reading one costs a step an element.
             return (hostEmbed as (i: unknown) => unknown).call(ml, many ? texts : texts[0]);
         };
+    }
+    // `ml.sh` — run a program, or read what one printed. The worker's survey only: the host's `sh` is the worker's own call
+    // (sw-shell-call.ts), which judges EACH call at the time it is made (a policy or the built-in default lets it run, no
+    // opinion raises a nested ask the script waits on, a deny throws), so the script's being free says nothing about what its
+    // calls are allowed to do. Rebuilt here from the two names and called with a plain copy of the arguments, never the
+    // script's own objects; `put` is not on it. Dispatched by IDENTITY (`onSh` in evaluator.ts), like `ml.answer`.
+    const hostSh = (ml as Record<string, unknown>)["sh"];
+    if (worker && hostSh && typeof hostSh === "object") {
+        const sh: Record<string, unknown> = Object.create(null);
+        for (const name of SH_READONLY_METHODS) {
+            const fn = (hostSh as Record<string, unknown>)[name];
+            if (typeof fn === "function") sh[name] = (...args: unknown[]): unknown => (fn as (...a: unknown[]) => unknown).apply(hostSh, args.slice(0, 2).map((x) => plainCopy(x)));
+        }
+        if (Object.keys(sh).length) out.sh = Object.freeze(sh);
     }
     // `ml.answer` — the run's curated answer set (a curate-only facade: add/remove/clear/dump/length, built by
     // the CALLER via makeAnswerFacade so this interpreter stays dependency-free + DOM-free). Mutating your OWN

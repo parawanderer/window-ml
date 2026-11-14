@@ -8,7 +8,7 @@ import { NotInDialect, Stopped, MAX_STRING, MAX_COLLECTION, Denied, riskyRegex, 
 import { Node } from "./parser";
 import { regexSteps } from "./regex-cost";
 import { replaceSize, replaceWorstCase } from "./replace-size";
-import { isSet, isMap, isStringObject, isRegExpObject, drainIterator, isWritableTarget, ReadonlyRealm, DENIED_PROPS, isDomCollection, tokenListBrand, SAFE_CONSTRUCTORS, ANSWER_METHODS, methodAllowed, kindOf, MUTATING_METHODS, CALLABLE_ROOTS, INTRINSIC_CALLBACKS, INTRINSIC_ROOTS, COERCING_CALLBACKS, convertingArgs, ROOT_CONVERTS, CTOR_CONVERTS, CTOR_ITERABLES, convertsByIntrinsics, argWrites } from "./policy";
+import { isSet, isMap, isStringObject, isRegExpObject, drainIterator, isWritableTarget, ReadonlyRealm, DENIED_PROPS, isDomCollection, tokenListBrand, SAFE_CONSTRUCTORS, ANSWER_METHODS, SH_READONLY_METHODS, methodAllowed, kindOf, MUTATING_METHODS, CALLABLE_ROOTS, INTRINSIC_CALLBACKS, INTRINSIC_ROOTS, COERCING_CALLBACKS, convertingArgs, ROOT_CONVERTS, CTOR_CONVERTS, CTOR_ITERABLES, convertsByIntrinsics, argWrites } from "./policy";
 import { PrintSwap, abridgeRow, diffSwap, jsonPathKey } from "./print";
 
 /** Per-frame set of names declared `const`, kept off the frame's own enumerable keys. */
@@ -1169,6 +1169,8 @@ export class Evaluator {
             // like `onMl` — so add/remove/clear/dump run on IT, and nothing else. Its methods deliberately never
             // join ALLOWED_METHODS (so `x.remove()`/`x.dump()` on a page object stay out of dialect).
             const onAnswer = this.ml !== null && obj != null && obj === (this.ml as Record<string, unknown>).answer;
+            // `ml.sh` — the worker's program runner, with its OWN allowlist (SH_READONLY_METHODS: run, read), by identity too.
+            const onSh = this.ml !== null && obj != null && obj === (this.ml as Record<string, unknown>).sh;
             // THE CURATED FACADES FIRST, where absence is a REFUSAL rather than a typo. `ml` holds only the
             // read-only API, and `ml.answer` only its four curate methods — the real `window.ml` has
             // `setModel`/`chat`/`pythonExec`, so a missing name here means "the dialect withheld it", which
@@ -1184,6 +1186,8 @@ export class Evaluator {
                 if (typeof obj[key] !== "function") throw new TypeError(`${key} is not a function on the call`);
             } else if (onAnswer) {
                 if (!ANSWER_METHODS.has(key)) throw new NotInDialect(`method '${key}' not allowed`);
+            } else if (onSh) {
+                if (!SH_READONLY_METHODS.has(key)) throw new NotInDialect(`ml.sh.${key} is not in the read-only dialect: it is put to the person`);
             } else if (!methodAllowed(obj, key, this.isTokenList)) {
                 // WHICH KIND OF "no" IS THIS? The distinction decides whether a human gets interrupted.
                 //

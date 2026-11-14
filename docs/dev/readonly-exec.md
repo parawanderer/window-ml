@@ -44,6 +44,13 @@ Good for:
 - Curating the run's answer (`ml.answer.add(…)`).
 - Finding where a long text talks about something: embed its pages with `ml.embed([...])` and `rank` them against a
   query, within the caps below.
+- Running programs and reading what they printed: `ml.sh.run(argv)` and `ml.sh.read(...)`, in the WORKER's survey only (docs/spec/SHELL.md,
+  "Approval"; ruled 2026-11-14). The members are rebuilt from those two names (`SH_READONLY_METHODS`, `mlFacade`), dispatched by
+  identity (`onSh`, evaluator.ts), and handed a plain COPY of their arguments; `put` is not on them, so a script naming it is put to the
+  person whole. The script being free says nothing about its calls: each one is judged when it is made (`judgeCall("sh", …)`, a policy
+  or the built-in default lets it run, no opinion raises a nested ask the script waits on, a deny throws a catchable error with
+  `code: "Denied"`), and a program's time is the host's, not the step budget's. A script naming them still routes `script-isolated`, never
+  to the page's world. Tests: `tests/readonly-sh.test.mjs`.
 - Walking a nested structure recursively, to a bounded depth.
 
 Not for, and falls back to approval: anything with an effect (a click, typing, a fetch of a new URL, changing the
