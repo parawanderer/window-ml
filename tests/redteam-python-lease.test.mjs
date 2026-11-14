@@ -1,9 +1,9 @@
 // redteam-python-lease.test.mjs — the red team's pass on ASYNC_CALLS.md mode 1 as it reaches `python_exec` (#1642): what
 // a PAGE must never get from the lease, the detached task and the four messages it added (PY_STARTED, PY_CANCEL,
-// PY_TAIL, PY_DONE; src/sw/sw-python-task.ts, src/python/py-lease.ts, src/offscreen.ts; docs/spec/ASYNC_CALLS.md,
-// mode 1 rules 4 to 6).
+// PY_TAIL, PY_DONE) plus the one slice B added (PY_RESULT; src/sw/sw-python-task.ts, src/python/py-lease.ts,
+// src/offscreen.ts; docs/spec/ASYNC_CALLS.md, mode 1 rules 4 to 6, rule 4b's durable table).
 //
-// What must not be reachable, each a row: the four worker-only messages, relayed or posted at the router; a page's own
+// What must not be reachable, each a row: the five worker-only messages, relayed or posted at the router; a page's own
 // `ml.pythonExec` leasing a cell, or naming one; another run cancelling or tailing a cell, under any id shape; the API
 // key in a detached cell's tail, its `task tail` or the late task's text; and a detached cell outliving its turn, or
 // locking a kernel that is not its run's.
@@ -30,8 +30,10 @@ const baseConfig = (o = {}) => ({ chatUrl: "http://host/api/chat/completions", a
 const hostilePage = (id = 9, url = "https://evil.example/attack") => ({ tab: { id, url }, url });   // sender.tab set + web origin
 const tick = () => new Promise((r) => setTimeout(r, 5));
 
-/** The four messages #1642 adds: read by the offscreen document and the worker, made only by the worker. */
-const CELL_TYPES = ["PY_STARTED", "PY_CANCEL", "PY_TAIL", "PY_DONE"];
+/** The messages a leased cell adds — #1642's four and slice B's `PY_RESULT`: read by the offscreen document and the
+ *  worker, made only by the worker. `PY_RESULT` is the one that HANDS OVER a held result: a page reaching it would be
+ *  handed another run's output. */
+const CELL_TYPES = ["PY_STARTED", "PY_CANCEL", "PY_TAIL", "PY_DONE", "PY_RESULT"];
 
 // The attacker owns window.postMessage, which the content script no longer hears (SITE_PRESENCE step 2b): its strongest
 // position is injected.js's port. Which background messages can it get RELAYED through that? Only HANDLE_MAP
@@ -48,15 +50,17 @@ async function pageRelays(...msgs) {
     return world.runtimeCalls.map((c) => c.type);
 }
 
-// --- 1. the four messages are worker-only ---
-// Mutation measured (not committed): list any one of the four in PAGE_STARTED_TYPES, or give it a HANDLE_MAP entry, and
-// this row goes red on the table assertion first and on the relay second.
+// --- 1. the five messages are worker-only ---
+// Mutation measured (not committed): list any one of the five in PAGE_STARTED_TYPES, or give it a HANDLE_MAP entry, and
+// this row goes red on the table assertion first and on the relay second. Slice B's table, measured at 0f789112: a
+// router branch that forwards a page's `PY_RESULT` to the offscreen document reds the "forwards none" assertion.
 
 
-test("GAIN blocked — the lease's four messages are no page's to relay or post: they are absent from the relay tables and the router forwards none", async () => {
-    // PY_STARTED arms a lease, PY_CANCEL interrupts a run's cell, PY_TAIL reads its kept output, PY_DONE settles it. A
-    // page reaching any of them would be a confused deputy over another run's Python, so each must be unrelayable and
-    // inert from a tab sender even when it names a cell that exists.
+test("GAIN blocked — the lease's five messages are no page's to relay or post: they are absent from the relay tables and the router forwards none", async () => {
+    // PY_STARTED arms a lease, PY_CANCEL interrupts a run's cell, PY_TAIL reads its kept output, PY_DONE settles it,
+    // PY_RESULT hands over the result held for the worker that lost it. A page reaching any of them would be a confused
+    // deputy over another run's Python, so each must be unrelayable and inert from a tab sender even when it names a
+    // cell that exists.
     const mapped = Object.entries(HANDLE_MAP).flatMap(([k, v]) => [k, v.type, v.responseType]);
     for (const t of CELL_TYPES) {
         assert.ok(!mapped.some((m) => String(m).startsWith(t)), `${t} is in HANDLE_MAP`);
@@ -65,14 +69,14 @@ test("GAIN blocked — the lease's four messages are no page's to relay or post:
         }
     }
     const relayed = await pageRelays(...CELL_TYPES.flatMap((t) => [{ type: t, cell: "c1a2b3d4" }, { type: `${t}_REQUEST`, payload: { cell: "c1a2b3d4" } }]));
-    assert.deepEqual(relayed, [], "the content script relayed one of the four");
+    assert.deepEqual(relayed, [], "the content script relayed one of the five");
     // The instrument sees an honest relay: a page's CONFIG_REQUEST reaches the worker as GET_CONFIG.
     const control = await pageRelays({ type: "CONFIG_REQUEST", requestId: "c1", payload: {} });
     assert.ok(control.includes("GET_CONFIG"), `positive control: the page's CONFIG_REQUEST relays (${JSON.stringify(control)})`);
 
     // Posted straight at the router as if the content script had relayed it: nothing reaches the offscreen document,
     // where the cell's interrupt, its ring and its settled reply live.
-    // The page approves itself, so the origin gate is not what refuses the four: the types' own absence is.
+    // The page approves itself, so the origin gate is not what refuses the five: the types' own absence is.
     const bg = loadBackground({ config: baseConfig(), local: { ml_site_schema: 2, ml_site_selfapprove: ["https://evil.example"] } });
     for (const t of CELL_TYPES) await Promise.race([bg.send({ type: t, cell: "c1a2b3d4", run: "run-victim", ok: true, bytes: 1 }, hostilePage()), tick()]);
     const forwarded = bg.runtimeSent.filter((m) => CELL_TYPES.includes(m?.type));

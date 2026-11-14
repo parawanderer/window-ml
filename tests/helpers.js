@@ -144,7 +144,7 @@ function streamResponse(lines, { status = 200 } = {}) {
 // lets a test declare contextMenus, which GET_INVOCATION reads as "the right-click entry exists".
 // `holdPolicies` is a promise the policy store's first storage read waits on.
 // `holdRestore` is a promise the worker's read of ALL of local storage (its run restore) waits on.
-function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, onPdfRead, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false, siteAgents = "always", userScripts, onTabsGet, holdRestore, onNative, dialectInside, pyInside, holdPolicies, onPyDelete, onPyInstallTest }) {
+function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, onArchiveOp, onPdfRead, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB, focusedWindow, openTabs = [], allSites = true, siteGate = false, siteAgents = "always", userScripts, onTabsGet, holdRestore, onNative, dialectInside, pyInside, holdPolicies, onPyDelete, extensionTabs = [], onPyInstallTest }) {
     const calls = [];
     // chrome.runtime.connectNative: each host name asked for, in order. With `onNative(name, end)`, the test plays the
     // native host: `end.send(msg)` delivers a message to the worker's port, `end.close(why)` disconnects it, and the
@@ -155,6 +155,8 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     const tabsCreated = [];     // chrome.tabs.create props, for the PDF-print tab flow
     const tabsRemoved = [];     // chrome.tabs.remove ids
     const tabsBack = [];        // chrome.tabs.goBack ids
+    const tabsUpdated = [];     // chrome.tabs.update arg lists (a tab focused, or sent to a new hash)
+    const windowsUpdated = [];  // chrome.windows.update arg lists (a window brought forward)
     const pyRuns = [];          // PY_RUN payloads relayed to the offscreen doc (for python_exec tests)
     // A run's try of a python_exec cell INSIDE the dialect (`inside: true`), kept apart from `pyRuns`. `pyInside(msg)`
     // answers it; absent, it is answered as the stock Pyodide core answers (no membership predicate), so the cell asks.
@@ -351,6 +353,10 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
             },
             runtime: {
                 getURL: (p = "") => `chrome-extension://test/${p}`,   // origin checks (e.g. FETCH_SHEET_TITLE's sender-origin gate)
+                // This extension's open tab contexts: `extensionTabs` (`{ tabId, windowId, documentUrl }`), as the
+                // browser reports them; the chat page is found among them to focus it rather than open a second one.
+                ContextType: { TAB: "TAB" },
+                getContexts: async () => extensionTabs.map((c) => ({ contextType: "TAB", ...c })),
                 getManifest: () => ({
                     version: manifestVersion,
                     permissions: manifestPermissions,
@@ -470,7 +476,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
             // answers (`{ focused, incognito, tabs }`); unset, no window has focus.
             windows: {
                 getLastFocused: async () => (typeof focusedWindow === "function" ? focusedWindow() : focusedWindow) ?? { focused: false, tabs: [] },
-                update: async () => ({}),
+                update: async (...args) => { windowsUpdated.push(args); return {}; },
             },
             tabs: {
                 // Records args so tests can assert the windowId; onCaptureTab (if
@@ -493,6 +499,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                 // The PDF-print flow opens a print.html tab and later removes it by id.
                 create: async (props) => { tabsCreated.push(props); return { id: 4242 + tabsCreated.length }; },
                 remove: async (id) => { tabsRemoved.push(id); },
+                update: async (...args) => { tabsUpdated.push(args); return { id: args[0] }; },
                 goBack: async (id) => { tabsBack.push(id); },
                 onRemoved: { addListener: (fn) => tabRemovedListeners.push(fn) },
                 onActivated: { addListener: (fn) => tabActivatedListeners.add(fn), removeListener: (fn) => tabActivatedListeners.delete(fn) },
@@ -534,6 +541,8 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         tabsCreated,
         tabsRemoved,
         tabsBack,
+        tabsUpdated,
+        windowsUpdated,
         pyRuns,
         runtimeSent,
         pyInsideRuns,
@@ -958,6 +967,7 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
     const hkCalls = [];   // DUMP_HOUSEKEEPING payloads (the Settings → Housekeeping log)
     let hkEvents = housekeeping;   // the log the worker would return; setHousekeeping() changes it AND fires storage.onChanged
     const printCalls = [];   // PRINT_SESSION payloads (the PDF export routes its rendered doc to the background)
+    const openChatCalls = [];   // OPEN_CHAT_PAGE payloads (a link on the HUD card asks the worker to open the chat page)
     let psVram = vram;   // mutable so a test can change the resident set mid-run (setVram)
     const dom = new JSDOM(`<!doctype html><html><body><div id="root"></div></body></html>`, { runScripts: "outside-only", pretendToBeVisual: true });
     const win = dom.window;
@@ -994,6 +1004,7 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
             lastError: undefined,
             sendMessage: (msg, cb) => {
                 if (msg && msg.type === "PRINT_SESSION") { printCalls.push(msg.payload); return; }   // fire-and-forget → the background opens a print tab
+                if (msg && msg.type === "OPEN_CHAT_PAGE") { openChatCalls.push(msg.payload); if (cb) cb({ data: true }); return; }
                 if (!cb) return;
                 const type = msg && msg.type;
                 if (type === "LIST_MODELS") cb(listModels ? listModels(msg.payload) : { data: models, ollamaModels });
@@ -1073,7 +1084,7 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
     const setVram = (v) => { psVram = v; };   // change the resident set a later poll will see
     // Replace the housekeeping log the way the worker's flush does: the store changes and storage.onChanged fires.
     const setHousekeeping = (events) => { const old = hkEvents; hkEvents = events; for (const fn of [...changeListeners]) fn({ ml_hk_log: { oldValue: old, newValue: events } }, "session"); };
-    return { window: win, shadow: win.document, dispatch, raw, tick, flush, changeListeners, syncStore, localStore, unloadCalls, pyCalls, printCalls, hkCalls, setHousekeeping, setVram };
+    return { window: win, shadow: win.document, dispatch, raw, tick, flush, changeListeners, syncStore, localStore, unloadCalls, pyCalls, printCalls, openChatCalls, hkCalls, setHousekeeping, setVram };
 }
 
 module.exports = { FakeMessageChannel, FakeMessagePort, FakeMessageEvent, jsonResponse, htmlResponse, streamResponse, binaryStreamResponse, loadBackground, loadPageWorld, loadDomWorld, loadSidebarWorld, closeSidebarWorlds, loadDotEnv };

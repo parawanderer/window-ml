@@ -91,6 +91,7 @@ export const INVENTORY: readonly InventoryEntry[] = [
     local("ml_session_", "chat", "a chat's resumable record, per chat: the session's archive row carries the same history (backup.md, \"Resuming a restored chat\")", "never", { prefix: true }),
     local("ml_bgrun_", "run-state", "a live run's resumable snapshot; a restored machine has no run to resume", "never", { prefix: true }),
     session("ml_answer:", "run-state", "a run's answer set, memory-lifetime", { prefix: true }),
+    session("ml_tasks:", "run-state", "a run's detached tasks (ids, timings, parked result text), memory-lifetime", { prefix: true }),
     local("ml_run_models", "run-state", "the model a run was switched to"),
     local("ml_handed_to_worker", "run-state", "runs handed from a page to the worker"),
     session("ml_pagebuilt", "run-state", "which tab and site built a page's session; tab ids, meaningless in another browser"),

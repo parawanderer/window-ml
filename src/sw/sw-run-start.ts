@@ -20,7 +20,7 @@ import { assembleRun, rebuildFor, routeTurnImages, startPayload, userRunOptions,
 import { relayDebugEvent } from "./sw-debug";
 import { getConfig } from "./sw-llm";
 import { dropLocalTools, registerLocalTools } from "./sw-local-tools";
-import { buildWorkerTools } from "./worker-tools";
+import { buildWorkerTools, workerRunTab } from "./worker-tools";
 import { pyMediaFor } from "./worker-media";
 import { hostRun } from "./sw-run-host";
 import { bgRuns, bufferReplay, isWorkerRun, makeWorkerRun, runControllers, runInboxes, runModelFor, runRebuilds, startingControllers, tabPageUrl, workerRunsStarting, beginStart, endStart, sessionTokens, releaseSessionTokens, turnByRun } from "./sw-runs";
@@ -109,7 +109,9 @@ async function startMinted(tabId: number, tab: chrome.tabs.Tab, url: string, ml:
     // Remote tools, and the builtins that never read the page, run HERE (sw-local-tools.ts, worker-tools.ts); everything
     // else is registered in the page by the adopt below.
     const names = asm.toolset.map((t) => t.name);
-    registerLocalTools(runId, [...asm.toolset.filter((t) => !!t.remote), ...buildWorkerTools(runId, tabId, () => tabPageUrl.get(tabId) || url, names, pyMediaFor(runId, tabId))],
+    // The tab read at each use: the run host re-points the tools when the run moves or its tab is replaced (retabWorkerRun).
+    const tabNow = (): number => workerRunTab(runId) ?? tabId;
+    registerLocalTools(runId, [...asm.toolset.filter((t) => !!t.remote), ...buildWorkerTools(runId, tabId, () => tabPageUrl.get(tabNow()) || url, names, pyMediaFor(runId, tabNow))],
         { model: asm.runModel, driverSees: asm.driverSees, visionModel: asm.runVisionModel });
     // Marked worker-built BEFORE its id reaches the page (the push below carries it): from then on a page's own
     // START_RUN, RESUME_RUN or INJECT_MESSAGE naming it is refused, so the page cannot host its own run under the hash

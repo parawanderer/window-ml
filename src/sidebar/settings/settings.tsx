@@ -15,13 +15,13 @@ import type { PanelTab, MlConfig, ApiFormat, Theme, DebugMode, CardCorner, Agent
 import type { ComponentChildren } from "preact";
 import type { VisionSupport } from "../../contract/contract-render";
 import type { LoadedModel, ServerTool } from "../../contract/contract-server";
-import { BUILD_DEFAULT_WORLD, DEFAULT_CONFIG, modelFilterAllows, protoMode } from "../../contract/contract-config";
+import { BUILD_DEFAULT_WORLD, DEFAULT_CONFIG, labelMetric, modelFilterAllows, protoMode } from "../../contract/contract-config";
 import { DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX } from "../../contract/contract-render";
 import { detectGroundingModel, generatesText, producesEmbeddings } from "../../contract/contract-server";
 import { PY_PACKAGES } from "../../python/python-env";
 import {
     config, models, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes,
-    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, CODE_THEME_KEY, CODE_THEME_VSCODE_KEY, CODE_THEME_UI_KEY, codeTheme, codeThemeCustom, codeThemeUi, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, modelKinds, embedDims, view } from "../store";
+    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, CODE_THEME_KEY, CODE_THEME_VSCODE_KEY, CODE_THEME_UI_KEY, codeTheme, codeThemeCustom, codeThemeUi, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, modelKinds, embedDims, view, markReturn } from "../store";
 import { truncate } from "../format";
 import { ToolDefsView } from "../transcript/agent-detail";   // the SAME viewer an agent run uses for its local toolset
 import { applyTheme, applyFont, applyCodePrefs, panelThemeActive } from "../prefs";
@@ -35,7 +35,7 @@ import { ManifestsSectionBody } from "./manifests-section";
 import { LibrariesSectionBody } from "./libraries-section";
 import { RequestRows, answerRequest, useWaitingRequests } from "./requests-section";
 import { Lbl } from "./settings-label";
-import type { PanelRoute } from "../links";
+import type { PanelRoute } from "../../link-address";
 
 /** The chart-window lengths the picker offers by name. The scrub strip can set others by drag, which is
  *  why the select needs to know which values it already has an option for. */
@@ -703,11 +703,12 @@ function markRow(el: Element): void {
 
 /**
  * Open the panel view a `window-ml:` link names (links.ts): Settings, at its tab and section, scrolled to the
- * setting's row or the Backup block.
+ * setting's row or the Backup block. The session the link was clicked in is where `‹` returns, as from the gear.
  * @param r the resolved view
  */
 export function openPanelRoute(r: PanelRoute): void {
     showSettingsSection(r.tab, r.section, r.setting ? { setting: r.setting } : r.target);
+    markReturn();
     view.value = { name: "settings" };
 }
 
@@ -1871,7 +1872,7 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                 <div class="set-note">A tool output can be kept under a name you give it (<code>token: "the sales table"</code>) and read back later with <code>dereference</code>. When a name isn't recalled exactly, this picks how the near matches are ranked. A near match is only used when it clearly beats the runner-up, and it is always reported.</div>
                 <div data-setting="labelMatch" class="set-field">
                     <Lbl tip={TIP.labelMatch}>Label matching</Lbl>
-                    <select value={c.labelMatch} onChange={(e: any) => setField("labelMatch", e.target.value as LexicalMetric)}>
+                    <select value={labelMetric(c.labelMatch)} onChange={(e: any) => setField("labelMatch", e.target.value as LexicalMetric)}>
                         <option value="hybrid">hybrid — trigram + word overlap (default)</option>
                         <option value="tokenset">tokenset — word overlap only</option>
                         <option value="trigram">trigram — character level</option>
@@ -1910,6 +1911,11 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                         onChange={(e: any) => { const n = parseInt(e.target.value, 10); setField("pythonIdleMinutes", Number.isFinite(n) && n >= 0 ? n : DEFAULT_CONFIG.pythonIdleMinutes); }} />
                 </label>
                 <div class="set-hint">A run's Python names (variables, imports) last as long as the run, across its turns. Between turns the sandbox holding them is shut after this many idle minutes, and the run is told on its next cell and in its transcript. 0 never shuts it for idleness; it still ends with the session. A python_exec keep: true holds it only through its own turn.</div>
+                <label data-setting="detachedTaskMaxMin" class="set-field"><span>Detached task limit (minutes)</span>
+                    <input type="number" min="1" max="60" step="1" value={c.detachedTaskMaxMin}
+                        onChange={(e: any) => { const n = parseInt(e.target.value, 10); setField("detachedTaskMaxMin", Number.isFinite(n) && n >= 1 && n <= 60 ? n : DEFAULT_CONFIG.detachedTaskMaxMin); }} />
+                </label>
+                <div class="set-hint">The longest a detached task runs before it is ended: a python_exec cell that outran its lease (the sandbox ends it) or an ml.sh call (its timeoutMs is held to this). 1 to 60; 60 is the ceiling and the default. A task keeps running after the model answers, and its result is read at the next turn.</div>
                 </Section>
 
                 <Section id="fetch" title="Fetching (fetch_url / ml.fetch)">

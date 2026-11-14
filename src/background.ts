@@ -72,6 +72,7 @@ import { runControlPayloadError } from "./sw/run-payload-check";
 import { forPage } from "./sw/sw-scrub";   // error text bound for a page, without the config's secrets
 import { pythonPrewarm, pythonExec, pythonInterrupt, relayPyStdout, deletePythonRun, dropPythonLibraries, pythonReaped, pythonStarted, pythonDone } from "./sw/sw-python";
 import { focusLineFor } from "./sw/sw-focus";
+import { chatHashFor, openChatPage } from "./sw/sw-open-chat";
 import { eventSession, pageMayWrite, withoutPageWhy, WORKER_ONLY_KINDS, type WorkerClaim } from "./event-admission";   // what a page may add to a session the worker speaks for
 import { fetchUrlFor, pageFetchCaller } from "./sw/sw-fetch-url";
 import { watchRedirects } from "./sw/sw-redirects";
@@ -972,7 +973,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     }
     if (message.type === "PY_STDOUT") { relayPyStdout(message); return false; }
     if (message.type === "PY_STARTED") { pythonStarted(message, sender); return false; }
-    if (message.type === "PY_DONE") { pythonDone(message, sender); return false; }
+    if (message.type === "PY_DONE") { void pythonDone(message, sender); return false; }
     if (message.type === "PY_REAPED") { pythonReaped(message, sender, noteRunLine); return false; }
     if (message.type === "SERVER_TOOL_EXEC") {
         // Run ONE OpenWebUI-configured tool. CHOKE POINT, and a real one: the fetch spends the user's API
@@ -1044,6 +1045,16 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // untrusted page may fetch only a URL the user approved for THIS tab (grown in a run's approval,
         // unforgeable). A trusted surface / whitelisted domain is unrestricted. Only http(s) targets.
         void pageFetchCaller(sender).then((caller) => fetchUrlFor(message.payload, caller)).then(sendResponse);
+        return true;   // async
+    }
+    if (message.type === "OPEN_CHAT_PAGE") {
+        // The chat page, opened or focused at a view: the popup's buttons, and a `window-ml:` link on the HUD card,
+        // which draws no Settings (docs/spec/LINKS.md). EXTENSION-ORIGIN ONLY, by the sender's URL (the card is our
+        // iframe in a page tab, so `sender.tab` is set), and not in HANDLE_MAP, so a page cannot reach it. The URL is
+        // `chat.html` and the hash of an address a link resolves (`chatHashFor`), never one the sender sends.
+        const hash = isExtensionSender(sender) ? chatHashFor(message.payload?.address) : null;
+        if (hash == null) { sendResponse({ error: "refused" }); return true; }
+        openChatPage(hash).then(() => sendResponse({ data: true }), (e) => sendResponse({ error: (e as Error)?.message || String(e) }));
         return true;   // async
     }
     if (message.type === "OPEN_EXTENSIONS_PAGE") {
