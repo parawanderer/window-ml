@@ -3,6 +3,9 @@
 Each notebook has a generator beside it (`make-<name>.py`, the file to edit) and its pinned inputs under
 `data/<name>/`.
 
+- [links-prompt.ipynb](links-prompt.ipynb): LINKS.md open question 1, whether one sentence in the system prompt makes
+  models write `window-ml:` links to a setting: link rate, whether the address resolves, the right place and the exact
+  row per model and arm, the control, and the sentence's tokens per call. Generator: `make-links-prompt.py`.
 - [prompt-cuts2.ipynb](prompt-cuts2.ipynb): prompt budget round 2 (locate and python_exec option texts moved to
   `agent_api_docs`): passes per model under each prompt, whether a drop is more than noise, why each failure failed,
   tokens saved per call, and the ship rule. Generator: `make-prompt-cuts2.py`.
