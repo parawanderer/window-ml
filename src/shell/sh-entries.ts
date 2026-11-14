@@ -79,9 +79,8 @@ const flagsOf = (lines: ShCardLine[], oom: boolean): { warn: boolean; flags: str
 
 /**
  * A step's answered calls, as entries, in the order they happened: the asks the person answered and the calls that ran
- * without asking, together, by when each finished (`ShCallSpan.endedAt`). A record written before that stamp existed
- * has none, and then the asks come first (in the order they were raised) and the free calls after (in the order they
- * finished), which is what the transcript always showed.
+ * without asking, together, in the order the worker listed the calls (`shCalls`), which is the order the code ran them.
+ * A call that never ran (denied) has no place in that list, and then the instants decide where there are any.
  * @param st the step's `asks` and `shCalls`
  */
 export function shEntries(st: { asks?: readonly StepAsk[]; shCalls?: readonly ShCallSpan[] }): ShEntry[] {
@@ -99,13 +98,14 @@ export function shEntries(st: { asks?: readonly StepAsk[]; shCalls?: readonly Sh
         const i = timed ? spans.findIndex((c, j) => !taken.has(j) && c.endedAt! >= (a.answeredAt ?? 0)) : spans.length === allowed.length ? k : -1;
         if (i >= 0) { taken.add(i); spanOf.set(a.id, i); }
     });
-    const items: { at: number | undefined; e: ShEntry }[] = [];
+    const items: { at: number | undefined; idx: number | undefined; e: ShEntry }[] = [];
     for (const a of answered) {
         const argv = a.kind === "put" ? [putSubject(a.facts as unknown as PutFacts)] : argvOf(a.facts?.argv);
         const facts = askFacts(a);
         const span = spanOf.has(a.id) ? spans[spanOf.get(a.id)!] : undefined;
         items.push({
             at: span?.endedAt ?? a.answeredAt ?? a.raisedAt,
+            idx: span ? calls.indexOf(span) : undefined,
             e: {
                 key: a.id, verdict: a.state === "allowed" ? "ran" : a.state === "denied" ? "denied" : "stopped", how: "asked",
                 said: `${Object.hasOwn(ASK_DONE, a.state) ? ASK_DONE[a.state] : String(a.state)}${waited(a)}`,
@@ -123,6 +123,7 @@ export function shEntries(st: { asks?: readonly StepAsk[]; shCalls?: readonly Sh
         const facts = unaskedLines(u);
         items.push({
             at: c.endedAt,
+            idx: i,
             e: {
                 key: `free${i}`, verdict: "ran", how: "free",
                 said: `ran without asking (${u.by === "policy" ? (u.policy ? `the policy "${u.policy}"` : "a policy") : "the built-in default"})`,
@@ -131,8 +132,13 @@ export function shEntries(st: { asks?: readonly StepAsk[]; shCalls?: readonly Sh
             },
         });
     });
-    // Interleaved only when every entry has an instant; otherwise the order the records came in (asks, then free).
-    if (items.every((x) => x.at !== undefined)) items.sort((x, y) => x.at! - y.at!);
+    // THE ORDER THE CALLS RAN IN is the order of the worker's own list of them (`calls`), which holds the asked and the
+    // free ones together: an entry knows its place in it, with no clock involved. Where some entry has no place (a call
+    // that was denied never ran), the instants decide when every entry has one; otherwise the placed ones first, in
+    // that order, and the rest after in the order the records came in.
+    if (items.every((x) => x.idx !== undefined)) items.sort((x, y) => x.idx! - y.idx!);
+    else if (items.every((x) => x.at !== undefined)) items.sort((x, y) => x.at! - y.at!);
+    else items.splice(0, items.length, ...items.filter((x) => x.idx !== undefined).sort((x, y) => x.idx! - y.idx!), ...items.filter((x) => x.idx === undefined));
     return items.map((x) => x.e);
 }
 
