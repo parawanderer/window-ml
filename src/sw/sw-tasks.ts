@@ -5,8 +5,13 @@
 // executor can do (cancel it, read its tail) and a promise of how it ends. The table is the run's alone: every read and
 // every action is keyed by the run id the worker knows, never by anything a script or the model said, so another run's
 // id and an id that never existed read the same. A turn's end leaves its tasks running (`closeTurnTasks`, rule 4b): `endTasks` cancels what still runs at session release and archive.
+//
+// The table is also kept in `chrome.storage.session`, one key per run (`ml_tasks:<runId>`), so a worker evicted between
+// turns (about 65 s idle) loses neither a parked result nor the knowledge that a cell still runs: `hydrateTasks` rebuilds
+// the table from it, and the executor's end, told by its own message (`PY_DONE`), settles the rebuilt row.
 
 import { defineState } from "../state-registry";
+import { DEFAULT_CONFIG } from "../contract/contract-config";
 import { tableOf } from "../table/table-data";
 import type { TableLike } from "../table/table-data";
 import type { CurrentSnapshot } from "../agent/current-context";
@@ -14,6 +19,7 @@ import { onSessionRelease, runControllers, runInboxes } from "./sw-runs";
 import { recordRunLog } from "./sw-run-log";
 import { forModel } from "./sw-scrub";
 import { storeText } from "./sw-values";
+import { clampDetachedMs } from "../python/py-lease";
 
 /** Where a task is. A detached call is `running`; `detached` is how it got here, not a status. */
 export type TaskStatus = "running" | "done" | "failed" | "cancelled" | "orphaned";
@@ -72,7 +78,22 @@ export interface TaskSpec {
     leaseMs: number;
     /** The model's own expectation, null when it gave none. */
     expectMs: number | null;
+    /** What a rebuilt worker needs to find the call again: the cell's id for Python, nothing for the host's call. Absent
+     *  for an executor that cannot be found again (its running row is orphaned when a worker restarts). */
+    ref?: TaskRef;
     exec: TaskExecutor;
+}
+
+/** How a stored running row reaches its executor again. A cell's `capMs` is the cap its sandbox applied (the person's
+ *  `detachedTaskMaxMin`, clamped as the offscreen document clamps it), so a rebuilt worker knows when the cell was killed. */
+export type TaskRef = { kind: "py"; cell: string; capMs?: number } | { kind: "sh" };
+
+/** A task row as `chrome.storage.session` holds it, filed under `ml_tasks:<runId>`. `v` is the shape's version: a row of a
+ *  version this code does not know is dropped (and logged), never read as the current shape. */
+export interface StoredTask {
+    v: 1; id: string; tool: string; startedMs: number; leaseMs: number; expectMs: number | null; status: TaskStatus;
+    result: string | null; text: string | null; delivered: boolean; endedMs?: number; code: number | null;
+    value?: string; chars?: number; image?: string; ref?: TaskRef;
 }
 
 interface Task extends Omit<TaskSpec, "exec"> {
@@ -94,6 +115,9 @@ interface Task extends Omit<TaskSpec, "exec"> {
     waiter?: (o: AwaitAnswer) => void;
     /** Its end is being recorded (the scrub is async): a second end is ignored, and it still reads as running. */
     ending?: boolean;
+    /** Set on a row rebuilt from storage whose executor ran in another document (a cell): the executor's end, told after the
+     *  worker that started it was gone, settles it. */
+    settle?: (o: TaskOutcome) => void;
     exec: TaskExecutor;
 }
 
@@ -103,14 +127,19 @@ export const TASK_AWAIT_MAX_MS = 10 * 60_000;
 export const TASK_TAIL_MAX_LINES = 200;
 
 const tasks = new Map<string, Map<string, Task>>();
+/** A run's table being read back from storage, so two callers wait on one read. */
+const hydrating = new Map<string, Promise<void>>();   // state: plumbing — one read per run, until it is done
 /** Where a run's finished task is announced to its surfaces (the run host's fan), set while the run's turn is live. */
 const sinks = new Map<string, (text: string, id: string, end: TaskEnd) => void>();   // state: plumbing — the run host's fan, for the live turn
 defineState({
-    id: "run.tasks", scope: "run", realm: "worker", audience: "model", lostOn: ["worker-eviction"],
+    id: "run.tasks", scope: "run", realm: "worker", audience: "model", lostOn: ["browser-restart"],
     exposedAs: "ml.current.tasks",
-    describe: "The run's calls that outran their lease and were detached: each one's tool, status, how long it has run, and its result once it finished.",
+    describe: "The run's calls that outran their lease and were detached: each one's tool, status, how long it has run, and its result once it finished. Kept in session storage (`ml_tasks:<runId>`), so a worker eviction does not lose it; a browser restart does.",
     read: ({ runId }) => (runId && tasks.get(runId)?.size ? rowsOf(runId, Date.now()) : undefined),
 });
+
+/** Forget every run's table, sink and read in memory: what a worker eviction does (the eviction test hook). The stored copy stays. */
+export function dropAllTaskMemory(): void { tasks.clear(); sinks.clear(); hydrating.clear(); }
 
 /**
  * Open a run's task table for its turn: a finished task is announced through `fan` as well as the inbox. A task that ended
@@ -159,8 +188,162 @@ export function detachTask(runId: string, spec: TaskSpec): string {
     let mine = tasks.get(runId);
     if (!mine) tasks.set(runId, (mine = new Map()));
     mine.set(id, t);
-    void spec.exec.settled.then((o) => finish(runId, t, o), (e) => finish(runId, t, { status: "failed", text: `${spec.tool} failed: ${(e as Error)?.message || String(e)}`, result: null }));
+    watch(runId, t);
+    persist(runId);
     return id;
+}
+
+/** Collect a running task's outcome when its executor settles. */
+function watch(runId: string, t: Task): void {
+    void t.exec.settled.then((o) => finish(runId, t, o), (e) => finish(runId, t, { status: "failed", text: `${t.tool} failed: ${(e as Error)?.message || String(e)}`, result: null }));
+}
+
+// --- the stored copy ---
+
+const KEY = (runId: string): string => `ml_tasks:${runId}`;
+
+/** A task as it is stored: plain data, never its executor, its waiter or its ending flag. */
+function rowOf(t: Task): StoredTask {
+    return {
+        v: 1, id: t.id, tool: t.tool, startedMs: t.startedMs, leaseMs: t.leaseMs, expectMs: t.expectMs, status: t.status,
+        result: t.result, text: t.text, delivered: t.delivered, ...(t.endedMs !== undefined ? { endedMs: t.endedMs } : {}), code: t.code,
+        ...(t.value ? { value: t.value } : {}), ...(t.chars !== undefined ? { chars: t.chars } : {}), ...(t.image ? { image: t.image } : {}),
+        ...(t.ref ? { ref: t.ref } : {}),
+    };
+}
+
+/**
+ * Write the run's table through to session storage, best effort: memory still holds it when the write fails (the quota,
+ * an image too large), and the failure is a run-log record. A run with no tasks has no key. The rows are read now and the
+ * writes land in the order they were made.
+ * @param runId the run
+ */
+function persist(runId: string): void {
+    const mine = tasks.get(runId);
+    if (!mine) return;
+    const rows = [...mine.values()].map(rowOf);
+    const failed = (e: unknown) => recordRunLog(runId, { level: "warn", subsystem: "task", kind: "persist-failed", reason: "write", detail: { rows: rows.length, error: String((e as Error)?.message || e).slice(0, 120) } });
+    try {
+        if (rows.length) void Promise.resolve(chrome.storage.session.set({ [KEY(runId)]: rows })).catch(failed);
+        else void Promise.resolve(chrome.storage.session.remove(KEY(runId))).catch(() => { /* nothing stored */ });
+    } catch (e) { failed(e); }
+}
+
+/** What reads a stored running row of one kind back into an executor: its `exec`, and `settle`, the way the executor's end,
+ *  told later, resolves `exec.settled`. Null when the row cannot be attached. Lives in the executor's own module, which
+ *  imports this one (and is loaded through a cycle), so it is imported when a row needs it. */
+export type TaskRehydrator = (runId: string, row: StoredTask) => { exec: TaskExecutor; settle: (o: TaskOutcome) => void } | null;
+
+/** How long past a cell's own deadline (its start plus the cap its sandbox applied) a stored running row is still
+ *  believed: its `PY_DONE` is in flight or its worker is starting. Past it the cell is gone and nobody is coming. */
+const ORPHAN_GRACE_MS = 60_000;
+
+/**
+ * Make the run's table whole in this worker: when memory holds none (a worker started since the run's tasks were
+ * detached), read it back from session storage. Rows of a version this code does not know are dropped and logged. A
+ * running row is attached to its executor again where the executor can be found (a cell in the offscreen document, by its
+ * id) and is `orphaned` where it cannot (a call whose connection to the host died with the worker, a cell past its
+ * cap), told to the model at the next turn. An ended row comes back as it was: a parked result stays parked, a
+ * delivered one stays delivered. Safe to call on every entry; a run with nothing stored gets an empty table.
+ * @param runId the run
+ */
+export function hydrateTasks(runId: string): Promise<void> {
+    if (tasks.has(runId)) return Promise.resolve();
+    let p = hydrating.get(runId);
+    if (!p) { p = readBack(runId).finally(() => { hydrating.delete(runId); }); hydrating.set(runId, p); }
+    return p;
+}
+
+async function readBack(runId: string): Promise<void> {
+    let stored: unknown;
+    try { stored = (await chrome.storage.session.get(KEY(runId)))?.[KEY(runId)]; } catch { stored = undefined; }
+    // A task detached while the read was in flight made the table: the stored rows join it.
+    let mine = tasks.get(runId);
+    if (!mine) tasks.set(runId, (mine = new Map()));
+    if (!Array.isArray(stored)) return;
+    let changed = false;
+    const now = Date.now();
+    // Imported only when a running cell is to be attached again: sw-python-task imports this module, and both are in the
+    // worker's import cycle, so neither may call the other as it loads.
+    const py: { attach: TaskRehydrator; probe: (cell: string) => Promise<{ outcome: TaskOutcome; lost: boolean } | null> } | undefined = (stored as { status?: unknown; ref?: { kind?: unknown } }[]).some((r) => r?.status === "running" && r.ref?.kind === "py")
+        ? await import("./sw-python-task").then((m) => ({ attach: m.rehydratePyTask, probe: m.probePyCell }), () => undefined) : undefined;
+    for (const raw of stored as unknown[]) {
+        const row = raw as Partial<StoredTask> | null;
+        if (!row || typeof row !== "object" || row.v !== 1 || typeof row.id !== "string" || typeof row.tool !== "string") {
+            recordRunLog(runId, { level: "warn", subsystem: "task", kind: "dropped", reason: "unknown-version", detail: { v: String((row as { v?: unknown } | null)?.v ?? "none").slice(0, 20) } });
+            changed = true;
+            continue;
+        }
+        if (mine.has(row.id)) continue;
+        const r = row as StoredTask;
+        const base = { id: r.id, tool: r.tool, startedMs: Number(r.startedMs) || now, leaseMs: Number(r.leaseMs) || 0, expectMs: r.expectMs ?? null, status: r.status, result: r.result ?? null, text: r.text ?? null,
+            delivered: r.delivered === true, ...(r.endedMs !== undefined ? { endedMs: r.endedMs } : {}), code: r.code ?? null,
+            ...(r.value ? { value: r.value } : {}), ...(r.chars !== undefined ? { chars: r.chars } : {}), ...(r.image ? { image: r.image } : {}), ...(r.ref ? { ref: r.ref } : {}) };
+        if (r.status !== "running") {
+            // Ended: as it was. Its executor has nothing left to do.
+            mine.set(r.id, { ...base, exec: { cancel: async () => ({ confirmed: true, text: "it had already ended." }), tail: () => null, tailAbsent: "", settled: new Promise<TaskOutcome>(() => { /* ended: never settles */ }) } });
+            continue;
+        }
+        changed = true;
+        const orphan = (why: string, text: string) => {
+            mine!.set(r.id, { ...base, status: "orphaned", endedMs: now, text, exec: { cancel: async () => ({ confirmed: true, text: "it had already ended." }), tail: () => null, tailAbsent: "", settled: new Promise<TaskOutcome>(() => { /* ended */ }) } });
+            recordRunLog(runId, { level: "warn", subsystem: "task", kind: "orphaned", reason: why, ms: now - base.startedMs, detail: { id: r.id, tool: r.tool } });
+        };
+        if (r.ref?.kind === "sh") {
+            orphan("worker-restart", "the service worker restarted and this call's connection to the host was lost, so its outcome is not known.");
+            continue;
+        }
+        // The sandbox kills a cell at its start plus its cap (the kill timer arms when the cell starts, as `startedMs` is
+        // taken); a row stored without one is held to the ceiling.
+        if (r.ref?.kind === "py" && now > base.startedMs + clampDetachedMs(r.ref.capMs) + ORPHAN_GRACE_MS) {
+            orphan("past-cap", "the service worker restarted, and this cell ran past its cap, so the sandbox ended it and its result was not kept.");
+            continue;
+        }
+        // A cell that ended while no worker listened: its end message reached nobody, so settle it from what the sandbox holds.
+        const ended = r.ref?.kind === "py" && py ? await py.probe(r.ref.cell) : null;
+        if (mine.has(r.id)) continue;
+        const live = r.ref?.kind === "py" ? py?.attach(runId, r) : null;
+        if (!live) { orphan("worker-restart", "the service worker restarted and this task could not be attached again, so its outcome is not known."); continue; }
+        const t: Task = { ...base, exec: live.exec, settle: live.settle };
+        mine.set(r.id, t);
+        watch(runId, t);
+        if (ended) {
+            if (ended.lost) recordRunLog(runId, { level: "warn", subsystem: "task", kind: "orphaned", reason: "ended-unheard", ms: now - base.startedMs, detail: { id: r.id, tool: r.tool } });
+            live.settle(ended.outcome);
+        }
+    }
+    if (changed) persist(runId);
+}
+
+/**
+ * The running task of the run that a stored cell reference names, for the executor's end to settle: present only for a row
+ * rebuilt from storage whose cell has not reported yet.
+ * @param runId the run
+ * @param cell the cell's id
+ * @returns a function that settles the task with the cell's outcome, or null when there is no such task
+ */
+export function rehydratedCellTask(runId: string, cell: string): ((o: TaskOutcome) => void) | null {
+    for (const t of tasks.get(runId)?.values() ?? []) if (t.status === "running" && t.settle && t.ref?.kind === "py" && t.ref.cell === cell) return t.settle;
+    return null;
+}
+
+/**
+ * The cap, in ms, that a detached task runs under: the person's `detachedTaskMaxMin` (1..60 minutes; a value outside
+ * reads as 60), read now. One knob for `ml.sh` and `python_exec`.
+ */
+export async function detachedCapMs(): Promise<number> {
+    let v: unknown = DEFAULT_CONFIG.detachedTaskMaxMin;
+    try { v = (await chrome.storage.sync.get({ detachedTaskMaxMin: DEFAULT_CONFIG.detachedTaskMaxMin }))?.detachedTaskMaxMin; } catch { /* the default */ }
+    return capMinutes(v) * 60_000;
+}
+
+/**
+ * The knob's value as minutes: a finite number from 1 to 60, rounded down, else the ceiling.
+ * @param v what the setting holds
+ */
+export function capMinutes(v: unknown): number {
+    const n = typeof v === "number" ? Math.floor(v) : NaN;
+    return Number.isFinite(n) && n >= 1 && n <= 60 ? n : 60;
 }
 
 /**
@@ -187,7 +370,8 @@ async function finish(runId: string, t: Task, o: TaskOutcome): Promise<void> {
     if (o.image) t.image = o.image;
     recordRunLog(runId, { ...(o.status === "done" ? {} : { level: "warn" as const }), subsystem: "task", kind: "ended", reason: o.status, ms: Date.now() - t.startedMs, detail: { id: t.id, tool: t.tool } });
     if (tasks.get(runId)?.get(t.id) !== t) return;
-    if (t.waiter) { const w = t.waiter; t.waiter = undefined; t.delivered = true; w({ ...o, text: t.text }); return; }
+    if (t.waiter) { const w = t.waiter; t.waiter = undefined; t.delivered = true; persist(runId); w({ ...o, text: t.text }); return; }
+    persist(runId);
     const inbox = runInboxes.get(runId);
     if (t.delivered) return;
     // No turn is live: the result stays in the table, undelivered, and the next turn's `openTasks` queues it.
@@ -230,6 +414,7 @@ export function taskDrained(runId: string, id: string, text: string): boolean {
     const t = tasks.get(runId)?.get(id);
     if (!t || t.delivered) return false;
     t.delivered = true;
+    persist(runId);
     sinks.get(runId)?.(text, id, { status: t.status, ms: (t.endedMs ?? Date.now()) - t.startedMs, code: t.code });
     recordRunLog(runId, { subsystem: "task", kind: "collected", reason: "inbox", detail: { id } });
     return true;
@@ -244,8 +429,12 @@ export function taskDrained(runId: string, id: string, text: string): boolean {
  */
 export async function endTasks(runId: string, reason = "session-release"): Promise<void> {
     sinks.delete(runId);
+    // A worker started since the tasks were detached holds none in memory: they are read back first, so a cell still running
+    // is cancelled and not left to run to its ceiling with no run to take its result.
+    if (!tasks.has(runId)) await hydrateTasks(runId);
     const mine = tasks.get(runId);
     tasks.delete(runId);
+    try { void Promise.resolve(chrome.storage.session.remove(KEY(runId))).catch(() => { /* nothing stored */ }); } catch { /* no storage */ }
     if (!mine) return;
     await Promise.all([...mine.values()].filter((t) => t.status === "running").map(async (t) => {
         t.waiter = undefined;
@@ -276,7 +465,8 @@ export async function cancelPageTasks(runId: string): Promise<void> {
         t.text = text;
         recordRunLog(runId, { level: "warn", subsystem: "task", kind: c.confirmed ? "cancelled" : "orphaned", reason: "page-change", ms: t.endedMs - t.startedMs, detail: { id: t.id, tool: t.tool } });
         if (tasks.get(runId)?.get(t.id) !== t) return;
-        if (t.waiter) { const w = t.waiter; t.waiter = undefined; t.delivered = true; w({ status: t.status, text, result: null }); return; }
+        if (t.waiter) { const w = t.waiter; t.waiter = undefined; t.delivered = true; persist(runId); w({ status: t.status, text, result: null }); return; }
+        persist(runId);
         runInboxes.get(runId)?.queue.push({ text: `[task ${t.id} ${t.status}: ${text}]`, task: t.id });
     }));
 }
@@ -295,6 +485,7 @@ const UNKNOWN = (id: string): string => `UnknownTask: this run has no task ${JSO
  */
 export async function taskAction(runId: string, args: Record<string, unknown>): Promise<string | TaskAnswer> {
     const id = typeof args.id === "string" ? args.id : "";
+    await hydrateTasks(runId);
     const t = tasks.get(runId)?.get(id);
     if (!t) return UNKNOWN(id);
     const op = args.op;
@@ -312,7 +503,7 @@ export async function taskAction(runId: string, args: Record<string, unknown>): 
         return `task ${t.id}: ${c.text}`;
     }
     if (op === "await") {
-        if (t.status !== "running") { t.delivered = true; return answered(t, `task ${t.id} ${t.status}: ${t.text ?? ""}`); }
+        if (t.status !== "running") { t.delivered = true; persist(runId); return answered(t, `task ${t.id} ${t.status}: ${t.text ?? ""}`); }
         if (t.waiter) return `task ${t.id}: another await is already waiting on it.`;
         const given = Number(args.timeout_ms);
         const expect = Number.isFinite(given) && given > 0 ? Math.min(Math.floor(given), TASK_AWAIT_MAX_MS) : null;
@@ -357,6 +548,7 @@ function rowsOf(runId: string, now: number, tails?: ReadonlyMap<string, string |
  * @param runId the run
  */
 export async function withTasks(current: CurrentSnapshot, runId: string): Promise<CurrentSnapshot> {
+    await hydrateTasks(runId);
     if (!tasks.get(runId)?.size) return current;
     const now = Date.now();
     const tails = new Map<string, string | null>();
