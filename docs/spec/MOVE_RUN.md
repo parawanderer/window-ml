@@ -41,7 +41,9 @@ that URL opens. The person has already done the navigating: the run should follo
 `hostRun` (`sw-run-host.ts`) binds the run's `tabId` ONCE PER TURN: every page send (`toPage`, `delegateSend`), the
 run's inbox (`runInboxes.set`), and the turn's `settle` (`untrackRun`, `releaseDebugger`, `watchBetweenTurns`) close
 over it, about a hundred uses. Re-keying a map does not redirect a turn that is running. And `settle`, at the end of
-EVERY turn, deletes the run's inbox, ends its tasks (`endTasks`) and the turn's Python state (`endPythonTurn`; the run's own namespace stays, it lives per run). So:
+EVERY turn, deletes the run's inbox, lets go of its tasks (`closeTurnTasks`: a detached task runs on, and its result waits
+for the next turn, `ASYNC_CALLS.md` rule 4b) and ends the turn's Python state (`endPythonTurn`; the run's own namespace
+stays, it lives per run). So:
 
 - **(a) A move BETWEEN TURNS. Ships first.** The run is paused or finished; its in-memory `bgRuns` entry's tab is re-homed, and
   its next turn is hosted on the new tab from the start. It is cheap, and it covers both headline cases. It covers the
@@ -69,13 +71,13 @@ nothing away from it:
 | Carried to the new tab | Already ended by the turn's `settle`, move or not | Stays behind with the old tab |
 | --- | --- | --- |
 | the transcript and the run's messages (its snapshot) | the run's inbox (`runInboxes`) | whatever the model made in the old page's world: `exec` variables, DOM edits, form input it filled |
-| the `@tool:` pointers and values of a worker-held run (`tokensByRun`, memory, as a follow-up keeps them) | its detached tasks (`endTasks`; `ASYNC_CALLS.md`, rule 4) | the per-TAB grants: `fetchConsent` and `credFetchGrants` are consent for the old tab's page and do NOT follow the run (`@security`) |
-| `ml.current` | its Python namespace (`deletePythonRun`) | a CDP attach (already released at `settle`, `releaseDebugger`) |
-| | its tracking entry and the tab's pin (`untrackRun`; the tab is unpinned and `tab`/`released` logged when it was the tab's last run) | |
-| | | point and box tokens: see below |
+| the `@tool:` pointers and values of a worker-held run (`tokensByRun`, memory, as a follow-up keeps them) | the turn's hold on its tasks (`closeTurnTasks`) | the per-TAB grants: `fetchConsent` and `credFetchGrants` are consent for the old tab's page and do NOT follow the run (`@security`) |
+| `ml.current` | the turn's Python state (`endPythonTurn`) | a CDP attach (already released at `settle`, `releaseDebugger`) |
+| its detached tasks, filed by run and still running (`ASYNC_CALLS.md`, rule 4b; none is page-bound yet, rule 4a) | its tracking entry and the tab's pin (`untrackRun`; the tab is unpinned and `tab`/`released` logged when it was the tab's last run) | |
+| the run's Python namespace (it lives per run) | | point and box tokens: see below |
 
-For shape (b) the middle column is live, so a move between steps would carry the inbox and the runtime-bound tasks,
-and cancel the page-bound ones (`ASYNC_CALLS.md`, rule 4a).
+For shape (b) the middle column is live, so a move between steps would also carry the inbox,
+and cancel the page-bound tasks (`ASYNC_CALLS.md`, rule 4a).
 
 **Point and box tokens.** A page-world `@pt`/`@box` token lives in that page's `pointRegistry` (`util.ts`); on another
 tab it does not exist and fails as "Unknown point token … may be stale" (`builtin-tools.ts`). A worker-held shot is
