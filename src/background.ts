@@ -53,7 +53,7 @@ import { checkDraft } from "./sw/sw-manifest-proposal";
 
 import { bringableSessions, bringHere } from "./sw/bring-here";
 import { isWorkerRun, withoutWorkerSession, makeWorkerRun, dropHandedMemoryForTest, runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, replayedTo, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, contextByRun, turnByRun, workerRunsStarting, execReads, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel, retabRuns, senderOwnsRun, reconcileTabPins, startingControllers, abortStart, startingOwnedBy } from "./sw/sw-runs";
-import { cancelPageTasks, detachTask, resetTaskChain, type TaskOutcome } from "./sw/sw-tasks";
+import { cancelPageTasks, detachTask, resetTaskChain, taskAction, type TaskOutcome } from "./sw/sw-tasks";
 import { moveTabKey } from "./sw/tab-replaced";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw/sw-debug";   // the DevTools panel's copy of the page debug stream
 import { startBackgroundRun, delegateStreams, hostRun, WORKER_RUN_REFUSED } from "./sw/sw-run-host";
@@ -167,12 +167,12 @@ startValueSweeps();
 
 // TEST-ONLY (SW realm only): detach a task of a run by hand, as an executor does, and get its id and a function that ends
 // it with an outcome. A test of what a FINISHED task does (starts a turn, parks) needs one without driving ml.sh or Python.
-(globalThis as unknown as { __mlDetachTaskForTest?: unknown }).__mlDetachTaskForTest = (runId: string, tool = "ml.sh"): { id: string; finish: (o: Partial<TaskOutcome>) => void } => {
+(globalThis as unknown as { __mlDetachTaskForTest?: unknown }).__mlDetachTaskForTest = (runId: string, tool = "ml.sh"): { id: string; finish: (o: Partial<TaskOutcome>) => void; read: () => Promise<unknown> } => {
     let end!: (o: TaskOutcome) => void;
     const settled = new Promise<TaskOutcome>((res) => { end = res; });
     const id = detachTask(runId, { tool, startedMs: Date.now(), leaseMs: 15_000, expectMs: null,
         exec: { cancel: async () => ({ confirmed: true, text: "cancelled" }), tail: () => null, tailAbsent: "no tail", settled } });
-    return { id, finish: (o) => end({ status: "done", text: "finished", result: null, ...o }) };
+    return { id, finish: (o) => end({ status: "done", text: "finished", result: null, ...o }), read: () => taskAction(runId, { op: "await", id }) };
 };
 // TEST-ONLY (SW realm only): the popup's "Stop all agent runs" (CANCEL_ALL_RUNS), plus every in-flight page-made model
 // call, as one call: the bench cancels a cell's run when its deadline passes (tests/e2e/run-once.mjs). Resolves how many

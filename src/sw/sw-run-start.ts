@@ -43,7 +43,7 @@ import { notePersonTurn } from "./sw-start-approval";
 import { adoptOnTab } from "./adopt-run";
 import { holdStands } from "./nav-arrival";
 import { toPageUi } from "./sw-side-panel";
-import { resetTaskChain, setTaskTurnHost } from "./sw-tasks";
+import { resetTaskChain, setTaskTurnHost, taskTurnHasWork } from "./sw-tasks";
 
 /** Whether a run the worker builds offers `python_install`. Off until the install step exists (docs/plan/repl/
  *  PACKAGES_INSTALL.md, slice 4): before it, an approved card installs nothing, so offering it would only mislead. */
@@ -296,14 +296,15 @@ function turnVision(hash: string): { driverSees: boolean; runModel: string | nul
  * @param sentFrom where the message was typed, as the channel it came over knows it (a hub command's sender); wins over
  *   the body's `surface`
  * @param startedBy set only by a finished task starting the run's next turn (sw-tasks.ts `TaskTurnHost`): the line the
- *   transcript shows for it, said before the turn is hosted. Such a turn is not the person's, so it does not break the chain
+ *   transcript shows for it, said just before the turn is hosted, and `ready`, asked after the page has been adopted and
+ *   before anything is announced: false when the result the turn is for has been read elsewhere, and the turn is not started. Such a turn is not the person's, so it does not break the chain
  *   of turns tasks started in a row
  * @returns what happened, or null when this is not the worker's run to drive
  * @throws {FilesRefused} the files break the rule, a PDF will not read, or one would go to a page
  * @throws {ImagesRefused} the images may not be sent
  * @throws {PageGone} no page may frame the message here and the worker may not drive it from this tab
  */
-export async function userRunAction(hash: string, action: "send" | "continue", body: { text?: string; images?: string[]; files?: SentFile[]; elementContext?: ElementContext; maxSteps?: number; surface?: string }, fromTabId?: number, sentFrom?: PromptOrigin, startedBy?: string): Promise<"steer" | "turn" | "continued" | "busy" | "none" | null> {
+export async function userRunAction(hash: string, action: "send" | "continue", body: { text?: string; images?: string[]; files?: SentFile[]; elementContext?: ElementContext; maxSteps?: number; surface?: string }, fromTabId?: number, sentFrom?: PromptOrigin, startedBy?: { line: string; ready: () => Promise<boolean> }): Promise<"steer" | "turn" | "continued" | "busy" | "none" | null> {
     const stored = bgRuns.get(hash);
     const live = runInboxes.get(hash);
     const tabId = stored?.tabId ?? live?.tabId;
@@ -420,13 +421,15 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
                 endStart(hash, starting);
                 throw e;
             }
+            // A turn started for a task never runs on an empty inbox: its result may have been read while the page was adopted.
+            if (startedBy && !await startedBy.ready()) { endStart(hash, starting); return takeBack("none"); }
             if (starting.signal.aborted) { endStart(hash, starting); return takeBack("none"); }
             // Delivered from here on, with no await before the turn is hosted: recorded BEFORE `hostRun` copies the stored
             // payload into the turn's, so the turn and what it stores at its end carry them.
             if (action === "send") noteSend(hash, turn, added);
             else if (!startedBy) resetTaskChain(hash);   // the person's Continue breaks the chain too
             if (text || attached.length) announce(tabId, { kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text, ...(display ? { display } : {}), ...shown });
-            if (startedBy) noteRunLine(hash, startedBy);
+            if (startedBy) noteRunLine(hash, startedBy.line);
             const steps = stepBudget(body.maxSteps);
             endStart(hash, starting);
             hostRun({ type: "RESUME_RUN", payload: { runId: hash, task: text, ...(steps ? { maxSteps: steps } : {}) } },
@@ -450,8 +453,10 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
 // origin stands, as it does for a task's result in the inbox. `startedBy` is what keeps it from breaking the chain.
 setTaskTurnHost({
     start: async (runId, _taskId, line) => {
-        const outcome = await userRunAction(runId, "continue", {}, undefined, undefined, line).catch(() => null);
-        return outcome === "continued";
+        let empty = false;
+        const ready = async (): Promise<boolean> => { const ok = await taskTurnHasWork(runId); empty = !ok; return ok; };
+        const outcome = await userRunAction(runId, "continue", {}, undefined, undefined, { line, ready }).catch(() => null);
+        return outcome === "continued" ? true : empty ? "empty-inbox" : false;
     },
     say: noteRunLine,
 });

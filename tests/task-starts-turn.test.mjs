@@ -185,3 +185,21 @@ test("a steer from an extension frame (INJECT_MESSAGE) into the live started tur
     release();
     assert.ok(await until(r.idle(2)));
 });
+
+test("a turn started for a task never runs on an empty inbox: the result read elsewhere while the page was adopted starts nothing and gives the count back", T, async () => {
+    const r = await settled();
+    let release;
+    r.hold.adopt = new Promise((res) => { release = res; });
+    const t = r.detach();
+    t.finish({ text: "built" });
+    assert.ok(await until(r.starting), "the turn is starting");
+    await t.read();   // an await takes the result: nothing is left for the turn to read
+    release();
+    assert.ok(await until(() => !r.starting()));
+    await new Promise((res) => setTimeout(res, 100));
+    assert.equal(r.completions().length, 1, "no model call");
+    assert.equal(r.turns(), 1);
+    assert.ok(!r.notes().some((x) => x.startsWith("Turn started by task")), "no start line is left standing");
+    assert.ok((await r.logOf()).some((e) => e.kind === "not-started" && e.reason === "empty-inbox"));
+    assert.equal(r.bg.sessionStore[`ml_task_chain:${r.hash}`], 0, "the count was given back");
+});

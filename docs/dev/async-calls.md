@@ -165,8 +165,10 @@ every condition and ends in the start, so two completions finishing together can
   said as an `agent-note` just before the turn is hosted, so the transcript and both exports carry it (the reducer's `notes`). The turn
   has no `PromptOrigin` of its own: nobody typed it, so the run's last origin stands, as it does for a task's result in the inbox.
   There is no model-facing note: the first step drains the inbox (the parked results, queued by `openTasks`) as user messages, so the
-  model never sees an empty user turn. One race is left: a result an `await` takes between the decision and `openTasks` leaves the
-  started turn with an empty inbox.
+  model never sees an empty user turn. A result that an `await` or another turn read while the page was being adopted would
+  leave nothing for the turn to read, so `userRunAction` asks `taskTurnHasWork` (`sw-tasks.ts`) once the adopt has answered and
+  before anything is announced or hosted: with no unread ended result it starts nothing, says no line, gives the chain count back
+  and logs `task`/`not-started` with reason `empty-inbox`.
 - `session-index.ts` folds `agent-task-say` as "the turn is running": a started turn has no `agent-say` of the person's to open it.
 
 **Coalescing.** A completion that arrives while the turn is starting (the adopt is in flight) sees `startingControllers` and parks

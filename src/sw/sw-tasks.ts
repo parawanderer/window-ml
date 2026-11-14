@@ -147,8 +147,9 @@ export function dropAllTaskMemory(): void { tasks.clear(); sinks.clear(); hydrat
  *  module cannot import (the run host imports this one). Absent, a result only parks, as before slice C. */
 export interface TaskTurnHost {
     /** Start the run's next turn through the same path as the person's "continue", announcing `line` first. Resolves true
-     *  when a turn was hosted, false when none was (the page did not answer, the run is gone). */
-    start(runId: string, taskId: string, line: string): Promise<boolean>;
+     *  when a turn was hosted, false when none was (the page did not answer, the run is gone), and "empty-inbox" when the
+     *  result it was started for was read elsewhere first, so a turn would have had nothing to read. */
+    start(runId: string, taskId: string, line: string): Promise<boolean | "empty-inbox">;
     /** One line in the run's step list, in the worker's voice; nothing when the run has no tab. */
     say(runId: string, text: string): void;
 }
@@ -198,6 +199,16 @@ export function resetTaskChain(runId: string): void {
     try { void Promise.resolve(chrome.storage.session.remove(CHAIN_KEY(runId))).catch(() => { /* nothing stored */ }); } catch { /* no storage */ }
 }
 
+/**
+ * Whether the run holds a finished task's result that no turn has read: what a turn started for a task must find in its
+ * inbox, or it would run on nothing. Reads the stored table back first when memory holds none.
+ * @param runId the run
+ */
+export async function taskTurnHasWork(runId: string): Promise<boolean> {
+    await hydrateTasks(runId).catch(() => { /* an unreadable table holds nothing */ });
+    return [...(tasks.get(runId)?.values() ?? [])].some((t) => t.status !== "running" && !t.delivered && t.endedMs !== undefined && t.text !== null);
+}
+
 /** The person's two settings for a finished task, read now. */
 async function turnPolicy(): Promise<{ notifyOnly: boolean; max: number }> {
     let c: { taskNotifyOnly?: unknown; taskTurnChainMax?: unknown } = {};
@@ -236,7 +247,8 @@ async function startTurnFor(runId: string, t: Task): Promise<void> {
     if (policy.notifyOnly) { host.say(runId, `${line}; its result is read at your next message (Settings: finished tasks only notify).`); return why("notify-only"); }
     if (used >= policy.max) { host.say(runId, `${line}; ${used} turns in a row were already started by finished tasks (the cap, Settings: taskTurnChainMax = ${policy.max}), so its result is read at your next message.`); return why("chain-cap"); }
     setChain(runId, used + 1);
-    const started = await host.start(runId, t.id, `Turn started by task ${t.id} (${t.status} after ${secs((t.endedMs ?? Date.now()) - t.startedMs)}).`).catch(() => false);
+    const started = await host.start(runId, t.id, `Turn started by task ${t.id} (${t.status} after ${secs((t.endedMs ?? Date.now()) - t.startedMs)}).`).catch(() => false as const);
+    if (started === "empty-inbox") { if (chains.get(runId) === used + 1) setChain(runId, used); why("empty-inbox"); return; }
     if (started) { recordRunLog(runId, { subsystem: "task", kind: "turn-started", reason: t.status, detail: { id: t.id, chain: used + 1 } }); return; }
     // No turn came of it: the count is given back, and the result stays parked for the person's next message.
     if (chains.get(runId) === used + 1) setChain(runId, used);
