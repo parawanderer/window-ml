@@ -165,13 +165,15 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
    carries its red-team row: a task cancelled by a page change is reported, and never resolves against the new page.
    **4b. A detached task survives the end of its turn.** RULED 2026-11-12 (Shane: "that is what a user expects of
    background tasks"; the coordinator's text with the async lane's additions). BUILT 2026-11-13 in part (the async
-   lane, slice A): `settle` calls `closeTurnTasks` and leaves tasks running; `endTasks` runs at session release and at
-   archive or delete; a result finished between turns is parked in the task table (not in `runInboxes`) and queued by
+   lane, slices A and B): `settle` calls `closeTurnTasks` and leaves tasks running; `endTasks` runs at session release and
+   at archive or delete; a result finished between turns is parked in the task table (not in `runInboxes`) and queued by
    `openTasks` at the next turn's start; the kernel lock holds across turns; a Stop of the turn no longer cancels a
-   detached `ml.sh` call or cell; the `Detached` texts say the task runs on. NOT built: durability across a worker
-   eviction, the cap knob (`PY_DETACHED_MAX_MS` is still 5 min), a completion starting a turn, notify-only, the chain
-   cap, the lifetimes list and the no-tab state. This reverses rule 4, and
-   the mode 1 ruling that a model answering while a build is detached ends the build, for the two executors that run
+   detached `ml.sh` call or cell; the `Detached` texts say the task runs on. Slice B: the table is durable in
+   `chrome.storage.session` (`ml_tasks:<runId>`), read back by `hydrateTasks` before a turn opens it; `PY_DONE` for a
+   cell a new worker never sent fetches the result from the offscreen document (`PY_RESULT`) and parks it; the cap is the
+   `detachedTaskMaxMin` setting (default 60) for both executors, and `PY_DETACHED_MAX_MS` is its 60 min ceiling. NOT
+   built: a completion starting a turn, notify-only, the chain cap, the lifetimes list and the no-tab state. This
+   reverses rule 4, and the mode 1 ruling that a model answering while a build is detached ends the build, for the two executors that run
    outside the service worker: an `ml.sh` call (the host's process) and a detached `python_exec` cell (the offscreen
    document). A fetch runs IN the service worker and dies with it, so it stays turn-bound: the turn's end cancels it,
    as rule 4 says. Built after the Python namespace change (a run's namespace lives per run, not per turn), without
@@ -181,18 +183,54 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
      keeps the run's inbox while a task of the run is pending. An `ml.sh` call's owner is the run, so its lease
      outlives the turn and ends with the run. A detached cell keeps the kernel locked until it ends, so the next
      turn's `python_exec` is refused with `pyKernelBusy` while it runs, as within a turn.
-   - **The cap.** `PY_DETACHED_MAX_MS` (5 min) was set by the service worker's eviction (`docs/dev/async-calls.md`:
-     a pending reply keeps the worker alive only to about 345 s), not by the work. With the durable path below,
-     a detached task is bounded by its own deadline under one cap, a DevTools Settings knob (the settings rule).
-     Default 60 min (RULED 2026-11-12, Shane: tune it later if it is wrong).
-   - **Durable, filed by run and session.** Between turns nothing keeps the service worker alive: with nothing
-     pending it is evicted at about 65 s. So the task table and a parked result are durable (`chrome.storage.session`
-     or IndexedDB), filed by run and session, and declared through `defineState` from the first commit. `state.md`
-     is read first, so the parked result is the run inbox persisted, never a second copy of it. The pending
-     `sendMessage` reply stays the in-turn path. Past it, the executor delivers its end as a FRESH message (`PY_DONE`
-     by cell id from the offscreen document; the host's own message for `ml.sh`), which starts a new worker; that
-     worker rehydrates the task's row and parks the result. This replaces the mode 1 ruling that `PY_DONE` by cell
-     id is not built.
+   - **The cap.** BUILT (slice B). `PY_DETACHED_MAX_MS` was 5 min, set by the service worker's eviction
+     (`docs/dev/async-calls.md`: a pending reply keeps the worker alive only to about 345 s), not by the work. With the
+     durable path below, a detached task is bounded by its own deadline under one cap, the `detachedTaskMaxMin` setting
+     (DevTools Settings, the settings rule; 1 to 60 minutes, default 60, a value outside reads as 60; RULED 2026-11-12,
+     Shane: tune it later if it is wrong). One knob for both executors. The worker reads it at the call and sends it on a
+     leased cell's `PY_RUN` (`detachedMaxMs`); the offscreen document clamps it to `PY_DETACHED_MAX_MS` (now the 60 min
+     ceiling, still the `__PY_DETACHED_MAX_MS__` bench define) for the cell's kill timer, honouring it only on the
+     worker's own leased cell, and the `Detached` text states the cap applied. An `ml.sh` call's `timeoutMs` is clamped
+     to it when the call can detach; a call naming none keeps the host's 120 s default. The lease stays short of the
+     cap: `PY_LEASE_MAX_MS` is a fixed 150 s (never more than half a bench build's ceiling), and a lease is at most half
+     the cap in force.
+   - **Durable, filed by run and session.** BUILT (slice B). Between turns nothing keeps the service worker alive: with
+     nothing pending it is evicted at about 65 s. So the task table and a parked result are durable in
+     `chrome.storage.session`, one key per run (`ml_tasks:<runId>`), declared through `defineState` (`run.tasks`, lost
+     only on a browser restart). `state.md` is read first, so the parked result is the run inbox persisted, never a
+     second copy of it: `runInboxes` still means "a turn is live", and `openTasks` queues the stored parked rows. A row is
+     `{ v: 1, id, tool, startedMs, leaseMs, expectMs, status, result, text, delivered, endedMs, code, value, chars, image,
+     ref }`, where `ref` is `{ kind: "py", cell, capMs }` or `{ kind: "sh" }`; never the executor, a waiter or the ending
+     flag. It is
+     written after a call detaches, after its end is recorded, when `delivered` flips (the loop drains it, an await
+     answers it) and after a page change's cancel; `endTasks` removes the key; a write that fails (the quota) is caught,
+     memory still holds the table, and it is a `task`/`persist-failed` record. `hydrateTasks(runId)` reads it back when
+     memory holds no table, before `openTasks`, `taskAction` and `withTasks`: a row of an unknown `v` is dropped and
+     logged; an ended row comes back as it was (a parked result stays parked, a delivered one delivered); a running
+     `python_exec` row is attached to its cell again by id (cancel, tail, the kernel lock) unless it is past its own
+     deadline plus 60 s, when it is `orphaned` (its start plus the cap its sandbox applied, which the row's `ref` carries
+     as `capMs`; the sandbox's kill timer arms at the same start). Before it is attached, the cell is asked once whether
+     it outlived the gap (`PY_TAIL`, then `PY_RESULT` when it has ended): a cell that ended while no worker listened sent
+     its `PY_DONE` to nobody, so its row is settled there from the held result, or `failed` and logged
+     (`task`/`orphaned`, `ended-unheard`) when none is held, with the lost-result text ("its result was no longer held;
+     it is lost"), not the past-cap one, since the cell ran past nothing. The tail is asked first: a cell that ends after
+     it answers sends its `PY_DONE` to this worker, while a `PY_RESULT` asked first could miss a result that lands
+     between the two asks. RULED 2026-11-13 (the coordinator, #1854 review): both choices stand. A running `ml.sh` row is `orphaned`, since its call's
+     connection to the host closed with the dead worker. An orphan is told to the model at the next turn (`[task <id> orphaned after N s: …]`) and
+     logged. The pending `sendMessage` reply stays the in-turn path. Past it, the offscreen document delivers a cell's
+     end as a FRESH message (`PY_DONE` by cell id), which starts a new worker; that worker hydrates the run's table, finds
+     the running row for the cell, asks the offscreen document for the result (`PY_RESULT`: the last 8 leased results, 10
+     minutes, handed over once, to the service worker only), formats it PLAINLY (the output cap, then the value or the
+     error, and a sentence that it was formatted after the service worker restarted: the tool's own `format` closure died
+     with the old worker, so casts, table notes and the panel's render are not available) and settles the row, which
+     parks it for the next turn, exactly once. `PY_RESULT` is extension-only, as `PY_TAIL` is: it is in neither
+     `HANDLE_MAP` nor `PAGE_STARTED_TYPES` (a test asserts both), so no page can send it. The offscreen document answers
+     it only when `sender.id` is this extension's and `sender.tab` is absent, the check `PY_CANCEL` and `PY_TAIL` use: a
+     content script is an extension context too, but always carries its tab. An extension page with no tab (the popup)
+     passes the same check, and holds no cell id: the id is one the worker made (`wpy-<uuid>`, `worker-tools.ts`), which nothing outside it can name. No row, or no result held, is `python`/`orphaned`, as before. This
+     replaces the mode 1 ruling that `PY_DONE` by cell id is not built. `ml.sh` has no such path: the host sends no end
+     message after its port closed, so a live call keeps the worker alive through its open native port, and a worker
+     that crashes orphans the call (its row says so).
    - **A finished task starts a turn, by default.** CORRECTED 2026-11-12 (Shane: that is how they use and like
      Claude Code). A completion arriving while a turn runs parks in the inbox for that turn, as today. One arriving
      with no turn running starts a turn whose first step reads the inbox, through the same checks as any inbox item

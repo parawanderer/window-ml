@@ -16,7 +16,7 @@ import type { TokenStore } from "../pointers/token-pipe";
 import { bytesOf, HostError, hostTakesEnvelope, READ_CHUNK, type HostClient, type HostPutFacts, type HostEnvelope, type HostFacts, type HostStream } from "../shell/host-protocol";
 import { credentialFor, envelopeFor, envelopeMismatch, envelopeText, manifestFor, manifestsFor, parseShRun, planSpawn, protectedChangesText, shFacts, shOut, shOutcome, shResult, wireCodeOf, ShRefused, SH_HEAD_BYTES, SH_HOST_TIMEOUT_MS, SH_LEASE_MS, type ShFacts, type ShOut, type ShResult, type ShRunRequest } from "../shell/sh-call";
 import { OUTPUT_CAP } from "../contract/contract-pointers";
-import { detachTask, type TailAnswer, type TaskOutcome } from "./sw-tasks";
+import { detachedCapMs, detachTask, type TailAnswer, type TaskOutcome } from "./sw-tasks";
 import { toolToken } from "../util";
 import { defineState } from "../state-registry";
 import { binaryKind } from "./body-read";
@@ -192,6 +192,9 @@ function failure(e: unknown): ShAnswer {
 export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promise<ShAnswer> {
     let req: ShRunRequest;
     try { req = parseShRun(args); } catch (e) { return failure(e); }
+    // A call that can detach runs no longer than the person's cap on a detached task (`detachedTaskMaxMin`); a call that names
+    // no `timeoutMs` keeps the host's own default. SH_LIMITS.timeoutMs stays the ceiling parseShRun applied.
+    if (req.timeoutMs !== undefined && ctx.lease !== false) req = { ...req, timeoutMs: Math.min(req.timeoutMs, await detachedCapMs()) };
     const r = req;
     return new Promise<ShAnswer>((resolve) => {
         let timer: ReturnType<typeof setTimeout> | undefined;
@@ -203,7 +206,7 @@ export async function shRun(ctx: ShCallContext, args: readonly unknown[]): Promi
             const leaseMs = r.expectMs ?? SH_LEASE_MS, startedMs = Date.now();
             timer = setTimeout(() => {
                 const settled = new Promise<TaskOutcome>((done) => { settleTask = (a) => done(taskOutcomeOf(a)); });
-                const task = detachTask(ctx.runId, { tool: "ml.sh", startedMs, leaseMs, expectMs: r.expectMs ?? null, exec: {
+                const task = detachTask(ctx.runId, { tool: "ml.sh", startedMs, leaseMs, expectMs: r.expectMs ?? null, ref: { kind: "sh" }, exec: {
                     pageBound: false,   // runs in the host's process
                     cancel: () => h.client.cancel(id).then(
                         (c) => c.signalled ? { confirmed: true, text: "cancelled: the host signalled its process group (SIGTERM, then SIGKILL after 2 s)." }

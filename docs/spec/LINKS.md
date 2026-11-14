@@ -2,7 +2,9 @@
 
 **Status: proposed 2026-11-13; slice 1 built 2026-11-13** (the panel's addresses in the sidebar and the DevTools
 panel: the place table, `data-setting` rows, the renderer, `openAddress`; `docs/dev/sidebar.md`, "Links to a setting
-in model text"). Not built: session, search and attention addresses, the chat page's surfaces and the exports' text.
+in model text"), on the extension's chat page (the panel's addresses from its hash and from a link in a reply), and
+on the HUD card, through the worker's `OPEN_CHAT_PAGE`. Not built: session, search and attention addresses, the web
+and phone chat pages and the exports' text.
 From Shane's words in the calm-chat-motion session (2026-11-13), handed to the settings-specs lane by the
 policies/python/desktop/manifests coordinator. Ruled by the coordinator on
 2026-11-13, pending Shane: a spec of its own, one parser for hashes and links, a button and never an `<a href>`, and
@@ -110,7 +112,7 @@ calls only the service (the sidebar trap: session views call `services()`, never
 | Surface | A settings address | A session, search or attention address |
 | --- | --- | --- |
 | Overlay sidebar, DevTools panel | the panel's own Settings view, through `showSettingsSection`; a setting's row scrolled to and marked | opens the chat page, or focuses it where it is open, at the hash: the popup's `openChat`, moved to where the sidebar can call it through the worker (an extension-page message, never in `HANDLE_MAP`) |
-| HUD card (the Commander's) | opens the chat page, or focuses it, at the address's hash (Shane, 2026-11-13: the chat page's Settings, not the sidebar). Until that is built, the label | the same |
+| HUD card (the Commander's) | opens the chat page, or focuses it, at the address's hash (Shane, 2026-11-13: the chat page's Settings, not the sidebar), through the worker's `OPEN_CHAT_PAGE` | the same |
 | Chat page, in the extension | the hash, set in place; the page reads it on `hashchange` as today | the hash, in place |
 | Chat page, web and phone builds | the session's runtime's settings, through `ChatExtras.findSetting`'s runtime argument, where that runtime reports `localSettings` and this device can draw them; otherwise the link renders as text with a tip naming where it lives | the hash, in place |
 | Exports (Markdown, PDF, JSON) | text: the label and where it is (`Backup and restore (Settings → Storage)`); the raw link in the raw view | text: the label |
@@ -152,8 +154,10 @@ view; so the questions are what opening can cost, and whether the form leaks int
    that is not `http(s)` or `window-ml:` stays text, as today (`javascript:`, `data:`, `chrome-extension:`,
    `chrome:`).
 4. **A page using the form itself.** A link is drawn only in the extension's own transcript views, from the model's
-   text; a page's DOM never gets one. The new extension-page message the sidebar uses to open the chat page is not
-   page-started and is not in `HANDLE_MAP`, so a page cannot open the chat page or Settings through it.
+   text; a page's DOM never gets one. The extension-page message the HUD card uses to open the chat page
+   (`OPEN_CHAT_PAGE`) is not page-started and is not in `HANDLE_MAP`, and the worker refuses it from anything but an
+   extension page, so a page cannot open the chat page or Settings through it. Its URL is `chat.html` and the hash of
+   an address a link resolves, never one the sender sends.
    The reverse holds too: page text enters the transcript through tool results (a fetched page, a DOM read, a Python
    `print`) and through the model quoting it, so **a `window-ml:` link is resolved only in the model's own prose**. In
    a tool result, an output cell, a quoted block, a code span or fence, or anything else that came from a tool or a

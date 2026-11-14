@@ -1,0 +1,367 @@
+{
+  "machine": {
+    "cpu": "Apple M5 Pro",
+    "cores": 15,
+    "memGB": 24,
+    "node": "v26.12.1",
+    "os": "Darwin 25.6.0",
+    "pyodide": "pyodide-core 314.0.3 (Python 3.14.0, restricted-mode fork build)",
+    "date": "2026-11-13T22:36:12.686Z"
+  },
+  "caveats": [
+    "The worker is a node:worker_threads Worker and the host a Node main thread: the channel is one postMessage hop plus a SharedArrayBuffer, not worker -> offscreen -> service worker -> wmlhost. Every figure is the sandbox side's floor; the product adds its hops.",
+    "The host answers from the real disk with node:fs in-process, synchronously inside one event-loop turn. wmlhost's native-messaging, JSON and base64 costs are not here.",
+    "Large files are sparse: the host reads zeros from holes without touching a disk, so the fetch figures are memory-copy speed, not I/O speed.",
+    "Cells run through py.runPython (not the product's wrapUserCode harness, which needs numpy/pandas): the cell gate's begin/revoke window is not opened around them.",
+    "The stop latency is stamped Python-side with time.perf_counter() (== performance.now() here, offset calibrated at boot) and host-side with Date-aligned performance.timeOrigin + now."
+  ],
+  "item": "4: import over the mount",
+  "import": {
+    "boot": {
+      "clockOff": -0.00037450000309036113,
+      "lockdown": false,
+      "pyVersion": "314.0.3"
+    },
+    "realPackageAvailable": true,
+    "rows": [
+      {
+        "case": "synthetic 50 modules",
+        "files": 51,
+        "variant": "MEMFS, first import (the .pyc is written)",
+        "reps": 20,
+        "error": null,
+        "importMs": {
+          "n": 20,
+          "min": 25.147,
+          "median": 25.979,
+          "p90": 30.217,
+          "max": 31.368,
+          "mean": 26.554
+        },
+        "modulesImported": 51,
+        "channelRequests": {
+          "n": 20,
+          "min": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0,
+          "mean": 0
+        },
+        "requestsByOp": {}
+      },
+      {
+        "case": "synthetic 50 modules",
+        "files": 51,
+        "variant": "MEMFS, later import reads the .pyc",
+        "reps": 19,
+        "error": null,
+        "importMs": {
+          "n": 19,
+          "min": 12.152,
+          "median": 12.557,
+          "p90": 14.145,
+          "max": 15.95,
+          "mean": 12.856
+        },
+        "modulesImported": 51,
+        "channelRequests": {
+          "n": 19,
+          "min": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0,
+          "mean": 0
+        },
+        "requestsByOp": {}
+      },
+      {
+        "case": "synthetic 50 modules",
+        "files": 51,
+        "variant": "mount read-only (no .pyc possible)",
+        "reps": 20,
+        "error": null,
+        "importMs": {
+          "n": 20,
+          "min": 29.434,
+          "median": 30.562,
+          "p90": 33.006,
+          "max": 34.431,
+          "mean": 30.882
+        },
+        "modulesImported": 51,
+        "channelRequests": {
+          "n": 20,
+          "min": 211,
+          "median": 211,
+          "p90": 211,
+          "max": 211,
+          "mean": 211
+        },
+        "requestsByOp": {
+          "stat": 158,
+          "readdir": 2,
+          "read": 51
+        }
+      },
+      {
+        "case": "synthetic 50 modules",
+        "files": 51,
+        "variant": "mount, dont_write_bytecode",
+        "reps": 20,
+        "error": null,
+        "importMs": {
+          "n": 20,
+          "min": 25.591,
+          "median": 26.335,
+          "p90": 29.307,
+          "max": 29.345,
+          "mean": 26.781
+        },
+        "modulesImported": 51,
+        "channelRequests": {
+          "n": 20,
+          "min": 109,
+          "median": 109,
+          "p90": 109,
+          "max": 109,
+          "mean": 109
+        },
+        "requestsByOp": {
+          "stat": 56,
+          "readdir": 2,
+          "read": 51
+        }
+      },
+      {
+        "case": "synthetic 50 modules",
+        "files": 51,
+        "variant": "mount read-write, first import writes .pyc",
+        "reps": 20,
+        "error": null,
+        "importMs": {
+          "n": 20,
+          "min": 41.495,
+          "median": 42.574,
+          "p90": 44.558,
+          "max": 47.519,
+          "mean": 43.015
+        },
+        "modulesImported": 51,
+        "channelRequests": {
+          "n": 20,
+          "min": 418,
+          "median": 418,
+          "p90": 418,
+          "max": 418,
+          "mean": 418
+        },
+        "requestsByOp": {
+          "stat": 262,
+          "readdir": 2,
+          "read": 51,
+          "mkdir": 1,
+          "put": 51,
+          "rename": 51
+        }
+      },
+      {
+        "case": "synthetic 50 modules",
+        "files": 51,
+        "variant": "mount read-write, second process reads .pyc",
+        "reps": 19,
+        "error": null,
+        "importMs": {
+          "n": 19,
+          "min": 14.983,
+          "median": 15.392,
+          "p90": 16.416,
+          "max": 16.797,
+          "mean": 15.532
+        },
+        "modulesImported": 51,
+        "channelRequests": {
+          "n": 19,
+          "min": 110,
+          "median": 110,
+          "p90": 110,
+          "max": 110,
+          "mean": 110
+        },
+        "requestsByOp": {
+          "stat": 57,
+          "readdir": 2,
+          "read": 51
+        }
+      },
+      {
+        "case": "real: pip's vendored rich (pure Python), import pip._vendor.rich.table",
+        "files": 452,
+        "variant": "MEMFS, first import (the .pyc is written)",
+        "reps": 20,
+        "error": null,
+        "importMs": {
+          "n": 20,
+          "min": 45.264,
+          "median": 47.162,
+          "p90": 50.615,
+          "max": 82.656,
+          "mean": 49.245
+        },
+        "modulesImported": 39,
+        "channelRequests": {
+          "n": 20,
+          "min": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0,
+          "mean": 0
+        },
+        "requestsByOp": {}
+      },
+      {
+        "case": "real: pip's vendored rich (pure Python), import pip._vendor.rich.table",
+        "files": 452,
+        "variant": "MEMFS, later import reads the .pyc",
+        "reps": 19,
+        "error": null,
+        "importMs": {
+          "n": 19,
+          "min": 5.354,
+          "median": 5.728,
+          "p90": 7.76,
+          "max": 12.012,
+          "mean": 6.41
+        },
+        "modulesImported": 33,
+        "channelRequests": {
+          "n": 19,
+          "min": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0,
+          "mean": 0
+        },
+        "requestsByOp": {}
+      },
+      {
+        "case": "real: pip's vendored rich (pure Python), import pip._vendor.rich.table",
+        "files": 452,
+        "variant": "mount read-only (no .pyc possible)",
+        "reps": 20,
+        "error": null,
+        "importMs": {
+          "n": 20,
+          "min": 49.875,
+          "median": 52.166,
+          "p90": 56.31,
+          "max": 59.839,
+          "mean": 52.231
+        },
+        "modulesImported": 33,
+        "channelRequests": {
+          "n": 20,
+          "min": 149,
+          "median": 149,
+          "p90": 149,
+          "max": 149,
+          "mean": 149
+        },
+        "requestsByOp": {
+          "stat": 112,
+          "readdir": 4,
+          "read": 33
+        }
+      },
+      {
+        "case": "real: pip's vendored rich (pure Python), import pip._vendor.rich.table",
+        "files": 452,
+        "variant": "mount, dont_write_bytecode",
+        "reps": 20,
+        "error": null,
+        "importMs": {
+          "n": 20,
+          "min": 45.965,
+          "median": 47.169,
+          "p90": 51.449,
+          "max": 60.708,
+          "mean": 48.247
+        },
+        "modulesImported": 33,
+        "channelRequests": {
+          "n": 20,
+          "min": 83,
+          "median": 83,
+          "p90": 83,
+          "max": 83,
+          "mean": 83
+        },
+        "requestsByOp": {
+          "stat": 46,
+          "readdir": 4,
+          "read": 33
+        }
+      },
+      {
+        "case": "real: pip's vendored rich (pure Python), import pip._vendor.rich.table",
+        "files": 452,
+        "variant": "mount read-write, first import writes .pyc",
+        "reps": 20,
+        "error": null,
+        "importMs": {
+          "n": 20,
+          "min": 59.173,
+          "median": 60.439,
+          "p90": 64.55,
+          "max": 68.26,
+          "mean": 61.585
+        },
+        "modulesImported": 33,
+        "channelRequests": {
+          "n": 20,
+          "min": 290,
+          "median": 290,
+          "p90": 290,
+          "max": 290,
+          "mean": 290
+        },
+        "requestsByOp": {
+          "stat": 184,
+          "readdir": 4,
+          "read": 33,
+          "mkdir": 3,
+          "put": 33,
+          "rename": 33
+        }
+      },
+      {
+        "case": "real: pip's vendored rich (pure Python), import pip._vendor.rich.table",
+        "files": 452,
+        "variant": "mount read-write, second process reads .pyc",
+        "reps": 19,
+        "error": null,
+        "importMs": {
+          "n": 19,
+          "min": 7.949,
+          "median": 9.279,
+          "p90": 11.342,
+          "max": 12.679,
+          "mean": 9.471
+        },
+        "modulesImported": 33,
+        "channelRequests": {
+          "n": 19,
+          "min": 86,
+          "median": 86,
+          "p90": 86,
+          "max": 86,
+          "mean": 86
+        },
+        "requestsByOp": {
+          "stat": 49,
+          "readdir": 4,
+          "read": 33
+        }
+      }
+    ]
+  }
+}

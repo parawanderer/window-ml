@@ -12,7 +12,7 @@ import { proposeManifestTool } from "../tools/propose-manifest-tool";
 import { pythonInstallTool } from "../tools/python-install-tool";
 import { installOutcome } from "./sw-pkg-install";
 import { taskTool } from "../tools/task-tool";
-import { taskAction } from "./sw-tasks";
+import { detachedCapMs, taskAction } from "./sw-tasks";
 import { proposalOutcome } from "./sw-manifest-proposal";
 import { isLibraryDraft, libraryOutcome } from "./sw-library-proposal";
 import type { FetchLlmPayload, FetchResult, MlApi, MlTool, ShotBox, SubcallUsage, TokenUsage } from "../contract";
@@ -230,6 +230,22 @@ function policyAllows(runId: string, url: string): boolean {
 /** Forget a run's worker-tool state, with its local tools. */
 export function dropWorkerTools(runId: string): void { runs.delete(runId); }
 
+/** The tab a run's worker tools act on now: the one they were built for, until the run host moves them
+ *  ({@link retabWorkerRun}). */
+export const workerRunTab = (runId: string): number | undefined => runs.get(runId)?.tabId;
+
+/**
+ * Point a run's worker tools at the tab the run is on now (MOVE_RUN.md): a run the worker built has them registered
+ * once, at its start, so a move or a replaced tab reaches them only through this. The run host calls it at each turn's
+ * start and from the turn's tab cell.
+ * @param runId the run
+ * @param to the tab it is on now
+ */
+export function retabWorkerRun(runId: string, to: number): void {
+    const ctx = runs.get(runId);
+    if (ctx) ctx.tabId = to;
+}
+
 /**
  * Send one model request for a run's worker tool and count what it spent into the run's sub-call tally: the one path
  * every worker-side sub-call takes (fetch_url's reader, the vision calls), so each lands in `subUsage` the same way.
@@ -389,6 +405,8 @@ async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; 
     // A LEASED cell: the tool handed its own formatter (`late`) for a result that arrives after the call detached. Its id
     // is the stream's: one this worker made, which nothing outside it can name.
     const leased = typeof opts.late === "function";
+    // The person's cap on a detached task (DevTools Settings), read at the call and sent with the cell.
+    const detachedMaxMs = leased ? await detachedCapMs() : undefined;
     let attached = true;
     const onStdout = opts.onStdout && ((chunk: string, ts?: number) => { if (attached) opts.onStdout!(chunk, ts); });
     const call = runPython({
@@ -403,7 +421,7 @@ async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; 
         ...(onStdout ? { stream: onStdout } : {}),
         ...(ctx.pyCall?.inside ? { inside: true } : {}),
         ...(ctx.pyCall?.bridges ? { bridges: true } : {}),
-        ...(leased ? { cell: requestId } : {}),
+        ...(leased ? { cell: requestId, detachedMaxMs } : {}),
     });
     // What the cell answered, as the tool reads it. A late one's (once detached) is read with the call's grant gone, so
     // what it needs from the run is taken now.
@@ -412,7 +430,7 @@ async function workerPython(ctx: RunCtx, code: string, opts: { image?: unknown; 
     if (!leased) return shape(await call);
     const expectMs = typeof opts.expectMs === "number" && Number.isFinite(opts.expectMs) && opts.expectMs > 0 ? Math.floor(opts.expectMs) : null;
     const late = opts.late!;
-    const r = await leaseCell({ runId: ctx.runId, cell: requestId, ...(pyCall?.step ? { seq: pyCall.step.seq } : {}), expectMs, call, onDetach: () => { attached = false; },
+    const r = await leaseCell({ runId: ctx.runId, cell: requestId, ...(pyCall?.step ? { seq: pyCall.step.seq } : {}), expectMs, ...(detachedMaxMs !== undefined ? { detachedMaxMs } : {}), call, onDetach: () => { attached = false; },
         late: async (x) => { let res: Record<string, unknown>; try { res = shape(x); } catch (e) { return { status: "failed", text: (e as Error)?.message || String(e), result: null }; } return late(res); } });
     return (r as PyDetached).detached ? r as PyDetached : shape(r as Awaited<typeof call>);
 }

@@ -14,6 +14,8 @@ import { pyCodeCovers } from "./grant-extract";
 import { pythonCellInDialect } from "../agent/python-dialect";
 import { openWireClient } from "./ml-wire-serve";
 import { recordRunLog } from "./sw-run-log";
+import { hydrateTasks, rehydratedCellTask } from "./sw-tasks";
+import { plainPyOutcome } from "./sw-python-late";
 import { dialectLibraries } from "./sw-libraries";
 import type { DialectLibrary } from "../python/python-dialect-run";
 import type { CellCancel } from "../python/py-lease";
@@ -153,6 +155,9 @@ export interface PythonCaller {
     /** A LEASED cell's id (py-lease.ts): a worker-hosted run's python_exec, whose start the offscreen document reports
      *  (`PY_STARTED`, to {@link onPyCellStarted}) and which a cancel and a tail reach by it. Set only by worker code. */
     cell?: string;
+    /** The cap on how long the leased cell may run detached, in ms (the person's `detachedTaskMaxMin`): sent with its PY_RUN,
+     *  which the offscreen document clamps to its ceiling. Set only by worker code, with `cell`. */
+    detachedMaxMs?: number;
     /** Run the cell INSIDE the dialect only, under the fork's gate (docs/spec/PYTHON_DIALECT.md, "Membership replaces
      *  `mode`"): a run the worker drives trying it before its own gate. Honoured only with `runGated`. A cell outside
      *  comes back as `notInDialect` and nothing it did is kept. */
@@ -274,7 +279,7 @@ export async function runPython(payload: any, requestId: string | undefined, cal
     // The lift, only for the exact code the person approved, and only outside the dialect (an inside cell needs none).
     const bridges = outside && caller.bridges === true && !!caller.pyCodeOk?.(String(payload?.code ?? ""));
     if (keep && !keptRuns.has(caller.wireRun!)) { keptRuns.add(caller.wireRun!); recordRunLog(caller.wireRun!, { subsystem: "python", kind: "keep" }); }
-    const run = { type: "PY_RUN", principal, ...(wire ? { wire: { client: wire.handle, run: caller.wireRun ?? null } } : {}), ...(valueBudget ? { valueBudget } : {}), code: payload?.code, image: payload?.image ?? null, hardened: true, tables: payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}), ...(inside ? { inside: true } : {}), ...(keep ? { keep: true } : {}), ...(bridges ? { bridges: true } : {}), ...(cell ? { cell } : {}) };
+    const run = { type: "PY_RUN", principal, ...(wire ? { wire: { client: wire.handle, run: caller.wireRun ?? null } } : {}), ...(valueBudget ? { valueBudget } : {}), code: payload?.code, image: payload?.image ?? null, hardened: true, tables: payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}), ...(inside ? { inside: true } : {}), ...(keep ? { keep: true } : {}), ...(bridges ? { bridges: true } : {}), ...(cell ? { cell, ...(typeof caller.detachedMaxMs === "number" ? { detachedMaxMs: caller.detachedMaxMs } : {}) } : {}) };
     // A cell inside the dialect may import the person's approved tier 3 libraries: they ride every inside run, and the
     // sandbox loads each pin once.
     if (inside) { const libraries = await dialectLibraries(); if (libraries.length) Object.assign(run, { libraries }); }
@@ -410,16 +415,41 @@ const SETTLED_CELLS_MAX = 64;
 
 /**
  * PY_DONE: the offscreen document says a leased cell ended. The worker that sent it ignores it (its reply carries the
- * result). A worker that never sent it is a new one: the sender died while the cell ran (past the per-event cap, a
- * crash), the run's loop and its task table with it, so nothing can take the result, and it is logged as orphaned
+ * result). A worker that never sent it is a new one: the sender died while the cell ran (the per-event cap, an eviction
+ * between turns), the run's loop with it, so the run's stored task table is read back (`hydrateTasks`) and, if it names the
+ * cell as running, the result is fetched from the offscreen document (`PY_RESULT`), formatted plainly and settled into the
+ * task, which parks it for the run's next turn (sw-tasks.ts). With no such row or no result held, it is logged as orphaned
  * rather than dropped silently. Only from our own documents.
  * @param message `{ cell, run, ok, bytes }`
  * @param sender who sent it
  */
-export function pythonDone(message: any, sender: chrome.runtime.MessageSender): void {
+export async function pythonDone(message: any, sender: chrome.runtime.MessageSender): Promise<void> {
     if (!isExtensionSender(sender) || sender.tab || typeof message?.cell !== "string" || typeof message?.run !== "string" || !message.run) return;
     if (liveCells.has(message.cell) || settledCells.includes(message.cell)) return;
-    recordRunLog(message.run, { level: "warn", subsystem: "python", kind: "orphaned", reason: "worker-lost", bytes: Number(message.bytes) || 0, detail: { cell: message.cell, ok: message.ok !== false } });
+    const orphaned = () => recordRunLog(message.run, { level: "warn", subsystem: "python", kind: "orphaned", reason: "worker-lost", bytes: Number(message.bytes) || 0, detail: { cell: message.cell, ok: message.ok !== false } });
+    try { await hydrateTasks(message.run); } catch { /* no table: orphaned below */ }
+    const settle = rehydratedCellTask(message.run, message.cell);
+    if (!settle) { orphaned(); return; }
+    const held = await heldPyResult(message.cell);
+    if (held === null) {
+        // The row would otherwise run forever, with the kernel locked behind it.
+        orphaned();
+        settle({ status: "failed", result: null, text: PY_RESULT_LOST });
+        return;
+    }
+    settle(plainPyOutcome(held));
+}
+
+/** A rebuilt cell's text when it ended and the offscreen document no longer holds its result. */
+export const PY_RESULT_LOST = "python_exec ended while the service worker was away, and its result was no longer held; it is lost.";
+
+/**
+ * The result the offscreen document holds for a leased cell that ended (`PY_RESULT`), handed over once; null when it
+ * holds none or does not answer.
+ * @param cell the cell's id
+ */
+export async function heldPyResult(cell: string): Promise<unknown> {
+    try { return ((await chrome.runtime.sendMessage({ type: "PY_RESULT", cell })) as { result?: unknown } | undefined)?.result ?? null; } catch { return null; }
 }
 
 /** What to do when a leased cell starts, by its id: the lease's start (worker-tools.ts `workerPython`). */
