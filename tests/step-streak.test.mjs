@@ -344,3 +344,12 @@ test("a refold collapses the rows that were on screen, not the call that caused 
     assert.deepEqual(rowsSeen([seen, at(4, now - FOLD_SEEN_MS)], now).map((t) => t.step), [1, 4], "on screen exactly long enough counts");
     assert.deepEqual(rowsSeen([unstamped], now), [], "no stamp is no evidence it was seen");
 });
+
+// --- a step replacing a live call continues it ---
+
+test("a step landing just after a live call is drawn takes its height over; one with none on screen does not", async () => {
+    const { noteLiveCall, liveHandoff, HANDOFF_MS } = await import("../src/sidebar/transcript/just-arrived.ts");
+    noteLiveCall(180, 1000);
+    assert.equal(liveHandoff(1000 + HANDOFF_MS - 1), 180);
+    assert.equal(liveHandoff(1000 + HANDOFF_MS), null);
+});

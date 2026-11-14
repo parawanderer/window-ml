@@ -953,6 +953,14 @@ button.chat-page-go:hover { color: var(--fg); }
 /* `--astep-close-ms` is how this surface tells the component how long to keep the body mounted on the way out —
    the component reads it and waits, and a surface that sets nothing closes in the same tick it always has. */
 .chat.calm .astep-body { animation: chat-step-open .22s cubic-bezier(.4, 0, .2, 1); --astep-close-ms: 200; }
+/* `.handoff`: a step that has just replaced the call the model was typing out. Its body begins at the live block's last
+   height (`--handoff-h`) and eases to its own, so the reformatted code reads as the typed text settling rather than the
+   block collapsing and reopening. Cleared after 400 ms (agent-detail.tsx), so a later open eases from nothing as usual. */
+.chat.calm .astep.handoff .astep-body { animation: chat-step-handoff .26s cubic-bezier(.4, 0, .2, 1); }
+@keyframes chat-step-handoff {
+    from { height: var(--handoff-h, 0px); opacity: .55; overflow: hidden; }
+    to { height: auto; opacity: 1; overflow: hidden; }
+}
 .chat.calm .astep-body.closing { animation: chat-step-close .2s cubic-bezier(.4, 0, .2, 1) forwards; }
 /* An embedded output folds and opens on the same curve. It eases in only when OPENED AGAIN (`.opening`): one drawn
    with its answer must simply be there. */
@@ -1013,7 +1021,7 @@ button.chat-page-go:hover { color: var(--fg); }
 @keyframes chat-tool-in { from { opacity: 0; transform: translateX(-12px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
     .chat.calm .aturn.fresh { animation: none; }
-    .chat.calm .astep.tool.fresh, .chat.calm .astep.tool.fresh.pending { animation: none; }
+    .chat.calm .astep.tool.fresh, .chat.calm .astep.tool.fresh.pending, .chat.calm .astep.handoff .astep-body { animation: none; }
 }
 
 /* THE GRANT CARD IS NOT A WARNING HERE. In the panel it is a warm card because it establishes a session-long

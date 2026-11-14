@@ -764,9 +764,10 @@ test("awaiting approval of a python_exec that loads an EXTERNAL sheet warns it's
 
 // Focus mode reads the run as a conversation. A tool call is kept OPEN after you decide so the result fills
 // in on the same cell — right when you are debugging, wrong when you are reading: every approval would
-// permanently widen the transcript, which is the thing focus mode exists to narrow.
-test("focus mode: a decided step collapses; outside focus mode it stays open", async () => {
-    const openAfterDecide = async (focus) => {
+// permanently widen the transcript, which is the thing focus mode exists to narrow. A CODE step is the exception
+// while it runs: a program it starts asks next, and that card needs its code above it. It folds once it settles.
+test("focus mode: a decided code step stays open while it runs and collapses once it settles; outside focus mode it stays open", async () => {
+    const run = async (focus) => {
         const w = await loadSidebarWorld(focus ? { local: { ml_debug_focus: true } } : undefined);
         await w.dispatch(agentStart("fm", "fetch stuff"));
         await w.dispatch(grantStep("fm"));
@@ -777,10 +778,17 @@ test("focus mode: a decided step collapses; outside focus mode it stays open", a
         w.window.postMessage = () => {};
         w.shadow.querySelector(".astep-approve .appr-btn:not(.remember)").click();
         await w.tick();
-        return !w.shadow.querySelector(".astep-preview");   // a preview line only shows while COLLAPSED
+        const whileRunning = !w.shadow.querySelector(".astep-preview");   // a preview line only shows while COLLAPSED
+        await w.dispatch(agentStep("fm", 1, { seq: 1, tool: "exec", arguments: { js: "1" }, pending: false, result: "ok", approval: "user" }));
+        // The fold is an animation on the surface and a timer in the component: give it its beat instead of counting ticks.
+        for (let i = 0; i < 20 && !w.shadow.querySelector(".astep-preview"); i++) { await w.tick(); await new Promise((r) => setTimeout(r, 30)); }
+        return { whileRunning, settled: !w.shadow.querySelector(".astep-preview") };
     };
-    assert.equal(await openAfterDecide(false), true, "debugging: it stays open and the Out fills in there");
-    assert.equal(await openAfterDecide(true), false, "reading: it collapses back to its one-line preview");
+    const debug = await run(false);
+    assert.deepEqual(debug, { whileRunning: true, settled: true }, "debugging: it stays open and the Out fills in there");
+    const reading = await run(true);
+    assert.equal(reading.whileRunning, true, "reading: the code stays above whatever it asks next");
+    assert.equal(reading.settled, false, "reading: it collapses back to its one-line preview once it settles");
 });
 
 test("reused-grant step: a readonly exec that re-read a cached URL shows a collapsed 'reused a grant' note", async () => {
