@@ -50,6 +50,15 @@ export const LEXICAL_METRICS = ["hybrid", "edit", "trigram", "tokenset"] as cons
  *  exactly. Derived from the array so the setting and the implementations cannot drift apart. */
 export type LexicalMetric = (typeof LEXICAL_METRICS)[number];
 
+/**
+ * The stored `labelMatch` as one of LEXICAL_METRICS: a value no build offers (an older build's metric, a hand-edited
+ * storage entry) reads as the default, `hybrid`, which is also what pointer resolution falls back to.
+ * @param v the stored value
+ * @returns the metric to use and to show
+ */
+export const labelMetric = (v: unknown): LexicalMetric =>
+    (LEXICAL_METRICS as readonly unknown[]).includes(v) ? (v as LexicalMetric) : "hybrid";
+
 /** Full config held in chrome.storage.sync (background + popup own it). */
 export interface MlConfig {
     chatUrl: string;
@@ -485,7 +494,8 @@ export function publicConfig(config: MlConfig, pageApprovalAllowed: boolean): Ml
         selfIntrospection: config.selfIntrospection !== false,
         pierceClosedShadow: config.pierceClosedShadow, cdp: config.cdp,
         groundingEnabled: config.groundingEnabled, groundingModel: config.groundingModel,
-        groundingRange: config.groundingRange, debugMode: config.debugMode, pageApprovalAllowed: pageApprovalAllowed === true,
+        groundingRange: config.groundingRange, debugMode: config.debugMode, labelMatch: labelMetric(config.labelMatch),
+        pageApprovalAllowed: pageApprovalAllowed === true,
     } as MlPublicConfig;
 }
 

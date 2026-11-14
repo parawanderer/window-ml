@@ -636,8 +636,9 @@ Recorded as each slice lands, with the reason.
   - Edits and the migration's writes run one at a time (`serially`), and an edit is refused while the migration
     cannot complete, so it is never applied to the old layout and undone by a later migration.
   - The popup shows the agents line only; its buttons are PR 3's (the popup's agents buttons).
-- **Not fixed, noticed:** `GET_CONFIG` never sent `labelMatch`, so a page-built run always used the default metric.
-  `publicConfig` keeps that behaviour; the worker path inherits it.
+- **Fixed later:** `GET_CONFIG` never sent `labelMatch`, so a page-built run always used the default metric, and the
+  worker path inherited that. `publicConfig` now returns it, read through `labelMetric` so a stored value no build
+  offers reads as `hybrid`.
 
 ## Open questions
 

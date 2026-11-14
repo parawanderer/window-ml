@@ -79,7 +79,7 @@ test("every DEFAULT_CONFIG key with a row has its place in SETTING_PLACES, and e
 
 test("ocrNumCtx has no control in the panel, so it has no place and its link renders as its label", async () => {
     const { SETTING_PLACES } = await import("../src/contract/contract-config.ts");
-    const { parseAddress } = await import("../src/sidebar/links.ts");
+    const { parseAddress } = await import("../src/link-address.ts");
     assert.equal(SETTING_PLACES.ocrNumCtx, undefined);
     assert.equal(parseAddress("setting/ocrNumCtx"), null);
 });
@@ -126,10 +126,28 @@ test("a window-ml:setting link in a chat reply is a button; clicking it opens Se
     assert.ok(row.classList.contains("set-marked"), "the row is marked");
 });
 
-// links.ts copies the Backup block's tab and id from settings.tsx (which a renderer does not import); the panel
+test("after a link opened Settings, the panel's back control returns to the session the link was clicked in", async () => {
+    const w = await loadSidebarWorld({ siteLists: SITE_LISTS });
+    await w.dispatch(chatStart("lnbk", 0, "how do I let scripts run programs?"));
+    await w.dispatch(chatResult("lnbk", 0, "Turn on [Let scripts run programs](window-ml:setting/shellEnabled) first."));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    w.shadow.querySelector("button.md-addr").click();
+    await new Promise((r) => setTimeout(r, 100));
+    await w.flush();
+    assert.ok(w.shadow.querySelector('[data-setting~="shellEnabled"]'), "Settings is open");
+    const back = w.shadow.querySelector("button.tt.nav");
+    assert.equal(back.getAttribute("aria-label"), "Back", "a return, not the way to the sessions list");
+    back.click();
+    await w.flush();
+    assert.equal(w.shadow.querySelector(".set-body"), null, "Settings closed");
+    assert.ok(w.shadow.querySelector('button.md-addr[data-addr="setting/shellEnabled"]'), "the reply with its link is drawn again: the session, not the list");
+});
+
+// link-address.ts copies the Backup block's tab and id from settings.tsx (which a renderer does not import); the panel
 // itself is what the copy is held to here, so a renamed or moved block fails this rather than scrolling nowhere.
 test("clicking the backup alias opens the tab the panel draws its Backup block on, with the block the link names", async () => {
-    const { parseAddress } = await import("../src/sidebar/links.ts");
+    const { parseAddress } = await import("../src/link-address.ts");
     const { target } = parseAddress("settings/extension/backup");
     const w = await loadSidebarWorld({ siteLists: SITE_LISTS });
     await w.dispatch(chatStart("lnb", 0, "how do I back up?"));
@@ -157,14 +175,18 @@ test("an unresolved window-ml address in a reply renders as its label, with no b
     assert.match(md.textContent, /See the context size and nowhere\./);
 });
 
-test("on the HUD card, which draws no Settings, a link in the answer is its label with no button", async () => {
+test("on the HUD card, which draws no Settings, a link is a button that asks the worker to open the chat page at its address", async () => {
     const w = await loadSidebarWorld();
     await w.raw({ __mlSidebarSurface: "card" });
     await w.dispatch(agentStart("lcard", "how do I run programs?"));
-    await w.dispatch(agentResult("lcard", "Turn on [Let scripts run programs](window-ml:setting/shellEnabled).", 1));
+    await w.dispatch(agentResult("lcard", "Turn on [Let scripts run programs](window-ml:setting/shellEnabled), in [Programs](window-ml:settings/extension/advanced/shell).", 1));
     await w.tick();
     const answer = w.shadow.querySelector(".card-answer");
     assert.ok(answer, "the card drew the answer");
-    assert.match(answer.textContent, /Turn on Let scripts run programs\./);
-    assert.equal(w.shadow.querySelector("button.md-addr"), null);
+    const buttons = [...answer.querySelectorAll("button.md-addr")];
+    assert.deepEqual(buttons.map((b) => b.textContent), ["Let scripts run programs", "Programs"]);
+    for (const b of buttons) b.click();
+    await w.flush();
+    assert.deepEqual(w.openChatCalls, [{ address: "setting/shellEnabled" }, { address: "settings/extension/advanced/shell" }]);
+    assert.equal(w.shadow.querySelector(".set-body"), null, "the card itself opened no Settings");
 });

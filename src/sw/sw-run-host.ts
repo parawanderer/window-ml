@@ -59,11 +59,11 @@ import { withRuntime } from "./sw-current-runtime";
 import { isolationAvailable, pageApproved, runIsolatedExec } from "./sw-isolated-exec";
 import { handOverSettled } from "./nav-handover";
 import { fetchTarget } from "./sw-fetch-url";
-import { grantRunFetch, grantRunOrigin, runOriginGranted, runOrigins, runFetchConsented, grantRunPython, takePyRefusal, pythonDialectReady } from "./worker-tools";
+import { grantRunFetch, grantRunOrigin, runOriginGranted, runOrigins, runFetchConsented, grantRunPython, takePyRefusal, pythonDialectReady, retabWorkerRun } from "./worker-tools";
 import { autoApprovePython } from "../agent/auto-approve";
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
 import { takeMovedNote } from "./move-run";
-import { PROPOSAL_TOOLS, withoutProposals, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, keptOnRebuild, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart } from "./sw-runs";
+import { PROPOSAL_TOOLS, withoutProposals, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, keptOnRebuild, turnTabCells, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { drawStoredPages } from "./sw-attach";
 import { claimValue, runMayClaim, valueHolders, readStoredBytes, readStoredColumns, readStoredText, withHeldValuesOnly } from "./sw-values";
@@ -599,7 +599,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         return visionMemo.facts;
     };
     /** A worker-run python_exec's `image` and `cast`, through the worker's vision over this run's tab (worker-media.ts). */
-    const pyMedia = pyMediaFor(runId, tabId);
+    const pyMedia = pyMediaFor(runId, () => tabId);
     const verifyHere = async (doc: string | null | undefined, req: WorkerVerify, verb: string): Promise<VerifyOutcome> =>
         workerVerify(runId, tabId, doc, req, verb, await visionFacts(), tabUrlNow);
     /** Where an approved exec of this run would go now (exec-routing.ts): the tab's site as the browser reports it, the
@@ -713,7 +713,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     // Undoes what this turn registered: run when the turn settles, and when its setup throws before the loop starts.
     let unhostAsks: (() => void) | undefined;   // set once the run's steps may raise nested asks (sw-asks.ts)
     let unwatchArrivals: (() => void) | undefined;   // set once the run judges its tab's arrivals (nav-arrival.ts)
-    const settle = (): void => { unhostAsks?.(); unwatchArrivals?.(); if (unwatchArrivals) watchBetweenTurns(tabId, runId); cancelReasons.delete(runId); noteRunEnd(runId); dropActs(runId); runControllers.delete(runId); runInboxes.delete(runId); closeTurnTasks(runId); untrackRun(tabId, runId); deleteRun(runId); endPythonTurn(runId); releaseDebugger(tabId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); the turn's end: the run's Python namespace stays, the shared full worker's dict goes
+    let rewatchArrivals: (() => void) | undefined;   // the same judge, moved to the turn's tab now
+    const settle = (): void => { turnTabCells.delete(runId); unhostAsks?.(); unwatchArrivals?.(); if (unwatchArrivals) watchBetweenTurns(tabId, runId); cancelReasons.delete(runId); noteRunEnd(runId); dropActs(runId); runControllers.delete(runId); runInboxes.delete(runId); closeTurnTasks(runId); untrackRun(tabId, runId); deleteRun(runId); endPythonTurn(runId); releaseDebugger(tabId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); the turn's end: the run's Python namespace stays, the shared full worker's dict goes
     /** Ends the run's session on every surface when the setup throws after its start event went out; set once the fan exists. */
     let endSession: ((error: string) => void) | undefined;
     try {
@@ -721,6 +722,19 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // The live controller takes over from any start registration: from here a CANCEL_RUN finds this one.
         for (const e of startingSet ?? []) endStart(runId, e.ctl);
         runInboxes.set(runId, { tabId, queue: [] });   // a.say() steering lands here while the run is live
+        // The turn's TAB CELL (MOVE_RUN.md, shape (b)): every send below reads `tabId` as it sends, so re-pointing the
+        // binding moves them; what holds the old tab by value is moved here. Only `rekeyRunInbox` calls it.
+        // A run the worker built registered its worker tools once, at its start: they follow the run to the tab it is on
+        // now, at this turn's start (a move between turns) and through the cell (a move or a replace during it).
+        retabWorkerRun(runId, tabId);
+        turnTabCells.set(runId, (to) => {
+            if (to === tabId) return;
+            const from = tabId;
+            tabId = to;
+            retabWorkerRun(runId, to);
+            releaseDebugger(from);
+            rewatchArrivals?.();
+        });
         // Register the run against its tab so the navigation sensor watches it — UNLESS the run opted out of
         // cross-page persistence (navigate: false), in which case a nav simply ends it (no barrier, no adopt).
         if (p.crossPage !== false) trackRun(tabId, runId, p.rebuild);
@@ -981,6 +995,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             if (v.kind === "deny") raiseDenyCard(); else void answerArrival();
         };
         unwatchArrivals = watchArrivals(tabId, runId, judgeHere);
+        rewatchArrivals = () => { unwatchArrivals?.(); unwatchArrivals = watchArrivals(tabId, runId, judgeHere); };
         /** "A model call is underway" — the one stamp for it, since the pending step START fires only once a
          *  TOOL is about to run (i.e. after the generation) and a turn that emits nothing but a tool call
          *  produces no stream deltas at all. Re-fired on each phase change with the marks so far. */

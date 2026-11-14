@@ -374,29 +374,18 @@ $("save").addEventListener("click", save);
 $("unload").addEventListener("click", freeVram);
 $("stopAllRuns").addEventListener("click", stopAllRuns);
 $("openConfig").addEventListener("click", () => showConfig($("openConfig").getAttribute("aria-expanded") !== "true"));
-// The chat page, in a tab of its own. Focused if it is already open, rather than opened twice: it is one view of
-// this browser's sessions, and two of them would each hold their own port and their own scroll position.
-/** Open the chat page, or focus it where it is already open; `hash` (`#/settings/extension/backup`) names a view to show there. */
-async function openChat(hash = ""): Promise<void> {
-    const url = chrome.runtime.getURL("chat.html");
+/** Open the chat page, or focus it where it is already open (the worker does it: OPEN_CHAT_PAGE, sw-open-chat.ts);
+ *  `address` (`settings/extension/backup`) names a view to show there. */
+function openChat(address = ""): void {
     try {
-        // This extension's own open tabs, by their document URL: an open chat puts its route in the hash
-        // (`chat.html#/…`), and `chrome.tabs.query({ url })` matched only the bare URL, so it missed that page and
-        // opened a second one (a URL pattern did not match it either).
-        const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.TAB] });
-        const open = contexts.find((c) => c.tabId >= 0 && (c.documentUrl ?? "").split("#")[0] === url);
-        if (open) {
-            // A hash-only change: the page reads it on `hashchange`, so it is not reloaded.
-            await chrome.tabs.update(open.tabId, { active: true, ...(hash ? { url: url + hash } : {}) });
-            // In another window, the tab is only active THERE; bring that window forward too.
-            if (open.windowId >= 0) await chrome.windows.update(open.windowId, { focused: true });
-        } else await chrome.tabs.create({ url: url + hash });
-        window.close();
-    } catch { /* the browser refused; the popup stays open so the click can be repeated */ }
+        chrome.runtime.sendMessage({ type: "OPEN_CHAT_PAGE", payload: { address } }, (resp: { data?: boolean } | undefined) => {
+            if (!chrome.runtime.lastError && resp?.data) window.close();
+        });
+    } catch { /* no runtime channel; the popup stays open so the click can be repeated */ }
 }
 $("openChat").addEventListener("click", () => openChat());
 // Backup and restore live in the chat page's Settings → Extension: a popup closes the moment a file chooser takes focus.
-$("openBackup").addEventListener("click", () => openChat("#/settings/extension/backup"));
+$("openBackup").addEventListener("click", () => openChat("settings/extension/backup"));
 $("test").addEventListener("click", saveAndTest);
 $("refreshVram").addEventListener("click", refreshVram);
 $("sheetsAccess").addEventListener("click", enableSheetsAccess);

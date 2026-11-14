@@ -566,6 +566,17 @@ test("labelMatch: the configured metric reaches resolution, and a bad value fall
     assert.equal(s.resolveRef(q, undefined).value.out, "REWORDED", "…as does none at all");
 });
 
+// UPGRADE: ml.config() did not carry labelMatch before, so whatever is in storage reaches a page for the first time
+// now. A stored value no build offers (a dropped metric, a hand edit) must read as the default, not throw or pass
+// through to a run payload the worker's check would refuse.
+test("labelMatch: ml.config() carries the stored metric, and one no build offers reads as hybrid", async () => {
+    const { DEFAULT_CONFIG, LEXICAL_METRICS, publicConfig } = await import("../src/contract/contract-config.ts");
+    for (const m of LEXICAL_METRICS) assert.equal(publicConfig({ ...DEFAULT_CONFIG, labelMatch: m }, false).labelMatch, m);
+    for (const stale of ["levenshtein", "", 3, null, undefined]) {
+        assert.equal(publicConfig({ ...DEFAULT_CONFIG, labelMatch: stale }, false).labelMatch, "hybrid", `stored ${JSON.stringify(stale)}`);
+    }
+});
+
 // THE DIALECT IS SPELLED OUT ONCE. It used to be inlined verbatim in four `pipe` PARAMETERS at ~270 tokens
 // each — consistent, because PIPE_CMDS single-sources them, but still serialised into context four times.
 // Single-sourcing buys correctness; it does not buy brevity, and those were being conflated.
