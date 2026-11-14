@@ -203,6 +203,27 @@ export function settingsLinksSection(): string {
     return lines.join("\n");
 }
 
+/**
+ * The "running programs, and setting it up" section of agent_api_docs: what a person with no process host is told, so a
+ * model asked to run a program it has no `ml.sh` for can point them at the install. Found by name or by `search`
+ * (`ml.sh`, `process host`, `install`); the default view only names it. docs/spec/SHELL.md, "Installing the host".
+ * @returns a markdown section
+ */
+export function programsSetupSection(): string {
+    return [
+        "## Running programs on the person's machine (ml.sh), and setting it up", "",
+        "`ml.sh` runs programs (git, npm, a test runner) on the person's machine, through the process host (`wmlhost`), a " +
+        "separate program they install once. `ml.current.runtime.capabilities` reports `shellHost` when one answers. " +
+        "Without `shellHost` you have no `ml.sh`: do not promise a program run. If the person wants one, tell them it needs " +
+        "the process host and point them to Settings, Extension, Advanced, Programs (ml.sh) (`settings/extension/advanced/shell`), " +
+        "which shows the one line to paste with this install's extension id. Link it: " +
+        "`[Programs (ml.sh)](window-ml:settings/extension/advanced/shell)`.", "",
+        "Never write an install command yourself: the line in Settings is pinned to a checked release and yours would not be. " +
+        "After it, they press Check again there, turn on Let scripts run programs, and name a workspace folder. Every call " +
+        "still asks them.",
+    ].join("\n");
+}
+
 /** The `agent_api_docs({ diff: true })` section: this build's EXACT uncommitted diff (captured at build time,
  *  the extension can't run git live). Kept behind an explicit arg — it's large and rarely needed. */
 const dirtyDiffSection = (): string => {
@@ -297,6 +318,7 @@ export function apiDocsTool(define: typeof defineTool, src: DocsSource): MlTool 
                     { name: "My source", body: sourceSection() },
                     { name: "Reading your own setup", body: await selfIntrospectionSection(src) },
                     { name: "Your settings", body: settingsLinksSection() },
+                    { name: "Running programs", body: programsSetupSection() },
                 ].filter(e => e.body)
                 : [];
             // Within-burst dedup: this call IS the docs streak, so reset the leniency counter; `fresh`

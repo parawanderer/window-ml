@@ -30,7 +30,7 @@ export type StateAttentionLevel = "blocks" | "limits" | "suggests";
 export type AttentionCode =
     | "no-model" | "backend-unreachable" | "site-access" | "tab-groups" | "no-utility-model"
     | "archive-folder-lapsed" | "archive-folder-unsupported" | "python-packages-missing"
-    | "archive-off" | "archive-folder-none" | "spend-no-electricity-price"
+    | "archive-off" | "archive-folder-none" | "spend-no-electricity-price" | "host-not-connected"
     /** THIS DEVICE, not a runtime: an iPhone or iPad reading the hosted client in a tab rather than as an app. */
     | "add-to-home"
     /** THIS DEVICE's certificate: running out, and run out. See {@link certItems}. */
@@ -132,6 +132,11 @@ const KNOWN: Record<AttentionCode, Known> = {
     "python-packages-missing": {
         level: "limits", title: "Python has no packages",
         detail: "This build was made without its Python wheels, so python_exec and the bench fail. Run npm run fetch-pyodide, then rebuild.",
+    },
+    "host-not-connected": {
+        level: "suggests", title: "Programs on this machine: connect window-ml-host",
+        detail: "Scripts can run programs here (git, tests, a build) once the process host is installed. Settings shows the one line to paste, with this install's extension id in it.",
+        fix: { kind: "settings", label: "Show me", where: "Extension → Advanced → Programs (ml.sh)", find: "Programs (ml.sh)" },
     },
     "no-utility-model": {
         level: "suggests", title: "No utility model",

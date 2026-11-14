@@ -228,3 +228,16 @@ test("agent_api_docs' default view names the settings section, and a search for 
     assert.match(await tool.run({}), /"Your settings"/);
     assert.match(await tool.run({ search: "window-ml:" }), /## Your settings, and linking the person to one/);
 });
+
+test("agent_api_docs' programs section points at an address the renderer accepts, and a search for ml.sh or the host returns it", async () => {
+    const { apiDocsTool, programsSetupSection } = await import("../src/tools/api-docs-tool.ts");
+    const text = programsSetupSection();
+    const addresses = [...text.matchAll(/`(?:\[[^\]]+\]\(window-ml:)?(settings\/extension\/[A-Za-z0-9_/]+)/g)].map((m) => m[1]);
+    assert.ok(addresses.length >= 2 && new Set(addresses).size === 1, "the plain and the link form name one address");
+    assert.deepEqual(parseAddress(addresses[0]), { tab: "advanced", section: "shell" });
+    assert.doesNotMatch(text, /\S {2,}\S/, "no padding: the model pays for every space");
+    assert.doesNotMatch(text, /curl|sh -s|wmlhost install/, "the model is never handed an install command");
+    const tool = apiDocsTool((d) => d, { invocation: async () => null, config: async () => null });
+    assert.match(await tool.run({}), /"Running programs"/);
+    for (const term of ["process host", "ml.sh", "install"]) assert.match(await tool.run({ search: term }), /## Running programs on the person's machine/, term);
+});

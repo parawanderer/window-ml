@@ -15,7 +15,9 @@ export type AttentionCode =
     // The build: made without Python's wheels, so python_exec and the bench fail at run time.
     | "python-packages-missing"
     // Spend tracking is on (a price service is set) but no electricity price is, so a local model's runs cost nothing.
-    | "spend-no-electricity-price";
+    | "spend-no-electricity-price"
+    // Programs on this machine: no process host has answered in this profile, and a run has already happened.
+    | "host-not-connected";
 
 /** How long an answer about the backend stands before a page connecting asks again. */
 const BACKEND_TTL_MS = 60_000;
@@ -28,7 +30,7 @@ let backendOk: boolean | null = null;
 let backendAt = 0;
 let probing: Promise<void> | null = null;
 /** `archiveOn` answers null until the setting has been read: no archive code is a guess. */
-let deps: { archiveOn: () => boolean | null; onChange: () => void; pythonMissing?: () => boolean } | null = null;
+let deps: { archiveOn: () => boolean | null; onChange: () => void; pythonMissing?: () => boolean; hostMissing?: () => boolean } | null = null;
 
 /** The codes as they stand now, in a fixed order; empty until the first read. */
 export function attentionCodes(): AttentionCode[] {
@@ -55,6 +57,7 @@ export function recomputeAttention(): void {
         else if (folder === "none") next.push("archive-folder-none");
     } else if (archive === false) next.push("archive-off");
     if (deps.pythonMissing?.()) next.push("python-packages-missing");
+    if (deps.hostMissing?.()) next.push("host-not-connected");
     if (cfg && cfg.priceSnapshotUrl.trim() && !(cfg.electricityPerKwh > 0)) next.push("spend-no-electricity-price");
     if (next.join() === codes.join()) return;
     codes = next;
@@ -100,7 +103,7 @@ async function readConfig(): Promise<void> {
  * then on. `archiveOn` is the session store's reading of the setting; `onChange` re-sends the runtime's description.
  * The archive folder's own changes arrive through `recomputeAttention`, called by whoever hears them.
  */
-export function watchAttention(opts: { archiveOn: () => boolean | null; onChange: () => void; pythonMissing?: () => boolean }): void {
+export function watchAttention(opts: { archiveOn: () => boolean | null; onChange: () => void; pythonMissing?: () => boolean; hostMissing?: () => boolean }): void {
     deps = opts;
     // The backend is asked only when a page connects (`refreshBackendAttention`) or its settings change: a worker
     // stopped when idle starts again often, and a fetch at every start would be traffic nobody reads.

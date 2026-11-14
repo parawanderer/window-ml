@@ -7,6 +7,8 @@ import { useEffect, useState } from "preact/hooks";
 import type { MlConfig } from "../../contract";
 import type { ShellStatus } from "../../sw/sw-shell";
 import { Lbl as L } from "./settings-label";
+import { hostInstall, type HostInstall, type HostPlatform } from "../../shell/host-install";
+import { HostInstallGuide } from "./host-install-guide";
 
 /** One path a line, blank lines and surrounding space dropped. */
 export function linesOf(text: string): string[] {
@@ -29,15 +31,28 @@ export function shellStatusText(s: ShellStatus | null): string {
  * @param c the config
  * @param setField writes one setting
  * @param initial the status to draw before the first measurement (the gallery's); absent asks the worker
+ * @param platform what the browser says about this machine (the gallery's); absent asks `chrome.runtime.getPlatformInfo`
  */
-export function ShellSectionBody({ c, setField, initial }: {
+export function ShellSectionBody({ c, setField, initial, platform: givenPlatform }: {
     c: Pick<MlConfig, "shellEnabled" | "shellRoots" | "shellSandbox" | "shellPath">;
     setField: (k: "shellEnabled" | "shellRoots" | "shellSandbox" | "shellPath", v: boolean | string[]) => void;
     initial?: ShellStatus;
+    platform?: HostPlatform;
 }) {
     const [status, setStatus] = useState<ShellStatus | null>(initial ?? null);
     const [roots, setRoots] = useState((c.shellRoots ?? []).join("\n"));
     const [path, setPath] = useState((c.shellPath ?? []).join("\n"));
+    const [platform, setPlatform] = useState<HostPlatform | null>(givenPlatform ?? null);
+    const [checking, setChecking] = useState(false);
+    // "Check again" in the installer guide: a hello to the host, whether or not ml.sh is on (the person pressed it).
+    const probe = () => {
+        if (initial || typeof chrome === "undefined" || !chrome.runtime?.sendMessage) return;
+        setChecking(true);
+        chrome.runtime.sendMessage({ type: "SHELL_STATUS", payload: { probe: true } }, (r?: { data?: ShellStatus }) => {
+            setChecking(false);
+            if (r?.data) { setStatus(r.data); if (r.data.hostAnswers) measure(true); }
+        });
+    };
     const measure = (refresh: boolean) => {
         if (initial || typeof chrome === "undefined" || !chrome.runtime?.sendMessage) return;
         chrome.runtime.sendMessage({ type: "SHELL_STATUS", payload: { refresh } }, (r?: { data?: ShellStatus; error?: string }) => {
@@ -45,11 +60,21 @@ export function ShellSectionBody({ c, setField, initial }: {
             else setStatus({ enabled: !!c.shellEnabled, ready: false, sandboxed: false, error: r?.error || "No answer from the extension." });
         });
     };
-    useEffect(() => { measure(false); }, []);
-    const id = typeof chrome !== "undefined" && chrome.runtime?.id ? chrome.runtime.id : "<extension id>";
+    useEffect(() => {
+        measure(false);
+        if (!givenPlatform && typeof chrome !== "undefined" && chrome.runtime?.getPlatformInfo) {
+            chrome.runtime.getPlatformInfo().then((p) => setPlatform({ os: p.os, arch: p.arch })).catch(() => undefined);
+        }
+    }, []);
+    const id = typeof chrome !== "undefined" && chrome.runtime?.id ? chrome.runtime.id : "";
+    // Offered until a host has answered (this worker's last hello, else any earlier one in this profile); not before the
+    // first measurement, so a person with a working host never sees it flash.
+    const missing = !!status && !status.ready && !(status.hostAnswers ?? status.hostSeen);
+    const install: HostInstall | null = missing && platform ? hostInstall(platform, id) : null;
     return (
         <>
-            <div class="set-note">Let an approved script start <b>programs on this machine</b> with <code>ml.sh.run(["git", "status"])</code>: an argument list, never a shell command. <b>Every call asks you</b>, showing exactly what will run, in which folder, under which sandbox. Programs run through the <b>process host</b>, a separate program you install once: <code>wmlhost install --extension-id {id}</code>. <b>Off by default.</b></div>
+            <div class="set-note">Let an approved script start <b>programs on this machine</b> with <code>ml.sh.run(["git", "status"])</code>: an argument list, never a shell command. <b>Every call asks you</b>, showing exactly what will run, in which folder, under which sandbox. Programs run through the <b>process host</b>, a separate program you install once. <b>Off by default.</b></div>
+            {install ? <HostInstallGuide install={install} answered={status?.hostAnswers} busy={checking} onCheck={probe} /> : null}
             <label data-setting="shellEnabled" class="set-check">
                 <input type="checkbox" checked={!!c.shellEnabled} onChange={(e: any) => { setField("shellEnabled", e.target.checked); setTimeout(() => measure(true), 50); }} />
                 <L tip="Off by default. On: an approved exec may call ml.sh, and each call still asks you.">Let scripts run programs (ml.sh)</L>
