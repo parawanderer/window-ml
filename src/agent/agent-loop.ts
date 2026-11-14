@@ -103,7 +103,7 @@ export interface AgentLoopDeps {
     // Build the initial neutral message array (system + user(task)) — world-specific (page context).
     buildMessages(task: string): unknown[];
     // Append the assistant tool-call message / a tool-result message to the running history.
-    pushAssistant(messages: unknown[], msg: { content?: string | null; tool_calls?: ToolCall[] }): void;
+    pushAssistant(messages: unknown[], msg: { content?: string | null; tool_calls?: ToolCall[]; reasoning?: unknown }): void;
     pushToolResult(messages: unknown[], call: ToolCall, result: string): void;
     // Inline vision: after a step, inject any screenshots the step's tools captured as a user turn, so
     // the NEXT model call sees the pixels (a tool RESULT can't carry an image; a user turn can). Omit
@@ -503,8 +503,8 @@ async function preRender(
 
 /** The engine's count for an assistant message, when it measures the message. The completion count is the whole
  *  GENERATION, so it measures the message only when nothing else was generated: a turn that also produced reasoning
- *  counted that too, and reasoning is not re-sent in history, so its count would overstate what compacting the message
- *  reclaims. Null then, and the size is estimated from what is actually in the context. (A model whose reasoning is
+ *  counted that too, and reasoning is re-sent only to an endpoint that asked for it (`ml_wants_reasoning`) and only
+ *  on a tool-call turn, so its count would overstate what compacting the message reclaims. Null then, and the size is estimated from what is actually in the context. (A model whose reasoning is
  *  hidden entirely, never returned, cannot be told apart here and is counted.) */
 function countedFor(msg: { usage?: unknown; reasoning?: unknown }): number | null {
     if (!msg.usage) return null;

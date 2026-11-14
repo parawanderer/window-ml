@@ -41,6 +41,28 @@ interface ChatBody {
  *  with a 400 — and a metadata field must never cost an answer. Per URL: a refusal is a fact about the far end. */
 const refusesHint = new Set<string>();
 
+/** The endpoint and model pairs (`<chat url>|<model>`) whose server answered a 400 naming `reasoning_content`: a thinking
+ *  mode that wants the assistant's earlier thinking passed back on every turn that called tools. Learned from the refusal and
+ *  never guessed, so a backend that does not ask never receives the field (a strict OpenAI-compatible host answers an unknown
+ *  message field with a 400 of its own). Kept in `storage.local`, so a worker the browser evicts does not pay one refused
+ *  request again. */
+const WANTS_REASONING_KEY = "ml_wants_reasoning";
+// state: cache
+const wantsReasoning = new Set<string>();
+// state: plumbing
+let wantsReasoningRead: Promise<void> | null = null;
+async function readWantsReasoning(): Promise<void> {
+    wantsReasoningRead ??= (async () => {
+        try { const stored = (await chrome.storage.local.get(WANTS_REASONING_KEY))?.[WANTS_REASONING_KEY];
+        if (Array.isArray(stored)) for (const k of stored) wantsReasoning.add(String(k)); } catch { /* no storage: this worker's memory only */ }
+    })();
+    return wantsReasoningRead;
+}
+async function rememberWantsReasoning(key: string): Promise<void> {
+    wantsReasoning.add(key);
+    try { await chrome.storage.local.set({ [WANTS_REASONING_KEY]: [...wantsReasoning].slice(-50) }); } catch { /* memory only */ }
+}
+
 /** `storage.local` flag marking every request from this browser as SYNTHETIC (`hint.synthetic`): set by the
  *  benchmark and observe harnesses on their throwaway profiles, so generated traffic is served exactly like real
  *  traffic but kept out of what the server learns from. Not a user setting. */
@@ -717,6 +739,13 @@ export async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSig
         signal?.addEventListener("abort", () => { clearTimeout(t); reject(new DOMException("Aborted", "AbortError")); }, { once: true });
     });
 
+    // WHAT A THINKING-MODE SERVER WANTS BACK: the thinking of each assistant turn that called tools, by the index of its
+    // wire message (the wire list is the neutral list, one to one). A turn from a transcript written before the field existed
+    // has none and is sent an EMPTY string: the server checks that the field is there, and nothing is invented for it.
+    const reasoningAt: (string | null)[] = config.apiFormat === "ollama" ? [] : messages.map((m) => m.role === "assistant" && m.tool_calls?.length ? (typeof m.reasoning === "string" ? m.reasoning : "") : null);
+    const withReasoning = (b: ChatBody): ChatBody => ({ ...b, messages: (b.messages as any[]).map((m, i) => reasoningAt[i] != null && m?.role === "assistant" ? { ...m, reasoning_content: reasoningAt[i] } : m) as any });
+    const wantKey = `${config.chatUrl}|${model}`;
+
     const send = async (requestBody: ChatBody, stream = false): Promise<any> => {
         // Rate-limit backoff: a free tier / shared backend answers 429 with a Retry-After (or a "try again in
         // Xs" in the body). Rather than fail the whole run, pace ourselves — wait the advised delay and retry.
@@ -730,6 +759,9 @@ export async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSig
         // Set once a 400/422 has been retried WITHOUT the hint; remembered for the URL only if that retry
         // succeeds, so a 400 for any other reason fails the same way twice and surfaces as the error it was.
         let hintDropped = false;
+        // Set once a 400 naming `reasoning_content` has been retried WITH it; remembered only if that retry succeeds.
+        let reasoningAdded = false, asked = false;
+        if (reasoningAt.some((x) => x != null)) { await readWantsReasoning(); if (wantsReasoning.has(wantKey)) { requestBody = withReasoning(requestBody); reasoningAdded = true; } }
         for (let attempt = 0; ; attempt++) {
             let res: Response;
             const sentAt = Date.now();
@@ -768,25 +800,34 @@ export async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSig
             if (!res.ok) {
                 text ??= await res.text().catch(() => "");
                 // A STRICT server refusing the unfamiliar `hint`: ask once more without it. Not when the refusal
-                // names the running-count keys instead — those have their own retry (streamAgentTurn), and blaming
+                // names the running-count keys or `reasoning_content` instead — those have their own retry, and blaming
                 // the hint first would spend a request on the wrong field.
                 if ((res.status === 400 || res.status === 422) && requestBody.hint && !hintDropped && !rateLimited
-                    && !/stream_options|continuous_usage_stats|stream_metrics/.test(text)) {
+                    && !/stream_options|continuous_usage_stats|stream_metrics|reasoning_content/.test(text)) {
                     const { hint: _unsent, ...plain } = requestBody;
                     requestBody = plain as ChatBody;
                     hintDropped = true;
+                    continue;
+                }
+                // A thinking-mode server asking for the thinking it was sent: put it back and ask again, once.
+                if ((res.status === 400 || res.status === 422) && !reasoningAdded && !rateLimited && /reasoning_content/.test(text) && reasoningAt.some((x) => x != null)) {
+                    requestBody = withReasoning(requestBody);
+                    reasoningAdded = true;
+                    asked = true;
                     continue;
                 }
                 // Cut before a secret the body echoes rather than through it: a half key matches no form the scrub knows.
                 let msg = `HTTP ${res.status} from ${config.chatUrl}: ${clipClear(text, 300, secretsOf(config))}`;
                 // Capability probe was inconclusive for this backend, so the images
                 // themselves are a plausible culprit — say so.
-                if (hasImages && !visionConfirmed) {
+                // Not when the server named something else it wants: blaming the images there sent people the wrong way.
+                if (hasImages && !visionConfirmed && !/reasoning_content/.test(text)) {
                     msg += " (request included images — the model may not support image input)";
                 }
                 throw new Error(msg);
             }
             if (hintDropped) refusesHint.add(config.chatUrl);
+            if (asked) await rememberWantsReasoning(wantKey);
             return stream ? res : res.json();
         }
     };

@@ -24,6 +24,10 @@ export interface NeutralMessage {
     images?: string[];
     tool_calls?: ToolCall[];
     tool_call_id?: string;
+    /** An assistant turn's own thinking, kept on a turn that called tools so the next request can pass it back to a model
+     *  whose server demands it (DeepSeek's thinking mode: "reasoning_content … must be passed back"). Sent only to a
+     *  backend that asked for it (`sw-llm.ts`, `wantsReasoning`); absent from a transcript written before it existed. */
+    reasoning?: string;
     /** OpenWebUI tool/RAG provenance */
     sources?: unknown[];
 }
