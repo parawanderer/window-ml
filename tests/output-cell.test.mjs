@@ -472,6 +472,7 @@ test("value tree: each primitive carries the highlight.js class the text view gi
     assert.ok(has(".jt-null", "hljs-literal"), "null is a literal");
     assert.ok(has(".jt-number", "hljs-number"));
     assert.ok(has(".jt-string", "hljs-string"));
+    assert.ok(has(".jt-key", "hljs-attr"), "a key is an attribute, as in the text view");
 });
 
 test("output cell: dragging the grip resizes THIS cell only", async () => {
