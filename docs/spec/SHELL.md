@@ -216,7 +216,7 @@ extension can do is make it one paste.
 
 - **The shown line carries nothing a page wrote.** It is built in the extension page from three values: `chrome.runtime.id`,
   the pinned tag and the pinned sha256 (both from `tools/host-dist.json`, committed and reviewed). Nothing from a page, a
-  message or the model reaches it; `hostInstall` refuses an id that is not 32 letters a-p.
+  message or the model reaches it; `hostInstall` refuses an id that is not 32 letters a-p, and a pin whose tag, installer file name (exactly `install.sh`) or hash is not the expected shape.
 - **The extension id is the extension's own**, so the manifest the installer writes allows this extension and no other.
 - **The download is pinned by version and hash.** The URL names the release; the installer is checked against the pin
   before it runs; the installer checks the archive against hashes inside itself. The pin is bumped by `fetch-host --bump`,

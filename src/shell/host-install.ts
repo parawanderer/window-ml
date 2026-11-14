@@ -39,7 +39,7 @@ export function hostInstall(platform: HostPlatform, extensionId: string, pin: Ho
     const x64 = platform.arch === "x86-64";
     const sum = platform.os === "mac" && (arm || x64) ? "shasum -a 256 -c -" : platform.os === "linux" && (arm || x64) ? "sha256sum -c -" : null;
     if (!sum) return { ok: false, why: `There is no window-ml-host build for ${platform.os} ${platform.arch} yet (macOS on Apple silicon or Intel, Linux x86-64 and arm64).` };
-    if (!pin.installer || !/^v\d+\.\d+\.\d+$/.test(pin.tag) || !/^[0-9a-f]{64}$/.test(pin.installer.sha256)) return { ok: false, why: "The pinned window-ml-host release has no installer; build it from source (docs/dev/shell.md)." };
+    if (!pin.installer || !/^v\d+\.\d+\.\d+$/.test(pin.tag) || pin.installer.file !== "install.sh" || !/^[0-9a-f]{64}$/.test(pin.installer.sha256)) return { ok: false, why: "The pinned window-ml-host release has no installer; build it from source (docs/dev/shell.md)." };
     const url = `https://github.com/parawanderer/window-ml-host/releases/download/${pin.tag}/${pin.installer.file}`;
     const line = `f=$(mktemp) && curl -fsSL ${url} -o "$f" && echo "${pin.installer.sha256}  $f" | ${sum} && sh "$f" --extension-id ${extensionId}`;
     return { ok: true, line, tag: pin.tag, undo: "wmlhost uninstall (the installer prints the exact command), then delete ~/.local/bin/wmlhost" };
