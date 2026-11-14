@@ -43,6 +43,17 @@ export function parseAddress(address: string): PanelRoute | null {
 }
 
 /**
+ * The chat page's hash for a panel view, the way back from {@link parseAddress}: where the extension's chat page,
+ * which reads its own hash, sends a link it opens (docs/spec/LINKS.md, "What a click does").
+ * @param r the resolved view
+ */
+export function addressHash(r: PanelRoute): string {
+    if (r.setting) return formatRoute({ setting: r.setting });
+    if (r.target === BACKUP.target) return formatRoute({ main: "settings", tab: "extension", anchor: "backup" });
+    return formatRoute({ main: "settings", tab: "extension", panelTab: r.tab, section: r.section });
+}
+
+/**
  * What a link's tip says: where it goes, from the resolved address and never from the label, since link text and
  * destination are the two things Markdown lets disagree.
  * @param r the resolved view

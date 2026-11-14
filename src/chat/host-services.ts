@@ -26,6 +26,8 @@ export interface HostReadings {
     priceCalls?: SidebarServices["priceCalls"];
     /** Open this page's Settings filtered to a field. */
     findSetting?: SidebarServices["findSetting"];
+    /** Open the extension's settings view a `window-ml:` link names (sidebar/links.ts). */
+    openAddress?: SidebarServices["openAddress"];
 }
 
 /** The services for a chat page over `store`'s host. `readings` is what the entry can tell about a runtime's box. */
@@ -136,6 +138,7 @@ export function hostServices(store: ChatStore, platform: ClientPlatform, reading
         // The snapshots a call ran under live in a runtime's worker: only the extension's own page can ask one.
         priceCalls: readings.priceCalls ?? null,
         findSetting: readings.findSetting ?? null,
+        openAddress: readings.openAddress ?? null,
         savePref: (key, value) => platform.prefs.set(key, value),
         saveFile: (name, data) => platform.saveFile(name, data),
         printDoc: platform.printDoc ?? null,
