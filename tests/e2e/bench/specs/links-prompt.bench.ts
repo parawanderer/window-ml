@@ -15,7 +15,7 @@
 // sentence it links the setting's row, without it a section it found through agent_api_docs.
 
 import { defineBench } from "../spec";
-import { parseAddress, type PanelRoute } from "../../../../src/sidebar/links";
+import { parseAddress, type PanelRoute } from "../../../../src/link-address";
 
 const MODELS = (process.env.LINKS_MODELS || "gemma4:31b,gemma4:e4b,qwen3.8-flash-next:vision,deepseek.deepseek-flash,openrouter.openai/gpt-6-luna")
     .split(",").map((s) => s.trim()).filter(Boolean);

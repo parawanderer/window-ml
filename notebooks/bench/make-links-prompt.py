@@ -60,7 +60,7 @@ md("""
 ## The runs, pinned
 
 One row per run, from each run's `cell.json` (outcome, answer) and `run.json` (its steps and each call's usage). Every
-address an answer links is resolved at extract time by the product's parser (`src/sidebar/links.ts`), and the result is
+address an answer links is resolved at extract time by the product's parser (`src/link-address.ts`), and the result is
 pinned with the row, so the notebook does not need the source to run.
 """)
 
@@ -72,7 +72,7 @@ WANT = {  # the spec's own `want` per task (links-prompt.bench.ts TASKS)
     "backup": {"tab": "appearance", "backup": True},
 }
 RESOLVE_JS = (
-    'import fs from "node:fs"; import { parseAddress } from "./src/sidebar/links.ts"; '
+    'import fs from "node:fs"; import { parseAddress } from "./src/link-address.ts"; '
     'const addrs = JSON.parse(fs.readFileSync(0, "utf8")); '
     'console.log(JSON.stringify(Object.fromEntries(addrs.map((a) => [a, parseAddress(a)]))));'
 )
