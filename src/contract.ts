@@ -87,13 +87,14 @@ export interface MlSh {
      *  inside the workspace folders, no network) or `host-plain`. A call past its memory bound is killed: `killed`
      *  is `"oom"`, and `peakFootprint`/`memoryBound` are bytes; `cpuMs` is the CPU time it used, in milliseconds,
      *  measured and never bounded (absent from an older host). `envelope` is the sandbox scope the host APPLIED
-     *  (`write` is `"today"` when the call sent no envelope and the host applied its floor: writes only inside the workspace folders; it is not a lease), or `null` when an older host reported nothing (unknown, never narrow);
+     *  (`write` is `"today"` when the call sent no envelope and the host applied its floor: writes only inside the
+     *  workspace folders; it is not a lease), or `null` when an older host reported nothing (unknown, never narrow);
      *  `asked` is what was sent on start, absent when nothing was. `protectedChanged` lists the protected names
      *  (`.envrc`, `.git/hooks/*`, …) that changed DURING the call, by it or by anything else, `[]` when none, or `null`
      *  when the host reported nothing (unknown, never "none"); `protectedChangedTruncated` means the list was cut.
      *  When `ml.current.runtime.capabilities` reports `shellTilde`, an argument or `cwd` that is `~` or starts with `~/`
-     *  begins at the home directory; nothing else is expanded. The expanded path is checked like any other: `cwd` `~` is
-     *  refused (`CwdOutsideRoots`) unless home is inside a workspace folder.
+     *  begins at the home directory; nothing else is expanded. The expanded path is checked like any other: a `cwd` of
+     *  `~` is refused (`CwdOutsideRoots`) unless home is inside a workspace folder.
      * @param argv the program and its arguments, e.g. `["rg", "-n", "TODO", "src"]`
      * @param opts `cwd` (default: the first workspace folder, so usually leave it out; absolute, or relative to that folder), `env` (variables to add; most make the
      *   call ask), `timeoutMs` (the host kills it then; default 120 s), `expectMs` (how long you expect it to take) */
@@ -109,8 +110,8 @@ export interface MlSh {
         protectedChanged: { root: string; name: string; change: "created" | "modified" | "removed" }[] | null;
         protectedChangedTruncated?: true;
     }>;
-    /** Read a range of an output past its head (`complete` false), by its `token`, until the agent run that made it ends (not the program's lifetime; also gone if the host restarts or evicts it). Text comes back
-     *  as `text`; binary output as `bytes` (`{ $bytes: base64 }`).
+    /** Read a range of an output past its head (`complete` false), by its `token`, until the agent run that made it
+     *  ends (not the program's lifetime; also gone if the host restarts or evicts it). Text comes back as `text`; binary output as `bytes` (`{ $bytes: base64 }`).
      * @param token the output's `@tool:` pointer
      * @param range `offset` and `length` in bytes (default 0 and 64 KiB; at most 512 KiB) */
     read(token: string, range?: { offset?: number; length?: number }): Promise<{ offset: number; length: number; size: number; eof: boolean; text?: string; bytes?: { $bytes: string } }>;
@@ -133,9 +134,9 @@ export interface MlApi {
      *  only inside a read-only `exec` of an agent run the extension hosts; a page's `window.ml` has no `current`. */
     readonly current?: import("./agent/current-context").CurrentSnapshot;
     /** Run PROGRAMS on the person's machine, through the process host they installed: `await ml.sh.run(["git",
-     *  "status"])`, an argument list, never a shell command line (no pipes, globs or `$VAR`). A program with a manifest (shipped: `cat`, `cp`, `find`,
-     *  `gh`, `git`, `head`, `jq`, `ls`, `mv`, `rg`, `rm`, `rmdir`, `tail`, `unlink`, `wc`) called as an argv, `["wc", "-l", "f.txt"]` or
-     *  `["ls"]`, can run without asking when its effects allow it; `["bash", "-c", …]` or `["sh", "-c", …]` has no manifest and always asks. There only inside an
+     *  "status"])`, an argument list, never a shell command line (no pipes, globs or `$VAR`). A program with a manifest (`git`, `rg`, `ls`, `wc`, …) called as an
+     *  argv, `["wc", "-l", "f.txt"]` or `["ls"]`, can run without asking when its effects allow it; `["bash", "-c", …]` or
+     *  `["sh", "-c", …]` has no manifest, so it asks unless a policy covers it. There only inside an
      *  approved `exec` that names `ml.sh`, of a run the extension hosts, and only when `ml.current.runtime.capabilities` reports
      *  `shellHost`; a page's `window.ml` has none. Each call is decided on what the host resolved (program, folder,
      *  paths, sandbox): a policy or the built-in default answers, or the person is asked, and the call waits. With no host
