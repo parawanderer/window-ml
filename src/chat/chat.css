@@ -1123,7 +1123,8 @@ button.chat-page-go:hover { color: var(--fg); }
    the stream landing as a block. The component paces them and keeps each fade going across redraws by its delay;
    this says how long one takes. Opacity only: a word that moved as it arrived would make the line it is on shimmer. */
 .chat.calm .asst-body { --word-fade-ms: 380; }
-.chat.calm .asst-body .w-in { animation: chat-word-in calc(var(--word-fade-ms) * 1ms) cubic-bezier(.3, 0, .2, 1) backwards; }
+/* A code span or block, a quote or a table (`b-in`) arrives with its first word, as the words do (`w-in`): its box is not drawn ahead of the text (streaming-md.tsx). */
+.chat.calm .asst-body .w-in, .chat.calm .asst-body .b-in { animation: chat-word-in calc(var(--word-fade-ms) * 1ms) cubic-bezier(.3, 0, .2, 1) backwards; }
 @keyframes chat-word-in { from { opacity: 0; } }
 @keyframes chat-asst-shrink { from { height: auto; opacity: 1; } to { height: 1lh; opacity: 0; } }
 @keyframes chat-asst-grow { from { height: 1lh; opacity: 0; } to { height: auto; opacity: 1; } }
