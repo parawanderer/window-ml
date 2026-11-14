@@ -30,7 +30,7 @@ export type StateAttentionLevel = "blocks" | "limits" | "suggests";
 export type AttentionCode =
     | "no-model" | "backend-unreachable" | "site-access" | "tab-groups" | "no-utility-model"
     | "archive-folder-lapsed" | "archive-folder-unsupported" | "python-packages-missing"
-    | "archive-off" | "archive-folder-none" | "spend-no-electricity-price" | "host-not-connected"
+    | "archive-off" | "archive-folder-none" | "spend-no-electricity-price" | "host-not-connected" | "host-outdated"
     /** THIS DEVICE, not a runtime: an iPhone or iPad reading the hosted client in a tab rather than as an app. */
     | "add-to-home"
     /** THIS DEVICE's certificate: running out, and run out. See {@link certItems}. */
@@ -136,6 +136,11 @@ const KNOWN: Record<AttentionCode, Known> = {
     "host-not-connected": {
         level: "suggests", title: "Programs on this machine: connect window-ml-host",
         detail: "Scripts can run programs here (git, tests, a build) once the process host is installed. Settings shows the one line to paste, with this install's extension id in it.",
+        fix: { kind: "settings", label: "Show me", where: "Extension → Advanced → Programs (ml.sh)", find: "Programs (ml.sh)" },
+    },
+    "host-outdated": {
+        level: "suggests", title: "window-ml-host is out of date",
+        detail: "This build of window.ml pins a newer process host than the one installed. Settings shows the one line that updates it.",
         fix: { kind: "settings", label: "Show me", where: "Extension → Advanced → Programs (ml.sh)", find: "Programs (ml.sh)" },
     },
     "no-utility-model": {

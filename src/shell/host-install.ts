@@ -46,3 +46,36 @@ export function hostInstall(platform: HostPlatform, extensionId: string, pin: Ho
     const line = `f=$(mktemp) && curl -fsSL ${url} -o "$f" && echo "${pin.installer.sha256}  $f" | ${sum} && sh "$f" --extension-id ${extensionId}${platform.browser === "brave" ? " --browser brave" : ""}`;
     return { ok: true, line, tag: pin.tag, undo: "wmlhost uninstall (the installer prints the exact command), then delete ~/.local/bin/wmlhost" };
 }
+
+/** A host version in the pin's own shape: three whole numbers, nothing else. */
+export type HostVersion = readonly [number, number, number];
+
+/**
+ * A reported host version, parsed strictly: `major.minor.patch`, each one to four digits, with no prefix, suffix or
+ * space. Anything else (a pre-release, a word, a number the wrong size, a non-string) is unknown, which gives no hint:
+ * the raw text is never kept, drawn or sent anywhere, only this parsed form.
+ * @param raw what the host's hello said
+ */
+export function parseHostVersion(raw: unknown): HostVersion | null {
+    const m = typeof raw === "string" ? /^(\d{1,4})\.(\d{1,4})\.(\d{1,4})$/.exec(raw) : null;
+    return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+/** A parsed version as `0.10.0`. */
+export const formatHostVersion = (v: HostVersion): string => v.join(".");
+
+/** The version this build pins (the tag without its `v`), or null for a pin that is not one. */
+export const pinnedHostVersion = (pin: HostPin = PIN): HostVersion | null => parseHostVersion(/^v(.+)$/.exec(pin.tag)?.[1]);
+
+/**
+ * Whether the installed host is OLDER than the one this build pins. Unknown on either side, equal and newer all say no:
+ * a hint is for a host known to be behind, never for one that merely could not be read.
+ * @param seen the host's last reported version, parsed
+ * @param pin the host pin; the committed one by default
+ */
+export function hostOutdated(seen: HostVersion | null, pin: HostPin = PIN): boolean {
+    const want = pinnedHostVersion(pin);
+    if (!seen || !want) return false;
+    for (let i = 0; i < 3; i++) if (seen[i] !== want[i]) return seen[i] < want[i];
+    return false;
+}

@@ -10,6 +10,7 @@
 // output it held. The next call reconnects and configures afresh.
 
 import { HostClient, HostError, HOST_NAME, HOST_PROTOCOL, type HostConfigured, type HostHello, type HostPort } from "../shell/host-protocol";
+import { formatHostVersion, hostOutdated, parseHostVersion, pinnedHostVersion, type HostVersion } from "../shell/host-install";
 import { getConfig } from "./sw-llm";
 import { defineState } from "../state-registry";
 import type { MlConfig } from "../contract";
@@ -51,6 +52,12 @@ export interface ShellStatus {
     hostAnswers?: boolean;
     /** A host has answered in this profile at some time (stored): with `hostAnswers`, whether Settings still offers the installer. */
     hostSeen?: boolean;
+    /** The installed host's version when its last hello reported one in the pin's shape (parsed, `0.10.0`); absent when unknown. */
+    hostVersion?: string;
+    /** The installed host is older than the one this build pins: Settings and the attention list offer the update. */
+    hostOutdated?: boolean;
+    /** The version this build pins, for the update line's wording. */
+    pinnedHostVersion?: string;
 }
 
 let current: ShellHost | null = null;   // state: declared below as "shell.host"
@@ -69,16 +76,23 @@ defineState({
 });
 
 const HOST_SEEN_KEY = "shellHostSeen";
+const HOST_VERSION_KEY = "shellHostVersion";
 let hostSeen = false;   // state: declared below as "shell.hostSeen"
+let hostVersion: HostVersion | null = null;   // state: declared below as "shell.hostSeen"
 let hostAnswers: boolean | undefined;   // state: plumbing — the last hello attempt's outcome, remeasured by the next
 const hostSeenRead: Promise<void> = (async () => {
-    try { hostSeen = (await chrome.storage.local.get(HOST_SEEN_KEY))[HOST_SEEN_KEY] === true; } catch { /* no storage (a test harness) */ }
+    try {
+        const got = await chrome.storage.local.get([HOST_SEEN_KEY, HOST_VERSION_KEY]);
+        hostSeen = got[HOST_SEEN_KEY] === true;
+        // Parsed again on the way in: a stored string that is not the shape is unknown, never a version.
+        hostVersion = parseHostVersion(got[HOST_VERSION_KEY]);
+    } catch { /* no storage (a test harness) */ }
 })();
 
 defineState({
     id: "shell.hostSeen", scope: "browser", realm: "worker", audience: "human", lostOn: [],
-    describe: "Whether a process host has ever answered in this profile. Stored; it decides whether Settings and the attention list offer the installer.",
-    read: () => ({ hostSeen, hostAnswers }),
+    describe: "Whether a process host has ever answered in this profile, and the version its last hello reported (parsed, absent when unreadable). Stored; they decide whether Settings and the attention list offer the installer or an update.",
+    read: () => ({ hostSeen, hostAnswers, hostVersion: hostVersion ? formatHostVersion(hostVersion) : undefined }),
 });
 
 /**
@@ -87,12 +101,28 @@ defineState({
  */
 export const hostMissing = (): boolean => !(hostAnswers ?? hostSeen);
 
-/** A hello got an answer (or did not): remember it, and tell the status's listeners when the offer changes. */
-function noteHello(answered: boolean): void {
-    const before = hostMissing();
+/** Whether the host's last reported version is older than the one this build pins (unknown is not outdated). */
+export const hostIsOutdated = (): boolean => hostOutdated(hostVersion);
+
+/**
+ * A hello got an answer (or did not): remember it, and tell the status's listeners when the offer changes. An answer
+ * carries the host's version; only its strict parse is kept (stored beside the flag), and a version that does not parse
+ * clears the one before it, so what a newer host said is never judged by what an older one did.
+ * @param answered whether the host said hello
+ * @param version `hello.version`, as the host sent it
+ */
+function noteHello(answered: boolean, version?: unknown): void {
+    const before = [hostMissing(), hostIsOutdated()];
     hostAnswers = answered;
     if (answered && !hostSeen) { hostSeen = true; void chrome.storage.local.set({ [HOST_SEEN_KEY]: true }).catch(() => undefined); }
-    if (before !== hostMissing()) for (const l of statusListeners) { try { l(); } catch { /* a listener's own problem */ } }
+    if (answered && version !== undefined) {
+        const next = parseHostVersion(version);
+        if (JSON.stringify(next) !== JSON.stringify(hostVersion)) {
+            hostVersion = next;
+            void (next ? chrome.storage.local.set({ [HOST_VERSION_KEY]: formatHostVersion(next) }) : chrome.storage.local.remove(HOST_VERSION_KEY)).catch(() => undefined);
+        }
+    }
+    if (before[0] !== hostMissing() || before[1] !== hostIsOutdated()) for (const l of statusListeners) { try { l(); } catch { /* a listener's own problem */ } }
 }
 
 /** The settings as one string: a different string is a different session. */
@@ -161,7 +191,7 @@ async function connect(cfg: ShellSettings, key: string): Promise<ShellHost> {
     let hello: HostHello;
     try { hello = await client.hello(); }
     catch (e) { client.close("hello failed"); noteHello(false); return fail("not-installed", notInstalledText((e as Error)?.message)); }
-    noteHello(true);
+    noteHello(true, hello?.version);
     if (hello?.protocol !== HOST_PROTOCOL) { client.close("protocol"); return fail("protocol", `The process host speaks protocol ${hello?.protocol}; this extension speaks ${HOST_PROTOCOL}. Update one of them.`); }
     let configured: HostConfigured;
     try {
@@ -213,7 +243,12 @@ export function holdOutput(delta: number): void {
 }
 
 /** The status as last measured, for the settings page. */
-export const shellStatus = (): ShellStatus => ({ ...status, hostSeen, ...(hostAnswers === undefined ? {} : { hostAnswers }) });
+export const shellStatus = (): ShellStatus => ({
+    ...status, hostSeen, ...(hostAnswers === undefined ? {} : { hostAnswers }),
+    ...(hostVersion ? { hostVersion: formatHostVersion(hostVersion) } : {}),
+    ...(hostIsOutdated() ? { hostOutdated: true } : {}),
+    ...(pinnedHostVersion() ? { pinnedHostVersion: formatHostVersion(pinnedHostVersion()!) } : {}),
+});
 
 /**
  * The status after the stored "a host has answered" flag has been read: a worker woken by a settings page after an eviction
@@ -231,10 +266,15 @@ export async function shellStatusRead(): Promise<ShellStatus> {
  */
 export async function probeShell(): Promise<ShellStatus> {
     await hostSeenRead;
-    if (current && !current.client.isClosed) { noteHello(true); return shellStatus(); }
+    if (current && !current.client.isClosed) {
+        // An old host stays running after its binary is replaced: with nothing in flight, drop the port so this hello is
+        // the new binary's, and the update guide can retire on "Check again".
+        if (!(hostIsOutdated() && inFlight === 0 && held === 0)) { noteHello(true, current.hello.version); return shellStatus(); }
+        const old = current; current = null; old.client.close("probe after an update offer");
+    }
     try {
         const client = new HostClient(nativePort(chrome.runtime.connectNative(HOST_NAME)));
-        try { await client.hello(); noteHello(true); } catch { noteHello(false); } finally { client.close("probe"); }
+        try { const h = await client.hello(); noteHello(true, h?.version); } catch { noteHello(false); } finally { client.close("probe"); }
     } catch { noteHello(false); }
     return shellStatus();
 }

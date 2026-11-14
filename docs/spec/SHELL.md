@@ -212,6 +212,15 @@ extension can do is make it one paste.
    the link itself: a link inside a tool result is never a button (LINKS.md), so the refusal carries the words and the address
    in backticks, not link syntax. The refusal carries no command: the model never tells a person to paste something.
 
+**Updating the host (PROPOSED 2026-11-14).** The extension never looks up a latest version; it knows the one this build
+pins. Each hello's `version` is parsed strictly (`major.minor.patch`, whole numbers, nothing else; anything unparseable is
+unknown) and only the parsed form is kept, stored beside `shell.hostSeen` and drawn. While that version is older than the
+pinned tag, and only then (equal, newer and unknown say nothing), the Settings guide shows the same pinned line worded as an
+update ("X is installed; this build pins Y"), and the attention list carries `host-outdated` (`suggests`, the same fix path).
+Re-running the installer replaces the binary in one rename; a host left running keeps its old version until it restarts, so
+"Check again" drops an idle open port and says hello again. No hello is made to find the version out: a profile whose
+storage predates the version has none, and no hint, until the next hello. No message type, `ml.*` member or tool is added.
+
 **Threat items.**
 
 - **The shown line carries nothing a page wrote.** It is built in the extension page from three values: `chrome.runtime.id`,

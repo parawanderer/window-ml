@@ -321,3 +321,8 @@ archive hash) is what the line's `sha256` check pins. A pin without it shows no 
 carries `install.sh` is what turns the guide on. "Check again" sends `SHELL_STATUS` with `probe: true` (extension pages
 only), which says hello whatever ml.sh's setting is. The chat page's `host-not-connected` attention item uses the same
 test, plus "a session exists". The design and its threat items: `docs/spec/SHELL.md`, "Installing the host".
+
+The host-version hint rides the same state: `parseHostVersion` keeps only a strict `major.minor.patch`, `hostOutdated` compares
+it with the pin's tag by number (older only; equal, newer and unknown are no), and the worker stores the parsed version as
+`shellHostVersion` beside `shellHostSeen` (a profile without it has no hint until the next hello). `hostOutdated` and
+`pinnedHostVersion` ride `ShellStatus` as parsed strings; the `host-outdated` attention code and the guide's update wording read them.
