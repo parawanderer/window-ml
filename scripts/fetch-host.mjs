@@ -20,7 +20,7 @@ const PIN = new URL("../tools/host-dist.json", import.meta.url);
 const REPO = "parawanderer/window-ml-host";
 
 /** Every target a release publishes. A new one is a code change here, in the pin's shape and in the release.yml. */
-const TARGETS = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin"];
+const TARGETS = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-apple-darwin"];
 
 /**
  * The pin. This file is the ONLY trust root: the commit, and one sha256 per target, written by `--bump` from a
@@ -40,7 +40,7 @@ export async function readPin(pinPath = PIN) {
  * @param {string} [key] `platform-arch`, default this machine's; a parameter so a row can name another one.
  */
 export function target(key = `${process.platform}-${process.arch}`) {
-    const known = { "linux-x64": "x86_64-unknown-linux-gnu", "linux-arm64": "aarch64-unknown-linux-gnu", "darwin-arm64": "aarch64-apple-darwin" };
+    const known = { "linux-x64": "x86_64-unknown-linux-gnu", "linux-arm64": "aarch64-unknown-linux-gnu", "darwin-arm64": "aarch64-apple-darwin", "darwin-x64": "x86_64-apple-darwin" };
     if (!known[key]) {
         throw new Error(`no published host build for ${key}. Build it yourself and set E2E_WMLHOST, or add the target to ${REPO}'s release.yml.`);
     }
@@ -131,7 +131,7 @@ export function assertPinned(archive, pinnedSha, name) {
 /**
  * What `--bump <tag>` writes: every target's archive, hashed here and refused unless SHA256SUMS agrees, and the
  * tag's commit PEELED as `resolveCommit` describes. Nothing is written — `main` writes, `--check` does not.
- * @returns {Promise<{repo: string, tag: string, commit: string, tagObjectSha: string, assets: Record<string, {file: string, sha256: string}>}>}
+ * @returns {Promise<{repo: string, tag: string, commit: string, tagObjectSha: string, assets: Record<string, {file: string, sha256: string}>, installer?: {file: string, sha256: string}}>}
  */
 export async function bumpPin(tag, sleep = backoff) {
     const sumsRes = await fetch(`https://github.com/${REPO}/releases/download/${tag}/SHA256SUMS`).catch(() => null);
@@ -149,7 +149,26 @@ export async function bumpPin(tag, sleep = backoff) {
         assets[t] = { file, sha256: got };
     }
     const { commit, tagObjectSha } = await resolveCommit(tag);
-    return { repo: REPO, tag, commit, tagObjectSha, assets };
+    const installer = await releaseInstaller(tag, assets);
+    return { repo: REPO, tag, commit, tagObjectSha, assets, ...(installer ? { installer } : {}) };
+}
+
+/**
+ * The release's `install.sh`, when it has one (releases before v0.10.0 do not): hashed for the pin, and refused unless it
+ * names this tag and every archive's sha256 the pin just verified, since those are what it checks a download against.
+ * The Settings install line pins THIS hash (src/shell/host-install.ts).
+ * @returns {Promise<{file: string, sha256: string} | null>}
+ */
+export async function releaseInstaller(tag, assets) {
+    const res = await fetch(`https://github.com/${REPO}/releases/download/${tag}/install.sh`).catch(() => null);
+    if (!res?.ok) return null;
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    const text = new TextDecoder().decode(bytes);
+    if (!text.includes(`TAG="${tag}"`)) throw new Error(`install.sh on ${tag} does not name ${tag}`);
+    for (const [t, a] of Object.entries(assets)) {
+        if (!text.includes(`"${a.sha256}"`)) throw new Error(`install.sh on ${tag} does not hold ${t}'s sha256 ${a.sha256}`);
+    }
+    return { file: "install.sh", sha256: createHash("sha256").update(bytes).digest("hex") };
 }
 
 /**
@@ -174,6 +193,7 @@ export function checkAgainstPin(pin, fresh) {
             if (have.sha256 !== want.sha256) drift.push(`${t}: pin ${have.sha256}, release ${want.sha256}`);
         }
     }
+    if (pin.installer?.sha256 !== fresh.installer?.sha256) drift.push(`installer: pin ${pin.installer?.sha256 ?? "none"}, release ${fresh.installer?.sha256 ?? "none"}`);
     if (drift.length) throw new Error(`the pin does not match ${fresh.tag}:\n  ${drift.join("\n  ")}`);
 }
 
@@ -194,7 +214,7 @@ export async function cli(argv, { pinPath = PIN, sleep = backoff, dir = null } =
         if (!tagArg && !check) throw new Error("--bump needs a tag: --bump v0.7.1");
         const tag = tagArg ?? (await readPin(pinPath)).tag;
         const fresh = await bumpPin(tag, sleep);
-        const want = { repo: fresh.repo, tag: fresh.tag, commit: fresh.commit, assets: fresh.assets };
+        const want = { repo: fresh.repo, tag: fresh.tag, commit: fresh.commit, assets: fresh.assets, ...(fresh.installer ? { installer: fresh.installer } : {}) };
         if (check) {
             checkAgainstPin(await readPin(pinPath), fresh); // writes nothing
             console.log(`the pin matches ${tag}`);

@@ -26,9 +26,20 @@ test("a different tool breaks the run, because that is a change of activity", ()
     assert.deepEqual(kinds(out), ["exec×3", "look", "exec×3"]);
 });
 
-test("PROSE breaks it: if the model said something, that is content and not noise", () => {
+test("PROSE stays visible, and what the turn CALLED folds with its neighbours", () => {
     const out = foldStreaks([turn(1, "exec"), { ...turn(2, "exec"), thought: "the cards are in a list" }, turn(3, "exec"), turn(4, "exec")]);
-    assert.deepEqual(kinds(out), ["exec", "exec", "exec", "exec"], "a prose turn cannot join, and splits the rest below three");
+    assert.deepEqual(kinds(out), ["exec", "·", "exec×3"], "the remark is its own item, and its call joins the two after it");
+    assert.equal(out[1].thought, "the cards are in a list");
+    assert.deepEqual(out[1].tools, [], "the prose half carries no calls");
+    assert.equal(out[2].turns[0].half, "tools", "the call that came with the remark leads the group");
+});
+
+test("a turn whose calls did NOT fold is put back together: one turn, prose and calls", () => {
+    const t = { ...turn(2, "exec"), thought: "the cards are in a list", reasoning: "hm" };
+    const out = foldStreaks([turn(1, "look"), t, turn(3, "look")]);
+    assert.equal(out.length, 3);
+    assert.equal(out[1].half, undefined, "no half-marker left on a turn nothing grouped");
+    assert.deepEqual(out[1], t);
 });
 
 test("THINKING does not break it — that is the other half of what is being folded away", () => {
@@ -224,10 +235,25 @@ test("a gate ALREADY ANSWERED is ordinary work again and folds with the rest", (
     assert.deepEqual(kinds(all([turn(1, "exec"), turn(2, "exec"), done])), ["exec×3"]);
 });
 
-test("group-all still never swallows what the model SAID", () => {
+test("group-all still never swallows what the model SAID — it folds the calls around it", () => {
     // Prose is the thing the reading view exists to show; a transcript of nothing but folded rows is not a win.
     const out = all([turn(1, "exec"), turn(2, "exec"), turn(3, "exec", { }), { step: 4, localStep: 4, tools: [], thought: "Rebuilding it from the cards." }, turn(5, "look"), turn(6, "look")]);
     assert.deepEqual(kinds(out), ["exec×3", "·", "look×2"]);
+});
+
+test("group-all: a turn that spoke AND called folds its calls into the group below, leaving the remark above", () => {
+    // The screenshot that prompted this: "I'll take a look at this page" + pageInfo + look, then seven more calls.
+    const opener = { step: 1, localStep: 1, thought: "I'll take a look at what's on this page.", tools: [{ step: 1, seq: 1, tool: "pageInfo" }, { step: 1, seq: 2, tool: "look" }] };
+    const out = all([opener, turn(2, "exec"), turn(3, "exec"), turn(4, "dereference")]);
+    assert.deepEqual(kinds(out), ["·", "pageInfo×4"]);
+    assert.equal(out[0].thought, opener.thought);
+    assert.equal(streakFacts(out[1]).calls, 5, "the two calls of the opening turn are counted with the rest");
+});
+
+test("a gate on the call of a turn that spoke is still never hidden", () => {
+    const gated = { step: 2, localStep: 2, thought: "Checking.", tools: [{ step: 2, seq: 2, tool: "fetch_url", pending: true, awaitingApproval: true }] };
+    const out = all([turn(1, "exec"), turn(3, "exec"), gated]);
+    assert.ok(out.every(x => !("kind" in x) || x.turns.every(t => !t.tools.some(st => st.awaitingApproval))));
 });
 
 test("group-all folds a live tail, because otherwise the toggle does nothing while a run is going", () => {

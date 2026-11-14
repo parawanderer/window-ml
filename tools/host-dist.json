@@ -1,19 +1,27 @@
 {
   "repo": "parawanderer/window-ml-host",
-  "tag": "v0.9.0",
-  "commit": "5fd151e23df07f9f926e51909c2d9d0ad4b2070d",
+  "tag": "v0.10.0",
+  "commit": "7cdd2c3cca9163ba964bd86110f99fe560ad548a",
   "assets": {
     "x86_64-unknown-linux-gnu": {
-      "file": "wmlhost-v0.9.0-x86_64-unknown-linux-gnu.tar.gz",
-      "sha256": "f64eb0022f2a4e3e4ecf996116ac0610f3c1c1aa4c6c7d23c74fce6cd13f0efe"
+      "file": "wmlhost-v0.10.0-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "4d868394e19a1d74f1a6508e8e0cde65097aa4305a4544dab7ae972c9eb0310c"
     },
     "aarch64-unknown-linux-gnu": {
-      "file": "wmlhost-v0.9.0-aarch64-unknown-linux-gnu.tar.gz",
-      "sha256": "1439cf67815ca06d93c0959ca65cd7eeaf22502d7b6621218b293881a7972924"
+      "file": "wmlhost-v0.10.0-aarch64-unknown-linux-gnu.tar.gz",
+      "sha256": "4f04ad852f863c370b98feab0e9f3da1b397d6d113dada1caa0e525c0cc10024"
     },
     "aarch64-apple-darwin": {
-      "file": "wmlhost-v0.9.0-aarch64-apple-darwin.tar.gz",
-      "sha256": "fbdb2b73b01eec8af5bebad99b1061560ca601bb3b099090f8c33a038f61ba43"
+      "file": "wmlhost-v0.10.0-aarch64-apple-darwin.tar.gz",
+      "sha256": "03d8ce2e0be1e1bd55dfa553130feb5e6efa976b2df15b367e8b6c55b4379cf1"
+    },
+    "x86_64-apple-darwin": {
+      "file": "wmlhost-v0.10.0-x86_64-apple-darwin.tar.gz",
+      "sha256": "54bda6dfaa80ef9539aa3315eaf3223acdf61cc3a09cf5ad9b36a72c57724e42"
     }
+  },
+  "installer": {
+    "file": "install.sh",
+    "sha256": "78da07ceb3af9984a88788323f0cbaa542bf606b063f468b298ab0d0636c259e"
   }
 }

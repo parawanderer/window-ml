@@ -79,7 +79,7 @@ import { watchRedirects } from "./sw/sw-redirects";
 import { fetchImageDataUrl } from "./sw/sw-image-fetch";
 import { approvalKey } from "./approval-key";
 import { raiseAsk } from "./sw/sw-asks";
-import { refreshShell, shellStatus } from "./sw/sw-shell";
+import { probeShell, refreshShell, shellStatusRead } from "./sw/sw-shell";
 import { toPageUi, notePage, forgetTab, syncAllPanels, servePanelPort, startGesture, tabHidden, cuePanel, panelOpen, HL_POSITIONS } from "./sw/sw-side-panel";
 
 
@@ -1266,7 +1266,9 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // `refresh` starts the host process, which nothing a page sends may cause.
         if (!isExtensionSender(sender)) { sendResponse({ error: "Refused" }); return true; }
         const refresh = (message.payload as { refresh?: unknown } | undefined)?.refresh === true;
-        (refresh ? refreshShell() : Promise.resolve(shellStatus())).then((data) => sendResponse({ data }), (e) => sendResponse({ error: String((e as Error)?.message || e) }));
+        // `probe` (the installer guide's "Check again") says hello to the host whatever the settings say; nothing more.
+        const probe = (message.payload as { probe?: unknown } | undefined)?.probe === true;
+        (probe ? probeShell() : refresh ? refreshShell() : shellStatusRead()).then((data) => sendResponse({ data }), (e) => sendResponse({ error: String((e as Error)?.message || e) }));
         return true;
 
     } else if (message.type === "SESSION_TITLE") {
