@@ -17,6 +17,8 @@ const PIN = pinJson as HostPin;
 export interface HostPlatform {
     os: string;
     arch: string;
+    /** `"brave"` when the page is Brave: the installer registers Brave's own folder, which Chrome's is not. Absent: Chrome. */
+    browser?: "brave";
 }
 
 /** The installer line for a platform, or why there is none. */
@@ -41,6 +43,6 @@ export function hostInstall(platform: HostPlatform, extensionId: string, pin: Ho
     if (!sum) return { ok: false, why: `There is no window-ml-host build for ${platform.os} ${platform.arch} yet (macOS on Apple silicon or Intel, Linux x86-64 and arm64).` };
     if (!pin.installer || !/^v\d+\.\d+\.\d+$/.test(pin.tag) || pin.installer.file !== "install.sh" || !/^[0-9a-f]{64}$/.test(pin.installer.sha256)) return { ok: false, why: "The pinned window-ml-host release has no installer; build it from source (docs/dev/shell.md)." };
     const url = `https://github.com/parawanderer/window-ml-host/releases/download/${pin.tag}/${pin.installer.file}`;
-    const line = `f=$(mktemp) && curl -fsSL ${url} -o "$f" && echo "${pin.installer.sha256}  $f" | ${sum} && sh "$f" --extension-id ${extensionId}`;
+    const line = `f=$(mktemp) && curl -fsSL ${url} -o "$f" && echo "${pin.installer.sha256}  $f" | ${sum} && sh "$f" --extension-id ${extensionId}${platform.browser === "brave" ? " --browser brave" : ""}`;
     return { ok: true, line, tag: pin.tag, undo: "wmlhost uninstall (the installer prints the exact command), then delete ~/.local/bin/wmlhost" };
 }
