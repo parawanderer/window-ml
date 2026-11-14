@@ -105,6 +105,10 @@ What main does NOT have (read by the async lane, main 43f88825):
   never the run's: today a run whose tab closes keeps everything, with no grace period and no release. The release at
   grace expiry is a NEW trigger, beside `forgetRun`, a failed start, the install purge, token-store pressure, and
   archive or delete.
+  It ships FIRST, without this spec (Shane, 2026-11-14; the async lane's): a closed tab's run with no running task
+  is released after the grace period, and the session list shows whether a session is still alive and lets the
+  person stop its kernel by hand, the same release at once. This spec then changes only what the run is during
+  the grace period: detached, and reopenable.
 - **"The run has no running task", as something the worker can ask.** The task table is private (`sw-tasks.ts`). The
   async lane builds `hasRunningTasks(runId)` (hydrating first: after an eviction the in-memory table is empty while
   cells still run), or an `onTasksIdle(runId)` hook from `finish()` that also fires on the path where a cell finished
