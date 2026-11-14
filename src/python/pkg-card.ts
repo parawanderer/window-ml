@@ -8,6 +8,7 @@
 import { INVISIBLE } from "../agent/security";
 import { VERDICT_BOUNDS, type LockEntry, type Verdict } from "./pkg-verdict";
 import { PkgCard, PkgRow } from "../contract/contract-render";
+import { SHIPPED_LOCK_FILES } from "./pkg-shipped.gen";
 
 /** Where a package comes from, as the card says it. `pypi` only in slice 2's types: no slice-2 card has such a row. */
 export type PkgEcosystem = "pypi";
@@ -20,17 +21,21 @@ const ROW_KEYS = ["name", "version", "filename", "source", "size", "sha256"] as 
 /**
  * The card for a verdict. A file without a 64-hex digest, or a PyPI file without a size, refuses the whole card as
  * `malformed` at that package: a row the person cannot check in full is never shown as approvable. A PyPI file whose
- * digest is in `mirrored` is shown as `mirror` and left out of the download total: its bytes are already held.
+ * digest is in `mirrored` is shown as `mirror` and left out of the download total: its bytes are already held. A lock
+ * file the extension does not ship refuses the card as `not-shipped` at that package.
  * @param v the verdict, from `verdict()`
  * @param mirrored the digests the mirror holds
+ * @param shipped the lock files the extension ships (`pkg-shipped.gen.ts`)
  * @returns the card's rows and total, or the refusal
  */
-export function cardFromVerdict(v: Verdict, mirrored: ReadonlySet<string> = new Set()): PkgCard {
+export function cardFromVerdict(v: Verdict, mirrored: ReadonlySet<string> = new Set(), shipped: ReadonlySet<string> = new Set(SHIPPED_LOCK_FILES)): PkgCard {
     if (!v.ok) return { ok: false, reason: v.reason, at: v.at };
     const files: PkgRow[] = [];
     let totalBytes = 0;
     for (const f of v.files) {
         if (typeof f.sha256 !== "string" || !SHA256_RE.test(f.sha256)) return { ok: false, reason: "malformed", at: f.name };
+        // A lock file is in the core only when the extension ships it; the lock names far more than that (ruled 2026-11-13).
+        if (f.source === "lock" && !shipped.has(f.filename)) return { ok: false, reason: "not-shipped", at: f.name };
         let size: number | null = null;
         if (f.source === "pypi") {
             if (typeof f.size !== "number" || !Number.isSafeInteger(f.size) || f.size < 0) return { ok: false, reason: "malformed", at: f.name };

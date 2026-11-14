@@ -647,10 +647,10 @@ reach it through the factory's closure, so a JsProxy there would be one in the n
 harness's references captured before any cell ran, never the importable `json`/`base64`, which a cell may patch.
 Tested under real CPython against a fake transport: `tests/ml-facade.test.mjs`.
 
-## Installing a package (`python_install`, slices 2 and 3 of docs/plan/repl/PACKAGES_INSTALL.md)
+## Installing a package (`python_install`, slices 2 to 4 of docs/plan/repl/PACKAGES_INSTALL.md)
 
-Not offered to any run yet (`OFFER_PYTHON_INSTALL`, `sw-run-start.ts`): the card and the download exist, the install
-does not.
+Offered to a run the worker builds (`OFFER_PYTHON_INSTALL`, `sw-run-start.ts`). An install belongs to that run: its
+readonly cells can import it, and nothing else can.
 
 - **The verdict is decided in the worker before any wheel is fetched** (`sw-pkg-install.ts` `checkInstall`), against the
   lock the extension ships (`pyodide/pyodide-lock.json`, read once per worker), the start-up packages' closure as
@@ -667,11 +667,27 @@ does not.
   (`approval.answer`: the chat page, the phone, the hub) can only deny a package card.
 - **Index text is hostile.** Every string on the card goes through `shownText` (`pkg-card.ts`): text nodes only, with
   control, bidi and invisible characters replaced and listed beside their field. The export does the same.
+- **A lock row is in the core only when the extension ships its file** (`pkg-shipped.gen.ts`, generated at build from
+  `pyodide-wheels/` by `scripts/gen-pkg-shipped.mjs`). The extension ships the start-up set's closure, not the lock;
+  any other lock row refuses the card as `not-shipped`. A shipped lock file is already in every readonly worker (the
+  start-up set and its lazy tooling load at boot), so approving one installs nothing.
+- **An approval installs into the run** (`installApproved`): each new wheel's archive is checked before anything
+  unpacks it (`pkg-archive.ts`: paths, symlinks, `.pth`, site hooks, RECORD, an inflation bound, import names the lock,
+  the dialect or an earlier install already takes); then a CANDIDATE readonly worker (`offscreen.ts` `installTest`) is
+  handed the run's installs and the new wheels after its lockdown and imports each new top-level module in a hardened
+  cell (`pkg-install-test.ts`), with a 60 s deadline from spawn and the run's Stop. Only when it passes are the wheels
+  added to the run's record (`sw-pkg-installs.ts`, `chrome.storage.session`). Every failure leaves the run as it was.
+- **The run's own worker gets the wheels at its next cell.** Every readonly cell of the run carries the record; the
+  offscreen document reads the wheels that worker lacks from the mirror (re-hashed) and the worker unpacks them after
+  its lockdown, before the cell (`installWheels`). The namespace is kept. A respawned or reaped worker gets them the
+  same way. A wheel that fails to unpack fails that cell before it runs, and the next cell tries again.
 
 ## Traps
 
 - **A worker-hosted run keeps one namespace across its cells; every other call is stateless** (a page's `ml.pythonExec`, a page-hosted agent).
 - **`readonly` mode hardens the sandbox and may auto-approve; `full` always asks.**
+- **The lock is not what ships.** `pyodide-lock.json` names 354 packages; the extension ships the 25 of the start-up
+  set's closure (`pkg-shipped.gen.ts`). Anything that treats a lock entry as present on disk is wrong for the other 329.
 - **A Python callable a cell gave JavaScript is REVOKED at the cell's cancel, never destroyed** (`cell-gate.ts`): a
   destroyed proxy throws when a timer fires it, and the throw kills the worker. Revoke after the spend, never before.
 - **The wheels (`pyodide-wheels/`) are gitignored, and a missing set fails only at run time**, as

@@ -44,9 +44,9 @@ import { adoptOnTab } from "./adopt-run";
 import { holdStands } from "./nav-arrival";
 import { toPageUi } from "./sw-side-panel";
 
-/** Whether a run the worker builds offers `python_install`. Off until the install step exists (docs/plan/repl/
- *  PACKAGES_INSTALL.md, slice 4): before it, an approved card installs nothing, so offering it would only mislead. */
-export const OFFER_PYTHON_INSTALL = false;
+/** Whether a run the worker builds offers `python_install`. On since the install step (docs/plan/repl/PACKAGES_INSTALL.md,
+ *  slice 4): an approved card is installed into the run's own Python worker. */
+export const OFFER_PYTHON_INSTALL = true;
 
 /** What a run is given when the person set no step budget: the same default `ml.agent` and `createAgent` use. */
 const DEFAULT_MAX_STEPS = 10;

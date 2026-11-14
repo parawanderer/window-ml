@@ -410,3 +410,33 @@ test("a keep from a call with no run (our own surface, a page) never reaches PY_
     assert.equal(bg.pyRuns.at(-1)?.type, "PY_RUN", "positive control: the call ran");
     assert.equal(bg.pyRuns.at(-1).keep, undefined);
 });
+
+// --- RED TEAM: the error a mirror defect hands the MODEL names the wheel made visible ---
+
+// `installApproved` builds its own sentences and makes a filename visible in each (`pkg-card.ts` `shownText`,
+// tests/pkg-archive.test.mjs). The CELL's error is built HERE, from the run's install record (`wheelRefs(msg.installs)`,
+// from the service worker alone), and the filename goes into it as written. A record row can carry bidi, a zero-width
+// character or a C1 control in its filename — a lock row's `file` is not put through `parseWheelFilename`, and a
+// record written by an older build is state, not a claim — so a raw echo reorders or hides the sentence that is
+// supposed to name the wheel the cell cannot be handed.
+const HIDDEN = new RegExp(`[\\u0000-\\u001f\\u007f-\\u009f]|${(await import("../src/agent/security.ts")).INVISIBLE.source}`, "u");
+
+test("RED TEAM: a mirror defect's error names the wheel with no character that hides or reorders it", async () => {
+    const hostile = "tab\u202e\u200bulate-0.9.0-py3-none-any.whl";
+    const answer = await send({
+        type: "PY_RUN", code: "pass", hardened: true, tables: null,
+        principal: "run:mirror-r", wire: { client: "mlw-m", run: "mirror-r" },
+        installs: [{ filename: hostile, sha256: "a".repeat(64) }],
+    });
+    assert.equal(answer.ok, false, JSON.stringify(answer));
+    assert.match(String(answer.error), /package mirror/, `the mirror's own sentence: ${answer.error}`);
+    assert.ok(!HIDDEN.test(String(answer.error)), `the error carries a character from the filename: ${JSON.stringify(answer.error)}`);
+    // Control: the same cell with no install row reaches a worker and runs, so what refused above is the record.
+    const posted = new Map(workers.map((w) => [w, w.posts.length]));
+    const ok = send({ type: "PY_RUN", code: "pass", hardened: true, tables: null, principal: "run:mirror-ok", wire: { client: "mlw-o", run: "mirror-ok" }, installs: [] });
+    await tick();
+    const w = workers.find((x) => x.posts.length > (posted.get(x) ?? 0));
+    assert.ok(w, "the control cell reached a worker");
+    w.reply({ id: lastPost(w).id, ok: true, stdout: "" });
+    assert.equal((await ok).ok, true, "a cell with no install row runs");
+});

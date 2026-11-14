@@ -175,7 +175,9 @@ AS BUILT (slice 2), with its departures, each ruled by the coordinator on 2026-1
   `sw-run-start.ts`), because before it an approved card installs nothing.
 - No network: the index view is the lock alone, so a package the core does not ship is refused as `not-on-index`.
   The lock rows carry the lock's own sha256 (`LockEntry.sha256`); a lock file has no size, and the card says "in the
-  core". The platform scan's note waits for PyPI rows (slice 3).
+  core". The platform scan's note waits for PyPI rows (slice 3). CORRECTED in slice 4 (ruled 2026-11-13): "in the
+  core" held only for the lock files the extension ships, 25 of the lock's 354; a lock row is now shown only for a
+  shipped file, and any other refuses the card as `not-shipped`.
 - The card is its own `RenderDescriptor`, `{ type: "packages", ecosystem: "pypi", request, verdict }`
   (`pkg-card-view.tsx`). Index text is drawn as text nodes; a control, bidi or invisible character is replaced by U+FFFD
   and listed beside its field as `\u{XXXX}`.
@@ -213,7 +215,9 @@ AS BUILT (slice 3), with the rulings of 2026-11-12 (the coordinator; the one-car
 - The mirror is IndexedDB `ml-pkg-mirror` (store `wheels`, by sha256), declared as `packages.mirror`: not
   `ml-values`, whose budget evicts per session, while approved wheels are global. It holds approved BYTES, not an
   approved install: a held wheel still goes through the card, as `source: "mirror"`, left out of the download total.
-  The lock is not mirrored: it ships in the extension (`dist/pyodide`) and is never a network read.
+  The lock is not mirrored, and is never a network read. CORRECTED in slice 4: the lock does not ship in the
+  extension; `dist/pyodide` holds the start-up set's closure, 25 of the lock's 354 packages, and a lock package outside
+  it is refused as `not-shipped`.
 - After approval (`fetchApproved`, `ensureWheel` in `sw-pkg-mirror.ts`): no credentials, no redirect followed; the body
   is counted as it streams and dropped past the card's size; its sha256 is computed over those bytes and must equal the
   card's, as must the size, before anything is stored. Two requests for one digest share one download; a held digest is
@@ -283,12 +287,17 @@ The design:
    "Nothing was installed; the downloaded files stay in the mirror."
 5. **Checks before unpack**, in JS, on bytes already checked against the card. Every archive entry has a relative path
    with no `..`, is a regular file (no symlink), and lies under one of the wheel's top-level names, its `.dist-info`, or
-   `.data/purelib` or `.data/platlib` (any other `.data/` entry refuses). No `.pth`, no `sitecustomize`, no
-   `usercustomize`. RECORD lists exactly the entries. The uncompressed total is bounded (proposed: 8 times the file and
-   512 MB per call). No top-level name may be one the standard library, a lock package's `imports`, the dialect
-   (`DIALECT_MODULES`), the harness (`_ml_*`), `pyodide`, `pyodide_js`, `js` or `micropip` already provides, or one
-   another distribution in the run's record took, since two files would write one path. New refusals: `bad-archive`,
-   `name-collision`, `too-large`.
+   `.data/purelib` or its own `.data/` directory. AMENDED 2026-11-13 (ruled, on measurement): `.data/` is inert, not
+   refused, since `unpackArchive` leaves `<dist>.data/` as it is in site-packages, purelib and platlib included, where
+   nothing under it can be imported (measured on fonttools); fonttools and sympy, both shipped, carry `.data/data` man
+   pages the first rule refused. No `.pth` anywhere, `.data/` included; no `sitecustomize`, no `usercustomize`. RECORD
+   lists exactly the entries. A standard-library name is refused in the candidate instead, against
+   `sys.stdlib_module_names` before any import (AMENDED 2026-11-13: the worker holds no stdlib list), and reaches the
+   person as the candidate's verdict. The uncompressed total is bounded (ruled 2026-11-13: 8 times the file and 512 MB
+   per call). No top-level name may be one the standard library (checked in the candidate, above), a lock package's
+   `imports`, the dialect (`DIALECT_MODULES`), the harness (`_ml_*`), `pyodide`, `pyodide_js`, `js` or `micropip`
+   already provides, or one another distribution in the run's record took, since two files would write one path. New
+   refusals: `bad-archive`, `name-collision`, `too-large`.
 6. **An undeclared dependency.** When the candidate's import raises `ModuleNotFoundError` naming a module no file of the
    closure provides, the call fails as in (4) and its result names that module: "importing `<module>` needs `<name>`,
    which none of the approved files provide. Ask python_install for the package that provides it; the files approved
@@ -310,10 +319,50 @@ The design:
     `numpy`, `json` or `_ml_harness`, a RECORD that lies, an archive that inflates past the bound. Import-time code in
     the candidate reaching the network, `js` or `postMessage`. An import that never returns. A fatal trap. A page
     posting a cell with an install record.
+    AMENDED 2026-11-14 (red team, e3, measured at cf32fcbf). Five shapes the list above does not name; the first three
+    are rows in `tests/pkg-archive.test.mjs` and `tests/python-install.test.mjs`, RED at that head, and each is a
+    finding rather than a pin:
+    (i) an entry name or a filename carrying a bidi, zero-width or C1 character. Every refusal echoes it as written
+    (`entry ${JSON.stringify(name)} …`), while the card's own text is made visible (`pkg-card.ts` `shownText`), so the
+    sentence that names the refused file — which the MODEL reads as the tool's result — can be reordered or hidden.
+    (ii) a root stub file that HIDES a name a package also provides: `pkg.pyi` beside `pkg/__init__.py`. `stubOnly`
+    reads the ROOT files only, so the name is dropped from `modules`, the wheel passes with nothing imported, and it is
+    recorded; its import-time code then runs for the first time in the run's OWN worker, which is the one thing items 2
+    and 4 say cannot happen.
+    (iii) a wheel with nothing importable at all (only `.data/` entries, only a stub, or an empty one): the candidate
+    answers ok having imported nothing, and the call is recorded and reported as "Installed … import … works" for an
+    import that never ran.
+    (iv) the commit does not re-check what it read before the candidate: `taken` and `earlier` are read before a test
+    that may run 60 s, and `recordInstalls` appends without re-checking, so two approvals of one run could both record
+    the same top-level name. NO UNPRIVILEGED SHAPE AT THIS HEAD (the loop runs one tool call at a time, and a run's id
+    is its own), so it is named here and not rowed.
+    (v) `PY_INSTALL_TEST` and `PY_INSTALL_STOP` honour any `run` id from any context without `sender.tab`, so an
+    extension page could start or kill another run's candidate. The boundary `PY_RUN` already has — a web page always
+    has `sender.tab` — named, not rowed.
+    Checked at cf32fcbf and NOT a shape: a PyPI row posing as a lock row (`source` is assigned only from a lock entry,
+    `pkg-verdict.ts`); the mirror's bytes swapped between the check and the candidate (every read goes through
+    `mirroredWheel`, which re-hashes against the card's sha256, in the candidate and again in the live worker);
+    `not-shipped` bypassed by case or normalisation (`shipped.has(filename)` is exact against a list generated from the
+    directory the build copies, so a differing spelling is refused, the safe direction).
+    FIXED 2026-11-14 (python-packages): (i) every name a refusal quotes goes through `shownText` (`pkg-archive.ts` `q`,
+    and, as defence in depth, the card's filename in `installApproved`'s sentences, which no file reaches at this head:
+    a PyPI filename is printable ASCII and a lock row is skipped earlier); (ii) a name is importable when a module file or a directory
+    provides it, so only a name a stub ALONE provides is skipped; (iii) refused in `installApproved` for the whole call
+    (run-log reason `nothing-importable`), not per wheel, so a stub-only wheel beside its package still installs: the
+    archive row now asserts `modules: []` for such a wheel. RESIDUAL (e3): in a mixed call, an inert wheel beside a
+    real one is recorded as installed, though it provides nothing importable and so nothing of it is tested. (iv) and (v) stand as named: one tool call runs at a time per
+    run, and an extension page is the extension's own code, the boundary `PY_RUN` already has.
 
-Not measured: any of this in a browser worker, including two workers at once against the worker's 2.6 GB heap death; a
-lock package of the shared-library type unpacked after the lockdown; how `unpackArchive` treats `.data/`; a candidate's
-boot on a slow machine against the deadline.
+MEASURED 2026-11-13, for the Q3 condition below (`notebooks/python-packages/probe-two-workers.mjs`, headless Chromium
+with the built extension, one machine, one Chromium build): a live readonly worker holding 0 to 3,584 MB in its run
+namespace and a candidate booted beside it (4.1 to 4.8 s) both answered at every step, and the candidate allocated 512
+MB more with neither dying. What bounds a worker is its own wasm32 memory, 4 GB, with numpy refusing any one array of 2
+GB or more; the 2.6 GB figure was a JavaScript heap level measured in Node during a callback flood, not a browser limit.
+RSS was not used: the machine was swapping, and RSS did not follow the data held.
+
+Not measured: a lock package of the shared-library type unpacked after the lockdown (none can reach an install: a
+shipped lock file is loaded at boot, and an unshipped one is refused); a candidate's boot on a slow machine against the
+deadline.
 
 Questions for the ruling: (Q1) the run's readonly worker only, with the `full` worker left open; (Q2) the second ask
 raised by the model (the departure in 6); (Q3) the bounds: 60 s, 8 times and 512 MB; (Q4) an install per run, not per
@@ -327,6 +376,37 @@ MB per call, on one condition: before any `src/` change, the slice 4 code PR mea
 (the live one and a candidate) against the worker's heap death, and if they cannot coexist the design comes back to the
 coordinator. (Q4) Per run, not per browser.
 
+AS BUILT (slice 4), with what the ruling of 2026-11-13 and the measurements changed:
+
+- Ruled (A), 2026-11-13: a lock row is in the core only when its file is in `pkg-shipped.gen.ts`, generated at build
+  from the `pyodide-wheels/` the build copies into `dist/pyodide` (`scripts/gen-pkg-shipped.mjs`); any other lock row
+  refuses the card as `not-shipped`, shown as "is in Pyodide's lock, not shipped with the extension". The figure, 25
+  shipped of 354 in the lock, is the length of `SHIPPED_LOCK_FILES` against the packages of
+  `dist/pyodide/pyodide-lock.json` on the lane's clone, 2026-11-13. `tests/pkg-card.test.mjs` asserts every lock
+  package's card against the list. A shipped lock file is already in every readonly worker, so approving one installs
+  nothing.
+- The install is PyPI wheels only. `installApproved` (`sw-pkg-install.ts`) downloads, checks each new wheel
+  (`pkg-archive.ts`), tests the import in a candidate (`offscreen.ts` `installTest`, the cell `pkg-install-test.ts`),
+  and only on a pass appends to the run's record (`sw-pkg-installs.ts`, `chrome.storage.session`, state
+  `python.run-installs`). The record rides every readonly cell of the run; the offscreen document hands the worker the
+  wheels it lacks (`wheelsForCell`) and the worker unpacks them after its lockdown (`installWheels`). Run log:
+  `python/pkg-install`.
+- Departure from item 5, measured and ruled 2026-11-13: `<dist>.data/` is INERT, not refused. `unpackArchive` leaves it
+  where it is in site-packages, purelib and platlib included (fonttools' `.data/data/share/man/man1/ttx.1`), and a
+  directory of that name imports nothing; fonttools and sympy, both shipped, carry `.data/data` man pages the cleared
+  rule refused. A `.pth` anywhere is still refused. `tests/pkg-archive.test.mjs` runs the check over every shipped
+  wheel, and a red-team row in `tests/pkg-install-py.test.mjs` unpacks `.data/purelib` and `.data/scripts` entries named
+  `json` and `six` and asserts neither is importable from there and no `.data` directory is on `sys.path`.
+- Departure from item 5, ruled 2026-11-13: a standard-library name is refused in the candidate, against
+  `sys.stdlib_module_names`, before any import; the worker holds no stdlib list, so the refusal reaches the person as
+  the candidate's verdict ("Not installed: importing <name> failed: <name> is a standard-library module"). The lock's
+  import names, the dialect's modules and the run's earlier installs are refused before unpack.
+- Found: `unpackArchive` checks each entry's CRC-32 (Python's `zipfile`), so a corrupted entry fails the unpack; a
+  red-team row in `tests/pkg-install-py.test.mjs` asserts it, and in the run's worker such a failure fails the cell
+  before it runs.
+- Item 7, the platform scan, is slice 4b, its own PR (ruled 2026-11-13: the scan is a note and never a refusal, so slice
+  4's safety does not rest on it). Until it lands, a failed import's reason is the import's own last line.
+
 **Slice 5, policy-store wiring.** The four facts (`name`, `version`, `source`, `sha256`) reach the policy realm as a
 call's facts. A policy can then allow or deny an install where the card would otherwise ask, and the policy page
 lists it like any other. This is the first consumer POLICIES.md names. Widening is never a card button. A remembered
@@ -338,5 +418,11 @@ approval is a policy, written as one.
   defined.
 - Host placement: 459 of the 533 not installable in Pyodide have a native-host wheel. No placement rule is drawn until
   window-ml-host reads its own tags.
+- A lock package the extension does not ship, option (B) of 2026-11-13, for a later ruling: download it after approval
+  from the Pyodide CDN (`cdn.jsdelivr.net/pyodide/v<pin>/full/<file_name>`, the host `fetch-pyodide` already uses,
+  pinned to the lock's version), checked against the lock's sha256 and kept in the mirror. Its costs: a third network
+  host; the lock gives no file sizes, so the card shows the hash but no size and needs a per-file cap (64 MB proposed)
+  in its place; and the card's text for such a row becomes "Pyodide, to download". Option (C), shipping the whole lock,
+  is out: hundreds of MB in the extension.
 
 > Written by the packages lane (session `19f583d1-eb33-429d-bccc-727080ef9997`, model `claude-opus-5-5`).
