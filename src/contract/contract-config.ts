@@ -122,6 +122,10 @@ export interface MlConfig {
     /** Minutes a run's Python namespace may sit unused between turns before its worker is shut and the names are lost
      *  (the run's next cell is told). The namespace itself lives as long as the run. 0 never reaps it for idleness. */
     pythonIdleMinutes: number;
+    /** Minutes a detached task (an `ml.sh` call or a `python_exec` cell that outran its lease) may run before it is
+     *  ended, whichever executor runs it. 1..60; a value outside reads as 60, the ceiling (docs/spec/ASYNC_CALLS.md,
+     *  rule 4b). A call's own `timeoutMs` is clamped to it. */
+    detachedTaskMaxMin: number;
     /** Move a session the store evicts (by retention or by the budget) into the long-term SQLite archive instead of
      *  deleting it. Off by default: it changes what "delete after N days" means. */
     sessionArchive: boolean;
@@ -310,6 +314,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     sessionRetentionDays: 0,
     sessionStoreBudgetMB: 256,
     pythonIdleMinutes: 10,
+    detachedTaskMaxMin: 60,
     sessionArchive: false,
     agentStartPage: "",
     priceSnapshotUrl: "",
@@ -403,6 +408,7 @@ export const SETTING_PLACES: Readonly<Partial<Record<keyof MlConfig, SettingPlac
     valueStoreBudgetMB: { tab: "advanced", section: "pointers" },
     autoApprovePython: { tab: "advanced", section: "python" },
     pythonIdleMinutes: { tab: "advanced", section: "python" },
+    detachedTaskMaxMin: { tab: "advanced", section: "python" },
     autoApproveSelfSource: { tab: "advanced", section: "fetch" },
     agentSeesFocus: { tab: "advanced", section: "focus" },
     shellEnabled: { tab: "advanced", section: "shell" },

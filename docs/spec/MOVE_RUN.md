@@ -162,3 +162,4 @@ to the old id and nowhere else, until shape (b).
 - Whether a crash ends the turn, or offers a move (the hook: the crashed branch in `delegate-send.ts` and
   `page-reachable.ts`'s watch). To be decided on how models behave against the failing tool.
 - A move between runtimes (another browser through the hub), after this exists.
+- A move from NO tab: a run started detached ([`TABLESS_RUN.md`](TABLESS_RUN.md)) skips the source tab's three steps.

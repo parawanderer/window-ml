@@ -47,7 +47,7 @@ import { lookPreviewArgs, workerLook } from "./worker-look";
 import { workerLocate } from "./worker-locate";
 import { runVision, workerWroteVision, type RunVision } from "./run-vision";
 import { withUserWatches } from "./sw-shared-watches";
-import { closeTurnTasks, openTasks, taskDrained, withTasks } from "./sw-tasks";
+import { closeTurnTasks, hydrateTasks, openTasks, taskDrained, withTasks } from "./sw-tasks";
 import { routeExec, execNames, surveyMayEnterPage, withoutWorld, worldCardNote, type ExecRoute } from "./exec-routing";
 import { defaultExecWorld } from "../contract/contract-config";
 import { outputCapPrecheck } from "../contract/contract-pointers";
@@ -852,8 +852,10 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             ingestSessionEvent(event, { tabId, trusted: true, hosts: byWorker() });
             if (p.crossPage !== false) bufferReplay(tabId, event);
         };
-        // A detached call's result, once the inbox carries it: drawn as the task's, never as the person's words.
-        openTasks(runId, (text, task, end) => fanEvent({ kind: "agent-task-say", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, text, task, ...end }));
+        // A detached call's result, once the inbox carries it: drawn as the task's, never as the person's words. Opened
+        // just before the loop starts, after the run's stored task table is read back (`hydrateTasks`), so a result a worker
+        // that died parked is queued into this turn's first step.
+        const openTaskTable = (): void => openTasks(runId, (text, task, end) => fanEvent({ kind: "agent-task-say", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, text, task, ...end }));
         // The run's steps may now raise nested asks: a call made from inside a running step that needs the person.
         unhostAsks = hostAsks({
             runId, unattended: !!p.unattended, routing: p.approvalRouting || "ui", signal: abortCtl.signal,
@@ -1126,7 +1128,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             recordRunLog(runId, { subsystem: "routing", kind: "python-inside", reason: "in-dialect", detail: { tool: "python_exec" } });
             return { result: env.result || "", renderIn: env.renderIn, renderOut: env.renderOut, feedback: env.feedback, image: env.image, imageLabel: env.imageLabel, images: env.images, ...(env && workerEnvelopes.has(env as import("../contract").PageToolEnvelope) && typeof env.textValue === "string" ? { textValue: env.textValue, ...(typeof env.textChars === "number" ? { textChars: env.textChars } : {}) } : {}) };
         };
-        runBackgroundAgent(
+        hydrateTasks(runId).catch(() => { /* an unreadable table starts empty */ }).then(() => { openTaskTable(); return runBackgroundAgent(
             { task: modelTask, systemPrompt: p.systemPrompt, pageContext: p.pageContext, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSelfSource: p.autoApproveSelfSource, unattended: p.unattended, toolTokens: p.toolTokens, stream: p.stream, ...(p.origin ? { origin: p.origin } : {}), runId, seqBase, tokenStore: sessionTokens(runId), labelMatch: p.labelMatch, resumeMessages, images: p.images,
               // A resumed turn follows a PERSON (a follow-up, Continue, Retry) — except a run resurrected after the
               // worker was evicted, where nobody was waited on.
@@ -2094,7 +2096,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     return { model, contextWindow, capabilities, vramBytes, local, capacity, userFocus, ...overhead };
                 },
             },
-        )
+        ); })
             .then(async ({ result: res, messages }) => {
                 // Cancelled because its site lost the agent level (Q9): the result says so.
                 const reason = cancelReasons.get(runId);
