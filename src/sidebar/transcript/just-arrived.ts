@@ -39,3 +39,16 @@ export const justArrived = (ts: number | undefined | null, now = Date.now()): bo
     const age = now - ts;
     return age >= 0 && age < JUST_ARRIVED_MS;
 };
+
+/** How long after a live call was last drawn the step that replaces it still counts as its successor. */
+export const HANDOFF_MS = 1500;
+
+// state: plumbing
+const liveCall = { at: 0, h: 0 };
+
+/** A tool call is being drawn live right now, with a body this tall: the step that lands in its place starts from it. */
+export const noteLiveCall = (height: number, now = Date.now()): void => { liveCall.at = now; liveCall.h = height; };
+
+/** The height of the live call a step arriving now takes over from, or null when none was on screen: a step that
+ *  replaces what was streaming must continue it, not fade in from nothing beside it. */
+export const liveHandoff = (now = Date.now()): number | null => now - liveCall.at < HANDOFF_MS ? liveCall.h : null;
