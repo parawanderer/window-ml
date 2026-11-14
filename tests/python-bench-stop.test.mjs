@@ -20,6 +20,11 @@
 // an event loop timer starves when the main thread spins in WASM under load, and the 15 s backstop became 37 min
 // (2026-11-12, test-slot 20261112T175621-8584c5). `Atomics.wait` blocks the thread directly; the deadline is
 // `Date.now()`, checked every 5 ms.
+//
+// The writers cover a RUNNING CELL. The boot and the positive-control `cell()` before the first writer was armed
+// had nothing: 2026-11-14 the file ran 41 min in CI (run 43598035248) and only the runner's 45-min watchdog ended
+// it, every file queued behind it reported "interrupted". `armFileGuard` below is armed at MODULE LOAD, before
+// `before()`, so the boot is covered too — same Worker + `Atomics.wait` + SIGKILL shape as the writer.
 import { test, before, after } from "node:test";
 import assert from "node:assert";
 import path from "node:path";
@@ -29,6 +34,10 @@ import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 import { PY_PACKAGE_LOADS } from "../src/python/python-env.ts";
+import { armFileGuard } from "./helpers-fileguard.mjs";
+
+// Armed at module load, before `before()` — the boot is the gap the per-test writers cannot see (header, 2026-11-14).
+const disarmFileGuard = armFileGuard({ label: "python-bench-stop" });
 
 const DIST = path.resolve(import.meta.dirname, "../dist");
 const hasPyodide = fs.existsSync(path.join(DIST, "pyodide", "pyodide.mjs"));
@@ -129,7 +138,10 @@ before(async () => {
     handler({ data: { interruptBuffer: flag } });
 }, { timeout: 180000 });
 
-after(() => { if (shim) fs.rmSync(shim, { recursive: true, force: true }); });
+after(() => {
+    disarmFileGuard();
+    if (shim) fs.rmSync(shim, { recursive: true, force: true });
+});
 
 /** Post one bench script the way the offscreen document does and wait for the worker's answer to it. */
 async function cell(code) {
@@ -206,6 +218,35 @@ test("the writer's backstop SIGKILLs the whole process, so a blocked main thread
     `], { timeout: 10_000 });
     assert.equal(r.signal, "SIGKILL", `the backstop killed the process itself: signal ${r.signal}, status ${r.status}`);
     assert.ok(Date.now() - t0 < 5000, "killed at the backstop's deadline, not by the spawn's own timeout");
+});
+
+// --- the file guard: the whole file, boot included, cannot outlive its budget ---
+
+test("the file guard SIGKILLs its own process when the file does not disarm it in time, and lets a disarmed one go", () => {
+    // The child blocks its main thread the way a WASM boot does, and never calls the disarm `after()` would:
+    // only the guard's own thread can end it. Same shape as the writer's backstop above — the kill it asserts
+    // is the kill this file's rows rely on when `before()` never returns.
+    const t0 = Date.now();
+    const guard = pathToFileURL(path.resolve(import.meta.dirname, "helpers-fileguard.mjs")).href;
+    const r = spawnSync(process.execPath, ["--input-type=module", "-e", `
+        import { armFileGuard } from ${JSON.stringify(guard)};
+        armFileGuard({ budgetMs: 200, label: "child" });
+        await new Promise(() => {});
+    `], { timeout: 10_000 });
+    assert.equal(r.signal, "SIGKILL", `the file guard killed the process itself: signal ${r.signal}, status ${r.status}`);
+    assert.ok(Date.now() - t0 < 5000, "killed at the guard's budget, not by the spawn's own timeout");
+
+    // And the disarm is real: a file that finishes in time is never killed, even with a budget this tight.
+    const ok = spawnSync(process.execPath, ["--input-type=module", "-e", `
+        import { armFileGuard } from ${JSON.stringify(guard)};
+        const disarm = armFileGuard({ budgetMs: 200, label: "child" });
+        disarm();
+        await new Promise((r) => setTimeout(r, 400));
+        console.log("SURVIVED");
+    `], { timeout: 10_000, encoding: "utf8" });
+    assert.equal(ok.signal, null, `a disarmed guard kills nothing: signal ${ok.signal}`);
+    assert.equal(ok.status, 0);
+    assert.match(ok.stdout, /SURVIVED/);
 });
 
 // --- a stop ends the script, and the kept variables survive ---

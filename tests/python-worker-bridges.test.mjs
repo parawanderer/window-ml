@@ -13,6 +13,11 @@ import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
 import { pathToFileURL } from "node:url";
+import { armFileGuard } from "./helpers-fileguard.mjs";
+
+// The same gap python-bench-stop's header names: `before()` boots real Pyodide and can block this thread, where
+// no test timeout can fire. Armed at module load so the boot is covered (helpers-fileguard.mjs).
+const disarmFileGuard = armFileGuard({ label: "python-worker-bridges" });
 
 const DIST = path.resolve(import.meta.dirname, "../dist");
 const hasPyodide = fs.existsSync(path.join(DIST, "pyodide", "pyodide.mjs"));
@@ -42,7 +47,10 @@ before(async () => {
     await import("../src/python/python-worker.ts");
 }, { timeout: 180000 });
 
-after(() => { if (shim) fs.rmSync(shim, { recursive: true, force: true }); });
+after(() => {
+    disarmFileGuard();
+    if (shim) fs.rmSync(shim, { recursive: true, force: true });
+});
 
 /** Post one cell the way the offscreen document does and wait for the worker's answer to it. */
 async function cell(code, extra = {}) {
