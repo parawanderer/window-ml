@@ -9,6 +9,7 @@
 import { signal } from "@preact/signals";
 import type { ComponentChildren } from "preact";
 import type { PairingApi } from "../pairing/api";
+import type { PanelTab } from "../contract/contract-config";
 import { AccountPanel } from "../pairing/pairing-ui";
 import { IconBack } from "../sidebar/icons";
 import { mainView, useEscapeCloses } from "./nav";
@@ -34,6 +35,10 @@ export const settingsTab = signal<SettingsTab>("page");
 /** A block of the Extension tab the address asked for (`#/settings/extension/backup`), until the settings view has
  *  opened and scrolled to it; null once it has. */
 export const settingsAnchor = signal<SettingsAnchor | null>(null);
+
+/** A place in the extension's settings view the address asked for (`#/settings/extension/advanced/shell`,
+ *  `#/setting/<key>`), until that view has opened it; null once it has. */
+export const settingsPlace = signal<{ panelTab?: PanelTab; section?: string; setting?: string } | null>(null);
 
 /**
  * The settings sheet: this page's display settings, and the extension's where there are any.

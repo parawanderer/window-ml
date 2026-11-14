@@ -98,6 +98,7 @@ page-hosted one. Several stores exist once per host.
 | Reader-triggered model calls (titles, summaries, annotations) | `asides` (`store.ts`), client-side | no |
 | The title | owned by the worker (`titleSession`, `sw-sessions.ts`): kept in the session index, asked of the utility model once; every surface asks it (`SESSION_TITLE`, or `side.call` with purpose `title`) | in `ml-saved-sessions` if saved. A rename on the chat page does not yet reach a sidebar that already shows the old one |
 | Who built a page-built run or chat: its tab and that tab's top-frame origin (`run.builder`) | `ml_pagebuilt` in `chrome.storage.session` (`page-route.ts`), written once from the browser's stamp at the page's START_RUN or first session event | survives a worker eviction, not a browser restart; dropped when its tab closes, when the session is forgotten, and oldest first past 500 |
+| A run's detached tasks (`run.tasks`): each row's tool, status, timing, result text and whether the model read it, and for a cell the id that finds it again | `tasks` (`sw-tasks.ts`) | `ml_tasks:<runId>` in `chrome.storage.session`, written through (`persist`) and read back by `hydrateTasks` before a turn opens; survives a worker eviction, not a browser restart; removed by `endTasks`. The executor, a waiter and the ending flag are never stored | `run.tasks` (`ml.current.tasks`) |
 
 The builder record is what lets a person's message to a page-built session reach a page at all
 (`pageRouteFor`): without one the message is refused, so losing it fails closed. A browser restart loses it along

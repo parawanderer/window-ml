@@ -703,8 +703,8 @@ host's `/`, or `/home`, which would shadow `/home/pyodide`):
 a host that has a `/files` directory the person accepts the alias: there `/files/x` is the host's file in `ml.sh` and
 the sandbox's in a cell.
 
-**The channel.** Pyodide has no synchronous remote backend, so a host-backed node needs one. Two routes, neither
-measured:
+**The channel.** Pyodide has no synchronous remote backend, so a host-backed node needs one. Two routes; A was
+measured on 2026-11-13 and holds ("Measured", below):
 
 - A: a sliced wait, no rebuild. The node posts a request (worker, offscreen, service worker, host) and waits on
   `Atomics.wait` in slices of about 50 ms, checking the interrupt flag between slices and raising `KeyboardInterrupt`
@@ -735,8 +735,8 @@ opening it, so nothing can swap a component between the check and the open. A pa
   and inode on every request, so a mounted directory replaced by a symlink to `/` is refused, not followed.
 - Unmounted or disconnected during a cell. The next read fails; the cached listing and any copy in MEMFS are not
   served, and a close does not push.
-- Bounded sizes. An open and the before copy are bounded by a size cap (its value waits for the measurement below): a
-  file over it fails the open with `EFBIG` and a sentence naming `ml.sh`, so the worker's memory is never the limit
+- Bounded sizes. An open and the before copy are bounded by a size cap (256 MB (ruled 2026-11-13), "What follows" below):
+  a file over it fails the open with `EFBIG` and a sentence naming `ml.sh`, so the worker's memory is never the limit
   that is hit.
 - Stop between an open and its close. The host gets the file whole or not at all (the rename above), and the cell's
   diff line says the write did not land: `a.py was not written: the cell was stopped.`
@@ -772,6 +772,60 @@ cost of one round trip, an `os.walk` and an `import` over a mounted real workspa
 (a workspace holds them, and a whole-file fetch needs a size cap set from this), and whether the sliced wait holds
 under the lockdown.
 
+**Measured** (2026-11-13, the async lane; `notebooks/pyodide-mount/`, Apple M5 Pro, Node 26, Chromium 151, the
+restricted-mode Pyodide core). Two labs, no product code: a prototype host-backed FS type in real Pyodide in a Node
+worker thread, served from the disk by the main thread; and each hop of the product chain timed alone in a real
+Chromium against a real `wmlhost` (0.7.0) registered in a throwaway profile. Medians, with p90 and max in the notebook.
+
+- Stop works. The blocked FS op throws `ErrnoError(EINTR)` when its slice check sees the interrupt word at 2; CPython's
+  EINTR retry then runs its signal check and raises `KeyboardInterrupt`. 300 of 300 stops, over a blocked lookup, a
+  whole-file read, a chunk of a 20 MB read, `os.listdir`, `os.stat` and a `try`/`finally` whose `finally` opens a
+  second file; the same 300 of 300 under `lockdownReadonly`. CPython clears the word itself, the cleanup read in the
+  `finally` is not interrupted again, the next cell and the mount are normal, and a late reply to the abandoned id is
+  discarded by the worker's id check alone.
+- Stop latency is the slice: uniform over 0 to 60 ms with a pure 50 ms slice. When the code that stores 2 also calls
+  `Atomics.notify` on the channel's reply word, it is 0.05 to 0.09 ms. Route A therefore needs that notify beside the
+  store in the offscreen document's Stop (`src/offscreen.ts`, `Atomics.store(flag, 0, 2)`), with the reply word in a
+  buffer the offscreen document holds.
+- One request: 0.26 ms end to end through the product chain (worker → offscreen → service worker → host → back, with
+  a plain Worker standing in for Pyodide's and an extension page for the offscreen document; its hops, each measured
+  alone: page ↔ service worker 0.13 ms, service worker ↔ host 0.11 ms, worker ↔ page 0.01 ms, the SAB wake under
+  0.1 ms). The 50 ms slice never adds to it: a reply wakes the wait at once. Python and the FS node add 0.01 to
+  0.02 ms per op.
+- Whole files: 103 MB/s end to end in the host's 512 KiB `read` chunks (the host alone gives 200 MB/s; the relay
+  through the service worker and the base64 decode take the rest), so 100 MB opens in about 1 s and 1 GB in about 10 s.
+  In the worker, `f.read()` of one object fails at 2 GiB and above (`OverflowError`, or `MemoryError` at 4 GiB); a
+  chunked read works to 4 GiB. A cap refuses before anything is allocated: the first reply carries the size.
+- `os.walk` over this repository (21,498 files, 1,558 directories) costs requests, not bytes. With a readdir that
+  returns names only, every entry is a lookup: 26,238 requests, about 7 s through the product chain. With a readdir
+  that returns each entry's stat: 1,639 requests, about 0.55 s, and a second walk in the same cell with the listing
+  cached per cell costs 34 requests. Without `node_modules` and `.git`, 189 requests, about 0.06 s. These seconds are
+  the request count times the measured round trip plus the Node lab's walk time: an estimate composed from two
+  measurements, which assumes the host answers a `stat` or a readdir as fast as the `hello` that was measured.
+- `import` costs about 50 to 150 requests for a real package (pip's vendored `rich.table`: 149 read-only, 83 with
+  `sys.dont_write_bytecode`), tens of milliseconds over the chain. A read-write mount writes `__pycache__/*.pyc` into
+  the person's directory on the first import (51 puts and 51 renames for a 50-module package).
+- The lockdown leaves the channel working at the same cost, the node's closures holding `postMessage`, the buffers and
+  `Atomics` from before the strip. With the bridge refused, `import js` fails; with it lifted, a cell sees `Atomics`
+  and `SharedArrayBuffer` (allowed globals) and can make its own buffer, but the probes found no name for the channel's
+  buffers, the interrupt word, the port or the FS object. Not probed: ctypes, `/proc`, `sys.modules` internals.
+
+**What follows** (proposed by the async lane; RULED 2026-11-13, the coordinator: all five as written; the 256 MB cap is
+the coordinator's value, Shane may override).
+
+- Route A, not B: Stop is 0.1 ms with the notify, a request 0.26 ms, and it holds under the lockdown. JSPI is not
+  needed for either reason the spec gave.
+- The host's mount readdir returns each entry's stat with its name, and the worker caches a directory's listing for
+  the cell: without both, a walk of a real workspace costs sixteen times the requests. A host-lane requirement
+  ("What window-ml-host must do").
+- The size cap for an open, proposed 256 MB: about 2.5 s to fetch, an eighth of the 2 GiB where one `f.read()` fails.
+  Shane's or the coordinator's value; the measurement only rules out anything at or past 2 GiB.
+- Bytecode on a read-write mount: set `sys.pycache_prefix` to a MEMFS path so an import never writes into the person's
+  directory, and so the per-cell diff does not list `.pyc` files. Not measured; `dont_write_bytecode` was, and costs
+  nothing on the first import.
+- e3's rows gain one: a cell reaching the channel's buffers or the interrupt word through `Atomics`,
+  `SharedArrayBuffer` or anything the bridge lifts.
+
 **Initial decisions** (Shane, 2026-11-13: decided now, changed if they cause trouble).
 
 - The cell's directory. With a workspace mounted, each cell starts in the workspace's real path, so a relative path
@@ -799,7 +853,7 @@ under the lockdown.
 
 - Whether a mounted file's real path is kept from what the model reads (an e3 row the coordinator did not adopt). By
   design it is not: the model is given the real path because that is what `open()` takes. For Shane.
-- The size cap's value, set from the measurement above.
+- The size cap's value: 256 MB (ruled 2026-11-13) from the measurement above ("What follows").
 
 **Owners.** This text, the diff row and the provenance of a file read from a mount: the chat-page lane. The channel and
 the mount: the Pyodide lane. The host's scope check, the argv mapping and the `ml.sh` snapshot: the host lane, as
