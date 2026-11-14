@@ -15,7 +15,7 @@ import type { PanelTab, MlConfig, ApiFormat, Theme, DebugMode, CardCorner, Agent
 import type { ComponentChildren } from "preact";
 import type { VisionSupport } from "../../contract/contract-render";
 import type { LoadedModel, ServerTool } from "../../contract/contract-server";
-import { BUILD_DEFAULT_WORLD, DEFAULT_CONFIG, modelFilterAllows, protoMode } from "../../contract/contract-config";
+import { BUILD_DEFAULT_WORLD, DEFAULT_CONFIG, labelMetric, modelFilterAllows, protoMode } from "../../contract/contract-config";
 import { DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX } from "../../contract/contract-render";
 import { detectGroundingModel, generatesText, producesEmbeddings } from "../../contract/contract-server";
 import { PY_PACKAGES } from "../../python/python-env";
@@ -1871,7 +1871,7 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                 <div class="set-note">A tool output can be kept under a name you give it (<code>token: "the sales table"</code>) and read back later with <code>dereference</code>. When a name isn't recalled exactly, this picks how the near matches are ranked. A near match is only used when it clearly beats the runner-up, and it is always reported.</div>
                 <div data-setting="labelMatch" class="set-field">
                     <Lbl tip={TIP.labelMatch}>Label matching</Lbl>
-                    <select value={c.labelMatch} onChange={(e: any) => setField("labelMatch", e.target.value as LexicalMetric)}>
+                    <select value={labelMetric(c.labelMatch)} onChange={(e: any) => setField("labelMatch", e.target.value as LexicalMetric)}>
                         <option value="hybrid">hybrid — trigram + word overlap (default)</option>
                         <option value="tokenset">tokenset — word overlap only</option>
                         <option value="trigram">trigram — character level</option>
