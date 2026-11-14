@@ -221,3 +221,8 @@ test("an unclosed fence at the end of a finished reply runs to the end instead o
     assert.match(html, /<pre class="code">/);
     assert.ok(!html.replace(/<[^>]+>/g, "").includes("```"));
 });
+
+test("a block opened in the middle of a line still pairs with its closing fence line, which is not an opener", () => {
+    const html = markdown("You said: ```mermaid\ngraph TD\n  A-->B\n```");
+    assert.match(html, /class="mmd"/);
+});

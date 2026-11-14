@@ -26,7 +26,7 @@ export function openFenceAt(lines: string[]): { at: number; ch: "`" | "~"; n: nu
     return cur;
 }
 
-/** `src` with each fenced block replaced by `fn(lang, code)`. A fence never closed runs to the end, as CommonMark reads it;
+/** `src` with each fenced block replaced by `fn(lang, code)`. A fence with a language word that is never closed runs to the end, as CommonMark reads it; a bare one that is never closed is left as text;
  *  text outside the fences is returned unchanged for the caller's own passes. */
 export function replaceFences(src: string, fn: (lang: string, code: string) => string): string {
     const lines = src.split("\n");
@@ -36,6 +36,9 @@ export function replaceFences(src: string, fn: (lang: string, code: string) => s
         if (!o) { out.push(lines[i]); continue; }
         let j = i + 1;
         while (j < lines.length && !closesFence(lines[j], o.ch, o.n)) j++;
+        // A bare fence line with nothing after it to close it is most likely the CLOSER of a block opened mid-line
+        // (`here: ```js`), not an opener: left as text for the caller's mid-line pass.
+        if (!o.lang && j >= lines.length) { out.push(lines[i]); continue; }
         out.push(fn(o.lang, lines.slice(i + 1, j).join("\n")));
         i = j;
     }
