@@ -44,6 +44,14 @@ export interface HostHello {
      *  FILE_ATTACHMENTS.md H1 to H8, H15): true on a native connection, false over the hub. Absent from an older host.
      *  Only `true` counts ({@link hostOffersMounts}); the worker never probes by calling. */
     mounts?: boolean;
+    /** That `spawn` takes `files` and maps a `/files` path argument and cwd to the uploads folder of that mount
+     *  (FILE_ATTACHMENTS.md H9): true on a native connection. Absent from an older host, which would ignore `files`. */
+    filesArgv?: boolean;
+}
+
+/** Whether this host maps `/files` in a spawn's argv (`spawn.files`): `hello.filesArgv` is exactly `true`. */
+export function hostMapsFiles(hello: Pick<HostHello, "filesArgv"> | null | undefined): boolean {
+    return hello?.filesArgv === true;
 }
 
 /** Whether this host answers the mount calls: `hello.mounts` is exactly `true` (`"yes"`, `1` or `{}` read as absent). */
@@ -86,7 +94,14 @@ export interface HostConfigured { roots: { given: string; path: string }[]; sand
 
 /** One argv slot the host resolves as a path: the whole argument, or the part after `split` (`--output=f`); `walk` adds
  *  `containsSecret` from a bounded walk beneath it. */
-export interface HostPathArg { arg: number; split?: string; walk?: boolean; /** Hash the resolved file (host 0.4.0): an interpreted script's entrypoint. */ hash?: boolean }
+export interface HostPathArg {
+    arg: number; split?: string; walk?: boolean;
+    /** Hash the resolved file (host 0.4.0): an interpreted script's entrypoint. */
+    hash?: boolean;
+    /** Whether the program writes the path (the manifest's operand roles, `writtenOperands`): a host with `filesArgv`
+     *  refuses a written path in an `attached/` folder (`InAttached`). Absent reads as read. */
+    role?: "read" | "write";
+}
 
 /** `spawn`'s arguments: everything the host needs to resolve the call's facts. It starts nothing. */
 export interface HostSpawn {
@@ -107,6 +122,9 @@ export interface HostSpawn {
     /** A credential the host injects (host 0.8.0): the provider, and the sha256 of the manifest bytes the call was
      *  described with, which the host honours only when it pinned them. Sent only when `hello.credentials` names it. */
     credential?: { provider: string; manifest: string };
+    /** The mount whose uploads folder `/files` names for this call (`hello.filesArgv`, FILE_ATTACHMENTS.md H9): the host
+     *  maps a path argument and the cwd that are `/files` or start with `/files/` to that folder's real path. */
+    files?: { mount: string; session: string };
 }
 
 /** One resolved path argument. `containsSecret` only for a walked one: null past the walk's cap. */
@@ -158,7 +176,13 @@ export interface HostFacts {
     credential?: { provider: string; ports: number[]; hosts?: string[]; profile: string } | null;
     /** The arguments that began with `~`, as the host expanded them (`hello.tilde`); absent from an older host. */
     tilde?: HostTilde[];
+    /** The `/files` arguments the host mapped (`spawn.files`): `argv`, the cwd and the paths already carry the real
+     *  path, and `from` is what the call wrote. Absent when nothing was mapped or from an older host. */
+    files?: HostFilesMapped[];
 }
+
+/** One `/files` argument the host mapped to the uploads folder: where it was, what it said, what it became. */
+export interface HostFilesMapped { index: number | "cwd"; from: string; to: string }
 
 /** One stream of a finished call: a pointer to the bytes the host holds, or why it could not keep them. */
 export type HostStream = { ptr: string; size: number; sha256: string; truncated: boolean } | { error: string };

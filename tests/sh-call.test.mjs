@@ -65,7 +65,7 @@ test("the options are cwd, env, timeoutMs and expectMs, each checked; an unknown
 // --- what the host is asked ---
 
 test("the manifests are found by the program's basename, and only the shipped ones", () => {
-    assert.deepEqual(Object.keys(SHIPPED_MANIFESTS).sort(), ["cat", "find", "gh", "git", "head", "jq", "ls", "mv", "rg", "rm", "rmdir", "tail", "unlink", "wc"]);
+    assert.deepEqual(Object.keys(SHIPPED_MANIFESTS).sort(), ["cat", "cp", "find", "gh", "git", "head", "jq", "ls", "mv", "rg", "rm", "rmdir", "tail", "unlink", "wc"]);
     assert.equal(manifestFor(["/usr/bin/git"])?.program, "git");
     assert.equal(manifestFor(["python3"]), undefined);
     assert.equal(manifestFor(["constructor"]), undefined, "a prototype name is not a manifest");
@@ -75,7 +75,7 @@ test("the manifests are found by the program's basename, and only the shipped on
 test("the spawn carries the HARDENED argv, and its path indices point into that argv, not the one the script wrote", () => {
     const p = planSpawn(parseShRun([["git", "-C", "sub", "log", "--output=o.txt"]]), S);
     assert.deepEqual(p.spawn.argv, ["git", "--no-pager", "-C", "sub", "log", "--no-ext-diff", "--no-textconv", "--output=o.txt"]);
-    assert.deepEqual(p.spawn.pathArgs, [{ arg: 3 }, { arg: 7, split: "=" }]);
+    assert.deepEqual(p.spawn.pathArgs, [{ arg: 3 }, { arg: 7, split: "=", role: "write" }], "a written path says so");
     assert.equal(p.spawn.argv[3], "sub");
     assert.equal(p.spawn.repoArg, 3, "git -C names the repository");
     assert.deepEqual(planSpawn(parseShRun([["git", "status"]]), S).spawn.argv, ["git", "--no-pager", "status"],

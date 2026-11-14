@@ -9,11 +9,12 @@
 import type { CallDescription, ProgramManifest } from "./program-manifest";
 import { CREDENTIAL_PROVIDERS, describeCall, hardenArgv } from "./program-manifest";
 import { claimsTopLevelName, type EffectsData, type Resource } from "../effects";
-import type { HostDone, HostDoneEnvelope, HostEnvelope, HostFacts, HostPathArg, HostPlacement, HostProtectedChange, HostSpawn, HostStream, HostTilde } from "./host-protocol";
+import type { HostDone, HostDoneEnvelope, HostEnvelope, HostFacts, HostPathArg, HostPlacement, HostProtectedChange, HostSpawn, HostStream, HostTilde, HostFilesMapped } from "./host-protocol";
 import { binaryKind } from "../sw/body-read";
 import { BOX_PREFIX, FILE_PREFIX, POINT_PREFIX, TOOL_TOKEN_PREFIX } from "../pointers/token-prefixes";
 import { applicable, storedMisses, type StoredManifest } from "./stored-manifests";
 import cat from "./manifests/cat.json";
+import cp from "./manifests/cp.json";
 import find from "./manifests/find.json";
 import gh from "./manifests/gh.json";
 import git from "./manifests/git.json";
@@ -32,7 +33,7 @@ import type { ShCallSpan, ShUnasked, StepAsk } from "../contract";
 /** The manifests shipped with the extension, by program name. A program not here is unannotated: its effects are
  *  `unknown`, the host resolves none of its arguments as paths, and every call to it asks. */
 export const SHIPPED_MANIFESTS: Readonly<Record<string, ProgramManifest>> = Object.freeze(Object.fromEntries(
-    ([cat, find, gh, git, head, jq, ls, mv, rg, rm, rmdir, tail, unlink, wc] as unknown as ProgramManifest[]).map((m) => [m.program, m]),
+    ([cat, cp, find, gh, git, head, jq, ls, mv, rg, rm, rmdir, tail, unlink, wc] as unknown as ProgramManifest[]).map((m) => [m.program, m]),
 ));
 
 /** The manifests a call is described by: the shipped ones, unless the caller names its own. */
@@ -235,6 +236,9 @@ export interface ShPlan {
     /** The credential the manifest names, and the manifest itself, whose bytes' hash the host checks: what
      *  `credentialFor` turns into `spawn.credential` once it knows the host holds the provider. */
     credential?: { provider: string; manifest: ProgramManifest };
+    /** Why the call is refused before it reaches the host: a `/files` argument the manifest does not place, while `/files`
+     *  is a folder on the host's disk (FILE_ATTACHMENTS.md H9). The model's text, naming the real path to retry with. */
+    filesRefusal?: string;
 }
 
 /**
@@ -265,15 +269,19 @@ export async function credentialFor(plan: ShPlan, host: { hello: { credentials?:
  * Turn a checked request into the host's `spawn`, with the manifest's hardening and the arguments it marks as paths.
  * @param req the request
  * @param session the session's working directory (an absolute path inside a root); a relative `cwd` is taken from it.
- *   `tilde`: the host expands a leading `~` (`hello.tilde`), so a `cwd` of `~` or `~/…` goes to it as written
+ *   `tilde`: the host expands a leading `~` (`hello.tilde`), so a `cwd` of `~` or `~/…` goes to it as written.
+ *   `files`: `/files` is the uploads folder of this mount on the host's disk (`hello.filesArgv`); `shown` is that
+ *   folder as the model's text writes it (`~/git/proj/window-ml-files`)
  * @returns the plan
  */
-export function planSpawn(req: ShRunRequest, session: { cwd: string; roots?: readonly string[]; manifests?: readonly ProgramManifest[]; stored?: readonly StoredManifest[]; tilde?: boolean }): ShPlan {
+export function planSpawn(req: ShRunRequest, session: { cwd: string; roots?: readonly string[]; manifests?: readonly ProgramManifest[]; stored?: readonly StoredManifest[]; tilde?: boolean; files?: { mount: string; session: string; shown: string } }): ShPlan {
     const cwd = req.cwd === undefined ? session.cwd : req.cwd.startsWith("/") || (session.tilde && isTildeArg(req.cwd)) ? req.cwd : `${session.cwd.replace(/\/+$/, "")}/${req.cwd}`;
     const st = session.stored ? manifestsFor(session.stored, session.roots ?? []) : undefined;
     const m = manifestFor(req.argv, session.roots ? { cwd, roots: session.roots, ...(st ? { rootOf: st.rootOf } : {}) } : undefined, st?.list ?? session.manifests);
     const spawn: HostSpawn = { argv: req.argv, cwd, ...(Object.keys(req.env).length ? { env: { ...req.env } } : {}), mode: "host", ...(req.timeoutMs ? { timeoutMs: req.timeoutMs } : {}) };
-    if (!m) return { spawn, description: null };
+    const files = session.files;
+    if (files) spawn.files = { mount: files.mount, session: files.session };
+    if (!m) return { spawn, description: null, ...filesPlaced(req.argv, null, files) };
     const first = describeCall(req.argv, m, { envSet: Object.keys(req.env) });
     // Hardening is a belt, not a judgement: it applies whether or not the call is described (git is undescribed until
     // the host reports its version, and still gets `--no-pager`). Its points come only from levels the parse
@@ -282,7 +290,7 @@ export function planSpawn(req: ShRunRequest, session: { cwd: string; roots?: rea
     const argv = first.harden.length ? hardenArgv(req.argv, first) : req.argv;
     const d = argv === req.argv ? first : describeCall(argv, m, { envSet: Object.keys(req.env) });
     spawn.argv = argv;
-    const pathArgs: HostPathArg[] = d.pathArgs.map((p) => ({ arg: p.arg, ...(p.split ? { split: p.split } : {}), ...(p.walk ? { walk: true } : {}) }));
+    const pathArgs: HostPathArg[] = d.pathArgs.map((p) => ({ arg: p.arg, ...(p.split ? { split: p.split } : {}), ...(p.walk ? { walk: true } : {}), ...(p.role === "write" ? { role: "write" as const } : {}) }));
     // The script itself, resolved and hashed, so its facts say which file runs and whether it is the pinned one.
     if (m.entrypoint) pathArgs.unshift({ arg: 1, hash: true });
     if (pathArgs.length) spawn.pathArgs = pathArgs;
@@ -291,7 +299,35 @@ export function planSpawn(req: ShRunRequest, session: { cwd: string; roots?: rea
     // Only the shipped manifest's own object: the host pins the shipped bytes alone, and a stored entry kept from before
     // `shippedOnlyRefusal` existed would only end in CredentialRefused after the ask.
     const shipped = m.credential && SHIPPED_MANIFESTS[m.program] === m;
-    return { spawn, description: d, ...(shipped ? { credential: { provider: m.credential!.provider, manifest: m } } : {}) };
+    return { spawn, description: d, ...(shipped ? { credential: { provider: m.credential!.provider, manifest: m } } : {}), ...filesPlaced(argv, m, files) };
+}
+
+/** Whether an argument names `/files` itself or a path under it. */
+const isFilesPath = (a: string): boolean => a === "/files" || a.startsWith("/files/");
+
+/**
+ * The refusal of a `/files` argument the host cannot place (FILE_ATTACHMENTS.md H9): while `/files` is on the host's
+ * disk, the host maps only what the manifest marks as a path, so a call with no manifest, or one its manifest does not
+ * describe, naming `/files` at an argument's start or after its FIRST `=` is refused with the real path to retry with.
+ * A described call places every argument, and one it does not mark as a path (a pattern, a message) is left alone.
+ * Placing is the parse alone: the program's version and the call's environment are not known yet here and change no
+ * argument's position, so they do not count (a call they leave undescribed still asks once the host reports them).
+ * Named cost: a `/files` path after a second `=` (`--set=a=/files/x`) is not seen.
+ * @param argv the call's argv
+ * @param m its manifest, or null with none
+ * @param files the mount `/files` names, if any
+ */
+function filesPlaced(argv: readonly string[], m: ProgramManifest | null, files: { shown: string } | undefined): { filesRefusal?: string } {
+    if (!files) return {};
+    // A script's manifest is pinned by its hash and has no version to check.
+    const unversioned = (p: ProgramManifest): ProgramManifest => p.entrypoint ? p : { ...p, version: { range: "*", args: [], pattern: "" } };
+    if (m && describeCall(argv, unversioned(m)).described) return {};
+    for (const a of argv.slice(1)) {
+        const eq = a.indexOf("=");
+        const at = isFilesPath(a) ? a : eq >= 0 && isFilesPath(a.slice(eq + 1)) ? a.slice(eq + 1) : null;
+        if (at !== null) return { filesRefusal: `/files is on disk while the host is connected: ${files.shown.replace(/\/+$/, "")}${at.slice("/files".length)}` };
+    }
+    return {};
 }
 
 /** One path argument as a policy reads it. `containsSecret` only for a walked directory: null when the walk could not
@@ -361,10 +397,22 @@ export interface ShFacts {
     /** The arguments whose leading `~` the host expanded (`argv` and the paths already carry the expansion); `[]` from a
      *  host that expands nothing. */
     tilde: HostTilde[];
+    /** The `/files` arguments the host mapped to the uploads folder (FILE_ATTACHMENTS.md H9; `argv` and the paths carry
+     *  the real path); `[]` when nothing was mapped. */
+    files: HostFilesMapped[];
 }
 
 /** Whether the host expands this argument's `~` (window-ml-host PROTOCOL.md, `spawn`): exactly `~`, or a `~/` prefix. */
 export const isTildeArg = (a: string): boolean => a === "~" || a.startsWith("~/");
+
+/**
+ * The card's lines for the `/files` arguments the host mapped: both forms, what the call wrote and what the process got.
+ * Human-facing text.
+ * @param files the facts' entries
+ */
+export function filesLines(files: readonly HostFilesMapped[]): ShCardLine[] {
+    return files.map((m) => ({ label: "/files", value: `${m.from} is ${m.to}` }));
+}
 
 /**
  * The card's lines for the arguments whose `~` the host expanded, or left literal for want of a usable `HOME`.
@@ -441,6 +489,7 @@ export function shFacts(facts: HostFacts, version: string | null = null, place?:
         mode: facts.mode, sandboxed: facts.sandboxed, placement: facts.placement,
         credential: credentialOf(facts, m),
         tilde: (facts.tilde ?? []).map((t) => ({ ...t })),
+        files: (facts.files ?? []).map((m) => ({ ...m })),
     };
 }
 
@@ -601,6 +650,7 @@ export function shCardLines(f: ShFacts, applied?: HostDoneEnvelope | null, asked
         { label: "Program", value: f.program.path + (f.program.version ? ` (version ${f.program.version})` : "") },
         { label: "In", value: f.cwd.path + (f.cwd.inRoot ? "" : " (outside the workspace roots)"), ...(f.cwd.inRoot ? {} : { warn: true }) },
         ...tildeLines(f.tilde ?? []),
+        ...filesLines(f.files ?? []),
         f.sandboxed
             ? { label: "Sandbox", value: f.credential?.held ? `on: writes only inside the workspace roots, network to ${f.credential.hosts ? f.credential.hosts.join(", ") : "any host"} on ${portsText(f.credential.ports)} only` : "on: writes only inside the workspace roots, no network" }
             : { label: "Sandbox", value: "off: runs as you, with your files and network", warn: true },
@@ -791,6 +841,7 @@ function putWrote(o: unknown): ShCardLine | undefined {
 export function unaskedLines(u: ShUnasked): ShCardLine[] {
     const lines: ShCardLine[] = [{ label: "Allowed by", value: u.by !== "policy" ? "the built-in default" : u.policy ? `the policy "${u.policy}"` : "a policy (no label recorded)" }];
     if (Array.isArray(u.tilde)) lines.push(...tildeLines(u.tilde));
+    if (Array.isArray(u.files)) lines.push(...filesLines(u.files));
     const put = putWrote(u.outcome);
     if (put) return [...lines, put];
     try { lines.push(...shOutcomeLines(u.outcome as unknown as ShOutcome)); } catch { /* an outcome of another shape: the line says who allowed it */ }

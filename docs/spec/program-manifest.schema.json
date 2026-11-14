@@ -260,6 +260,11 @@
           "description": "Operands are git pathspecs: one that starts with `:` (magic; `:/x` is relative to the repository root, not to the cwd), or holds `*`, `?`, `[` or `\\` (a glob git expands to every match, or an escape), is not one path the host can resolve, so the call is `unknown`.",
           "type": "boolean"
         },
+        "writtenOperands": {
+          "description": "Which path operands a writing command writes: `\"last\"`, the destination (`cp a b dir`), the others being read. Absent, a command whose effects write writes EVERY path operand, which fails closed (FILE_ATTACHMENTS.md H9: such a call naming a path in `attached/` is refused, even as a source).",
+          "type": "string",
+          "const": "last"
+        },
         "harden": {
           "description": "Arguments the caller inserts right after this command's name, turning off what the repository's own config could make it run (`git` → `--no-pager`; `git diff` → `--no-ext-diff --no-textconv`). They never widen a call.",
           "type": "array",
