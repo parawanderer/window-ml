@@ -1973,8 +1973,9 @@ html[data-focus] .msg.user .mrow .sp { display: none; }
 
    Unlike the rest of this block it is NOT a CSS hide: a section you cannot open is worse than one that is
    simply gone, and the point of folding is that the thing is still one click away. So the fold seeds the
-   `details`' own state (see `useFocusFold`) and this only marks it. */
-html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
+   `details`' own state (see `useFocusFold`) and this only marks it. `.touched` is a section the reader has opened or
+   closed since: the note explains a fold nobody asked for, so it goes once they have. */
+html[data-focus] .r-py-sec.focus-fold:not(.touched):not([open]) > summary::after {
     content: " — folded in focus mode"; color: var(--fg-faint); font-style: italic; }
 
 /* Shared tool OUTPUT CELL (python_exec / exec / any future tool): capped height → scrolls, with a drag grip.
