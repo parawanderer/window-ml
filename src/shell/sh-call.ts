@@ -535,7 +535,28 @@ export function envelopeFor(f: ShFacts): HostEnvelope | undefined {
 }
 
 /** One line of the approval card: a label, its value, and whether it is something to look at twice. */
-export interface ShCardLine { label: string; value: string; warn?: boolean }
+export interface ShCardLine {
+    label: string; value: string; warn?: boolean;
+    /** What the label means, and for a value that is not what it seems, why: drawn as a hover on the line. */
+    tip?: string;
+    /** The line is the COMMAND: drawn as code, not as a fact. `script` is the body of a `<shell> -c <script>` call, with its newlines. */
+    command?: true; script?: string;
+}
+
+const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh"]);
+
+/**
+ * The script of a `<shell> -c <script>` argv, or null for any other call. A short-option cluster ending in `c`
+ * (`-lc`, `-euc`) is the same flag; the script is the argument after it.
+ * @param argv the program and its arguments
+ */
+export function scriptOf(argv: readonly string[]): string | null {
+    const prog = (argv[0] ?? "").split("/").pop() ?? "";
+    if (!SHELLS.has(prog)) return null;
+    const flag = argv[1];
+    if (typeof flag !== "string" || !/^-[A-Za-z]*c$/.test(flag)) return null;
+    return typeof argv[2] === "string" ? argv[2] : null;
+}
 
 /** The floor's report name: what an absent envelope on `start` means, and what `done` calls it. */
 const FLOOR: HostDoneEnvelope = { write: "today", exec: "any" };
@@ -646,7 +667,7 @@ function portsText(ports: readonly number[]): string {
  */
 export function shCardLines(f: ShFacts, applied?: HostDoneEnvelope | null, asked?: HostEnvelope): ShCardLine[] {
     const lines: ShCardLine[] = [
-        { label: "Runs", value: f.argv.map(quoteArg).join(" ") },
+        { label: "Runs", value: f.argv.map(quoteArg).join(" "), command: true, ...(scriptOf(f.argv) !== null ? { script: scriptOf(f.argv)! } : {}) },
         { label: "Program", value: f.program.path + (f.program.version ? ` (version ${f.program.version})` : "") },
         { label: "In", value: f.cwd.path + (f.cwd.inRoot ? "" : " (outside the workspace roots)"), ...(f.cwd.inRoot ? {} : { warn: true }) },
         ...tildeLines(f.tilde ?? []),
@@ -673,9 +694,21 @@ export function shCardLines(f: ShFacts, applied?: HostDoneEnvelope | null, asked
     if (secretBeneath(f.cwd.containsSecret)) lines.push({ label: "Reads", value: f.cwd.containsSecret ? "the whole directory, which has secret-looking files in it" : "the whole directory, too large to check for secrets", warn: true });
     if (f.repoConfigRunsCode) lines.push({ label: "Repository", value: `its own config makes git run a program: ${f.repo?.reasons.join(", ") || "see .git/config"}`, warn: true });
     if (f.runner) lines.push({ label: "Starts", value: "another program, which this card does not show", warn: true });
-    lines.push({ label: "Does", value: effectsText(f.effects), ...(f.effects === "unknown" || f.effects.some(claimsTopLevelName) ? { warn: true } : {}) });
+    lines.push({ label: "Does", value: effectsText(f.effects), tip: doesTip(f), ...(f.effects === "unknown" || f.effects.some(claimsTopLevelName) ? { warn: true } : {}) });
     if (!f.described && f.why.length) lines.push({ label: "Why unknown", value: f.why.join("; ") });
     return lines;
+}
+
+/**
+ * The hover on a card's "Does" line: what the line is, and when the effects are unknown, what that means for this call
+ * (a shell runs whatever script it is handed, so its effects are the script's, which nothing here judges).
+ * @param f the call's facts
+ */
+function doesTip(f: ShFacts): string {
+    const what = "What this call would do to your files, the network and the machine, read from the program's manifest.";
+    if (f.effects !== "unknown") return what;
+    const shell = scriptOf(f.argv) !== null || SHELLS.has((f.argv[0] ?? "").split("/").pop() ?? "");
+    return `${what} Here it is unknown: ${f.why.length ? `${f.why.join("; ")}. ` : ""}${shell ? "A shell does whatever the script it is given says, so read the command above before approving. " : ""}Approving it is approving whatever it does, inside the sandbox.`;
 }
 
 /** An argument as the card prints it: bare when it is plain, else JSON-quoted, so a space or a quote cannot hide where

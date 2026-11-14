@@ -681,3 +681,28 @@ test("scrollerX: `hidden` still counts — it clips visually but accepts a progr
     cell.appendChild(text);
     assert.equal(scrollerX(text, cell), cell);
 });
+
+// --- the focus-fold note goes once the reader has opened or closed the section ---
+
+test("a stdout section folded in focus mode is marked `touched` once the reader toggles it, so the 'folded in focus mode' note goes", async () => {
+    const { focusMode } = await import("../src/sidebar/store.ts");
+    focusMode.value = true;
+    const host = doc.getElementById("root");
+    render(null, host);
+    render(h(RenderPanel, { d: { type: "python-out", stdout: "hello\n" } }), host);
+    await tick();
+    const sec = () => host.querySelector("details.r-py-stdout");
+    assert.ok(sec().classList.contains("focus-fold"));
+    assert.equal(sec().open, false, "starts folded");
+    assert.ok(!sec().classList.contains("touched"));
+    sec().open = true;
+    sec().dispatchEvent(new doc.defaultView.Event("toggle"));
+    await tick();
+    sec().open = false;
+    sec().dispatchEvent(new doc.defaultView.Event("toggle"));
+    await tick();
+    assert.equal(sec().open, false);
+    assert.ok(sec().classList.contains("touched"), "closed again by hand: no note");
+    render(null, host);
+    focusMode.value = false;
+});

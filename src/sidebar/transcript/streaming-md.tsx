@@ -17,6 +17,9 @@ import { closeStreaming } from "./stream-close";
 import { splitAnswer } from "../../pointers/answer-tokens";
 import { escapeHtml } from "../format";
 
+/** The elements that draw a box of their own around the words in them, which fade with their first word (`b-in`). */
+const BOXES = "pre, code, blockquote, table";
+
 /** How long after the previous word a new one starts fading, while a burst is being spread out. */
 export const FADE_STEP_MS = 24;
 /** The most a word may be held back behind the stream to keep the pace even. */
@@ -34,6 +37,7 @@ export function fadeWords(root: Element, starts: number[], now: number, fadeMs: 
     const texts: Text[] = [];
     for (let n = walker.nextNode(); n; n = walker.nextNode()) texts.push(n as Text);
     let k = 0;
+    const boxes = new Map<Element, number>();
     let last = starts.length ? Math.max(...starts.filter(Number.isFinite), -Infinity) : -Infinity;
     for (const t of texts) {
         const pieces = t.data.match(/\s+|\S+\s*/g);
@@ -50,6 +54,12 @@ export function fadeWords(root: Element, starts: number[], now: number, fadeMs: 
             ages.push(age);
             if (age < fadeMs) fading = true;
         }
+        // THE BOX FADES WITH ITS FIRST WORD. A code span or block, a quote and a table draw their own background and border
+        // the moment the HTML is placed, while the words inside are still at nothing: the outline stood there empty for a
+        // moment before any text came. Each such element is given the fade of the first word inside it, which is when its
+        // box should arrive (`b-in`, the words' own animation, so the two read as one thing appearing).
+        const first = pieces.findIndex((p) => /\S/.test(p));
+        if (first >= 0) for (let a = t.parentElement; a && a !== root; a = a.parentElement) if (a.matches(BOXES) && !boxes.has(a)) boxes.set(a, ages[first]);
         if (!fading) continue;
         const frag = doc.createDocumentFragment();
         let plain = "";
@@ -64,6 +74,11 @@ export function fadeWords(root: Element, starts: number[], now: number, fadeMs: 
         });
         if (plain) frag.appendChild(doc.createTextNode(plain));
         t.replaceWith(frag);
+    }
+    for (const [el, age] of boxes) {
+        if (age >= fadeMs) continue;
+        el.classList.add("b-in");
+        (el as HTMLElement).style.animationDelay = `${Math.round(-age)}ms`;
     }
 }
 

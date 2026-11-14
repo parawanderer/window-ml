@@ -229,6 +229,20 @@ test("a PENDING APPROVAL is the one call group-all still refuses to hide", () =>
     assert.deepEqual(kinds(out), ["exec×2", "fetch_url", "exec×2"], "the gate stands between two groups");
 });
 
+test("a nested ask still WAITING is a decision too: a step already past its own gate is not folded over it", () => {
+    // The sequence that was seen: the exec's own gate is answered, the step runs, and the `ml.sh` call it makes raises
+    // an ask of its own. That step is no longer `awaitingApproval`, so only its `asks` say a person is needed, and a
+    // group that folded it closed the card the person had to answer.
+    const asking = (step, state) => turn(step, "exec", { pending: state === "pending", asks: [{ id: `a${step}`, kind: "sh", state, raisedAt: 0, facts: {} }] });
+    const around = (mid) => [turn(1, "exec"), turn(2, "exec"), mid, turn(4, "exec"), turn(5, "exec")];
+    assert.deepEqual(kinds(all(around(asking(3, "pending")))), ["exec×2", "exec", "exec×2"], "group-all leaves the waiting step standing between two groups");
+    assert.deepEqual(kinds(foldStreaks(around(asking(3, "pending")))), ["exec", "exec", "exec", "exec", "exec"], "the ordinary rule does not fold across it either");
+    assert.deepEqual(kinds(foldStreaks([turn(1, "exec"), turn(2, "exec"), turn(3, "exec"), asking(4, "pending"), turn(5, "exec")])), ["exec×3", "exec", "exec"], "nor does a streak take it as a member");
+    // …and once it is answered it is ordinary work again.
+    assert.deepEqual(kinds(all(around(asking(3, "allowed")))), ["exec×5"]);
+    assert.deepEqual(kinds(all(around(asking(3, "denied")))), ["exec×5"]);
+});
+
 test("a gate ALREADY ANSWERED is ordinary work again and folds with the rest", () => {
     // The refusal is about a decision WAITING on a human, not about the tool or about it having needed approval.
     const done = turn(3, "fetch_url", { approval: "user", result: "ok" });
@@ -329,4 +343,13 @@ test("a refold collapses the rows that were on screen, not the call that caused 
         "the new call was never a row to the reader: drawn into the collapse, the group's first frame was a row taller than the one before");
     assert.deepEqual(rowsSeen([seen, at(4, now - FOLD_SEEN_MS)], now).map((t) => t.step), [1, 4], "on screen exactly long enough counts");
     assert.deepEqual(rowsSeen([unstamped], now), [], "no stamp is no evidence it was seen");
+});
+
+// --- a step replacing a live call continues it ---
+
+test("a step landing just after a live call is drawn takes its height over; one with none on screen does not", async () => {
+    const { noteLiveCall, liveHandoff, HANDOFF_MS } = await import("../src/sidebar/transcript/just-arrived.ts");
+    noteLiveCall(180, 1000);
+    assert.equal(liveHandoff(1000 + HANDOFF_MS - 1), 180);
+    assert.equal(liveHandoff(1000 + HANDOFF_MS), null);
 });

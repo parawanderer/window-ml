@@ -34,9 +34,10 @@ import { Hash } from "../copy-hash";
 import { FeedbackBlock, ReusedBlock } from "./answer-render";
 import { foldStreaks, StepStreak, InStreak } from "./step-streak";
 import { FoldRail } from "./fold-rail";
-import { AskList, UnaskedList } from "./ask-card";
+import { AskList } from "./ask-card";
+import { ShCalls } from "./sh-calls";
 import { CALL_TITLE } from "../../tools/tool-params";
-import { justArrived } from "./just-arrived";
+import { justArrived, liveHandoff } from "./just-arrived";
 import { useHistoryPaint } from "./history-paint";
 import { deepestUserLine } from "../../python/py-format";
 import { StartAskCard, SiteWaitPrompt } from "../card/card-start";
@@ -373,7 +374,12 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
     // the turn uses, so a transcript opened later never plays a page of these.
     const inStreak = useContext(InStreak);
     const history = useHistoryPaint();
-    const [fresh] = useState(() => !inStreak && !history && justArrived(st.ts));
+    // TAKING OVER FROM A LIVE CALL, not arriving: the row that was being typed out is replaced by this one, so fading
+    // it in from nothing blinked the block out and back. It starts at the live block's height instead and lets the
+    // reformatted code settle into it (`.handoff`, chat.css), for the length of that animation only.
+    const [handoff, setHandoff] = useState(() => (!inStreak && !history ? liveHandoff() : null));
+    useEffect(() => { if (handoff == null) return; const t = setTimeout(() => setHandoff(null), 400); return () => clearTimeout(t); }, []);
+    const [fresh] = useState(() => !inStreak && !history && handoff == null && justArrived(st.ts));
     const args = st.arguments && Object.keys(st.arguments).length ? st.arguments : null;
     // The run's def for THIS tool — its summary (hover on the name) + its parameter schema (the raw In view
     // annotates each arg key with its schema description). Absent on older debug events (names only).
@@ -449,6 +455,8 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
     // body still sees the same number.
     const rootRef = useRef<HTMLDivElement>(null);
     const { closing, close, cancel } = useCloseAnimation(rootRef);
+    const closeOnSettle = useRef(false);
+    useEffect(() => { if (closeOnSettle.current && !st.pending) { closeOnSettle.current = false; close(() => setExpanded(false)); } });
     const toggle = (): void => {
         // `forcedOpen`, not `awaiting`: a step that CANNOT close has nothing to animate, but a gated step in calm
         // closes like any other and was snapping shut while every step beside it eased. It read as a different
@@ -474,7 +482,10 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
         // what you were looking at, so animating only the body left the card itself blinking out. A flag of its
         // own rather than reusing `closing`, which is also how a long-decided step collapses — that must not
         // conjure the card back.
-        if (focusMode.value) { setFading(true); close(() => { setFading(false); setExpanded(false); }); }
+        // A CODE STEP STAYS OPEN while it runs: the program it starts (an `ml.sh` inside the cell) asks next, and a card
+        // over a collapsed row does not say which code wants it. It folds when the step settles (`closeOnSettle`).
+        if (focusMode.value && codeOf(st) && st.pending) { closeOnSettle.current = true; setExpanded(true); setFading(true); setTimeout(() => setFading(false), 220); }
+        else if (focusMode.value) { setFading(true); close(() => { setFading(false); setExpanded(false); }); }
         else setExpanded(true);
         if (hash && st.seq != null) decidedSteps.add(stepKey(hash, st.seq));
         void decideGate(st, hash!, st.seq!, ok, persist, feedback);   // fetch_url: grant its host in-gesture, then post
@@ -520,8 +531,8 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
         // each row's entrance delay on the custom property below (not `animationDelay`, which would also delay
         // a pending step's own `busy-fade` pulse).
         <div ref={rootRef} data-astep-seq={st.seq} data-rev={stepRev}
-            class={`astep tool${fresh ? " fresh" : ""}${dimmed ? " away" : ""}${open ? " open" : ""}${closing ? " closing" : ""}${inFlight ? " pending" : ""}${(awaiting || askWaiting) && !cut ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : (st.approval === "skipped" || st.approval === "cancelled") ? " appr-skip" : " appr-yes") : ""}`}
-            style={fresh && slot ? { "--in-delay": `${Math.min(slot, 5) * 45}ms` } : undefined}>
+            class={`astep tool${fresh ? " fresh" : ""}${dimmed ? " away" : ""}${open ? " open" : ""}${closing ? " closing" : ""}${handoff != null ? " handoff" : ""}${inFlight ? " pending" : ""}${(awaiting || askWaiting) && !cut ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : (st.approval === "skipped" || st.approval === "cancelled") ? " appr-skip" : " appr-yes") : ""}`}
+            style={handoff ? { "--handoff-h": `${handoff}px` } : fresh && slot ? { "--in-delay": `${Math.min(slot, 5) * 45}ms` } : undefined}>
             <button class="astep-head" onClick={toggle}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
                 {/* WHEN and HOW LONG ride the dot's tip: both facts already existed on the step — the stamp in the
@@ -631,9 +642,9 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
                 </div>
                 : null}
             {/* NESTED ASKS: calls made while this step ran that need the person (an ml.sh from an approved exec). Below
-                the step, open or not, like the step's own gate: a card for each waiting, a line for each answered. */}
+                the step, open or not, like the step's own gate: a card for each waiting; the answered ones are the footer below them. */}
             <AskList st={st} hash={hash ?? undefined} live={live} />
-            <UnaskedList st={st} />
+            <ShCalls st={st} />
         </div>
     );
 }
@@ -676,7 +687,7 @@ export function AgentTurn({ turn, max, hash }: { turn: AgentTurnGroup; max?: num
     // reading blinking out and coming back.
     const history = useHistoryPaint();
     const inStreak = useContext(InStreak);
-    const [fresh] = useState(() => !inStreak && !history && justArrived(turn.tools[turn.tools.length - 1]?.ts));
+    const [fresh] = useState(() => !inStreak && !history && liveHandoff() == null && justArrived(turn.tools[turn.tools.length - 1]?.ts));
     return (
         <div class={`aturn${fresh ? " fresh" : ""}`}>
             {turn.half === "tools" ? null : <div class="aturn-head"><StepPill step={turn.localStep} max={max} /></div>}
@@ -1204,13 +1215,13 @@ export function PendingNote({ s, leaving = false, rootRef }: { s: Session;
     const dup = !blocked && liveShownByTranscript(s);
     // LEAVING, it says what it said last: the run has ended and its state no longer describes a live run, so a
     // phrase read from it now would change under the fade.
-    const said = useRef<{ blocked: boolean; dup: boolean; text: ComponentChildren }>({ blocked, dup, text: null });
-    if (!leaving) said.current = { blocked, dup, text: blocked
+    const said = useRef<{ blocked: boolean; dup: boolean; live: boolean; text: ComponentChildren }>({ blocked, dup, live: false, text: null });
+    if (!leaving) said.current = { blocked, dup, live: !!(s.liveStream?.reasoning || s.liveStream?.content), text: blocked
         ? "waiting for your approval…"
         : <>{live?.label}<InlineFold text={live?.suffix ?? ""} /><InlineFold class="psteps" text={n > 0 ? ` · ${n} ${n === 1 ? "step" : "steps"}` : ""} /></> };
     const v = said.current;
     return (
-        <div ref={rootRef} class={`pending-note${v.blocked ? " blocked" : ""}${v.dup ? " dup" : ""}${leaving ? " leaving" : ""}`}>
+        <div ref={rootRef} class={`pending-note${v.blocked ? " blocked" : ""}${v.dup ? " dup" : ""}${v.dup && v.live ? " dup-live" : ""}${leaving ? " leaving" : ""}`}>
             {/* BOTH are drawn and the view picks one in CSS: the bar in the panel, where it matches the
                 instrumentation around it, and the glyph in the reading view, where a full-width rule is furniture.
                 A hidden element's animations do not run, so the one that is not shown costs nothing. */}

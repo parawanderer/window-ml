@@ -209,6 +209,28 @@ test("K3c: find -delete is a names write, so deleting under a root itself or a t
     assert.match(shCardLines(del(["find", "src", "-delete"], [dir(1, "src", "/w/src")])).find((l) => l.label === "Does").value, /create, remove or rename \/w\/src/);
 });
 
+// --- the card's command and its hovers ---
+
+test("the card's Runs line is the COMMAND: a bash -c call carries its script with the newlines, any other call carries none", () => {
+    const script = "cat > demo.sh <<'EOF'\necho hi\nEOF\nchmod +x demo.sh";
+    const sh = shCardLines(shFacts(facts({ argv: ["bash", "-c", script], paths: [], program: { path: "/bin/bash", inRoot: false } }))).find((l) => l.label === "Runs");
+    assert.equal(sh.command, true);
+    assert.equal(sh.script, script, "the script as it was written, not run together on one line");
+    const plain = shCardLines(shFacts(facts())).find((l) => l.label === "Runs");
+    assert.equal(plain.command, true);
+    assert.equal(plain.script, undefined);
+});
+
+test("the Does line explains itself on hover; unknown effects say why, and for a shell that the script decides", () => {
+    const bash = shCardLines(shFacts(facts({ argv: ["bash", "-c", "echo hi"], paths: [], program: { path: "/bin/bash", inRoot: false }, why: ["bash has no program manifest"], described: false }))).find((l) => l.label === "Does");
+    assert.equal(bash.warn, true);
+    assert.match(bash.tip, /would do to your files, the network and the machine/);
+    assert.match(bash.tip, /bash has no program manifest/, "the reason is in the tip as well as on its own row");
+    assert.match(bash.tip, /A shell does whatever the script it is given says/);
+    const known = shCardLines(shFacts(facts())).find((l) => l.label === "Does");
+    assert.doesNotMatch(known.tip, /unknown|shell/, "a described call's tip says only what the line is");
+});
+
 // --- place resolution: the markers follow the host's RESOLVED path, widened by the lexical `given` ---
 
 test("a symlink's place is what it RESOLVED to, widened by the name as typed: markers off `path` and `given`", async () => {
