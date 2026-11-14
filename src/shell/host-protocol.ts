@@ -40,6 +40,15 @@ export interface HostHello {
      *  profile (Linux) and over the hub. Absent from an older host, which ignores a `credential` on `spawn`: the
      *  worker's only gate. */
     credentials?: string[];
+    /** That the host answers the mount calls (`mount`, `stat`, `list`, `fetch`, `store`, `remove`, `rename`;
+     *  FILE_ATTACHMENTS.md H1 to H8, H15): true on a native connection, false over the hub. Absent from an older host.
+     *  Only `true` counts ({@link hostOffersMounts}); the worker never probes by calling. */
+    mounts?: boolean;
+}
+
+/** Whether this host answers the mount calls: `hello.mounts` is exactly `true` (`"yes"`, `1` or `{}` read as absent). */
+export function hostOffersMounts(hello: Pick<HostHello, "mounts"> | null | undefined): boolean {
+    return hello?.mounts === true;
 }
 
 /** The worker's narrowing envelope on `start`/`pipe`. Both keys are required and there are no others. `"today"` is the
@@ -241,14 +250,62 @@ export interface HostPutFacts {
 /** `commit`'s answer: the file in place, and the hash of the bytes written. */
 export interface HostCommitted { id: string; path: string; rel: string; size: number; sha256: string }
 
+/** A directory a chat session mounted (host `mount`): its id, its realpath, the root it lies in, its mode, and the
+ *  uploads folder inside it, relative. Held by the host for this connection only. */
+export interface HostMount { id: string; path: string; root: string; mode: "rw" | "ro"; uploads: string | null }
+
+/** What a judgment was made on (FILE_ATTACHMENTS.md H8): the file's identity, size and modification time, and its
+ *  sha256 when it is at or under the diff cap. The worker keeps the one `stat` gave and sends it back unchanged. */
+export interface HostBasis { dev: number; ino: number; size: number; mtimeNs: number; sha256?: string }
+
+/** `stat`'s facts about one path in a mount (H7). The host computes each from its held descriptor. `gitUndoable` is
+ *  null when git cannot be asked or the repository's config runs code; `ignored` null when git cannot be asked. */
+export interface HostMountFacts {
+    mount: string;
+    path: string;
+    inMount: boolean;
+    mode: "rw" | "ro";
+    kind: "file" | "dir" | "symlink" | "other" | null;
+    exists: boolean;
+    secret: boolean;
+    protected: boolean;
+    ignored: boolean | null;
+    inUploads: boolean;
+    inAttached: boolean;
+    gitUndoable: boolean | null;
+    hardLinked: boolean;
+    basis: HostBasis | null;
+}
+
+/** One page of a directory in a mount (host `list`), sorted by name; a symlink is listed, never followed. */
+export interface HostListing {
+    mount: string;
+    path: string;
+    entries: { name: string; kind: "file" | "dir" | "symlink" | "other" | null; size: number | null; mtimeNs: number | null; lossy?: true }[];
+    total: number;
+    more: boolean;
+}
+
+/** One chunk of a file in a mount (host `fetch`). */
+export interface HostFetched { mount: string; path: string; offset: number; size: number; eof: boolean; data: { $bytes: string } }
+
+/** `store`'s answer: the write is checked and its directory held; the bytes go through `write`, then `commitStore`. */
+export interface HostStoring { id: string; mount: string; path: string; size: number; expiresInMs: number }
+
+/** A store's commit: the file in place, and the hash of the bytes written. */
+export interface HostStored { id: string; mount: string; path: string; size: number; sha256: string }
+
 /** The host's error codes (PROTOCOL.md, "Error codes"). */
 export type HostErrorCode = "BadRequest" | "NotConfigured" | "BadRoot" | "ProgramNotFound" | "CwdOutsideRoots" | "EnvRefused"
     | "SecretUnavailable" | "Unsupported" | "UnknownId" | "UnknownPtr" | "SandboxFailed" | "SpawnFailed" | "Busy" | "Failed"
-    | "TooLarge" | "Disconnected" | "Refused" | "NoParent" | "OutsideRoots" | "IsSymlink" | "IsDirectory" | "Protected" | "Exists";
+    | "TooLarge" | "Disconnected" | "Refused" | "NoParent" | "OutsideRoots" | "IsSymlink" | "IsDirectory" | "Protected" | "Exists"
+    | "MountRefused" | "UnknownMount" | "MountReplaced" | "ChangedSinceJudged" | "EROFS" | "EFBIG" | "InAttached"
+    | "HardLinked" | "NotADirectory" | "NotFound" | "EXDEV";
 
-/** A call the host answered with an error, or the port closing under it (`Disconnected`). */
+/** A call the host answered with an error, or the port closing under it (`Disconnected`). `detail` holds what the
+ *  error carries beside its code and message: `EFBIG`'s `size` and `cap`. */
 export class HostError extends Error {
-    constructor(readonly code: HostErrorCode | string, message: string) { super(message); }
+    constructor(readonly code: HostErrorCode | string, message: string, readonly detail: Record<string, unknown> = {}) { super(message); }
 }
 
 /** What carries one JSON object each way. `onClose` fires once, when the other end has gone. */
@@ -292,7 +349,10 @@ export class HostClient {
         if (!p) return;
         this.pending.delete(m.seq as number);
         const err = m.error as { code?: unknown; message?: unknown } | undefined;
-        if (err && typeof err === "object") p.reject(new HostError(String(err.code ?? "Failed"), String(err.message ?? "")));
+        if (err && typeof err === "object") {
+            const { code, message, ...detail } = err as Record<string, unknown>;
+            p.reject(new HostError(String(code ?? "Failed"), String(message ?? ""), detail));
+        }
         else p.resolve(m.value);
     }
 
@@ -415,6 +475,43 @@ export class HostClient {
      * @param replace whether to rename over a file at the target
      */
     commit(id: string, replace: boolean): Promise<HostCommitted> { return this.call("commit", { id, replace }); }
+
+    // The mount calls (FILE_ATTACHMENTS.md H1 to H8): only when `hello.mounts` is true. `session` is the worker's
+    // stamp for the chat session, never a cell's; another session's mount id answers `UnknownMount`.
+
+    /**
+     * Hold a folder for one chat session (host `mount`), refused (`MountRefused`) at, under or above what it must not
+     * reach, or outside every root.
+     * @param a the session, the folder's absolute path, the mode, and the uploads folder inside it, relative
+     */
+    mount(a: { session: string; path: string; mode: "rw" | "ro"; uploads?: string }): Promise<HostMount> { return this.call("mount", a); }
+    unmount(session: string, mount: string): Promise<Record<string, never>> { return this.call("unmount", { session, mount }); }
+    /**
+     * The facts and the basis of one path in a mount; reads no bytes into the answer.
+     * @param session the chat session
+     * @param mount the mount's id
+     * @param path relative to the mount, `""` for the mount itself
+     */
+    stat(session: string, mount: string, path: string): Promise<HostMountFacts> { return this.call("stat", { session, mount, path }); }
+    list(session: string, mount: string, path: string, offset = 0, limit?: number): Promise<HostListing> {
+        return this.call("list", limit === undefined ? { session, mount, path, offset } : { session, mount, path, offset, limit });
+    }
+    /**
+     * One chunk of at most {@link READ_CHUNK} bytes of a file whose basis is still `basis` (else `ChangedSinceJudged`);
+     * a file over `cap` is `EFBIG` with `detail.size`, before a byte is read.
+     */
+    fetch(a: { session: string; mount: string; path: string; basis: HostBasis; offset: number; length: number; cap?: number }): Promise<HostFetched> {
+        return this.call("fetch", { ...a, length: Math.max(0, Math.min(READ_CHUNK, Math.floor(a.length))) });
+    }
+    /**
+     * Check a whole-file write of `size` bytes and hold its directory, writing nothing. `basis` is the existing file's
+     * as judged, absent for a new file. The bytes go through {@link write}, then {@link commitStore}.
+     */
+    store(a: { session: string; mount: string; path: string; size: number; basis?: HostBasis; cap?: number }): Promise<HostStoring> { return this.call("store", a); }
+    /** Put a store's bytes in place, comparing the basis again (`ChangedSinceJudged`). Consumes the store. */
+    commitStore(id: string): Promise<HostStored> { return this.call("commit", { id }); }
+    remove(a: { session: string; mount: string; path: string; basis: HostBasis }): Promise<{ mount: string; path: string; removed: true }> { return this.call("remove", a); }
+    rename(a: { session: string; mount: string; from: string; to: string; basis: HostBasis }): Promise<{ mount: string; from: string; to: string }> { return this.call("rename", a); }
 }
 
 /**

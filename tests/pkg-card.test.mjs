@@ -332,6 +332,44 @@ test("sameRows: size null versus 0 is false", () => {
     assert.equal(sameRows([row({ size: 0 })], [row({ size: null })]), false);
 });
 
+// --- the mirror: a PyPI file whose bytes are already held ---
+
+test("cardFromVerdict: a pypi file whose sha256 is mirrored is a mirror row with its size, and is left out of totalBytes", () => {
+    const held = pypiFile({ name: "a", sha256: H1, size: 100 }), fresh = pypiFile({ name: "b", sha256: H2, size: 7 });
+    const c = cardFromVerdict(okVerdict([held, fresh, lockFile({ name: "l" })]), new Set([H1]));
+    assert.equal(c.ok, true);
+    assert.deepEqual(c.files.map((f) => [f.name, f.source, f.size]), [["a", "mirror", 100], ["b", "pypi", 7], ["l", "lock", null]]);
+    assert.equal(c.totalBytes, 7);
+    for (const f of c.files) assert.deepEqual(Object.keys(f).sort(), ["filename", "name", "sha256", "size", "source", "version"]);
+});
+
+test("cardFromVerdict: with every pypi file mirrored the total is 0, and with no mirrored set it is as before", () => {
+    const v = okVerdict([pypiFile({ sha256: H1, size: 100 })]);
+    assert.equal(cardFromVerdict(v, new Set([H1])).totalBytes, 0);
+    assert.equal(cardFromVerdict(v).totalBytes, 100);
+    assert.equal(cardFromVerdict(v, new Set([H2])).files[0].source, "pypi");
+});
+
+test("cardFromVerdict: a lock file is never a mirror row, even when its digest is in the set", () => {
+    const c = cardFromVerdict(okVerdict([lockFile({ sha256: H1 })]), new Set([H1]));
+    assert.equal(c.files[0].source, "lock");
+});
+
+test("cardFromVerdict: a mirrored pypi file without a valid size still refuses the card as malformed", () => {
+    const c = cardFromVerdict(okVerdict([pypiFile({ sha256: H1, size: undefined })]), new Set([H1]));
+    assert.deepEqual(c, { ok: false, reason: "malformed", at: "idna" });
+});
+
+test("rowsFromAnswer: source mirror passes with a size; any other source string still gives undefined", () => {
+    assert.deepEqual(rowsFromAnswer([row({ source: "mirror", size: 10 })]), [row({ source: "mirror", size: 10 })]);
+    for (const source of ["Mirror", "mirror ", "held", "cache", "", "pypi2", null, 1]) assert.equal(rowsFromAnswer([row({ source })]), undefined, String(source));
+});
+
+test("sameRows: a mirror row and a pypi row for one file differ", () => {
+    assert.equal(sameRows([row({ source: "pypi" })], [row({ source: "mirror" })]), false);
+    assert.equal(sameRows([row({ source: "mirror" })], rowsFromAnswer([row({ source: "mirror" })])), true);
+});
+
 // --- approvalPayload: the rows at the sidebar's boundary ---
 
 const { approvalPayload } = await import("../src/approval-key.ts");

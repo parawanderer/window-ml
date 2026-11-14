@@ -19,11 +19,13 @@ const ROW_KEYS = ["name", "version", "filename", "source", "size", "sha256"] as 
 
 /**
  * The card for a verdict. A file without a 64-hex digest, or a PyPI file without a size, refuses the whole card as
- * `malformed` at that package: a row the person cannot check in full is never shown as approvable.
+ * `malformed` at that package: a row the person cannot check in full is never shown as approvable. A PyPI file whose
+ * digest is in `mirrored` is shown as `mirror` and left out of the download total: its bytes are already held.
  * @param v the verdict, from `verdict()`
+ * @param mirrored the digests the mirror holds
  * @returns the card's rows and total, or the refusal
  */
-export function cardFromVerdict(v: Verdict): PkgCard {
+export function cardFromVerdict(v: Verdict, mirrored: ReadonlySet<string> = new Set()): PkgCard {
     if (!v.ok) return { ok: false, reason: v.reason, at: v.at };
     const files: PkgRow[] = [];
     let totalBytes = 0;
@@ -33,6 +35,10 @@ export function cardFromVerdict(v: Verdict): PkgCard {
         if (f.source === "pypi") {
             if (typeof f.size !== "number" || !Number.isSafeInteger(f.size) || f.size < 0) return { ok: false, reason: "malformed", at: f.name };
             size = f.size;
+            if (mirrored.has(f.sha256)) {
+                files.push({ name: f.name, version: f.version, filename: f.filename, source: "mirror", size, sha256: f.sha256 });
+                continue;
+            }
             totalBytes += f.size;
         }
         files.push({ name: f.name, version: f.version, filename: f.filename, source: f.source, size, sha256: f.sha256 });
@@ -83,7 +89,7 @@ export function rowsFromAnswer(x: unknown): PkgRow[] | undefined {
         const name = str(o.name, VERDICT_BOUNDS.name), version = str(o.version, VERSION_MAX), filename = str(o.filename, VERDICT_BOUNDS.filename);
         const sha256 = str(o.sha256, 64), source = o.source, size = o.size;
         if (name === undefined || version === undefined || filename === undefined || sha256 === undefined || !SHA256_RE.test(sha256)) return undefined;
-        if (source !== "lock" && source !== "pypi") return undefined;
+        if (source !== "lock" && source !== "pypi" && source !== "mirror") return undefined;
         if (size !== null && (typeof size !== "number" || !Number.isSafeInteger(size) || size < 0)) return undefined;
         out.push({ name, version, filename, source, size, sha256 });
     }

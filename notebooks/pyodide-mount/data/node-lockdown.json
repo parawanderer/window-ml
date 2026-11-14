@@ -1,0 +1,723 @@
+{
+  "machine": {
+    "cpu": "Apple M5 Pro",
+    "cores": 15,
+    "memGB": 24,
+    "node": "v26.12.1",
+    "os": "Darwin 25.6.0",
+    "pyodide": "pyodide-core 314.0.3 (Python 3.14.0, restricted-mode fork build)",
+    "date": "2026-11-13T22:36:37.245Z"
+  },
+  "caveats": [
+    "The worker is a node:worker_threads Worker and the host a Node main thread: the channel is one postMessage hop plus a SharedArrayBuffer, not worker -> offscreen -> service worker -> wmlhost. Every figure is the sandbox side's floor; the product adds its hops.",
+    "The host answers from the real disk with node:fs in-process, synchronously inside one event-loop turn. wmlhost's native-messaging, JSON and base64 costs are not here.",
+    "Large files are sparse: the host reads zeros from holes without touching a disk, so the fetch figures are memory-copy speed, not I/O speed.",
+    "Cells run through py.runPython (not the product's wrapUserCode harness, which needs numpy/pandas): the cell gate's begin/revoke window is not opened around them.",
+    "The stop latency is stamped Python-side with time.perf_counter() (== performance.now() here, offset calibrated at boot) and host-side with Date-aligned performance.timeOrigin + now."
+  ],
+  "item": "6: under lockdownReadonly",
+  "stop": {
+    "boot": {
+      "clockOff": -0.00035450000723358244,
+      "lockdown": true,
+      "pyVersion": "314.0.3"
+    },
+    "lockdown": true,
+    "sliceMs": 50,
+    "rows": [
+      {
+        "name": "open().read(), blocked at the first lookup",
+        "reps": 25,
+        "notify": false,
+        "outcomes": {
+          "KeyboardInterrupt": 25
+        },
+        "interruptWordAfterHandler": {
+          "0": 25
+        },
+        "nextCellNormal": 25,
+        "finallyOpsCompleted": 0,
+        "stopToHandlerMs": {
+          "n": 25,
+          "min": 11.599,
+          "median": 39.95,
+          "p90": 56.042,
+          "max": 60.28,
+          "mean": 37.027
+        },
+        "stopToJsDetectMs": {
+          "n": 25,
+          "min": 11.53,
+          "median": 39.897,
+          "p90": 55.878,
+          "max": 60.026,
+          "mean": 36.935
+        },
+        "failures": []
+      },
+      {
+        "name": "open().read(), lookup answered, whole-file read blocked",
+        "reps": 25,
+        "notify": false,
+        "outcomes": {
+          "KeyboardInterrupt": 25
+        },
+        "interruptWordAfterHandler": {
+          "0": 25
+        },
+        "nextCellNormal": 25,
+        "finallyOpsCompleted": 0,
+        "stopToHandlerMs": {
+          "n": 25,
+          "min": 2.206,
+          "median": 37.209,
+          "p90": 53.044,
+          "max": 60.061,
+          "mean": 35.923
+        },
+        "stopToJsDetectMs": {
+          "n": 25,
+          "min": 2.117,
+          "median": 37.149,
+          "p90": 52.949,
+          "max": 59.982,
+          "mean": 35.845
+        },
+        "failures": []
+      },
+      {
+        "name": "open().read() of 20 MB, blocked on the 3rd 4 MB chunk",
+        "reps": 25,
+        "notify": false,
+        "outcomes": {
+          "KeyboardInterrupt": 25
+        },
+        "interruptWordAfterHandler": {
+          "0": 25
+        },
+        "nextCellNormal": 25,
+        "finallyOpsCompleted": 0,
+        "stopToHandlerMs": {
+          "n": 25,
+          "min": 4.56,
+          "median": 36.783,
+          "p90": 54.043,
+          "max": 60.102,
+          "mean": 33.736
+        },
+        "stopToJsDetectMs": {
+          "n": 25,
+          "min": 4.457,
+          "median": 36.64,
+          "p90": 53.892,
+          "max": 59.96,
+          "mean": 33.604
+        },
+        "failures": []
+      },
+      {
+        "name": "os.listdir, blocked at readdir",
+        "reps": 25,
+        "notify": false,
+        "outcomes": {
+          "KeyboardInterrupt": 25
+        },
+        "interruptWordAfterHandler": {
+          "0": 25
+        },
+        "nextCellNormal": 25,
+        "finallyOpsCompleted": 0,
+        "stopToHandlerMs": {
+          "n": 25,
+          "min": 0.964,
+          "median": 22.067,
+          "p90": 47.968,
+          "max": 58.461,
+          "mean": 23.986
+        },
+        "stopToJsDetectMs": {
+          "n": 25,
+          "min": 0.929,
+          "median": 21.894,
+          "p90": 47.92,
+          "max": 58.276,
+          "mean": 23.885
+        },
+        "failures": []
+      },
+      {
+        "name": "open().read() in try/finally, blocked; the finally reads a second file (is the flag cleared once delivered?)",
+        "reps": 25,
+        "notify": false,
+        "outcomes": {
+          "KeyboardInterrupt": 25
+        },
+        "interruptWordAfterHandler": {
+          "0": 25
+        },
+        "nextCellNormal": 25,
+        "finallyOpsCompleted": 25,
+        "stopToHandlerMs": {
+          "n": 25,
+          "min": 4.734,
+          "median": 31.409,
+          "p90": 53.666,
+          "max": 60.546,
+          "mean": 30.973
+        },
+        "stopToJsDetectMs": {
+          "n": 25,
+          "min": 3.815,
+          "median": 30.905,
+          "p90": 53.062,
+          "max": 59.979,
+          "mean": 30.381
+        },
+        "failures": []
+      },
+      {
+        "name": "os.stat, blocked at the lookup",
+        "reps": 25,
+        "notify": false,
+        "outcomes": {
+          "KeyboardInterrupt": 25
+        },
+        "interruptWordAfterHandler": {
+          "0": 25
+        },
+        "nextCellNormal": 25,
+        "finallyOpsCompleted": 0,
+        "stopToHandlerMs": {
+          "n": 25,
+          "min": 4.176,
+          "median": 31.975,
+          "p90": 53.731,
+          "max": 56.873,
+          "mean": 33.298
+        },
+        "stopToJsDetectMs": {
+          "n": 25,
+          "min": 4.122,
+          "median": 31.948,
+          "p90": 53.657,
+          "max": 56.764,
+          "mean": 33.24
+        },
+        "failures": []
+      },
+      {
+        "name": "open().read(), blocked at the first lookup",
+        "reps": 25,
+        "notify": true,
+        "outcomes": {
+          "KeyboardInterrupt": 25
+        },
+        "interruptWordAfterHandler": {
+          "0": 25
+        },
+        "nextCellNormal": 25,
+        "finallyOpsCompleted": 0,
+        "stopToHandlerMs": {
+          "n": 25,
+          "min": 0.032,
+          "median": 0.061,
+          "p90": 0.106,
+          "max": 0.139,
+          "mean": 0.071
+        },
+        "stopToJsDetectMs": {
+          "n": 25,
+          "min": 0.014,
+          "median": 0.021,
+          "p90": 0.031,
+          "max": 0.037,
+          "mean": 0.023
+        },
+        "failures": []
+      },
+      {
+        "name": "open().read(), lookup answered, whole-file read blocked",
+        "reps": 25,
+        "notify": true,
+        "outcomes": {
+          "KeyboardInterrupt": 25
+        },
+        "interruptWordAfterHandler": {
+          "0": 25
+        },
+        "nextCellNormal": 25,
+        "finallyOpsCompleted": 0,
+        "stopToHandlerMs": {
+          "n": 25,
+          "min": 0.043,
+          "median": 0.067,
+          "p90": 0.14,
+          "max": 0.198,
+          "mean": 0.086
+        },
+        "stopToJsDetectMs": {
+          "n": 25,
+          "min": 0.013,
+          "median": 0.024,
+          "p90": 0.037,
+          "max": 0.056,
+          "mean": 0.026
+        },
+        "failures": []
+      },
+      {
+        "name": "open().read() of 20 MB, blocked on the 3rd 4 MB chunk",
+        "reps": 25,
+        "notify": true,
+        "outcomes": {
+          "KeyboardInterrupt": 25
+        },
+        "interruptWordAfterHandler": {
+          "0": 25
+        },
+        "nextCellNormal": 25,
+        "finallyOpsCompleted": 0,
+        "stopToHandlerMs": {
+          "n": 25,
+          "min": 0.042,
+          "median": 0.09,
+          "p90": 0.179,
+          "max": 0.657,
+          "mean": 0.115
+        },
+        "stopToJsDetectMs": {
+          "n": 25,
+          "min": 0.011,
+          "median": 0.025,
+          "p90": 0.041,
+          "max": 0.529,
+          "mean": 0.046
+        },
+        "failures": []
+      },
+      {
+        "name": "os.listdir, blocked at readdir",
+        "reps": 25,
+        "notify": true,
+        "outcomes": {
+          "KeyboardInterrupt": 25
+        },
+        "interruptWordAfterHandler": {
+          "0": 25
+        },
+        "nextCellNormal": 25,
+        "finallyOpsCompleted": 0,
+        "stopToHandlerMs": {
+          "n": 25,
+          "min": 0.043,
+          "median": 0.065,
+          "p90": 0.129,
+          "max": 0.145,
+          "mean": 0.076
+        },
+        "stopToJsDetectMs": {
+          "n": 25,
+          "min": 0.016,
+          "median": 0.023,
+          "p90": 0.037,
+          "max": 0.04,
+          "mean": 0.025
+        },
+        "failures": []
+      },
+      {
+        "name": "open().read() in try/finally, blocked; the finally reads a second file (is the flag cleared once delivered?)",
+        "reps": 25,
+        "notify": true,
+        "outcomes": {
+          "KeyboardInterrupt": 25
+        },
+        "interruptWordAfterHandler": {
+          "0": 25
+        },
+        "nextCellNormal": 25,
+        "finallyOpsCompleted": 25,
+        "stopToHandlerMs": {
+          "n": 25,
+          "min": 0.261,
+          "median": 0.375,
+          "p90": 0.646,
+          "max": 0.983,
+          "mean": 0.429
+        },
+        "stopToJsDetectMs": {
+          "n": 25,
+          "min": 0.014,
+          "median": 0.018,
+          "p90": 0.025,
+          "max": 0.041,
+          "mean": 0.02
+        },
+        "failures": []
+      },
+      {
+        "name": "os.stat, blocked at the lookup",
+        "reps": 25,
+        "notify": true,
+        "outcomes": {
+          "KeyboardInterrupt": 25
+        },
+        "interruptWordAfterHandler": {
+          "0": 25
+        },
+        "nextCellNormal": 25,
+        "finallyOpsCompleted": 0,
+        "stopToHandlerMs": {
+          "n": 25,
+          "min": 0.039,
+          "median": 0.056,
+          "p90": 0.095,
+          "max": 0.143,
+          "mean": 0.067
+        },
+        "stopToJsDetectMs": {
+          "n": 25,
+          "min": 0.016,
+          "median": 0.022,
+          "p90": 0.032,
+          "max": 0.044,
+          "mean": 0.024
+        },
+        "failures": []
+      }
+    ]
+  },
+  "late": {
+    "reps": 25,
+    "ok": 25,
+    "bad": []
+  },
+  "cost": {
+    "boot": {
+      "clockOff": -0.0003544999999576248,
+      "lockdown": true,
+      "pyVersion": "314.0.3"
+    },
+    "lockdown": true,
+    "n": 500,
+    "rawSabRoundTripMs": {
+      "n": 2000,
+      "min": 0.004,
+      "median": 0.008,
+      "p90": 0.01,
+      "max": 0.151,
+      "mean": 0.008
+    },
+    "perOpMs": {
+      "stat existing, mount (getattr)": {
+        "n": 500,
+        "min": 0.012,
+        "median": 0.016,
+        "p90": 0.025,
+        "max": 0.178,
+        "mean": 0.018
+      },
+      "stat existing, MEMFS": {
+        "n": 500,
+        "min": 0.002,
+        "median": 0.002,
+        "p90": 0.003,
+        "max": 0.071,
+        "mean": 0.003
+      },
+      "stat missing, mount (lookup miss)": {
+        "n": 500,
+        "min": 0.013,
+        "median": 0.016,
+        "p90": 0.018,
+        "max": 0.067,
+        "mean": 0.016
+      },
+      "stat missing, MEMFS": {
+        "n": 500,
+        "min": 0.002,
+        "median": 0.002,
+        "p90": 0.002,
+        "max": 0.008,
+        "mean": 0.002
+      },
+      "open+read+close 4 KB text, mount": {
+        "n": 500,
+        "min": 0.04,
+        "median": 0.048,
+        "p90": 0.06,
+        "max": 0.401,
+        "mean": 0.052
+      },
+      "open+read+close 4 KB text, MEMFS": {
+        "n": 500,
+        "min": 0.007,
+        "median": 0.008,
+        "p90": 0.009,
+        "max": 0.078,
+        "mean": 0.009
+      },
+      "listdir 40 entries, mount": {
+        "n": 500,
+        "min": 0.044,
+        "median": 0.051,
+        "p90": 0.061,
+        "max": 0.681,
+        "mean": 0.054
+      },
+      "listdir 40 entries, MEMFS": {
+        "n": 500,
+        "min": 0.007,
+        "median": 0.007,
+        "p90": 0.011,
+        "max": 0.047,
+        "mean": 0.008
+      },
+      "scandir 40 entries + is_dir, mount, no listing cache": {
+        "n": 100,
+        "min": 0.054,
+        "median": 0.061,
+        "p90": 0.076,
+        "max": 0.174,
+        "mean": 0.065
+      },
+      "scandir 40 entries + is_dir, MEMFS": {
+        "n": 500,
+        "min": 0.009,
+        "median": 0.011,
+        "p90": 0.013,
+        "max": 0.04,
+        "mean": 0.012
+      }
+    },
+    "writeClose4KB": {
+      "ms": {
+        "n": 100,
+        "min": 0.138,
+        "median": 0.157,
+        "p90": 0.19,
+        "max": 0.416,
+        "mean": 0.168
+      },
+      "landedBytes": 4096
+    },
+    "perOpRequests": {
+      "stat existing": {
+        "stat": 3
+      },
+      "stat missing x2": {
+        "stat": 2
+      },
+      "open+read+close x2": {
+        "stat": 3,
+        "read": 2
+      },
+      "listdir x2 (40 entries)": {
+        "stat": 41,
+        "readdir": 2
+      }
+    },
+    "withHostDelay": {
+      "1 ms host delay, stat": {
+        "n": 30,
+        "min": 1.296,
+        "median": 1.35,
+        "p90": 1.376,
+        "max": 1.417,
+        "mean": 1.345
+      },
+      "5 ms host delay, stat": {
+        "n": 30,
+        "min": 5.098,
+        "median": 6.351,
+        "p90": 6.4,
+        "max": 12.718,
+        "mean": 6.423
+      }
+    }
+  },
+  "reach": {
+    "boot": {
+      "clockOff": -0.0003125000002910383,
+      "lockdown": true,
+      "pyVersion": "314.0.3"
+    },
+    "probes": {
+      "bridge refused (the readonly default)": {
+        "import js: globals present": "RAISED ImportError: js is refused in python_exec: a cell may not reach the browser's JavaScript (js.postMessage)",
+        "js.Atomics / new SharedArrayBuffer": "RAISED ImportError: js is refused in python_exec: a cell may not reach the browser's JavaScript (js.Atomics)",
+        "js.globalThis lowercase and __ names": "RAISED ImportError: js is refused in python_exec: a cell may not reach the browser's JavaScript (js.Object)",
+        "Atomics on a fresh SAB": "RAISED ImportError: js is refused in python_exec: a cell may not reach the browser's JavaScript (js.Atomics)",
+        "import pyodide_js: names": [
+          "_api",
+          "_js_type_flags",
+          "_sig",
+          "as_object_map",
+          "as_py_json",
+          "bind_class",
+          "bind_sig",
+          "constructor",
+          "hasOwnProperty",
+          "isPrototypeOf",
+          "js_id",
+          "object_entries",
+          "object_keys",
+          "object_values",
+          "propertyIsEnumerable",
+          "toLocaleString",
+          "toString",
+          "to_py",
+          "to_weakref",
+          "typeof",
+          "valueOf"
+        ],
+        "pyodide_js._module": "RAISED AttributeError: _module",
+        "pyodide_js.FS": "RAISED AttributeError: FS",
+        "pyodide.ffi names": [],
+        "import _pyodide_core": [],
+        "gc.get_objects: Js* types": [
+          "Js2PyConverter",
+          "JsFinder",
+          "JsFuncSignature",
+          "JsLoader",
+          "JsNull",
+          "Py2JsConverter",
+          "_JsProxyMetaClass"
+        ],
+        "sys.modules with js/pyodide/ffi": [
+          "_json",
+          "_pyodide",
+          "_pyodide._base",
+          "_pyodide._core_docs",
+          "_pyodide._future_helper",
+          "_pyodide._importhook",
+          "_pyodide.docs_argspec",
+          "_pyodide.docstring",
+          "_pyodide.jsbind",
+          "_pyodide_core",
+          "js",
+          "json",
+          "json.decoder",
+          "json.encoder",
+          "json.scanner",
+          "pyodide",
+          "pyodide._package_loader",
+          "pyodide._state",
+          "pyodide.code",
+          "pyodide.common",
+          "pyodide.ffi",
+          "pyodide.ffi.wrappers",
+          "pyodide.webloop",
+          "pyodide_js"
+        ],
+        "os /proc": [
+          true,
+          [
+            "self"
+          ]
+        ]
+      },
+      "bridge lifted": {
+        "import js: globals present": [
+          "Atomics",
+          "SharedArrayBuffer"
+        ],
+        "js.Atomics / new SharedArrayBuffer": "can build a NEW SharedArrayBuffer: 8",
+        "js.globalThis lowercase and __ names": [
+          "atob",
+          "btoa",
+          "clearInterval",
+          "clearTimeout",
+          "console",
+          "crypto",
+          "decodeURI",
+          "decodeURIComponent",
+          "encodeURI",
+          "encodeURIComponent",
+          "escape",
+          "globalThis",
+          "isFinite",
+          "isNaN",
+          "parseFloat",
+          "parseInt",
+          "performance",
+          "queueMicrotask",
+          "setInterval",
+          "setTimeout",
+          "structuredClone",
+          "undefined",
+          "unescape"
+        ],
+        "Atomics on a fresh SAB": "0",
+        "import pyodide_js: names": [
+          "_api",
+          "_js_type_flags",
+          "_sig",
+          "as_object_map",
+          "as_py_json",
+          "bind_class",
+          "bind_sig",
+          "constructor",
+          "hasOwnProperty",
+          "isPrototypeOf",
+          "js_id",
+          "object_entries",
+          "object_keys",
+          "object_values",
+          "propertyIsEnumerable",
+          "toLocaleString",
+          "toString",
+          "to_py",
+          "to_weakref",
+          "typeof",
+          "valueOf"
+        ],
+        "pyodide_js._module": "RAISED AttributeError: _module",
+        "pyodide_js.FS": "RAISED AttributeError: FS",
+        "pyodide.ffi names": [],
+        "import _pyodide_core": [],
+        "gc.get_objects: Js* types": [
+          "Js2PyConverter",
+          "JsFinder",
+          "JsFuncSignature",
+          "JsLoader",
+          "JsNull",
+          "Py2JsConverter",
+          "_JsProxyMetaClass"
+        ],
+        "sys.modules with js/pyodide/ffi": [
+          "_json",
+          "_pyodide",
+          "_pyodide._base",
+          "_pyodide._core_docs",
+          "_pyodide._future_helper",
+          "_pyodide._importhook",
+          "_pyodide.docs_argspec",
+          "_pyodide.docstring",
+          "_pyodide.jsbind",
+          "_pyodide_core",
+          "js",
+          "json",
+          "json.decoder",
+          "json.encoder",
+          "json.scanner",
+          "pyodide",
+          "pyodide._package_loader",
+          "pyodide._state",
+          "pyodide.code",
+          "pyodide.common",
+          "pyodide.ffi",
+          "pyodide.ffi.wrappers",
+          "pyodide.webloop",
+          "pyodide_js"
+        ],
+        "os /proc": [
+          true,
+          [
+            "self"
+          ]
+        ]
+      }
+    }
+  }
+}

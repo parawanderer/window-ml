@@ -194,12 +194,138 @@ is kept. Where the mirror lives (OPFS or IndexedDB) and how it meets the state r
 PR, after `docs/dev/state.md`. This slice is e3's red-team pass too: redirects, a body larger than its stated size, and
 a second request for the same hash.
 
+AS BUILT (slice 3), with the rulings of 2026-11-12 (the coordinator; the one-card ruling confirmed by Shane the same day):
+
+- ONE card, with the index read before approval. `pypi.org/pypi/<name>/json` is read on python_install's precheck
+  inside a run, never on a page's say-so or from the popup or Settings. Bounded against names used as a channel to the
+  network: a name that is not a PEP 508 project name, or longer than `VERDICT_BOUNDS.name`, is refused with no request
+  (`lookupName`); a lock name resolves to the lock with no request; at most `INDEX_BOUNDS.requests` per call and
+  `INDEX_BOUNDS.perRun` per run (refusal `lookup-cap`; the count is in worker memory, so an eviction after ~30 s idle
+  resets it, which a loop of calls cannot cause: ruled to stand); every request is a run-log record `python/pkg-index` naming the
+  URL. The verdict's view stays synchronous: `resolveVerdict` (`pkg-index.ts`) reruns it over what has been fetched
+  until it asks for nothing new.
+- The core's tags, marker environment and Python are `core-env.gen.ts` (generated at build, gitignored), written by
+  `scripts/gen-core-env.mjs` from the oracle's `env.json`, so one pin bump regenerates both; a test fails when it
+  names another core than `tools/pyodide-dist.json`.
+- A file is kept from an answer only with a 64-hex sha256, a positive integer size and a URL on
+  `files.pythonhosted.org` (https, default port, no credentials, query or fragment) ending in its own filename. The
+  URLs stay with the frozen check, keyed by digest and filename, and are never on the card or in the answer.
+- The mirror is IndexedDB `ml-pkg-mirror` (store `wheels`, by sha256), declared as `packages.mirror`: not
+  `ml-values`, whose budget evicts per session, while approved wheels are global. It holds approved BYTES, not an
+  approved install: a held wheel still goes through the card, as `source: "mirror"`, left out of the download total.
+  The lock is not mirrored: it ships in the extension (`dist/pyodide`) and is never a network read.
+- After approval (`fetchApproved`, `ensureWheel` in `sw-pkg-mirror.ts`): no credentials, no redirect followed; the body
+  is counted as it streams and dropped past the card's size; its sha256 is computed over those bytes and must equal the
+  card's, as must the size, before anything is stored. Two requests for one digest share one download; a held digest is
+  never fetched. The tool reports what was downloaded and that nothing was installed (slice 4).
+- New refusals: `index-error` (the index could not be read) and `lookup-cap`.
+- Not yet: a release other than the latest is looked up by its own answer only when the request names it, so a lock
+  package replaced by an older release still gives `no-metadata`; clearing the mirror is a later Settings row.
+
 **Slice 4, install and rollback.** A readonly worker loads its packages before the lockdown (`python-worker.ts`), so
 an install cannot happen inside a locked-down worker. Where the approved set is loaded (a fresh worker that loads it
 before the lockdown, as the start-up set is loaded now, or something else) is this slice's design question, and it
 reports back before building. A failed import after install rolls back, and nothing is recorded as installed. The
 platform scan's finding is the reason text. An import that asks for an undeclared package raises a second card for
 that package by name.
+
+**Slice 4: the design, PROPOSED 2026-11-13 for the coordinator's ruling; no `src/` change until it is ruled.** Measured
+with `notebooks/python-packages/probe-install.mjs` (Node, the built restricted core 314.0.3, the lock's own wheels,
+nothing fetched). [M] measured, [R] read, [I] inferred.
+
+What the design rests on:
+
+- A wheel installs from its BYTES: `unpackArchive(bytes, "wheel")`, then `import`, with no `loadPackage` and no `fetch`,
+  for a pure wheel (cycler) and a native one (kiwisolver, solving a constraint) [M].
+- Under the lockdown: unpacked before `lockdownReadonly` or after it, both import and run in a hardened cell; unpacking
+  after it took 2 ms [M]. So a locked worker can be given a package from JS without unlocking anything.
+- A failed import leaves the files on disk though `sys.modules` is clean (matplotlib without `packaging`:
+  `ModuleNotFoundError`, `e.name == "packaging"`) [M], and nothing unloads a loaded shared library or undoes an import's
+  side effects (READONLY_LIBRARY_MANIFEST.md, ruling D) [R]. A rollback inside the worker that tried the import is
+  therefore not clean.
+- `top_level.txt` is optional: matplotlib's wheel has none, and its RECORD names `matplotlib`, `mpl_toolkits` and
+  `pylab.py` [M]. The modules to import come from the wheel's file list.
+- A fresh readonly worker with the start-up set boots in 3.5 to 4.3 s and the process holds about 1.25 GB [M, Node, not
+  a browser worker].
+
+The design:
+
+1. **Where.** An install belongs to ONE RUN and goes into that run's readonly worker (`run:<id>`). Not the shared `full`
+   worker, which serves every run's full cells, so an install there would reach other runs; not a page's or the bench's
+   (`own`). The tool's result says the packages are importable in this run's readonly cells; a per-run `full` worker is
+   left open.
+2. **The test runs in a CANDIDATE, never in the live worker.** After the approved files are downloaded and checked
+   (slice 3), the offscreen document spawns a candidate readonly worker. It boots the core and the start-up set, loads
+   the closure's lock packages with `loadPackage` (before the lockdown, as now), unpacks the approved PyPI wheels from
+   the mirror's bytes, runs the platform scan over the unpacked sources, locks down, and imports each distribution's
+   top-level modules in a hardened cell. A PyPI package's code never runs in an unlocked realm. The candidate has a
+   deadline (proposed: 60 s from spawn) and stops on the run's Stop.
+3. **Commit.** When the candidate passes, the call's rows are appended to the run's install record and the candidate is
+   terminated. The live worker changes only at its next cell: every `python_exec` cell of the run carries the run's
+   install record, and the offscreen document unpacks what the worker lacks, after its lockdown and before the cell
+   runs. A PyPI wheel comes from the mirror, re-hashed (`mirroredWheel`), and a lock package from `dist/pyodide`,
+   checked against the lock's sha256. The run's namespace is kept. A worker that was reaped, killed or respawned gets
+   the set the same way at its first cell. When that unpack fails (the mirror's bytes no longer match their sha256, or
+   `unpackArchive` throws), the cell fails before any of it runs, and its result names the package and why; the install
+   record is unchanged, so the next cell tries again; and a mismatch is reported as a defect of the mirror (slice 3),
+   not of the install. Rejected: swapping the candidate in, which would lose the namespace at every install; and testing
+   in the live worker, which on failure keeps the files and the side effects (measured above), so a clean rollback would
+   need a restart and lose the namespace anyway.
+4. **Rollback is discarding the candidate.** What it RESTORES: nothing needs restoring, by construction. The live
+   worker, its namespace, its site-packages and the run's install record are as they were before the call, because none
+   of them is touched before the candidate passes. What it REFUSES TO TOUCH: the mirror's bytes (approved bytes stay;
+   clearing them is the later Settings row of slice 3); the card and the answer in the transcript; the run-log records;
+   packages earlier calls of the run installed; every other run's worker and record; the shared `full` worker;
+   `dist/pyodide` and the lock; the policy store. An install is all or nothing per call: no part of a failed call's set
+   is recorded. A call FAILS on an import that raises, on the interpreter dying (a fatal wasm trap, as `PIL._imagingtk`
+   gives; a memory kill; a worker crash), on the deadline, on Stop, and on a check before unpack (5). Its result: "Not
+   installed: importing `<module>` failed: `<last line>`.", then the scan's note when it names that module, then
+   "Nothing was installed; the downloaded files stay in the mirror."
+5. **Checks before unpack**, in JS, on bytes already checked against the card. Every archive entry has a relative path
+   with no `..`, is a regular file (no symlink), and lies under one of the wheel's top-level names, its `.dist-info`, or
+   `.data/purelib` or `.data/platlib` (any other `.data/` entry refuses). No `.pth`, no `sitecustomize`, no
+   `usercustomize`. RECORD lists exactly the entries. The uncompressed total is bounded (proposed: 8 times the file and
+   512 MB per call). No top-level name may be one the standard library, a lock package's `imports`, the dialect
+   (`DIALECT_MODULES`), the harness (`_ml_*`), `pyodide`, `pyodide_js`, `js` or `micropip` already provides, or one
+   another distribution in the run's record took, since two files would write one path. New refusals: `bad-archive`,
+   `name-collision`, `too-large`.
+6. **An undeclared dependency.** When the candidate's import raises `ModuleNotFoundError` naming a module no file of the
+   closure provides, the call fails as in (4) and its result names that module: "importing `<module>` needs `<name>`,
+   which none of the approved files provide. Ask python_install for the package that provides it; the files approved
+   here stay in the mirror and show as `mirror` on the next card." DEPARTURE for ruling: the brief says the import
+   raises the second card itself; this has the model raise it with a second call, because a tool call has one gate [I].
+7. **The platform scan** (the notebook's `scan.py`): harness code, run in the candidate before the lockdown over the
+   unpacked `.py` sources, which it reads and never imports. Its two core tables are generated into a `*.gen.ts` at
+   build, as ruling (3) of 2026-11-09 has it. On success its finding is a note in the result and the run log; on failure
+   it is the reason text when it names the failing module.
+8. **Records.** The run's install record (rows of `name`, `version`, `source`, `sha256`, `filename`) is declared with
+   `defineState`, scope run, audience model, so `ml.current.env` lists what the run installed. Where it persists is the
+   PR's to decide after `docs/dev/state.md`; it must survive a worker eviction, since the next cell carries it. A
+   run-log record `python/pkg-install` (`ok`, or the failure's reason) with the files and the time. The offscreen
+   document honours a cell's install record only on a run's own cell (the `ownLive` check in `offscreen.ts`), never on
+   anything a page posts.
+9. **Offered.** `OFFER_PYTHON_INSTALL` flips in this slice, and the tool's description adds that the packages are
+   importable in this run's readonly cells.
+10. **Red team, e3, with slice 3's file.** A hostile wheel: an entry outside the tree, a symlink, a `.pth`, a top-level
+    `numpy`, `json` or `_ml_harness`, a RECORD that lies, an archive that inflates past the bound. Import-time code in
+    the candidate reaching the network, `js` or `postMessage`. An import that never returns. A fatal trap. A page
+    posting a cell with an install record.
+
+Not measured: any of this in a browser worker, including two workers at once against the worker's 2.6 GB heap death; a
+lock package of the shared-library type unpacked after the lockdown; how `unpackArchive` treats `.data/`; a candidate's
+boot on a slow machine against the deadline.
+
+Questions for the ruling: (Q1) the run's readonly worker only, with the `full` worker left open; (Q2) the second ask
+raised by the model (the departure in 6); (Q3) the bounds: 60 s, 8 times and 512 MB; (Q4) an install per run, not per
+browser: a later run asks again and its card shows the held files as `mirror`, with no download, which is slice 3's
+"approved bytes, not an approved install".
+
+RULED 2026-11-13 (the coordinator, on #1864 at 2d3c9f23): yes to all four. (Q1) The run's readonly worker only; the
+`full` worker stays open. (Q2) The model raises the second ask with a second call, one gate per tool call, the result
+naming the exact module and that the approved files stay in the mirror. (Q3) 60 s from spawn, 8 times the file and 512
+MB per call, on one condition: before any `src/` change, the slice 4 code PR measures two workers at once in a browser
+(the live one and a candidate) against the worker's heap death, and if they cannot coexist the design comes back to the
+coordinator. (Q4) Per run, not per browser.
 
 **Slice 5, policy-store wiring.** The four facts (`name`, `version`, `source`, `sha256`) reach the policy realm as a
 call's facts. A policy can then allow or deny an install where the card would otherwise ask, and the policy page
