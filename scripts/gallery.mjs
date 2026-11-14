@@ -25,6 +25,7 @@ import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { writeBuildInfo } from "./gen-build-info.mjs";
+import { writePkgShipped } from "./gen-pkg-shipped.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 /** The generator, loaded only by the commands that read the TypeScript program (not `remind`, which runs on every commit). */
@@ -59,6 +60,7 @@ const stale = () => !existsSync(path.join(OUT, "gallery.js")) || Math.max(...SOU
 async function build() {
     const t0 = Date.now();
     writeBuildInfo();
+    writePkgShipped();
     const manifest = (await gen()).galleryManifest();
     const files = [...new Set(manifest.components.map((c) => c.file))];
     const imp = (f) => `() => import(${JSON.stringify(path.join(ROOT, f))})`;

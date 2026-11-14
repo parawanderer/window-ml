@@ -10,6 +10,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, r
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeBuildInfo } from "./gen-build-info.mjs";
+import { writePkgShipped } from "./gen-pkg-shipped.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -45,7 +46,9 @@ export async function buildWeb({ outdir = "dist-web", appdir = outdir === "dist-
     // The build stamp is GENERATED and gitignored, and this build needs it: the exports carry a run's provenance.
     // `build.mjs` writes it before calling here, but this script is also run alone (the mobile CI job does), and a
     // fresh checkout then has no such file — which fails as an unresolved import rather than as "run the generator".
+    // The same holds for pkg-shipped.gen.ts, which the session views reach through pkg-card.ts.
     writeBuildInfo();
+    writePkgShipped();
     const out = path.resolve(ROOT, outdir);
     const stage = `${out}.stage`;
     rmSync(stage, { recursive: true, force: true });
