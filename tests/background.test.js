@@ -4601,6 +4601,43 @@ test("PYTHON_EXEC: the bench's keep-state run, reset and completion all reach th
     assert.equal(runs[3].complete.bench, "readonly", "an unknown namespace name is dropped, never forwarded");
 });
 
+// --- OPEN_CHAT_PAGE: the chat page opened or focused at a view, for extension pages only ---
+
+const CHAT = "chrome-extension://test/chat.html";
+/** The HUD card's sender: our iframe in a page tab, so `tab` is set and `url` is ours. */
+const CARD_SENDER = { url: "chrome-extension://test/sidebar.html", tab: { id: 9 }, frameId: 3 };
+
+test("OPEN_CHAT_PAGE: with no chat page open, opens one at the address's hash; with none, at the page itself", async () => {
+    const bg = loadBackground({ config: baseConfig() });
+    assert.deepEqual(await bg.send({ type: "OPEN_CHAT_PAGE", payload: { address: "setting/shellEnabled" } }, CARD_SENDER), { data: true });
+    assert.deepEqual(await bg.send({ type: "OPEN_CHAT_PAGE", payload: { address: "settings/extension/backup" } }, { url: "chrome-extension://test/popup.html" }), { data: true });
+    assert.deepEqual(await bg.send({ type: "OPEN_CHAT_PAGE", payload: {} }, { url: "chrome-extension://test/popup.html" }), { data: true });
+    assert.deepEqual(bg.tabsCreated.map((t) => t.url), [`${CHAT}#/setting/shellEnabled`, `${CHAT}#/settings/extension/backup`, CHAT]);
+});
+
+test("OPEN_CHAT_PAGE: an open chat page, its route in the hash or not, is focused and sent to the hash in place, never opened twice", async () => {
+    const bg = loadBackground({ config: baseConfig(), extensionTabs: [
+        { tabId: 5, windowId: 2, documentUrl: "chrome-extension://test/sidebar.html" },
+        { tabId: 7, windowId: 3, documentUrl: `${CHAT}#/s/local:abc` },
+    ] });
+    assert.deepEqual(await bg.send({ type: "OPEN_CHAT_PAGE", payload: { address: "settings/extension/advanced/shell" } }, CARD_SENDER), { data: true });
+    assert.deepEqual(await bg.send({ type: "OPEN_CHAT_PAGE", payload: {} }, { url: "chrome-extension://test/popup.html" }), { data: true });
+    assert.equal(bg.tabsCreated.length, 0, "no second chat page");
+    assert.deepEqual(bg.tabsUpdated, [[7, { active: true, url: `${CHAT}#/settings/extension/advanced/shell` }], [7, { active: true }]],
+        "a hash-only change, so the page is not reloaded; no address leaves its route as it is");
+    assert.deepEqual(bg.windowsUpdated, [[3, { focused: true }], [3, { focused: true }]], "its window is brought forward");
+});
+
+test("OPEN_CHAT_PAGE: refused from a page's content script, and for an address a link does not resolve", async () => {
+    const bg = loadBackground({ config: baseConfig() });
+    const page = { url: "https://example.com/", origin: "https://example.com", tab: { id: 9, url: "https://example.com/" }, frameId: 0 };
+    assert.deepEqual(await bg.send({ type: "OPEN_CHAT_PAGE", payload: { address: "setting/shellEnabled" } }, page), { error: "refused" });
+    for (const address of ["setting/nope", "setting/ocrNumCtx", "s/local:abc", "search", "settings/extension", "https://evil.example/",
+        "../popup.html", "setting/apiKey?reveal=1", "setting/apiKey#x", "settings//extension/models", 42, null, ["setting/apiKey"]])
+        assert.deepEqual(await bg.send({ type: "OPEN_CHAT_PAGE", payload: { address } }, CARD_SENDER), { error: "refused" }, String(address));
+    assert.equal(bg.tabsCreated.length + bg.tabsUpdated.length, 0, "nothing opened or focused");
+});
+
 // --- the bench's Stop: PYTHON_INTERRUPT, for extension pages only ---
 
 test("SECURITY (PYTHON_INTERRUPT): a content script is refused and the offscreen document is never asked", async () => {

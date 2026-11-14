@@ -21,7 +21,7 @@ import { detectGroundingModel, generatesText, producesEmbeddings } from "../../c
 import { PY_PACKAGES } from "../../python/python-env";
 import {
     config, models, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes,
-    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, CODE_THEME_KEY, CODE_THEME_VSCODE_KEY, CODE_THEME_UI_KEY, codeTheme, codeThemeCustom, codeThemeUi, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, modelKinds, embedDims, view } from "../store";
+    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, CODE_THEME_KEY, CODE_THEME_VSCODE_KEY, CODE_THEME_UI_KEY, codeTheme, codeThemeCustom, codeThemeUi, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, modelKinds, embedDims, view, markReturn } from "../store";
 import { truncate } from "../format";
 import { ToolDefsView } from "../transcript/agent-detail";   // the SAME viewer an agent run uses for its local toolset
 import { applyTheme, applyFont, applyCodePrefs, panelThemeActive } from "../prefs";
@@ -35,7 +35,7 @@ import { ManifestsSectionBody } from "./manifests-section";
 import { LibrariesSectionBody } from "./libraries-section";
 import { RequestRows, answerRequest, useWaitingRequests } from "./requests-section";
 import { Lbl } from "./settings-label";
-import type { PanelRoute } from "../links";
+import type { PanelRoute } from "../../link-address";
 
 /** The chart-window lengths the picker offers by name. The scrub strip can set others by drag, which is
  *  why the select needs to know which values it already has an option for. */
@@ -703,11 +703,12 @@ function markRow(el: Element): void {
 
 /**
  * Open the panel view a `window-ml:` link names (links.ts): Settings, at its tab and section, scrolled to the
- * setting's row or the Backup block.
+ * setting's row or the Backup block. The session the link was clicked in is where `‹` returns, as from the gear.
  * @param r the resolved view
  */
 export function openPanelRoute(r: PanelRoute): void {
     showSettingsSection(r.tab, r.section, r.setting ? { setting: r.setting } : r.target);
+    markReturn();
     view.value = { name: "settings" };
 }
 
