@@ -1442,8 +1442,57 @@ html[data-calm] .appr-deny-wrap { border-radius: 999px; color: var(--fg-dim); }
 .astep-approve .ask-facts dt svg, .astep-ask-done .ask-facts dt svg { width: 12px; height: 12px; color: var(--notice); }
 .astep-approve .ask-facts dd, .astep-ask-done .ask-facts dd { margin: 0; color: var(--fg); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
 .astep-approve .ask-facts .warn dd, .astep-ask-done .ask-facts .warn dd { color: var(--notice); }
-/* An answered nested ask: one line under its step, and once an allowed call ran, what it reported (its own size: the
-   line is already small). */
+/* A step's answered ml.sh calls (sh-calls.tsx): a footer that says how many and how they went, opening to a row per call,
+   each opening to the command and every fact. Both levels are the panel's one Disclosure. */
+.shcalls { margin: 6px 0 4px; font-size: 0.86em; }
+.shcalls .disc-head, .shc-entry .disc-head { width: 100%; text-align: left; }
+/* The footer's name, "ml.sh", before its count. */
+.shc-head { font-weight: 600; color: var(--fg-dim); }
+/* How many calls the footer holds; it ticks when one joins. */
+.shc-n { margin-left: 6px; font-weight: 400; color: var(--fg-faint); }
+.shcalls > .disc > .disc-headrow .disc-note { color: var(--fg-faint); display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* "N to check" on the footer: some call's facts warn, said without opening it. */
+.shc-warn { display: inline-flex; align-items: center; gap: 4px; color: var(--notice); }
+.shc-warn svg { width: 12px; height: 12px; }
+/* The footer's open body: one row per call, indented under the footer's chevron. */
+.shc-list { display: flex; flex-direction: column; gap: 2px; padding: 4px 0 2px 14px; }
+/* One call in the footer: its row, and its body once opened. */
+.shc-entry .disc-label { flex: 1; min-width: 0; }
+/* A call's row: status dot, program, the start of what it ran, how it went, how long. */
+.shc-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.shc-row .dot { flex: none; }
+/* The program a call ran, in bold mono, on its row. */
+.shc-prog { flex: none; font: 600 1em ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg); }
+/* The start of what a call ran (its arguments, or a script's first line), one ellipsized line on its row. */
+.shc-prev { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-faint); font: 0.95em ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* How a call went, in words ("allowed after 3 s", "ran without asking"), on its row; a denial is red. */
+.shc-said { flex: none; color: var(--fg-dim); }
+.shc-row.denied .shc-said { color: var(--err); }
+/* How long a call took, on its row. */
+.shc-ms { flex: none; color: var(--fg-faint); font-style: italic; }
+/* What an opened call holds: the command, its facts and the raw-argv toggle, indented under its dot. */
+.shc-body { display: flex; flex-direction: column; gap: 8px; padding: 6px 0 8px 22px; }
+/* The person's note on a denial, or why an ask ended without them, in an opened call. */
+.shc-note { color: var(--fg-dim); font-style: italic; }
+/* "run as bash -c …" under a script: what the script was handed to, since the code above shows only its lines. */
+.shc-via { color: var(--fg-faint); }
+.shc-via code { font: inherit; color: var(--fg-dim); }
+/* A call's facts as a grid (what ran, where, under which sandbox, what it reported), a warning's value in the notice colour. */
+.shc-facts { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; }
+.shc-facts > div { display: contents; }
+.shc-facts dt { color: var(--fg-dim); display: flex; align-items: center; gap: 4px; }
+.shc-facts dt svg { width: 12px; height: 12px; color: var(--notice); }
+.shc-facts dd { margin: 0; color: var(--fg); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.shc-facts .warn dd { color: var(--notice); }
+/* A fact that explains itself on hover: the dotted underline says so, and the tip is the panel's own. */
+.ask-facts dd.has-tip { cursor: help; text-decoration: underline dotted; text-decoration-color: color-mix(in srgb, currentColor 45%, transparent); text-underline-offset: 3px; }
+.ask-facts dd.has-tip:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+/* The command an ask is about, above its facts: a card's copy button is in the corner, as on the host installer's line. */
+.ask-cmd { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 8px; font-size: 0.86em; }
+.ask-cmd .shc-via { color: var(--fg-faint); }
+.ask-cmd .shc-via code { font: inherit; color: var(--fg-dim); }
+/* The "raw argv" / "command" toggle at the foot of an opened call: the argv exactly as the host got it. */
+.shc-raw { align-self: flex-start; }
 .astep-ask-done { font-size: 0.8em; color: var(--fg-dim); margin: 2px 0 4px; overflow-wrap: anywhere; }
 .astep-ask-done .ask-facts { font-size: 1em; margin: 2px 0 0 12px; }
 .astep-ask-done code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg); }

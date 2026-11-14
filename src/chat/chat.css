@@ -1123,7 +1123,8 @@ button.chat-page-go:hover { color: var(--fg); }
    the stream landing as a block. The component paces them and keeps each fade going across redraws by its delay;
    this says how long one takes. Opacity only: a word that moved as it arrived would make the line it is on shimmer. */
 .chat.calm .asst-body { --word-fade-ms: 380; }
-.chat.calm .asst-body .w-in { animation: chat-word-in calc(var(--word-fade-ms) * 1ms) cubic-bezier(.3, 0, .2, 1) backwards; }
+/* A code span or block, a quote or a table (`b-in`) arrives with its first word, as the words do (`w-in`): its box is not drawn ahead of the text (streaming-md.tsx). */
+.chat.calm .asst-body .w-in, .chat.calm .asst-body .b-in { animation: chat-word-in calc(var(--word-fade-ms) * 1ms) cubic-bezier(.3, 0, .2, 1) backwards; }
 @keyframes chat-word-in { from { opacity: 0; } }
 @keyframes chat-asst-shrink { from { height: auto; opacity: 1; } to { height: 1lh; opacity: 0; } }
 @keyframes chat-asst-grow { from { height: 1lh; opacity: 0; } to { height: auto; opacity: 1; } }
@@ -2226,6 +2227,14 @@ button.chat-page-go:hover { color: var(--fg); }
    moves and the only evidence is a number changing — which is the pop. `bumped` is set by the component only
    when the tally grew (step-streak.tsx), never on the row's first paint. */
 .chat.calm .astreak-n.bumped { animation: chat-streak-bump .28s cubic-bezier(.2, .8, .2, 1); }
+/* THE ml.sh FOOTER: its count ticks as the streak's does when a call joins it, and the card you just answered eases away
+   (height, then nothing) over the same beat, so the call visibly goes into the footer instead of vanishing. */
+.chat.calm .shc-n.bumped { display: inline-block; animation: chat-streak-bump .28s cubic-bezier(.2, .8, .2, 1); }
+.chat.calm .astep-approve.ask.leaving { overflow: hidden; pointer-events: none; animation: chat-ask-leave .26s cubic-bezier(.4, 0, .2, 1) forwards; }
+@keyframes chat-ask-leave {
+    from { opacity: 1; max-height: 640px; }
+    to { opacity: 0; max-height: 0; margin-top: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; }
+}
 @keyframes chat-streak-bump {
     0% { transform: scale(1); }
     40% { transform: scale(1.14); }
@@ -2256,5 +2265,6 @@ button.chat-page-go:hover { color: var(--fg); }
     .chat.calm .astreak.grouped > .astreak-head,
     .chat.calm .astreak.forming > .astreak-head,
     .chat.calm .astreak.refolding, .chat.calm .astreak.refolding > .astreak-head,
-    .chat.calm .astreak-n.bumped { animation: none; }
+    .chat.calm .astreak-n.bumped, .chat.calm .shc-n.bumped { animation: none; }
+    .chat.calm .astep-approve.ask.leaving { animation: none; display: none; }
 }
