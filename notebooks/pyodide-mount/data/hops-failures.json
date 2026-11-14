@@ -1,0 +1,12 @@
+{
+  "machine": {
+    "cpu": "Apple M5 Pro",
+    "node": "v26.12.1",
+    "os": "Darwin 25.6.0",
+    "wmlhost": "/Users/sb/git/window-ml-host-async/target/release/wmlhost",
+    "quick": false,
+    "chromium": "151.0.7922.34",
+    "sabAvailable": false
+  },
+  "failures": []
+}
