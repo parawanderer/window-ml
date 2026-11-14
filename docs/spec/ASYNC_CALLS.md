@@ -178,8 +178,10 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
    reason, and notify-only and the cap also say a transcript line. Completions that arrive while the turn starts coalesce into
    it, and a person's message sent meanwhile is steered into that turn: a starting resume no longer answers "busy" and
    loses it. A turn started for a task never runs on an empty inbox: if its result was read elsewhere while the page was
-   adopted, nothing starts, the chain count is given back and `task`/`not-started` logs `empty-inbox`. The check runs in `userRunAction` after the page-adopt awaits and before `hostRun` (ruled 2026-11-14), since a turn
-   stopped after hosting still emits a result and nothing can drain the inbox without a live turn. The chain count is `ml_task_chain:<runId>` and the person's
+   adopted, nothing starts, the chain count is given back and `task`/`not-started` logs `empty-inbox`. The check runs in
+   `userRunAction` after the page-adopt awaits and before `hostRun` (ruled 2026-11-14), since a turn stopped after
+   hosting still emits a result and nothing can drain the inbox without a live turn. The chain count is
+   `ml_task_chain:<runId>` and the person's
    next word resets it. A result for an archived or released run is dropped with a record. NOT built: the HUD per-run task mark
    (slice E, with the chat-page lane; slice C keeps the transcript line), the lifetimes list and the no-tab state on the
    chat page. This
