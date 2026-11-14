@@ -20,6 +20,13 @@ test("macOS and Linux get the pinned installer, its hash checked before it runs,
     assert.ok(hostInstall({ os: "linux", arch: "arm" }, ID, PIN).ok, "Chrome reports arm64 Linux as arm on some builds");
 });
 
+test("in Brave the line registers Brave's own folder, and only then", () => {
+    const brave = hostInstall({ os: "mac", arch: "arm64", browser: "brave" }, ID, PIN);
+    assert.ok(brave.ok && brave.line.endsWith(`--extension-id ${ID} --browser brave`));
+    assert.ok(!hostInstall({ os: "mac", arch: "arm64" }, ID, PIN).line.includes("--browser"), "Chrome is the installer's default, so the line says nothing");
+    assert.ok(!hostInstall({ os: "linux", arch: "x86-64", browser: "chrome" }, ID, PIN).line.includes("--browser"), "no other value reaches the line");
+});
+
 test("a platform with no build, a pin with no installer, and a malformed pin each show no line", () => {
     for (const p of [{ os: "win", arch: "x86-64" }, { os: "cros", arch: "arm64" }, { os: "linux", arch: "x86-32" }, { os: "mac", arch: "mips" }]) {
         const r = hostInstall(p, ID, PIN);
