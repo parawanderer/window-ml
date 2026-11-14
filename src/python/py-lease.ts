@@ -17,18 +17,29 @@ export const PY_LEASE_MS = typeof __PY_LEASE_MS__ === "number" ? __PY_LEASE_MS__
 declare const __PY_DETACHED_MAX_MS__: number | undefined;
 
 /**
- * The longest a detached cell may run before the sandbox kills it. A placeholder under rule 1, but bounded by a
- * measurement: the service worker that waits on the cell's reply is killed with the reply still pending somewhere between
- * 345 s and 390 s after the cell was sent (Chrome 151, a SILENT cell; docs/spec/ASYNC_CALLS.md has the table), and a
- * reply after that reaches nobody. The ceiling is the last bound both runs survived, less 30 s, to the minute below. A
- * cell that PRINTS sends a message with every chunk and keeps the worker alive longer, so evidence from a printing cell
- * is no reason to raise it.
+ * The CEILING on how long a detached cell may run before the sandbox kills it: 60 minutes. The person's cap
+ * (`detachedTaskMaxMin`, DevTools Settings, 1..60) is what the worker sends with a leased cell, and the offscreen document
+ * clamps it to this. The old 5 minute bound came from the service worker that waits on the cell's pending reply being
+ * killed somewhere between 345 s and 390 s after the cell was sent (docs/spec/ASYNC_CALLS.md has the table); the result no
+ * longer depends on that reply, since the offscreen document tells the cell's end by its own message (`PY_DONE`) and keeps
+ * the result for a worker that was evicted meanwhile to fetch (`PY_RESULT`). A placeholder under rule 1.
  */
-export const PY_DETACHED_MAX_MS = typeof __PY_DETACHED_MAX_MS__ === "number" ? __PY_DETACHED_MAX_MS__ : 5 * 60_000;   // state: fixed
+export const PY_DETACHED_MAX_MS = typeof __PY_DETACHED_MAX_MS__ === "number" ? __PY_DETACHED_MAX_MS__ : 60 * 60_000;   // state: fixed
 
-/** The longest a cell runs attached, whatever its `expect_ms`: half the detached ceiling, so a cell that detaches still has
- *  as long again to run as a task. A lease at the ceiling would never detach: the sandbox kills the cell when the lease ends. */
-export const PY_LEASE_MAX_MS = Math.floor(PY_DETACHED_MAX_MS / 2);   // state: fixed
+/**
+ * The cap a detached task runs under, in ms, from the worker's word: a finite number in (0, PY_DETACHED_MAX_MS], else the
+ * ceiling. The offscreen document applies it to what a message carried.
+ * @param v what the message (or the setting, in minutes times 60 000) said
+ */
+export function clampDetachedMs(v: unknown): number {
+    return typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.min(Math.floor(v), PY_DETACHED_MAX_MS) : PY_DETACHED_MAX_MS;
+}
+
+/** The longest a cell runs attached, whatever its `expect_ms`: 150 s. It was half the detached ceiling when that was 5
+ *  minutes; the ceiling is now 60, and a lease that long would hold the call (and the service worker's pending reply) open
+ *  for as long, so it stays where it was. Never past half the ceiling a bench build defines: a lease at the ceiling would
+ *  never detach, the sandbox kills the cell when the ceiling ends. */
+export const PY_LEASE_MAX_MS = Math.min(150_000, Math.floor(PY_DETACHED_MAX_MS / 2));   // state: fixed
 
 /** How long a cancelled or stopped cell is given to answer its interrupt (`KeyboardInterrupt`) before its sandbox is
  *  killed: a Python loop answers in about 3 ms, a call inside C not until it returns. A placeholder, as the bench's

@@ -8,13 +8,14 @@
 // task. A cancel is the cell's interrupt first and its sandbox's kill only when the interrupt does not land, and says
 // which; a Stop of the run cancels an attached cell the same way.
 
-import { detachTask, type TaskOutcome, type TailAnswer } from "./sw-tasks";
-import { cancelPyCell, onPyCellStarted, tailPyCell } from "./sw-python";
+import { detachTask, type TaskRehydrator, type TaskOutcome, type TailAnswer, type TaskExecutor } from "./sw-tasks";
+import { cancelPyCell, heldPyResult, onPyCellStarted, PY_RESULT_LOST, tailPyCell } from "./sw-python";
+import { plainPyOutcome } from "./sw-python-late";
 import { recordRunLog } from "./sw-run-log";
 import { runControllers } from "./sw-runs";
 import { forModel } from "./sw-scrub";
 import { storeText } from "./sw-values";
-import { PY_DETACHED_MAX_MS, PY_INTERRUPT_KILL_MS, PY_LEASE_MAX_MS, PY_LEASE_MS, type CellCancel } from "../python/py-lease";
+import { clampDetachedMs, PY_DETACHED_MAX_MS, PY_INTERRUPT_KILL_MS, PY_LEASE_MAX_MS, PY_LEASE_MS, type CellCancel } from "../python/py-lease";
 import { OUTPUT_CAP } from "../contract/contract-pointers";
 import { ASKED_TAIL_CHARS } from "../shell/sh-tail";
 
@@ -24,6 +25,9 @@ export interface PyDetached { detached: { id: string; elapsedMs: number; tail: s
 
 /** The run's cell that is running detached, by run: the kernel is locked while it runs, into the next turns. */
 const detachedCells = new Map<string, string>();   // state: plumbing — run id → the task id of its detached cell, until it ends (across turns)
+
+/** Forget which runs' kernels are locked: what a worker eviction does (the eviction test hook). */
+export function dropPyTaskMemory(): void { detachedCells.clear(); }
 
 /**
  * The sentence a second python_exec reads while the run's detached cell still runs (the kernel lock), or null.
@@ -35,6 +39,9 @@ export function pyKernelBusy(runId: string): string | null {
 }
 
 const secs = (ms: number): string => `${Math.round(ms / 1000)} s`;
+
+/** The sentence for a cap, as the model reads it: whole minutes when it is, else seconds. */
+const capText = (ms: number): string => (ms % 60_000 === 0 ? `${ms / 60_000} min` : secs(ms));
 
 /**
  * What a cancel did, in words: a fact, never a promise.
@@ -54,15 +61,16 @@ export function pyCancelText(how: CellCancel): string {
  * @param leaseMs how long it ran attached
  * @param expectMs the model's own estimate, or null
  * @param tail its output so far, already cut and scrubbed ("" for none)
+ * @param capMs the cap the sandbox holds it to: the person's `detachedTaskMaxMin`, as the offscreen document applies it (default the ceiling)
  */
-export function pyDetachedText(id: string, leaseMs: number, expectMs: number | null, tail: string): string {
+export function pyDetachedText(id: string, leaseMs: number, expectMs: number | null, tail: string, capMs: number = PY_DETACHED_MAX_MS): string {
     const why = expectMs === null
         ? `no expect_ms was given, so the ${secs(leaseMs)} default applied and it is still running: estimate (expect_ms), investigate, or`
         : expectMs > PY_LEASE_MAX_MS
             ? `you expected ~${secs(expectMs)}, and a cell runs attached for at most ${secs(PY_LEASE_MAX_MS)}, so it is running as expected: wait for it, or`
             : `you expected ~${secs(expectMs)} and it is still running: investigate the stall, or`;
     return `Detached: python_exec detached as task ${id} after ${secs(leaseMs)}; ${why} use the task tool (await, tail, cancel). Its result arrives as a [task ${id} …] message. `
-        + `It keeps running after your answer until it finishes or is cancelled, and the sandbox ends it at ${secs(PY_DETACHED_MAX_MS)}; a result that comes after your answer is read at the start of the next turn. Until it is done or cancelled, another python_exec in this run is refused.`
+        + `It keeps running after your answer until it finishes or is cancelled, and the sandbox ends it at ${capText(capMs)}; a result that comes after your answer is read at the start of the next turn. Until it is done or cancelled, another python_exec in this run is refused.`
         + (tail ? `\nOutput so far:\n${tail}` : "");
 }
 
@@ -84,6 +92,69 @@ export function pyTailText(ring: string, lines: number, cap: number): { text: st
     return { text: `${head}:\n${body}`, whole: `${head}:\n${all.join("\n")}`, cut };
 }
 
+/**
+ * Lock the run's kernel for a detached cell until it settles (`pyKernelBusy`).
+ * @param runId the run
+ * @param task the task's id
+ * @param settled settles when the cell ends
+ * @returns a function that frees the lock now
+ */
+function holdKernel(runId: string, task: string, settled: Promise<unknown>): () => void {
+    detachedCells.set(runId, task);
+    const release = () => { if (detachedCells.get(runId) === task) detachedCells.delete(runId); };
+    void settled.finally(release);
+    return release;
+}
+
+/**
+ * A cell's `tail`, for its task: the offscreen document's kept output, cut like the cell's own and, when asked for and
+ * cut, the whole of it stored for a pointer.
+ * @param cell the cell's id
+ */
+function pyTail(cell: string): TaskExecutor["tail"] {
+    return async (n, asked): Promise<string | TailAnswer | null> => {
+        const ring = await tailPyCell(cell);
+        if (ring === null) return "It has just ended; its result arrives on its own.";
+        const d = pyTailText(ring, n, asked ? ASKED_TAIL_CHARS : OUTPUT_CAP.exec.default);
+        if (!asked || !d.cut) return d.text;
+        const whole = (await forModel(d.whole)).text;
+        const value = await storeText(whole, `task tail ${cell}`).catch(() => undefined);
+        return value ? { text: d.text, value, chars: whole.length } : d.text;
+    };
+}
+
+// A stored running row of a cell, read back by a worker started since it detached (sw-tasks.ts `hydrateTasks`, which imports this when it needs it): attached to
+// the same cell by its id, the kernel locked again, and settled by the cell's own end message (sw-python.ts `pythonDone`).
+export const rehydratePyTask: TaskRehydrator = (runId, row) => {
+    if (row.ref?.kind !== "py") return null;
+    const cell = row.ref.cell;
+    let cancelled: CellCancel | null = null;
+    let settle!: (o: TaskOutcome) => void;
+    const settled = new Promise<TaskOutcome>((done) => {
+        settle = (out) => done(cancelled ? { ...out, status: "cancelled", text: `${pyCancelText(cancelled)} ${out.text}` } : out);
+    });
+    const release = holdKernel(runId, row.id, settled);
+    return { settle, exec: {
+        pageBound: false,   // runs in the offscreen document
+        // The cell has ended once its cancel is answered, so the kernel is free even before its end message settles the row.
+        cancel: async () => { const how = await cancelPyCell(cell); if (how !== "ended") cancelled = how; release(); return { confirmed: true, text: pyCancelText(how) }; },
+        tail: pyTail(cell), tailAbsent: "", settled,
+    } };
+};
+
+/**
+ * Whether a stored running cell outlived the gap, asked once before it is attached again: null while the offscreen document
+ * still runs it, else its outcome. A cell that ended while no worker listened sent its `PY_DONE` to nobody, so nothing else
+ * would settle the row. The tail is asked first: a cell that ends after it answers sends its `PY_DONE` to this worker.
+ * @param cell the cell's id
+ * @returns null (running), or the outcome: the held result formatted plainly, or (`lost`) a failure saying it is gone
+ */
+export async function probePyCell(cell: string): Promise<{ outcome: TaskOutcome; lost: boolean } | null> {
+    if (await tailPyCell(cell) !== null) return null;
+    const held = await heldPyResult(cell);
+    return held === null ? { outcome: { status: "failed", result: null, text: PY_RESULT_LOST }, lost: true } : { outcome: plainPyOutcome(held), lost: false };
+}
+
 /** What runs one leased cell. */
 export interface LeasedCell<R> {
     runId: string;
@@ -93,6 +164,8 @@ export interface LeasedCell<R> {
     seq?: number;
     /** The model's own estimate (`expect_ms`), or null: it replaces the lease. */
     expectMs: number | null;
+    /** The cap the cell's PY_RUN carried (the person's `detachedTaskMaxMin`, in ms), for the detached text. Absent: the ceiling. */
+    detachedMaxMs?: number;
     /** The cell's run in the sandbox, already sent. */
     call: Promise<R>;
     /** Stop live output reaching the step, once it has detached. */
@@ -108,7 +181,9 @@ export interface LeasedCell<R> {
  * @returns the result, or {@link PyDetached}
  */
 export function leaseCell<R>(o: LeasedCell<R>): Promise<R | PyDetached> {
-    const leaseMs = Math.min(o.expectMs ?? PY_LEASE_MS, PY_LEASE_MAX_MS);
+    // Never past half the cap: a lease at the cap would never detach, the sandbox kills the cell when the cap ends.
+    const capMs = o.detachedMaxMs ?? PY_DETACHED_MAX_MS;
+    const leaseMs = Math.min(o.expectMs ?? PY_LEASE_MS, PY_LEASE_MAX_MS, Math.floor(capMs / 2));
     return new Promise<R | PyDetached>((resolve, reject) => {
         let timer: ReturnType<typeof setTimeout> | undefined;
         let settleTask: ((r: { ok: R } | { err: unknown }) => void) | undefined;
@@ -131,27 +206,18 @@ export function leaseCell<R>(o: LeasedCell<R>): Promise<R | PyDetached> {
                         (e) => done({ status: "failed", text: `python_exec failed: ${(e as Error)?.message || String(e)}`, result: null }));
                 };
             });
-            const task = detachTask(o.runId, { tool: "python_exec", startedMs, leaseMs, expectMs: o.expectMs, exec: {
+            const task = detachTask(o.runId, { tool: "python_exec", startedMs, leaseMs, expectMs: o.expectMs, ref: { kind: "py", cell: o.cell, capMs: clampDetachedMs(capMs) }, exec: {
                 pageBound: false,   // runs in the offscreen document
                 cancel: async () => { const how = await cancelPyCell(o.cell); if (how !== "ended") cancelled = how; return { confirmed: true, text: pyCancelText(how) }; },
-                tail: async (n, asked): Promise<string | TailAnswer | null> => {
-                    const ring = await tailPyCell(o.cell);
-                    if (ring === null) return "It has just ended; its result arrives on its own.";
-                    const d = pyTailText(ring, n, asked ? ASKED_TAIL_CHARS : OUTPUT_CAP.exec.default);
-                    if (!asked || !d.cut) return d.text;
-                    const whole = (await forModel(d.whole)).text;
-                    const value = await storeText(whole, `task tail ${o.cell}`).catch(() => undefined);
-                    return value ? { text: d.text, value, chars: whole.length } : d.text;
-                },
+                tail: pyTail(o.cell),
                 tailAbsent: "", settled,
             } });
-            detachedCells.set(o.runId, task);
-            void settled.finally(() => { if (detachedCells.get(o.runId) === task) detachedCells.delete(o.runId); });
+            holdKernel(o.runId, task, settled);
             o.onDetach?.();
             recordRunLog(o.runId, { subsystem: "python", kind: "detached", reason: o.expectMs !== null ? "expected" : "default", ms: leaseMs, detail: { ...(o.seq !== undefined ? { seq: o.seq } : {}), id: task, leaseMs, ...(o.expectMs !== null ? { expectMs: o.expectMs } : {}) } });
             const ring = await tailPyCell(o.cell).catch(() => null);
             const tail = ring ? (await forModel(pyTailText(ring, 20, OUTPUT_CAP.exec.default).text)).text : "";
-            resolve({ detached: { id: task, elapsedMs: Date.now() - startedMs, tail, text: pyDetachedText(task, leaseMs, o.expectMs, tail) } });
+            resolve({ detached: { id: task, elapsedMs: Date.now() - startedMs, tail, text: pyDetachedText(task, leaseMs, o.expectMs, tail, capMs) } });
         };
         o.call.then((r) => ({ ok: r }), (err) => ({ err })).then((x) => {
             clearTimeout(timer);
