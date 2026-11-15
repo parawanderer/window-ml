@@ -20,7 +20,8 @@ export function placeCard(at: { left: number; top: number; bottom: number }, car
 }
 
 /**
- * A HOVER CARD: wraps its trigger, and after the pointer has rested on it for a moment opens `card` just below (or above)
+ * A HOVER CARD: a tip the pointer can ENTER, for text too long to read in a tooltip and worth scrolling. Unlike the cursor
+ * tip (`cursorTipOn`), which follows the pointer and goes when it moves, this one stays where it opened. It wraps its trigger, and after the pointer has rested on it for a moment opens `card` just below (or above)
  * it, kept inside the window. The pointer may cross into the card, which stays open for as long as the pointer is in it
  * or the trigger (so a long text can be scrolled), and closes a moment after it leaves both. Escape closes it. The trigger is
  * marked `.hc-on` while it is open, for the caller's highlight. Nothing opens for a touch pointer: there is no hover.
