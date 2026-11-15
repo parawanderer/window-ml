@@ -35,6 +35,7 @@ import { displaySource } from "../code-block";
 import { DiffLines } from "../code-diff";
 import { copyText } from "../copy-hash";
 import { PkgCardRender } from "../card/pkg-card-view";
+import { useRawView } from "../raw-view";
 
 /** A tool's returned DOM ELEMENTS, as a hoverable list. Each row carries the same stateless
  *  `clickSelector` the model was handed, so hovering outlines the node on the page and "copy reference"
@@ -79,7 +80,7 @@ export function RenderElements({ items }: { items: { path: string; text?: string
 // with a raw⇄visualise image toggle) or a DOM snap (just a labelled image). The [N] badge
 // numbers it; hovering explains what kind of step it is.
 function LocateSubstepView({ s, n }: { s: LocateSubstep; n: number }) {
-    const [raw, setRaw] = useState(false);   // "visualise" (the human overlay) by default
+    const [raw, setRaw] = useRawView();   // "visualise" (the human overlay) by default
     const kind = s.prompt ? "a vision sub-call — its own prompt + reply, run standalone" : "a DOM hit-test — no model call";
     return (
         <div class="r-loc-sub">
@@ -1788,7 +1789,9 @@ function FetchLadder({ attempts, resolvedBy }: { attempts: import("../../contrac
 
 /** `lineMap` is the IN block's reflow map, handed to the OUT block so a failure can name the row the
  *  reader is actually looking at. The two are separate descriptors that cannot see each other; only the
- *  step holds both, so it is the step that passes this across. */
+ *  step holds both, so it is the step that passes this across.
+ *
+ *  @gallery-flow sections slide in the calm chat tests/gallery-flows/RenderPanelSections.mjs {"d":{"type":"python-out","value":"{\"ls\":\"total 32\\nline\\ttab\",\"n\":3}","stdout":"one\ntwo\nthree\nfour\nfive\nsix"}} */
 export function RenderPanel({ d, marks, live, failLine, ranMs, ranSince, ctx, lineMap, remoteMs, failed }: { d: RenderDescriptor; marks?: [number, number][]; live?: boolean; failLine?: number | null; ranMs?: number; ranSince?: number; ctx?: CodeCtx; lineMap?: number[] | null; remoteMs?: { durationMs: number; bootMs?: number } | null; failed?: boolean }) {
     switch (d.type) {
         case "image": {
