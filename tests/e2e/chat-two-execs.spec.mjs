@@ -41,9 +41,8 @@ test("two gated execs in one turn: both cells stay drawn, keep their rail, and f
                     return { path: path.join("<"), cls: el.className.replace(/astep|tool|pending/g, "").trim(), live: el.classList.contains("live-call"), h: Math.round(el.getBoundingClientRect().height), open: el.classList.contains("open"), rail: !!body?.querySelector(".fold-rail"), card: !!el.querySelector(".astep-approve"), dot: el.querySelector(".dot")?.className ?? "" };
                 });
                 window.__f.push({
-                    grouped: !!document.querySelector(".astreak"), t: performance.now() - t0, cells, thinking: document.querySelectorAll(".athinking").length,
-                    rolled: document.querySelectorAll(".tick-d.rolled").length,
-                    written: (() => { const w = document.querySelector(".live-call .astep-preview.written"); return w ? parseFloat(getComputedStyle(w).opacity) : null; })(),
+                    grouped: !!document.querySelector(".astreak"), bar: !!document.querySelector(".chat-waiting"), t: performance.now() - t0, cells, thinking: document.querySelectorAll(".athinking").length,
+                                        written: (() => { const w = document.querySelector(".live-call .astep-preview.written"); return w ? parseFloat(getComputedStyle(w).opacity) : null; })(),
                     foot: [".run-stats", ".usage-gauge"].map((q) => { const e = document.querySelector(q); return e ? getComputedStyle(e).animationName : ""; }).join(","),
                 });
                 if (performance.now() - t0 < 22000) requestAnimationFrame(tick);
@@ -77,8 +76,8 @@ test("two gated execs in one turn: both cells stay drawn, keep their rail, and f
         // 3. The cell that is open wears its rail in every frame it is drawn open (the rail snapped in at the approval).
         const bare = f.filter((r) => r.cells.some((c) => c.open && c.h > 60 && !c.rail));
         expect(bare.length, dump("an open cell had no rail")).toBe(0);
-        // 3b. The counters' digits roll as they change (the thinking's tokens, the call's characters), instead of being redrawn.
-        expect(Math.max(...f.map((r) => r.rolled)), dump("no figure rolled while the model was writing")).toBeGreaterThan(0);
+        // 3a. The "waiting on your approval" bar is not put up while the card is merely not drawn yet (its call is still held on screen).
+        expect(f.filter((r) => r.bar && !r.cells.some((c) => c.card)).length, dump("the approval bar was up before there was a card to approve")).toBe(0);
         // 3c. A call written in full sends its "writing… N chars" readout away over time: its opacity passes through the middle.
         const fading = f.filter((r) => r.written != null);
         expect(fading.length, dump("no written call ever sent its readout away")).toBeGreaterThan(0);

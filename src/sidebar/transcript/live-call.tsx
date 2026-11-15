@@ -8,7 +8,7 @@ import { noteLiveGlyphs, wasStreamed } from "./code-morph";
 import { liveMounted, liveUnmounted } from "./live-hold";
 import { focusMode } from "../store";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { Code, Dot, Ticking, cursorTipOn } from "../ui-kit";
+import { Code, Dot, cursorTipOn } from "../ui-kit";
 import { IconQuiet } from "../icons";
 import { markdown } from "../format";
 import { closeStreaming } from "./stream-close";
@@ -111,7 +111,7 @@ export function LiveCall({ call, leaving }: { call: LiveToolCall; /** folding aw
             <div class="astep-head">
                 <Dot status="pending" />
                 <span class="tool-name">{call.name ?? "tool call"}</span>
-                <span class={`astep-preview dim${written ? " written" : ""}`}>writing… <Ticking text={chars(call.chars)} />{stall ? <span class="live-call-stall"> · {stall}</span> : null}</span>
+                <span class={`astep-preview dim${written ? " written" : ""}`}>writing… {chars(call.chars)}{stall ? <span class="live-call-stall"> · {stall}</span> : null}</span>
                 {/* The calm view's form of the same readout: a slowly pulsing clock, its words in the tip. A spinner
                     would say "working", which is the one thing a stall cannot claim. */}
                 {stall ? <span class="live-call-quiet" role="img" aria-label={stall} {...cursorTipOn(stall)}><IconQuiet /></span> : null}

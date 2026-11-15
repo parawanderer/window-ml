@@ -26,7 +26,7 @@ import { usageSamples, liveOutTokens } from "./usage";
 import { currentTurnSteps, liveShownByTranscript, orbStatus } from "./orb-status";
 import { fmtDur } from "../timestamps";
 import {
-    FieldBusy, Code, CopyBtn, SheetChip, Stamp, Dot, InlineFold, Ticking,
+    FieldBusy, Code, CopyBtn, SheetChip, Stamp, Dot, InlineFold,
     decideGate, decidedSteps, stepKey, grantHostPattern, inlineJson, inlineText, cursorTipOn, PointerChip, TipText,
 } from "../ui-kit";
 import { Disclosure } from "../disclosure";
@@ -152,7 +152,7 @@ export function ThoughtBlock({ thought, live, tokens }: { thought: string; live?
                     preview, which focus mode hides as spam — and hiding this with it took away the only sign
                     that a long think is progressing rather than stuck, which is the opposite of what a reading
                     mode wants. Two classes rather than a new one: the styling is shared, the visibility is not. */}
-                {!open && (surface.value !== "card" || live) ? <span class="astep-preview astep-tokest">{live ? <Ticking text={`${tokLabel}…`} /> : tokLabel}</span> : null}
+                {!open && (surface.value !== "card" || live) ? <span class="astep-preview astep-tokest">{tokLabel}{live ? "…" : ""}</span> : null}
             </button>
             {/* Live: plain text (partial markdown mid-stream renders ugly); finished: markdown. */}
             {open

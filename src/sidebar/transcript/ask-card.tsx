@@ -73,7 +73,7 @@ export function FactList({ lines, cls = "ask-facts", skipCommand }: { lines: ShC
 }
 
 /** How long a card that was just answered takes to leave, in the calm view: the footer's count has ticked by then. */
-const LEAVE_MS = 260;
+const LEAVE_MS = 520;
 
 /**
  * A step's nested asks that need a person, each a card, in the order they were raised. An answered ask of a call

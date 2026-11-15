@@ -22,7 +22,7 @@ import type { AgentStep, Session } from "../store";
 /** How long, in ms, a live call stays on screen at least, counted from when it was first shown. */
 export const LIVE_MIN_MS = 1200;
 /** How long, in ms, a held call takes to fold away when no step opens in its place. */
-export const LIVE_LEAVE_MS = 220;
+export const LIVE_LEAVE_MS = 520;
 
 // state: ui — when the first live cell of this stretch appeared, until when it is owed, which cells (by call index) are drawn
 // now, and which of their steps open for approval (the code then flies there; otherwise the cell folds away)

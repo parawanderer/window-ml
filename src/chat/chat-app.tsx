@@ -421,6 +421,8 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
         const look = (): void => {
             const card = root.querySelector(".astep-approve");
             if (!card) {
+                // A call still drawn as it was written stands in for the step (and its card) for a moment: the card is coming, not out of reach.
+                if (root.querySelector(".live-call")) tries = GATE_WAIT_FRAMES;
                 if (tries-- <= 0) { setGateAway(true); return; }
                 frame = requestAnimationFrame(look);
                 return;

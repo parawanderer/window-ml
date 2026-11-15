@@ -10,7 +10,7 @@ import type { AgentStep } from "../store";
 /** How long, in ms, a step that has just started is left alone: the event that says it is waiting for approval follows its start. */
 export const STEP_YOUNG_MS = 300;
 /** How long, in ms, a step that was waiting for a person is left alone once it has settled: its code stays open for a beat and folds. */
-export const GROUP_AFTER_MS = 1300;
+export const GROUP_AFTER_MS = 1600;
 
 // state: ui — what each step of each run was last seen doing and when (by `hash:seq`), as this client saw it
 const seen = new Map<string, { run: boolean; gated: boolean; at: number; streamed: boolean }>();

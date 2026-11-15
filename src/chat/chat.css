@@ -952,7 +952,7 @@ button.chat-page-go:hover { color: var(--fg); }
 }
 /* `--astep-close-ms` is how this surface tells the component how long to keep the body mounted on the way out —
    the component reads it and waits, and a surface that sets nothing closes in the same tick it always has. */
-.chat.calm .astep-body { animation: chat-step-open .22s cubic-bezier(.4, 0, .2, 1); --astep-close-ms: 200; }
+.chat.calm .astep-body { animation: chat-step-open .22s cubic-bezier(.4, 0, .2, 1); --astep-close-ms: 400; }
 /* `.handoff`: a step that has just replaced the call the model was typing out. Its body begins at the live block's last
    height (`--handoff-h`) and eases to its own, so the reformatted code reads as the typed text settling rather than the
    block collapsing and reopening. Cleared after 400 ms (agent-detail.tsx), so a later open eases from nothing as usual. */
@@ -962,9 +962,9 @@ button.chat-page-go:hover { color: var(--fg); }
    handed off from a live call snapped shut. */
 .chat.calm .astep.handed:not(.closing) .astep-body { animation: none; }
 /* A held live call whose step does not open folds away (live-hold.tsx) on the step body's own close keyframes, rather than vanishing. */
-.chat.calm .live-hold.live-leaving { overflow: hidden; pointer-events: none; animation: chat-step-close calc(var(--calm-flow-ms) * 1ms) cubic-bezier(.4, 0, .2, 1) forwards; }
+.chat.calm .live-hold.live-leaving { overflow: hidden; pointer-events: none; animation: chat-step-close calc(var(--calm-flow-ms) * 2ms) cubic-bezier(.4, 0, .2, 1) forwards; }
 /* One cell of several folding away while the others stay (its step is a row, not a body): the same keyframes, on the cell. */
-.chat.calm .live-call.live-leaving { overflow: hidden; pointer-events: none; animation: chat-step-close calc(var(--calm-flow-ms) * 1ms) cubic-bezier(.4, 0, .2, 1) forwards; }
+.chat.calm .live-call.live-leaving { overflow: hidden; pointer-events: none; animation: chat-step-close calc(var(--calm-flow-ms) * 2ms) cubic-bezier(.4, 0, .2, 1) forwards; }
 /* A call WRITTEN IN FULL sends its "writing… 155 chars" readout away, to the left and out: there is no more arriving to count. */
 .chat.calm .live-call .astep-preview { transition: opacity calc(var(--calm-flow-ms) * 1ms) cubic-bezier(.4, 0, .2, 1), transform calc(var(--calm-flow-ms) * 1ms) cubic-bezier(.4, 0, .2, 1); }
 .chat.calm .live-call .astep-preview.written { opacity: 0; transform: translateX(-14px); pointer-events: none; }
@@ -978,12 +978,12 @@ button.chat-page-go:hover { color: var(--fg); }
     from { height: var(--handoff-h, 0px); opacity: .55; overflow: hidden; }
     to { height: auto; opacity: 1; overflow: hidden; }
 }
-.chat.calm .astep-body.closing { animation: chat-step-close .2s cubic-bezier(.4, 0, .2, 1) forwards; }
+.chat.calm .astep-body.closing { animation: chat-step-close .4s cubic-bezier(.4, 0, .2, 1) forwards; }
 /* An embedded output folds and opens on the same curve. It eases in only when OPENED AGAIN (`.opening`): one drawn
    with its answer must simply be there. */
-.chat.calm .tok-block { --astep-close-ms: 200; }
+.chat.calm .tok-block { --astep-close-ms: 400; }
 .chat.calm .tok-body.opening { animation: chat-step-open .22s cubic-bezier(.4, 0, .2, 1); }
-.chat.calm .tok-body.closing { animation: chat-step-close .2s cubic-bezier(.4, 0, .2, 1) forwards; }
+.chat.calm .tok-body.closing { animation: chat-step-close .4s cubic-bezier(.4, 0, .2, 1) forwards; }
 /* ONE DISCLOSURE, in the calm chat: the same chevron the ml.sh footer and every other fold draws (`>`, turning down while
    open, IconChevron's own path) in place of the browser's triangle on a native `details` (a result's VALUE / console
    sections, an In/Out block), and the same slide when it opens or closes (the Disclosure's `.2s`) in place of the snap.
@@ -1082,10 +1082,10 @@ button.chat-page-go:hover { color: var(--fg); }
 /* THE GATE CARD GOES THE SAME WAY as the body under it. It is the largest thing on a step and the thing you were
    reading, so blinking it out on the click left you looking for where the call went. Inert while it leaves —
    a card mid-exit is not a control, and a second click on it would decide an answered gate. */
-.chat.calm .astep-approve.closing { animation: chat-step-close .2s cubic-bezier(.4, 0, .2, 1) forwards; pointer-events: none; }
+.chat.calm .astep-approve.closing { animation: chat-step-close .4s cubic-bezier(.4, 0, .2, 1) forwards; pointer-events: none; }
 /* The step root carries the duration too, because a gated step in calm is not forced open: there may be no body
    mounted to read it from at the moment the card has to leave. It inherits, so the body reads the same number. */
-.chat.calm .astep.tool { --astep-close-ms: 200; }
+.chat.calm .astep.tool { --astep-close-ms: 400; }
 @media (prefers-reduced-motion: reduce) {
     .chat.calm .astep-body { animation: none; --astep-close-ms: 0; }
     .chat.calm .astep-body.closing, .chat.calm .astep-approve.closing { animation: none; }
@@ -2162,7 +2162,7 @@ html[data-calm] .tt-layer { --notice: var(--accent); --notice-fg: var(--accent-f
    that actually describes what happened, and a fold drawn into a transcript somebody opened should simply be
    there. What was left fired only in the second case — the one it is wrong for. What IS animated is the moment of
    grouping itself: see `chat-streak-form` and `chat-streak-wash` below. */
-.astreak { margin: 3px 0; --astep-close-ms: 200; }
+.astreak { margin: 3px 0; --astep-close-ms: 400; }
 /* …and inside an OPEN one, each row may say what the model said it was for. See `.astep-said`: this is the one
    place it is drawn, because expanding a group is the gesture that means "I am investigating what happened". */
 .chat.calm .astreak.expanded .astep-said { display: inline-block; max-width: 46ch; vertical-align: bottom; }
@@ -2245,7 +2245,7 @@ html[data-calm] .tt-layer { --notice: var(--accent); --notice-fg: var(--accent-f
 /* The rail inside it is the shared fold rail (`.fold-rail`, sidebar.css). */
 /* …and it opens and shuts on the same keyframes as a step body, through the same `--astep-close-ms` handshake. */
 .astreak-body { animation: chat-step-open .22s cubic-bezier(.4, 0, .2, 1); }
-.astreak-body.closing { animation: chat-step-close .2s cubic-bezier(.4, 0, .2, 1) forwards; }
+.astreak-body.closing { animation: chat-step-close .4s cubic-bezier(.4, 0, .2, 1) forwards; }
 @media (prefers-reduced-motion: reduce) {
     .astreak, .chat.calm .astreak.refolding { --astep-close-ms: 0; }
     .astreak-body, .astreak-body.closing { animation: none; }
@@ -2304,11 +2304,11 @@ html[data-calm] .tt-layer { --notice: var(--accent); --notice-fg: var(--accent-f
    the rest of the calm view's motion because it is the one thing being READ while it moves. The card's exit is the
    ordinary `--calm-flow-ms`. */
 .chat.calm { --calm-flow-ms: 260; --calm-reflow-ms: 420; }
-.chat.calm .astep-approve.ask { animation: chat-ask-in calc(var(--calm-reflow-ms) * 1ms) cubic-bezier(.4, 0, .2, 1) backwards; }
+.chat.calm .astep-approve { animation: chat-ask-in calc(var(--calm-reflow-ms) * 1ms) cubic-bezier(.4, 0, .2, 1) backwards; }
 /* It opens from nothing as it fades in, from its OWN height (`interpolate-size`): the card took its whole height in the first frame, under code
    that was still growing, and pushed everything below it down by that much at once. */
 @keyframes chat-ask-in { from { opacity: 0; transform: translateY(4px); height: 0; margin-top: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; overflow: hidden; } }
-.chat.calm .astep-approve.ask.leaving { overflow: hidden; pointer-events: none; animation: chat-ask-leave calc(var(--calm-flow-ms) * 1ms) cubic-bezier(.4, 0, .2, 1) forwards; }
+.chat.calm .astep-approve.ask.leaving { overflow: hidden; pointer-events: none; animation: chat-ask-leave calc(var(--calm-flow-ms) * 2ms) cubic-bezier(.4, 0, .2, 1) forwards; }
 /* From the card's OWN height (`interpolate-size`, set on `.chat.calm`): a `max-height` from a ceiling taller than the card
    sat still for most of the beat and then collapsed in the last of it. */
 @keyframes chat-ask-leave {
