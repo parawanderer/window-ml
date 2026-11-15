@@ -4652,6 +4652,6 @@ html[data-calm] .task-say > .task-dev, html[data-focus] .task-say > .task-dev { 
 /* `.code-morph`: the characters of a reformatted script flying from where the live call had them to their new places
    (code-morph.ts). The real text is hidden while they fly; the layer is removed when they land. */
 pre.code.morphing { position: relative; }
-pre.code.morphing > code { visibility: hidden; }
+pre.code.morphing:not(.numbered) > code, pre.code.morphing .lcode { visibility: hidden; }   /* a numbered block keeps its gutter */
 .code-morph { position: absolute; inset: 0; pointer-events: none; white-space: pre; }
 .code-morph > span { position: absolute; }
