@@ -1009,3 +1009,12 @@ test("python_install (HUD card): Enter on an approvable card approves with the d
     assert.ok(msg && msg.decision === true);
     assert.deepEqual(msg.files, PKG_ROWS);
 });
+
+// --- a note on an approval, in the calm chat ---
+
+test("an approval's note is drawn the same wherever it sits, and the calm chat quietens it: icon in the text's colour, a thicker grey rule", () => {
+    const css = sidebarCss();
+    assert.match(css, /(^|\n)\.appr-note \{[^}]*border-bottom: 1px solid color-mix\(in srgb, var\(--warn\)/, "unscoped, so the gallery shows it as the card does; amber elsewhere");
+    assert.match(css, /html\[data-calm\] \.appr-note \{[^}]*border-bottom: 2px solid color-mix\(in srgb, var\(--fg\)/, "calm: thicker, greyscale");
+    assert.match(css, /html\[data-calm\] \.appr-note svg \{[^}]*color: inherit/, "calm: the icon is the text's colour");
+});

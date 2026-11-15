@@ -1419,10 +1419,17 @@ html[data-calm] .appr-deny-wrap { border-radius: 999px; color: var(--fg-dim); }
 .appr-why { margin-top: 6px; }
 .appr-why-list { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 3px;
     color: var(--fg-dim); font-size: 0.86em; line-height: 1.4; }
-.astep-approve .appr-note, .card-foot .appr-note { display: flex; align-items: flex-start; gap: 6px; font-size: 0.82em; color: var(--fg);
+/* A NOTE ON AN APPROVAL: what the person should know before saying yes (why it asks, what approving grants), a warning
+   icon then a sentence, over a rule that sets it off from the question below. Not scoped to the card, so the gallery draws it as
+   it is drawn there. */
+.appr-note { display: flex; align-items: flex-start; gap: 6px; font-size: 0.82em; color: var(--fg);
     padding-bottom: 5px; border-bottom: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); }
-.astep-approve .appr-note svg, .card-foot .appr-note svg { flex: none; width: 13px; height: 13px; margin-top: 1px; color: var(--notice); }
-.astep-approve .appr-note b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.appr-note svg { flex: none; width: 14px; height: 14px; margin-top: .12em; color: var(--notice); }
+/* THE CALM CHAT draws it quieter: the icon in the text's own colour, which is what an inline mark is, and the rule a
+   thicker grey rather than a thin amber one, which reads as an alarm over a reading view's whole column. */
+html[data-calm] .appr-note { border-bottom: 2px solid color-mix(in srgb, var(--fg) 14%, transparent); }
+html[data-calm] .appr-note svg { color: inherit; }
+.appr-note b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 /* Google Docs-style smart chip for a Sheet reference: icon + friendly name, hoverable for the id. */
 .sheet-chip { display: inline-flex; align-items: center; gap: 3px; vertical-align: middle;
