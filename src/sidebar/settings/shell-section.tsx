@@ -7,7 +7,7 @@ import { useEffect, useState } from "preact/hooks";
 import type { MlConfig } from "../../contract";
 import type { ShellStatus } from "../../sw/sw-shell";
 import { Lbl as L } from "./settings-label";
-import { hostInstall, type HostInstall, type HostPlatform } from "../../shell/host-install";
+import { formatHostVersion, hostInstall, parseHostVersion, type HostInstall, type HostPlatform } from "../../shell/host-install";
 import { HostInstallGuide } from "./host-install-guide";
 
 /** One path a line, blank lines and surrounding space dropped. */
@@ -21,7 +21,9 @@ export function shellStatusText(s: ShellStatus | null): string {
     if (!s.enabled) return "Off.";
     if (!s.ready) return s.error || "Not reachable.";
     const where = s.sandboxed ? "under the OS sandbox (writes only in the folders above, no network)" : "WITHOUT a sandbox: programs run as you, with your files and network";
-    return `Ready: window-ml-host ${s.host?.version ?? "?"} on ${s.host?.platform ?? "?"}; calls run ${where}.`;
+    // The version is the parsed form only: text a host sent that is not `major.minor.patch` is shown as unknown.
+    const version = parseHostVersion(s.host?.version);
+    return `Ready: window-ml-host ${version ? formatHostVersion(version) : "?"} on ${s.host?.platform ?? "?"}; calls run ${where}.`;
 }
 
 /**
@@ -72,11 +74,13 @@ export function ShellSectionBody({ c, setField, initial, platform: givenPlatform
     // Offered until a host has answered (this worker's last hello, else any earlier one in this profile); not before the
     // first measurement, so a person with a working host never sees it flash.
     const missing = !!status && !status.ready && !(status.hostAnswers ?? status.hostSeen);
-    const install: HostInstall | null = missing && platform ? hostInstall(platform, id) : null;
+    // An answering host that is behind the pin gets the same line as an update; both versions are the worker's parsed forms.
+    const update = !missing && status?.hostOutdated && status.hostVersion && status.pinnedHostVersion ? { installed: status.hostVersion, pinned: status.pinnedHostVersion } : undefined;
+    const install: HostInstall | null = (missing || update) && platform ? hostInstall(platform, id) : null;
     return (
         <>
             <div class="set-note">Let an approved script start <b>programs on this machine</b> with <code>ml.sh.run(["git", "status"])</code>: an argument list, never a shell command. It is there only inside an agent run (the HUD, the sidebar, the chat page), never in a page's own console. <b>Every call asks you</b>, showing exactly what will run, in which folder, under which sandbox. Programs run through the <b>process host</b>, a separate program you install once. <b>Off by default.</b></div>
-            {install ? <HostInstallGuide install={install} answered={status?.hostAnswers} busy={checking} onCheck={probe} /> : null}
+            {install ? <HostInstallGuide install={install} answered={status?.hostAnswers} update={update} busy={checking} onCheck={probe} /> : null}
             <label data-setting="shellEnabled" class="set-check">
                 <input type="checkbox" checked={!!c.shellEnabled} onChange={(e: any) => { setField("shellEnabled", e.target.checked); setTimeout(() => measure(true), 50); }} />
                 <L tip="Off by default. On: an approved exec may call ml.sh, and each call still asks you.">Let scripts run programs (ml.sh)</L>
