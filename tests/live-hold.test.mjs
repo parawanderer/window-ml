@@ -71,7 +71,7 @@ test("a pending step waits for the live call's time on screen, then appears; a s
     render(null, host);
 });
 
-test("the live stream stays drawn as it last was for the time it is owed after the run dropped it, then goes", async () => {
+test("a held live stream folds away when no step opens to take it, and stays gone", async () => {
     reset();
     const ls = { step: 1, calls: [{ index: 0, name: "exec", args: "{", chars: 1 }] };
     const view = (v) => h(hold.HeldLive, { ls: v, render: (x) => h("i", { id: "live" }, `calls:${x.calls.length}`) });
@@ -80,8 +80,44 @@ test("the live stream stays drawn as it last was for the time it is owed after t
     assert.equal(host.querySelector("#live")?.textContent, "calls:1");
     render(view(null), host); await wait(20);                     // the reducer cleared it
     assert.equal(host.querySelector("#live")?.textContent, "calls:1", "held while time is owed");
-    await wait(250);
-    assert.equal(host.querySelector("#live"), null, "gone once it was served");
+    assert.ok(!host.querySelector(".live-leaving"), "and not folding yet");
+    await wait(220);                                              // the time is served
+    assert.ok(host.querySelector(".live-leaving #live"), "served, and no step opens: it folds, still drawn while it does");
+    await wait(hold.LIVE_LEAVE_MS + 120);
+    assert.equal(host.querySelector("#live"), null, "gone once it has folded");
+    hold.liveUnmounted();
+    render(null, host);
+});
+
+test("a held live stream goes at once when a step is opening to take its characters, and the step draws only after it has gone", async () => {
+    reset();
+    const ls = { step: 1, calls: [{ index: 0, name: "exec", args: "{", chars: 1 }] };
+    const gated = { tool: "exec", pending: true, awaitingApproval: true };
+    const tree = (v) => h("div", null,
+        h(hold.HeldStep, { st: gated }, h("b", { id: "step" }, "the step")),            // the step sits above the live block, as on the page
+        h(hold.HeldLive, { ls: v, render: (x) => h("i", { id: "live" }, `calls:${x.calls.length}`) }));
+    hold.liveMounted(Date.now() - (hold.LIVE_MIN_MS - 150));
+    render(tree(ls), host); await wait(10);
+    render(tree(null), host);                                     // the step has landed (awaiting you): it opens, so the code flies
+    // The ORDER the page changes in, which polling cannot see (both can change in one task): the live block must be removed before the
+    // step is added, or the step's flight has no hand-over from the block's characters to start from.
+    const order = [];
+    const mo = new window.MutationObserver((records) => {
+        for (const r of records) {
+            for (const n of r.removedNodes) if (n.querySelector?.("#live") || n.id === "live") order.push("live removed");
+            for (const n of r.addedNodes) if (n.id === "step" || n.querySelector?.("#step")) order.push("step added");
+        }
+    });
+    mo.observe(host, { childList: true, subtree: true });
+    const seen = [];
+    for (let i = 0; i < 40; i++) { await wait(10); seen.push({ step: !!host.querySelector("#step"), live: !!host.querySelector("#live"), folding: !!host.querySelector(".live-leaving") }); }
+    assert.ok(seen.some((f) => f.live && !f.step), "the live block stood first, with the step waiting");
+    assert.ok(seen.some((f) => f.step && !f.live), "then the step, with the block gone");
+    assert.ok(!seen.some((f) => f.step && f.live), "never both: the step mounting beside a block that has not left gave the flight nothing to start from");
+    assert.ok(!seen.some((f) => f.folding), "a step is opening to take the code, so the block does not fold: it goes");
+    mo.disconnect();
+    assert.ok(order.includes("live removed") && order.includes("step added"), `both happened: ${order.join(", ")}`);
+    assert.ok(order.indexOf("live removed") < order.indexOf("step added"), `the block left before the step arrived (${order.join(" → ")})`);
     hold.liveUnmounted();
     render(null, host);
 });

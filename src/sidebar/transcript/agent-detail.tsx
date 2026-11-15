@@ -481,6 +481,9 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
         if (closeOnSettle.current && !st.pending) { closeOnSettle.current = false; settleTimer.current = setTimeout(() => close(() => setExpanded(false)), SETTLE_DWELL_MS) as unknown as number; }
     });
     useEffect(() => () => clearTimeout(settleTimer.current), []);
+    // `handed` holds the body's open animation still for a step that has just taken over from a live call. It ends with the step's
+    // being open: kept past a fold, the next unfurl played no animation at all (it snapped open, where every other step eased).
+    useEffect(() => { if (!open && handed) setHanded(false); }, [open, handed]);
     // What the body holds, as far as its height is concerned: the running output, the result, the commands it ran. A change in any of
     // them eases the body to its new height in the calm view, where it used to jump.
     useHeightEase(bodyRef, `${st.pending ? 1 : 0}${awaiting ? 1 : 0}${decided ? 1 : 0}${st.approval ?? "-"}${st.result == null ? 0 : 1}${st.asks?.length ?? 0}.${st.shCalls?.length ?? 0}${st.renderOut ? 1 : 0}`, focusMode.value && !closing);

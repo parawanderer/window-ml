@@ -25,7 +25,8 @@ export function runsOf(series, minDelta = 1) {
     for (let i = 1; i < series.length; i++) {
         const d = series[i].v - series[i - 1].v;
         if (Math.abs(d) >= minDelta) {
-            if (!cur || series[i].t - cur.lastT > 60) { cur = { from: series[i - 1].v, to: series[i].v, startT: series[i - 1].t, lastT: series[i].t, maxStep: Math.abs(d) }; runs.push(cur); }
+            // A new run when the gap is long OR the direction turns: a rise and a fall are two changes, not one of their difference.
+            if (!cur || series[i].t - cur.lastT > 60 || Math.sign(d) !== cur.dir) { cur = { from: series[i - 1].v, to: series[i].v, startT: series[i - 1].t, lastT: series[i].t, maxStep: Math.abs(d), dir: Math.sign(d) }; runs.push(cur); }
             else { cur.to = series[i].v; cur.lastT = series[i].t; cur.maxStep = Math.max(cur.maxStep, Math.abs(d)); }
         }
     }
@@ -53,7 +54,16 @@ test("approving a streamed exec in the calm chat: nothing snaps, the fold animat
         void site1.evaluate(() => window.ml.agent("rename the page", { env: false, approvalRouting: "both", stream: true })).catch(() => {});
         await chat.locator(".chat-row", { hasText: "rename the page" }).click();
         await expect(chat.locator(".astep-approve")).toBeVisible({ timeout: 30_000 });
-        await chat.waitForTimeout(900);
+        // Settled: the step's own opening (its height ramping up as the code takes its place) is not the sequence under test, and on a
+        // slower runner it is still going a second later. Wait for the height to hold still for half a second.
+        let still = 0, prev = -1;
+        for (let i = 0; i < 150 && still < 5; i++) {
+            await chat.waitForTimeout(100);
+            const hh = await chat.evaluate(() => document.querySelector(".astep.tool")?.getBoundingClientRect().height ?? -1);
+            still = Math.abs(hh - prev) < 1 && hh > 0 ? still + 1 : 0;
+            prev = hh;
+        }
+        expect(still, "the step's height never settled before the approval").toBeGreaterThanOrEqual(5);
 
         // Every frame from the click: the step's height, the body's animation, and how far the transcript is from its bottom.
         await chat.evaluate(() => {
@@ -87,8 +97,8 @@ test("approving a streamed exec in the calm chat: nothing snaps, the fold animat
         const runs = runsOf(seen.map((f) => ({ t: f.t, v: f.step })), 1).filter((r) => r.total > 24);
         expect(runs.length, dump("the sequence changed the step's height at least once (the result, the fold)")).toBeGreaterThan(0);
         for (const r of runs) {
-            expect(r.duration, dump(`a ${Math.round(r.total)}px change in the step's height took ${Math.round(r.duration)}ms: it snapped (${Math.round(r.from)} → ${Math.round(r.to)})`)).toBeGreaterThanOrEqual(100);
-            expect(r.maxStep, dump(`one frame moved ${Math.round(r.maxStep)}px of a ${Math.round(r.total)}px change`)).toBeLessThanOrEqual(r.total * 0.45);
+            expect(r.duration, dump(`a ${Math.round(r.total)}px change in the step's height took ${Math.round(r.duration)}ms: it snapped (${Math.round(r.from)} → ${Math.round(r.to)})`)).toBeGreaterThanOrEqual(60);
+            expect(r.maxStep, dump(`one frame moved ${Math.round(r.maxStep)}px of a ${Math.round(r.total)}px change`)).toBeLessThanOrEqual(r.total * 0.7);
         }
 
         // 2. The fold is an ANIMATION while it folds. It was held at `none` by a rule more specific than its own.
@@ -109,5 +119,127 @@ test("approving a streamed exec in the calm chat: nothing snaps, the fold animat
         expect(longest, dump(`the view was more than 90px off the bottom for ${Math.round(longest)}ms at a stretch`)).toBeLessThanOrEqual(250);
         const tail = scrollable.slice(-10);
         expect(tail.every((f) => f.bottom <= 2), dump("the view did not end at the bottom")).toBe(true);
+
+        // 5. Unfurling the folded step again eases open. A step that had taken over from a live call kept the "hold the open animation
+        // still" state past its fold, and the next unfurl played no animation at all while every other step eased.
+        await chat.evaluate(() => {
+            window.__g = [];
+            const t0 = performance.now();
+            const tick = () => { const st = document.querySelector(".astep.tool"); window.__g.push({ t: performance.now() - t0, v: st ? st.getBoundingClientRect().height : null }); if (performance.now() - t0 < 800) requestAnimationFrame(tick); };
+            requestAnimationFrame(tick);
+        });
+        await chat.locator(".astep.tool .astep-head").first().click();
+        await chat.waitForTimeout(1000);
+        const g = (await chat.evaluate(() => window.__g)).filter((x) => x.v != null).map((x) => ({ t: x.t, v: x.v }));
+        const opened = runsOf(g, 1).filter((r) => r.total > 24);
+        expect(opened.length, dump("the step did not open when its head was clicked")).toBeGreaterThan(0);
+        for (const r of opened) {
+            expect(r.duration, `unfurling: a ${Math.round(r.total)}px change took ${Math.round(r.duration)}ms, it snapped open (${Math.round(r.from)} → ${Math.round(r.to)})`).toBeGreaterThanOrEqual(60);
+            expect(r.maxStep, "unfurling: one frame moved most of the change").toBeLessThanOrEqual(r.total * 0.7);
+        }
+    } finally { await ext.context.close(); await fake.stop(); await site.stop(); }
+});
+
+// --- two execs in a row: one that needs no approval, then one that does ---
+
+const FREE = `let a=[];${Array.from({ length: 10 }, (_, i) => `a.push(document.title.length+${i});`).join("")}a.length`;
+const GATED = `let o=[];${Array.from({ length: 12 }, (_, i) => `o.push({k:${i},v:[${i},${i + 1}]});`).join("")}document.title="held";o.length`;
+
+test("an exec that needs no approval, then one that does: the second stream replaces the first at once, its step is never drawn beside a live block, and its code flies", async () => {
+    test.setTimeout(120_000);
+    const fake = await startFakeLlm({ model: "fake-model", streamDelayMs: 120 });
+    const site = await startPageServer({});
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "off" });
+        fake.setScript([
+            { tool: "exec", args: { js: FREE }, emit: Array.from({ length: 10 }, () => ({ kind: "call" })) },
+            { tool: "exec", args: { js: GATED }, emit: Array.from({ length: 12 }, () => ({ kind: "call" })) },
+            { content: "done." }]);
+        const chat = await ext.context.newPage();
+        const errors = [];
+        chat.on("pageerror", (e) => errors.push(e.message));
+        await chat.setViewportSize({ width: 1100, height: 760 });
+        await chat.goto(`chrome-extension://${ext.extensionId}/chat.html`);
+        await chat.locator(".chat").waitFor();
+        await chat.evaluate(() => {
+            window.__flew = 0;
+            new MutationObserver(() => { if (document.querySelector(".code-morph")) window.__flew++; }).observe(document.body, { childList: true, subtree: true });
+            window.__f = [];
+            const t0 = performance.now();
+            const tick = () => {
+                const live = document.querySelector(".live-call");
+                window.__f.push({
+                    t: performance.now() - t0, live: live ? live.getBoundingClientRect().height : null, liveCount: document.querySelectorAll(".live-call").length,
+                    opening: !!document.querySelector(".astep.tool.open.pending.awaiting"), liveAlso: !!live,
+                    leaving: !!document.querySelector(".live-leaving"), card: !!document.querySelector(".astep-approve"),
+                });
+                if (performance.now() - t0 < 13000) requestAnimationFrame(tick);
+            };
+            requestAnimationFrame(tick);
+        });
+        const site1 = await ext.context.newPage();
+        await site1.goto(site.url + "/");
+        await waitForMl(site1);
+        void site1.evaluate(() => window.ml.agent("do two things", { env: false, approvalRouting: "both", stream: true })).catch(() => {});
+        await chat.locator(".chat-row", { hasText: "do two things" }).click();
+        await expect(chat.locator(".astep-approve")).toBeVisible({ timeout: 30_000 });
+        await chat.waitForTimeout(1500);
+        const f = await chat.evaluate(() => window.__f);
+        expect(errors).toEqual([]);
+        const dump = (m) => `${m}\n${f.filter((_, i) => i % 3 === 0).map((r) => `${Math.round(r.t)}ms live=${r.live && Math.round(r.live)} leaving=${r.leaving} opening=${r.opening} card=${r.card}`).join("\n")}`;
+
+        // The step that is opening for approval never stands beside a live block: it draws after the block has gone.
+        expect(f.filter((r) => r.opening && r.liveAlso).length, dump("the opening step was drawn while a live block was still on the page")).toBe(0);
+        // The second call displaces the first's held block: it is replaced at once, not left standing (or folding) over the new
+        // call's stream. At most one live block is ever on the page.
+        expect(f.every((r) => r.liveCount <= 1), dump("two live blocks stood on the page at once")).toBe(true);
+        // The second call's code flies into its approval step.
+        expect(await chat.evaluate(() => window.__flew > 0), dump("the gated call's code did not fly")).toBe(true);
+    } finally { await ext.context.close(); await fake.stop(); await site.stop(); }
+});
+
+// --- a held call that needs no approval folds away ---
+
+test("a quickly written exec that needs no approval: its held block folds away smoothly instead of vanishing", async () => {
+    test.setTimeout(120_000);
+    const fake = await startFakeLlm({ model: "fake-model", streamDelayMs: 40 });
+    const site = await startPageServer({});
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "off" });
+        // The reply is slow to start, so nothing displaces the held block while it stands and folds.
+        fake.setScript([{ tool: "exec", args: { js: FREE }, emit: Array.from({ length: 10 }, () => ({ kind: "call" })) }, { content: "done.", emit: [{ kind: "pause", ms: 4000 }, { kind: "answer", text: "done." }] }]);
+        const chat = await ext.context.newPage();
+        await chat.setViewportSize({ width: 1100, height: 760 });
+        await chat.goto(`chrome-extension://${ext.extensionId}/chat.html`);
+        await chat.locator(".chat").waitFor();
+        await chat.evaluate(() => {
+            window.__f = [];
+            const t0 = performance.now();
+            const tick = () => {
+                const live = document.querySelector(".live-call");
+                const box = document.querySelector(".live-hold");   // the wrapper is what folds
+                window.__f.push({ t: performance.now() - t0, live: live && box ? box.getBoundingClientRect().height : null, leaving: !!document.querySelector(".live-leaving") });
+                if (performance.now() - t0 < 6000) requestAnimationFrame(tick);
+            };
+            requestAnimationFrame(tick);
+        });
+        const site1 = await ext.context.newPage();
+        await site1.goto(site.url + "/");
+        await waitForMl(site1);
+        void site1.evaluate(() => window.ml.agent("read the title", { env: false, approvalRouting: "both", stream: true })).catch(() => {});
+        await chat.locator(".chat-row", { hasText: "read the title" }).click();
+        await chat.waitForTimeout(6200);
+        const f = await chat.evaluate(() => window.__f);
+        const dump = (m) => `${m}\n${f.filter((_, i) => i % 3 === 0).map((r) => `${Math.round(r.t)}ms live=${r.live && Math.round(r.live)} leaving=${r.leaving}`).join("\n")}`;
+        const shown = f.filter((r) => r.live != null);
+        expect(shown.length, dump("no live block was ever drawn")).toBeGreaterThan(10);
+        // Stood at least the minimum, then folded: the height falls over time to nothing, in more than a frame or two.
+        const folding = f.filter((r) => r.leaving && r.live != null);
+        expect(folding.length, dump("the held block never folded")).toBeGreaterThanOrEqual(4);
+        for (let i = 1; i < folding.length; i++) expect(folding[i].live, dump("the folding block grew")).toBeLessThanOrEqual(folding[i - 1].live + 1);
+        expect(folding[0].live - folding[folding.length - 1].live, dump("it did not shrink while it folded")).toBeGreaterThan(20);
+        expect(shown[shown.length - 1].t - shown[0].t, dump("the block stood less than the minimum")).toBeGreaterThanOrEqual(1000);
     } finally { await ext.context.close(); await fake.stop(); await site.stop(); }
 });

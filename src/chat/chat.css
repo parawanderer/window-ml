@@ -961,6 +961,8 @@ button.chat-page-go:hover { color: var(--fg); }
 /* Not while it is CLOSING: this rule is more specific than the close animation's, and held that at `none` too, so every step that had been
    handed off from a live call snapped shut. */
 .chat.calm .astep.handed:not(.closing) .astep-body { animation: none; }
+/* A held live call whose step does not open folds away (live-hold.tsx) on the step body's own close keyframes, rather than vanishing. */
+.chat.calm .live-hold.live-leaving { overflow: hidden; pointer-events: none; animation: chat-step-close calc(var(--calm-flow-ms) * 1ms) cubic-bezier(.4, 0, .2, 1) forwards; }
 @keyframes chat-step-handoff {
     from { height: var(--handoff-h, 0px); opacity: .55; overflow: hidden; }
     to { height: auto; opacity: 1; overflow: hidden; }
