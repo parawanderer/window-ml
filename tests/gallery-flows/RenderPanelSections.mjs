@@ -17,6 +17,13 @@ export default async ({ page, tile, shot }) => {
     }), [".gl-frame details.r-py-sec", act]);
     const fail = (m, r) => { throw new Error(`${m}: ${JSON.stringify(r.h)}`); };
 
+    // Whether STDOUT starts folded is the calm view's own seeding, which lands a moment after the switch: start from a section
+    // known to be shut, whatever it began as.
+    await page.waitForTimeout(400);
+    if (await page.evaluate(() => document.querySelector(".gl-frame details.r-py-sec").open)) {
+        await page.evaluate(() => document.querySelector(".gl-frame details.r-py-sec > summary").click());
+        await page.waitForTimeout(500);
+    }
     await shot("closed");
     const opening = await sample("open");
     if (!opening.open) fail("the section did not open", opening);
