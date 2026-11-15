@@ -15,7 +15,7 @@
 import { DOCK_DEFAULT, readDock, type DockLayout } from "./dock-layout";
 import { signal } from "@preact/signals";
 import { IconBrain, IconMenu } from "../sidebar/icons";
-import { focusMode, groupAllTools } from "../sidebar/store";
+import { calmEntered, focusMode, groupAllTools } from "../sidebar/store";
 import type { PlatformPrefs } from "./platform";
 import { CODE_DEFAULT, CODE_SIZES } from "../native/text-size";
 import { placePins } from "./pin-order";
@@ -304,6 +304,7 @@ export function setCodeSize(px: number): void {
 
 /** Switch views. */
 export function setCalm(on: boolean): void {
+    if (on && !calm.value) calmEntered.value++;   // blocks left on their raw view go back to rendered (raw-view.ts)
     calm.value = on;
     applyCalm();
     store?.set(CALM_KEY, on);

@@ -181,6 +181,9 @@ export const codeThemeUi = signal<boolean>(true);
 // FOCUS MODE: read the run as a conversation. A DISPLAY pref, not a filter — it quiets chrome (counters,
 // badges, provenance) via CSS on a root attribute, so nothing is dropped and turning it off restores it.
 export const focusMode = signal(false);
+/** How many times the calm chat has been switched ON this session; a block's raw choice resets on it (raw-view.ts). */
+// state: ui — a counter, not a preference
+export const calmEntered = signal(0);
 /**
  * GROUP EVERY TOOL CALL, not just a run of the same one. Off here, in which case the reading view folds by the
  * ordinary rule (adjacent, same tool, at least three, ended); the chat page turns it ON for a device that has not

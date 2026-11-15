@@ -21,6 +21,7 @@ import { STEP_BUDGETS } from "../../agent/step-budget";
 import { aliasOf, AnswerBody, ResultBlock } from "./answer-render";
 import { hasTokens } from "../../pointers/answer-tokens";
 import { promptLine } from "../../contract/contract-run";
+import { useRawView } from "../raw-view";
 
 // The session's createChat config (not the per-turn request/messages — full
 // message history is a separate export feature).
@@ -281,7 +282,7 @@ export function EmbedRunView({ s }: { s: Session }) {
 export function MessageTurn({ t, hash }: { t: Turn; hash?: string }) {
     // With files attached, `t.user` is exactly what the model got (the `<file>` blocks included, the raw view) and
     // `t.display` the words and the files apart (the rendered view, files as chips under the message).
-    const [raw, setRaw] = useState(false);
+    const [raw, setRaw] = useRawView();
     const shown = t.display && !raw ? t.display.typed : t.user;
     return (
         <>

@@ -55,6 +55,7 @@ import { groupTurns } from "../debug-reducer";
 import { EarlierInThread, tail } from "./transcript-window";
 import type { AgentTurnGroup } from "../debug-reducer";
 import { ApprovalRow } from "./approval-row";
+import { useRawView } from "../raw-view";
 
 // A Jupyter-style In:/Out: block: a gutter label + content, collapsible on its
 // own (a grey inline preview shows when collapsed). If a descriptor targets THIS
@@ -69,7 +70,7 @@ const slotOf = (label: string): "in" | "out" | undefined =>
  *  the raw-view rule, and this is where it is enforced. Both views carry the slot's `data-cite` anchor,
  *  so a citation lands on the half it named. */
 export function IoBlock({ label, tip, preview, render, raw, rawText, marks, reserve, failLine, live, ranMs, ranSince, ctx, lineMap, remoteMs, failed }: { label: string; tip?: string; preview: string; render?: RenderDescriptor; raw: ComponentChildren; rawText?: string; marks?: [number, number][]; reserve?: boolean; failLine?: number | null; live?: boolean; ranMs?: number; ranSince?: number; ctx?: CodeCtx; lineMap?: number[] | null; remoteMs?: { durationMs: number; bootMs?: number } | null; failed?: boolean }) {
-    const [showRaw, setShowRaw] = useState(false);   // rendered by default when a descriptor targets this block
+    const [showRaw, setShowRaw] = useRawView();   // rendered by default when a descriptor targets this block
     // The capped, scrollable, FINDABLE cell wraps the RAW view of either slot — which is the view you go to
     // in order to search for a token, and the one with no structure of its own to cap it. It is also where an
     // In block gets big: a call carrying a base64 image or a wide table stretches the step to any height,

@@ -969,6 +969,30 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat.calm .tok-block { --astep-close-ms: 200; }
 .chat.calm .tok-body.opening { animation: chat-step-open .22s cubic-bezier(.4, 0, .2, 1); }
 .chat.calm .tok-body.closing { animation: chat-step-close .2s cubic-bezier(.4, 0, .2, 1) forwards; }
+/* ONE DISCLOSURE, in the calm chat: the same chevron the ml.sh footer and every other fold draws (`>`, turning down while
+   open, IconChevron's own path) in place of the browser's triangle on a native `details` (a result's VALUE / console
+   sections, an In/Out block), and the same slide when it opens or closes (the Disclosure's `.2s`) in place of the snap.
+   The slide is `::details-content`, which a browser without it simply skips: the section still opens, unanimated. */
+.chat.calm .r-py-sec > summary::before, .chat.calm details.io > summary::before {
+    content: ""; display: inline-block; flex: none; width: 11px; height: 11px; font-size: inherit;
+    background: var(--fg-dim); transition: transform .18s cubic-bezier(.2, .7, .2, 1), background-color .12s;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6 3.5L10.5 8L6 12.5' fill='none' stroke='black' stroke-width='1.9'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6 3.5L10.5 8L6 12.5' fill='none' stroke='black' stroke-width='1.9'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.chat.calm details.io > summary::before { margin-right: 5px; vertical-align: -1px; }
+.chat.calm .r-py-sec > summary:hover::before, .chat.calm details.io > summary:hover::before { background: var(--fg); }
+.chat.calm .r-py-sec[open] > summary::before, .chat.calm details.io[open] > summary::before { transform: rotate(90deg); }
+@supports selector(::details-content) {
+    .chat.calm .r-py-sec, .chat.calm details.io { interpolate-size: allow-keywords; }
+    .chat.calm .r-py-sec::details-content, .chat.calm details.io::details-content {
+        block-size: 0; overflow: clip; transition: block-size .2s cubic-bezier(.2, .7, .2, 1), content-visibility .2s allow-discrete;
+    }
+    .chat.calm .r-py-sec[open]::details-content, .chat.calm details.io[open]::details-content { block-size: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .chat.calm .r-py-sec > summary::before, .chat.calm details.io > summary::before,
+    .chat.calm .r-py-sec::details-content, .chat.calm details.io::details-content { transition: none; }
+}
 /* The folded row's name slides in from the left when the embed folds and back out when it opens, on the reply's own
    keyframes and curves (`chat-asst-sum-in` / `chat-asst-sum-out`, below), so the two folds read as one gesture. */
 .chat.calm .tok-folded .tok-fold-name { animation: chat-asst-sum-in .18s cubic-bezier(0, 0, .2, 1) both; }
