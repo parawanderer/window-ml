@@ -95,6 +95,6 @@ test("a code step holds itself open for a command waiting on the person, and the
     assert.match(ad, /if \(holdsForAsk\) \{ if \(focusMode\.value\) closeOnSettle\.current = true; setExpanded\(true\); \}/, "and it stays open once answered; only the reading view folds it when the step settles");
     assert.match(ad, /Waiting for your approval to run it\./);
     assert.match(ad, /waiting for your answer to the command it started/);
-    assert.match(rd("../src/chat/chat.css"), /\.chat\.calm, html\[data-calm\] \{ --notice: var\(--accent\); --notice-fg: var\(--accent-fg\); --busy: var\(--accent\); \}/, "--busy is blue where the tooltip layer (outside .chat) reads it");
+    assert.match(rd("../src/chat/chat.css"), /html\[data-calm\] \.tt-layer \{ --notice: var\(--accent\); --notice-fg: var\(--accent-fg\); --busy: var\(--accent\); \}/, "--busy is blue where the tooltip layer (outside .chat) reads it, and only there");
     assert.match(rd("../src/sidebar/transcript/live-call.tsx"), /fold-rail fold-rail-still/, "the live call wears the rail, still");
 });
