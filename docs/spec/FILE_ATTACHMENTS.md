@@ -215,8 +215,9 @@ default model, so refusing there would leave another cloud model only the choice
 The override is `vision: true` on `chat.start`, `agent.start` and `session.send`, meaning what `ml.agent({ vision:
 true })` means: send the images to the run's own model, no probe. Amended 2026-11-15 (Shane's ruling): it is claimed when the
 person said yes, or when the model's vision is not reported and the person has not said no (an unreported model is
-assumed to see, and the eye toggle remembers the person's choice per model); a model reported without image input is
-never claimed. Before, `vision: true` was only ever the person's word (2026-10-29). `session.send` carries it
+assumed to see, and the eye toggle remembers the person's choice per model); a LOCAL model reported without image
+input is never claimed, and a cloud model's vision counts as not reported whatever its kinds list says
+(`visionUnreported`, sees-images.tsx). Before, `vision: true` was only ever the person's word (2026-10-29). `session.send` carries it
 for a chat only; an agent run's vision is decided at `agent.start`. The composer offers it as the "This model sees
 images" toggle when the model's vision is not reported (sees-images.tsx), on the start page and in a chat's composer;
 the refusal is checked again in the runtime. This changes what a worker chat does with a pasted image: a model of
