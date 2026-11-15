@@ -2142,6 +2142,9 @@ button.chat-page-go:hover { color: var(--fg); }
 /* SEVERAL TOOLS cannot name themselves in the mono slot, so the count leads and the names follow it. The count is
    the brighter of the two: "how much work is behind this row" is the question the row is answering. */
 .astreak-calls { color: var(--fg); font-weight: 600; }
+/* THE HEAD STAYS ON ONE LINE: the tool list is what gives way (it truncates, and says the whole list on hover when it did), so the
+   count, the failure count and the time never wrap beside a long list. */
+.astreak-head > :not(.astreak-tools) { flex: none; white-space: nowrap; }
 .astreak-tools { color: var(--fg-faint); font-family: var(--mono, ui-monospace, monospace); font-size: .88em;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 /* STILL GROWING. In "group all" the newest call joins a row that is already closed, so without a word here the
