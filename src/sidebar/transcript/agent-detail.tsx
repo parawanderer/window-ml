@@ -45,7 +45,7 @@ import { StartAskCard, SiteWaitPrompt } from "../card/card-start";
 import { hostOf } from "../../agent-start";
 import { JsonNode, type JsonSchemaNode } from "./json-tree";
 import { LiveCall } from "./live-call";
-import { HeldLive, HeldStep } from "./live-hold";
+import { HeldLive, HeldStep, foldPauseOwed, noteFold } from "./live-hold";
 import { liveCallView } from "./live-call-view";
 import { isRefusedPkgCard } from "../card/pkg-card-view";
 export { JsonNode, JtKey, jtPreview, type JsonSchemaNode } from "./json-tree";
@@ -479,7 +479,12 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
     // state: ui — the pending fold of a settled step
     const settleTimer = useRef(0);
     useEffect(() => {
-        if (closeOnSettle.current && !st.pending) { closeOnSettle.current = false; settleTimer.current = setTimeout(() => close(() => setExpanded(false)), SETTLE_DWELL_MS) as unknown as number; }
+        if (closeOnSettle.current && !st.pending) {
+            closeOnSettle.current = false;
+            // The next model turn often starts streaming while this step is still open: it waits for the fold (the dwell, then the close) and a beat more.
+            noteFold(SETTLE_DWELL_MS + 400);
+            settleTimer.current = setTimeout(() => close(() => setExpanded(false)), SETTLE_DWELL_MS) as unknown as number;
+        }
     });
     useEffect(() => () => clearTimeout(settleTimer.current), []);
     // `handed` holds the body's open animation still for a step that has just taken over from a live call. It ends with the step's
@@ -520,7 +525,7 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
         // A CODE STEP STAYS OPEN while it runs: the program it starts (an `ml.sh` inside the cell) asks next, and a card
         // over a collapsed row does not say which code wants it. It folds when the step settles (`closeOnSettle`).
         if (focusMode.value && codeOf(st) && st.pending) { closeOnSettle.current = true; setExpanded(true); setFading(true); setTimeout(() => setFading(false), 220); }
-        else if (focusMode.value) { setFading(true); close(() => { setFading(false); setExpanded(false); }); }
+        else if (focusMode.value) { noteFold(400); setFading(true); close(() => { setFading(false); setExpanded(false); }); }
         else setExpanded(true);
         if (hash && st.seq != null) decidedSteps.add(stepKey(hash, st.seq));
         void decideGate(st, hash!, st.seq!, ok, persist, feedback);   // fetch_url: grant its host in-gesture, then post
@@ -1088,8 +1093,9 @@ export function AgentRunView({ s }: { s: Session }) {
     const runLive = services().stillLive(s.hash);
     // A step still moving (just decided, or just started) is not grouped yet; when the first of them is let go, this draws again.
     if (s.liveStream?.calls?.length) noteStreamed(s.hash, s.liveStream.step);
+    const foldWait = foldPauseOwed();
     const settleIn = noteSteps(s.hash, s.steps || []);
-    useEffect(() => { if (!settleIn) return; const t = setTimeout(() => { rev.value++; }, settleIn + 20); return () => clearTimeout(t); });
+    useEffect(() => { const ms = Math.min(settleIn || Infinity, foldWait || Infinity); if (ms === Infinity) return; const t = setTimeout(() => { rev.value++; }, ms + 20); return () => clearTimeout(t); });
     const items: { pos: number; ts: number; el: preact.JSX.Element; weight?: number }[] = [
         { pos: -1, ts: s.createdTs, el: <UserBubble key="task" pin="task" text={s.task || ""} ts={s.createdTs} images={s.taskImages} display={s.taskDisplay} site={s.site} /> },
         // A RUN OF THE SAME TOOL folds into one row in the reading view — eight `exec` rows with empty previews say
@@ -1120,7 +1126,8 @@ export function AgentRunView({ s }: { s: Session }) {
             ts: r.ts,
             el: <ResumeDivider key={`r${i}-${r.id}`} r={r} />,
         })),
-        ...(s.answers || []).map((a, i) => ({ pos: a.atStep + 0.5, ts: a.ts, el: answer(a, `a${i}`, i) })),
+        // The newest answer waits out the pause after a collapse, like the stream it came from (live-hold.tsx): a model that finishes inside the fold would draw it over the motion.
+        ...(s.answers || []).map((a, i) => ({ pos: a.atStep + 0.5, ts: a.ts, el: answer(a, `a${i}`, i), held: i === (s.answers?.length ?? 0) - 1 && foldWait > 0 })).filter((it) => !it.held),
         // A task's result is drawn twice and CSS shows one: the calm line, or the dev view's labelled bubble (task-line.tsx).
         ...(s.says || []).map((sy, i) => ({ pos: sy.atStep + 0.5, ts: sy.ts, el: sy.task
             ? <div key={`s${i}`} class="task-say"><TaskResultLine task={sy.task} text={sy.text} end={sy.taskEnd} /><div class="task-dev"><UserBubble pin={`s${i}`} text={sy.text} ts={sy.ts} task={sy.task} /></div></div>

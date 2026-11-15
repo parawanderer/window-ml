@@ -41,7 +41,7 @@ test("two gated execs in one turn: both cells stay drawn, keep their rail, and f
                     return { path: path.join("<"), cls: el.className.replace(/astep|tool|pending/g, "").trim(), live: el.classList.contains("live-call"), h: Math.round(el.getBoundingClientRect().height), open: el.classList.contains("open"), rail: !!body?.querySelector(".fold-rail"), card: !!el.querySelector(".astep-approve"), dot: el.querySelector(".dot")?.className ?? "" };
                 });
                 window.__f.push({
-                    grouped: !!document.querySelector(".astreak"), bar: !!document.querySelector(".chat-waiting"), quiet: document.querySelectorAll(".live-call-quiet").length, liveTips: [...document.querySelectorAll(".live-call .dot-tip-line")].map((e) => e.textContent).join("|"), t: performance.now() - t0, cells, thinking: document.querySelectorAll(".athinking").length,
+                    grouped: !!document.querySelector(".astreak"), bar: !!document.querySelector(".chat-waiting"), reply: !!document.querySelector(".msg.asst"), folding: !!document.querySelector(".astep.closing, .astreak-body.closing"), quiet: document.querySelectorAll(".live-call-quiet").length, liveTips: [...document.querySelectorAll(".live-call .dot-tip-line")].map((e) => e.textContent).join("|"), t: performance.now() - t0, cells, thinking: document.querySelectorAll(".athinking").length,
                                         written: (() => { const w = document.querySelector(".live-call .astep-preview.written"); return w ? parseFloat(getComputedStyle(w).opacity) : null; })(),
                     foot: [".run-stats", ".usage-gauge"].map((q) => { const e = document.querySelector(q); return e ? getComputedStyle(e).animationName : ""; }).join(","),
                 });
@@ -83,6 +83,13 @@ test("two gated execs in one turn: both cells stay drawn, keep their rail, and f
         expect(queuedFrames.length, dump("no frame had a card and a waiting call")).toBeGreaterThan(10);
         expect(queuedFrames.filter((r) => r.quiet > 0).length, dump("a call waiting its turn showed the no-output clock")).toBe(0);
         expect(queuedFrames.every((r) => /waiting its turn/.test(r.liveTips)), dump("the waiting call's dot did not say it waits its turn")).toBe(true);
+        // 3f. The model's next words are not drawn while the calls are still collapsing into their group: a beat of quiet between the two.
+        const firstReply = f.find((r) => r.reply);
+        if (firstReply) {
+            const lastFold = [...f].reverse().find((r) => r.folding && r.t < firstReply.t);
+            expect(lastFold && firstReply.t - lastFold.t, dump("the reply started while the calls were still folding, or with no beat after")).toBeGreaterThanOrEqual(250);
+            expect(f.filter((r) => r.reply && r.folding).length, dump("the reply was drawn during a fold")).toBe(0);
+        }
         // 3c. A call written in full sends its "writing… N chars" readout away over time: its opacity passes through the middle.
         const fading = f.filter((r) => r.written != null);
         expect(fading.length, dump("no written call ever sent its readout away")).toBeGreaterThan(0);

@@ -24,6 +24,7 @@ import { IconChevron } from "../icons";
 import { FoldRail } from "./fold-rail";
 import { useCloseAnimation } from "../use-close";
 import { justArrived } from "./just-arrived";
+import { noteFold } from "./live-hold";
 import { useHistoryPaint } from "./history-paint";
 import { Ticking, cursorTipOn } from "../ui-kit";
 
@@ -329,6 +330,8 @@ export function StepStreak({ s, render }: { s: ToolStreak; render: (t: AgentTurn
     // marked as the thing the vanished rows became.
     const [forming] = useState(() => !history && groupedInView(s));
     const grouped = refolding || forming;
+    // A group forming in view is a collapse: what the model says next waits for it (live-hold.tsx).
+    useState(() => { if (grouped) noteFold(500); });
     const [open, setOpen] = useState(refolding);
     const { failed, ms, calls, pending } = streakFacts(s);
     // A CALL JOINING A LIVING GROUP is the one moment the fold's own motion cannot speak: the row is already

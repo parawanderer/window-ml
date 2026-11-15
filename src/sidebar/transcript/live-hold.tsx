@@ -24,6 +24,18 @@ export const LIVE_MIN_MS = 1200;
 /** How long, in ms, a held call takes to fold away when no step opens in its place. */
 export const LIVE_LEAVE_MS = 520;
 
+/** How long, in ms, the next stream is held back after a call folds or a group forms, on top of the fold itself. */
+export const FOLD_PAUSE_MS = 400;
+
+// state: ui — until when the next model stream is kept off the page: set when something collapsed by itself
+const calm = { until: 0 };
+
+/** Something has just collapsed by itself (a call folded, a group formed) and takes `ms` to do it: the next stream waits for that and a beat more. */
+export function noteFold(ms: number, now = Date.now()): void { calm.until = Math.max(calm.until, now + ms + FOLD_PAUSE_MS); }
+
+/** Milliseconds the next stream is still to be kept off the page (0 outside the calm view). */
+export function foldPauseOwed(now = Date.now()): number { return focusMode.value ? Math.max(0, calm.until - now) : 0; }
+
 // state: ui — when the first live cell of this stretch appeared, until when it is owed, which cells (by call index) are drawn
 // now, and which of their steps open for approval (the code then flies there; otherwise the cell folds away)
 const hold = { first: 0, until: 0, cells: new Set<number>(), opens: new Set<number>() };
@@ -79,7 +91,14 @@ export function HeldLive({ ls: incoming, landed, render }: { ls: Session["liveSt
     void tick.value;
     // The next turn's stream arrives EMPTY (nothing written yet) and draws nothing: it does not displace a held block, which
     // goes when something has actually been written to replace it.
-    const ls = incoming && (incoming.reasoning || incoming.content || incoming.calls?.length) ? incoming : null;
+    const written = incoming && (incoming.reasoning || incoming.content || incoming.calls?.length) ? incoming : null;
+    // A stream that STARTS right after something collapsed waits a beat: a fast model writes into the fold's last frames and everything moves at
+    // once. What it says keeps arriving in the session meanwhile; a stream already on screen is never taken off it.
+    const shownStep = useRef<number | null>(null);
+    const pause = written && written.step !== shownStep.current ? foldPauseOwed() : 0;
+    const ls = pause > 0 ? null : written;
+    if (ls) shownStep.current = ls.step;
+    useWake(pause);
     const last = useRef<Session["liveStream"] | null>(null);
     // state: ui — when each cell began to fold away (by call index), when the whole block did, and whether it was ever HELD
     // (a block that was not goes at once)

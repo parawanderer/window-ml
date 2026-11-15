@@ -138,6 +138,27 @@ test("a held live stream goes at once when a step is opening to take its charact
     render(null, host);
 });
 
+// --- a beat after something collapses, before the next stream ---
+test("a stream that starts right after a collapse waits a beat; one already on screen is not taken off it; nothing waits outside the calm view", async () => {
+    reset();
+    const mk = (step, content) => ({ step, content, calls: [] });
+    const view = (v) => h(hold.HeldLive, { ls: v, landed: () => 0, render: (x) => h("i", { id: "live" }, x.content) });
+    hold.noteFold(60);                                            // a call has just folded (it takes 60 ms here)
+    assert.ok(hold.foldPauseOwed() > 400, "the fold and a beat more");
+    render(view(mk(2, "hello")), host); await wait(20);
+    assert.equal(host.querySelector("#live"), null, "the next turn's words are not drawn yet");
+    await wait(hold.FOLD_PAUSE_MS + 120);
+    assert.equal(host.querySelector("#live")?.textContent, "hello", "then they are, with what has arrived meanwhile");
+    hold.noteFold(60);
+    render(view(mk(2, "hello there")), host); await wait(20);
+    assert.equal(host.querySelector("#live")?.textContent, "hello there", "a stream that is already on screen is never taken off it by a later fold");
+    render(null, host);
+    reset(false); hold.noteFold(60);
+    assert.equal(hold.foldPauseOwed(), 0, "no pause outside the calm view");
+    await wait(hold.FOLD_PAUSE_MS + 100);                         // let it run out: the next tests start from a clear page
+    reset();
+});
+
 // --- several calls in one turn ---
 test("the calls that have no step yet stay where they are drawn, while the first one's step takes over", async () => {
     reset();
