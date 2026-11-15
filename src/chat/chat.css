@@ -2028,7 +2028,8 @@ button.chat-page-go:hover { color: var(--fg); }
    the app asking a question, not a warning about something that went wrong, and a page of amber badges says the
    second. This replaces the touch-only cyan, which existed because the yellow read as an alarm in a phone's small
    frame — a problem the accent does not have at either size, so one colour now serves both. */
-.chat.calm { --notice: var(--accent); --notice-fg: var(--accent-fg); --busy: var(--accent); }
+/* On `html` too: the tooltip layer hangs off <body>, outside `.chat`, and read the panel's orange `--busy` for a dot that is blue. */
+.chat.calm, html[data-calm] { --notice: var(--accent); --notice-fg: var(--accent-fg); --busy: var(--accent); }
 /* …and a CITATION with it. The green rails and underlines are right in the developer view, where green means "this
    is real, it came from a tool" among a page of other machinery. In the reading view they are the loudest thing on
    a page of prose — a colour the page uses nowhere else, down the side of every table and under every cited number —
@@ -2281,10 +2282,12 @@ button.chat-page-go:hover { color: var(--fg); }
 /* THE ml.sh FOOTER: its count ticks as the streak's does when a call joins it, and the card you just answered eases away
    (height, then nothing) over the same beat, so the call visibly goes into the footer instead of vanishing. */
 .chat.calm .shc-n.bumped { display: inline-block; animation: chat-streak-bump .28s cubic-bezier(.2, .8, .2, 1); }
-/* ONE BEAT for an approval and the code it asks about: the card fades in and out, and a streamed script's characters fly to
-   their reformatted places (code-morph.ts, which reads this), over `--calm-flow-ms` on the same curve. */
-.chat.calm { --calm-flow-ms: 260; }
-.chat.calm .astep-approve.ask { animation: chat-ask-in calc(var(--calm-flow-ms) * 1ms) cubic-bezier(.4, 0, .2, 1) backwards; }
+/* ONE BEAT for an approval and the code it asks about: the card fades in and a streamed script's characters fly to their
+   reformatted places (code-morph.ts reads `--calm-reflow-ms`), over the same time on the same curve, a little slower than
+   the rest of the calm view's motion because it is the one thing being READ while it moves. The card's exit is the
+   ordinary `--calm-flow-ms`. */
+.chat.calm { --calm-flow-ms: 260; --calm-reflow-ms: 420; }
+.chat.calm .astep-approve.ask { animation: chat-ask-in calc(var(--calm-reflow-ms) * 1ms) cubic-bezier(.4, 0, .2, 1) backwards; }
 @keyframes chat-ask-in { from { opacity: 0; transform: translateY(4px); } }
 .chat.calm .astep-approve.ask.leaving { overflow: hidden; pointer-events: none; animation: chat-ask-leave calc(var(--calm-flow-ms) * 1ms) cubic-bezier(.4, 0, .2, 1) forwards; }
 @keyframes chat-ask-leave {

@@ -5,6 +5,8 @@
 
 import { noteLiveCall } from "./just-arrived";
 import { noteLiveGlyphs, wasStreamed } from "./code-morph";
+import { liveMounted, liveUnmounted } from "./live-hold";
+import { focusMode } from "../store";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { Code, Dot, cursorTipOn } from "../ui-kit";
 import { IconQuiet } from "../icons";
@@ -85,7 +87,14 @@ export function LiveCall({ call }: { call: LiveToolCall }) {
     // How long it stood and how many times it grew: a provider that sends the call whole leaves nothing to fly from.
     const life = useRef({ at: Date.now(), arrivals: 0, chars: call.chars });
     if (call.chars !== life.current.chars) { life.current.chars = call.chars; life.current.arrivals++; }
-    useLayoutEffect(() => { const el = body.current; return () => { if (el) noteLiveGlyphs(el, wasStreamed(life.current.arrivals, Date.now() - life.current.at)); }; }, []);
+    useLayoutEffect(() => {
+        const el = body.current;
+        liveMounted();
+        return () => {
+            liveUnmounted();
+            if (el) { noteLiveCall(el.offsetHeight); noteLiveGlyphs(el, wasStreamed(life.current.arrivals, Date.now() - life.current.at)); }   // the hand-over's window starts now
+        };
+    }, []);
     const onScroll = (): void => { const el = body.current; if (el) follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 8; };
     // HAS IT GONE QUIET? A model that stalls mid-call (a server that stopped, a dropped stream) looked exactly like
     // one writing slowly: a counter that is not moving. Timed by THIS clock from when the count last changed, so a
@@ -105,7 +114,10 @@ export function LiveCall({ call }: { call: LiveToolCall }) {
                     would say "working", which is the one thing a stall cannot claim. */}
                 {stall ? <span class="live-call-quiet" role="img" aria-label={stall} {...cursorTipOn(stall)}><IconQuiet /></span> : null}
             </div>
-            <div class="astep-body" ref={body} onScroll={onScroll}>
+            {/* The reading view's step carries the fold rail down its left; the live call wears it too (STILL: nothing folds a call
+                that is being written), so it does not appear at the hand-over. */}
+            <div class={`astep-body${focusMode.value ? " railed" : ""}`} ref={body} onScroll={onScroll}>
+                {focusMode.value ? <span class="fold-rail fold-rail-still" aria-hidden="true" /> : null}
                 {v.kind === "text" && v.as !== "markdown"
                     ? <div class={`live-call-code${v.writing || typed.length < v.text.length ? " writing" : ""}`}><Code text={typed} lang={v.as} /></div>
                     : v.kind === "text"

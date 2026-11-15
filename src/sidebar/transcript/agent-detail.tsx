@@ -44,6 +44,7 @@ import { StartAskCard, SiteWaitPrompt } from "../card/card-start";
 import { hostOf } from "../../agent-start";
 import { JsonNode, type JsonSchemaNode } from "./json-tree";
 import { LiveCall } from "./live-call";
+import { HeldLive, HeldStep } from "./live-hold";
 import { liveCallView } from "./live-call-view";
 import { isRefusedPkgCard } from "../card/pkg-card-view";
 export { JsonNode, JtKey, jtPreview, type JsonSchemaNode } from "./json-tree";
@@ -447,7 +448,14 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
     // …EXCEPT a code tool, whose sentence says only WHERE it runs. The source is the thing being judged and no
     // sentence stands in for it, so it unfurls either way. This used to ride on `intentFor` returning null for a
     // code tool; now that it returns one, the rule has to say what it meant.
-    const forcedOpen = awaiting && !(intent && !codeOf(st) && focusMode.value);
+    // A nested ask waiting inside this running step: the step reads as needing approval while it does.
+    const askWaiting = !!st.pending && !!st.asks?.some((a) => a.state === "pending" && !a.external);
+    // …and a CODE step holds itself open while a command it started waits on the person: that card asks about one call
+    // inside the code, and over a folded row it does not say which. This is the step's own state, not something the
+    // gate's `decide` has to remember: the gate may be answered from the footer or by a remembered grant, and the step
+    // then arrives here shut.
+    const holdsForAsk = askWaiting && !!codeOf(st) && focusMode.value;   // the reading view; the panel keeps the step shut under the card
+    const forcedOpen = (awaiting && !(intent && !codeOf(st) && focusMode.value)) || holdsForAsk;
     const open = expanded || forcedOpen;
     // CLOSING A STEP, on a surface that animates it shut. The body is unmounted the moment it closes, so there is
     // nothing left to animate — the way to give it a way out is to keep it mounted for exactly as long as the
@@ -462,6 +470,9 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
     const { closing, close, cancel } = useCloseAnimation(rootRef);
     const closeOnSettle = useRef(false);
     useEffect(() => { if (closeOnSettle.current && !st.pending) { closeOnSettle.current = false; close(() => setExpanded(false)); } });
+    // Once a command has asked, the code stays open after it is answered too (the rest of the script is still running), and
+    // folds when the step settles, as it does after its own approval.
+    useEffect(() => { if (holdsForAsk) { closeOnSettle.current = true; setExpanded(true); } }, [holdsForAsk]);
     const toggle = (): void => {
         // `forcedOpen`, not `awaiting`: a step that CANNOT close has nothing to animate, but a gated step in calm
         // closes like any other and was snapping shut while every step beside it eased. It read as a different
@@ -509,8 +520,6 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
     // `gate`, not `awaiting`: everything the card SAYS has to stay put while it animates away, or its last beat
     // on screen is a different card — the intent sentence replaced by the generic question, the grant note gone.
     const gate = awaiting || fading;
-    // A nested ask waiting inside this running step: the step reads as needing approval while it does.
-    const askWaiting = !!st.pending && !!st.asks?.some((a) => a.state === "pending" && !a.external);
     // Whether the RUNTIME would still act on it — the other reducer over the same events. A run that died without a
     // terminal event leaves this client's step `awaitingApproval` for ever, so the card is drawn with live buttons
     // over a gate nothing holds.
@@ -545,6 +554,7 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
                     while the dot is what the eye is on when the question is asked. `toolMs` is the TOOL's clock and
                     not the step's, because a step's time is mostly a human standing at an approval gate. */}
                 <Dot status={inFlight ? "pending" : toolFailed(st.result) ? "err" : "ok"} ts={st.ts} ms={st.toolMs}
+                    tip={inFlight && !cut && (awaiting || askWaiting) ? (awaiting ? "Waiting for your approval to run it." : "Running, and waiting for your answer to the command it started.") : undefined}
                     warn={cut ? (awaiting ? "The run ended before anyone answered, so this call never ran." : "The run ended before this call finished.") : undefined} />
                 {/* Tool-authored short summary (contract MlTool.summary) → hover tooltip, both surfaces. */}
                 {/* THE MODEL'S OWN ACCOUNT of this call (the reserved `title` argument), where it wrote one. It is a
@@ -701,7 +711,7 @@ export function AgentTurn({ turn, max, hash }: { turn: AgentTurnGroup; max?: num
             {turn.half === "tools" ? null : <div class="aturn-head"><StepPill step={turn.localStep} max={max} /></div>}
             {turn.reasoning ? <ThoughtBlock thought={turn.reasoning} tokens={turn.reasoningTokens} /> : null}
             {turn.thought ? <TurnProse text={turn.thought} ts={turn.thoughtTs} /> : null}
-            {turn.tools.map((st, i) => <ToolStep key={`${st.tool}-${i}`} st={st} hash={hash} slot={i} />)}
+            {turn.tools.map((st, i) => <HeldStep key={`${st.tool}-${i}`} st={st}><ToolStep st={st} hash={hash} slot={i} /></HeldStep>)}
         </div>
     );
 }
@@ -1104,7 +1114,7 @@ export function AgentRunView({ s }: { s: Session }) {
             <AgentOptionsBlock s={s} />
             <EarlierInThread sessionKey={s.hash} hidden={hidden} />
             {drawn.map(it => it.el)}
-            {s.liveStream && runLive ? <LiveStream ls={s.liveStream} s={s} /> : null}
+            {runLive ? <HeldLive ls={s.liveStream} render={(ls) => <LiveStream ls={ls} s={s} />} /> : null}
             <StartAskCard s={s} />
             <SiteWaitPrompt s={s} />
             {/* THE RUN SAYS HOW IT ENDED, or the transcript simply stops. A run that died without a terminal event

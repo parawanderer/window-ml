@@ -3282,6 +3282,8 @@ html[data-focus] .action-verb { font-weight: 500; }
 .fold-rail:hover::before { background: color-mix(in srgb, var(--fg) 32%, transparent); }
 .fold-rail-cite::before { background: color-mix(in srgb, var(--cite) 70%, transparent); }
 .fold-rail-cite:hover::before { background: var(--cite); }
+/* `.fold-rail-still`: the rail of a call still being written (live-call.tsx), drawn but not a control: no hover, no click. */
+.fold-rail-still { pointer-events: none; cursor: default; }
 @media (prefers-reduced-motion: reduce) { .fold-rail::before { transition: none; } }
 /* NOT A TAP TARGET on a phone: each place that draws one has a full-width header or row that does the same, and an
    11px strip beside the content is a mis-tap there. The line stays; only the click goes. */
