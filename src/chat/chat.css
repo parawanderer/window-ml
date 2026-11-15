@@ -957,6 +957,8 @@ button.chat-page-go:hover { color: var(--fg); }
    height (`--handoff-h`) and eases to its own, so the reformatted code reads as the typed text settling rather than the
    block collapsing and reopening. Cleared after 400 ms (agent-detail.tsx), so a later open eases from nothing as usual. */
 .chat.calm .astep.handoff .astep-body { animation: chat-step-handoff .26s cubic-bezier(.4, 0, .2, 1); }
+/* `.handed`: the handoff is over. Without it the body's animation would change back to its open one and play again. */
+.chat.calm .astep.handed .astep-body { animation: none; }
 @keyframes chat-step-handoff {
     from { height: var(--handoff-h, 0px); opacity: .55; overflow: hidden; }
     to { height: auto; opacity: 1; overflow: hidden; }
