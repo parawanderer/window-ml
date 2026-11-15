@@ -3398,7 +3398,7 @@ test("a returned value drawn as a tree is the size its text is, at the page's co
 
 // --- "This model sees images" on the start page, as the Commander offers it (docs/spec/FILE_ATTACHMENTS.md) ---
 
-test("the start page offers 'This model sees images' for a model whose vision is not reported, and sends it only when turned on", async () => {
+test("the start page offers 'This model sees images' for a model whose vision is not reported, assumes it does, and remembers what the person says per model", async () => {
     const { page, errors } = await open(DESKTOP);
     const eye = page.locator(".chat-start-row .cmp-vis");
     const modelPill = page.getByRole("button", { name: /^Model:/ });
@@ -3411,18 +3411,18 @@ test("the start page offers 'This model sees images' for a model whose vision is
     await expect(eye).toHaveCount(0);
     await pickModel(/gemma3:27b/);
     await expect(eye).toHaveCount(0);
-    // A cloud model: the toggle, off.
+    // A cloud model nobody said anything about: assumed to see images, drawn as the assumption.
     await pickModel(/gemini-flash-latest/);
-    await expect(eye).toHaveAttribute("aria-pressed", "false");
-    await eye.click();
     await expect(eye).toHaveAttribute("aria-pressed", "true");
+    await expect(eye).toHaveClass(/assumed/);
     await expect(eye).toHaveAccessibleName("This model sees images");
-    // A chat asks the same question of its model now (a runtime refuses its images while it cannot tell): the toggle
-    // is there too, and the choice made for this model stays across the kind.
+    // The person says it does not: that is their word, and it stays across the kind and across another model.
+    await eye.click();
+    await expect(eye).toHaveAttribute("aria-pressed", "false");
+    await expect(eye).not.toHaveClass(/assumed/);
     await pickKind(page, "Chat");
-    await expect(eye).toHaveAttribute("aria-pressed", "true");
+    await expect(eye).toHaveAttribute("aria-pressed", "false");
     await pickKind(page, "Agent");
-    // Another model drops the choice: it was made for that model, and does not ride along.
     await pickModel(/gemma3:27b/);
     await pickModel(/gemini-flash-latest/);
     await expect(eye).toHaveAttribute("aria-pressed", "false");
@@ -3433,17 +3433,20 @@ test("the start page offers 'This model sees images' for a model whose vision is
     await expect.poll(async () => (await commands(page)).at(-1)).toMatchObject({ type: "agent.start", model: "litellm.google/gemini-flash-latest" });
     expect((await commands(page)).at(-1)).not.toHaveProperty("vision");
 
+    // The word outlives the page: a reload still has it, and turning it back on is carried.
     await page.goto(server.url);
     await pickModel(/gemini-flash-latest/);
+    await expect(eye).toHaveAttribute("aria-pressed", "false");
     await eye.click();
     await box.fill("read the chart again");
     await box.press("Enter");
     await expect.poll(async () => (await commands(page)).at(-1)).toMatchObject({ type: "agent.start", task: "read the chart again", vision: true });
 
+    // A chat asks the same question of its model, and the stored word needs no second click.
     await page.goto(server.url);
     await pickKind(page, "Chat");
     await pickModel(/gemini-flash-latest/);
-    await eye.click();
+    await expect(eye).toHaveAttribute("aria-pressed", "true");
     await box.fill("what is in it");
     await box.press("Enter");
     await expect.poll(async () => (await commands(page)).at(-1)).toMatchObject({ type: "chat.start", text: "what is in it", vision: true });

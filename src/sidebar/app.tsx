@@ -12,7 +12,7 @@ import type { InvocationInfo } from "../contract/contract-server";
 import type { MlDebugEvent } from "../contract/contract-debug";
 import { DEFAULT_CONFIG } from "../contract/contract-config";
 import {
-    FONT_KEY, WRAP_KEY, LINES_KEY, CODE_THEME_KEY, CODE_THEME_VSCODE_KEY, CODE_THEME_UI_KEY, codeTheme, codeThemeCustom, codeThemeUi, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_PREF_KEY, RESWIN_DEFAULT, VRAMH_KEY, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, SECTIONS_KEY, LANEH_KEY, LANE_H_DEFAULT, SNAPDOT_KEY, PREDICT_KEY, TIMEGRID_KEY, FOCUS_KEY, focusMode,
+    VISION_KEY, FONT_KEY, WRAP_KEY, LINES_KEY, CODE_THEME_KEY, CODE_THEME_VSCODE_KEY, CODE_THEME_UI_KEY, codeTheme, codeThemeCustom, codeThemeUi, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_PREF_KEY, RESWIN_DEFAULT, VRAMH_KEY, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, SECTIONS_KEY, LANEH_KEY, LANE_H_DEFAULT, SNAPDOT_KEY, PREDICT_KEY, TIMEGRID_KEY, FOCUS_KEY, focusMode,
     benchOpen, benchDock, viewReturn, markReturn, openBench, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY,
     prefsSnapshot, restorePrefs,
     sessionMap, rev, view, config,
@@ -551,7 +551,7 @@ function mount(): void {
     // The snapshot goes out WITH the read: the callback can land after a click, and the restore must not
     // yank that click back (store.ts, the init restore).
     const prefsSnap = prefsSnapshot();
-    chrome.storage.local.get({ [FONT_KEY]: 1, [WRAP_KEY]: true, [LINES_KEY]: false, [STATS_TOKENS_KEY]: true, [STATS_TPS_KEY]: false, [OUTMAX_KEY]: OUTMAX_DEFAULT, [OUTTS_KEY]: true, [RESWIN_KEY]: 0, [RESWIN_PREF_KEY]: RESWIN_DEFAULT, [VRAMH_KEY]: 0, [LANE_HIDDEN_KEY]: [], [LANE_SCOPE_KEY]: true, [SECTIONS_KEY]: null, [LANEH_KEY]: LANE_H_DEFAULT, [SNAPDOT_KEY]: false, [PREDICT_KEY]: false, [TIMEGRID_KEY]: false, [VRAM_PALETTE_KEY]: "", [FOCUS_KEY]: false, [BENCH_OPEN_KEY]: false, [BENCH_DOCK_KEY]: "drawer", [BENCH_H_KEY]: 280, [BENCH_SPLIT_KEY]: 0, [CODE_THEME_KEY]: DEFAULT_CODE_THEME, [CODE_THEME_VSCODE_KEY]: null, [CODE_THEME_UI_KEY]: true }, (d: any) => {
+    chrome.storage.local.get({ [VISION_KEY]: {}, [FONT_KEY]: 1, [WRAP_KEY]: true, [LINES_KEY]: false, [STATS_TOKENS_KEY]: true, [STATS_TPS_KEY]: false, [OUTMAX_KEY]: OUTMAX_DEFAULT, [OUTTS_KEY]: true, [RESWIN_KEY]: 0, [RESWIN_PREF_KEY]: RESWIN_DEFAULT, [VRAMH_KEY]: 0, [LANE_HIDDEN_KEY]: [], [LANE_SCOPE_KEY]: true, [SECTIONS_KEY]: null, [LANEH_KEY]: LANE_H_DEFAULT, [SNAPDOT_KEY]: false, [PREDICT_KEY]: false, [TIMEGRID_KEY]: false, [VRAM_PALETTE_KEY]: "", [FOCUS_KEY]: false, [BENCH_OPEN_KEY]: false, [BENCH_DOCK_KEY]: "drawer", [BENCH_H_KEY]: 280, [BENCH_SPLIT_KEY]: 0, [CODE_THEME_KEY]: DEFAULT_CODE_THEME, [CODE_THEME_VSCODE_KEY]: null, [CODE_THEME_UI_KEY]: true }, (d: any) => {
         restorePrefs(d, prefsSnap);
         // The DOM renders whatever value won — the restore's, or the person's mid-read change the restore
         // skipped — so every apply* runs either way and nothing a signal holds goes undrawn.

@@ -7,7 +7,9 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
-import { prefsSnapshot, restorePrefs, openBench, benchOpen, benchDock, BENCH_OPEN_KEY, BENCH_DOCK_KEY } from "../src/sidebar/store.ts";
+import { visionChoices, VISION_KEY, prefsSnapshot, restorePrefs, openBench, benchOpen, benchDock, BENCH_OPEN_KEY, BENCH_DOCK_KEY } from "../src/sidebar/store.ts";
+import { setComposerVision, COMMANDER_SCOPE } from "../src/sidebar/card/card-state.ts";
+import { visionFor, visionKey } from "../src/vision-choice.ts";
 
 // --- a click landing before the restore must survive it ---
 test("a click landing before the restore stays open", () => {
@@ -19,6 +21,22 @@ test("a click landing before the restore stays open", () => {
     // The callback hands the default-filled record a fresh profile reads back, its remembered open false.
     restorePrefs({ [BENCH_OPEN_KEY]: false }, snap);
     assert.equal(benchOpen.value, true, "the restore must not close a bench the person opened mid-read");
+});
+
+// --- an eye click before the restore resolves must survive it ---
+test("a vision choice clicked before the restore resolves survives it", () => {
+    visionChoices.value = {};
+    const snap = prefsSnapshot();
+    setComposerVision("gpt-x", false);       // the eye click, before the read lands
+    restorePrefs({ [VISION_KEY]: {} }, snap);  // a fresh profile stores nothing
+    assert.equal(visionFor(visionChoices.value, COMMANDER_SCOPE, "gpt-x").on, false, "the restore must not revert the click");
+});
+
+test("a remembered vision choice still lands when nothing was clicked during the read", () => {
+    visionChoices.value = {};
+    const snap = prefsSnapshot();
+    restorePrefs({ [VISION_KEY]: { [visionKey(COMMANDER_SCOPE, "gpt-x")]: false } }, snap);
+    assert.equal(visionFor(visionChoices.value, COMMANDER_SCOPE, "gpt-x").on, false);
 });
 
 // --- the guard is per key, never a veto on the whole restore ---

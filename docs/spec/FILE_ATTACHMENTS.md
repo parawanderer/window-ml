@@ -203,17 +203,21 @@ needs one) and the answer is:
 
 | The model… | The message |
 | --- | --- |
-| sees, or the person said it does (`vision: true`) | is sent with the images |
-| does not see or is UNKNOWN, and a reader model is set | goes with the reader's reading of each image, attributed to the reader |
+| sees, or is claimed to (`vision: true`: the person said yes, or the model's vision is not reported and the person has not said no) | is sent with the images |
+| does not see, or is UNKNOWN and the person said no, and a reader model is set | goes with the reader's reading of each image, attributed to the reader |
 | does not see, and no reader model is set | goes with each image or page named ("page 3 is a scan this model cannot see; set a reader model in Settings to have it read") |
-| is UNKNOWN, and no reader model is set | is refused before sending (`unsupported`), with a sentence: "This model may not see images. If it does, turn on 'This model sees images' and send again." Nothing is dropped and nothing is sent. |
+| is UNKNOWN and the person said no, and no reader model is set | is refused before sending (`unsupported`), with a sentence: "This model may not see images. If it does, turn on 'This model sees images' and send again." Nothing is dropped and nothing is sent. |
 
-An unknown model with a reader goes to the reader (decided 2026-10-29): no pixels reach a model nobody confirmed, and
-"does not see" can be declared only for the default model, so refusing there would leave another cloud model only
-the choice of forcing images on it.
+An unknown model the person said does not see goes to the reader (decided 2026-10-29). Since 2026-11-15 (Shane's ruling) an
+unknown model nobody said no to is sent the images (the override below). "Does not see" can be declared only for the
+default model, so refusing there would leave another cloud model only the choice of forcing images on it.
 
-The override is `vision: true` on `chat.start`, `agent.start` and `session.send`, the person's declaration, meaning
-what `ml.agent({ vision: true })` means: send the images to the run's own model, no probe. `session.send` carries it
+The override is `vision: true` on `chat.start`, `agent.start` and `session.send`, meaning what `ml.agent({ vision:
+true })` means: send the images to the run's own model, no probe. Amended 2026-11-15 (Shane's ruling): it is claimed when the
+person said yes, or when the model's vision is not reported and the person has not said no (an unreported model is
+assumed to see, and the eye toggle remembers the person's choice per model); a LOCAL model reported without image
+input is never claimed, and a cloud model's vision counts as not reported whatever its kinds list says
+(`visionUnreported`, sees-images.tsx). Before, `vision: true` was only ever the person's word (2026-10-29). `session.send` carries it
 for a chat only; an agent run's vision is decided at `agent.start`. The composer offers it as the "This model sees
 images" toggle when the model's vision is not reported (sees-images.tsx), on the start page and in a chat's composer;
 the refusal is checked again in the runtime. This changes what a worker chat does with a pasted image: a model of

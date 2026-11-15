@@ -4,7 +4,8 @@
 // (no JSX) shared by the card view components AND app.tsx's message bus. Extracted from hud-card.tsx.
 import { signal } from "@preact/signals";
 import type { ElementContext, SentFile } from "../../contract/contract-run";
-import { sessionMap, ollamaIds, config } from "../store";
+import { sessionMap, ollamaIds, config, visionChoices, VISION_KEY } from "../store";
+import { withVisionChoice } from "../../vision-choice";
 import type { AgentStep, Session } from "../store";
 import { decidedSteps, stepKey, askKey } from "../ui-kit";
 import type { StepAsk } from "../../contract";
@@ -72,11 +73,16 @@ export function startRefused(reason: string): void {
 // startRun payload carries it to createAgent({ model }); it never touches config. Persists across opens.
 export const composerModel = signal("");
 export const composerModelOpen = signal(false);     // the model-picker dropdown is open (over the composer foot)
-// Per-call FORCE-NATIVE vision, only meaningful for a NON-Ollama picked model whose vision we can't probe
-// (e.g. GPT-4o / minimax). ON → startRun passes ml.agent's `vision: true` (see with its own model) for
-// this run; OFF → the default routing (delegate to the OCR reader if one sees). Ollama models auto-detect,
-// so the toggle is hidden for them — the composer mirror of the Settings "vision capable?" lock.
-export const composerVision = signal(false);
+// Per-call NATIVE vision for a NON-Ollama picked model whose vision we can't probe (e.g. GPT-4o / minimax): whether images go to
+// the model itself (ml.agent's `vision: true`) or to the OCR reader. A model nobody said anything about is assumed to see them,
+// and the person's click is remembered per model (vision-choice.ts, `visionChoices` in store.ts). Ollama models auto-detect,
+// so the toggle is hidden for them: the composer mirror of the Settings "vision capable?" lock.
+export const COMMANDER_SCOPE = "commander";
+/** Remember the person's word on whether `model` sees images, for the Commander, and keep it across opens. */
+export function setComposerVision(model: string, on: boolean): void {
+    visionChoices.value = withVisionChoice(visionChoices.value, COMMANDER_SCOPE, model, on);
+    try { void chrome.storage.local.set({ [VISION_KEY]: visionChoices.value }); } catch { /* no storage: the choice lasts this page */ }
+}
 // Known Ollama-backed? The server's provenance list is authoritative.
 export const isOllamaModel = (id: string): boolean => !!ollamaIds.value?.includes(id);
 // The model a UI-started run will actually use: the per-call override, else the configured default.
