@@ -57,6 +57,7 @@ import { EarlierInThread, tail } from "./transcript-window";
 import type { AgentTurnGroup } from "../debug-reducer";
 import { ApprovalRow } from "./approval-row";
 import { useRawView } from "../raw-view";
+import { useHeightEase } from "../ease-height";
 
 // A Jupyter-style In:/Out: block: a gutter label + content, collapsible on its
 // own (a grey inline preview shows when collapsed). If a descriptor targets THIS
@@ -359,6 +360,9 @@ function TokenChip({ token }: { token: string }) {
     );
 }
 
+/** How long, in ms, a step that has just settled stays open before the reading view folds it. */
+const SETTLE_DWELL_MS = 900;
+
 /** ONE TOOL CALL in a run — the header (name, status, approval badge, live preview), the approval gate
  *  when it is waiting on you, and both I/O halves when it is open. The step is where the two render
  *  descriptors meet, so it is also what passes the failing line and the reflow map from the Out to the
@@ -454,7 +458,7 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
     // inside the code, and over a folded row it does not say which. This is the step's own state, not something the
     // gate's `decide` has to remember: the gate may be answered from the footer or by a remembered grant, and the step
     // then arrives here shut.
-    const holdsForAsk = askWaiting && !!codeOf(st) && focusMode.value;   // the reading view; the panel keeps the step shut under the card
+    const holdsForAsk = askWaiting && !!codeOf(st);   // in every view: the code is the context the card's command came from
     const forcedOpen = (awaiting && !(intent && !codeOf(st) && focusMode.value)) || holdsForAsk;
     const open = expanded || forcedOpen;
     // CLOSING A STEP, on a surface that animates it shut. The body is unmounted the moment it closes, so there is
@@ -469,11 +473,22 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
     const rootRef = useRef<HTMLDivElement>(null);
     const { closing, close, cancel } = useCloseAnimation(rootRef);
     const closeOnSettle = useRef(false);
-    useEffect(() => { if (closeOnSettle.current && !st.pending) { closeOnSettle.current = false; close(() => setExpanded(false)); } });
-    // Once a command has asked, the code stays open after it is answered too (the rest of the script is still running), and
-    // folds when the step settles, as it does after its own approval.
-    useEffect(() => { if (holdsForAsk) { closeOnSettle.current = true; setExpanded(true); } }, [holdsForAsk]);
+    // The step folds a moment AFTER it settles, not in the render its result arrives in: the result was drawn and gone in the same
+    // breath, and a reader approving a call never saw what it returned.
+    // state: ui — the pending fold of a settled step
+    const settleTimer = useRef(0);
+    useEffect(() => {
+        if (closeOnSettle.current && !st.pending) { closeOnSettle.current = false; settleTimer.current = setTimeout(() => close(() => setExpanded(false)), SETTLE_DWELL_MS) as unknown as number; }
+    });
+    useEffect(() => () => clearTimeout(settleTimer.current), []);
+    // What the body holds, as far as its height is concerned: the running output, the result, the commands it ran. A change in any of
+    // them eases the body to its new height in the calm view, where it used to jump.
+    useHeightEase(bodyRef, `${st.pending ? 1 : 0}${awaiting ? 1 : 0}${decided ? 1 : 0}${st.approval ?? "-"}${st.result == null ? 0 : 1}${st.asks?.length ?? 0}.${st.shCalls?.length ?? 0}${st.renderOut ? 1 : 0}`, focusMode.value && !closing);
+    // Once a command has asked, the code stays open after it is answered too (the rest of the script is still running). The
+    // reading view folds it when the step settles, as it does after its own approval; the panel never folds a step by itself.
+    useEffect(() => { if (holdsForAsk) { if (focusMode.value) closeOnSettle.current = true; setExpanded(true); } }, [holdsForAsk]);
     const toggle = (): void => {
+        clearTimeout(settleTimer.current);   // a hand on the step ends the wait to fold it
         // `forcedOpen`, not `awaiting`: a step that CANNOT close has nothing to animate, but a gated step in calm
         // closes like any other and was snapping shut while every step beside it eased. It read as a different
         // control on the one step you are most likely to be poking at.

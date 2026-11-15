@@ -46,7 +46,7 @@ import { clientUi, lightboxSrc, type ClientPlatform } from "./platform";
 import { PageChip } from "./page-chip";
 import { SessionList } from "./session-list";
 import { useNarrow } from "./narrow";
-import { pinGlide } from "./pin-glide";
+import { keepsFollow, pinGlide } from "./pin-glide";
 
 /** How long after a gesture a scroll still counts as the reader's own. Covers a phone's momentum coasting. */
 const USER_SCROLL_MS = 1200;
@@ -347,9 +347,9 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
     // step (the jump then went nowhere, in about half the runs).
     const byUser = useRef(0);
     // A citation's own pointerdown (or Enter) lands here BEFORE its click fires the jump, which sets `jumped` again.
-    // state: ui (what the reader's last gesture landed on: a tap opening the RUNNING step keeps the follow, below)
-    const userTarget = useRef<Element | null>(null);
-    const markUser = (e?: Event) => { byUser.current = Date.now(); jumped.current = false; userTarget.current = e?.target instanceof Element ? e.target : null; };
+    // state: ui (whether the reader's last gesture was on the RUNNING step or an approval card, which keeps the follow, below)
+    const userKeeps = useRef(false);
+    const markUser = (e?: Event) => { byUser.current = Date.now(); jumped.current = false; userKeeps.current = keepsFollow(e?.target instanceof Element ? e.target : null); };
     // READ, for the list's dot (read-marks.ts): this session's history is drawn, the end of it is on screen, and the
     // tab is visible. Asked when any of those can change: the session or its newest event, a scroll, the tab showing.
     const lastTs = summary?.lastTs ?? 0, status = summary?.status;
@@ -385,7 +385,7 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
         const up = el.scrollTop < lastTop.current - 1;
         lastTop.current = el.scrollTop;
         if (el.scrollHeight - el.scrollTop - el.clientHeight < 40) { if (!jumped.current) stuck.current = true; }
-        else if (Date.now() - byUser.current < USER_SCROLL_MS && (up || !userTarget.current?.closest(".astep.pending"))) { stuck.current = false; glide.current?.stop(); }
+        else if (Date.now() - byUser.current < USER_SCROLL_MS && (up || !userKeeps.current)) { stuck.current = false; glide.current?.stop(); }
     };
     // A citation sending the reader UP the transcript stops it following the bottom, or the step it opens grows
     // the content, the observer above pins back down, and the jump is overwritten before it lands.

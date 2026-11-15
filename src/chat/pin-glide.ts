@@ -50,3 +50,11 @@ export function pinGlide(el: HTMLElement, opts: { reduced?: () => boolean; raf?:
         stop(): void { if (frame) caf(frame); frame = 0; },
     };
 }
+
+/**
+ * Whether a gesture on `target` keeps the transcript following its bottom through the content change it causes: a tap on the
+ * RUNNING step (opening its output) or on an approval card's button (answering it). Asked AT the gesture, never later:
+ * answering takes the card out of the page, and a node that has left it no longer says what it was inside, so a check made
+ * when the result arrived read the click as someone leaving the bottom and the follow stopped there.
+ */
+export const keepsFollow = (target: Element | null | undefined): boolean => !!target?.closest(".astep.pending, .astep-approve");
