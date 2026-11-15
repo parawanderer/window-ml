@@ -384,6 +384,12 @@ function openChat(address = ""): void {
     } catch { /* no runtime channel; the popup stays open so the click can be repeated */ }
 }
 $("openChat").addEventListener("click", () => openChat());
+// The extension's own page in the browser (pin, disable, incognito): the link a right-click on the toolbar icon gives, one click
+// from the popup. Its address is the browser's own scheme (`brave://`, `edge://`), the one "Allow in Incognito" already opens.
+$("openExtensions").addEventListener("click", async () => {
+    try { await chrome.tabs.create({ url: extensionsDetailsUrl() }); window.close(); }
+    catch (e: any) { setStatus(`Couldn't open the extensions page (${e?.message || e}). Open ${extensionsDetailsUrl()} yourself.`, "err"); }
+});
 // Backup and restore live in the chat page's Settings → Extension: a popup closes the moment a file chooser takes focus.
 $("openBackup").addEventListener("click", () => openChat("settings/extension/backup"));
 $("test").addEventListener("click", saveAndTest);
