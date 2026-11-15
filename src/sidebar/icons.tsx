@@ -51,14 +51,12 @@ export const IconFile = () => (
     </svg>
 );
 
-/** A warning triangle (an SVG — the native ⚠ emoji renders inconsistently and off-baseline). Its dot is a real
- *  circle for the same reason {@link IconInfo}'s is, and at the same size: the two sit on one card and the docstring
- *  above is only true while they are drawn alike. */
+/** A warning triangle (an SVG — the native ⚠ emoji renders inconsistently and off-baseline): Heroicons' rounded
+ *  exclamation-triangle, outline, the family the gear and chat icons beside it come from. Its dot is part of the path,
+ *  so it keeps its weight at the small sizes a note beside a sentence draws it. */
 export const IconWarn = () => (
-    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M8 2 15 14H1z" />
-        <path d="M8 6.6v3.2" />
-        <circle cx="8" cy="11.9" r="0.85" fill="currentColor" stroke="none" />
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
     </svg>
 );
 // Disclosure chevron (the ▸ glyph renders tiny; an SVG is crisp and scalable).

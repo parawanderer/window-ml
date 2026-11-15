@@ -25,7 +25,7 @@ import { FoldRail } from "./fold-rail";
 import { useCloseAnimation } from "../use-close";
 import { justArrived } from "./just-arrived";
 import { useHistoryPaint } from "./history-paint";
-import { Ticking } from "../ui-kit";
+import { Ticking, cursorTipOn } from "../ui-kit";
 
 /** A member drawn inside a streak, where the GROUP owns the motion: a step that also slid itself in would fight
  *  the collapse that is describing the same event. Only the members the group was opened with (`groupOwns`): a call
@@ -402,7 +402,7 @@ export function StepStreak({ s, render }: { s: ToolStreak; render: (t: AgentTurn
                 {one
                     ? <><span class="astreak-tool">{s.tool}</span><span class={`astreak-n${bumped ? " bumped" : ""}`}>× {calls}</span></>
                     : <><span class={`astreak-n astreak-calls${bumped ? " bumped" : ""}`}>{calls} tool calls</span>
-                        <span class="astreak-tools">{s.tools.map((t, i) =>
+                        <span class="astreak-tools" {...cursorTipOn(s.tools.join(", "), { delayMs: 300, onlyIf: (el) => el.scrollWidth > el.clientWidth })}>{s.tools.map((t, i) =>
                             <span key={t} class={`astreak-name${named.current.has(t) ? "" : " arrived"}`}>{i ? ", " : ""}{t}</span>)}</span></>}
                 {failed ? <span class="astreak-bad">{failed} failed</span> : null}
                 {/* A GROUP THAT IS STILL GROWING SAYS SO. In "group all" the newest call joins a row that is already
