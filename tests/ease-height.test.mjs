@@ -87,3 +87,19 @@ test("a change that lands mid-ease starts from the height the box had reached, a
     assert.deepEqual(b.calls[1].frames.map((f) => f.height), ["150px", "260px"], "from where it had reached, to the new height");
     render(null, host);
 });
+
+// --- the height it eases from is the height the box really had ---
+test("a box that grew by itself between two draws eases from where it had got to, not from the height it was first drawn at", async () => {
+    const seen = [];
+    globalThis.ResizeObserver = class { constructor(cb) { this.cb = cb; seen.push(this); } observe() {} disconnect() {} };
+    try {
+        const b = box();
+        const m = mount(b, "a"); await m.first;                   // drawn at 100
+        b.height = 400;                                           // it opened / reflowed on its own: no render
+        for (const ro of seen) ro.cb([]);                         // the browser tells the hook
+        b.height = 450; await m.draw("b");                        // then its content changed
+        assert.equal(b.calls.length, 1);
+        assert.deepEqual(b.calls[0].frames.map((f) => f.height), ["400px", "450px"], "from 400, not from the 100 it was first drawn at (that is a fold and a re-open in one beat)");
+        render(null, host);
+    } finally { delete globalThis.ResizeObserver; }
+});

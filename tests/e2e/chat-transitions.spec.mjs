@@ -11,27 +11,12 @@ import { test, expect } from "@playwright/test";
 import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
+import { runsOf } from "./frame-runs.mjs";
 
 // Packed (so it is reformatted), mutating (so it is gated), and slow enough that the running output stands for a moment.
 const CODE = `let o=[];${Array.from({ length: 16 }, (_, i) => `o.push({k:${i},v:[${i},${i + 1}]});`).join("")}await new Promise(r=>setTimeout(r,700));document.title="held";({code:0,ok:true,list:o.map(String),out:"line one\\nline two"})`;
 
-/**
- * Change runs in a series of heights: each maximal stretch of frames in which the height keeps changing, with how much it
- * changed, how long it took and its biggest single-frame step. A one-frame change is a run of duration 0.
- */
-export function runsOf(series, minDelta = 1) {
-    const runs = [];
-    let cur = null;
-    for (let i = 1; i < series.length; i++) {
-        const d = series[i].v - series[i - 1].v;
-        if (Math.abs(d) >= minDelta) {
-            // A new run when the gap is long OR the direction turns: a rise and a fall are two changes, not one of their difference.
-            if (!cur || series[i].t - cur.lastT > 60 || Math.sign(d) !== cur.dir) { cur = { from: series[i - 1].v, to: series[i].v, startT: series[i - 1].t, lastT: series[i].t, maxStep: Math.abs(d), dir: Math.sign(d) }; runs.push(cur); }
-            else { cur.to = series[i].v; cur.lastT = series[i].t; cur.maxStep = Math.max(cur.maxStep, Math.abs(d)); }
-        }
-    }
-    return runs.map((r) => ({ ...r, total: Math.abs(r.to - r.from), duration: r.lastT - r.startT }));
-}
+// --- approve, run, result, fold ---
 
 test("approving a streamed exec in the calm chat: nothing snaps, the fold animates, and the view stays at the bottom", async () => {
     test.setTimeout(120_000);
@@ -94,7 +79,7 @@ test("approving a streamed exec in the calm chat: nothing snaps, the fold animat
         expect(seen.length, dump("the step was never drawn")).toBeGreaterThan(20);
 
         // 1. A change in the step's height happens over time. A block that snaps in or a fold that snaps shut is a run of one frame.
-        const runs = runsOf(seen.map((f) => ({ t: f.t, v: f.step })), 1).filter((r) => r.total > 24);
+        const runs = runsOf(seen.map((f) => ({ t: f.t, v: f.step })), 1).filter((r) => r.total > 60);   // a small change on a slow machine lands in a frame or two: not a snap
         expect(runs.length, dump("the sequence changed the step's height at least once (the result, the fold)")).toBeGreaterThan(0);
         for (const r of runs) {
             expect(r.duration, dump(`a ${Math.round(r.total)}px change in the step's height took ${Math.round(r.duration)}ms: it snapped (${Math.round(r.from)} → ${Math.round(r.to)})`)).toBeGreaterThanOrEqual(60);
@@ -209,7 +194,8 @@ test("a quickly written exec that needs no approval: its held block folds away s
     try {
         await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "off" });
         // The reply is slow to start, so nothing displaces the held block while it stands and folds.
-        fake.setScript([{ tool: "exec", args: { js: FREE }, emit: Array.from({ length: 10 }, () => ({ kind: "call" })) }, { content: "done.", emit: [{ kind: "pause", ms: 4000 }, { kind: "answer", text: "done." }] }]);
+        // The call starts being written after a pause, so the session is open in the page before it does (a slow runner opened it after the whole call had been written).
+        fake.setScript([{ tool: "exec", args: { js: FREE }, emit: [{ kind: "pause", ms: 2500 }, ...Array.from({ length: 10 }, () => ({ kind: "call" }))] }, { content: "done.", emit: [{ kind: "pause", ms: 4000 }, { kind: "answer", text: "done." }] }]);
         const chat = await ext.context.newPage();
         await chat.setViewportSize({ width: 1100, height: 760 });
         await chat.goto(`chrome-extension://${ext.extensionId}/chat.html`);

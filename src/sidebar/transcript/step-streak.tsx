@@ -136,10 +136,10 @@ export interface ToolStreak { kind: "streak"; tool: string; tools: string[]; tur
  *
  * THINKING does not disqualify a turn: that is the other half of what is being folded away.
  */
-function foldable(t: AgentTurnGroup): AgentStep | null {
+function foldable(t: AgentTurnGroup, settling?: (st: AgentStep) => boolean): AgentStep | null {
     if (t.thought || t.tools.length !== 1) return null;
     const st = t.tools[0];
-    if (!st.tool || needsPerson(st)) return null;
+    if (!st.tool || needsPerson(st) || settling?.(st)) return null;
     if (revisionOf(st)) return null;
     return st;
 }
@@ -159,9 +159,9 @@ function foldable(t: AgentTurnGroup): AgentStep | null {
  * A turn with no tool call at all — pure thinking — folds here and not above: that is the other half of what this
  * toggle was asked for ("group all tool calls AND thinking blocks").
  */
-function foldableAll(t: AgentTurnGroup): boolean {
+function foldableAll(t: AgentTurnGroup, settling?: (st: AgentStep) => boolean): boolean {
     if (t.thought) return false;
-    return !t.tools.some(needsPerson);
+    return !t.tools.some((st) => needsPerson(st) || settling?.(st));
 }
 
 /**
@@ -215,8 +215,9 @@ const revisionOf = (st: AgentStep): unknown =>
  * @param live is the run still going? the last streak stays open while it is
  * @param all the reader's "group all tool calls" preference — fold by adjacency rather than by tool name
  * @param breaks step positions a fold may not span: where an answer or one of the reader's own messages sits
+ * @param settling steps that are not to be grouped yet (step-settle.ts): one still open under the person who decided it
  */
-export function foldStreaks(groups: AgentTurnGroup[], opts: { live?: boolean; all?: boolean; breaks?: readonly number[] } = {}): (AgentTurnGroup | ToolStreak)[] {
+export function foldStreaks(groups: AgentTurnGroup[], opts: { live?: boolean; all?: boolean; breaks?: readonly number[]; settling?: (st: AgentStep) => boolean } = {}): (AgentTurnGroup | ToolStreak)[] {
     return rejoin(foldHalves(splitProse(groups), opts));
 }
 
@@ -248,14 +249,14 @@ function rejoin(items: (AgentTurnGroup | ToolStreak)[]): (AgentTurnGroup | ToolS
     return out;
 }
 
-function foldHalves(groups: AgentTurnGroup[], { live = false, all = false, breaks = [] as readonly number[] }: { live?: boolean; all?: boolean; breaks?: readonly number[] }): (AgentTurnGroup | ToolStreak)[] {
+function foldHalves(groups: AgentTurnGroup[], { live = false, all = false, breaks = [] as readonly number[], settling }: { live?: boolean; all?: boolean; breaks?: readonly number[]; settling?: (st: AgentStep) => boolean }): (AgentTurnGroup | ToolStreak)[] {
     const out: (AgentTurnGroup | ToolStreak)[] = [];
     const seg = (t: AgentTurnGroup): number => segmentOf(t.step, breaks);
     for (let i = 0; i < groups.length;) {
         if (all) {
-            if (!foldableAll(groups[i])) { out.push(groups[i++]); continue; }
+            if (!foldableAll(groups[i], settling)) { out.push(groups[i++]); continue; }
             let j = i + 1;
-            while (j < groups.length && foldableAll(groups[j]) && seg(groups[j]) === seg(groups[i])) j++;
+            while (j < groups.length && foldableAll(groups[j], settling) && seg(groups[j]) === seg(groups[i])) j++;
             const run = groups.slice(i, j);
             // NO "ENDED" TEST HERE, unlike the ordinary rule. A group of two exists almost immediately and every
             // later call joins a row that is ALREADY closed, so nothing collapses out from under a reader mid-run —
@@ -266,11 +267,11 @@ function foldHalves(groups: AgentTurnGroup[], { live = false, all = false, break
             i = j;
             continue;
         }
-        const first = foldable(groups[i]);
+        const first = foldable(groups[i], settling);
         if (!first) { out.push(groups[i++]); continue; }
         let j = i + 1;
         while (j < groups.length) {
-            const next = foldable(groups[j]);
+            const next = foldable(groups[j], settling);
             if (!next || next.tool !== first.tool || seg(groups[j]) !== seg(groups[i])) break;
             j++;
         }

@@ -963,6 +963,17 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat.calm .astep.handed:not(.closing) .astep-body { animation: none; }
 /* A held live call whose step does not open folds away (live-hold.tsx) on the step body's own close keyframes, rather than vanishing. */
 .chat.calm .live-hold.live-leaving { overflow: hidden; pointer-events: none; animation: chat-step-close calc(var(--calm-flow-ms) * 1ms) cubic-bezier(.4, 0, .2, 1) forwards; }
+/* One cell of several folding away while the others stay (its step is a row, not a body): the same keyframes, on the cell. */
+.chat.calm .live-call.live-leaving { overflow: hidden; pointer-events: none; animation: chat-step-close calc(var(--calm-flow-ms) * 1ms) cubic-bezier(.4, 0, .2, 1) forwards; }
+/* A call WRITTEN IN FULL sends its "writing… 155 chars" readout away, to the left and out: there is no more arriving to count. */
+.chat.calm .live-call .astep-preview { transition: opacity calc(var(--calm-flow-ms) * 1ms) cubic-bezier(.4, 0, .2, 1), transform calc(var(--calm-flow-ms) * 1ms) cubic-bezier(.4, 0, .2, 1); }
+.chat.calm .live-call .astep-preview.written { opacity: 0; transform: translateX(-14px); pointer-events: none; }
+/* THE RUN'S FIGURES UNDER THE COMPOSER arrive instead of appearing: the token counts from the left, the context gauge and spend from the right. */
+.chat.calm .run-stats { animation: chat-foot-from-left calc(var(--calm-flow-ms) * 1ms) cubic-bezier(.2, .8, .2, 1) backwards; }
+.chat.calm .usage-gauge, .chat.calm .usage-spend, .chat.calm .usage-sub { animation: chat-foot-from-right calc(var(--calm-flow-ms) * 1ms) cubic-bezier(.2, .8, .2, 1) backwards; }
+@keyframes chat-foot-from-left { from { opacity: 0; transform: translateX(-14px); } to { opacity: 1; transform: none; } }
+@keyframes chat-foot-from-right { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .chat.calm .run-stats, .chat.calm .usage-gauge, .chat.calm .usage-spend, .chat.calm .usage-sub, .chat.calm .live-call .astep-preview { animation: none; transition: none; } }
 @keyframes chat-step-handoff {
     from { height: var(--handoff-h, 0px); opacity: .55; overflow: hidden; }
     to { height: auto; opacity: 1; overflow: hidden; }
@@ -2294,7 +2305,9 @@ html[data-calm] .tt-layer { --notice: var(--accent); --notice-fg: var(--accent-f
    ordinary `--calm-flow-ms`. */
 .chat.calm { --calm-flow-ms: 260; --calm-reflow-ms: 420; }
 .chat.calm .astep-approve.ask { animation: chat-ask-in calc(var(--calm-reflow-ms) * 1ms) cubic-bezier(.4, 0, .2, 1) backwards; }
-@keyframes chat-ask-in { from { opacity: 0; transform: translateY(4px); } }
+/* It opens from nothing as it fades in, from its OWN height (`interpolate-size`): the card took its whole height in the first frame, under code
+   that was still growing, and pushed everything below it down by that much at once. */
+@keyframes chat-ask-in { from { opacity: 0; transform: translateY(4px); height: 0; margin-top: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; overflow: hidden; } }
 .chat.calm .astep-approve.ask.leaving { overflow: hidden; pointer-events: none; animation: chat-ask-leave calc(var(--calm-flow-ms) * 1ms) cubic-bezier(.4, 0, .2, 1) forwards; }
 /* From the card's OWN height (`interpolate-size`, set on `.chat.calm`): a `max-height` from a ceiling taller than the card
    sat still for most of the beat and then collapsed in the last of it. */

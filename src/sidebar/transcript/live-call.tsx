@@ -8,7 +8,7 @@ import { noteLiveGlyphs, wasStreamed } from "./code-morph";
 import { liveMounted, liveUnmounted } from "./live-hold";
 import { focusMode } from "../store";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { Code, Dot, cursorTipOn } from "../ui-kit";
+import { Code, Dot, Ticking, cursorTipOn } from "../ui-kit";
 import { IconQuiet } from "../icons";
 import { markdown } from "../format";
 import { closeStreaming } from "./stream-close";
@@ -73,7 +73,7 @@ function useReveal(text: string): string {
  * @gallery {"call":{"index":0,"name":"python_exec","args":"{\"code\": \"import math\\nfor i in range(3):\\n    print(math.sqrt(i))\\nprint(\\\"do","chars":78}}
  * @group transcript
  */
-export function LiveCall({ call }: { call: LiveToolCall }) {
+export function LiveCall({ call, leaving }: { call: LiveToolCall; /** folding away: its step is not opening to take it */ leaving?: boolean }) {
     const v = liveCallView(call);
     // Code is typed out evenly; Markdown and argument trees are drawn as they arrive (re-rendering either per frame
     // costs more than it shows).
@@ -89,9 +89,9 @@ export function LiveCall({ call }: { call: LiveToolCall }) {
     if (call.chars !== life.current.chars) { life.current.chars = call.chars; life.current.arrivals++; }
     useLayoutEffect(() => {
         const el = body.current;
-        liveMounted();
+        liveMounted(call.index);
         return () => {
-            liveUnmounted();
+            liveUnmounted(call.index);
             if (el) { noteLiveCall(el.offsetHeight); noteLiveGlyphs(el, wasStreamed(life.current.arrivals, Date.now() - life.current.at)); }   // the hand-over's window starts now
         };
     }, []);
@@ -104,12 +104,14 @@ export function LiveCall({ call }: { call: LiveToolCall }) {
     const [now, setNow] = useState(() => Date.now());
     useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
     const stall = stallNote(now - seen.current.at);
+    // WRITTEN, and drawn all the way: the readout of how much is arriving has nothing left to say (the calm view sends it away).
+    const written = v.kind === "text" ? !v.writing && typed.length >= v.text.length : v.kind === "tree" ? !v.writing : false;
     return (
-        <div class={`astep tool pending open live-call${stall ? " stalled" : ""}`} data-live-call={call.index} data-tool={call.name}>
+        <div class={`astep tool pending open live-call${stall ? " stalled" : ""}${leaving ? " live-leaving" : ""}`} data-live-call={call.index} data-tool={call.name}>
             <div class="astep-head">
                 <Dot status="pending" />
                 <span class="tool-name">{call.name ?? "tool call"}</span>
-                <span class="astep-preview dim">writing… {chars(call.chars)}{stall ? <span class="live-call-stall"> · {stall}</span> : null}</span>
+                <span class={`astep-preview dim${written ? " written" : ""}`}>writing… <Ticking text={chars(call.chars)} />{stall ? <span class="live-call-stall"> · {stall}</span> : null}</span>
                 {/* The calm view's form of the same readout: a slowly pulsing clock, its words in the tip. A spinner
                     would say "working", which is the one thing a stall cannot claim. */}
                 {stall ? <span class="live-call-quiet" role="img" aria-label={stall} {...cursorTipOn(stall)}><IconQuiet /></span> : null}

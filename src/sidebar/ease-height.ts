@@ -5,7 +5,7 @@
 // body is not mounted or unmounted by any of it (its own open and close have animations), so nothing animated the change.
 // This measures the height before and after a change the caller names (`sig`) and eases between them.
 
-import { useLayoutEffect, useRef } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
 import type { RefObject } from "preact";
 
 /** How long, in ms, the box takes to reach its new height. */
@@ -14,13 +14,29 @@ export const EASE_HEIGHT_MS = 260;
 /**
  * Ease `ref`'s height whenever `sig` changes (a string naming what the box now holds). Only while `enabled`; it does nothing on
  * the first draw, for a change too small to see, or under reduced motion. A change that lands mid-ease starts from the height
- * it had reached, not from where the last one began.
+ * it had reached, not from where the last one began. The height it eases FROM is kept current by what the box is actually doing
+ * (a resize observer), not by the last time it was drawn: a body that grew by itself (its open, a reformat) between two draws
+ * used to be eased from the height it had at the first of them, which on a slow machine is a fold and a re-open in one beat.
  */
 export function useHeightEase(ref: RefObject<HTMLElement>, sig: string, enabled: boolean, ms = EASE_HEIGHT_MS): void {
     // state: ui — the box's settled height and the signature it had
     const last = useRef<{ h: number | null; sig: string }>({ h: null, sig });
+    // state: ui — the observer on the box now drawn, and which box that is
+    const watch = useRef<{ ro: ResizeObserver | null; el: HTMLElement | null }>({ ro: null, el: null });
     useLayoutEffect(() => {
         const el = ref.current;
+        if (el !== watch.current.el) {
+            watch.current.ro?.disconnect();
+            watch.current = { ro: null, el };
+            if (el && typeof ResizeObserver !== "undefined") {
+                const ro = new ResizeObserver(() => {
+                    if (el.getAnimations?.().some((a) => a.id === "ease")) return;   // its own easing is not a settled height
+                    last.current.h = el.getBoundingClientRect().height;
+                });
+                ro.observe(el);
+                watch.current.ro = ro;
+            }
+        }
         if (!el) { last.current = { h: null, sig }; return; }
         const running = el.getAnimations?.().filter((a) => a.id === "ease") ?? [];
         const changed = last.current.sig !== sig;
@@ -34,4 +50,5 @@ export function useHeightEase(ref: RefObject<HTMLElement>, sig: string, enabled:
         if (!enabled || reduced || from == null || Math.abs(to - from) < 3 || typeof el.animate !== "function") return;
         el.animate([{ height: `${from}px`, overflow: "hidden" }, { height: `${to}px`, overflow: "hidden" }], { duration: ms, easing: "cubic-bezier(.4, 0, .2, 1)", id: "ease" });
     });
+    useEffect(() => () => watch.current.ro?.disconnect(), []);
 }

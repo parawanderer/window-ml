@@ -26,13 +26,14 @@ import { usageSamples, liveOutTokens } from "./usage";
 import { currentTurnSteps, liveShownByTranscript, orbStatus } from "./orb-status";
 import { fmtDur } from "../timestamps";
 import {
-    FieldBusy, Code, CopyBtn, SheetChip, Stamp, Dot, InlineFold,
+    FieldBusy, Code, CopyBtn, SheetChip, Stamp, Dot, InlineFold, Ticking,
     decideGate, decidedSteps, stepKey, grantHostPattern, inlineJson, inlineText, cursorTipOn, PointerChip, TipText,
 } from "../ui-kit";
 import { Disclosure } from "../disclosure";
 import { Hash } from "../copy-hash";
 import { FeedbackBlock, ReusedBlock } from "./answer-render";
 import { foldStreaks, StepStreak, InStreak } from "./step-streak";
+import { isSettling, isYoung, noteSteps, noteStreamed } from "./step-settle";
 import { FoldRail } from "./fold-rail";
 import { AskList } from "./ask-card";
 import { ShCalls } from "./sh-calls";
@@ -151,7 +152,7 @@ export function ThoughtBlock({ thought, live, tokens }: { thought: string; live?
                     preview, which focus mode hides as spam — and hiding this with it took away the only sign
                     that a long think is progressing rather than stuck, which is the opposite of what a reading
                     mode wants. Two classes rather than a new one: the styling is shared, the visibility is not. */}
-                {!open && (surface.value !== "card" || live) ? <span class="astep-preview astep-tokest">{tokLabel}{live ? "…" : ""}</span> : null}
+                {!open && (surface.value !== "card" || live) ? <span class="astep-preview astep-tokest">{live ? <Ticking text={`${tokLabel}…`} /> : tokLabel}</span> : null}
             </button>
             {/* Live: plain text (partial markdown mid-stream renders ugly); finished: markdown. */}
             {open
@@ -555,7 +556,9 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
     // call. The step keeps its own state; only the live chrome is withheld.
     const cut = !!st.pending && !live;
     const inFlight = !!st.pending && !cut;
-    const railed = focusMode.value && !forcedOpen;
+    // The rail is drawn on a gate held open too, STILL (it cannot be folded yet): the line is there through the whole approval and
+    // becomes the control in place when the call is decided, instead of appearing under the click.
+    const railed = focusMode.value;
     const sheetGrants = gate ? externalSheetGrant(st.arguments) : [];
     const showGrants = gate && hasPersistGrants(st.grants);
     return (
@@ -597,8 +600,8 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
             {open
                 ? <div class={`astep-body${closing ? " closing" : ""}${railed ? " railed" : ""}`} ref={bodyRef}>
                     {/* The reading view's fold rail, as an open group has: the line that says where this call ends
-                        closes it. Not on a gate held open, which cannot close. */}
-                    {railed ? <FoldRail onFold={toggle} tip="Collapse this call" /> : null}
+                        closes it. A gate held open wears it still: nothing closes it yet. */}
+                    {railed ? <FoldRail onFold={forcedOpen ? () => {} : toggle} tip="Collapse this call" cls={forcedOpen ? "fold-rail-still" : undefined} /> : null}
                     {issues ? <div class="tt tt-row arg-issues"><IconWarn /><span>arg schema: {issues.join("; ")}</span><span class="tt-pop wrap left" role="tooltip">The args don't match this tool's parameter schema.</span></div> : null}
                     {st.reused?.length ? <ReusedBlock reused={st.reused} /> : null}
                     {args || inRender
@@ -729,7 +732,7 @@ export function AgentTurn({ turn, max, hash }: { turn: AgentTurnGroup; max?: num
             {turn.half === "tools" ? null : <div class="aturn-head"><StepPill step={turn.localStep} max={max} /></div>}
             {turn.reasoning ? <ThoughtBlock thought={turn.reasoning} tokens={turn.reasoningTokens} /> : null}
             {turn.thought ? <TurnProse text={turn.thought} ts={turn.thoughtTs} /> : null}
-            {turn.tools.map((st, i) => <HeldStep key={`${st.tool}-${i}`} st={st}><ToolStep st={st} hash={hash} slot={i} /></HeldStep>)}
+            {turn.tools.map((st, i) => <HeldStep key={`${st.tool}-${i}`} st={st} slot={i} young={isYoung(hash ?? "", st)}><ToolStep st={st} hash={hash} slot={i} /></HeldStep>)}
         </div>
     );
 }
@@ -1083,6 +1086,10 @@ export function AgentRunView({ s }: { s: Session }) {
     // appears to do nothing. Which is the exact failure `reveal` exists to prevent.
     const r = rev.value;
     const runLive = services().stillLive(s.hash);
+    // A step still moving (just decided, or just started) is not grouped yet; when the first of them is let go, this draws again.
+    if (s.liveStream?.calls?.length) noteStreamed(s.hash, s.liveStream.step);
+    const settleIn = noteSteps(s.hash, s.steps || []);
+    useEffect(() => { if (!settleIn) return; const t = setTimeout(() => { rev.value++; }, settleIn + 20); return () => clearTimeout(t); });
     const items: { pos: number; ts: number; el: preact.JSX.Element; weight?: number }[] = [
         { pos: -1, ts: s.createdTs, el: <UserBubble key="task" pin="task" text={s.task || ""} ts={s.createdTs} images={s.taskImages} display={s.taskDisplay} site={s.site} /> },
         // A RUN OF THE SAME TOOL folds into one row in the reading view — eight `exec` rows with empty previews say
@@ -1093,7 +1100,7 @@ export function AgentRunView({ s }: { s: Session }) {
         // reader's own messages. A fold that spans one leaves that item rendering below the whole block, which is
         // how a "stopped at its step cap" seam ended up under the seven steps it sat in the middle of.
         ...((runGoing => focusMode.value
-            ? foldStreaks(groups, { live: runGoing, all: groupAllTools.value, breaks: [...answers.map(a => a.atStep), ...(s.says || []).map(m => m.atStep)] })
+            ? foldStreaks(groups, { live: runGoing, all: groupAllTools.value, settling: (st) => isSettling(s.hash, st), breaks: [...answers.map(a => a.atStep), ...(s.says || []).map(m => m.atStep)] })
             : groups)(s.status === "pending" && runLive)).map(g =>
             "kind" in g
                 // `live` is the same answer `foldStreaks` is given, and it is what lets the streak tell a fold
@@ -1132,7 +1139,7 @@ export function AgentRunView({ s }: { s: Session }) {
             <AgentOptionsBlock s={s} />
             <EarlierInThread sessionKey={s.hash} hidden={hidden} />
             {drawn.map(it => it.el)}
-            {runLive ? <HeldLive ls={s.liveStream} render={(ls) => <LiveStream ls={ls} s={s} />} /> : null}
+            {runLive ? <HeldLive ls={s.liveStream} landed={(step) => callsLanded(s, step)} render={(ls, rest, leaving) => <LiveStream ls={ls} s={s} rest={rest} leaving={leaving} />} /> : null}
             <StartAskCard s={s} />
             <SiteWaitPrompt s={s} />
             {/* THE RUN SAYS HOW IT ENDED, or the transcript simply stops. A run that died without a terminal event
@@ -1152,7 +1159,7 @@ export function AgentRunView({ s }: { s: Session }) {
 // `.aturn` group (StepPill + a live `ThoughtBlock`, ticking count, expand to watch), the reply into the real
 // `ReplyBubble` in streaming mode (model chip + content + a live pulse). Cleared the instant the step's real
 // events land (the reducer nulls liveStream on agent-step/agent-result).
-export function LiveStream({ ls, s }: { ls: NonNullable<Session["liveStream"]>; s: Session }) {
+export function LiveStream({ ls, s, rest, leaving }: { ls: NonNullable<Session["liveStream"]>; s: Session; /** only the calls that have no step yet: the turn's thinking is drawn by the turn that has landed */ rest?: boolean; /** call indexes folding away */ leaving?: ReadonlySet<number> }) {
     if (!ls.reasoning && !ls.content && !ls.calls?.length) return null;
     if (ls.content) noteLiveAnswer(s.hash);
     // AN ANSWER WRITTEN AS A CALL is the reply all the same. The reading view draws it as one (the words fading in, and
@@ -1167,15 +1174,25 @@ export function LiveStream({ ls, s }: { ls: NonNullable<Session["liveStream"]>; 
                 place its step takes once the call is parsed. */}
             {ls.reasoning || ls.calls?.length
                 ? <div class="aturn">
-                    <div class="aturn-head"><StepPill step={ls.localStep ?? ls.step} max={s.maxSteps} /></div>
-                    {ls.reasoning ? <ThoughtBlock thought={ls.reasoning} tokens={ls.reasoningTokens} live /> : null}
-                    {(ls.calls || []).map((c) => <LiveCall key={c.index} call={c} />)}
+                    {rest ? null : <div class="aturn-head"><StepPill step={ls.localStep ?? ls.step} max={s.maxSteps} /></div>}
+                    {ls.reasoning && !rest ? <ThoughtBlock thought={ls.reasoning} tokens={ls.reasoningTokens} live /> : null}
+                    {(ls.calls || []).map((c) => <LiveCall key={c.index} call={c} leaving={leaving?.has(c.index)} />)}
                   </div>
                 : null}
             {ls.content ? <ReplyBubble content={ls.content} status="ok" model={s.model} profile={sessionProfile(s)} ts={ls.step /* unused while streaming */} streaming /> : null}
             {answerText && !ls.content ? <div class="live-answer"><ReplyBubble content={answerText} status="ok" model={s.model} profile={sessionProfile(s)} ts={ls.step} streaming /></div> : null}
         </>
     );
+}
+
+/**
+ * How many of the calls the model wrote in turn `step` have a step now (one per call, in order), and Infinity once nothing more
+ * will come of them: the run has ended, or a later turn has begun. What the held live cells wait on.
+ */
+export function callsLanded(s: Session, step: number): number {
+    const steps = s.steps || [];
+    if (s.ended || steps.some((st) => st.step > step)) return Infinity;
+    return steps.filter((st) => st.step === step && st.tool && !isYoung(s.hash, st)).length;
 }
 
 /**
