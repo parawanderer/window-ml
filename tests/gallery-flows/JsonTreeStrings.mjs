@@ -41,6 +41,11 @@ export default async ({ page, tile, shot }) => {
     await page.waitForTimeout(500);
     const card = page.locator(".hc-card");
     if (!(await card.count())) fail("the card did not open after the pointer rested");
+    // It hangs from the line the pointer is on, in the cursor's column: just under it, and starting at its left.
+    const hovered = await multi.boundingBox(), cardBox = await card.boundingBox();
+    const px = hovered.x + hovered.width / 2;
+    if (Math.abs(cardBox.x - (px - 16)) > 24 && cardBox.x > 8) fail(`the card is not at the cursor's column: x=${cardBox.x}, pointer ${px}`);
+    await shot("under-the-cursor");
     const text = await card.innerText();
     if (!text.includes("line one\nline two\n") && !text.includes("line one\nline two")) fail(`the card did not show the newlines as lines: ${JSON.stringify(text)}`);
     if (text.includes("\\n")) fail("the card still shows the \\n escape");

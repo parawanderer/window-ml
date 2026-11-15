@@ -7,7 +7,7 @@ import { JSDOM } from "jsdom";
 import { createRequire } from "node:module";
 const require_ = createRequire(import.meta.url);
 
-let h, render, JsonNode, JT_STR_CUT, hasEscapes, cutString, HoverCard, placeCard, doc, host, win;
+let h, render, JsonNode, JT_STR_CUT, hasEscapes, cutString, HoverCard, placeCard, lineAt, doc, host, win;
 before(async () => {
     const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", { pretendToBeVisual: true });
     win = dom.window; doc = win.document;
@@ -16,7 +16,7 @@ before(async () => {
     host = doc.getElementById("root");
     ({ h, render } = require_("preact"));
     ({ JsonNode, JT_STR_CUT, hasEscapes, cutString } = await import("../src/sidebar/transcript/json-tree.tsx"));
-    ({ HoverCard, placeCard } = await import("../src/sidebar/hover-card.tsx"));
+    ({ HoverCard, placeCard, lineAt } = await import("../src/sidebar/hover-card.tsx"));
 });
 const wait = (ms = 40) => new Promise((r) => setTimeout(r, ms));
 const fire = (el, type) => el.dispatchEvent(new win.Event(type, { bubbles: false }));
@@ -160,4 +160,13 @@ test("placeCard: below the trigger when it fits, above when there is more room t
     assert.equal(placeCard({ left: -50, top: 100, bottom: 120 }, { w: 300, h: 100 }, view).left, 8, "and off the left");
     const tall = placeCard({ left: 0, top: 300, bottom: 320 }, { w: 100, h: 900 }, view);
     assert.ok(tall.top >= 8, "a card taller than either side still starts on screen");
+});
+
+test("lineAt picks the line of a wrapped trigger that the pointer is on, else the nearest, so the card hangs from where the eye is", () => {
+    const lines = [{ left: 80, top: 100, bottom: 120 }, { left: 20, top: 120, bottom: 140 }, { left: 20, top: 140, bottom: 160 }];
+    assert.equal(lineAt(lines, 110), lines[0]);
+    assert.equal(lineAt(lines, 150), lines[2], "the third of three lines, not the box around all of them");
+    assert.equal(lineAt(lines, 400), lines[2], "below them all: the nearest");
+    assert.equal(lineAt(lines, 10), lines[0], "above them all: the nearest");
+    assert.equal(lineAt([], 10), null);
 });
