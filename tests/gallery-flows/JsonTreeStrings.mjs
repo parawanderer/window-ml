@@ -35,7 +35,7 @@ export default async ({ page, tile, shot }) => {
 
     // A string with escapes: nothing at once, the card after the pointer rests, the string lit.
     const multi = row("multi").locator(".jt-val");
-    await multi.hover();
+    await multi.hover({ position: { x: 24, y: 2 } });          // the top edge of its first line: where the cursor's image reaches into a card below
     await page.waitForTimeout(120);
     if (await page.locator(".hc-card").count()) fail("the card opened before the pointer had rested");
     await page.waitForTimeout(500);
@@ -43,8 +43,11 @@ export default async ({ page, tile, shot }) => {
     if (!(await card.count())) fail("the card did not open after the pointer rested");
     // It hangs from the line the pointer is on, in the cursor's column: just under it, and starting at its left.
     const hovered = await multi.boundingBox(), cardBox = await card.boundingBox();
-    const px = hovered.x + hovered.width / 2;
+    const px = hovered.x + 24;
     if (Math.abs(cardBox.x - (px - 16)) > 24 && cardBox.x > 8) fail(`the card is not at the cursor's column: x=${cardBox.x}, pointer ${px}`);
+    // And it never covers the cursor: the card starts below the foot of the cursor's image, or ends above its hotspot.
+    const py = hovered.y + 2;
+    if (!(cardBox.y >= py + 22 || cardBox.y + cardBox.height <= py)) fail(`the card cuts the cursor: card ${Math.round(cardBox.y)}–${Math.round(cardBox.y + cardBox.height)}, pointer y ${Math.round(py)}`);
     await shot("under-the-cursor");
     const text = await card.innerText();
     if (!text.includes("line one\nline two\n") && !text.includes("line one\nline two")) fail(`the card did not show the newlines as lines: ${JSON.stringify(text)}`);

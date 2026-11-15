@@ -12,9 +12,11 @@ export const HOVER_CARD_OUT_MS = 280;
  * Where a card of `card` size goes for a trigger at `at`, inside a `view`: below the trigger, or above it when there is
  * more room there, and shifted sideways so no edge of it leaves the view. Pure, so the rule is tested without a layout.
  */
-export function placeCard(at: { left: number; top: number; bottom: number }, card: { w: number; h: number }, view: { w: number; h: number }, gap = 4, pad = 8): { left: number; top: number } {
-    const below = view.h - at.bottom - gap - pad, above = at.top - gap - pad;
-    const top = card.h <= below || below >= above ? at.bottom + gap : Math.max(pad, at.top - gap - card.h);
+export function placeCard(at: { left: number; top: number; bottom: number }, card: { w: number; h: number }, view: { w: number; h: number }, gap = 4, pad = 8, clear = -Infinity): { left: number; top: number } {
+    // `clear`: a card below starts no higher than this, the foot of the cursor's own image, which hangs under its hotspot.
+    const belowTop = Math.max(at.bottom, clear) + gap;
+    const below = view.h - belowTop - pad, above = at.top - gap - pad;
+    const top = card.h <= below || below >= above ? belowTop : Math.max(pad, at.top - gap - card.h);
     const left = Math.min(Math.max(pad, at.left), Math.max(pad, view.w - card.w - pad));
     return { left, top };
 }
@@ -31,6 +33,8 @@ export function lineAt(rects: { left: number; top: number; bottom: number }[], y
 
 /** How far left of the pointer the card starts, so it opens under the cursor and a move straight down is inside it. */
 export const HOVER_CARD_UNDER = 16;
+/** How far below the pointer's hotspot the cursor's image reaches, in px: a card never starts inside it. */
+export const HOVER_CARD_CURSOR = 24;
 
 /**
  * A HOVER CARD: a tip the pointer can ENTER, for text too long to read in a tooltip and worth scrolling. Unlike the cursor
@@ -77,7 +81,7 @@ export function HoverCard({ class: cls = "", card, children, inMs = HOVER_CARD_I
         // The line the pointer is on, and the cursor's own column: a string wrapped over twenty lines is not one box to hang a card from.
         const line = (lines.length ? lineAt(lines, pointer.current.y) : null) ?? trig.current.getBoundingClientRect();
         const left = pointer.current.x ? pointer.current.x - HOVER_CARD_UNDER : line.left;
-        setAt(placeCard({ left, top: line.top, bottom: line.bottom }, { w: c.width, h: c.height }, { w: window.innerWidth, h: window.innerHeight }));
+        setAt(placeCard({ left, top: line.top, bottom: line.bottom }, { w: c.width, h: c.height }, { w: window.innerWidth, h: window.innerHeight }, 4, 8, pointer.current.y ? pointer.current.y + HOVER_CARD_CURSOR : undefined));
     }, [open]);
     useEffect(() => {
         if (!open) return;

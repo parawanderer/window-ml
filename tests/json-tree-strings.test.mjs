@@ -170,3 +170,12 @@ test("lineAt picks the line of a wrapped trigger that the pointer is on, else th
     assert.equal(lineAt(lines, 10), lines[0], "above them all: the nearest");
     assert.equal(lineAt([], 10), null);
 });
+
+test("placeCard clears the cursor's own image: a card below starts under the pointer's foot, never across it", () => {
+    const view = { w: 800, h: 600 };
+    const line = { left: 100, top: 100, bottom: 118 };            // an 18px line; the pointer is near its top, at y=102
+    assert.equal(placeCard(line, { w: 300, h: 100 }, view, 4, 8, 102 + 24).top, 102 + 24 + 4, "starts below the cursor image, which reaches 24px under the hotspot");
+    assert.equal(placeCard(line, { w: 300, h: 100 }, view).top, 118 + 4, "without a pointer it hangs from the line, as before");
+    const low = placeCard({ left: 100, top: 500, bottom: 518 }, { w: 300, h: 240 }, view, 4, 8, 502 + 24);
+    assert.ok(low.top + 240 <= 502, "above, the whole card is over the hotspot, so the cursor is never under it");
+});
