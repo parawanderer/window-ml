@@ -2290,10 +2290,14 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat.calm .astep-approve.ask { animation: chat-ask-in calc(var(--calm-reflow-ms) * 1ms) cubic-bezier(.4, 0, .2, 1) backwards; }
 @keyframes chat-ask-in { from { opacity: 0; transform: translateY(4px); } }
 .chat.calm .astep-approve.ask.leaving { overflow: hidden; pointer-events: none; animation: chat-ask-leave calc(var(--calm-flow-ms) * 1ms) cubic-bezier(.4, 0, .2, 1) forwards; }
+/* From the card's OWN height (`interpolate-size`, set on `.chat.calm`): a `max-height` from a ceiling taller than the card
+   sat still for most of the beat and then collapsed in the last of it. */
 @keyframes chat-ask-leave {
-    from { opacity: 1; max-height: 640px; }
-    to { opacity: 0; max-height: 0; margin-top: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; }
+    from { opacity: 1; height: auto; }
+    to { opacity: 0; height: 0; margin-top: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; }
 }
+/* The buttons' place in a card on its way out: held (so the card keeps its height) and not seen. */
+.chat.calm .ask-leave-row { visibility: hidden; pointer-events: none; }
 @keyframes chat-streak-bump {
     0% { transform: scale(1); }
     40% { transform: scale(1.14); }
