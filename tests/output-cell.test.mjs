@@ -754,9 +754,19 @@ test("planMorph pairs the live text's characters with the reformatted text's, an
 
 test("the live call hands its glyphs over, the reformatted block takes them, and the handoff does not replay the open animation", () => {
     const rd = (f) => readFileSync(new URL(f, import.meta.url), "utf8");
-    assert.match(rd("../src/sidebar/transcript/live-call.tsx"), /noteLiveGlyphs\(el\)/);
+    assert.match(rd("../src/sidebar/transcript/live-call.tsx"), /noteLiveGlyphs\(el, wasStreamed\(/);
     assert.match(rd("../src/sidebar/code-block.tsx"), /if \(format && preRef\.current\) morphInto\(preRef\.current\)/);
     assert.match(rd("../src/sidebar/transcript/agent-detail.tsx"), /useState\(\(\) => \(!history \? liveHandoff\(\) : null\)\)/);
     assert.match(rd("../src/sidebar/transcript/agent-detail.tsx"), /handed && open \? " handed"/);
     assert.match(rd("../src/chat/chat.css"), /\.chat\.calm \.astep\.handed \.astep-body \{ animation: none; \}/);
+});
+
+test("a call that arrived as one block, or stood for a frame, is not morphed", async () => {
+    const { wasStreamed, noteLiveGlyphs, morphInto } = await import("../src/sidebar/transcript/code-morph.ts");
+    assert.equal(wasStreamed(1, 5000), false, "one arrival however long it stood: the provider sent it whole");
+    assert.equal(wasStreamed(40, 16), false, "many arrivals in a frame: nothing was seen");
+    assert.equal(wasStreamed(12, 1800), true, "a call that was watched being written");
+    // A not-streamed hand-over also clears what an earlier call left, so the next block cannot inherit it.
+    noteLiveGlyphs({}, false);
+    assert.equal(morphInto({}), undefined);
 });

@@ -14,6 +14,17 @@ export const MORPH_MAX_CHARS = 1500;
 /** How long a character takes to reach its place when the view does not say (`--calm-flow-ms`, chat.css). */
 export const MORPH_MS = 260;
 
+/** How many times a live tool-call block must have grown to count as watched being written (see {@link wasStreamed}). */
+export const STREAMED_MIN_ARRIVALS = 3;
+/** How long, in ms, a live tool-call block must have stood on screen to count as watched being written. */
+export const STREAMED_MIN_MS = 300;
+
+/**
+ * Whether the live block was watched being written. Some providers send a tool call as ONE block however the prose
+ * streams: its live view stands for a frame at most, and flying characters out of something nobody saw is noise.
+ */
+export const wasStreamed = (arrivals: number, shownMs: number): boolean => arrivals >= STREAMED_MIN_ARRIVALS && shownMs >= STREAMED_MIN_MS;
+
 /** One non-whitespace character of a drawn block: where its box sits in the viewport, its colour, whether it was in view. */
 export interface Glyph { ch: string; x: number; y: number; color: string; vis: boolean }
 
@@ -66,8 +77,10 @@ export function glyphsOf(root: Element, clip?: Element): Glyph[] | null {
 // state: plumbing — the live block's glyphs for the step about to replace it, gone after HANDOFF_MS or on the first take
 let held: { at: number; glyphs: Glyph[]; height: number } | null = null;
 
-/** The live call is unmounting: remember where each of its characters is, for the step that takes over. */
-export function noteLiveGlyphs(root: Element, now = Date.now()): void {
+/** The live call is unmounting: remember where each of its characters is, for the step that takes over. A call that was
+ *  not watched being written (`streamed` false) hands over nothing, so the step simply appears. */
+export function noteLiveGlyphs(root: Element, streamed = true, now = Date.now()): void {
+    if (!streamed) { held = null; return; }
     const glyphs = glyphsOf(root, root);
     held = glyphs?.length ? { at: now, glyphs, height: (root.querySelector("pre") ?? root).getBoundingClientRect().height } : null;
 }
