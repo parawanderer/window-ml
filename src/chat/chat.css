@@ -957,6 +957,8 @@ button.chat-page-go:hover { color: var(--fg); }
    height (`--handoff-h`) and eases to its own, so the reformatted code reads as the typed text settling rather than the
    block collapsing and reopening. Cleared after 400 ms (agent-detail.tsx), so a later open eases from nothing as usual. */
 .chat.calm .astep.handoff .astep-body { animation: chat-step-handoff .26s cubic-bezier(.4, 0, .2, 1); }
+/* `.handed`: the handoff is over. Without it the body's animation would change back to its open one and play again. */
+.chat.calm .astep.handed .astep-body { animation: none; }
 @keyframes chat-step-handoff {
     from { height: var(--handoff-h, 0px); opacity: .55; overflow: hidden; }
     to { height: auto; opacity: 1; overflow: hidden; }
@@ -2279,7 +2281,12 @@ button.chat-page-go:hover { color: var(--fg); }
 /* THE ml.sh FOOTER: its count ticks as the streak's does when a call joins it, and the card you just answered eases away
    (height, then nothing) over the same beat, so the call visibly goes into the footer instead of vanishing. */
 .chat.calm .shc-n.bumped { display: inline-block; animation: chat-streak-bump .28s cubic-bezier(.2, .8, .2, 1); }
-.chat.calm .astep-approve.ask.leaving { overflow: hidden; pointer-events: none; animation: chat-ask-leave .26s cubic-bezier(.4, 0, .2, 1) forwards; }
+/* ONE BEAT for an approval and the code it asks about: the card fades in and out, and a streamed script's characters fly to
+   their reformatted places (code-morph.ts, which reads this), over `--calm-flow-ms` on the same curve. */
+.chat.calm { --calm-flow-ms: 260; }
+.chat.calm .astep-approve.ask { animation: chat-ask-in calc(var(--calm-flow-ms) * 1ms) cubic-bezier(.4, 0, .2, 1) backwards; }
+@keyframes chat-ask-in { from { opacity: 0; transform: translateY(4px); } }
+.chat.calm .astep-approve.ask.leaving { overflow: hidden; pointer-events: none; animation: chat-ask-leave calc(var(--calm-flow-ms) * 1ms) cubic-bezier(.4, 0, .2, 1) forwards; }
 @keyframes chat-ask-leave {
     from { opacity: 1; max-height: 640px; }
     to { opacity: 0; max-height: 0; margin-top: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; }
@@ -2315,5 +2322,6 @@ button.chat-page-go:hover { color: var(--fg); }
     .chat.calm .astreak.forming > .astreak-head,
     .chat.calm .astreak.refolding, .chat.calm .astreak.refolding > .astreak-head,
     .chat.calm .astreak-n.bumped, .chat.calm .shc-n.bumped { animation: none; }
+    .chat.calm .astep-approve.ask { animation: none; }
     .chat.calm .astep-approve.ask.leaving { animation: none; display: none; }
 }

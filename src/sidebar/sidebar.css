@@ -4487,7 +4487,7 @@ button.chat-chip.on { background: var(--accent); color: var(--accent-fg); }
 /* "Scanned: the keys match": said in the ok colour, since it replaces the comparison a person would have made. */
 .pair-checked { color: var(--ok); }
 
-/* ======================= THE MODAL SHELL (sidebar/dialog.tsx) =======================
+/* ======================= THE MODAL SHELL (sidebar/dialog.tsx) ================
    HERE RATHER THAN IN chat.css, because the panel loads only this sheet and the approval card is drawn on
    both surfaces. The primitive's own header says it exists so a fourth dialog would not hand-roll a
    backdrop, an Escape and a click-outside again; that argument only holds if everything that needs one can
@@ -4664,3 +4664,10 @@ html[data-calm] .task-say > .task-dev, html[data-focus] .task-say > .task-dev { 
     border-radius: 8px; box-shadow: 0 6px 24px rgba(0, 0, 0, .35); font-weight: normal; text-align: left; cursor: auto;
 }
 .hc-text { margin: 0; white-space: pre-wrap; word-break: break-word; font: inherit; font-size: .92em; color: var(--fg); tab-size: 4; }
+=======
+/* `.code-morph`: the characters of a reformatted script flying from where the live call had them to their new places
+   (code-morph.ts). The real text is hidden while they fly; the layer is removed when they land. */
+pre.code.morphing { position: relative; }
+pre.code.morphing:not(.numbered) > code, pre.code.morphing .lcode { visibility: hidden; }   /* a numbered block keeps its gutter */
+.code-morph { position: absolute; inset: 0; pointer-events: none; white-space: pre; }
+.code-morph > span { position: absolute; }

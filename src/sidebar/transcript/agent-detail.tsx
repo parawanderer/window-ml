@@ -377,9 +377,13 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
     const history = useHistoryPaint();
     // TAKING OVER FROM A LIVE CALL, not arriving: the row that was being typed out is replaced by this one, so fading
     // it in from nothing blinked the block out and back. It starts at the live block's height instead and lets the
-    // reformatted code settle into it (`.handoff`, chat.css), for the length of that animation only.
-    const [handoff, setHandoff] = useState(() => (!inStreak && !history ? liveHandoff() : null));
-    useEffect(() => { if (handoff == null) return; const t = setTimeout(() => setHandoff(null), 400); return () => clearTimeout(t); }, []);
+    // reformatted code settle into it (`.handoff`, chat.css), for the length of that animation only. A member of a streak
+    // takes over too: the one that opens to ask for approval is the block that was just typed.
+    const [handoff, setHandoff] = useState(() => (!history ? liveHandoff() : null));
+    // Dropping `.handoff` flips the body's animation back to its OPEN one, which would play it a second time: `handed`
+    // holds it still instead (`animation: none`), and a body that opens again later eases as usual.
+    const [handed, setHanded] = useState(false);
+    useEffect(() => { if (handoff == null) return; const t = setTimeout(() => { setHandoff(null); setHanded(true); }, 400); return () => clearTimeout(t); }, []);
     const [fresh] = useState(() => !inStreak && !history && handoff == null && justArrived(st.ts));
     const args = st.arguments && Object.keys(st.arguments).length ? st.arguments : null;
     // The run's def for THIS tool — its summary (hover on the name) + its parameter schema (the raw In view
@@ -532,7 +536,7 @@ export function ToolStep({ st, hash, slot }: { st: AgentStep; hash?: string; slo
         // each row's entrance delay on the custom property below (not `animationDelay`, which would also delay
         // a pending step's own `busy-fade` pulse).
         <div ref={rootRef} data-astep-seq={st.seq} data-rev={stepRev}
-            class={`astep tool${fresh ? " fresh" : ""}${dimmed ? " away" : ""}${open ? " open" : ""}${closing ? " closing" : ""}${handoff != null ? " handoff" : ""}${inFlight ? " pending" : ""}${(awaiting || askWaiting) && !cut ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : (st.approval === "skipped" || st.approval === "cancelled") ? " appr-skip" : " appr-yes") : ""}`}
+            class={`astep tool${fresh ? " fresh" : ""}${dimmed ? " away" : ""}${open ? " open" : ""}${closing ? " closing" : ""}${handoff != null ? " handoff" : handed && open ? " handed" : ""}${inFlight ? " pending" : ""}${(awaiting || askWaiting) && !cut ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : (st.approval === "skipped" || st.approval === "cancelled") ? " appr-skip" : " appr-yes") : ""}`}
             style={handoff ? { "--handoff-h": `${handoff}px` } : fresh && slot ? { "--in-delay": `${Math.min(slot, 5) * 45}ms` } : undefined}>
             <button class="astep-head" onClick={toggle}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
