@@ -9,11 +9,13 @@ import { useImageAttach, ThumbStrip, FileStrip } from "../transcript/composer";
 import { services } from "../services";
 import { ElementPill } from "../transcript/user-text";
 import {
-    composerModel, composerModelOpen, composerVision, composerStream, composerMaxSteps, composerResolvedModel,
+    composerModel, composerModelOpen, setComposerVision, COMMANDER_SCOPE, composerStream, composerMaxSteps, composerResolvedModel,
     composerOpen, composerElement, composerTarget, composerStarting, composerDraft, setDefaultModel,
     isOllamaModel,
 } from "./card-state";
 import { isCloudModel } from "../model";
+import { visionChoices } from "../store";
+import { visionFor, visionTip } from "../../vision-choice";
 import { STEP_BUDGETS } from "../../agent/step-budget";
 import { toHost } from "../parent-channel";
 import { imagesRefusal, promptLine } from "../../contract/contract-run";
@@ -74,14 +76,15 @@ export function ComposerModelBar() {
                 <span class="cmp-model-name">{sel || "no model"}</span>
                 <IconChevron />
             </button>
-            {cloud ? (
-                <button class={`cmp-vis${composerVision.value ? " on" : ""}`} type="button" aria-pressed={composerVision.value}
-                    aria-label={composerVision.value ? "Native vision on for this run" : "Native vision off for this run"}
-                    title={composerVision.value
-                        ? "This run: the model sees images itself (native vision) — click to turn off"
-                        : "This run: no native vision — delegates to the reader model. Click to turn on for a cloud model that can see (e.g. GPT-4o)."}
-                    onClick={() => (composerVision.value = !composerVision.value)}>{composerVision.value ? <IconEye /> : <IconEyeOff />}</button>
-            ) : null}
+            {cloud ? (() => {
+                const { on, chosen } = visionFor(visionChoices.value, COMMANDER_SCOPE, sel);
+                return (
+                    <button class={`cmp-vis${on ? " on" : ""}${chosen ? "" : " assumed"}`} type="button" aria-pressed={on}
+                        aria-label={on ? "Native vision on for this model" : "Native vision off for this model"}
+                        title={visionTip(on, chosen)}
+                        onClick={() => setComposerVision(sel, !on)}>{on ? <IconEye /> : <IconEyeOff />}</button>
+                );
+            })() : null}
             {open ? (
                 <div class="cmp-model-menu" role="listbox">
                     <input ref={filterRef} class="cmp-model-filter" type="text" value={filter} placeholder="Filter models…"
@@ -170,7 +173,7 @@ export function ComposerCard() {
         // Native-vision override only rides along for a non-Ollama pick with the eye toggled on (Ollama
         // vision is auto-detected, so we never send it there — the background resolves it). undefined ⇒
         // omitted ⇒ ml.agent's default routing (delegate to the reader model if one sees).
-        const vision = (isCloudModel(resolved) && composerVision.value) ? true : undefined;
+        const vision = (isCloudModel(resolved) && visionFor(visionChoices.value, COMMANDER_SCOPE, resolved).on) ? true : undefined;
         // Bridge the round-trip: show a "Starting…" pill until the run's first event arrives (the composer
         // flies back to the corner and is instantly working). Safety-cleared if the run never surfaces.
         const t0 = Date.now();

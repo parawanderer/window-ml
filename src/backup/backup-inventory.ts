@@ -56,6 +56,7 @@ export const INVENTORY: readonly InventoryEntry[] = [
     local("ml_site_visible", "sites", "the sites marked to see window.ml and ask for access before they may use it", "yes", { mode: "replace" }),
     local("ml_site_schema", "sites", "which layout the site lists are stored in: tells a restore which upgrade an old backup needs", "yes", { mode: "replace" }),
     ui("ml_debug_fontscale", "the panel's font scale"),
+    ui("ml_vision_choices", "which cloud models the person said see images, as the Commander's eye toggle remembers them"),
     ui("ml_debug_codewrap", "code blocks wrap or scroll"),
     ui("ml_debug_codelines", "code block line numbers"),
     ui("ml_debug_focus", "the panel's focus mode"),

@@ -121,7 +121,7 @@ function useHashRoute(): void {
  *  model picker where the page puts it below. */
 function composerTools(store: ChatStore, rt: RuntimeInfo | undefined, summary: SessionSummary | undefined, sessionKey: SessionKey, modelBelow: boolean) {
     if (!rt || !summary) return undefined;
-    const eye = summary.kind === "chat" ? <ChatSeesImages store={store} rt={rt} model={summary.model ?? null} sessionKey={sessionKey} /> : null;
+    const eye = summary.kind === "chat" ? <ChatSeesImages store={store} rt={rt} model={summary.model ?? null} /> : null;
     const picker = modelBelow && summary.model ? <ModelTop store={store} rt={rt} model={summary.model} sessionKey={sessionKey} summary={summary} quiet /> : null;
     return eye || picker ? <>{eye}{picker}</> : undefined;
 }

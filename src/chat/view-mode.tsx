@@ -19,10 +19,11 @@ import { focusMode, groupAllTools } from "../sidebar/store";
 import type { PlatformPrefs } from "./platform";
 import { CODE_DEFAULT, CODE_SIZES } from "../native/text-size";
 import { placePins } from "./pin-order";
+import { readVisionChoices, withVisionChoice, type VisionChoices } from "../vision-choice";
 import { hasBaseline, markSeen, readStateFrom, throttledWriter, type ReadState } from "./read-marks";
 
 /** Preference keys, under the platform's own namespace. */
-export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", READ_KEY = "view.read", PINNED_MODELS_KEY = "view.pinnedModels", CODE_KEY = "view.codeSize", GROUP_ALL_KEY = "view.groupAll", LOG_OPEN_KEY = "view.log", STATE_OPEN_KEY = "view.state", DOCK_KEY = "view.dock", PANEL_FS_KEY = "view.panelSize", DISMISSED_KEY = "view.dismissed", TAB_GROUPS_KEY = "view.tabGroups", THEME_KEY = "view.theme", TARGET_KEY = "view.target", KEYS_KEY = "view.keys";
+export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", READ_KEY = "view.read", PINNED_MODELS_KEY = "view.pinnedModels", CODE_KEY = "view.codeSize", GROUP_ALL_KEY = "view.groupAll", LOG_OPEN_KEY = "view.log", STATE_OPEN_KEY = "view.state", DOCK_KEY = "view.dock", PANEL_FS_KEY = "view.panelSize", DISMISSED_KEY = "view.dismissed", TAB_GROUPS_KEY = "view.tabGroups", THEME_KEY = "view.theme", TARGET_KEY = "view.target", KEYS_KEY = "view.keys", VISION_KEY = "view.vision";
 
 /** Is the page in calm view? Read it in a render to re-render when it changes. */
 export const calm = signal(true);
@@ -95,6 +96,10 @@ export const readState = signal<ReadState>({ since: Date.now(), seen: {} });
  * unloaded, and forgetting the pin because the list is momentarily short would lose it for good.
  */
 export const pinnedModels = signal<ReadonlySet<string>>(new Set());
+
+/** What the person said about whether a model sees images, per runtime and model, on this device (`vision-choice.ts`): the
+ *  eye toggle's remembered answers, so a model they set once starts as they left it. */
+export const visionChoices = signal<VisionChoices>({});   // state: ui
 
 /** The code size this device reads at, in px. */
 export const codeSize = signal<number>(CODE_DEFAULT);
@@ -170,6 +175,7 @@ export function installViewPrefs(prefs: PlatformPrefs): void {
     if (!hasBaseline(rawRead)) prefs.set(READ_KEY, readState.value);
     const pm = prefs.get<string[]>(PINNED_MODELS_KEY);
     pinnedModels.value = new Set(Array.isArray(pm) ? pm.filter((x) => typeof x === "string") : []);
+    visionChoices.value = readVisionChoices(prefs.get<unknown>(VISION_KEY));
     dockLayout.value = readDock(prefs.get<DockLayout>(DOCK_KEY));
     const ps = prefs.get<number>(PANEL_FS_KEY);
     panelSize.value = PANEL_SIZES.some((x) => x.px === ps) ? ps! : PANEL_FS_DEFAULT;
@@ -372,6 +378,12 @@ export function togglePinnedModel(id: string): void {
     if (!next.delete(id)) next.add(id);
     pinnedModels.value = next;
     store?.set(PINNED_MODELS_KEY, [...next]);
+}
+
+/** Remember the person's word on whether `model` (listed by runtime `scope`) sees images, on this device. */
+export function setVisionChoice(scope: string, model: string, on: boolean): void {
+    visionChoices.value = withVisionChoice(visionChoices.value, scope, model, on);
+    store?.set(VISION_KEY, visionChoices.value);
 }
 
 /** Pin a session on this device (a no-op when it already is). */

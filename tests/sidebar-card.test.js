@@ -786,9 +786,14 @@ test("card composer: the model picker overrides the run's model, and a cloud pic
     assert.match(doc.querySelector(".cmp-model-name").textContent, /gpt-4o/, "the chip updates to the picked model");
     const eye = doc.querySelector(".cmp-vis");
     assert.ok(eye, "a non-Ollama pick surfaces the per-call vision toggle");
-    eye.click();   // enable native vision for THIS run
+    assert.ok(doc.querySelector(".cmp-vis.on.assumed"), "a cloud model nobody said anything about is assumed to see images, drawn as the assumption");
+    eye.click();   // the person says it does not
     await w.tick();
-    assert.ok(doc.querySelector(".cmp-vis.on"), "the vision toggle reads as on");
+    assert.ok(!doc.querySelector(".cmp-vis.on"), "the toggle reads as off");
+    assert.ok(!doc.querySelector(".cmp-vis.assumed"), "and that is their word now, not the assumption");
+    doc.querySelector(".cmp-vis").click();   // and says it does after all
+    await w.tick();
+    assert.ok(doc.querySelector(".cmp-vis.on:not(.assumed)"), "the toggle reads as on, as their word");
 
     // Type + Send → the startRun carries the per-call model AND vision:true.
     const input = doc.querySelector(".card-cmp-input");

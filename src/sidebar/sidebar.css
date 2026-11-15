@@ -2952,6 +2952,8 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 .cmp-vis:hover { opacity: .85; }
 .cmp-vis.on { opacity: 1; filter: none; color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent); }
+/* The eye on a model nobody said anything about: on by assumption, drawn dimmer than one the person turned on. */
+.cmp-vis.assumed.on { opacity: .6; }
 /* The dropdown floats down from the chip over the composer body. Capped to the iframe viewport (100vh = the
    composer card's own height, since the shell sizes the iframe to it) so a long model list SCROLLS inside the
    menu instead of spilling past the card's bottom edge and being clipped by the iframe. */

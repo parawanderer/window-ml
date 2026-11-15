@@ -411,13 +411,14 @@ test("services: files are offered only for a runtime that lists attachFiles, and
     store.dispose();
 });
 
-test("services: session.send carries vision: true for a chat the person said sees images, and only with images", async () => {
-    const { setSeesImages, visionUnreported } = await import("../src/chat/sees-images.tsx");
+test("services: session.send carries vision: true for a chat whose unreported model is assumed or said to see images, and only with images", async () => {
+    const { modelCache, visionUnreported } = await import("../src/chat/sees-images.tsx");
+    const { setVisionChoice } = await import("../src/chat/view-mode.tsx");
     sessionMap.clear();
     view.value = { name: "list" };
     const fake = new FakeHost({
         runtimes: [runtime("new", { capabilities: { chat: true, agent: true } })],
-        sessions: [{ summary: summary("new", "cccc0001"), events: [agentStart("cccc0001", "t")] }],
+        sessions: [{ summary: summary("new", "cccc0001", { model: "gpt-x" }), events: [agentStart("cccc0001", "t")] }],
     });
     const store = new ChatStore(fake);
     store.start();
@@ -426,15 +427,22 @@ test("services: session.send carries vision: true for a chat the person said see
     const key = "new:cccc0001";
     const pic = ["data:image/png;base64,AAAA"];
     await svc.sendToSession(key, "look", pic);
-    assert.equal("vision" in fake.commands.at(-1), false, "not said: not sent");
-    setSeesImages(key, true);
+    assert.equal("vision" in fake.commands.at(-1), false, "no model list yet: nothing is claimed");
+    modelCache.set("new", [{ id: "gpt-x", where: "cloud" }]);
     await svc.sendToSession(key, "look", pic);
-    assert.equal(fake.commands.at(-1).vision, true);
+    assert.equal(fake.commands.at(-1).vision, true, "a cloud model nobody said anything about is assumed to see images");
     await svc.sendToSession(key, "words only");
     assert.equal("vision" in fake.commands.at(-1), false, "no images, nothing to say");
-    setSeesImages(key, false);
+    setVisionChoice("new", "gpt-x", false);
     await svc.sendToSession(key, "look", pic);
-    assert.equal("vision" in fake.commands.at(-1), false, "turned off again");
+    assert.equal("vision" in fake.commands.at(-1), false, "the person said it does not");
+    setVisionChoice("new", "gpt-x", true);
+    await svc.sendToSession(key, "look", pic);
+    assert.equal(fake.commands.at(-1).vision, true, "and said it does again");
+    modelCache.set("new", [{ id: "gpt-x", where: "local", kinds: ["completion"] }]);
+    await svc.sendToSession(key, "look", pic);
+    assert.equal("vision" in fake.commands.at(-1), false, "a model whose vision the runtime reports is never claimed for");
+    modelCache.clear();
     // Whose vision only the person can tell: a cloud model, or one listed with no kinds; never one the list lacks.
     assert.equal(visionUnreported({ id: "c", where: "cloud", kinds: ["completion"] }), true);
     assert.equal(visionUnreported({ id: "k" }), true);
