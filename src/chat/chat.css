@@ -1118,7 +1118,17 @@ button.chat-page-go:hover { color: var(--fg); }
     .chat.calm .r-code:hover .code-tools, .chat.calm .io-body:hover .code-tools,
     .chat.calm .code-tools:focus-within { opacity: 1; }
     @media (prefers-reduced-motion: reduce) { .chat.calm .code-tools { transition: none; } }
+    /* EVERY BLOCK BUTTON IS THE SAME KIND OF QUIET: absent until the pointer is in its block. Two families sat at a
+       lower opacity instead (the output cell's corner at half, a wrapped command's copy button always lit), so some
+       buttons faded in and some only brightened. A touch screen has no hover to reveal anything, so it keeps them lit. */
+    .chat.calm .r-outcorner, .chat.calm .copyable-code.corner .code-tools { opacity: 0; transition: opacity .15s ease; }
+    .chat.calm .r-outcell:hover .r-outcorner, .chat.calm .r-outcorner:focus-within,
+    .chat.calm .copyable-code.corner:hover .code-tools, .chat.calm .copyable-code.corner .code-tools:focus-within { opacity: 1; }
+    @media (prefers-reduced-motion: reduce) { .chat.calm .r-outcorner, .chat.calm .copyable-code.corner .code-tools { transition: none; } }
 }
+/* THE TIMESTAMP GUTTER KEEPS ITS RULE in the calm chat. The panel's rule is `--border`, which the calm palette makes the
+   colour of the block it is drawn on, so the console output lost the line that says where its text starts. */
+.chat.calm .r-timed::after { background: color-mix(in srgb, var(--fg) 14%, transparent); }
 
 /* THE REPLY FOLDS TO ITS SUMMARY WITHOUT BOUNCING. The old version shrank to nothing and grew back, which read as
    the reply closing and then reopening. Now the height stops where the summary will stand — one line, `1lh` — so
@@ -1619,7 +1629,7 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-settings-body .shell-install { display: flex; flex-direction: column; gap: 12px; }
 .chat-settings-body .shell-install .code-block { border-radius: 12px; overflow: hidden; }
 .chat-settings-body .shell-install .set-hint { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin: 0 2px; }
-.chat.calm .copyable-code.corner .code-tools { opacity: 1; }
+@media (hover: none), (pointer: coarse) { .chat.calm .copyable-code.corner .code-tools { opacity: 1; } }
 .chat-settings-body .pol-source-input { padding: 10px 14px; border: 1px solid transparent; border-radius: 12px; background: var(--panel); }
 .chat-settings-body .pol-source-input:focus, .chat-settings-body select:focus { outline: none; border-color: var(--panel-2-hover); }
 .chat-settings-body .set-test { padding: 14px 16px; border: none; border-radius: 14px; }

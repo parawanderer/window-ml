@@ -4,6 +4,7 @@
 // Real scrolling (which needs layout) is covered by tests/e2e/output-scroll.spec.mjs — jsdom has no layout.
 import { test, before, after } from "node:test";
 import assert from "node:assert";
+import { readFileSync } from "node:fs";
 import { JSDOM } from "jsdom";
 import { createRequire } from "node:module";
 const require_ = createRequire(import.meta.url);
@@ -720,4 +721,14 @@ test("a stdout section folded in focus mode is marked `touched` once the reader 
     assert.ok(sec().classList.contains("touched"), "closed again by hand: no note");
     render(null, host);
     focusMode.value = false;
+});
+
+// --- the calm chat's console output and code-block buttons ---
+
+test("calm chat: the timestamp gutter keeps a visible rule, and every block button is hidden until its block is hovered, except on touch", () => {
+    const css = readFileSync(new URL("../src/chat/chat.css", import.meta.url), "utf8");
+    assert.match(css, /\.chat\.calm \.r-timed::after \{ background: color-mix\(in srgb, var\(--fg\)/, "a rule that is not the block's own colour");
+    const hover = css.slice(css.indexOf("@media (hover: hover) and (pointer: fine) {\n    .chat.calm .code-tools"));
+    assert.match(hover, /\.chat\.calm \.r-outcorner, \.chat\.calm \.copyable-code\.corner \.code-tools \{ opacity: 0;/, "the output cell's corner and a wrapped command's copy fade like the code toolbar");
+    assert.match(css, /@media \(hover: none\), \(pointer: coarse\) \{ \.chat\.calm \.copyable-code\.corner \.code-tools \{ opacity: 1; \} \}/, "a touch screen has no hover, so it stays lit");
 });
