@@ -732,3 +732,41 @@ test("calm chat: the timestamp gutter keeps a visible rule, and every block butt
     assert.match(hover, /\.chat\.calm \.r-outcorner, \.chat\.calm \.copyable-code\.corner \.code-tools \{ opacity: 0;/, "the output cell's corner and a wrapped command's copy fade like the code toolbar");
     assert.match(css, /@media \(hover: none\), \(pointer: coarse\) \{ \.chat\.calm \.copyable-code\.corner \.code-tools \{ opacity: 1; \} \}/, "a touch screen has no hover, so it stays lit");
 });
+
+// --- a streamed script's reformat moves its characters instead of the block vanishing ---
+test("planMorph pairs the live text's characters with the reformatted text's, and draws nothing when they disagree or nothing moves", async () => {
+    const { planMorph } = await import("../src/sidebar/transcript/code-morph.ts");
+    const g = (s, y = 0, vis = true) => [...s].map((ch, i) => ({ ch, x: i * 8, y, color: "", vis }));
+    const old = g("a=[1,2];");                                           // packed, one line
+    const neu = [...g("a=[", 0), ...g("1,", 20), ...g("2", 40), ...g("];", 60)]; // the same characters, reflowed
+    const plan = planMorph(old, neu);
+    assert.equal(plan.length, neu.length);
+    assert.ok(plan.some((p) => p.dy !== 0), "something moves");
+    assert.equal(planMorph(g("a=[9"), neu), null, "a different character: no morph");
+    assert.equal(planMorph(old, g("a=[1,2];")), null, "nothing moved: no morph");
+    const partial = planMorph(g("a=[1"), neu);                            // the reveal was mid-text at the hand-over
+    assert.ok(partial.slice(4).every((p) => p.fade), "characters the live block had not typed fade in");
+    const mixed = [...g("a=[", 0, false), ...g("1,2];", 0, true)];
+    const m = planMorph(mixed, neu);
+    assert.ok(m.slice(0, 3).every((p) => p.fade) && m[3].fade === false, "characters scrolled out of view fade in, the rest travel");
+    assert.equal(planMorph(g("a=[1,2];", 0, false), neu), null, "none of it was on screen: no morph");
+});
+
+test("the live call hands its glyphs over, the reformatted block takes them, and the handoff does not replay the open animation", () => {
+    const rd = (f) => readFileSync(new URL(f, import.meta.url), "utf8");
+    assert.match(rd("../src/sidebar/transcript/live-call.tsx"), /noteLiveGlyphs\(el, wasStreamed\(/);
+    assert.match(rd("../src/sidebar/code-block.tsx"), /if \(format && preRef\.current\) morphInto\(preRef\.current\)/);
+    assert.match(rd("../src/sidebar/transcript/agent-detail.tsx"), /useState\(\(\) => \(!history \? liveHandoff\(\) : null\)\)/);
+    assert.match(rd("../src/sidebar/transcript/agent-detail.tsx"), /handed && open \? " handed"/);
+    assert.match(rd("../src/chat/chat.css"), /\.chat\.calm \.astep\.handed \.astep-body \{ animation: none; \}/);
+});
+
+test("a call that arrived as one block, or stood for a frame, is not morphed", async () => {
+    const { wasStreamed, noteLiveGlyphs, morphInto } = await import("../src/sidebar/transcript/code-morph.ts");
+    assert.equal(wasStreamed(1, 5000), false, "one arrival however long it stood: the provider sent it whole");
+    assert.equal(wasStreamed(40, 16), false, "many arrivals in a frame: nothing was seen");
+    assert.equal(wasStreamed(12, 1800), true, "a call that was watched being written");
+    // A not-streamed hand-over also clears what an earlier call left, so the next block cannot inherit it.
+    noteLiveGlyphs({}, false);
+    assert.equal(morphInto({}), undefined);
+});
