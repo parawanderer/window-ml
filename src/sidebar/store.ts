@@ -501,6 +501,7 @@ export const openBench = (code?: string): void => {
  *  so a change arriving through ANY path (a button, a Settings toggle, a direct chrome write) counts. */
 export function prefsSnapshot() {
     return {
+        visionChoices: visionChoices.value,
         fontScale: fontScale.value, codeWrap: codeWrap.value, codeLineNumbers: codeLineNumbers.value,
         codeTheme: codeTheme.value, codeThemeCustom: codeThemeCustom.value, codeThemeUi: codeThemeUi.value,
         showStatsTokens: showStatsTokens.value, showStatsTps: showStatsTps.value,
@@ -526,7 +527,7 @@ function ifUntouched<T>(sig: { value: T }, snap: T, v: T): void {
  *  key the person changed since `prefsSnapshot` was taken. The DOM side effects (applyFont and friends) stay
  *  at the call site: they render whatever value won, so nothing a signal holds goes undrawn either way. */
 export function restorePrefs(d: any, snap: ReturnType<typeof prefsSnapshot>): void {
-    visionChoices.value = readVisionChoices(d[VISION_KEY]);
+    ifUntouched(visionChoices, snap.visionChoices, readVisionChoices(d[VISION_KEY]));
     if (d[FONT_KEY]) ifUntouched(fontScale, snap.fontScale, d[FONT_KEY]);
     ifUntouched(codeWrap, snap.codeWrap, d[WRAP_KEY] !== false);
     ifUntouched(codeLineNumbers, snap.codeLineNumbers, !!d[LINES_KEY]);
