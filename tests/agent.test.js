@@ -1924,6 +1924,18 @@ test("Q1: a self-approving site keeps its own loop when no debug surface is on; 
     assert.ok(surfaced.runtimeCalls.some(c => c.type === "START_RUN"));
 });
 
+test("a page run's tool-call turn carries the model's thinking back on the next call, and a plain reply's does not", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: scriptedModel([{ content: "", reasoning: "I should ping first", tool_calls: [{ id: "c1", name: "ping", arguments: {} }] }, { content: "done", reasoning: "all good", tool_calls: [] }])
+    });
+    const ping = world.ml.defineTool({ name: "ping", run: () => "pong" });
+    const a = world.ml.createAgent({ tools: [ping], maxSteps: 5 });
+    await a.run("go");
+    const turn = world.runtimeCalls[1].payload.messages.find((x) => x.role === "assistant" && x.tool_calls?.length);
+    assert.equal(turn.reasoning, "I should ping first", "the tool-call turn keeps its thinking, as agent-host does");
+    assert.equal(a.messages.at(-1).reasoning, undefined, "a final reply's thinking is not kept");
+});
+
 test("agent surfaces the model's reasoning as thought events and transcript entries", async () => {
     const world = loadPageWorld({
         onRuntimeMessage: scriptedModel([
