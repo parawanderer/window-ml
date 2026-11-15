@@ -1176,7 +1176,7 @@ export function LiveStream({ ls, s, rest, leaving }: { ls: NonNullable<Session["
                 ? <div class="aturn">
                     {rest ? null : <div class="aturn-head"><StepPill step={ls.localStep ?? ls.step} max={s.maxSteps} /></div>}
                     {ls.reasoning && !rest ? <ThoughtBlock thought={ls.reasoning} tokens={ls.reasoningTokens} live /> : null}
-                    {(ls.calls || []).map((c) => <LiveCall key={c.index} call={c} leaving={leaving?.has(c.index)} />)}
+                    {(ls.calls || []).map((c) => <LiveCall key={c.index} call={c} leaving={leaving?.has(c.index)} queued={rest} />)}
                   </div>
                 : null}
             {ls.content ? <ReplyBubble content={ls.content} status="ok" model={s.model} profile={sessionProfile(s)} ts={ls.step /* unused while streaming */} streaming /> : null}

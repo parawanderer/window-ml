@@ -41,7 +41,7 @@ test("two gated execs in one turn: both cells stay drawn, keep their rail, and f
                     return { path: path.join("<"), cls: el.className.replace(/astep|tool|pending/g, "").trim(), live: el.classList.contains("live-call"), h: Math.round(el.getBoundingClientRect().height), open: el.classList.contains("open"), rail: !!body?.querySelector(".fold-rail"), card: !!el.querySelector(".astep-approve"), dot: el.querySelector(".dot")?.className ?? "" };
                 });
                 window.__f.push({
-                    grouped: !!document.querySelector(".astreak"), bar: !!document.querySelector(".chat-waiting"), t: performance.now() - t0, cells, thinking: document.querySelectorAll(".athinking").length,
+                    grouped: !!document.querySelector(".astreak"), bar: !!document.querySelector(".chat-waiting"), quiet: document.querySelectorAll(".live-call-quiet").length, liveTips: [...document.querySelectorAll(".live-call .dot-tip-line")].map((e) => e.textContent).join("|"), t: performance.now() - t0, cells, thinking: document.querySelectorAll(".athinking").length,
                                         written: (() => { const w = document.querySelector(".live-call .astep-preview.written"); return w ? parseFloat(getComputedStyle(w).opacity) : null; })(),
                     foot: [".run-stats", ".usage-gauge"].map((q) => { const e = document.querySelector(q); return e ? getComputedStyle(e).animationName : ""; }).join(","),
                 });
@@ -55,7 +55,7 @@ test("two gated execs in one turn: both cells stay drawn, keep their rail, and f
         void site1.evaluate(() => window.ml.agent("do two things", { env: false, approvalRouting: "both", stream: true })).catch(() => {});
         await chat.locator(".chat-row", { hasText: "do two things" }).click();
         await expect(chat.locator(".astep-approve")).toBeVisible({ timeout: 30_000 });
-        await chat.waitForTimeout(2500);
+        await chat.waitForTimeout(6000);                           // long enough for a call that had gone quiet to say so (4 s)
         await chat.getByRole("button", { name: /^Approve/ }).first().click();
         await chat.waitForTimeout(1500);
         await expect(chat.locator(".astep-approve").last()).toBeVisible({ timeout: 30_000 });
@@ -78,6 +78,11 @@ test("two gated execs in one turn: both cells stay drawn, keep their rail, and f
         expect(bare.length, dump("an open cell had no rail")).toBe(0);
         // 3a. The "waiting on your approval" bar is not put up while the card is merely not drawn yet (its call is still held on screen).
         expect(f.filter((r) => r.bar && !r.cells.some((c) => c.card)).length, dump("the approval bar was up before there was a card to approve")).toBe(0);
+        // 3e. A call that is written and waiting behind the one at the gate is not "quiet" (no clock), and its dot says it waits its turn.
+        const queuedFrames = f.filter((r) => r.cells.some((c) => c.card) && r.cells.some((c) => c.live));
+        expect(queuedFrames.length, dump("no frame had a card and a waiting call")).toBeGreaterThan(10);
+        expect(queuedFrames.filter((r) => r.quiet > 0).length, dump("a call waiting its turn showed the no-output clock")).toBe(0);
+        expect(queuedFrames.every((r) => /waiting its turn/.test(r.liveTips)), dump("the waiting call's dot did not say it waits its turn")).toBe(true);
         // 3c. A call written in full sends its "writing… N chars" readout away over time: its opacity passes through the middle.
         const fading = f.filter((r) => r.written != null);
         expect(fading.length, dump("no written call ever sent its readout away")).toBeGreaterThan(0);

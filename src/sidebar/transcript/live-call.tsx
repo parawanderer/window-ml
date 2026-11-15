@@ -73,7 +73,7 @@ function useReveal(text: string): string {
  * @gallery {"call":{"index":0,"name":"python_exec","args":"{\"code\": \"import math\\nfor i in range(3):\\n    print(math.sqrt(i))\\nprint(\\\"do","chars":78}}
  * @group transcript
  */
-export function LiveCall({ call, leaving }: { call: LiveToolCall; /** folding away: its step is not opening to take it */ leaving?: boolean }) {
+export function LiveCall({ call, leaving, queued }: { call: LiveToolCall; /** folding away: its step is not opening to take it */ leaving?: boolean; /** the model has finished its answer: this call is written and waits behind the ones before it */ queued?: boolean }) {
     const v = liveCallView(call);
     // Code is typed out evenly; Markdown and argument trees are drawn as they arrive (re-rendering either per frame
     // costs more than it shows).
@@ -103,13 +103,15 @@ export function LiveCall({ call, leaving }: { call: LiveToolCall; /** folding aw
     if (call.chars !== seen.current.chars) seen.current = { chars: call.chars, at: Date.now() };
     const [now, setNow] = useState(() => Date.now());
     useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
-    const stall = stallNote(now - seen.current.at);
     // WRITTEN, and drawn all the way: the readout of how much is arriving has nothing left to say (the calm view sends it away).
-    const written = v.kind === "text" ? !v.writing && typed.length >= v.text.length : v.kind === "tree" ? !v.writing : false;
+    const written = queued || (v.kind === "text" ? !v.writing && typed.length >= v.text.length : v.kind === "tree" ? !v.writing : false);
+    // A call that is written, or waiting its turn, is not "gone quiet": nothing more is due from the model for it.
+    const stall = written ? null : stallNote(now - seen.current.at);
+    const tip = queued ? "Written, and waiting its turn: it runs after the calls before it." : written ? "Written. The model is finishing the rest of its answer." : "The model is still writing this call.";
     return (
         <div class={`astep tool pending open live-call${stall ? " stalled" : ""}${leaving ? " live-leaving" : ""}`} data-live-call={call.index} data-tool={call.name}>
             <div class="astep-head">
-                <Dot status="pending" />
+                <Dot status="pending" tip={tip} />
                 <span class="tool-name">{call.name ?? "tool call"}</span>
                 <span class={`astep-preview dim${written ? " written" : ""}`}>writing… {chars(call.chars)}{stall ? <span class="live-call-stall"> · {stall}</span> : null}</span>
                 {/* The calm view's form of the same readout: a slowly pulsing clock, its words in the tip. A spinner
