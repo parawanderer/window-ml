@@ -3,7 +3,9 @@
 // when one opens or closes. Sampled on every animation frame, because only a layout engine shows a snap.
 
 export default async ({ page, tile, shot }) => {
-    const sec = tile.locator("details.r-py-sec").first();       // the one that starts closed (stdout folds in the calm view)
+    // These are the CALM chat's behaviours, and `gallery check` runs a flow in the dev view: switch the page to calm first.
+    await page.evaluate(() => { const [path, q = ""] = location.hash.split("?"); const p = new URLSearchParams(q); p.set("view", "calm"); location.hash = `${path}?${p}`; });
+    await page.waitForSelector(".gl-frame.calm");
     const sample = (act) => page.evaluate(([sel, act]) => new Promise((resolve) => {
         const el = document.querySelector(sel);
         const t0 = performance.now(), h = [];
