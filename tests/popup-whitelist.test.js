@@ -289,3 +289,18 @@ test("popup: an ask that comes from Let sites ask for access (not marked) shows 
     assert.equal(visibleButton(p, "siteHide"), null);
     assert.equal(visibleButton(p, "siteLetAsk"), null, "it already asks");
 });
+
+// --- the header's way to the browser's page for this extension ---
+
+test("popup: the puzzle-piece button opens this extension's page in the browser, in a tab, and closes the popup", async () => {
+    const p = await loadPopup();
+    const opened = [];
+    p.win.chrome.tabs.create = async (o) => { opened.push(o); return {}; };
+    const btn = p.doc.getElementById("openExtensions");
+    assert.ok(btn.querySelector("svg"), "an icon, like the chat and gear buttons beside it");
+    assert.ok(btn.getAttribute("aria-label"), "an icon-only control is named");
+    btn.click();
+    await p.flush();
+    assert.deepEqual(opened, [{ url: "chrome://extensions/?id=test" }], "the details page for this extension id, in the browser's scheme");
+    assert.equal(p.closed.value, true);
+});
