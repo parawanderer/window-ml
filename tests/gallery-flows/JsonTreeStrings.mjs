@@ -24,6 +24,15 @@ export default async ({ page, tile, shot }) => {
     await row("long").locator("button.jt-more").click();
     if (!(await longVal.textContent()).includes("…")) fail("show less did not cut it again");
 
+    // A cut string has no escapes, and its card still reads all of it: the part the row cut is what the card is for.
+    await longVal.hover();
+    await page.waitForTimeout(700);
+    const longCard = page.locator(".hc-card");
+    if (!(await longCard.count())) fail("a cut string opened no card");
+    if ((await longCard.innerText()).length < 600) fail("the cut string's card did not hold all of it");
+    await page.mouse.move(2, 2, { steps: 4 });
+    await page.waitForTimeout(600);
+
     // A string with escapes: nothing at once, the card after the pointer rests, the string lit.
     const multi = row("multi").locator(".jt-val");
     await multi.hover();

@@ -39,8 +39,8 @@ export function cutString(s: string, n: number = JT_STR_CUT): string {
 /**
  * A string value in the tree. A long one is cut after {@link JT_STR_CUT} characters with the count to show all of it, and
  * "show less" folds it back; the choice is this row's own, so folding the container it is in and opening it again starts
- * cut. `allOpen` (the raw In view, which exists so Ctrl+F reaches everything) never cuts. One with escapes in it opens a
- * HOVER CARD with the text as it reads, the escapes applied.
+ * cut. `allOpen` (the raw In view, which exists so Ctrl+F reaches everything) never cuts. One with something hidden from the row (escapes
+ * in it, or the cut itself) opens a HOVER CARD with the whole text as it reads, the escapes applied.
  */
 function StrLeaf({ s, cls, sep, allOpen }: { s: string; cls: string; sep: ComponentChildren; allOpen?: boolean }) {
     const [full, setFull] = useState(false);
@@ -49,7 +49,7 @@ function StrLeaf({ s, cls, sep, allOpen }: { s: string; cls: string; sep: Compon
     const val = <>{text}{sep}</>;
     const more = long ? <button class="jt-more" aria-expanded={full} onClick={(e) => { e.stopPropagation(); setFull(!full); }}>{full ? "show less" : `show all ${s.length.toLocaleString()} chars`}</button> : null;
     return <>
-        {hasEscapes(s)
+        {hasEscapes(s) || (long && !full)
             ? <HoverCard class={cls} card={<pre class="hc-text">{s}</pre>}>{val}</HoverCard>
             : <span class={cls}>{val}</span>}
         {more}

@@ -94,11 +94,16 @@ test("a cut string keeps its comma after the ellipsis, and a click on the button
     assert.ok(a);
 });
 
-test("only a string with an escape in it is a hover card; its card holds the text unescaped", async () => {
-    await mountTree({ plain: "no escapes", multi: "line one\nline two\tTabbed" });
-    const triggers = host.querySelectorAll(".hc");
-    assert.equal(triggers.length, 1, "one string has escapes");
+test("a string with something hidden from its row is a hover card, and one that shows all of itself is not", async () => {
+    await mountTree({ plain: "no escapes", multi: "line one\nline two\tTabbed", long: LONG });
+    const triggers = [...host.querySelectorAll(".hc")];
+    assert.equal(triggers.length, 2, "the string with escapes and the cut one; the short plain one has nothing to reveal");
     assert.match(triggers[0].textContent, /line one\\nline two\\tTabbed/, "the row still shows the escapes, as the JSON does");
+    assert.ok(triggers[1].textContent.endsWith("…"), "the cut one is the second");
+    more().click(); await wait();                                  // expanded: the row shows all of it already
+    assert.equal(host.querySelectorAll(".hc").length, 1, "once it is all there, the card has nothing to add");
+    more().click(); await wait();
+    assert.equal(host.querySelectorAll(".hc").length, 2, "and cut again, it has");
 });
 
 // --- the hover card's timing ---
