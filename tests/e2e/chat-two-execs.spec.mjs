@@ -41,7 +41,7 @@ test("two gated execs in one turn: both cells stay drawn, keep their rail, and f
                     return { path: path.join("<"), cls: el.className.replace(/astep|tool|pending/g, "").trim(), live: el.classList.contains("live-call"), h: Math.round(el.getBoundingClientRect().height), open: el.classList.contains("open"), rail: !!body?.querySelector(".fold-rail"), card: !!el.querySelector(".astep-approve"), dot: el.querySelector(".dot")?.className ?? "" };
                 });
                 window.__f.push({
-                    grouped: !!document.querySelector(".astreak"), bar: !!document.querySelector(".chat-waiting"), reply: !!document.querySelector(".msg.asst"), folding: !!document.querySelector(".astep.closing, .astreak-body.closing"), quiet: document.querySelectorAll(".live-call-quiet").length, liveTips: [...document.querySelectorAll(".live-call .dot-tip-line")].map((e) => e.textContent).join("|"), t: performance.now() - t0, cells, thinking: document.querySelectorAll(".athinking").length,
+                    grouped: !!document.querySelector(".astreak"), bar: !!document.querySelector(".chat-waiting"), cardSeen: (() => { const c = document.querySelector(".astep-approve:not(.leaving):not(.closing)"); if (!c) return false; const r = c.getBoundingClientRect(); return r.height > 20 && r.top >= 0 && r.bottom <= innerHeight; })(), reply: !!document.querySelector(".msg.asst"), folding: !!document.querySelector(".astep.closing, .astreak-body.closing"), quiet: document.querySelectorAll(".live-call-quiet").length, liveTips: [...document.querySelectorAll(".live-call .dot-tip-line")].map((e) => e.textContent).join("|"), t: performance.now() - t0, cells, thinking: document.querySelectorAll(".athinking").length,
                                         written: (() => { const w = document.querySelector(".live-call .astep-preview.written"); return w ? parseFloat(getComputedStyle(w).opacity) : null; })(),
                     foot: [".run-stats", ".usage-gauge"].map((q) => { const e = document.querySelector(q); return e ? getComputedStyle(e).animationName : ""; }).join(","),
                 });
@@ -90,6 +90,8 @@ test("two gated execs in one turn: both cells stay drawn, keep their rail, and f
             expect(lastFold && firstReply.t - lastFold.t, dump("the reply started while the calls were still folding, or with no beat after")).toBeGreaterThanOrEqual(250);
             expect(f.filter((r) => r.reply && r.folding).length, dump("the reply was drawn during a fold")).toBe(0);
         }
+        // 3g. The bar is for a gate out of reach: never while the card to answer is on screen (a card folding away from the one before it was watched instead).
+        expect(f.filter((r) => r.bar && r.cardSeen).length, dump("the approval bar was up while the card was in view")).toBeLessThan(4);
         // 3c. A call written in full sends its "writing… N chars" readout away over time: its opacity passes through the middle.
         const fading = f.filter((r) => r.written != null);
         expect(fading.length, dump("no written call ever sent its readout away")).toBeGreaterThan(0);

@@ -419,7 +419,9 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
         // reach — a gate further back than the transcript draws (transcript-window.tsx) — and the bar is the only
         // thing that would say so.
         const look = (): void => {
-            const card = root.querySelector(".astep-approve");
+            // The card to be answered: not one that has been answered and is folding away (an `ml.sh` ask card stays through its exit, and a run of
+            // them leaves one at the top while the next is already up: watching that one reports the gate out of reach when it is removed).
+            const card = root.querySelector(".astep-approve:not(.leaving):not(.closing)");
             if (!card) {
                 // A call still drawn as it was written stands in for the step (and its card) for a moment: the card is coming, not out of reach.
                 if (root.querySelector(".live-call")) tries = GATE_WAIT_FRAMES;
@@ -427,7 +429,7 @@ export function SessionPane({ store, sessionKey, narrow, extras, native, onGate 
                 frame = requestAnimationFrame(look);
                 return;
             }
-            io = new IntersectionObserver(([e]) => setGateAway(!e.isIntersecting), { root });
+            io = new IntersectionObserver(([e]) => setGateAway(!e.isIntersecting && e.target.isConnected), { root });
             io.observe(card);
         };
         look();
