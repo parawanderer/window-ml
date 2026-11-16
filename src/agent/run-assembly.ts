@@ -17,7 +17,7 @@ import type { FramedFile } from "../attached-files";
 import type { StartRunPayload, RebuildConfig } from "../contract/contract-messages";
 import { promptSurfaceClause, promptSurfaceOf } from "./prompt-surface";
 import { stepBudget } from "./step-budget";
-import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, tooltokensClause, shadowClause, SHADOW_TRIGGER_TOOLS, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, LINKS_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, currentClause, HUD_PROSE_QUIET, HUD_PROSE_PROGRESS, framePrompt } from "./prompts";
+import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, tooltokensClause, shadowClause, SHADOW_TRIGGER_TOOLS, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, LINKS_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, shellClause, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, currentClause, HUD_PROSE_QUIET, HUD_PROSE_PROGRESS, framePrompt } from "./prompts";
 import { buildDereferenceTool, withComposeNote } from "../tools/tools";
 import { PAGE_CONTEXT_HEAD } from "./output-clip";
 import { withToolDetails } from "../tools/tool-details";
@@ -82,6 +82,8 @@ export interface AssemblyOptions {
     toolTokens?: boolean;
     /** give the run the `answer` tool (and `ml.answer`) when it takes the default kit; a `tools` list decides for itself */
     answer?: boolean;
+    /** the person turned `ml.sh` on (the worker sets it for a run it builds): the prompt says terminal access may exist */
+    shell?: boolean;
     images?: (string | HTMLImageElement)[];
 }
 
@@ -123,7 +125,7 @@ export interface AssembledRun {
  * @param opts what the run should contain
  * @returns the assembled run
  */
-export async function assembleRun(ml: AssemblyMl, task: string, { tools = null, extraTools = [], serverTools = [], commanderTools = false, system = null, systemAppend = null, model = null, vision = null, unattended = false, navigate = true, crossOrigin = false, toolTokens = false, answer = false, images = [] }: AssemblyOptions = {}): Promise<AssembledRun> {
+export async function assembleRun(ml: AssemblyMl, task: string, { tools = null, extraTools = [], serverTools = [], commanderTools = false, system = null, systemAppend = null, model = null, vision = null, unattended = false, navigate = true, crossOrigin = false, toolTokens = false, answer = false, shell = false, images = [] }: AssemblyOptions = {}): Promise<AssembledRun> {
     let toolset = [...(tools || ml.domTools || []), ...extraTools];
     // `answer` is for a CALLER that wants elements or a curated block back (`AgentResult.elements`), not for a person
     // reading the reply, which embeds outputs inline. So the default kit leaves it out unless asked; a `tools` list
@@ -331,7 +333,7 @@ export async function assembleRun(ml: AssemblyMl, task: string, { tools = null, 
     const systemPrompt = composeSystemPrompt({
         system, systemAppend, names, vision: hasCap("vision"), toolTokens, answer: !!byName.answer, pierceClosed,
         pipe: toolset.some(t => !!(t.parameters?.properties as Record<string, unknown> | undefined)?.pipe),
-        current: !!(selfIntro && autoRO), unattended, navigate,
+        current: !!(selfIntro && autoRO), unattended, navigate, shell,
     });
 
     return {
@@ -354,6 +356,8 @@ export interface PromptFacts {
     /** Its read-only surveys may read `ml.current`. */
     current?: boolean;
     unattended?: boolean; navigate?: boolean;
+    /** `ml.sh` is turned on: tell the model terminal access may exist (when a script tool can call it) */
+    shell?: boolean;
 }
 
 /**
@@ -393,6 +397,8 @@ export function composeSystemPrompt(f: PromptFacts): string {
         else if (has("exec")) systemPrompt += EXEC_COMPUTE_CLAUSE;
         // Its own run, as data: only where a survey reaches `ml.current`, which needs the read-only path to auto-run.
         if (f.current && has("exec")) systemPrompt += currentClause(has("agent_api_docs"));
+        // Terminal access, only where the person turned it on and a script can reach it (ml.sh lives in exec and full-mode python_exec).
+        if (f.shell && (has("exec") || has("python_exec"))) systemPrompt += shellClause(has("agent_api_docs"));
         // Headless run: tell the model upfront it's unattended (read-only only), so it doesn't
         // waste steps attempting clicks/typing/mutations that the gate below will just refuse.
         if (f.unattended) systemPrompt += UNATTENDED_CLAUSE;

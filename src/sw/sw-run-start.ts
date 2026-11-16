@@ -103,7 +103,7 @@ async function startMinted(tabId: number, tab: chrome.tabs.Tab, url: string, ml:
     const base = [...(recipe.options.tools ?? (ml as { domTools?: { name: string }[] }).domTools ?? []), ...(recipe.options.extraTools ?? [])];
     const extraTools = [...(recipe.options.extraTools ?? []), proposePolicyTool(defineTool), ...(shellOn ? [proposeManifestTool(defineTool)] : []), ...(offersTask(shellOn, base.map((t) => t?.name)) ? [taskTool(defineTool)] : []),
         ...(OFFER_PYTHON_INSTALL ? [pythonInstallTool(defineTool)] : [])];
-    const asm = await assembleRun(ml, recipe.task, { ...recipe.options, extraTools, ...(opts.answer ? { answer: true } : {}) });
+    const asm = await assembleRun(ml, recipe.task, { ...recipe.options, extraTools, ...(shellOn ? { shell: true } : {}), ...(opts.answer ? { answer: true } : {}) });
     const rebuild = rebuildFor(asm, true, "worker");
     noteWorkerVision(runId);   // its vision facts are the worker's own (run-vision.ts)
     // Remote tools, and the builtins that never read the page, run HERE (sw-local-tools.ts, worker-tools.ts); everything

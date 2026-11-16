@@ -21,6 +21,12 @@ Tool schemas are not in that count, and in a UI run they are the larger half. St
 call out of them, and leaving `answer` out of the default kit (#464) about 2.3k more. Since #456 a console run has
 `click` and `type` too, and `agent_api_docs` whenever it has `exec`.
 
+**2026-11-16: terminal access is named (`shellClause`, prompts.ts), about 480 characters, only on a run the worker builds while `ml.sh` is turned on
+(Settings, Programs) and the toolset has `exec` or `python_exec`.** People saw models guess at `child_process` or promise a shell they
+did not have, because nothing in the prompt said `ml.sh` exists. It says that it MAY exist, what it is, the one call shape, that it is
+there only when `ml.current.runtime.capabilities` has `shellHost`, and where to read more (`agent_api_docs` search). Not measured
+against a bench: it is a pointer added to a feature the person has switched on, and costs nothing while it is off.
+
 ## How the problems were found: the model panel
 
 `converse` (`.claude/skills/converse/SKILL.md`) runs a real model in the built extension and lets a session talk to it
