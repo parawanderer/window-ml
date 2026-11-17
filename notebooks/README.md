@@ -11,5 +11,6 @@ README naming every notebook. How they are made, run and checked: [docs/dev/note
 - [js-packages/](js-packages/README.md): which of the top npm packages load in a browser Worker with no Node built-ins, installed, bundled and run, and whether a static scan of the dependency closure predicts it.
 - [python-packages/](python-packages/README.md): which PyPI packages `python_exec` could install on demand, judged by wheel tags and checked by installing them, and whether a source scan finds the platform limits tags cannot.
 - [pyodide-mount/](pyodide-mount/README.md): what route A of #1780 (a synchronous host-backed filesystem in the Pyodide worker) costs: Stop latency, per-operation and per-hop cost, `os.walk`, `import`, large files.
+- [session-store/](session-store/README.md): the bounds a Chrome extension actually has for a session's history: how much an MV3 service worker holds before it dies, the quota with and without `unlimitedStorage`, the largest IndexedDB put, the runtime message limit.
 - `pyproject.toml`, `uv.lock`: the one environment (`node scripts/nb.mjs setup`).
 - `src/wmlnb/`: what every notebook shares (`extract`, `open_ro`, `provenance`, `find_sweep`, `store`).
