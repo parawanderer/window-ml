@@ -52,8 +52,11 @@ test("the model may change a setting only with a row in DevTools Settings, and n
     assert.equal(KEYS.filter((k) => modelWritable(k)).length, 49);
 });
 
-test("the secrets and the gate keys are exactly the ruled ones", () => {
-    assert.deepEqual(ofClass("secret"), ["apiKey", "chatUrl", "modelFilter", "pageApprovalDomains", "priceSnapshotUrl"]);
+test("the secrets and the gate keys are exactly the ruled ones", async () => {
+    // The secret class is what the error scrubber takes out, plus the legacy site list: computed, so a key added to the
+    // scrubber and classified anything else reds here.
+    const { SECRET_KEYS } = await import("../src/sw/sw-scrub.ts");
+    assert.deepEqual(ofClass("secret"), [...SECRET_KEYS, "pageApprovalDomains"].sort());
     assert.deepEqual(ofClass("gate"), ["autoApprovePython", "autoApproveReadonly", "autoApproveSelfSource"]);
     assert.equal(ofClass("guarded").length, 22);
 });

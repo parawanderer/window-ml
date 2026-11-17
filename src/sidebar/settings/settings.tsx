@@ -222,7 +222,7 @@ function ServerToolsSection() {
                                     const name = srvToolName(b.id, f.name);
                                     const on = !(c.serverToolsOff || []).includes(name);
                                     return (
-                                        <label class="set-check srv-fn" key={name}>
+                                        <label class="set-check srv-fn" key={name} {...cursorTipOn(SETTING_TEXT.serverToolsOff!.tip!)}>
                                             <input type="checkbox" checked={on}
                                                 onChange={(e: any) => setField("serverToolsOff",
                                                     toggled(c.serverToolsOff || [], name, !e.target.checked))} />

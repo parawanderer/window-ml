@@ -133,6 +133,35 @@ test("every key the model may write has a SETTING_TEXT entry with a name", async
     assert.deepEqual(missing, []);
 });
 
+test("the functions list shows serverToolsOff's tooltip on each function's row", async () => {
+    const { SETTING_TEXT } = await import("../src/setting-text.ts");
+    const w = await loadSidebarWorld({ siteLists: SITE_LISTS });
+    const send = w.window.chrome.runtime.sendMessage;
+    w.window.chrome.runtime.sendMessage = (msg, cb) => msg?.type === "LIST_SERVER_TOOLS"
+        ? cb?.({ data: [{ id: "web", name: "Web", functions: [{ name: "search", description: "Search the web." }] }] })
+        : send(msg, cb);
+    await openSettings(w);
+    let section = null;
+    for (const id of TABS) {
+        [...w.shadow.querySelectorAll(".set-tab")].find((b) => b.textContent.trim().toLowerCase() === id).click();
+        await w.flush();
+        section = w.shadow.querySelector('[data-section="servertools"]');
+        if (section) break;
+    }
+    assert.ok(section, "no tab draws the server-side tools section");
+    section.querySelector(".disc-head").click();
+    await w.flush();
+    await new Promise((r) => setTimeout(r, 50));
+    await w.flush();
+    const row = section.querySelector(".srv-fn");
+    assert.ok(row, "the functions list draws a row for the function");
+    row.dispatchEvent(new w.window.PointerEvent("pointermove", { bubbles: true, clientX: 10, clientY: 10 }));
+    await w.flush();
+    const tip = w.shadow.querySelector(".cursor-tip");
+    assert.ok(tip, "hovering a function's row shows a tooltip");
+    assert.equal(tip.textContent.trim(), SETTING_TEXT.serverToolsOff.tip);
+});
+
 // --- a link in a reply opens the row ---
 
 test("a window-ml:setting link in a chat reply is a button; clicking it opens Settings at the row and marks it", async () => {
