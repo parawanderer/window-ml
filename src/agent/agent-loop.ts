@@ -89,7 +89,8 @@ export interface AgentLoopDeps {
     // Page-delegated on the background path; safe to delegate BECAUSE it can't do anything a mutation
     // could. Reached before autoApprove/the gate for a requiresApproval tool. `live` (opt-in streaming) takes the
     // survey's console lines as they print; on null the loop discards whatever it streamed.
-    tryReadonly?(name: string, args: Record<string, unknown>, live?: LiveOutput): Promise<ToolRunResult | null>;
+    /** `call` is the step the call is made in (its offset-free seq and step), for a host that binds something to it. */
+    tryReadonly?(name: string, args: Record<string, unknown>, live?: LiveOutput, call?: { seq: number; step: number }): Promise<ToolRunResult | null>;
     // PRE-RUN In render for the pending step (the tool's `render(input,args)` — exec's beautified JS,
     // python's code cell), so a step shows a pretty In instead of raw JSON args from the moment it starts.
     // Async because the BACKGROUND must ask the page to compute it; page-side it is a direct call. Optional —
@@ -1045,7 +1046,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 // the gate: the person is asked, which is never less safe than the step that threw.
                 let ro: ToolRunResult | null = null;
                 try {
-                    const r = deps.tryReadonly ? await orStopped(deps.tryReadonly(call.name, args, fan ?? undefined)) : null;
+                    const r = deps.tryReadonly ? await orStopped(deps.tryReadonly(call.name, args, fan ?? undefined, { seq: s, step })) : null;
                     // Stopped mid-try: its lines so far stay (they ran). An exec survey's host stops its interpreter
                     // (readonly-exec.md); a Python cell's sandbox is not told, so it is not said to have stopped.
                     if (r === STOPPED) { stoppedMidCall = true; ro = { result: call.name === "exec" ? STOPPED_SURVEY : STOPPED_RUNNING }; }

@@ -126,3 +126,25 @@ test("a loop of calls does not spend the step budget while each waits, and a tig
     assert.equal(r.value, 40);
     await assert.rejects(run(`while (true) {}`, h, { realm: "worker", stepBudget: 500 }));
 });
+
+// --- the plain copy: what the host is handed in the shapes a model writes, and in the ones it should not ---
+
+test("a String object is handed over as its string, and nothing the script put on it runs", async () => {
+    const h = host();
+    await run(`const s = new String("ls"); return (await ml.sh.run([s, "-la"])).ok`, h);
+    assert.deepEqual(h.calls[0][1], ["ls", "-la"]);
+    const h2 = host();
+    // An attempt to make the conversion run the script's code: refused or inert, and the host still sees only the string.
+    await run(`const s = new String("ls"); try { s.valueOf = () => "rm"; s.toString = () => "rm"; } catch (e) {} return (await ml.sh.run([s])).ok`, h2).catch(() => {});
+    for (const c of h2.calls) assert.deepEqual(c[1], ["ls"], "the host got the brand's string, never a script's conversion");
+});
+
+test("undefined inside the data is refused, and undefined in an argument slot is the omitted argument", async () => {
+    const h = host();
+    await assert.rejects(run(`return await ml.sh.run(["ls", undefined])`, h), (e) => e instanceof TypeError);
+    await assert.rejects(run(`return await ml.sh.run(["ls"], { cwd: undefined })`, h), (e) => e instanceof TypeError);
+    assert.equal(h.calls.length, 0, "nothing reached the host");
+    const h2 = host();
+    await run(`return (await ml.sh.run(["ls"], undefined)).ok`, h2);
+    assert.equal(h2.calls.length, 1);
+});

@@ -665,6 +665,33 @@ Tests: `tests/readonly-current.test.mjs` (the realm, the worker's `ml`, its adve
 `tests/delegation.test.mjs` (the page leg refuses pointer reads) and `tests/run-start.test.mjs` (the routing, against
 the bundle).
 
+### ml.sh in the worker's survey: a script that has started a program is never run again
+
+The worker's survey is the FIRST try at an exec, and what it cannot answer falls through to the next leg: a `needs-page` goes to the
+page's world or the person, a refusal goes to the person's approval, and an approved script then runs in an isolated world FROM THE
+TOP. For a script of reads that is free. For one that has called `ml.sh.run` it is not: the program would run twice (an `ls` is
+harmless, `npm test` or `git commit` is not). So:
+
+- **The rule** (`guardSurvey`, `sw-survey-sh.ts`, called from `tryReadonly` in `sw-run-host.ts`): once the survey has STARTED any
+  `ml.sh` call (`run` or `read`, whatever its outcome: ok, error, denied, aborted), the script never runs again on any leg. Every exit
+  that would fall through (`needs-page`, a refusal, a thrown `NotInDialect`, any other throw) is the step's FINAL result instead: an
+  error to the model naming each call by program and outcome (no output: it has not been through the bounds a result goes through),
+  saying the script was stopped there and NOT run again, and that the page work belongs in its own exec. A run-log record
+  (`routing` / `readonly-sh-stopped`) says which exit it was.
+- **Started means counted before the judge**, not after the answer: a call waiting on a nested ask already blocks the re-run.
+- **No static pre-scan.** A script that names `ml.sh` and, say, `ml.queryAll` is not refused up front: it loses valid scripts that
+  never reach the page branch. The cost is the stop above, which only happens to a script that actually did both, in that order.
+- **The order that keeps today's behaviour**: a page read BEFORE any call is `needs-page` with nothing run, and falls through as before
+  (`tests/redteam-readonly-sh.test.mjs`). A script naming no `ml.sh` is untouched.
+- **Each call is bound to the step it is made in**, never to anything the script says: the same `ShCallContext` the isolated route
+  builds (run, offset seq, the loop's step, the run's abort signal, its pointers). Stop aborts a call that is waiting or running.
+- **The arguments are a plain copy** (`plainCopy`): strings, finite numbers, booleans, `null`, arrays and plain objects of those. A
+  dialect String object (what `ml.dereference` returns) is its string; a hole or an accessor is refused (the copy walks the indexes,
+  because `map` skips a hole); an `undefined` in an argument slot is an omitted argument; `undefined` nested inside data is refused.
+
+Tests: `tests/sw-survey-sh.test.mjs` (every exit, a denied call then a page read, counted before the answer, Stop mid-call, the
+before-any-call order), `tests/readonly-sh.test.mjs` and `tests/redteam-readonly-sh.test.mjs` (the facade and the evaluator rule).
+
 ## The policy realm
 
 A policy (`docs/spec/POLICIES.md`) is a function over one gated call's resolved facts that answers whether the person

@@ -520,12 +520,20 @@ export const SH_READONLY_METHODS: ReadonlySet<string> = new Set(["run", "read"])
 function plainCopy(v: unknown, depth = 0): unknown {
     if (v === null || typeof v === "string" || typeof v === "boolean") return v;
     if (typeof v === "number" && Number.isFinite(v)) return v;
+    // A String OBJECT (what `ml.dereference` returns) is its string, told by brand and read by `valueOf` on the String prototype, never
+    // through anything the object itself defines.
+    if (typeof v === "object" && v !== null && isStringObject(v)) return String.prototype.valueOf.call(v);
     if (depth > 4) throw new TypeError("ml.sh: an argument nests too deep");
-    if (Array.isArray(v)) return v.map((_x, i) => {
-        const d = Object.getOwnPropertyDescriptor(v, i);
-        if (!d || !("value" in d)) throw new TypeError("ml.sh: an argument has a hole or an accessor");
-        return plainCopy(d.value, depth + 1);
-    });
+    if (Array.isArray(v)) {
+        // An index loop, NOT `map`: `map` skips a hole, so the check below would never see one.
+        const out: unknown[] = [];
+        for (let i = 0; i < v.length; i++) {
+            const d = Object.getOwnPropertyDescriptor(v, i);
+            if (!d || !("value" in d)) throw new TypeError("ml.sh: an argument has a hole or an accessor");
+            out.push(plainCopy(d.value, depth + 1));
+        }
+        return out;
+    }
     if (v !== null && typeof v === "object" && (Object.getPrototypeOf(v) === Object.prototype || Object.getPrototypeOf(v) === null)) {
         const out: Record<string, unknown> = Object.create(null);
         for (const k of Object.keys(v)) {
@@ -718,7 +726,7 @@ export function mlFacade(ml: unknown, reused?: string[], answerFacade?: unknown,
         const sh: Record<string, unknown> = Object.create(null);
         for (const name of SH_READONLY_METHODS) {
             const fn = (hostSh as Record<string, unknown>)[name];
-            if (typeof fn === "function") sh[name] = (...args: unknown[]): unknown => (fn as (...a: unknown[]) => unknown).apply(hostSh, args.slice(0, 2).map((x) => plainCopy(x)));
+            if (typeof fn === "function") sh[name] = (...args: unknown[]): unknown => (fn as (...a: unknown[]) => unknown).apply(hostSh, args.slice(0, 2).map((x) => x === undefined ? undefined : plainCopy(x)));
         }
         if (Object.keys(sh).length) out.sh = Object.freeze(sh);
     }
