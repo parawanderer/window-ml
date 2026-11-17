@@ -476,7 +476,7 @@ export const fmtCtx = (n: number): string => {
  *  ml.agent can decide whether to route a run through the unforgeable BACKGROUND loop (design A —
  *  when a debug surface is enabled) or the in-page loop (off). It's UI state, not a secret. */
 export type MlPublicConfig = Pick<MlConfig,
-    "model" | "ocrModel" | "ocrNumCtx" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "serverToolsOff" | "commanderServerTools" | "autoApprovePython" | "autoApproveSelfSource" | "selfIntrospection" | "pierceClosedShadow" | "cdp" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode" | "defaultModelVision" | "labelMatch"> & {
+    "model" | "ocrModel" | "ocrNumCtx" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "serverToolsOff" | "commanderServerTools" | "autoApprovePython" | "autoApproveSelfSource" | "selfIntrospection" | "pierceClosedShadow" | "cdp" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode" | "defaultModelVision" | "labelMatch" | "pythonIdleMinutes" | "detachedTaskMaxMin"> & {
     /** COMPUTED per request (not stored): whether THIS page's origin is on the user's page-approval
      *  whitelist. When true, ml.agent honours the page's own approve()/confirm gate (the user trusts this
      *  domain); otherwise a privileged tool routes to the unforgeable background gate. The raw domain
@@ -506,6 +506,8 @@ export function publicConfig(config: MlConfig, pageApprovalAllowed: boolean): Ml
         pierceClosedShadow: config.pierceClosedShadow, cdp: config.cdp,
         groundingEnabled: config.groundingEnabled, groundingModel: config.groundingModel,
         groundingRange: config.groundingRange, debugMode: config.debugMode, labelMatch: labelMetric(config.labelMatch),
+        // The lifetimes list in the prompt states them (docs/spec/ASYNC_CALLS.md, rule 4b): a page-built run composes its own.
+        pythonIdleMinutes: config.pythonIdleMinutes, detachedTaskMaxMin: config.detachedTaskMaxMin,
         pageApprovalAllowed: pageApprovalAllowed === true,
     } as MlPublicConfig;
 }

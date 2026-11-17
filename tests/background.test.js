@@ -813,6 +813,8 @@ test("GET_CONFIG returns the model/ocrModel/apiFormat and withholds the URL and 
         groundingEnabled: false, groundingModel: "", groundingRange: 1000, debugMode: "off",
         // Which metric ranks a near match on a pointer label: a page-built run reads it from here.
         labelMatch: "hybrid",
+        // The lifetimes list in a page-built run's prompt states these two (docs/spec/ASYNC_CALLS.md, rule 4b).
+        pythonIdleMinutes: 10, detachedTaskMaxMin: 60,
         // Computed per-origin: no sender.tab in this harness call → not on the whitelist → false. The raw
         // pageApprovalDomains list is deliberately NOT exposed (only this boolean for the caller's origin).
         pageApprovalAllowed: false,

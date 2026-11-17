@@ -19,7 +19,7 @@ import { bgRuns, isWorkerRun, onSessionRelease, runControllers, runInboxes, star
 import { recordRunLog } from "./sw-run-log";
 import { forModel } from "./sw-scrub";
 import { storeText } from "./sw-values";
-import { clampDetachedMs } from "../python/py-lease";
+import { capMinutes, clampDetachedMs } from "../python/py-lease";
 
 /** Where a task is. A detached call is `running`; `detached` is how it got here, not a status. */
 export type TaskStatus = "running" | "done" | "failed" | "cancelled" | "orphaned";
@@ -449,15 +449,6 @@ export async function detachedCapMs(): Promise<number> {
     let v: unknown = DEFAULT_CONFIG.detachedTaskMaxMin;
     try { v = (await chrome.storage.sync.get({ detachedTaskMaxMin: DEFAULT_CONFIG.detachedTaskMaxMin }))?.detachedTaskMaxMin; } catch { /* the default */ }
     return capMinutes(v) * 60_000;
-}
-
-/**
- * The knob's value as minutes: a finite number from 1 to 60, rounded down, else the ceiling.
- * @param v what the setting holds
- */
-export function capMinutes(v: unknown): number {
-    const n = typeof v === "number" ? Math.floor(v) : NaN;
-    return Number.isFinite(n) && n >= 1 && n <= 60 ? n : 60;
 }
 
 /**

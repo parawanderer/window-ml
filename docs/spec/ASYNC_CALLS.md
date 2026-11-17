@@ -182,9 +182,14 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
    `userRunAction` after the page-adopt awaits and before `hostRun` (ruled 2026-11-14), since a turn stopped after
    hosting still emits a result and nothing can drain the inbox without a live turn. The chain count is
    `ml_task_chain:<runId>` and the person's
-   next word resets it. A result for an archived or released run is dropped with a record. NOT built: the HUD per-run task mark
-   (slice E, with the chat-page lane; slice C keeps the transcript line), the lifetimes list and the no-tab state on the
-   chat page. This
+   next word resets it. A result for an archived or released run is dropped with a record.
+   Slice D: the lifetimes list, one paragraph ("HOW LONG THINGS LAST") in the default system prompt
+   (`lifetimesClause`, `prompts.ts`, appended by `composeSystemPrompt`), nowhere else. Its two figures are the person's
+   settings, carried in the public config (`pythonIdleMinutes`, `detachedTaskMaxMin`) so a page-built run composes the
+   same text: the idle figure as the reap reads it (`idleMinutes`, `py-reap.ts`), the cap as the sandbox applies it
+   (`capMinutes` and `clampDetachedMs`, `py-lease.ts`), both defaulting to `DEFAULT_CONFIG`; `tests/agent-start.test.mjs`
+   compares them with `DEFAULT_REAP_BETWEEN_MS` and `PY_DETACHED_MAX_MS`. NOT built: the HUD per-run task mark
+   (slice E, with the chat-page lane; slice C keeps the transcript line) and the no-tab state on the chat page. This
    reverses rule 4, and the mode 1 ruling that a model answering while a build is detached ends the build, for the two executors that run
    outside the service worker: an `ml.sh` call (the host's process) and a detached `python_exec` cell (the offscreen
    document). A fetch runs IN the service worker and dies with it, so it stays turn-bound: the turn's end cancels it,
@@ -288,7 +293,12 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
      task runs on after the answer and its result starts or reaches the next turn, replacing the line that says the
      answer ends it. Each figure in the list is read from the constant that enforces it, never typed twice, and a row
      fails when the two differ. The list is measured against the prompt budget (`docs/spec/PROMPT_BUDGET.md`) and
-     goes through the next prompt review.
+     goes through the next prompt review. BUILT 2026-11-17 (slice D; see the BUILT line above, the review in
+     PROMPT_BUDGET.md). The `Detached` texts already said the task runs on after the answer and that a result after it
+     is read at the start of the next turn, so slice D left them as they were; "starts a turn" waits for slice C. The
+     list says a `@tool:` value is gone when the worker restarts (`docs/dev/state.md`, "Lost on a worker eviction"),
+     so the tool-output clause's "valid for the whole session", which contradicted it, was removed: the list is the one
+     statement of how long a value lasts.
    - **Bounds** (e3's rows, rule 10, on the building branch): a task never delivers to another run or another
      session; no task completion starts a turn for a run other than its own; a completion on notify-only never starts
      a turn; a started turn runs on no page we own; a parked result is delivered only to its own run, on its own session, at that run's next turn; a run
