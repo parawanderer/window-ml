@@ -340,8 +340,9 @@ test("the finished step carries its ml.sh calls with peak and bound; a killed on
         await runOn("userScripts", [runs(["/usr/bin/ls"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: (bg, ev) => { if (ev.shCalls) seen.push(ev); } });
         assert.equal(seen.length, 1, JSON.stringify(done));
         assert.equal(seen[0].shCalls.length, 1);
-        const { durationMs, unasked, ...rest } = seen[0].shCalls[0];
+        const { durationMs, endedAt, unasked, ...rest } = seen[0].shCalls[0];
         assert.equal(typeof durationMs, "number");
+        assert.equal(typeof endedAt, "number", "when it finished: what puts a step's calls in the order they happened");
         assert.deepEqual(rest, { program: "ls", ...expect }, "the basename, and only the fields the host sent");
         assert.equal(unasked?.by, "default", "the built-in default let it run");
     }

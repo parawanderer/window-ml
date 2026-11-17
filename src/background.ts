@@ -72,13 +72,14 @@ import { runControlPayloadError } from "./sw/run-payload-check";
 import { forPage } from "./sw/sw-scrub";   // error text bound for a page, without the config's secrets
 import { pythonPrewarm, pythonExec, pythonInterrupt, relayPyStdout, deletePythonRun, dropPythonLibraries, pythonReaped, pythonStarted, pythonDone } from "./sw/sw-python";
 import { focusLineFor } from "./sw/sw-focus";
+import { chatHashFor, openChatPage } from "./sw/sw-open-chat";
 import { eventSession, pageMayWrite, withoutPageWhy, WORKER_ONLY_KINDS, type WorkerClaim } from "./event-admission";   // what a page may add to a session the worker speaks for
 import { fetchUrlFor, pageFetchCaller } from "./sw/sw-fetch-url";
 import { watchRedirects } from "./sw/sw-redirects";
 import { fetchImageDataUrl } from "./sw/sw-image-fetch";
 import { approvalKey } from "./approval-key";
 import { raiseAsk } from "./sw/sw-asks";
-import { refreshShell, shellStatus } from "./sw/sw-shell";
+import { probeShell, refreshShell, shellStatusRead } from "./sw/sw-shell";
 import { toPageUi, notePage, forgetTab, syncAllPanels, servePanelPort, startGesture, tabHidden, cuePanel, panelOpen, HL_POSITIONS } from "./sw/sw-side-panel";
 
 
@@ -1055,6 +1056,16 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         void pageFetchCaller(sender).then((caller) => fetchUrlFor(message.payload, caller)).then(sendResponse);
         return true;   // async
     }
+    if (message.type === "OPEN_CHAT_PAGE") {
+        // The chat page, opened or focused at a view: the popup's buttons, and a `window-ml:` link on the HUD card,
+        // which draws no Settings (docs/spec/LINKS.md). EXTENSION-ORIGIN ONLY, by the sender's URL (the card is our
+        // iframe in a page tab, so `sender.tab` is set), and not in HANDLE_MAP, so a page cannot reach it. The URL is
+        // `chat.html` and the hash of an address a link resolves (`chatHashFor`), never one the sender sends.
+        const hash = isExtensionSender(sender) ? chatHashFor(message.payload?.address) : null;
+        if (hash == null) { sendResponse({ error: "refused" }); return true; }
+        openChatPage(hash).then(() => sendResponse({ data: true }), (e) => sendResponse({ error: (e as Error)?.message || String(e) }));
+        return true;   // async
+    }
     if (message.type === "OPEN_EXTENSIONS_PAGE") {
         // Deep-link to THIS extension's details page (where "Allow in Incognito" lives) — opened for the
         // Settings/popup "Incognito rendering" button. EXTENSION-ORIGIN ONLY (a page can't reach
@@ -1264,7 +1275,9 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         // `refresh` starts the host process, which nothing a page sends may cause.
         if (!isExtensionSender(sender)) { sendResponse({ error: "Refused" }); return true; }
         const refresh = (message.payload as { refresh?: unknown } | undefined)?.refresh === true;
-        (refresh ? refreshShell() : Promise.resolve(shellStatus())).then((data) => sendResponse({ data }), (e) => sendResponse({ error: String((e as Error)?.message || e) }));
+        // `probe` (the installer guide's "Check again") says hello to the host whatever the settings say; nothing more.
+        const probe = (message.payload as { probe?: unknown } | undefined)?.probe === true;
+        (probe ? probeShell() : refresh ? refreshShell() : shellStatusRead()).then((data) => sendResponse({ data }), (e) => sendResponse({ error: String((e as Error)?.message || e) }));
         return true;
 
     } else if (message.type === "SESSION_TITLE") {

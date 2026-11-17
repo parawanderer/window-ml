@@ -124,6 +124,8 @@ const prim = (m, p) => { m.command.primaries["-name"] = p; };
 const GH = () => ({ ...BIN(), program: "gh", credential: { provider: "github" }, network: { ports: [443] } });
 
 const INVALID = [
+    // which operands a writer writes (FILE_ATTACHMENTS.md H9)
+    ["writtenOperands other than \"last\"", BIN, (m) => cmd(m, { writtenOperands: "first" })],
     // a credential and its network
     ["an unknown credential provider", GH, (m) => { m.credential.provider = "aws"; }],
     ["a credential with an env name", GH, (m) => { m.credential.env = "GH_TOKEN"; }],
@@ -268,6 +270,7 @@ const SCHEMA_GAPS = [
     ["$.version.pattern is a regex the engine compiles (JSON Schema's `format: regex` is an annotation, and not the same dialect: the host reads it as a Rust regex, this validator as an ECMAScript one)", BIN, (m) => { m.version.pattern = "("; }],
     ["every `harden` argument is a flag THIS command lists (a cross-reference between a value and the keys of a sibling object)", BIN, (m) => cmd(m, { harden: ["--not-listed"] })],
     ["every `harden` argument is a flag this command lists, so it is not the empty list's element either (the same cross-reference, a subcommand)", BIN, (m) => { m.command.subcommands.sub.harden = ["-v"]; }],
+    ["`writtenOperands` only on a command whose operands are paths (a cross-reference to the sibling `paths`)", BIN, (m) => cmd(m, { paths: "none", writtenOperands: "last" })],
 ];
 
 test("the rules the schema cannot express are named, and are real", () => {

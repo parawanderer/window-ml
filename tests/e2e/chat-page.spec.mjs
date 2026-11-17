@@ -60,6 +60,8 @@ test("a page's own chat appears in the extension's chat page, and can be answere
     } finally { await ext.context.close(); await fake.stop(); await site.stop(); }
 });
 
+// --- opening the chat page from another surface: the popup's buttons, a link on the HUD card (OPEN_CHAT_PAGE) ---
+
 test("the popup opens the chat page, and opening it again focuses the one that is already there, a chat open in it or not", async () => {
     const ext = await launchExtension();
     try {
@@ -88,6 +90,26 @@ test("the popup opens the chat page, and opening it again focuses the one that i
         await popup3.locator("#openChat").click();
         await expect.poll(() => ext.context.pages().filter((p) => p.url().endsWith("popup.html")).length).toBe(0);
         expect(ext.context.pages().filter((p) => p.url().startsWith(url)).length, "the open chat page is reused").toBe(1);
+    } finally { await ext.context.close(); }
+});
+
+test("a link from the HUD card (OPEN_CHAT_PAGE) sends the open chat page to the view, and the browser's Back returns it to the route it was on", async () => {
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: "http://127.0.0.1:1/", apiKey: "", apiFormat: "openai", model: "m" });
+        const url = `chrome-extension://${ext.extensionId}/chat.html`;
+        const chat = await ext.context.newPage();
+        await chat.goto(`${url}#/search`);
+        // Any extension page sends what the card sends: the worker judges the sender by its URL, which is ours.
+        const popup = await ext.context.newPage();
+        await popup.goto(`chrome-extension://${ext.extensionId}/popup.html`);
+        const resp = await popup.evaluate(() => new Promise((r) => chrome.runtime.sendMessage({ type: "OPEN_CHAT_PAGE", payload: { address: "settings/extension/advanced/shell" } }, r)));
+        expect(resp).toEqual({ data: true });
+        // The page shows Settings → Extension and may rewrite the hash to the part it draws (`#/settings/extension`).
+        await expect.poll(() => chat.url().startsWith(`${url}#/settings/extension`), { message: chat.url() }).toBe(true);
+        expect(ext.context.pages().filter((p) => p.url().startsWith(url)).length, "the open chat page is reused").toBe(1);
+        await chat.goBack();
+        await expect.poll(() => chat.url(), { message: "Back returns to where the chat page was" }).toBe(`${url}#/search`);
     } finally { await ext.context.close(); }
 });
 
@@ -1266,6 +1288,86 @@ test("#/settings/extension/backup opens the Storage section and scrolls to Backu
         await expect(page.locator("#set-backup")).toBeVisible();
         await page.close();
     } finally { await ext.close(); }
+});
+
+// --- the extension's settings by address, from the hash and from a window-ml: link (LINKS.md) ---
+
+// The rest of the extension's settings addresses (LINKS.md, "Addresses"): a panel tab and section open as the backup
+// anchor does, and one setting's row is scrolled to and marked. The page reads its own hash for both.
+test("#/settings/extension/<tab>/<section> opens that section, and #/setting/<key> scrolls to and marks the row", async () => {
+    const ext = await launchExtension();
+    try {
+        const page = await ext.context.newPage();
+        await page.setViewportSize({ width: 1300, height: 600 });
+        const url = `chrome-extension://${ext.extensionId}/chat.html`;
+        await page.goto(`${url}#/settings/extension`);
+        await page.locator(".settings .set-search").waitFor();
+        await page.evaluate(() => localStorage.setItem("ml_set_collapsed", JSON.stringify({ shell: true })));
+        await page.goto(`${url}#/settings/extension/advanced/shell`);
+        await page.reload();
+        const shell = page.locator('details.set-section[data-section="shell"]');
+        await expect(shell).toHaveAttribute("open", "");
+        await expect(page.locator(".set-pills [role=tab][aria-selected=true]")).toHaveText("Advanced");
+
+        // A setting's address names no main view of its own: it opens Settings → Extension over the list.
+        await page.goto(`${url}#/setting/autoApproveReadonly`);
+        await page.reload();
+        const row = page.locator('.set-marked[data-setting~="autoApproveReadonly"]');
+        await expect(row).toBeVisible();
+        await expect(row).toBeInViewport();
+        await expect(page).toHaveURL(/#\/settings\/extension$/);
+
+        // The address the worker opens for a HUD card's link (OPEN_CHAT_PAGE): its tab and section, row marked.
+        await page.evaluate(() => localStorage.setItem("ml_set_collapsed", JSON.stringify({ shell: true })));
+        await page.goto(`${url}#/setting/shellEnabled`);
+        await page.reload();
+        await expect(page.locator(".set-pills [role=tab][aria-selected=true]")).toHaveText("Advanced");
+        await expect(shell).toHaveAttribute("open", "");
+        await expect(page.locator('.set-marked[data-setting~="shellEnabled"]')).toBeInViewport();
+        await page.close();
+    } finally { await ext.close(); }
+});
+
+// A `window-ml:` link in a reply on the extension's chat page sets the page's hash in place (LINKS.md, "What a click
+// does"), so it opens the same view the address would.
+test("a window-ml: link in a reply on the chat page opens that settings section", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const site = await startPageServer({});
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "overlay" });
+        fake.setScript([{ content: "Set it up under [Programs](window-ml:settings/extension/advanced/shell)." }]);
+        const { page: chat, errors } = await openChatPage(ext);
+        const site1 = await ext.context.newPage();
+        await site1.goto(site.url + "/");
+        await waitForMl(site1);
+        const hash = await site1.evaluate(async () => {
+            const c = window.ml.createChat({});
+            await c.chat("where do programs go?");
+            return c.hash;
+        });
+        await chat.locator(`.chat-row[data-session="local:${hash}"]`).click();
+        const link = chat.locator(".chat-main button.md-addr", { hasText: "Programs" });
+        await expect(link).toBeVisible();
+        await link.click();
+        await expect(chat.locator('details.set-section[data-section="shell"]')).toHaveAttribute("open", "");
+        await expect(chat.locator(".set-pills [role=tab][aria-selected=true]")).toHaveText("Advanced");
+
+        // The way back from the link is to the session it was clicked in, by the browser's Back and by Settings' own
+        // back arrow, never to the list.
+        const inSession = new RegExp(`#/s/local%3A${hash}$`);
+        await chat.goBack();
+        await expect(chat.locator(".settings")).toHaveCount(0);
+        await expect(link).toBeVisible();
+        await expect(chat).toHaveURL(inSession);
+        await link.click();
+        await expect(chat.locator('details.set-section[data-section="shell"]')).toHaveAttribute("open", "");
+        await chat.getByRole("button", { name: "Close settings" }).click();
+        await expect(chat.locator(".settings")).toHaveCount(0);
+        await expect(link).toBeVisible();
+        await expect(chat).toHaveURL(inSession);
+        expect(errors).toEqual([]);
+    } finally { await ext.context.close(); await fake.stop(); await site.stop(); }
 });
 
 // --- `ml` in the chat page's own console (chat-console.ts) ---

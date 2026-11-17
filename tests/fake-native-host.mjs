@@ -54,7 +54,7 @@ export function fakeNativeHost(opts = {}) {
                 if (call === "hello") {
                     const sandbox = { kind: opts.sandboxKind === undefined ? "seatbelt" : opts.sandboxKind, available: opts.sandbox !== false };
                     if (opts.landlockAbi !== undefined) sandbox.landlockAbi = opts.landlockAbi;
-                    return reply({ seq, value: { host: "window-ml-host", version: "0.2.0", protocol: opts.protocol ?? 1, platform: "macos", sandbox, modes: ["host"], ...(tilde ? { tilde: true } : {}), ...(opts.credentials ? { credentials: opts.credentials } : {}), ...(opts.peek ? { peek: true } : {}) } });
+                    return reply({ seq, value: { host: "window-ml-host", version: opts.version ?? "0.2.0", protocol: opts.protocol ?? 1, platform: "macos", sandbox, modes: ["host"], ...(tilde ? { tilde: true } : {}), ...(opts.credentials ? { credentials: opts.credentials } : {}), ...(opts.peek ? { peek: true } : {}) } });
                 }
                 if (call === "configure") roots = args.roots;
                 if (call === "configure") return reply({ seq, value: { roots: args.roots.map((r) => ({ given: r, path: r })), sandboxed: args.sandbox !== false && opts.sandbox !== false } });

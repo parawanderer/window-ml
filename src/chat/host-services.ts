@@ -11,7 +11,7 @@ import type { SidebarServices } from "../sidebar/services";
 import { view } from "../sidebar/store";
 import type { ChatStore } from "./chat-store";
 import { mayCommand } from "./grants";
-import { seesImages } from "./sees-images";
+import { claimsVision } from "./sees-images";
 import type { ClientPlatform } from "./platform";
 
 /**
@@ -26,6 +26,8 @@ export interface HostReadings {
     priceCalls?: SidebarServices["priceCalls"];
     /** Open this page's Settings filtered to a field. */
     findSetting?: SidebarServices["findSetting"];
+    /** Open the extension's settings view a `window-ml:` link names (sidebar/links.ts). */
+    openAddress?: SidebarServices["openAddress"];
 }
 
 /** The services for a chat page over `store`'s host. `readings` is what the entry can tell about a runtime's box. */
@@ -74,7 +76,7 @@ export function hostServices(store: ChatStore, platform: ClientPlatform, reading
         sendToSession: async (key, text, images, files) => {
             const id = idOf(key);
             if (!id) return { ok: false, error: "no such session here" };
-            const vision = !!images?.length && seesImages.value.has(key as SessionKey);
+            const vision = !!images?.length && claimsVision(id.runtime, store.index.value.get(key as SessionKey)?.model);
             const r = await store.send({ type: "session.send", session: id, text, ...(images?.length ? { images } : {}), ...(files?.length ? { files } : {}), ...(vision ? { vision: true as const } : {}) });
             return r.ok ? { ok: true } : { ok: false, error: r.error.message || r.error.code };
         },
@@ -136,6 +138,7 @@ export function hostServices(store: ChatStore, platform: ClientPlatform, reading
         // The snapshots a call ran under live in a runtime's worker: only the extension's own page can ask one.
         priceCalls: readings.priceCalls ?? null,
         findSetting: readings.findSetting ?? null,
+        openAddress: readings.openAddress ?? null,
         savePref: (key, value) => platform.prefs.set(key, value),
         saveFile: (name, data) => platform.saveFile(name, data),
         printDoc: platform.printDoc ?? null,

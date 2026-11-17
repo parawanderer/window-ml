@@ -3,6 +3,8 @@
 // tool's streamed output: a long script or document passed as an argument used to show nothing until the model
 // stopped. Display only; the step that replaces it is drawn from the parsed call.
 
+import { noteLiveCall } from "./just-arrived";
+import { noteLiveGlyphs, wasStreamed } from "./code-morph";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { Code, Dot, cursorTipOn } from "../ui-kit";
 import { IconQuiet } from "../icons";
@@ -78,7 +80,12 @@ export function LiveCall({ call }: { call: LiveToolCall }) {
     // see. Until the reader scrolls up to read an earlier line, which stops the follow; scrolling back down resumes it.
     const body = useRef<HTMLDivElement>(null);
     const follow = useRef(true);
-    useLayoutEffect(() => { const el = body.current; if (el && follow.current) el.scrollTop = el.scrollHeight; });
+    useLayoutEffect(() => { const el = body.current; if (!el) return; noteLiveCall(el.offsetHeight); if (follow.current) el.scrollTop = el.scrollHeight; });
+    // As it unmounts for the step that replaces it, say where each character of the code sits, so the reformat can move them.
+    // How long it stood and how many times it grew: a provider that sends the call whole leaves nothing to fly from.
+    const life = useRef({ at: Date.now(), arrivals: 0, chars: call.chars });
+    if (call.chars !== life.current.chars) { life.current.chars = call.chars; life.current.arrivals++; }
+    useLayoutEffect(() => { const el = body.current; return () => { if (el) noteLiveGlyphs(el, wasStreamed(life.current.arrivals, Date.now() - life.current.at)); }; }, []);
     const onScroll = (): void => { const el = body.current; if (el) follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 8; };
     // HAS IT GONE QUIET? A model that stalls mid-call (a server that stopped, a dropped stream) looked exactly like
     // one writing slowly: a counter that is not moving. Timed by THIS clock from when the count last changed, so a

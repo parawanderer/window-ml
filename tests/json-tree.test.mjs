@@ -161,6 +161,18 @@ test("a comma after every member but the last, in arrays and objects, after a cl
     assert.deepEqual(rows, ["{", '"a":[', '"x",', '"y"', "],", '"b":[', "1", "]", "}"]);
 });
 
+test("a scalar's comma is INSIDE its value, so a string that wraps ends its last line with it", () => {
+    // As its own flex item it sat at the row's right edge, level with the string's FIRST line, whatever length the string was.
+    const host = show({ v: { stderr: "fatal: not a git repository (or any of the parent directories): .git\n", ok: false, n: 1 }, defaultOpen: true });
+    for (const re of [/stderr/, /ok/]) {
+        const row = [...host.querySelectorAll(".jt-row")].find((r) => re.test(r.textContent));
+        assert.equal(row.querySelector(".jt-val > .jt-comma")?.textContent, ",", `${re}: the comma is the value's own last child`);
+        assert.equal(row.querySelector(":scope > .jt-comma"), null, `${re}: and not a separate flex item of the row`);
+    }
+    const last = [...host.querySelectorAll(".jt-row")].find((r) => /"n"/.test(r.textContent));
+    assert.equal(last.querySelector(".jt-comma"), null, "the last member takes none");
+});
+
 test("a marker row takes no comma, and the member before it takes one only if a real member follows", () => {
     const rows = (v) => { const host = show({ v, allOpen: true }); return [...host.querySelectorAll(".jt-row")].map((r) => r.textContent.replace(/\s+/g, "")); };
     const [, a, cut] = rows([1, T.JT_CUT]);

@@ -89,6 +89,10 @@ export type CommandSpec = {
      *  the cwd), or holds `*`, `?`, `[` or `\` (a glob git expands to every match, or an escape), is not one path the
      *  host can resolve, so the call is `unknown`. */
     pathspecs?: boolean;
+    /** Which path operands a writing command writes: `"last"`, the destination (`cp a b dir`), the others being read.
+     *  Absent, a command whose effects write writes EVERY path operand, which fails closed (FILE_ATTACHMENTS.md H9: such
+     *  a call naming a path in `attached/` is refused, even as a source). */
+    writtenOperands?: "last";
     /** Arguments the caller inserts right after this command's name, turning off what the repository's own config could
      *  make it run (`git` → `--no-pager`; `git diff` → `--no-ext-diff --no-textconv`). They never widen a call. */
     harden?: readonly string[];
@@ -272,6 +276,12 @@ export function describeCall(argv: readonly string[], m: ProgramManifest, opts: 
     }
     if (cmd.recursive) d.recursive = true;
     if (d.recursive) for (const p of d.pathArgs) if (operandPaths.includes(p.arg)) p.walk = true;
+    // Which operands are written: those the command's own write terms fall on (its effects, or a flag's with no path of
+    // its own, `sed -i`); `writtenOperands: "last"` narrows them to the destination.
+    const lastOnly = cmd.writtenOperands === "last";
+    const dest = operandPaths.length ? operandPaths[operandPaths.length - 1] : -1;
+    const writesOperands = terms.some((t) => t.targets === "command" && WRITE_TERMS.has(t.term));
+    for (const p of d.pathArgs) if (operandPaths.includes(p.arg) && writesOperands && (!lastOnly || p.arg === dest)) p.role = "write";
     if (cmd.okCodes) d.okCodes = [...new Set([...cmd.okCodes, ...d.okCodes.filter((c) => c !== 0)])];
     if (cmd.echoes) d.echoes = true;
 
@@ -279,14 +289,19 @@ export function describeCall(argv: readonly string[], m: ProgramManifest, opts: 
     const resolve = opts.resolve ?? unresolved;
     const repoWide = cmd.repoWide === true;
     const dirRes = (): Resource => d.dirArg !== null ? resolve({ arg: d.dirArg, given: argv[d.dirArg] }) : resolve({ arg: "cwd", given: "." });
-    const commandTargets: Resource[] = [
-        ...operandPaths.map((i) => resolve({ arg: i, given: argv[i] })),
+    const around: Resource[] = [
         ...(d.actsOnDir ? [dirRes()] : []),
         ...(repoWide ? [dirRes(), resolve({ arg: "repo", given: "." })] : []),
     ];
+    const operandRes = (keep: (i: number) => boolean) => operandPaths.filter(keep).map((i) => resolve({ arg: i, given: argv[i] }));
+    const commandTargets: Resource[] = [...operandRes(() => true), ...around];
+    // With `writtenOperands: "last"` a write falls on the destination and a read on the sources; any other term on all.
+    const targetsOf = (term: ProgramEffect): Resource[] => !lastOnly ? commandTargets
+        : WRITE_TERMS.has(term) ? [...operandRes((i) => i === dest), ...around]
+        : term === "read" ? [...operandRes((i) => i !== dest), ...around] : commandTargets;
     const sets: EffectsData[] = [];
     for (const t of terms) {
-        const targets = t.targets === "command" ? commandTargets : t.targets.map((r) => r.kind === "fs" && r.path.startsWith("\0arg:")
+        const targets = t.targets === "command" ? targetsOf(t.term) : t.targets.map((r) => r.kind === "fs" && r.path.startsWith("\0arg:")
             ? resolveArg(r.path, argv, resolve) : r);
         sets.push(fromProgramEffect(t.term, { paths: targets }));
     }
@@ -317,6 +332,9 @@ export function hardenArgv(argv: readonly string[], d: CallDescription): string[
     }
     return out;
 }
+
+/** The terms that write a path: bytes in place, or its entry. */
+const WRITE_TERMS: ReadonlySet<ProgramEffect> = new Set<ProgramEffect>(["write", "write-names"]);
 
 type Terms = { term: ProgramEffect; targets: "command" | Resource[] }[];
 
@@ -523,7 +541,7 @@ function notLiteralPathspec(a: string): boolean {
     return a.startsWith(":") || /[*?[\\]/.test(a);
 }
 
-const COMMAND_KEYS = new Set(["effects", "paths", "noPaths", "terminator", "numericFlag", "clusters", "maxOperands", "flags", "subcommands", "syntax", "primaries", "okCodes", "echoes", "recursive", "harden", "optionsFirst", "dashIsPath", "repoWide", "pathspecs"]);
+const COMMAND_KEYS = new Set(["effects", "paths", "noPaths", "terminator", "numericFlag", "clusters", "maxOperands", "flags", "subcommands", "syntax", "primaries", "okCodes", "echoes", "recursive", "harden", "optionsFirst", "dashIsPath", "repoWide", "pathspecs", "writtenOperands"]);
 const VERSION_KEYS = new Set(["range", "args", "pattern"]);
 const MANIFEST_KEYS = new Set(["$schema", "program", "version", "okCodes", "echoes", "env", "entrypoint", "credential", "network", "command"]);
 
@@ -566,6 +584,8 @@ export function validateManifest(m: unknown): string[] {
         if (c.harden !== undefined && !(Array.isArray(c.harden) && c.harden.every((a) => typeof a === "string" && isObj(c.flags) && a in (c.flags as object))))
             errs.push(`${at}.harden: flags this command lists, so hardening never makes a call unknown`);
         for (const b of ["numericFlag", "clusters", "echoes", "recursive", "optionsFirst", "dashIsPath", "repoWide", "pathspecs"]) if (c[b] !== undefined && typeof c[b] !== "boolean") errs.push(`${at}.${b}: boolean`);
+        if (c.writtenOperands !== undefined && !(c.writtenOperands === "last" && (p === "operands" || isObj(p))))
+            errs.push(`${at}.writtenOperands: "last", on a command whose operands are paths`);
         if (c.maxOperands !== undefined && !(Number.isInteger(c.maxOperands) && (c.maxOperands as number) >= 0)) errs.push(`${at}.maxOperands`);
         if (c.okCodes !== undefined) codes(c.okCodes, `${at}.okCodes`);
         if (!isObj(c.flags)) errs.push(`${at}.flags: an object`);

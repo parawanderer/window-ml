@@ -2,7 +2,9 @@
 
 **Status: proposed 2026-11-13; slice 1 built 2026-11-13** (the panel's addresses in the sidebar and the DevTools
 panel: the place table, `data-setting` rows, the renderer, `openAddress`; `docs/dev/sidebar.md`, "Links to a setting
-in model text"). Not built: session, search and attention addresses, the chat page's surfaces and the exports' text.
+in model text"), on the extension's chat page (the panel's addresses from its hash and from a link in a reply), and
+on the HUD card, through the worker's `OPEN_CHAT_PAGE`. Not built: session, search and attention addresses, the web
+and phone chat pages and the exports' text.
 From Shane's words in the calm-chat-motion session (2026-11-13), handed to the settings-specs lane by the
 policies/python/desktop/manifests coordinator. Ruled by the coordinator on
 2026-11-13, pending Shane: a spec of its own, one parser for hashes and links, a button and never an `<a href>`, and
@@ -110,7 +112,7 @@ calls only the service (the sidebar trap: session views call `services()`, never
 | Surface | A settings address | A session, search or attention address |
 | --- | --- | --- |
 | Overlay sidebar, DevTools panel | the panel's own Settings view, through `showSettingsSection`; a setting's row scrolled to and marked | opens the chat page, or focuses it where it is open, at the hash: the popup's `openChat`, moved to where the sidebar can call it through the worker (an extension-page message, never in `HANDLE_MAP`) |
-| HUD card (the Commander's) | opens the chat page, or focuses it, at the address's hash (Shane, 2026-11-13: the chat page's Settings, not the sidebar). Until that is built, the label | the same |
+| HUD card (the Commander's) | opens the chat page, or focuses it, at the address's hash (Shane, 2026-11-13: the chat page's Settings, not the sidebar), through the worker's `OPEN_CHAT_PAGE` | the same |
 | Chat page, in the extension | the hash, set in place; the page reads it on `hashchange` as today | the hash, in place |
 | Chat page, web and phone builds | the session's runtime's settings, through `ChatExtras.findSetting`'s runtime argument, where that runtime reports `localSettings` and this device can draw them; otherwise the link renders as text with a tip naming where it lives | the hash, in place |
 | Exports (Markdown, PDF, JSON) | text: the label and where it is (`Backup and restore (Settings → Storage)`); the raw link in the raw view | text: the label |
@@ -130,11 +132,12 @@ made.)
 
 ## How the model learns the form
 
-Not in the system prompt: every token there is paid on every turn (`docs/spec/PROMPT_BUDGET.md`). The `agent_api_docs`
-tool gets a `links` topic: the form, the address table, and one line per setting key with its label and place,
-generated from the table the class test checks. Whether one sentence in the prompt ("you may link to a setting as
-`[label](window-ml:setting/<key>)`") earns its cost is open question 1, for the next prompt review
-(`docs/dev/prompt-review.md`).
+The `agent_api_docs` tool gets a `links` topic: the form, the address table, and one line per setting key with its
+label and place, generated from the table the class test checks. The system prompt adds one sentence naming the form
+(`LINKS_CLAUSE`, after the self-introspection clause, only where `agent_api_docs` is in the toolset): "To point the
+person at one of the extension's settings, link it as `[label](window-ml:setting/<key>)`; `agent_api_docs` lists the
+keys." Every token there is paid on every turn (`docs/spec/PROMPT_BUDGET.md`), so whether it earns its cost was open
+question 1; measured, it does (below), and it ships on (Shane, 2026-11-13).
 
 ## Threat model
 
@@ -152,8 +155,10 @@ view; so the questions are what opening can cost, and whether the form leaks int
    that is not `http(s)` or `window-ml:` stays text, as today (`javascript:`, `data:`, `chrome-extension:`,
    `chrome:`).
 4. **A page using the form itself.** A link is drawn only in the extension's own transcript views, from the model's
-   text; a page's DOM never gets one. The new extension-page message the sidebar uses to open the chat page is not
-   page-started and is not in `HANDLE_MAP`, so a page cannot open the chat page or Settings through it.
+   text; a page's DOM never gets one. The extension-page message the HUD card uses to open the chat page
+   (`OPEN_CHAT_PAGE`) is not page-started and is not in `HANDLE_MAP`, and the worker refuses it from anything but an
+   extension page, so a page cannot open the chat page or Settings through it. Its URL is `chat.html` and the hash of
+   an address a link resolves, never one the sender sends.
    The reverse holds too: page text enters the transcript through tool results (a fetched page, a DOM read, a Python
    `print`) and through the model quoting it, so **a `window-ml:` link is resolved only in the model's own prose**. In
    a tool result, an output cell, a quoted block, a code span or fence, or anything else that came from a tool or a
@@ -186,7 +191,19 @@ checklist, landing in the builder's PR as its own file (rule 10).
 
 ## Open questions
 
-1. A sentence in the system prompt, or `agent_api_docs` only (above).
+1. ~~A sentence in the system prompt, or `agent_api_docs` only (above).~~ **Answered 2026-11-13: add the sentence.**
+   The `links-prompt` sweep (five models, four tasks that a link answers plus a control, four repeats, both arms; notebook
+   `notebooks/bench/links-prompt.ipynb`) found that a link to the right place rises from 41/80 runs with `agent_api_docs`
+   alone to 55/80 with the sentence (Fisher two-sided p = 0.036). The gain is in the models that can link at all but do
+   not look for the form: DeepSeek Flash 9 → 15 of 16, GPT-6 Luna 8 → 14 (the API key's question 0 → 4 of 4), Gemma 4
+   31B 9 → 12. Qwen 3.8 Flash already links from the docs (14 → 13) and Gemma 4 E4B links in neither arm (1 and 1). No
+   run in either arm put a link in the control's answer. The control failed 5 of 20 times with the sentence and 0 of
+   20 without (Gemma 4 E4B answering `[]` or the code in lower case, Qwen writing an en dash or `CROSSPACE`); run again,
+   it failed 2 of 20 in each arm, every one Gemma 4 E4B answering off the task, and still no link: chance and E4B's
+   noise, not the sentence. The cost is 36 to 40 prompt tokens a call by each model's
+   tokenizer, about 150 to 180 a run on these tasks. Three links in the sentence's arm, none in the other, mixed the two
+   forms (`setting/advanced/shell`) and render as their label: the sentence's `setting/<key>` reads to some models as a
+   path. Without the sentence, a run that linked had read `agent_api_docs` first (41 of 41), and 22 of 80 never read it.
 2. Whether the chat page's web and phone builds should offer "open on that browser" for a setting of a runtime they
    cannot draw, through the hub; out of scope here.
 3. Whether a step of a session (`s/<runtime:hash>/step/<n>`) is an address; the `@tool:` pointer already links a step

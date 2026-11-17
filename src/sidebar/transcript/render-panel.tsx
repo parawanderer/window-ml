@@ -35,6 +35,7 @@ import { displaySource } from "../code-block";
 import { DiffLines } from "../code-diff";
 import { copyText } from "../copy-hash";
 import { PkgCardRender } from "../card/pkg-card-view";
+import { useRawView } from "../raw-view";
 
 /** A tool's returned DOM ELEMENTS, as a hoverable list. Each row carries the same stateless
  *  `clickSelector` the model was handed, so hovering outlines the node on the page and "copy reference"
@@ -79,7 +80,7 @@ export function RenderElements({ items }: { items: { path: string; text?: string
 // with a raw⇄visualise image toggle) or a DOM snap (just a labelled image). The [N] badge
 // numbers it; hovering explains what kind of step it is.
 function LocateSubstepView({ s, n }: { s: LocateSubstep; n: number }) {
-    const [raw, setRaw] = useState(false);   // "visualise" (the human overlay) by default
+    const [raw, setRaw] = useRawView();   // "visualise" (the human overlay) by default
     const kind = s.prompt ? "a vision sub-call — its own prompt + reply, run standalone" : "a DOM hit-test — no model call";
     return (
         <div class="r-loc-sub">
@@ -524,9 +525,9 @@ function tableSourceDesc(s: TableSource): { short: string; tip: string } {
 /** One input dataframe, as a section that focus mode can fold once the step has settled. Its own component
  *  because the fold has to seed a `details`' state (see `useFocusFold`) and hooks cannot live inside a map. */
 function PyInTable({ fold, label, children }: { fold: boolean; label: ComponentChildren; children: ComponentChildren }) {
-    const [open, setOpen] = useFocusFold(fold);
+    const [open, setOpen, touched] = useFocusFold(fold);
     return (
-        <details class={`r-py-table r-py-sec${fold ? " focus-fold" : ""}`} open={open}
+        <details class={`r-py-table r-py-sec${fold ? " focus-fold" : ""}${touched ? " touched" : ""}`} open={open}
             onToggle={(e: any) => setOpen(!!e.currentTarget.open)}>
             <summary class="r-py-lbl">{label}</summary>
             {children}
@@ -1325,12 +1326,16 @@ export function RanFor({ live, ms, since, remote }: { live?: boolean; ms?: numbe
  *  Re-seeded when the MODE changes and not on every render: binding `open` straight to the signal would slam
  *  a section you had just opened shut on the panel's next poll, and never re-seeding would leave the fold not
  *  applying until the step was re-mounted. */
-function useFocusFold(fold: boolean | undefined): [boolean, (v: boolean) => void] {
+function useFocusFold(fold: boolean | undefined): [boolean, (v: boolean) => void, boolean] {
     const focus = focusMode.value;
     const [open, setOpen] = useState(!(fold && focus));
+    // Whether the READER has opened or closed it since the fold was seeded: the "folded in focus mode" note explains a
+    // section that closed itself, and means nothing on one you closed with your own hand.
+    const [touched, setTouched] = useState(false);
     const seeded = useRef(focus);
-    if (seeded.current !== focus) { seeded.current = focus; if (fold) setOpen(!focus); }
-    return [open, setOpen];
+    if (seeded.current !== focus) { seeded.current = focus; if (fold) { setOpen(!focus); setTouched(false); } }
+    // A `toggle` also fires for the seed's own change, which arrives already equal to the state: only a difference is a hand.
+    return [open, (v) => { if (v !== open) setTouched(true); setOpen(v); }, touched];
 }
 
 function PyOutSection({ label, cls, children, cite, open = true, foldInFocus, actions }: { label: string; cls: string; children: ComponentChildren; cite?: "in" | "out"; open?: boolean; foldInFocus?: boolean;
@@ -1338,9 +1343,9 @@ function PyOutSection({ label, cls, children, cite, open = true, foldInFocus, ac
     // `foldInFocus` is a CLASS, not a different `open`: focus mode is a CSS-only hide everywhere else (see
     // the FOCUS MODE block), so the section keeps one real open/closed state and turning the mode off
     // restores exactly what you left. A `details` whose openness depended on the mode would forget it.
-    const [shown, setShown] = useFocusFold(foldInFocus);
+    const [shown, setShown, touched] = useFocusFold(foldInFocus);
     const isOpen = foldInFocus ? shown : open;
-    return <details class={`r-py-sec ${cls}${foldInFocus ? " focus-fold" : ""}`} open={isOpen}
+    return <details class={`r-py-sec ${cls}${foldInFocus ? " focus-fold" : ""}${touched ? " touched" : ""}`} open={isOpen}
         onToggle={(e: any) => foldInFocus && setShown(!!e.currentTarget.open)}
         {...(cite ? { "data-cite": cite } : {})}><summary class="r-py-lbl">{label}</summary>
         {/* OUTSIDE the <summary>, placed onto its line by CSS: inside it, the control's tooltip text became part of the
@@ -1383,7 +1388,7 @@ function PyOutBody({ id, d, marks, lineMap, fill }: { id: PyOutSectionId; d: Ext
         // In a cell like the output above it: a returned value can be as long as anything printed on the way
         // there, and it is the half you most often want to search — so it is capped, scrollable and
         // Ctrl+F-able by being wrapped, rather than by each section inventing its own.
-        case "value": return <ValueOut text={String(d.value)} fill={fill} seen={d.valueSeen} />;
+        case "value": return <ValueOut text={String(d.value)} fill={fill} seen={d.valueSeen} treeFirst={focusMode.value} />;
     }
 }
 
@@ -1658,12 +1663,14 @@ function markSeen(value: object, seenText: string): WeakMap<object, number> | un
 /** A tool's returned VALUE (exec, python_exec): the JSON text exactly as the model got it, plus a corner button that
  *  draws it as a collapsible JSON TREE whenever it is an object or array. A value clipped for the UI (the
  *  `… [first K of M chars]` note) still gets its tree: the part that arrived whole, closed at the cut, with a row
- *  saying where the cut was. Text stays the default, since it is what the model read and what Ctrl+F searches. */
-export function ValueOut({ text, fill, seen, after }: { text: string; fill?: boolean; /** chars the model received; absent → all */ seen?: number;
+ *  saying where the cut was. Text is the default, since it is what the model read and what Ctrl+F searches; the calm
+ *  view (`treeFirst`) opens a JSON value as the tree instead, with "text" one click away. */
+export function ValueOut({ text, fill, seen, after, treeFirst }: { text: string; fill?: boolean; /** chars the model received; absent → all */ seen?: number;
+    /** open as the tree rather than the text, when the value is JSON (the calm view's default; the toggle still flips it) */ treeFirst?: boolean;
     /** drawn inside the cell, after the value (an exec's print notes), so it scrolls and is found with it */
     after?: ComponentChildren }) {
     const partial = seen != null && seen < text.length;
-    const [asTree, setAsTree] = useState(false);
+    const [asTree, setAsTree] = useState(!!treeFirst);
     const loose = useMemo(() => parseLooseJson(text), [text]);
     // Re-parsed rather than shared with `loose`, because marking the cut mutates the value.
     const tree = useMemo(() => {
@@ -1721,7 +1728,7 @@ function ExecOutRender({ d, marks, live, ranMs, ranSince, lineMap, remoteMs }: {
             </PyOutSection> : null}
             {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
             {d.error ? <PyOutSection label="error" cls="r-py-err"><OutputCell text><ExecError text={d.error} line={d.errorLine} map={lineMap} /></OutputCell></PyOutSection> : null}
-            {d.value != null && !d.error ? <PyOutSection label="value" cls="r-py-val"><ValueOut text={d.value} seen={d.valueSeen}
+            {d.value != null && !d.error ? <PyOutSection label="value" cls="r-py-val"><ValueOut text={d.value} seen={d.valueSeen} treeFirst={focusMode.value}
                 after={d.valueNotes?.length ? <PrintNotes notes={d.valueNotes} /> : null} /></PyOutSection> : null}
             {!d.stdout ? <RanFor live={live} ms={ranMs} since={ranSince} remote={remoteMs} /> : null}
         </div>
@@ -1782,7 +1789,9 @@ function FetchLadder({ attempts, resolvedBy }: { attempts: import("../../contrac
 
 /** `lineMap` is the IN block's reflow map, handed to the OUT block so a failure can name the row the
  *  reader is actually looking at. The two are separate descriptors that cannot see each other; only the
- *  step holds both, so it is the step that passes this across. */
+ *  step holds both, so it is the step that passes this across.
+ *
+ *  @gallery-flow sections slide in the calm chat tests/gallery-flows/RenderPanelSections.mjs {"d":{"type":"python-out","value":"{\"ls\":\"total 32\\nline\\ttab\",\"n\":3}","stdout":"one\ntwo\nthree\nfour\nfive\nsix"}} */
 export function RenderPanel({ d, marks, live, failLine, ranMs, ranSince, ctx, lineMap, remoteMs, failed }: { d: RenderDescriptor; marks?: [number, number][]; live?: boolean; failLine?: number | null; ranMs?: number; ranSince?: number; ctx?: CodeCtx; lineMap?: number[] | null; remoteMs?: { durationMs: number; bootMs?: number } | null; failed?: boolean }) {
     switch (d.type) {
         case "image": {

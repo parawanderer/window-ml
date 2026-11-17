@@ -1,0 +1,81 @@
+// host-install.ts — the one line that installs the process host, as Settings shows it: the pinned release's installer, its
+// sha256 checked before it runs, and THIS install's extension id filled in. Pure, so the section and its tests share it.
+
+// docs/spec/SHELL.md, "Installing the host": the line carries nothing a page wrote (the id is `chrome.runtime.id`, the
+// version and hash come from tools/host-dist.json, committed and reviewed), and it is built here, never from a message.
+import pinJson from "../../tools/host-dist.json";
+
+/** The pin's shape (scripts/fetch-host.mjs writes it). `installer` is absent until the pinned release carries install.sh. */
+interface HostPin {
+    tag: string;
+    installer?: { file: string; sha256: string };
+}
+
+const PIN = pinJson as HostPin;
+
+/** What `chrome.runtime.getPlatformInfo()` says about this machine, narrowed to the fields the line needs. */
+export interface HostPlatform {
+    os: string;
+    arch: string;
+    /** `"brave"` when the page is Brave: the installer registers Brave's own folder, which Chrome's is not. Absent: Chrome. */
+    browser?: "brave";
+}
+
+/** The installer line for a platform, or why there is none. */
+export type HostInstall = { ok: true; line: string; tag: string; undo: string } | { ok: false; why: string };
+
+/** An extension id: 32 letters a-p (what `wmlhost install` itself checks). */
+export const EXTENSION_ID_RE = /^[a-p]{32}$/;
+
+/**
+ * The install line for this machine: download the pinned release's `install.sh`, check its sha256 against the pin, run
+ * it with the extension id. macOS and Linux differ only in the checksum program. None for a platform the release has
+ * no build for, a release without an installer, or an id that is not an extension id.
+ * @param platform what the browser says about this machine
+ * @param extensionId this install's own id
+ * @param pin the host pin; the committed one by default
+ */
+export function hostInstall(platform: HostPlatform, extensionId: string, pin: HostPin = PIN): HostInstall {
+    if (!EXTENSION_ID_RE.test(extensionId)) return { ok: false, why: "This install's extension id is not available here." };
+    const arm = platform.arch === "arm64" || platform.arch === "arm";
+    const x64 = platform.arch === "x86-64";
+    const sum = platform.os === "mac" && (arm || x64) ? "shasum -a 256 -c -" : platform.os === "linux" && (arm || x64) ? "sha256sum -c -" : null;
+    if (!sum) return { ok: false, why: `There is no window-ml-host build for ${platform.os} ${platform.arch} yet (macOS on Apple silicon or Intel, Linux x86-64 and arm64).` };
+    if (!pin.installer || !/^v\d+\.\d+\.\d+$/.test(pin.tag) || pin.installer.file !== "install.sh" || !/^[0-9a-f]{64}$/.test(pin.installer.sha256)) return { ok: false, why: "The pinned window-ml-host release has no installer; build it from source (docs/dev/shell.md)." };
+    const url = `https://github.com/parawanderer/window-ml-host/releases/download/${pin.tag}/${pin.installer.file}`;
+    const line = `f=$(mktemp) && curl -fsSL ${url} -o "$f" && echo "${pin.installer.sha256}  $f" | ${sum} && sh "$f" --extension-id ${extensionId}${platform.browser === "brave" ? " --browser brave" : ""}`;
+    return { ok: true, line, tag: pin.tag, undo: "wmlhost uninstall (the installer prints the exact command), then delete ~/.local/bin/wmlhost" };
+}
+
+/** A host version in the pin's own shape: three whole numbers, nothing else. */
+export type HostVersion = readonly [number, number, number];
+
+/**
+ * A reported host version, parsed strictly: `major.minor.patch`, each one to four digits, with no prefix, suffix or
+ * space. Anything else (a pre-release, a word, a number the wrong size, a non-string) is unknown, which gives no hint:
+ * the raw text is never stored, drawn or sent on; only this parsed form is.
+ * @param raw what the host's hello said
+ */
+export function parseHostVersion(raw: unknown): HostVersion | null {
+    const m = typeof raw === "string" ? /^(\d{1,4})\.(\d{1,4})\.(\d{1,4})$/.exec(raw) : null;
+    return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+/** A parsed version as `0.10.0`. */
+export const formatHostVersion = (v: HostVersion): string => v.join(".");
+
+/** The version this build pins (the tag without its `v`), or null for a pin that is not one. */
+export const pinnedHostVersion = (pin: HostPin = PIN): HostVersion | null => parseHostVersion(/^v(.+)$/.exec(pin.tag)?.[1]);
+
+/**
+ * Whether the installed host is OLDER than the one this build pins. Unknown on either side, equal and newer all say no:
+ * a hint is for a host known to be behind, never for one that merely could not be read.
+ * @param seen the host's last reported version, parsed
+ * @param pin the host pin; the committed one by default
+ */
+export function hostOutdated(seen: HostVersion | null, pin: HostPin = PIN): boolean {
+    const want = pinnedHostVersion(pin);
+    if (!seen || !want) return false;
+    for (let i = 0; i < 3; i++) if (seen[i] !== want[i]) return seen[i] < want[i];
+    return false;
+}

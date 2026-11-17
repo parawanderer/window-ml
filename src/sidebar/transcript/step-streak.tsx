@@ -25,7 +25,7 @@ import { FoldRail } from "./fold-rail";
 import { useCloseAnimation } from "../use-close";
 import { justArrived } from "./just-arrived";
 import { useHistoryPaint } from "./history-paint";
-import { Ticking } from "../ui-kit";
+import { Ticking, cursorTipOn } from "../ui-kit";
 
 /** A member drawn inside a streak, where the GROUP owns the motion: a step that also slid itself in would fight
  *  the collapse that is describing the same event. Only the members the group was opened with (`groupOwns`): a call
@@ -139,7 +139,7 @@ export interface ToolStreak { kind: "streak"; tool: string; tools: string[]; tur
 function foldable(t: AgentTurnGroup): AgentStep | null {
     if (t.thought || t.tools.length !== 1) return null;
     const st = t.tools[0];
-    if (!st.tool || (st.awaitingApproval && st.pending)) return null;
+    if (!st.tool || needsPerson(st)) return null;
     if (revisionOf(st)) return null;
     return st;
 }
@@ -161,8 +161,19 @@ function foldable(t: AgentTurnGroup): AgentStep | null {
  */
 function foldableAll(t: AgentTurnGroup): boolean {
     if (t.thought) return false;
-    return !t.tools.some((st) => st.awaitingApproval && st.pending);
+    return !t.tools.some(needsPerson);
 }
+
+/**
+ * Is a person needed for this call RIGHT NOW: its own gate is waiting, or a call it is making raised an ask that is.
+ *
+ * The second half is the one that was missed. A step's own gate clears when it is approved, and the step then runs;
+ * the `ml.sh` call inside it asks again, on the step's `asks`, with the step no longer `awaitingApproval`. Looking only
+ * at the gate folded the step the moment it was approved, and the card the person had to answer next was inside a
+ * closed group. A decision is never hidden, so it stays out until it is answered.
+ */
+const needsPerson = (st: AgentStep): boolean =>
+    (!!st.awaitingApproval && !!st.pending) || !!st.asks?.some((a) => a.state === "pending");
 
 /**
  * Which SEGMENT of the transcript a turn is in — how many boundaries sit before it.
@@ -205,7 +216,39 @@ const revisionOf = (st: AgentStep): unknown =>
  * @param all the reader's "group all tool calls" preference — fold by adjacency rather than by tool name
  * @param breaks step positions a fold may not span: where an answer or one of the reader's own messages sits
  */
-export function foldStreaks(groups: AgentTurnGroup[], { live = false, all = false, breaks = [] as readonly number[] } = {}): (AgentTurnGroup | ToolStreak)[] {
+export function foldStreaks(groups: AgentTurnGroup[], opts: { live?: boolean; all?: boolean; breaks?: readonly number[] } = {}): (AgentTurnGroup | ToolStreak)[] {
+    return rejoin(foldHalves(splitProse(groups), opts));
+}
+
+/**
+ * A turn that SAID something and also CALLED tools, as two turns: what it said, and what it did.
+ *
+ * Prose is never folded, and a whole turn used to be refused for carrying it, which stranded that turn's calls
+ * outside the group right next to them: two rows above a group of seven, with a remark between nothing and
+ * nothing. Split, the remark stays where it is and its calls are ordinary tool-only turns, which join whatever
+ * run they sit in. The reasoning goes with the prose, since it is what led to saying it.
+ */
+function splitProse(groups: AgentTurnGroup[]): AgentTurnGroup[] {
+    return groups.flatMap((t) => t.thought && t.tools.length
+        ? [{ ...t, tools: [], half: "prose" as const }, { step: t.step, localStep: t.localStep, tools: t.tools, half: "tools" as const }]
+        : [t]);
+}
+
+/** Put back together every split whose calls did NOT fold, so a turn nothing grouped looks exactly as it did: one
+ *  box, one pill. A half that went into a streak stays where the streak put it. */
+function rejoin(items: (AgentTurnGroup | ToolStreak)[]): (AgentTurnGroup | ToolStreak)[] {
+    const out: (AgentTurnGroup | ToolStreak)[] = [];
+    for (const it of items) {
+        const prev = out[out.length - 1];
+        if (!("kind" in it) && it.half === "tools" && prev && !("kind" in prev) && prev.half === "prose" && prev.step === it.step) {
+            const { half: _h, ...whole } = prev;
+            out[out.length - 1] = { ...whole, tools: it.tools };
+        } else out.push(it);
+    }
+    return out;
+}
+
+function foldHalves(groups: AgentTurnGroup[], { live = false, all = false, breaks = [] as readonly number[] }: { live?: boolean; all?: boolean; breaks?: readonly number[] }): (AgentTurnGroup | ToolStreak)[] {
     const out: (AgentTurnGroup | ToolStreak)[] = [];
     const seg = (t: AgentTurnGroup): number => segmentOf(t.step, breaks);
     for (let i = 0; i < groups.length;) {
@@ -359,7 +402,7 @@ export function StepStreak({ s, render }: { s: ToolStreak; render: (t: AgentTurn
                 {one
                     ? <><span class="astreak-tool">{s.tool}</span><span class={`astreak-n${bumped ? " bumped" : ""}`}>× {calls}</span></>
                     : <><span class={`astreak-n astreak-calls${bumped ? " bumped" : ""}`}>{calls} tool calls</span>
-                        <span class="astreak-tools">{s.tools.map((t, i) =>
+                        <span class="astreak-tools" {...cursorTipOn(s.tools.join(", "), { delayMs: 300, onlyIf: (el) => el.scrollWidth > el.clientWidth })}>{s.tools.map((t, i) =>
                             <span key={t} class={`astreak-name${named.current.has(t) ? "" : " arrived"}`}>{i ? ", " : ""}{t}</span>)}</span></>}
                 {failed ? <span class="astreak-bad">{failed} failed</span> : null}
                 {/* A GROUP THAT IS STILL GROWING SAYS SO. In "group all" the newest call joins a row that is already

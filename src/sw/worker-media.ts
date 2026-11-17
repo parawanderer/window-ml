@@ -110,12 +110,13 @@ export async function workerMint(runId: string, tabId: number, q: { pt: { x: num
  * the live document read from the page as plain data (worker-page-read.ts). What the run's worker tools are built with
  * (worker-tools.ts `buildWorkerTools`), wherever they are built (sw-run-start.ts, sw-run-host.ts).
  * @param runId the run
- * @param tabId the run's tab
+ * @param tab the run's tab, or a read of it at each call for a turn whose tab can change (MOVE_RUN.md, shape (b))
  * @returns the worker tools' media and page reads
  */
-export function pyMediaFor(runId: string, tabId: number): WorkerPyMedia {
+export function pyMediaFor(runId: string, tab: number | (() => number)): WorkerPyMedia {
+    const at = typeof tab === "number" ? () => tab : tab;
     return {
-        image: (image, margin) => workerPythonImage(runId, tabId, image, margin), mint: (q, doc) => workerMint(runId, tabId, q, doc),
-        table: (src, raw) => workerPageTable(runId, tabId, src, raw), document: (url) => workerPageDocument(runId, tabId, url),
+        image: (image, margin) => workerPythonImage(runId, at(), image, margin), mint: (q, doc) => workerMint(runId, at(), q, doc),
+        table: (src, raw) => workerPageTable(runId, at(), src, raw), document: (url) => workerPageDocument(runId, at(), url),
     };
 }

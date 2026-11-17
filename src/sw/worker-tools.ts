@@ -230,6 +230,22 @@ function policyAllows(runId: string, url: string): boolean {
 /** Forget a run's worker-tool state, with its local tools. */
 export function dropWorkerTools(runId: string): void { runs.delete(runId); }
 
+/** The tab a run's worker tools act on now: the one they were built for, until the run host moves them
+ *  ({@link retabWorkerRun}). */
+export const workerRunTab = (runId: string): number | undefined => runs.get(runId)?.tabId;
+
+/**
+ * Point a run's worker tools at the tab the run is on now (MOVE_RUN.md): a run the worker built has them registered
+ * once, at its start, so a move or a replaced tab reaches them only through this. The run host calls it at each turn's
+ * start and from the turn's tab cell.
+ * @param runId the run
+ * @param to the tab it is on now
+ */
+export function retabWorkerRun(runId: string, to: number): void {
+    const ctx = runs.get(runId);
+    if (ctx) ctx.tabId = to;
+}
+
 /**
  * Send one model request for a run's worker tool and count what it spent into the run's sub-call tally: the one path
  * every worker-side sub-call takes (fetch_url's reader, the vision calls), so each lands in `subUsage` the same way.

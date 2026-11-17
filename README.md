@@ -1,5 +1,15 @@
 # window.ml
 
+> **Status:** Unmaintained Experimental Artifact / Read-Only Archive
+> 
+> This repository contains the raw, uninspected output of an unattended automated code-generation loop (~475,000 lines across 2,765 commits). The code is disposable scaffolding used solely to collect empirical measurements for inference and context-addressability experiments.
+> 
+> * **No human inspection or maintenance has ever been performed on this code.**
+> * **This is not a software product, library, or engineering portfolio.**
+> * **Issues, pull requests, and software engineering inquiries will be ignored.**
+> 
+> For mathematical findings and empirical data, see `notebooks/`.
+
 I'm an applied mathematician. This repo holds experiments on LLM inference: whether a server can learn where to
 load a model and for how long from recorded use, whether it can predict decode speed and correct itself, and what
 becomes possible once every piece of a context has an address. Agents write and maintain the code and I don't read

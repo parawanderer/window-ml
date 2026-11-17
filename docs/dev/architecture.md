@@ -81,8 +81,8 @@ The main world can't touch storage, hence the round-trip. A saved session is
 readable by any page that knows its (random 128-bit) hash — fine for chat history,
 which holds no credentials.
 
-`GET_CONFIG` (`ml.config()`) returns the **non-secret** config subset
-`{ model, ocrModel, apiFormat, utilityModel, utilityNumCtx, utilityForceCpu }` —
+`GET_CONFIG` (`ml.config()`) returns the **non-secret** config subset: the keys `publicConfig()`
+(`contract-config.ts`) returns, which `docs/API.md` lists —
 the URL and API key are never exposed to the page. `ml.agent` uses it to
 auto-wire a vision (`look`) tool. The `vision` option: `null` (default) **probes** the
 agent's model then the OCR model, adding `look` only on a positive Ollama capability (native

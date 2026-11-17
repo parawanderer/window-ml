@@ -1,0 +1,371 @@
+{
+  "commit": "7ded3154a3f99f961713c6d9032518aa10eca938",
+  "extracted_at": "2026-11-13T18:28:54+00:00",
+  "rows": [
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "repeat": 0,
+      "sentence": "off"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "repeat": 1,
+      "sentence": "off"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "repeat": 2,
+      "sentence": "off"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "repeat": 3,
+      "sentence": "off"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "repeat": 0,
+      "sentence": "on"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "repeat": 1,
+      "sentence": "on"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "repeat": 2,
+      "sentence": "on"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "repeat": 3,
+      "sentence": "on"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "gemma4:31b",
+      "passed": true,
+      "repeat": 0,
+      "sentence": "off"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "gemma4:31b",
+      "passed": true,
+      "repeat": 1,
+      "sentence": "off"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "gemma4:31b",
+      "passed": true,
+      "repeat": 2,
+      "sentence": "off"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "gemma4:31b",
+      "passed": true,
+      "repeat": 3,
+      "sentence": "off"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "gemma4:31b",
+      "passed": true,
+      "repeat": 0,
+      "sentence": "on"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "gemma4:31b",
+      "passed": true,
+      "repeat": 1,
+      "sentence": "on"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "gemma4:31b",
+      "passed": true,
+      "repeat": 2,
+      "sentence": "on"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "gemma4:31b",
+      "passed": true,
+      "repeat": 3,
+      "sentence": "on"
+    },
+    {
+      "answer": "```javascript\nconst crossDomainTest = async () => {\n  // This function simulates crossing a domain boundary.\n  // In a real-world application, this might involve an API call\n  // or a client-side redirect to a different origin.\n  console.log(\"Attempting to cross domain boundary...\");\n\n  // NOTE: Direct manipulation of window.location.href across\n  // origins requires specific CORS handling and security checks.\n  // For testing purposes, we simulate success by logging.\n  const targetOrigin = \"http://127.0.0.1:54273\";\n\n  if (window.location.origin !== targetOrigin) {\n    console.warn(\n      `[Security Warning] Origin mismatch: Currently on ${window.location.origin}, ` +\n      `expected ${targetOrigin}. Cross-origin access might be blocked.`\n    );\n  }\n\n  // Simulate redirect/navigation action\n  setTimeout(() => {\n    console.log(`Successfully 'navigated' to ${targetOrigin}`);\n    // In a real app, you might do: window.location.href = targetOrigin;\n  }, 1500);\n};\n\ncrossDomainTest();\n```",
+      "error": false,
+      "linked": false,
+      "model": "gemma4:e4b",
+      "passed": false,
+      "repeat": 0,
+      "sentence": "off"
+    },
+    {
+      "answer": "http://127.0.0.1:54306",
+      "error": false,
+      "linked": false,
+      "model": "gemma4:e4b",
+      "passed": false,
+      "repeat": 1,
+      "sentence": "off"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "gemma4:e4b",
+      "passed": true,
+      "repeat": 2,
+      "sentence": "off"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "gemma4:e4b",
+      "passed": true,
+      "repeat": 3,
+      "sentence": "off"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "gemma4:e4b",
+      "passed": true,
+      "repeat": 0,
+      "sentence": "on"
+    },
+    {
+      "answer": "```javascript\nconst user = \"username\";\nconst token = \"user_token\";\nconst endpoint = \"/api/data\";\n\n// Function to fetch data from the API\nasync function fetchData(userId, accessToken) {\n    try {\n        const response = await fetch(`${endpoint}/${userId}`, {\n            method: 'GET',\n            headers: {\n                'Authorization': `Bearer ${accessToken}`,\n                'Content-Type': 'application/json',\n            },\n        });\n\n        if (!response.ok) {\n            throw new Error(`HTTP error! Status: ${response.status}`);\n        }\n\n        const data = await response.json();\n        return data;\n\n    } catch (error) {\n        console.error(\"Failed to fetch data:\", error);\n        return null;\n    }\n}\n\n// Example usage\nasync function runTest() {\n    const data = await fetchData(user, token);\n    if (data) {\n        console.log(\"Successfully fetched data:\", data);\n    } else {\n        console.log(\"Failed to fetch data.\");\n    }\n}\n\nrunTest();\n```",
+      "error": false,
+      "linked": false,
+      "model": "gemma4:e4b",
+      "passed": false,
+      "repeat": 1,
+      "sentence": "on"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "gemma4:e4b",
+      "passed": true,
+      "repeat": 2,
+      "sentence": "on"
+    },
+    {
+      "answer": "```javascript\ncrosspage-9471\n```",
+      "error": false,
+      "linked": false,
+      "model": "gemma4:e4b",
+      "passed": false,
+      "repeat": 3,
+      "sentence": "on"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "repeat": 0,
+      "sentence": "off"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "repeat": 1,
+      "sentence": "off"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "repeat": 2,
+      "sentence": "off"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "repeat": 3,
+      "sentence": "off"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "repeat": 0,
+      "sentence": "on"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "repeat": 1,
+      "sentence": "on"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "repeat": 2,
+      "sentence": "on"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "repeat": 3,
+      "sentence": "on"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "repeat": 0,
+      "sentence": "off"
+    },
+    {
+      "answer": "`CROSSPAGE-9471`",
+      "error": false,
+      "linked": false,
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "repeat": 1,
+      "sentence": "off"
+    },
+    {
+      "answer": "![The code box](@tool:look:out)\n\nCROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "repeat": 2,
+      "sentence": "off"
+    },
+    {
+      "answer": "`CROSSPAGE-9471`",
+      "error": false,
+      "linked": false,
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "repeat": 3,
+      "sentence": "off"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "repeat": 0,
+      "sentence": "on"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "repeat": 1,
+      "sentence": "on"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "repeat": 2,
+      "sentence": "on"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "error": false,
+      "linked": false,
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "repeat": 3,
+      "sentence": "on"
+    }
+  ],
+  "source": {
+    "rerun": true,
+    "sweep": "links-prompt",
+    "task": "control"
+  }
+}

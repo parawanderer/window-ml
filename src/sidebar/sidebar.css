@@ -1203,6 +1203,10 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
 .aturn-prose .md { flex: 1; min-width: 0; color: var(--fg); }
 .aturn-prose .asst-collapsed { flex: 1; min-width: 0; color: var(--fg-dim); }
 .aturn-prose .md > :first-child { margin-top: 0; } .aturn-prose .md > :last-child { margin-bottom: 0; }
+/* Copy and the time, on a line of their own under the prose, as under a final answer. */
+.aturn-prose { flex-wrap: wrap; }
+.aturn-prose .prose-meta { flex: 1 0 100%; margin: 4px 0 0; }
+.aturn-prose .prose-meta .sp { flex: 1; }
 /* A thinking block (reasoning_content) reads as SECONDARY to the assistant's prose (content) —
    dim its label + preview so the two are visually distinct, per the content/reasoning split. */
 .athinking .who { color: var(--fg-dim); font-weight: 500; font-style: italic; }
@@ -1415,10 +1419,17 @@ html[data-calm] .appr-deny-wrap { border-radius: 999px; color: var(--fg-dim); }
 .appr-why { margin-top: 6px; }
 .appr-why-list { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 3px;
     color: var(--fg-dim); font-size: 0.86em; line-height: 1.4; }
-.astep-approve .appr-note, .card-foot .appr-note { display: flex; align-items: flex-start; gap: 6px; font-size: 0.82em; color: var(--fg);
+/* A NOTE ON AN APPROVAL: what the person should know before saying yes (why it asks, what approving grants), a warning
+   icon then a sentence, over a rule that sets it off from the question below. Not scoped to the card, so the gallery draws it as
+   it is drawn there. */
+.appr-note { display: flex; align-items: flex-start; gap: 6px; font-size: 0.82em; color: var(--fg);
     padding-bottom: 5px; border-bottom: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); }
-.astep-approve .appr-note svg, .card-foot .appr-note svg { flex: none; width: 13px; height: 13px; margin-top: 1px; color: var(--notice); }
-.astep-approve .appr-note b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.appr-note svg { flex: none; width: 14px; height: 14px; margin-top: .12em; color: var(--notice); }
+/* THE CALM CHAT draws it quieter: the icon in the text's own colour, which is what an inline mark is, and the rule a
+   thicker grey rather than a thin amber one, which reads as an alarm over a reading view's whole column. */
+html[data-calm] .appr-note { border-bottom: 2px solid color-mix(in srgb, var(--fg) 14%, transparent); }
+html[data-calm] .appr-note svg { color: inherit; }
+.appr-note b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 /* Google Docs-style smart chip for a Sheet reference: icon + friendly name, hoverable for the id. */
 .sheet-chip { display: inline-flex; align-items: center; gap: 3px; vertical-align: middle;
@@ -1438,8 +1449,56 @@ html[data-calm] .appr-deny-wrap { border-radius: 999px; color: var(--fg-dim); }
 .astep-approve .ask-facts dt svg, .astep-ask-done .ask-facts dt svg { width: 12px; height: 12px; color: var(--notice); }
 .astep-approve .ask-facts dd, .astep-ask-done .ask-facts dd { margin: 0; color: var(--fg); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
 .astep-approve .ask-facts .warn dd, .astep-ask-done .ask-facts .warn dd { color: var(--notice); }
-/* An answered nested ask: one line under its step, and once an allowed call ran, what it reported (its own size: the
-   line is already small). */
+/* A step's answered ml.sh calls (sh-calls.tsx): a footer that says how many and how they went, opening to a row per call,
+   each opening to the command and every fact. Both levels are the panel's one Disclosure. */
+.shcalls { margin: 6px 0 4px; font-size: 0.86em; }
+.shcalls .disc-head, .shc-entry .disc-head { width: 100%; text-align: left; }
+/* The footer's name, "ml.sh", before its count. */
+.shc-head { font-weight: 600; color: var(--fg-dim); }
+/* How many calls the footer holds; it ticks when one joins. */
+.shc-n { margin-left: 6px; font-weight: 400; color: var(--fg-faint); }
+.shcalls > .disc > .disc-headrow .disc-note { color: var(--fg-faint); display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* "N worth a look" on the footer: some call has something the person could not have seen when they decided, said without opening it. */
+.shc-warn { display: inline-flex; align-items: center; gap: 4px; color: var(--notice); }
+.shc-warn svg { width: 12px; height: 12px; }
+/* The footer's open body: one row per call, indented under the footer's chevron. */
+.shc-list { display: flex; flex-direction: column; gap: 2px; padding: 4px 0 2px 14px; }
+/* One call in the footer: its row, and its body once opened. */
+.shc-entry .disc-label { flex: 1; min-width: 0; }
+/* A call's row: status dot, program, the start of what it ran, how it went, how long. */
+.shc-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.shc-row .dot { flex: none; }
+/* The program a call ran, in bold mono, on its row. */
+.shc-prog { flex: none; font: 600 1em ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg); }
+/* The start of what a call ran (its arguments, or a script's first line), one ellipsized line on its row. */
+.shc-prev { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-faint); font: 0.95em ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* How a call went, in words ("allowed after 3 s", "ran without asking"), on its row; a denial is red. */
+.shc-said { flex: none; color: var(--fg-dim); }
+.shc-row.denied .shc-said { color: var(--err); }
+/* How long a call took, on its row. */
+.shc-ms { flex: none; color: var(--fg-faint); font-style: italic; }
+/* What an opened call holds: the command, its facts and the raw-argv toggle, indented under its dot. */
+.shc-body { display: flex; flex-direction: column; gap: 8px; padding: 6px 0 8px 22px; }
+/* The person's note on a denial, or why an ask ended without them, in an opened call. */
+.shc-note { color: var(--fg-dim); font-style: italic; }
+/* "run as bash -c …" under a script: what the script was handed to, since the code above shows only its lines. */
+.shc-via { color: var(--fg-faint); }
+.shc-via code { font: inherit; color: var(--fg-dim); }
+/* A call's facts as a grid (what ran, where, under which sandbox, what it reported), a warning's value in the notice colour. */
+.shc-facts { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; }
+.shc-facts > div { display: contents; }
+.shc-facts dt { color: var(--fg-dim); display: flex; align-items: center; gap: 4px; }
+.shc-facts dt svg { width: 12px; height: 12px; color: var(--notice); }
+.shc-facts dd { margin: 0; color: var(--fg); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.shc-facts .warn dd { color: var(--notice); }
+/* A fact that explains itself on hover: the dotted underline says so, and the tip is the panel's own. */
+.ask-facts dd.has-tip { cursor: help; text-decoration: underline dotted; text-decoration-color: color-mix(in srgb, currentColor 45%, transparent); text-underline-offset: 3px; }
+.ask-facts dd.has-tip:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+/* The command an ask is about, above its facts: a card's copy button is in the corner, as on the host installer's line. */
+.ask-cmd { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 8px; font-size: 0.86em; }
+.ask-cmd .shc-via { color: var(--fg-faint); }
+.ask-cmd .shc-via code { font: inherit; color: var(--fg-dim); }
+/* The "raw argv" / "command" toggle at the foot of an opened call: the argv exactly as the host got it. */
 .astep-ask-done { font-size: 0.8em; color: var(--fg-dim); margin: 2px 0 4px; overflow-wrap: anywhere; }
 .astep-ask-done .ask-facts { font-size: 1em; margin: 2px 0 0 12px; }
 .astep-ask-done code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg); }
@@ -1785,6 +1844,16 @@ th .help { text-decoration-color: color-mix(in srgb, var(--fg-faint) 50%, transp
 /** The FIGURES under a status tooltip's sentence — when it happened and how long it took — on their own line
  *  under a rule. A separator is a BORDER on the section it opens, never an element of its own (the same rule the
  *  event tip follows), or the two end up a pixel apart on surfaces whose font scale differs. */
+/* The state's own dot leads its sentence, so the line says which state it is before it is read. */
+.dot-tip-line { display: flex; align-items: baseline; gap: 6px; }
+.dot-tip-line .tip-dot { width: 0.67em; height: 0.67em; border-radius: 50%; flex: 0 0 auto; position: relative; top: 0.04em; }
+/* A different class from `.dot` on purpose: a test or a script that counts a step's status dots must not count its tooltip's. */
+.tip-dot.pending { background: var(--busy); animation: pulse 1s infinite; }
+.tip-dot.ok { background: var(--ok); }
+.tip-dot.err { background: var(--err); }
+.tip-dot.warn { background: var(--warn); }
+/* `.hollow`: a ring in the status colour instead of a disc: it did not happen (a denied call), which is not the same as it failing. */
+.dot.err.hollow, .tip-dot.err.hollow { background: transparent; box-shadow: inset 0 0 0 1.5px var(--err); animation: none; }
 .dot-when { display: block; margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--tip-line);
     color: var(--fg-dim); font-variant-numeric: tabular-nums; }
 .dot-when b { color: var(--fg); font-weight: 600; }
@@ -1912,8 +1981,9 @@ html[data-focus] .msg.user .mrow .sp { display: none; }
 
    Unlike the rest of this block it is NOT a CSS hide: a section you cannot open is worse than one that is
    simply gone, and the point of folding is that the thing is still one click away. So the fold seeds the
-   `details`' own state (see `useFocusFold`) and this only marks it. */
-html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
+   `details`' own state (see `useFocusFold`) and this only marks it. `.touched` is a section the reader has opened or
+   closed since: the note explains a fold nobody asked for, so it goes once they have. */
+html[data-focus] .r-py-sec.focus-fold:not(.touched):not([open]) > summary::after {
     content: " — folded in focus mode"; color: var(--fg-faint); font-style: italic; }
 
 /* Shared tool OUTPUT CELL (python_exec / exec / any future tool): capped height → scrolls, with a drag grip.
@@ -2201,6 +2271,8 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
 /* "show N more": an open container draws its members a page at a time. */
 .jt-more { font: inherit; font-size: 0.95em; padding: 0 4px; color: var(--accent); background: none; border: none; cursor: pointer; }
 .jt-more:hover { text-decoration: underline; }
+/* The "show all" of a cut string stays on ONE line at the end of its row, however the string beside it wraps. */
+.jt-row > .jt-more { flex: none; white-space: nowrap; align-self: flex-start; }
 .jt-row { display: flex; align-items: baseline; gap: 4px; font: 0.86em/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .jt-row.jt-clickable { cursor: pointer; }
 .jt-row.jt-clickable:hover { background: var(--panel-2); border-radius: 3px; }
@@ -2212,15 +2284,18 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
 .jt-row .tri.jt-tri-space { visibility: hidden; }
 /* A time drawn as a clock time and an age; the exact value is on hover. */
 .jt-time { cursor: help; }
-.jt-key { color: var(--j-key); }
+:where(.jt-key) { color: var(--j-base); }   /* the colon; the name is `.jt-key-text` */
+:where(.jt-key-text) { color: var(--j-key); }
 .jt-brace { color: var(--j-base); }
 /* The `,` after a member that another follows. Pulled back over the row's flex gap so it sits against its value. */
 .jt-comma { color: var(--j-base); margin-left: -4px; }
+/* …inside a scalar's own span (so a string that wraps ends its last line with it), there is no flex gap to pull back over. */
+.jt-val > .jt-comma { margin-left: 0; color: var(--j-base); }   /* the value's own token class would otherwise paint it */
 .jt-preview { color: var(--fg-faint); font-style: italic; }
-.jt-string { color: var(--j-str); word-break: break-word; }
-.jt-number { color: var(--j-key); }
-.jt-boolean { color: var(--j-lit); }
-.jt-null { color: var(--j-lit); }
+:where(.jt-string) { color: var(--j-str); word-break: break-word; }
+:where(.jt-number) { color: var(--j-key); }
+:where(.jt-boolean) { color: var(--j-lit); }
+:where(.jt-null) { color: var(--j-lit); }
 /* A key the tool schema documents → dotted underline on its name only (this key has a hover tooltip with its description). */
 .jt-key-doc { cursor: help; }
 .jt-key-doc .jt-key-name { text-decoration: underline dotted; text-underline-offset: 2px; text-decoration-thickness: 1px; }
@@ -2886,6 +2961,8 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 .cmp-vis:hover { opacity: .85; }
 .cmp-vis.on { opacity: 1; filter: none; color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent); }
+/* The eye on a model nobody said anything about: on by assumption, drawn dimmer than one the person turned on. */
+.cmp-vis.assumed.on { opacity: .6; }
 /* The dropdown floats down from the chip over the composer body. Capped to the iframe viewport (100vh = the
    composer card's own height, since the shell sizes the iframe to it) so a long model list SCROLLS inside the
    menu instead of spilling past the card's bottom edge and being clipped by the iframe. */
@@ -3717,6 +3794,11 @@ button.ui-step-now:hover { background: var(--panel-2); color: var(--fg); }
 /* Above a code theme's `pre code.hljs { padding: 1em }`, also where a page scopes the theme under `:root:not(…)`. */
 .code-block.copyable-code pre.code code.hljs { padding: 0; background: none; }
 .copyable-code .code-tools { top: 50%; transform: translateY(-50%); }
+/* A line that WRAPS: room on the right for the button, which sits in the corner instead of beside the first line. */
+.copyable-code.corner .code { padding: 10px 40px 10px 12px; }
+.copyable-code.corner .code-tools { top: 6px; right: 6px; transform: none; opacity: 1; }
+/* `.has-extra`: the toolbar also holds a control beside the copy button (the call's raw-argv toggle), so the code keeps clear of the wider corner. */
+.copyable-code.corner.has-extra .code { padding-right: 118px; }
 /* FIND IN A CODE BLOCK (Ctrl/Cmd+F with the block focused). The block is focusable for the shortcut, so a click
    must not ring it; only keyboard focus does, as on the output cell. The bar takes the toolbar's corner, so the
    toolbar steps aside while it is open. */
@@ -4405,7 +4487,7 @@ button.chat-chip.on { background: var(--accent); color: var(--accent-fg); }
 /* "Scanned: the keys match": said in the ok colour, since it replaces the comparison a person would have made. */
 .pair-checked { color: var(--ok); }
 
-/* ======================= THE MODAL SHELL (sidebar/dialog.tsx) =======================
+/* ======================= THE MODAL SHELL (sidebar/dialog.tsx) ================
    HERE RATHER THAN IN chat.css, because the panel loads only this sheet and the approval card is drawn on
    both surfaces. The primitive's own header says it exists so a fourth dialog would not hand-roll a
    backdrop, an Escape and a click-outside again; that argument only holds if everything that needs one can
@@ -4570,3 +4652,22 @@ html[data-calm] .task-say > .task-dev, html[data-focus] .task-say > .task-dev { 
 .pkg-loaded-name { color: inherit; }
 /* A refused card: why the package cannot be installed, and the reason's code under it. */
 .pkg-refused .pkg-reason { font-family: var(--mono, ui-monospace, monospace); font-size: .85em; color: var(--fg-dim); }
+
+/* `.hc`: a trigger that opens a hover card (hover-card.tsx); `.hc-on` while it is open, which lights a JSON tree string
+   in the theme's own colours (a wash of the text colour, so it reads in every theme). `.hc-card` is the card: fixed, so no
+   scrolling ancestor clips it, capped in height so the pointer can enter it and scroll a long text. */
+.hc { position: relative; }
+.hc.jt-val:hover, .hc.hc-on { background: color-mix(in srgb, currentColor 14%, transparent); border-radius: 3px; }
+.hc-card {
+    position: fixed; z-index: 2147482000; box-sizing: border-box; width: max-content; max-width: min(560px, calc(100vw - 16px)); max-height: 240px; overflow: auto;
+    padding: 7px 10px; background: var(--panel); color: var(--fg); border: 1px solid color-mix(in srgb, var(--fg) 20%, var(--panel));
+    border-radius: 8px; box-shadow: 0 6px 24px rgba(0, 0, 0, .35); font-weight: normal; text-align: left; cursor: auto;
+}
+.hc-text { margin: 0; white-space: pre-wrap; word-break: break-word; font: inherit; font-size: .92em; color: var(--fg); tab-size: 4; }
+=======
+/* `.code-morph`: the characters of a reformatted script flying from where the live call had them to their new places
+   (code-morph.ts). The real text is hidden while they fly; the layer is removed when they land. */
+pre.code.morphing { position: relative; }
+pre.code.morphing:not(.numbered) > code, pre.code.morphing .lcode { visibility: hidden; }   /* a numbered block keeps its gutter */
+.code-morph { position: absolute; inset: 0; pointer-events: none; white-space: pre; }
+.code-morph > span { position: absolute; }

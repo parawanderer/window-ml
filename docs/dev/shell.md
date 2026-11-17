@@ -226,6 +226,20 @@ calls them yet: the `/files` bridge a cell's `open()` goes through is the next s
 - `storeWhole` discards its store when a chunk fails, so the host's temp file goes with it. A store's commit has no
   `replace`: whether it replaces is decided by the basis.
 
+### `/files` in an argv (H9)
+
+While `/files` is a folder on the host's disk, the host maps it in an `ml.sh` argv; nothing passes it yet, since no
+session mounts an uploads folder before H16.
+
+- `planSpawn(req, { files: { mount, session, shown } })` sends `spawn.files`, only when `hostMapsFiles(hello)`.
+  The host maps the `pathArgs` entries and the cwd that are `/files` or under it, and lists each mapping in the facts'
+  `files`. The card shows both forms (`filesLines`), and so does the line under a call that ran without asking.
+- A call whose manifest does not place a `/files` argument gets `plan.filesRefusal`, which names the real path to retry
+  with. That covers no manifest, or a parse the manifest does not describe. Placing is the parse with the version check
+  left out (`filesPlaced`): at plan time the host has not reported the version yet, and the version moves no argument.
+- Every path argument carries `role` (`describeCall`, `writtenOperands`), and a written one is sent as `role: "write"`
+  whatever `/files` is. The host refuses one that resolves into an `attached/` folder (`InAttached`) by either name.
+
 ## Detached calls (ASYNC_CALLS.md, mode 1)
 
 A call that runs past its lease detaches into a task: [`async-calls.md`](async-calls.md) is how that is built (the
@@ -296,3 +310,19 @@ Settings checkbox (a user gesture), is open: it has to work from both the overla
   listener (`nativePort`). Read later, it is gone.
 - **The fake host answers synchronously enough to hide ordering bugs.** A test that depends on the port being open
   `flush()`es before asserting, as `tests/sh-host.test.mjs` does.
+
+## The installer guide
+
+Settings, "Programs (ml.sh)", offers one line that installs the host while none has answered (`hostMissing()` in
+`sw-shell.ts`: the last hello this worker made, else the stored `shellHostSeen`). The line is built by `hostInstall`
+(`src/shell/host-install.ts`) from `chrome.runtime.id` and `tools/host-dist.json`, whose `installer` key (written by
+`node scripts/fetch-host.mjs --bump <tag>` from the release's `install.sh`, after checking it names the tag and every pinned
+archive hash) is what the line's `sha256` check pins. A pin without it shows no line, so bumping to a release that
+carries `install.sh` is what turns the guide on. "Check again" sends `SHELL_STATUS` with `probe: true` (extension pages
+only), which says hello whatever ml.sh's setting is. The chat page's `host-not-connected` attention item uses the same
+test, plus "a session exists". The design and its threat items: `docs/spec/SHELL.md`, "Installing the host".
+
+The host-version hint rides the same state: `parseHostVersion` keeps only a strict `major.minor.patch`, `hostOutdated` compares
+it with the pin's tag by number (older only; equal, newer and unknown are no), and the worker stores the parsed version as
+`shellHostVersion` beside `shellHostSeen` (a profile without it has no hint until the next hello). `hostOutdated` and
+`pinnedHostVersion` ride `ShellStatus` as parsed strings, and `host.version` is the parsed form or `"unknown"` (the connect path too, so no answer and no inspector read carries a host's own text); the `host-outdated` attention code and the guide's update wording read them.

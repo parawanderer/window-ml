@@ -33,6 +33,8 @@ runtime) and hash, and what the page offers for a session follows what its runti
   new-tab page or `about:blank` (2026-09-17). The agent runs as a
   background-hosted run (the loop in the service worker, DOM tools delegated to the bound tab). A third option,
   headless, is shown disabled as a placeholder: headless agents and subagents are deliberately deferred.
+  Proposed (2026-11-14): "No tab" replaces "New tab", a run with no page that gets one later
+  ([`TABLESS_RUN.md`](TABLESS_RUN.md)).
 - **Plain chats live here too.** A conversation with no page tools needs no tab at all.
 - **One index across tabs.** The overlay and the DevTools panel show one tab's sessions; this page shows every session
   from every tab, plus saved ones. The background holds the index.

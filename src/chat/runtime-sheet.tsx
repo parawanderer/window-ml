@@ -13,11 +13,19 @@ import type { ChatStore } from "./chat-store";
 import { mayCommand } from "./grants";
 import { openSession } from "./nav";
 
-/** What each capability means to a person, in the order worth reading. Unknown ones are left out, not guessed at. */
-const CAPS: [keyof RuntimeCapabilities, string][] = [
-    ["chat", "Chats"], ["agent", "Agent runs"], ["tabs", "Its tabs"], ["screenshots", "Screenshots"],
-    ["highlight", "Highlight on the page"], ["persistence", "Saved sessions"], ["sideCalls", "Titles and summaries"],
-    ["resourcePanel", "Resource graphs"], ["pythonBench", "Python bench"], ["headless", "Headless runs"],
+/** What each capability means to a person, in the order worth reading: its label, and what the hover says it is
+ *  for. Unknown ones are left out, not guessed at. */
+const CAPS: [keyof RuntimeCapabilities, string, string][] = [
+    ["chat", "Chats", "Plain conversations with a model on this runtime: no tools, no page."],
+    ["agent", "Agent runs", "Runs where the model works toward a task, calling tools one step at a time, with you approving what needs it."],
+    ["tabs", "Its tabs", "This runtime is a browser: you can list its open tabs and start a run on one, or on a blank tab."],
+    ["screenshots", "Screenshots", "You can ask it for a picture of a tab it has open."],
+    ["highlight", "Highlight on the page", "You can have it outline an element, or a point, on the page a session is running on."],
+    ["persistence", "Saved sessions", "Its sessions are kept and survive a restart of the runtime, so they are still here when it comes back."],
+    ["sideCalls", "Titles and summaries", "Small helper calls on your behalf to its utility model, such as naming a session or summarising one."],
+    ["resourcePanel", "Resource graphs", "It reports memory and GPU use, which the Models and memory panel draws."],
+    ["pythonBench", "Python bench", "A Python workbench you can open against this runtime."],
+    ["headless", "Headless runs", "Runs that start with no human present, so every approval is refused. Reserved: no runtime offers it yet."],
 ];
 
 /** The Runtimes tab: a runtime picker when there is more than one, then that runtime. */
@@ -45,7 +53,7 @@ export function RuntimeSheet({ store }: { store: ChatStore }) {
 
 /** What the runtime is and what it can do. */
 function RuntimeFacts({ rt }: { rt: RuntimeInfo }) {
-    const can = CAPS.filter(([k]) => rt.capabilities[k]).map(([, label]) => label);
+    const can = CAPS.filter(([k]) => rt.capabilities[k]);
     return (
         <section class="chat-set-group" aria-label="About this runtime">
             <div class="chat-set-row"><div class="chat-set-label"><span>Status</span></div>
@@ -62,10 +70,22 @@ function RuntimeFacts({ rt }: { rt: RuntimeInfo }) {
                 came out centre-ragged — three chips, then two, then one, each line ending somewhere else. Below the
                 label and left-aligned it reads as the list it is, like Models and Storage under it. */}
             <div class="chat-set-row stack"><div class="chat-set-label"><span>Offers</span></div>
-                <div class="rt-val rt-caps">{can.length ? can.map((c) => <span key={c} class="chat-chip">{c}</span>) : "Nothing this client knows"}</div></div>
+                <div class="rt-val rt-caps">{can.length ? can.map(([k, label, tip]) => <span key={k} class="chat-chip" tabIndex={0} {...cursorTipOn(tip)}>{label}</span>) : "Nothing this client knows"}</div></div>
         </section>
     );
 }
+
+/** What a model's capability label means, for its hover. Ollama's own names, reported as they come: one this page does
+ *  not know is drawn without a tip rather than explained wrongly. */
+const KIND_TIPS: Record<string, string> = {
+    completion: "Generates text: it can answer, continue and chat.",
+    tools: "Can call tools: the agent can use it, because it can ask for a function by name and arguments.",
+    thinking: "Reasons before it answers. The reasoning is shown apart from the reply and costs extra tokens.",
+    vision: "Reads images: a screenshot or a picture can be sent to it.",
+    audio: "Takes audio as input.",
+    embedding: "Turns text into a vector for search and similarity. It does not chat.",
+    insert: "Fills in the middle of some text, between what comes before and after (code infill).",
+};
 
 /** Past this many models the list gets a filter: a cloud gateway lists dozens. */
 const MODEL_FILTER_AT = 8;
@@ -123,7 +143,7 @@ function RuntimeModels({ store, rt }: { store: ChatStore; rt: RuntimeInfo }) {
                                         <li key={m.id}><code>{m.id}</code>
                                             {m.default ? <span class="chat-chip">default</span> : null}
                                             {m.where ? <span class={`chat-chip rt-where ${m.where}`}>{m.where}</span> : null}
-                                            {m.kinds?.length ? <span class="rt-kinds">{m.kinds.join(" · ")}</span> : null}</li>
+                                            {m.kinds?.length ? <span class="rt-kinds">{m.kinds.map((k, i) => <>{i ? " · " : ""}<span key={k} class={KIND_TIPS[k] ? "rt-kind" : undefined} {...(KIND_TIPS[k] ? { tabIndex: 0, ...cursorTipOn(KIND_TIPS[k]) } : {})}>{k}</span></>)}</span> : null}</li>
                                     ))}
                                     {!shown.length ? <li class="rt-none">No model matches “{q.trim()}”.</li> : null}
                                 </ul>

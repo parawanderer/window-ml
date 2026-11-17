@@ -59,11 +59,11 @@ import { withRuntime } from "./sw-current-runtime";
 import { isolationAvailable, pageApproved, runIsolatedExec } from "./sw-isolated-exec";
 import { handOverSettled } from "./nav-handover";
 import { fetchTarget } from "./sw-fetch-url";
-import { grantRunFetch, grantRunOrigin, runOriginGranted, runOrigins, runFetchConsented, grantRunPython, takePyRefusal, pythonDialectReady } from "./worker-tools";
+import { grantRunFetch, grantRunOrigin, runOriginGranted, runOrigins, runFetchConsented, grantRunPython, takePyRefusal, pythonDialectReady, retabWorkerRun } from "./worker-tools";
 import { autoApprovePython } from "../agent/auto-approve";
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
 import { takeMovedNote } from "./move-run";
-import { PROPOSAL_TOOLS, withoutProposals, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, keptOnRebuild, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart } from "./sw-runs";
+import { PROPOSAL_TOOLS, withoutProposals, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, keptOnRebuild, turnTabCells, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { drawStoredPages } from "./sw-attach";
 import { claimValue, runMayClaim, valueHolders, readStoredBytes, readStoredColumns, readStoredText, withHeldValuesOnly } from "./sw-values";
@@ -84,7 +84,7 @@ import { adoptOnTab } from "./adopt-run";
 import { approvalFor, cancelReasons, gatePageTurn, noteRunEnd, noteRunStart, personClaimed } from "./sw-start-approval";
 import { pageTurnText } from "../agent-start";
 import { toPageUi } from "./sw-side-panel";
-import { checkInstall, fetchApproved, installRequest, judgeAnswer, noteInstallOutcome, type PkgCheck } from "./sw-pkg-install";
+import { checkInstall, installApproved, installRequest, judgeAnswer, noteInstallOutcome, type PkgCheck } from "./sw-pkg-install";
 
 // The model-facing cap cdpEval clips its console to (exec's default per-slot cap) — the UI keeps far more, so
 // `seen` marks where the model's copy stopped, exactly like the main-world exec path.
@@ -539,7 +539,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
      *  tools offer it (the settings turned ml.sh on when it started). Whether the host answers is the check's. */
     const offersManifests = (): boolean => p.builtBy === "worker" && byWorker() && runsInWorker(p, "propose_manifest");
     /** Whether this run may ask the person to install a Python package (`python_install`): one the worker built, whose
-     *  tools offer it (none yet: `OFFER_PYTHON_INSTALL`, sw-run-start.ts). */
+     *  tools offer it (`OFFER_PYTHON_INSTALL`, sw-run-start.ts). */
     const offersInstall = (): boolean => p.builtBy === "worker" && byWorker() && runsInWorker(p, "python_install");
     /** `p` as the run is stored for a later turn or a worker restart: a run handed to the worker during this turn
      *  (`makeWorkerRun`) stays the worker's. `p` is the turn's start payload, written before the hand-over, and storing
@@ -599,7 +599,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         return visionMemo.facts;
     };
     /** A worker-run python_exec's `image` and `cast`, through the worker's vision over this run's tab (worker-media.ts). */
-    const pyMedia = pyMediaFor(runId, tabId);
+    const pyMedia = pyMediaFor(runId, () => tabId);
     const verifyHere = async (doc: string | null | undefined, req: WorkerVerify, verb: string): Promise<VerifyOutcome> =>
         workerVerify(runId, tabId, doc, req, verb, await visionFacts(), tabUrlNow);
     /** Where an approved exec of this run would go now (exec-routing.ts): the tab's site as the browser reports it, the
@@ -713,7 +713,8 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
     // Undoes what this turn registered: run when the turn settles, and when its setup throws before the loop starts.
     let unhostAsks: (() => void) | undefined;   // set once the run's steps may raise nested asks (sw-asks.ts)
     let unwatchArrivals: (() => void) | undefined;   // set once the run judges its tab's arrivals (nav-arrival.ts)
-    const settle = (): void => { unhostAsks?.(); unwatchArrivals?.(); if (unwatchArrivals) watchBetweenTurns(tabId, runId); cancelReasons.delete(runId); noteRunEnd(runId); dropActs(runId); runControllers.delete(runId); runInboxes.delete(runId); closeTurnTasks(runId); untrackRun(tabId, runId); deleteRun(runId); endPythonTurn(runId); releaseDebugger(tabId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); the turn's end: the run's Python namespace stays, the shared full worker's dict goes
+    let rewatchArrivals: (() => void) | undefined;   // the same judge, moved to the turn's tab now
+    const settle = (): void => { turnTabCells.delete(runId); unhostAsks?.(); unwatchArrivals?.(); if (unwatchArrivals) watchBetweenTurns(tabId, runId); cancelReasons.delete(runId); noteRunEnd(runId); dropActs(runId); runControllers.delete(runId); runInboxes.delete(runId); closeTurnTasks(runId); untrackRun(tabId, runId); deleteRun(runId); endPythonTurn(runId); releaseDebugger(tabId); };   // detach the run's CDP debugger (attached once, reused across execs/clicks); the turn's end: the run's Python namespace stays, the shared full worker's dict goes
     /** Ends the run's session on every surface when the setup throws after its start event went out; set once the fan exists. */
     let endSession: ((error: string) => void) | undefined;
     try {
@@ -721,6 +722,19 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
         // The live controller takes over from any start registration: from here a CANCEL_RUN finds this one.
         for (const e of startingSet ?? []) endStart(runId, e.ctl);
         runInboxes.set(runId, { tabId, queue: [] });   // a.say() steering lands here while the run is live
+        // The turn's TAB CELL (MOVE_RUN.md, shape (b)): every send below reads `tabId` as it sends, so re-pointing the
+        // binding moves them; what holds the old tab by value is moved here. Only `rekeyRunInbox` calls it.
+        // A run the worker built registered its worker tools once, at its start: they follow the run to the tab it is on
+        // now, at this turn's start (a move between turns) and through the cell (a move or a replace during it).
+        retabWorkerRun(runId, tabId);
+        turnTabCells.set(runId, (to) => {
+            if (to === tabId) return;
+            const from = tabId;
+            tabId = to;
+            retabWorkerRun(runId, to);
+            releaseDebugger(from);
+            rewatchArrivals?.();
+        });
         // Register the run against its tab so the navigation sensor watches it — UNLESS the run opted out of
         // cross-page persistence (navigate: false), in which case a nav simply ends it (no barrier, no adopt).
         if (p.crossPage !== false) trackRun(tabId, runId, p.rebuild);
@@ -981,6 +995,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
             if (v.kind === "deny") raiseDenyCard(); else void answerArrival();
         };
         unwatchArrivals = watchArrivals(tabId, runId, judgeHere);
+        rewatchArrivals = () => { unwatchArrivals?.(); unwatchArrivals = watchArrivals(tabId, runId, judgeHere); };
         /** "A model call is underway" — the one stamp for it, since the pending step START fires only once a
          *  TOOL is about to run (i.e. after the generation) and a turn that emits nothing but a tool call
          *  produces no stream deltas at all. Re-fired on each phase change with the marks so far. */
@@ -1856,7 +1871,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                                 // A package card stands only on the rows it showed: anything else approving it is a denial.
                                 if (tool === "python_install" && (decision === true || (typeof decision === "object" && !!decision && decision.approved && !decision.cancelled))) {
                                     const j = pkg && offersInstall() ? judgeAnswer(pkg, typeof decision === "object" ? decision.files : undefined) : { ok: false as const, reason: "no-check", why: "the run does not offer python_install, or its card could not be checked" };
-                                    if (j.ok) { const check = pkg; if (check) noteInstallOutcome(runId, args, fetchApproved(check).catch(() => "Not installed: the download failed.")); }
+                                    if (j.ok) { const check = pkg; if (check) noteInstallOutcome(runId, args, installApproved(check, runId, abortCtl.signal).catch(() => "Not installed: the install failed before it changed anything.")); }
                                     else {
                                         recordRunLog(runId, { level: "warn", subsystem: "python", kind: "pkg-card-mismatch", reason: j.reason, detail: { tool, seq: gateSeq ?? seqBase, why: j.why } });
                                         decision = { approved: false, source: "user", feedback: "The approval did not carry the files the card showed, so it counts as a denial." };

@@ -16,7 +16,7 @@ import type { ChatExtras } from "./chat/extras";
 import { ChatStore } from "./chat/chat-store";
 import { hostServices } from "./chat/host-services";
 import { mainView } from "./chat/nav";
-import { settingsAnchor, settingsTab } from "./chat/settings-page";
+import { settingsAnchor, settingsPlace, settingsTab } from "./chat/settings-page";
 import { LocalHost } from "./chat/local-host";
 import { webPlatform, type ClientPlatform } from "./chat/platform";
 import { extensionPairing } from "./pairing/extension-pairing";
@@ -34,10 +34,11 @@ import { BACKEND_HEALTH_MS, connectResourceStream, fetchModels, loadedAt, pollBa
 import { PythonBench } from "./sidebar/vram-bench";
 import type { RuntimeId } from "./session/session-host";
 import { BACKUP_BLOCK_ID, BACKUP_TAB, Settings, searchSettings, showSettingsSection } from "./sidebar/settings/settings";
+import { addressHash } from "./sidebar/links";
 import { config, psError } from "./sidebar/store";
 import { residentNow } from "./sidebar/resource/panel-facts";
 import { residentReader } from "./sidebar/resident-reader";
-import { DEFAULT_CONFIG, type MlConfig } from "./contract";
+import { DEFAULT_CONFIG, SETTING_PLACES, type MlConfig } from "./contract";
 
 /**
  * The extension's device adapter.
@@ -102,6 +103,17 @@ function SettingsPane() {
         showSettingsSection(BACKUP_TAB, "storage", BACKUP_BLOCK_ID);
         settingsAnchor.value = null;
     }, [anchor]);
+    // `#/settings/extension/<panelTab>[/<section>]` and `#/setting/<key>`: open that tab and section, and scroll to and
+    // mark the setting's row, once. Not `openPanelRoute`: that also sets the sidebar's `view`, which here is the
+    // chat page's own list-or-session signal.
+    const place = settingsPlace.value;
+    useEffect(() => {
+        if (!place) return;
+        const at = place.setting ? SETTING_PLACES[place.setting as keyof MlConfig]
+            : place.panelTab ? { tab: place.panelTab, section: place.section } : undefined;
+        if (at) showSettingsSection(at.tab, at.section, place.setting ? { setting: place.setting } : undefined);
+        settingsPlace.value = null;
+    }, [place]);
     return <Settings layout={useNarrow() ? "one-page" : "pills"} />;
 }
 
@@ -167,6 +179,13 @@ installServices(hostServices(store, extensionPlatform, {
         catch { resolve(null); }
     }),
     findSetting: (query) => { searchSettings(query); settingsTab.value = "extension"; mainView.value = "settings"; },
+    // A `window-ml:` link sets this page's hash in place, which the router reads like any other address (LINKS.md).
+    // The same address twice changes nothing, so it is read again by hand.
+    openAddress: (route) => {
+        const hash = addressHash(route);
+        if (location.hash === hash) dispatchEvent(new HashChangeEvent("hashchange"));
+        else location.hash = hash;
+    },
 }));
 initThemeStyle();
 installMermaid(document);   // ```mermaid fences in model text become diagrams (mermaid-client.ts)

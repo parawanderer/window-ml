@@ -201,3 +201,28 @@ test("in a STATIC document (the PDF) a drawn fence is its <img> alone, in the th
     assert.match(markdown("```mermaid\n" + bad + "\n```", { diagrams: "light" }), /data-mmd="error"><pre class="code mmd-src">.*<div class="mmd-note">Couldn't draw this diagram: Parse error<\/div>/s);
     done.clear();
 });
+
+// --- fence lengths: a fence closes only on a line of the same character at least as long ---
+
+test("a four-backtick fence holds a three-backtick block verbatim, and the outer block is one block", () => {
+    const html = markdown("before\n\n````\n```\ngrep -rn \"TODO\" src | head -20\n```\n````\n\nafter");
+    assert.equal((html.match(/<pre class="code">/g) || []).length, 1);
+    assert.ok(html.replace(/<[^>]+>/g, "").includes("```\ngrep"), "the inner fence is code text");
+    assert.ok(!/<p>`+<\/p>/.test(html), "no stray backtick paragraphs");
+});
+
+test("a tilde fence is a code block, and a shorter fence line inside a longer fence does not close it", () => {
+    const html = markdown("~~~js\nconst a = 1;\n~~~\n\n````\n```\nx\n````");
+    assert.equal((html.match(/<pre class="code">/g) || []).length, 2);
+});
+
+test("an unclosed fence at the end of a finished reply runs to the end instead of printing its backticks", () => {
+    const html = markdown("```js\nconst a = 1;");
+    assert.match(html, /<pre class="code">/);
+    assert.ok(!html.replace(/<[^>]+>/g, "").includes("```"));
+});
+
+test("a block opened in the middle of a line still pairs with its closing fence line, which is not an opener", () => {
+    const html = markdown("You said: ```mermaid\ngraph TD\n  A-->B\n```");
+    assert.match(html, /class="mmd"/);
+});

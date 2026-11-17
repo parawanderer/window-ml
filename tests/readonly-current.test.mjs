@@ -606,6 +606,26 @@ test("nothing is sent with selfIntrospection off or without a snapshot; an over-
     assert.match(r.error, /read-only exec/);
 });
 
+test("an image's pixels are not sent to an approved exec: a 14-million-character screenshot is a stub, and the rest still goes", async () => {
+    const { currentForExec, EXEC_CURRENT_CHARS, snapshotCurrent } = await import("../src/agent/current-context.ts");
+    const shot = `data:image/png;base64,${"A".repeat(14_000_000)}`;
+    const snap = snapshotCurrent({ run: { id: "r", model: null, step: 1, maxSteps: 5, startedTs: 0 },
+        messages: [{ role: "user", content: "what is on this page?" }, { role: "user", content: "Screenshot captured.", images: [shot, shot] }], recorded: [], now: 1 });
+    const r = currentForExec(snap, true);
+    assert.equal(r.error, undefined, "over the cap by its pixels alone, and still sent");
+    assert.ok(JSON.stringify(r.value).length < EXEC_CURRENT_CHARS);
+    const sent = r.value.current.messages[1];
+    assert.equal(sent.images.length, 2, "the count survives");
+    assert.match(sent.images[0], /^\[image omitted: 14000022 characters\]$/, "and the stub says how big each was");
+    assert.equal(sent.content, "Screenshot captured.");
+    assert.equal(r.value.current.meta[1].images, 2);
+    assert.equal(snap.messages[1].images[0], shot, "the run's own message is untouched");
+    // Text is still capped: only the pixels were let off.
+    const bigText = snapshotCurrent({ run: { id: "r", model: null, step: 1, maxSteps: 5, startedTs: 0 },
+        messages: [{ role: "user", content: "x".repeat(EXEC_CURRENT_CHARS), images: [shot] }], recorded: [], now: 1 });
+    assert.match(currentForExec(bigText, true).error, /over the/);
+});
+
 // --- HALTING and FAILURE ----------------------------------------------------------------------------------------------
 // The halting argument for a loop over `messages` is that the array cannot grow. That argument dies with the write half
 // (`for (const m of ml.current.messages) ml.current.drop(m)` is the Set/Map mutator bug again), so it is tested NOW,

@@ -3,6 +3,7 @@
 // the code-gutter line splitter. Extracted from app.tsx; highlight.js language
 // registration lives here so highlighting is self-contained.
 
+import { replaceFences } from "./md-fence";
 import hljs from "highlight.js/lib/core";
 import json from "highlight.js/lib/languages/json";
 import javascript from "highlight.js/lib/languages/javascript";
@@ -63,7 +64,7 @@ export const escapeHtml = (s: string): string =>
 // the literal syntax. Not a parser: targeted replaces, whitespace-collapsed. (The detail view keeps rendered
 // markdown; this is only for the plain pill.)
 export function stripFormatting(s: string): string {
-    return (s || "")
+    return replaceFences(s || "", () => " ")
         .replace(/```[\s\S]*?```/g, " ")            // fenced code blocks
         .replace(/`([^`]+)`/g, "$1")                // inline code
         .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")  // links / images → their text
@@ -145,13 +146,16 @@ export function markdown(src: string, opts: { math?: boolean; diagrams?: "light"
     const codeBlocks: string[] = [];
     // Pull fenced code from the RAW source first (highlighted, not double-escaped),
     // stashed behind an ASCII placeholder restored at the end.
-    const stashed = src.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang: string, code: string) => {
+    // Fences are read line by line (md-fence.ts), so four backticks, tildes and a closing line of the same kind all hold;
+    // a triple-backtick run in the MIDDLE of a line, which no CommonMark reader treats as a fence, still does here.
+    const fence = (_: string, lang: string, code: string): string => {
         // A ```mermaid fence is a diagram: drawn already (the cache) or pending, for mermaid-client.ts to draw in place.
         // `diagrams` names a static document's theme: the drawing alone, from the cache, and nothing pending.
         codeBlocks.push(lang === "mermaid" ? (opts.diagrams ? mermaidStatic(code.replace(/\n$/, ""), opts.diagrams === "dark") : mermaidBlock(code.replace(/\n$/, "")))
             : `<pre class="code"><code class="hljs">${highlight(code.replace(/\n$/, ""), lang || undefined)}</code></pre>`);
         return `\n@@CODE${codeBlocks.length - 1}@@\n`;
-    });
+    };
+    const stashed = replaceFences(src, (lang, code) => fence("", lang, code)).replace(/```(\w*)\n?([\s\S]*?)```/g, fence);
     // Stash rendered math behind placeholders BEFORE escaping — KaTeX output is trusted HTML that must
     // NOT be re-escaped or mangled by the inline formatter. Display ($$…$$ / \[…\]) before inline
     // ($…$ / \(…\)). The inline-`$` guards (no space just inside, no trailing digit) skip currency.

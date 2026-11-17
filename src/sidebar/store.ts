@@ -2,6 +2,7 @@
 // signal), the view/config/model signals, and the storage-key constants. Every
 // view module imports from here — extracted from app.tsx so the components can
 // live in their own files while still reading one source of truth.
+import { readVisionChoices, type VisionChoices } from "../vision-choice";
 import { signal } from "@preact/signals";
 import type { MlConfig } from "../contract/contract-config";
 import type { ExtendProfile, TokenUsage, GenPhase } from "../contract/contract-chat";
@@ -16,6 +17,9 @@ import { PREDICT_KEY } from "../resource/load-records";
 import { DEFAULT_CODE_THEME } from "../code-themes";
 import { VRAM_PALETTE_KEY, VRAM_PALETTES, vramPalette } from "./palette";
 
+/** What the person said per model about it seeing images, for the Commander's eye (`vision-choice.ts`); the chat page keeps its own. */
+export const visionChoices = signal<VisionChoices>({});   // state: ui
+export const VISION_KEY = "ml_vision_choices";   // storage.local: what the person said per model about it seeing images (vision-choice.ts)
 export const FONT_KEY = "ml_debug_fontscale";   // storage.local: the panel's font scale
 export const BASE_FS = 12, MIN_FS = 0.8, MAX_FS = 1.6;   // font-scale bounds (× BASE_FS px)
 // Sidebar-only code-block display prefs (storage.local, like fontScale — not part
@@ -177,6 +181,9 @@ export const codeThemeUi = signal<boolean>(true);
 // FOCUS MODE: read the run as a conversation. A DISPLAY pref, not a filter — it quiets chrome (counters,
 // badges, provenance) via CSS on a root attribute, so nothing is dropped and turning it off restores it.
 export const focusMode = signal(false);
+/** How many times the calm chat has been switched ON this session; a block's raw choice resets on it (raw-view.ts). */
+// state: ui — a counter, not a preference
+export const calmEntered = signal(0);
 /**
  * GROUP EVERY TOOL CALL, not just a run of the same one. Off here, in which case the reading view folds by the
  * ordinary rule (adjacent, same tool, at least three, ended); the chat page turns it ON for a device that has not
@@ -497,6 +504,7 @@ export const openBench = (code?: string): void => {
  *  so a change arriving through ANY path (a button, a Settings toggle, a direct chrome write) counts. */
 export function prefsSnapshot() {
     return {
+        visionChoices: visionChoices.value,
         fontScale: fontScale.value, codeWrap: codeWrap.value, codeLineNumbers: codeLineNumbers.value,
         codeTheme: codeTheme.value, codeThemeCustom: codeThemeCustom.value, codeThemeUi: codeThemeUi.value,
         showStatsTokens: showStatsTokens.value, showStatsTps: showStatsTps.value,
@@ -522,6 +530,7 @@ function ifUntouched<T>(sig: { value: T }, snap: T, v: T): void {
  *  key the person changed since `prefsSnapshot` was taken. The DOM side effects (applyFont and friends) stay
  *  at the call site: they render whatever value won, so nothing a signal holds goes undrawn either way. */
 export function restorePrefs(d: any, snap: ReturnType<typeof prefsSnapshot>): void {
+    ifUntouched(visionChoices, snap.visionChoices, readVisionChoices(d[VISION_KEY]));
     if (d[FONT_KEY]) ifUntouched(fontScale, snap.fontScale, d[FONT_KEY]);
     ifUntouched(codeWrap, snap.codeWrap, d[WRAP_KEY] !== false);
     ifUntouched(codeLineNumbers, snap.codeLineNumbers, !!d[LINES_KEY]);

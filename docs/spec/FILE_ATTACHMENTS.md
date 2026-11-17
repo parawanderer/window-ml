@@ -203,17 +203,21 @@ needs one) and the answer is:
 
 | The model… | The message |
 | --- | --- |
-| sees, or the person said it does (`vision: true`) | is sent with the images |
-| does not see or is UNKNOWN, and a reader model is set | goes with the reader's reading of each image, attributed to the reader |
+| sees, or is claimed to (`vision: true`: the person said yes, or the model's vision is not reported and the person has not said no) | is sent with the images |
+| does not see, or is UNKNOWN and the person said no, and a reader model is set | goes with the reader's reading of each image, attributed to the reader |
 | does not see, and no reader model is set | goes with each image or page named ("page 3 is a scan this model cannot see; set a reader model in Settings to have it read") |
-| is UNKNOWN, and no reader model is set | is refused before sending (`unsupported`), with a sentence: "This model may not see images. If it does, turn on 'This model sees images' and send again." Nothing is dropped and nothing is sent. |
+| is UNKNOWN and the person said no, and no reader model is set | is refused before sending (`unsupported`), with a sentence: "This model may not see images. If it does, turn on 'This model sees images' and send again." Nothing is dropped and nothing is sent. |
 
-An unknown model with a reader goes to the reader (decided 2026-10-29): no pixels reach a model nobody confirmed, and
-"does not see" can be declared only for the default model, so refusing there would leave another cloud model only
-the choice of forcing images on it.
+An unknown model the person said does not see goes to the reader (decided 2026-10-29). Since 2026-11-15 (Shane's ruling) an
+unknown model nobody said no to is sent the images (the override below). "Does not see" can be declared only for the
+default model, so refusing there would leave another cloud model only the choice of forcing images on it.
 
-The override is `vision: true` on `chat.start`, `agent.start` and `session.send`, the person's declaration, meaning
-what `ml.agent({ vision: true })` means: send the images to the run's own model, no probe. `session.send` carries it
+The override is `vision: true` on `chat.start`, `agent.start` and `session.send`, meaning what `ml.agent({ vision:
+true })` means: send the images to the run's own model, no probe. Amended 2026-11-15 (Shane's ruling): it is claimed when the
+person said yes, or when the model's vision is not reported and the person has not said no (an unreported model is
+assumed to see, and the eye toggle remembers the person's choice per model); a LOCAL model reported without image
+input is never claimed, and a cloud model's vision counts as not reported whatever its kinds list says
+(`visionUnreported`, sees-images.tsx). Before, `vision: true` was only ever the person's word (2026-10-29). `session.send` carries it
 for a chat only; an agent run's vision is decided at `agent.start`. The composer offers it as the "This model sees
 images" toggle when the model's vision is not reported (sees-images.tsx), on the start page and in a chat's composer;
 the refusal is checked again in the runtime. This changes what a worker chat does with a pasted image: a model of
@@ -1185,7 +1189,38 @@ refusal and gives a sentence for it:
   naming the last operand. It is H9's second step, in the host lane after the mapping: the manifest, the field in both
   readers (`describeCall` in `program-manifest.ts` and the host's `manifest.rs`, per `docs/spec/PROGRAM_MANIFEST.md`)
   and the vectors (`VECTOR_PIN` moves on both sides), with fail-first adversarial rows and e3's pass, since it is a new
-  agent write path. Until it lands, both `cp` calls above are refused with the real-path sentence.
+  agent write path. It landed in #1873 and window-ml-host#43; before them, both `cp` calls above were refused with the real-path sentence.
+- AMENDED 2026-11-13 (host lane), as built:
+  - `writtenOperands: "last"` is the field (`PROGRAM_MANIFEST.md`), on `cp` only. `mv` carries none: its sources are
+    removed, so every operand is written, and `mv` out of `attached/` stays refused as the table says (the sentence
+    above naming the last operand for `mv` is the narrower reading, and is not taken). Every path argument now
+    carries its `role`, read or write, in both readers and the vectors.
+  - The worker refuses what cannot be placed, before `spawn`, since it holds the manifest: a call with no manifest, or
+    one its manifest's parse does not describe, naming `/files` at an argument's start or after its first `=`. Placing
+    is the parse alone: the program's version and the call's environment are not known at that point and move no
+    argument, so `rg TODO /files` is placed before the host reports rg's version (and still asks until it does).
+  - The host maps, at `spawn`, the `pathArgs` entries (the whole argument, or the part after `split`) and the cwd
+    that are `/files` or start with `/files/`, to the uploads folder of the mount `spawn.files` names (`{mount,
+    session}`, checked as every mount request is, H3). The rest after `/files/` must pass the mount-relative path rule
+    (H2): `/files/../x` is refused, never resolved. The facts list each mapping as `files: [{index, from, to}]`,
+    beside `tilde`, and the card shows both forms. `hello.filesArgv: true` says the host maps; the worker sends
+    `files` only then, since an older host would ignore it (H15).
+  - The host refuses at `spawn`, with `InAttached`, a call whose path argument with `role: "write"` resolves into a
+    held `attached/` (by its realpath and by the device and inode of each existing ancestor), whichever name the call
+    used; an absent `role` reads as read.
+  - So does a written path the program walks (`rm -r`, `cp -R`, every `mv` operand) that holds a held `attached/`
+    beneath it: `rm -r /files` and `cp -R x/attached /files/` would change `attached/` without naming it. Named cost:
+    `mv notes.txt /files/` is refused, and `mv notes.txt /files/notes.txt` runs. The refusal teaches that retry, naming
+    the path as the call wrote it, and the step's result shows it: `/files/ holds attached/, which a recursive write
+    there could change: name the file instead, as in mv notes.txt /files/notes.txt rather than mv notes.txt /files/`.
+  - A `/files` token in an argument that is not a `pathArgs` entry, with `spawn.files` set, passes through the host
+    literally: never mapped, never refused. A stated trust beside H3's: the host holds no description of the call, so
+    it cannot tell a pattern (`rg '/files/' .`, which must reach `rg` as written) from a path the manifest did not
+    place, and the worker's refusal before `spawn` is the check. A token that slips past reaches the program as the
+    literal `/files/…`, which names nothing on the host's disk unless the host has a `/files` of its own (the alias
+    exception above).
+  - No session mounts an uploads folder until H16, so no call sends `files` yet and `/files` stays the browser
+    sandbox's in an argv.
 
 **The `ml.sh` snapshot** (H10 to H14). Settles the second disagreement: "Diffs from git" takes the snapshot with
 `git add -A` into a scratch index, which writes a blob for every changed file into the repository's object store, and
@@ -1215,7 +1250,8 @@ nothing into the repository.
   workspace that is not a git repository gets a null diff (open, as in the section above).
 - H14. The diff's file list is what the call's end flushes to the browser backup ("The sync").
 
-**Telling an old host apart** (H15). `hello` gains `mounts: true` and `snapshot: true`. Their absence means an older
+**Telling an old host apart** (H15). `hello` gains `mounts: true` and `snapshot: true` (and `filesArgv: true`, H9;
+AMENDED 2026-11-13, host lane). Their absence means an older
 host: the worker treats mounts and diffs as unavailable, never probes by calling. The `~` form in H9's sentence
 depends on `hello.tilde`: a host without it gets the raw path in that sentence, so the retry it teaches works on both.
 
@@ -1246,7 +1282,7 @@ rows still compose with it.
 | the same when git cannot be asked | asks | `gitUndoable` null |
 | a new file | free | `exists` false |
 | anything in the uploads folder outside `attached/` | free | `inUploads` |
-| delete in `attached/` | asks | `inAttached` |
+| delete in `attached/` (a cell's `remove`; a process's delete there, `rm` through `ml.sh`, is refused at `spawn` with `InAttached`, H9: a process's walk cannot be judged per file) | asks | `inAttached` |
 | write into, or rename in or out of, `attached/` | refused | `inAttached` |
 | a path outside every mount, through a symlink, or after the mount was replaced | refused | H3, H4 |
 | a write through a hard link | refused | `fstat` `st_nlink` |

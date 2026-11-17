@@ -6,13 +6,16 @@
 // script is not approving every call it can build (docs/spec/SHELL.md, "Approval").
 
 import type { AgentStep } from "../store";
-import { rev } from "../store";
+import { rev, focusMode } from "../store";
 import { ARRIVAL_ASK, ARRIVAL_DENIED, type StepAsk } from "../../contract";
 import { ASK_ID } from "../../approval-key";
 import { decidedSteps, sendApproval, askKey, cursorTipOn } from "../ui-kit";
+import { CopyableCode } from "../code-block";
 import { ApprovalRow } from "./approval-row";
 import { IconWarn } from "../icons";
-import { askOutcomeLines, shCardLines, unaskedCalls, unaskedLines, type ShCardLine, type ShFacts } from "../../shell/sh-call";
+import { shCardLines, type ShCardLine, type ShFacts } from "../../shell/sh-call";
+import { isCallAsk } from "../../shell/sh-entries";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { putCardLines, putSubject, type PutFacts } from "../../shell/sh-put";
 
 /** What each kind of ask is, said as the card's question. A kind this build does not know is asked about plainly. */
@@ -43,38 +46,82 @@ export function askLines(a: StepAsk): ShCardLine[] {
     return Object.entries(a.facts ?? {}).map(([label, v]) => ({ label, value: typeof v === "string" ? v : JSON.stringify(v) }));
 }
 
-/** An ask's lines as the card's definition list. */
-function FactList({ lines }: { lines: ShCardLine[] }) {
+/** An ask's lines as the card's definition list. The COMMAND line is not a fact: it is drawn above them as the code it is
+ *  (a script as the lines it was written in, with a copy button), and a line with a `tip` explains itself on hover.
+ *  @param lines the lines
+ *  @param cls the list's class, so a surface can size it its own way
+ *  @param skipCommand leave the command out, where the caller has drawn it already */
+export function FactList({ lines, cls = "ask-facts", skipCommand }: { lines: ShCardLine[]; cls?: string; skipCommand?: boolean }) {
     return (
-        <dl class="ask-facts">
-            {lines.map((l, i) => (
-                <div key={i} class={l.warn ? "warn" : undefined}>
-                    <dt>{l.warn ? <IconWarn /> : null}{l.label}</dt><dd>{l.value}</dd>
+        <>
+            {skipCommand ? null : lines.filter((l) => l.command).map((l, i) => (
+                <div key={`cmd${i}`} class="ask-cmd">
+                    <CopyableCode text={l.script ?? l.value} block lang="bash" tip="copy the command" />
+                    {l.script != null ? <div class="shc-via">run as <code>{l.value.match(/^\S+ -\w*c(?= )/)?.[0] ?? "a shell"} …</code></div> : null}
                 </div>
             ))}
-        </dl>
+            <dl class={`ask-facts ${cls}`}>
+                {lines.filter((l) => !l.command).map((l, i) => (
+                    <div key={i} class={l.warn ? "warn" : undefined}>
+                        <dt>{l.warn ? <IconWarn /> : null}{l.label}</dt>
+                        <dd class={l.tip ? "has-tip" : undefined} {...(l.tip ? { tabIndex: 0, ...cursorTipOn(l.tip) } : {})}>{l.value}</dd>
+                    </div>
+                ))}
+            </dl>
+        </>
     );
 }
 
+/** How long a card that was just answered takes to leave, in the calm view: the footer's count has ticked by then. */
+const LEAVE_MS = 260;
+
 /**
- * A step's nested asks, in the order they were raised.
- * @gallery {"st":{"step":3,"seq":3,"tool":"exec","pending":true,"asks":[{"id":"a0123456789abcdef01234567","kind":"sh","state":"pending","raisedAt":0,"facts":{"argv":["git","--no-pager","status"],"program":{"path":"/usr/bin/git","inRoot":false},"cwd":{"path":"/Users/me/src/proj","inRoot":true},"env":{"set":[],"free":true},"secrets":[],"paths":[],"repo":{"root":"/Users/me/src/proj","reasons":[]},"repoConfigRunsCode":false,"effects":"unknown","described":false,"why":["the program's version was not reported"],"runner":false,"mode":"host","sandboxed":true,"placement":"host-sandbox"}},{"id":"a0123456789abcdef01234568","kind":"sh","state":"denied","raisedAt":0,"answeredAt":4000,"note":"not that branch","facts":{"argv":["git","checkout","main"]}},{"id":"a0123456789abcdef01234569","kind":"sh","state":"allowed","raisedAt":0,"answeredAt":2000,"facts":{"argv":["npm","install"]},"outcome":{"ran":"host-sandbox","envelope":{"write":"today","exec":"any"},"protectedChanged":[{"root":"/Users/me/src/proj","name":".git/hooks","change":"modified"},{"root":"/Users/me/src/proj","name":".git/hooks/pre-commit","change":"created"}]}}]},"hash":"r1","live":true}
+ * A step's nested asks that need a person, each a card, in the order they were raised. An answered ask of a call
+ * (`ml.sh`) is not drawn here: it joins the step's footer of calls (sh-calls.tsx), and in the calm view its card
+ * eases away rather than vanishing, so what you just did visibly goes somewhere. An answered ask of another kind (an
+ * arrival) stays the one line it was.
+ * @gallery {"st":{"step":3,"seq":3,"tool":"exec","pending":true,"asks":[{"id":"a0123456789abcdef01234567","kind":"sh","state":"pending","raisedAt":0,"facts":{"argv":["git","--no-pager","status"],"program":{"path":"/usr/bin/git","inRoot":false},"cwd":{"path":"/Users/me/src/proj","inRoot":true},"env":{"set":[],"free":true},"secrets":[],"paths":[],"repo":{"root":"/Users/me/src/proj","reasons":[]},"repoConfigRunsCode":false,"effects":"unknown","described":false,"why":["the program's version was not reported"],"runner":false,"mode":"host","sandboxed":true,"placement":"host-sandbox"}}]},"hash":"r1","live":true}
  * @group approval
  * @param st the step
  * @param hash the run, for answering; absent where the run cannot be answered from here
  * @param live whether the runtime still holds the run's gates
  */
 export function AskList({ st, hash, live }: { st: AgentStep; hash?: string; live: boolean }) {
-    const asks = st.asks;
-    if (!asks?.length) return null;
+    const asks = st.asks ?? [];
     const seq = st.seq;
+    const isWaiting = (a: StepAsk): boolean => a.state === "pending" && !(hash && seq != null && decidedSteps.has(askKey(hash, seq, a.id)));
+    const waitingNow = asks.filter(isWaiting);
+    // The cards that WERE waiting a render ago and are not now, kept on screen for the length of their exit. Only a
+    // call's ask, and only in the calm view: elsewhere a card answered is a card gone, as it always was.
+    const was = useRef<Map<string, StepAsk>>(new Map());
+    const [leaving, setLeaving] = useState<StepAsk[]>([]);
+    const calm = focusMode.value;
+    // SUBSCRIBED TO `rev` TOO, and the read is kept in the output. Reading `focusMode` makes @preact/signals memoize this
+    // component on its props, which stops the parent's cascade reaching it, and that cascade is how an answer given here
+    // (`decidedSteps`, a plain Set) takes the card away. Without this the card stayed until the worker's event landed.
+    void rev.value;
+    useEffect(() => {
+        const gone = [...was.current.values()].filter((p) => !waitingNow.some((w) => w.id === p.id) && isCallAsk(p.kind));
+        was.current = new Map(waitingNow.map((a) => [a.id, a]));
+        if (!gone.length || !calm) return;
+        setLeaving((l) => [...l, ...gone]);
+        const t = setTimeout(() => setLeaving((l) => l.filter((x) => !gone.includes(x))), LEAVE_MS);
+        return () => clearTimeout(t);
+    });
+    if (!asks.length && !leaving.length) return null;
     return (
         <>
+            {leaving.filter((l) => !asks.some((a) => a.id === l.id && isWaiting(a))).map((a) => (
+                <div key={`leave-${a.id}`} class="astep-approve ask leaving" aria-hidden="true">
+                    <span class="appr-ask">{Object.hasOwn(ASK_TITLE, a.kind) ? ASK_TITLE[a.kind] : String(a.kind)}</span>
+                    <FactList lines={askLines(a)} />
+                </div>
+            ))}
             {asks.map((a) => {
                 const key = hash && seq != null ? askKey(hash, seq, a.id) : "";
-                const waiting = a.state === "pending" && !(key && decidedSteps.has(key));
+                const waiting = isWaiting(a);
                 const arrival = a.kind === ARRIVAL_ASK ? "ask" as const : a.kind === ARRIVAL_DENIED ? "deny" as const : undefined;
-                if (!waiting) return <AskDone key={a.id} a={a} />;
+                if (!waiting) return isCallAsk(a.kind) ? null : <AskDone key={a.id} a={a} />;
                 return (
                     <div key={a.id} class="astep-approve ask">
                         {arrival
@@ -103,28 +150,6 @@ export function AskList({ st, hash, live }: { st: AgentStep; hash?: string; live
     );
 }
 
-/**
- * A step's `ml.sh` calls that ran without asking (a policy or the built-in default allowed them): a line each, with the
- * argv the host got as it is (the raw view) and the ask card's words for who allowed it and what it reported.
- * @gallery {"st":{"step":3,"seq":3,"tool":"exec","shCalls":[{"program":"ls","durationMs":12,"unasked":{"by":"default","argv":["ls","-la"],"outcome":{"ran":"host-sandbox","envelope":{"write":"none","exec":"program-only"},"asked":{"write":"none","exec":"program-only"},"protectedChanged":[]}}},{"program":"find","durationMs":40,"unasked":{"by":"policy","policy":"tidy build dir","argv":["find","build","-name","*.o","-delete"],"outcome":{"ran":"host-sandbox","envelope":{"write":"today","exec":"any"},"asked":{"write":"roots","exec":"program-only"},"protectedChanged":null}}}]}}
- * @group approval
- * @param st the step
- */
-export function UnaskedList({ st }: { st: AgentStep }) {
-    const calls = unaskedCalls(st.shCalls);
-    if (!calls.length) return null;
-    return (
-        <>
-            {calls.map((u, i) => (
-                <div key={i} class="astep-ask-done ok unasked">
-                    Ran without asking: <code>{JSON.stringify(u.argv)}</code>
-                    <FactList lines={unaskedLines(u)} />
-                </div>
-            ))}
-        </>
-    );
-}
-
 /** One answered ask, as a line under its step. */
 function AskDone({ a }: { a: StepAsk }) {
     if (a.kind === ARRIVAL_ASK || a.kind === ARRIVAL_DENIED) {
@@ -135,11 +160,9 @@ function AskDone({ a }: { a: StepAsk }) {
     const argv = a.kind === "put" ? putSubject(a.facts) : Array.isArray(a.facts?.argv) ? (a.facts.argv as unknown[]).map(String).join(" ") : a.kind;
     const waited = a.answeredAt != null ? ` after ${Math.max(0, Math.round((a.answeredAt - a.raisedAt) / 1000))} s` : "";
     const outcome = a.state === "pending" ? "answered, waiting for the run" : Object.hasOwn(ASK_DONE, a.state) ? ASK_DONE[a.state] : String(a.state);
-    const ran = askOutcomeLines(a);
     return (
         <div class={`astep-ask-done ${a.state === "allowed" ? "ok" : "no"}`}>
             Asked to {a.kind === "put" ? "write" : "run"} <code>{argv}</code>: {outcome}{waited}{a.note ? <> — “{a.note}”</> : null}
-            {ran.length ? <FactList lines={ran} /> : null}
         </div>
     );
 }

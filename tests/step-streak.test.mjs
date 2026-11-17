@@ -4,6 +4,7 @@
 "use strict";
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { groupOwns, rowsSeen, foldStreaks, streakFacts, holdsSeq, foldedInView, groupedInView, FOLD_SEEN_MS, STREAK_MIN, STREAK_MIN_ALL } from "../src/sidebar/transcript/step-streak.tsx";
 import { JUST_ARRIVED_MS } from "../src/sidebar/transcript/just-arrived.ts";
 
@@ -26,9 +27,20 @@ test("a different tool breaks the run, because that is a change of activity", ()
     assert.deepEqual(kinds(out), ["exec×3", "look", "exec×3"]);
 });
 
-test("PROSE breaks it: if the model said something, that is content and not noise", () => {
+test("PROSE stays visible, and what the turn CALLED folds with its neighbours", () => {
     const out = foldStreaks([turn(1, "exec"), { ...turn(2, "exec"), thought: "the cards are in a list" }, turn(3, "exec"), turn(4, "exec")]);
-    assert.deepEqual(kinds(out), ["exec", "exec", "exec", "exec"], "a prose turn cannot join, and splits the rest below three");
+    assert.deepEqual(kinds(out), ["exec", "·", "exec×3"], "the remark is its own item, and its call joins the two after it");
+    assert.equal(out[1].thought, "the cards are in a list");
+    assert.deepEqual(out[1].tools, [], "the prose half carries no calls");
+    assert.equal(out[2].turns[0].half, "tools", "the call that came with the remark leads the group");
+});
+
+test("a turn whose calls did NOT fold is put back together: one turn, prose and calls", () => {
+    const t = { ...turn(2, "exec"), thought: "the cards are in a list", reasoning: "hm" };
+    const out = foldStreaks([turn(1, "look"), t, turn(3, "look")]);
+    assert.equal(out.length, 3);
+    assert.equal(out[1].half, undefined, "no half-marker left on a turn nothing grouped");
+    assert.deepEqual(out[1], t);
 });
 
 test("THINKING does not break it — that is the other half of what is being folded away", () => {
@@ -218,16 +230,45 @@ test("a PENDING APPROVAL is the one call group-all still refuses to hide", () =>
     assert.deepEqual(kinds(out), ["exec×2", "fetch_url", "exec×2"], "the gate stands between two groups");
 });
 
+test("a nested ask still WAITING is a decision too: a step already past its own gate is not folded over it", () => {
+    // The sequence that was seen: the exec's own gate is answered, the step runs, and the `ml.sh` call it makes raises
+    // an ask of its own. That step is no longer `awaitingApproval`, so only its `asks` say a person is needed, and a
+    // group that folded it closed the card the person had to answer.
+    const asking = (step, state) => turn(step, "exec", { pending: state === "pending", asks: [{ id: `a${step}`, kind: "sh", state, raisedAt: 0, facts: {} }] });
+    const around = (mid) => [turn(1, "exec"), turn(2, "exec"), mid, turn(4, "exec"), turn(5, "exec")];
+    assert.deepEqual(kinds(all(around(asking(3, "pending")))), ["exec×2", "exec", "exec×2"], "group-all leaves the waiting step standing between two groups");
+    assert.deepEqual(kinds(foldStreaks(around(asking(3, "pending")))), ["exec", "exec", "exec", "exec", "exec"], "the ordinary rule does not fold across it either");
+    assert.deepEqual(kinds(foldStreaks([turn(1, "exec"), turn(2, "exec"), turn(3, "exec"), asking(4, "pending"), turn(5, "exec")])), ["exec×3", "exec", "exec"], "nor does a streak take it as a member");
+    // …and once it is answered it is ordinary work again.
+    assert.deepEqual(kinds(all(around(asking(3, "allowed")))), ["exec×5"]);
+    assert.deepEqual(kinds(all(around(asking(3, "denied")))), ["exec×5"]);
+});
+
 test("a gate ALREADY ANSWERED is ordinary work again and folds with the rest", () => {
     // The refusal is about a decision WAITING on a human, not about the tool or about it having needed approval.
     const done = turn(3, "fetch_url", { approval: "user", result: "ok" });
     assert.deepEqual(kinds(all([turn(1, "exec"), turn(2, "exec"), done])), ["exec×3"]);
 });
 
-test("group-all still never swallows what the model SAID", () => {
+test("group-all still never swallows what the model SAID — it folds the calls around it", () => {
     // Prose is the thing the reading view exists to show; a transcript of nothing but folded rows is not a win.
     const out = all([turn(1, "exec"), turn(2, "exec"), turn(3, "exec", { }), { step: 4, localStep: 4, tools: [], thought: "Rebuilding it from the cards." }, turn(5, "look"), turn(6, "look")]);
     assert.deepEqual(kinds(out), ["exec×3", "·", "look×2"]);
+});
+
+test("group-all: a turn that spoke AND called folds its calls into the group below, leaving the remark above", () => {
+    // The screenshot that prompted this: "I'll take a look at this page" + pageInfo + look, then seven more calls.
+    const opener = { step: 1, localStep: 1, thought: "I'll take a look at what's on this page.", tools: [{ step: 1, seq: 1, tool: "pageInfo" }, { step: 1, seq: 2, tool: "look" }] };
+    const out = all([opener, turn(2, "exec"), turn(3, "exec"), turn(4, "dereference")]);
+    assert.deepEqual(kinds(out), ["·", "pageInfo×4"]);
+    assert.equal(out[0].thought, opener.thought);
+    assert.equal(streakFacts(out[1]).calls, 5, "the two calls of the opening turn are counted with the rest");
+});
+
+test("a gate on the call of a turn that spoke is still never hidden", () => {
+    const gated = { step: 2, localStep: 2, thought: "Checking.", tools: [{ step: 2, seq: 2, tool: "fetch_url", pending: true, awaitingApproval: true }] };
+    const out = all([turn(1, "exec"), turn(3, "exec"), gated]);
+    assert.ok(out.every(x => !("kind" in x) || x.turns.every(t => !t.tools.some(st => st.awaitingApproval))));
 });
 
 test("group-all folds a live tail, because otherwise the toggle does nothing while a run is going", () => {
@@ -303,4 +344,23 @@ test("a refold collapses the rows that were on screen, not the call that caused 
         "the new call was never a row to the reader: drawn into the collapse, the group's first frame was a row taller than the one before");
     assert.deepEqual(rowsSeen([seen, at(4, now - FOLD_SEEN_MS)], now).map((t) => t.step), [1, 4], "on screen exactly long enough counts");
     assert.deepEqual(rowsSeen([unstamped], now), [], "no stamp is no evidence it was seen");
+});
+
+// --- a step replacing a live call continues it ---
+
+test("a step landing just after a live call is drawn takes its height over; one with none on screen does not", async () => {
+    const { noteLiveCall, liveHandoff, HANDOFF_MS } = await import("../src/sidebar/transcript/just-arrived.ts");
+    noteLiveCall(180, 1000);
+    assert.equal(liveHandoff(1000 + HANDOFF_MS - 1), 180);
+    assert.equal(liveHandoff(1000 + HANDOFF_MS), null);
+});
+
+// --- the head stays on one line; the tool list is what is cut ---
+
+test("a long tool list is what truncates: every other part of the head is kept whole on one line", () => {
+    const css = readFileSync(new URL("../src/chat/chat.css", import.meta.url), "utf8");
+    assert.match(css, /\.astreak-head > :not\(\.astreak-tools\)\s*\{[^}]*flex:\s*none;[^}]*white-space:\s*nowrap/, "count, failures and time never shrink or wrap");
+    assert.match(css, /\.astreak-tools\s*\{[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;[^}]*min-width:\s*0/s, "the list gives way, with an ellipsis");
+    const src = readFileSync(new URL("../src/sidebar/transcript/step-streak.tsx", import.meta.url), "utf8");
+    assert.match(src, /astreak-tools" \{\.\.\.cursorTipOn\(s\.tools\.join\(", "\), \{ delayMs: \d+, onlyIf: \(el\) => el\.scrollWidth > el\.clientWidth/, "the whole list on hover, only when it was cut");
 });

@@ -176,8 +176,10 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
             : [{ role: "system", content: cfg.systemPrompt }, ...userTurn];
         return built;
     };
-    const pushAssistant = (messages: NeutralMessage[], msg: { content?: string | null; tool_calls?: ToolCall[] }): void => {
-        messages.push({ role: "assistant", content: msg.content || "", tool_calls: msg.tool_calls });
+    const pushAssistant = (messages: NeutralMessage[], msg: { content?: string | null; tool_calls?: ToolCall[]; reasoning?: unknown }): void => {
+        // The thinking rides only a turn that called tools: that is where a thinking-mode server wants it back.
+        const reasoning = msg.tool_calls?.length && typeof msg.reasoning === "string" && msg.reasoning ? msg.reasoning : undefined;
+        messages.push({ role: "assistant", content: msg.content || "", tool_calls: msg.tool_calls, ...(reasoning ? { reasoning } : {}) });
     };
     const pushToolResult = (messages: NeutralMessage[], call: ToolCall, result: string): void => {
         messages.push({ role: "tool", tool_call_id: call.id, content: result });

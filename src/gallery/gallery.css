@@ -53,6 +53,9 @@
 .gl-tile figcaption { font-size: 11px; color: var(--fg-dim); margin-bottom: 8px }
 /* The frame a component renders in, at the chosen width. */
 .gl-frame { position: relative; width: 100%; font-size: var(--fs) }
+/* The calm view's frame wears `.chat` so the chat page's rules (`.chat.calm …`) apply, and `.chat` is the APP'S layout: a
+   100vh grid with a 320px list column, which squeezed every component into that column. The frame is a plain block. */
+.gl-frame.chat { display: block; height: auto; padding: 0; transition: none }
 .gl-host { min-height: 8px }
 .gl-err { color: var(--err); white-space: pre-wrap; font-size: 12px; margin: 0 }
 .gl-pending { color: var(--fg-faint); font-size: 12px }

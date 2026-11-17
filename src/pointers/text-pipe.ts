@@ -65,8 +65,8 @@ export function pipeHint(message: string): string {
  *  carried the ~270-token dialect verbatim, which single-sourcing had made consistent but not smaller. */
 export const PIPE_REF = "The dialect is described once under THE PIPE DIALECT in your instructions.";
 
-export const PIPE_SYNTAX =
-    "It's an interpreted line-based environment (NOT a real shell); supported commands, chained with `|`: " +
+/** The pipe dialect's grammar as the model reads it, built from {@link PIPE_CMDS}: what PIPE_CLAUSE says after its lead-in. */
+export const PIPE_SYNTAX = "It's an interpreted line-based environment (NOT a real shell); supported commands, chained with `|`: " +
     `${PIPE_CMDS.map(c => PIPE_USAGE[c]).join(", ")}, or a \`.path\` into JSON (\`.rows[0].name\`). ` +
     "E.g. \"grep -i pricing | head -n 20\", or \"grep -o '[0-9]+' | sort -n | tail -n 1\". " +
     "A stage's argument needs quoting if it contains spaces; `ml.pipe` in exec also takes an ARRAY with one stage per " +

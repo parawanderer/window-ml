@@ -65,7 +65,7 @@ test("the options are cwd, env, timeoutMs and expectMs, each checked; an unknown
 // --- what the host is asked ---
 
 test("the manifests are found by the program's basename, and only the shipped ones", () => {
-    assert.deepEqual(Object.keys(SHIPPED_MANIFESTS).sort(), ["cat", "find", "gh", "git", "head", "jq", "ls", "mv", "rg", "rm", "rmdir", "tail", "unlink", "wc"]);
+    assert.deepEqual(Object.keys(SHIPPED_MANIFESTS).sort(), ["cat", "cp", "find", "gh", "git", "head", "jq", "ls", "mv", "rg", "rm", "rmdir", "tail", "unlink", "wc"]);
     assert.equal(manifestFor(["/usr/bin/git"])?.program, "git");
     assert.equal(manifestFor(["python3"]), undefined);
     assert.equal(manifestFor(["constructor"]), undefined, "a prototype name is not a manifest");
@@ -75,7 +75,7 @@ test("the manifests are found by the program's basename, and only the shipped on
 test("the spawn carries the HARDENED argv, and its path indices point into that argv, not the one the script wrote", () => {
     const p = planSpawn(parseShRun([["git", "-C", "sub", "log", "--output=o.txt"]]), S);
     assert.deepEqual(p.spawn.argv, ["git", "--no-pager", "-C", "sub", "log", "--no-ext-diff", "--no-textconv", "--output=o.txt"]);
-    assert.deepEqual(p.spawn.pathArgs, [{ arg: 3 }, { arg: 7, split: "=" }]);
+    assert.deepEqual(p.spawn.pathArgs, [{ arg: 3 }, { arg: 7, split: "=", role: "write" }], "a written path says so");
     assert.equal(p.spawn.argv[3], "sub");
     assert.equal(p.spawn.repoArg, 3, "git -C names the repository");
     assert.deepEqual(planSpawn(parseShRun([["git", "status"]]), S).spawn.argv, ["git", "--no-pager", "status"],
@@ -207,6 +207,28 @@ test("K3c: find -delete is a names write, so deleting under a root itself or a t
     assert.equal(free(del(["find", "src", "-delete"], [dir(1, "src", "/w/src")]).effects, B), false, "find src -delete removes the top-level src");
     assert.equal(free(del(["find", "src/gen", "-delete"], [dir(1, "src/gen", "/w/src/gen")]).effects, B), true, "two levels down is free");
     assert.match(shCardLines(del(["find", "src", "-delete"], [dir(1, "src", "/w/src")])).find((l) => l.label === "Does").value, /create, remove or rename \/w\/src/);
+});
+
+// --- the card's command and its hovers ---
+
+test("the card's Runs line is the COMMAND: a bash -c call carries its script with the newlines, any other call carries none", () => {
+    const script = "cat > demo.sh <<'EOF'\necho hi\nEOF\nchmod +x demo.sh";
+    const sh = shCardLines(shFacts(facts({ argv: ["bash", "-c", script], paths: [], program: { path: "/bin/bash", inRoot: false } }))).find((l) => l.label === "Runs");
+    assert.equal(sh.command, true);
+    assert.equal(sh.script, script, "the script as it was written, not run together on one line");
+    const plain = shCardLines(shFacts(facts())).find((l) => l.label === "Runs");
+    assert.equal(plain.command, true);
+    assert.equal(plain.script, undefined);
+});
+
+test("the Does line explains itself on hover; unknown effects say why, and for a shell that the script decides", () => {
+    const bash = shCardLines(shFacts(facts({ argv: ["bash", "-c", "echo hi"], paths: [], program: { path: "/bin/bash", inRoot: false }, why: ["bash has no program manifest"], described: false }))).find((l) => l.label === "Does");
+    assert.equal(bash.warn, true);
+    assert.match(bash.tip, /would do to your files, the network and the machine/);
+    assert.match(bash.tip, /bash has no program manifest/, "the reason is in the tip as well as on its own row");
+    assert.match(bash.tip, /A shell does whatever the script it is given says/);
+    const known = shCardLines(shFacts(facts())).find((l) => l.label === "Does");
+    assert.doesNotMatch(known.tip, /unknown|shell/, "a described call's tip says only what the line is");
 });
 
 // --- place resolution: the markers follow the host's RESOLVED path, widened by the lexical `given` ---

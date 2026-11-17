@@ -19,7 +19,10 @@
 //      relayed request shape, and no message a page sends writes the cap (`detachedTaskMaxMin`) or any setting but the
 //      model;
 //   F. a detached cell's held result is handed to the run whose STORED ROW names it, once: another run's `PY_DONE`
-//      settles nothing and uses up nothing, and after the run's end no late `PY_DONE` puts the row or the table back.
+//      settles nothing and uses up nothing, and after the run's end no late `PY_DONE` puts the row or the table back;
+//   G. the deadline a stored RUNNING row is held to is the row's OWN cap (the sandbox's kill at start + cap, then the
+//      grace), never the ceiling: past its own cap it is orphaned and the kernel is not locked again, and a row whose cap
+//      is missing, not a number, negative or above the ceiling is held to the ceiling and no longer.
 //
 // Not duplicated here, because another file pins it: parking, exactly-once and the third turn within ONE run
 // (tests/sh-lease.test.mjs, "a result that arrives between turns is parked…"), a Stop after a cell detached not
@@ -98,7 +101,7 @@ globalThis.chrome = {
 };
 const { leaseCell, pyKernelBusy, dropPyTaskMemory } = await import("../src/sw/sw-python-task.ts");
 const { pythonStarted, pythonDone } = await import("../src/sw/sw-python.ts");
-const { taskAction, endTasks, closeTurnTasks, openTasks, taskDrained, dropAllTaskMemory } = await import("../src/sw/sw-tasks.ts");
+const { taskAction, endTasks, closeTurnTasks, openTasks, taskDrained, hydrateTasks, dropAllTaskMemory } = await import("../src/sw/sw-tasks.ts");
 const { runControllers, runInboxes } = await import("../src/sw/sw-runs.ts");
 const { runLog } = await import("../src/sw/sw-run-log.ts");
 
@@ -342,4 +345,58 @@ test("RED TEAM: after the run's end a late PY_DONE settles nothing and puts neit
     assert.deepEqual(next.queue, [], "a released run's late result was queued into a later turn");
     runInboxes.delete(a.runId);
     resultAnswer = { result: null };
+});
+
+// --- G. the orphan deadline is the row's OWN cap, not the ceiling ---
+// A stored running row is believed for its start plus the cap its sandbox applied (sw-tasks.ts `readBack`, the
+// `clampDetachedMs(r.ref.capMs)` check, `ORPHAN_GRACE_MS` after it). The person's cap runs 1..60 min while the ceiling is
+// 60: read against the ceiling, a task detached under a 1-minute cap stays "running" for an hour after the sandbox has
+// killed it and locked the run's Python for that hour; read against the row's raw number, a forged `capMs` (1e12) pushes
+// the same deadline out of reach, and a negative one orphans a cell that is still working.
+// Mutations measured at a44f2913 (not committed, each alone, sources restored after each; the rows' baseline 14/14
+// green): the ceiling read in place of the row's cap (`clampDetachedMs(undefined)`) reds on "a 1 min cap, five minutes
+// on: the row was not orphaned at its own cap's deadline"; the row's raw `capMs` believed instead of the clamped one reds
+// on "a negative cap … orphaned before its own cap's deadline", and with that leg switched to a missing cap, on "a cap
+// above the ceiling, past the ceiling: the row was not orphaned at its own cap's deadline"; the grace dropped reds on
+// "30 s past a 1 min cap: inside the grace".
+
+test("RED TEAM: a stored running cell is orphaned past ITS OWN cap and its grace, and a cap that is missing, not a number, negative or above the ceiling is held to the ceiling", T, async () => {
+    const { PY_DETACHED_MAX_MS } = await import("../src/python/py-lease.ts");
+    const now = Date.now();
+    const CEIL = PY_DETACHED_MAX_MS;
+    // Each case branches on the two quantities the decision is about: how long ago the row started, and the cap the row
+    // itself carries. `past` is what start + clamp(cap) + grace says by now.
+    const cases = [
+        { startedAgo: 5 * 60_000, capMs: 60_000, past: true, why: "a 1 min cap, five minutes on" },
+        { startedAgo: 5 * 60_000, capMs: 1, past: true, why: "a 1 ms cap" },
+        { startedAgo: 5 * 60_000, capMs: 10 * 60_000, past: false, why: "a 10 min cap, five minutes on: inside its own cap" },
+        { startedAgo: 90_000, capMs: 60_000, past: false, why: "30 s past a 1 min cap: inside the grace" },
+        { startedAgo: 5 * 60_000, capMs: undefined, past: false, why: "no cap: the ceiling, and it has not passed" },
+        { startedAgo: 5 * 60_000, capMs: -5, past: false, why: "a negative cap: not believed, the ceiling decides" },
+        { startedAgo: 5 * 60_000, capMs: "60000", past: false, why: "a cap that is not a number: the ceiling decides" },
+        { startedAgo: CEIL + 2 * 60_000, capMs: 1e12, past: true, why: "a cap above the ceiling, past the ceiling: the ceiling decides" },
+        { startedAgo: CEIL + 2 * 60_000, capMs: undefined, past: true, why: "no cap, past the ceiling and its grace" },
+    ];
+    try {
+        for (const [i, k] of cases.entries()) {
+            const runId = `run-orphan-${i}`;
+            const id = `t0a00${i}`;
+            const key = `ml_tasks:${runId}`;
+            session[key] = [{ v: 1, id, tool: "python_exec", startedMs: now - k.startedAgo, leaseMs: 30_000, expectMs: null, status: "running",
+                ref: { kind: "py", cell: `cell-orphan-${i}`, ...(k.capMs !== undefined ? { capMs: k.capMs } : {}) } }];
+            evict();
+            await hydrateTasks(runId);
+            const orphans = (await runLog.forRun(runId)).filter((e) => e.subsystem === "task" && e.kind === "orphaned" && e.detail?.id === id);
+            if (k.past) {
+                assert.equal(orphans[0]?.reason, "past-cap", `${k.why}: the row was not orphaned at its own cap's deadline (${JSON.stringify(orphans.map((e) => e.reason))})`);
+                assert.equal(pyKernelBusy(runId), null, `${k.why}: the run's Python is locked by a cell past its own cap`);
+                await until(() => session[key]?.[0]?.status === "orphaned");
+            } else {
+                assert.deepEqual(orphans, [], `${k.why}: the row was orphaned before its own cap's deadline`);
+                assert.match(pyKernelBusy(runId) ?? "", new RegExp(id), `${k.why}: the row inside its cap was not attached again, so its result has no task`);
+                await until(() => session[key]?.[0]?.status === "running");
+            }
+            delete session[key];
+        }
+    } finally { evict(); }
 });

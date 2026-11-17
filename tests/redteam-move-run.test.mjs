@@ -49,6 +49,8 @@ const { HANDLE_MAP, PAGE_STARTED_TYPES, PAGE_RELAYED_EXTRA, PAGE_UNGATED_TYPES, 
 const SITE_URL = "https://site.example/page";
 const HOME = 7;          // where the run is
 const ELSEWHERE = 8;     // the tab a hostile page would move it to
+const OUR = 9;           // a tab showing OUR OWN page (the chat page): never a place a turn may be moved to
+const OWN_URL = "chrome-extension://test/chat.html";
 const T = { timeout: 30000 };
 const tick = () => new Promise((r) => setTimeout(r, 0));
 /** Waits until `done()` holds, for at most `cap` macrotasks. */
@@ -109,15 +111,26 @@ test("a page's post of a move-shaped request is answered with nothing and relays
  * `exec` is approved from the page's own tab, as a person at the HUD would. `bg.tabMessages` records `[tabId, message]`
  * for every delegated message, which is how a move shows: the turn after it would be hosted on the destination.
  */
-async function harness({ keep = false } = {}) {
+async function harness({ keep = false, autoApprove = true } = {}) {
     let n = 0, bg;
+    /** A message from a page on `id`, the shape the content-script shell stamps. */
+    const tabSender = (id) => ({ tab: { id, url: SITE_URL }, url: SITE_URL, origin: "https://site.example", frameId: 0 });
+    /** The person's answer at the gate, sent from a given tab: `data: true` only when that tab owns the turn. */
+    const answer = (ev, tabId) => bg.send({ type: "SET_APPROVAL", payload: { runId: ev.id, seq: ev.seq, decision: true } }, tabSender(tabId));
+    /** Every gate the run reaches, in order, with the tab it was drawn on. */
+    const approvals = [];
     bg = loadBackground({
         config: { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test-0123456789abcdef", model: "m", apiFormat: "openai", debugMode: "off" },
         ...(keep ? { indexedDB: new IDBFactory() } : {}),
-        openTabs: [{ id: HOME, windowId: 3, active: true, url: SITE_URL, title: "Site" }, { id: ELSEWHERE, windowId: 3, active: false, url: SITE_URL, title: "Elsewhere" }],
+        openTabs: [{ id: HOME, windowId: 3, active: true, url: SITE_URL, title: "Site" }, { id: ELSEWHERE, windowId: 3, active: false, url: SITE_URL, title: "Elsewhere" },
+            { id: OUR, windowId: 3, active: false, url: OWN_URL, title: "window.ml" }],
         onFetch: async (call) => {
             if (call.url.endsWith("/api/models")) return jsonResponse({ data: [{ id: "m" }] });
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
+            // A page's own traffic in this worker (a title, a summary) shares the one backend, so the agent loop's steps
+            // are counted by the calls that carry `tools`, never by every completion: a row that drives the page's whole
+            // surface must not find its script advanced by traffic the page caused.
+            if (!(Array.isArray(call.body?.tools) && call.body.tools.length)) return jsonResponse({ choices: [{ message: { content: "" } }] });
             const k = n++;
             const step = k === 2 ? null : { name: "exec", args: { js: "document.body.remove()" } };
             if (!step) return jsonResponse({ choices: [{ message: { content: "done" } }] });
@@ -125,7 +138,10 @@ async function harness({ keep = false } = {}) {
         },
         onTabMessage: async (t, msg) => {
             if (msg.type === "ADOPT_RUN_NOW") return { pageInfo: "" };
-            if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } }, { tab: { id: t, url: SITE_URL }, url: SITE_URL, origin: "https://site.example" });
+            if (msg.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) {
+                approvals.push({ tab: t, event: msg.event });
+                if (autoApprove) void answer(msg.event, t);
+            }
             if (msg.type !== "RUN_TOOL_IN_PAGE") return undefined;
             if (msg.payload.finish || msg.payload.renderOnly || msg.payload.precheck || msg.payload.readonlyTry) return {};
             return { result: "ran" };
@@ -139,7 +155,7 @@ async function harness({ keep = false } = {}) {
     const ended = (id = hash) => bg.tabMessages.map((a) => a[1]).find((m) => m?.type === "ML_DEBUG_TO_PAGE" && m.event?.kind === "agent-result" && m.event.id === id)?.event;
     const toolsOn = (tab) => bg.tabMessages.filter(([t, m]) => t === tab && m?.type === "RUN_TOOL_IN_PAGE").length;
     const runLog = async () => await bg.context.__mlRunLog.all();
-    return { bg, hash, ended, toolsOn, runLog };
+    return { bg, hash, ended, toolsOn, runLog, approvals, answer, tabSender };
 }
 
 /** `p`, or `{ pending: true }` after `ms`: one handler a move-shaped payload makes slow must not spend the row's timeout. */
@@ -266,4 +282,101 @@ test("a resume of a held run on the tab it is already on stays a resume, and a p
     assert.equal(refused?.data, undefined, `a RESUME_RUN from another tab was answered with data: ${JSON.stringify(refused)}`);
     assert.deepEqual(await movedRecords(r), [], "a plain RESUME_RUN from another tab recorded a move");
     assert.equal(r.toolsOn(ELSEWHERE), 0, "a plain RESUME_RUN from another tab hosted the run there");
+});
+
+// --- F. a LIVE turn's tab cell (MOVE_RUN.md shape (b): `rekeyRunInbox`, `retabRuns`) ---
+//
+// A and B drive a SETTLED run, whose move changes where the NEXT turn is hosted. A turn IN FLIGHT files its tab in two
+// places this slice made movable: the inbox's `tabId` (the gate's and the steer's owner check, and where a
+// runtime-bound task's result is delivered) and the turn's tab cell (every page send the turn makes from then on).
+// These rows hold that a page can move neither, that the browser's own `onReplaced` moves it only to the id it names,
+// and that no move puts a turn on a page we own.
+//
+// MEASURED AT 0e0b6707: green 9/9, and one mutation per row, each alone with `node build.mjs` and the sources restored
+// after it. F: a router branch taking any message whose payload names a `runId` and a `tabId` and writing that tab into the
+// run's inbox reds on "the destination tab's answer released the turn's gate". G: `rekeyRunInbox` moving the inbox but not
+// calling the turn's tab cell reds on "the turn's page sends did not follow the tab to its new id", and `retabRuns` moving
+// everything except the inbox reds on "the replaced tab could still answer for the turn" — the two halves are independent,
+// so each has its own leg. H: `moveRun`'s check reduced to `if (!tab)` reds on "a turn was moved onto a page we own".
+// Two things this row had to learn: the router's SET_APPROVAL is FIRE-AND-FORGET (no `sendResponse`), so an answer is
+// watched by what it CAUSES, never awaited; and a page's own traffic shares the one backend, so the harness counts the
+// agent loop's steps by the calls carrying `tools` — a title or summary a page's message triggered is not a step.
+// These three drive a turn held AT A GATE, so each waits for that gate, for the step it admits, and for the turn's end:
+// several waits that are 8 s when a send does not arrive, against the 30 s `T` the settled-run rows use. The rows fail on
+// their assertions, never on the clock, which is why their own limit is 60 s.
+const LIVE = { timeout: 60000 };
+/** The router's SET_APPROVAL is FIRE-AND-FORGET (`return;`, no `sendResponse`), so a row never awaits the send: it
+ *  watches what the answer CAUSES. Nothing arriving inside this window, then the owner's answer advancing the turn
+ *  inside the same code path, is what makes the window a measurement. */
+const silence = (ms = 500) => new Promise((r) => setTimeout(r, ms));
+
+test("a live turn's tab is no page's to re-point: a page's whole surface leaves the gate's owner check on its own tab", LIVE, async () => {
+    const r = await harness({ autoApprove: false });
+    assert.ok(await until(() => r.approvals.length > 0, 8000), "positive control: the turn is held at its first gate");
+    const ev = r.approvals[0].event;
+    // The step's own probe of the page (readonlyTry/precheck) has already gone to HOME by now; what is measured below is
+    // any FURTHER delegation, which is what a released gate or a moved binding would cause.
+    const sentAtGate = r.toolsOn(HOME);
+    const payload = { runId: r.hash, hash: r.hash, id: ev.id, seq: ev.seq, toTabId: ELSEWHERE, tabId: ELSEWHERE, target: { kind: "tab", tabId: ELSEWHERE }, action: "move" };
+    // Every shape the content script could relay or a page could post, minus the run-control types (they end or steer a
+    // turn, which is a different question, and B drives them over a settled run): the question here is the BINDING.
+    const flood = [...new Set([...Object.keys(HANDLE_MAP), ...Object.values(HANDLE_MAP).map((e) => e.type), ...GUESSES])].filter((t) => !RUN_CONTROL_TYPES.has(t));
+    assert.ok(flood.length > 20, "positive control: the page surface is enumerated");
+    const probes = flood.flatMap((type) => [
+        { type, p: within(r.bg.send({ type, payload }, r.tabSender(HOME))) },
+        { type, p: within(r.bg.send({ type }, r.tabSender(HOME))) },
+    ]);
+    const answers = await Promise.all(probes.map((x) => x.p));
+    assert.deepEqual(probes.filter((x, i) => MOVE_WORDS.test(x.type) && answers[i]?.data).map((x) => x.type), [], "a page's move-shaped message was answered with data");
+    // Nothing a page sent released the gate. Had any moved the owner check, the run would have gone on to its next step:
+    // the gate is still the one the turn was drawn at, and still unanswered.
+    assert.equal(r.approvals.length, 1, "a page's message released the gate the turn was held at");
+    assert.equal(r.toolsOn(HOME), sentAtGate, "a page's message let the gated step run");
+    // The owner check is still the tab the turn began on: the destination tab cannot answer at the gate, its own tab can.
+    void r.answer(ev, ELSEWHERE);
+    await silence();
+    assert.equal(r.approvals.length, 1, "the destination tab's answer released the turn's gate");
+    void r.answer(ev, HOME);
+    // And the turn runs to its end on its own tab: no delegation went anywhere else.
+    assert.ok(await until(() => r.approvals.length > 1, 8000), "the turn's own tab could not answer at its gate");
+    void r.answer(r.approvals[1].event, HOME);
+    assert.ok(await until(() => r.ended(), 8000), "the turn did not end");
+    assert.equal(r.toolsOn(ELSEWHERE), 0, `the run moved: ${r.toolsOn(ELSEWHERE)} page message(s) reached tab ${ELSEWHERE}`);
+    assert.ok(r.toolsOn(HOME) > 0, "positive control: the turn delegated to its own tab");
+});
+
+test("a replaced tab's live turn follows only the id onReplaced names: the old id can no longer answer for it, the new one can, and its sends go there", LIVE, async () => {
+    const r = await harness({ autoApprove: false });
+    assert.ok(await until(() => r.approvals.length > 0, 8000), "positive control: the turn is held at its first gate");
+    const ev = r.approvals[0].event;
+    const before = r.toolsOn(HOME);
+    // The browser hands the tab a new id: a discard restored, or a prerender swapped in.
+    r.bg.replaceTab(HOME, ELSEWHERE);
+    void r.answer(ev, HOME);
+    await silence();
+    assert.equal(r.approvals.length, 1, "the replaced tab could still answer for the turn");
+    void r.answer(ev, ELSEWHERE);
+    // Every send the turn makes from here is the NEW id's; the old one hears nothing more of it.
+    assert.ok(await until(() => r.approvals.length > 1, 8000), "the tab onReplaced named could not answer for its own turn");
+    void r.answer(r.approvals[1].event, ELSEWHERE);
+    assert.ok(await until(() => r.ended(), 8000), "the turn did not end");
+    assert.ok(r.toolsOn(ELSEWHERE) > before, "the turn's page sends did not follow the tab to its new id");
+    assert.equal(r.toolsOn(HOME), before, "the turn's page sends still went to the tab id it lost");
+    // The record names the pair, so the move is legible after the fact.
+    const replaced = (await r.runLog()).filter((m) => m.subsystem === "tab" && m.kind === "replaced");
+    assert.deepEqual(replaced.map((m) => [m.detail?.wasTab, m.detail?.tab]), [[HOME, ELSEWHERE]], `the replace was not recorded once with both ids: ${JSON.stringify(replaced)}`);
+});
+
+test("a turn cannot be moved onto a page we own: MOVE_RUN from a surface in the tab showing our chat page is refused, and the run stays where it is", LIVE, async () => {
+    const r = await harness();
+    assert.ok(await until(() => r.ended(), 8000), "positive control: the first turn ended, so the run is settled and movable");
+    const ourSurface = { tab: { id: OUR, url: OWN_URL }, url: "chrome-extension://test/sidebar.html", frameId: 1 };
+    const out = await within(r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, ourSurface), 4000);
+    assert.match(String(out?.error ?? ""), /ordinary web page/, `a turn was moved onto a page we own: ${JSON.stringify(out)}`);
+    assert.deepEqual((await r.runLog()).filter((m) => m.subsystem === "tab" && m.kind === "moved"), [], "the refused move was recorded");
+    // Control, the other half: the same surface in an ordinary page's tab IS admitted, so the refusal above is the
+    // destination's kind and not the sender's.
+    const hudOn = { tab: { id: ELSEWHERE, url: SITE_URL }, url: "chrome-extension://test/sidebar.html", frameId: 1 };
+    assert.equal((await within(r.bg.send({ type: "MOVE_RUN", payload: { runId: r.hash } }, hudOn), 8000))?.data, true, "the same surface on an ordinary page could not move the run");
+    assert.equal(r.toolsOn(OUR), 0, "a page of ours was sent a turn");
 });

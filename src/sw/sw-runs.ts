@@ -674,10 +674,16 @@ defineState({
     },
 });
 
+/** Each live turn's TAB CELL (MOVE_RUN.md, shape (b)): the setter `hostTurn` registers for the length of the turn,
+ *  through which every page send the turn makes from then on goes to the tab given. */
+export const turnTabCells = new Map<string, (to: number) => void>();   // state: plumbing
+
 /**
- * Move a live run's inbox to another tab, so a runtime-bound task's result reaches the run where it is now and the
- * inbox's owner check (`senderOwnsRun`) answers for the new tab only. The tasks are keyed by run id and follow on their
- * own. A same-tab navigation needs no re-key. Not wired into any flow: the move-run lane calls it.
+ * Move a live run to another tab mid-turn: its inbox, so a runtime-bound task's result reaches the run where it is now
+ * and the inbox's owner check (`senderOwnsRun`) answers for the new tab only, and its turn's tab cell, so the turn's next
+ * page send goes there. The tasks are keyed by run id and follow on their own. A same-tab navigation needs no re-key.
+ * What is filed BY TAB (the tracking entry, the replay ring, the grants) is the caller's to move: `retabRuns` moves it
+ * for a replaced tab.
  * @param runId the run
  * @param to the tab the run is on now
  * @returns false when the run has no inbox (between turns: nothing to move)
@@ -686,6 +692,7 @@ export const rekeyRunInbox = (runId: string, to: number): boolean => {
     const inbox = runInboxes.get(runId);
     if (!inbox) return false;
     inbox.tabId = to;
+    turnTabCells.get(runId)?.(to);
     return true;
 };
 
@@ -707,9 +714,9 @@ export const retabRuns = (from: number, to: number): number => {
     const moved = moveTabKey([activeRuns, runReplayBuffer, readoptPageInfo, tabPageUrl] as Array<Map<number, unknown>>, from, to);
     for (const runId of hosted) recordRunLog(runId, { subsystem: "tab", kind: "replaced", detail: { tab: to, wasTab: from } });
     for (const snap of bgRuns.values()) if (snap.tabId === from) snap.tabId = to;
-    // A live turn's inbox too: the person's answer to a gate and their steer are checked against its tab, and come from
-    // the new id now. The turn's own page sends still name the old one (`hostRun` closed over it; MOVE_RUN.md shape (b)).
-    for (const inbox of runInboxes.values()) if (inbox.tabId === from) inbox.tabId = to;
+    // A live turn too: the person's answer to a gate and their steer are checked against its inbox's tab, and come from
+    // the new id now; the turn's own page sends follow through its tab cell.
+    for (const [runId, inbox] of runInboxes) if (inbox.tabId === from) rekeyRunInbox(runId, to);
     navBarrier.forget(from);
     return moved;
 };

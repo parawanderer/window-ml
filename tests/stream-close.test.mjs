@@ -56,3 +56,10 @@ test("an open ```mermaid fence is closed as plain code (mermaid_open), so a half
     // Any other open fence keeps its language.
     ["```js\nlet x", "```js\nlet x\n```"],
 ]));
+
+// --- a longer fence is closed with its own length ---
+
+test("a four-backtick fence still open is closed with four backticks, and an inner three-backtick line does not close it", () => {
+    assert.equal(closeStreaming("````\n```\nx"), "````\n```\nx\n````");
+    assert.equal(closeStreaming("~~~\nx"), "~~~\nx\n~~~");
+});

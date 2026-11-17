@@ -2,11 +2,13 @@
 // beautifying JS first (exec source), numbered, marked and annotated. Apart from ui-kit so a page with no panel (the
 // bench's) draws the same block; ui-kit's `Code` passes in the panel's line-number setting and cursor tooltip.
 
-import { useMemo, useEffect } from "preact/hooks";
+import { useMemo, useEffect, useLayoutEffect, useRef } from "preact/hooks";
+import type { ComponentChildren } from "preact";
 import { lineMapBetween } from "../line-map";
 import { highlight, beautifyJs, htmlLines, mdInline } from "./format";
 import { useCopy } from "./copy-hash";
 import { IconCopy, IconCheck } from "./icons";
+import { morphInto } from "./transcript/code-morph";
 
 /** A span of `text` that was substituted for something the author did not write, with the original for a
  *  tooltip — `exec`'s expanded pointer macros. */
@@ -70,6 +72,9 @@ export const CodeBlock = ({ text, lang, format, marks, lineIds, markLine, markTi
     // since moved, which is the same silent disagreement the Python side had.
     const lineMap = useMemo(() => (src === text ? null : lineMapBetween(text, src)), [text, src]);
     useEffect(() => { onMap?.(lineMap); }, [lineMap, onMap]);
+    // A reformatted script that replaces a live call's packed text flies into its new layout (code-morph.ts), once, on mount.
+    const preRef = useRef<HTMLPreElement>(null);
+    useLayoutEffect(() => { if (format && preRef.current) morphInto(preRef.current); }, []);
     // An expansion is a single call and never contains a newline, so a marked span cannot straddle one —
     // which is what lets the line-number path below split this HTML as it always has.
     const html = marks?.length ? markedHtml(src, lang, marks) : highlight(src, lang);
@@ -84,9 +89,9 @@ export const CodeBlock = ({ text, lang, format, marks, lineIds, markLine, markTi
     // noise. A mark or a note still numbers it, since those do name the line.
     const oneLine = !src.replace(/\n+$/, "").includes("\n");
     if ((!lineNumbers || oneLine) && markLine == null && !notes?.size)
-        return <pre class="code"><code class="hljs" dangerouslySetInnerHTML={{ __html: html }} /></pre>;
+        return <pre class="code" ref={preRef}><code class="hljs" dangerouslySetInnerHTML={{ __html: html }} /></pre>;
     return (
-        <pre class="code numbered"><code class="hljs">
+        <pre class="code numbered" ref={preRef}><code class="hljs">
             {htmlLines(html).map((ln, i) => [
                 // `lineIds` makes each row addressable, so a traceback elsewhere on the page can point AT a
                 // line rather than at the block containing it.
@@ -115,16 +120,20 @@ export const CodeBlock = ({ text, lang, format, marks, lineIds, markLine, markTi
 };
 
 /** A command or snippet to paste: the code block with a copy button in its corner (the transcript's toolbar corner), for
- *  pages that hand someone a line to run, such as the bench page's held-run menu. */
-export const CopyableCode = ({ text, lang = "bash" }: { text: string; lang?: string }) => {
+ *  pages that hand someone a line to run, such as the bench page's held-run menu.
+ *  `block` is for a line long enough to WRAP, such as an installer's: the button sits in the top-right corner and stays
+ *  lit, where the one-line form centres it and (on the chat page) shows it only while the pointer is over the block. */
+export const CopyableCode = ({ text, lang = "bash", block, tip = "copy", extra }: { text: string; lang?: string; block?: boolean; tip?: string;
+    /** a control for the toolbar, drawn beside the copy button (a view toggle) */ extra?: ComponentChildren }) => {
     const { copied, copy } = useCopy();
     return (
-        <div class="code-block copyable-code">
+        <div class={`code-block copyable-code${block ? " corner" : ""}${extra ? " has-extra" : ""}`}>
             <CodeBlock text={text} lang={lang} />
             <div class="code-tools">
-                <button class="icon-btn tt" aria-label="copy" onClick={() => copy(text)}>
+                {extra}
+                <button class="icon-btn tt" aria-label={tip} onClick={() => copy(text)}>
                     {copied ? <IconCheck /> : <IconCopy />}
-                    <span class="tt-pop" role="tooltip">{copied ? "copied!" : "copy"}</span>
+                    <span class="tt-pop left" role="tooltip">{copied ? "copied!" : tip}</span>
                 </button>
             </div>
         </div>

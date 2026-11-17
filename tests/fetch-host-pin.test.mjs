@@ -7,7 +7,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { releaseArchive, resolveCommit, target, assertPinned, bumpPin, checkAgainstPin, cli } from "../scripts/fetch-host.mjs";
+import { releaseArchive, releaseInstaller, resolveCommit, target, assertPinned, bumpPin, checkAgainstPin, cli } from "../scripts/fetch-host.mjs";
 
 const ARCHIVE = "wmlhost-v0.7.0-aarch64-apple-darwin.tar.gz";
 
@@ -165,10 +165,11 @@ test("a body whose hash is not the pin's is refused, naming both", () => {
     );
 });
 
-test("the three published targets map from their Node keys, and an unknown platform names itself", () => {
+test("the four published targets map from their Node keys, and an unknown platform names itself", () => {
     assert.equal(target("linux-x64"), "x86_64-unknown-linux-gnu");
     assert.equal(target("linux-arm64"), "aarch64-unknown-linux-gnu");
     assert.equal(target("darwin-arm64"), "aarch64-apple-darwin");
+    assert.equal(target("darwin-x64"), "x86_64-apple-darwin");
     assert.equal(target(), target(`${process.platform}-${process.arch}`), "the default is this machine's key");
     assert.throws(
         () => target("win32-x64"),
@@ -239,7 +240,7 @@ const TAGOBJ = "dfecf446" + "0".repeat(56);
 /** A fresh pin as `bumpPin` reports it, one sha per target; `over` patches it (a drift to refuse). */
 function freshPin(over = {}) {
     const assets = {};
-    for (const t of ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin"]) {
+    for (const t of ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-apple-darwin"]) {
         assets[t] = { file: `wmlhost-v0.7.0-${t}.tar.gz`, sha256: "ab".repeat(32) };
     }
     return { repo: "parawanderer/window-ml-host", tag: "v0.7.0", commit: PEELED, tagObjectSha: TAGOBJ, assets, ...over };
@@ -263,7 +264,7 @@ test("a pin holding the tag object's sha is refused as the annotated-tag mistake
 });
 
 test("every target's drift is refused with both hashes, and a missing target is named", () => {
-    for (const t of ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin"]) {
+    for (const t of ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-apple-darwin"]) {
         const pin = diskPin();
         pin.assets[t] = { ...pin.assets[t], sha256: "cd".repeat(32) };
         assert.throws(
@@ -286,7 +287,7 @@ function bumpStub({ bad = null, ref = "annotated", commit = PEELED, tagObjectSha
     const asked = [];
     const sums = [];
     const archives = {};
-    for (const t of ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin"]) {
+    for (const t of ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-apple-darwin"]) {
         const file = `wmlhost-v0.7.0-${t}.tar.gz`;
         let bytes = new TextEncoder().encode(`the ${t} archive\n`);
         sums.push(`${createHash("sha256").update(bytes).digest("hex")}  ${file}`);
@@ -346,7 +347,7 @@ test("--bump stores the PEELED commit in the ruled shape, and --check writes not
         const written = JSON.parse(await readFile(pinPath, "utf8"));
         assert.equal(written.commit, PEELED, "the PEELED commit is stored");
         assert.deepEqual(Object.keys(written).sort(), ["assets", "commit", "repo", "tag"], "the ruled shape, with no tagObjectSha in the file");
-        assert.deepEqual(Object.keys(written.assets).sort(), ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"]);
+        assert.deepEqual(Object.keys(written.assets).sort(), ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu"]);
         await cli(["--bump", "--check"], { pinPath, sleep }); // the fresh pin passes with no write
     } finally {
         globalThis.fetch = real;
@@ -388,7 +389,7 @@ test("GITHUB_TOKEN or GH_TOKEN is a bearer on the API calls, and no download rou
     const seen = []; // {url, headers}
     const bodies = {};
     const sums = [];
-    for (const t of ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin"]) {
+    for (const t of ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-apple-darwin"]) {
         const file = `wmlhost-v0.7.0-${t}.tar.gz`;
         const bytes = new TextEncoder().encode(`the ${t} archive\n`);
         bodies[file] = bytes;
@@ -438,4 +439,35 @@ test("GITHUB_TOKEN or GH_TOKEN is a bearer on the API calls, and no download rou
             else process.env[k] = had[k];
         }
     }
+});
+
+// --- the installer the Settings line pins (src/shell/host-install.ts) ---
+
+const ASSETS = Object.fromEntries(["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-apple-darwin"]
+    .map((t, i) => [t, { file: `wmlhost-v0.9.1-${t}.tar.gz`, sha256: String(i).repeat(64) }]));
+/** install.sh as the release workflow renders it, or what a tampered one leaves out. */
+const installerText = ({ tag = "v0.9.1", drop = null } = {}) =>
+    `TAG="${tag}"\n${Object.entries(ASSETS).filter(([t]) => t !== drop).map(([, a]) => `want="${a.sha256}"`).join("\n")}\n`;
+const withFetch = async (fn, body) => {
+    const real = globalThis.fetch;
+    globalThis.fetch = async () => (body == null ? { ok: false, status: 404 } : { ok: true, arrayBuffer: async () => new TextEncoder().encode(body).buffer });
+    try { return await fn(); } finally { globalThis.fetch = real; }
+};
+
+test("an installer that names the tag and every pinned archive hash is pinned by its own sha256", async () => {
+    const text = installerText();
+    const got = await withFetch(() => releaseInstaller("v0.9.1", ASSETS), text);
+    assert.deepEqual(got, { file: "install.sh", sha256: createHash("sha256").update(text).digest("hex") });
+});
+
+test("a release with no installer pins none, and an installer naming another tag or missing a hash is refused", async () => {
+    assert.equal(await withFetch(() => releaseInstaller("v0.9.0", ASSETS), null), null, "v0.9.0 has none: no installer key, no Settings line");
+    await assert.rejects(withFetch(() => releaseInstaller("v0.9.1", ASSETS), installerText({ tag: "v0.9.0" })), /does not name v0\.9\.1/);
+    await assert.rejects(withFetch(() => releaseInstaller("v0.9.1", ASSETS), installerText({ drop: "aarch64-apple-darwin" })), /does not hold aarch64-apple-darwin/);
+});
+
+test("--bump --check names a pin whose installer drifted from the release", () => {
+    const pin = { tag: "v0.7.0", commit: PEELED, assets: freshPin().assets, installer: { file: "install.sh", sha256: "a".repeat(64) } };
+    assert.throws(() => checkAgainstPin(pin, { ...freshPin(), installer: { file: "install.sh", sha256: "b".repeat(64) } }), /installer: pin a+, release b+/);
+    assert.throws(() => checkAgainstPin(pin, freshPin()), /installer: pin a+, release none/);
 });

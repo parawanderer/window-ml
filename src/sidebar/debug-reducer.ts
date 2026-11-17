@@ -584,7 +584,9 @@ export function maybeGenerateTitles(): void {
 // `step` is the SESSION-cumulative step (the grouping key, so turn N's steps don't merge with turn 1's);
 // `localStep` is the PER-TURN step shown in the pill — maxSteps is a per-turn budget, so a follow-up run
 // counts 1/N again, not 18/20. (Falls back to `step` for a pre-localStep event.)
-export interface AgentTurnGroup { step: number; localStep: number; thought?: string; reasoning?: string | null; /** COUNTED thinking tokens, from the turn's usage */ reasoningTokens?: number; tools: AgentStep[]; }
+export interface AgentTurnGroup { step: number; localStep: number; thought?: string; /** when the thought was said (its step's stamp) */ thoughtTs?: number; reasoning?: string | null; /** COUNTED thinking tokens, from the turn's usage */ reasoningTokens?: number; tools: AgentStep[];
+    /** Set only by `foldStreaks`, which splits a turn that said something from the calls it made: "prose" is what it said (and its thinking), "tools" the calls. */
+    half?: "prose" | "tools"; }
 /** Split a run's steps into TURNS — one model call and the tool calls it decided on all share a `step`.
  *  `steps.length` over-counts turns, which is why the count comes from here and not from the array. */
 export function groupTurns(steps: AgentStep[]): AgentTurnGroup[] {
@@ -593,7 +595,7 @@ export function groupTurns(steps: AgentStep[]): AgentTurnGroup[] {
     for (const st of steps) {
         let t = byStep.get(st.step);
         if (!t) { t = { step: st.step, localStep: st.localStep ?? st.step, tools: [] }; byStep.set(st.step, t); order.push(st.step); }
-        if (st.thought != null) t.thought = st.thought;
+        if (st.thought != null) { t.thought = st.thought; if (st.ts) t.thoughtTs = st.ts; }
         if (st.reasoning != null) t.reasoning = st.reasoning;
         if (st.usage?.reasoningTokens != null) t.reasoningTokens = st.usage.reasoningTokens;
         if (st.tool) t.tools.push(st);

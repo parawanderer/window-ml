@@ -155,6 +155,49 @@ directly (method step 3).
 - **The interview's own wording**: "readable, verbatim, as ml.current.messages[0].content" sent Kimi through eight
   exec calls to read what it already had; Opus and Carbon made none.
 
+## Step 4 result: the panel-bloat cuts (2026-11-13)
+
+The cuts the 2026-11-12 panel agreed (above) were measured with a `cuts` build variant: a shorter vision paragraph,
+self-description, `ml.current` paragraph and python clause; READING AN OUTPUT AGAIN removed (`dereference`'s own
+description says it); the compose hint said once in `interactives`' description instead of in every
+`findByText`/`interactives` result; shorter `pageInfo`, `dereference`, `token` and `title` texts; exec's closing line;
+and the pipe section without its prose. The variant, its two specs and their fixture pages are deleted; the branch
+`backup/prompt-cuts-3` has them.
+
+- **Main sweep** (`prompt-budget-cuts`, 6 models x 10 tasks x 2 prompts x 3): DeepSeek Flash, DeepSeek V4 Pro,
+  glm-4.7-flash, Gemini Flash, MiniMax M3 and qwen3.6:35b. The first call's prompt is 1,131 to 1,185 tokens shorter
+  on every model (11.7% to 12.5%).
+- **Rerun** (`prompt-budget-cuts-rep2`, the 11 cells where the arms differed, x 11 each): 90/121 under both prompts,
+  after one predicate fix. Tokens per run fell 42,878 to 36,673. The rerun followed #1807, so cloud drivers had
+  native vision; the first sweep's look-using cells ran without it and are not pooled with it.
+- **A wrong predicate**: `disabled-controls` failed any answer that also listed the ENABLED buttons, which correct
+  answers often do. It failed 29 of the task's 74 runs (all runs, every model, the three sweeps; recounted from each
+  run's `run.md` answer under both predicates), every one a correct answer (commit `0e39b318`'s "21 of 38" is a
+  miscount), and made DeepSeek Flash look 7/11 against 3/11. Rescored with a predicate that counts an enabled button
+  against the answer only where it is not called enabled, every run of that task is right under both prompts. An audit
+  of every other task's failed runs found no other false negative (one glm-4.7-flash pipe-log answer wrote `4471`
+  without its `E-`, kept as wrong).
+- **The one effect: the pipe section.** glm-4.7-flash on `pipe-log` (find the one FATAL line in a long log) went
+  6/14 to 4/14, pooled. Every glm run that used a `pipe` was right under both prompts (6/6 and 3/3); under the cut
+  fewer used one (6/11 to 3/11 in the rerun), and the rest asked `fetch_url`'s `ask` and got an ERROR line's code
+  back, or read one themselves. The cut took the section from 1,388 to 644 characters and dropped its
+  `"grep -i pricing | head -n 20"` example.
+- **Vision** (`prompt-budget-cuts-vision`, Gemini Flash and qwen3.6:35b x 2 prompts x 3, a canvas tile grid): 12/12
+  under both. Neither prompt got the paragraph's rule followed: every run took one look at the whole grid and
+  answered from it (Gemini then checked with `exec`). So the shorter paragraph changes nothing this task can see.
+- **Call titles** (the cut also dropped the `title` parameter's example, `"Count the fare cards"`; no sweep scores
+  titles): they did not lengthen. Over the three sweeps, 527 of 1,089 calls carried a title under the cuts against
+  553 of 1,126 under the current prompt, median 24 characters against 26 (p90 38 against 41); the two larger sweeps
+  alone agree (main 23 against 25, rerun 28 against 30). Counted 2026-11-14 from each run's `events.json`, one row
+  per finished call (an `agent-step` with a `tool` and no `pending`), its `arguments.title`. An earlier count of 876
+  counted logged events, not calls, and is withdrawn.
+- **Not measured: the links sentence after the short self-description.** #1871's `LINKS_CLAUSE` (a right-place
+  setting link in 55/80 runs with it against 41/80 without) was measured after the long `SELF_CLAUSE`, never after
+  this cut's short one, which it now follows. A re-measure is open.
+- **Shipped** (Shane, 2026-11-13): every cut but the pipe section's, about 960 tokens a call (about 10%). The pipe
+  section stays as it was. **Not covered**: a shorter pipe text that keeps a grep example, measured on glm-4.7-flash's
+  `pipe-log`; and a vision task a whole-grid look cannot answer.
+
 ## Tried and dropped: "the whole `ml` surface as TypeScript" (2026-10-12)
 
 The proposal was to replace "`agent_api_docs` lists the rest." in `SELF_CLAUSE` (`src/agent/prompts.ts`) with

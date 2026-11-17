@@ -7,6 +7,7 @@ import { IconChevron, IconCopy } from "../icons";
 import { fmtAge } from "../timestamps";
 import { TipText, cursorTipOn, openCtxMenu, type CtxItem } from "../ui-kit";
 import { copyText } from "../copy-hash";
+import { HoverCard } from "../hover-card";
 
 /** Marks where a CUT-OFF value ended: a JSON value whose text was clipped is drawn as the part that arrived, and this
  *  sentinel, placed as the last member of the innermost container open at the cut, draws a "truncated" row there. */
@@ -20,6 +21,45 @@ export const JT_SEEN: object = Object.freeze({});
 /** How many members an open container draws before a "show more" row, so a returned array of 50,000 rows does not
  *  mount 50,000 rows the moment you expand it. */
 export const JT_PAGE = 200;
+
+/** How many characters of a string a tree row shows before "show all", as the browser console cuts a long string. */
+export const JT_STR_CUT = 240;
+
+/** Does `s` hold a character the JSON text shows as an escape (a newline, a tab, any other control)? Those are the strings
+ *  worth reading with the escapes applied. */
+export const hasEscapes = (s: string): boolean => /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(s);
+
+/** The JSON text of the first `n` characters of `s`, left open (`"abc`), never splitting a surrogate pair. */
+export function cutString(s: string, n: number = JT_STR_CUT): string {
+    let end = Math.min(n, s.length);
+    if (end < s.length && end > 0 && /[\ud800-\udbff]/.test(s[end - 1])) end--;
+    return JSON.stringify(s.slice(0, end)).slice(0, -1);
+}
+
+/**
+ * A string value in the tree. A long one is cut after {@link JT_STR_CUT} characters with the count to show all of it, and
+ * "show less" folds it back; the choice is this row's own, so folding the container it is in and opening it again starts
+ * cut. `allOpen` (the raw In view, which exists so Ctrl+F reaches everything) never cuts. One with something hidden from the row (escapes
+ * in it, or the cut itself) opens a HOVER CARD with the whole text as it reads, the escapes applied.
+ */
+function StrLeaf({ s, cls, sep, allOpen }: { s: string; cls: string; sep: ComponentChildren; allOpen?: boolean }) {
+    const [full, setFull] = useState(false);
+    const long = !allOpen && s.length > JT_STR_CUT;
+    const text = long && !full ? <>{cutString(s)}…</> : JSON.stringify(s);
+    const val = <>{text}{sep}</>;
+    const more = long ? <button class="jt-more" aria-expanded={full} onClick={(e) => { e.stopPropagation(); setFull(!full); }}>{full ? "show less" : `show all ${s.length.toLocaleString()} chars`}</button> : null;
+    return <>
+        {hasEscapes(s) || (long && !full)
+            ? <HoverCard class={cls} card={<pre class="hc-text">{s}</pre>}>{val}</HoverCard>
+            : <span class={cls}>{val}</span>}
+        {more}
+    </>;
+}
+
+/** The highlight.js token a primitive is drawn as in the text view, so the tree takes its colour from the code theme (which sets
+ *  `.hljs-*` globally) and the two views of one value never disagree. `.jt-<type>` keeps the panel's own colour only until a
+ *  theme says otherwise. */
+const HLJS_OF: Record<string, string> = { string: "hljs-string", number: "hljs-number", boolean: "hljs-literal", null: "hljs-literal" };
 
 /** Does the cut marker sit anywhere under `v`? It is always a LAST member, so only the chain of last members is walked,
  *  and a folded container can say "cut" in its preview without drawing its children. */
@@ -54,11 +94,11 @@ export interface JsonSchemaNode { description?: string; properties?: Record<stri
 // elsewhere) + a dotted underline under the field name alone (not the quotes or colon) so you can tell which keys carry docs — a debugging affordance over raw args.
 export function JtKey({ name: raw, desc, unknown }: { name: string; desc?: string; unknown?: boolean }) {
     const name = keyLabel(raw);
-    if (unknown) return <span class="tt jt-key jt-key-unknown" tabIndex={0}>{name}:<span class="tt-pop left" role="tooltip">Not in this tool's parameter schema — likely a hallucinated argument, so the tool will ignore it or error.</span></span>;
+    if (unknown) return <span class="tt jt-key jt-key-unknown" tabIndex={0}><span class="jt-key-text hljs-attr">{name}</span>:<span class="tt-pop left" role="tooltip">Not in this tool's parameter schema — likely a hallucinated argument, so the tool will ignore it or error.</span></span>;
     // The description comes from the tool's own JSON Schema, which is written in markdown — backticked
     // identifiers, mostly. Printed raw it showed the backticks, which reads as a rendering that gave up.
-    if (desc) return <span class="tt jt-key jt-key-doc" tabIndex={0}>"<span class="jt-key-name">{name.slice(1, -1)}</span>":<span class="tt-pop left" role="tooltip"><TipText md={desc} /></span></span>;
-    return <span class="jt-key">{name}:</span>;
+    if (desc) return <span class="tt jt-key jt-key-doc" tabIndex={0}><span class="jt-key-text hljs-attr">"<span class="jt-key-name">{name.slice(1, -1)}</span>"</span>:<span class="tt-pop left" role="tooltip"><TipText md={desc} /></span></span>;
+    return <span class="jt-key"><span class="jt-key-text hljs-attr">{name}</span>:</span>;
 }
 /** A key as the tree prints it: always quoted as a JSON string, so every key reads the same and one with a space,
  *  a colon or nothing in it does not read as part of the syntax around it. */
@@ -90,7 +130,9 @@ const copyMenu = (v: unknown, path: string): CtxItem[] => [
 /** A JSON TREE — the raw args, a tool's parameter schema. Collapsible by default; `allOpen` makes it
  *  non-collapsible at EVERY depth, which is what the raw In view passes so nothing can be folded away
  *  from a Ctrl+F. Keys carry their schema `description` as a tooltip, and one not in the schema is
- *  flagged as a likely hallucinated argument. */
+ *  flagged as a likely hallucinated argument.
+ *
+ *  @gallery-flow strings cut, expand and read tests/gallery-flows/JsonTreeStrings.mjs {"v": {"title": "Release notes", "note": "short and plain", "multi": "line one\nline two\n\tindented with a tab", "long": "The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. ", "script": "echo step 1\necho step 2\necho step 3\necho step 4\necho step 5\necho step 6\necho step 7\necho step 8\necho step 9\necho step 10\necho step 11\necho step 12\necho step 13\necho step 14\necho step 15\necho step 16\necho step 17\necho step 18\necho step 19\necho step 20\necho step 21\necho step 22\necho step 23\necho step 24\necho step 25\necho step 26\necho step 27\necho step 28\necho step 29\necho step 30"}, "defaultOpen": true} */
 export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, allOpen, cut, unsent, dim, path, label, trail, times, menuExtra, comma }: { k?: string; v: unknown; depth?: number; defaultOpen?: boolean; schema?: JsonSchemaNode; desc?: string; unknown?: boolean; allOpen?: boolean; cut?: string;
     /** Another member follows this one in its container: the row ends in a `,`, as the JSON would. */ comma?: boolean;
     /** Container → index of its first member the model was NOT sent (see JT_SEEN). */ unsent?: WeakMap<object, number>;
@@ -123,9 +165,10 @@ export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, 
             {label != null ? <span class="tri jt-tri-space" aria-hidden="true"><IconChevron /></span> : null}
             {label ?? (k != null ? <JtKey name={k} desc={desc} unknown={unknown} /> : null)}
             {times && isTimeField(k, v)
-                ? <span class="jt-val jt-number jt-time" {...cursorTipOn(`${new Date(v).toISOString()} (${v})`)}>{timeLabel(v)}</span>
-                : <span class={`jt-val jt-${t}`}>{typeof v === "string" ? JSON.stringify(v) : String(v)}</span>}
-            {sep}
+                ? <span class="jt-val jt-number jt-time" {...cursorTipOn(`${new Date(v).toISOString()} (${v})`)}>{timeLabel(v)}{sep}</span>
+                : typeof v === "string"
+                    ? <StrLeaf s={v} cls={`jt-val jt-${t} ${HLJS_OF[t] ?? ""}`} sep={sep} allOpen={allOpen} />
+                    : <span class={`jt-val jt-${t} ${HLJS_OF[t] ?? ""}`}>{String(v)}{sep}</span>}
             {trail}
         </div>;
     }

@@ -10,6 +10,7 @@
 // output it held. The next call reconnects and configures afresh.
 
 import { HostClient, HostError, HOST_NAME, HOST_PROTOCOL, type HostConfigured, type HostHello, type HostPort } from "../shell/host-protocol";
+import { formatHostVersion, hostOutdated, parseHostVersion, pinnedHostVersion, type HostVersion } from "../shell/host-install";
 import { getConfig } from "./sw-llm";
 import { defineState } from "../state-registry";
 import type { MlConfig } from "../contract";
@@ -41,12 +42,22 @@ export interface ShellStatus {
     ready: boolean;
     /** Calls will run under the OS sandbox (asked for, and available on this machine). */
     sandboxed: boolean;
-    /** `tilde`: the host expands a leading `~` in argv and cwd (`hello.tilde`). */
+    /** `version` is the PARSED form (`0.10.0`), or `"unknown"` when the host's text was not that shape: the version a host sent is never drawn or sent on. `tilde`: the host expands a leading `~` in argv and cwd (`hello.tilde`). */
     host?: { version: string; platform: string; sandbox: HostHello["sandbox"]; tilde?: boolean };
     roots?: HostConfigured["roots"];
     /** Why it is not ready, in words for the settings page. */
     error?: string;
     reason?: ShellUnavailable["reason"];
+    /** The last attempt to say hello to the host, in this worker: true if it answered, false if not, absent if none was made. */
+    hostAnswers?: boolean;
+    /** A host has answered in this profile at some time (stored): with `hostAnswers`, whether Settings still offers the installer. */
+    hostSeen?: boolean;
+    /** The installed host's version when its last hello reported one in the pin's shape (parsed, `0.10.0`); absent when unknown. */
+    hostVersion?: string;
+    /** The installed host is older than the one this build pins: Settings and the attention list offer the update. */
+    hostOutdated?: boolean;
+    /** The version this build pins, for the update line's wording. */
+    pinnedHostVersion?: string;
 }
 
 let current: ShellHost | null = null;   // state: declared below as "shell.host"
@@ -63,6 +74,56 @@ defineState({
     // Nothing while ml.sh is off and the host idle: a session with nothing live must read as such (the Run state panel).
     read: () => (status.enabled || inFlight || held ? { ...status, inFlight, held } : undefined),
 });
+
+const HOST_SEEN_KEY = "shellHostSeen";
+const HOST_VERSION_KEY = "shellHostVersion";
+let hostSeen = false;   // state: declared below as "shell.hostSeen"
+let hostVersion: HostVersion | null = null;   // state: declared below as "shell.hostSeen"
+let hostAnswers: boolean | undefined;   // state: plumbing — the last hello attempt's outcome, remeasured by the next
+const hostSeenRead: Promise<void> = (async () => {
+    try {
+        const got = await chrome.storage.local.get([HOST_SEEN_KEY, HOST_VERSION_KEY]);
+        hostSeen = got[HOST_SEEN_KEY] === true;
+        // Parsed again on the way in: a stored string that is not the shape is unknown, never a version.
+        hostVersion = parseHostVersion(got[HOST_VERSION_KEY]);
+    } catch { /* no storage (a test harness) */ }
+})();
+
+defineState({
+    id: "shell.hostSeen", scope: "browser", realm: "worker", audience: "human", lostOn: [],
+    describe: "Whether a process host has ever answered in this profile, and the version its last hello reported (parsed, absent when unreadable). Stored; they decide whether Settings and the attention list offer the installer or an update.",
+    read: () => ({ hostSeen, hostAnswers, hostVersion: hostVersion ? formatHostVersion(hostVersion) : undefined }),
+});
+
+/**
+ * Whether Settings and the attention list should still offer to install the host: no host has answered, by the last
+ * attempt this worker made or, with none yet, by any earlier one in this profile.
+ */
+export const hostMissing = (): boolean => !(hostAnswers ?? hostSeen);
+
+/** Whether the host's last reported version is older than the one this build pins (unknown is not outdated). */
+export const hostIsOutdated = (): boolean => hostOutdated(hostVersion);
+
+/**
+ * A hello got an answer (or did not): remember it, and tell the status's listeners when the offer changes. An answer
+ * carries the host's version; only its strict parse is kept (stored beside the flag), and a version that does not parse
+ * clears the one before it, so what a newer host said is never judged by what an older one did.
+ * @param answered whether the host said hello
+ * @param version `hello.version`, as the host sent it
+ */
+function noteHello(answered: boolean, version?: unknown): void {
+    const before = [hostMissing(), hostIsOutdated()];
+    hostAnswers = answered;
+    if (answered && !hostSeen) { hostSeen = true; void chrome.storage.local.set({ [HOST_SEEN_KEY]: true }).catch(() => undefined); }
+    if (answered && version !== undefined) {
+        const next = parseHostVersion(version);
+        if (JSON.stringify(next) !== JSON.stringify(hostVersion)) {
+            hostVersion = next;
+            void (next ? chrome.storage.local.set({ [HOST_VERSION_KEY]: formatHostVersion(next) }) : chrome.storage.local.remove(HOST_VERSION_KEY)).catch(() => undefined);
+        }
+    }
+    if (before[0] !== hostMissing() || before[1] !== hostIsOutdated()) for (const l of statusListeners) { try { l(); } catch { /* a listener's own problem */ } }
+}
 
 /** The settings as one string: a different string is a different session. */
 const settingsKey = (s: ShellSettings): string => JSON.stringify([!!s.shellEnabled, s.shellRoots ?? [], s.shellSandbox !== false, s.shellPath ?? []]);
@@ -124,12 +185,13 @@ async function connect(cfg: ShellSettings, key: string): Promise<ShellHost> {
     if (!roots.length) return fail("no-roots", "No workspace folder is set: ml.sh runs programs only inside the folders named in Settings.");
     let port: chrome.runtime.Port;
     try { port = chrome.runtime.connectNative(HOST_NAME); }
-    catch (e) { return fail("not-installed", `The process host could not be started: ${(e as Error)?.message || e}`); }
+    catch (e) { noteHello(false); return fail("not-installed", `The process host could not be started: ${(e as Error)?.message || e}`); }
     const client = new HostClient(nativePort(port));
     client.onClosed(() => { if (current?.client === client) { current = null; setStatus({ ...status, ready: false, error: "The process host closed the connection." }); } });
     let hello: HostHello;
     try { hello = await client.hello(); }
-    catch (e) { client.close("hello failed"); return fail("not-installed", notInstalledText((e as Error)?.message)); }
+    catch (e) { client.close("hello failed"); noteHello(false); return fail("not-installed", notInstalledText((e as Error)?.message)); }
+    noteHello(true, hello?.version);
     if (hello?.protocol !== HOST_PROTOCOL) { client.close("protocol"); return fail("protocol", `The process host speaks protocol ${hello?.protocol}; this extension speaks ${HOST_PROTOCOL}. Update one of them.`); }
     let configured: HostConfigured;
     try {
@@ -139,14 +201,14 @@ async function connect(cfg: ShellSettings, key: string): Promise<ShellHost> {
         return fail("config", `The process host refused the settings: ${(e as Error)?.message || e}`);
     }
     current = { client, hello, configured, key };
-    setStatus({ enabled, ready: true, sandboxed: configured.sandboxed, host: { version: hello.version, platform: hello.platform, sandbox: hello.sandbox, ...(hello.tilde === true ? { tilde: true } : {}) }, roots: configured.roots });
+    setStatus({ enabled, ready: true, sandboxed: configured.sandboxed, host: { version: parseHostVersion(hello.version) ? formatHostVersion(parseHostVersion(hello.version)!) : "unknown", platform: hello.platform, sandbox: hello.sandbox, ...(hello.tilde === true ? { tilde: true } : {}) }, roots: configured.roots });
     touch();
     return current;
 }
 
 /** What a port that would not start says, turned into what to do about it. */
 function notInstalledText(why: string | undefined): string {
-    return `The process host is not installed or would not start (${why || "no answer"}). Install it with \`wmlhost install --extension-id ${chrome.runtime.id}\`.`;
+    return `The process host is not installed or would not start (${why || "no answer"}). The person installs it from Settings, Extension, Advanced, Programs (ml.sh) (\`settings/extension/advanced/shell\`), which shows the one line to paste.`;
 }
 
 /** The port is in use: restart its idle clock. */
@@ -181,13 +243,48 @@ export function holdOutput(delta: number): void {
 }
 
 /** The status as last measured, for the settings page. */
-export const shellStatus = (): ShellStatus => ({ ...status });
+export const shellStatus = (): ShellStatus => ({
+    ...status, hostSeen, ...(hostAnswers === undefined ? {} : { hostAnswers }),
+    ...(hostVersion ? { hostVersion: formatHostVersion(hostVersion) } : {}),
+    ...(hostIsOutdated() ? { hostOutdated: true } : {}),
+    ...(pinnedHostVersion() ? { pinnedHostVersion: formatHostVersion(pinnedHostVersion()!) } : {}),
+});
+
+/**
+ * The status after the stored "a host has answered" flag has been read: a worker woken by a settings page after an eviction
+ * must not report no host to a person who has one. For the SHELL_STATUS answer; `shellStatus` stays synchronous for the rest.
+ */
+export async function shellStatusRead(): Promise<ShellStatus> {
+    await hostSeenRead;
+    return shellStatus();
+}
+
+/**
+ * Ask whether a host answers, whatever the settings say: connect, say hello, close. For the "Check again" the person
+ * presses in the installer guide, so ml.sh can be off and no folder set. Nothing is configured and nothing runs; extension
+ * pages only (background.ts). A port already open answers without a second one.
+ */
+export async function probeShell(): Promise<ShellStatus> {
+    await hostSeenRead;
+    if (current && !current.client.isClosed) {
+        // An old host stays running after its binary is replaced: with nothing in flight, drop the port so this hello is
+        // the new binary's, and the update guide can retire on "Check again".
+        if (!(hostIsOutdated() && inFlight === 0 && held === 0)) { noteHello(true, current.hello.version); return shellStatus(); }
+        const old = current; current = null; old.client.close("probe after an update offer");
+    }
+    try {
+        const client = new HostClient(nativePort(chrome.runtime.connectNative(HOST_NAME)));
+        try { const h = await client.hello(); noteHello(true, h?.version); } catch { noteHello(false); } finally { client.close("probe"); }
+    } catch { noteHello(false); }
+    return shellStatus();
+}
 
 /**
  * Measure the status now: connect and configure if the settings say so, or record why not. For the settings page and
  * the capabilities; never throws.
  */
 export async function refreshShell(): Promise<ShellStatus> {
+    await hostSeenRead;
     try { await shellHost(); } catch (e) { if (!(e instanceof ShellUnavailable) && !(e instanceof HostError)) setStatus({ ...status, ready: false, error: String((e as Error)?.message || e) }); }
     return shellStatus();
 }

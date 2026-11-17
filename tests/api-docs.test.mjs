@@ -229,3 +229,17 @@ test("docs/API.md's ml.config() row names every field publicConfig() returns, an
     assert.deepEqual(fields.filter((f) => !named.includes(f)), [], "a field ml.config() returns that the row does not name");
     assert.deepEqual(named.filter((n) => !fields.includes(n)), [], "a name in the row that ml.config() does not return");
 });
+
+// The type a page is told it gets and the object it does get were two lists kept by hand: `labelMatch` sat in the
+// Pick for months while publicConfig() never sent it. Held both ways, so neither can name a key the other lacks.
+test("MlPublicConfig's Pick names exactly the stored keys publicConfig() returns", async () => {
+    const { publicConfig, DEFAULT_CONFIG } = await import("../src/contract/contract-config.ts");
+    const returned = Object.keys(publicConfig(DEFAULT_CONFIG, false)).filter((k) => k !== "pageApprovalAllowed");
+    const decl = parseDecls(readFileSync(new URL("../src/contract/contract-config.ts", import.meta.url), "utf8")).get("MlPublicConfig").body.join("\n");
+    const pick = /Pick<MlConfig,([^>]*)>/.exec(decl)?.[1];
+    assert.ok(pick, "MlPublicConfig is a Pick<MlConfig, …>");
+    const picked = [...pick.matchAll(/"(\w+)"/g)].map((m) => m[1]);
+    assert.ok(picked.length > 10, `the Pick's key list was read (${picked.length} keys)`);
+    assert.deepEqual(returned.filter((k) => !picked.includes(k)), [], "a key publicConfig() returns that MlPublicConfig does not name");
+    assert.deepEqual(picked.filter((k) => !returned.includes(k)), [], "a key MlPublicConfig names that publicConfig() does not return");
+});

@@ -39,12 +39,13 @@ const REFUSED: Record<string, string> = {
     "no-metadata": "does not say what it depends on",
     "index-error": "could not be looked up on PyPI",
     "lookup-cap": "was not looked up: this run has made all the PyPI lookups it may",
+    "not-shipped": "is in Pyodide's lock, not shipped with the extension",
 };
 
 /**
  * python_install's card: the files with their hashes and the download total, or the refusal.
  * @group card
- * @gallery {"request": {"name": "attrs"}, "verdict": {"ok": true, "files": [{"name": "attrs", "version": "26.1.0", "filename": "attrs-26.1.0-py3-none-any.whl", "source": "lock", "size": null, "sha256": "b5f2e20d25fbeb55950af8cda6b5ef71d47e60872587d11ab6b6425b0d7c2c92"}, {"name": "six", "version": "1.17.0", "filename": "six-1.17.0-py2.py3-none-any.whl", "source": "lock", "size": null, "sha256": "c6681057bd87fdec57e811b8e4007bad38deea284052817fa400d542c6423e2d"}], "loaded": [], "totalBytes": 0}}
+ * @gallery {"request": {"name": "jedi"}, "verdict": {"ok": true, "files": [{"name": "jedi", "version": "0.19.2", "filename": "jedi-0.19.2-py2.py3-none-any.whl", "source": "lock", "size": null, "sha256": "3d65f786600178d41b4657d12ca5c332ea7ee45484510bee74bc5a9046e7a48f"},{"name": "parso", "version": "0.8.6", "filename": "parso-0.8.6-py2.py3-none-any.whl", "source": "lock", "size": null, "sha256": "31fad5b0c039c6769850f94b6c7289a738371dbc1b514f497fe997c0c3d90217"}], "loaded": [], "totalBytes": 0}}
  */
 export function PkgCardRender({ request, verdict }: { request: { name: string; version?: string }; verdict: PkgCard }) {
     const asked = request.version ? `${request.name} ${request.version}` : request.name;

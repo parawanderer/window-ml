@@ -756,15 +756,25 @@ test("interactives scopes to an open modal dialog (the rating popup case)", () =
     assert.ok(!/"Like"/.test(out.content), "controls outside the modal are not listed");
 });
 
-test("findByText/interactives hint at exec composition ONLY when exec is wired (ctx.hasTool)", () => {
+// The hint that a filter these tools lack composes as a read-only exec survey rode on every findByText/interactives
+// result; since the panel-bloat cut (PROMPT_BUDGET.md, 2026-11-13) it is said once, in interactives' description.
+test("the exec compose hint is in interactives' description ONLY when exec is wired, and never in a result", async () => {
     const { ml } = loadDomWorld('<button aria-label="Delete">x</button><p>hello there</p>');
     const withExec = { hasTool: (n) => n === "exec", tools: ["exec"], model: null, capabilities: null };
-    const noExec = { hasTool: () => false, tools: [], model: null, capabilities: null };
     const fbt = ml.domTools.find(t => t.name === "findByText");
-    assert.match(String(fbt.run({ text: "hello" }, withExec).content), /compose it in a read-only exec survey[\s\S]*ml\.a11y/, "exec wired → the compose hint (smart models can act on it)");
-    assert.doesNotMatch(String(fbt.run({ text: "hello" }, noExec).content), /read-only exec survey/, "no exec → no hint (weaker models just keep calling the tool)");
     const inter = ml.domTools.find(t => t.name === "interactives");
-    assert.match(String(inter.run({}, withExec).content), /ml\.a11y\(el\)/, "interactives hints too when exec is wired");
+    assert.match(String(fbt.run({ text: "hello" }, withExec).content), /hello there/, "the tool ran");
+    assert.doesNotMatch(String(fbt.run({ text: "hello" }, withExec).content), /read-only exec survey/, "findByText's result carries no hint");
+    assert.doesNotMatch(String(inter.run({}, withExec).content), /ml\.a11y\(el\)/, "nor does interactives'");
+    const { withComposeNote } = await import("../src/tools/tools.ts");
+    const kit = [{ name: "interactives", description: "List controls." }, { name: "findByText", description: "Find text." }];
+    const wired = withComposeNote([...kit, { name: "exec", description: "Run JS." }]);
+    assert.match(wired[0].description, /^List controls\. A filter this tool lacks: a read-only exec survey, `ml\.queryAll\(sel\)\.map\(el => ml\.a11y\(el\)\)`/);
+    assert.equal(wired[1].description, "Find text.", "said once, on interactives");
+    assert.deepEqual(withComposeNote(kit), kit, "no exec, no hint: there is nothing to compose with");
+    const subset = withComposeNote([kit[1], { name: "exec", description: "Run JS." }]);
+    assert.match(subset[0].description, /^Find text\. A filter this tool lacks/, "a subset without interactives keeps the hint on findByText");
+    assert.deepEqual(withComposeNote([{ name: "exec", description: "Run JS." }]), [{ name: "exec", description: "Run JS." }], "neither tool: nothing changes");
 });
 
 test("describeElement describes the first match (+ node) and handles bad input", () => {
@@ -1912,6 +1922,18 @@ test("Q1: a self-approving site keeps its own loop when no debug surface is on; 
     const surfaced = loadPageWorld({ config: { pageApprovalAllowed: true, debugMode: "overlay" }, onRuntimeMessage: scriptedModel([reply("done")]) });
     await surfaced.ml.agent("x", { tools: [surfaced.ml.defineTool({ name: "ping", run: () => "pong" })], vision: false }).catch(() => null);
     assert.ok(surfaced.runtimeCalls.some(c => c.type === "START_RUN"));
+});
+
+test("a page run's tool-call turn carries the model's thinking back on the next call, and a plain reply's does not", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: scriptedModel([{ content: "", reasoning: "I should ping first", tool_calls: [{ id: "c1", name: "ping", arguments: {} }] }, { content: "done", reasoning: "all good", tool_calls: [] }])
+    });
+    const ping = world.ml.defineTool({ name: "ping", run: () => "pong" });
+    const a = world.ml.createAgent({ tools: [ping], maxSteps: 5 });
+    await a.run("go");
+    const turn = world.runtimeCalls[1].payload.messages.find((x) => x.role === "assistant" && x.tool_calls?.length);
+    assert.equal(turn.reasoning, "I should ping first", "the tool-call turn keeps its thinking, as agent-host does");
+    assert.equal(a.messages.at(-1).reasoning, undefined, "a final reply's thinking is not kept");
 });
 
 test("agent surfaces the model's reasoning as thought events and transcript entries", async () => {

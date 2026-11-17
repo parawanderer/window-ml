@@ -193,7 +193,7 @@ export async function setBackgroundChatModel(hash: string, model: string): Promi
 
 /** The next turn of a background chat. `not-found` when this worker does not host it and storage cannot bring it
  *  back; `busy` while a turn is still running, since a chat has no inbox to steer into. Throws {@link ImagesRefused}
- *  before the turn when its images may not be sent (`vision: true` is the person's word that the model sees), and
+ *  before the turn when its images may not be sent (`vision: true` is the client's claim that the model sees; the worker cannot tell a claim from the person's word), and
  *  {@link FilesRefused} when a PDF cannot be read or its text files hold more text than a message takes. */
 export async function sendBackgroundChat(hash: string, text: string, images?: string[], files?: SentFile[], vision?: true): Promise<"turn" | "busy" | "not-found"> {
     const chat = chats.get(hash) ?? (await rehydrate(hash));
@@ -297,7 +297,7 @@ async function turn(chat: BgChat, text: string, images: string[] | undefined, pr
     const controller = new AbortController();
     chat.running = controller;
     chat.lastTs = d.now();
-    // Images go to the model only when it sees (or the person said it does); otherwise each is replaced by a note the
+    // Images go to the model only when it sees (or the client claims it does, `vision: true`); otherwise each is replaced by a note the
     // model reads, the reader's transcription or a line naming it as not sent (image-gate.ts).
     const shown = images ?? [];
     const pictures = plan.route === "model" ? [...shown] : [];

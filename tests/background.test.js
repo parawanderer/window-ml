@@ -811,6 +811,8 @@ test("GET_CONFIG returns the model/ocrModel/apiFormat and withholds the URL and 
         // On since 2026-10-09: a core component. Never stored here, so this is the default.
         pierceClosedShadow: true, cdp: true,
         groundingEnabled: false, groundingModel: "", groundingRange: 1000, debugMode: "off",
+        // Which metric ranks a near match on a pointer label: a page-built run reads it from here.
+        labelMatch: "hybrid",
         // Computed per-origin: no sender.tab in this harness call → not on the whitelist → false. The raw
         // pageApprovalDomains list is deliberately NOT exposed (only this boolean for the caller's origin).
         pageApprovalAllowed: false,
@@ -4599,6 +4601,43 @@ test("PYTHON_EXEC: the bench's keep-state run, reset and completion all reach th
     assert.equal(runs[3].complete.bench, "readonly", "an unknown namespace name is dropped, never forwarded");
 });
 
+// --- OPEN_CHAT_PAGE: the chat page opened or focused at a view, for extension pages only ---
+
+const CHAT = "chrome-extension://test/chat.html";
+/** The HUD card's sender: our iframe in a page tab, so `tab` is set and `url` is ours. */
+const CARD_SENDER = { url: "chrome-extension://test/sidebar.html", tab: { id: 9 }, frameId: 3 };
+
+test("OPEN_CHAT_PAGE: with no chat page open, opens one at the address's hash; with none, at the page itself", async () => {
+    const bg = loadBackground({ config: baseConfig() });
+    assert.deepEqual(await bg.send({ type: "OPEN_CHAT_PAGE", payload: { address: "setting/shellEnabled" } }, CARD_SENDER), { data: true });
+    assert.deepEqual(await bg.send({ type: "OPEN_CHAT_PAGE", payload: { address: "settings/extension/backup" } }, { url: "chrome-extension://test/popup.html" }), { data: true });
+    assert.deepEqual(await bg.send({ type: "OPEN_CHAT_PAGE", payload: {} }, { url: "chrome-extension://test/popup.html" }), { data: true });
+    assert.deepEqual(bg.tabsCreated.map((t) => t.url), [`${CHAT}#/setting/shellEnabled`, `${CHAT}#/settings/extension/backup`, CHAT]);
+});
+
+test("OPEN_CHAT_PAGE: an open chat page, its route in the hash or not, is focused and sent to the hash in place, never opened twice", async () => {
+    const bg = loadBackground({ config: baseConfig(), extensionTabs: [
+        { tabId: 5, windowId: 2, documentUrl: "chrome-extension://test/sidebar.html" },
+        { tabId: 7, windowId: 3, documentUrl: `${CHAT}#/s/local:abc` },
+    ] });
+    assert.deepEqual(await bg.send({ type: "OPEN_CHAT_PAGE", payload: { address: "settings/extension/advanced/shell" } }, CARD_SENDER), { data: true });
+    assert.deepEqual(await bg.send({ type: "OPEN_CHAT_PAGE", payload: {} }, { url: "chrome-extension://test/popup.html" }), { data: true });
+    assert.equal(bg.tabsCreated.length, 0, "no second chat page");
+    assert.deepEqual(bg.tabsUpdated, [[7, { active: true, url: `${CHAT}#/settings/extension/advanced/shell` }], [7, { active: true }]],
+        "a hash-only change, so the page is not reloaded; no address leaves its route as it is");
+    assert.deepEqual(bg.windowsUpdated, [[3, { focused: true }], [3, { focused: true }]], "its window is brought forward");
+});
+
+test("OPEN_CHAT_PAGE: refused from a page's content script, and for an address a link does not resolve", async () => {
+    const bg = loadBackground({ config: baseConfig() });
+    const page = { url: "https://example.com/", origin: "https://example.com", tab: { id: 9, url: "https://example.com/" }, frameId: 0 };
+    assert.deepEqual(await bg.send({ type: "OPEN_CHAT_PAGE", payload: { address: "setting/shellEnabled" } }, page), { error: "refused" });
+    for (const address of ["setting/nope", "setting/ocrNumCtx", "s/local:abc", "search", "settings/extension", "https://evil.example/",
+        "../popup.html", "setting/apiKey?reveal=1", "setting/apiKey#x", "settings//extension/models", 42, null, ["setting/apiKey"]])
+        assert.deepEqual(await bg.send({ type: "OPEN_CHAT_PAGE", payload: { address } }, CARD_SENDER), { error: "refused" }, String(address));
+    assert.equal(bg.tabsCreated.length + bg.tabsUpdated.length, 0, "nothing opened or focused");
+});
+
 // --- the bench's Stop: PYTHON_INTERRUPT, for extension pages only ---
 
 test("SECURITY (PYTHON_INTERRUPT): a content script is refused and the offscreen document is never asked", async () => {
@@ -4696,6 +4735,54 @@ test("FETCH_LLM: a 400 for some other reason is not blamed on the hint", async (
     assert.match(r1.error, /HTTP 400.*context too long/, "the real error surfaces");
     await bg.send({ type: "FETCH_LLM", payload: hinted });
     assert.deepEqual(bodies.map((b) => !!b.hint), [true, false, true, false], "the retry failed too, so the server is not marked as refusing it");
+});
+
+// --- a thinking-mode server wants the assistant's thinking back on a turn that called tools ---
+
+const DEMAND = { error: { message: "The reasoning_content in the thinking mode must be passed back to the API." } };
+const toolTurn = (extra = {}) => [
+    { role: "user", content: "list it" },
+    { role: "assistant", content: "", tool_calls: [{ id: "c1", name: "ls", arguments: {} }], ...extra },
+    { role: "tool", tool_call_id: "c1", content: "a b" },
+];
+/** A server that demands the field on any assistant turn with tool calls, as DeepSeek's thinking mode does. */
+const demanding = (bodies) => ({ body }) => {
+    bodies.push(body);
+    const bare = body.messages.some((m) => m.role === "assistant" && m.tool_calls && typeof m.reasoning_content !== "string");
+    return bare ? jsonResponse(DEMAND, 400) : jsonResponse({ choices: [{ message: { content: "ok" } }] });
+};
+
+test("FETCH_LLM: a server that demands reasoning_content is sent the turn's thinking once and then every time, and nothing else gets it", async () => {
+    const bodies = [];
+    const bg = loadBackground({ config: baseConfig(), onFetch: demanding(bodies) });
+    const payload = { messages: toolTurn({ reasoning: "the folder first" }) };
+    assert.equal((await bg.send({ type: "FETCH_LLM", payload })).data, "ok", "the refusal is answered, not shown");
+    assert.equal((await bg.send({ type: "FETCH_LLM", payload })).data, "ok");
+    assert.deepEqual(bodies.map((b) => b.messages[1].reasoning_content), [undefined, "the folder first", "the folder first"], "refused once, then sent without waiting to be refused");
+    assert.equal(bodies[0].messages[0].reasoning_content, undefined, "only the assistant turn that called tools carries it");
+    assert.equal(bodies[0].messages[2].reasoning_content, undefined);
+});
+
+test("FETCH_LLM: a server that never asks never receives reasoning_content, whatever the turn carries", async () => {
+    const bodies = [];
+    const bg = loadBackground({ config: baseConfig(), onFetch: ({ body }) => { bodies.push(body); return jsonResponse({ choices: [{ message: { content: "ok" } }] }); } });
+    await bg.send({ type: "FETCH_LLM", payload: { messages: toolTurn({ reasoning: "private" }) } });
+    assert.ok(bodies.every((b) => b.messages.every((m) => !("reasoning_content" in m))), "an OpenAI-compatible host that rejects unknown fields is never sent one");
+});
+
+test("FETCH_LLM: a transcript written before the field existed is resumed with an empty reasoning_content, and none is invented", async () => {
+    const bodies = [];
+    const bg = loadBackground({ config: baseConfig(), onFetch: demanding(bodies) });
+    const old = toolTurn();   // no `reasoning` on its turn: what the previous build stored
+    assert.equal((await bg.send({ type: "FETCH_LLM", payload: { messages: old } })).data, "ok", "it must not 400");
+    assert.equal(bodies.at(-1).messages[1].reasoning_content, "", "the field is there, empty: nothing was made up for it");
+});
+
+test("FETCH_LLM: a 400 that names reasoning_content is not blamed on the images", async () => {
+    const bg = loadBackground({ config: baseConfig(), onFetch: () => jsonResponse(DEMAND, 400) });
+    const r = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "see", images: ["data:image/png;base64,AAAA"] }] } });
+    assert.match(r.error, /reasoning_content/);
+    assert.doesNotMatch(r.error, /may not support image input/);
 });
 
 test("START_RUN: every step is an agent request in the run's session, and says it followed a tool", async () => {

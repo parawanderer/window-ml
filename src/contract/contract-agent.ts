@@ -229,6 +229,9 @@ export interface ShCallSpan {
     peakFootprint?: number;
     memoryBound?: number;
     killed?: "oom";
+    /** When the call finished, in epoch milliseconds (the worker's clock): what lets a surface put the calls of one step
+     *  in the order they happened, asked and unasked together. Absent from a record written before it existed. */
+    endedAt?: number;
     /** The CPU time the host measured, in milliseconds (host 0.7.0): a second fact beside memory, never bounded.
      *  Absent from an older host: absent is not zero. */
     cpuMs?: number;
@@ -248,6 +251,9 @@ export interface ShUnasked {
     argv: string[];
     /** The arguments whose leading `~` the host expanded (`HostTilde`), when any did: the line shows `~/x is /real/x`. */
     tilde?: { index: number | "cwd" | "path"; from: string; to: string | null; reason?: string }[];
+    /** The `/files` arguments the host mapped to the uploads folder (`HostFilesMapped`), when any were: the line shows
+     *  `/files/x is /real/x`, the argv the model wrote beside the one the process got. */
+    files?: { index: number | "cwd"; from: string; to: string }[];
     /** What the call reported once it ran (`ShOutcome`: where it ran, the sandbox applied, the protected names). */
     outcome: Record<string, unknown>;
 }
