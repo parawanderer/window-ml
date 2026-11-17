@@ -1,6 +1,6 @@
 // site-instructions.ts — what of a page-built run's system prompt the SITE wrote, for the start card to show.
 
-import { AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, tooltokensClause, shadowClause, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, LINKS_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, currentClause, shellClause } from "./prompts";
+import { AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, tooltokensClause, shadowClause, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, LINKS_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, currentClause, shellClause, LIFETIMES_RE } from "./prompts";
 
 /** The marker `assembleRun` writes before a run's `systemAppend`. */
 const NOTES_MARKER = "\n\nTask-specific notes:\n";
@@ -27,6 +27,7 @@ export function siteInstructions(systemPrompt: unknown, toolNames: readonly stri
     // Wherever it sits: text the site put before the preamble is then all that is left, not the preamble with it.
     rest = rest.split(AGENT_SYSTEM).join("\n");
     for (const c of clauses) rest = rest.split(c).join("\n");
+    rest = rest.replace(LIFETIMES_RE, "\n");   // its two figures are the person's settings, so any figure
     rest = rest.split(NOTES_MARKER).join("\n");
     return rest.replace(/\n{3,}/g, "\n\n").trim();
 }
