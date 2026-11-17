@@ -137,7 +137,7 @@ const offscreenTester: InstallTester = async (run, wheels, modules, stop, scope 
 /**
  * The scan as the run log keeps it, whose `detail` is flat: the findings as one line of names (readScan kept nothing
  * the package wrote), fitted to the log's string cap by whole findings, with their count and how many modules it read;
- * `scanLost` when it did not answer (its cell failed, or a source killed its interpreter), so a lost scan is seen.
+ * `scanLost` when it did not answer (its cell failed, or the candidate died before it did), so a lost scan is seen.
  * @param scan the candidate's scan, or null
  */
 export function scanDetail(scan: ScanResult | null): Record<string, string | number | boolean> {

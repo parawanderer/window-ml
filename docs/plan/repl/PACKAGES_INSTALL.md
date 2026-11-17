@@ -413,8 +413,8 @@ AS BUILT (slice 4b, item 7 and shapes iv and v of item 10):
   before the lockdown: the candidate's wheels are unpacked after it (slice 4), and the scan only reads. Its scope is the
   top-level names of the call's and the run's earlier wheels; a lock package is never read. Call depth is 1, the
   notebook's default. Bounded at 2,000 modules, 2 MB a file and 48 MB in all, past which it says it stopped short. A
-  scan that fails or kills its interpreter is no finding: the import test runs as before, in a fresh candidate if need be,
-  and the run log says `scanLost`. A module too deep to parse or to walk is skipped as unparsed (janitor-2, #1934).
+  scan that fails is no finding: the import test runs as before, in a fresh worker, and the run log says `scanLost`. A
+  source that kills Pyodide gets no answer (the fatal error escapes the cell), so the 60 s deadline fails that install. A module too deep to parse or to walk is skipped as unparsed (janitor-2, #1934).
 - Only names reach the model: a finding is a kind, a call or module from the scan's own tables, and the dotted names of
   the modules and functions on its chain, each cut to 120 characters (e3, #1934: a local function's name has no length
   limit). A module-level `raise` is reported without its text.

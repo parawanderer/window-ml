@@ -117,7 +117,7 @@ test("RED TEAM: a source the parser refuses (nesting past its limit, bad syntax)
 
 test("RED TEAM: a source that parses but is too deep to walk (a 1200-attribute call chain) is skipped and the scan still answers", T, async () => {
     // 1000 to 1500 attributes parse in this core and then pass the recursion limit in the walk; from about 2000 the
-    // parser overflows the JS stack and the interpreter dies, which the candidate survives by a fresh worker.
+    // parser overflows the JS stack and kills the interpreter (tests/pkg-install-fatal-worker.test.mjs).
     const r = await scan(["chain"]);
     assert.deepEqual(brief(r), []);
     assert.equal(r.reached, 1);

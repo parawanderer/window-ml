@@ -451,6 +451,13 @@ function noteWheels(w: Worker, sent: WheelRef[], ok: boolean): void {
 /** From the candidate's spawn to its answer; past it the candidate is killed and the install fails (ruled 2026-11-13). */
 const PY_INSTALL_DEADLINE_MS = 60_000;
 const candidates = new Map<string, string>();   // state: plumbing — run id → its candidate's principal, while one runs
+const candidateEnds = new Map<string, string>();   // state: plumbing — a candidate's principal → why it was ended (the deadline, Stop), while it runs
+
+/** End a candidate: its worker is killed, and the test does not go on in a fresh one. */
+function endCandidate(principal: string, reason: string): void {
+    candidateEnds.set(principal, reason);
+    killWorker(principal, reason);
+}
 /** What a candidate found. */
 type InstallTest = ({ ok: true } | { ok: false; error: string; module?: string; missing?: string; died?: boolean; collision?: boolean }) & { scan?: ScanResult | null };
 
@@ -478,16 +485,24 @@ async function installTest(run: string, refs: WheelRef[], modules: string[], sco
     if (candidates.has(run)) return { ok: false, error: "another install of this run is being tested" };
     const principal = `install:${run}:${nextId++}`;
     candidates.set(run, principal);
-    const deadline = setTimeout(() => killWorker(principal, "install-deadline"), PY_INSTALL_DEADLINE_MS);
+    const deadline = setTimeout(() => endCandidate(principal, "install-deadline"), PY_INSTALL_DEADLINE_MS);
     try {
         const cell = (code: string, wheels: WheelBytes[]) => runInWorker(code, null, true, null, false, undefined, false, true, undefined, undefined, [], principal, undefined, false, undefined, false, undefined, undefined, wheels) as Promise<PyResult & { installFailed?: boolean }>;
         const got = await wheelsForCell(ensureWorker(principal, true), refs);
         if ("error" in got) return { ok: false, error: got.error };
         // The scan reads before any of the packages' code runs, and is a note whatever it answers (item 7): a scan that
-        // fails leaves the import test to decide, in this worker or, when the scan's interpreter died, a fresh one.
+        // fails leaves the import test to decide, in a fresh worker. A source that kills Pyodide gets no answer at all (the
+        // fatal error escapes the cell, tests/pkg-install-fatal-worker.test.mjs): the deadline ends that candidate.
         const s = await cell(scanCode(modules, scope), got);
         if (!s.ok && s.installFailed) return { ok: false, error: String(s.error ?? "the candidate did not answer"), scan: null };
         const scan = s.ok ? readScan(s.value) : null;
+        // A scan that failed may have left its interpreter unusable (a fatal error answered, the worker living on to answer
+        // "already fatally failed"): the import gets a fresh worker, never that one.
+        if (!s.ok) dropCandidate(principal);
+        // The deadline and Stop end the whole candidate: reached in the scan, the import never starts in a fresh worker
+        // (its cell has no timer of its own, so it would run past the deadline unbounded).
+        const ended = candidateEnds.get(principal);
+        if (ended) return { ok: false, error: `Python worker stopped (${ended}).`, died: true, scan };
         const again = await wheelsForCell(ensureWorker(principal, true), refs);
         if ("error" in again) return { ok: false, error: again.error, scan };
         const r = await cell(importTestCode(modules), again);
@@ -502,6 +517,7 @@ async function installTest(run: string, refs: WheelRef[], modules: string[], sco
     } finally {
         clearTimeout(deadline);
         candidates.delete(run);
+        candidateEnds.delete(principal);
         dropCandidate(principal);
     }
 }
@@ -648,7 +664,7 @@ chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
     }
     if (msg?.type === "PY_INSTALL_STOP" && sender.id === chrome.runtime.id && !sender.tab && typeof msg.run === "string") {
         const principal = candidates.get(msg.run);
-        if (principal) killWorker(principal, "stopped");
+        if (principal) endCandidate(principal, "stopped");
         sendResponse({ ok: true, stopped: !!principal });
         return;
     }

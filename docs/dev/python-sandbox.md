@@ -692,8 +692,9 @@ readonly cells can import it, and nothing else can.
   after the result, on a failed import they follow the error when they are reached from the failing module, and the
   run log keeps them as `detail.scan`. A source too deep for the parser or for the walk (a call chain of about 1,000
   attributes passes the recursion limit) is unparsed and skipped; from about 2,000 the parser overflows the JS stack
-  and the interpreter dies. A scan that fails or dies leaves the import test to decide, in a fresh worker when it
-  died, and the run log says `detail.scanLost`.
+  and kills the interpreter, and the cell never answers (the fatal error escapes it), so the candidate's deadline ends
+  the install as `died`. A scan that fails leaves the import test to decide, in a fresh worker, and the run log says
+  `detail.scanLost`. The deadline and Stop end the whole candidate, so neither lets the import start after the scan.
 - **The run's own worker gets the wheels at its next cell.** Every readonly cell of the run carries the record; the
   offscreen document reads the wheels that worker lacks from the mirror (re-hashed) and the worker unpacks them after
   its lockdown, before the cell (`installWheels`). The namespace is kept. A respawned or reaped worker gets them the
