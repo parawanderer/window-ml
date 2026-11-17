@@ -155,7 +155,7 @@ Written after the run; the figures are the tables above.
 
 - **Messages: 64 MiB, refused at the sender.** A 64 MiB string goes through, 65 MiB fails before it is sent, with
   `Message exceeded maximum allowed size of 64MiB.`, on `sendMessage` and on a `Port` alike, and the send of
-  64 MiB takes about 150 ms. A batch for the archive move and the backup (§5) is therefore bounded well under it; the
+  64 MiB took 129 ms by `sendMessage` and 123 ms by a `Port`. A batch for the archive move and the backup (§5) is therefore bounded well under it; the
   spec's slices 4 and 6 use a byte budget per message, not a count of events.
 - **IndexedDB: a single put is not the bound.** Values up to 256 MiB (and 512 MiB as an object of strings) were put
   and read back; the 128 MiB IPC limit does not bind a put, because a large value is wrapped as a Blob. A 512 MiB
