@@ -53,6 +53,7 @@ test("two gated execs in one turn: both cells stay drawn, keep their rail, and f
         await site1.goto(site.url + "/");
         await waitForMl(site1);
         void site1.evaluate(() => window.ml.agent("do two things", { env: false, approvalRouting: "both", stream: true })).catch(() => {});
+        await chat.bringToFront();   // the site's tab opened after it; the chat is the one being sampled (see chat-transitions.spec.mjs)
         await chat.locator(".chat-row", { hasText: "do two things" }).click();
         await expect(chat.locator(".astep-approve")).toBeVisible({ timeout: 30_000 });
         await chat.waitForTimeout(6000);                           // long enough for a call that had gone quiet to say so (4 s)

@@ -39,6 +39,7 @@ async function flew({ call, stream, delay = 200 }) {
         await site1.goto(site.url + "/");
         await waitForMl(site1);
         void site1.evaluate((s) => window.ml.agent("rename the page", { env: false, approvalRouting: "both", stream: s }), stream).catch(() => {});
+        await chat.bringToFront();   // the site's tab opened after it; the chat is the one being sampled (see chat-transitions.spec.mjs)
         await chat.locator(".chat-row", { hasText: "rename the page" }).click();
         await expect(chat.locator(".astep-approve")).toBeVisible({ timeout: 30_000 });
         await chat.waitForTimeout(600);   // past the beat: a layer that is going to draw has drawn

@@ -176,6 +176,7 @@ test("an exec that needs no approval, then one that does: the second stream repl
         await site1.goto(site.url + "/");
         await waitForMl(site1);
         void site1.evaluate(() => window.ml.agent("do two things", { env: false, approvalRouting: "both", stream: true })).catch(() => {});
+        await chat.bringToFront();
         await chat.locator(".chat-row", { hasText: "do two things" }).click();
         await expect(chat.locator(".astep-approve")).toBeVisible({ timeout: 30_000 });
         await chat.waitForTimeout(1500);
@@ -224,6 +225,7 @@ test("a quickly written exec that needs no approval: its held block folds away s
         await site1.goto(site.url + "/");
         await waitForMl(site1);
         void site1.evaluate(() => window.ml.agent("read the title", { env: false, approvalRouting: "both", stream: true })).catch(() => {});
+        await chat.bringToFront();
         await chat.locator(".chat-row", { hasText: "read the title" }).click();
         await chat.waitForTimeout(6200);
         const f = await chat.evaluate(() => window.__f);
