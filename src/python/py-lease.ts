@@ -66,3 +66,12 @@ export function ringAppend(ring: string, chunk: string, max = PY_TAIL_RING_CHARS
 /** What the cell's sandbox says a cancel did: the interrupt landed and the names are kept, or the sandbox was killed
  *  and they are lost, or the cell had already ended. */
 export type CellCancel = "interrupted" | "killed" | "ended";
+
+/**
+ * The knob's value as minutes: a finite number from 1 to 60, rounded down, else the ceiling.
+ * @param v what the setting holds
+ */
+export function capMinutes(v: unknown): number {
+    const n = typeof v === "number" ? Math.floor(v) : NaN;
+    return Number.isFinite(n) && n >= 1 && n <= 60 ? n : 60;
+}
