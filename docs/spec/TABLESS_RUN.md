@@ -1,9 +1,10 @@
 # A run that starts with no tab
 
 **Status: proposal, nothing built (2026-11-14, from Shane's idea in the window-ml-9b session; the tab invariant read
-by the `[window-ml move-run]` lane on move-run-b 0e0b6707; UNASSIGNED).** It changes a decision in
-[`CHAT_PAGE.md`](CHAT_PAGE.md) ("an agent chat needs a primary page") and extends [`MOVE_RUN.md`](MOVE_RUN.md) shape
-(a). It waits on that shape, not on shape (b).
+by the `[window-ml move-run]` lane on move-run-b 0e0b6707; the build is that lane's, after MOVE_RUN slice 2, by the
+coordinator's ruling of 2026-11-16).** It changes a decision in [`CHAT_PAGE.md`](CHAT_PAGE.md) ("an agent chat needs a
+primary page") and extends [`MOVE_RUN.md`](MOVE_RUN.md) shape (a). It waits on that shape, not on shape (b). Resuming a
+session whose tab closed is part of it (§Resuming with no page, 2026-11-17).
 
 ## Why
 
@@ -123,15 +124,77 @@ What main does NOT have (read by the async lane, main 43f88825):
   finishes and refuses with reason `no-tab` when the run has no tab, leaving the result parked. That is right for a
   detached run until someone reopens it; whether a reopen starts that turn is decided in that branch.
 
+## Resuming with no page (Shane, 2026-11-14)
+
+**Status: amendment, proposal, nothing built (2026-11-17, the `[window-ml move-run]` lane, from Shane's report that
+"Resume on a page" was broken; the defect itself is #1946).** A session whose tab has closed is resumed the way a
+detached run is started: from the composer, with no page. A page comes later, and only by one of the two ways above.
+
+- **No closed-tab bar.** Today the chat page swaps the composer for a bar ("The tab this run worked in has closed",
+  `.chat-resume` in `chat-app.tsx`, chosen by `resumableHere` in `grants.ts`) whose one action is the "Resume this
+  run" dialog and its tab pick. That bar and that dialog go from this path: the composer stays, as for any idle
+  session.
+- **The first message resumes it, detached.** Sending to such a session resumes it on the DETACHED HOST and then
+  continues with the message, one action for the person. During the grace period the run is already detached
+  (above), so the send is an ordinary turn; after it, or after the browser restarted, the send rehydrates the saved
+  run first, as `session.resume` does today, with no tab. A chat session (no tools) has no page to lose: the send is
+  the whole of its resume.
+- **A visible line says what the kernels are started with.** The `session-resumed` divider gains, per kernel the run
+  had (the Python namespace today; a worker `exec` world if the `ml.sh` bench above ever builds one), one of:
+  - kept: the namespace was never released, and holds N names;
+  - re-initialised: the namespace was released at `<time>` (`<reason>`: the grace period, the idle reap, a memory
+    eviction, a browser restart, a person's stop), so the N names it held are gone (listed by name), and it starts
+    with the run's files and its kept `@tool:` values, each counted.
+
+  The line is drawn as part of the divider, never as a message, and both exports carry it. The MODEL is told the same
+  in one line at the head of its next turn ("namespace reset at <time>: <reason>", PYTHON_DIALECT.md, "The
+  namespace"), so it does not call a name that is gone. The names come from the scope manifest (`runNsVars`,
+  `offscreen.ts`, the copy `ml.current.env` reads), which is dropped WITH the namespace: to name what was lost, the
+  release keeps that list in the session store before it drops it. Where it did not (a browser restart, an old
+  session), the line gives what is known (released, when, why) and no count.
+- **A page later, two ways, as for any detached run.**
+  1. **The model navigates**: `navigate` from the detached state, approved by the person (above).
+  2. **The person picks one of their open tabs**: MOVE_RUN shape (a) from no tab. The person started it, so it asks
+     for no approval; the tab's grants start empty, as `RESUME_DROPS` already says of every resume. Between turns
+     only: while a turn runs the control says it waits for the turn to end, until MOVE_RUN slice 2 moves a running
+     turn.
+- **That control is not in the composer and not in a bubble.** Anything typed into the composer reads as a message
+  to the model, and this is not one. Its surface is OPEN, for Shane:
+  - a page chip beside the composer ("page: none ▾", or the tab's title once attached) that opens the open-tabs
+    picker (`useTargetPick`), always visible, so the person can see the run has no page;
+  - a `/`-command (`/page`) that opens the same picker. It is typed in the composer, which is the reading Shane
+    named as wrong, and nobody finds it until told;
+  - both, the chip as the surface and the command as its shortcut (the lane's recommendation).
+- **The contract.** `session.resume` names a TARGET today, a tab or a blank one. Resuming detached is a third target
+  (`{ detached: true }`), additive, agreed with the hub session before it is built, as the first resume was; the
+  phone and other clients then resume the same way. The tab pick is `session.resume` with a tab target, as today.
+
+### The overlap with the async lane's closed-tab release
+
+The release above ("It ships FIRST") is the async lane's: the grace period, `closedRunGraceMin`, the alive marker in
+the session list and the stop-the-kernel button. This section does not touch that code. Two things are shared:
+
+- **The fact "this run's namespace was released, at T, because R", with the names it held.** The release records
+  it; the re-initialised line reads it. Which module records it, and where (the session store or the run log), is
+  the release's.
+- **The model's line.** The release says "a later Continue starts a fresh namespace and is told so"; the
+  re-initialised line above is that telling, for the person and the model. It is one line, not two.
+
+The boundary between the two, and the order, is the coordinator's ruling.
+
 ## Order
 
 1. MOVE_RUN shape (a) on main.
 2. The detached host, the snapshot form, and where its events render. "No tab" in the start form. Attach from no tab.
    A closed tab detaches its run, with the grace period: the async lane's task predicate first, then the release.
 3. `navigate` from the detached state, with its tests.
-4. The `ml.sh` bench, and a worker `exec` world only if it says so.
+4. Resuming with no page: the closed-tab bar goes, the composer resumes detached, the kernel line, the person's tab
+   pick. It needs 2 and the async lane's release; the pick needs only 2.
+5. The `ml.sh` bench, and a worker `exec` world only if it says so.
 
 ## Open
+
+- The surface of the person's tab pick: a chip beside the composer, a `/`-command, or both (§Resuming with no page).
 
 - Whether the person can detach a run whose tab is still open (a closed tab detaches it; above).
 - How this relates to headless runs ([`HEADLESS_AGENTS.md`](HEADLESS_AGENTS.md)): a detached run has no page at all; a
