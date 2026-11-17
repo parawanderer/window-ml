@@ -696,7 +696,7 @@ const { createRequire } = await import("node:module");
 const { IDBFactory } = createRequire(import.meta.url)("fake-indexeddb");
 const { ValueStore } = await import("../src/pointers/value-store.ts");
 globalThis.chrome ??= { storage: { sync: { get: async (d) => d } }, alarms: { create() {}, onAlarm: { addListener() {} } } };
-const { releaseOrphanedHeld } = await import("../src/sw/sw-values.ts");
+const { firstValuePass, releaseOrphanedHeld } = await import("../src/sw/sw-values.ts");
 
 /** Wait until the async `fn()` is true: `until` reads a promise as true at once. */
 async function untilAsync(fn, what) {
@@ -754,4 +754,23 @@ test("a session that becomes live while the pass reads the rows keeps them: live
     assert.deepEqual(await releaseOrphanedHeld((s) => liveNow.has(s), store), ["dead1"]);
     assert.equal((await values.rows()).filter((r) => r.sessions.includes("late1")).length, 1);
     assert.deepEqual(await releaseOrphanedHeld(() => false, null), [], "no store: nothing to do");
+});
+
+test("the first pass still sweeps when the live set cannot be read or the release fails, and then releases nothing", T, async () => {
+    const values = new ValueStore({ idb: new IDBFactory(), budgetBytes: () => 1e9 });
+    await values.put(new Blob(["a"]), { format: "bytes", session: "dead2", held: true });
+    let swept = 0;
+    const released = [];
+    const store = { rows: () => values.rows(), releaseSession: (s) => { released.push(s); return values.releaseSession(s); } };
+    // No session store, or one that will not open: liveSessions rejects.
+    await firstValuePass(() => Promise.reject(new Error("no session store")), () => { swept++; }, store);
+    assert.deepEqual(released, [], "nothing released when what is live cannot be told");
+    assert.equal(swept, 1, "the sweep still ran");
+    // The release itself failing (the store's read rejects).
+    await firstValuePass(async () => () => false, () => { swept++; }, { rows: () => Promise.reject(new Error("idb gone")), releaseSession: store.releaseSession });
+    assert.equal(swept, 2);
+    // And with a live set and no failure, it releases and sweeps.
+    await firstValuePass(async () => () => false, () => { swept++; }, store);
+    assert.deepEqual(released, ["dead2"]);
+    assert.equal(swept, 3);
 });

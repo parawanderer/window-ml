@@ -217,6 +217,22 @@ export async function releaseOrphanedHeld(live: (session: string) => boolean, st
 }
 
 /**
+ * A worker start's pass over the value store: the held rows no session can end released, then the sweep. The sweep runs
+ * whatever the release did: a live set that cannot be read (no session store, a store that will not open) or a release
+ * that fails releases nothing, and never stops the idle and budget eviction that follows.
+ * @param liveSessions what can still end a held row's session (absent: release nothing)
+ * @param sweep the idle and budget sweep
+ * @param store the value store (a test seam)
+ */
+export async function firstValuePass(liveSessions: (() => Promise<(session: string) => boolean>) | undefined, sweep: () => void,
+    store: Pick<ValueStore, "rows" | "releaseSession"> | null = values()): Promise<void> {
+    try {
+        if (liveSessions) await releaseOrphanedHeld(await liveSessions(), store);
+    } catch { /* cannot tell a live session from an ended one: release nothing */ }
+    sweep();
+}
+
+/**
  * The idle sweep, now and every hour. The alarm is what catches orphans when nothing else runs: a worker evicted mid-run
  * never releases its session, and its values would otherwise wait for the next write. Call once, at the worker's top
  * level, so the alarm listener is registered on every start.
@@ -236,10 +252,7 @@ export function startValueSweeps(liveSessions?: () => Promise<(session: string) 
         },
     });
     const sweep = () => { void values()?.sweep().catch(() => {}); };
-    void (async () => {
-        if (liveSessions) await releaseOrphanedHeld(await liveSessions()).catch(() => {});
-        sweep();
-    })();
+    void firstValuePass(liveSessions, sweep);
     if (!chrome.alarms) return;
     chrome.alarms.onAlarm.addListener((a) => { if (a.name === SWEEP_ALARM) sweep(); });
     void chrome.alarms.get(SWEEP_ALARM).then((a) => { if (!a) void chrome.alarms.create(SWEEP_ALARM, { periodInMinutes: SWEEP_EVERY_MIN }); }).catch(() => {});
