@@ -184,7 +184,13 @@ on real captured output in its PR.
   at most 64 entries; a value of 8 to 512 characters (a shorter one would match ordinary text, and the margins and
   the base64 forms grow with a longer one); a NAME matching `[A-Z0-9_]{1,40}`, since it is written into model-facing
   text. `ml_secret_registry` is in no backup, export or archive-folder file (the backup inventory classes it `never`),
-  and the state inspector and the housekeeping log show its names and a count, never a value.
+  the state inspector shows its names and a count, never a value, and the housekeeping log records a read of the store
+  that failed (`secrets`/`registry-unreadable`), with no name and no value.
+- **Before the registry is read, no crossing reads it as empty.** The worker starts the read when it starts. A crossing
+  that can wait (a tool result, a page-started request, an `ml.sh.read` range) awaits it; one that cannot (a live
+  output's delta, the loop's appended lines, the run log's `key`) shows nothing, or a held-back line, until it is done.
+  A store that cannot be read fails each waiting crossing closed and is read again by the next one, and a change the
+  store reports while the first read is in flight wins over that read.
 - **The forms matched** for each value: as written, JSON-escaped, percent-encoded, base64 (standard and URL-safe, at
   each of the three byte alignments a value can take inside a longer base64 run) and shell-escaped (single-quoted with
   `'\''`, and backslash-escaped).

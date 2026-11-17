@@ -277,7 +277,12 @@ test("a store that cannot be read fails every crossing closed, and the next cros
         assert.ok(!leaks(r.text) && r.changed, r.text);
         assert.equal(forLive(text), "");
         assert.ok(!leaks(forPerson(text)));
-        await assert.rejects(registryReady());
+        const seen = [];
+        const { housekeeping } = await import("../src/sw/sw-housekeeping.ts");
+        const record = housekeeping.record;
+        housekeeping.record = (r) => seen.push(r);
+        try { await assert.rejects(registryReady()); } finally { housekeeping.record = record; }
+        assert.deepEqual(seen, [{ level: "warn", subsystem: "secrets", kind: "registry-unreadable" }], "the failed read is logged with no name and no value");
         fail = false;
         const again = await forModel(text);
         assert.equal(again.text, `token ${MARK}`);

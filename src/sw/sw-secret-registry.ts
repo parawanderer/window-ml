@@ -1,6 +1,7 @@
 // sw-secret-registry.ts — the worker's store of the values the person registered as secret, read once into memory and kept current, and the substitutions every crossing into a script or a model scrubs with (SECRET_HANDLES.md, "The scrub as built").
 
 import { defineState } from "../state-registry";
+import { recordHousekeeping } from "./sw-housekeeping";
 import { entryRefusal, registrySubs, type RegistryEntry, type RegistrySub } from "../secret-registry";
 
 /** The `chrome.storage.local` key the entries live under: never sync, never a key of `MlConfig`, never in `GET_CONFIG`
@@ -60,7 +61,8 @@ export function registryReady(): Promise<void> {
             ready = true;
         })();
         loaded = read;
-        read.catch(() => { if (loaded === read) loaded = null; });
+        // The system failing closed on its own is a housekeeping event: no name and no value, only that it happened.
+        read.catch(() => { if (loaded === read) loaded = null; recordHousekeeping({ level: "warn", subsystem: "secrets", kind: "registry-unreadable" }); });
     }
     return loaded;
 }
