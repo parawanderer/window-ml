@@ -5,8 +5,9 @@ import { mergeSecrets, scrubErrors, scrubSecrets, secretsOf, type SecretSub } fr
 import type { MlConfig } from "../contract/contract-config";
 import type { NeutralMessage } from "../contract/contract-chat";
 
-/** The settings `secretsOf` reads. */
-const SECRET_KEYS = ["chatUrl", "apiKey", "modelFilter", "priceSnapshotUrl"] as const;
+/** The settings `secretsOf` reads. With the legacy site list, exactly the `secret` class of
+ *  setting-class.ts (tests/setting-class.test.mjs holds the two together). */
+export const SECRET_KEYS = ["chatUrl", "apiKey", "modelFilter", "priceSnapshotUrl"] as const;
 /** How many replaced settings are remembered. */
 const RETIRED_MAX = 8;
 
