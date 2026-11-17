@@ -24,10 +24,11 @@ import { FILE_INLINE_MAX, FilesRefused, b64Bytes, frameFiles, isPdfFile, textCap
 import { ImagesRefused, namedNote, readerNote, type ImagePlan } from "../image-gate";
 import { fitPages, pageSections, planPages, wantsImage, type PageAim, type PageOutcome } from "../pdf/pdf-frame";
 import type { PdfDoc } from "../pdf/pdf-read";
-import type { PdfReadReply, PdfRenderReply } from "../pdf/pdf-wire";
+import { b64ToBytes, type PdfReadReply, type PdfRenderReply } from "../pdf/pdf-wire";
 import { type LlmResult, type NeutralMessage } from "../contract/contract-chat";
-import { type StoredSession } from "../contract/contract-messages";
+import { type ChatHeldFile, type StoredSession } from "../contract/contract-messages";
 import { type MlDebugEvent } from "../contract/contract-debug";
+import { defineState } from "../state-registry";
 
 /** Live background chats. Small on purpose: each holds a whole history, and the worker's memory is shared with
  *  every run. The oldest idle chat is dropped when a new one would exceed it; a SAVED chat is only dropped from
@@ -92,10 +93,16 @@ export interface ChatDeps {
     /** the context `model` (null: the default) is loaded with, in tokens, or null when it is not loaded or does not
      *  say; sizes how much of a PDF a message sends ({@link pdfTextBudget}). Absent: not known. */
     contextTokens?(model: string | null): Promise<number | null>;
+    /** keep one of a chat's files in the value store for its session, exempt from idle and budget eviction
+     *  (`storeHeld`, sw-values.ts); throws when the store cannot keep it. Absent: nothing is held. */
+    hold?(blob: Blob, format: "bytes" | "paged", source: string, session: string): Promise<{ key: string }>;
+    /** release every value a chat's session holds (`releaseSessionValues`) */
+    release?(session: string): void;
 }
 
-/** A message's files once its PDFs are read: a text file as sent, a PDF with its pages and what each page sends. */
-type ReadFile = AttachedFile | { pdf: AttachedPdf; doc: PdfDoc; aims: PageAim[] };
+/** A message's files once its PDFs are read: a text file as sent, a PDF with its pages, what each page sends, and how
+ *  many pages from the first go. */
+type ReadFile = AttachedFile | { pdf: AttachedPdf; doc: PdfDoc; aims: PageAim[]; sent: number };
 /** What a turn needs decided before it starts: where its pasted images go, and its files read. */
 interface Prepared { plan: ImagePlan; files?: ReadFile[] }
 
@@ -113,10 +120,21 @@ interface BgChat {
     /** set while a turn is in flight; `cancel` aborts it */
     running: AbortController | null;
     lastTs: number;
+    /** the PDFs of its answered messages, in the order sent, held for its session */
+    files: ChatHeldFile[];
 }
 
 let deps: ChatDeps | null = null;
-const chats = new Map<string, BgChat>();
+const chats = new Map<string, BgChat>();   // state: plumbing — a live chat's history; what a run reads is `chat.files` below
+
+defineState({
+    id: "chat.files", scope: "session", realm: "worker", audience: "human", lostOn: [],
+    describe: "The PDFs a worker-hosted chat was sent: each one's name, page count, how many pages the message sent, and the value-store rows that hold it (none when the store would not keep it).",
+    read: ({ runId }) => {
+        const files = runId ? chats.get(runId)?.files : undefined;
+        return files?.length ? files.map((f) => ({ ...f })) : undefined;
+    },
+});
 
 /** Install the worker's dependencies. Called once, from `sw-sessions.ts`. */
 export function configureBackgroundChats(d: ChatDeps): void {
@@ -128,11 +146,23 @@ export function isBackgroundChat(hash: string): boolean {
     return chats.has(hash);
 }
 
-/** Drop a chat from memory, after `session.delete` has removed whatever it stored. */
+/** Drop a chat from memory, after `session.delete` has removed whatever it stored, and release the files its session
+ *  held, whether or not this worker still had it in memory. */
 export function forgetBackgroundChat(hash: string): void {
     const chat = chats.get(hash);
     chat?.running?.abort();
     chats.delete(hash);
+    deps?.release?.(hash);
+}
+
+/** A chat's session left the live store on its own (archived, or dropped for retention or the budget): release the
+ *  files it held. Its record keeps their names, so a chat brought back from the archive or a backup lists them as no
+ *  longer held rather than not at all. Only a chat whose record lists files is touched. */
+export async function releaseEvictedChatFiles(hash: string): Promise<void> {
+    const d = deps;
+    if (!d?.release) return;
+    const held = chats.get(hash)?.files ?? (await d.load(hash).catch(() => null))?.files;
+    if (Array.isArray(held) && held.length) d.release(hash);
 }
 
 /** Every background chat, for tests and `ml.__housekeeping()`. */
@@ -175,6 +205,7 @@ export async function startBackgroundChat(opts: {
         turns: 0,
         running: null,
         lastTs: d.now(),
+        files: [],
     };
     chats.set(hash, chat);
     void turn(chat, opts.text, opts.images, prep);
@@ -224,7 +255,7 @@ async function prepare(d: ChatDeps, model: string | null, images: string[] | und
         const r = await d.pdf.read(f.data).catch(() => null);
         if (!r) throw new FilesRefused(`${f.name} could not be read: the PDF reader did not answer`);
         if (!r.ok) throw new FilesRefused(`${f.name}: ${r.refusal}`);
-        read.push({ pdf: f, doc: r.doc, aims: [] });
+        read.push({ pdf: f, doc: r.doc, aims: [], sent: 0 });
     }
     // Text files are sent whole or refused, as in slice 1. A PDF's pages go in order while their text fits in what
     // is left, and the rest are named as not sent (pdf-frame.ts, `cut`).
@@ -255,7 +286,7 @@ async function prepare(d: ChatDeps, model: string | null, images: string[] | und
         const room = MAX_TURN_IMAGES - Math.min(images?.length ?? 0, MAX_TURN_IMAGES);
         const aims = planPages(docs, plan.route, { images: room, reader: !!reader, readerMax: READER_PAGE_MAX, chars });
         let i = 0;
-        for (const f of read) if ("pdf" in f) f.aims = aims[i++];
+        for (const f of read) if ("pdf" in f) { f.sent = fit[i]; f.aims = aims[i++]; }
     }
     return { plan, ...(read.length ? { files: read } : {}) };
 }
@@ -358,6 +389,7 @@ async function turn(chat: BgChat, text: string, images: string[] | undefined, pr
         if (result.sources?.length) answer.sources = result.sources;
         chat.messages = [...messages, answer];
         chat.lastTs = d.now();
+        for (const f of prep.files ?? []) if ("pdf" in f) chat.files.push(await holdPdf(d, chat.hash, f));
         if (chat.save) await persist(chat);
         d.emit({
             kind: "chat-result", id, ts: d.now(), save: chat.save, session, content: result.content,
@@ -397,6 +429,34 @@ function preview(chat: BgChat, id: string, session: { hash: string; turn: number
     };
 }
 
+/**
+ * Keep one PDF of an answered message for the chat's session: its bytes and its read document, the two rows an agent
+ * run holds for an attached PDF (sw-attach.ts). A store that will not keep it never fails the turn, which has already
+ * been answered: the file is listed with no rows, which is what reading it later answers as no longer held.
+ */
+async function holdPdf(d: ChatDeps, session: string, f: { pdf: AttachedPdf; doc: PdfDoc; sent: number }): Promise<ChatHeldFile> {
+    const listed: ChatHeldFile = { name: f.pdf.name, pages: f.doc.pageCount, sent: f.sent };
+    const bytes = d.hold && b64ToBytes(f.pdf.data);
+    if (!d.hold || !bytes) return listed;
+    try {
+        const data = await d.hold(new Blob([bytes as Uint8Array<ArrayBuffer>]), "bytes", f.pdf.name, session);
+        const doc = await d.hold(new Blob([JSON.stringify(f.doc)]), "paged", f.pdf.name, session);
+        return { ...listed, doc: doc.key, data: data.key };
+    } catch { return listed; }   // ValueTooLarge, or no store: the rows held by then go with the session
+}
+
+/** A stored record's files, as a chat lists them: an older record has none, and an entry that is not one is dropped. */
+function heldFiles(files: unknown): ChatHeldFile[] {
+    if (!Array.isArray(files)) return [];
+    const str = (v: unknown): v is string => typeof v === "string" && v.length > 0;
+    const n = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : 0);
+    return files.flatMap((f): ChatHeldFile[] => {
+        if (!f || typeof f !== "object" || !str((f as ChatHeldFile).name)) return [];
+        const { name, pages, sent, doc, data } = f as ChatHeldFile;
+        return [{ name, pages: n(pages), sent: Math.min(n(sent), n(pages)), ...(str(doc) && str(data) ? { doc, data } : {}) }];
+    });
+}
+
 /** Write the chat where `ml.resumeChat(hash)` and a later worker can find it: the same `ml_session_<hash>` record a
  *  page's `{ save: true }` chat writes, so a background chat is resumable from a page like any other. */
 async function persist(chat: BgChat): Promise<void> {
@@ -405,6 +465,7 @@ async function persist(chat: BgChat): Promise<void> {
         await d.save(chat.hash, {
             hash: chat.hash, messages: chat.messages, model: chat.model, extend: null, numCtx: null, numGpu: null,
             think: chat.think, schema: null, toolIds: null, maxTokens: null, save: true,
+            ...(chat.files.length ? { files: chat.files } : {}),
         });
     } catch { /* storage full or unavailable: the turn still happened, and resume just will not have it */ }
 }
@@ -425,6 +486,7 @@ async function rehydrate(hash: string): Promise<BgChat | null> {
         // the eviction. The messages say how many turns there were; an assistant message per answered turn.
         turns: stored.messages.filter((m) => m.role === "assistant").length,
         running: null, lastTs: d.now(),
+        files: heldFiles(stored.files),
     };
     chats.set(hash, chat);
     return chat;
@@ -437,6 +499,8 @@ function evict(): void {
         for (const chat of chats.values()) if (!chat.running && (!oldest || chat.lastTs < oldest.lastTs)) oldest = chat;
         if (!oldest) return;   // every chat is mid-turn: let the map exceed its cap rather than abort someone's turn
         chats.delete(oldest.hash);
+        // An ephemeral chat cannot come back from storage, so nothing will read its files again.
+        if (!oldest.save && oldest.files.length) need().release?.(oldest.hash);
     }
 }
 

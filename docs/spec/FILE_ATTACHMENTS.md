@@ -449,6 +449,28 @@ Giving worker chats the read-only dialect instead would be a far larger surface 
 an agent run instead ("start a run to read them") leaves the model stuck, which is the thing the note is there to
 prevent. `read_pages` is a new agent-facing call, so it gets the red-team pass.
 
+**Where a worker chat keeps its PDFs (ruled 2026-11-17; built, the tool not yet).** In the value store, held for the
+chat's session through `storeHeld`, as an agent run's attached files are: two rows per PDF, its bytes (`bytes`) and
+its read document (`paged`). One store, so the files panel lists from it. A PDF is held once its message is
+answered; a failed turn holds nothing, since its message is not kept either. A text file is not held: it is sent
+whole or refused, so no page of it is held back.
+
+- The chat's record (`ml_session_<hash>`, `StoredSession.files`) lists each PDF by name, page count, how many pages
+  from the first the message sent, and its two row keys. It holds keys and counts only, never bytes or page text, so a
+  record does not grow with its attachments. A record written before this has no list and resumes with none held.
+- A store that will not keep a PDF (`ValueTooLarge`, or no store) never fails the turn, which has already been
+  answered: the PDF is listed with no rows. `read_pages` on a PDF with no rows, or whose rows were released, answers
+  in a plain sentence that it is no longer held, never an error that ends the turn.
+- Deleting the chat releases its rows. So does its session leaving the live store on its own (moved to the archive,
+  or dropped for retention or the budget), and an ephemeral chat leaving the worker's memory, since nothing can read
+  its files again.
+- Backup and the archive carry the record, so they carry the list, never the rows: a chat brought back from either,
+  on this browser or another, lists its PDFs as no longer held. The bytes are the person's own file, which they can
+  attach again.
+- The tool is offered only when the model's capabilities say it takes tools (`MODEL_CAPS` `tools: true`). Unknown and
+  no keep "This chat cannot show them.", because a backend refuses a whole request that lists tools to a model without
+  them. Named cost: a model that takes tools but does not say so never gets `read_pages`.
+
 Built (2026-10-29, `pdfTextBudget` and `fitPages`):
 
 - The budget is half the context the model is LOADED with (Ollama's `/api/ps`; a worker chat sends no `num_ctx`, so
@@ -1582,5 +1604,3 @@ the shelf's refusals and the `run.files` state row say lines for text and pages 
 - Whether the page-image fallback for a scanned page without a vision model uses the reader model or OCR.
 - Whether embeddings of an attached document are kept with it, keyed by the blob's SHA-256, so a second question does
   not embed every page again.
-- Where a worker chat keeps its attachments so `read_pages` can reach them after the message is sent: the value store,
-  as an agent run's `@file:` rows are, or the session store. The files panel lists from the same place.

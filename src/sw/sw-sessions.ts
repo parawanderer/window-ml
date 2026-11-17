@@ -8,7 +8,8 @@ import { hintSession, type SentFile } from "../contract/contract-run";
 import { FilesRefused, isPdfFile, pdfToPageRun, textFiles } from "../attached-files";
 import { type MlDebugEvent } from "../contract/contract-debug";
 import { createCommandHandler, THIS_BROWSER, type CommandDeps, type PageOutcome } from "../session/session-commands";
-import { cancelBackgroundChat, configureBackgroundChats, forgetBackgroundChat, isBackgroundChat, sendBackgroundChat, setBackgroundChatModel, startBackgroundChat } from "./sw-chat";
+import { cancelBackgroundChat, configureBackgroundChats, forgetBackgroundChat, isBackgroundChat, releaseEvictedChatFiles, sendBackgroundChat, setBackgroundChatModel, startBackgroundChat } from "./sw-chat";
+import { releaseSessionValues, storeHeld } from "./sw-values";
 import { type StoredSession } from "../contract/contract-messages";
 import { SESSION_CONTRACT_VERSION, type Command, type CommandFrom, type CommandResult, type CommandType, type ArchiveCapability, type BlankStartCapability, type RuntimeInfo, type SessionSummary, type TabGroupInfo, type TabInfo } from "../session/session-host";
 import { FaviconCache, stripOrder } from "./tab-favicons";
@@ -307,6 +308,10 @@ export function configureSessionCommands(run: RunDeps): void {
         },
         save: saveChatSession,
         now: () => Date.now(),
+        // A chat's PDFs are held for its session as an agent run's attached files are (FILE_ATTACHMENTS.md, "Reading
+        // the pages held back"), and released with it.
+        hold: (blob, format, source, session) => storeHeld(blob, format, source, session),
+        release: (session) => releaseSessionValues(session),
         // The question an agent run asks (run-assembly.ts): the chat's model, then the reader the person set.
         images: async (model, forced) => {
             const ml = workerMl("");
@@ -566,7 +571,7 @@ export const sessionStore = (() => {
             protect: () => sessionServer.subscribed(),
             // The store decides whether a saved session exists, so an eviction there is one here too. Without this a
             // session stayed listed after its history had left the disk.
-            onEvict: (hashes) => { for (const hash of hashes) sessionServer.remove({ runtime: localRuntimeId(), hash }); },
+            onEvict: (hashes) => { for (const hash of hashes) { sessionServer.remove({ runtime: localRuntimeId(), hash }); void releaseEvictedChatFiles(hash); } },
             // Every session the store drops without being asked is a housekeeping decision, whichever rule made it.
             onEvicted: (e) => {
                 // Deleted, or moved to the archive: its run policies go with it (POLICIES.md, "Scopes"). An archived
