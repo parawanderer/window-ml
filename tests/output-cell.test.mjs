@@ -337,6 +337,8 @@ const mountValue = async (text, seen) => {
 };
 const treeBtn = (cell) => [...cell.querySelectorAll(".r-outcorner button")].find(b => /^(tree|text)$/.test(b.textContent));
 
+// --- a JSON value draws as text or as a tree, and the calm view opens it as the tree ---
+
 test("value tree: text by default; the corner button draws the tree and back", async () => {
     const cell = await mountValue(`{"name":"qwen3","sizes":[1,2,3]}`);
     assert.ok(cell.querySelector("pre.code"), "text first: it is what the model read");
