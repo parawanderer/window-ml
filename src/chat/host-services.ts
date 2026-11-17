@@ -73,11 +73,11 @@ export function hostServices(store: ChatStore, platform: ClientPlatform, reading
             const id = idOf(key as SessionKey);
             return !!id && !!store.runtimes.value.find((r) => r.id === id.runtime)?.capabilities.attachPdf;
         },
-        sendToSession: async (key, text, images, files) => {
+        sendToSession: async (key, text, images, files, progress) => {
             const id = idOf(key);
             if (!id) return { ok: false, error: "no such session here" };
             const vision = !!images?.length && claimsVision(id.runtime, store.index.value.get(key as SessionKey)?.model);
-            const r = await store.send({ type: "session.send", session: id, text, ...(images?.length ? { images } : {}), ...(files?.length ? { files } : {}), ...(vision ? { vision: true as const } : {}) });
+            const r = await store.send({ type: "session.send", session: id, text, ...(images?.length ? { images } : {}), ...(files?.length ? { files } : {}), ...(vision ? { vision: true as const } : {}) }, progress ? { progress } : undefined);
             return r.ok ? { ok: true } : { ok: false, error: r.error.message || r.error.code };
         },
         cancelSession: (key) => {

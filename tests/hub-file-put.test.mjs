@@ -14,7 +14,7 @@ const { Role } = await import("../src/hub/wire.ts");
 const { HubConnection } = await import("../src/chat/hub-connection.ts");
 const { HubRuntime } = await import("../src/hub/runtime/hub-runtime.ts");
 const { FileChunks } = await import("../src/hub/runtime/file-chunks.ts");
-const { frameChunk, sha256Hex } = await import("../src/hub/file-frame.ts");
+const { frameChunk, sha256Hex, uploadFraction } = await import("../src/hub/file-frame.ts");
 const { checkedFiles } = await import("../src/session/session-commands.ts");
 const { bytesToB64 } = await import("../src/pdf/pdf-wire.ts");
 
@@ -262,4 +262,118 @@ test("ADVERSARIAL: a device holding only `view` can neither send a chunk nor ask
         assert.equal(w.puts.length, 0, "the store never saw a chunk");
         assert.equal(w.files.heldBytes(), data.length, "and holds only the phone's file");
     } finally { raw?.close(); await w.close(); }
+});
+
+// --- the upload's progress figure: chunks the runtime accepted over chunks expected ---
+
+test("progress: no chunk accepted is 0", () => {
+    assert.equal(uploadFraction([], 4), 0);
+    assert.equal(uploadFraction(new Set(), 4), 0);
+});
+
+test("progress: one chunk accepted of 4 is a quarter", () => {
+    assert.equal(uploadFraction([2], 4), 0.25);
+});
+
+test("progress: the same chunk accepted twice moves the bar once", () => {
+    assert.equal(uploadFraction([1, 1], 4), 0.25);
+});
+
+test("progress: chunks held per file.have plus later accepted ones are the union", () => {
+    const held = new Set([0, 1]);
+    assert.equal(uploadFraction(held, 5), 0.4);
+    held.add(1); // sent again
+    held.add(3);
+    assert.equal(uploadFraction(held, 5), 0.6);
+});
+
+test("progress: a refusal after 2 of 5 leaves 0.4, never 1", () => {
+    const accepted = new Set([0, 1]);
+    const at = uploadFraction(accepted, 5);
+    assert.equal(at, 0.4);
+    assert.notEqual(at, 1);
+    assert.equal(uploadFraction(accepted, 5), at, "nothing further accepted, nothing further reported");
+});
+
+test("progress: every chunk accepted, in any order, is exactly 1", () => {
+    assert.equal(uploadFraction([3, 0, 2, 1], 4), 1);
+    assert.equal(uploadFraction([0, 1, 2, 3, 3, 0], 4), 1);
+    assert.equal(uploadFraction(new Set([6, 5, 4, 3, 2, 1, 0]), 7), 1);
+});
+
+test("progress: a one-command upload is 0 until its one chunk is accepted, then 1", () => {
+    assert.equal(uploadFraction([], 1), 0);
+    assert.equal(uploadFraction([0], 1), 1);
+});
+
+test("progress: a count that is not a positive integer shows nothing", () => {
+    for (const count of [0, -1, NaN, 2.5, Infinity]) assert.equal(uploadFraction([0, 1], count), 0, String(count));
+});
+
+test("progress: indices outside [0, count) or not integers are ignored", () => {
+    assert.equal(uploadFraction([-1, 4, 1.5, NaN, 99], 4), 0);
+    assert.equal(uploadFraction([-1, 4, 1.5, NaN, 0], 4), 0.25);
+});
+
+test("progress: fed chunk by chunk the figure rises monotonically to 1", () => {
+    const n = 6, got = new Set();
+    let last = uploadFraction(got, n);
+    assert.equal(last, 0);
+    for (const i of [0, 0, 2, 1, 2, 5, 4, 3]) {
+        got.add(i);
+        const f = uploadFraction(got, n);
+        assert.ok(f >= last, `${f} < ${last} after ${i}`);
+        last = f;
+    }
+    assert.equal(last, 1);
+});
+
+// --- the progress a send reports while a file goes ahead in chunks (the composer's bar) ---
+
+test("progress: a send reports the share accepted after file.have and after each chunk, rising to 1", LIVE, async () => {
+    const w = await world();
+    try {
+        const seen = [];
+        const file = { name: "paper.pdf", type: "application/pdf", data: bytesToB64(pdf(3_500_000)) };
+        const r = await w.conn.send({ type: "chat.start", runtime: w.id, text: "summarise", files: [file] }, { progress: (p) => seen.push(p) });
+        assert.equal(r.ok, true, JSON.stringify(r));
+        const count = w.puts[0].count;
+        assert.ok(count >= 3, `${count} chunks`);
+        assert.ok(seen.every((p) => p.name === "paper.pdf"));
+        const f = seen.map((p) => p.fraction);
+        assert.equal(f.length, count + 1, "once before the first chunk, then once per accepted chunk");
+        assert.equal(f[0], 0);
+        assert.equal(f.at(-1), 1);
+        assert.ok(f.every((x, i) => i === 0 || x > f[i - 1]), `rises: ${f.join(", ")}`);
+    } finally { await w.close(); }
+});
+
+test("progress: a file the runtime holds whole reports nothing; one it holds part of starts at that share", LIVE, async () => {
+    const w = await world();
+    try {
+        const data = pdf(2_500_000, 5);
+        const file = { name: "a.pdf", type: "application/pdf", data: bytesToB64(data) };
+        assert.equal((await start(w, [file])).ok, true);
+        const count = w.puts[0].count, size = Math.max(...w.puts.map((p) => p.size));
+        const again = [];
+        assert.equal((await w.conn.send({ type: "chat.start", runtime: w.id, text: "again", files: [file] }, { progress: (p) => again.push(p) })).ok, true);
+        assert.deepEqual(again, [], "named by hash: nothing to show");
+
+        const other = pdf(2_500_000, 13);
+        const sha256 = await sha256Hex(other);
+        await w.files.put(hex(w.phone.principal), { sha256, index: 0, count, bytes: other.length }, other.subarray(0, size));
+        const part = [];
+        assert.equal((await w.conn.send({ type: "chat.start", runtime: w.id, text: "b", files: [{ name: "b.pdf", type: "application/pdf", data: bytesToB64(other) }] }, { progress: (p) => part.push(p.fraction) })).ok, true);
+        assert.equal(part[0], uploadFraction([0], count), "the chunk it held counts from the start");
+        assert.equal(part.at(-1), 1);
+    } finally { await w.close(); }
+});
+
+test("progress: a callback that throws does not fail the upload", LIVE, async () => {
+    const w = await world();
+    try {
+        const r = await w.conn.send({ type: "chat.start", runtime: w.id, text: "x", files: [{ name: "c.pdf", type: "application/pdf", data: bytesToB64(pdf(2_000_000, 21)) }] },
+            { progress: () => { throw new Error("a view broke"); } });
+        assert.equal(r.ok, true, JSON.stringify(r));
+    } finally { await w.close(); }
 });
