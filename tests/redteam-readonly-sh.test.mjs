@@ -3,10 +3,11 @@
 // read-only dialect, a script naming them runs in an isolated world only, and each call is judged on its own by the sh
 // gate. One `// ---` section per property.
 //
-// Written against feat/sh-in-readonly-dialect at 26d7eb73, which holds the DIALECT half only: nothing hands the worker's
-// survey an `ml.sh` yet, so no row here drives a real judgement (a policy's allow, a card for the person, a deny). What
-// the dialect owes the gate is pinned below — every call handed over on its own, in a shape the gate can read — and
-// section B ends with the one row that has to wait for the gate half.
+// Written against feat/sh-in-readonly-dialect at d44f67fd, which also binds `sh` into the worker's survey
+// (sw-run-host.ts `tryReadonly` → sw-survey-sh.ts `surveySh`/`guardSurvey`), so a survey's calls are judged by the real
+// gate. Sections A-E pin the dialect's half — every call handed over on its own, in a shape the gate can read — against
+// a stand-in host; section F drives one script with two programs through the real wiring end to end, where a card for
+// the second call is owed even though the first was allowed.
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
@@ -15,6 +16,8 @@ import { mlFacade } from "../src/readonly-exec/policy.ts";
 import { routeExec, surveyMayEnterPage } from "../src/sw/exec-routing.ts";
 import { evalReadonlyInWorker } from "../src/sw/sw-readonly.ts";
 import { parseShRun, ShRefused } from "../src/shell/sh-call.ts";
+import { runOn } from "./isolated-harness.mjs";
+import { fakeNativeHost } from "./fake-native-host.mjs";
 
 const doc = () => new JSDOM("<!doctype html><body><p id='p'>hello</p></body>").window.document;
 const ANY = { userScripts: true, cdp: true }, NONE = { userScripts: false, cdp: false };
@@ -142,10 +145,8 @@ test("RED TEAM: each call is copied when it is made, so a later write to the scr
     assert.deepEqual(h.calls.map((c) => c[1]), [["ls"], ["rm"]], JSON.stringify(h.calls));
 });
 
-// The end-to-end row that has to wait for the gate half (named here so it is not lost): a survey that runs
-// `ml.sh.run(["ls"])` and then `ml.sh.run(["rm", "-rf", "/"])` in one script must be judged TWICE — the first call's
-// allow must not answer for the second — and it can only be asserted once a worker survey is handed a real `ml.sh`
-// bound to a step (sw-run-host.ts `tryReadonly` → workerReadonlyMl, today without `sh`) and a real gate to ask.
+// The end-to-end double judgement, which a stand-in host cannot show, is section F at the end of this file: one script,
+// two programs, through `tryReadonly` and the real sh gate.
 
 // --- C: the shapes the dialect hands the gate ---
 
@@ -175,9 +176,10 @@ test("RED TEAM: a third argument is dropped and the options arrive as inert own 
 
 // --- D: a script that reads the page and runs a program reaches the person, never the page ---
 
-// Shane's ruling places this case in the isolated world. Slice 1 has no wiring that hands a worker survey an `ml.sh`, so
-// what the script meets is a survey the worker cannot answer (it has no page) and a page leg it may not use (it names
-// ml.sh): the exec card, which is the expected outcome here and asserted as such, not a fall to the main world.
+// Shane's ruling places this case in the isolated world. The worker leg answers a page read `needs-page` and the page leg
+// may not be used (the script names ml.sh); with nothing started `guardSurvey` keeps the fall-through, so the real wiring
+// hands the script to the person's gate and then an isolated world — the outcome asserted here, not a fall to the main
+// world. End to end, with a page read before the call: tests/ml-sh-survey.test.mjs.
 
 test("RED TEAM: a DOM read plus an ml.sh call is answered by neither realm, so the call reaches the person", async () => {
     const withSh = mlFacade(host().ml, undefined, undefined, undefined, "worker");
@@ -236,4 +238,73 @@ test("RED TEAM: an omitted second argument written as undefined is the absence t
     const h2 = host();
     await run(`return (await ml.sh.read("p", undefined)).ok`, h2);
     assert.deepEqual(h2.calls[0], ["read", "p", undefined], "read's range is optional in the same way");
+});
+
+// --- F: the real wiring, one script, two programs, each call judged where it is made ---
+
+// Sections A-E hand the dialect a stand-in host, so they pin the SHAPE of each call and nothing about the gate. These
+// rows run the same script through the worker's own survey (sw-run-host.ts `tryReadonly` → sw-survey-sh.ts `surveySh`,
+// then `guardSurvey`) against the REAL sh gate and the fake process host (tests/isolated-harness.mjs,
+// tests/fake-native-host.mjs): the call the built-in default allows starts with no card, the next call is judged on its
+// own, and its card is raised between the two starts. MEASURED at d44f67fd by making `surveySh` answer every later call
+// with the first call's answer (`ok`, no judge — a per-survey allow memo): F1 reds with 0 cards where 1 is owed, and F2
+// reds with 2 starts where the second call was declined.
+
+const T = { timeout: Number(process.env.ML_SH_T) || 60000 };
+const ON = { shellEnabled: true, shellRoots: ["/w/proj"] };
+const NO_FETCH = { fetches: [] };
+
+/** A script that runs each argv in turn, catching what the gate throws, and reports every outcome in the script's order. */
+const each = (argvs) => () => `(async () => {
+    const out = [];
+    for (const argv of ${JSON.stringify(argvs)}) {
+        try { const r = await ml.sh.run(argv); out.push({ argv, ok: r.ok, code: r.code }); }
+        catch (e) { out.push({ argv, threw: e.message, code: e.code }); }
+    }
+    return JSON.stringify({ out });
+})()`;
+const inside = (result) => { const m = /^value: (.*)$/m.exec(result) ?? /^({.*\})$/m.exec(result); assert.ok(m, `no value in: ${result}`); return JSON.parse(m[1]).out; };
+/** Answer each nested ask with the next of `decisions`, recording the ask and how many programs had STARTED when it was raised. */
+function answering(host, decisions) {
+    const asked = [];
+    return {
+        asked,
+        onStep: async (bg, ev) => {
+            for (const a of ev.asks ?? []) {
+                if (a.state !== "pending" || asked.some((x) => x.id === a.id)) continue;
+                asked.push({ id: a.id, starts: host.names().filter((n) => n === "start").length });
+                void bg.send({ type: "SET_APPROVAL", payload: { runId: ev.id, seq: ev.seq, ask: a.id, decision: decisions[Math.min(asked.length - 1, decisions.length - 1)] } });
+            }
+        },
+    };
+}
+/** The programs that actually STARTED, in order: a call is spawned once to judge it (facts, the card) and started after. */
+const started = (host) => host.calls.filter((c) => c.call === "start").map((c) => host.calls.find((s) => s.call === "spawn" && s.id === c.args.id)?.args.argv.join(" ") ?? c.args.id);
+const legs = (r) => r.log.filter((x) => x.kind.startsWith("readonly-") || x.kind.startsWith("exec-")).map((x) => [x.kind, x.reason]);
+
+test("RED TEAM: one script running `ls` then `python3 x.py` is judged twice — one card, and two starts in the script's order", T, async () => {
+    const host = fakeNativeHost({ done: () => ({ out: "ok\n", err: "", code: 0 }) });
+    const ask = answering(host, [true]);
+    const r = await runOn("readonly", [each([["ls"], ["python3", "x.py"]])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep });
+    // The worker answered the script, so neither start below is a second leg re-running it.
+    assert.deepEqual(legs(r), [["readonly-worker", "no-page-reads"]], `the script was run again on another leg: ${JSON.stringify(legs(r))}`);
+    assert.deepEqual(started(host), ["ls", "python3 x.py"], `the programs that started, in order: ${JSON.stringify(started(host))}`);
+    // ONE card, raised after the default-allowed call had already started: the first call's allow did not answer for the second.
+    assert.equal(ask.asked.length, 1, `the person was asked ${ask.asked.length} times: ${JSON.stringify(ask.asked)}`);
+    assert.equal(ask.asked[0].starts, 1, `the card was not raised between the two starts: ${JSON.stringify(ask.asked)}`);
+    assert.deepEqual(inside(r.results[0]).map((o) => [o.argv.join(" "), o.ok]), [["ls", true], ["python3 x.py", true]], `the script's own outcomes: ${r.results[0]}`);
+});
+
+test("RED TEAM: two programs that each need an answer get a card each, and the second's decline starts nothing", T, async () => {
+    const host = fakeNativeHost({ done: () => ({ out: "ok\n", err: "", code: 0 }) });
+    const ask = answering(host, [true, false]);
+    const r = await runOn("readonly", [each([["python3", "a.py"], ["python3", "b.py"]])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep });
+    assert.deepEqual(legs(r), [["readonly-worker", "no-page-reads"]], `the script was run again on another leg: ${JSON.stringify(legs(r))}`);
+    // A card per call, each raised after exactly the starts before it: an allow that answered for a later call would show
+    // as one card here, or as none.
+    assert.deepEqual(ask.asked.map((a) => a.starts), [0, 1], `one card per call, raised in the script's order: ${JSON.stringify(ask.asked)}`);
+    assert.deepEqual(started(host), ["python3 a.py"], `a declined call started anyway: ${JSON.stringify(started(host))}`);
+    const out = inside(r.results[0]);
+    assert.equal(out[0].ok, true, JSON.stringify(out));
+    assert.equal(out[1].code, "Denied", `the declined call did not reach the script as Denied: ${JSON.stringify(out[1])}`);
 });
