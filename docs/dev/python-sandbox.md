@@ -685,8 +685,8 @@ readonly cells can import it, and nothing else can.
   not its business), import-time code only, guards and `sys.platform` decided as the core sees them, one level into the
   package's own functions, bounded in modules and bytes. Its core tables (the stdlib modules the core lacks, the
   attributes its stdlib modules expose) are `pkg-core.gen.ts`, generated at build from the notebook's `core.json` by
-  `scripts/gen-pkg-core.mjs`, which fails the build when the tables are absent, empty or measured on another core than
-  the pin; re-measure with `node notebooks/python-packages/probe.mjs core`. What comes back is read keeping only names
+  `scripts/gen-pkg-core.mjs` (run by the build and by `npm run typecheck`), which fails when the tables are absent,
+  empty or measured on another core than the pin; re-measure with `node notebooks/python-packages/probe.mjs core`. What comes back is read keeping only names
   (`pkg-scan-note.ts` `readScan`), so nothing the package wrote reaches the model: on a pass the findings are a note
   after the result, on a failed import they follow the error when they are reached from the failing module, and the
   run log keeps them as `detail.scan`. A scan that fails or dies leaves the import test to decide.
