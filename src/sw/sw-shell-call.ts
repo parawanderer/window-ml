@@ -634,7 +634,15 @@ export async function shRead(ctx: ShCallContext, args: readonly unknown[]): Prom
             return { ok: { ...base, bytes: { $bytes: base64Of(out) }, ...(n ? { scrubbed: n } : {}) } };
         }
         const dec = (b: Uint8Array): string => new TextDecoder("utf-8", { fatal: false }).decode(b);
-        const from = dec(win.subarray(0, offset - lo)).length, to = from + dec(bytes).length;
+        // Both ends are taken to a character boundary of the ONE decoded window (the start back, the end forward): a
+        // range that starts inside a multi-byte character would otherwise count its continuation bytes as replacement
+        // characters and end that many characters past the range, in the margin, where a form cut by the window's edge
+        // is never matched.
+        const cont = (i: number): boolean => i < win.length && (win[i] & 0xc0) === 0x80;
+        let a = offset - lo, b = a + bytes.length;
+        while (a > 0 && cont(a)) a--;
+        while (cont(b)) b++;
+        const from = dec(win.subarray(0, a)).length, to = dec(win.subarray(0, b)).length;
         const sc = scrubRange(dec(win), from, to, subs);
         const n = Object.values(sc.counts).reduce((a, b) => a + b, 0);
         return { ok: { ...base, text: (await forModel(sc.text)).text, ...(n ? { scrubbed: n } : {}) } };

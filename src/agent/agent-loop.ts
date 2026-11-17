@@ -142,6 +142,10 @@ export interface AgentLoopDeps {
      *  is held back), and the lines the loop appends after `forModel` (the `@tool:` line, the cut line, the budget
      *  line). Synchronous: it runs on every delta. Omitted → the text unchanged. */
     scrubText?(text: string, live: boolean): string;
+    /** The same crossing for what the run stores or shows beside the result: the tool's Out render (the sidebar and
+     *  both exports draw it) and so a pointer's fuller capture, which a later `@tool:` read hands a script or the
+     *  model. Omitted → unchanged. */
+    scrubStored?<T>(value: T): Promise<T>;
 }
 
 /** Where in a tool call's dispatch a throw happened: the read-only try, the auto-approve decision, the doomed-action
@@ -1151,6 +1155,12 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             if (deps.forModel) {
                 try { result = String(await deps.forModel(call.name, result)); }
                 catch { result = `Error: the "${call.name}" call's result could not be checked before you read it, so it is withheld.`; }
+            }
+            // What the run keeps beside the result crosses the same scrub, or the panel, the exports and a pointer
+            // would hold what the model was kept from.
+            if (tr?.renderOut && deps.scrubStored) {
+                try { tr = { ...tr, renderOut: await deps.scrubStored(tr.renderOut) }; }
+                catch { tr = { ...tr, renderOut: undefined }; }
             }
             const entry: AgentTranscriptEntry = { tool: call.name, arguments: args, result };
             // Real result nodes ride the transcript ENTRY too (page-side only — undefined for the delegated

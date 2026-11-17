@@ -12,7 +12,7 @@ import { endPythonTurn, markPythonBridged, pythonRunBridged } from "./sw-python"
 import { workerReadonlyMl, derefWhole } from "./worker-readonly-ml";
 import { pipeStages } from "../pointers/token-pipe";
 import { recordRunLog, runLog } from "./sw-run-log";
-import { forModel, forModelHistory, forPage, forLive, forPerson, redactedNote } from "./sw-scrub";
+import { forModel, forModelHistory, forPage, forLive, forPerson, forStored, redactedNote } from "./sw-scrub";
 import { eventsForRun, type RunLogEvent } from "../log/run-log";
 import { execCodeIn, expandPointers } from "../pointers/pointer-macro";
 import { namedReads, type PreRead } from "../pointers/named-reads";
@@ -1219,6 +1219,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                     return r.text + redactedNote(r.counts);
                 },
                 scrubText: (text, live) => live ? forLive(text) : forPerson(text),
+                scrubStored: forStored,
                 // A call routed for the page-built run it was, whose run is handed to the worker before it is sent (a revoke while
                 // it was being built, nav-handover.ts), is built again as the worker's run: never sent to the page as it was.
                 // A page the run is held on (nav-arrival.ts) runs nothing of it: the call is answered by the hold, or waits for

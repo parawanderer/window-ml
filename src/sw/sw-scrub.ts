@@ -1,7 +1,7 @@
-// sw-scrub.ts — the worker's one crossing for error text: what a page is answered and what a run's model reads, with the config's secrets and the person's registered secrets taken out.
+// sw-scrub.ts — the worker's crossings for text that leaves it: a page's answer (its error strings: the config's secrets, and each registered value as a bare `[REDACTED]`), a page-started model request (every message, bare `[REDACTED]`), a run's model input, a script's input, the run's stored renders and pointers (the config's secrets and each registered value as `[REDACTED:<NAME>]`), the live output and the run log's key (registered values only). `GET_CONFIG`'s data is not among them (SECRET_HANDLES.md, Known limits).
 
 import { getConfig } from "./sw-llm";
-import { mergeSecrets, scrubErrors, scrubSecrets, secretsOf, type SecretSub } from "../secret-scrub";
+import { mapErrorStrings, mergeSecrets, scrubSecrets, secretsOf, type SecretSub } from "../secret-scrub";
 import type { MlConfig } from "../contract/contract-config";
 import type { NeutralMessage } from "../contract/contract-chat";
 import { heldTail, redactedLine, scrubRegistry, type RegistrySub } from "../secret-registry";
@@ -33,15 +33,68 @@ async function configSecrets(): Promise<SecretSub[]> {
 }
 
 /**
- * A response bound for a page, with every `error` string scrubbed (`scrubErrors`). Applied by the router to every
- * answer to a page-started message and to the streaming port's error. Fails closed: a config that cannot be read
- * leaves an error carrying nothing but that the request failed.
+ * A response bound for a page, with every `error` string scrubbed: the config's secrets, then each registered value as
+ * a bare `[REDACTED]`, so a page never learns a name. Applied by the router to every answer to a page-started message
+ * and to the streaming port's error. Fails closed: a config or a registry that cannot be read leaves an error carrying
+ * nothing but that the request failed.
  * @param response what the handler answered
  * @returns the response a page may read
  */
 export async function forPage<T>(response: T): Promise<T> {
-    try { return scrubErrors(response, await configSecrets()); }
-    catch { return (response && typeof response === "object" && "error" in response ? { error: "The request failed." } : response) as T; }
+    try {
+        const secrets = await configSecrets();
+        await registryReady();
+        const subs = bareSubs();
+        return mapErrorStrings(response, (s) => scrubRegistry(scrubSecrets(s, secrets), subs).text);
+    } catch { return (response && typeof response === "object" && "error" in response ? { error: "The request failed." } : response) as T; }
+}
+
+/** The keys of a render whose strings are image data, which the scrub leaves alone. */
+const IMAGE_KEY = /^(src|image|rawImage)$/;
+/** What a stored string becomes when the secrets could not be read to scrub it. */
+const STORED_WITHHELD = "[withheld: the registered secrets could not be read]";
+
+/**
+ * A value the run STORES or shows beside what the model read (a tool's Out render, a pointer's fuller capture), with
+ * every string scrubbed the way {@link forModel} scrubs a result, less the count line: the sidebar, both exports and a
+ * later `@tool:` read then hold no more than the model saw. Image data is not scanned. Fails closed: when the
+ * secrets cannot be read, every string is withheld.
+ * @param value the render, or a text
+ * @returns the value, copied where something changed
+ */
+export async function forStored<T>(value: T): Promise<T> {
+    let f: (s: string) => string;
+    try {
+        const secrets = await configSecrets();
+        await registryReady();
+        const subs = registrySubsNow();
+        f = (s) => scrubRegistry(scrubSecrets(s, secrets), subs).text;
+    } catch { f = () => STORED_WITHHELD; }
+    return mapStrings(value, f, 8);
+}
+
+/**
+ * Every string in a value, through `f`, but those under an image key.
+ * @param value the value
+ * @param f what each string becomes
+ * @param depth how deep to look
+ * @returns the value, copied where something changed
+ */
+function mapStrings<T>(value: T, f: (s: string) => string, depth: number): T {
+    if (typeof value === "string") return f(value) as T;
+    if (depth < 0 || value == null || typeof value !== "object") return value;
+    if (Array.isArray(value)) {
+        let changed = false;
+        const out = value.map((v) => { const s = mapStrings(v, f, depth - 1); if (s !== v) changed = true; return s; });
+        return (changed ? out : value) as T;
+    }
+    let out: Record<string, unknown> | null = null;
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+        if (IMAGE_KEY.test(k)) continue;
+        const s = mapStrings(v, f, depth - 1);
+        if (s !== v) (out ??= { ...(value as Record<string, unknown>) })[k] = s;
+    }
+    return (out ?? value) as T;
 }
 
 /**

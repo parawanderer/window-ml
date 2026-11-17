@@ -245,3 +245,22 @@ test("scrubRange: out-of-bounds and empty ranges", () => {
     assert.equal(scrubRange(WIN, 5, 5, RS).text, "");
     assert.equal(scrubRange(WIN, 0, 999, RS).text, scrubRegistry(WIN, RS).text);
 });
+
+// --- the registry is in no backup, and a restore never writes it ---
+
+test("a settings backup leaves the registry out, encrypted or not, and a restore that carries one does not write it", async () => {
+    const B = await import("../src/backup/backup-settings.ts");
+    const entries = [{ name: "PLUG_PASSWORD", value: "REALSECRET-4b1d-77" }];
+    for (const encrypted of [false, true]) {
+        const { payload } = B.collectSettings({ sync: {}, local: { ml_secret_registry: entries } }, { encrypted, includeApiKey: true });
+        assert.ok(!("ml_secret_registry" in payload.local), `encrypted: ${encrypted}`);
+        assert.ok(!JSON.stringify(payload).includes("REALSECRET"), `encrypted: ${encrypted}`);
+    }
+    // A forged backup carrying the registry beside an ordinary setting: the setting is written (the control), the registry is not.
+    const forged = { format: "wml-settings", v: 1, created: new Date().toISOString(), apiKeyIncluded: false, sync: { model: "gemma4:31b" }, local: { ml_secret_registry: entries } };
+    const plan = B.planRestore(forged, { sync: {}, local: {} });
+    const written = { sync: {}, local: {} };
+    await B.applyRestore(plan, B.chromeStorageWriter({ sync: { set: async (x) => { Object.assign(written.sync, x); } }, local: { set: async (x) => { Object.assign(written.local, x); } } }));
+    assert.equal(written.sync.model, "gemma4:31b", "the restore ran");
+    assert.ok(!("ml_secret_registry" in written.local), "a restore never writes the registry");
+});

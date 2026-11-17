@@ -126,6 +126,17 @@ test("a read range that cuts a registered value shows its marker, never a front 
     assert.equal(clean.ok.scrubbed, undefined);
 });
 
+test("a read range that starts inside a multi-byte character ends where the range ends, not in the margin", T, async () => {
+    const pad = "b".repeat(SH_HEAD_BYTES + 100);
+    hostPrinting(`${pad}€${"A".repeat(20)}${"B".repeat(50)}`);
+    const ctx = ctxFor("run-read-utf8");
+    const r = await shRun(ctx, [["ls"], { expectMs: 5000 }]);
+    // Byte pad+1 is inside the three-byte "€"; 20 bytes from there are its two continuation bytes and 18 "A"s.
+    const x = await shRead(ctx, [r.ok.stdout.token, { offset: pad.length + 1, length: 20 }]);
+    assert.ok("ok" in x, JSON.stringify(x));
+    assert.equal(x.ok.text, `€${"A".repeat(18)}`, "the straddled character whole, and not one character past the range");
+});
+
 test("a binary read range comes back as scrubbed bytes with scrubbed: n", T, async () => {
     const pad = "\u0000\u0001\u0002".repeat(SH_HEAD_BYTES / 3 + 50);
     hostPrinting(`${pad}${VALUE}\u0000\u0000`);
@@ -169,6 +180,123 @@ test("the agent loop's live emits and its appended lines go through scrubText", 
     assert.ok(live.length > 0, "the tool streamed");
     for (const s of live) assert.ok(!leaks(s), s);
     for (const m of msgs) assert.ok(!leaks(m.content), m.content);
+});
+
+// --- what the run stores beside the result: the Out render (sidebar, both exports) and a pointer's fuller capture ---
+
+const { forStored, forPage } = await import("../src/sw/sw-scrub.ts");
+const { derefPipe } = await import("../src/pointers/token-pipe.ts");
+const { sessionToJson } = await import("../src/sidebar/export/export-json.ts");
+await import("./stub-css.mjs");   // export.ts imports the panel's CSS
+const { serializeSession } = await import("../src/sidebar/export/export.ts");
+
+/**
+ * One worker-hosted step of an exec that printed a registered value: the DONE event and the run's token store.
+ * @returns the DONE event and the store
+ */
+async function execThatPrints() {
+    const emits = [];
+    const tokenStore = new TokenStore();
+    let turn = 0;
+    const long = `${"x".repeat(400)} ${VALUE} ${"y".repeat(400)}`;
+    await runAgentLoop("go", { tools: [{ name: "exec" }], maxSteps: () => 3, tokenStore, toolTokens: true, runHash: "abc12345" }, {
+        callModel: async () => (turn++ === 0 ? { content: "", tool_calls: [{ id: "c1", name: "exec", arguments: { js: "1" } }] } : { content: "done", tool_calls: [] }),
+        approve: async () => true, autoApprove: () => null,
+        buildMessages: (task) => [{ role: "user", content: task }],
+        pushAssistant: (m, msg) => m.push({ role: "assistant", ...msg }),
+        runTool: async () => ({ result: `out ${VALUE}`, renderIn: { type: "code", text: "1" }, renderOut: { type: "exec-out", stdout: long, capture: long, value: `v ${VALUE}`, error: `e ${VALUE}` } }),
+        pushToolResult: (m, call, content) => m.push({ role: "tool", tool_call_id: call.id, content }),
+        emit: (ev) => emits.push(ev),
+        forModel: async (_n, r) => (await forModel(r)).text,
+        scrubText: (t, live) => (live ? forLive(t) : forPerson(t)),
+        scrubStored: forStored,
+    });
+    return { done: emits.find((e) => e.tool === "exec" && e.result != null), tokenStore };
+}
+
+test("an exec that printed a registered value leaves none of it in the Out render the sidebar draws", T, async () => {
+    const { done } = await execThatPrints();
+    const out = done.renderOut;
+    for (const k of ["stdout", "capture", "value", "error"]) assert.ok(!leaks(out[k]) && out[k].includes(MARK), `${k}: ${out[k]}`);
+});
+
+test("neither export of that step holds the registered value", T, async () => {
+    const { done } = await execThatPrints();
+    const session = { hash: "abc12345", kind: "agent", model: "m", tag: "session", createdTs: 1, lastTs: 2, status: "ok", config: {}, turns: [], task: "go", maxSteps: 3,
+        steps: [{ step: 1, seq: 1, ts: 1, tool: "exec", arguments: { js: "1" }, result: done.result, renderIn: done.renderIn, renderOut: done.renderOut, ...(done.modelResult ? { modelResult: done.modelResult } : {}) }],
+        answers: [], summary: "" };
+    const json = JSON.stringify(sessionToJson(session));
+    assert.ok(!leaks(json) && json.includes(MARK), "the JSON export");
+    const { md } = serializeSession(session);
+    assert.ok(!leaks(md), "the Markdown export");
+});
+
+test("a @tool: read of that step's output hands back the marker, never the value", T, async () => {
+    const { done, tokenStore } = await execThatPrints();
+    assert.ok(done.token, "the step minted a pointer");
+    const v = tokenStore.get(done.token);
+    assert.ok(v.full, "the pointer keeps the fuller capture");
+    const read = derefPipe(v, "out");
+    assert.ok(!leaks(read) && read.includes(MARK), read.slice(0, 200));
+});
+
+test("a render whose secrets cannot be read is withheld whole, and its image data is left alone", async () => {
+    const r = { type: "python-out", stdout: `p ${VALUE}`, image: "data:image/png;base64,AAAA" };
+    const real = chrome.storage.local.get;
+    chrome.storage.local.get = async () => { throw new Error("gone"); };
+    _coldRegistryForTest();
+    try {
+        const got = await forStored(r);
+        assert.ok(!leaks(got.stdout) && /could not be read/.test(got.stdout), got.stdout);
+        assert.equal(got.image, r.image);
+    } finally { chrome.storage.local.get = real; _setRegistryForTest([{ name: NAME, value: VALUE }]); }
+});
+
+test("every model-bound read of a stored whole (a pointer read, a pipe's head, grep and tail) crosses the scrub", T, async () => {
+    const tokenStore = new TokenStore();
+    tokenStore.note({ id: "a1b2c3f", tool: "fetch_url", kind: "text", out: "preview", value: "whole-1", in: "{}", t: 1, step: 1, seq: 1 });
+    const whole = `line one\nthe key is ${VALUE} here\n${"filler\n".repeat(40)}last ${VALUE}\n`;
+    const pipes = [undefined, "head 3", "grep key", "tail 1"];
+    const sent = [];
+    let turn = 0;
+    await runAgentLoop("go", { tools: [{ name: "dereference" }], maxSteps: () => 6, tokenStore, readText: async (k) => { if (k !== "whole-1") throw new Error("gone"); return whole; } }, {
+        callModel: async () => (turn < pipes.length
+            ? { content: "", tool_calls: [{ id: `c${turn}`, name: "dereference", arguments: { token: "@tool:a1b2c3f", ...(pipes[turn++] ? { pipe: pipes[turn - 1] } : {}) } }] }
+            : { content: "done", tool_calls: [] }),
+        approve: async () => true, autoApprove: () => null,
+        buildMessages: (task) => [{ role: "user", content: task }],
+        pushAssistant: (m, msg) => m.push({ role: "assistant", ...msg }),
+        pushToolResult: (m, call, content) => { m.push({ role: "tool", tool_call_id: call.id, content }); sent.push(content); },
+        emit: () => {},
+        forModel: async (_n, r) => (await forModel(r)).text,
+        scrubText: (t, live) => (live ? forLive(t) : forPerson(t)),
+        scrubStored: forStored,
+    });
+    assert.equal(sent.length, pipes.length, "each read reached the model");
+    for (const [i, c] of sent.entries()) {
+        assert.ok(!leaks(c), `read ${i} (${pipes[i] ?? "no pipe"}): ${c.slice(0, 300)}`);
+        assert.ok(c.includes(MARK), `read ${i} carries the marker: ${c.slice(0, 300)}`);
+    }
+});
+
+// --- what a page is answered: its error strings, with no name ---
+
+test("an error answered to a page has a registered value as a bare [REDACTED], and no name", async () => {
+    const got = await forPage({ error: `refused ${VALUE}`, data: { nested: { transportError: `t ${VALUE}` } }, text: `data ${VALUE}` });
+    assert.equal(got.error, "refused [REDACTED]");
+    assert.equal(got.data.nested.transportError, "t [REDACTED]");
+    assert.ok(!JSON.stringify(got).includes(NAME), "no name reaches a page");
+    assert.equal(got.text, `data ${VALUE}`, "a data field is the handler's answer, as before");
+});
+
+test("an error to a page fails closed when the registry cannot be read", async () => {
+    const real = chrome.storage.local.get;
+    chrome.storage.local.get = async () => { throw new Error("gone"); };
+    _coldRegistryForTest();
+    try {
+        const got = await forPage({ error: `refused ${VALUE}` });
+        assert.deepEqual(got, { error: "The request failed." });
+    } finally { chrome.storage.local.get = real; _setRegistryForTest([{ name: NAME, value: VALUE }]); }
 });
 
 // --- the peek tail: it reaches the model through forModel ---

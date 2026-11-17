@@ -166,7 +166,13 @@ on real captured output in its PR.
   - a resumed run's history ([`forModelHistory`](../../src/sw/sw-scrub.ts)), so a value registered after a session
     was stored is scrubbed from what a resumed model is sent, though the stored session still holds it;
   - the run log's `key`, which keeps an error's raw text for extension pages: the registry's values are scrubbed from
-    it, and the backend's own URL, key and filter stay there as today.
+    it, and the backend's own URL, key and filter stay there as today;
+  - what the run keeps beside a tool result (`forStored`, the loop's `scrubStored`): the tool's Out render, which the
+    sidebar and both exports draw, and so a pointer's fuller capture, which a later `@tool:` read hands a script or the
+    model. Every string in it is scrubbed as the result is, without the count line; image data is not scanned;
+  - an error answered to a page (`forPage`): every string under an error key, the config's secrets and then each
+    registered value as a bare `[REDACTED]`, so a page never learns a name. It waits for the registry and fails closed
+    to "The request failed."
 - **The host does not scrub.** A process's held output stays its raw bytes, so a registered value can pass between
   the stages of a pipe on the host (an OS pipe, which never crosses into the worker); it is scrubbed before any script
   or model reads it. `done`'s `sha256` and `size` are over the raw bytes. A scrubbed read says so: a text range comes
@@ -200,14 +206,19 @@ on real captured output in its PR.
   that arrived after it was registered.
 - **Known limits**: images; the person's own turn and the page context the run is started with; a value that was
   transformed or only partly echoed (threat 2); a value registered after a session stored it (re-scrubbing stored
-  sessions is a later slice); anything a pattern does not know until PR 2; a script or model that already holds a
-  guess can confirm it, by echoing the guess and seeing the marker; the model's own tool arguments, which are not
-  scrubbed; an approved page that drives a model can confirm a full guess it already holds if the model repeats the
-  marker, and learns no name; the page-world tool results of a page-hosted run stay the page's own and are not scrubbed
-  for the page; `GET_CONFIG`'s answer to a page is not run through the registry, by design, since what keeps a secret
-  out of it is `publicConfig`'s fixed key list (`redteam-lifetimes-config.test.mjs`, #1942, enumerates it, no secret key
-  among them), and a public value equal to a registered one reaches the model only through a crossing that scrubs it (a
-  page-started request, or a tool result that read the page).
+  sessions is a later slice); anything a pattern does not know until PR 2; a script or model that already holds a guess
+  can confirm it, by echoing the guess and seeing the marker; the model's own tool arguments, which are not scrubbed; an
+  approved page that drives a model can confirm a full guess it already holds if the model repeats the marker, and
+  learns no name; the page-world tool results of a page-hosted run stay the page's own and are not scrubbed for the
+  page; a page whose own text comes back in an error (a refusal that quotes what it refused) can confirm that a guess
+  equals a registered value, by seeing `[REDACTED]` where its text was, though never which one; a registered value at
+  rest in the value store behind a pointer (a `fetch_url` page's whole text, a stored table) until PR 2 scrubs it where
+  it is written: every model-bound read of it (a `@tool:` read, a pipe's head, range or grep, the output of a script
+  that called `ml.dereference`) crosses the scrub, so what remains is the value at rest and an approved script that
+  reads it and transforms it before printing; `GET_CONFIG`'s answer to a page is not run through the registry, by
+  design, since what keeps a secret out of it is `publicConfig`'s fixed key list (`redteam-lifetimes-config.test.mjs`,
+  #1942, enumerates it, no secret key among them), and a public value equal to a registered one reaches the model only
+  through a crossing that scrubs it (a page-started request, or a tool result that read the page).
 - **Deferred to the handles slice**: reading values from a listed `.env` (a new host message), the keychain, a handle's
   value, and the `echoes` refusal.
 
