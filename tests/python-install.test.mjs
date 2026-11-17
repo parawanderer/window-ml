@@ -79,7 +79,7 @@ async function installRun(calls, { answer = (_ev, send) => send(false), offered 
     const cards = [];
     let n = 0, bg;
     bg = loadBackground({
-        siteGate: true, indexedDB: idb, onPyInstallTest,
+        siteGate: true, indexedDB: idb, onPyInstallTest: onPyInstallTest && ((msg) => onPyInstallTest(msg, bg)),
         config: { chatUrl: "http://host/api/chat/completions", apiKey: "sk-test", model: "default-model", apiFormat: "openai", ocrModel: "", debugMode: "off" },
         local: { ml_site_always: ["https://site.example"] },
         openTabs: [{ id: 7, url: SITE_URL, title: "Site" }],
@@ -307,7 +307,7 @@ test("approving a card with a PyPI row downloads it, tests its import in a candi
     assert.deepEqual(v.files.map((f) => [f.source, f.sha256, f.size]), [["pypi", WHEEL_SHA, WHEEL.byteLength]]);
     assert.deepEqual(r.mismatches, []);
     assert.equal(r.results[0], INSTALLED);
-    assert.deepEqual(r.candidates, [{ type: "PY_INSTALL_TEST", run: r.hash, wheels: [{ filename: WHEEL_FN, sha256: WHEEL_SHA }], modules: ["tabulate"] }]);
+    assert.deepEqual(r.candidates, [{ type: "PY_INSTALL_TEST", run: r.hash, wheels: [{ filename: WHEEL_FN, sha256: WHEEL_SHA }], modules: ["tabulate"], scope: ["tabulate"] }]);
     assert.deepEqual(r.installs, [{ name: "tabulate", version: "0.9.0", source: "pypi", filename: WHEEL_FN, sha256: WHEEL_SHA, topLevel: ["tabulate"] }]);
     assert.deepEqual(r.pkgInstalls.map((l) => l.reason), ["ok"]);
 });
@@ -340,6 +340,48 @@ test("a candidate whose import raises rolls back with the error", { ...T, skip: 
     const r = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]), onPyInstallTest: () => ({ ok: false, module: "tabulate", error: "SystemExit: 2" }) });
     assert.equal(r.results[0], `Not installed: importing tabulate failed: SystemExit: 2. ${KEPT}`);
     assert.deepEqual(r.installs, []);
+});
+
+// --- the platform scan's note (slice 4b, PACKAGES_INSTALL.md item 7) ---
+
+const SUBPROCESS = { kind: "call", what: "subprocess.run", in: "tabulate.cli", chain: ["tabulate", "tabulate.cli"] };
+const RESOURCE = { kind: "missing", what: "resource", in: "other", chain: ["other"] };
+
+test("a scan finding on an install that passes is a note after the result, and the run log keeps the findings", { ...T, skip: SKIP }, async () => {
+    const scan = { findings: [SUBPROCESS], reached: 2 };
+    const r = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]), onPyInstallTest: () => ({ ok: true, scan }) });
+    assert.equal(r.results[0], `${INSTALLED} The platform scan found: tabulate.cli calls subprocess.run at import time, which fails in this sandbox. The import passed, so this is a note: those paths may fail when the code reaches them.`);
+    assert.equal(r.installs.length, 1, "a note is never a refusal");
+    assert.deepEqual(r.pkgInstalls.map((l) => [l.reason, l.detail.scan, l.detail.scanFindings, l.detail.scanReached, l.detail.modules]), [["ok", "call subprocess.run in tabulate.cli", 1, 2, "tabulate"]]);
+});
+
+test("no finding, and no scan at all, leave the result as it was", { ...T, skip: SKIP }, async () => {
+    for (const answer of [{ ok: true, scan: { findings: [], reached: 1 } }, { ok: true, scan: null }, { ok: true }]) {
+        const r = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]), onPyInstallTest: () => answer });
+        assert.equal(r.results[0], INSTALLED, JSON.stringify(answer));
+    }
+});
+
+test("a failed import's reason carries the scan's finding when it is reached from the failing module, and only then", { ...T, skip: SKIP }, async () => {
+    const r = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]), onPyInstallTest: () => ({ ok: false, module: "tabulate", error: "OSError: [Errno 138] Not supported", scan: { findings: [SUBPROCESS, RESOURCE], reached: 3 } }) });
+    assert.equal(r.results[0], `Not installed: importing tabulate failed: OSError: [Errno 138] Not supported. The platform scan found: tabulate.cli calls subprocess.run at import time, which fails in this sandbox. ${KEPT}`);
+    assert.deepEqual(r.installs, []);
+    assert.deepEqual(r.pkgInstalls.map((l) => [l.reason, l.detail.scan, l.detail.scanFindings]), [["import", "call subprocess.run in tabulate.cli; missing resource in other", 2]]);
+    const other = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]), onPyInstallTest: () => ({ ok: false, module: "tabulate", error: "SystemExit: 2", scan: { findings: [RESOURCE], reached: 1 } }) });
+    assert.equal(other.results[0], `Not installed: importing tabulate failed: SystemExit: 2. ${KEPT}`, "a finding under another module is not this failure's reason");
+});
+
+// --- an install the run recorded while this one was in its candidate (PACKAGES_INSTALL.md item 10, shape iv) ---
+
+test("shape (iv): a call whose run record changed while its candidate ran is not recorded, and says to ask again", { ...T, skip: SKIP }, async () => {
+    const landed = { name: "other", version: "1.0", source: "pypi", filename: "other-1.0-py3-none-any.whl", sha256: "e".repeat(64), topLevel: ["tabulate"] };
+    const r = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]), onPyInstallTest: async (msg, bg) => {
+        await bg.context.chrome.storage.session.set({ [PKG_INSTALLS_KEY]: { [msg.run]: [landed] } });
+        return { ok: true };
+    } });
+    assert.equal(r.results[0], "Not installed: another install of this run finished while this one was tested, so this one was not tested beside it. Ask python_install again; the files approved here stay in the mirror and show as mirror on the next card.");
+    assert.deepEqual(r.installs, [landed], "the other install stands; this one, which takes the same name, is not added beside it");
+    assert.deepEqual(r.pkgInstalls.map((l) => [l.reason, l.level]), [["concurrent", "warn"]]);
 });
 
 test("a wheel whose top-level name a lock package takes is refused before any candidate", { ...T, skip: SKIP }, async () => {

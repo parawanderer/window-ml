@@ -647,7 +647,7 @@ reach it through the factory's closure, so a JsProxy there would be one in the n
 harness's references captured before any cell ran, never the importable `json`/`base64`, which a cell may patch.
 Tested under real CPython against a fake transport: `tests/ml-facade.test.mjs`.
 
-## Installing a package (`python_install`, slices 2 to 4 of docs/plan/repl/PACKAGES_INSTALL.md)
+## Installing a package (`python_install`, slices 2 to 4b of docs/plan/repl/PACKAGES_INSTALL.md)
 
 Offered to a run the worker builds (`OFFER_PYTHON_INSTALL`, `sw-run-start.ts`). An install belongs to that run: its
 readonly cells can import it, and nothing else can.
@@ -676,7 +676,20 @@ readonly cells can import it, and nothing else can.
   the dialect or an earlier install already takes); then a CANDIDATE readonly worker (`offscreen.ts` `installTest`) is
   handed the run's installs and the new wheels after its lockdown and imports each new top-level module in a hardened
   cell (`pkg-install-test.ts`), with a 60 s deadline from spawn and the run's Stop. Only when it passes are the wheels
-  added to the run's record (`sw-pkg-installs.ts`, `chrome.storage.session`). Every failure leaves the run as it was.
+  added to the run's record (`sw-pkg-installs.ts`, `chrome.storage.session`), and only when that record is still the
+  one the call read: a call whose candidate ran while another install of the run landed is refused (`concurrent`),
+  since it was neither tested beside that install nor checked against its names. Every failure leaves the run as it was.
+- **The platform scan is a note, never a refusal** (`pkg-scan.ts`, a port of `notebooks/python-packages/scan.py`). It is
+  its own hardened cell in the candidate, after the unpack and before the import cell, so no package code has run when
+  it reads the sources: `ast` over the `.py` files of the call's and the run's earlier wheels only (a lock package is
+  not its business), import-time code only, guards and `sys.platform` decided as the core sees them, one level into the
+  package's own functions, bounded in modules and bytes. Its core tables (the stdlib modules the core lacks, the
+  attributes its stdlib modules expose) are `pkg-core.gen.ts`, generated at build from the notebook's `core.json` by
+  `scripts/gen-pkg-core.mjs`, which fails the build when the tables are absent, empty or measured on another core than
+  the pin; re-measure with `node notebooks/python-packages/probe.mjs core`. What comes back is read keeping only names
+  (`pkg-scan-note.ts` `readScan`), so nothing the package wrote reaches the model: on a pass the findings are a note
+  after the result, on a failed import they follow the error when they are reached from the failing module, and the
+  run log keeps them as `detail.scan`. A scan that fails or dies leaves the import test to decide.
 - **The run's own worker gets the wheels at its next cell.** Every readonly cell of the run carries the record; the
   offscreen document reads the wheels that worker lacks from the mirror (re-hashed) and the worker unpacks them after
   its lockdown, before the cell (`installWheels`). The namespace is kept. A respawned or reaped worker gets them the
