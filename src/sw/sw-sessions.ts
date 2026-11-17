@@ -8,7 +8,8 @@ import { hintSession, type SentFile } from "../contract/contract-run";
 import { FilesRefused, isPdfFile, pdfToPageRun, textFiles } from "../attached-files";
 import { type MlDebugEvent } from "../contract/contract-debug";
 import { createCommandHandler, THIS_BROWSER, type CommandDeps, type PageOutcome } from "../session/session-commands";
-import { cancelBackgroundChat, configureBackgroundChats, forgetBackgroundChat, isBackgroundChat, sendBackgroundChat, setBackgroundChatModel, startBackgroundChat } from "./sw-chat";
+import { cancelBackgroundChat, configureBackgroundChats, forgetBackgroundChat, isBackgroundChat, releaseEvictedChatFiles, sendBackgroundChat, setBackgroundChatModel, startBackgroundChat } from "./sw-chat";
+import { releaseSessionValues, storeHeld } from "./sw-values";
 import { type StoredSession } from "../contract/contract-messages";
 import { SESSION_CONTRACT_VERSION, type Command, type CommandFrom, type CommandResult, type CommandType, type ArchiveCapability, type BlankStartCapability, type RuntimeInfo, type SessionSummary, type TabGroupInfo, type TabInfo } from "../session/session-host";
 import { FaviconCache, stripOrder } from "./tab-favicons";
@@ -21,7 +22,7 @@ import { AGENT_START_PAGE, DEFAULT_CONFIG, modelFilterAllows } from "../contract
 import type { NeutralMessage } from "../contract/contract-chat";
 import { cleanTitle, titleMessages } from "../session/session-title";
 import { defineState } from "../state-registry";
-import { bgRuns, keptOnRebuild, makeWorkerRun, trackRun, untrackRun } from "./sw-runs";
+import { bgRuns, hydrationDone, keptOnRebuild, makeWorkerRun, pageValueSession, runControllers, runRebuilds, startingControllers, trackRun, untrackRun, workerRunsStarting } from "./sw-runs";
 import { moveRun } from "./move-run";
 import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
 import { isExtensionSender } from "./sw-site-access";
@@ -307,6 +308,10 @@ export function configureSessionCommands(run: RunDeps): void {
         },
         save: saveChatSession,
         now: () => Date.now(),
+        // A chat's PDFs are held for its session as an agent run's attached files are (FILE_ATTACHMENTS.md, "Reading
+        // the pages held back"), and released with it.
+        hold: (blob, format, source, session) => storeHeld(blob, format, source, session),
+        release: (session) => releaseSessionValues(session),
         // The question an agent run asks (run-assembly.ts): the chat's model, then the reader the person set.
         images: async (model, forced) => {
             const ml = workerMl("");
@@ -566,7 +571,7 @@ export const sessionStore = (() => {
             protect: () => sessionServer.subscribed(),
             // The store decides whether a saved session exists, so an eviction there is one here too. Without this a
             // session stayed listed after its history had left the disk.
-            onEvict: (hashes) => { for (const hash of hashes) sessionServer.remove({ runtime: localRuntimeId(), hash }); },
+            onEvict: (hashes) => { for (const hash of hashes) { sessionServer.remove({ runtime: localRuntimeId(), hash }); void releaseEvictedChatFiles(hash); } },
             // Every session the store drops without being asked is a housekeeping decision, whichever rule made it.
             onEvicted: (e) => {
                 // Deleted, or moved to the archive: its run policies go with it (POLICIES.md, "Scopes"). An archived
@@ -875,6 +880,22 @@ export async function handleSessionTitle(payload: unknown, sender: chrome.runtim
     if (typeof p.hash !== "string" || !p.hash || !Array.isArray(p.messages) || !p.messages.length) return { error: "SESSION_TITLE needs a hash and messages" };
     if (!utilityModelSet) return { error: "no utility model is set" };
     return { data: await titleSession(p.hash, p.messages as NeutralMessage[]) };
+}
+
+/**
+ * What can still end a held value-store row's session, for the value sweep's first pass (`releaseOrphanedHeld`): a chat
+ * this worker hosts, a session the store saved, a run the worker holds or restored from storage, and an open tab's page.
+ * Asked after the store and the runs are loaded, so a restart does not read an empty map as every session ended.
+ * @throws when this worker has no session store, since a saved session cannot then be told from an ended one
+ */
+export async function liveHeldSessions(): Promise<(session: string) => boolean> {
+    const store = sessionStore;
+    if (!store) throw new Error("no session store: a saved session cannot be told from an ended one");
+    await hydrationDone;
+    await store.open();
+    const tabs = new Set((await chrome.tabs.query({})).flatMap((t) => (typeof t.id === "number" ? [pageValueSession(t.id)] : [])));
+    return (s) => isBackgroundChat(s) || store.has(s) || bgRuns.has(s) || runControllers.has(s) || runRebuilds.has(s)
+        || startingControllers.has(s) || workerRunsStarting.has(s) || tabs.has(s);
 }
 
 /**
