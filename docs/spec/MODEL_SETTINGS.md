@@ -227,11 +227,11 @@ Only a run the worker built (`SITE_ACCESS.md`, "Runs the user starts are built i
 sidebar, the DevTools panel, the chat page or over the hub. The guards are the ones `propose_policy` already has
 (`docs/dev/policies.md`, "A proposal from the model"):
 
-- the tool is offered only by `startUserRun`; `change_setting` joins `PROPOSAL_TOOLS`, so `pageStartPayload` drops a
-  page's descriptor of that name and `withoutProposals` strips it from the stored copy of a page-built run handed to
-  the worker (`src/sw/sw-runs.ts`). `change_setting` proposes nothing to store, so the builder renames the set to
-  `WORKER_ONLY_TOOLS` (and `withoutProposals` to `withoutWorkerOnly`) and rewrites its comment to "the tools only a
-  run the worker built offers: they ask the person to store or change something the model drafted";
+- the tool is offered only by `startUserRun`; `change_setting` joins `WORKER_ONLY_TOOLS`, so `pageStartPayload` drops
+  a page's descriptor of that name and `withoutWorkerOnly` strips it from the stored copy of a page-built run handed to
+  the worker (`src/sw/sw-runs.ts`). The set was `PROPOSAL_TOOLS` (and the function `withoutProposals`) until this was
+  built: `change_setting` proposes nothing to store, so the name became what the set is, "the tools only a run the
+  worker built offers: they ask the person to store or change something the model drafted";
 - every place a run becomes one the worker built is enumerated, not sampled: `startUserRun`, the hand-over
   (`markWorkerRun`), adoption (`adoptSession` in `src/sw/sw-sessions.ts`, which hydrates a saved session's payload and
   calls `makeWorkerRun`) and the resume. On the three that are not `startUserRun` the toolset is the payload's, which
