@@ -37,6 +37,9 @@ test("approving a streamed exec in the calm chat: nothing snaps, the fold animat
         await site1.goto(site.url + "/");
         await waitForMl(site1);
         void site1.evaluate(() => window.ml.agent("rename the page", { env: false, approvalRouting: "both", stream: true })).catch(() => {});
+        // The chat is the tab being sampled, and the site's tab, opened after it, is the active one. On CI the chat drew about one frame
+        // a second late in this test, and an unfurl read 1.5 s after the click was still at its first frame: a background tab's clock.
+        await chat.bringToFront();
         await chat.locator(".chat-row", { hasText: "rename the page" }).click();
         await expect(chat.locator(".astep-approve")).toBeVisible({ timeout: 30_000 });
         // Settled: the step's own opening (its height ramping up as the code takes its place) is not the sequence under test, and on a
@@ -117,10 +120,10 @@ test("approving a streamed exec in the calm chat: nothing snaps, the fold animat
             const tick = () => { const st = document.querySelector(".astep.tool"); window.__g.push({ t: performance.now() - t0, v: st ? st.getBoundingClientRect().height : null }); if (performance.now() - t0 < 800) requestAnimationFrame(tick); };
             requestAnimationFrame(tick);
         });
-        const before = await chat.evaluate(() => { const st = document.querySelector(".astep.tool"); return `${st?.className} h=${Math.round(st?.getBoundingClientRect().height ?? -1)}`; });
+        const before = await chat.evaluate(() => { const st = document.querySelector(".astep.tool"); const b = st?.querySelector(".astep-body"); return `${st?.className} h=${Math.round(st?.getBoundingClientRect().height ?? -1)} body=${b ? Math.round(b.getBoundingClientRect().height) : "none"} anims=${b ? b.getAnimations().map((a) => `${a.id || a.animationName}@${Math.round(Number(a.currentTime))}/${a.playState}`).join("+") : ""} ${document.visibilityState} timeline=${Math.round(Number(document.timeline.currentTime))} now=${Math.round(performance.now())}`; });
         await chat.locator(".astep.tool .astep-head").first().click();
         await chat.waitForTimeout(1000);
-        const after = await chat.evaluate(() => { const st = document.querySelector(".astep.tool"); return `${st?.className} h=${Math.round(st?.getBoundingClientRect().height ?? -1)}`; });
+        const after = await chat.evaluate(() => { const st = document.querySelector(".astep.tool"); const b = st?.querySelector(".astep-body"); return `${st?.className} h=${Math.round(st?.getBoundingClientRect().height ?? -1)} body=${b ? Math.round(b.getBoundingClientRect().height) : "none"} anims=${b ? b.getAnimations().map((a) => `${a.id || a.animationName}@${Math.round(Number(a.currentTime))}/${a.playState}`).join("+") : ""} ${document.visibilityState} timeline=${Math.round(Number(document.timeline.currentTime))} now=${Math.round(performance.now())}`; });
         const g = (await chat.evaluate(() => window.__g)).filter((x) => x.v != null).map((x) => ({ t: x.t, v: x.v }));
         const opened = runsOf(g, 1).filter((r) => r.total > 24);
         expect(opened.length, `the step did not open when its head was clicked. Before the click: ${before}. After: ${after}. Heights from the click: ${g.map((x) => `${Math.round(x.t)}ms:${Math.round(x.v)}`).join(" ")}`).toBeGreaterThan(0);
