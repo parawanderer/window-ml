@@ -2,8 +2,8 @@
 
 **Status: slices 1 and 2 built (2026-10-28/29); slice 3 under way: the held rows, the `@file:` pointer, the `pages`
 verb, attaching a PDF to an agent run, and every attachment to a worker-built run (any message) and a long paste as
-pointers, `ml.dereference` of `@file:` and `look` at a document are built; Python's `files`, the files panel and
-upload progress are next (Shane and the calm-chat-motion session); a session's files as a directory `/files/` is ruled,
+pointers, `ml.dereference` of `@file:`, `look` at a document and upload progress are built; Python's `files` and the
+files panel are next (Shane and the calm-chat-motion session); a session's files as a directory `/files/` is ruled,
 not built (2026-11-12).** The order is
 three slices, each landing on its own: text files, then PDFs, then documents as `@file:` pointers in agent runs. Slice
 3's contact points with the python, shell and policies lanes were ruled on by their coordinator (2026-10-28,
@@ -193,7 +193,12 @@ Built (2026-10-29, `file-frame.ts`, `file-chunks.ts`, `HubConnection.putFile`; h
   guesses a document learns another device sent it within the TTL. Every device holding `drive` is the same person's,
   under one root. An upload in progress stays its sender's, so another device cannot spoil it. A device with `view`
   alone is refused both commands, and one declaring `drive` it does not hold fails to open and goes unanswered.
-- Not built: progress in the composer while the chunks go.
+- Progress while the chunks go (built 2026-11-17): a send's `progress` option (`SendOptions`, session-host.ts) hears
+  each file's share of chunks the runtime has accepted (`uploadFraction`, file-frame.ts), once after `file.have` and
+  once per accepted chunk, so the bar never runs ahead of the runtime's word. A file the runtime holds whole reports
+  nothing; one it holds part of starts at that share. The start page draws the bar under the file's own chip, which
+  stays in the box while it starts; the session composer, which empties on send, draws the uploading files as their
+  own strip (`UploadStrip`) until the send has its answer. A host that sends files inline reports nothing.
 
 **Images go only to a model known to see them: unknown is refused.** (Built.) A worker chat attached images without
 asking; it now asks the question an agent run does (`_modelVision`, image-gate.ts: Ollama reports vision or not, or
@@ -1239,7 +1244,12 @@ nothing into the repository.
   by which the repository's config runs a program, and the e3 row with a clean filter, an fsmonitor and a hook
   configured is the pass condition for that case too. AMENDED 2026-11-13 (host lane): the belt alone was not enough,
   since the person's global config (`git lfs install` sets `filter.lfs.clean`) also runs a program; H7's
-  `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM` close that. The changed set is the host's own stat comparison against
+  `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM` close that. AMENDED 2026-11-17 (host lane, found building H10): nor
+  for a spawn that writes the scratch index (`write-tree`, `read-tree`, `update-index`). The write runs the
+  repository's `post-index-change` hook, and its check of a racily clean entry reads the file through the clean
+  filter, at the entry's path from the process's directory, since `write-tree` never enters `GIT_WORK_TREE`. So each
+  scratch spawn also sets `core.hooksPath=/dev/null` and runs in, and names as `GIT_WORK_TREE`, an empty directory of
+  the scratch store (window-ml-host `src/snapshot.rs`). The changed set is the host's own stat comparison against
   the scratch index, not a git status.
 - H12. Bounds: no file over the diff cap (1 MB, "The diff's cap") goes into the tree; it is compared by size and
   sha256 instead. The walk stops at `WALK_CAP` (20 000) entries; past that the call's diff is null with the reason.
