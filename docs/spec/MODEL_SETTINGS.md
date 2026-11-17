@@ -7,15 +7,24 @@ Shane on 2026-11-13 as proposed. Shane also ruled on 2026-11-13:
 
 - the model reads the settings through `ml.settings()`, not `ml.current.settings`: they are the person's global
   settings, and a name under `ml.current` says they belong to the run;
-- the whitelist is ours for now: a constant in code, with no Settings section to edit it, and it starts EMPTY. We add
-  keys to it one at a time as visible (`read`) or editable (`read-write`);
-- nothing of this spec's surface is built until we add the first key. Until then the model learns that every setting
-  exists, and where, from `agent_api_docs`' "Your settings" section (#1815), the server URL and the API key included,
-  and reads values only through `ml.config()`, as today. `ml.settings()`, `change_setting` and the `setting` consumer
-  are built in the PR that adds the first key ("Slices", below);
 - fatigue: once the person declines a guarded change, the same key's change is refused for the rest of that run, with
-  no card and a reason naming the earlier decline; nothing is remembered across runs ("Threat model", item 6). Built in
-  the PR that adds the first guarded key.
+  no card and a reason naming the earlier decline; nothing is remembered across runs ("Threat model", item 6).
+
+**Ruling 2 (Shane, 2026-11-14), which replaces the first ruling's whitelist.** That ruling had a constant in code,
+starting empty, with keys added one at a time; nothing was to be built until the first. Now `change_setting` reaches
+every setting, because every call it makes is approval-gated, except:
+
+- the secrets, which include the server URL (`chatUrl`) and `modelFilter`, excluded outright;
+- the gate's own keys (`autoApproveReadonly`; the site lists and policies, which are not settings at all), excluded,
+  with a link to the setting's row as the help. `autoApprovePython` and `autoApproveSelfSource` are classed with
+  `autoApproveReadonly` for the same reason, that one approved change removes every later approval of their kind;
+  confirmed by Shane, 2026-11-17;
+- `shellEnabled` and the host connection settings (`shellRoots`, `shellSandbox`, `shellPath`) are read-write only with
+  the card showing the old and the new value verbatim. The hub's connection (pairing, keys) is not a key of
+  `DEFAULT_CONFIG` and stays outside this spec ("Not settings", below).
+
+A consequence: every value but a secret's is READABLE by the model under ruling 2, the shell keys' folder and program
+paths included ("Threat model", item 5). Starting the build is Shane's to confirm (coordinator, 2026-11-14).
 
 A new agent-facing surface, so the threat model below is reviewed by the red team (e3, through the coordinator) before
 this lands.
@@ -34,7 +43,7 @@ whose "deleting the person's files asks unless a policy allows it" is the rule r
 
 "Something like this already" is real, and it is not a whitelist the person controls:
 
-- **`ml.config()` returns a fixed subset**, `publicConfig()` in `src/contract/contract-config.ts`: 21 keys
+- **`ml.config()` returns a fixed subset**, `publicConfig()` in `src/contract/contract-config.ts`: 21 keys of the 58
   (`model`, `ocrModel`, `ocrNumCtx`, `apiFormat`, `defaultModelVision`, the three utility-model keys,
   `autoApproveReadonly`, `autoApprovePython`, `autoApproveSelfSource`, `serverToolsOff`, `commanderServerTools`,
   `selfIntrospection`, `pierceClosedShadow`, `cdp`, the three grounding keys, `debugMode`, `labelMatch`) plus the
@@ -48,65 +57,64 @@ whose "deleting the person's files asks unless a policy allows it" is the rule r
   `modelFilter`, `priceSnapshotUrl`) and `RISKY_CONFIG` in `src/backup/backup-settings.ts` (settings that send traffic
   or widen what runs without asking, which a restore lists apart with what each does).
 
-That subset was chosen in code, for the page, and the page reads it too. What this spec adds is the person's own list,
-for the model, with writes.
+That subset was chosen in code, for the page, and the page reads it too. What this spec adds is a view for the model,
+with writes.
 
 ## The rule
 
-1. **The whitelist is ours, for now** (Shane, 2026-11-13). A constant in code names setting keys, each `read` or
-   `read-write`, and starts empty; the person does not edit it in this spec (open question 8). The model changes only
-   `read-write` keys, and reads a value only for a key on it or one `ml.config()` already returns. Every other key is
-   listed with no value (below, "The surface"), and a write to it is refused naming it as one the model may not change.
+1. **Every setting is read-write except the secrets and the gate's own keys** (ruling 2, Shane, 2026-11-14). The set
+   is derived from the class declaration (below, "Four classes of setting"), never listed a second time, and the
+   person does not edit it in this spec (open question 8). The model reads the value of every read-write key and of
+   every key `ml.config()` already returns. A secret is listed with no value (below, "The surface"). A write to a
+   secret or a gate key is refused, naming it as one the model may not change; a gate key's refusal links to its row.
 2. **A change asks unless a policy allows it**, through the policy store (`POLICIES.md`), as a new consumer `setting`.
    One mechanism: no second store, no per-setting "always allow" button, no remembered answer of its own. (The
    fatigue refusal under "Threat model", item 6, is run-scoped memory of the model's own refused call, not an answer:
    it never lets a change through. Ruled by Shane, 2026-11-13.)
-3. **A guarded change always asks**, whatever a policy says (below, "Three classes of setting"). Precedent: a
+3. **A guarded change always asks**, whatever a policy says (below, "Four classes of setting"). Precedent: a
    credentialed fetch asks regardless of policy (`POLICIES.md`, "Scopes"). A policy may still DENY a guarded change.
    This is not a second mechanism: the same consumer, the same store and the same judge, and the guarded class is an
    answer the judge cannot free, as a credentialed fetch is (ruled by Shane, 2026-11-13).
 4. **A page-started run never reaches it**: not the reads, not the tool, not the card (below, "Who reaches it").
-5. **Secrets are never whitelistable**, and neither are the stores that decide what the model may do (the whitelist
-   itself, policies, site lists).
+5. **Secrets and the gate's own keys are never writable**, and neither are the stores that decide what the model may
+   do (policies, site lists).
 6. **The DevTools Settings panel is the superset.** A setting the panel does not show is not a setting for this
    purpose.
 
-`ml.config()` is not changed by this spec. Its 20 keys stay readable by the model and by approved pages whatever the
-whitelist says, because a page on an approved origin can call it itself and the worker cannot tell the model's call
+`ml.config()` is not changed by this spec. Its 21 keys stay readable by the model and by approved pages whatever their
+class, because a page on an approved origin can call it itself and the worker cannot tell the model's call
 from the page's (the sender is the tab either way). Rule 1 governs the new surface. Narrowing an isolated-world
-exec's `ml.config()` to the whitelist is open question 1, a later slice.
+exec's `ml.config()` is open question 1, a later slice.
 
 ## Slices
 
 - **Discovery, built** (#1815, LINKS.md slice 1). `agent_api_docs` has a "Your settings" section: every setting by tab
   and section, with its link address, and which values `ml.config()` returns, generated from `SETTING_PLACES`,
   `PANEL_LAYOUT` and `publicConfig()`. A setting it lists and `ml.config()` does not return, the server URL and the API
-  key among them, the model knows exists and cannot read. With the whitelist empty that is all the model needs, so
-  nothing below is built yet (Shane, 2026-11-13).
-- **The first key** (the PR that adds one to the whitelist builds the rest of this spec in the same change):
-  `ml.settings()`, `change_setting`, the `setting` consumer, the card and the red-team rows. Building the isolated-world
-  member before there is a value behind it would be a guarded surface with nothing to guard.
-- **The first guarded key** builds the fatigue refusal ("Threat model", item 6) in the same change: before a guarded
-  key is on the whitelist no change can be declined at a guarded card, so there is nothing for it to remember.
+  key among them, the model knows exists and cannot read.
+- **The surface, one PR**: `ml.settings()`, `change_setting`, the `setting` consumer, the card (with the verbatim
+  values the shell keys need), the fatigue refusal ("Threat model", item 6) and the red-team rows. Under ruling 2
+  guarded keys are read-write from the first commit, so a change can be declined at a guarded card from the start, and
+  the fatigue refusal cannot wait for a later key. Not started until Shane confirms (coordinator, 2026-11-14).
 
-## Three classes of setting
+## Four classes of setting
 
-Every key of `DEFAULT_CONFIG` is in exactly one class, declared in code beside it: the class; for an ordinary key its
-domain; for a guarded key its `widens(from, to)`; and for a guarded or a secret key its reason, one sentence saying
-what changing it does. That declaration supersedes `RISKY_CONFIG` (`src/backup/backup-settings.ts`) for both of its
-readers:
+Every key of `DEFAULT_CONFIG` is in exactly one class (the gate class joined the first three under ruling 2), declared
+in code beside it: the class; for an ordinary key its domain; for a guarded key its `widens(from, to)`; and for a
+guarded, gate or secret key its reason, one sentence saying what changing it does. That declaration supersedes
+`RISKY_CONFIG` (`src/backup/backup-settings.ts`) for both of its readers:
 
 - a guarded change's card shows the reason (below, "The surface");
-- the restore preview's `risky` group (`groupOf`, and the sentence it prints) becomes "a `sync` key that is guarded or
-  secret", with the declaration's reason as its sentence. A secret is never on a card, but a restore still lists it
-  apart, so the five secrets (`chatUrl`, `apiKey`, `modelFilter`, `priceSnapshotUrl`, `pageApprovalDomains`) keep a
+- the restore preview's `risky` group (`groupOf`, and the sentence it prints) becomes "a `sync` key that is guarded,
+  gate or secret", with the declaration's reason as its sentence. A secret is never on a card, but a restore still lists
+  it apart, so the five secrets (`chatUrl`, `apiKey`, `modelFilter`, `priceSnapshotUrl`, `pageApprovalDomains`) keep a
   reason, carried over from `RISKY_CONFIG` word for word, and the `chatUrl` sentence about a backup with no API key
   stays the restore's own.
 
-`RISKY_CONFIG` has a sentence for 17 keys today: those five and 12 of the 25 guarded keys. The restore's `risky` group
-therefore widens from 17 keys to 30, on purpose: a setting the model may not change without a card is also one a
-restore lists apart. The builder deletes `RISKY_CONFIG`, so what a setting does has one source. The restore preview's
-test is updated to the 30 keys by enumerating the declaration, not by copying the list.
+`RISKY_CONFIG` has a sentence for 17 keys today: those five and 12 of the 22 guarded and 3 gate keys. The restore's
+`risky` group therefore widens from 17 keys to 30, on purpose: a setting the model may not change without a card, or at
+all, is also one a restore lists apart. The builder deletes `RISKY_CONFIG`, so what a setting does has one source. The
+restore preview's test is updated to the 30 keys by enumerating the declaration, not by copying the list.
 
 The domain is a closed union in the declaration's type, so a new kind of domain is a change to the type, not a new
 value:
@@ -122,17 +130,17 @@ type Domain =
 
 None of the five admits an arbitrary string, so a future `*Url`, `*Template`, `*Prompt` or `*Header` key cannot be
 declared ordinary without a new member of the union, which a reviewer sees; it is classified guarded or secret instead.
-A guarded or secret key declares no domain here: its value is validated as today (`configTypeOk`, `CONFIG_ENUMS`).
+A guarded, gate or secret key declares no domain here: its value is validated as today (`configTypeOk`,
+`CONFIG_ENUMS`).
 
-**What the whitelist accepts is derived, not declared a second time.** `whitelistable(key, places)` is true when the
-key is classified, is not secret, and has a place in `places`, the table LINKS.md (merged in #1795) adds beside
-`DEFAULT_CONFIG` naming each key's tab and section in DevTools Settings (`SETTING_PLACES`, #1815). It is the one
-function the whitelist's test (every key on the constant is whitelistable) and `change_setting` call. `places` is a
-parameter
-so the test can pass the real table and a table with a row added: a key with no control has no place, so it is not
-whitelistable, and the same table is what LINKS.md's test checks against the panel's `data-setting` rows, so a place
-cannot be claimed for a control that does not exist. The table and the `data-setting` rows land with LINKS.md's
-slice 1 (#1815), and this spec's whitelist is built after it.
+**What the model may change is derived, not declared a second time.** `modelWritable(key, places)` is true when the
+key is classified, is neither secret nor gate, and has a place in `places`, the table beside `DEFAULT_CONFIG` naming
+each key's tab and section in DevTools Settings (`SETTING_PLACES`, #1815). It is the one function `ml.settings()`,
+`change_setting` and their tests call. `places` is a parameter so the test can pass the real table and a table with a
+row added: a key with no control has no place, so it is not writable, and the same table is what LINKS.md's test
+checks against the panel's `data-setting` rows, so a place cannot be claimed for a control that does not exist. A new
+setting is therefore read-write the moment it is classified ordinary or guarded and given a row; its class is the
+review.
 
 A `number` domain with no `max` is unbounded above: `pythonIdleMinutes`, `sessionRetentionDays` and
 `sessionStoreBudgetMB` are at least 0 with no ceiling in DevTools Settings today.
@@ -140,34 +148,35 @@ A `number` domain with no `max` is unbounded above: `pythonIdleMinutes`, `sessio
 **The class test** enumerates `DEFAULT_CONFIG` (AGENTS.md: enumerate the inputs, do not sample them) and fails on:
 
 - a key with no class, so a new setting cannot land unclassified;
-- a guarded or secret key with no reason, so no card and no restore shows a change without saying what it does;
+- a guarded, gate or secret key with no reason, so no card and no restore shows a change without saying what it does;
+- a gate key with no place, since its refusal links to its row;
 - an ordinary key with no domain, or with one outside the union (a type error, and the test asserts each declared
   `kind` is one of the five, for a declaration built at run time);
-- `whitelistable` true for a key with no place. `ocrNumCtx` is the fixture: it is classified ordinary, has no control
-  in DevTools Settings today (open question 6) and no place, so with the real table it is not whitelistable, and with
-  a table given a row for it it is. The test is therefore green today and fails if `whitelistable` stops reading the
-  table.
+- `modelWritable` true for a key with no place, or for a secret or gate key. `ocrNumCtx` is the fixture: it is
+  classified ordinary, has no control in DevTools Settings today (open question 6) and no place, so with the real
+  table it is not writable, and with a table given a row for it it is. The test is therefore green today and fails if
+  `modelWritable` stops reading the table.
 
-**The panel's display preferences are out of the whitelist** in this spec: `fontScale`, the code theme and its custom
+**The panel's display preferences are out of this spec**: `fontScale`, the code theme and its custom
 VS Code import, the output cell height, the stats toggles. They are not keys of `DEFAULT_CONFIG` (they live in
 `chrome.storage.local` and the panel's `localStorage`, read through `src/sidebar/store.ts`), the custom theme's value
 is an arbitrary JSON document, and they change only how this browser draws. Bringing them in needs a home for their
 class beside their own keys in `store.ts` and the same domain union; that is open question 5.
 
-| Class | Whitelistable | A change | Keys (the initial classification; the code's table is the truth) |
+| Class | Read-write | A change | Keys (the initial classification; the code's table is the truth) |
 | --- | --- | --- | --- |
-| **secret** | never | impossible | `chatUrl`, `apiKey`, `modelFilter`, `priceSnapshotUrl` (exactly `SECRET_KEYS`), and the legacy `pageApprovalDomains` (it is a site list) |
-| **guarded** | yes, by the person | always asks in the guarded direction; a policy may deny, never allow | what widens what runs unasked or what the model reaches; what sends the person's data somewhere it did not go before; what shrinks the person's record of what happened. Exactly the next table |
-| **ordinary** | yes | asks unless a policy allows it | everything else: models and their context sizes, appearance, the HUD, titling, electricity prices, `protoStream`. `autoTitles` and `groundingEnabled` send more to the model server when turned on, and are ordinary on purpose: they reach only the server the person configured, with data already going there |
+| **secret** | never; not readable | impossible | `chatUrl`, `apiKey`, `modelFilter`, `priceSnapshotUrl` (exactly `SECRET_KEYS`), and the legacy `pageApprovalDomains` (it is a site list) |
+| **gate** | never; readable through `ml.config()` | impossible; refused with a link to the row (`window-ml:setting/<key>`, LINKS.md), so the model can say where the person changes it | `autoApproveReadonly`, `autoApprovePython`, `autoApproveSelfSource`: the approval gate itself, where one approved change would remove every later approval of its kind |
+| **guarded** | yes | always asks in the guarded direction; a policy may deny, never allow | what widens what the model reaches; what sends the person's data somewhere it did not go before; what shrinks the person's record of what happened. Exactly the next table |
+| **ordinary** | yes | asks unless a policy allows it | everything else: models and their context sizes, appearance, the HUD, titling, electricity prices, `protoStream`, the Python idle and detached-task limits. `autoTitles` and `groundingEnabled` send more to the model server when turned on, and are ordinary on purpose: they reach only the server the person configured, with data already going there |
 
-**The guarded direction is per key.** Turning `autoApproveReadonly` off narrows and is an ordinary change; turning it on
-is guarded. Each guarded key declares a `widens(from, to)` in code; a key that declares none is guarded in both
-directions, so a missing declaration fails closed.
+**The guarded direction is per key.** Turning `cdp` off narrows and is an ordinary change; turning it on is guarded.
+Each guarded key declares a `widens(from, to)` in code; a key that declares none is guarded in both directions, so a
+missing declaration fails closed.
 
 | Guarded key | Guarded direction | Why |
 | --- | --- | --- |
-| `autoApproveReadonly`, `autoApprovePython`, `autoApproveSelfSource` | on | runs calls without asking |
-| `shellEnabled`, `shellRoots`, `shellPath`, `shellSandbox` | on; a root or path added; the sandbox off | what `ml.sh` may run and where (`SHELL.md`) |
+| `shellEnabled`, `shellRoots`, `shellPath`, `shellSandbox` | on; a root or path added; the sandbox off | what `ml.sh` may run and where (`SHELL.md`). The card shows the old and the new value verbatim, every path in full, in both directions (ruling 2) |
 | `pierceClosedShadow`, `cdp` | on | what a run reaches in a page, trusted input |
 | `execDefaultWorld` | both | which world a script runs in decides what the page sees of it (`src/sw/exec-routing.ts`) |
 | `agentStartPage` | both | a URL every blank run navigates to: an exfiltration channel the fetch gate never sees (threat model, item 1) |
@@ -181,22 +190,22 @@ directions, so a missing declaration fails closed.
 A model-name key (`model`, `ocrModel`, `utilityModel`, `embeddingModel`, `groundingModel`, `defaultModelVision`) is
 ordinary and its value is validated as `setModel`'s is: it must be on the server's list and pass `modelFilterAllows`.
 
-**Not settings, never on the whitelist**: the whitelist itself; global and run policies (`propose_policy` is the
-model's route there); the site lists and the self-approval list; program manifests and Python libraries (each has its
-own proposal path or none); the backup passphrase and keys; the archive folder's grant; pairing and hub keys. None of
-them is a key of `DEFAULT_CONFIG`, so the class test does not see them; the whitelist's test fails on a constant
-naming any key that is not a classified one.
+**Not settings, never writable**: global and run policies (`propose_policy` is the model's route there); the site lists
+and the self-approval list; program manifests and Python libraries (each has its own proposal path or none); the
+backup passphrase and keys; the archive folder's grant; pairing and hub keys. None of them is a key of
+`DEFAULT_CONFIG`, so `change_setting` cannot name them: a key that is not a classified one is refused.
 
-## The whitelist
+## The read-write set
 
-- **A constant in code**, beside the class declaration in `src/contract/contract-config.ts`: each classified key
-  `read` or `read-write`, or absent; a secret never. Changing it is a code change, reviewed like any other. It is not
-  stored, synced or backed up, so a restore and an upgrade have nothing of it to carry (Shane, 2026-11-13). Marked
-  `// state: fixed`; the values `ml.settings()` reads are the config's own, in `chrome.storage.sync`.
-- **What is on it: nothing, to start** (Shane, 2026-11-13). We add keys one at a time, as `read` (visible) or
-  `read-write` (editable), each addition a reviewed change. The class decides what an addition costs: an ordinary
-  key's change asks unless a policy allows it, a guarded key's always asks, a secret is never added.
-- **No Settings section edits it** in this spec, so it has no link address of its own. A list the person edits is open
+- **Derived, not stored**: `modelWritable` over the class declaration and `SETTING_PLACES`, both in
+  `src/contract/contract-config.ts`. Changing a key's class is a code change, reviewed like any other. Nothing of it is
+  stored, synced or backed up, so a restore and an upgrade have nothing of it to carry. The values `ml.settings()`
+  reads are the config's own, in `chrome.storage.sync`.
+- **What is in it** (ruling 2, Shane, 2026-11-14): every classified key with a place, less the five secrets and the
+  three gate keys, which is 49 of the 58 keys of `DEFAULT_CONFIG` today (`ocrNumCtx` and `pageApprovalDomains` have
+  no place). The class decides what a change costs: an ordinary key's change asks unless a policy allows it, a guarded
+  key's always asks.
+- **No Settings section edits it** in this spec, so it has no link address of its own. A person narrowing it is open
   question 8.
 
 ## Who reaches it
@@ -222,25 +231,26 @@ sidebar, the DevTools panel, the chat page or over the hub. The guards are the o
 
 ## The surface
 
-**Reading: `ml.settings()`**, built with the first key ("Slices"). The model's one view of the settings: one entry per
+**Reading: `ml.settings()`**, built with the surface ("Slices"). The model's one view of the settings: one entry per
 classified key with a place in `SETTING_PLACES` (a row in the panel), the secrets included: the rule that keeps a key
-off the whitelist (rule 6) also keeps it out of the entries, so every entry's doc can name where the setting lives. A
-key with no place (today `ocrNumCtx`) is read through `ml.config()` until it gets a control (open question 6). An
-entry carries a value wherever the model may read it by any route, which is the 20 keys `ml.config()` already returns
-plus the keys on the whitelist; every other entry is hidden:
+out of the read-write set (rule 6) also keeps it out of the entries, so every entry's doc can name where the setting
+lives. A key with no place (today `ocrNumCtx`) is read through `ml.config()` until it gets a control (open question 6).
+An entry carries a value wherever the model may read it by any route, which is the 21 keys `ml.config()` already returns
+plus every read-write key; only a secret's entry is hidden:
 
 ```ts
 model:        { value: "qwen3:14b", mode: "read", class: "ordinary" }   // also returned by ml.config()
-theme:        { value: "dark", mode: "read-write", class: "ordinary" }  // on the whitelist, editable
-shellEnabled: { mode: "hidden", class: "guarded" }                      // exists; not visible to the model
-apiKey:       { mode: "hidden", class: "secret" }                       // never readable, whatever the list says
+theme:        { value: "dark", mode: "read-write", class: "ordinary" }  // editable
+shellEnabled: { value: false, mode: "read-write", class: "guarded" }    // editable; the card always shows
+autoApproveReadonly: { value: true, mode: "read", class: "gate" }       // readable, never changed by the model
+apiKey:       { mode: "hidden", class: "secret" }                       // never readable
 ```
 
-So `ml.settings()` never contradicts `ml.config()`. `ml.config()` stays as it is: the page-facing API, a fixed 20 keys,
+So `ml.settings()` never contradicts `ml.config()`. `ml.config()` stays as it is: the page-facing API, a fixed 21 keys,
 for approved pages and the model alike. A hidden entry has no `value` field at all, never `null` or `""`, which would
 say whether it is set. Each entry's doc names where the setting lives, so the model can link to it
 (`[your API key](window-ml:setting/apiKey)`, LINKS.md). Its doc says they are the person's settings for this browser,
-the same for every run, and that a change to one is a change everywhere. The worker reads the whitelist
+the same for every run, and that a change to one is a change everywhere. The worker reads the classes
 and the values each time an exec calls it, so a change the person makes in Settings is what the next survey sees. It
 reaches the model only through an exec run in an isolated world: where no isolated world is available, an exec naming
 `ml.settings` is refused (`src/sw/exec-routing.ts`), so on that setup the model reads no setting through this surface,
@@ -250,7 +260,8 @@ refusal when this is built: never a main-world fallback for `ml.settings()`.
 **Writing: one tool, `change_setting({ key, value, why })`**, a builtin declared in the tool registry
 (`defineBuiltinTool`), run in the worker. In order:
 
-1. Refused, with no card, when the key is off the list or `read`, or when the value fails the key's own validation:
+1. Refused, with no card, when the key is a secret, a gate key (the refusal links to its row) or has no place, or when
+   the value fails the key's own validation:
    its type (`configTypeOk`, module-private in `src/backup/backup-settings.ts` today), its words (`CONFIG_ENUMS`), its
    range, a model name off the server's list or the filter, a string over a cap. The model is told why in one
    sentence.
@@ -263,7 +274,7 @@ refusal when this is built: never a main-world fallback for `ml.settings()`.
 the key's declared direction applied to this change and `effects` is `unknown`, as for `act`. An unknown effect is
 inside no bound, so the built-in default (`free()`) frees nothing here: every change the person did not write a policy
 for asks. A person who wants the theme to follow the model's say writes `(c) => c.key === "theme"`, or has the model
-propose it (`propose_policy` gains `setting` rows; its breadth is measured over every whitelisted key with sample values
+propose it (`propose_policy` gains `setting` rows; its breadth is measured over every read-write key with sample values
 from each key's domain, which for an enum key is the whole domain).
 
 **The card**, rendered by the worker from the facts, never from the model's text, except `why`, shown as the model's
@@ -276,7 +287,9 @@ words:
 > [Allow] [Deny, with a note]
 
 Two answers, as every card (`POLICIES.md`, "Widening is a policy, never a button on a card"). A card for a guarded
-change says it cannot be remembered.
+change says it cannot be remembered. A card for a shell key (`shellEnabled`, `shellRoots`, `shellSandbox`,
+`shellPath`) shows the old and the new value verbatim, every path of a list in full and in order, never a count, a
+summary or a diff alone (ruling 2).
 
 **The write** is a compare-and-set against storage at the moment of the write: `from` is the value the worker read
 when it judged the call, which is the value the card shows; when the answer comes, the worker reads the key again and
@@ -293,20 +306,22 @@ The attacker is a page the run reads (prompt injection into the model) or the mo
 call this surface (above); what it can do is ask the model, in text, to call it.
 
 1. **Exfiltration through a setting that names a URL or a host.** A run that could set `chatUrl` would send the API key
-   to that host on the next request; `priceSnapshotUrl` is fetched by the worker. Both are secrets, never on the list.
+   to that host on the next request; `priceSnapshotUrl` is fetched by the worker. Both are secrets, never writable.
    `agentStartPage` is a URL every blank run navigates to, so setting it to `https://evil.example/?d=<data>` leaks data
    through a navigation the fetch gate never judges: it is guarded both ways, its card shows the host, and its value
    is also judged as a navigation (`navigateFacts`), so a `fetch` `deny` of that host refuses the change too. A string
    value is a second channel: `chrome.storage.sync` carries it to the person's other machines and to Google's sync, and
-   a page-readable key (the 20 of `ml.config()`) carries it to every approved page. So no key on the list takes free
+   a page-readable key (the 21 of `ml.config()`) carries it to every approved page. So no ordinary key takes free
    text: every value is checked against a closed domain (an enum, a number range, a model on the server's list, a
    currency code, a parsed hour range), and a key whose value cannot be so checked is not classified ordinary.
-2. **A setting that widens the model's own permissions.** `autoApproveReadonly`, `autoApprovePython`, the shell keys,
-   `cdp`: one approved change and every later call runs unasked. Guarded: always a card in the widening direction, no
-   policy can free it, so the model cannot `propose_policy` its way past it (a proposed `allow` naming a guarded key is
-   refused at the precheck, with that reason). The site lists, the self-approval list and the whitelist are not settings
-   at all, so a run cannot grant a page `window.ml` or put a key on its own list. Shrinking the record
-   (`persistUiRuns`, retention, budgets) is guarded for the same reason in the other direction: it hides what was done.
+2. **A setting that widens the model's own permissions.** The gate keys (`autoApproveReadonly`, `autoApprovePython`,
+   `autoApproveSelfSource`): one approved change and every later call of its kind runs unasked, so they are never
+   writable. The shell keys and `cdp` widen what an approved call reaches: guarded, always a card in the
+   widening direction, no policy can free it, so the model cannot `propose_policy` its way past it (a proposed `allow`
+   naming a guarded key is refused at the precheck, with that reason). The site lists and the self-approval list are
+   not settings at all, so a run cannot grant a page `window.ml`.
+   Shrinking the record (`persistUiRuns`, retention, budgets) is guarded for the same reason in the other direction: it
+   hides what was done.
 3. **A page's run reaching it.** A page-started run, a page-built run handed to the worker, and a page's own
    `ml.agent` never have the tool or `ml.settings()` ("Who reaches it"). A page reading the change afterwards
    through `ml.config()` reads only what it could read before.
@@ -316,11 +331,12 @@ call this surface (above); what it can do is ask the model, in text, to call it.
    `why` cannot restate the change ("this only changes the theme"). The compare-and-set binds the answer to the change
    the card showed. A key reclassified while a card shows closes the card refused.
    `rejudgePending` re-judges an ordinary change's card when a policy changes, and never answers a guarded one.
-5. **Reading.** A listed value reaches the model's context and, from there, anything the model writes (a fetch the
-   person approves, a reply). No secret is ever on the list, and a key goes on it for `read` only through a reviewed
-   change to the constant. A hidden entry carries the key's name, class and place only, which the source and
-   `agent_api_docs` already publish: never the value, its length, a hash of it, or whether it is set. Error text from
-   a refused write goes through `sw-scrub.ts`.
+5. **Reading.** A readable value reaches the model's context and, from there, anything the model writes (a fetch the
+   person approves, a reply). Under ruling 2 that is every key but the secrets, the shell keys' folder and program
+   paths included, which name the person's directories; no secret is ever readable, and a key's class changes only
+   through a reviewed change to the declaration. A hidden entry carries the key's name, class and place only, which
+   the source and `agent_api_docs` already publish: never the value, its length, a hash of it, or whether it is set.
+   Error text from a refused write goes through `sw-scrub.ts`.
 6. **Fatigue.** A model asking again and again for the same change. Once the person declines a guarded change, a
    change of the same key, to any value, is refused for the rest of that run with no card and a reason naming the
    earlier decline; nothing is remembered across runs (Shane, 2026-11-13). That is run-scoped memory of the model's own
@@ -339,12 +355,12 @@ call this surface (above); what it can do is ask the model, in text, to call it.
 
 **Red-team rows** (e3, through the coordinator), what a hostile page or an injected model must not get:
 
-- a read of any key off the whitelist that `ml.config()` does not return, of any secret by any route, of
-  `ml.settings()` from a page's script or a page-started run;
-- a write of any key off the list, of a `read` key, of a secret, or of a value outside the key's domain;
+- a read of any secret by any route, or of `ml.settings()` from a page's script or a page-started run;
+- a write of a secret, of a gate key, of a key with no place, or of a value outside the key's domain;
 - a guarded change in its guarded direction without a card, by an `allow` policy of any origin, a proposed policy, a
   remembered answer or a policy file;
-- a change to the whitelist, a policy, a site list or the self-approval list through `change_setting`;
+- a change to a gate key, a policy, a site list or the self-approval list through `change_setting`, and a gate key's
+  refusal that does not link to its row;
 - a card answered by a page's message, or an answer applied to a different value than the card showed;
 - `agentStartPage` set to a host a `fetch` `deny` covers, and to the same host spelled so two parsers could disagree:
   userinfo (`https://good.example@evil.example/`), a trailing dot, an IDN and its punycode, a non-http(s) scheme
@@ -354,38 +370,42 @@ call this surface (above); what it can do is ask the model, in text, to call it.
 - a write landing over a value that changed after the card was drawn, by the person in Settings or by `sync` from
   another browser;
 - a change to a `sync` key whose card does not say it applies to every browser signed in;
+- a shell key's card that shortens, elides or summarises either value: a long path, a path with a newline or a
+  right-to-left mark in it, a list of more roots than fit;
 - the tool or the snapshot key reaching a page-built run through any caller of `makeWorkerRun` or `markWorkerRun`:
   `startBackgroundRun`, the hand-over, `adoptSession`, a resume;
 - `ml.settings()` served from the main world where no isolated world exists;
-- the class test's four failures: an unclassified key, a guarded or secret key without a reason, an ordinary key with
-  no domain or one outside the union, `whitelistable` true for a key with no place (`ocrNumCtx`);
+- the class test's five failures: an unclassified key, a guarded, gate or secret key without a reason, a gate key with
+  no place, an ordinary key with no domain or one outside the union, `modelWritable` true for a key with no place
+  (`ocrNumCtx`) or for a secret or gate key;
 - a hidden or secret entry in `ml.settings()` carrying its value, its length, a hash or prefix of it, or whether it is
   set; a write to a hidden key that changes anything.
 
 ## Open questions
 
-1. **Narrowing `ml.config()` for the model** (a later slice; Shane ruled on the first review, 2026-11-13, that the 20
+1. **Narrowing `ml.config()` for the model** (a later slice; Shane ruled on the first review, 2026-11-13, that the 21
    keys stay readable regardless, since the page can read them anyway and narrowing them would break `ml.agent`'s own
-   vision wiring): narrow what a model's run reads of `ml.config()` to the whitelist where the worker can tell the call
-   is the model's (an isolated-world exec).
-2. **Which keys we add first.** Ruled by Shane (2026-11-13): the whitelist starts empty. Which keys go on it, and as
-   `read` or `read-write`, is decided key by key in the PRs that add them; the first of those builds the surface.
+   vision wiring): narrow what a model's run reads of `ml.config()` to the read-write set where the worker can tell the
+   call is the model's (an isolated-world exec).
+2. **Which keys the model may change.** RULED by Shane (ruling 2, 2026-11-14), replacing the first ruling's empty
+   whitelist: every key but the secrets and the gate keys, with the shell keys' card showing both values verbatim.
+   `autoApprovePython` and `autoApproveSelfSource` as gate keys: confirmed by Shane, 2026-11-17.
 3. **Per-key `widens` for lists** (`shellRoots`, `serverToolsOff`): a set comparison, which the declaration in code
    makes exact; whether a reorder counts as a change at all.
 4. **Fatigue**: RULED by Shane (2026-11-13), as threat item 6 reads: after one decline, the same key at all, for the
    rest of the run, with nothing remembered across runs.
-5. **Local display preferences** (`fontScale`, the code theme, the output cell height) are out of the whitelist in
-   this spec (above, "Three classes of setting"). Whether a later slice brings them in, with their class declared
+5. **Local display preferences** (`fontScale`, the code theme, the output cell height) are out of
+   this spec (above, "Four classes of setting"). Whether a later slice brings them in, with their class declared
    beside their keys in `src/sidebar/store.ts` and the custom VS Code theme kept off as an open domain.
 6. **A key the panel does not show.** `ocrNumCtx` is in `DEFAULT_CONFIG` and `ml.config()` but has no control in
-   DevTools Settings, so the class test keeps it off the whitelist; whether it gets a control (which the standing rule
+   DevTools Settings, so it is not writable; whether it gets a control (which the standing rule
    for a setting wants anyway) is the panel owner's call.
 7. **Settings of other surfaces**: the chat page's "This page" tab is the device's own and is not the extension's
    config; out of scope here.
-8. **A list the person edits**: stored per browser (`chrome.storage.local`), backed up with the policies, edited in
-   DevTools Settings → Permissions with a three-way choice per key (off, read, read and change), the 20 keys of
-   `ml.config()` marked readable regardless, and given a section id there so the model can link to it. Out of this spec
-   by Shane's ruling (2026-11-13): the list is ours for now.
+8. **A person narrowing the set**: a list stored per browser (`chrome.storage.local`), backed up with the policies,
+   edited in DevTools Settings → Permissions with a three-way choice per key (off, read, read and change), the 21 keys
+   of `ml.config()` marked readable regardless, and given a section id there so the model can link to it. It could
+   only narrow ruling 2's set, never widen it past the secrets and the gate keys. Out of this spec.
 
 ## Owners
 
