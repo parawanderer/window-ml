@@ -117,11 +117,13 @@ test("approving a streamed exec in the calm chat: nothing snaps, the fold animat
             const tick = () => { const st = document.querySelector(".astep.tool"); window.__g.push({ t: performance.now() - t0, v: st ? st.getBoundingClientRect().height : null }); if (performance.now() - t0 < 800) requestAnimationFrame(tick); };
             requestAnimationFrame(tick);
         });
+        const before = await chat.evaluate(() => { const st = document.querySelector(".astep.tool"); return `${st?.className} h=${Math.round(st?.getBoundingClientRect().height ?? -1)}`; });
         await chat.locator(".astep.tool .astep-head").first().click();
         await chat.waitForTimeout(1000);
+        const after = await chat.evaluate(() => { const st = document.querySelector(".astep.tool"); return `${st?.className} h=${Math.round(st?.getBoundingClientRect().height ?? -1)}`; });
         const g = (await chat.evaluate(() => window.__g)).filter((x) => x.v != null).map((x) => ({ t: x.t, v: x.v }));
         const opened = runsOf(g, 1).filter((r) => r.total > 24);
-        expect(opened.length, dump("the step did not open when its head was clicked")).toBeGreaterThan(0);
+        expect(opened.length, `the step did not open when its head was clicked. Before the click: ${before}. After: ${after}. Heights from the click: ${g.map((x) => `${Math.round(x.t)}ms:${Math.round(x.v)}`).join(" ")}`).toBeGreaterThan(0);
         for (const r of opened) {
             expect(r.duration, `unfurling: a ${Math.round(r.total)}px change took ${Math.round(r.duration)}ms, it snapped open (${Math.round(r.from)} → ${Math.round(r.to)})`).toBeGreaterThanOrEqual(60);
             expect(r.maxStep, "unfurling: one frame moved most of the change").toBeLessThanOrEqual(r.total * 0.7);
