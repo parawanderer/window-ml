@@ -13,6 +13,7 @@ import { ClickableImg } from "../ui-kit";
 import { FilePill } from "./user-text";
 import { PDF_ATTACH_MAX, readMaxBytes, tooLargeHeld, b64Bytes, PDF_FILE_ACCEPT, TEXT_FILE_ACCEPT, decodeTextFile, encodePdfFile, fileInfo, fileSummary, looksPdf, pendingRefusals, sizeLabel, tooLarge, tooLargePdf, type FileTarget } from "../../attached-files";
 import { TURN_IMAGES_MAX, imagesRefusal, type SentFile } from "../../contract/contract-run";
+import type { FileProgress } from "../../session/session-host";
 import { UsageBar } from "./usage";
 import { SpendChip } from "./spend";
 import { RunStatsBar } from "./agent-detail";
@@ -125,13 +126,42 @@ function pendingSummary(d: PendingFile): string {
 /** The text files waiting in a box, as pills with their reasons: a refused one says why and is not sent.
  *  @group sidebar/transcript
  *  @gallery {"docs": [{"name": "server.log", "type": "text/plain", "text": "a\nb\n"}, {"name": "x.bin", "type": "application/octet-stream", "why": "x.bin is not a text file"}], "reasons": [null, "x.bin is not a text file"], "onRemove": null} */
-export function FileStrip({ docs, reasons, onRemove }: { docs: PendingFile[]; reasons: (string | null)[]; onRemove: (i: number) => void }) {
+export function FileStrip({ docs, reasons, onRemove, progress }: { docs: PendingFile[]; reasons: (string | null)[]; onRemove: (i: number) => void; progress?: FileProgress[] }) {
     if (!docs.length) return null;
     return (
         <div class="cfiles">
-            {docs.map((d, i) => (
-                <FilePill key={`${i}${d.name}`} summary={pendingSummary(d)}
-                    refusal={reasons[i]} onRemove={() => onRemove(i)} />
+            {docs.map((d, i) => {
+                const pill = <FilePill key={`${i}${d.name}`} summary={pendingSummary(d)} refusal={reasons[i]} onRemove={() => onRemove(i)} />;
+                // A box that keeps its files while it sends (the start page) draws each one's upload under its own chip.
+                const up = progress?.find((p) => p.name === d.name);
+                return up ? <span class="cupload" key={`${i}${d.name}`} data-progress={up.fraction}>{pill}<UploadBar fraction={up.fraction} /></span> : pill;
+            })}
+        </div>
+    );
+}
+
+/** The bar under an uploading file's chip: the share of its chunks the runtime has accepted. */
+function UploadBar({ fraction }: { fraction: number }) {
+    return <span class="upbar" aria-hidden="true"><span style={{ width: `${pctOf(fraction)}%` }} /></span>;
+}
+
+/** A fraction as a whole percentage, clamped to 0..100. */
+const pctOf = (fraction: number): number => Math.round(Math.min(1, Math.max(0, fraction || 0)) * 100);
+
+/** The files of a send still going to the runtime, each as its chip with a bar of the share the runtime has accepted:
+ *  the composer has emptied, and nothing else shows the message until the runtime says it arrived. `data-progress`
+ *  carries the figure the bar was last given, for a test to record.
+ *  @group sidebar/transcript
+ *  @gallery {"uploads": [{"name": "paper.pdf", "fraction": 0.4}, {"name": "notes.txt", "fraction": 1}]} */
+export function UploadStrip({ uploads }: { uploads: FileProgress[] }) {
+    if (!uploads.length) return null;
+    return (
+        <div class="cfiles cuploads" role="status">
+            {uploads.map((u) => (
+                <span class="cupload" key={u.name} data-progress={u.fraction}>
+                    <FilePill summary={`${u.name} · sending, ${pctOf(u.fraction)}%`} />
+                    <UploadBar fraction={u.fraction} />
+                </span>
             ))}
         </div>
     );
@@ -234,6 +264,7 @@ export function Composer({ s, multiline, tools, keys }: { s: Session; multiline?
         files: { target: () => (s.kind === "agent" ? "agent" : "chat"), accepts: () => services().acceptsFiles(key), acceptsPdf: () => services().acceptsPdf(key), initial: () => loadDraftFiles(key) },
     });
     const type = (t: string) => { setText(t); saveDraft(key, t); };
+    const [uploads, setUploads] = useState<FileProgress[]>([]);   // state: ui — the files of a send still uploading
     // Another session in the same box: its own draft. Not on mount, which `useState` already read: an effect runs after
     // paint, and a keystroke landing before it would be overwritten by what was saved before that keystroke.
     const shown = useRef(key);
@@ -263,7 +294,9 @@ export function Composer({ s, multiline, tools, keys }: { s: Session; multiline?
         if (imagesRefusal(att.imgs.length)) return;   // the strip says why
         const imgs = att.imgs, files = att.sendable;
         setText(""); att.clear();
-        void sendHeld(key, t, imgs, () => services().sendToSession(key, t, imgs, files), files);
+        // A file going ahead in chunks reports each accepted one; the strip goes when the send has its answer.
+        const progress = (p: FileProgress) => setUploads((u) => (u.some((x) => x.name === p.name) ? u.map((x) => (x.name === p.name ? p : x)) : [...u, p]));
+        void sendHeld(key, t, imgs, () => services().sendToSession(key, t, imgs, files, progress), files).finally(() => setUploads([]));
     };
     const act = () => (stop ? cancel() : send());
     // Grow to fit, to a cap — measured from `scrollHeight`, which needs the height reset first or it only ever
@@ -300,6 +333,7 @@ export function Composer({ s, multiline, tools, keys }: { s: Session; multiline?
         <div class="composer" data-rev={r} onDragOver={att.onDragOver} onDrop={att.onDrop}>
             <ThumbStrip imgs={att.imgs} loading={att.loading} onRemove={att.remove} />
             <FileStrip docs={att.docs} reasons={att.reasons} onRemove={att.removeDoc} />
+            <UploadStrip uploads={uploads} />
             <div class={`composer-row${stacked ? " stacked" : ""}`}>
                 <input ref={att.fileRef} type="file" accept={att.fileAccept} multiple style="display:none"
                     onChange={e => { att.addFiles((e.target as HTMLInputElement).files); (e.target as HTMLInputElement).value = ""; }} />

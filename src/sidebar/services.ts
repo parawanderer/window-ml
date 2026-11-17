@@ -12,6 +12,7 @@
 // sessions, `runtime:hash` in the chat page. An implementation that needs the bare hash takes it with `bareHash`.
 
 import type { SentFile } from "../contract/contract-run";
+import type { FileProgress } from "../session/session-host";
 import type { SendOutcome } from "./drafts";
 
 /** A small utility-model call the UI makes about a session: its title, a block summary, `explain` notes, an
@@ -51,8 +52,9 @@ export interface SidebarServices {
      *  it: the HUD card, the overlay and the DevTools panel (Q7). Absent elsewhere, and the card is then not drawn. */
     answerStart?(requestId: string, decision: "allow" | "always" | "deny"): void;
     /** A message to a session: steers a running agent, or starts its next turn. Resolves when the host knows whether it
-     *  was taken, so the composer can put the text back on a failure (drafts.ts); never rejects. */
-    sendToSession(session: string, text: string, images?: string[], files?: SentFile[]): Promise<SendOutcome>;
+     *  was taken, so the composer can put the text back on a failure (drafts.ts); never rejects. `progress` hears how
+     *  far each file's upload has got, on a surface that sends files ahead in chunks (the hub); others never call it. */
+    sendToSession(session: string, text: string, images?: string[], files?: SentFile[], progress?: (p: FileProgress) => void): Promise<SendOutcome>;
     /**
      * Does the runtime behind this session take text files with a message (`capabilities.attachFiles`)? A runtime
      * without it would IGNORE a `files` field and send the message without them, so the composer refuses a file

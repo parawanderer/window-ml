@@ -16,21 +16,29 @@ before(async () => {
     ({ calmEntered } = await import("../src/sidebar/store.ts"));
 });
 const tick = () => new Promise((r) => setTimeout(r, 40));
+/** Wait until `pred()` is true, or throw — a fixed delay is too short on a loaded runner (CI 2026-11-17). */
+const waitFor = async (pred, label, timeout = 2000) => {
+    for (let i = 0; i < timeout / 10; i++) {
+        if (pred()) return;
+        await new Promise((r) => setTimeout(r, 10));
+    }
+    throw new Error("timed out waiting for " + label);
+};
 
 // --- switching the calm chat on resets a block to its rendered view ---
 test("a block on its raw view goes back to rendered when the calm chat is switched on, and not otherwise", async () => {
     let set;
     const Block = () => { const [raw, setRaw] = useRawView(); set = setRaw; return h("span", { id: "b" }, raw ? "raw" : "rendered"); };
-    render(h(Block), host); await tick();
+    render(h(Block), host); await waitFor(() => host.querySelector("#b"), "initial render");
     const text = () => host.querySelector("#b").textContent;
     assert.equal(text(), "rendered", "rendered by default");
-    set(true); await tick();
+    set(true); await waitFor(() => text() === "raw", "the person's own switch holds");
     assert.equal(text(), "raw", "the person's own switch holds");
     await tick();
     assert.equal(text(), "raw", "and keeps holding: mounting does not reset it");
-    calmEntered.value++; await tick();
+    calmEntered.value++; await waitFor(() => text() === "rendered", "calm switched on: back to rendered");
     assert.equal(text(), "rendered", "calm switched on: back to rendered");
-    set(true); await tick();
+    set(true); await waitFor(() => text() === "raw", "and the switch works again afterwards");
     assert.equal(text(), "raw", "and the switch works again afterwards");
     render(null, host);
 });

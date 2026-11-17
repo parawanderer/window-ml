@@ -26,10 +26,12 @@ function snapshot(dir) {
 // --- the pin check refuses before anything is replaced ---
 
 test("a pyodide-core/ whose .pin disagrees with tools/pyodide-dist.json fails the build, names the mismatch, and leaves dist/ byte-identical", () => {
-    // A copy of the tracked tree, so the real dist/ and pyodide-core/ are never touched; node_modules is shared.
+    // A copy of the working tree (tracked + untracked, minus ignored), so the real dist/ and pyodide-core/
+    // are never touched; node_modules is shared. `--others` matters: a tracked file importing a new
+    // untracked one would make esbuild fail before the pin check runs (2026-11-17).
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "build-pin-"));
     try {
-        const tracked = spawnSync("git", ["ls-files", "-z"], { cwd: ROOT, encoding: "utf8", maxBuffer: 1 << 28 }).stdout.split("\0").filter(Boolean);
+        const tracked = spawnSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], { cwd: ROOT, encoding: "utf8", maxBuffer: 1 << 28 }).stdout.split("\0").filter(Boolean);
         for (const f of tracked) {
             if (!fs.existsSync(path.join(ROOT, f))) continue;
             fs.mkdirSync(path.dirname(path.join(tmp, f)), { recursive: true });
