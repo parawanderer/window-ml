@@ -158,12 +158,16 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
     const streaming = kind === "agent";
     // Text, or an image or a file alone: the start commands accept any of them (session-commands.ts).
     const ready = (!!text.trim() || att.imgs.length > 0 || att.sendable.length > 0) && !imagesRefusal(att.imgs.length) && !busy && rt.online && (kind === "chat" || (pick.ready && blocked.kind === "ok"));
+    // A progress index counts the command's files, which are `att.sendable` (the refused docs are not sent): each doc
+    // takes the upload at its position among the sendable ones, the same test `useImageAttach` filters by.
+    let sentSoFar = 0;
+    const uploadsByDoc = att.docs.map((d, i) => (!att.reasons[i] && sentFile(d) ? uploads.find((p) => p.index === sentSoFar++) : undefined));
     const start = async (): Promise<void> => {
         if (!ready) return;
         setBusy(true);
         const images = att.imgs, files = att.sendable;
         // A file going ahead in chunks reports each accepted one, drawn under its chip until the start has its answer.
-        const progress = (p: FileProgress) => setUploads((u) => (u.some((x) => x.name === p.name) ? u.map((x) => (x.name === p.name ? p : x)) : [...u, p]));
+        const progress = (p: FileProgress) => setUploads((u) => (u.some((x) => x.index === p.index) ? u.map((x) => (x.index === p.index ? p : x)) : [...u, p]));
         try {
             const r = kind === "chat"
                 ? await store.send({ type: "chat.start", runtime: rt.id, text: text.trim(), ...(images.length ? { images } : {}), ...(files.length ? { files } : {}), ...(model ? { model } : {}), ...(unreported && vision ? { vision: true as const } : {}) }, { progress })
@@ -247,7 +251,7 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
                 {narrow ? <div class="chat-start-above">{row}{pick.urlField}</div> : null}
                 <div class="chat-start-box" onDragOver={att.onDragOver} onDrop={att.onDrop}>
                     <ThumbStrip imgs={att.imgs} loading={att.loading} onRemove={att.remove} />
-                    <FileStrip docs={att.docs} reasons={att.reasons} onRemove={att.removeDoc} progress={uploads} />
+                    <FileStrip docs={att.docs} reasons={att.reasons} onRemove={att.removeDoc} progress={uploadsByDoc} />
                     <input ref={att.fileRef} type="file" accept={att.fileAccept} multiple style="display:none" aria-hidden="true" tabIndex={-1}
                         onChange={(e) => { att.addFiles((e.target as HTMLInputElement).files); (e.target as HTMLInputElement).value = ""; }} />
                     <textarea ref={box} rows={1} value={text} aria-label={kind === "agent" ? "Task" : "Message"}
