@@ -6,7 +6,7 @@
 import { useEffect, useState } from "preact/hooks";
 import type { MlConfig } from "../../contract";
 import type { ShellStatus } from "../../sw/sw-shell";
-import { Lbl as L } from "./settings-label";
+import { SettingLbl } from "./settings-label";
 import { formatHostVersion, hostInstall, parseHostVersion, type HostInstall, type HostPlatform } from "../../shell/host-install";
 import { HostInstallGuide } from "./host-install-guide";
 
@@ -83,20 +83,20 @@ export function ShellSectionBody({ c, setField, initial, platform: givenPlatform
             {install ? <HostInstallGuide install={install} answered={status?.hostAnswers} update={update} busy={checking} onCheck={probe} /> : null}
             <label data-setting="shellEnabled" class="set-check">
                 <input type="checkbox" checked={!!c.shellEnabled} onChange={(e: any) => { setField("shellEnabled", e.target.checked); setTimeout(() => measure(true), 50); }} />
-                <L tip="Off by default. On: an approved exec may call ml.sh, and each call still asks you.">Let scripts run programs (ml.sh)</L>
+                <SettingLbl k="shellEnabled" />
             </label>
             <label data-setting="shellRoots" class="set-field">
-                <L tip="Absolute paths, one per line. A call's working folder must be inside one; with the sandbox on, programs may write only inside them.">Workspace folders</L>
+                <SettingLbl k="shellRoots" />
                 <textarea class="set-input shell-roots" rows={3} spellcheck={false} placeholder="/Users/you/src/project" value={roots}
                     onInput={(e: any) => setRoots(e.target.value)}
                     onBlur={() => { setField("shellRoots", linesOf(roots)); setTimeout(() => measure(true), 50); }} />
             </label>
             <label data-setting="shellSandbox" class="set-check">
                 <input type="checkbox" checked={c.shellSandbox !== false} onChange={(e: any) => { setField("shellSandbox", e.target.checked); setTimeout(() => measure(true), 50); }} />
-                <L tip="On by default. Each call runs under the OS sandbox: writes only inside the workspace folders, no network, credential folders hidden. Where no sandbox is available, every call's card says so.">Run programs under the OS sandbox</L>
+                <SettingLbl k="shellSandbox" />
             </label>
             <label data-setting="shellPath" class="set-field">
-                <L tip="Directories to look programs up in, in order, one per line. Empty: the host's default (your PATH plus the usual system folders).">Program search path (optional)</L>
+                <SettingLbl k="shellPath" />
                 <textarea class="set-input shell-path" rows={2} spellcheck={false} placeholder="/opt/homebrew/bin" value={path}
                     onInput={(e: any) => setPath(e.target.value)}
                     onBlur={() => { setField("shellPath", linesOf(path)); setTimeout(() => measure(true), 50); }} />
