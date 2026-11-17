@@ -31,8 +31,8 @@ The grammar also names the extension's own settings, for `window-ml:` links (`do
 (`#/setting/<key>`, a key with a row in the panel: `SETTING_PLACES`). The tabs and sections are `PANEL_LAYOUT`
 (contract-config.ts), which tests/sidebar-settings.test.js and tests/setting-places.test.js hold to what the view draws.
 An unknown section drops to its panel tab, an unknown panel tab to Extension, an unknown key or one with no row to the
-list. A `window-ml:` link is parsed by the same `parseRoute` (links.ts), which accepts only an address that formats
-back to itself, so a link never falls back to a wider view. The extension's chat page opens these from its own hash
+list. A `window-ml:` link is parsed by `parseAddress` (link-address.ts) over the same `parseRoute` (route.ts), and is
+accepted only when it formats back to itself, so a link never falls back to a wider view. The extension's chat page opens these from its own hash
 (`settingsPlace`, chat-ext.tsx): the tab and section through `showSettingsSection`, and a setting's row, found by its
 `SETTING_PLACES` entry, scrolled to and marked; `#/setting/<key>` opens Settings → Extension over the list. Not
 `openPanelRoute`, which also sets the sidebar's `view`, the chat page's own list-or-session signal. Like the backup
