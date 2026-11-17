@@ -61,7 +61,7 @@ export function stoppedAfterCalls(started: readonly SurveyShCall[], why: "needs-
     const n = started.length;
     const list = started.map((c) => `${c.program.split("/").pop() || c.program}: ${c.outcome}`).join("; ");
     const where = why === "needs-page" ? "reached for the page" : why === "refused" ? "reached something outside the worker's dialect" : "failed outside the script's own code";
-    return { result: `Error: this script started ${n} ml.sh call${n === 1 ? "" : "s"} (${list}) and then ${where}. It was stopped there and NOT run again, because running it again would run those programs twice. Put the page work in its own exec.` };
+    return { result: `Error: this script started ${n} ml.sh call${n === 1 ? "" : "s"} (${list}) and then ${where}. It was stopped there and NOT run again, because running it again would make those calls twice. Put the page work in its own exec.` };
 }
 
 /** What {@link guardSurvey} answers when the survey started a program and then could not finish in the worker. */

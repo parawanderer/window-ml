@@ -52,7 +52,7 @@ Good for:
   `code: "Denied"`), and a program's time is the host's, not the step budget's. Which script takes which route: one that stays inside the worker's dialect is
   ANSWERED in the worker (`readonly-worker` / `no-page-reads`, no approval of the script, each call still judged); one that reaches past the
   dialect BEFORE any call goes to the approval gate and then runs isolated (`script-isolated`), never to the page's world; one that does
-  so AFTER a call has started is stopped with a final result and not run again ("ml.sh in the worker's survey", below). Tests: `tests/readonly-sh.test.mjs`.
+  so AFTER a call has started is stopped with a final result and not run again ("ml.sh in the worker's survey", below). Tests: `tests/readonly-sh.test.mjs`, `tests/ml-sh-survey.test.mjs`.
 - Walking a nested structure recursively, to a bounded depth.
 
 Not for, and falls back to approval: anything with an effect (a click, typing, a fetch of a new URL, changing the
@@ -693,7 +693,7 @@ harmless, `npm test` or `git commit` is not). So:
   because `map` skips a hole); an `undefined` in an argument slot is an omitted argument; `undefined` nested inside data is refused.
 
 Tests: `tests/sw-survey-sh.test.mjs` (every exit, a denied call then a page read, counted before the answer, Stop mid-call, the
-before-any-call order), `tests/readonly-sh.test.mjs` and `tests/redteam-readonly-sh.test.mjs` (the facade and the evaluator rule).
+before-any-call order), `tests/ml-sh-survey.test.mjs` (the rule end to end through the real run path), `tests/readonly-sh.test.mjs` and `tests/redteam-readonly-sh.test.mjs` (the facade and the evaluator rule).
 
 ## The policy realm
 
