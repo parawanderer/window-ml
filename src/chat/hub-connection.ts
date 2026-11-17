@@ -18,11 +18,11 @@ import { CommandTooLarge, HubClient, type HubEvent } from "../hub/client";
 import { pageRaster, workerRaster, type Raster } from "../raster";
 import { fitImages } from "./fit-images";
 import { Role } from "../hub/wire";
-import { COMMAND_SCOPE, type AttachedFileRef, type Command, type CommandResult, type CommandType, type WireFile } from "../session/session-host";
+import { COMMAND_SCOPE, type AttachedFileRef, type Command, type CommandResult, type CommandType, type SendOptions, type WireFile } from "../session/session-host";
 import type { SentFile } from "../contract/contract-run";
 import { PDF_ATTACH_MAX, sentWhole, utf8Length } from "../attached-files";
 import { b64ToBytes } from "../pdf/pdf-wire";
-import { FILE_PUT_WINDOW, chunkSize, fileCap, frameChunk, sha256Hex } from "../hub/file-frame";
+import { FILE_PUT_WINDOW, chunkSize, fileCap, frameChunk, sha256Hex, uploadFraction } from "../hub/file-frame";
 
 /** How long a sealed command waits for its result before the caller is told the runtime did not answer. */
 export const COMMAND_TIMEOUT_MS = 30_000;
@@ -152,7 +152,7 @@ export class HubConnection {
      * error has two error paths for one question. A runtime that is not in presence is `not-found` rather than a
      * timeout — there is nobody to be slow.
      */
-    async send<C extends Command>(command: C, opts?: { signal?: AbortSignal; timeoutMs?: number }): Promise<CommandResult<C["type"]>> {
+    async send<C extends Command>(command: C, opts?: SendOptions & { timeoutMs?: number }): Promise<CommandResult<C["type"]>> {
         const runtime = "runtime" in command ? command.runtime : command.session.runtime;
         const peer = this.peers.get(runtime);
         if (!peer) return fail("not-found", "no such runtime on this hub");
@@ -231,7 +231,7 @@ export class HubConnection {
      * fits only when they are small; a text file past what one sealed message takes is refused here, naming it). A
      * failure of any chunk is the answer.
      */
-    private async filesAhead<C extends Command>(command: C, peer: HubPeer, runtime: string, opts?: { signal?: AbortSignal; timeoutMs?: number }): Promise<C | CommandResult<C["type"]>> {
+    private async filesAhead<C extends Command>(command: C, peer: HubPeer, runtime: string, opts?: SendOptions & { timeoutMs?: number }): Promise<C | CommandResult<C["type"]>> {
         if (command.type !== "chat.start" && command.type !== "session.send" && command.type !== "agent.start") return command;
         const files = (command as { files?: WireFile[] }).files ?? [];
         const sent = files.filter((f): f is SentFile => typeof (f as { sha256?: unknown }).sha256 !== "string");
@@ -276,7 +276,7 @@ export class HubConnection {
      * runtime already holds; done is the runtime's word (`complete`), never "all sent".
      * @returns the reference to send in the file's place, `inline` when the runtime does not take chunks, or the failure
      */
-    private async putFile(runtime: string, peer: HubPeer, name: string, type: string, data: Uint8Array, opts?: { signal?: AbortSignal; timeoutMs?: number }): Promise<AttachedFileRef | "inline" | CommandResult<CommandType>> {
+    private async putFile(runtime: string, peer: HubPeer, name: string, type: string, data: Uint8Array, opts?: SendOptions & { timeoutMs?: number }): Promise<AttachedFileRef | "inline" | CommandResult<CommandType>> {
         const cap = fileCap(PDF_ATTACH_MAX, this.client.limits.accountBurstBytes);
         if (data.length > cap) return fail("invalid", `${name} is too large to send through this hub: ${mb(data.length)}; it takes files up to ${mb(cap)}`);
         const sha256 = await sha256Hex(data);
@@ -296,6 +296,10 @@ export class HubConnection {
         const count = Math.ceil(data.length / size);
         const held = have.data.count === count ? new Set(have.data.held) : new Set<number>();
         const todo = Array.from({ length: count }, (_, i) => i).filter((i) => !held.has(i));
+        // What the runtime has accepted, the chunks it already held included: the bar moves only on its word.
+        const accepted = new Set(held);
+        const report = () => { try { opts?.progress?.({ name, fraction: uploadFraction(accepted, count) }); } catch { /* a view failing must not fail the upload */ } };
+        report();
         let next = 0, complete = false;
         let failed: CommandResult<CommandType> | null = null;
         const lane = async (): Promise<void> => {
@@ -304,6 +308,8 @@ export class HubConnection {
                 const put = { type: "file.put" as const, runtime, sha256, index: i, count, bytes: data.length };
                 const r = await this.deliver(put, peer, scope, data.subarray(i * size, (i + 1) * size), opts);
                 if (!r.ok) { failed ??= r; return; }
+                accepted.add(i);
+                report();
                 if (r.data.complete) complete = true;
             }
         };

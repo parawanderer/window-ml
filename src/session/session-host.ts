@@ -930,6 +930,14 @@ export type HostStatus =
     | { state: "online" }
     | { state: "offline"; reason?: string; retryAt?: number };
 
+/** How far one attached file's upload has got, for a host that sends files ahead in chunks (the hub's `file.put`):
+ *  `fraction` is the share of its chunks the runtime has accepted, 0 to 1 (`uploadFraction`, file-frame.ts). */
+export interface FileProgress { name: string; fraction: number }
+
+/** What a send may carry beside its command: a cancel, and where a file's upload reports how far it has got. A host
+ *  that sends files inline reports nothing. */
+export interface SendOptions { signal?: AbortSignal; progress?: (p: FileProgress) => void }
+
 /** A source of sessions. The chat page's local host and the hub host implement it; the UI depends on nothing else.
  *
  *  Subscriptions deliver their current state first and then changes. A listener is never called synchronously
@@ -945,7 +953,7 @@ export interface SessionHost {
     /** one session's events, from `since` when the client already holds part of the stream */
     events(session: SessionId, listener: (message: SessionStreamMessage) => void, opts?: { since?: StreamPosition }): Unsubscribe;
     /** Send a command. Never rejects: every failure, abort included, resolves as `{ ok: false }`. */
-    send<C extends Command>(command: C, opts?: { signal?: AbortSignal }): Promise<CommandResult<C["type"]>>;
+    send<C extends Command>(command: C, opts?: SendOptions): Promise<CommandResult<C["type"]>>;
     /**
      * Is this runtime the one this client runs IN: the browser whose own page this is? The HOST's knowledge, never
      * the runtime's report, so it is not a field of `RuntimeInfo`: a runtime reached through a hub that said it was
