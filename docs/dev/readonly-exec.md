@@ -49,8 +49,10 @@ Good for:
   identity (`onSh`, evaluator.ts), and handed a plain COPY of their arguments; `put` is not on them, so a script naming it is put to the
   person whole. The script being free says nothing about its calls: each one is judged when it is made (`judgeCall("sh", …)`, a policy
   or the built-in default lets it run, no opinion raises a nested ask the script waits on, a deny throws a catchable error with
-  `code: "Denied"`), and a program's time is the host's, not the step budget's. A script naming them still routes `script-isolated`, never
-  to the page's world. Tests: `tests/readonly-sh.test.mjs`.
+  `code: "Denied"`), and a program's time is the host's, not the step budget's. Which script takes which route: one that stays inside the worker's dialect is
+  ANSWERED in the worker (`readonly-worker` / `no-page-reads`, no approval of the script, each call still judged); one that reaches past the
+  dialect BEFORE any call goes to the approval gate and then runs isolated (`script-isolated`), never to the page's world; one that does
+  so AFTER a call has started is stopped with a final result and not run again ("ml.sh in the worker's survey", below). Tests: `tests/readonly-sh.test.mjs`.
 - Walking a nested structure recursively, to a bounded depth.
 
 Not for, and falls back to approval: anything with an effect (a click, typing, a fetch of a new URL, changing the
@@ -551,7 +553,8 @@ Tests: the `stored table` block in `tests/readonly-exec.test.mjs`.
   a survey needing both the page and the run's pointers goes to the approval gate. Each decision is an execution-log
   record, subsystem `routing`: `readonly-worker` (`no-page-reads`, `out-of-dialect`, `world-isolated` for a
   survey whose exec would run isolated, by its `world` or the default world, or `script-isolated` for one whose
-  SCRIPT names `ml.sh`, `ml.current` or a pointer (`surveyMayEnterPage`); neither ever goes to the page's leg) or
+  SCRIPT names `ml.current` or a pointer, or names `ml.sh` and reaches past the worker's dialect before any call (`surveyMayEnterPage`);
+  neither ever goes to the page's leg) or
   `readonly-page` (`reads-page` or `refused-in-page`). The step's In is drawn in the worker too (`execCodeIn`), so a survey the
   worker answers never sends its script to the page.
 - **After approval**: the real `exec` tool (`tools.ts`) expands pointers, resolves them, and runs the code with
