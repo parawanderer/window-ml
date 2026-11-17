@@ -191,9 +191,10 @@ and the pipe section without its prose. The variant, its two specs and their fix
   alone agree (main 23 against 25, rerun 28 against 30). Counted 2026-11-14 from each run's `events.json`, one row
   per finished call (an `agent-step` with a `tool` and no `pending`), its `arguments.title`. An earlier count of 876
   counted logged events, not calls, and is withdrawn.
-- **Not measured: the links sentence after the short self-description.** #1871's `LINKS_CLAUSE` (a right-place
-  setting link in 55/80 runs with it against 41/80 without) was measured after the long `SELF_CLAUSE`, never after
-  this cut's short one, which it now follows. A re-measure is open.
+- **The links sentence after the short self-description** (measured 2026-11-17, `notebooks/bench/links-prompt.ipynb`).
+  #1871's `LINKS_CLAUSE` was measured after the long `SELF_CLAUSE`; after this cut, a sweep of the same spec showed no
+  clear gain (43/79 → 49/79, p = 0.42), and a third, with its test fixed before it ran, did: Mantel-Haenszel odds ratio
+  3.41 (95% CI 1.39 to 8.32) by model. Kept on (Shane); the detail is LINKS.md, open question 1.
 - **Shipped** (Shane, 2026-11-13): every cut but the pipe section's, about 960 tokens a call (about 10%). The pipe
   section stays as it was. **Not covered**: a shorter pipe text that keeps a grep example, measured on glm-4.7-flash's
   `pipe-log`; and a vision task a whole-grid look cannot answer.

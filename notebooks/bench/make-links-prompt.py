@@ -88,7 +88,7 @@ def resolve(addresses):
     return json.loads(out.stdout)
 
 
-def read_sweep(sweep_dir=None):
+def read_sweep(sweep_dir=None, build=None):
     rows = []
     for cell in sorted((sweep_dir or wmlnb.find_sweep(SWEEP)).glob("*/*/r*/cell.json")):
         if "history" in cell.parts:
@@ -96,7 +96,10 @@ def read_sweep(sweep_dir=None):
         c = json.loads(cell.read_text())
         m = c.get("measurement") or {}
         run = cell.parent / "run.json"
-        steps = json.loads(run.read_text())["session"]["steps"] if run.exists() else []
+        rj = json.loads(run.read_text()) if run.exists() else {}
+        if build and (rj.get("generator", {}).get("build") or {}).get("shortCommit") != build:
+            continue
+        steps = rj["session"]["steps"] if run.exists() else []
         usage = [s["usage"] for s in steps if s.get("usage")]
         answer = m.get("finalAnswer") or m.get("answer") or ""
         rows.append({
@@ -418,6 +421,108 @@ stratified test fixed in advance, before deciding whether the sentence stays on.
   per-model Fisher; the control task's failures and links per arm.
 - **What the result means for the decision** (the decision is Shane's): the interval above 1 supports keeping the
   sentence on; an interval that includes 1 is no evidence that it helps at the current prompt.
+""")
+
+md("""
+## The third sweep: the result
+
+The plan's primary test is the first table below. Rows are pinned in `third.json`: the cells in this checkout's sweep
+folder whose build is `23525f35` (the folder also holds cells left from the second sweep). Errored runs are left out,
+as the plan says; the four link tasks are every task but `control`.
+""")
+
+code("""
+THIRD = HERE / "data" / "links-prompt" / "third.json"
+THIRD_BUILD = "23525f35"
+third = pd.DataFrame(wmlnb.extract(THIRD, lambda: read_sweep(CUTS_DIR, build=THIRD_BUILD),
+                                   source={"sweep": SWEEP, "third": True, "build": THIRD_BUILD}))
+third = third.join(third.apply(judge, axis=1))
+third_ok = third[~third.error]
+third_asks = third_ok[third_ok.task != "control"]
+print(f"{len(third)} runs, {int(third.error.sum())} errored (left out below); {len(third_asks)} on the four link tasks")
+pd.DataFrame(wmlnb.provenance(THIRD))
+""")
+
+md("""
+### Right place per model and arm
+
+Runs that opened the right place on the four link tasks, errored runs left out.
+""")
+
+code("""
+g = third_asks.groupby(["model", "sentence"]).right_place
+pd.DataFrame({"hit": g.sum().astype(int), "runs": g.size()}).unstack("sentence")
+""")
+
+md("""
+### Primary: stratified by model
+
+Mantel-Haenszel odds ratio of a right-place link, sentence on against off, stratified by model, with its 95% interval,
+the CMH test and Breslow-Day across models.
+""")
+
+code("""
+third_t = tables(third_asks)
+pd.DataFrame([summary("third", third_t)]).set_index("sweep")
+""")
+
+md("""
+### Secondary: without GPT-6 Luna
+
+The same summary with the GPT-6 Luna stratum dropped.
+""")
+
+code("""
+pd.DataFrame([summary("third, no Luna", drop(third_t))]).set_index("sweep")
+""")
+
+md("""
+### Secondary: per-model Fisher
+
+Fisher's exact test (two-sided) per model and pooled, on right-place runs over the four link tasks.
+""")
+
+code("""
+fisher(third_asks)
+""")
+
+md("""
+### Secondary: the control task
+
+Control runs per arm, errored runs left out: how many failed and how many linked.
+""")
+
+code("""
+third_ok[third_ok.task == "control"].groupby("sentence").agg(runs=("passed", "size"), failed=("passed", lambda x: int((~x).sum())), linked=("linked", "sum"))
+""")
+
+md("""
+### Sensitivity, not in the plan: errored runs counted as misses
+
+The same primary summary with every errored link-task run kept as a run without a right-place link, instead of left out.
+""")
+
+code("""
+third_all_asks = third[third.task != "control"]
+pd.DataFrame([summary("third, errors as misses", tables(third_all_asks))]).set_index("sweep")
+""")
+
+md("""
+### The errored runs
+
+Each errored run of the third sweep, with the start of the error text from its `cell.json`.
+""")
+
+code("""
+def error_text(r):
+    for cell in CUTS_DIR.glob(f"{r.task}/*/r{r.repeat}/cell.json"):
+        c = json.loads(cell.read_text())
+        if c["combo"]["model"] == r.model and c["combo"]["sentence"] == r.sentence:
+            return str((c.get("measurement") or {}).get("error"))[:100]
+    return ""
+
+errs = third[third.error]
+errs.assign(error=[error_text(r) for r in errs.itertuples()])[["model", "sentence", "task", "repeat", "error"]]
 """)
 
 md("""
