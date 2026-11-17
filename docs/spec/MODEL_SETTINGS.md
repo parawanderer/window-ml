@@ -18,7 +18,7 @@ every setting, because every call it makes is approval-gated, except:
 - the gate's own keys (`autoApproveReadonly`; the site lists and policies, which are not settings at all), excluded,
   with a link to the setting's row as the help. `autoApprovePython` and `autoApproveSelfSource` are classed with
   `autoApproveReadonly` for the same reason, that one approved change removes every later approval of their kind;
-  pending Shane's confirmation, since the ruling names only the first;
+  confirmed by Shane, 2026-11-17;
 - `shellEnabled` and the host connection settings (`shellRoots`, `shellSandbox`, `shellPath`) are read-write only with
   the card showing the old and the new value verbatim. The hub's connection (pairing, keys) is not a key of
   `DEFAULT_CONFIG` and stays outside this spec ("Not settings", below).
@@ -389,7 +389,7 @@ call this surface (above); what it can do is ask the model, in text, to call it.
    call is the model's (an isolated-world exec).
 2. **Which keys the model may change.** RULED by Shane (ruling 2, 2026-11-14), replacing the first ruling's empty
    whitelist: every key but the secrets and the gate keys, with the shell keys' card showing both values verbatim.
-   Open: whether `autoApprovePython` and `autoApproveSelfSource` are gate keys, as this spec classes them, or guarded.
+   `autoApprovePython` and `autoApproveSelfSource` as gate keys: confirmed by Shane, 2026-11-17.
 3. **Per-key `widens` for lists** (`shellRoots`, `serverToolsOff`): a set comparison, which the declaration in code
    makes exact; whether a reorder counts as a change at all.
 4. **Fatigue**: RULED by Shane (2026-11-13), as threat item 6 reads: after one decline, the same key at all, for the
