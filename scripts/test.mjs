@@ -50,7 +50,7 @@ const GENRES = {
             "sidebar-asks.test.js", "sidebar-render-kinds.test.js", "sidebar-start-card.test.js",
             "output-cell.test.mjs", "pointer-gone.test.mjs", "code-tools.test.mjs", "legend.test.mjs",
             "context-container.test.mjs", "sidebar-prompt-display.test.js", "fold-badges.test.mjs", "tooltip-layer.test.mjs", "tip.test.mjs", "code-diff.test.mjs", "views.test.mjs",
-            "json-tree.test.mjs", "run-state-view.test.mjs", "run-log-view.test.mjs", "chart-gestures.test.mjs", "stacked-area.test.mjs", "sidebar-bench-stop.test.js"],
+            "json-tree.test.mjs", "json-tree-strings.test.mjs", "json-tree-theme.test.mjs", "live-hold.test.mjs", "step-settle.test.mjs", "raw-view.test.mjs", "run-state-view.test.mjs", "run-log-view.test.mjs", "chart-gestures.test.mjs", "stacked-area.test.mjs", "sidebar-bench-stop.test.js"],
     },
     // The repo's own checks (scripts/check-*.mjs): broken doc links, JSDoc that contradicts its code, the prompt
     // review's age, and notebooks committed without the evidence they were run.
