@@ -789,6 +789,22 @@ test("host-not-connected goes when the last session is deleted, and is back with
     assert.ok(!(await until((a) => !a.includes("host-not-connected"))).includes("host-not-connected"), "no session left: a fresh install's quiet again");
 });
 
+test("host-outdated: only a host known to be older than the pin, and gone once it is not", T, async () => {
+    const { fakeNativeHost } = await import("./fake-native-host.mjs");
+    const sender = { url: "chrome-extension://test/sidebar.html" };
+    const attention = (bg, port) => port.messages.filter((m) => m.type === "runtime").at(-1)?.runtime.capabilities.attention ?? [];
+    const settle = async (bg, port, pred) => { for (let i = 0; i < 100 && !pred(attention(bg, port)); i++) await new Promise((r) => setTimeout(r, 20)); return attention(bg, port); };
+    for (const [version, offered] of [["0.0.1", true], ["999.0.0", false], ["banana", false]]) {
+        const bg = loadBackground({ config, onNative: fakeNativeHost({ version }).onNative, onFetch: () => jsonResponse({ data: [{ id: "default-model" }] }) });
+        const port = bg.connect("ml-sessions", PAGE);
+        await settle(bg, port, (a) => a.includes("python-packages-missing"));
+        assert.ok(!attention(bg, port).includes("host-outdated"), "nothing is known before a hello");
+        await bg.send({ type: "SHELL_STATUS", payload: { probe: true } }, sender);
+        const got = await settle(bg, port, (a) => a.includes("host-outdated") === offered);
+        assert.equal(got.includes("host-outdated"), offered, version);
+    }
+});
+
 test("HUB_RUNTIME: refused to a web page, and an unpaired browser says so to its own pages", T, async () => {
     const bg = loadBackground({ config });
     const refused = await bg.send({ type: "HUB_RUNTIME", payload: {} }, tab(3));

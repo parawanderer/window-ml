@@ -56,6 +56,7 @@ export const INVENTORY: readonly InventoryEntry[] = [
     local("ml_site_visible", "sites", "the sites marked to see window.ml and ask for access before they may use it", "yes", { mode: "replace" }),
     local("ml_site_schema", "sites", "which layout the site lists are stored in: tells a restore which upgrade an old backup needs", "yes", { mode: "replace" }),
     ui("ml_debug_fontscale", "the panel's font scale"),
+    ui("ml_vision_choices", "which cloud models the person said see images, as the Commander's eye toggle remembers them"),
     ui("ml_debug_codewrap", "code blocks wrap or scroll"),
     ui("ml_debug_codelines", "code block line numbers"),
     ui("ml_debug_focus", "the panel's focus mode"),
@@ -96,6 +97,7 @@ export const INVENTORY: readonly InventoryEntry[] = [
     local("ml_handed_to_worker", "run-state", "runs handed from a page to the worker"),
     session("ml_pagebuilt", "run-state", "which tab and site built a page's session; tab ids, meaningless in another browser"),
     session("ml_pinned_tabs", "run-state", "tab ids, meaningless in another browser"),
+    session("ml_pkginstalls", "run-state", "the Python packages each run installed; dies with the run's namespace, and the wheels themselves are in the mirror"),
     session("ml_py_bridged", "run-state", "runs whose Python cell reached the browser's JavaScript, for their later cells' cards; dies with the namespace"),
     local("ml_policies_run", "policies", "run policies belong to one session and go with it when it is archived or restored"),
     local("ml_policies_archived", "policies", "what an archived session lost, told once"),
@@ -130,6 +132,7 @@ export const INVENTORY: readonly InventoryEntry[] = [
     local("ml_manifests_workspace", "manifests", "keyed by a workspace root's realpath on this machine; the same reason as ml_manifests_global"),
     local("ml_libraries_global", "manifests", "a tier 3 Python library is the person's approval of a file read on this machine; restored elsewhere it would admit an import nobody approved there"),
     local("ml_synthetic_traffic", "run-state", "marks this browser's requests as synthetic (a bench switch); restoring it would relabel real use"),
+    local("ml_wants_reasoning", "cache", "which endpoints answered 400 until the assistant's thinking was passed back; relearned on the first refusal, and another machine's servers may differ", "never"),
 
     // --- never: not chrome.storage at all ---
     web("ml_dev_hub_url", "the development pairing page's own localStorage"),

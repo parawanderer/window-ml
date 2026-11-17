@@ -1419,10 +1419,17 @@ html[data-calm] .appr-deny-wrap { border-radius: 999px; color: var(--fg-dim); }
 .appr-why { margin-top: 6px; }
 .appr-why-list { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 3px;
     color: var(--fg-dim); font-size: 0.86em; line-height: 1.4; }
-.astep-approve .appr-note, .card-foot .appr-note { display: flex; align-items: flex-start; gap: 6px; font-size: 0.82em; color: var(--fg);
+/* A NOTE ON AN APPROVAL: what the person should know before saying yes (why it asks, what approving grants), a warning
+   icon then a sentence, over a rule that sets it off from the question below. Not scoped to the card, so the gallery draws it as
+   it is drawn there. */
+.appr-note { display: flex; align-items: flex-start; gap: 6px; font-size: 0.82em; color: var(--fg);
     padding-bottom: 5px; border-bottom: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); }
-.astep-approve .appr-note svg, .card-foot .appr-note svg { flex: none; width: 13px; height: 13px; margin-top: 1px; color: var(--notice); }
-.astep-approve .appr-note b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.appr-note svg { flex: none; width: 14px; height: 14px; margin-top: .12em; color: var(--notice); }
+/* THE CALM CHAT draws it quieter: the icon in the text's own colour, which is what an inline mark is, and the rule a
+   thicker grey rather than a thin amber one, which reads as an alarm over a reading view's whole column. */
+html[data-calm] .appr-note { border-bottom: 2px solid color-mix(in srgb, var(--fg) 14%, transparent); }
+html[data-calm] .appr-note svg { color: inherit; }
+.appr-note b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 /* Google Docs-style smart chip for a Sheet reference: icon + friendly name, hoverable for the id. */
 .sheet-chip { display: inline-flex; align-items: center; gap: 3px; vertical-align: middle;
@@ -1845,6 +1852,8 @@ th .help { text-decoration-color: color-mix(in srgb, var(--fg-faint) 50%, transp
 .tip-dot.ok { background: var(--ok); }
 .tip-dot.err { background: var(--err); }
 .tip-dot.warn { background: var(--warn); }
+/* `.hollow`: a ring in the status colour instead of a disc: it did not happen (a denied call), which is not the same as it failing. */
+.dot.err.hollow, .tip-dot.err.hollow { background: transparent; box-shadow: inset 0 0 0 1.5px var(--err); animation: none; }
 .dot-when { display: block; margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--tip-line);
     color: var(--fg-dim); font-variant-numeric: tabular-nums; }
 .dot-when b { color: var(--fg); font-weight: 600; }
@@ -2262,6 +2271,8 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
 /* "show N more": an open container draws its members a page at a time. */
 .jt-more { font: inherit; font-size: 0.95em; padding: 0 4px; color: var(--accent); background: none; border: none; cursor: pointer; }
 .jt-more:hover { text-decoration: underline; }
+/* The "show all" of a cut string stays on ONE line at the end of its row, however the string beside it wraps. */
+.jt-row > .jt-more { flex: none; white-space: nowrap; align-self: flex-start; }
 .jt-row { display: flex; align-items: baseline; gap: 4px; font: 0.86em/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .jt-row.jt-clickable { cursor: pointer; }
 .jt-row.jt-clickable:hover { background: var(--panel-2); border-radius: 3px; }
@@ -2273,17 +2284,18 @@ pre.code > code.hljs.r-timed { padding-left: 0; }
 .jt-row .tri.jt-tri-space { visibility: hidden; }
 /* A time drawn as a clock time and an age; the exact value is on hover. */
 .jt-time { cursor: help; }
-.jt-key { color: var(--j-key); }
+:where(.jt-key) { color: var(--j-base); }   /* the colon; the name is `.jt-key-text` */
+:where(.jt-key-text) { color: var(--j-key); }
 .jt-brace { color: var(--j-base); }
 /* The `,` after a member that another follows. Pulled back over the row's flex gap so it sits against its value. */
 .jt-comma { color: var(--j-base); margin-left: -4px; }
 /* …inside a scalar's own span (so a string that wraps ends its last line with it), there is no flex gap to pull back over. */
-.jt-val > .jt-comma { margin-left: 0; }
+.jt-val > .jt-comma { margin-left: 0; color: var(--j-base); }   /* the value's own token class would otherwise paint it */
 .jt-preview { color: var(--fg-faint); font-style: italic; }
-.jt-string { color: var(--j-str); word-break: break-word; }
-.jt-number { color: var(--j-key); }
-.jt-boolean { color: var(--j-lit); }
-.jt-null { color: var(--j-lit); }
+:where(.jt-string) { color: var(--j-str); word-break: break-word; }
+:where(.jt-number) { color: var(--j-key); }
+:where(.jt-boolean) { color: var(--j-lit); }
+:where(.jt-null) { color: var(--j-lit); }
 /* A key the tool schema documents → dotted underline on its name only (this key has a hover tooltip with its description). */
 .jt-key-doc { cursor: help; }
 .jt-key-doc .jt-key-name { text-decoration: underline dotted; text-underline-offset: 2px; text-decoration-thickness: 1px; }
@@ -2949,6 +2961,8 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 .cmp-vis:hover { opacity: .85; }
 .cmp-vis.on { opacity: 1; filter: none; color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent); }
+/* The eye on a model nobody said anything about: on by assumption, drawn dimmer than one the person turned on. */
+.cmp-vis.assumed.on { opacity: .6; }
 /* The dropdown floats down from the chip over the composer body. Capped to the iframe viewport (100vh = the
    composer card's own height, since the shell sizes the iframe to it) so a long model list SCROLLS inside the
    menu instead of spilling past the card's bottom edge and being clipped by the iframe. */
@@ -4473,7 +4487,7 @@ button.chat-chip.on { background: var(--accent); color: var(--accent-fg); }
 /* "Scanned: the keys match": said in the ok colour, since it replaces the comparison a person would have made. */
 .pair-checked { color: var(--ok); }
 
-/* ======================= THE MODAL SHELL (sidebar/dialog.tsx) =======================
+/* ======================= THE MODAL SHELL (sidebar/dialog.tsx) ================
    HERE RATHER THAN IN chat.css, because the panel loads only this sheet and the approval card is drawn on
    both surfaces. The primitive's own header says it exists so a fourth dialog would not hand-roll a
    backdrop, an Escape and a click-outside again; that argument only holds if everything that needs one can
@@ -4638,3 +4652,22 @@ html[data-calm] .task-say > .task-dev, html[data-focus] .task-say > .task-dev { 
 .pkg-loaded-name { color: inherit; }
 /* A refused card: why the package cannot be installed, and the reason's code under it. */
 .pkg-refused .pkg-reason { font-family: var(--mono, ui-monospace, monospace); font-size: .85em; color: var(--fg-dim); }
+
+/* `.hc`: a trigger that opens a hover card (hover-card.tsx); `.hc-on` while it is open, which lights a JSON tree string
+   in the theme's own colours (a wash of the text colour, so it reads in every theme). `.hc-card` is the card: fixed, so no
+   scrolling ancestor clips it, capped in height so the pointer can enter it and scroll a long text. */
+.hc { position: relative; }
+.hc.jt-val:hover, .hc.hc-on { background: color-mix(in srgb, currentColor 14%, transparent); border-radius: 3px; }
+.hc-card {
+    position: fixed; z-index: 2147482000; box-sizing: border-box; width: max-content; max-width: min(560px, calc(100vw - 16px)); max-height: 240px; overflow: auto;
+    padding: 7px 10px; background: var(--panel); color: var(--fg); border: 1px solid color-mix(in srgb, var(--fg) 20%, var(--panel));
+    border-radius: 8px; box-shadow: 0 6px 24px rgba(0, 0, 0, .35); font-weight: normal; text-align: left; cursor: auto;
+}
+.hc-text { margin: 0; white-space: pre-wrap; word-break: break-word; font: inherit; font-size: .92em; color: var(--fg); tab-size: 4; }
+=======
+/* `.code-morph`: the characters of a reformatted script flying from where the live call had them to their new places
+   (code-morph.ts). The real text is hidden while they fly; the layer is removed when they land. */
+pre.code.morphing { position: relative; }
+pre.code.morphing:not(.numbered) > code, pre.code.morphing .lcode { visibility: hidden; }   /* a numbered block keeps its gutter */
+.code-morph { position: absolute; inset: 0; pointer-events: none; white-space: pre; }
+.code-morph > span { position: absolute; }

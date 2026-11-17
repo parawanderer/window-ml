@@ -1,4 +1,4 @@
-// pkg-mirror.test.mjs — python_install's network and mirror (src/sw/sw-pkg-mirror.ts, src/sw/sw-pkg-install.ts fetchApproved): host-locked index reads with a per-run cap, and wheel downloads kept only when their size and sha256 are the card's. `fetch` is a stub and IndexedDB is fake-indexeddb. Run: node --import tsx --test tests/pkg-mirror.test.mjs
+// pkg-mirror.test.mjs — python_install's network and mirror (src/sw/sw-pkg-mirror.ts, src/python/pkg-mirror-db.ts, src/sw/sw-pkg-install.ts fetchApproved): host-locked index reads with a per-run cap, and wheel downloads kept only when their size and sha256 are the card's. `fetch` is a stub and IndexedDB is fake-indexeddb. Run: node --import tsx --test tests/pkg-mirror.test.mjs
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -6,7 +6,8 @@ import crypto from "node:crypto";
 import { IDBFactory } from "fake-indexeddb";
 
 globalThis.indexedDB = new IDBFactory();
-const mirror = await import("../src/sw/sw-pkg-mirror.ts");
+// The mirror's reads moved to pkg-mirror-db.ts (the offscreen document reads them too); the writes stay in sw-pkg-mirror.ts.
+const mirror = { ...await import("../src/sw/sw-pkg-mirror.ts"), ...await import("../src/python/pkg-mirror-db.ts") };
 const { fetchApproved } = await import("../src/sw/sw-pkg-install.ts");
 const { INDEX_BOUNDS, IndexRunCap, fileKey } = await import("../src/python/pkg-index.ts");
 const { ensureWheel, indexGetFor, mirroredDigests, mirroredWheel } = mirror;

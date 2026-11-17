@@ -88,7 +88,7 @@ export interface CommandDeps {
     startChat(opts: { text: string; images?: string[]; files?: SentFile[]; model?: string; system?: string; think?: boolean | null; ephemeral?: boolean; vision?: true }): Promise<string>;
     /** the next turn of a worker-hosted chat; `not-found` when this worker does not host it and storage has nothing.
      *  Both throw `ImagesRefused` (image-gate.ts) before a turn whose images may not be sent; `vision: true` is the
-     *  person's word that the model sees. Both throw `FilesRefused` (attached-files.ts) before a turn whose PDF cannot
+     *  client's claim that the model sees (the worker cannot tell a claim from the person's word). Both throw `FilesRefused` (attached-files.ts) before a turn whose PDF cannot
      *  be read, or whose text files hold more text than a message takes. */
     sendChat(hash: string, text: string, images?: string[], files?: SentFile[], vision?: true): Promise<"turn" | "busy" | "not-found">;
     /** switch a worker-hosted chat's model from its next turn; false when this worker does not host it */

@@ -15,6 +15,8 @@ import type { ModelChoice, RuntimeInfo } from "../session/session-host";
 import { loadDraft, loadDraftFiles, loadDraftImages, saveDraft, saveDraftFiles, saveDraftImages } from "../sidebar/drafts";
 import { IconSend, IconWarn } from "../sidebar/icons";
 import { modelCache, SeesImagesToggle, visionUnreported } from "./sees-images";
+import { setVisionChoice, visionChoices } from "./view-mode";
+import { visionFor } from "../vision-choice";
 import { FileStrip, ThumbStrip, sentFile, useImageAttach } from "../sidebar/transcript/composer";
 import { imagesRefusal, type SentFile } from "../contract/contract-run";
 import { cursorTipOn } from "../sidebar/ui-kit";
@@ -103,12 +105,10 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
     // waits (with a placeholder pill the real one fades into, rather than a pill that jumps into the row).
     const [models, setModels] = useState<ModelChoice[] | null>(() => (rt ? modelCache.get(rt.id) ?? null : null));
     const [model, setModel] = useState("");
-    // "THIS MODEL SEES IMAGES", the person's word (`vision: true`), as the Commander's eye toggle has it: offered only
-    // for a model whose vision the runtime does not report (a cloud model, or one listed with no kinds; an Ollama
-    // model's vision is probed), and dropped whenever the model or the device changes, so a choice made for one model
-    // never rides along to another. Without it, a runtime refuses images for such a model when no reader is set.
-    const [vision, setVision] = useState(false);
-    useEffect(() => { setVision(false); }, [model, rt?.id]);
+    // "THIS MODEL SEES IMAGES": offered only for a model whose vision the runtime does not report (a cloud model, or one listed
+    // with no kinds; an Ollama model's vision is probed). A model nobody said anything about is assumed to, and the person's
+    // click is remembered per model (`vision-choice.ts`), so a model starts as they left it. Without it, a runtime refuses
+    // images for such a model when no reader is set.
     const canList = !!rt && mayCommand(rt, "models.list");
     useEffect(() => {
         setModels(rt ? modelCache.get(rt.id) ?? null : null); setModel("");
@@ -163,8 +163,8 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
         const images = att.imgs, files = att.sendable;
         try {
             const r = kind === "chat"
-                ? await store.send({ type: "chat.start", runtime: rt.id, text: text.trim(), ...(images.length ? { images } : {}), ...(files.length ? { files } : {}), ...(model ? { model } : {}), ...(vision && unreported ? { vision: true as const } : {}) })
-                : await store.send({ type: "agent.start", runtime: rt.id, task: text.trim(), ...(images.length ? { images } : {}), ...(files.length ? { files } : {}), target: pick.target(), ...(model ? { model } : {}), ...(vision && unreported ? { vision: true as const } : {}), ...(streaming ? { stream: true as const } : {}) });
+                ? await store.send({ type: "chat.start", runtime: rt.id, text: text.trim(), ...(images.length ? { images } : {}), ...(files.length ? { files } : {}), ...(model ? { model } : {}), ...(unreported && vision ? { vision: true as const } : {}) })
+                : await store.send({ type: "agent.start", runtime: rt.id, task: text.trim(), ...(images.length ? { images } : {}), ...(files.length ? { files } : {}), target: pick.target(), ...(model ? { model } : {}), ...(unreported && vision ? { vision: true as const } : {}), ...(streaming ? { stream: true as const } : {}) });
             // A refusal is already a notice; what was typed stays, to be changed and tried again.
             if (r.ok) { saveDraft("start", ""); saveDraftImages("start", []); saveDraftFiles("start", []); att.clear(); onStarted(`${r.data.session.runtime}:${r.data.session.hash}`); }
         } finally { setBusy(false); }
@@ -181,7 +181,8 @@ export function StartPage({ store, onStarted, initialKind, initialRuntime, extra
         : models === null && canList ? <span class={`tp-pill tp-pill-model${head ? " chat-head-model" : ""} tp-pill-wait`} role="status" aria-label="Loading models" /> : null);
     const chosen = models?.find((m) => (model ? m.id === model : m.default));
     const unreported = visionUnreported(chosen);
-    const visionToggle = unreported ? <SeesImagesToggle on={vision} onToggle={() => setVision((v) => !v)} /> : null;
+    const { on: vision, chosen: visionChosen } = visionFor(visionChoices.value, rt?.id ?? "", chosen?.id ?? "");
+    const visionToggle = unreported && chosen ? <SeesImagesToggle on={vision} chosen={visionChosen} onToggle={() => setVisionChoice(rt!.id, chosen.id, !vision)} /> : null;
     const modelTop = modelAs(false);
     const modelHead = modelAs(true);
     // The session composer's own button and tooltip. On a wide page the row's first control; on a phone, at the foot beside send, where the row has no room for a 40px target.

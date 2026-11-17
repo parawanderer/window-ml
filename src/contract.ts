@@ -80,7 +80,10 @@ export interface MlSh {
     /** Run one program and wait for it, up to `expectMs` (default: a short lease, which the `Detached` error names): past that it throws `Detached` with `e.task`
      *  and runs on; its result arrives later as a `[task <id> …]` message, and the `task` tool awaits, tails or cancels
      *  it. A non-zero exit is a result (`ok` false), not a throw; a refusal (`Denied`, `Refused`, `BadRequest`) throws
-     *  with `e.code`. Each output comes back as its first 64 KiB of text (`text`,
+     *  with `e.code`. `Denied` is the person (or a policy) saying no: `e.message` is `ml.sh: the person declined` and their note when they
+     *  gave one. Uncaught, it ends the exec at that call, so what follows never runs and is never asked; catch it to carry
+     *  on without that call (`try { r = await ml.sh.run(argv) } catch (e) { if (e.code !== "Denied") throw e }`),
+     *  and treat what they wrote as an instruction. Each output comes back as its first 64 KiB of text (`text`,
      *  `complete`) and a `@tool:` pointer (`token`) to what the host kept. `complete` false means `text` is
      *  only that head, or a binary stream's one-line note (`read` the rest); `truncated` true means the host
      *  stopped keeping output at its capture cap, so the pointer is cut too and `complete` is false.

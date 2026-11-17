@@ -4,6 +4,7 @@
 "use strict";
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { groupOwns, rowsSeen, foldStreaks, streakFacts, holdsSeq, foldedInView, groupedInView, FOLD_SEEN_MS, STREAK_MIN, STREAK_MIN_ALL } from "../src/sidebar/transcript/step-streak.tsx";
 import { JUST_ARRIVED_MS } from "../src/sidebar/transcript/just-arrived.ts";
 
@@ -352,4 +353,14 @@ test("a step landing just after a live call is drawn takes its height over; one 
     noteLiveCall(180, 1000);
     assert.equal(liveHandoff(1000 + HANDOFF_MS - 1), 180);
     assert.equal(liveHandoff(1000 + HANDOFF_MS), null);
+});
+
+// --- the head stays on one line; the tool list is what is cut ---
+
+test("a long tool list is what truncates: every other part of the head is kept whole on one line", () => {
+    const css = readFileSync(new URL("../src/chat/chat.css", import.meta.url), "utf8");
+    assert.match(css, /\.astreak-head > :not\(\.astreak-tools\)\s*\{[^}]*flex:\s*none;[^}]*white-space:\s*nowrap/, "count, failures and time never shrink or wrap");
+    assert.match(css, /\.astreak-tools\s*\{[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;[^}]*min-width:\s*0/s, "the list gives way, with an ellipsis");
+    const src = readFileSync(new URL("../src/sidebar/transcript/step-streak.tsx", import.meta.url), "utf8");
+    assert.match(src, /astreak-tools" \{\.\.\.cursorTipOn\(s\.tools\.join\(", "\), \{ delayMs: \d+, onlyIf: \(el\) => el\.scrollWidth > el\.clientWidth/, "the whole list on hover, only when it was cut");
 });

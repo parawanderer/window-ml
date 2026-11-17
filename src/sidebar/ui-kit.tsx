@@ -36,17 +36,21 @@ export const DOT_TIP: Record<Status, string> = {
  *  block — which is to say behind a scroll and behind a disclosure. The dot is the thing the eye is already on.
  *  Same shape as the event lane's tip: the sentence, then a rule, then the figures. A row that is a STATE (a
  *  session's dot, a model's residency) passes neither and is unchanged. */
-export const Dot = ({ status, warn, ts, ms }: {
+export const Dot = ({ status, warn, hollow, tip, ts, ms }: {
     status: Status; warn?: string;
+    /** drawn as a ring, not a disc: the thing never happened (a call that was denied), as opposed to one that failed */
+    hollow?: boolean;
+    /** the tooltip's sentence in place of the status's own, the colour kept */
+    tip?: string;
     /** when this happened, as wall clock */
     ts?: number;
     /** how long it took — the tool's own clock, not the step's (a step's time includes a human at a gate) */
     ms?: number;
 }) => (
     <span class="tt">
-        <span class={`dot ${warn ? "warn" : status}`} />
+        <span class={`dot ${warn ? "warn" : status}${hollow ? " hollow" : ""}`} />
         <span class="tt-pop left" role="tooltip">
-            <span class="dot-tip-line"><span class={`tip-dot ${warn ? "warn" : status}`} aria-hidden="true" />{warn ?? DOT_TIP[status]}</span>
+            <span class="dot-tip-line"><span class={`tip-dot ${warn ? "warn" : status}${hollow ? " hollow" : ""}`} aria-hidden="true" />{warn ?? tip ?? DOT_TIP[status]}</span>
             {ts != null || ms != null
                 ? <span class="dot-when">{ts != null ? hhmmss(ts) : null}{ts != null && ms != null ? " · " : null}{ms != null ? <b>{fmtDur(ms)}</b> : null}</span>
                 : null}

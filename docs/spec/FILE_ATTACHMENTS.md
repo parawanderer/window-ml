@@ -203,17 +203,21 @@ needs one) and the answer is:
 
 | The model… | The message |
 | --- | --- |
-| sees, or the person said it does (`vision: true`) | is sent with the images |
-| does not see or is UNKNOWN, and a reader model is set | goes with the reader's reading of each image, attributed to the reader |
+| sees, or is claimed to (`vision: true`: the person said yes, or the model's vision is not reported and the person has not said no) | is sent with the images |
+| does not see, or is UNKNOWN and the person said no, and a reader model is set | goes with the reader's reading of each image, attributed to the reader |
 | does not see, and no reader model is set | goes with each image or page named ("page 3 is a scan this model cannot see; set a reader model in Settings to have it read") |
-| is UNKNOWN, and no reader model is set | is refused before sending (`unsupported`), with a sentence: "This model may not see images. If it does, turn on 'This model sees images' and send again." Nothing is dropped and nothing is sent. |
+| is UNKNOWN and the person said no, and no reader model is set | is refused before sending (`unsupported`), with a sentence: "This model may not see images. If it does, turn on 'This model sees images' and send again." Nothing is dropped and nothing is sent. |
 
-An unknown model with a reader goes to the reader (decided 2026-10-29): no pixels reach a model nobody confirmed, and
-"does not see" can be declared only for the default model, so refusing there would leave another cloud model only
-the choice of forcing images on it.
+An unknown model the person said does not see goes to the reader (decided 2026-10-29). Since 2026-11-15 (Shane's ruling) an
+unknown model nobody said no to is sent the images (the override below). "Does not see" can be declared only for the
+default model, so refusing there would leave another cloud model only the choice of forcing images on it.
 
-The override is `vision: true` on `chat.start`, `agent.start` and `session.send`, the person's declaration, meaning
-what `ml.agent({ vision: true })` means: send the images to the run's own model, no probe. `session.send` carries it
+The override is `vision: true` on `chat.start`, `agent.start` and `session.send`, meaning what `ml.agent({ vision:
+true })` means: send the images to the run's own model, no probe. Amended 2026-11-15 (Shane's ruling): it is claimed when the
+person said yes, or when the model's vision is not reported and the person has not said no (an unreported model is
+assumed to see, and the eye toggle remembers the person's choice per model); a LOCAL model reported without image
+input is never claimed, and a cloud model's vision counts as not reported whatever its kinds list says
+(`visionUnreported`, sees-images.tsx). Before, `vision: true` was only ever the person's word (2026-10-29). `session.send` carries it
 for a chat only; an agent run's vision is decided at `agent.start`. The composer offers it as the "This model sees
 images" toggle when the model's vision is not reported (sees-images.tsx), on the start page and in a chat's composer;
 the refusal is checked again in the runtime. This changes what a worker chat does with a pasted image: a model of
@@ -1235,7 +1239,12 @@ nothing into the repository.
   by which the repository's config runs a program, and the e3 row with a clean filter, an fsmonitor and a hook
   configured is the pass condition for that case too. AMENDED 2026-11-13 (host lane): the belt alone was not enough,
   since the person's global config (`git lfs install` sets `filter.lfs.clean`) also runs a program; H7's
-  `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM` close that. The changed set is the host's own stat comparison against
+  `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM` close that. AMENDED 2026-11-17 (host lane, found building H10): nor
+  for a spawn that writes the scratch index (`write-tree`, `read-tree`, `update-index`). The write runs the
+  repository's `post-index-change` hook, and its check of a racily clean entry reads the file through the clean
+  filter, at the entry's path from the process's directory, since `write-tree` never enters `GIT_WORK_TREE`. So each
+  scratch spawn also sets `core.hooksPath=/dev/null` and runs in, and names as `GIT_WORK_TREE`, an empty directory of
+  the scratch store (window-ml-host `src/snapshot.rs`). The changed set is the host's own stat comparison against
   the scratch index, not a git status.
 - H12. Bounds: no file over the diff cap (1 MB, "The diff's cap") goes into the tree; it is compared by size and
   sha256 instead. The walk stops at `WALK_CAP` (20 000) entries; past that the call's diff is null with the reason.

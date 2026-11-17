@@ -44,9 +44,9 @@ import { adoptOnTab } from "./adopt-run";
 import { holdStands } from "./nav-arrival";
 import { toPageUi } from "./sw-side-panel";
 
-/** Whether a run the worker builds offers `python_install`. Off until the install step exists (docs/plan/repl/
- *  PACKAGES_INSTALL.md, slice 4): before it, an approved card installs nothing, so offering it would only mislead. */
-export const OFFER_PYTHON_INSTALL = false;
+/** Whether a run the worker builds offers `python_install`. On since the install step (docs/plan/repl/PACKAGES_INSTALL.md,
+ *  slice 4): an approved card is installed into the run's own Python worker. */
+export const OFFER_PYTHON_INSTALL = true;
 
 /** What a run is given when the person set no step budget: the same default `ml.agent` and `createAgent` use. */
 const DEFAULT_MAX_STEPS = 10;
@@ -103,7 +103,7 @@ async function startMinted(tabId: number, tab: chrome.tabs.Tab, url: string, ml:
     const base = [...(recipe.options.tools ?? (ml as { domTools?: { name: string }[] }).domTools ?? []), ...(recipe.options.extraTools ?? [])];
     const extraTools = [...(recipe.options.extraTools ?? []), proposePolicyTool(defineTool), ...(shellOn ? [proposeManifestTool(defineTool)] : []), ...(offersTask(shellOn, base.map((t) => t?.name)) ? [taskTool(defineTool)] : []),
         ...(OFFER_PYTHON_INSTALL ? [pythonInstallTool(defineTool)] : [])];
-    const asm = await assembleRun(ml, recipe.task, { ...recipe.options, extraTools, ...(opts.answer ? { answer: true } : {}) });
+    const asm = await assembleRun(ml, recipe.task, { ...recipe.options, extraTools, ...(shellOn ? { shell: true } : {}), ...(opts.answer ? { answer: true } : {}) });
     const rebuild = rebuildFor(asm, true, "worker");
     noteWorkerVision(runId);   // its vision facts are the worker's own (run-vision.ts)
     // Remote tools, and the builtins that never read the page, run HERE (sw-local-tools.ts, worker-tools.ts); everything

@@ -546,7 +546,11 @@ export const agent = async function(this: MlApi, task: string, { host = null, to
             }
             return control.messages;
         },
-        pushAssistant: (messages, msg) => (messages as NeutralMessage[]).push({ role: "assistant", content: msg.content || "", tool_calls: msg.tool_calls }),
+        pushAssistant: (messages, msg) => {
+            // The thinking rides only a turn that called tools, as in agent-host: a thinking-mode server wants it back there.
+            const reasoning = msg.tool_calls?.length && typeof msg.reasoning === "string" && msg.reasoning ? msg.reasoning : undefined;
+            (messages as NeutralMessage[]).push({ role: "assistant", content: msg.content || "", tool_calls: msg.tool_calls, ...(reasoning ? { reasoning } : {}) });
+        },
         pushToolResult: (messages, call, result) => (messages as NeutralMessage[]).push({ role: "tool", tool_call_id: call.id, content: result }),
         // Mid-run steering (a.say()): drain the inbox at each step boundary and inject as user turns.
         // Draining IS the agent seeing each steer, so fan an `agent-say-seen` per bubble (the indicator).

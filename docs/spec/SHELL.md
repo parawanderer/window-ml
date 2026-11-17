@@ -212,6 +212,15 @@ extension can do is make it one paste.
    the link itself: a link inside a tool result is never a button (LINKS.md), so the refusal carries the words and the address
    in backticks, not link syntax. The refusal carries no command: the model never tells a person to paste something.
 
+**Updating the host (PROPOSED 2026-11-14).** The extension never looks up a latest version; it knows the one this build
+pins. Each hello's `version` is parsed strictly (`major.minor.patch`, whole numbers, nothing else; anything unparseable is
+unknown) and only the parsed form is stored (beside `shell.hostSeen`), drawn or sent on (the open port holds its hello until it closes, and the platform and sandbox it reports are drawn as before). While that version is older than the
+pinned tag, and only then (equal, newer and unknown say nothing), the Settings guide shows the same pinned line worded as an
+update ("X is installed; this build pins Y"), and the attention list carries `host-outdated` (`suggests`, the same fix path).
+Re-running the installer replaces the binary in one rename; a host left running keeps its old version until it restarts, so
+"Check again" drops an idle open port and says hello again. No hello is made to find the version out: a profile whose
+storage predates the version has none, and no hint, until the next hello. No message type, `ml.*` member or tool is added.
+
 **Threat items.**
 
 - **The shown line carries nothing a page wrote.** It is built in the extension page from three values: `chrome.runtime.id`,
@@ -470,7 +479,9 @@ Without a manifest `effects` is `unknown` and the call asks.
 
 ## What the model sees
 
-- **Nothing new in the prompt.** `ml.sh` is documented by its JSDoc through `agent_api_docs`, like every `ml` member.
+- **The prompt names `ml.sh` when the person has turned it on and the run has `exec`** (`shellClause`, prompts.ts: that it may
+  exist, the call shape, that each call is decided by policy or asked, and where to read more); `agent_api_docs` carries the
+  detail, as it does for every `ml` member.
 - **Whether it exists, and in which modes** (decided 2026-10-13): three boolean capabilities in `RuntimeCapabilities`,
   which the projection rule passes with no edit (`current-runtime.ts`): `shellContainer` (a container is available),
   `shellHost` (the real filesystem is), `shellSandboxed` (host mode runs under the OS sandbox). Booleans rather than one
