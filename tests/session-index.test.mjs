@@ -369,6 +369,28 @@ test("a resume note is recorded once, however many sides report it", () => {
     assert.equal(kinds(ix.backfill("aaaa0001")).filter((k) => k === "session-resumed").length, 2);
 });
 
+test("a resume puts the session on its new page: the row names that tab and its url, so the closed-tab bar goes", () => {
+    // Shane's report (2026-11-14): "Resume on a page" added a divider and left the bar. `pageGone` deletes the row's
+    // `page.tabId`, and the resume's note re-owned the session without touching the row, so `resumableHere` (which
+    // reads `page.tabId`) kept offering the resume.
+    const ix = index();
+    const note = (over = {}) => base("aaaa0001", "session-resumed", { url: "https://new.example/", fromUrl: "https://site/11", afterMs: 1, dropped: ["state"], ...over });
+    ix.ingest(start("aaaa0001"), { ...bg(TAB_A), page: { url: "https://site/11", title: "Site" } });
+    ix.ingest(result("aaaa0001"), bg(TAB_A));
+    ix.pageGone(TAB_A, { closed: true });
+    assert.equal(ix.get("aaaa0001").page.tabId, undefined, "precondition: the closed tab let go of it");
+
+    ix.ingest(note(), bg(TAB_B));
+    assert.deepEqual(ix.get("aaaa0001").page, { url: "https://new.example/", tabId: TAB_B }, "the new page, with no stale title");
+    assert.equal(ix.binding("aaaa0001").tabId, TAB_B);
+
+    // A page's own copy of a note is a claim about a url, not the worker's word: it moves nothing.
+    ix.pageGone(TAB_B, { closed: true });
+    ix.ingest(note({ id: "aaaa0001-r2", url: "https://elsewhere.example/" }), page(TAB_A));
+    assert.equal(ix.get("aaaa0001").page.url, "https://new.example/");
+    assert.equal(ix.get("aaaa0001").page.tabId, undefined);
+});
+
 test("a resume note that does not say what it dropped never enters the stream", () => {
     const ix = index();
     const note = (over) => base("aaaa0001", "session-resumed", { url: "https://new.example/", afterMs: 1, dropped: ["state"], ...over });
