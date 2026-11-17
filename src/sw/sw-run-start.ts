@@ -218,14 +218,24 @@ const nextSend = (hash: string): number => Math.max(1, ...runPayloads(hash).map(
  * @param hash the run
  * @param turn the message's turn ({@link nextSend})
  * @param added the pointers it added
+ * @returns the rollback for a message taken back after this: it removes from each payload only the file ids THIS call
+ *   added (one another message attached stays) and puts `sends` back only where this call raised it and no later message
+ *   has raised it further. The task chain's reset is not undone.
  */
-function noteSend(hash: string, turn: number, added: readonly FilePointer[]): void {
+function noteSend(hash: string, turn: number, added: readonly FilePointer[]): () => void {
     resetTaskChain(hash);   // every delivered message of the person's passes here (a steer, a turn, a queued one)
+    const undo: Array<() => void> = [];
     for (const p of runPayloads(hash)) {
-        p.sends = Math.max(p.sends ?? 1, turn);
+        const before = p.sends, raised = (before ?? 1) < turn;
+        p.sends = Math.max(before ?? 1, turn);
         const fresh = added.filter((a) => !(p.files ?? []).some((g) => g.id === a.id));
         if (fresh.length) p.files = [...(p.files ?? []), ...fresh];
+        undo.push(() => {
+            if (fresh.length) p.files = (p.files ?? []).filter((f) => !fresh.some((a) => a.id === f.id));
+            if (raised && p.sends === turn) { if (before === undefined) delete p.sends; else p.sends = before; }
+        });
     }
+    return () => { for (const u of undo) u(); };
 }
 
 /**
@@ -370,7 +380,8 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
     const turn = nextSend(hash);
     const added: FilePointer[] = [];
     const shelf = sessionTokens(hash).files;
-    const takeBack = <T>(outcome: T): T => { shelf.drop(added.map((f) => f.id)); return outcome; };
+    let rollBack: (() => void) | null = null;   // set once `noteSend` has recorded this message on the payloads
+    const takeBack = <T>(outcome: T): T => { shelf.drop(added.map((f) => f.id)); rollBack?.(); rollBack = null; return outcome; };
     const deliver = async (): Promise<"steer" | "turn" | "continued" | "busy" | "none"> => {
         // A message with nowhere to go holds nothing: a run at the end of its turn (its inbox closed) is busy, and one
         // neither running nor stored is gone. Checked again after the awaits below, which a turn can end during.
@@ -395,8 +406,8 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
             if (action === "continue") return "busy";
             // A run with an inbox takes the steer (steerRun): only then is the message, and what it attached, the run's.
             if (!runInboxes.has(hash)) return takeBack("busy");
-            noteSend(hash, turn, added);
-            return steerRun(hash, text, origin, display, routed.images, attached) ? "steer" : "busy";
+            rollBack = noteSend(hash, turn, added);
+            return steerRun(hash, text, origin, display, routed.images, attached) ? "steer" : takeBack("busy");
         }
         if (!stored) return takeBack("none");
         // A resume already starting (another send still in the awaits below) makes this one busy: a second RESUME_RUN
@@ -404,7 +415,7 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
         // A message sent while it starts is held and steered into the turn once its inbox opens (the starter flushes it).
         if (startingControllers.has(hash)) {
             if (action !== "send") return takeBack("busy");
-            noteSend(hash, turn, added);
+            rollBack = noteSend(hash, turn, added);
             const held = pendingSteers.get(hash) ?? [];
             held.push({ text, origin, display, images: routed.images, shown: attached, takeBack: () => takeBack(undefined) });
             pendingSteers.set(hash, held);
@@ -428,7 +439,7 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
             if (starting.signal.aborted) { endStart(hash, starting); return takeBack("none"); }
             // Delivered from here on, with no await before the turn is hosted: recorded BEFORE `hostRun` copies the stored
             // payload into the turn's, so the turn and what it stores at its end carry them.
-            if (action === "send") noteSend(hash, turn, added);
+            if (action === "send") rollBack = noteSend(hash, turn, added);
             else if (!startedBy) resetTaskChain(hash);   // the person's Continue breaks the chain too
             if (text || attached.length) announce(tabId, { kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text, ...(display ? { display } : {}), ...shown });
             if (startedBy) noteRunLine(hash, startedBy.line);

@@ -16,12 +16,12 @@ async function until(done, cap = 4000) { for (let i = 0; i < cap && !(await done
 
 /** A worker-built run on tab 7 whose first turn has ended. `hold.adopt` (a promise) holds the page's answer to an adopt;
  *  `hold.model` holds the model's next answer. */
-async function settled(config = {}) {
+async function settled(config = {}, more = {}) {
     const hold = { adopt: null, model: null };
     const openTabs = [{ id: 7, windowId: 3, active: true, url: SITE_URL, title: "Site" }];
     const bg = loadBackground({
         config: { chatUrl: "http://host/api/chat/completions", apiKey: "k", model: "m", apiFormat: "openai", debugMode: "off", ...config },
-        openTabs,
+        openTabs, ...more,
         onFetch: async (call) => {
             if (call.url.endsWith("/api/models")) return jsonResponse({ data: [{ id: "m" }] });
             if (!call.url.includes("/chat/completions")) return jsonResponse({});
@@ -108,6 +108,33 @@ test("a message held for a turn that never hosts is said not to have been sent",
     release();
     assert.ok(await until(() => !r.starting()));
     assert.ok(await until(() => r.notes().some((x) => /^Your message was not sent: the run's turn did not start/.test(x))), r.notes().join(" | "));
+});
+
+test("a message WITH a file held for a turn that never hosts is taken back whole: no payload, no run.files, no shelf after an eviction", T, async () => {
+    const { IDBFactory } = require("fake-indexeddb");
+    const r = await settled({}, { indexedDB: new IDBFactory() });
+    const NOTES = { name: "notes.txt", type: "text/plain", text: "alpha\nbeta" };
+    const EXT = { id: "ext", url: "chrome-extension://ext/sidebar.html", origin: "chrome-extension://ext" };
+    const payloads = () => JSON.parse(JSON.stringify(r.bg.context.__mlRunPayloadsForTest(r.hash)));
+    const shelf = async () => JSON.parse(JSON.stringify((await r.bg.send({ type: "DUMP_RUN_STATE", payload: { run: r.hash } }, EXT)).data.entries.find((e) => e.id === "run.files")?.value ?? null));
+    const before = payloads();
+    assert.ok(before.length > 0, "the run carries a payload");
+    let release;
+    r.hold.adopt = new Promise((res) => { release = res; });
+    r.detach().finish({ text: "built" });
+    assert.ok(await until(r.starting));
+    assert.equal(await r.bg.context.__mlUserRunActionForTest(r.hash, "send", { text: "see this", files: [NOTES], surface: "hud" }), "steer");
+    assert.ok(payloads().some((p) => p.files.length === 1), "held: recorded while the turn starts");
+    r.hold.adopt = null;
+    r.bg.context.__mlCancelAllRunsForTest();
+    release();
+    assert.ok(await until(() => !r.starting()));
+    assert.ok(await until(() => r.notes().some((x) => /^Your message was not sent: the run's turn did not start/.test(x))), r.notes().join(" | "));
+    assert.deepEqual(payloads(), before, "no payload lists the file, and sends is what it was");
+    assert.equal(await shelf(), null, "run.files does not list it");
+    await r.bg.context.__mlEvictForTest();
+    assert.deepEqual(payloads().flatMap((p) => p.files), [], "still none after the worker was evicted");
+    assert.equal(await shelf(), null, "the rebuilt shelf does not hold it");
 });
 
 test("notify-only: the result parks, the person sees the line, and the next message's turn reads it", T, async () => {

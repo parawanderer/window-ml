@@ -159,9 +159,9 @@ every condition and ends in the start, so two completions finishing together can
   such as the page not answering the adopt; the chain count is given back.
 - A result that arrives for a run that was archived or released (its table is gone) or a task already ended is dropped: `task`/`dropped`
   with reason `run-ended` or `late-result`. Nothing starts.
-- The start is `userRunAction(runId, "continue", {}, undefined, undefined, line)` (`sw-run-start.ts`), registered with `setTaskTurnHost`
+- The start is `userRunAction(runId, "continue", {}, undefined, undefined, { line, ready })` (`sw-run-start.ts`), registered with `setTaskTurnHost`
   because the run host imports `sw-tasks.ts`, never the other way. It is the person's Continue path: the stored payload, the stored
-  step budget, `adoptOnTab`, `hostRun` with a `RESUME_RUN` whose task is "". `line` (`Turn started by task <id> (done after N s).`) is
+  step budget, `adoptOnTab`, `hostRun` with a `RESUME_RUN` whose task is "". `ready` is `taskTurnHasWork(runId)` (below), awaited once the adopt has answered; `line` (`Turn started by task <id> (done after N s).`) is
   said as an `agent-note` just before the turn is hosted, so the transcript and both exports carry it (the reducer's `notes`). The turn
   has no `PromptOrigin` of its own: nobody typed it, so the run's last origin stands, as it does for a task's result in the inbox.
   There is no model-facing note: the first step drains the inbox (the parked results, queued by `openTasks`) as user messages, so the

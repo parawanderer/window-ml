@@ -152,6 +152,10 @@ startValueSweeps();
     replayTabs: [...runReplayBuffer.keys()], deref: [...derefByRun.keys()], context: [...contextByRun.keys()], turns: [...turnByRun.keys()],
     starting: [...new Set([...workerRunsStarting, ...startingControllers.keys()])], sessions: sessionServer.index.list().map((s) => s.id.hash),
 });
+// TEST-ONLY (SW realm only): the payloads a run's next message is recorded on (the live turn's and the stored one), as
+// the files' ids and the message count each carries (tests/task-starts-turn.test.mjs: a message taken back leaves neither).
+(globalThis as unknown as { __mlRunPayloadsForTest?: unknown }).__mlRunPayloadsForTest = (hash: string): Array<{ files: string[]; sends: number | undefined }> =>
+    [turnByRun.get(hash)?.().payload, bgRuns.get(hash)?.p].filter((p): p is StartRunPayload => !!p).map((p) => ({ files: (p.files ?? []).map((f) => f.id), sends: p.sends }));
 // TEST-ONLY (SW realm only, like the two above): keep a session past the worker's life, as a run the user started with
 // `persistUiRuns` on is kept, without starting one through a surface.
 // A nested ask raised from inside a running step, as a consumer (ml.sh) raises one: what the surfaces, SET_APPROVAL and
