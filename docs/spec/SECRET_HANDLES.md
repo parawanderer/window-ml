@@ -204,7 +204,10 @@ on real captured output in its PR.
   guess can confirm it, by echoing the guess and seeing the marker; the model's own tool arguments, which are not
   scrubbed; an approved page that drives a model can confirm a full guess it already holds if the model repeats the
   marker, and learns no name; the page-world tool results of a page-hosted run stay the page's own and are not scrubbed
-  for the page.
+  for the page; `GET_CONFIG`'s answer to a page is not run through the registry, by design, since what keeps a secret
+  out of it is `publicConfig`'s fixed key list (`redteam-lifetimes-config.test.mjs`, #1942, enumerates it, no secret key
+  among them), and a public value equal to a registered one reaches the model only through a crossing that scrubs it (a
+  page-started request, or a tool result that read the page).
 - **Deferred to the handles slice**: reading values from a listed `.env` (a new host message), the keychain, a handle's
   value, and the `echoes` refusal.
 
