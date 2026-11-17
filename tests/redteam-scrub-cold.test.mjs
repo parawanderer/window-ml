@@ -4,6 +4,10 @@
 // the shapes a hostile or unlucky store gives it: a `chrome.storage.local.get` that never answers, one that fails while
 // a second crossing is already waiting, and the first delta after the read lands. Every row asserts the VALUE never
 // crosses — not the sentence it is replaced with, so a different fail-closed wording keeps the rows meaningful.
+// Last pass, at the branch head that fixes the read/change race (f752e4fc) and records a failed read (5866b0b2): the
+// last three rows pin a change that arrives while the read is in flight — one, two, and one that REMOVES an entry — and
+// the housekeeping record's contents. The read no longer adopts over a change, so the rows measure both directions:
+// an added secret still scrubbed after the read lands, a removed one not scrubbed again.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fakeNativeHost } from "./fake-native-host.mjs";
@@ -12,6 +16,10 @@ const T = { timeout: 20000 };
 const VALUE = "COLD-SECRET-9f21-3c";
 const NAME = "COLD_TOKEN";
 const MARK = `[REDACTED:${NAME}]`;
+/** A second registered value, for the rows where two lists follow one another. */
+const OTHER = "OTHER-SECRET-71b0-55";
+const OTHER_LIST = [{ name: "OTHER_TOKEN", value: OTHER }];
+const MARK_OTHER = "[REDACTED:OTHER_TOKEN]";
 /** The front a leaked half-value would show: redacting the whole value but its tail is still a leak. */
 const FRONT = VALUE.slice(0, 8);
 const leaks = (s) => typeof s === "string" && (s.includes(VALUE) || s.includes(FRONT));
@@ -135,11 +143,9 @@ test("RED TEAM: the first delta after the read is scrubbed whole, and a tail tha
 
 // --- a change that lands BEFORE the read does: the crossings scrub with it at once ---
 
-// MEASURED DEFECT, reported rather than pinned (087e543b): the read the worker started at import answers with what it
-// read BEFORE the change and `adopt()`s it, so once it lands `forLive` and `forPerson` show the value again. Not
-// reachable through the product today — `secretRegistryOp` is the only writer of the key and it awaits this same read —
-// so the row below asserts what must hold either way: while the read is in flight nothing is shown until a change
-// arrives, and that change is what the crossings scrub with. The fix brings its own row that releases the read.
+// MEASURED at 087e543b and fixed by f752e4fc: the read the worker started at import answered with what it read BEFORE
+// the change and `adopt()`ed it, so once it landed `forLive` and `forPerson` showed the value again. The read now adopts
+// only when no change arrived while it was in flight, and the three rows below measure that from both sides.
 test("RED TEAM: a change that lands while the first read is in flight is what the crossings scrub with at once", T, async () => {
     let release;
     const gate = new Promise((r) => { release = r; });
@@ -152,8 +158,72 @@ test("RED TEAM: a change that lands while the first read is in flight is what th
         assert.equal(registryIsReady(), true, "a change did not make the registry ready");
         assert.equal(forLive(`k ${VALUE}`), `k ${MARK}`, "the changed registry is not the one scrubbing");
         assert.equal(forPerson(`k ${VALUE}`), `k ${MARK}`);
-        // Released and awaited for the fixture's sake only: what the read then does to the registry is the defect above.
+        // The read's own list is older than the change: landing after it must not put the value back on show.
         release();
         await first;
+        assert.equal(forLive(`k ${VALUE}`), `k ${MARK}`, "the read's older list overwrote the change");
+        assert.equal((await forModel(`k ${VALUE}`)).text, `k ${MARK}`);
     });
+});
+
+// --- two changes during the read, and a change that REMOVES an entry: the last change is the state ---
+
+test("RED TEAM: two changes while the read is in flight: the SECOND is the state, not the read's list and not the first", T, async () => {
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    await coldWith(async () => { await gate; return { ml_secret_registry: [] }; }, async () => {
+        const first = registryReady();
+        // The first change registers NAME; the second replaces the list with OTHER alone, which also REMOVES NAME.
+        for (const f of changed) f({ ml_secret_registry: { oldValue: [], newValue: ENTRIES } }, "local");
+        assert.equal(forLive(`a ${VALUE}`), `a ${MARK}`, "the first change did not scrub at once");
+        for (const f of changed) f({ ml_secret_registry: { oldValue: ENTRIES, newValue: OTHER_LIST } }, "local");
+        release();
+        await first;
+        assert.equal(forLive(`a ${VALUE} b ${OTHER}`), `a ${VALUE} b ${MARK_OTHER}`, "the last change is not the state the crossings scrub with");
+        assert.equal((await forModel(`a ${VALUE} b ${OTHER}`)).text, `a ${VALUE} b ${MARK_OTHER}`, "the model's crossing read the first change or the read's list");
+        assert.equal(forPerson(`x ${OTHER}`), `x ${MARK_OTHER}`);
+    });
+});
+
+test("RED TEAM: an entry REMOVED while the read is in flight is not resurrected by the read's older list", T, async () => {
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    // The store still holds the entry when the read reaches it; the person removes it before the answer is taken in.
+    await coldWith(async () => { await gate; return { ml_secret_registry: ENTRIES }; }, async () => {
+        const first = registryReady();
+        for (const f of changed) f({ ml_secret_registry: { oldValue: ENTRIES, newValue: [] } }, "local");
+        assert.equal(registryIsReady(), true, "a change did not make the registry ready");
+        assert.equal(forLive(`k ${VALUE}`), `k ${VALUE}`, "a delta was scrubbed against a registry the person had emptied");
+        release();
+        await first;
+        assert.equal(forLive(`k ${VALUE}`), `k ${VALUE}`, "the read's older list resurrected a secret the person had removed");
+        assert.equal((await forModel(`k ${VALUE}`)).text, `k ${VALUE}`, "the model's crossing still treats the removed value as secret");
+        assert.equal(forPerson(`k ${VALUE}`), `k ${VALUE}`, "the person's crossing still treats the removed value as secret");
+    });
+});
+
+// --- the failed read's housekeeping record: the event and nothing of the store ---
+
+test("RED TEAM: a failed read records the event alone, whatever its error carries, and a read that succeeds records nothing", T, async () => {
+    const { housekeeping } = await import("../src/sw/sw-housekeeping.ts");
+    const real = housekeeping.record;
+    const seen = [];
+    housekeeping.record = (r) => seen.push(r);
+    try {
+        // The store rejects with the value in its message: an implementation that logged the error would leak it here.
+        await coldWith(async () => { throw new Error(`cannot read ml_secret_registry: ${VALUE}`); }, async () => {
+            await assert.rejects(registryReady());
+            assert.deepEqual(seen, [{ level: "warn", subsystem: "secrets", kind: "registry-unreadable" }], `the record is not the bare event: ${JSON.stringify(seen)}`);
+            assert.ok(!leaks(JSON.stringify(seen)), `the record carried the value: ${JSON.stringify(seen)}`);
+            // And the crossings a failed read reaches say nothing of the store's message either.
+            assert.ok(!leaks(forPerson(`x ${VALUE}`)), forPerson(`x ${VALUE}`));
+            assert.equal(forLive(`x ${VALUE}`), "");
+        });
+        seen.length = 0;
+        await coldWith(async () => ({ ml_secret_registry: ENTRIES }), async () => {
+            await registryReady();
+            assert.deepEqual(seen, [], `a read that succeeded recorded an event: ${JSON.stringify(seen)}`);
+            assert.equal(forLive(`x ${VALUE}`), `x ${MARK}`, "the read that succeeded is not the one scrubbing");
+        });
+    } finally { housekeeping.record = real; }
 });
