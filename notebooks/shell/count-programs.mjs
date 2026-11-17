@@ -23,8 +23,8 @@ import { fileURLToPath } from "node:url";
 export const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,39}$/;
 export const MIN_SESSIONS = 2;
 
-const KEYWORDS_SKIP = new Set(["for", "case", "function", "select", "fi", "done", "esac", "}", "{", "(", ")", "[[", "]]", "[", "]", "in", ";;", "cd", "export", "source", "."]);
-const KEYWORDS_STRIP = new Set(["if", "then", "else", "elif", "do", "while", "until", "!", "&&", "||"]);
+const KEYWORDS_SKIP = new Set(["for", "case", "function", "select", "fi", "done", "esac", "}", "(", ")", "[[", "]]", "[", "]", "in", ";;", "cd", "export", "source", "."]);
+const KEYWORDS_STRIP = new Set(["if", "then", "else", "elif", "do", "while", "until", "!", "&&", "||", "{"]);
 // Wrappers that just run another program, each with the options that take a separate value.
 const WRAPPERS = {
     env: { val: new Set(["-u", "-C", "-S", "--unset", "--chdir"]) },
@@ -53,15 +53,21 @@ export function parseCommands(src, depth = 0) {
     let has = false; // a word is in progress (an empty "" still is one)
     let skipNext = false; // after a redirection operator: its target is not a word
     const heredocs = [];
+    const defined = new Set(); // functions this command defines: a call to one is not a program
+    let caseDepth = 0; // open `case … in` blocks
+    let inPattern = false; // reading a case pattern list (up to its `)`): not a command
     const flushWord = () => {
         if (!has) return;
+        if (caseDepth && cur === "esac" && (inPattern || !words.length)) { caseDepth--; inPattern = false; cur = ""; has = false; return; }
+        if (inPattern) { cur = ""; has = false; return; }
         if (skipNext) skipNext = false;
         else if (/^(\d*|&)?(>>?|<<?<?|>&|<&|>\|)$/.test(cur) && !cur.includes("\0")) skipNext = !/^\d*>&$|^\d*<&$/.test(cur);
         else if (/^(\d*|&)?(>>?|<)[^&]/.test(cur) && !cur.includes("\0")) { /* `>file`, `2>file`: target attached */ }
         else words.push(cur);
+        if (cur === "in" && words.length === 3 && words[0] === "case") { caseDepth++; inPattern = true; words = []; }
         cur = ""; has = false;
     };
-    const endCmd = () => { flushWord(); if (words.length) out.push(words); words = []; skipNext = false; };
+    const endCmd = () => { flushWord(); if (words.length && !inPattern) out.push(words); words = []; skipNext = false; };
     const n = src.length;
     let i = 0;
     /** Read the body of $( ... ) starting after the "(": returns the text and the index after the ")". */
@@ -79,8 +85,27 @@ export function parseCommands(src, depth = 0) {
         throw new Error("paren");
     };
     const sub = (body) => { for (const c of parseCommands(body, depth + 1)) out.push(c); };
+    /**
+      * Skip a `[[ … ]]` test from just after its `[[`: one test, not commands, so `&&`, `|` and `(` inside it split
+      * nothing; `$( )` and backticks inside still run and are counted. Returns the index after the `]]`.
+      */
+    const skipTest = (start) => {
+        let j = start;
+        while (j < n) {
+            const c = src[j];
+            if (c === "\\") { j += 2; continue; }
+            if (c === "'") { const k = src.indexOf("'", j + 1); if (k < 0) throw new Error("quote"); j = k + 1; continue; }
+            if (c === "$" && src[j + 1] === "(") { const [b, e] = readParen(j + 2); if (src[j + 2] !== "(") sub(b); j = e; continue; }
+            if (c === "`") { const k = src.indexOf("`", j + 1); if (k < 0) throw new Error("tick"); sub(src.slice(j + 1, k)); j = k + 1; continue; }
+            if (c === '"') { j++; while (j < n && src[j] !== '"') { if (src[j] === "\\") { j += 2; continue; } if (src[j] === "$" && src[j + 1] === "(") { const [b, e] = readParen(j + 2); if (src[j + 2] !== "(") sub(b); j = e; continue; } if (src[j] === "`") { const k = src.indexOf("`", j + 1); if (k < 0) throw new Error("tick"); sub(src.slice(j + 1, k)); j = k + 1; continue; } j++; } if (j >= n) throw new Error("quote"); j++; continue; }
+            if (c === "]" && src[j + 1] === "]" && /\s/.test(src[j - 1]) && (j + 2 >= n || /[\s;&|)]/.test(src[j + 2]))) return j + 2;
+            j++;
+        }
+        throw new Error("test");
+    };
     while (i < n) {
         const c = src[i];
+        if (!has && c === "[" && src[i + 1] === "[" && /\s/.test(src[i + 2] ?? "")) { i = skipTest(i + 2); continue; }
         if (c === "\\") { if (src[i + 1] === "\n") { i += 2; continue; } cur += src[i + 1] ?? ""; has = true; i += 2; continue; }
         if (c === "'") { const k = src.indexOf("'", i + 1); if (k < 0) throw new Error("quote"); cur += src.slice(i + 1, k); has = true; i = k + 1; continue; }
         if (c === '"') {
@@ -128,6 +153,16 @@ export function parseCommands(src, depth = 0) {
             }
             continue;
         }
+        if (inPattern && (c === ")" || c === "(" || c === "|")) { // a case pattern list: `start|stop)`, `(start)`
+            if (c === ")") { cur = ""; has = false; words = []; inPattern = false; }
+            i++; continue;
+        }
+        if (caseDepth && c === ";" && src[i + 1] === ";") { endCmd(); inPattern = true; i += 2; if (src[i] === "&") i++; continue; } // `;;`, `;;&`
+        if (caseDepth && c === ";" && src[i + 1] === "&") { endCmd(); inPattern = true; i += 2; continue; } // `;&`
+        if (c === "(") { // `name()` / `name ()`: a function definition, not a call
+            let j = i + 1; while (src[j] === " " || src[j] === "\t") j++;
+            if (src[j] === ")") { const name = has ? cur : words[words.length - 1]; if (name) defined.add(name); cur = ""; has = false; words = []; i = j + 1; continue; }
+        }
         if (c === "(" && src[i + 1] === "(") { // arithmetic command (( ... )), and for (( ... )): not a command
             endCmd(); const [, e] = readParen(i + 1); i = e; continue;
         }
@@ -142,7 +177,8 @@ export function parseCommands(src, depth = 0) {
     }
     if (heredocs.length && !/^\s*$/.test("")) { /* heredoc opened on the last line: body missing */ throw new Error("heredoc"); }
     endCmd();
-    return out;
+    if (!defined.size) return out;
+    return out.filter((w) => !defined.has(w.find((x) => !KEYWORDS_STRIP.has(x) && !isAssign(x))));
 }
 
 const isAssign = (w) => /^[A-Za-z_][A-Za-z0-9_]*(\+)?=/.test(w);

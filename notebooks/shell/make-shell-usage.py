@@ -34,9 +34,13 @@ fixed watch list typed on the command line, exempt from the two-session rule).
 - Input: every `*.jsonl` under `~/.claude/projects/`, recursively. A subagent transcript counts toward its parent
   session. Each `Bash` `tool_use` is counted once by its id (resumed sessions copy earlier messages).
 - A quote-aware tokenizer (single and double quotes, backslash escapes, heredoc bodies skipped to their terminator)
-  splits the command into simple commands on `;` `&&` `||` `|` `&` newlines and parentheses. `$( ... )`, backticks
-  and `<( ... )` bodies are parsed recursively and their commands counted too. A command it cannot parse
-  (unterminated quote, paren or heredoc) is counted in `parse_failures` and contributes nothing.
+  splits the command into simple commands on `;` `&&` `||` `|` `&` newlines and subshell parentheses. `$( ... )`,
+  backticks and `<( ... )` bodies are parsed recursively and their commands counted too, and so are the commands
+  inside a `{ ...; }` group. Four shapes are not commands and count nothing: arithmetic (`$(( ))`, `(( ))`,
+  `for (( ))`), a `[[ ... ]]` test (its `$( )` still counts), a case pattern list (`start|stop)`), and a function
+  definition `name()`, along with calls to a function the same command defines. The splitter's cases are
+  `tests/count-programs.test.mjs`. A command it cannot parse (unterminated quote, paren, test or heredoc) is
+  counted in `parse_failures` and contributes nothing.
 - Per simple command: leading `VAR=value` dropped; `env sudo nohup time nice caffeinate xargs timeout` are counted
   as wrappers (own table) and the program they run is counted; `cd export source .` and shell keywords are skipped;
   `echo`/`printf` are kept and tagged `builtin`. One call = one simple command, so `a | b | c` is three calls.
@@ -214,7 +218,7 @@ d.sort_values("denied", ascending=False)[["name", "denied", "denied_auto", "deni
 md("""
 ## What the ranking says
 
-The 15 existing manifests already cover about half of all external-program calls (52%), but that is almost all `head`, `tail`, `git`, `cat`, `ls` and `gh`. The uncovered mass is concentrated: grep, sed, node, python3 and npm alone take coverage to 91%, and the top 20 candidates to 98%. By calls that is dominated by `grep` (the most-run program of all) and `sed`; by sessions the ranking is the same head, with `sort`, `cut`, `mkdir`, `ln`, `awk`, `sleep`, `uniq`, `tr` and `date` next, each in 33 to 48 of 74 sessions.
+The 15 existing manifests already cover about half of all external-program calls (52%), but that is almost all `head`, `tail`, `git`, `cat`, `ls` and `gh`. The uncovered mass is concentrated: grep, sed, node, python3 and npm alone take coverage to 91%, and the top 20 candidates to 98%. By calls that is dominated by `grep` (the most-run program of all) and `sed`; by sessions the ranking is the same head, with `sort`, `cut`, `mkdir`, `ln`, `awk`, `sleep`, `uniq`, `tr` and `date` next, each in 33 to 49 of 75 sessions.
 
 `node`, `python3`, `npm` and `npx` are interpreters: a manifest for them is a different problem (what they run is in the repo-tools table, and it is the repo's own scripts), so the plain-text tools are the practical first batch: grep, sed, sort, cut, mkdir, ln, awk, sleep, uniq, tr, date.
 
