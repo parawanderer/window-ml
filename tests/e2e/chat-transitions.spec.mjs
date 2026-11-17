@@ -107,6 +107,10 @@ test("approving a streamed exec in the calm chat: nothing snaps, the fold animat
 
         // 5. Unfurling the folded step again eases open. A step that had taken over from a live call kept the "hold the open animation
         // still" state past its fold, and the next unfurl played no animation at all while every other step eased.
+        // Folded and still: the fold takes the calm view's collapse beat after the settle dwell, later on a slow machine, and a click on
+        // a step still folding closes it instead of opening it.
+        await chat.waitForFunction(() => { const st = document.querySelector(".astep.tool"); return !!st && !st.classList.contains("open") && !st.classList.contains("closing") && st.getBoundingClientRect().height < 80; }, null, { timeout: 15000 });
+        await chat.waitForTimeout(150);
         await chat.evaluate(() => {
             window.__g = [];
             const t0 = performance.now();
