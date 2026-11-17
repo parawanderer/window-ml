@@ -584,6 +584,96 @@ mismatch.
 lane reads Shane's "you can do that" as standing word for a host release tag within its lane and will name the
 version and reason when it pushes; the coordinator surfaced that reading to Shane.
 
+**Rulings 19 and 20 (Shane, 2026-11-17, in the coordinator's session).**
+
+- **Ruling 19, session history.** A session's history is always written to the store; only a recent window is
+  loaded; older history is read explicitly by range, by the model too; nothing loads a whole session into memory.
+  The model managing its own compaction still stands as the goal. Shane created the lane `[window-ml
+  session-store]` for it. Its spec is `docs/spec/SESSION_HISTORY_STORE.md` (#1932, merged 0f9e9adc; the
+  coordinator read both heads and cleared fe63be61). The lane's measurements: the session row carries the whole
+  history and is rewritten every step (1.35 GB of row writes for a 3.3 MB history at 800 steps, about N/2); the
+  worker holds every saved session's history from start-up; the 256 MiB budget counts events only; one protected
+  session over the budget evicts every unpinned other; a backup over 1 GiB is written and then refused on restore;
+  a quota failure on a session write is silent. Coordinator's calls (infra; Shane may override): eviction goes
+  down to the budget plus what protected sessions hold above it, and a running session is never evicted for its
+  own size; the store gets an error handler that writes the housekeeping log and shows one line on the session;
+  the first slice measures the service worker's heap limit and the effect of `unlimitedStorage` in a real Chrome,
+  as a notebook. Shane's two further questions: the `/files/` directory as specified loads every file whole (the
+  worker dies at 2.6 GB), and the lane proposes a lazy ranged mount on the async lane's measured Route A (accepted
+  as a proposal; the lane writes the FILE_ATTACHMENTS.md amendment as its own spec PR); archived history through
+  a file system is a read-only view for Python later, never the storage, with `dereference` and an `@history:`
+  pointer as the main route. The packages lane's constraint is carried: a `python_install` candidate worker never
+  gets the `/files/` mount (its "Shane said yes" is RELAYED). **Open for Shane:** what bounds resume before
+  compaction exists; the coordinator recommends leaving resume as it is for the storage slices and making a
+  window plus a stub that points at the older range the first compaction design item.
+- **Ruling 20, secret files.** `.env` stays blocked in sandbox mode; naming it in a call asks, and approval opens
+  it for that call. Users get a hide list of paths or globs for their own secret files, treated exactly like a
+  dotenv file; the list is a gate key, outside `change_setting`. Scrubbing values out of such files is deferred to
+  the handles work, by a generic rule over JSON, YAML, TOML and dotenv string leaves of 8 to 512 characters; a
+  user-supplied parser is refused. Optional: at root approval, offer gitignored files that look like credentials;
+  never hide everything gitignored. Tasked to files-host after window-ml-host#46 merges, spec diff first. The
+  lane's account: the host's existing hidden list is not user-settable and denies writes too, so the hide list is
+  a new input; it will propose refusing `**` and bounding the match count.
+
+**The secrets work as it stands (2026-11-17).** All heads verified with gh; measurements are each lane's account.
+
+- **window-ml-host#45 (H10, the snapshot tree), head 299b59a6, open.** janitor-2 reviewed three heads (comments
+  6945534079, 6945774045, 6946363358), none clearing. Repaired so far: a colon in the repository path, a leaked
+  scratch directory, a commit with no index, a stale shared index (now asked of git with `rev-parse
+  --shared-index-path`), an unbounded index copy (no-follow open, non-regular refused, 256 MiB cap), and a fixture
+  race with git's background maintenance. Coordinator's calls: both guards (the empty working directory and the
+  scratch work tree) stay, each shown load-bearing by one reviewer's mutation; a symlinked index takes HEAD's tree
+  with `from_head` set and its target is never opened; a failed copy gets its own message. For H11's first
+  commit: `from_head` is surfaced in the facts, `maintenance.auto=false` and `gc.auto=0` join the belt, and the
+  spec says a git without `--shared-index-path` degrades to HEAD's tree. It waits on e3 re-pointing one row.
+- **window-ml-host#46 (`.env` denied in the sandbox), head 1f46350b, open.** Coordinator's calls, built by the
+  lane's account: a hardlink to a dotenv file at a root's top is found by device and inode, hidden and listed;
+  deeper is a documented gap; `.env.example`, `.env.sample` and `.env.template` are readable and no longer
+  flagged secret, unless one shares a hidden file's inode; naming a secret path unmasks it for that call, and the
+  approval is the control; a masked file on Linux reads empty. It waits on e3 re-pointing three rows. The
+  model-facing "held unreadable" note is a separate window-ml PR after it merges.
+- **The scrub (feat/secret-registry-scrub, spec at 7d635478, no PR yet).** The spec's eight edits are accepted.
+  Registry values are typed in Settings and kept under `secretRegistry` in chrome.storage.local: at most 64
+  entries, a value of 8 to 512 characters, a NAME of `[A-Z0-9_]{1,40}`, in no backup, export or archive, and
+  scrubbed from the run log's `key` too. The crossings named: `forModel`, the `ml.sh` head and read range, each
+  streamed delta, the peek tail, `forModelHistory` on resume. Coordinator's call on the page-hosted loop: scrub
+  where a page-started model request leaves the worker, keyed on sender, every role, with the marker `[REDACTED]`
+  carrying no name and no count; a page-reachable scrub message is refused as an oracle; the known limit is that
+  an approved page driving a model can confirm a full guess. The `echoes` refusal is deferred to handles. PR 1
+  starts after e3's rows land on the branch.
+
+**Other lanes (2026-11-17).**
+
+- **`change_setting` (settings specs).** Split in three, no stacking: (a) feat/setting-text, the class declaration,
+  the RISKY_CONFIG replacement (restore 17 to 30 keys with an upgrade fixture), the WORKER_ONLY_TOOLS rename and
+  one name-and-tooltip table; (b) feat/change-setting (at 68d1bcc0), the tool and its card, opened after (a)
+  merges, with e3's rows; (c) the `propose_policy` setting rows, a spec diff first. RELAYED from the lane's
+  session: every card shows the setting's Settings name and tooltip; ruling 2's verbatim old and new value still
+  binds. Accepted: a guarded change ignores `allow` and asks, `deny` still refuses; a card closed by a storage
+  change resolves denied with source "worker"; `agentStartPage` is refused when a fetch deny covers its host.
+- **`ml.sh` in the read-only dialect (small-fixes, ruling 12).** Branch feat/sh-in-readonly-dialect at 50e54716 in
+  the lane's own new clone, no code yet. Coordinator's call on the double run the lane found: once the worker
+  survey has started any `ml.sh` call, the script is never run again on any leg; each fall-through exit becomes a
+  final error naming the calls that ran; "started" is set before the judge; a script that needs the page before
+  any call keeps today's fall-through; no static pre-scan. e3 adds its row after the gate half is pushed.
+- **small-fixes' PRs.** #1924 (the prompt names `ml.sh`) merged f616e210 after janitor-2's comment 6946320893;
+  #1930 (two test sections) merged d3394f0d; #1922 (calm-stream polish, within ruling 13) is open at 28151ec5.
+  One small-fixes session had been running twice in Shane's tree; the older process exited. An unclaimed stash
+  there is left untouched and surfaced to Shane.
+- **async, #1929 (slice C), head 519fb463, open, not cleared.** janitor-2's comment 6946245310: a message taken
+  back from a starting turn leaves its file pointers on the run, and one argument shape in the dev doc. The lane
+  repairs, merges main last and sends a new head.
+- **Chat Page.** Running again after Shane cut its history (it had passed 2 GB). #1931 (a dev-doc repair) merged
+  fb5e4f00 on the coordinator's read. The protect-share wording is parked until a caller passes `protect`. Order
+  for FILE_ATTACHMENTS slice 3: `read_pages`, upload progress beside it, the files panel, python files, the e2e,
+  the bench. Coordinator's calls on `read_pages`: bytes as held value-store rows with the held list (never bytes)
+  persisted; offered only when the model reports tools; the agent run's tool-step event reused if it can carry
+  it, else a new event with a SESSION_CONTRACT.md diff first; at most 4 calls a turn, worker-only, never on a
+  page-started chat; two PRs (bytes and list, then the tool with e3's rows).
+- **Standing.** Shane asked every session but small-fixes to hand well-scoped subtasks to Sonnet (sent).
+  host-setup and the `ml.current` lane are not running. Open with Shane: the two setting names the settings
+  specs lane wrote ("Server-side tools turned off", "Server-side tool bundles for Commander runs").
+
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
   `?`, window-ml's `riskyRegex` change ported. cpython#11 (1e35340b): the read-only Python dialect's regex check also walks

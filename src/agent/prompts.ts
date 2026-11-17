@@ -198,6 +198,19 @@ export const EXEC_COMPUTE_CLAUSE =
     "with the `exec` tool (JavaScript): gather the values and run `Array`/`.map`/`.filter`/" +
     "`.reduce`/`Math.*` to get the EXACT result before you answer. It's clunkier than a dedicated " +
     "calculator, but infinitely better than guessing — the final number must come from code, not your head.";
+/**
+ * TERMINAL ACCESS: said only when the person turned `ml.sh` on (Settings, Programs) and the run has a script tool to call it from. A
+ * model that is not told it exists never looks for it, and one that guesses writes `child_process` or promises a shell it has
+ * not got, which is what confused people. One short paragraph: that it MAY be there, what it is, how it is checked, and where to read more.
+ * `docs` is whether `agent_api_docs` is in the toolset.
+ */
+export const shellClause = (docs: boolean, current: boolean): string =>
+    "\n\nYou may have terminal (shell) access: the person turned on `ml.sh`, which an `exec` script calls as " +
+    "`await ml.sh.run([\"git\", \"status\"])` (an argv array, no shell string) to run a program on THEIR machine; each call " +
+    "is decided by their policies or asked of them. " +
+    (current ? "It is there only when `ml.current.runtime.capabilities` has `shellHost`; otherwise do not promise a program run. " : "") +
+    (docs ? "`agent_api_docs({ search: \"ml.sh\" })` has the rest (results, long output, background tasks)." : "Say what you need, and they can run it themselves.");
+
 /** The python section: compute with a script, never in your head, and RETURN the value. Appended when python_exec is wired. */
 export const PYTHON_CLAUSE = "\n\nYou have `python_exec`. You predict tokens and do NOT calculate: multi-step arithmetic, counts, date math, " +
     "unit conversions and any other exact number come from a script you run, never from your head. Only the RETURNED " +

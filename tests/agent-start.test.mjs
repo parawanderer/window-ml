@@ -9,6 +9,7 @@ const { visibleControls } = await import("../src/agent/security.ts");
 const { siteInstructions, textDigest } = await import("../src/agent/site-instructions.ts");
 const { composeSystemPrompt } = await import("../src/agent/run-assembly.ts");
 const { PAGE_CONTEXT_HEAD } = await import("../src/agent/output-clip.ts");
+const prompts = await import("../src/agent/prompts.ts");
 const { builtinTools, GATED_BUILTINS } = await import("../src/tools/tool-registry.ts");
 
 const t = (name, remote) => ({ name, ...(remote ? { remote } : {}) });
@@ -21,7 +22,7 @@ const pageWrote = (prompt, ctx, head = "Current page context:") => `${prompt}\n\
 
 /** Every composition `composeSystemPrompt` makes for a toolset, over each fact on and off. */
 function* compositions(names) {
-    const flags = ["vision", "toolTokens", "answer", "pierceClosed", "pipe", "current", "unattended"];
+    const flags = ["vision", "toolTokens", "answer", "pierceClosed", "pipe", "current", "unattended", "shell"];
     for (let m = 0; m < 1 << flags.length; m++) for (const navigate of [true, false]) {
         const f = { names, navigate };
         flags.forEach((k, i) => { f[k] = !!(m & (1 << i)); });
@@ -67,6 +68,39 @@ test("a digest tells a changed instruction apart and is stable", async () => {
     assert.equal(await textDigest("a"), await textDigest("a"));
     assert.notEqual(await textDigest("a"), await textDigest("b"));
     assert.notEqual(await textDigest(""), await textDigest(" "));
+});
+
+// --- the prompt says terminal access may exist, when it is turned on ---
+
+test("ml.sh is named in the system prompt only when it is turned on and an exec script can reach it, and says where to read more", () => {
+    const { shellClause } = prompts;
+    const on = composeSystemPrompt({ names: ["exec", "agent_api_docs"], shell: true, current: true });
+    assert.ok(on.includes(shellClause(true, true)), "turned on, with exec, the docs and ml.current");
+    assert.match(on, /terminal \(shell\) access/);
+    assert.match(on, /ml\.sh\.run\(\["git", "status"\]\)/);
+    assert.match(on, /shellHost/, "says how to tell it is really there");
+    assert.match(on, /agent_api_docs\(\{ search: "ml\.sh" \}\)/, "says where to read more");
+    assert.ok(composeSystemPrompt({ names: ["exec"], shell: true, current: true }).includes(shellClause(false, true)), "without the docs tool it does not name it");
+    for (const f of [{ names: ["exec", "agent_api_docs"], current: true }, { names: ["exec", "agent_api_docs"], shell: false }, { names: ["findByText", "click"], shell: true },
+        { names: ["python_exec"], shell: true }]) {
+        assert.ok(!composeSystemPrompt(f).includes("ml.sh"), `never named: ${JSON.stringify(f)}`);
+    }
+    assert.ok(!composeSystemPrompt({ names: ["exec"], shell: true, system: "You are a pirate." }).includes("ml.sh"), "a run with its own system prompt keeps it");
+    assert.ok(shellClause(true, true).length < 700, `kept short (${shellClause(true, true).length} chars)`);
+});
+
+test("the ml.sh clause does not send a run with no ml.current to read it, and claims no more about consent than the gate does", () => {
+    const { shellClause } = prompts;
+    const noCurrent = composeSystemPrompt({ names: ["exec", "agent_api_docs"], shell: true });
+    assert.ok(noCurrent.includes("ml.sh"), "still named");
+    assert.ok(!/ml\.current|shellHost/.test(noCurrent.slice(noCurrent.indexOf("terminal (shell) access"))), "selfIntrospection off: there is no ml.current to check");
+    const text = shellClause(true, true);
+    // What the code does (judgeCall, sh-call.ts): a stored allow policy or the built-in bound runs a call unasked, a program
+    // with no manifest asks. So no "each call asked" and no "refused": the sentence says decided by policy or asked.
+    assert.match(text, /decided by their policies or asked of them/);
+    assert.ok(!/refus/i.test(text), "no program is refused for lack of a list: it asks");
+    assert.ok(!/each call asked/.test(text));
+    assert.ok(!/  /.test(text), "no run of two spaces");
 });
 
 // --- what an approval is bound to (Q3) ---

@@ -116,6 +116,7 @@ it was learned by shipping the wrong version first.
 | the overlay vs DevTools surfaces, `debugMode`, shared UI components, tooltips, the transcript window | `docs/dev/sidebar.md` |
 | the chat page (`src/chat/`): the client store, hosts, stream rules, the web build | `docs/dev/chat-page.md` (+ `docs/spec/CHAT_PAGE.md`, `docs/spec/SESSION_CONTRACT.md`) |
 | the session archive (SQLite over OPFS, the offscreen worker, move-instead-of-delete) | `docs/dev/archive.md` |
+| how a session's history is stored and read: what loads a whole session, the bounds, ranged reads (by the model too) | `docs/spec/SESSION_HISTORY_STORE.md` |
 | reading a PDF (pdf.js in the offscreen document's worker, per-page measurements and kind, the bounds, the provisional thresholds) | `docs/dev/pdf.md` (+ `docs/spec/FILE_ATTACHMENTS.md`, slice 2) |
 | backup and restore, the archive folder's sync and its file format (compression, encryption, the passphrase) | `docs/dev/backup.md` |
 | the hub client (`src/hub/`): HPKE over WebCrypto, certificates, sealed commands, encrypted streams | `docs/dev/hub-client.md` |
