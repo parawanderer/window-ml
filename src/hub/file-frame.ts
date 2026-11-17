@@ -56,3 +56,15 @@ export async function sha256Hex(data: Uint8Array): Promise<string> {
     const d = new Uint8Array(await crypto.subtle.digest("SHA-256", data as BufferSource));
     return Array.from(d, (b) => b.toString(16).padStart(2, "0")).join("");
 }
+
+/** How far one file's upload has got, from 0 to 1: the share of its chunks the runtime has accepted, so a bar never
+ *  runs ahead of the runtime's word. A chunk counts once however often it is accepted (sent again, or held already per
+ *  `file.have`); an index outside `[0, count)` counts for nothing; it is 1 only when every chunk is accepted, and a
+ *  file that goes as one command (`count` 1) is 0 until that one is. An upload refused partway is the caller's to stop
+ *  reporting: the figure stays the share accepted before the refusal. `count` that is not a positive integer gives 0. */
+export function uploadFraction(accepted: ReadonlySet<number> | readonly number[], count: number): number {
+    if (!Number.isInteger(count) || count <= 0) return 0;
+    const seen = new Set<number>();
+    for (const i of accepted) if (Number.isInteger(i) && i >= 0 && i < count) seen.add(i);
+    return Math.min(1, seen.size / count);
+}
