@@ -397,8 +397,9 @@ export function composeSystemPrompt(f: PromptFacts): string {
         else if (has("exec")) systemPrompt += EXEC_COMPUTE_CLAUSE;
         // Its own run, as data: only where a survey reaches `ml.current`, which needs the read-only path to auto-run.
         if (f.current && has("exec")) systemPrompt += currentClause(has("agent_api_docs"));
-        // Terminal access, only where the person turned it on and a script can reach it (ml.sh lives in exec and full-mode python_exec).
-        if (f.shell && (has("exec") || has("python_exec"))) systemPrompt += shellClause(has("agent_api_docs"));
+        // Terminal access, only where the person turned it on and an `exec` script can reach it. The check on `ml.current` is named
+        // only when the run has one: with self-introspection off there is no `ml.current` to read.
+        if (f.shell && has("exec")) systemPrompt += shellClause(has("agent_api_docs"), !!f.current);
         // Headless run: tell the model upfront it's unattended (read-only only), so it doesn't
         // waste steps attempting clicks/typing/mutations that the gate below will just refuse.
         if (f.unattended) systemPrompt += UNATTENDED_CLAUSE;

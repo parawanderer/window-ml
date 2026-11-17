@@ -204,11 +204,11 @@ export const EXEC_COMPUTE_CLAUSE =
  * not got, which is what confused people. One short paragraph: that it MAY be there, what it is, how it is checked, and where to read more.
  * `docs` is whether `agent_api_docs` is in the toolset.
  */
-export const shellClause = (docs: boolean): string =>
-    "\n\nYou may have terminal (shell) access: the person turned on `ml.sh`, which an approved `exec` script calls as " +
-    "`await ml.sh.run([\"git\", \"status\"])` (an argv array, no shell string) to run a program on THEIR machine, each call " +
-    "asked of them and refused when it is not on their list. It is there only when `ml.current.runtime.capabilities` " +
-    "has `shellHost`; otherwise do not promise a program run. " +
+export const shellClause = (docs: boolean, current: boolean): string =>
+    "\n\nYou may have terminal (shell) access: the person turned on `ml.sh`, which an `exec` script calls as " +
+    "`await ml.sh.run([\"git\", \"status\"])` (an argv array, no shell string) to run a program on THEIR machine; each call " +
+    "is decided by their policies or asked of them. " +
+    (current ? "It is there only when `ml.current.runtime.capabilities` has `shellHost`; otherwise do not promise a program run. " : "") +
     (docs ? "`agent_api_docs({ search: \"ml.sh\" })` has the rest (results, long output, background tasks)." : "Say what you need, and they can run it themselves.");
 
 /** The python section: compute with a script, never in your head, and RETURN the value. Appended when python_exec is wired. */

@@ -21,11 +21,16 @@ Tool schemas are not in that count, and in a UI run they are the larger half. St
 call out of them, and leaving `answer` out of the default kit (#464) about 2.3k more. Since #456 a console run has
 `click` and `type` too, and `agent_api_docs` whenever it has `exec`.
 
-**2026-11-16: terminal access is named (`shellClause`, prompts.ts), about 480 characters, only on a run the worker builds while `ml.sh` is turned on
-(Settings, Programs) and the toolset has `exec` or `python_exec`.** People saw models guess at `child_process` or promise a shell they
-did not have, because nothing in the prompt said `ml.sh` exists. It says that it MAY exist, what it is, the one call shape, that it is
-there only when `ml.current.runtime.capabilities` has `shellHost`, and where to read more (`agent_api_docs` search). Not measured
-against a bench: it is a pointer added to a feature the person has switched on, and costs nothing while it is off.
+**2026-11-16: terminal access is named (`shellClause`, prompts.ts), 469 characters with `agent_api_docs` and
+`ml.current`, 427 without the docs tool, 356 on a run with no `ml.current`, only on a run the worker builds while
+`ml.sh` is turned on (Settings, Programs) and the toolset has `exec`.** What keeps a page from asking for it:
+`shell` is set in one place, `sw-run-start.ts`, from `shellTurnedOn(getConfig())`, and the options a page's
+`ml.agent` can pass (`userRunOptions`) have no `shell` key. People saw models guess at `child_process` or promise a
+shell they did not have, because nothing in the prompt said `ml.sh` exists. It says that it MAY exist, what it is,
+the one call shape, that each call is decided by their policies or asked of them, where to read more
+(`agent_api_docs` search), and, on a run that has `ml.current` (self-introspection on), that it is there only when
+`ml.current.runtime.capabilities` has `shellHost`. Not measured against a bench: it is a pointer added to a feature
+the person has switched on, and costs nothing while it is off.
 
 ## How the problems were found: the model panel
 

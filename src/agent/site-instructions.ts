@@ -21,7 +21,7 @@ export function siteInstructions(systemPrompt: unknown, toolNames: readonly stri
     const clauses = [
         CALL_TITLE_CLAUSE, VISION_CLAUSE, tooltokensClause(true), tooltokensClause(false),
         shadowClause(toolNames, true), shadowClause(toolNames, false), IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, LINKS_CLAUSE,
-        PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, currentClause(true), currentClause(false), shellClause(true), shellClause(false), UNATTENDED_CLAUSE,
+        PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, currentClause(true), currentClause(false), shellClause(true, true), shellClause(true, false), shellClause(false, true), shellClause(false, false), UNATTENDED_CLAUSE,
         NAV_OFF_CLAUSE,
     ].filter((c) => c.length > 0).sort((a, b) => b.length - a.length);
     // Wherever it sits: text the site put before the preamble is then all that is left, not the preamble with it.
