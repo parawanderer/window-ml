@@ -1239,7 +1239,12 @@ nothing into the repository.
   by which the repository's config runs a program, and the e3 row with a clean filter, an fsmonitor and a hook
   configured is the pass condition for that case too. AMENDED 2026-11-13 (host lane): the belt alone was not enough,
   since the person's global config (`git lfs install` sets `filter.lfs.clean`) also runs a program; H7's
-  `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM` close that. The changed set is the host's own stat comparison against
+  `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM` close that. AMENDED 2026-11-17 (host lane, found building H10): nor
+  for a spawn that writes the scratch index (`write-tree`, `read-tree`, `update-index`). The write runs the
+  repository's `post-index-change` hook, and its check of a racily clean entry reads the file through the clean
+  filter, at the entry's path from the process's directory, since `write-tree` never enters `GIT_WORK_TREE`. So each
+  scratch spawn also sets `core.hooksPath=/dev/null` and runs in, and names as `GIT_WORK_TREE`, an empty directory of
+  the scratch store (window-ml-host `src/snapshot.rs`). The changed set is the host's own stat comparison against
   the scratch index, not a git status.
 - H12. Bounds: no file over the diff cap (1 MB, "The diff's cap") goes into the tree; it is compared by size and
   sha256 instead. The walk stops at `WALK_CAP` (20 000) entries; past that the call's diff is null with the reason.
