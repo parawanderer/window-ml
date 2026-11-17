@@ -22,6 +22,7 @@ import type { CellCancel } from "../python/py-lease";
 import { sessionArea } from "./sw-housekeeping";
 import { defineState } from "../state-registry";
 import { DEFAULT_CONFIG } from "../contract/contract-config";
+import { idleMinutes } from "../python/py-reap";
 import { dropRunInstalls, runInstalls } from "./sw-pkg-installs";
 
 // LIVE python_exec stdout streaming: maps a run's streamId (the page requestId) → its tabId, so a PY_STDOUT
@@ -348,8 +349,7 @@ export function endPythonTurn(runId: string): void {
     void (async () => {
         let minutes: unknown = DEFAULT_CONFIG.pythonIdleMinutes;
         try { minutes = (await chrome.storage.sync.get({ pythonIdleMinutes: DEFAULT_CONFIG.pythonIdleMinutes }))?.pythonIdleMinutes; } catch { /* default */ }
-        const n = Number(minutes);
-        const ms = Math.round((Number.isFinite(n) && n >= 0 ? n : DEFAULT_CONFIG.pythonIdleMinutes) * 60_000);
+        const ms = Math.round(idleMinutes(minutes, DEFAULT_CONFIG.pythonIdleMinutes) * 60_000);
         try { await chrome.runtime.sendMessage({ type: "PY_END_TURN", run: runId, ms }); } catch { /* no offscreen listening: the worker is gone with its Map */ }
     })();
 }

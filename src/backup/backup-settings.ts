@@ -10,7 +10,8 @@
  * validator) and drops what this version does not keep, and `previewRestore` lists the changes. `applyRestore` then writes
  * exactly the preview's changes and nothing else.
  */
-import { DEFAULT_CONFIG, LEXICAL_METRICS, protoMode } from "../contract/contract-config";
+import { protoMode } from "../contract/contract-config";
+import { configTypeOk, restoreListsApart } from "../setting-class";
 import { type AgentLevel, type SiteLists, SITE_ACCESS_KEYS, SITE_SCHEMA, SITE_SCHEMA_KEY, levelsFor, migrateSiteLists, originOf } from "../site-access";
 import { GLOBAL_POLICIES_KEY, validList, POLICY_LABEL_MAX, POLICY_SOURCE_MAX } from "../sw/policy-valid";
 import { type PolicyOrigin, type StoredPolicy } from "../sw/sw-policies";
@@ -124,22 +125,6 @@ const CONFIG_UPGRADES: Record<string, (v: unknown) => unknown> = {
     /** `protoStream` shipped as a boolean (`protoMode` is the same read the worker applies) */
     protoStream: protoMode,
 };
-
-/** The settings that are one of a few words, which a restore holds to the words (the types in contract-config.ts; a test holds each default to its list). */
-export const CONFIG_ENUMS: Readonly<Record<string, readonly string[]>> = Object.freeze({
-    apiFormat: ["openai", "ollama"], theme: ["auto", "dark", "light"], agentHud: ["progress", "quiet"], debugMode: ["off", "overlay", "devtools"],
-    cardCorner: ["bottom-right", "bottom-left", "top-right", "top-left"], labelMatch: LEXICAL_METRICS, defaultModelVision: ["", "yes", "no"],
-    execDefaultWorld: ["", "page", "isolated"], protoStream: ["off", "auto", "on"],
-});
-
-/** Whether `v` has the type of the key's default: the config is typed, and a restore must not write a string where a flag goes. */
-function configTypeOk(key: string, v: unknown): boolean {
-    const d = (DEFAULT_CONFIG as unknown as Rec)[key];
-    if (own(CONFIG_ENUMS, key)) return typeof v === "string" && CONFIG_ENUMS[key].includes(v);
-    if (Array.isArray(d)) return Array.isArray(v) && v.every((x) => typeof x === "string");
-    if (typeof d === "number") return typeof v === "number" && Number.isFinite(v);
-    return typeof v === typeof d;
-}
 
 /** The agent levels a site list may hold. */
 const LEVELS: readonly AgentLevel[] = ["ask", "always", "denied"];
@@ -282,27 +267,6 @@ export interface RestorePlan {
     apiKeyIncluded: boolean;
 }
 
-/** Settings that send traffic or widen what runs without asking: a restore lists them apart, with what they do. */
-const RISKY_CONFIG: Readonly<Record<string, string>> = {
-    chatUrl: "requests, and the saved API key, go to this address",
-    priceSnapshotUrl: "the price list is fetched from this address",
-    apiFormat: "changes how requests to the server are written",
-    shellEnabled: "lets ml.sh run programs on this machine",
-    shellRoots: "the folders ml.sh may reach",
-    shellPath: "the directories ml.sh finds programs in",
-    shellSandbox: "whether ml.sh runs inside a sandbox",
-    autoApproveReadonly: "runs read-only page surveys without asking",
-    autoApprovePython: "runs Python without asking",
-    autoApproveSelfSource: "reads the agent's own source without asking",
-    modelFilter: "the whitelist of models a page or run may use; clearing it allows every model the server offers",
-    agentStartPage: "the page a blank agent run starts on",
-    pageApprovalDomains: "the old self-approval whitelist: its sites are migrated into the self-approval list, which grants use",
-    apiKey: "replaces this browser's saved API key",
-    pierceClosedShadow: "lets runs read closed shadow roots",
-    cdp: "lets runs use trusted clicks and typing through the debugger",
-    execDefaultWorld: "which world page scripts run in",
-};
-
 /** A value as text for a screen, cut at 160 characters; `cut` says so, with the full length. */
 const show = (key: string, v: unknown): { text: string; cut: boolean; length: number } => {
     if (key === API_KEY) { const t = v === "" || v === undefined ? "(empty)" : "(set)"; return { text: t, cut: false, length: t.length }; }
@@ -316,7 +280,7 @@ const GROUP_ORDER: ChangeGroup[] = ["sites", "policies", "risky", "settings"];
 function groupOf(area: "sync" | "local", key: string, entryGroup: string): ChangeGroup {
     if (entryGroup === "sites") return "sites";
     if (entryGroup === "policies") return "policies";
-    if (area === "sync" && own(RISKY_CONFIG, key)) return "risky";
+    if (area === "sync" && restoreListsApart(key) !== null) return "risky";
     return "settings";
 }
 
@@ -360,7 +324,7 @@ export function previewRestore(up: UpgradedSettings, current: StorageSnapshot): 
                 area, key, kind, group, ...(has ? { before: now[key] } : {}), after,
                 shown: { ...(sb ? { before: sb.text } : {}), after: sa.text, ...(cut ? { truncated: true as const, length: { ...(sb ? { before: sb.length } : {}), after: sa.length } } : {}) },
                 ...(group === "risky" ? { why: key === "chatUrl" && !own(next, API_KEY) && typeof now[API_KEY] === "string" && now[API_KEY] !== ""
-                    ? "this backup carries no API key, so THIS browser's saved API key would be sent to this address" : RISKY_CONFIG[key] } : {}),
+                    ? "this backup carries no API key, so THIS browser's saved API key would be sent to this address" : restoreListsApart(key) ?? undefined } : {}),
             });
         }
     }

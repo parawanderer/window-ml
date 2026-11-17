@@ -88,15 +88,18 @@ def resolve(addresses):
     return json.loads(out.stdout)
 
 
-def read_sweep():
+def read_sweep(sweep_dir=None, build=None):
     rows = []
-    for cell in sorted(wmlnb.find_sweep(SWEEP).glob("*/*/r*/cell.json")):
+    for cell in sorted((sweep_dir or wmlnb.find_sweep(SWEEP)).glob("*/*/r*/cell.json")):
         if "history" in cell.parts:
             continue
         c = json.loads(cell.read_text())
         m = c.get("measurement") or {}
         run = cell.parent / "run.json"
-        steps = json.loads(run.read_text())["session"]["steps"] if run.exists() else []
+        rj = json.loads(run.read_text()) if run.exists() else {}
+        if build and (rj.get("generator", {}).get("build") or {}).get("shortCommit") != build:
+            continue
+        steps = rj["session"]["steps"] if run.exists() else []
         usage = [s["usage"] for s in steps if s.get("usage")]
         answer = m.get("finalAnswer") or m.get("answer") or ""
         rows.append({
@@ -264,6 +267,262 @@ first["sentence_tokens"] = first["on"] - first["off"]
 first["calls_per_run"] = ok.groupby("model").calls.mean().round(1)
 first["tokens_per_run"] = (first.sentence_tokens * first.calls_per_run).round(0)
 first
+""")
+
+md("""
+## After the prompt cuts (2026-11-17)
+
+The same spec run a second time, after #1867 shortened the self-description sentence the links sentence follows. Its rows
+are pinned in `after-cuts.json`, read from this checkout's own `tests/e2e/artifacts/bench/links-prompt/` (not from
+`find_sweep`), with the same row logic and the same `judge`. `runs.json` stays the first sweep.
+""")
+
+code("""
+CUTS = HERE / "data" / "links-prompt" / "after-cuts.json"
+CUTS_DIR = TOP / "tests" / "e2e" / "artifacts" / "bench" / "links-prompt"
+
+def cuts_build():
+    for run in sorted(CUTS_DIR.glob("*/*/r*/run.json")):
+        if "history" not in run.parts:
+            b = json.loads(run.read_text()).get("generator", {}).get("build") or {}
+            return b.get("shortCommit")
+
+_build = cuts_build() if not CUTS.exists() else None
+_src = {"sweep": SWEEP, "after": "#1867 (prompt cuts)", **({"build": _build} if _build else {})}
+cuts = pd.DataFrame(wmlnb.extract(CUTS, lambda: read_sweep(CUTS_DIR), source=_src))
+cuts = cuts.join(cuts.apply(judge, axis=1))
+cuts_ok = cuts[~cuts.error]
+cuts_asks = cuts_ok[cuts_ok.task != "control"]
+print(f"{len(cuts)} runs, {int(cuts.error.sum())} errored (left out below); {len(cuts_asks)} on the four link tasks")
+pd.DataFrame(wmlnb.provenance(CUTS))
+""")
+
+md("""
+### Right place, first sweep and after the cuts
+
+Per model and pooled, runs that opened the right place on the four link tasks, sentence off and on, with Fisher's exact
+test (two-sided) for each sweep. `first_*` is the sweep in `runs.json`, `cuts_*` the one above.
+""")
+
+code("""
+def side_by_side(a, b):
+    fa, fb = fisher(a), fisher(b)
+    t = fa.add_prefix("first_").join(fb.add_prefix("cuts_"), how="outer")
+    return t.loc[[m for m in t.index if m != "(all)"] + ["(all)"]]
+
+side_by_side(asks, cuts_asks)
+""")
+
+md("""
+### The control task, after the cuts
+
+Runs on the control task (a code on the page), errored runs left out: how many failed and how many linked, per arm.
+""")
+
+code("""
+cuts_ok[cuts_ok.task == "control"].groupby("sentence").agg(runs=("passed", "size"), failed=("passed", lambda x: int((~x).sum())), linked=("linked", "sum"))
+""")
+
+md("""
+### What the sentence costs, after the cuts
+
+The same method as above: first-call prompt tokens, on minus off, median per model.
+""")
+
+code("""
+first2 = cuts_ok.groupby(["model", "sentence"]).first_prompt_tokens.median().unstack("sentence")
+first2["sentence_tokens"] = first2["on"] - first2["off"]
+first2["calls_per_run"] = cuts_ok.groupby("model").calls.mean().round(1)
+first2["tokens_per_run"] = (first2.sentence_tokens * first2.calls_per_run).round(0)
+first2
+""")
+
+md("""
+## Stratified by model: one effect or two, and who carries it
+
+Not planned before the second sweep was seen: the analysis planned for it was the first sweep's (per-model and pooled
+Fisher), which gives the pooled p above. These were computed after, at the coordinator's request, and are read as such.
+
+The Mantel-Haenszel odds ratio of a right-place link with the sentence against without, stratified by model (a model
+with no link in either arm carries no information and drops out), its 95% interval (Robins-Breslow-Greenland), the CMH
+test (continuity-corrected); Breslow-Day for whether the models share one odds ratio; and a Wald test of whether the two
+sweeps' ratios differ (the interaction of sweep with arm). Each also without GPT-6 Luna, the model with the largest gain.
+""")
+
+code("""
+import math
+from scipy.stats import chi2, norm
+from scipy.optimize import brentq
+
+def tables(df):
+    # One 2x2 per model: (on hit, on miss, off hit, off miss); a model with an empty margin drops out.
+    out = {}
+    for model, g in df.groupby("model"):
+        on, off = g[g.sentence == "on"].right_place, g[g.sentence == "off"].right_place
+        a, b, c, d = int(on.sum()), int(len(on) - on.sum()), int(off.sum()), int(len(off) - off.sum())
+        if (a + c) and (b + d):
+            out[model] = (a, b, c, d)
+    return out
+
+def mh(ts):
+    R = S = PR = PSQR = QS = A = E = V = 0.0
+    for a, b, c, d in ts:
+        n = a + b + c + d; r, s = a * d / n, b * c / n; p, q = (a + d) / n, (b + c) / n
+        R += r; S += s; PR += p * r; PSQR += p * s + q * r; QS += q * s
+        n1, n0, m1, m0 = a + b, c + d, a + c, b + d
+        A += a; E += n1 * m1 / n; V += n1 * n0 * m1 * m0 / (n * n * (n - 1))
+    lor = math.log(R / S); var = PR / (2 * R * R) + PSQR / (2 * R * S) + QS / (2 * S * S); z = norm.ppf(0.975)
+    return {"OR": math.exp(lor), "lo": math.exp(lor - z * var ** 0.5), "hi": math.exp(lor + z * var ** 0.5),
+            "p": chi2.sf((abs(A - E) - 0.5) ** 2 / V, 1), "lor": lor, "var": var}
+
+def breslow_day(ts, psi):
+    x = 0.0
+    for a, b, c, d in ts:
+        n1, n0, m1 = a + b, c + d, a + c
+        lo, hi = max(0, m1 - n0), min(n1, m1)
+        e = brentq(lambda e: e * (n0 - m1 + e) - psi * (n1 - e) * (m1 - e), lo + 1e-9, hi - 1e-9) if hi > lo else lo
+        x += (a - e) ** 2 * (1 / e + 1 / (n1 - e) + 1 / (m1 - e) + 1 / (n0 - m1 + e))
+    return chi2.sf(x, len(ts) - 1)
+
+def summary(name, ts):
+    m = mh(list(ts.values()))
+    return {"sweep": name, "models": len(ts), "MH OR": round(m["OR"], 2), "95% CI": f"{m['lo']:.2f}-{m['hi']:.2f}",
+            "CMH p": round(m["p"], 3), "Breslow-Day p": round(breslow_day(list(ts.values()), m["OR"]), 3)}
+
+LUNA = "openrouter.openai/gpt-6-luna"
+first_t, cuts_t = tables(asks), tables(cuts_asks)
+both_t = {**{"1 " + k: v for k, v in first_t.items()}, **{"2 " + k: v for k, v in cuts_t.items()}}
+drop = lambda t: {k: v for k, v in t.items() if not k.endswith(LUNA)}
+pd.DataFrame([summary(n, t) for n, t in [("first", first_t), ("after cuts", cuts_t), ("both", both_t),
+              ("first, no Luna", drop(first_t)), ("after cuts, no Luna", drop(cuts_t)), ("both, no Luna", drop(both_t))]]).set_index("sweep")
+""")
+
+code("""
+m1, m2 = mh(list(first_t.values())), mh(list(cuts_t.values()))
+d, se = m1["lor"] - m2["lor"], (m1["var"] + m2["var"]) ** 0.5
+pd.DataFrame([{"ratio of ORs (first / after cuts)": round(math.exp(d), 2),
+               "95% CI": f"{math.exp(d - 1.96 * se):.2f}-{math.exp(d + 1.96 * se):.2f}", "Wald p": round(2 * norm.sf(abs(d) / se), 3)}])
+""")
+
+md("""
+## The third sweep: the plan, written before it ran
+
+Decided 2026-11-17, before any run of it, and committed with this text. Shane asked for a third sweep, with the
+stratified test fixed in advance, before deciding whether the sentence stays on.
+
+- **What runs:** the same spec at the commit carrying this text, five models: DeepSeek Flash, GPT-6 Luna, Gemma 4 31B,
+  Qwen 3.8 Flash and Gemma 4 12B, which replaces Gemma 4 E4B (Shane: the smallest model is the 12B; E4B linked in 2 of
+  64 runs over both sweeps). Gemma 4 12B has no earlier sweep, so it enters the third sweep's test only. Both arms, five
+  tasks, four repeats: 200 runs. Errored runs are left out; none is re-run.
+- **Primary test:** on the third sweep alone, the Mantel-Haenszel odds ratio of a right-place link (the four link tasks)
+  with the sentence against without, stratified by model, with its 95% interval (Robins-Breslow-Greenland) and the CMH
+  test, two-sided, alpha 0.05.
+- **Secondary, reported whatever the primary says:** the same without GPT-6 Luna; Breslow-Day across the four models;
+  per-model Fisher; the control task's failures and links per arm.
+- **What the result means for the decision** (the decision is Shane's): the interval above 1 supports keeping the
+  sentence on; an interval that includes 1 is no evidence that it helps at the current prompt.
+""")
+
+md("""
+## The third sweep: the result
+
+The plan's primary test is the first table below. Rows are pinned in `third.json`: the cells in this checkout's sweep
+folder whose build is `23525f35` (the folder also holds cells left from the second sweep). Errored runs are left out,
+as the plan says; the four link tasks are every task but `control`.
+""")
+
+code("""
+THIRD = HERE / "data" / "links-prompt" / "third.json"
+THIRD_BUILD = "23525f35"
+third = pd.DataFrame(wmlnb.extract(THIRD, lambda: read_sweep(CUTS_DIR, build=THIRD_BUILD),
+                                   source={"sweep": SWEEP, "third": True, "build": THIRD_BUILD}))
+third = third.join(third.apply(judge, axis=1))
+third_ok = third[~third.error]
+third_asks = third_ok[third_ok.task != "control"]
+print(f"{len(third)} runs, {int(third.error.sum())} errored (left out below); {len(third_asks)} on the four link tasks")
+pd.DataFrame(wmlnb.provenance(THIRD))
+""")
+
+md("""
+### Right place per model and arm
+
+Runs that opened the right place on the four link tasks, errored runs left out.
+""")
+
+code("""
+g = third_asks.groupby(["model", "sentence"]).right_place
+pd.DataFrame({"hit": g.sum().astype(int), "runs": g.size()}).unstack("sentence")
+""")
+
+md("""
+### Primary: stratified by model
+
+Mantel-Haenszel odds ratio of a right-place link, sentence on against off, stratified by model, with its 95% interval,
+the CMH test and Breslow-Day across models.
+""")
+
+code("""
+third_t = tables(third_asks)
+pd.DataFrame([summary("third", third_t)]).set_index("sweep")
+""")
+
+md("""
+### Secondary: without GPT-6 Luna
+
+The same summary with the GPT-6 Luna stratum dropped.
+""")
+
+code("""
+pd.DataFrame([summary("third, no Luna", drop(third_t))]).set_index("sweep")
+""")
+
+md("""
+### Secondary: per-model Fisher
+
+Fisher's exact test (two-sided) per model and pooled, on right-place runs over the four link tasks.
+""")
+
+code("""
+fisher(third_asks)
+""")
+
+md("""
+### Secondary: the control task
+
+Control runs per arm, errored runs left out: how many failed and how many linked.
+""")
+
+code("""
+third_ok[third_ok.task == "control"].groupby("sentence").agg(runs=("passed", "size"), failed=("passed", lambda x: int((~x).sum())), linked=("linked", "sum"))
+""")
+
+md("""
+### Sensitivity, not in the plan: errored runs counted as misses
+
+The same primary summary with every errored link-task run kept as a run without a right-place link, instead of left out.
+""")
+
+code("""
+third_all_asks = third[third.task != "control"]
+pd.DataFrame([summary("third, errors as misses", tables(third_all_asks))]).set_index("sweep")
+""")
+
+md("""
+### The errored runs
+
+Each errored run of the third sweep, with the start of the error text from its `cell.json`.
+""")
+
+code("""
+def error_text(r):
+    for cell in CUTS_DIR.glob(f"{r.task}/*/r{r.repeat}/cell.json"):
+        c = json.loads(cell.read_text())
+        if c["combo"]["model"] == r.model and c["combo"]["sentence"] == r.sentence:
+            return str((c.get("measurement") or {}).get("error"))[:100]
+    return ""
+
+errs = third[third.error]
+errs.assign(error=[error_text(r) for r in errs.itertuples()])[["model", "sentence", "task", "repeat", "error"]]
 """)
 
 md("""

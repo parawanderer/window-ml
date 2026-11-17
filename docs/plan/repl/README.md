@@ -630,7 +630,7 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
   lane's account: a hardlink to a dotenv file at a root's top is found by device and inode, hidden and listed;
   deeper is a documented gap; `.env.example`, `.env.sample` and `.env.template` are readable and no longer
   flagged secret, unless one shares a hidden file's inode; naming a secret path unmasks it for that call, and the
-  approval is the control; a masked file on Linux reads empty. It waits on e3 re-pointing three rows. The
+  approval is the control; reading a masked file fails on both platforms (corrected below). It waits on e3 re-pointing three rows. The
   model-facing "held unreadable" note is a separate window-ml PR after it merges.
 - **The scrub (feat/secret-registry-scrub, spec at 7d635478, no PR yet).** The spec's eight edits are accepted.
   Registry values are typed in Settings and kept under `secretRegistry` in chrome.storage.local: at most 64
@@ -743,6 +743,57 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
 - **Bench, the links sentence.** Two sweeps disagree (Mantel–Haenszel by model: 2.90 then 1.59, the second with
   heterogeneity). RELAYED from bench's session: Shane asked for a third sweep with the test fixed in advance. No
   PR until it is done. The resume bound is still open.
+
+**Corrections and review state, 2026-11-17 (later).** Each head below was read from GitHub when this was written.
+
+- **Withdrawn: "a masked file on Linux reads empty."** That was the coordinator's call and it was wrong. Ubuntu CI
+  on window-ml-host#46 measured that reading a held dotenv file FAILS on both platforms: EPERM on macOS, EACCES on
+  Linux, because bwrap's read-only bind is nodev and the `/dev/null` laid over the file cannot be opened. The host
+  docs and one test row (`a_held_dotenv_read_fails_with_the_platforms_refusal`) say so at head 2989ff40. The
+  lane's account: no other "reads empty" claim is left in the host repo, and window-ml's shell docs never made it.
+  The model-facing note that follows the host PR says "fails" from the start.
+- **Other calls on host#46.** A root-top hardlink to a DEEPER dotenv file (`ln app/.env notes.txt`) is part of
+  the documented gap, with a row. Writing, renaming and unlinking a held file stay denied, and the docs name the
+  refused bootstrap copy with the unsandboxed mode as the way through. On Linux, creating a NEW dotenv name
+  succeeds and is held from the next call; accepted. The deny set is the dotenv names plus `.netrc`,
+  `.git-credentials` and `.pgpass` at a root's top; that widening is still open with Shane.
+- **#1935 (`change_setting` part a), head ca2b51f8.** The reviewer asks one change: the secret-class test keeps
+  its five names as a LITERAL and asserts both directions against `[...SECRET_KEYS, "pageApprovalDomains"]`. This
+  REPLACES the coordinator's earlier "computed" shape, which would have passed with a key dropped from both sides.
+- **#1929 (async slice C), head 532bf799.** The red team's three: `sends` reads one high after a joint take-back,
+  which async repairs now with its own row; `takeBack`'s shelf drop is unobservable, so it gets a code comment
+  and no new read; the redundant `had` check in `holdText` needs no action. The reviewer re-reads the final head.
+- **#1942 (async slice D), head c9ab1f5e.** The reviewer asks one change: the detached-task paragraph's figures
+  in the prompt budget doc do not match the stated kit (326 chars and 56 words, 7,257 to 7,583). Red-team rows
+  for the two new public config keys go on top of the corrected head.
+- **#1934 (wheel scan), head b166d7d7.** Three repairs are owed in one push: the walk moved outside the `try`
+  with a row, two `scanDetail` rows, and a length cap per name in the scan note (the red team measured a note of
+  1,600,197 chars from one crafted wheel; two of its rows are red until the cap lands).
+- **#1944 (the links sentence, third sweep), head 060b9fe7.** The lane's account: Mantel-Haenszel odds ratio 3.41
+  (1.39 to 8.32), p 0.010, Breslow-Day 0.37, right-place links 43 of 80 to 54 of 76; without GPT-6 Luna 2.56
+  (0.95 to 6.94); errored runs as misses 2.44 (1.08 to 5.54). RELAYED: Shane keeps the sentence on. The
+  coordinator reviewed it as a results PR, confirmed the analysis plan was committed before the data, and asked
+  no change.
+- **#1938 (session-store slice 1), head b919c5c4.** Three repairs pushed and the measurements rerun; conclusions
+  unchanged by the lane's account. Its ranged-read memory figures are VOID (the baseline drifted) and are being
+  rerun with a fresh browser per configuration. Back with the reviewer.
+- **The scrub (feat/secret-registry-scrub, pushed head f752e4fc, no PR yet).** A failed registry read is to be a
+  housekeeping event, `secrets`/`registry-unreadable`, carrying no name and no value, and before the registry is
+  read no crossing treats it as empty. The red team's cold-start rows are on the branch.
+- **#1941 (upload progress over the hub) merged as 6e8a654b.** A follow-up keys upload entries by position, so a
+  send's cleanup clears only its own; it comes from a new branch.
+- **#1936 (`ml.sh` in the read-only dialect), head d44f67fd,** is queued for review. The red team's reorder of
+  the sh-put row replaces the coordinator's proposed split: the channel answers "no shell" before the arity
+  check, and the row asserts the malformed refusal by import.
+- **A fatal error inside a Python cell never answers (found on #1934, the lane's account).** A module whose
+  compile overflows the JS stack (an attribute chain of about 2,000 or more, where CPython raises RecursionError)
+  leaves the cell's promise unsettled; the RangeError escapes as an unhandled rejection, which a Worker does not
+  report as `onerror`, so the offscreen document hears nothing until a timer fires. Coordinator's call: first the
+  cheap repair on our side, an `unhandledrejection` listener in the Python worker that answers the pending cell
+  as a fatal error and marks the kernel dead, built by packages with a row that fails first; a patch to the
+  Pyodide fork (a fatal error rejects the run's promise; the parser's recursion guard trips before the JS stack)
+  goes to the Pyodide lane, which async wears and which owns the pin, only if the listener is measured not to
+  catch it. RELAYED: Shane told the packages lane to raise editing Pyodide with the coordinator.
 
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
