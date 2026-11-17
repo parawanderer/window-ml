@@ -111,15 +111,45 @@ and the row becomes small.
 
 **The writer.** `putHistory(hash, messages)` keeps, per live session, the message objects it last wrote (references
 only; the loop already holds the objects). At a checkpoint it compares by identity: positions past the last write
-are appended; a position whose object changed is put again; nothing else is written. Identity is the right test
-because the loop replaces a message rather than editing it (`sw-scrub.ts:71`, the system notes pushed at
-`sw-run-host.ts:1162-1165`). The `chrome.storage.local` resume snapshot (`persistRun`) stops carrying `messages` and
-names the store instead: `{ hash, historyCount }`. A run that is not saved (`ephemeral`) still gets its history
-written under its run id, deleted at settle as the snapshot is today, so an evicted worker can still resume it.
+are appended; a position whose object changed is put again; nothing else is written.
 
-**What is loaded.** Resume reads the VIEW's ranges, which today is the whole history. That is bounded by what the
-model was last sent, which had to fit its context window, not by how long the session has run. Everything else
-(transcript, export, the model's reads of older history) takes a range.
+**RULE: a message object is never mutated after it enters `messages`; a change replaces it.** Identity comparison is
+correct only under this rule, and the code today follows it: the resume scrub replaces (`messages[i] = { ...m, content
+}`, `sw-scrub.ts:71`), and the archive and move notes are pushed as new objects (`sw-run-host.ts:1162-1165`). The
+test that enforces it: in the test build, at each checkpoint, the writer also keeps a content hash of every position
+it has written and recomputes it for each position whose identity is unchanged; a hash that differs under an
+unchanged identity fails the test, naming the position. Image compaction (`session-store.ts:445-497`) is outside this
+rule's reach: it rewrites EVENTS, never `history` (`:445-447`), and copy-on-write: `replaceImages` returns new objects
+along a changed path and the originals untouched (`image-compact.ts:39-56`).
+
+The `chrome.storage.local` resume snapshot (`persistRun`) stops carrying `messages` and names the store instead:
+`{ hash, historyCount }`.
+
+**A run that is not saved** (`ephemeral`) still gets its history written, under its run id, so an evicted worker can
+still resume it. Those records:
+
+- are deleted when the run settles, as the snapshot is today;
+- are swept at worker start: a run-id history with no live run and no resumable snapshot (`bgRunResumable`) is a crash
+  between write and settle, and is deleted, with one housekeeping record;
+- are in no backup, archive or export, and count toward no session list and no budget row.
+
+**A failed write is recorded and shown.** The store gets an `onError` (today the worker builds it with none,
+`sw-sessions.ts:565`, §2): a failed flush is recorded in the housekeeping log (subsystem `sessions`, kind
+`write-failed`, the session's hash and how many events and history positions were not written) and shown on the
+session as one line saying what was not saved. The run continues. This is the same slice as the row change.
+
+**Eviction (ruled by the coordinator, 2026-11-17).** A protected session's excess is not paid for by the others:
+`planEviction` evicts down to `budget + protectedBytes`, where `protectedBytes` is what the protected sessions hold
+above the budget, and records that in the housekeeping log. A running session is never evicted for its own size.
+
+**State.** The four new stores, the migration pass's progress, the scrub cache of §4 and §6b, and §5's OPFS build
+file are each declared with `defineState` beside their store from the first commit, each with its row in
+`docs/dev/state.md`. The migration pass writes one housekeeping record per session moved and one per failure.
+
+**What is loaded.** Resume reads the VIEW's ranges. With no compaction the view is the whole history, so **this does
+not yet bound resume**: Shane's ruling (only a recent window is loaded) is met for every other reader, and for resume
+only once a compaction policy writes a smaller view ("Open", below). Everything else (transcript, export, the model's
+reads of older history) takes a range.
 
 **Expected cost after the change** (to be measured by the build, same script): rows written per step drop from O(N)
 to O(1), so the 800-step case above writes about 3.3 MB of history instead of 1.35 GB.
@@ -155,8 +185,12 @@ same scrub.
 
 - **Through `dereference`.** History positions get a pointer form, `@history:<from>-<to>` for messages and
   `@history:turn/<n>` for a turn, resolved by the worker from the `history` and `marks` stores. `dereference` already
-  pages, slices and pipes (`docs/dev/pointers.md`), so a long range is read the way a long tool output is. A range of
-  another session is refused (§6b says when that could change).
+  pages, slices and pipes (`docs/dev/pointers.md`), so a long range is read the way a long tool output is. Ranges are
+  over `history` positions (model messages), never event `seq`. A range of another session is refused (§6b says when
+  that could change).
+- **Who may read.** `@history:` resolves only inside the run that owns the session, checked on the worker's run record,
+  never on anything in the pointer text. A page-started run gets no `ml.current.history`, and `@history:` is refused
+  there.
 - **What `ml.current` shows.** `ml.current` is resolved up front and synchronous (`docs/spec/CURRENT_CONTEXT.md`, "It
   is all RESOLVED UP FRONT"), so it cannot read storage. It gains metadata only: `ml.current.history = { count, bytes,
   sent: [[from, to], ...], turns: [{ pos, ts }, ...] }`, read from the row and `marks`, which are small. A model sees
@@ -168,6 +202,10 @@ same scrub.
   cap. A message is bounded by what the model saw when it was written, so scrubbing it whole is bounded too. (The
   brief cites a section "The scrub as built" in SECRET_HANDLES.md; there is none. Its scrub section is "Scrubbing is
   by VALUE, in the harness", which ends "Not built". The built scrub is `src/secret-scrub.ts` and `sw-scrub.ts`.)
+- **The scrub cache.** Scrubbed chunks, where they are cached (§6b.2), are cached under a fingerprint of the secrets.
+  The cache and the fingerprint follow the secret registry's rule: in no backup, export or archive file, deleted with
+  the session, and the fingerprint is a KEYED value (an HMAC under a per-install key), never a bare hash of the
+  registry, which would let anyone holding the cache test a guessed secret against it.
 - **Images.** A range returns an image as its existing `@tool:`/image reference, never as an inline data URL, so
   reading old screenshots costs what the model asks for.
 
@@ -207,6 +245,9 @@ Each of these keeps a bound per step: one batch of events, a few MiB at most, ne
 
 ### a. The memory of `/files/` (FILE_ATTACHMENTS.md, "A session's files as a directory")
 
+**A proposal.** It takes effect only through an amendment to FILE_ATTACHMENTS.md, a separate spec PR after this one
+(accepted as a proposal by the coordinator, 2026-11-17); building it is assigned later.
+
 **Measured in that spec, not built** (`FILE_ATTACHMENTS.md:552-555`). The ruled mount is EAGER: at interpreter start
 every file's whole bytes are posted to the worker and held as ArrayBuffers, "one times the directory's size" (`:601`).
 A cell then reads into the wasm heap, which grows and never shrinks; the measured worst case is three times a file's
@@ -225,7 +266,8 @@ end to end, and reads 103 MB/s in 512 KiB chunks, with a chunked read working to
 the shelf by range** (`Blob.slice(a, b).arrayBuffer()` over the value store's blobs, `src/pointers/value-store.ts:236-242`,
 reads a range without loading the blob). Nothing is held until a file is read, and a read holds its range. Keep the
 eager MEMFS only below a small directory size, to be measured, where it is simpler and as cheap. Writes stay as ruled
-(MEMFS nodes, posted on close). This is the files-host lane's ground: the recommendation goes to it through the
+(MEMFS nodes, posted on close). A `python_install` candidate worker never gets the `/files/` mount (the packages
+lane's constraint): the worker that tries an install sees no session's files. This is the files-host lane's ground: the recommendation goes to it through the
 coordinator, and this spec builds nothing there.
 
 ### b. Archived history through that file system?
@@ -299,12 +341,39 @@ const rows = [row("big-running", 300 * MB, 1000), ...Array.from({ length: 40 }, 
 console.log(planEviction(rows, { protect: ["big-running"] }).length);   // 40
 ```
 
+## Slices
+
+In order. Each is one PR, with what it must not break.
+
+1. **The two unknown figures, measured in a real Chrome, as a notebook** (`notebooks/session-store/`): the service
+   worker's `jsHeapSizeLimit` and where it dies, and what `unlimitedStorage` does to IndexedDB and OPFS quota
+   (`navigator.storage.estimate()`). Small, no `src/` change. It decides the batch sizes in slices 4, 6 and 7.
+2. **The `history` and `runmeta` stores, the writer, the upgrade, `onError`, `historyBytes` in the budget** (§3).
+   Medium. Must not break: resume of a session saved by today's code (the upgrade fixture), a run resumed after
+   worker eviction, `ml.resumeChat`, the Storage page's figures.
+3. **`open()` without histories; the protected-session eviction rule** (§3). Small. Must not break: the session
+   list after a restart, a pinned session surviving, the housekeeping log's eviction records.
+4. **Ranged `events` reads, `session.backfill` by key range, the chat page's newest window** (§5). Medium. Changes
+   what a phone or hub receives: labels `@hub-compat` and `@mobile`, with the SESSION_CONTRACT.md diff saying that
+   opening a session sends a window with `from > 0` and that `session.backfill` is the way to the rest. Must not
+   break: an older phone app that never asks for earlier pages (it sees the newest window, which is the honest
+   degradation), the chat page's export pull.
+5. **`marks`, `views`, `ml.current.history`, `@history:`** (§4), with its red-team pass (a hostile page, a
+   page-started run, another session's range) and a prompt review. Medium. Must not break: `ml.current.messages`
+   as the wire, the existing pointer forms.
+6. **The batched archive move and backup; restore by stream** (§5). Large. Changes what a phone or hub receives:
+   an archived session is served by range from the archive, so `session.backfill` and opening a session answer for
+   it the same way as for a live one. Labels `@hub-compat` and `@mobile`, with the SESSION_CONTRACT.md diff saying an
+   archived session is paged like any other. Must not break: restoring every backup an older version wrote, the
+   archive folder's month files (byte-compatible) and its sync's merge.
+7. **Streaming export** (§5). Medium. Must not break: `export.schema.json` and the `run.json` diff rule
+   (`docs/dev/export.md`).
+8. **`/history/`** (§6b), after `/files/` exists.
+
 ## Open, for Shane through the coordinator
 
-- The window resume loads is the VIEW, which with no compaction is the whole history. Its bound is the compaction
-  policy's, which this spec leaves alone.
-- One protected session over the budget evicts every other session (§2). The narrow fix is to stop counting a
-  protected session's excess against the others: evict down to `budget + protectedBytes`, and record it in the
-  housekeeping log. Whether a running session may exceed the budget at all is a policy.
-- Two figures remain unknown and decide the batch sizes above: the extension service worker's heap limit, and what
-  `unlimitedStorage` does to IndexedDB and OPFS quota. Both are a one-page measurement in a real Chrome.
+- **What bounds resume before compaction exists.** Resume loads the VIEW, which with no compaction is the whole
+  history (§3, "What is loaded"). Until a policy writes a smaller view, resume is the one reader this spec does not
+  bound.
+- **Anything about what the model is SENT** (the view's contents, when it shrinks, what a stub says): compaction
+  policy, out of scope here.
