@@ -108,7 +108,9 @@ export function rejudgePending(): number {
     for (const [key, { descriptor: d }] of [...pendingApprovals]) {
         // Facts without resolved effects are left to the person: a person's `allow` that never reads `c.effects` would
         // otherwise answer a call whose effects nobody resolved, the case the built-in default sends to a card.
-        if ((d.consumer !== "fetch" && d.consumer !== "sh") || !d.facts || d.facts.effects === undefined) continue;
+        if ((d.consumer !== "fetch" && d.consumer !== "sh" && d.consumer !== "setting") || !d.facts || d.facts.effects === undefined) continue;
+        // A guarded setting always asks the person, in both directions (MODEL_SETTINGS.md): no policy answers its card.
+        if (d.consumer === "setting" && d.facts.class !== "ordinary") continue;
         const j = judgeCall(d.runId, d.consumer, d.facts, d.placement);
         if (!j.by || j.by === "builtin" || (j.decision !== "allow" && j.decision !== "deny")) continue;
         const said = `the policy "${j.by.label}" ${j.decision === "deny" ? "refuses" : "allows"} it`;

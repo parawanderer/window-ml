@@ -464,12 +464,14 @@ const STOPPED_SURVEY = "Error: the user cancelled the run while this survey was 
 /** {@link orStopped}'s answer when the run's signal aborted first. */
 const STOPPED: unique symbol = Symbol("stopped");
 
-const normalize = (d: ApprovalDecision, orig: Record<string, unknown>): { approved: boolean; feedback: string | null; arguments: Record<string, unknown>; source: "user" | "external" | "policy"; cancelled: boolean } => {
+const normalize = (d: ApprovalDecision, orig: Record<string, unknown>): { approved: boolean; feedback: string | null; arguments: Record<string, unknown>; source: "user" | "external" | "policy" | "worker"; cancelled: boolean } => {
     if (d && typeof d === "object") return {
         approved: !!d.approved,
         feedback: typeof d.feedback === "string" && d.feedback.trim() ? d.feedback.trim() : null,
         arguments: d.approved && d.arguments && typeof d.arguments === "object" ? d.arguments : orig,
-        source: d.source === "external" || d.source === "policy" ? d.source : "user",
+        source: d.source === "external" || d.source === "policy" || d.source === "worker" ? d.source : "user",
+        // The worker only ever closes a card as a denial.
+        ...(d.source === "worker" ? { approved: false } : {}),
         cancelled: !!d.cancelled,
     };
     return { approved: !!d, feedback: null, arguments: orig, source: "user", cancelled: false };
@@ -1101,7 +1103,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                         // A PERSON decided at the gate, so the gap before the next call is theirs — unless the decision
                         // came through the external channel (a harness, an orchestrator): that is code, in
                         // milliseconds, and there is no honest label for it, so it adds none.
-                        if (!(typeof rawDecision === "object" && (rawDecision?.source === "external" || rawDecision?.source === "policy"))) waited = "human";
+                        if (!(typeof rawDecision === "object" && (rawDecision?.source === "external" || rawDecision?.source === "policy" || rawDecision?.source === "worker"))) waited = "human";
                         const d = normalize(rawDecision as ApprovalDecision, args);
                         // CANCELLED while the gate was open (Stop pressed) — two channels, either suffices:
                         // `signal.aborted` (CANCEL_RUN aborted the run's controller) OR `d.cancelled` (CANCEL_RUN
@@ -1121,7 +1123,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                                 approval = "denied";
                                 // Attribute the denial accurately: a human in a browser surface, or an external
                                 // approver (the __mlApprovals IPC channel — an orchestrator / policy driver).
-                                const who = d.source === "external" ? "an external approver" : d.source === "policy" ? "a policy the person set while the card was showing" : "the user";
+                                const who = d.source === "external" ? "an external approver" : d.source === "policy" ? "a policy the person set while the card was showing" : d.source === "worker" ? "the extension, before the person answered" : "the user";
                                 result = d.feedback
                                     ? `Denied by ${who}: ${d.feedback}\nDo not retry this exact call unchanged; address the feedback or try another approach.`
                                     : `Denied by ${who}. Do not retry this exact call; try another approach.`;

@@ -304,6 +304,22 @@ change says it cannot be remembered. A card for a shell key (`shellEnabled`, `sh
 `shellPath`) shows the old and the new value verbatim, every path of a list in full and in order, never a count, a
 summary or a diff alone (ruling 2).
 
+Every card also shows the setting's name and tooltip as its row in DevTools Settings shows them, read from the one table
+both render from (`SETTING_TEXT`, `src/setting-text.ts`), so the person reads the same words in both places. The model
+reads none of that text: `ml.settings()` carries no names or tooltips, and neither the tool's description nor its
+results quote them, so a tooltip costs nothing in the prompt budget and is edited for the person alone.
+
+For `agentStartPage` the card also shows the new value's host. A host no `fetch` policy covers is asked like any
+other guarded change: the built-in default frees nothing, and an uncovered host is neither refused nor marked on
+the card as one. A host spelled two ways (an IDN and its punycode, a trailing dot) is judged as the URL parser
+reads it, the parser `navigateFacts` uses for the navigation itself.
+
+A card that closes because its setting changed elsewhere is a denial no one gave: the model reads "Denied by the
+extension, before the person answered" and the key's name, never its old or new value, and the run log gets a `setting`/`card-closed` record
+whose reason is `worker`. A guarded change declined by the person is not asked again in the same run: the call is
+refused with no card (the run's memory of it is in `storage.session`, so it outlives a worker restart and goes with
+the browser).
+
 **The write** is a compare-and-set against storage at the moment of the write: `from` is the value the worker read
 when it judged the call, which is the value the card shows; when the answer comes, the worker reads the key again and
 writes only if it still equals `from`. A change from anywhere else in between (the person in Settings, another
@@ -419,6 +435,11 @@ call this surface (above); what it can do is ask the model, in text, to call it.
    edited in DevTools Settings → Permissions with a three-way choice per key (off, read, read and change), the 21 keys
    of `ml.config()` marked readable regardless, and given a section id there so the model can link to it. It could
    only narrow ruling 2's set, never widen it past the secrets and the gate keys. Out of this spec.
+9. **`ml.settings()` in a read-only survey** (a follow-up PR of its own, after the surface). As built, `ml.settings()`
+   exists only on an isolated exec's `ml`, so every read of the settings costs the person an exec card. Bringing it
+   to the survey needs: an `ML_READONLY_METHODS` entry; the member on the wire only for a client of a run the worker
+   built; the secret and gate classes unreadable there as they are on the isolated exec; the dialect's adversarial
+   tests (`docs/dev/readonly-exec.md`, "The rule for extending the dialect"); and a red-team pass.
 
 ## Owners
 

@@ -323,6 +323,14 @@ system and user message:
   answers that misread a wake are the waits after a missed estimate. What stays open is what "this turn" and "this run"
   span, asked by three models. The words are shared with `ml.sh`'s detached text and the `task` tool, so that is the
   next prompt review's, not this text's.
+## `change_setting` reaches every run the worker builds (2026-11-17)
+
+`change_setting` (MODEL_SETTINGS.md) is offered by `startUserRun` to every run the worker builds, beside
+`propose_policy`, so its definition is paid on every call of such a run. It is 625 characters as sent (name,
+description, parameters); `propose_policy`'s is 1,199. Its description names `ml.settings()` and says the result names
+the old value; it quotes no setting's name or tooltip (those are the person's, on the card). The backend's
+`usage.prompt_tokens` delta is not measured yet: the next prompt review measures it with the bench, as for `task` above.
+
 ## Round 3, first finding: glm-4.7-flash's csv-total was the tool, not the prompt (2026-10-14)
 
 Round 2 left the `python_exec` cut unshipped because glm-4.7-flash lost csv-total under it. Reading its steps showed

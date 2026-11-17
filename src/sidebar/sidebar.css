@@ -4677,3 +4677,14 @@ pre.code.morphing { position: relative; }
 pre.code.morphing:not(.numbered) > code, pre.code.morphing .lcode { visibility: hidden; }   /* a numbered block keeps its gutter */
 .code-morph { position: absolute; inset: 0; pointer-events: none; white-space: pre; }
 .code-morph > span { position: absolute; }
+
+/* change_setting's card (card/setting-card-view.tsx): both values in full, never capped or scrolled away. */
+.setcard { display: flex; flex-direction: column; gap: 6px; font-size: .92em; line-height: 1.4; }
+.setcard-name { font-weight: 600; }
+.setcard-tip, .setcard-sync, .setcard-once { color: var(--fg-dim); }
+.setcard-reason { font-weight: 600; }
+.setcard-val { display: grid; grid-template-columns: 3.5em 1fr; gap: 2px 8px; }
+.setcard-val-label { color: var(--fg-dim); }
+.setcard-val-lines { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.setcard-line { font-family: var(--mono, ui-monospace, monospace); font-size: .9em; overflow-wrap: anywhere; white-space: pre-wrap; }
+.setcard-why-text { overflow-wrap: anywhere; }

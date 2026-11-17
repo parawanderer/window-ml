@@ -110,6 +110,10 @@ export interface RunAgentHostDeps {
      *  the page resolves for it: a `deny` refuses it without a card, an `allow` skips the card, an `ask` shows it. Undefined when
      *  none decides. */
     actPolicy?(tool: string, args: Record<string, unknown>): Promise<{ decision: "allow" | "deny" | "ask"; label: string; text?: string } | undefined>;
+    /** What the worker says of a `change_setting` call before any card (docs/spec/MODEL_SETTINGS.md): `refused` when the
+     *  key or value is refused, the key was declined earlier in the run, or a `deny` policy covers it; `allow` (the policy's
+     *  label) when an `allow` frees an ordinary key's change; undefined when the person is asked. */
+    settingPolicy?(args: Record<string, unknown>): Promise<{ refused: string } | { allow: string } | undefined>;
     /** The model's text when the run is held on a page a `deny` policy denies (sw/nav-arrival.ts): every call is refused
      *  with it, without a card; undefined when the run may act on its page. */
     arrivalRefused?(): string | undefined;
@@ -224,6 +228,13 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
                 return (deps.actPolicy?.(name, args) ?? Promise.resolve(undefined)).then((pol) => {
                     if (pol?.decision === "deny") return { approval: "denied" as const, refused: pol.text ?? `Refused by the policy "${pol.label}", without asking: the ${name} was not made. Do not retry it; the person set this rule.` };
                     return pol?.decision === "allow" ? { approval: "consented" as const, reused: [{ kind: "policy" as const, detail: pol.label }] } : null;
+                });
+            }
+            // change_setting: the `setting` consumer. Refused without a card, freed by an `allow` (ordinary keys only), or asked.
+            if (name === "change_setting") {
+                return (deps.settingPolicy?.(args) ?? Promise.resolve(undefined)).then((v) => {
+                    if (v && "refused" in v) return { approval: "denied" as const, refused: v.refused };
+                    return v ? { approval: "consented" as const, reused: [{ kind: "policy" as const, detail: v.allow }] } : null;
                 });
             }
             // navigate: the interactive mode of a fetch as you (docs/spec/POLICIES.md, "Navigate is a fetch"). A POLICY first,

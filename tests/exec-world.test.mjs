@@ -22,7 +22,7 @@ const ROOT = new URL("..", import.meta.url).pathname;
 
 // --- the route: every input ---
 
-const SCRIPTS = { plain: "document.title = 'x'; return 1", pointer: "return @tool:exec.length", current: "return ml.current.messages.length", sh: "return (await ml.sh.run([\"ls\"])).code" };
+const SCRIPTS = { plain: "document.title = 'x'; return 1", pointer: "return @tool:exec.length", current: "return ml.current.messages.length", settings: "return ml.settings().theme.value", sh: "return (await ml.sh.run([\"ls\"])).code" };
 /** Each policy that forces isolation, and none: [approved page, script]. */
 const FORCED = { pointer: [true, SCRIPTS.pointer], current: [true, SCRIPTS.current], sh: [true, SCRIPTS.sh], "unapproved-page": [false, SCRIPTS.plain], none: [true, SCRIPTS.plain] };
 const AVAIL = { userScripts: { userScripts: true, cdp: false }, cdp: { userScripts: false, cdp: true }, none: { userScripts: false, cdp: false } };
@@ -367,7 +367,7 @@ test("on the default build, a world-less read-only survey still auto-answers on 
 
 /** Every reason, placed: `page` keeps the survey's page leg, `script` is read off the script and loses it, `call` is
  *  never read off the script (the page's approval, the call's `world`, the default world). An unplaced one fails. */
-const LEG = { plain: "page", sh: "script", current: "script", pointer: "script", "unapproved-page": "call", requested: "call", default: "call" };
+const LEG = { plain: "page", sh: "script", current: "script", settings: "script", pointer: "script", "unapproved-page": "call", requested: "call", default: "call" };
 
 test("every route reason is placed for the survey's page leg, and only a plain script keeps it", () => {
     assert.deepEqual([...EXEC_REASONS].sort(), Object.keys(LEG).sort(), `a reason is not placed: ${EXEC_REASONS.filter((r) => !(r in LEG))}`);
