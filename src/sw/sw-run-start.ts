@@ -275,14 +275,22 @@ const pendingSteers = new Map<string, PendingSteer[]>();   // state: plumbing â€
 function flushPendingSteers(hash: string): void {
     const held = pendingSteers.get(hash);
     pendingSteers.delete(hash);
-    for (const m of held ?? []) if (!steerRun(hash, m.text, m.origin, m.display, m.images, m.shown)) { m.takeBack(); noteRefusedTurn(hash, "the run's turn did not start."); }
+    const refused = (held ?? []).filter((m) => !steerRun(hash, m.text, m.origin, m.display, m.images, m.shown));
+    takeBackAll(hash, refused);
 }
 
 /** The turn never hosted: each held message is taken back and said not to have been sent. */
 function dropPendingSteers(hash: string): void {
     const held = pendingSteers.get(hash);
     pendingSteers.delete(hash);
-    for (const m of held ?? []) { m.takeBack(); noteRefusedTurn(hash, "the run's turn did not start."); }
+    takeBackAll(hash, held ?? []);
+}
+
+/** Take back held messages newest first: each one's rollback restores `sends` only while it still holds that message's
+ *  own turn, so the oldest taken back first would find a later one's raise and leave the count high. */
+function takeBackAll(hash: string, held: readonly PendingSteer[]): void {
+    for (const m of [...held].reverse()) m.takeBack();
+    held.forEach(() => noteRefusedTurn(hash, "the run's turn did not start."));
 }
 
 /** A worker-built run's vision facts, for routing a later turn's images: the model it is on now, and what its build
@@ -381,6 +389,9 @@ export async function userRunAction(hash: string, action: "send" | "continue", b
     const added: FilePointer[] = [];
     const shelf = sessionTokens(hash).files;
     let rollBack: (() => void) | null = null;   // set once `noteSend` has recorded this message on the payloads
+    // The `shelf.drop` is not observable from outside today: `run.files` reads the payload and a rebuilt shelf re-notes
+    // from it, so the rollback alone keeps both right. It stays so this worker's live shelf never holds a pointer to a
+    // message that was not sent, whatever reads the shelf directly later.
     const takeBack = <T>(outcome: T): T => { shelf.drop(added.map((f) => f.id)); rollBack?.(); rollBack = null; return outcome; };
     const deliver = async (): Promise<"steer" | "turn" | "continued" | "busy" | "none"> => {
         // A message with nowhere to go holds nothing: a run at the end of its turn (its inbox closed) is busy, and one

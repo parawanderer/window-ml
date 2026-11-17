@@ -137,6 +137,24 @@ test("a message WITH a file held for a turn that never hosts is taken back whole
     assert.equal(await shelf(), null, "the rebuilt shelf does not hold it");
 });
 
+test("several messages held for a turn that never hosts are taken back together: sends returns to its starting value", T, async () => {
+    const r = await settled();
+    const sends = () => JSON.parse(JSON.stringify(r.bg.context.__mlRunPayloadsForTest(r.hash))).map((p) => p.sends);
+    const before = sends();
+    let release;
+    r.hold.adopt = new Promise((res) => { release = res; });
+    r.detach().finish({ text: "built" });
+    assert.ok(await until(r.starting));
+    for (const text of ["one", "two", "three"]) assert.equal(await r.bg.context.__mlUserRunActionForTest(r.hash, "send", { text, surface: "hud" }), "steer");
+    assert.notDeepEqual(sends(), before, "held: each raised the count while the turn starts");
+    r.hold.adopt = null;
+    r.bg.context.__mlCancelAllRunsForTest();
+    release();
+    assert.ok(await until(() => !r.starting()));
+    assert.ok(await until(() => r.notes().filter((x) => /^Your message was not sent: the run's turn did not start/.test(x)).length === 3), r.notes().join(" | "));
+    assert.deepEqual(sends(), before, "sends is back where it started, not one per message high");
+});
+
 test("notify-only: the result parks, the person sees the line, and the next message's turn reads it", T, async () => {
     const r = await settled({ taskNotifyOnly: true });
     const t = r.detach();
