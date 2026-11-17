@@ -9,7 +9,7 @@
 //
 // No `chrome` and no DOM: the local host, the hub host and the fake host all come through here unchanged.
 import { signal, type ReadonlySignal } from "@preact/signals";
-import type { Command, CommandError, CommandResult, HostStatus, RuntimeId, RuntimeInfo, SessionHost, SessionId, SessionIndexUpdate, SessionKey, SessionSummary, Unsubscribe } from "../session/session-host";
+import type { Command, CommandError, CommandResult, HostStatus, RuntimeId, RuntimeInfo, SendOptions, SessionHost, SessionId, SessionIndexUpdate, SessionKey, SessionSummary, Unsubscribe } from "../session/session-host";
 import { parseSessionKey, sessionKey } from "../session/session-host";
 import { awaitingStart, batchReduce, forgetSessionReduced, onDebug, titleTried } from "../sidebar/debug-reducer";
 import { rev, sessionMap, view } from "../sidebar/store";
@@ -417,7 +417,7 @@ export class ChatStore {
 
     /** Send a command. A failure becomes a notice as well as the result, so a button needs no error handling of its
      *  own to be honest about what happened. */
-    async send<C extends Command>(command: C, opts?: { signal?: AbortSignal; quiet?: boolean }): Promise<CommandResult<C["type"]>> {
+    async send<C extends Command>(command: C, opts?: SendOptions & { quiet?: boolean }): Promise<CommandResult<C["type"]>> {
         // A message a person sends says what this client can show (`ml.current.client.ui`): stamped here, the one
         // place every sender passes through, so no view has to remember it.
         if (this.ui && (command.type === "session.send" || command.type === "agent.start") && !("ui" in command)) command = { ...command, ui: [...this.ui] };
