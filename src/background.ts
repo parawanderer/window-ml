@@ -33,7 +33,7 @@ import { fetchSheetCsv, SHEET_URL_OK, sheetNameFromDisposition } from "./sw/sw-f
 import { executeServerTool, serverToolResult } from "./sw/sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, prepareRequest, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw/sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw/sw-events";
-import { configureSessionCommands, handleSessionTitle, ingestSessionEvent, keepSession, saveChatSession, senderPage, serveSessionsPort, sessionServer, sessionStorageStats, sessionStore, storageReport } from "./sw/sw-sessions";   // the cross-tab session index the chat page reads
+import { configureSessionCommands, handleSessionTitle, ingestSessionEvent, keepSession, liveHeldSessions, saveChatSession, senderPage, serveSessionsPort, sessionServer, sessionStorageStats, sessionStore, storageReport } from "./sw/sw-sessions";   // the cross-tab session index the chat page reads
 import { backupAction, backupFailure } from "./sw/sw-backup";   // backup and restore, for Settings
 import { folderAction } from "./sw/sw-archive";   // the session archive's folder, for Settings
 import { ensureHubRuntime, hubDevices, hubLog, hubState, revokeHubDevice, stopHubRuntime } from "./sw/sw-hub";   // this browser as a runtime on a hub
@@ -116,7 +116,7 @@ void housekeeping.start();
 // rehydrate — so a run that came back keeps its own tab — release the ones that did not.
 void hydrationDone.then(() => reconcileTabPins());
 // The value store's idle sweep: now, and on an alarm, since a worker evicted mid-run never releases what its session held.
-startValueSweeps();
+startValueSweeps(liveHeldSessions);   // its first pass releases held rows no session can end any more
 
 // TEST-ONLY (reachable only from the SW realm via serviceWorker.evaluate, like __mlApprovals — no page can
 // reach it, and nothing in prod calls it): simulate an MV3 eviction by dropping all in-memory run state, then

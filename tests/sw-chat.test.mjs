@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
     backgroundChats, cancelBackgroundChat, configureBackgroundChats, forgetBackgroundChat, isBackgroundChat,
-    sendBackgroundChat, startBackgroundChat, MAX_BG_CHATS, MAX_TURN_IMAGES, READER_PAGE_MAX, CHAT_PAGE_RECOVERY,
+    releaseEvictedChatFiles, sendBackgroundChat, startBackgroundChat, MAX_BG_CHATS, MAX_TURN_IMAGES, READER_PAGE_MAX, CHAT_PAGE_RECOVERY,
     pdfTextBudget, CHARS_PER_TOKEN, PDF_CONTEXT_SHARE, PDF_TEXT_FLOOR,
 } from "../src/sw/sw-chat.ts";
 import { FilesRefused, FILE_INLINE_MAX } from "../src/attached-files.ts";
@@ -15,7 +15,7 @@ const T = { timeout: 5000 };
 
 /** A worker whose model call, storage and clock are scriptable. `answer` may resolve, reject, or wait. `stream`, when
  *  given, is the worker's streamed call (a turn then takes it instead of `call`), and `clock` the worker's clock. */
-function world({ answer, stream, clock, plan, read, pdf, ctx } = {}) {
+function world({ answer, stream, clock, plan, read, pdf, ctx, hold } = {}) {
     const events = [];
     const stored = new Map();
     let pending = null;
@@ -35,12 +35,20 @@ function world({ answer, stream, clock, plan, read, pdf, ctx } = {}) {
         ...(pdf ? { pdf } : {}),
         // The context the model is loaded with: a number, a function of the model, or absent (not known).
         ...(ctx !== undefined ? { contextTokens: async (model) => { ctxAsked.push(model); return typeof ctx === "function" ? ctx(model) : ctx; } } : {}),
+        // The value store's held rows: `hold` decides each one (a key, or a throw); every row asked for is in `held`.
+        hold: async (blob, format, source, session) => {
+            const key = hold ? await hold(blob, format, source, session) : `row-${held.length + 1}`;
+            held.push({ key, format, source, session, size: blob.size });
+            return { key };
+        },
+        release: (session) => { released.push(session); },
     };
-    const asked = [], ctxAsked = [];
+    const asked = [], ctxAsked = [], held = [], released = [];
     configureBackgroundChats(deps);
     for (const hash of backgroundChats()) forgetBackgroundChat(hash);   // the module's map is worker-wide
+    released.length = 0;   // what that cleanup released is the previous test's
     return {
-        events, stored, deps, asked, ctxAsked,
+        events, stored, deps, asked, ctxAsked, held, released,
         kinds: () => events.map((e) => e.kind),
         of: (kind) => events.filter((e) => e.kind === kind),
         hold: () => new Promise((resolve) => { pending = resolve; }),
@@ -574,4 +582,195 @@ test("a scan past the cut asks no vision, draws nothing and refuses nothing", T,
     assert.deepEqual(r.calls.render, []);
     assert.equal(userOf(w).images, undefined);
     assert.match(userOf(w).content, /\npages 1-2 were not sent: past the text a message takes\./);
+});
+
+// --- a chat's PDFs held for its session, so read_pages can reach them after the message (FILE_ATTACHMENTS.md) ---
+
+/** The chat's saved record, once its turn is answered and written. */
+const recordOf = (w, hash) => w.stored.get(hash);
+
+test("an answered PDF is held for the chat's session as two rows, and its record lists keys and counts, never bytes", T, async () => {
+    const half = FILE_INLINE_MAX / 2;
+    const w = world({ pdf: reader(textDoc(half, half, 1, 5)) });
+    const hash = await startBackgroundChat({ text: "", files: [PDF] });
+    await until(() => w.of("chat-result").length === 1 && recordOf(w, hash), "the turn and its record");
+    assert.deepEqual(w.held.map((h) => [h.format, h.source, h.session]), [["bytes", "paper.pdf", hash], ["paged", "paper.pdf", hash]]);
+    assert.equal(w.held[0].size, 9, "the PDF's decoded bytes, not its base64");
+    assert.deepEqual(recordOf(w, hash).files, [{ name: "paper.pdf", pages: 4, sent: 2, data: "row-1", doc: "row-2" }]);
+    const json = JSON.stringify(recordOf(w, hash).files);
+    assert.ok(!json.includes(PDF.data) && !json.includes("text of"), "no bytes and no page text in the record");
+});
+
+test("a store that will not keep the PDF never fails the turn: the file is listed with no rows", T, async () => {
+    const w = world({ pdf: reader(textDoc(10)), hold: async (_b, format) => { if (format === "paged") throw Object.assign(new Error("does not fit"), { name: "ValueTooLarge" }); return "row-bytes"; } });
+    const hash = await startBackgroundChat({ text: "", files: [PDF] });
+    await until(() => w.of("chat-result").length === 1 && recordOf(w, hash), "the turn and its record");
+    assert.equal(w.of("chat-error").length, 0);
+    assert.deepEqual(recordOf(w, hash).files, [{ name: "paper.pdf", pages: 1, sent: 1 }]);
+});
+
+test("a failed turn holds nothing, and a text file or a chat with no files is never held", T, async () => {
+    let w = world({ pdf: reader(textDoc(10)), answer: () => Promise.reject(new Error("model down")) });
+    await startBackgroundChat({ text: "", files: [PDF] });
+    await until(() => w.of("chat-error").length === 1, "the failed turn");
+    assert.deepEqual(w.held, []);
+
+    w = world();
+    const hash = await startBackgroundChat({ text: "", files: [{ name: "a.txt", type: "text/plain", text: "hi" }] });
+    await until(() => recordOf(w, hash), "the record");
+    assert.deepEqual(w.held, []);
+    assert.equal("files" in recordOf(w, hash), false, "no files key on a chat that holds none");
+});
+
+test("a saved chat keeps its held list across an eviction, and a later PDF is added after it", T, async () => {
+    const w = world({ pdf: reader(textDoc(10)) });
+    const hash = await startBackgroundChat({ text: "", files: [PDF] });
+    await until(() => recordOf(w, hash)?.files, "the record");
+    for (const h of backgroundChats()) forgetBackgroundChat(h);   // the worker forgot it (and releases are recorded)
+    w.released.length = 0;
+    w.stored.set(hash, { ...recordOf(w, hash) });   // the forget above stands for an eviction; the record is still on disk
+    assert.equal(await sendBackgroundChat(hash, "again", undefined, [{ ...PDF, name: "second.pdf" }]), "turn");
+    await until(() => w.of("chat-result").length === 2 && recordOf(w, hash).files.length === 2, "the second turn");
+    assert.deepEqual(recordOf(w, hash).files.map((f) => f.name), ["paper.pdf", "second.pdf"]);
+});
+
+// The upgrade: a record written before chats held their files has no `files`, and must still resume.
+test("a record written before this change rehydrates with an empty held list, and its held-back note is today's", T, async () => {
+    const half = FILE_INLINE_MAX / 2;
+    const w = world({ pdf: reader(textDoc(half, half, 1)) });
+    const old = { hash: "oldchat1", messages: [{ role: "user", content: "hi" }, { role: "assistant", content: "hello" }], model: null, extend: null, numCtx: null, numGpu: null, think: null, schema: null, toolIds: null, maxTokens: null, save: true };
+    w.stored.set("oldchat1", old);
+    assert.equal(await sendBackgroundChat("oldchat1", "", undefined, [PDF]), "turn");
+    await until(() => w.of("chat-result").length === 1, "the turn");
+    assert.match(userOf(w).content, /page 3 was not sent: past the text a message takes\. This chat cannot show them\./);
+    assert.deepEqual(recordOf(w, "oldchat1").files.map((f) => f.name), ["paper.pdf"], "only the new message's file");
+});
+
+test("a stored list that is not one is cleaned: a nameless entry dropped, counts floored, half a pair of rows dropped", T, async () => {
+    const w = world();
+    w.stored.set("odd1", { hash: "odd1", messages: [], model: null, extend: null, numCtx: null, numGpu: null, think: null, schema: null, toolIds: null, maxTokens: null, save: true,
+        files: [{ pages: 3 }, "x", { name: "a.pdf", pages: 3.7, sent: 9, doc: "d1" }, { name: "b.pdf", pages: -1, sent: 0, doc: "d2", data: "b2" }] });
+    assert.equal(await sendBackgroundChat("odd1", "hi"), "turn");
+    await until(() => w.of("chat-result").length === 1 && recordOf(w, "odd1").messages.length === 2, "the turn");
+    assert.deepEqual(recordOf(w, "odd1").files, [{ name: "a.pdf", pages: 3, sent: 3 }, { name: "b.pdf", pages: 0, sent: 0, doc: "d2", data: "b2" }]);
+});
+
+test("deleting a chat releases its session's rows, whether or not the worker still had it in memory", T, async () => {
+    const w = world({ pdf: reader(textDoc(10)) });
+    const hash = await startBackgroundChat({ text: "", files: [PDF] });
+    await until(() => recordOf(w, hash), "the record");
+    forgetBackgroundChat(hash);
+    forgetBackgroundChat("notinmemory");
+    assert.deepEqual(w.released, [hash, "notinmemory"]);
+});
+
+test("a session leaving the live store releases a chat's rows only when its record lists files", T, async () => {
+    const w = world({ pdf: reader(textDoc(10)) });
+    const withFiles = await startBackgroundChat({ text: "", files: [PDF] });
+    const without = await startBackgroundChat({ text: "plain" });
+    await until(() => recordOf(w, withFiles)?.files && recordOf(w, without), "both records");
+    await releaseEvictedChatFiles(withFiles);
+    await releaseEvictedChatFiles(without);
+    await releaseEvictedChatFiles("nochat");
+    assert.deepEqual(w.released, [withFiles]);
+    for (const h of backgroundChats()) forgetBackgroundChat(h);
+    w.released.length = 0;
+    await releaseEvictedChatFiles(withFiles);   // read from its record, the chat not in memory
+    assert.deepEqual(w.released, [withFiles]);
+});
+
+test("an ephemeral chat pushed out of memory releases its rows, since nothing can read them again", T, async () => {
+    let t = 0;
+    const w = world({ pdf: reader(textDoc(10)), clock: () => ++t });
+    const eph = await startBackgroundChat({ text: "", files: [PDF], ephemeral: true });
+    await until(() => w.of("chat-result").length === 1, "the turn");
+    for (let i = 0; i < MAX_BG_CHATS; i++) await startBackgroundChat({ text: `c${i}` });
+    assert.ok(!isBackgroundChat(eph));
+    assert.deepEqual(w.released, [eph]);
+});
+
+// The held rows nothing can end: an ephemeral chat's, after a worker eviction took the map that would have released them.
+// The value sweep's first pass releases them (`releaseOrphanedHeld`), asking what is live only when it releases.
+
+const { createRequire } = await import("node:module");
+const { IDBFactory } = createRequire(import.meta.url)("fake-indexeddb");
+const { ValueStore } = await import("../src/pointers/value-store.ts");
+globalThis.chrome ??= { storage: { sync: { get: async (d) => d } }, alarms: { create() {}, onAlarm: { addListener() {} } } };
+const { firstValuePass, releaseOrphanedHeld } = await import("../src/sw/sw-values.ts");
+
+/** Wait until the async `fn()` is true: `until` reads a promise as true at once. */
+async function untilAsync(fn, what) {
+    for (let i = 0; i < 200; i++) {
+        if (await fn()) return;
+        await new Promise((r) => setTimeout(r, 5));
+    }
+    assert.fail(`timed out waiting for ${what}`);
+}
+
+/** A real value store on a fresh in-memory IndexedDB, and a chat world that holds its PDFs in it. */
+function heldWorld() {
+    const values = new ValueStore({ idb: new IDBFactory(), budgetBytes: () => 1e9 });
+    const w = world({ pdf: reader(textDoc(10)), hold: async (blob, format, source, session) => (await values.put(blob, { format, source, session, held: true })).key });
+    const heldBy = async (session) => (await values.rows()).filter((r) => r.held && r.sessions.includes(session)).length;
+    return { w, values, heldBy };
+}
+
+test("an ephemeral chat's rows, left behind by a worker eviction, are released by the sweep's first pass", T, async () => {
+    const { w, values, heldBy } = heldWorld();
+    const hash = await startBackgroundChat({ text: "", files: [PDF], ephemeral: true });
+    await until(() => w.of("chat-result").length === 1, "the turn");
+    await untilAsync(async () => (await heldBy(hash)) === 2, "both rows held");
+    assert.equal(await heldBy(hash), 2);
+    // A worker eviction: the map is gone and nothing released (the world's `release` only records).
+    for (const h of backgroundChats()) forgetBackgroundChat(h);
+    const released = await releaseOrphanedHeld((s) => isBackgroundChat(s), values);
+    assert.deepEqual(released, [hash]);
+    assert.equal(await heldBy(hash), 0, "no held row is left for the chat");
+});
+
+test("the pass keeps what a saved chat, an open tab and a chat in memory hold", T, async () => {
+    const { w, values, heldBy } = heldWorld();
+    const saved = await startBackgroundChat({ text: "", files: [PDF] });
+    await until(() => w.of("chat-result").length === 1 && recordOf(w, saved), "the saved chat's turn");
+    await untilAsync(async () => (await heldBy(saved)) === 2, "its rows");
+    await values.put(new Blob(["%PDF-1.4\n"]), { format: "bytes", source: "tab.pdf", session: "page:5", held: true });
+    for (const h of backgroundChats()) forgetBackgroundChat(h);
+    const live = await startBackgroundChat({ text: "", files: [PDF], ephemeral: true });
+    await untilAsync(async () => (await heldBy(live)) === 2, "the live chat's rows");
+    const savedSessions = new Set([saved]), tabs = new Set(["page:5"]);
+    assert.deepEqual(await releaseOrphanedHeld((s) => isBackgroundChat(s) || savedSessions.has(s) || tabs.has(s), values), []);
+    assert.equal(await heldBy(saved), 2, "the saved chat's");
+    assert.equal(await heldBy("page:5"), 1, "the open tab's");
+    assert.equal(await heldBy(live), 2, "the chat in memory's");
+});
+
+test("a session that becomes live while the pass reads the rows keeps them: live is asked at each release", T, async () => {
+    const values = new ValueStore({ idb: new IDBFactory(), budgetBytes: () => 1e9 });
+    await values.put(new Blob(["a"]), { format: "bytes", session: "late1", held: true });
+    await values.put(new Blob(["b"]), { format: "bytes", session: "dead1", held: true });
+    const liveNow = new Set();
+    // The rows are read first; the late session starts (as a chat would) before any release is decided.
+    const store = { rows: async () => { const r = await values.rows(); liveNow.add("late1"); return r; }, releaseSession: (s) => values.releaseSession(s) };
+    assert.deepEqual(await releaseOrphanedHeld((s) => liveNow.has(s), store), ["dead1"]);
+    assert.equal((await values.rows()).filter((r) => r.sessions.includes("late1")).length, 1);
+    assert.deepEqual(await releaseOrphanedHeld(() => false, null), [], "no store: nothing to do");
+});
+
+test("the first pass still sweeps when the live set cannot be read or the release fails, and then releases nothing", T, async () => {
+    const values = new ValueStore({ idb: new IDBFactory(), budgetBytes: () => 1e9 });
+    await values.put(new Blob(["a"]), { format: "bytes", session: "dead2", held: true });
+    let swept = 0;
+    const released = [];
+    const store = { rows: () => values.rows(), releaseSession: (s) => { released.push(s); return values.releaseSession(s); } };
+    // No session store, or one that will not open: liveSessions rejects.
+    await firstValuePass(() => Promise.reject(new Error("no session store")), () => { swept++; }, store);
+    assert.deepEqual(released, [], "nothing released when what is live cannot be told");
+    assert.equal(swept, 1, "the sweep still ran");
+    // The release itself failing (the store's read rejects).
+    await firstValuePass(async () => () => false, () => { swept++; }, { rows: () => Promise.reject(new Error("idb gone")), releaseSession: store.releaseSession });
+    assert.equal(swept, 2);
+    // And with a live set and no failure, it releases and sweeps.
+    await firstValuePass(async () => () => false, () => { swept++; }, store);
+    assert.deepEqual(released, ["dead2"]);
+    assert.equal(swept, 3);
 });
