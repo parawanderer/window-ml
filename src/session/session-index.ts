@@ -230,6 +230,10 @@ export class SessionIndex {
         if (src.page && !s.summary.page) s.summary.page = { ...src.page, ...(s.owner != null ? { tabId: s.owner } : {}) };
 
         if (this.isDuplicate(s, ev)) return { accepted: false, reason: "duplicate" };
+        // A resume MOVES the session's page, which the fill above never does once a row has one: `pageGone` left it
+        // the closed tab's url with no `tabId`, and `resumableHere` kept offering the resume. The worker's word only;
+        // a page's copy of a note is its own claim about a url. The old title belonged to the old page.
+        if (ev.kind === "session-resumed" && src.trusted && src.tabId != null) s.summary.page = { url: ev.url, tabId: src.tabId };
         this.fold(s, ev);
         this.coalesce(s, ev);
 
