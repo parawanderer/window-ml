@@ -35,7 +35,7 @@ globalThis.chrome = {
         local: { get: async (d) => ({ ...(d ?? {}) }), set: async () => {}, remove: async () => {} },
         sync: { get: async (d) => ({ ...(d ?? {}), ...sync }), set: async () => {} },
         session: { get: async () => ({}), set: async () => {}, remove: async () => {} },
-        onChanged: { addListener() {} },
+        onChanged: { listeners: [], addListener(f) { this.listeners.push(f); } },
     },
 };
 const { _setRegistryForTest, _coldRegistryForTest, registryReady } = await import("../src/sw/sw-secret-registry.ts");
@@ -281,5 +281,19 @@ test("a store that cannot be read fails every crossing closed, and the next cros
         fail = false;
         const again = await forModel(text);
         assert.equal(again.text, `token ${MARK}`);
+    });
+});
+
+test("a change that arrives while the first read is in flight is not overwritten by that read's older list", async () => {
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    await withStore(async () => { await gate; return { ml_secret_registry: [] }; }, async () => {
+        const read = registryReady();
+        for (const f of chrome.storage.onChanged.listeners) f({ ml_secret_registry: { newValue: [{ name: NAME, value: VALUE }] } }, "local");
+        assert.equal(forLive(`k ${VALUE}`), `k ${MARK}`, "after the change");
+        release();
+        await read;
+        assert.equal(forLive(`k ${VALUE}`), `k ${MARK}`, "after the older read lands");
+        assert.equal((await forModel(`k ${VALUE}`)).text, `k ${MARK}`);
     });
 });

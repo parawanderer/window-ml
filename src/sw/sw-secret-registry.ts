@@ -17,6 +17,8 @@ let loaded: Promise<void> | null = null;   // state: plumbing — the first read
 /** Whether the entries in memory are the stored ones: false until a read or a change succeeds. A crossing never reads
  *  an empty registry as "no secrets" while this is false. */
 let ready = false;   // state: plumbing — set by the first read, never unset
+/** How many changes `storage.onChanged` has delivered: a read that started before one does not adopt over it. */
+let changes = 0;   // state: plumbing — orders a read against the changes that arrive while it is in flight
 
 defineState({
     id: "secrets.registry", scope: "browser", realm: "worker", audience: "human", lostOn: [],
@@ -51,8 +53,10 @@ export function registryReady(): Promise<void> {
     if (!loaded) {
         const read = (async () => {
             if (typeof chrome === "undefined" || !chrome.storage?.local) { ready = true; return; }
+            const seen = changes;
             const got = await chrome.storage.local.get({ [SECRET_REGISTRY_KEY]: [] });
-            adopt(parse(got[SECRET_REGISTRY_KEY]));
+            // A change that arrived while the read was in flight is the later state: the read's list is older than it.
+            if (changes === seen) adopt(parse(got[SECRET_REGISTRY_KEY]));
             ready = true;
         })();
         loaded = read;
@@ -73,8 +77,8 @@ export function registryIsReady(): boolean {
 // Guarded: a module imported outside the worker (a test, a page bundle) has no `chrome` at import. The first read
 // starts here, so a crossing that cannot wait finds it done in all but the worker's first moments.
 if (typeof chrome !== "undefined") {
-    chrome.storage?.onChanged?.addListener((changes, area) => {
-        if (area === "local" && SECRET_REGISTRY_KEY in changes) { adopt(parse(changes[SECRET_REGISTRY_KEY].newValue)); ready = true; }
+    chrome.storage?.onChanged?.addListener((changed, area) => {
+        if (area === "local" && SECRET_REGISTRY_KEY in changed) { changes++; adopt(parse(changed[SECRET_REGISTRY_KEY].newValue)); ready = true; }
     });
     void registryReady().catch(() => { /* read again by the first crossing that awaits it */ });
 }
