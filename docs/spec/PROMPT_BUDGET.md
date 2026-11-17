@@ -277,8 +277,9 @@ sentence is there only when the run has tool tokens (off by default, when the pr
 feature). The idle clause is left out when `pythonIdleMinutes` is 0 (never reaped for idleness). Both figures follow the person's
 settings, read from the public config the run is assembled with.
 
-- **Size**: a default-kit prompt (every builtin tool, tool tokens, pipe, `ml.current`, vision) goes from 7,286 to 7,628
-  characters; the paragraph is 342 characters, 59 words, about 85 tokens at four characters a token (not measured
+- **Size**: a default-kit prompt (every builtin tool, tool tokens, pipe, `ml.current`, vision; the shell off, so the
+  list reads "A detached cell") goes from 7,257 to 7,583 characters; the paragraph is 326 characters, 56 words, about
+  82 tokens at four characters a token (not measured
   against a backend's `usage.prompt_tokens`, which this review did not run). The tool schemas are unchanged.
 - **Not measured on a bench**: whether the paragraph changes any model's behaviour. It adds facts and removes none, so
   the decision rule (no pass rate drops) has not been checked; the next sweep that touches the prompt should include it.
