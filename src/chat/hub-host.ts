@@ -26,8 +26,8 @@ import { StreamReader } from "../hub/seal";
 import { accountRevoker } from "../pairing/pairing-state";
 import { Role } from "../hub/wire";
 import type {
-    Command, CommandResult, HostStatus, Principal, RuntimeCapabilities, RuntimeId, RuntimeInfo, SessionHost, SessionId,
-    SessionIndexUpdate, SessionStreamMessage, StreamPosition, Unsubscribe,
+    Command, CommandResult, HostStatus, Principal, RuntimeCapabilities, RuntimeId, RuntimeInfo, SendOptions, SessionHost,
+    SessionId, SessionIndexUpdate, SessionStreamMessage, StreamPosition, Unsubscribe,
 } from "../session/session-host";
 import { IndexReader, decodeStreamFrame, eventsChannel, indexChannel, indexKeysChannel, keysChannel } from "../hub/runtime/session-relay";
 import type { Position } from "../hub/wire";
@@ -418,7 +418,7 @@ export class HubHost implements SessionHost {
         adapter.ringFromRuntime({ epoch: r.data.epoch, from: r.data.from + r.data.events.length, truncated: r.data.truncated });
     }
 
-    send<C extends Command>(command: C, opts?: { signal?: AbortSignal }): Promise<CommandResult<C["type"]>> {
+    send<C extends Command>(command: C, opts?: SendOptions): Promise<CommandResult<C["type"]>> {
         if (!this.conn) return Promise.resolve({ ok: false, error: { code: "unavailable", message: "not connected to the hub" } });
         return this.conn.send(command, opts);
     }

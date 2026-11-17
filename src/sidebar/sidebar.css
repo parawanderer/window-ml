@@ -983,6 +983,12 @@ textarea.cinput { resize: none; overflow-y: auto; line-height: 1.5; font: inheri
 .file-pill-info:hover, .file-pill-info:focus-visible { color: var(--fg-dim); }
 .file-pill.refused { border-color: var(--warn); border-radius: 14px; }
 .file-pill.refused .el-pill-txt { color: var(--warn); white-space: normal; }
+/* A file of a send still going to the runtime (`UploadStrip`): its chip over a bar of the share the runtime accepted. */
+.cupload { display: inline-flex; flex-direction: column; gap: 3px; max-width: 100%; }
+/* The determinate bar under an uploading file's chip: its width is the share of chunks the runtime accepted. */
+.upbar { position: relative; height: 2px; width: 100%; background: var(--border); border-radius: 2px; overflow: hidden; }
+.upbar > span { position: absolute; top: 0; bottom: 0; left: 0; background: var(--accent); border-radius: 2px; transition: width .15s ease-out; }
+@media (prefers-reduced-motion: reduce) { .upbar > span { transition: none; } }
 /* The files waiting in a composer, as a row of pills beside the image thumbnails. */
 .cfiles { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .cfiles .el-pill { margin-bottom: 0; }
