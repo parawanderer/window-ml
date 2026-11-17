@@ -1,0 +1,293 @@
+{
+  "machine": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpus": "Apple M5 Pro",
+    "ramGiB": 24,
+    "node": "v26.12.1",
+    "load": [
+      4.9609375,
+      4.89599609375,
+      5.14453125
+    ],
+    "loadAfter": [
+      8.35009765625,
+      5.7060546875,
+      5.42724609375
+    ]
+  },
+  "quick": false,
+  "at": "2026-11-17T11:43:43.258Z",
+  "browser": "151.0.7922.34",
+  "quota-default": {
+    "inWorker": {
+      "quota": 10737418808,
+      "usage": 568,
+      "persisted": false
+    },
+    "inPage": {
+      "quota": 10737418808,
+      "usage": 568
+    },
+    "disk": {
+      "totalBytes": 994610155520,
+      "freeBytes": 720052547584
+    }
+  },
+  "pageMemory": {
+    "jsHeapSizeLimit": 4395630592
+  },
+  "quota-unlimited": {
+    "inWorker": {
+      "quota": 720051909176,
+      "usage": 568,
+      "persisted": false
+    },
+    "inPage": {
+      "quota": 720051900984,
+      "usage": 568
+    },
+    "disk": {
+      "totalBytes": 994610155520,
+      "freeBytes": 720051900416
+    }
+  },
+  "messages": [
+    {
+      "mib": 1,
+      "via": "sendMessage",
+      "ok": true,
+      "ms": 3
+    },
+    {
+      "mib": 1,
+      "via": "port",
+      "ok": true,
+      "ms": 3
+    },
+    {
+      "mib": 32,
+      "via": "sendMessage",
+      "ok": true,
+      "ms": 82
+    },
+    {
+      "mib": 32,
+      "via": "port",
+      "ok": true,
+      "ms": 76
+    },
+    {
+      "mib": 63,
+      "via": "sendMessage",
+      "ok": true,
+      "ms": 159
+    },
+    {
+      "mib": 63,
+      "via": "port",
+      "ok": true,
+      "ms": 135
+    },
+    {
+      "mib": 64,
+      "via": "sendMessage",
+      "ok": true,
+      "ms": 150
+    },
+    {
+      "mib": 64,
+      "via": "port",
+      "ok": true,
+      "ms": 132
+    },
+    {
+      "mib": 65,
+      "via": "sendMessage",
+      "ok": false,
+      "error": "Error in invocation of runtime.sendMessage(optional string extensionId, any message, optional object options, optional function callback): Message exceeded maximum allowed size of 64MiB."
+    },
+    {
+      "mib": 65,
+      "via": "port",
+      "ok": false,
+      "error": "Message exceeded maximum allowed size of 64MiB."
+    },
+    {
+      "mib": 128,
+      "via": "sendMessage",
+      "ok": false,
+      "error": "Error in invocation of runtime.sendMessage(optional string extensionId, any message, optional object options, optional function callback): Message exceeded maximum allowed size of 64MiB."
+    },
+    {
+      "mib": 128,
+      "via": "port",
+      "ok": false,
+      "error": "Message exceeded maximum allowed size of 64MiB."
+    }
+  ],
+  "idb": [
+    {
+      "mib": 32,
+      "kind": "string",
+      "ok": true,
+      "putMs": 10,
+      "readBackOk": true,
+      "workerClosed": false
+    },
+    {
+      "mib": 32,
+      "kind": "object-of-strings",
+      "ok": true,
+      "putMs": 12,
+      "readBackOk": true,
+      "workerClosed": false
+    },
+    {
+      "mib": 64,
+      "kind": "string",
+      "ok": true,
+      "putMs": 17,
+      "readBackOk": true,
+      "workerClosed": false
+    },
+    {
+      "mib": 64,
+      "kind": "object-of-strings",
+      "ok": true,
+      "putMs": 26,
+      "readBackOk": true,
+      "workerClosed": false
+    },
+    {
+      "mib": 120,
+      "kind": "string",
+      "ok": true,
+      "putMs": 30,
+      "readBackOk": true,
+      "workerClosed": false
+    },
+    {
+      "mib": 120,
+      "kind": "object-of-strings",
+      "ok": true,
+      "putMs": 43,
+      "readBackOk": true,
+      "workerClosed": false
+    },
+    {
+      "mib": 127,
+      "kind": "string",
+      "ok": true,
+      "putMs": 33,
+      "readBackOk": true,
+      "workerClosed": false
+    },
+    {
+      "mib": 127,
+      "kind": "object-of-strings",
+      "ok": true,
+      "putMs": 52,
+      "readBackOk": true,
+      "workerClosed": false
+    },
+    {
+      "mib": 130,
+      "kind": "string",
+      "ok": true,
+      "putMs": 35,
+      "readBackOk": true,
+      "workerClosed": false
+    },
+    {
+      "mib": 130,
+      "kind": "object-of-strings",
+      "ok": true,
+      "putMs": 50,
+      "readBackOk": true,
+      "workerClosed": false
+    },
+    {
+      "mib": 256,
+      "kind": "string",
+      "ok": true,
+      "putMs": 97,
+      "readBackOk": true,
+      "workerClosed": false
+    },
+    {
+      "mib": 256,
+      "kind": "object-of-strings",
+      "ok": true,
+      "putMs": 126,
+      "readBackOk": true,
+      "workerClosed": false
+    },
+    {
+      "mib": 512,
+      "kind": "string",
+      "ok": false,
+      "died": true,
+      "error": "worker.evaluate: RangeError: Invalid string length",
+      "workerClosed": false
+    },
+    {
+      "mib": 512,
+      "kind": "object-of-strings",
+      "ok": true,
+      "putMs": 404,
+      "readBackOk": true,
+      "workerClosed": false
+    }
+  ],
+  "heap": [
+    {
+      "kind": "string",
+      "stepMiB": 64,
+      "capMiB": 6144,
+      "heapBefore": null,
+      "ended": "cap",
+      "mib": 6144,
+      "heldBytes": 6442450944,
+      "sampleSum": 7433,
+      "lastStepWrittenMiB": 6144,
+      "workerClosed": false,
+      "peakExtensionRssMiB": 3399,
+      "chromiumRssBeforeMiB": 2404,
+      "peakChromiumRssMiB": 3986,
+      "ms": 7632
+    },
+    {
+      "kind": "arraybuffer",
+      "stepMiB": 64,
+      "capMiB": 6144,
+      "heapBefore": null,
+      "ended": "cap",
+      "mib": 6144,
+      "heldBytes": 6442450944,
+      "sampleSum": 12573,
+      "lastStepWrittenMiB": 6144,
+      "workerClosed": false,
+      "peakExtensionRssMiB": 4361,
+      "chromiumRssBeforeMiB": 3493,
+      "peakChromiumRssMiB": 5112,
+      "ms": 1787
+    },
+    {
+      "kind": "objects",
+      "stepMiB": 64,
+      "capMiB": 6144,
+      "heapBefore": null,
+      "ended": "cap",
+      "mib": 6144,
+      "heldBytes": 96000000,
+      "sampleSum": 48000000,
+      "lastStepWrittenMiB": 6144,
+      "workerClosed": false,
+      "peakExtensionRssMiB": 5760,
+      "chromiumRssBeforeMiB": 6327,
+      "peakChromiumRssMiB": 6327,
+      "ms": 18847
+    }
+  ]
+}
