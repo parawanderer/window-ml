@@ -414,7 +414,7 @@ export function composeSystemPrompt(f: PromptFacts): string {
         if (has("python_exec")) systemPrompt += PYTHON_CLAUSE;
         else if (has("exec")) systemPrompt += EXEC_COMPUTE_CLAUSE;
         // Every lifetime in one list (rule 4b), once, so the model never counts on a thing that is gone.
-        systemPrompt += lifetimesClause(f.idleMin ?? lifetimeFigures(null).idleMin, f.capMin ?? lifetimeFigures(null).capMin, !!f.toolTokens);
+        systemPrompt += lifetimesClause(f.idleMin ?? lifetimeFigures(null).idleMin, f.capMin ?? lifetimeFigures(null).capMin, !!f.toolTokens, !!f.shell && has("exec"));
         // Its own run, as data: only where a survey reaches `ml.current`, which needs the read-only path to auto-run.
         if (f.current && has("exec")) systemPrompt += currentClause(has("agent_api_docs"));
         // Terminal access, only where the person turned it on and an `exec` script can reach it. The check on `ml.current` is named

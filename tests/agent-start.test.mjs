@@ -220,4 +220,8 @@ test("the lifetimes list names `@tool:` values only when the run has tool tokens
     assert.doesNotMatch(off, /@tool:/, "tokens off: the prompt says nothing of the feature");
     assert.match(on, /`@tool:` values: this session; gone if the extension's worker restarts/);
     for (const p of [off, on]) assert.equal(siteInstructions(p, ["exec"]), "");
+    const sh = composeSystemPrompt({ names: ["exec"], shell: true });
+    assert.match(sh, /A detached `ml\.sh` call or cell: runs on/, "the shell on: the call is named");
+    assert.match(off, /A detached cell: runs on/, "the shell off: only the cell, and `ml.sh` is not named");
+    assert.equal(siteInstructions(sh, ["exec"]).includes("HOW LONG"), false);
 });
