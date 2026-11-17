@@ -31,6 +31,16 @@ export const REAP_LIVE_MS = 30 * 60_000;
 /** How long a worker holding a namespace between turns may sit idle by default (the `pythonIdleMinutes` setting, 10). */
 export const DEFAULT_REAP_BETWEEN_MS = 10 * 60_000;
 
+/**
+ * The `pythonIdleMinutes` setting as minutes: a finite number from 0 up (0 never reaps for idleness), else the default.
+ * @param v what the setting holds
+ * @param dflt the default, in minutes
+ */
+export function idleMinutes(v: unknown, dflt: number): number {
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? n : dflt;
+}
+
 /** The longest delay `setTimeout` keeps: a longer one wraps and fires at once (2^31-1 ms, about 24.8 days). */
 export const MAX_TIMER_MS = 2 ** 31 - 1;
 
