@@ -83,6 +83,15 @@ test("readScan keeps truncated only when it is exactly true, and reached only wh
     assert.equal(readScan({ findings: [], reached: Infinity }).reached, 0);
 });
 
+test("readScan cuts a name past 120 characters to 120 and an ellipsis, in what, in and every chain entry, and leaves one at 120 whole", () => {
+    const at = `pkg.${"a".repeat(116)}`;
+    const long = `pkg.${"b".repeat(300)}`;
+    const f = readScan(scan(F({ kind: "missing", what: long, in: long, chain: [at, long] }))).findings[0];
+    assert.equal(at.length, 120);
+    for (const v of [f.what, f.in, f.chain[1]]) assert.equal(v, `${long.slice(0, 120)}…`);
+    assert.equal(f.chain[0], at, "a name at the cap is kept whole");
+});
+
 // --- the note the model reads ---
 
 test("scanNote is empty for null, for no findings, and when module matches no finding's chain[0]", () => {

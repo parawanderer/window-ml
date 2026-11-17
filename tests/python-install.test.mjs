@@ -362,6 +362,23 @@ test("no finding, and no scan at all, leave the result as it was", { ...T, skip:
     }
 });
 
+test("the run log's scan line is fitted to the string cap by whole findings, and keeps the count of every finding", { ...T, skip: SKIP }, async () => {
+    const findings = [0, 1, 2, 3, 4, 5].map((i) => ({ ...SUBPROCESS, in: `tabulate.m${i}`, chain: ["tabulate", `tabulate.m${i}`] }));
+    const r = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]), onPyInstallTest: () => ({ ok: true, scan: { findings, reached: 7 } }) });
+    const d = r.pkgInstalls[0].detail;
+    assert.equal(d.scan, [0, 1, 2, 3, 4].map((i) => `call subprocess.run in tabulate.m${i}`).join("; "), "five whole findings: the sixth would pass 200 characters");
+    assert.ok(d.scan.length <= 200);
+    assert.equal(d.scanFindings, 6);
+    assert.equal("scanTruncated" in d, false);
+});
+
+test("a scan that stopped at its bounds is flagged in the run log, and one that did not answer is logged as lost", { ...T, skip: SKIP }, async () => {
+    const r = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]), onPyInstallTest: () => ({ ok: true, scan: { findings: [SUBPROCESS], reached: 2000, truncated: true } }) });
+    assert.deepEqual([r.pkgInstalls[0].detail.scanTruncated, r.pkgInstalls[0].detail.scanFindings, r.pkgInstalls[0].detail.scanLost], [true, 1, undefined]);
+    const lost = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]), onPyInstallTest: () => ({ ok: true, scan: null }) });
+    assert.deepEqual([lost.pkgInstalls[0].detail.scanLost, lost.pkgInstalls[0].detail.scanFindings], [true, undefined]);
+});
+
 test("a failed import's reason carries the scan's finding when it is reached from the failing module, and only then", { ...T, skip: SKIP }, async () => {
     const r = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]), onPyInstallTest: () => ({ ok: false, module: "tabulate", error: "OSError: [Errno 138] Not supported", scan: { findings: [SUBPROCESS, RESOURCE], reached: 3 } }) });
     assert.equal(r.results[0], `Not installed: importing tabulate failed: OSError: [Errno 138] Not supported. The platform scan found: tabulate.cli calls subprocess.run at import time, which fails in this sandbox. ${KEPT}`);

@@ -314,22 +314,27 @@ def analyze_module(src, modname, is_pkg):
                     facts["calls"].append(("threading.Thread.start", "runtime", frozenset(caught)))
                 scan_expr(st, caught, facts, assigns)
 
-    top = new_facts()
-    visit(tree.body, set(), top, True, True, {}, set())
-    funcs = {}
-    for st in tree.body:
-        if isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            f = new_facts()
-            visit(st.body, set(), f, False, False, {}, set())
-            funcs[st.name] = f
-        elif isinstance(st, ast.ClassDef):
-            for m in st.body:
-                if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    f = new_facts()
-                    current_class[0] = st.name
-                    visit(m.body, set(), f, False, False, {}, set())
-                    current_class[0] = None
-                    funcs[st.name + "." + m.name] = f
+    # A tree that parsed can still be too deep for the walk (obj.a.a...a() past the recursion limit reaches _dotted,
+    # ast.unparse and _decide recursively): the module is unparsed, as when the parser refused it.
+    try:
+        top = new_facts()
+        visit(tree.body, set(), top, True, True, {}, set())
+        funcs = {}
+        for st in tree.body:
+            if isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                f = new_facts()
+                visit(st.body, set(), f, False, False, {}, set())
+                funcs[st.name] = f
+            elif isinstance(st, ast.ClassDef):
+                for m in st.body:
+                    if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        f = new_facts()
+                        current_class[0] = st.name
+                        visit(m.body, set(), f, False, False, {}, set())
+                        current_class[0] = None
+                        funcs[st.name + "." + m.name] = f
+    except (RecursionError, MemoryError):
+        return {"imports": [], "calls": [], "called": [], "raises": [], "funcs": {}, "unparsed": True}
     return top | {"funcs": funcs}
 
 

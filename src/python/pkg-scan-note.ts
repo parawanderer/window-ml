@@ -31,8 +31,20 @@ export const SCAN_BOUNDS = { modules: 2000, fileBytes: 2 * 1024 * 1024, totalByt
 /** A dotted name the scan built from the package's paths and identifiers; anything else is not shown. */
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*(\(\))?$/;
 
+/** A name the note may show: a dotted name (its length is bounded after, by `cut`). */
+const isName = (v: unknown): v is string => typeof v === "string" && NAME.test(v);
+
 /**
- * Read a scan cell's answer, keeping only findings whose every field is a name: anything else in it is dropped.
+ * The longest name a finding keeps. Its last part can be an identifier the package's source chose, which has no length
+ * limit, so a longer name is cut here rather than setting the length of the note, the log line and the kept copy.
+ */
+const MAX_NAME = 120;
+
+/** A name cut to MAX_NAME characters, marked with an ellipsis when it was cut. */
+const cut = (v: string): string => (v.length > MAX_NAME ? `${v.slice(0, MAX_NAME)}…` : v);
+
+/**
+ * Read a scan cell's answer, keeping only findings whose every field is a name (`isName`): anything else in it is dropped.
  * @param raw the cell's JSON value
  * @returns the scan, or null when it did not answer one
  */
@@ -42,9 +54,9 @@ export function readScan(raw: unknown): ScanResult | null {
     if (!v || typeof v !== "object" || !Array.isArray((v as ScanResult).findings)) return null;
     const r = v as ScanResult;
     const findings = r.findings.filter((f): f is ScanFinding => !!f && ["call", "missing", "raise"].includes(f.kind)
-        && typeof f.in === "string" && NAME.test(f.in) && typeof f.what === "string" && (f.kind === "raise" ? f.what === "" : NAME.test(f.what) || (f.kind === "call" && /^dlopen-(system|unknown)$/.test(f.what)))
-        && Array.isArray(f.chain) && f.chain.length > 0 && f.chain.every((c) => typeof c === "string" && NAME.test(c)))
-        .slice(0, SCAN_BOUNDS.findings).map(({ kind, what, in: where, chain }) => ({ kind, what, in: where, chain: [...chain] }));
+        && isName(f.in) && typeof f.what === "string" && (f.kind === "raise" ? f.what === "" : isName(f.what) || (f.kind === "call" && /^dlopen-(system|unknown)$/.test(f.what)))
+        && Array.isArray(f.chain) && f.chain.length > 0 && f.chain.every(isName))
+        .slice(0, SCAN_BOUNDS.findings).map(({ kind, what, in: where, chain }) => ({ kind, what: cut(what), in: cut(where), chain: chain.map(cut) }));
     return { findings, reached: Number.isFinite(r.reached) ? Number(r.reached) : 0, ...(r.truncated === true ? { truncated: true } : {}) };
 }
 

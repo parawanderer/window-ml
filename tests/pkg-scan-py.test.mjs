@@ -35,6 +35,7 @@ const PACKAGES = {
     sidefx: [["sidefx.py", "import builtins\nbuiltins.SCAN_RAN_SIDEFX = True\n"]],
     deep: [["deep.py", `x = ${"(".repeat(400)}1${")".repeat(400)}\nimport resource\n`]],
     nosyntax: [["nosyntax.py", "def (:\n"]],
+    chain: [["chain.py", `obj${".a".repeat(1200)}()\nimport resource\n`]],
     huge: [["huge/__init__.py", "import huge.big\n"], ["huge/big.py", `# ${"x".repeat(SCAN_BOUNDS.fileBytes + 10)}\nimport resource\n`]],
 };
 
@@ -112,6 +113,14 @@ test("RED TEAM: a source the parser refuses (nesting past its limit, bad syntax)
         assert.deepEqual(brief(r), [], m);
         assert.equal(r.reached, 1, m);
     }
+});
+
+test("RED TEAM: a source that parses but is too deep to walk (a 1200-attribute call chain) is skipped and the scan still answers", T, async () => {
+    // 1000 to 1500 attributes parse in this core and then pass the recursion limit in the walk; from about 2000 the
+    // parser overflows the JS stack and the interpreter dies, which the candidate survives by a fresh worker.
+    const r = await scan(["chain"]);
+    assert.deepEqual(brief(r), []);
+    assert.equal(r.reached, 1);
 });
 
 test("RED TEAM: a file past the size bound is not read, and the scan says it stopped short", T, async () => {
