@@ -53,10 +53,12 @@ test("the model may change a setting only with a row in DevTools Settings, and n
 });
 
 test("the secrets and the gate keys are exactly the ruled ones", async () => {
-    // The secret class is what the error scrubber takes out, plus the legacy site list: computed, so a key added to the
-    // scrubber and classified anything else reds here.
+    // The ruled five as a literal, held against both the scrubber's list (plus the legacy site list) and the class
+    // table: a key dropped from both, or added to one, reds here.
+    const RULED = ["apiKey", "chatUrl", "modelFilter", "pageApprovalDomains", "priceSnapshotUrl"];
     const { SECRET_KEYS } = await import("../src/sw/sw-scrub.ts");
-    assert.deepEqual(ofClass("secret"), [...SECRET_KEYS, "pageApprovalDomains"].sort());
+    assert.deepEqual([...SECRET_KEYS, "pageApprovalDomains"].sort(), RULED);
+    assert.deepEqual(ofClass("secret"), RULED);
     assert.deepEqual(ofClass("gate"), ["autoApprovePython", "autoApproveReadonly", "autoApproveSelfSource"]);
     assert.equal(ofClass("guarded").length, 22);
 });
