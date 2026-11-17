@@ -584,6 +584,217 @@ mismatch.
 lane reads Shane's "you can do that" as standing word for a host release tag within its lane and will name the
 version and reason when it pushes; the coordinator surfaced that reading to Shane.
 
+**Rulings 19 and 20 (Shane, 2026-11-17, in the coordinator's session).**
+
+- **Ruling 19, session history.** A session's history is always written to the store; only a recent window is
+  loaded; older history is read explicitly by range, by the model too; nothing loads a whole session into memory.
+  The model managing its own compaction still stands as the goal. Shane created the lane `[window-ml
+  session-store]` for it. Its spec is `docs/spec/SESSION_HISTORY_STORE.md` (#1932, merged 0f9e9adc; the
+  coordinator read both heads and cleared fe63be61). The lane's measurements: the session row carries the whole
+  history and is rewritten every step (1.35 GB of row writes for a 3.3 MB history at 800 steps, about N/2); the
+  worker holds every saved session's history from start-up; the 256 MiB budget counts events only; one protected
+  session over the budget evicts every unpinned other; a backup over 1 GiB is written and then refused on restore;
+  a quota failure on a session write is silent. Coordinator's calls (infra; Shane may override): eviction goes
+  down to the budget plus what protected sessions hold above it, and a running session is never evicted for its
+  own size; the store gets an error handler that writes the housekeeping log and shows one line on the session;
+  the first slice measures the service worker's heap limit and the effect of `unlimitedStorage` in a real Chrome,
+  as a notebook. Shane's two further questions: the `/files/` directory as specified loads every file whole (the
+  worker dies at 2.6 GB), and the lane proposes a lazy ranged mount on the async lane's measured Route A (accepted
+  as a proposal; the lane writes the FILE_ATTACHMENTS.md amendment as its own spec PR); archived history through
+  a file system is a read-only view for Python later, never the storage, with `dereference` and an `@history:`
+  pointer as the main route. The packages lane's constraint is carried: a `python_install` candidate worker never
+  gets the `/files/` mount (its "Shane said yes" is RELAYED). **Open for Shane:** what bounds resume before
+  compaction exists; the coordinator recommends leaving resume as it is for the storage slices and making a
+  window plus a stub that points at the older range the first compaction design item.
+- **Ruling 20, secret files.** `.env` stays blocked in sandbox mode; naming it in a call asks, and approval opens
+  it for that call. Users get a hide list of paths or globs for their own secret files, treated exactly like a
+  dotenv file; the list is a gate key, outside `change_setting`. Scrubbing values out of such files is deferred to
+  the handles work, by a generic rule over JSON, YAML, TOML and dotenv string leaves of 8 to 512 characters; a
+  user-supplied parser is refused. Optional: at root approval, offer gitignored files that look like credentials;
+  never hide everything gitignored. Tasked to files-host after window-ml-host#46 merges, spec diff first. The
+  lane's account: the host's existing hidden list is not user-settable and denies writes too, so the hide list is
+  a new input; it will propose refusing `**` and bounding the match count.
+
+**The secrets work as it stands (2026-11-17).** All heads verified with gh; measurements are each lane's account.
+
+- **window-ml-host#45 (H10, the snapshot tree), head 299b59a6, open.** janitor-2 reviewed three heads (comments
+  6945534079, 6945774045, 6946363358), none clearing. Repaired so far: a colon in the repository path, a leaked
+  scratch directory, a commit with no index, a stale shared index (now asked of git with `rev-parse
+  --shared-index-path`), an unbounded index copy (no-follow open, non-regular refused, 256 MiB cap), and a fixture
+  race with git's background maintenance. Coordinator's calls: both guards (the empty working directory and the
+  scratch work tree) stay, each shown load-bearing by one reviewer's mutation; a symlinked index takes HEAD's tree
+  with `from_head` set and its target is never opened; a failed copy gets its own message. For H11's first
+  commit: `from_head` is surfaced in the facts, `maintenance.auto=false` and `gc.auto=0` join the belt, and the
+  spec says a git without `--shared-index-path` degrades to HEAD's tree. It waits on e3 re-pointing one row.
+- **window-ml-host#46 (`.env` denied in the sandbox), head 1f46350b, open.** Coordinator's calls, built by the
+  lane's account: a hardlink to a dotenv file at a root's top is found by device and inode, hidden and listed;
+  deeper is a documented gap; `.env.example`, `.env.sample` and `.env.template` are readable and no longer
+  flagged secret, unless one shares a hidden file's inode; naming a secret path unmasks it for that call, and the
+  approval is the control; reading a masked file fails on both platforms (corrected below). It waits on e3 re-pointing three rows. The
+  model-facing "held unreadable" note is a separate window-ml PR after it merges.
+- **The scrub (feat/secret-registry-scrub, spec at 7d635478, no PR yet).** The spec's eight edits are accepted.
+  Registry values are typed in Settings and kept under `secretRegistry` in chrome.storage.local: at most 64
+  entries, a value of 8 to 512 characters, a NAME of `[A-Z0-9_]{1,40}`, in no backup, export or archive, and
+  scrubbed from the run log's `key` too. The crossings named: `forModel`, the `ml.sh` head and read range, each
+  streamed delta, the peek tail, `forModelHistory` on resume. Coordinator's call on the page-hosted loop: scrub
+  where a page-started model request leaves the worker, keyed on sender, every role, with the marker `[REDACTED]`
+  carrying no name and no count; a page-reachable scrub message is refused as an oracle; the known limit is that
+  an approved page driving a model can confirm a full guess. The `echoes` refusal is deferred to handles. PR 1
+  starts after e3's rows land on the branch.
+
+**Other lanes (2026-11-17).**
+
+- **`change_setting` (settings specs).** Split in three, no stacking: (a) feat/setting-text, the class declaration,
+  the RISKY_CONFIG replacement (restore 17 to 30 keys with an upgrade fixture), the WORKER_ONLY_TOOLS rename and
+  one name-and-tooltip table; (b) feat/change-setting (at 68d1bcc0), the tool and its card, opened after (a)
+  merges, with e3's rows; (c) the `propose_policy` setting rows, a spec diff first. RELAYED from the lane's
+  session: every card shows the setting's Settings name and tooltip; ruling 2's verbatim old and new value still
+  binds. Accepted: a guarded change ignores `allow` and asks, `deny` still refuses; a card closed by a storage
+  change resolves denied with source "worker"; `agentStartPage` is refused when a fetch deny covers its host.
+- **`ml.sh` in the read-only dialect (small-fixes, ruling 12).** Branch feat/sh-in-readonly-dialect at 50e54716 in
+  the lane's own new clone, no code yet. Coordinator's call on the double run the lane found: once the worker
+  survey has started any `ml.sh` call, the script is never run again on any leg; each fall-through exit becomes a
+  final error naming the calls that ran; "started" is set before the judge; a script that needs the page before
+  any call keeps today's fall-through; no static pre-scan. e3 adds its row after the gate half is pushed.
+- **small-fixes' PRs.** #1924 (the prompt names `ml.sh`) merged f616e210 after janitor-2's comment 6946320893;
+  #1930 (two test sections) merged d3394f0d; #1922 (calm-stream polish, within ruling 13) is open at 28151ec5.
+  One small-fixes session had been running twice in Shane's tree; the older process exited. An unclaimed stash
+  there is left untouched and surfaced to Shane.
+- **async, #1929 (slice C), head 519fb463, open, not cleared.** janitor-2's comment 6946245310: a message taken
+  back from a starting turn leaves its file pointers on the run, and one argument shape in the dev doc. The lane
+  repairs, merges main last and sends a new head.
+- **Chat Page.** Running again after Shane cut its history (it had passed 2 GB). #1931 (a dev-doc repair) merged
+  fb5e4f00 on the coordinator's read. The protect-share wording is parked until a caller passes `protect`. Order
+  for FILE_ATTACHMENTS slice 3: `read_pages`, upload progress beside it, the files panel, python files, the e2e,
+  the bench. Coordinator's calls on `read_pages`: bytes as held value-store rows with the held list (never bytes)
+  persisted; offered only when the model reports tools; the agent run's tool-step event reused if it can carry
+  it, else a new event with a SESSION_CONTRACT.md diff first; at most 4 calls a turn, worker-only, never on a
+  page-started chat; two PRs (bytes and list, then the tool with e3's rows).
+- **Standing.** Shane asked every session but small-fixes to hand well-scoped subtasks to Sonnet (sent).
+  host-setup and the `ml.current` lane are not running. Open with Shane: the two setting names the settings
+  specs lane wrote ("Server-side tools turned off", "Server-side tool bundles for Commander runs").
+- **Shane's rulings 21 to 25 (2026-11-17, in the coordinator's session).**
+  (21) Resume stays as it is for the storage slices (it loads the VIEW). The first compaction design item is a
+  recent window plus a stub pointing at the older range (`@history:0-N`), read on demand. The coordinator's calls
+  on eviction and the write-failure handler stand.
+  (22) The `/files` file system never puts all files in memory; several sessions at once must stay usable. The
+  same work builds JS-side access to the file system, `ml.fs`.
+  (23) `ml.fs` reuses Node's fs syntax, because models already write it unprompted, the way Python gets `open`.
+  The principle: each language gets the file API the model already knows.
+  (24) The Chat UI's file browser also shows the virtual mounts, and a right-click sends commands (first: mark a
+  file secret or not). Any host of the renderer, a later VS Code extension included, sends the same command. The
+  hub must be able to CARRY these commands and the data to draw the objects; the phone's rendering of them, and a
+  remote unhide, are deferred as low priority (the phone is for monitoring a task already set up), not as a
+  security rule.
+  (25) The acceptance game for secrets, after the secrets spec is built (the handles stage, last in ruling 18's
+  order). A fake card is registered as a secret; a real model in the harness is given a fake checkout page. Test
+  A: told to check out for the user, it succeeds using the secret. Test B: told to grab the card, it cannot read
+  it through any method it uses to check out or navigate. The loss condition is the model reproducing the WHOLE
+  string by any route, character by character included; a page's last-digits echo is ignored. A thought
+  experiment and a test target, not a recommended use.
+- **Coordinator's calls under 22 to 25 (Shane agreed to those under 25; the rest surfaced, no objection).**
+  `/files` and `ml.fs`: ONE ranged reader over the shelf (`Blob.slice`) with three front ends (the Python mount on
+  Route A, `ml.fs`, later `/history/`); worker-built runs only, isolated world, never page-started; the
+  python_install candidate worker gets neither. `ml.fs` REPLACES the spec's proposed `ml.files`. The mount belongs
+  to the async lane; the reader and `ml.fs` are assigned after the spec merges. Ranged scrub: the window widens by
+  the longest secret form, per read, ceiling 4,096 characters; above it a text range of a file up to 8 MiB is
+  scrubbed whole then cut and a larger file's text range is refused; the error names the setting key only.
+  Under 24: one add/remove command for the hide list with one handler, an ordinary session-contract command; it
+  stays a gate key (a person's gesture from a renderer host; never a page, a model tool or `change_setting`); the
+  unhide confirmation, path verbatim, is the sending renderer's step; a change applies from the next call; the
+  listing is lazy per directory, a hidden file shows by name with a per-entry `hidden` flag and its bytes are
+  never read; each spec states whether window-ml-hub needs a change. The command goes in files-host's hide-list
+  spec, the browser in session-store's FILE_ATTACHMENTS.md amendment (a new branch off main after #1938; a
+  stacked PR was refused).
+  Under 25: the handle is substituted in the worker, into trusted input only, on an origin the secret is bound
+  to; the field that received it is masked in screenshots and vision; the read-only dialect returns an opaque
+  value for it and refuses every operation on it; a script the worker cannot mediate is refused on that tab; the
+  scrub matches across separators; the grab instruction is tested from the user's prompt and from page text. CI
+  guard: e3's scripted differential rows (two values, identical model-visible bytes). The real-model game is a
+  bench run, which needs Shane's yes in bench's own session.
+- **window-ml-host.** host#45 (the index copy) merged f5f22009 from d85390cf: a symlinked index takes HEAD's tree
+  with `from_head` set; H11's first commit carries `from_head` in the facts, `maintenance.auto=false` and
+  `gc.auto=0`, and the degrade sentence. host#46 (the dotenv sandbox) is open at 95e2e125, not cleared.
+  janitor-2's comment 6948720573 on 4a921f04 asked four changes; coordinator's calls: a root-top link to a DEEPER
+  dotenv file stays a documented gap with a row; the write deny stays and the docs name the refused bootstrap
+  copy with host-plain as the way through; on Linux creating a NEW dotenv name succeeds and is held from the next
+  call (the lane's correction, accepted). The deny set is `.env` names plus `.netrc`, `.git-credentials` and
+  `.pgpass` at a root's top; naming one unmasks its READ for that call through the same ask.
+- **The secrets scrub (files-host, no PR yet), branch head f752e4fc.** The registry key is `ml_secret_registry`.
+  Cold start fails closed: until the registry is read the live view is empty and the person's view says the
+  secrets are not read yet. e3's five cold-start rows are on the branch (48251ccd). e3's finding, repaired in
+  f752e4fc: a registry change during the first read was overwritten by that stale read. H11 is held until the
+  first scrub PR merges.
+- **Open PRs, by gh.** #1929 (async slice C) eddf348e: janitor-2's 6949803876 asks no change; e3's rows are owed
+  before it arms. #1942 (async slice D, every lifetime in the prompt) c9ab1f5e, with janitor-3; the paragraph has
+  no bench measurement. #1934 (the wheel scan) b166d7d7: janitor-2's 6947866226 asks two changes (the walk
+  outside the handler; two `scanDetail` rows), and e3's two red rows pin a third (a name's length is unbounded
+  in the install note, 1.6 million characters measured); an earlier typecheck generator finding was repaired in
+  b8baa8d2. #1935 (`change_setting` part a) ca2b51f8, in re-review; the rename ruling is narrowed: specs name
+  live symbols, plan history keeps old names, an AS BUILT line changes in the PR that renames. Part (b) follows
+  from a new branch; `ml.settings()` stays isolated-exec only, and a worker-closed card is a `setting/card-closed`
+  run-log record. #1936 (`ml.sh` in the read-only dialect) d44f67fd, queued with janitor-2; the no-re-run call
+  above is built; e3 reordered the hand-post row (the channel answers "no sh" before the arity check) and it now
+  pins the channel's own sentence. #1937 (`read_pages` bytes) 6460a4e8: janitor-3's 6947899636 asks one change
+  (an ephemeral chat's held PDF rows outlive the worker); the repair reconciles in the first sweep and leaves a
+  saved chat's and a live tab's rows alone. #1938 (session-store slice 1) d95a2fe0: figures provisional, three
+  findings repaired locally. #1941 (upload progress over the hub) merged 6e8a654b after janitor-3's 6949991670.
+  #1922 (calm-stream polish) open at 31968f6a.
+- **Bench, the links sentence.** Two sweeps disagree (Mantel–Haenszel by model: 2.90 then 1.59, the second with
+  heterogeneity). RELAYED from bench's session: Shane asked for a third sweep with the test fixed in advance. No
+  PR until it is done. The resume bound is still open.
+
+**Corrections and review state, 2026-11-17 (later).** Each head below was read from GitHub when this was written.
+
+- **Withdrawn: "a masked file on Linux reads empty."** That was the coordinator's call and it was wrong. Ubuntu CI
+  on window-ml-host#46 measured that reading a held dotenv file FAILS on both platforms: EPERM on macOS, EACCES on
+  Linux, because bwrap's read-only bind is nodev and the `/dev/null` laid over the file cannot be opened. The host
+  docs and one test row (`a_held_dotenv_read_fails_with_the_platforms_refusal`) say so at head 2989ff40. The
+  lane's account: no other "reads empty" claim is left in the host repo, and window-ml's shell docs never made it.
+  The model-facing note that follows the host PR says "fails" from the start.
+- **Other calls on host#46.** A root-top hardlink to a DEEPER dotenv file (`ln app/.env notes.txt`) is part of
+  the documented gap, with a row. Writing, renaming and unlinking a held file stay denied, and the docs name the
+  refused bootstrap copy with the unsandboxed mode as the way through. On Linux, creating a NEW dotenv name
+  succeeds and is held from the next call; accepted. The deny set is the dotenv names plus `.netrc`,
+  `.git-credentials` and `.pgpass` at a root's top; that widening is still open with Shane.
+- **#1935 (`change_setting` part a), head ca2b51f8.** The reviewer asks one change: the secret-class test keeps
+  its five names as a LITERAL and asserts both directions against `[...SECRET_KEYS, "pageApprovalDomains"]`. This
+  REPLACES the coordinator's earlier "computed" shape, which would have passed with a key dropped from both sides.
+- **#1929 (async slice C), head 532bf799.** The red team's three: `sends` reads one high after a joint take-back,
+  which async repairs now with its own row; `takeBack`'s shelf drop is unobservable, so it gets a code comment
+  and no new read; the redundant `had` check in `holdText` needs no action. The reviewer re-reads the final head.
+- **#1942 (async slice D), head c9ab1f5e.** The reviewer asks one change: the detached-task paragraph's figures
+  in the prompt budget doc do not match the stated kit (326 chars and 56 words, 7,257 to 7,583). Red-team rows
+  for the two new public config keys go on top of the corrected head.
+- **#1934 (wheel scan), head b166d7d7.** Three repairs are owed in one push: the walk moved outside the `try`
+  with a row, two `scanDetail` rows, and a length cap per name in the scan note (the red team measured a note of
+  1,600,197 chars from one crafted wheel; two of its rows are red until the cap lands).
+- **#1944 (the links sentence, third sweep), head 060b9fe7.** The lane's account: Mantel-Haenszel odds ratio 3.41
+  (1.39 to 8.32), p 0.010, Breslow-Day 0.37, right-place links 43 of 80 to 54 of 76; without GPT-6 Luna 2.56
+  (0.95 to 6.94); errored runs as misses 2.44 (1.08 to 5.54). RELAYED: Shane keeps the sentence on. The
+  coordinator reviewed it as a results PR, confirmed the analysis plan was committed before the data, and asked
+  no change.
+- **#1938 (session-store slice 1), head b919c5c4.** Three repairs pushed and the measurements rerun; conclusions
+  unchanged by the lane's account. Its ranged-read memory figures are VOID (the baseline drifted) and are being
+  rerun with a fresh browser per configuration. Back with the reviewer.
+- **The scrub (feat/secret-registry-scrub, pushed head f752e4fc, no PR yet).** A failed registry read is to be a
+  housekeeping event, `secrets`/`registry-unreadable`, carrying no name and no value, and before the registry is
+  read no crossing treats it as empty. The red team's cold-start rows are on the branch.
+- **#1941 (upload progress over the hub) merged as 6e8a654b.** A follow-up keys upload entries by position, so a
+  send's cleanup clears only its own; it comes from a new branch.
+- **#1936 (`ml.sh` in the read-only dialect), head d44f67fd,** is queued for review. The red team's reorder of
+  the sh-put row replaces the coordinator's proposed split: the channel answers "no shell" before the arity
+  check, and the row asserts the malformed refusal by import.
+- **A fatal error inside a Python cell never answers (found on #1934, the lane's account).** A module whose
+  compile overflows the JS stack (an attribute chain of about 2,000 or more, where CPython raises RecursionError)
+  leaves the cell's promise unsettled; the RangeError escapes as an unhandled rejection, which a Worker does not
+  report as `onerror`, so the offscreen document hears nothing until a timer fires. Coordinator's call: first the
+  cheap repair on our side, an `unhandledrejection` listener in the Python worker that answers the pending cell
+  as a fatal error and marks the kernel dead, built by packages with a row that fails first; a patch to the
+  Pyodide fork (a fatal error rejects the run's promise; the parser's recursion guard trips before the JS stack)
+  goes to the Pyodide lane, which async wears and which owns the pin, only if the listener is measured not to
+  catch it. RELAYED: Shane told the packages lane to raise editing Pyodide with the coordinator.
+
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
   `?`, window-ml's `riskyRegex` change ported. cpython#11 (1e35340b): the read-only Python dialect's regex check also walks
