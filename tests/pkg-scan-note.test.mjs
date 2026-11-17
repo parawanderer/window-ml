@@ -90,6 +90,8 @@ test("readScan cuts a name past 120 characters to 120 and an ellipsis, in what, 
     assert.equal(at.length, 120);
     for (const v of [f.what, f.in, f.chain[1]]) assert.equal(v, `${long.slice(0, 120)}…`);
     assert.equal(f.chain[0], at, "a name at the cap is kept whole");
+    const bad = `pkg.${"c".repeat(300)} x`;
+    for (const over of [{ in: bad }, { what: bad }, { chain: ["pkg", bad] }]) assert.deepEqual(readScan(scan(F(over))).findings, [], `the shape is tested before the cut: ${Object.keys(over)[0]}`);
 });
 
 // --- the note the model reads ---
