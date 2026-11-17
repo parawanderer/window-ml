@@ -500,6 +500,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command, from
             catch { return fail("unavailable", "that page is not reachable; the extension may not run there"); }
             if (outcome !== "adopted") {
                 if (outcome === "no-answer") return fail("unavailable", "that page did not answer; it may still be loading");
+                if (outcome === "busy") return fail("conflict", "the session is running: wait for its turn to end, or stop it, then resume it");
                 return fail("failed", "that page did not take the session");
             }
             // Only once the page holds it: a note about a resume that did not happen would be a lie in the place a

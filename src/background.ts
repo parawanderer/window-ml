@@ -488,7 +488,8 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         const runId = (message.payload as { runId?: unknown } | undefined)?.runId;
         const toTabId = sender.tab?.id;
         if (!isExtensionSender(sender) || toTabId == null || typeof runId !== "string") { sendResponse({ error: "Refused: a session is moved only from the extension's own surface in the tab it moves to." }); return; }
-        void bringHere(runId, toTabId).then((r) => sendResponse("refused" in r ? { error: r.refused } : { data: true }), (e) => sendResponse({ error: (e as Error)?.message || String(e) }));
+        // A run with a turn running is not moved yet: the answer says it moves when its current step ends (move-run.ts).
+        void bringHere(runId, toTabId).then((r) => sendResponse("refused" in r ? { error: r.refused } : "queued" in r ? { data: { queued: r.queued } } : { data: true }), (e) => sendResponse({ error: (e as Error)?.message || String(e) }));
         return true;
     }
     // The sessions "bring a session here" offers in the HUD on this tab: the same sender rule as MOVE_RUN.
