@@ -87,6 +87,7 @@ export function parseCommands(src, depth = 0) {
             i++; has = true;
             while (i < n && src[i] !== '"') {
                 if (src[i] === "\\") { cur += src[i + 1] ?? ""; i += 2; continue; }
+                if (src[i] === "$" && src[i + 1] === "(" && src[i + 2] === "(") { const [, e] = readParen(i + 2); cur += "\0"; i = e; continue; } // arithmetic
                 if (src[i] === "$" && src[i + 1] === "(") { const [b, e] = readParen(i + 2); sub(b); cur += "\0"; i = e; continue; }
                 if (src[i] === "`") { const k = src.indexOf("`", i + 1); if (k < 0) throw new Error("tick"); sub(src.slice(i + 1, k)); cur += "\0"; i = k + 1; continue; }
                 cur += src[i++];
@@ -126,6 +127,9 @@ export function parseCommands(src, depth = 0) {
                 if (!found) throw new Error("heredoc");
             }
             continue;
+        }
+        if (c === "(" && src[i + 1] === "(") { // arithmetic command (( ... )), and for (( ... )): not a command
+            endCmd(); const [, e] = readParen(i + 1); i = e; continue;
         }
         if (c === ";" || c === "|" || c === "&" || c === "(" || c === ")") {
             if (c === "&" && (src[i + 1] === ">" || (cur !== "" && /\d$/.test(cur) && false))) { cur += c; has = true; i++; continue; } // &> redirect

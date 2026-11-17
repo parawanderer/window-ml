@@ -214,11 +214,11 @@ d.sort_values("denied", ascending=False)[["name", "denied", "denied_auto", "deni
 md("""
 ## What the ranking says
 
-The 14 existing manifests already cover about half of all external-program calls (52%), but that is almost all `head`, `tail`, `git`, `cat`, `ls` and `gh`. The uncovered mass is concentrated: grep, sed, node, python3 and npm alone take coverage to 91%, and the top 20 candidates to 98%. By calls that is dominated by `grep` (the most-run program of all) and `sed`; by sessions the ranking is the same head, with `sort`, `cut`, `mkdir`, `ln`, `awk`, `sleep`, `uniq`, `tr` and `date` next, each in 33 to 48 of 74 sessions.
+The 15 existing manifests already cover about half of all external-program calls (52%), but that is almost all `head`, `tail`, `git`, `cat`, `ls` and `gh`. The uncovered mass is concentrated: grep, sed, node, python3 and npm alone take coverage to 91%, and the top 20 candidates to 98%. By calls that is dominated by `grep` (the most-run program of all) and `sed`; by sessions the ranking is the same head, with `sort`, `cut`, `mkdir`, `ln`, `awk`, `sleep`, `uniq`, `tr` and `date` next, each in 33 to 48 of 74 sessions.
 
 `node`, `python3`, `npm` and `npx` are interpreters: a manifest for them is a different problem (what they run is in the repo-tools table, and it is the repo's own scripts), so the plain-text tools are the practical first batch: grep, sed, sort, cut, mkdir, ln, awk, sleep, uniq, tr, date.
 
-The starting list from the idea sits much lower than the text tools. `ps` (rank 17) and `du` (18) are in 25 sessions each; `df`, `sysctl`, `lsof`, `uptime` and `vm_stat` are in 10 to 16 sessions; `memory_pressure` and `top` are in 4 and 3 sessions. None is zero. They are real but second-batch: a few hundred calls each against tens of thousands for the text tools.
+The starting list from the idea sits much lower than the text tools. `ps` (rank 17) and `du` (18) are in 25 sessions each; `df`, `sysctl`, `lsof`, `uptime` and `vm_stat` are in 10 to 16 sessions; `memory_pressure` and `top` are in 5 and 3 sessions. None is zero. They are real but second-batch: a few hundred calls each against tens of thousands for the text tools.
 
 Denial is rare (0.11% of Bash calls) and sits on programs that already have manifests (`git`, `gh`, `tail`); among the candidates `grep` and `node` lead in absolute count, and `pkill` has the highest share (about 3%). It does not change the order.
 

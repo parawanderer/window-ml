@@ -1,40 +1,40 @@
 {
-  "commit": "d4ae4d443e92d55bb67bee2b374dcd4352d2513d",
-  "extracted_at": "2026-11-17T17:15:59+00:00",
+  "commit": "3b3dcb82a27339ff1a9950df06f7bac8997439de",
+  "extracted_at": "2026-11-17T17:36:31+00:00",
   "rows": [
     {
-      "bash_tool_uses": 73885,
+      "bash_tool_uses": 74216,
       "denied_auto": 70,
       "denied_user": 11,
-      "duplicate_tool_uses_skipped": 183096,
-      "error_results_bash": 1362,
-      "files_subagent": 342,
+      "duplicate_tool_uses_skipped": 183144,
+      "error_results_bash": 1368,
+      "files_subagent": 343,
       "files_top_level": 74,
       "min_sessions": 2,
       "name_filter": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,39}$",
-      "parse_failures": 235,
+      "parse_failures": 236,
       "projects": 10,
       "sessions": 74,
-      "simple_commands": 312982,
+      "simple_commands": 314274,
       "table": "corpus",
-      "tool_results_matched": 73871
+      "tool_results_matched": 74201
     },
     {
-      "calls": 1813,
+      "calls": 1753,
       "denied_auto": 6,
       "denied_user": 1,
-      "names": 374,
+      "names": 320,
       "table": "other"
     },
     {
-      "calls": 3675,
+      "calls": 3676,
       "denied_auto": 4,
       "denied_user": 1,
-      "names": 1021,
+      "names": 1023,
       "table": "subnames_other"
     },
     {
-      "calls": 45127,
+      "calls": 45317,
       "denied_auto": 15,
       "denied_user": 5,
       "first": "2026-07-29",
@@ -47,7 +47,7 @@
       "table": "program"
     },
     {
-      "calls": 57676,
+      "calls": 57900,
       "denied_auto": 17,
       "denied_user": 5,
       "first": "2026-07-29",
@@ -60,7 +60,7 @@
       "table": "program"
     },
     {
-      "calls": 18314,
+      "calls": 18399,
       "denied_auto": 40,
       "denied_user": 4,
       "first": "2026-07-29",
@@ -73,7 +73,7 @@
       "table": "program"
     },
     {
-      "calls": 46942,
+      "calls": 47200,
       "denied_auto": 103,
       "denied_user": 15,
       "first": "2026-07-29",
@@ -86,7 +86,7 @@
       "table": "program"
     },
     {
-      "calls": 24091,
+      "calls": 24204,
       "denied_auto": 6,
       "denied_user": 2,
       "first": "2026-08-30",
@@ -99,7 +99,7 @@
       "table": "program"
     },
     {
-      "calls": 9173,
+      "calls": 9223,
       "denied_auto": 13,
       "denied_user": 0,
       "first": "2026-08-03",
@@ -112,7 +112,7 @@
       "table": "program"
     },
     {
-      "calls": 5386,
+      "calls": 5391,
       "denied_auto": 3,
       "denied_user": 3,
       "first": "2026-07-29",
@@ -125,7 +125,7 @@
       "table": "program"
     },
     {
-      "calls": 22837,
+      "calls": 22940,
       "denied_auto": 19,
       "denied_user": 10,
       "first": "2026-07-29",
@@ -138,7 +138,7 @@
       "table": "program"
     },
     {
-      "calls": 16985,
+      "calls": 17086,
       "denied_auto": 19,
       "denied_user": 2,
       "first": "2026-07-29",
@@ -151,7 +151,7 @@
       "table": "program"
     },
     {
-      "calls": 15713,
+      "calls": 15805,
       "denied_auto": 53,
       "denied_user": 3,
       "first": "2026-10-08",
@@ -164,7 +164,7 @@
       "table": "program"
     },
     {
-      "calls": 10096,
+      "calls": 10150,
       "denied_auto": 5,
       "denied_user": 0,
       "first": "2026-09-25",
@@ -177,7 +177,7 @@
       "table": "program"
     },
     {
-      "calls": 2180,
+      "calls": 2182,
       "denied_auto": 2,
       "denied_user": 0,
       "first": "2026-08-15",
@@ -190,7 +190,7 @@
       "table": "program"
     },
     {
-      "calls": 2760,
+      "calls": 2762,
       "denied_auto": 9,
       "denied_user": 0,
       "first": "2026-07-29",
@@ -203,7 +203,7 @@
       "table": "program"
     },
     {
-      "calls": 959,
+      "calls": 966,
       "denied_auto": 7,
       "denied_user": 1,
       "first": "2026-10-09",
@@ -216,7 +216,7 @@
       "table": "program"
     },
     {
-      "calls": 1485,
+      "calls": 1495,
       "denied_auto": 1,
       "denied_user": 0,
       "first": "2026-09-17",
@@ -229,7 +229,7 @@
       "table": "program"
     },
     {
-      "calls": 6110,
+      "calls": 6183,
       "denied_auto": 4,
       "denied_user": 0,
       "first": "2026-09-17",
@@ -255,7 +255,7 @@
       "table": "program"
     },
     {
-      "calls": 2197,
+      "calls": 2207,
       "denied_auto": 0,
       "denied_user": 0,
       "first": "2026-07-29",
@@ -268,7 +268,7 @@
       "table": "program"
     },
     {
-      "calls": 799,
+      "calls": 800,
       "denied_auto": 0,
       "denied_user": 0,
       "first": "2026-10-09",
@@ -281,7 +281,7 @@
       "table": "program"
     },
     {
-      "calls": 1362,
+      "calls": 1377,
       "denied_auto": 4,
       "denied_user": 0,
       "first": "2026-09-17",
@@ -294,7 +294,7 @@
       "table": "program"
     },
     {
-      "calls": 2064,
+      "calls": 2071,
       "denied_auto": 6,
       "denied_user": 1,
       "first": "2026-10-08",
@@ -307,7 +307,7 @@
       "table": "program"
     },
     {
-      "calls": 1663,
+      "calls": 1665,
       "denied_auto": 8,
       "denied_user": 0,
       "first": "2026-10-08",
@@ -320,7 +320,7 @@
       "table": "program"
     },
     {
-      "calls": 467,
+      "calls": 468,
       "denied_auto": 0,
       "denied_user": 0,
       "first": "2026-10-08",
@@ -333,7 +333,7 @@
       "table": "program"
     },
     {
-      "calls": 556,
+      "calls": 557,
       "denied_auto": 1,
       "denied_user": 0,
       "first": "2026-09-17",
@@ -342,7 +342,7 @@
       "last": "2026-11-17",
       "name": "tr",
       "projects": 4,
-      "sessions": 35,
+      "sessions": 36,
       "table": "program"
     },
     {
@@ -359,7 +359,7 @@
       "table": "program"
     },
     {
-      "calls": 1432,
+      "calls": 1440,
       "denied_auto": 1,
       "denied_user": 0,
       "first": "2026-10-09",
@@ -372,7 +372,7 @@
       "table": "program"
     },
     {
-      "calls": 1218,
+      "calls": 1200,
       "denied_auto": 0,
       "denied_user": 0,
       "first": "2026-10-08",
@@ -385,7 +385,7 @@
       "table": "program"
     },
     {
-      "calls": 739,
+      "calls": 744,
       "denied_auto": 3,
       "denied_user": 0,
       "first": "2026-10-08",
@@ -424,7 +424,7 @@
       "table": "program"
     },
     {
-      "calls": 363,
+      "calls": 364,
       "denied_auto": 3,
       "denied_user": 0,
       "first": "2026-10-09",
@@ -463,6 +463,19 @@
       "table": "program"
     },
     {
+      "calls": 122,
+      "denied_auto": 4,
+      "denied_user": 0,
+      "first": "2026-10-09",
+      "has_manifest": false,
+      "kind": "external",
+      "last": "2026-11-17",
+      "name": "pkill",
+      "projects": 3,
+      "sessions": 24,
+      "table": "program"
+    },
+    {
       "calls": 127,
       "denied_auto": 0,
       "denied_user": 0,
@@ -471,19 +484,6 @@
       "kind": "external",
       "last": "2026-11-17",
       "name": "diff",
-      "projects": 3,
-      "sessions": 23,
-      "table": "program"
-    },
-    {
-      "calls": 120,
-      "denied_auto": 4,
-      "denied_user": 0,
-      "first": "2026-10-09",
-      "has_manifest": false,
-      "kind": "external",
-      "last": "2026-11-17",
-      "name": "pkill",
       "projects": 3,
       "sessions": 23,
       "table": "program"
@@ -554,7 +554,7 @@
       "table": "program"
     },
     {
-      "calls": 232,
+      "calls": 233,
       "denied_auto": 0,
       "denied_user": 0,
       "first": "2026-10-09",
@@ -563,6 +563,19 @@
       "last": "2026-11-17",
       "name": "set",
       "projects": 5,
+      "sessions": 19,
+      "table": "program"
+    },
+    {
+      "calls": 122,
+      "denied_auto": 1,
+      "denied_user": 0,
+      "first": "2026-09-25",
+      "has_manifest": false,
+      "kind": "external",
+      "last": "2026-11-17",
+      "name": "curl",
+      "projects": 3,
       "sessions": 19,
       "table": "program"
     },
@@ -577,19 +590,6 @@
       "name": "cmp",
       "projects": 2,
       "sessions": 19,
-      "table": "program"
-    },
-    {
-      "calls": 121,
-      "denied_auto": 1,
-      "denied_user": 0,
-      "first": "2026-09-25",
-      "has_manifest": false,
-      "kind": "external",
-      "last": "2026-11-17",
-      "name": "curl",
-      "projects": 3,
-      "sessions": 18,
       "table": "program"
     },
     {
@@ -645,7 +645,7 @@
       "table": "program"
     },
     {
-      "calls": 68,
+      "calls": 72,
       "denied_auto": 0,
       "denied_user": 0,
       "first": "2026-10-10",
@@ -654,7 +654,7 @@
       "last": "2026-11-17",
       "name": "read",
       "projects": 4,
-      "sessions": 16,
+      "sessions": 17,
       "table": "program"
     },
     {
@@ -710,7 +710,7 @@
       "table": "program"
     },
     {
-      "calls": 1206,
+      "calls": 1207,
       "denied_auto": 2,
       "denied_user": 2,
       "first": "2026-10-15",
@@ -723,7 +723,7 @@
       "table": "program"
     },
     {
-      "calls": 101,
+      "calls": 108,
       "denied_auto": 0,
       "denied_user": 0,
       "first": "2026-10-09",
@@ -892,14 +892,27 @@
       "table": "program"
     },
     {
-      "calls": 39,
+      "calls": 40,
       "denied_auto": 0,
       "denied_user": 0,
       "first": "2026-10-19",
       "has_manifest": false,
       "kind": "builtin",
-      "last": "2026-11-13",
+      "last": "2026-11-17",
       "name": "command",
+      "projects": 3,
+      "sessions": 10,
+      "table": "program"
+    },
+    {
+      "calls": 37,
+      "denied_auto": 0,
+      "denied_user": 0,
+      "first": "2026-10-09",
+      "has_manifest": false,
+      "kind": "builtin",
+      "last": "2026-11-17",
+      "name": "continue",
       "projects": 3,
       "sessions": 10,
       "table": "program"
@@ -915,19 +928,6 @@
       "name": "vm_stat",
       "projects": 2,
       "sessions": 10,
-      "table": "program"
-    },
-    {
-      "calls": 36,
-      "denied_auto": 0,
-      "denied_user": 0,
-      "first": "2026-10-09",
-      "has_manifest": false,
-      "kind": "builtin",
-      "last": "2026-11-13",
-      "name": "continue",
-      "projects": 3,
-      "sessions": 9,
       "table": "program"
     },
     {
@@ -1087,19 +1087,6 @@
       "table": "program"
     },
     {
-      "calls": 7,
-      "denied_auto": 0,
-      "denied_user": 0,
-      "first": "2026-10-09",
-      "has_manifest": false,
-      "kind": "external",
-      "last": "2026-11-13",
-      "name": "n+45",
-      "projects": 1,
-      "sessions": 7,
-      "table": "program"
-    },
-    {
       "calls": 1521,
       "denied_auto": 0,
       "denied_user": 1,
@@ -1122,6 +1109,19 @@
       "last": "2026-10-28",
       "name": "configure",
       "projects": 2,
+      "sessions": 6,
+      "table": "program"
+    },
+    {
+      "calls": 10,
+      "denied_auto": 0,
+      "denied_user": 0,
+      "first": "2026-10-21",
+      "has_manifest": false,
+      "kind": "external",
+      "last": "2026-11-17",
+      "name": "fold",
+      "projects": 1,
       "sessions": 6,
       "table": "program"
     },
@@ -1217,53 +1217,14 @@
       "table": "program"
     },
     {
-      "calls": 9,
+      "calls": 10,
       "denied_auto": 0,
       "denied_user": 0,
-      "first": "2026-10-21",
+      "first": "2026-10-10",
       "has_manifest": false,
       "kind": "external",
       "last": "2026-11-17",
-      "name": "fold",
-      "projects": 1,
-      "sessions": 5,
-      "table": "program"
-    },
-    {
-      "calls": 6,
-      "denied_auto": 0,
-      "denied_user": 0,
-      "first": "2026-10-14",
-      "has_manifest": false,
-      "kind": "external",
-      "last": "2026-11-11",
-      "name": "n+30",
-      "projects": 1,
-      "sessions": 5,
-      "table": "program"
-    },
-    {
-      "calls": 6,
-      "denied_auto": 0,
-      "denied_user": 0,
-      "first": "2026-10-15",
-      "has_manifest": false,
-      "kind": "external",
-      "last": "2026-11-15",
-      "name": "n+40",
-      "projects": 1,
-      "sessions": 5,
-      "table": "program"
-    },
-    {
-      "calls": 5,
-      "denied_auto": 0,
-      "denied_user": 0,
-      "first": "2026-11-07",
-      "has_manifest": false,
-      "kind": "external",
-      "last": "2026-11-17",
-      "name": "n+12",
+      "name": "memory_pressure",
       "projects": 1,
       "sessions": 5,
       "table": "program"
@@ -1360,19 +1321,6 @@
       "table": "program"
     },
     {
-      "calls": 9,
-      "denied_auto": 0,
-      "denied_user": 0,
-      "first": "2026-10-10",
-      "has_manifest": false,
-      "kind": "external",
-      "last": "2026-11-17",
-      "name": "memory_pressure",
-      "projects": 1,
-      "sessions": 4,
-      "table": "program"
-    },
-    {
       "calls": 8,
       "denied_auto": 1,
       "denied_user": 0,
@@ -1394,19 +1342,6 @@
       "kind": "builtin",
       "last": "2026-11-13",
       "name": "setopt",
-      "projects": 1,
-      "sessions": 4,
-      "table": "program"
-    },
-    {
-      "calls": 4,
-      "denied_auto": 0,
-      "denied_user": 0,
-      "first": "2026-10-14",
-      "has_manifest": false,
-      "kind": "external",
-      "last": "2026-11-08",
-      "name": "n-3",
       "projects": 1,
       "sessions": 4,
       "table": "program"
@@ -1571,51 +1506,12 @@
       "calls": 4,
       "denied_auto": 0,
       "denied_user": 0,
-      "first": "2026-11-07",
-      "has_manifest": false,
-      "kind": "external",
-      "last": "2026-11-17",
-      "name": "n+25",
-      "projects": 1,
-      "sessions": 3,
-      "table": "program"
-    },
-    {
-      "calls": 4,
-      "denied_auto": 0,
-      "denied_user": 0,
-      "first": "2026-10-22",
-      "has_manifest": false,
-      "kind": "external",
-      "last": "2026-11-08",
-      "name": "n-5",
-      "projects": 1,
-      "sessions": 3,
-      "table": "program"
-    },
-    {
-      "calls": 4,
-      "denied_auto": 0,
-      "denied_user": 0,
       "first": "2026-10-14",
       "has_manifest": false,
       "kind": "external",
       "last": "2026-10-21",
       "name": "rsync",
       "projects": 2,
-      "sessions": 3,
-      "table": "program"
-    },
-    {
-      "calls": 3,
-      "denied_auto": 0,
-      "denied_user": 0,
-      "first": "2026-10-13",
-      "has_manifest": false,
-      "kind": "external",
-      "last": "2026-11-13",
-      "name": "n-12",
-      "projects": 1,
       "sessions": 3,
       "table": "program"
     },
@@ -1655,19 +1551,6 @@
       "last": "2026-10-23",
       "name": "local",
       "projects": 2,
-      "sessions": 2,
-      "table": "program"
-    },
-    {
-      "calls": 12,
-      "denied_auto": 0,
-      "denied_user": 0,
-      "first": "2026-10-14",
-      "has_manifest": false,
-      "kind": "external",
-      "last": "2026-11-13",
-      "name": "b",
-      "projects": 1,
       "sessions": 2,
       "table": "program"
     },
@@ -1795,19 +1678,6 @@
       "first": "2026-10-20",
       "has_manifest": false,
       "kind": "external",
-      "last": "2026-11-11",
-      "name": "n+8",
-      "projects": 1,
-      "sessions": 2,
-      "table": "program"
-    },
-    {
-      "calls": 3,
-      "denied_auto": 0,
-      "denied_user": 0,
-      "first": "2026-10-20",
-      "has_manifest": false,
-      "kind": "external",
       "last": "2026-11-14",
       "name": "nl",
       "projects": 2,
@@ -1896,19 +1766,6 @@
       "calls": 2,
       "denied_auto": 0,
       "denied_user": 0,
-      "first": "2026-10-24",
-      "has_manifest": false,
-      "kind": "external",
-      "last": "2026-11-12",
-      "name": "l+30",
-      "projects": 1,
-      "sessions": 2,
-      "table": "program"
-    },
-    {
-      "calls": 2,
-      "denied_auto": 0,
-      "denied_user": 0,
       "first": "2026-10-10",
       "has_manifest": false,
       "kind": "external",
@@ -1919,105 +1776,14 @@
       "table": "program"
     },
     {
-      "calls": 2,
-      "denied_auto": 0,
-      "denied_user": 0,
-      "first": "2026-10-14",
-      "has_manifest": false,
-      "kind": "external",
-      "last": "2026-11-07",
-      "name": "n+14",
-      "projects": 1,
-      "sessions": 2,
-      "table": "program"
-    },
-    {
-      "calls": 2,
-      "denied_auto": 0,
-      "denied_user": 0,
-      "first": "2026-11-07",
-      "has_manifest": false,
-      "kind": "external",
-      "last": "2026-11-13",
-      "name": "n+3",
-      "projects": 1,
-      "sessions": 2,
-      "table": "program"
-    },
-    {
-      "calls": 2,
-      "denied_auto": 0,
-      "denied_user": 0,
-      "first": "2026-10-13",
-      "has_manifest": false,
-      "kind": "external",
-      "last": "2026-11-08",
-      "name": "n+6",
-      "projects": 1,
-      "sessions": 2,
-      "table": "program"
-    },
-    {
-      "calls": 2,
-      "denied_auto": 0,
-      "denied_user": 0,
-      "first": "2026-10-09",
-      "has_manifest": false,
-      "kind": "external",
-      "last": "2026-11-12",
-      "name": "n-14",
-      "projects": 1,
-      "sessions": 2,
-      "table": "program"
-    },
-    {
-      "calls": 2,
-      "denied_auto": 0,
-      "denied_user": 0,
-      "first": "2026-10-24",
-      "has_manifest": false,
-      "kind": "external",
-      "last": "2026-11-12",
-      "name": "n-2",
-      "projects": 1,
-      "sessions": 2,
-      "table": "program"
-    },
-    {
-      "calls": 2,
-      "denied_auto": 0,
-      "denied_user": 0,
-      "first": "2026-10-23",
-      "has_manifest": false,
-      "kind": "external",
-      "last": "2026-11-17",
-      "name": "n-30",
-      "projects": 1,
-      "sessions": 2,
-      "table": "program"
-    },
-    {
-      "calls": 2,
-      "denied_auto": 0,
-      "denied_user": 0,
-      "first": "2026-10-22",
-      "has_manifest": false,
-      "kind": "external",
-      "last": "2026-11-07",
-      "name": "n-40",
-      "projects": 1,
-      "sessions": 2,
-      "table": "program"
-    },
-    {
-      "calls": 343,
+      "calls": 352,
       "denied_auto": 1,
       "denied_user": 0,
       "first": "2026-10-09",
       "last": "2026-11-17",
       "name": "timeout",
       "projects": 4,
-      "sessions": 27,
+      "sessions": 28,
       "table": "wrapper"
     },
     {
@@ -2043,7 +1809,7 @@
       "table": "wrapper"
     },
     {
-      "calls": 50,
+      "calls": 51,
       "denied_auto": 0,
       "denied_user": 0,
       "first": "2026-10-15",
@@ -2065,7 +1831,7 @@
       "table": "wrapper"
     },
     {
-      "calls": 9852,
+      "calls": 9905,
       "denied_auto": 5,
       "denied_user": 0,
       "first": "2026-09-25",
@@ -2077,7 +1843,7 @@
       "table": "sub"
     },
     {
-      "calls": 1750,
+      "calls": 1752,
       "denied_auto": 5,
       "denied_user": 0,
       "first": "2026-10-09",
@@ -2089,7 +1855,7 @@
       "table": "sub"
     },
     {
-      "calls": 1354,
+      "calls": 1359,
       "denied_auto": 0,
       "denied_user": 0,
       "first": "2026-10-09",
@@ -2101,7 +1867,7 @@
       "table": "sub"
     },
     {
-      "calls": 2109,
+      "calls": 2110,
       "denied_auto": 2,
       "denied_user": 0,
       "first": "2026-10-08",
@@ -2125,7 +1891,7 @@
       "table": "sub"
     },
     {
-      "calls": 459,
+      "calls": 462,
       "denied_auto": 0,
       "denied_user": 0,
       "first": "2026-10-08",
@@ -2137,7 +1903,7 @@
       "table": "sub"
     },
     {
-      "calls": 1056,
+      "calls": 1058,
       "denied_auto": 1,
       "denied_user": 0,
       "first": "2026-10-09",
@@ -2149,7 +1915,7 @@
       "table": "sub"
     },
     {
-      "calls": 617,
+      "calls": 619,
       "denied_auto": 3,
       "denied_user": 0,
       "first": "2026-10-08",
@@ -2161,7 +1927,7 @@
       "table": "sub"
     },
     {
-      "calls": 297,
+      "calls": 299,
       "denied_auto": 0,
       "denied_user": 0,
       "first": "2026-10-08",
@@ -2173,7 +1939,7 @@
       "table": "sub"
     },
     {
-      "calls": 1331,
+      "calls": 1341,
       "denied_auto": 0,
       "denied_user": 0,
       "first": "2026-07-29",
@@ -2197,7 +1963,19 @@
       "table": "sub"
     },
     {
-      "calls": 339,
+      "calls": 974,
+      "denied_auto": 0,
+      "denied_user": 0,
+      "first": "2026-08-30",
+      "interp": "node",
+      "last": "2026-11-17",
+      "name": "build",
+      "projects": 4,
+      "sessions": 31,
+      "table": "sub"
+    },
+    {
+      "calls": 341,
       "denied_auto": 0,
       "denied_user": 0,
       "first": "2026-10-09",
@@ -2206,18 +1984,6 @@
       "name": "test-index",
       "projects": 6,
       "sessions": 31,
-      "table": "sub"
-    },
-    {
-      "calls": 961,
-      "denied_auto": 0,
-      "denied_user": 0,
-      "first": "2026-08-30",
-      "interp": "node",
-      "last": "2026-11-17",
-      "name": "build",
-      "projects": 4,
-      "sessions": 30,
       "table": "sub"
     },
     {
@@ -2233,7 +1999,7 @@
       "table": "sub"
     },
     {
-      "calls": 154,
+      "calls": 157,
       "denied_auto": 0,
       "denied_user": 0,
       "first": "2026-10-09",
@@ -2245,7 +2011,7 @@
       "table": "sub"
     },
     {
-      "calls": 176,
+      "calls": 180,
       "denied_auto": 0,
       "denied_user": 0,
       "first": "2026-10-09",
@@ -2269,7 +2035,7 @@
       "table": "sub"
     },
     {
-      "calls": 329,
+      "calls": 332,
       "denied_auto": 2,
       "denied_user": 0,
       "first": "2026-10-13",
@@ -2281,7 +2047,7 @@
       "table": "sub"
     },
     {
-      "calls": 1009,
+      "calls": 1019,
       "denied_auto": 3,
       "denied_user": 0,
       "first": "2026-11-08",
@@ -2305,7 +2071,7 @@
       "table": "sub"
     },
     {
-      "calls": 56,
+      "calls": 59,
       "denied_auto": 0,
       "denied_user": 0,
       "first": "2026-10-09",
@@ -2341,7 +2107,7 @@
       "table": "sub"
     },
     {
-      "calls": 71,
+      "calls": 73,
       "denied_auto": 0,
       "denied_user": 0,
       "first": "2026-10-10",
@@ -2353,7 +2119,19 @@
       "table": "sub"
     },
     {
-      "calls": 182,
+      "calls": 44,
+      "denied_auto": 0,
+      "denied_user": 0,
+      "first": "2026-10-13",
+      "interp": "node",
+      "last": "2026-11-17",
+      "name": "check-tools",
+      "projects": 3,
+      "sessions": 12,
+      "table": "sub"
+    },
+    {
+      "calls": 185,
       "denied_auto": 0,
       "denied_user": 0,
       "first": "2026-10-10",
@@ -2373,18 +2151,6 @@
       "last": "2026-11-17",
       "name": null,
       "projects": 4,
-      "sessions": 11,
-      "table": "sub"
-    },
-    {
-      "calls": 43,
-      "denied_auto": 0,
-      "denied_user": 0,
-      "first": "2026-10-13",
-      "interp": "node",
-      "last": "2026-11-17",
-      "name": "check-tools",
-      "projects": 3,
       "sessions": 11,
       "table": "sub"
     },
@@ -2425,6 +2191,18 @@
       "table": "sub"
     },
     {
+      "calls": 41,
+      "denied_auto": 0,
+      "denied_user": 0,
+      "first": "2026-10-09",
+      "interp": "node",
+      "last": "2026-11-17",
+      "name": "check-file-size",
+      "projects": 4,
+      "sessions": 10,
+      "table": "sub"
+    },
+    {
       "calls": 24,
       "denied_auto": 0,
       "denied_user": 0,
@@ -2461,25 +2239,13 @@
       "table": "sub"
     },
     {
-      "calls": 66,
+      "calls": 67,
       "denied_auto": 0,
       "denied_user": 0,
       "first": "2026-10-15",
       "interp": "node",
       "last": "2026-11-17",
       "name": "build-web",
-      "projects": 4,
-      "sessions": 9,
-      "table": "sub"
-    },
-    {
-      "calls": 40,
-      "denied_auto": 0,
-      "denied_user": 0,
-      "first": "2026-10-09",
-      "interp": "node",
-      "last": "2026-11-13",
-      "name": "check-file-size",
       "projects": 4,
       "sessions": 9,
       "table": "sub"
@@ -3520,6 +3286,18 @@
       "calls": 12,
       "denied_auto": 0,
       "denied_user": 0,
+      "first": "2026-10-15",
+      "interp": "node",
+      "last": "2026-11-17",
+      "name": "session-index.test",
+      "projects": 1,
+      "sessions": 3,
+      "table": "sub"
+    },
+    {
+      "calls": 12,
+      "denied_auto": 0,
+      "denied_user": 0,
       "first": "2026-10-28",
       "interp": "node",
       "last": "2026-11-08",
@@ -3724,18 +3502,6 @@
       "calls": 7,
       "denied_auto": 0,
       "denied_user": 0,
-      "first": "2026-10-15",
-      "interp": "node",
-      "last": "2026-11-17",
-      "name": "session-index.test",
-      "projects": 1,
-      "sessions": 3,
-      "table": "sub"
-    },
-    {
-      "calls": 7,
-      "denied_auto": 0,
-      "denied_user": 0,
       "first": "2026-10-09",
       "interp": "node",
       "last": "2026-11-13",
@@ -3789,6 +3555,18 @@
       "last": "2026-11-12",
       "name": "agent-loop.test",
       "projects": 3,
+      "sessions": 3,
+      "table": "sub"
+    },
+    {
+      "calls": 5,
+      "denied_auto": 0,
+      "denied_user": 0,
+      "first": "2026-11-08",
+      "interp": "node",
+      "last": "2026-11-17",
+      "name": "sidebar-card.test",
+      "projects": 1,
       "sessions": 3,
       "table": "sub"
     },
@@ -3901,6 +3679,18 @@
       "table": "sub"
     },
     {
+      "calls": 69,
+      "denied_auto": 0,
+      "denied_user": 0,
+      "first": "2026-11-12",
+      "interp": "node",
+      "last": "2026-11-17",
+      "name": "move-run.test",
+      "projects": 2,
+      "sessions": 2,
+      "table": "sub"
+    },
+    {
       "calls": 55,
       "denied_auto": 0,
       "denied_user": 0,
@@ -3908,18 +3698,6 @@
       "interp": "node",
       "last": "2026-10-28",
       "name": "python-spend-queue.test",
-      "projects": 2,
-      "sessions": 2,
-      "table": "sub"
-    },
-    {
-      "calls": 49,
-      "denied_auto": 0,
-      "denied_user": 0,
-      "first": "2026-11-12",
-      "interp": "node",
-      "last": "2026-11-13",
-      "name": "move-run.test",
       "projects": 2,
       "sessions": 2,
       "table": "sub"
@@ -4185,6 +3963,18 @@
       "last": "2026-11-09",
       "name": "python",
       "projects": 1,
+      "sessions": 2,
+      "table": "sub"
+    },
+    {
+      "calls": 14,
+      "denied_auto": 0,
+      "denied_user": 0,
+      "first": "2026-11-17",
+      "interp": "node",
+      "last": "2026-11-17",
+      "name": "redteam-scrub-cold.test",
+      "projects": 2,
       "sessions": 2,
       "table": "sub"
     },
@@ -4964,18 +4754,6 @@
       "interp": "node",
       "last": "2026-10-19",
       "name": "rt2",
-      "projects": 1,
-      "sessions": 2,
-      "table": "sub"
-    },
-    {
-      "calls": 4,
-      "denied_auto": 0,
-      "denied_user": 0,
-      "first": "2026-11-08",
-      "interp": "node",
-      "last": "2026-11-15",
-      "name": "sidebar-card.test",
       "projects": 1,
       "sessions": 2,
       "table": "sub"
