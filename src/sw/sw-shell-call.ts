@@ -28,6 +28,8 @@ import { recordRunLog } from "./sw-run-log";
 import { MAX_DETAIL_STRING } from "../log/housekeeping";
 import { ASKED_TAIL_CHARS, PEEK_DEFAULT_BYTES, peekBytesFor, peekDetail } from "../shell/sh-tail";
 import { forModel } from "./sw-scrub";
+import { registryReady, registrySubsNow } from "./sw-secret-registry";
+import { heldTail, margin, scrubRange, type RegistrySub } from "../secret-registry";
 import { holdOutput, shellHost, ShellUnavailable, withShell, type ShellHost } from "./sw-shell";
 import { manifestsReady, storedManifests } from "./sw-manifests";
 import type { ProgramManifest } from "../shell/program-manifest";
@@ -515,7 +517,7 @@ async function keep(ctx: ShCallContext, h: ShellHost, s: HostStream, f: ShFacts)
     const head = s.size ? bytesOf((await h.client.read(s.ptr, 0, Math.min(SH_HEAD_BYTES, READ_CHUNK))).data) : new Uint8Array();
     // Its own seed, so it never collides with the loop's per-step ids.
     const id = toolToken(`${ctx.runId}:sh:${crypto.randomUUID()}`, ctx.seq);
-    const out = shOut(s, `@tool:${id}`, head);
+    const out = await scrubbedHead(shOut(s, `@tool:${id}`, head), head, s.size);
     ctx.tokens.note({ id, tool: "ml.sh", kind: "text", out: out.text, in: JSON.stringify(f.argv), t: Date.now(), step: ctx.local.step, seq: ctx.local.seq });
     if (head.length >= s.size) { await h.client.release(s.ptr).catch(() => { /* gone */ }); return out; }
     held.set(id, { runId: ctx.runId, ptr: s.ptr, size: s.size, client: h.client });
@@ -524,6 +526,47 @@ async function keep(ctx: ShCallContext, h: ShellHost, s: HostStream, f: ShFacts)
     const mine = [...held].filter(([, x]) => x.runId === ctx.runId);
     for (const [old] of mine.slice(0, Math.max(0, mine.length - SH_HELD_PER_RUN))) releaseOne(old);
     return out;
+}
+
+/**
+ * A stream's head as it crosses into the script: the config's and the registered secrets taken out (`forModel`), and,
+ * when the head is cut, any tail that begins a registered value held back, so the script never holds a secret or the
+ * front of one. The run's token store keeps this text, never the raw head. A binary head is a note, with nothing to take.
+ * @param out the stream as `shOut` shaped it
+ * @param head the head's bytes
+ * @param size the stream's whole size
+ * @returns the stream with its text scrubbed
+ */
+async function scrubbedHead(out: ShOut, head: Uint8Array, size: number): Promise<ShOut> {
+    if (out.error !== undefined || !head.length || binaryKind(head)) return out;
+    const whole = head.length >= size;
+    let text = (await forModel(new TextDecoder("utf-8", { fatal: false }).decode(head))).text;
+    if (!whole) {
+        text = text.slice(0, text.length - heldTail(text, registrySubsNow()));
+        text = `${text}… [first ${head.length} of ${size} bytes]`;
+    }
+    return { ...out, text };
+}
+
+/**
+ * A byte string as one character per byte, so a byte range maps to a character range exactly.
+ * @param b the bytes
+ * @returns the latin-1 string
+ */
+function latin1(b: Uint8Array): string {
+    let s = "";
+    for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode(...b.subarray(i, i + 0x8000));
+    return s;
+}
+
+/**
+ * The registry's substitutions as latin-1 strings of their UTF-8 bytes, for scrubbing bytes through {@link latin1}.
+ * @param subs the substitutions
+ * @returns the same, byte for byte
+ */
+function bytewise(subs: readonly RegistrySub[]): RegistrySub[] {
+    const enc = new TextEncoder();
+    return subs.map((x) => ({ ...x, find: latin1(enc.encode(x.find)), put: latin1(enc.encode(x.put)) }));
 }
 
 /** Release one held output (the host deletes it). */
@@ -571,10 +614,30 @@ export async function shRead(ctx: ShCallContext, args: readonly unknown[]): Prom
     try {
         const h = await shellHost();
         if (h.client !== x.client) { forgetClient(x.client); return refuse("Refused", `${ref}: the process host restarted, and the output went with it`); }
-        const r = await h.client.read(x.ptr, offset, Math.min(length, SH_READ_MAX));
-        const bytes = bytesOf(r.data);
-        const base = { offset: r.offset, length: bytes.length, size: r.size, eof: r.eof };
-        return { ok: binaryKind(bytes) ? { ...base, bytes: r.data } : { ...base, text: new TextDecoder("utf-8", { fatal: false }).decode(bytes) } };
+        await registryReady();
+        const subs = registrySubsNow();
+        // Widened by the longest registered form on each side, so a value the range cuts is still seen whole and
+        // replaced where it overlaps (SECRET_HANDLES.md, "A cut never lets a prefix through"); the range shrinks to keep
+        // the widened read inside the host's cap.
+        const m = margin(subs), want = Math.min(length, SH_READ_MAX - 2 * m);
+        const lo = Math.max(0, offset - m);
+        const r = await h.client.read(x.ptr, lo, want + (offset - lo) + m);
+        const win = bytesOf(r.data);
+        const bytes = win.subarray(offset - lo, Math.min(win.length, offset - lo + want));
+        const eof = r.eof && offset - lo + want >= win.length;
+        const base = { offset, length: bytes.length, size: r.size, eof };
+        if (binaryKind(bytes)) {
+            if (!m) return { ok: { ...base, bytes: r.data } };
+            const sc = scrubRange(latin1(win), offset - lo, offset - lo + bytes.length, bytewise(subs));
+            const n = Object.values(sc.counts).reduce((a, b) => a + b, 0);
+            const out = Uint8Array.from(sc.text, (c) => c.charCodeAt(0));
+            return { ok: { ...base, bytes: { $bytes: base64Of(out) }, ...(n ? { scrubbed: n } : {}) } };
+        }
+        const dec = (b: Uint8Array): string => new TextDecoder("utf-8", { fatal: false }).decode(b);
+        const from = dec(win.subarray(0, offset - lo)).length, to = from + dec(bytes).length;
+        const sc = scrubRange(dec(win), from, to, subs);
+        const n = Object.values(sc.counts).reduce((a, b) => a + b, 0);
+        return { ok: { ...base, text: (await forModel(sc.text)).text, ...(n ? { scrubbed: n } : {}) } };
     } catch (e) { return failure(e); }
 }
 

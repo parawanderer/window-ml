@@ -69,7 +69,8 @@ import { FilesRefused, cleanFiles, isPdfFile, pdfToPageRun, textFiles } from "./
 import { adoptOnTab } from "./sw/adopt-run";
 import { pageRebuild } from "./agent/run-assembly";
 import { runControlPayloadError } from "./sw/run-payload-check";
-import { forPage } from "./sw/sw-scrub";   // error text bound for a page, without the config's secrets
+import { forBackendFromPage, forPage } from "./sw/sw-scrub";   // error text bound for a page, without the config's secrets; a page's model request, without a registered secret
+import { secretRegistryOp } from "./sw/sw-secret-registry";
 import { pythonPrewarm, pythonExec, pythonInterrupt, relayPyStdout, deletePythonRun, dropPythonLibraries, pythonReaped, pythonStarted, pythonDone } from "./sw/sw-python";
 import { focusLineFor } from "./sw/sw-focus";
 import { chatHashFor, openChatPage } from "./sw/sw-open-chat";
@@ -783,6 +784,13 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     // The tier 3 libraries stored for the read-only Python dialect (READONLY_LIBRARY_MANIFEST.md, "The runtime import
     // loop"): read them, remove one. EXTENSION PAGES ONLY. There is no add here: a library is stored only from a card the
     // person approved. A remove restarts every Python worker that was handed a library (ruling D): nothing unloads a module.
+    // The person's registered secrets (SECRET_HANDLES.md, "The scrub as built"): list, add, remove. EXTENSION PAGES ONLY,
+    // judged by the sender the browser reports; every answer is names and a count, never a value.
+    if (message.type === "SECRET_REGISTRY") {
+        if (!isExtensionSender(sender)) { sendResponse({ error: "refused" }); return; }
+        secretRegistryOp((message.payload || {}) as { op?: unknown; name?: unknown; value?: unknown }).then(sendResponse, (e) => sendResponse({ error: (e as Error)?.message || String(e) }));
+        return true;
+    }
     if (message.type === "LIBRARIES") {
         if (!isExtensionSender(sender)) { sendResponse({ error: "refused" }); return; }
         const p = (message.payload || {}) as { op?: unknown; id?: unknown };
@@ -1101,7 +1109,10 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
         if (rid) inflight.set(rid, ctl);
         const done = () => { if (rid) inflight.delete(rid); };
         // A page's call is its own: it may not file its generation under a run the worker built (sw-runs.ts).
-        fetchLLM(sender.tab ? withoutWorkerSession(message.payload) : message.payload, ctl.signal)
+        // A page's request leaves for the backend with no registered secret in any message, and nothing about it said back.
+        const fromPage = !!sender.tab && !isExtensionSender(sender);
+        (fromPage ? forBackendFromPage(withoutWorkerSession(message.payload)) : Promise.resolve(sender.tab ? withoutWorkerSession(message.payload) : message.payload))
+            .then((payload) => fetchLLM(payload, ctl.signal))
             // raw (ml.step) returns { content, tool_calls } as data; normal chat
             // returns the content string, with sources alongside only when present.
             .then((result: any) => {
@@ -1459,7 +1470,9 @@ chrome.runtime.onConnect.addListener((port) => {
         // The same origin gate as a one-shot request: a page's stream is a model call like any other.
         const refusal = port.sender ? await pageRefusal("FETCH_LLM", port.sender) : null;
         if (refusal) { if (!closed) port.postMessage({ type: "error", error: refusal }); return; }
-        streamLLM(port.sender?.tab ? withoutWorkerSession(message.payload) : message.payload, (delta) => { if (!closed) port.postMessage({ type: "chunk", delta }); }, ctl.signal)
+        const fromPage = !!port.sender?.tab && !isExtensionSender(port.sender);
+        (fromPage ? forBackendFromPage(withoutWorkerSession(message.payload)) : Promise.resolve(port.sender?.tab ? withoutWorkerSession(message.payload) : message.payload))
+            .then((payload) => streamLLM(payload, (delta) => { if (!closed) port.postMessage({ type: "chunk", delta }); }, ctl.signal))
             .then(({ content, sources, model, reasoning, usage }) => { if (!closed) port.postMessage({ type: "done", content, sources, model, reasoning, usage }); })
             .catch((err) => {
                 const error = String(err?.message || err);

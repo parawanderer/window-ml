@@ -33,6 +33,7 @@ import { toHost } from "../parent-channel";
 import { ShellSectionBody } from "./shell-section";
 import { ManifestsSectionBody } from "./manifests-section";
 import { LibrariesSectionBody } from "./libraries-section";
+import { SecretsSectionBody } from "./secrets-section";
 import { RequestRows, answerRequest, useWaitingRequests } from "./requests-section";
 import { Lbl } from "./settings-label";
 import type { PanelRoute } from "../../link-address";
@@ -1942,6 +1943,10 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
 
                 <Section id="manifests" title="Program manifests (ml.sh)">
                 <ManifestsSectionBody roots={c.shellRoots ?? []} />
+                </Section>
+
+                <Section id="secrets" title="Secrets">
+                <SecretsSectionBody />
                 </Section>
 
                 <Section id="libraries" title="Python libraries (read-only dialect)">

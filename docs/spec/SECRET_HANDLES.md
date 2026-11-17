@@ -143,8 +143,15 @@ on real captured output in its PR.
 - **The seat is the worker.** Every text that crosses from the worker into a script or the model passes one scrub,
   [`forModel`](../../src/sw/sw-scrub.ts) extended with the registry:
   - a tool result, at the agent loop's hook ([`agent-loop.ts`](../../src/agent/agent-loop.ts), `deps.forModel`), in
-    the worker-hosted loop and in the page-hosted one ([`ml-agent-run.ts`](../../src/ml/ml-agent-run.ts)), which passes
-    no `forModel` today;
+    the worker-hosted loop;
+  - a page-started model request, where it leaves the worker for the backend
+    ([`background.ts`](../../src/background.ts), `FETCH_LLM` and the stream port, keyed on the sender, never on anything
+    the page says): no registered value leaves the worker to a model backend in a page-started request. Every message
+    role is scrubbed, the user's included (the page composed all of them), with a bare `[REDACTED]`, no name and no
+    count line, so a registered name never reaches the model a page drives, and nothing is reported back to the page: no
+    count, no flag, no difference in an answer. This covers the page-hosted loop
+    ([`ml-agent-run.ts`](../../src/ml/ml-agent-run.ts)), whose scrub cannot run in the page (threat 4); a page-reachable
+    scrub message would be an oracle and does not exist (the coordinator's call, 2026-11-17, under ruling 18's order);
   - the lines the loop appends after that hook (the `@tool:` line, the cut line, the budget line);
   - an `ml.sh` output's head and every `ml.sh.read` range, where they cross from the worker into the script
     ([`sh-call.ts`](../../src/shell/sh-call.ts) `headText`, [`sw-shell-call.ts`](../../src/sw/sw-shell-call.ts)), and
@@ -168,7 +175,7 @@ on real captured output in its PR.
 - **A cut never lets a prefix through.** A read range is fetched with a margin of the longest registered form on each
   side and scrubbed whole, and a match that overlaps the range is replaced where it overlaps. A head whose last bytes
   are the start of a registered form is cut before them, and its `complete` is false.
-- **The registry**, by name and value, is `secretRegistry` in `chrome.storage.local` (never sync), declared in the
+- **The registry**, by name and value, is `ml_secret_registry` in `chrome.storage.local` (never sync), declared in the
   state registry beside its store. It is class secret under [`MODEL_SETTINGS.md`](MODEL_SETTINGS.md) ("Not settings,
   never writable"): never in `GET_CONFIG`, `ml.settings()` or an answer to any page-reachable message, never written by
   `change_setting`, and not a key of `MlConfig`. The person adds an entry in the DevTools Settings panel, through a
@@ -176,7 +183,7 @@ on real captured output in its PR.
   URL, key and model filter stay the built-in entries (`secretsOf`). Bounds, each refused when an entry is added:
   at most 64 entries; a value of 8 to 512 characters (a shorter one would match ordinary text, and the margins and
   the base64 forms grow with a longer one); a NAME matching `[A-Z0-9_]{1,40}`, since it is written into model-facing
-  text. `secretRegistry` is in no backup, export or archive-folder file (the backup inventory classes it `never`),
+  text. `ml_secret_registry` is in no backup, export or archive-folder file (the backup inventory classes it `never`),
   and the state inspector and the housekeeping log show its names and a count, never a value.
 - **The forms matched** for each value: as written, JSON-escaped, percent-encoded, base64 (standard and URL-safe, at
   each of the three byte alignments a value can take inside a longer base64 run) and shell-escaped (single-quoted with
@@ -189,7 +196,9 @@ on real captured output in its PR.
   transformed or only partly echoed (threat 2); a value registered after a session stored it (re-scrubbing stored
   sessions is a later slice); anything a pattern does not know until PR 2; a script or model that already holds a
   guess can confirm it, by echoing the guess and seeing the marker; the model's own tool arguments, which are not
-  scrubbed.
+  scrubbed; an approved page that drives a model can confirm a full guess it already holds if the model repeats the
+  marker, and learns no name; the page-world tool results of a page-hosted run stay the page's own and are not scrubbed
+  for the page.
 - **Deferred to the handles slice**: reading values from a listed `.env` (a new host message), the keychain, a handle's
   value, and the `echoes` refusal.
 
