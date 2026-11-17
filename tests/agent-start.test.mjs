@@ -179,3 +179,11 @@ test("the lifetimes list is the extension's own text at any figure, never the si
     assert.ok(LIFETIMES_RE.test(lifetimesClause(9, 9)));
     assert.equal(lifetimesClause(0, 0).match(/[78]/g), null, "the pattern's placeholder digits appear nowhere else in the text");
 });
+
+test("the lifetimes list names `@tool:` values only when the run has tool tokens, and is the extension's text either way", () => {
+    const off = composeSystemPrompt({ names: ["exec"] }), on = composeSystemPrompt({ names: ["exec"], toolTokens: true });
+    assert.match(off, /HOW LONG THINGS LAST/);
+    assert.doesNotMatch(off, /@tool:/, "tokens off: the prompt says nothing of the feature");
+    assert.match(on, /`@tool:` values: this session; gone if the extension's worker restarts/);
+    for (const p of [off, on]) assert.equal(siteInstructions(p, ["exec"]), "");
+});

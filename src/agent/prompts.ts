@@ -209,16 +209,18 @@ export const PYTHON_CLAUSE = "\n\nYou have `python_exec`. You predict tokens and
  * person's settings, read by `lifetimeFigures` (run-assembly.ts) from the constants that enforce them, never typed here.
  * @param idleMin minutes a run's Python names survive between turns (`pythonIdleMinutes`); 0 never resets them for idleness
  * @param capMin minutes a detached `ml.sh` call or cell may run (`detachedTaskMaxMin`, under the sandbox's ceiling)
+ * @param tokens the run has tool tokens: only then does the list name `@tool:` values (with them off the prompt says
+ *     nothing of the feature)
  */
-export const lifetimesClause = (idleMin: number, capMin: number): string =>
+export const lifetimesClause = (idleMin: number, capMin: number, tokens = true): string =>
     "\n\nHOW LONG THINGS LAST. Python variables: this run; gone if the sandbox dies" +
     (idleMin > 0 ? `, or after ${idleMin} min idle between turns` : "") + ". `/files/`: this session. " +
-    "`@tool:` values: this session; gone if the extension's worker restarts. " +
+    (tokens ? "`@tool:` values: this session; gone if the extension's worker restarts. " : "") +
     `A detached \`ml.sh\` call or cell: runs on after your answer, to its end or ${capMin} min. ` +
     "A fetch: this turn. A page-bound task: this page.";
 
 /** A pattern matching {@link lifetimesClause} with any figures, for `siteInstructions` to recognise it as the extension's. */
-export const LIFETIMES_RE: RegExp = new RegExp([lifetimesClause(7, 8), lifetimesClause(0, 8)]
+export const LIFETIMES_RE: RegExp = new RegExp([lifetimesClause(7, 8), lifetimesClause(0, 8), lifetimesClause(7, 8, false), lifetimesClause(0, 8, false)]
     .map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/[78]/g, "\\d+(?:\\.\\d+)?")).join("|"), "g");
 
 // Appended when ml.agent({ unattended: true }) — a headless/scripting run with no human to approve.
