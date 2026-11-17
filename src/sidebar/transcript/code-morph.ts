@@ -119,7 +119,10 @@ export function morphInto(pre: HTMLElement, now = Date.now()): void {
     const to = pre.getBoundingClientRect().height;
     if (old.height > 0 && Math.abs(old.height - to) > 1) {
         pre.style.overflow = "hidden";
-        pre.animate([{ height: `${old.height}px` }, { height: `${to}px` }], { duration: ms, easing: "cubic-bezier(.4, 0, .2, 1)" })
+        // To `auto` where the page can interpolate it: the approval card opens beside the block over the same beat, and a block
+        // that shares its room with it ends shorter than it measured at the start. A fixed `to` snapped back at the end.
+        const end = globalThis.CSS?.supports?.("interpolate-size", "allow-keywords") ? "auto" : `${to}px`;
+        pre.animate([{ height: `${old.height}px` }, { height: end }], { duration: ms, easing: "cubic-bezier(.4, 0, .2, 1)" })
             .finished.then(() => { pre.style.overflow = ""; }, () => { pre.style.overflow = ""; });
     }
     pre.classList.add("morphing");

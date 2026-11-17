@@ -7,7 +7,8 @@ export default async ({ page, shot }) => {
     const fail = (m, r) => { throw new Error(`${m}: ${JSON.stringify(r)}`); };
     await page.evaluate(() => { const [path, q = ""] = location.hash.split("?"); const p = new URLSearchParams(q); p.set("view", "calm"); location.hash = `${path}?${p}`; });
     await page.waitForSelector(".gl-frame.calm");
-    await page.waitForTimeout(300);
+    // Past the card's own entrance (it opens from nothing over --calm-reflow-ms): its height is the one it rests at.
+    await page.waitForTimeout(700);
     await shot("waiting");
     const r = await page.evaluate(() => new Promise((resolve) => {
         const q = () => document.querySelector(".gl-frame .astep-approve.ask");
