@@ -6,18 +6,19 @@
     "ramGiB": 24,
     "node": "v26.12.1",
     "load": [
-      4.9609375,
-      4.89599609375,
-      5.14453125
+      3.1630859375,
+      3.2626953125,
+      3.39697265625
     ],
     "loadAfter": [
-      8.35009765625,
-      5.7060546875,
-      5.42724609375
+      5.08154296875,
+      3.70166015625,
+      3.54931640625
     ]
   },
   "quick": false,
-  "at": "2026-11-17T11:43:43.258Z",
+  "at": "2026-11-17T13:23:07.576Z",
+  "otherBrowsersAtStart": 0,
   "browser": "151.0.7922.34",
   "quota-default": {
     "inWorker": {
@@ -31,7 +32,7 @@
     },
     "disk": {
       "totalBytes": 994610155520,
-      "freeBytes": 720052547584
+      "freeBytes": 721618194432
     }
   },
   "pageMemory": {
@@ -39,17 +40,17 @@
   },
   "quota-unlimited": {
     "inWorker": {
-      "quota": 720051909176,
+      "quota": 721618199096,
       "usage": 568,
       "persisted": false
     },
     "inPage": {
-      "quota": 720051900984,
+      "quota": 721618186808,
       "usage": 568
     },
     "disk": {
       "totalBytes": 994610155520,
-      "freeBytes": 720051900416
+      "freeBytes": 721618186240
     }
   },
   "messages": [
@@ -69,37 +70,37 @@
       "mib": 32,
       "via": "sendMessage",
       "ok": true,
-      "ms": 82
+      "ms": 73
     },
     {
       "mib": 32,
       "via": "port",
       "ok": true,
-      "ms": 76
+      "ms": 65
     },
     {
       "mib": 63,
       "via": "sendMessage",
       "ok": true,
-      "ms": 159
+      "ms": 138
     },
     {
       "mib": 63,
       "via": "port",
       "ok": true,
-      "ms": 135
+      "ms": 114
     },
     {
       "mib": 64,
       "via": "sendMessage",
       "ok": true,
-      "ms": 150
+      "ms": 129
     },
     {
       "mib": 64,
       "via": "port",
       "ok": true,
-      "ms": 132
+      "ms": 123
     },
     {
       "mib": 65,
@@ -131,16 +132,18 @@
       "mib": 32,
       "kind": "string",
       "ok": true,
-      "putMs": 10,
+      "putMs": 9,
       "readBackOk": true,
+      "died": false,
       "workerClosed": false
     },
     {
       "mib": 32,
       "kind": "object-of-strings",
       "ok": true,
-      "putMs": 12,
+      "putMs": 11,
       "readBackOk": true,
+      "died": false,
       "workerClosed": false
     },
     {
@@ -149,6 +152,7 @@
       "ok": true,
       "putMs": 17,
       "readBackOk": true,
+      "died": false,
       "workerClosed": false
     },
     {
@@ -157,6 +161,7 @@
       "ok": true,
       "putMs": 26,
       "readBackOk": true,
+      "died": false,
       "workerClosed": false
     },
     {
@@ -165,78 +170,88 @@
       "ok": true,
       "putMs": 30,
       "readBackOk": true,
+      "died": false,
       "workerClosed": false
     },
     {
       "mib": 120,
       "kind": "object-of-strings",
       "ok": true,
+      "putMs": 38,
+      "readBackOk": true,
+      "died": false,
+      "workerClosed": false
+    },
+    {
+      "mib": 127,
+      "kind": "string",
+      "ok": true,
+      "putMs": 31,
+      "readBackOk": true,
+      "died": false,
+      "workerClosed": false
+    },
+    {
+      "mib": 127,
+      "kind": "object-of-strings",
+      "ok": true,
       "putMs": 43,
       "readBackOk": true,
-      "workerClosed": false
-    },
-    {
-      "mib": 127,
-      "kind": "string",
-      "ok": true,
-      "putMs": 33,
-      "readBackOk": true,
-      "workerClosed": false
-    },
-    {
-      "mib": 127,
-      "kind": "object-of-strings",
-      "ok": true,
-      "putMs": 52,
-      "readBackOk": true,
+      "died": false,
       "workerClosed": false
     },
     {
       "mib": 130,
       "kind": "string",
       "ok": true,
-      "putMs": 35,
+      "putMs": 60,
       "readBackOk": true,
+      "died": false,
       "workerClosed": false
     },
     {
       "mib": 130,
       "kind": "object-of-strings",
       "ok": true,
-      "putMs": 50,
+      "putMs": 112,
       "readBackOk": true,
+      "died": false,
       "workerClosed": false
     },
     {
       "mib": 256,
       "kind": "string",
       "ok": true,
-      "putMs": 97,
+      "putMs": 143,
       "readBackOk": true,
+      "died": false,
       "workerClosed": false
     },
     {
       "mib": 256,
       "kind": "object-of-strings",
       "ok": true,
-      "putMs": 126,
+      "putMs": 142,
       "readBackOk": true,
+      "died": false,
       "workerClosed": false
     },
     {
       "mib": 512,
       "kind": "string",
       "ok": false,
-      "died": true,
+      "rejected": true,
       "error": "worker.evaluate: RangeError: Invalid string length",
+      "died": false,
       "workerClosed": false
     },
     {
       "mib": 512,
       "kind": "object-of-strings",
       "ok": true,
-      "putMs": 404,
+      "putMs": 318,
       "readBackOk": true,
+      "died": false,
       "workerClosed": false
     }
   ],
@@ -249,13 +264,13 @@
       "ended": "cap",
       "mib": 6144,
       "heldBytes": 6442450944,
-      "sampleSum": 7433,
+      "sampleSum": 7532,
       "lastStepWrittenMiB": 6144,
       "workerClosed": false,
-      "peakExtensionRssMiB": 3399,
-      "chromiumRssBeforeMiB": 2404,
-      "peakChromiumRssMiB": 3986,
-      "ms": 7632
+      "peakExtensionRssMiB": 3536,
+      "chromiumRssBeforeMiB": 2129,
+      "peakChromiumRssMiB": 4079,
+      "ms": 7140
     },
     {
       "kind": "arraybuffer",
@@ -265,13 +280,13 @@
       "ended": "cap",
       "mib": 6144,
       "heldBytes": 6442450944,
-      "sampleSum": 12573,
+      "sampleSum": 12428,
       "lastStepWrittenMiB": 6144,
       "workerClosed": false,
-      "peakExtensionRssMiB": 4361,
-      "chromiumRssBeforeMiB": 3493,
-      "peakChromiumRssMiB": 5112,
-      "ms": 1787
+      "peakExtensionRssMiB": 5218,
+      "chromiumRssBeforeMiB": 3543,
+      "peakChromiumRssMiB": 5970,
+      "ms": 1719
     },
     {
       "kind": "objects",
@@ -284,10 +299,11 @@
       "sampleSum": 48000000,
       "lastStepWrittenMiB": 6144,
       "workerClosed": false,
-      "peakExtensionRssMiB": 5760,
-      "chromiumRssBeforeMiB": 6327,
-      "peakChromiumRssMiB": 6327,
-      "ms": 18847
+      "peakExtensionRssMiB": 3977,
+      "chromiumRssBeforeMiB": 3384,
+      "peakChromiumRssMiB": 4603,
+      "ms": 20801
     }
-  ]
+  ],
+  "otherBrowsersAtEnd": 0
 }

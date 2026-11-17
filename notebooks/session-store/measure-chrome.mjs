@@ -15,6 +15,11 @@ import { execFileSync } from "node:child_process";
 import { launchExtension } from "../../tests/e2e/harness.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+/** Other Playwright Chromium browsers on the machine (not this run's): recorded at the start and end, so the data says
+ *  whether the machine was quiet. */
+const otherBrowsers = (/** @type {string} */ mine) => execFileSync("ps", ["-axo", "command="], { encoding: "utf8", maxBuffer: 1 << 26 })
+    .split("\n").filter((l) => l.includes("ms-playwright/chromium") && !l.includes("--type=") && !(mine && l.includes(mine))).length;
+
 const DATA = path.join(HERE, "data");
 const QUICK = process.argv.includes("--quick");
 const MiB = 1 << 20;
@@ -70,26 +75,21 @@ async function liveWorker(ext) {
 
 const machine = { platform: process.platform, arch: process.arch, cpus: os.cpus()[0]?.model, ramGiB: +(os.totalmem() / 2 ** 30).toFixed(1), node: process.version, load: os.loadavg() };
 
-/** The largest resident size, in MiB, of a Chromium process started with `--extension-process` (where an extension's
- *  service worker runs): sampled from outside, so a held allocation is checked to be real memory. */
-function extensionRssMiB() {
-    const out = execFileSync("ps", ["-axo", "rss=,command="], { encoding: "utf8", maxBuffer: 1 << 26 });
-    let max = 0;
-    for (const line of out.split("\n")) if (line.includes("--extension-process")) max = Math.max(max, Number(line.trim().split(/\s+/)[0]) / 1024);
-    return Math.round(max);
-}
-
-/** The resident size, in MiB, summed over the harness's browser (the process holding its temporary profile) and every
- *  process under it: other sessions may run their own Chromium at the same time. */
-function chromiumRssMiB() {
+/** The harness's browser (the process holding this run's temporary profile) and every process under it: other sessions
+ *  may run their own Chromium at the same time. */
+function myProcesses() {
     const out = execFileSync("ps", ["-axo", "pid=,ppid=,rss=,command="], { encoding: "utf8", maxBuffer: 1 << 26 });
     const procs = out.split("\n").filter(Boolean).map((l) => { const [pid, ppid, rss, ...cmd] = l.trim().split(/\s+/); return { pid: +pid, ppid: +ppid, rss: +rss, cmd: cmd.join(" ") }; });
     const roots = procs.filter((p) => p.cmd.includes("--user-data-dir=") && p.cmd.includes("playwright_chromiumdev_profile") && !p.cmd.includes("--type="));
     const mine = new Set(roots.filter((r) => r.cmd.includes(PROFILE_MARK)).map((r) => r.pid));
     let grew = true;
     while (grew) { grew = false; for (const p of procs) if (!mine.has(p.pid) && mine.has(p.ppid)) { mine.add(p.pid); grew = true; } }
-    return Math.round(procs.filter((p) => mine.has(p.pid)).reduce((a, p) => a + p.rss, 0) / 1024);
+    return procs.filter((p) => mine.has(p.pid));
 }
+const chromiumRssMiB = () => Math.round(myProcesses().reduce((a, p) => a + p.rss, 0) / 1024);
+/** The largest resident size, in MiB, of THIS run's `--extension-process` (where the probe's service worker runs):
+ *  sampled from outside, so a held allocation is checked to be real memory. Another session's Chromium never counts. */
+const extensionRssMiB = () => Math.round(Math.max(0, ...myProcesses().filter((p) => p.cmd.includes("--extension-process")).map((p) => p.rss)) / 1024);
 /** Set at launch: the temporary profile directory's name, which only this run's browser carries. */
 let PROFILE_MARK = "\0";
 
@@ -154,11 +154,13 @@ async function allocate(ext, /** @type {"objects"|"string"|"arraybuffer"} */ kin
         } catch (e) {
             return { ended: "threw", mib, error: `${e?.name}: ${String(e?.message).slice(0, 200)}` };
         } finally { g.__hold = null; }
-    }, { kind, step: STEP_MIB, capMiB: CAP_GIB * 1024 }).catch((e) => ({ ended: "died", error: String(e?.message || e).split("\n")[0].slice(0, 200) }));
+    }, { kind, step: STEP_MIB, capMiB: CAP_GIB * 1024 }).catch((e) => ({ ended: "rejected", error: String(e?.message || e).split("\n")[0].slice(0, 200) }));
     clearInterval(sampler);
     await new Promise((r) => setTimeout(r, 500));
     const after = await liveWorker(ext);
     const { mib: lastWritten } = await after.evaluate(() => chrome.storage.session.get("mib")).catch(() => ({ mib: null }));
+    // A REJECTION is the evaluate promise failing; a DEATH is the worker going away. Only the second is a death.
+    if (outcome.ended === "rejected" && closed !== null) outcome.ended = "died";
     return { kind, stepMiB: STEP_MIB, capMiB: CAP_GIB * 1024, heapBefore: heap, ...outcome, lastStepWrittenMiB: lastWritten ?? 0, workerClosed: closed !== null, peakExtensionRssMiB: peakRssMiB, chromiumRssBeforeMiB: baseAllMiB, peakChromiumRssMiB: peakAllMiB, ms: Date.now() - t0 };
 }
 
@@ -188,8 +190,9 @@ async function idbPuts(ext) {
                     db.close();
                     return { ok: true, putMs: Math.round(putMs), readBackOk: len === n };
                 } catch (e) { db.close(); return { ok: false, error: `${e?.name}: ${String(e?.message).slice(0, 200)}` }; }
-            }, { mib, kind }).catch((e) => ({ ok: false, died: true, error: String(e?.message || e).split("\n")[0].slice(0, 200) }));
-            out.push({ mib, kind, ...r, workerClosed: closed });
+            }, { mib, kind }).catch((e) => ({ ok: false, rejected: true, error: String(e?.message || e).split("\n")[0].slice(0, 200) }));
+            // `rejected`: the evaluate failed (a RangeError building the value counts); `died`: the worker went away.
+            out.push({ mib, kind, ...r, died: closed, workerClosed: closed });
         }
     }
     return out;
@@ -239,7 +242,7 @@ function diskBytes() {
     return { totalBytes: s.blocks * s.bsize, freeBytes: s.bavail * s.bsize };
 }
 
-const result = { machine, quick: QUICK, at: new Date().toISOString() };
+const result = { machine, quick: QUICK, at: new Date().toISOString(), otherBrowsersAtStart: otherBrowsers("") };
 for (const unlimited of [false, true]) {
     const ext = await launch(unlimited);
     result.browser ??= ext.version;
@@ -265,5 +268,6 @@ for (const unlimited of [false, true]) {
     fs.rmSync(ext.dist, { recursive: true, force: true });
 }
 result.machine.loadAfter = os.loadavg();
+result.otherBrowsersAtEnd = otherBrowsers("");
 save(QUICK ? "chrome-quick.json" : "chrome.json", result);
 console.log("wrote", QUICK ? "data/chrome-quick.json" : "data/chrome.json");

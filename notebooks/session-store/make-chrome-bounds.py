@@ -90,8 +90,9 @@ print("an extension PAGE's performance.memory.jsHeapSizeLimit:", D.get("pageMemo
 """)
 
 md("""
-**One death, not reproduced.** In the run before this one, the objects case ran FIRST, and the extension process died
-during it: its replacement was three seconds old when looked at, and the script, whose probe page died with the
+**One death, not reproduced.** In an earlier run (not kept: the script hung), the objects case ran FIRST, and the
+extension process died during it. That was a DEATH, not a rejection: the extension process was replaced (its
+successor was three seconds old when looked at), which a rejected `evaluate` never does, and the script, whose probe page died with the
 process, hung and recorded nothing (the script now replaces a crashed page and runs objects last). In the run kept
 here the same case reached its cap. What killed the first is not determined: V8's heap limit, or the machine's memory
 pressure at that moment. An extension PAGE reports a V8 heap limit of 4.09 GiB (above); if the worker's is the same,
@@ -124,7 +125,16 @@ history array). Chromium's source has a 128 MiB IPC limit for IndexedDB (`kIDBMa
 
 code("""
 print(pd.DataFrame([{"MiB": r["mib"], "as": r["kind"], "ok": r["ok"], "put ms": r.get("putMs"), "read back equal": r.get("readBackOk"),
-                     "error": r.get("error", "")} for r in D["idb"]]).to_string(index=False))
+                     "rejected": bool(r.get("rejected")), "died": bool(r.get("died")), "error": r.get("error", "")} for r in D["idb"]]).to_string(index=False))
+""")
+
+md("""
+`rejected` is the probe's `evaluate` failing, a `RangeError` while building the value included; `died` is the worker
+going away. They are separate: the 512 MiB string row is a rejection, the string could not be made, and the worker
+lived.""")
+
+code("""
+print("other Playwright browsers on the machine at start / end:", D.get("otherBrowsersAtStart"), "/", D.get("otherBrowsersAtEnd"))
 """)
 
 md("""
