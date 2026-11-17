@@ -1,0 +1,4500 @@
+{
+  "commit": "7ded3154a3f99f961713c6d9032518aa10eca938",
+  "extracted_at": "2026-11-17T12:10:14+00:00",
+  "rows": [
+    {
+      "answer": "Settings \u2192 **Connection** \u2192 API key (next to the server URL and API format): [Connection](window-ml:setting/apiKey)",
+      "calls": 4,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11566,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "setting/apiKey",
+          "label": "Connection",
+          "route": {
+            "setting": "apiKey",
+            "tab": "connection"
+          }
+        }
+      ],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 52830,
+      "repeat": 0,
+      "sentence": "off",
+      "steps": 4,
+      "task": "api-key"
+    },
+    {
+      "answer": "In window.ml's Settings, under the **Connection** tab \u2014 the `apiKey` row (next to your server URL and API format): [Settings \u203a Connection \u203a API key](window-ml:setting/apiKey).\n\n(Note: the page itself is just a cross-page navigation test showing `CROSSPAGE-9471`; it has nothing about API keys.)",
+      "calls": 3,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11566,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "setting/apiKey",
+          "label": "Settings \u203a Connection \u203a API key",
+          "route": {
+            "setting": "apiKey",
+            "tab": "connection"
+          }
+        }
+      ],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 39521,
+      "repeat": 1,
+      "sentence": "off",
+      "steps": 3,
+      "task": "api-key"
+    },
+    {
+      "answer": "Nothing on this page sets an API key \u2014 it's the tail of a cross-navigation test and only shows the code **CROSSPAGE-9471** (the other origin at :59270 is likewise just a \"different origin\" test page with XDOMAIN-2025).\n\nIf you meant your model server's key config, point me at that page/docs (or the app's settings URL) and I'll find the exact field.",
+      "calls": 4,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11566,
+      "hit_cap": false,
+      "links": [],
+      "model": "deepseek.deepseek-flash",
+      "passed": false,
+      "prompt_tokens": 50132,
+      "repeat": 2,
+      "sentence": "off",
+      "steps": 5,
+      "task": "api-key"
+    },
+    {
+      "answer": "In the extension's Settings \u2192 **Connection** tab \u2014 the API key field (next to the server URL and API format) is where the key lives: [Connection settings](window-ml:settings/extension/connection), or jump straight to [API key](window-ml:setting/apiKey). The key is stored in the extension and never exposed to the page.",
+      "calls": 3,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11566,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/connection",
+          "label": "Connection settings",
+          "route": {
+            "tab": "connection"
+          }
+        },
+        {
+          "address": "setting/apiKey",
+          "label": "API key",
+          "route": {
+            "setting": "apiKey",
+            "tab": "connection"
+          }
+        }
+      ],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 39899,
+      "repeat": 3,
+      "sentence": "off",
+      "steps": 3,
+      "task": "api-key"
+    },
+    {
+      "answer": "Set it in the extension's Settings \u2192 **Connection** tab: [API key](window-ml:setting/apiKey) (the server URL is the row above it, `chatUrl`). Full tab: [Connection settings](window-ml:settings/extension/connection).",
+      "calls": 3,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11605,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "setting/apiKey",
+          "label": "API key",
+          "route": {
+            "setting": "apiKey",
+            "tab": "connection"
+          }
+        },
+        {
+          "address": "settings/extension/connection",
+          "label": "Connection settings",
+          "route": {
+            "tab": "connection"
+          }
+        }
+      ],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 40005,
+      "repeat": 0,
+      "sentence": "on",
+      "steps": 3,
+      "task": "api-key"
+    },
+    {
+      "answer": "This page has no API-key setting \u2014 it's just a navigation test page (step 3 of 3) showing the code `CROSSPAGE-9471` and a link to http://127.0.0.1:60839. Tell me which app/config page your model server lives on and I'll point you to the field.",
+      "calls": 3,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11605,
+      "hit_cap": false,
+      "links": [],
+      "model": "deepseek.deepseek-flash",
+      "passed": false,
+      "prompt_tokens": 36569,
+      "repeat": 1,
+      "sentence": "on",
+      "steps": 3,
+      "task": "api-key"
+    },
+    {
+      "answer": "This page has nothing about it \u2014 it's just a \"Step 3 of 3\" test page showing the code `CROSSPAGE-9471` and a link to `http://127.0.0.1:61003`. There's no settings page or docs for a model server here.\n\nTell me which product/server you mean (e.g. LM Studio, Ollama, vLLM, an OpenAI-compatible endpoint) or point me at its settings/docs page, and I'll find the exact field.",
+      "calls": 3,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11605,
+      "hit_cap": false,
+      "links": [],
+      "model": "deepseek.deepseek-flash",
+      "passed": false,
+      "prompt_tokens": 36451,
+      "repeat": 2,
+      "sentence": "on",
+      "steps": 2,
+      "task": "api-key"
+    },
+    {
+      "answer": "Settings \u2192 Connection \u2192 **API key** (the same section as the server URL): [API key](window-ml:setting/apiKey) \u00b7 [Connection settings](settings/extension/connection).\n\n(The page you're on is a navigation test page \u2014 code `CROSSPAGE-9471` \u2014 nothing on it affects the key.)",
+      "calls": 3,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11605,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "setting/apiKey",
+          "label": "API key",
+          "route": {
+            "setting": "apiKey",
+            "tab": "connection"
+          }
+        }
+      ],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 40185,
+      "repeat": 3,
+      "sentence": "on",
+      "steps": 4,
+      "task": "api-key"
+    },
+    {
+      "answer": "You can set the API key in the extension's Settings panel under the [Connection](window-ml:settings/extension/connection) tab.",
+      "calls": 4,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11075,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/connection",
+          "label": "Connection",
+          "route": {
+            "tab": "connection"
+          }
+        }
+      ],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 49379,
+      "repeat": 0,
+      "sentence": "off",
+      "steps": 3,
+      "task": "api-key"
+    },
+    {
+      "answer": "You can set the API key in the **Connection** section of the extension's settings: [Connection settings](window-ml:settings/extension/connection).",
+      "calls": 7,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11075,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/connection",
+          "label": "Connection settings",
+          "route": {
+            "tab": "connection"
+          }
+        }
+      ],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 85957,
+      "repeat": 1,
+      "sentence": "off",
+      "steps": 6,
+      "task": "api-key"
+    },
+    {
+      "answer": "You can set the API key in the extension's [Connection settings](window-ml:settings/extension/connection).",
+      "calls": 3,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11075,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/connection",
+          "label": "Connection settings",
+          "route": {
+            "tab": "connection"
+          }
+        }
+      ],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 37742,
+      "repeat": 2,
+      "sentence": "off",
+      "steps": 2,
+      "task": "api-key"
+    },
+    {
+      "answer": "You can set the API key for your model server in the [Connection settings](window-ml:settings/extension/connection).",
+      "calls": 5,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11075,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/connection",
+          "label": "Connection settings",
+          "route": {
+            "tab": "connection"
+          }
+        }
+      ],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 61146,
+      "repeat": 3,
+      "sentence": "off",
+      "steps": 4,
+      "task": "api-key"
+    },
+    {
+      "answer": "You can set the API key for your model server in the [Connection](window-ml:settings/extension/connection) settings, specifically under the [API key](window-ml:setting/apiKey) field.",
+      "calls": 3,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11115,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/connection",
+          "label": "Connection",
+          "route": {
+            "tab": "connection"
+          }
+        },
+        {
+          "address": "setting/apiKey",
+          "label": "API key",
+          "route": {
+            "setting": "apiKey",
+            "tab": "connection"
+          }
+        }
+      ],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 37862,
+      "repeat": 0,
+      "sentence": "on",
+      "steps": 2,
+      "task": "api-key"
+    },
+    {
+      "answer": "You can set the API key for your model server in the [Connection](window-ml:settings/extension/connection) settings, specifically in the [API Key](window-ml:setting/apiKey) field.",
+      "calls": 4,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 11115,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/connection",
+          "label": "Connection",
+          "route": {
+            "tab": "connection"
+          }
+        },
+        {
+          "address": "setting/apiKey",
+          "label": "API Key",
+          "route": {
+            "setting": "apiKey",
+            "tab": "connection"
+          }
+        }
+      ],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 54023,
+      "repeat": 1,
+      "sentence": "on",
+      "steps": 3,
+      "task": "api-key"
+    },
+    {
+      "answer": "You can set the API key in the **Connection** section of the extension's settings: [apiKey](window-ml:setting/apiKey).",
+      "calls": 3,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11115,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "setting/apiKey",
+          "label": "apiKey",
+          "route": {
+            "setting": "apiKey",
+            "tab": "connection"
+          }
+        }
+      ],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 37763,
+      "repeat": 2,
+      "sentence": "on",
+      "steps": 2,
+      "task": "api-key"
+    },
+    {
+      "answer": "You can set the API key for your model server in the **Connection** tab of the extension's settings: [apiKey](window-ml:setting/apiKey).",
+      "calls": 4,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 11115,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "setting/apiKey",
+          "label": "apiKey",
+          "route": {
+            "setting": "apiKey",
+            "tab": "connection"
+          }
+        }
+      ],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 53345,
+      "repeat": 3,
+      "sentence": "on",
+      "steps": 3,
+      "task": "api-key"
+    },
+    {
+      "answer": "I cannot find any instructions or settings related to setting the API key for your model server on the current page.",
+      "calls": 8,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11075,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 92131,
+      "repeat": 0,
+      "sentence": "off",
+      "steps": 7,
+      "task": "api-key"
+    },
+    {
+      "answer": "I was unable to locate any mention of setting an \"API key\" or \"model server\" settings on the current page. The page content relates to a cross-domain test, not configuration settings.\n\nDo you know a specific link or menu item I should navigate to find the API key settings?",
+      "calls": 9,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11075,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 103208,
+      "repeat": 1,
+      "sentence": "off",
+      "steps": 8,
+      "task": "api-key"
+    },
+    {
+      "answer": "I was unable to find any mention of \"API key\" or \"model server\" on the current page. The content appears to be related to a cross-domain test setup. Can you provide a screenshot of the page you believe contains the settings, or tell me if there is a 'Settings' or 'Configuration' link I should click?",
+      "calls": 6,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11075,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 68582,
+      "repeat": 2,
+      "sentence": "off",
+      "steps": 5,
+      "task": "api-key"
+    },
+    {
+      "answer": "The current page does not contain instructions or controls for setting an API key for your model server.",
+      "calls": 5,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11075,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 57475,
+      "repeat": 3,
+      "sentence": "off",
+      "steps": 4,
+      "task": "api-key"
+    },
+    {
+      "answer": "The current page describes a cross-domain scenario and does not contain any information on where to set an API key.",
+      "calls": 9,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11115,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 106437,
+      "repeat": 0,
+      "sentence": "on",
+      "steps": 8,
+      "task": "api-key"
+    },
+    {
+      "answer": "I cannot find any instructions or fields to set an API key for a model server on this page.",
+      "calls": 5,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11115,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 58143,
+      "repeat": 1,
+      "sentence": "on",
+      "steps": 4,
+      "task": "api-key"
+    },
+    {
+      "answer": "I cannot find any reference to setting an API key on this page; the page content is focused solely on a technical task (\"CROSSPAGE-9471\") requiring a domain navigation.",
+      "calls": 6,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11115,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 69351,
+      "repeat": 2,
+      "sentence": "on",
+      "steps": 5,
+      "task": "api-key"
+    },
+    {
+      "answer": "Stopped at the 10-step cap without finishing.",
+      "calls": 10,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11115,
+      "hit_cap": true,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 118518,
+      "repeat": 3,
+      "sentence": "on",
+      "steps": 10,
+      "task": "api-key"
+    },
+    {
+      "answer": "I don\u2019t see an API-key setting on this page; it only shows the cross-domain test code.",
+      "calls": 3,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 9274,
+      "hit_cap": false,
+      "links": [],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": false,
+      "prompt_tokens": 29215,
+      "repeat": 0,
+      "sentence": "off",
+      "steps": 2,
+      "task": "api-key"
+    },
+    {
+      "answer": "This page doesn\u2019t show an API-key setting; it only explains that you\u2019ve reached a different origin.",
+      "calls": 9,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 9274,
+      "hit_cap": false,
+      "links": [],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": false,
+      "prompt_tokens": 95915,
+      "repeat": 1,
+      "sentence": "off",
+      "steps": 8,
+      "task": "api-key"
+    },
+    {
+      "answer": "The page I can see doesn\u2019t show API-key settings. Which model server are you using?",
+      "calls": 2,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 9274,
+      "hit_cap": false,
+      "links": [],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": false,
+      "prompt_tokens": 19727,
+      "repeat": 2,
+      "sentence": "off",
+      "steps": 1,
+      "task": "api-key"
+    },
+    {
+      "answer": "This page doesn\u2019t show an API-key setting. It only displays the cross-page code `CROSSPAGE-9471`.",
+      "calls": 5,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 9274,
+      "hit_cap": false,
+      "links": [],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": false,
+      "prompt_tokens": 50122,
+      "repeat": 3,
+      "sentence": "off",
+      "steps": 4,
+      "task": "api-key"
+    },
+    {
+      "answer": "Set it in the window.ml extension\u2019s **Settings \u2192 Connection** tab, in the **API key** field: [Open Connection settings](window-ml:settings/extension/connection).",
+      "calls": 4,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 9310,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/connection",
+          "label": "Open Connection settings",
+          "route": {
+            "tab": "connection"
+          }
+        }
+      ],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "prompt_tokens": 49613,
+      "repeat": 0,
+      "sentence": "on",
+      "steps": 3,
+      "task": "api-key"
+    },
+    {
+      "answer": "Set it in the extension\u2019s **Settings \u2192 Connection** panel: [Open Connection settings](window-ml:settings/extension/connection). The API key is the **apiKey** setting.",
+      "calls": 5,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 9310,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/connection",
+          "label": "Open Connection settings",
+          "route": {
+            "tab": "connection"
+          }
+        }
+      ],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "prompt_tokens": 59348,
+      "repeat": 1,
+      "sentence": "on",
+      "steps": 4,
+      "task": "api-key"
+    },
+    {
+      "answer": "Set it in window.ml\u2019s **Settings \u2192 Connection \u2192 API key**: [Connection settings](window-ml:settings/extension/connection).",
+      "calls": 5,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 9310,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/connection",
+          "label": "Connection settings",
+          "route": {
+            "tab": "connection"
+          }
+        }
+      ],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "prompt_tokens": 57448,
+      "repeat": 2,
+      "sentence": "on",
+      "steps": 4,
+      "task": "api-key"
+    },
+    {
+      "answer": "Set it in **Settings \u2192 Connection \u2192 API key**: [Connection settings](window-ml:settings/extension/connection).",
+      "calls": 5,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 9310,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/connection",
+          "label": "Connection settings",
+          "route": {
+            "tab": "connection"
+          }
+        }
+      ],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "prompt_tokens": 57478,
+      "repeat": 3,
+      "sentence": "on",
+      "steps": 4,
+      "task": "api-key"
+    },
+    {
+      "answer": "**Settings \u2192 Connection** \u2014 the extension's Settings panel has the tab with your server URL, API key and API format.\n\n- API key: [apiKey](window-ml:setting/apiKey)\n- Server URL: [chatUrl](window-ml:setting/chatUrl)\n- API format: [apiFormat](window-ml:setting/apiFormat)\n\nOr open the whole tab: [Connection settings](window-ml:settings/extension/connection). The extension icon in the toolbar also opens the popup with the model picker and settings.",
+      "calls": 4,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 11530,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "setting/apiKey",
+          "label": "apiKey",
+          "route": {
+            "setting": "apiKey",
+            "tab": "connection"
+          }
+        },
+        {
+          "address": "setting/chatUrl",
+          "label": "chatUrl",
+          "route": {
+            "setting": "chatUrl",
+            "tab": "connection"
+          }
+        },
+        {
+          "address": "setting/apiFormat",
+          "label": "apiFormat",
+          "route": {
+            "setting": "apiFormat",
+            "tab": "connection"
+          }
+        },
+        {
+          "address": "settings/extension/connection",
+          "label": "Connection settings",
+          "route": {
+            "tab": "connection"
+          }
+        }
+      ],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 51270,
+      "repeat": 0,
+      "sentence": "off",
+      "steps": 4,
+      "task": "api-key"
+    },
+    {
+      "answer": "**Settings \u2192 Extension \u2192 Connection** \u2014 that tab holds the three connection settings together: the server URL (`chatUrl`), the **API key** (`apiKey`), and the API format (`apiFormat`).\n\n[Open the API key setting](window-ml:setting/apiKey) \u00b7 [Connection tab](window-ml:settings/extension/connection)\n\nYou can also get there from the toolbar icon, which opens the popup with settings and the model picker. The key is never exposed to the page \u2014 requests go page \u2192 content script \u2192 background worker \u2192 your LLM server.",
+      "calls": 5,
+      "docs_calls": 3,
+      "error": false,
+      "first_prompt_tokens": 11530,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "setting/apiKey",
+          "label": "Open the API key setting",
+          "route": {
+            "setting": "apiKey",
+            "tab": "connection"
+          }
+        },
+        {
+          "address": "settings/extension/connection",
+          "label": "Connection tab",
+          "route": {
+            "tab": "connection"
+          }
+        }
+      ],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 71294,
+      "repeat": 1,
+      "sentence": "off",
+      "steps": 5,
+      "task": "api-key"
+    },
+    {
+      "answer": "Settings \u2192 **Connection** \u2014 that tab holds the three things that point the extension at your model server: the base URL (`chatUrl`), the **API key**, and the API format.\n\n- [Open Connection settings](window-ml:settings/extension/connection)\n- [Jump to the API key row](window-ml:setting/apiKey)\n\nThe toolbar icon opens the same popup with the model picker; the Models tab underneath is where you pick which models from that server to use.",
+      "calls": 4,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 11530,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/connection",
+          "label": "Open Connection settings",
+          "route": {
+            "tab": "connection"
+          }
+        },
+        {
+          "address": "setting/apiKey",
+          "label": "Jump to the API key row",
+          "route": {
+            "setting": "apiKey",
+            "tab": "connection"
+          }
+        }
+      ],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 51412,
+      "repeat": 2,
+      "sentence": "off",
+      "steps": 4,
+      "task": "api-key"
+    },
+    {
+      "answer": "In the extension's **Settings \u2192 Connection** tab \u2014 the *API key* field (`apiKey`), next to the server address (`chatUrl`) and wire format (`apiFormat`).\n\n[Open Settings \u2192 Connection](window-ml:settings/extension/connection) \u00b7 [jump straight to the API key row](window-ml:setting/apiKey)",
+      "calls": 4,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 11530,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/connection",
+          "label": "Open Settings \u2192 Connection",
+          "route": {
+            "tab": "connection"
+          }
+        },
+        {
+          "address": "setting/apiKey",
+          "label": "jump straight to the API key row",
+          "route": {
+            "setting": "apiKey",
+            "tab": "connection"
+          }
+        }
+      ],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 52345,
+      "repeat": 3,
+      "sentence": "off",
+      "steps": 4,
+      "task": "api-key"
+    },
+    {
+      "answer": "`apiKey` lives in the extension's **Connection** settings, next to the server URL (`chatUrl`) and wire format (`apiFormat`) \u2014 open it with the link below, or via the extension's toolbar icon \u2192 Settings.\n\n[Connection settings](window-ml:settings/extension/connection)\n\n(The page you're on, `127.0.0.1:57709/step3`, is a 3-step navigation demo showing the code `CROSSPAGE-9471` \u2014 nothing here relates to model config. Say the word if you want me to continue to the other origin at `127.0.0.1:57708`.)",
+      "calls": 8,
+      "docs_calls": 4,
+      "error": false,
+      "first_prompt_tokens": 11566,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/connection",
+          "label": "Connection settings",
+          "route": {
+            "tab": "connection"
+          }
+        }
+      ],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 115090,
+      "repeat": 0,
+      "sentence": "on",
+      "steps": 7,
+      "task": "api-key"
+    },
+    {
+      "answer": "**Settings \u2192 Connection** holds both the server URL (`chatUrl`) and the key (`apiKey`) \u2014 the key is never exposed to pages.\n\n[Connection settings](window-ml:settings/extension/connection) \u00b7 [API key row](window-ml:setting/apiKey)",
+      "calls": 4,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11566,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/connection",
+          "label": "Connection settings",
+          "route": {
+            "tab": "connection"
+          }
+        },
+        {
+          "address": "setting/apiKey",
+          "label": "API key row",
+          "route": {
+            "setting": "apiKey",
+            "tab": "connection"
+          }
+        }
+      ],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 52337,
+      "repeat": 1,
+      "sentence": "on",
+      "steps": 4,
+      "task": "api-key"
+    },
+    {
+      "answer": "**Settings \u2192 Extension \u2192 Connection** \u2014 the API key field sits there alongside your server URL (`chatUrl`) and `apiFormat`: [Connection settings](window-ml:settings/extension/connection) (key: `apiKey`).",
+      "calls": 7,
+      "docs_calls": 4,
+      "error": false,
+      "first_prompt_tokens": 11566,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/connection",
+          "label": "Connection settings",
+          "route": {
+            "tab": "connection"
+          }
+        }
+      ],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 94100,
+      "repeat": 2,
+      "sentence": "on",
+      "steps": 7,
+      "task": "api-key"
+    },
+    {
+      "answer": "**Settings \u2192 Connection** \u2014 that tab holds both the server URL (`chatUrl`) and the API key (`apiKey`):\n\n[Connection settings](window-ml:settings/extension/connection) \u00b7 or straight to the [API key row](window-ml:setting/apiKey)\n\nThe key is never exposed to the page \u2014 requests go page \u2192 content script \u2192 background worker \u2192 your server.",
+      "calls": 3,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11566,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/connection",
+          "label": "Connection settings",
+          "route": {
+            "tab": "connection"
+          }
+        },
+        {
+          "address": "setting/apiKey",
+          "label": "API key row",
+          "route": {
+            "setting": "apiKey",
+            "tab": "connection"
+          }
+        }
+      ],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 40456,
+      "repeat": 3,
+      "sentence": "on",
+      "steps": 3,
+      "task": "api-key"
+    },
+    {
+      "answer": "Use the extension's own backup tab: **Settings \u2192 Backup and restore** \u2014 [Backup and restore](window-ml:settings/extension/backup). There you export your settings and your stored sessions to one file, and can import it back later (on this browser or another) to restore them.\n\nRelated knobs live under [Appearance \u2192 Storage](window-ml:settings/extension/appearance/storage) (`sessionArchive`) and [Appearance \u2192 DevTools](window-ml:settings/extension/appearance/devtools) (`persistUiRuns`, `sessionRetentionDays`, `sessionStoreBudgetMB`) \u2014 set retention/storage before exporting, so the sessions you want are still there to back up.",
+      "calls": 9,
+      "docs_calls": 4,
+      "error": false,
+      "first_prompt_tokens": 11564,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/backup",
+          "label": "Backup and restore",
+          "route": {
+            "section": "storage",
+            "tab": "appearance",
+            "target": "set-backup"
+          }
+        },
+        {
+          "address": "settings/extension/appearance/storage",
+          "label": "Appearance \u2192 Storage",
+          "route": {
+            "section": "storage",
+            "tab": "appearance"
+          }
+        },
+        {
+          "address": "settings/extension/appearance/devtools",
+          "label": "Appearance \u2192 DevTools",
+          "route": {
+            "section": "devtools",
+            "tab": "appearance"
+          }
+        }
+      ],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 132748,
+      "repeat": 0,
+      "sentence": "off",
+      "steps": 9,
+      "task": "backup"
+    },
+    {
+      "answer": "Open **Settings \u2192 Backup and restore** ([Backup and restore](window-ml:settings/extension/backup)) and use its export/import there \u2014 that's where the extension writes and reads back a backup of your settings and your kept sessions.\n\nRelated, if you want the sessions themselves kept/directed first: the archive folder is set under Appearance \u2192 Storage ([Storage](window-ml:settings/extension/appearance/storage)), and retention/kept-run options under Appearance \u2192 DevTools ([DevTools](window-ml:settings/extension/appearance/devtools)).",
+      "calls": 9,
+      "docs_calls": 9,
+      "error": false,
+      "first_prompt_tokens": 11564,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/backup",
+          "label": "Backup and restore",
+          "route": {
+            "section": "storage",
+            "tab": "appearance",
+            "target": "set-backup"
+          }
+        },
+        {
+          "address": "settings/extension/appearance/storage",
+          "label": "Storage",
+          "route": {
+            "section": "storage",
+            "tab": "appearance"
+          }
+        },
+        {
+          "address": "settings/extension/appearance/devtools",
+          "label": "DevTools",
+          "route": {
+            "section": "devtools",
+            "tab": "appearance"
+          }
+        }
+      ],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 146786,
+      "repeat": 1,
+      "sentence": "off",
+      "steps": 12,
+      "task": "backup"
+    },
+    {
+      "answer": "That isn't on this page \u2014 it's an extension setting. Use **Settings \u2192 Backup and restore** ([Backup and restore](window-ml:settings/extension/backup)) to export/import your settings, and the sessions store itself is configured under **Appearance \u2192 Storage** ([Storage](window-ml:settings/extension/appearance/storage), key `sessionArchive`), which is what the backup includes.",
+      "calls": 8,
+      "docs_calls": 4,
+      "error": false,
+      "first_prompt_tokens": 11564,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/backup",
+          "label": "Backup and restore",
+          "route": {
+            "section": "storage",
+            "tab": "appearance",
+            "target": "set-backup"
+          }
+        },
+        {
+          "address": "settings/extension/appearance/storage",
+          "label": "Storage",
+          "route": {
+            "section": "storage",
+            "tab": "appearance"
+          }
+        }
+      ],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 113140,
+      "repeat": 2,
+      "sentence": "off",
+      "steps": 9,
+      "task": "backup"
+    },
+    {
+      "answer": "Settings \u2192 Extension \u2192 **Backup and restore** (`#/settings/extension/backup`): one backup file holds your settings, policies, site lists, UI preferences, and every session \u2014 live and archived \u2014 as a passphrase-protected, compressed file with a recovery key. Restoring it previews the changes and applies them only to the file you inspected.",
+      "calls": 10,
+      "docs_calls": 6,
+      "error": false,
+      "first_prompt_tokens": 11564,
+      "hit_cap": false,
+      "links": [],
+      "model": "deepseek.deepseek-flash",
+      "passed": false,
+      "prompt_tokens": 151111,
+      "repeat": 3,
+      "sentence": "off",
+      "steps": 11,
+      "task": "backup"
+    },
+    {
+      "answer": "Settings \u2192 [Backup and restore](window-ml:settings/extension/backup) \u2014 that tab exports your settings and saved sessions to a file and restores them from one. Session archiving/storage lives under [Storage](window-ml:settings/extension/appearance/storage) (key `sessionArchive`).\n\n(Unrelated to this page: it's the cross-page test card, code `CROSSPAGE-9471`.)",
+      "calls": 5,
+      "docs_calls": 5,
+      "error": false,
+      "first_prompt_tokens": 11603,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/backup",
+          "label": "Backup and restore",
+          "route": {
+            "section": "storage",
+            "tab": "appearance",
+            "target": "set-backup"
+          }
+        },
+        {
+          "address": "settings/extension/appearance/storage",
+          "label": "Storage",
+          "route": {
+            "section": "storage",
+            "tab": "appearance"
+          }
+        }
+      ],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 71178,
+      "repeat": 0,
+      "sentence": "on",
+      "steps": 7,
+      "task": "backup"
+    },
+    {
+      "answer": "Stopped at the 10-step cap without finishing.",
+      "calls": 10,
+      "docs_calls": 6,
+      "error": false,
+      "first_prompt_tokens": 11603,
+      "hit_cap": true,
+      "links": [],
+      "model": "deepseek.deepseek-flash",
+      "passed": false,
+      "prompt_tokens": 153505,
+      "repeat": 1,
+      "sentence": "on",
+      "steps": 12,
+      "task": "backup"
+    },
+    {
+      "answer": "The page has nothing about that \u2014 it's just a test page showing the code **CROSSPAGE-9471** and a link to another origin (127.0.0.1:61371). Nothing here covers backing up settings or sessions; tell me which app you mean (e.g. this browser's profile or a specific tool) and I'll look it up.",
+      "calls": 4,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11603,
+      "hit_cap": false,
+      "links": [],
+      "model": "deepseek.deepseek-flash",
+      "passed": false,
+      "prompt_tokens": 50314,
+      "repeat": 2,
+      "sentence": "on",
+      "steps": 4,
+      "task": "backup"
+    },
+    {
+      "answer": "Settings \u2192 **Backup and restore** (`[Backup and restore](window-ml:settings/extension/backup)`) is where you export/import your extension settings and saved sessions in one go.\n\nRelated controls:\n- Kept sessions/archive: [Storage](window-ml:settings/extension/appearance/storage) (`sessionArchive`)\n- How long runs are kept: [DevTools](window-ml:settings/extension/appearance/devtools) (`persistUiRuns`, `sessionRetentionDays`, `sessionStoreBudgetMB`)\n- Tool definitions included in exports: [Export](window-ml:settings/extension/appearance/export)",
+      "calls": 9,
+      "docs_calls": 8,
+      "error": false,
+      "first_prompt_tokens": 11603,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/backup",
+          "label": "Backup and restore",
+          "route": {
+            "section": "storage",
+            "tab": "appearance",
+            "target": "set-backup"
+          }
+        },
+        {
+          "address": "settings/extension/appearance/storage",
+          "label": "Storage",
+          "route": {
+            "section": "storage",
+            "tab": "appearance"
+          }
+        },
+        {
+          "address": "settings/extension/appearance/devtools",
+          "label": "DevTools",
+          "route": {
+            "section": "devtools",
+            "tab": "appearance"
+          }
+        },
+        {
+          "address": "settings/extension/appearance/export",
+          "label": "Export",
+          "route": {
+            "section": "export",
+            "tab": "appearance"
+          }
+        }
+      ],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 136092,
+      "repeat": 3,
+      "sentence": "on",
+      "steps": 10,
+      "task": "backup"
+    },
+    {
+      "answer": "To back up your settings and sessions, go to the Backup and restore section in the extension's settings: [Backup and restore](window-ml:settings/extension/backup).",
+      "calls": 8,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11073,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/backup",
+          "label": "Backup and restore",
+          "route": {
+            "section": "storage",
+            "tab": "appearance",
+            "target": "set-backup"
+          }
+        }
+      ],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 94661,
+      "repeat": 0,
+      "sentence": "off",
+      "steps": 7,
+      "task": "backup"
+    },
+    {
+      "answer": "I'm sorry, but I couldn't find any information on how to back up settings and sessions on the current pages.",
+      "calls": 9,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11073,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:31b",
+      "passed": false,
+      "prompt_tokens": 105509,
+      "repeat": 1,
+      "sentence": "off",
+      "steps": 8,
+      "task": "backup"
+    },
+    {
+      "answer": "To back up your settings and sessions, go to [Backup and restore](window-ml:settings/extension/backup).",
+      "calls": 4,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11073,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/backup",
+          "label": "Backup and restore",
+          "route": {
+            "section": "storage",
+            "tab": "appearance",
+            "target": "set-backup"
+          }
+        }
+      ],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 47058,
+      "repeat": 2,
+      "sentence": "off",
+      "steps": 3,
+      "task": "backup"
+    },
+    {
+      "answer": "You can back up your settings and sessions in the extension's settings at [Backup and restore](window-ml:settings/extension/backup).",
+      "calls": 6,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11073,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/backup",
+          "label": "Backup and restore",
+          "route": {
+            "section": "storage",
+            "tab": "appearance",
+            "target": "set-backup"
+          }
+        }
+      ],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 70973,
+      "repeat": 3,
+      "sentence": "off",
+      "steps": 5,
+      "task": "backup"
+    },
+    {
+      "answer": "To back up your settings and sessions, go to [Backup and restore](window-ml:settings/extension/backup).",
+      "calls": 3,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11113,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/backup",
+          "label": "Backup and restore",
+          "route": {
+            "section": "storage",
+            "tab": "appearance",
+            "target": "set-backup"
+          }
+        }
+      ],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 35481,
+      "repeat": 0,
+      "sentence": "on",
+      "steps": 2,
+      "task": "backup"
+    },
+    {
+      "answer": "You can back up your settings and sessions in [Backup and restore](window-ml:settings/extension/backup).",
+      "calls": 3,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11113,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/backup",
+          "label": "Backup and restore",
+          "route": {
+            "section": "storage",
+            "tab": "appearance",
+            "target": "set-backup"
+          }
+        }
+      ],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 35482,
+      "repeat": 1,
+      "sentence": "on",
+      "steps": 2,
+      "task": "backup"
+    },
+    {
+      "answer": "You can back up your settings and sessions in the [Backup and restore](window-ml:settings/extension/backup) section of the extension's settings.",
+      "calls": 6,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11113,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/backup",
+          "label": "Backup and restore",
+          "route": {
+            "section": "storage",
+            "tab": "appearance",
+            "target": "set-backup"
+          }
+        }
+      ],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 69685,
+      "repeat": 2,
+      "sentence": "on",
+      "steps": 5,
+      "task": "backup"
+    },
+    {
+      "answer": "To back up your settings and sessions, go to [Backup and restore](window-ml:settings/extension/backup).",
+      "calls": 5,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11113,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/backup",
+          "label": "Backup and restore",
+          "route": {
+            "section": "storage",
+            "tab": "appearance",
+            "target": "set-backup"
+          }
+        }
+      ],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 57917,
+      "repeat": 3,
+      "sentence": "on",
+      "steps": 4,
+      "task": "backup"
+    },
+    {
+      "answer": "I cannot find any information on this page about how to back up settings and sessions. This page appears to be a concluding step for a coding task.",
+      "calls": 3,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11073,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 33762,
+      "repeat": 0,
+      "sentence": "off",
+      "steps": 2,
+      "task": "backup"
+    },
+    {
+      "answer": "The current page only provides a step completion message and a button to \"Continue to the other domain \u2192\". I do not see any links or options related to backing up settings or sessions on this screen.",
+      "calls": 6,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11073,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 68850,
+      "repeat": 1,
+      "sentence": "off",
+      "steps": 5,
+      "task": "backup"
+    },
+    {
+      "answer": "I cannot find any instructions on how to back up settings and sessions on the current page. The page content is unrelated to account settings. Please provide a link or context for the settings page.",
+      "calls": 7,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11073,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 80258,
+      "repeat": 2,
+      "sentence": "off",
+      "steps": 6,
+      "task": "backup"
+    },
+    {
+      "answer": "I cannot find any instructions on how to back up your settings and sessions on the current page. The page seems to be guiding you through a technical task.",
+      "calls": 6,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11073,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 68934,
+      "repeat": 3,
+      "sentence": "off",
+      "steps": 5,
+      "task": "backup"
+    },
+    {
+      "answer": "[]",
+      "calls": 1,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11113,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 11113,
+      "repeat": 0,
+      "sentence": "on",
+      "steps": 0,
+      "task": "backup"
+    },
+    {
+      "answer": "The current page does not contain any information or controls regarding how to back up settings and sessions.",
+      "calls": 3,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11113,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 34159,
+      "repeat": 1,
+      "sentence": "on",
+      "steps": 2,
+      "task": "backup"
+    },
+    {
+      "answer": "The current page does not contain any information on how to back up settings and sessions.",
+      "calls": 4,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11113,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 45418,
+      "repeat": 2,
+      "sentence": "on",
+      "steps": 3,
+      "task": "backup"
+    },
+    {
+      "answer": "I cannot find any information on this page about how to back up settings and sessions.",
+      "calls": 3,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11113,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 33819,
+      "repeat": 3,
+      "sentence": "on",
+      "steps": 2,
+      "task": "backup"
+    },
+    {
+      "answer": "Which app or service do you mean? Backing up settings and sessions varies by product.",
+      "calls": 4,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 9272,
+      "hit_cap": false,
+      "links": [],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": false,
+      "prompt_tokens": 39525,
+      "repeat": 0,
+      "sentence": "off",
+      "steps": 3,
+      "task": "backup"
+    },
+    {
+      "answer": "Open [Settings \u2192 Backup and restore](window-ml:settings/extension/backup) to back up or restore your settings and sessions.",
+      "calls": 4,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 9272,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/backup",
+          "label": "Settings \u2192 Backup and restore",
+          "route": {
+            "section": "storage",
+            "tab": "appearance",
+            "target": "set-backup"
+          }
+        }
+      ],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "prompt_tokens": 42902,
+      "repeat": 1,
+      "sentence": "off",
+      "steps": 3,
+      "task": "backup"
+    },
+    {
+      "answer": "Which app do you mean? This page only shows a cross-domain test code, not settings or session backup instructions.",
+      "calls": 4,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 9272,
+      "hit_cap": false,
+      "links": [],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": false,
+      "prompt_tokens": 39526,
+      "repeat": 2,
+      "sentence": "off",
+      "steps": 3,
+      "task": "backup"
+    },
+    {
+      "answer": "This page doesn\u2019t include backup instructions. Which app\u2019s settings and sessions do you mean?",
+      "calls": 4,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 9272,
+      "hit_cap": false,
+      "links": [],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": false,
+      "prompt_tokens": 39601,
+      "repeat": 3,
+      "sentence": "off",
+      "steps": 3,
+      "task": "backup"
+    },
+    {
+      "answer": "Open [Backup and restore](window-ml:settings/extension/backup) in Settings to back up your settings and sessions.",
+      "calls": 7,
+      "docs_calls": 4,
+      "error": false,
+      "first_prompt_tokens": 9308,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/backup",
+          "label": "Backup and restore",
+          "route": {
+            "section": "storage",
+            "tab": "appearance",
+            "target": "set-backup"
+          }
+        }
+      ],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "prompt_tokens": 75326,
+      "repeat": 0,
+      "sentence": "on",
+      "steps": 6,
+      "task": "backup"
+    },
+    {
+      "answer": "Open [Backup and restore](window-ml:settings/extension/backup) in Settings to export a backup of your settings and sessions. Save the file somewhere safe; use the same page to restore it later.",
+      "calls": 5,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 9308,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/backup",
+          "label": "Backup and restore",
+          "route": {
+            "section": "storage",
+            "tab": "appearance",
+            "target": "set-backup"
+          }
+        }
+      ],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "prompt_tokens": 51736,
+      "repeat": 1,
+      "sentence": "on",
+      "steps": 4,
+      "task": "backup"
+    },
+    {
+      "answer": "Which app or browser do you mean? The steps differ for backing up its settings versus saved sessions.",
+      "calls": 5,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 9308,
+      "hit_cap": false,
+      "links": [],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": false,
+      "prompt_tokens": 50718,
+      "repeat": 2,
+      "sentence": "on",
+      "steps": 4,
+      "task": "backup"
+    },
+    {
+      "answer": "Open [Backup and restore](window-ml:settings/extension/backup) in Settings to back up or restore your settings and sessions.",
+      "calls": 6,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 9308,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/backup",
+          "label": "Backup and restore",
+          "route": {
+            "section": "storage",
+            "tab": "appearance",
+            "target": "set-backup"
+          }
+        }
+      ],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "prompt_tokens": 68205,
+      "repeat": 3,
+      "sentence": "on",
+      "steps": 5,
+      "task": "backup"
+    },
+    {
+      "answer": "I couldn't find that \u2014 nothing on this page (or the linked origin) covers backing up settings or sessions.\n\nBoth pages are part of a navigation test chain, not a product UI or docs site:\n\n- `127.0.0.1:57172/step3` \u2014 \"The code\": shows the code `CROSSPAGE\u20139471` and one link (\"Continue to the other domain \u2192\"). No settings, account, export or backup controls at all.\n- `127.0.0.1:57171` \u2014 \"Another domain\": an Same-Origin-Policy demo page with the token `XDOMAIN-2025`.\n\nTo answer the real question I'd need to know which app/tool you mean and be pointed at its settings or documentation page.",
+      "calls": 3,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11528,
+      "hit_cap": false,
+      "links": [],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": false,
+      "prompt_tokens": 37162,
+      "repeat": 0,
+      "sentence": "off",
+      "steps": 4,
+      "task": "backup"
+    },
+    {
+      "answer": "Backups live in the extension's **Backup and restore** view:\n\n**[Settings \u2192 Backup and restore](window-ml:settings/extension/backup)**\n\nRelated, if you want sessions kept longer/bigger before you export them:\n\n- [Session retention & store budget](window-ml:setting/sessionRetentionDays) \u2014 how long run history is kept and the storage cap.\n- [Session archive](window-ml:setting/sessionArchive) \u2014 the storage section controlling archived sessions.\n- [Export \u2192 include tool definitions](window-ml:setting/exportToolDefs) \u2014 affects what an exported run contains.\n\nI can only open those views for you, not read or write the values \u2014 check the file/fields there for what gets included in a given export.",
+      "calls": 9,
+      "docs_calls": 8,
+      "error": false,
+      "first_prompt_tokens": 11528,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/backup",
+          "label": "Settings \u2192 Backup and restore",
+          "route": {
+            "section": "storage",
+            "tab": "appearance",
+            "target": "set-backup"
+          }
+        },
+        {
+          "address": "setting/sessionRetentionDays",
+          "label": "Session retention & store budget",
+          "route": {
+            "section": "devtools",
+            "setting": "sessionRetentionDays",
+            "tab": "appearance"
+          }
+        },
+        {
+          "address": "setting/sessionArchive",
+          "label": "Session archive",
+          "route": {
+            "section": "storage",
+            "setting": "sessionArchive",
+            "tab": "appearance"
+          }
+        },
+        {
+          "address": "setting/exportToolDefs",
+          "label": "Export \u2192 include tool definitions",
+          "route": {
+            "section": "export",
+            "setting": "exportToolDefs",
+            "tab": "appearance"
+          }
+        }
+      ],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 139777,
+      "repeat": 1,
+      "sentence": "off",
+      "steps": 11,
+      "task": "backup"
+    },
+    {
+      "answer": "Settings \u2192 **Backup and restore** is where that lives: [Open Backup and restore](window-ml:settings/extension/backup) \u2014 export everything to a file, restore from one later.\n\nSessions themselves are governed under Appearance:\n- [Session retention / store budget](window-ml:settings/extension/appearance/devtools) \u2014 `sessionRetentionDays`, `sessionStoreBudgetMB`, `listPageSessions`, `persistUiRuns`\n- [Storage \u2192 session archive](window-ml:settings/extension/appearance/storage) \u2014 `sessionArchive`\n\n(The page you're on, `127.0.0.1:57264/step3`, is a navigation test page \u2014 it has no settings UI of its own. Code shown there: `CROSSPAGE\u20139471`.)",
+      "calls": 7,
+      "docs_calls": 3,
+      "error": false,
+      "first_prompt_tokens": 11528,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/backup",
+          "label": "Open Backup and restore",
+          "route": {
+            "section": "storage",
+            "tab": "appearance",
+            "target": "set-backup"
+          }
+        },
+        {
+          "address": "settings/extension/appearance/devtools",
+          "label": "Session retention / store budget",
+          "route": {
+            "section": "devtools",
+            "tab": "appearance"
+          }
+        },
+        {
+          "address": "settings/extension/appearance/storage",
+          "label": "Storage \u2192 session archive",
+          "route": {
+            "section": "storage",
+            "tab": "appearance"
+          }
+        }
+      ],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 93524,
+      "repeat": 2,
+      "sentence": "off",
+      "steps": 9,
+      "task": "backup"
+    },
+    {
+      "answer": "Use the extension's **Backup and restore** panel: [Settings \u2192 Backup and restore](window-ml:settings/extension/backup) \u2014 it exports everything (settings + sessions) to a file you can keep, and restores from it on the same or another browser.\n\nRelated, if you only want to tune what is kept rather than export it:\n- [Appearance \u2192 DevTools](window-ml:settings/extension/appearance/devtools) \u2014 `sessionRetentionDays`, `sessionStoreBudgetMB`, `persistUiRuns`\n- [Appearance \u2192 Storage](window-ml:settings/extension/appearance/storage) \u2014 `sessionArchive`\n\n(Nothing on the current page covers this \u2014 it's a \"Cross-page persistence demo\" at 127.0.0.1:57407/step3, whose code is `CROSSPAGE-9471`.)",
+      "calls": 7,
+      "docs_calls": 3,
+      "error": false,
+      "first_prompt_tokens": 11528,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/backup",
+          "label": "Settings \u2192 Backup and restore",
+          "route": {
+            "section": "storage",
+            "tab": "appearance",
+            "target": "set-backup"
+          }
+        },
+        {
+          "address": "settings/extension/appearance/devtools",
+          "label": "Appearance \u2192 DevTools",
+          "route": {
+            "section": "devtools",
+            "tab": "appearance"
+          }
+        },
+        {
+          "address": "settings/extension/appearance/storage",
+          "label": "Appearance \u2192 Storage",
+          "route": {
+            "section": "storage",
+            "tab": "appearance"
+          }
+        }
+      ],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 93978,
+      "repeat": 3,
+      "sentence": "off",
+      "steps": 8,
+      "task": "backup"
+    },
+    {
+      "answer": "**Settings \u2192 Backup** \u2014 that tab does both directions (export a file, restore from one): [Backup and restore](window-ml:settings/extension/backup)\n\nRelated, if you want the sessions themselves to survive: [Appearance \u2192 DevTools](window-ml:settings/extension/appearance/devtools) holds `sessionRetentionDays` and `sessionStoreBudgetMB` (how long/how much history is kept), and [Appearance \u2192 Storage](window-ml:settings/extension/appearance/storage) holds `sessionArchive`. Individual runs can also be exported as Markdown from the run itself ([Appearance \u2192 Export](window-ml:settings/extension/appearance/export)).\n\nI can't read your settings values, so check what's in each of those rows yourself.",
+      "calls": 5,
+      "docs_calls": 3,
+      "error": false,
+      "first_prompt_tokens": 11564,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/backup",
+          "label": "Backup and restore",
+          "route": {
+            "section": "storage",
+            "tab": "appearance",
+            "target": "set-backup"
+          }
+        },
+        {
+          "address": "settings/extension/appearance/devtools",
+          "label": "Appearance \u2192 DevTools",
+          "route": {
+            "section": "devtools",
+            "tab": "appearance"
+          }
+        },
+        {
+          "address": "settings/extension/appearance/storage",
+          "label": "Appearance \u2192 Storage",
+          "route": {
+            "section": "storage",
+            "tab": "appearance"
+          }
+        },
+        {
+          "address": "settings/extension/appearance/export",
+          "label": "Appearance \u2192 Export",
+          "route": {
+            "section": "export",
+            "tab": "appearance"
+          }
+        }
+      ],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 67098,
+      "repeat": 0,
+      "sentence": "on",
+      "steps": 6,
+      "task": "backup"
+    },
+    {
+      "answer": "Backups live in the extension's Settings \u2192 **Backup and restore**: [Backup and restore](window-ml:settings/extension/backup) \u2014 that's where you export the whole config and import it again.\n\nRelated, if you're backing up more than config:\n- Sessions are stored locally and trimmed by [session retention / store budget / persist UI runs](window-ml:settings/extension/appearance/devtools) and archived per [Storage \u2192 sessionArchive](window-ml:settings/extension/appearance/storage).\n- Individual conversations: save them via [Appearance \u2192 Export](window-ml:settings/extension/appearance/export) (which also controls whether tool definitions are included).\n- Note the API key is part of [Connection](window-ml:settings/extension/connection) \u2014 treat any exported file as a secret.\n\n(The page you're on is unrelated demo content \u2014 \"The code\", code `CROSSPAGE-9471` \u2014 nothing about backups on it.)",
+      "calls": 6,
+      "docs_calls": 4,
+      "error": false,
+      "first_prompt_tokens": 11564,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/backup",
+          "label": "Backup and restore",
+          "route": {
+            "section": "storage",
+            "tab": "appearance",
+            "target": "set-backup"
+          }
+        },
+        {
+          "address": "settings/extension/appearance/devtools",
+          "label": "session retention / store budget / persist UI runs",
+          "route": {
+            "section": "devtools",
+            "tab": "appearance"
+          }
+        },
+        {
+          "address": "settings/extension/appearance/storage",
+          "label": "Storage \u2192 sessionArchive",
+          "route": {
+            "section": "storage",
+            "tab": "appearance"
+          }
+        },
+        {
+          "address": "settings/extension/appearance/export",
+          "label": "Appearance \u2192 Export",
+          "route": {
+            "section": "export",
+            "tab": "appearance"
+          }
+        },
+        {
+          "address": "settings/extension/connection",
+          "label": "Connection",
+          "route": {
+            "tab": "connection"
+          }
+        }
+      ],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 84697,
+      "repeat": 1,
+      "sentence": "on",
+      "steps": 7,
+      "task": "backup"
+    },
+    {
+      "answer": "Use the extension's **Backup and restore** page \u2014 it's the export/import path for your settings and stored sessions:\n\n- Click the window.ml **toolbar icon** \u2192 Settings \u2192 **Backup and restore**: `[Backup and restore](window-ml:settings/extension/backup)`\n\nRelated knobs that govern how much of your session history is kept (and so what's in a backup) live under Settings \u2192 Appearance:\n- `[DevTools](window-ml:settings/extension/appearance/devtools)` \u2014 session retention (days) and store budget\n- `[Storage](window-ml:settings/extension/appearance/storage)` \u2014 session archive\n\nI can't read the contents of that page from here, so I can't say whether your API key is included \u2014 check the row there before storing the file somewhere shared.",
+      "calls": 9,
+      "docs_calls": 6,
+      "error": false,
+      "first_prompt_tokens": 11564,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/backup",
+          "label": "Backup and restore",
+          "route": {
+            "section": "storage",
+            "tab": "appearance",
+            "target": "set-backup"
+          }
+        },
+        {
+          "address": "settings/extension/appearance/devtools",
+          "label": "DevTools",
+          "route": {
+            "section": "devtools",
+            "tab": "appearance"
+          }
+        },
+        {
+          "address": "settings/extension/appearance/storage",
+          "label": "Storage",
+          "route": {
+            "section": "storage",
+            "tab": "appearance"
+          }
+        }
+      ],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 142421,
+      "repeat": 2,
+      "sentence": "on",
+      "steps": 10,
+      "task": "backup"
+    },
+    {
+      "answer": "Backups are in the extension's own Settings panel:\n\n- **[Backup and restore](window-ml:settings/extension/backup)** \u2014 export your settings to a file and restore them from it.\n- Sessions are subject to retention/pruning, so check **[Appearance \u2192 Storage](window-ml:settings/extension/appearance/storage)** (`sessionArchive`) and **[Appearance \u2192 DevTools](window-ml:settings/extension/appearance/devtools)** (`sessionRetentionDays`, `sessionStoreBudgetMB`, `persistUiRuns`) \u2014 raise these if you want runs kept rather than trimmed.\n- For a single conversation, export it from the run itself; **[Appearance \u2192 Export](window-ml:settings/extension/appearance/export)** (`exportToolDefs`) controls whether tool definitions are included.\n\nI can't read your current values \u2014 open the rows above to see what's set.",
+      "calls": 7,
+      "docs_calls": 5,
+      "error": false,
+      "first_prompt_tokens": 11564,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/backup",
+          "label": "Backup and restore",
+          "route": {
+            "section": "storage",
+            "tab": "appearance",
+            "target": "set-backup"
+          }
+        },
+        {
+          "address": "settings/extension/appearance/storage",
+          "label": "Appearance \u2192 Storage",
+          "route": {
+            "section": "storage",
+            "tab": "appearance"
+          }
+        },
+        {
+          "address": "settings/extension/appearance/devtools",
+          "label": "Appearance \u2192 DevTools",
+          "route": {
+            "section": "devtools",
+            "tab": "appearance"
+          }
+        },
+        {
+          "address": "settings/extension/appearance/export",
+          "label": "Appearance \u2192 Export",
+          "route": {
+            "section": "export",
+            "tab": "appearance"
+          }
+        }
+      ],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 94635,
+      "repeat": 3,
+      "sentence": "on",
+      "steps": 7,
+      "task": "backup"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 2,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11568,
+      "hit_cap": false,
+      "links": [],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 23799,
+      "repeat": 0,
+      "sentence": "off",
+      "steps": 1,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 3,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11568,
+      "hit_cap": false,
+      "links": [],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 36183,
+      "repeat": 1,
+      "sentence": "off",
+      "steps": 2,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 2,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11568,
+      "hit_cap": false,
+      "links": [],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 23672,
+      "repeat": 2,
+      "sentence": "off",
+      "steps": 1,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 2,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11568,
+      "hit_cap": false,
+      "links": [],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 23281,
+      "repeat": 3,
+      "sentence": "off",
+      "steps": 1,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 3,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11607,
+      "hit_cap": false,
+      "links": [],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 36250,
+      "repeat": 0,
+      "sentence": "on",
+      "steps": 2,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 4,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11607,
+      "hit_cap": false,
+      "links": [],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 47066,
+      "repeat": 1,
+      "sentence": "on",
+      "steps": 3,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 3,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11607,
+      "hit_cap": false,
+      "links": [],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 35197,
+      "repeat": 2,
+      "sentence": "on",
+      "steps": 2,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 2,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11607,
+      "hit_cap": false,
+      "links": [],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 23813,
+      "repeat": 3,
+      "sentence": "on",
+      "steps": 1,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 2,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11077,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 22647,
+      "repeat": 0,
+      "sentence": "off",
+      "steps": 1,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 2,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11077,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 22647,
+      "repeat": 1,
+      "sentence": "off",
+      "steps": 1,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 3,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11077,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 34276,
+      "repeat": 2,
+      "sentence": "off",
+      "steps": 2,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 2,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11077,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 22647,
+      "repeat": 3,
+      "sentence": "off",
+      "steps": 1,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 3,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11117,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 34396,
+      "repeat": 0,
+      "sentence": "on",
+      "steps": 2,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 2,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11117,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 22726,
+      "repeat": 1,
+      "sentence": "on",
+      "steps": 1,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 3,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11117,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 34402,
+      "repeat": 2,
+      "sentence": "on",
+      "steps": 2,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 2,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11117,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 22731,
+      "repeat": 3,
+      "sentence": "on",
+      "steps": 1,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 2,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11077,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": true,
+      "prompt_tokens": 22546,
+      "repeat": 0,
+      "sentence": "off",
+      "steps": 1,
+      "task": "control"
+    },
+    {
+      "answer": "```python\nimport requests\n\ndef test_cross_domain_navigation():\n    # Scenario: Testing navigation between different origins.\n    # This test should pass if the user can successfully reach the\n    # different origin from the current one.\n    \n    # 1. Perform the navigation\n    # We are currently on http://127.0.0.1:52714/step3\n    # We must navigate to http://127.0.0.1:52713/step2\n    print(\"Navigating to the different origin...\")\n    response = requests.get(\"http://127.0.0.1:52713/step2\")\n    \n    # 2. Assert the outcome\n    assert response.status_code == 200, \"Failed to navigate to the different origin.\"\n    # You can add further assertions on the content of the response\n    # e.g., check for a specific element in the returned HTML.\n    print(\"Navigation successful and status code is 200.\")\n```",
+      "calls": 2,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11077,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 22546,
+      "repeat": 1,
+      "sentence": "off",
+      "steps": 1,
+      "task": "control"
+    },
+    {
+      "answer": "```javascript\nawait navigate('http://127.0.0.1:52767/step1');\nawait wait({ selector: 'h1:contains(\"Welcome to the site!\")', title: 'Wait for page load' });\nawait click('h1:contains(\"Welcome to the site!\")');\n```",
+      "calls": 2,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11077,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 22546,
+      "repeat": 2,
+      "sentence": "off",
+      "steps": 1,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 2,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11077,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": true,
+      "prompt_tokens": 22546,
+      "repeat": 3,
+      "sentence": "off",
+      "steps": 1,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 2,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11117,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": true,
+      "prompt_tokens": 22625,
+      "repeat": 0,
+      "sentence": "on",
+      "steps": 1,
+      "task": "control"
+    },
+    {
+      "answer": "```javascript\nconst currentOrigin = window.location.origin;\n\n// Step 1: Cross-domain navigation\n// Navigate to the other domain (Variant A)\nif (window.location.href.startsWith(currentOrigin + \"/step1\")) {\n  // Assuming the other domain is based on the port/step number logic\n  // Replace with the actual target origin for Variant A if known\n  // For now, we use a placeholder based on the prompt context:\n  // If we were on 127.0.0.1:54093/step3, Variant A might be on :54092/step3\n  window.location.href = \"http://127.0.0.1:54092/step3\";\n} \n// Step 2: Cross-domain navigation 2\n// After navigating to Variant A, we might need to go somewhere else.\n// The actual logic depends on the full test case.\n// Example placeholder:\n// window.location.href = \"http://127.0.0.1:some_other_port/step3\";\n```",
+      "calls": 2,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11117,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 22627,
+      "repeat": 1,
+      "sentence": "on",
+      "steps": 1,
+      "task": "control"
+    },
+    {
+      "answer": "```javascript\ncrosspage-9471\n```",
+      "calls": 2,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11117,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 22628,
+      "repeat": 2,
+      "sentence": "on",
+      "steps": 1,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 2,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11117,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": true,
+      "prompt_tokens": 22625,
+      "repeat": 3,
+      "sentence": "on",
+      "steps": 1,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 3,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 9276,
+      "hit_cap": false,
+      "links": [],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "prompt_tokens": 29222,
+      "repeat": 0,
+      "sentence": "off",
+      "steps": 2,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 3,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 9276,
+      "hit_cap": false,
+      "links": [],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "prompt_tokens": 29225,
+      "repeat": 1,
+      "sentence": "off",
+      "steps": 2,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 3,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 9276,
+      "hit_cap": false,
+      "links": [],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "prompt_tokens": 29225,
+      "repeat": 2,
+      "sentence": "off",
+      "steps": 2,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 3,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 9276,
+      "hit_cap": false,
+      "links": [],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "prompt_tokens": 28137,
+      "repeat": 3,
+      "sentence": "off",
+      "steps": 2,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 3,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 9312,
+      "hit_cap": false,
+      "links": [],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "prompt_tokens": 29330,
+      "repeat": 0,
+      "sentence": "on",
+      "steps": 2,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 3,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 9312,
+      "hit_cap": false,
+      "links": [],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "prompt_tokens": 29330,
+      "repeat": 1,
+      "sentence": "on",
+      "steps": 2,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 3,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 9312,
+      "hit_cap": false,
+      "links": [],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "prompt_tokens": 28258,
+      "repeat": 2,
+      "sentence": "on",
+      "steps": 2,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 3,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 9312,
+      "hit_cap": false,
+      "links": [],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "prompt_tokens": 29185,
+      "repeat": 3,
+      "sentence": "on",
+      "steps": 2,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 4,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11532,
+      "hit_cap": false,
+      "links": [],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 48654,
+      "repeat": 0,
+      "sentence": "off",
+      "steps": 3,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 2,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11532,
+      "hit_cap": false,
+      "links": [],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 23232,
+      "repeat": 1,
+      "sentence": "off",
+      "steps": 1,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 4,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11532,
+      "hit_cap": false,
+      "links": [],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 48650,
+      "repeat": 2,
+      "sentence": "off",
+      "steps": 3,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 3,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11532,
+      "hit_cap": false,
+      "links": [],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 35326,
+      "repeat": 3,
+      "sentence": "off",
+      "steps": 2,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 2,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11568,
+      "hit_cap": false,
+      "links": [],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 23294,
+      "repeat": 0,
+      "sentence": "on",
+      "steps": 1,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 3,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11568,
+      "hit_cap": false,
+      "links": [],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 36831,
+      "repeat": 1,
+      "sentence": "on",
+      "steps": 2,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 3,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11568,
+      "hit_cap": false,
+      "links": [],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 36040,
+      "repeat": 2,
+      "sentence": "on",
+      "steps": 2,
+      "task": "control"
+    },
+    {
+      "answer": "CROSSPAGE-9471",
+      "calls": 3,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11568,
+      "hit_cap": false,
+      "links": [],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 35132,
+      "repeat": 3,
+      "sentence": "on",
+      "steps": 2,
+      "task": "control"
+    },
+    {
+      "answer": "Settings \u2192 Advanced \u2192 JavaScript \u2192 **autoApproveReadonly** (turn it off): [Open that setting](window-ml:setting/autoApproveReadonly) \u2014 or [the JavaScript section](window-ml:settings/extension/advanced/javascript).",
+      "calls": 3,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11574,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "setting/autoApproveReadonly",
+          "label": "Open that setting",
+          "route": {
+            "section": "javascript",
+            "setting": "autoApproveReadonly",
+            "tab": "advanced"
+          }
+        },
+        {
+          "address": "settings/extension/advanced/javascript",
+          "label": "the JavaScript section",
+          "route": {
+            "section": "javascript",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 43863,
+      "repeat": 0,
+      "sentence": "off",
+      "steps": 3,
+      "task": "readonly"
+    },
+    {
+      "answer": "Settings \u2192 Advanced \u2192 JavaScript: turn off **auto-approve read-only scripts** (`autoApproveReadonly`, currently on) \u2014 [Advanced \u2192 JavaScript \u2192 read-only scripts](window-ml:setting/autoApproveReadonly).",
+      "calls": 5,
+      "docs_calls": 5,
+      "error": false,
+      "first_prompt_tokens": 11574,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "setting/autoApproveReadonly",
+          "label": "Advanced \u2192 JavaScript \u2192 read-only scripts",
+          "route": {
+            "section": "javascript",
+            "setting": "autoApproveReadonly",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 71614,
+      "repeat": 1,
+      "sentence": "off",
+      "steps": 8,
+      "task": "readonly"
+    },
+    {
+      "answer": "Settings \u2192 **Advanced \u2192 JavaScript** \u2192 turn off **\u201cAuto-approve read-only scripts\u201d** (`autoApproveReadonly`).\n\n[Open that setting](window-ml:setting/autoApproveReadonly) \u00b7 [Advanced \u2192 JavaScript](window-ml:settings/extension/advanced/javascript)",
+      "calls": 3,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 11574,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "setting/autoApproveReadonly",
+          "label": "Open that setting",
+          "route": {
+            "section": "javascript",
+            "setting": "autoApproveReadonly",
+            "tab": "advanced"
+          }
+        },
+        {
+          "address": "settings/extension/advanced/javascript",
+          "label": "Advanced \u2192 JavaScript",
+          "route": {
+            "section": "javascript",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 44975,
+      "repeat": 2,
+      "sentence": "off",
+      "steps": 4,
+      "task": "readonly"
+    },
+    {
+      "answer": "Turn off **auto-approve read-only scripts** in Settings \u2192 Advanced \u2192 JavaScript: [autoApproveReadonly](window-ml:setting/autoApproveReadonly) (also listed under [Advanced \u2192 JavaScript](window-ml:settings/extension/advanced/javascript)). With it off, every `exec` asks first.",
+      "calls": 3,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 11574,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "setting/autoApproveReadonly",
+          "label": "autoApproveReadonly",
+          "route": {
+            "section": "javascript",
+            "setting": "autoApproveReadonly",
+            "tab": "advanced"
+          }
+        },
+        {
+          "address": "settings/extension/advanced/javascript",
+          "label": "Advanced \u2192 JavaScript",
+          "route": {
+            "section": "javascript",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 46643,
+      "repeat": 3,
+      "sentence": "off",
+      "steps": 3,
+      "task": "readonly"
+    },
+    {
+      "answer": "Settings \u2192 **Advanced \u2192 JavaScript** \u2014 turn off **auto-approve read-only scripts** there: [Advanced \u2192 JavaScript](window-ml:settings/extension/advanced/javascript) (key: `autoApproveReadonly`).",
+      "calls": 3,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11613,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/advanced/javascript",
+          "label": "Advanced \u2192 JavaScript",
+          "route": {
+            "section": "javascript",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 50930,
+      "repeat": 0,
+      "sentence": "on",
+      "steps": 4,
+      "task": "readonly"
+    },
+    {
+      "answer": "Settings \u2192 **Advanced \u2192 JavaScript** \u2014 turn off **autoApproveReadonly** \u2192 [auto-approve read-only scripts](window-ml:setting/autoApproveReadonly). With it off, even read-only `exec` surveys ask you first.",
+      "calls": 2,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11613,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "setting/autoApproveReadonly",
+          "label": "auto-approve read-only scripts",
+          "route": {
+            "section": "javascript",
+            "setting": "autoApproveReadonly",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 30952,
+      "repeat": 1,
+      "sentence": "on",
+      "steps": 2,
+      "task": "readonly"
+    },
+    {
+      "answer": "Settings \u2192 Advanced \u2192 JavaScript: turn off **autoApproveReadonly** ([open it](window-ml:setting/autoApproveReadonly)).",
+      "calls": 2,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 11613,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "setting/autoApproveReadonly",
+          "label": "open it",
+          "route": {
+            "section": "javascript",
+            "setting": "autoApproveReadonly",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 33705,
+      "repeat": 2,
+      "sentence": "on",
+      "steps": 2,
+      "task": "readonly"
+    },
+    {
+      "answer": "Turn off **Auto-approve read-only scripts**: [Advanced \u2192 JavaScript](window-ml:setting/autoApproveReadonly) in the extension's Settings (also linked as [that settings section](window-ml:settings/extension/advanced/javascript)). With it off, every `exec` \u2014 read-only or not \u2014 asks first. (The Python sandbox has its own switch: [autoApprovePython](window-ml:setting/autoApprovePython).)",
+      "calls": 2,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11613,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "setting/autoApproveReadonly",
+          "label": "Advanced \u2192 JavaScript",
+          "route": {
+            "section": "javascript",
+            "setting": "autoApproveReadonly",
+            "tab": "advanced"
+          }
+        },
+        {
+          "address": "settings/extension/advanced/javascript",
+          "label": "that settings section",
+          "route": {
+            "section": "javascript",
+            "tab": "advanced"
+          }
+        },
+        {
+          "address": "setting/autoApprovePython",
+          "label": "autoApprovePython",
+          "route": {
+            "section": "python",
+            "setting": "autoApprovePython",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 30978,
+      "repeat": 3,
+      "sentence": "on",
+      "steps": 2,
+      "task": "readonly"
+    },
+    {
+      "answer": "You can change this in the extension's settings under **Advanced** > **JavaScript**. Specifically, the [autoApproveReadonly](window-ml:setting/autoApproveReadonly) setting controls whether read-only scripts run without asking.",
+      "calls": 2,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11085,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "setting/autoApproveReadonly",
+          "label": "autoApproveReadonly",
+          "route": {
+            "section": "javascript",
+            "setting": "autoApproveReadonly",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 27429,
+      "repeat": 0,
+      "sentence": "off",
+      "steps": 1,
+      "task": "readonly"
+    },
+    {
+      "answer": "You can change this in the extension's settings under **Advanced** \u2192 **JavaScript**. Specifically, the setting is [autoApproveReadonly](window-ml:setting/autoApproveReadonly).",
+      "calls": 3,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11085,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "setting/autoApproveReadonly",
+          "label": "autoApproveReadonly",
+          "route": {
+            "section": "javascript",
+            "setting": "autoApproveReadonly",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 36682,
+      "repeat": 1,
+      "sentence": "off",
+      "steps": 2,
+      "task": "readonly"
+    },
+    {
+      "answer": "You can change this in the **JavaScript** section of the **Advanced** settings: [Auto-approve read-only scripts](window-ml:setting/autoApproveReadonly).",
+      "calls": 3,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11085,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "setting/autoApproveReadonly",
+          "label": "Auto-approve read-only scripts",
+          "route": {
+            "section": "javascript",
+            "setting": "autoApproveReadonly",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 35770,
+      "repeat": 2,
+      "sentence": "off",
+      "steps": 2,
+      "task": "readonly"
+    },
+    {
+      "answer": "You can change this in the **JavaScript** section of the Advanced settings: [autoApproveReadonly](window-ml:settings/extension/advanced/javascript)",
+      "calls": 3,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11085,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/advanced/javascript",
+          "label": "autoApproveReadonly",
+          "route": {
+            "section": "javascript",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 36792,
+      "repeat": 3,
+      "sentence": "off",
+      "steps": 2,
+      "task": "readonly"
+    },
+    {
+      "answer": "You can change this in [Settings > Advanced > JavaScript](window-ml:settings/extension/advanced/javascript) by toggling the **Auto-approve read-only scripts** (`autoApproveReadonly`) setting.",
+      "calls": 3,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 11125,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/advanced/javascript",
+          "label": "Settings > Advanced > JavaScript",
+          "route": {
+            "section": "javascript",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 41457,
+      "repeat": 0,
+      "sentence": "on",
+      "steps": 2,
+      "task": "readonly"
+    },
+    {
+      "answer": "You can change this in the [JavaScript settings](window-ml:setting/autoApproveReadonly).",
+      "calls": 2,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11125,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "setting/autoApproveReadonly",
+          "label": "JavaScript settings",
+          "route": {
+            "section": "javascript",
+            "setting": "autoApproveReadonly",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 23781,
+      "repeat": 1,
+      "sentence": "on",
+      "steps": 1,
+      "task": "readonly"
+    },
+    {
+      "answer": "You can change this in [Settings > Advanced > JavaScript > Auto-approve read-only scripts](window-ml:setting/autoApproveReadonly).",
+      "calls": 2,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11125,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "setting/autoApproveReadonly",
+          "label": "Settings > Advanced > JavaScript > Auto-approve read-only scripts",
+          "route": {
+            "section": "javascript",
+            "setting": "autoApproveReadonly",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 24799,
+      "repeat": 2,
+      "sentence": "on",
+      "steps": 1,
+      "task": "readonly"
+    },
+    {
+      "answer": "You can change this in the extension settings: [autoApproveReadonly](window-ml:setting/autoApproveReadonly).",
+      "calls": 2,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11125,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "setting/autoApproveReadonly",
+          "label": "autoApproveReadonly",
+          "route": {
+            "section": "javascript",
+            "setting": "autoApproveReadonly",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 27509,
+      "repeat": 3,
+      "sentence": "on",
+      "steps": 1,
+      "task": "readonly"
+    },
+    {
+      "answer": "I cannot find a way to change that setting on the current page. The visible content is restricted to the task progression steps, and no links or controls related to user/agent preferences or development environment settings are present.",
+      "calls": 9,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11085,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 107703,
+      "repeat": 0,
+      "sentence": "off",
+      "steps": 8,
+      "task": "readonly"
+    },
+    {
+      "answer": "Stopped at the 10-step cap without finishing.",
+      "calls": 10,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11085,
+      "hit_cap": true,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 116103,
+      "repeat": 1,
+      "sentence": "off",
+      "steps": 10,
+      "task": "readonly"
+    },
+    {
+      "answer": "Stopped at the 10-step cap without finishing.",
+      "calls": 10,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11085,
+      "hit_cap": true,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 118196,
+      "repeat": 2,
+      "sentence": "off",
+      "steps": 10,
+      "task": "readonly"
+    },
+    {
+      "answer": "[]",
+      "calls": 1,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11085,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 11085,
+      "repeat": 3,
+      "sentence": "off",
+      "steps": 0,
+      "task": "readonly"
+    },
+    {
+      "answer": "Stopped at the 10-step cap without finishing.",
+      "calls": 10,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11125,
+      "hit_cap": true,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 119683,
+      "repeat": 0,
+      "sentence": "on",
+      "steps": 10,
+      "task": "readonly"
+    },
+    {
+      "answer": "I could not find a link to change the setting for read-only scripts on the current page.",
+      "calls": 9,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11125,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 104287,
+      "repeat": 1,
+      "sentence": "on",
+      "steps": 8,
+      "task": "readonly"
+    },
+    {
+      "answer": "Stopped at the 10-step cap without finishing.",
+      "calls": 10,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11125,
+      "hit_cap": true,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 116426,
+      "repeat": 2,
+      "sentence": "on",
+      "steps": 10,
+      "task": "readonly"
+    },
+    {
+      "answer": "Stopped at the 10-step cap without finishing.",
+      "calls": 10,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11125,
+      "hit_cap": true,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 116932,
+      "repeat": 3,
+      "sentence": "on",
+      "steps": 10,
+      "task": "readonly"
+    },
+    {
+      "answer": "Change it in **Settings \u2192 Extension \u2192 Advanced \u2192 JavaScript**: [JavaScript settings](window-ml:settings/extension/advanced/javascript). Turn off **auto-approve read-only scripts**.",
+      "calls": 5,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 9281,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/advanced/javascript",
+          "label": "JavaScript settings",
+          "route": {
+            "section": "javascript",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "prompt_tokens": 57319,
+      "repeat": 0,
+      "sentence": "off",
+      "steps": 4,
+      "task": "readonly"
+    },
+    {
+      "answer": "[JavaScript settings](window-ml:settings/extension/advanced/javascript) \u2014 turn off **Auto-approve read-only scripts**.",
+      "calls": 4,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 9281,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/advanced/javascript",
+          "label": "JavaScript settings",
+          "route": {
+            "section": "javascript",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "prompt_tokens": 47083,
+      "repeat": 1,
+      "sentence": "off",
+      "steps": 3,
+      "task": "readonly"
+    },
+    {
+      "answer": "Change **Auto-approve read-only JavaScript** in **Settings \u2192 Extension \u2192 Advanced \u2192 JavaScript**: [JavaScript settings](window-ml:settings/extension/advanced/javascript). Turn it off to be asked before read-only scripts run.",
+      "calls": 5,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 9281,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/advanced/javascript",
+          "label": "JavaScript settings",
+          "route": {
+            "section": "javascript",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "prompt_tokens": 57315,
+      "repeat": 2,
+      "sentence": "off",
+      "steps": 4,
+      "task": "readonly"
+    },
+    {
+      "answer": "In the extension\u2019s **Settings**, turn off **Auto-approve read-only scripts** (`autoApproveReadonly`).",
+      "calls": 8,
+      "docs_calls": 4,
+      "error": false,
+      "first_prompt_tokens": 9281,
+      "hit_cap": false,
+      "links": [],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": false,
+      "prompt_tokens": 91074,
+      "repeat": 3,
+      "sentence": "off",
+      "steps": 7,
+      "task": "readonly"
+    },
+    {
+      "answer": "Change **Auto-approve read-only JavaScript** in [Settings \u2192 Advanced \u2192 JavaScript](window-ml:settings/extension/advanced/javascript). Turn it off to be asked before read-only scripts run.",
+      "calls": 3,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 9317,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/advanced/javascript",
+          "label": "Settings \u2192 Advanced \u2192 JavaScript",
+          "route": {
+            "section": "javascript",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "prompt_tokens": 34880,
+      "repeat": 0,
+      "sentence": "on",
+      "steps": 2,
+      "task": "readonly"
+    },
+    {
+      "answer": "Change **Auto-approve read-only JavaScript** in [Settings \u2192 Advanced \u2192 JavaScript](window-ml:settings/extension/advanced/javascript). Turn it off to require approval before read-only scripts run.",
+      "calls": 3,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 9317,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/advanced/javascript",
+          "label": "Settings \u2192 Advanced \u2192 JavaScript",
+          "route": {
+            "section": "javascript",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "prompt_tokens": 34878,
+      "repeat": 1,
+      "sentence": "on",
+      "steps": 2,
+      "task": "readonly"
+    },
+    {
+      "answer": "Change **Auto-approve read-only scripts** in [Settings \u2192 Extension \u2192 Advanced \u2192 JavaScript](window-ml:settings/extension/advanced/javascript).",
+      "calls": 3,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 9317,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/advanced/javascript",
+          "label": "Settings \u2192 Extension \u2192 Advanced \u2192 JavaScript",
+          "route": {
+            "section": "javascript",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "prompt_tokens": 34878,
+      "repeat": 2,
+      "sentence": "on",
+      "steps": 2,
+      "task": "readonly"
+    },
+    {
+      "answer": "",
+      "calls": 0,
+      "docs_calls": 0,
+      "error": true,
+      "first_prompt_tokens": null,
+      "hit_cap": false,
+      "links": [],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": false,
+      "prompt_tokens": 0,
+      "repeat": 3,
+      "sentence": "on",
+      "steps": 0,
+      "task": "readonly"
+    },
+    {
+      "answer": "Advanced \u2192 **JavaScript** in the extension's Settings \u2014 the \"run read-only scripts without asking\" toggle (`autoApproveReadonly`). Turn it off and every `exec` that isn't on the read-only allowlist will prompt you first.\n\n[Open Settings \u2192 Advanced \u2192 JavaScript](window-ml:settings/extension/advanced/javascript)\n\nRelated, if you want the same for the other auto-run paths: Sandboxed Python (`autoApprovePython`) at [Advanced \u2192 Sandboxed Python](window-ml:settings/extension/advanced/python), and fetches of your own source (`autoApproveSelfSource`) at [Advanced \u2192 Fetching](window-ml:settings/extension/advanced/fetch).",
+      "calls": 2,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11538,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/advanced/javascript",
+          "label": "Open Settings \u2192 Advanced \u2192 JavaScript",
+          "route": {
+            "section": "javascript",
+            "tab": "advanced"
+          }
+        },
+        {
+          "address": "settings/extension/advanced/python",
+          "label": "Advanced \u2192 Sandboxed Python",
+          "route": {
+            "section": "python",
+            "tab": "advanced"
+          }
+        },
+        {
+          "address": "settings/extension/advanced/fetch",
+          "label": "Advanced \u2192 Fetching",
+          "route": {
+            "section": "fetch",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 24693,
+      "repeat": 0,
+      "sentence": "off",
+      "steps": 1,
+      "task": "readonly"
+    },
+    {
+      "answer": "Settings \u2192 **Advanced \u2192 JavaScript** \u2192 the auto-approve read-only `exec` setting (config key `autoApproveReadonly`) \u2014 turn it off and every read-only script asks first.\n\n[Open that row in Settings](window-ml:setting/autoApproveReadonly)\n\nRelated, if you want the same for the other sandbox:\n- Sandboxed Python (`autoApprovePython`): [Advanced \u2192 Sandboxed Python](window-ml:settings/extension/advanced/python)",
+      "calls": 2,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 11538,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "setting/autoApproveReadonly",
+          "label": "Open that row in Settings",
+          "route": {
+            "section": "javascript",
+            "setting": "autoApproveReadonly",
+            "tab": "advanced"
+          }
+        },
+        {
+          "address": "settings/extension/advanced/python",
+          "label": "Advanced \u2192 Sandboxed Python",
+          "route": {
+            "section": "python",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 29087,
+      "repeat": 1,
+      "sentence": "off",
+      "steps": 2,
+      "task": "readonly"
+    },
+    {
+      "answer": "**Settings \u2192 Advanced \u2192 JavaScript \u2192 \"Auto-approve read-only exec\"** \u2014 turn it off, and every read-only `exec` survey asks you first (mutating ones always have).\n\n[Open that setting](window-ml:setting/autoApproveReadonly)\n\nRelated, if you want the same for the other sandbox:\n- Sandboxed Python (`python_exec`) has its own switch: [autoApprovePython](window-ml:setting/autoApprovePython) \u2014 Advanced \u2192 Sandboxed Python.\n- Note that read-free introspection (`ml.config()`, `ml.queryAll()`, `ml.a11y()`, `ml.pipe()` and the like) still runs unprompted; the switch only governs whole exec bodies.",
+      "calls": 2,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 11538,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "setting/autoApproveReadonly",
+          "label": "Open that setting",
+          "route": {
+            "section": "javascript",
+            "setting": "autoApproveReadonly",
+            "tab": "advanced"
+          }
+        },
+        {
+          "address": "setting/autoApprovePython",
+          "label": "autoApprovePython",
+          "route": {
+            "section": "python",
+            "setting": "autoApprovePython",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 29087,
+      "repeat": 2,
+      "sentence": "off",
+      "steps": 2,
+      "task": "readonly"
+    },
+    {
+      "answer": "**Settings \u2192 Extension \u2192 Advanced \u2192 JavaScript** (`settings/extension/advanced/javascript`) \u2014 turn off **\"auto-approve read-only\"** (`autoApproveReadonly`). With it off, every read-only `exec` survey prompts you before running.\n\nAdjacent switches, if you want the same for the others:\n- **Advanced \u2192 Sandboxed Python** \u2014 `autoApprovePython` (read-only Python cells)\n- **Advanced \u2192 Fetching** \u2014 `autoApproveSelfSource`",
+      "calls": 3,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 11538,
+      "hit_cap": false,
+      "links": [],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": false,
+      "prompt_tokens": 37748,
+      "repeat": 3,
+      "sentence": "off",
+      "steps": 2,
+      "task": "readonly"
+    },
+    {
+      "answer": "The user asks where to change the setting that lets read-only scripts run without asking. That's a setting in window.ml. I should call agent_api_docs to list setting keys.",
+      "calls": 1,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11574,
+      "hit_cap": false,
+      "links": [],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": false,
+      "prompt_tokens": 11574,
+      "repeat": 0,
+      "sentence": "on",
+      "steps": 0,
+      "task": "readonly"
+    },
+    {
+      "answer": "**Advanced \u2192 JavaScript \u2192 \"Run read-only code without asking\"** (config key `autoApproveReadonly`) \u2014 switch it off and every `exec` will prompt you, even a read-only query.\n\n[Open that setting](window-ml:setting/autoApproveReadonly)\n\nSandboxed Python has its own equivalent: [Sandboxed Python \u2192 `autoApprovePython`](window-ml:setting/autoApprovePython).",
+      "calls": 2,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11574,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "setting/autoApproveReadonly",
+          "label": "Open that setting",
+          "route": {
+            "section": "javascript",
+            "setting": "autoApproveReadonly",
+            "tab": "advanced"
+          }
+        },
+        {
+          "address": "setting/autoApprovePython",
+          "label": "Sandboxed Python \u2192 `autoApprovePython`",
+          "route": {
+            "section": "python",
+            "setting": "autoApprovePython",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 24607,
+      "repeat": 1,
+      "sentence": "on",
+      "steps": 1,
+      "task": "readonly"
+    },
+    {
+      "answer": "**Advanced \u2192 JavaScript \u2192 \"auto-approve read-only JS\"** (`autoApproveReadonly`) \u2014 turn it off and every read-only `exec` goes to you for approval first: [Advanced \u2192 JavaScript](window-ml:setting/extension/advanced/javascript)\n\nSame switch exists for sandboxed Python's read-only dialect (`autoApprovePython`): [Advanced \u2192 Sandboxed Python](window-ml:setting/extension/advanced/python)",
+      "calls": 3,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 11574,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "setting/extension/advanced/javascript",
+          "label": "Advanced \u2192 JavaScript",
+          "route": null
+        },
+        {
+          "address": "setting/extension/advanced/python",
+          "label": "Advanced \u2192 Sandboxed Python",
+          "route": null
+        }
+      ],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": false,
+      "prompt_tokens": 38297,
+      "repeat": 2,
+      "sentence": "on",
+      "steps": 2,
+      "task": "readonly"
+    },
+    {
+      "answer": "**Settings \u2192 Advanced \u2192 JavaScript** \u2014 turn off *Auto-approve read-only code* (`autoApproveReadonly`). It's currently **on**, so read-only `exec` runs (queries, `.map`/`.filter`, `ml.*` readers) go through with no prompt; off, every one asks you first.\n\n[Open that setting](window-ml:setting/autoApproveReadonly)\n\nThe same switch exists separately for sandboxed Python: [Settings \u2192 Advanced \u2192 Sandboxed Python](window-ml:setting/autoApprovePython) (also on now) \u2014 that one governs the read-only `python_exec` dialect.",
+      "calls": 5,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 11574,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "setting/autoApproveReadonly",
+          "label": "Open that setting",
+          "route": {
+            "section": "javascript",
+            "setting": "autoApproveReadonly",
+            "tab": "advanced"
+          }
+        },
+        {
+          "address": "setting/autoApprovePython",
+          "label": "Settings \u2192 Advanced \u2192 Sandboxed Python",
+          "route": {
+            "section": "python",
+            "setting": "autoApprovePython",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 65998,
+      "repeat": 3,
+      "sentence": "on",
+      "steps": 4,
+      "task": "readonly"
+    },
+    {
+      "answer": "Right now nothing on this machine can run programs for you \u2014 the runtime reports no `shellHost`, so I have no `ml.sh` (only in-page JS and the sandboxed Python, which has no filesystem or network).\n\nWhat lets me run real programs is the process host (`wmlhost`), installed once:\n\n1. Open [Programs (ml.sh)](window-ml:settings/extension/advanced/shell) \u2014 Settings \u2192 Extension \u2192 Advanced \u2192 Programs (ml.sh). It shows a one-line install command pinned to this install's extension id; paste that (don't hand-write one).\n2. Press **Check** there so it reports the host answering.\n3. Turn on **Let scripts run programs** and name a workspace folder \u2014 programs run there, writes stay inside it, and each call still asks you (or a policy you set) before it runs.\n\nOtherwise I can only work inside the page you're on.",
+      "calls": 8,
+      "docs_calls": 6,
+      "error": false,
+      "first_prompt_tokens": 11565,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/advanced/shell",
+          "label": "Programs (ml.sh)",
+          "route": {
+            "section": "shell",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 128239,
+      "repeat": 0,
+      "sentence": "off",
+      "steps": 9,
+      "task": "shell"
+    },
+    {
+      "answer": "You need the extension's separate **process host** (`wmlhost`) installed \u2014 right now it isn't connected, so `ml.sh` is present but nothing answers it.\n\nSteps: open [Programs (ml.sh)](window-ml:settings/extension/advanced/shell) (Settings \u2192 Extension \u2192 Advanced \u2192 Programs), copy the one-line install command shown there (it's pinned to a checked release for this extension id), run it, press **Check** again, then turn on **Let scripts run programs** and name a workspace folder. Each call still asks you \u2014 programs like `git`, `rg`, `ls` can pass by policy; `bash -c \u2026` always asks \u2014 and they start in that workspace folder, with sandboxed writes only inside it.",
+      "calls": 6,
+      "docs_calls": 4,
+      "error": false,
+      "first_prompt_tokens": 11565,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/advanced/shell",
+          "label": "Programs (ml.sh)",
+          "route": {
+            "section": "shell",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 95190,
+      "repeat": 1,
+      "sentence": "off",
+      "steps": 7,
+      "task": "shell"
+    },
+    {
+      "answer": "",
+      "calls": 2,
+      "docs_calls": 0,
+      "error": true,
+      "first_prompt_tokens": 11565,
+      "hit_cap": false,
+      "links": [],
+      "model": "deepseek.deepseek-flash",
+      "passed": false,
+      "prompt_tokens": 23750,
+      "repeat": 2,
+      "sentence": "off",
+      "steps": 3,
+      "task": "shell"
+    },
+    {
+      "answer": "You can't yet on this install \u2014 no process host is connected (`shellHost` is absent), so I have no `ml.sh` here.\n\nTo set it up: open [Programs (ml.sh)](window-ml:settings/extension/advanced/shell) \u2014 Settings \u2192 Extension \u2192 Advanced \u2192 Programs (ml.sh). It shows a one-line install command with this install's extension id; paste that (don't hand-write one), then press **Check** there, turn on **Let scripts run programs**, and name a workspace folder.\n\nAfter that I run programs as an argv \u2014 `await ml.sh.run([\"git\",\"status\"])`, no shell pipelines \u2014 inside an approved `exec`, and every call is still put to you (program, folder, sandbox) unless a policy covers it; writes stay inside the workspace folder.",
+      "calls": 6,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 11565,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/advanced/shell",
+          "label": "Programs (ml.sh)",
+          "route": {
+            "section": "shell",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 93119,
+      "repeat": 3,
+      "sentence": "off",
+      "steps": 6,
+      "task": "shell"
+    },
+    {
+      "answer": "I can't \u2014 not arbitrary programs on your machine. What I actually have is:\n\n- **`python_exec`** \u2014 Python (numpy/pandas/Pillow/scipy/sympy) in a sandboxed WASM runtime, with `python_install` to pull a PyPI package into that sandbox for the run. No filesystem, no network, no shell.\n- **`exec`** \u2014 JavaScript in your page's console (read-only by default; anything that mutates asks you first).\n- **Clicking/typing on the page** \u2014 each action needs your approval unless you set a `propose_policy` rule.\n\nSo: give me a URL or a package name and I'll work inside those limits; for real shell access to your computer you'd need a different tool entirely.",
+      "calls": 2,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11604,
+      "hit_cap": false,
+      "links": [],
+      "model": "deepseek.deepseek-flash",
+      "passed": false,
+      "prompt_tokens": 23972,
+      "repeat": 0,
+      "sentence": "on",
+      "steps": 2,
+      "task": "shell"
+    },
+    {
+      "answer": "I need a local **process host** \u2014 a small helper you install \u2014 which gives me `ml.sh.run([...])` for real programs on your machine:\n\n- Install/enable it in [Programs (ml.sh)](window-ml:settings/extension/advanced/shell) \u2014 that's Settings \u2192 Extension \u2192 Advanced \u2192 Programs (ml.sh) (`shellEnabled`, `shellRoots`, `shellSandbox`, `shellPath`).\n- After that, I can call e.g. `ml.sh.run([\"git\",\"status\"])` from an approved `exec`; each call is either covered by a [policy](window-ml:settings/extension/permissions/policies) or shown to you to approve, and by default writes are confined to your workspace folders.\n- `python_exec` is not that: it's sandboxed WASM Python in the browser (numpy/pandas/PIL, no filesystem, no network).\n\n(Unrelated to your question: the page you're on is a cross-page navigation test \u2014 its code is `CROSSPAGE-9471`.)",
+      "calls": 9,
+      "docs_calls": 7,
+      "error": false,
+      "first_prompt_tokens": 11604,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/advanced/shell",
+          "label": "Programs (ml.sh)",
+          "route": {
+            "section": "shell",
+            "tab": "advanced"
+          }
+        },
+        {
+          "address": "settings/extension/permissions/policies",
+          "label": "policy",
+          "route": {
+            "section": "policies",
+            "tab": "permissions"
+          }
+        }
+      ],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 133016,
+      "repeat": 1,
+      "sentence": "on",
+      "steps": 9,
+      "task": "shell"
+    },
+    {
+      "answer": "You need the process host (`wmlhost`) \u2014 this run reports no `shellHost`, so `ml.sh` isn't available yet.\n\n1. Open [Programs (ml.sh)](window-ml:settings/extension/advanced/shell) (Settings \u2192 Extension \u2192 Advanced \u2192 Programs). It shows the one-line installer, pinned to a checked release and this install's extension id \u2014 use that line, not one I'd write.\n2. Run it, then press **Check** there.\n3. Turn on **Let scripts run programs**, and name a **workspace folder** (programs start there, writes stay inside it).\n\nAfter that I can run e.g. `git status` or a test runner; each call still asks you unless a policy covers it (allow-listed programs with a manifest may run unprompted).",
+      "calls": 8,
+      "docs_calls": 7,
+      "error": false,
+      "first_prompt_tokens": 11604,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/advanced/shell",
+          "label": "Programs (ml.sh)",
+          "route": {
+            "section": "shell",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "deepseek.deepseek-flash",
+      "passed": true,
+      "prompt_tokens": 132517,
+      "repeat": 2,
+      "sentence": "on",
+      "steps": 12,
+      "task": "shell"
+    },
+    {
+      "answer": "I can't \u2014 nothing in my toolkit executes programs on your machine. My `exec` runs JS only inside this browser tab, and `python_exec` is a sandboxed WASM Python with no filesystem or network. To let something like me run local programs you'd need a local agent/CLI with shell access (or a terminal you paste commands into) \u2014 I'd need that grant, which the window.ml extension doesn't provide.",
+      "calls": 2,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11604,
+      "hit_cap": false,
+      "links": [],
+      "model": "deepseek.deepseek-flash",
+      "passed": false,
+      "prompt_tokens": 23908,
+      "repeat": 3,
+      "sentence": "on",
+      "steps": 2,
+      "task": "shell"
+    },
+    {
+      "answer": "To let me run programs on your computer, you need to install the process host. You can find the installation settings in **Settings** \u2192 **Extension** \u2192 **Advanced** \u2192 **Programs (ml.sh)**.",
+      "calls": 4,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 11074,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:31b",
+      "passed": false,
+      "prompt_tokens": 48531,
+      "repeat": 0,
+      "sentence": "off",
+      "steps": 3,
+      "task": "shell"
+    },
+    {
+      "answer": "To let me run programs on your computer, you need to install the process host. You can find the installation instructions in your browser extension settings under **Settings** \u2192 **Extension** \u2192 **Advanced** \u2192 **Programs (ml.sh)**.",
+      "calls": 5,
+      "docs_calls": 3,
+      "error": false,
+      "first_prompt_tokens": 11074,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:31b",
+      "passed": false,
+      "prompt_tokens": 63775,
+      "repeat": 1,
+      "sentence": "off",
+      "steps": 4,
+      "task": "shell"
+    },
+    {
+      "answer": "To let me run programs on your computer, you need to install the process host. You can find the installation instructions in your browser extension settings under **Settings** \u2192 **Extension** \u2192 **Advanced** \u2192 **Programs (ml.sh)**.",
+      "calls": 6,
+      "docs_calls": 3,
+      "error": false,
+      "first_prompt_tokens": 11074,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:31b",
+      "passed": false,
+      "prompt_tokens": 75015,
+      "repeat": 2,
+      "sentence": "off",
+      "steps": 5,
+      "task": "shell"
+    },
+    {
+      "answer": "I cannot run programs directly on your computer; I can only execute JavaScript within the browser page and Python within a sandboxed environment.",
+      "calls": 2,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11074,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:31b",
+      "passed": false,
+      "prompt_tokens": 22641,
+      "repeat": 3,
+      "sentence": "off",
+      "steps": 1,
+      "task": "shell"
+    },
+    {
+      "answer": "To let me run programs on your computer, you need to install the process host. You can find this in the extension's settings under: **Settings** \u2192 **Extension** \u2192 **Advanced** \u2192 **Programs (ml.sh)**.",
+      "calls": 3,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 11114,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:31b",
+      "passed": false,
+      "prompt_tokens": 37071,
+      "repeat": 0,
+      "sentence": "on",
+      "steps": 2,
+      "task": "shell"
+    },
+    {
+      "answer": "To let me run programs on your computer, you need to install the process host. You can find the installation instructions in the extension settings: **Settings** \u2192 **Extension** \u2192 **Advanced** \u2192 **Programs (ml.sh)**.",
+      "calls": 3,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 11114,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:31b",
+      "passed": false,
+      "prompt_tokens": 37079,
+      "repeat": 1,
+      "sentence": "on",
+      "steps": 2,
+      "task": "shell"
+    },
+    {
+      "answer": "To let me run programs on your computer, you need to install the process host (`wmlhost`).\n\nYou can find the one-line installation command for your specific extension ID here: [Programs (ml.sh)](window-ml:settings/extension/advanced/shell).\n\nOnce installed:\n1. Go back to that same settings page and press **Check**.\n2. Turn on **Let scripts run programs**.\n3. Name a **workspace folder** where the programs should operate.",
+      "calls": 3,
+      "docs_calls": 1,
+      "error": false,
+      "first_prompt_tokens": 11114,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/advanced/shell",
+          "label": "Programs (ml.sh)",
+          "route": {
+            "section": "shell",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "gemma4:31b",
+      "passed": true,
+      "prompt_tokens": 37734,
+      "repeat": 2,
+      "sentence": "on",
+      "steps": 2,
+      "task": "shell"
+    },
+    {
+      "answer": "To let me run programs on your computer, you need to install the process host. You can find the installation instructions in the extension settings under **Settings** \u2192 **Extension** \u2192 **Advanced** \u2192 **Programs (ml.sh)**.",
+      "calls": 5,
+      "docs_calls": 3,
+      "error": false,
+      "first_prompt_tokens": 11114,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:31b",
+      "passed": false,
+      "prompt_tokens": 62707,
+      "repeat": 3,
+      "sentence": "on",
+      "steps": 4,
+      "task": "shell"
+    },
+    {
+      "answer": "I cannot let you run programs on your computer. I am an automation agent operating in a sandboxed web environment and do not have the capability to execute code or programs outside of the web page's JavaScript context or my internal sandboxed Python interpreter.",
+      "calls": 1,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11074,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 11074,
+      "repeat": 0,
+      "sentence": "off",
+      "steps": 0,
+      "task": "shell"
+    },
+    {
+      "answer": "I operate within a secure, sandboxed environment that allows me to read and interact with web pages, execute JavaScript within the page's context, and run Python code in a limited sandbox. I cannot, however, access or run programs directly on your computer's operating system or local file system.",
+      "calls": 1,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11074,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 11074,
+      "repeat": 1,
+      "sentence": "off",
+      "steps": 0,
+      "task": "shell"
+    },
+    {
+      "answer": "I operate within a sandboxed environment on the webpage and cannot run programs directly on your local computer. I can, however, execute code (like Python) in a restricted sandbox for calculations, data processing, or logic solving.",
+      "calls": 1,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11074,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 11074,
+      "repeat": 2,
+      "sentence": "off",
+      "steps": 0,
+      "task": "shell"
+    },
+    {
+      "answer": "I cannot run programs directly on your computer. I operate within a secure, sandboxed web environment using the provided tools, which prevents me from accessing your local file system or executing arbitrary code outside of that sandbox.",
+      "calls": 1,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11074,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 11074,
+      "repeat": 3,
+      "sentence": "off",
+      "steps": 0,
+      "task": "shell"
+    },
+    {
+      "answer": "I am an automation agent that operates within a sandboxed web environment. I do not have the capability to access or run arbitrary programs directly on your computer's operating system. I can only interact with the content and functionality of the web page using the tools provided.",
+      "calls": 1,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11114,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 11114,
+      "repeat": 0,
+      "sentence": "on",
+      "steps": 0,
+      "task": "shell"
+    },
+    {
+      "answer": "I operate in a sandboxed environment within your browser. I cannot run arbitrary programs directly on your computer's operating system.\n\nHowever, for computational tasks, I can run code in a restricted, sandboxed Python interpreter using the `python_exec` tool. This allows me to perform data analysis, mathematical calculations, and image/table manipulation, but it is not a full shell access to your local file system or operating system.",
+      "calls": 1,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11114,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 11114,
+      "repeat": 1,
+      "sentence": "on",
+      "steps": 0,
+      "task": "shell"
+    },
+    {
+      "answer": "I do not have the capability to run general programs on your local computer's operating system. My execution environment is limited to:\n\n1.  **JavaScript:** Running code within the current web page context using the `exec` tool.\n2.  **Python:** Running sandboxed Python code for data processing, computation, and analysis using the `python_exec` tool.\n\nI cannot access your local file system, nor can I compile or run native executable programs outside of this controlled web/sandbox environment.",
+      "calls": 1,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11114,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 11114,
+      "repeat": 2,
+      "sentence": "on",
+      "steps": 0,
+      "task": "shell"
+    },
+    {
+      "answer": "I do not have the capability to run arbitrary programs on your local computer's operating system. My execution environment is confined to the browser sandbox and the sandboxed Python interpreter provided by the `python_exec` tool.",
+      "calls": 1,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 11114,
+      "hit_cap": false,
+      "links": [],
+      "model": "gemma4:e4b",
+      "passed": false,
+      "prompt_tokens": 11114,
+      "repeat": 3,
+      "sentence": "on",
+      "steps": 0,
+      "task": "shell"
+    },
+    {
+      "answer": "Install the **process host** in the extension\u2019s **Settings \u2192 Extension \u2192 Advanced \u2192 Programs (ml.sh)**. Then I can run programs through `ml.sh` from an extension-hosted run; the host applies its safety rules and may ask you to approve a call. This page\u2019s `window.ml` console alone can\u2019t run programs on your computer.",
+      "calls": 3,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 9273,
+      "hit_cap": false,
+      "links": [],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": false,
+      "prompt_tokens": 35828,
+      "repeat": 0,
+      "sentence": "off",
+      "steps": 2,
+      "task": "shell"
+    },
+    {
+      "answer": "You can\u2019t grant me direct access to run programs on your computer in this chat. I can interact with the current webpage, and I can run code in an isolated sandbox\u2014but that code cannot access your computer\u2019s files or applications. To run something locally, I can help you write the command or script for you to review and run yourself.",
+      "calls": 3,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 9273,
+      "hit_cap": false,
+      "links": [],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": false,
+      "prompt_tokens": 29212,
+      "repeat": 1,
+      "sentence": "off",
+      "steps": 2,
+      "task": "shell"
+    },
+    {
+      "answer": "You can\u2019t grant me direct access to run arbitrary programs on your computer here. I can run Python in a sandbox or JavaScript on the current page; for local programs, you\u2019ll need to run them yourself and share the output.",
+      "calls": 2,
+      "docs_calls": 0,
+      "error": false,
+      "first_prompt_tokens": 9273,
+      "hit_cap": false,
+      "links": [],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": false,
+      "prompt_tokens": 19731,
+      "repeat": 2,
+      "sentence": "off",
+      "steps": 1,
+      "task": "shell"
+    },
+    {
+      "answer": "To enable this, open [Settings \u2192 Extension \u2192 Advanced \u2192 Programs (ml.sh)](window-ml:settings/extension/advanced/shell). Copy and paste the install line shown there, then press **Check again**, turn on **Let scripts run programs**, and choose a workspace folder. Each program run will still ask for your approval.",
+      "calls": 3,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 9273,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/advanced/shell",
+          "label": "Settings \u2192 Extension \u2192 Advanced \u2192 Programs (ml.sh)",
+          "route": {
+            "section": "shell",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "prompt_tokens": 33544,
+      "repeat": 3,
+      "sentence": "off",
+      "steps": 2,
+      "task": "shell"
+    },
+    {
+      "answer": "Open [Programs (ml.sh)](window-ml:settings/extension/advanced/shell) in Settings and follow the one-line install command shown there. Then select **Check again**, enable **Let scripts run programs**, and choose a workspace folder. Each program run will still ask for your approval.",
+      "calls": 4,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 9309,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/advanced/shell",
+          "label": "Programs (ml.sh)",
+          "route": {
+            "section": "shell",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "prompt_tokens": 43271,
+      "repeat": 0,
+      "sentence": "on",
+      "steps": 3,
+      "task": "shell"
+    },
+    {
+      "answer": "Install the process host via **Settings \u2192 Extension \u2192 Advanced \u2192 Programs (ml.sh)**. Then I can run programs using `ml.sh.run([...])`; calls may ask you to approve them. This page\u2019s `window.ml` console alone can\u2019t run programs on your computer.",
+      "calls": 3,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 9309,
+      "hit_cap": false,
+      "links": [],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": false,
+      "prompt_tokens": 31023,
+      "repeat": 1,
+      "sentence": "on",
+      "steps": 2,
+      "task": "shell"
+    },
+    {
+      "answer": "Install and connect **window-ml-host** from the extension\u2019s **Settings \u2192 Extension \u2192 Advanced \u2192 Programs (ml.sh)**. Once connected, I can run programs through an approved `ml.sh` call; you\u2019ll be asked to approve calls as needed.",
+      "calls": 4,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 9309,
+      "hit_cap": false,
+      "links": [],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": false,
+      "prompt_tokens": 44739,
+      "repeat": 2,
+      "sentence": "on",
+      "steps": 3,
+      "task": "shell"
+    },
+    {
+      "answer": "To run programs on your computer, install the process host using the setup line in [Programs (ml.sh)](window-ml:settings/extension/advanced/shell). Then press **Check again**, enable **Let scripts run programs**, and choose a workspace folder. Each program run will still ask for your approval.",
+      "calls": 3,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 9309,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/advanced/shell",
+          "label": "Programs (ml.sh)",
+          "route": {
+            "section": "shell",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "openrouter.openai/gpt-6-luna",
+      "passed": true,
+      "prompt_tokens": 33651,
+      "repeat": 3,
+      "sentence": "on",
+      "steps": 2,
+      "task": "shell"
+    },
+    {
+      "answer": "You don't yet \u2014 the process host isn't connected on this machine, so I have no way to run anything locally right now.\n\nTo enable it:\n\n1. Open **[Programs (ml.sh)](window-ml:settings/extension/advanced/shell)** in Settings (Advanced tab). It shows the one install line pinned to your checked release \u2014 paste that into your terminal; I must not write it myself.\n2. Press **Check** there again until the host answers.\n3. Turn on **Let scripts run programs**.\n4. Name a workspace folder \u2014 every command starts there, and nothing carries over between calls.\n\nThen I can run programs as an argument list (`[\"git\", \"status\"]`, `[\"rg\", \"-n\", \"TODO\", \"src\"]`) \u2014 not a shell string, so no pipes or globs \u2014 inside the sandbox (writes only inside the workspace folders, no network). **Every call still asks you** before it runs; you can approve a program once or set a policy to stop being asked for it.",
+      "calls": 3,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 11529,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/advanced/shell",
+          "label": "Programs (ml.sh)",
+          "route": {
+            "section": "shell",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 48314,
+      "repeat": 0,
+      "sentence": "off",
+      "steps": 3,
+      "task": "shell"
+    },
+    {
+      "answer": "**You need the process host installed and connected \u2014 right now it isn't.**\n\nYour runtime reports `host-not-connected` (\"Programs on this machine: connect window-ml-host\"), so I can't run anything yet.\n\nTo enable it:\n\n1. **Install `window-ml-host`** on this machine (the local process host the extension talks to).\n2. Open **[Settings \u2192 Advanced \u2192 Programs (ml.sh)](window-ml:settings/extension/advanced/shell)** and turn it on (`shellEnabled`), set the **workspace folders** (`shellRoots`) I'm allowed to work in, and pick the **sandbox** mode and host path if non-default. Optionally review **[Program manifests](window-ml:settings/extension/advanced/manifests)**.\n3. Make sure the host is running so the extension connects to it.\n\nThen I can run programs via `ml.sh` from an approved `exec`:\n\n- `ml.sh.run([\"git\", \"status\"])` \u2014 an **argv array**, never a shell string (no pipes, globs, `$VAR`, or `cd`).\n- Every call starts in the first workspace folder; nothing carries over between calls.\n- Programmed calls are decided by manifest/policy; unsandboxed things like `bash -c` always ask you first.\n- `ml.sh.put(\"@file:\u2026\", \"inbox/report.pdf\")` writes a file you attached into a workspace folder so a program can open it.\n\nOnce it's connected, tell me what you want run and I'll do it.",
+      "calls": 6,
+      "docs_calls": 4,
+      "error": false,
+      "first_prompt_tokens": 11529,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/advanced/shell",
+          "label": "Settings \u2192 Advanced \u2192 Programs (ml.sh)",
+          "route": {
+            "section": "shell",
+            "tab": "advanced"
+          }
+        },
+        {
+          "address": "settings/extension/advanced/manifests",
+          "label": "Program manifests",
+          "route": {
+            "section": "manifests",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 94408,
+      "repeat": 1,
+      "sentence": "off",
+      "steps": 5,
+      "task": "shell"
+    },
+    {
+      "answer": "You need the **process host** (`wml-host`) installed \u2014 right now this machine reports *Programs on this machine: not connected*, so I can't run anything yet.\n\nSetup (once):\n\n1. Open **[Programs (ml.sh)](window-ml:settings/extension/advanced/shell)** \u2014 Settings \u2192 Extension \u2192 Advanced \u2192 Programs (ml.sh).\n2. Paste the install line shown there. It's pinned to a checked release for *your* extension id \u2014 I can't write that command for you.\n3. Press **Check** again on that page until it reports connected.\n4. Turn on **Let scripts run programs**.\n5. Name a **workspace folder** \u2014 every command starts there and can only write inside workspace folders unless you widen it.\n\nAfter that I can run programs via `ml.sh` (e.g. `git status`, `rg`, a test runner): argv arrays only, no shell strings, so no pipes, globs or `$VAR`. Each call still asks you before it runs, and you can allow a specific program/folder to skip the prompt.",
+      "calls": 4,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 11529,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/advanced/shell",
+          "label": "Programs (ml.sh)",
+          "route": {
+            "section": "shell",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 59557,
+      "repeat": 2,
+      "sentence": "off",
+      "steps": 3,
+      "task": "shell"
+    },
+    {
+      "answer": "You need to install the **process host** once \u2014 right now it isn't connected on this machine, so I have no programs to run.\n\n1. Open **[Programs (ml.sh)](window-ml:settings/extension/advanced/shell)** (Settings \u2192 Extension \u2192 Advanced \u2192 Programs).\n2. Paste the **one install line shown there** into your terminal \u2014 don't use a command I write, that page's line is pinned to your installed release and extension id.\n3. Press **Check** again on that page.\n4. Turn on **Let scripts run programs**, and **name a workspace folder** (where commands start and may write).\n\nThen I can run things via `ml.sh` \u2014 an argument list like `[\"git\", \"status\"]`, `[\"rg\", \"-n\", \"TODO\", \"src\"]`, `[\"npm\", \"test\"]` \u2014 not shell strings (no pipes, globs, `$VAR`, or `cd`; state doesn't carry between calls). Each call still asks you first, and a policy can let known-safe ones through. Ask me to run something once the Check goes green.",
+      "calls": 4,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 11529,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/advanced/shell",
+          "label": "Programs (ml.sh)",
+          "route": {
+            "section": "shell",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 59561,
+      "repeat": 3,
+      "sentence": "off",
+      "steps": 3,
+      "task": "shell"
+    },
+    {
+      "answer": "You need to install **window-ml-host**, the separate process host that actually spawns programs \u2014 I can't reach your filesystem on my own. It's not connected right now, so I have no program access yet.\n\nTo set it up:\n\n1. Open **[Programs (ml.sh)](window-ml:settings/extension/advanced/shell)** \u2014 Settings \u2192 Extension \u2192 Advanced \u2192 Programs (ml.sh).\n2. There, copy the **one install line** it prints (it's pinned to a checked release for this extension id \u2014 don't use one from anywhere else) and paste it into your own terminal.\n3. Press **Check** in that same panel until the host answers.\n4. Turn on **Let scripts run programs**, and name a **workspace folder** \u2014 that's where commands start and write.\n\nThen I run programs through `ml.sh.run([...])` \u2014 an argument list, never a shell string, so no pipes, globs or `$VAR`. Each call starts in the first workspace folder with no carried-over state. Manifested programs (`git`, `rg`, `ls`, `wc`, \u2026) can run without prompting when their effects allow it; anything like `[\"bash\", \"-c\", \u2026]` always asks. Every call is still decided per program/folder/path, and you can approve, deny, or set a standing policy.",
+      "calls": 4,
+      "docs_calls": 4,
+      "error": false,
+      "first_prompt_tokens": 11565,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/advanced/shell",
+          "label": "Programs (ml.sh)",
+          "route": {
+            "section": "shell",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 61271,
+      "repeat": 0,
+      "sentence": "on",
+      "steps": 5,
+      "task": "shell"
+    },
+    {
+      "answer": "You need the **process host** (`window-ml-host`) installed \u2014 right now it isn't connected, so I have no way to run anything on your machine.\n\n1. Open **[Programs (ml.sh)](window-ml:settings/extension/advanced/shell)** (Settings \u2192 Extension \u2192 Advanced \u2192 Programs). It shows the one line to paste \u2014 use that exact line, it's pinned to a checked release for this install's extension id.\n2. Press **Check** there again.\n3. Turn on **Let scripts run programs**.\n4. Name a **workspace folder** \u2014 every command starts there, and nothing carries over between calls (no `cd`, no state).\n\nAfter that I can run programs as an argument list (`[\"git\", \"status\"]`, `[\"rg\", \"-n\", \"TODO\", \"src\"]`) \u2014 never a shell line, so no pipes, globs or `$VAR`. Sandbox writes stay inside the workspace folders and have no network. **Every call still asks you first**; you can allowlist specific programs/folders so routine ones stop prompting.",
+      "calls": 4,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 11565,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/advanced/shell",
+          "label": "Programs (ml.sh)",
+          "route": {
+            "section": "shell",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 59609,
+      "repeat": 1,
+      "sentence": "on",
+      "steps": 3,
+      "task": "shell"
+    },
+    {
+      "answer": "You don't give me shell access directly \u2014 it comes from **window-ml-host**, a separate process host you install once, and `ml.sh` runs through it. It isn't connected on this machine yet (the runtime reports *\"Programs on this machine: connect window-ml-host\"*), so right now I can't run anything.\n\nTo set it up:\n\n1. Open **[Programs (ml.sh)](window-ml:settings/extension/advanced/shell)** \u2014 Settings \u2192 Extension \u2192 Advanced \u2192 Programs (ml.sh). It shows the one install line to paste, pinned to a checked release for *your* extension id. Don't let me (or anyone) hand-write that command.\n2. Press **Check** there again until the host answers.\n3. Turn on **Let scripts run programs**.\n4. Name a **workspace folder** the host may work in.\n\nThen `ml.sh` is live, and I can run programs (`git status`, `npm test`, \u2026) \u2014 but as an **argument list, never a shell command line**: no pipes, globs or `$VAR`. Every single call still pops an approval prompt to you; nothing runs silently.",
+      "calls": 4,
+      "docs_calls": 2,
+      "error": false,
+      "first_prompt_tokens": 11565,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/advanced/shell",
+          "label": "Programs (ml.sh)",
+          "route": {
+            "section": "shell",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 55534,
+      "repeat": 2,
+      "sentence": "on",
+      "steps": 3,
+      "task": "shell"
+    },
+    {
+      "answer": "You need to install the **process host** \u2014 I have no shell on your machine until it answers (right now the extension reports *window-ml-host not connected*).\n\n1. Open **[Programs (ml.sh)](window-ml:settings/extension/advanced/shell)** \u2014 Settings \u2192 Extension \u2192 Advanced \u2192 Programs (ml.sh).\n2. Paste the install line shown there (it's pinned to this build's extension id \u2014 don't use one I write out) and run it once.\n3. Press **Check** again on that page, turn on **Let scripts run programs**, and name a **workspace folder**.\n\nAfter that I can run programs through it \u2014 e.g. `git status`, `rg -n TODO src`, a test runner \u2014 as an argument list, not a shell command line (no pipes, globs or `$VAR`), starting in your workspace folder, with nothing carrying over between calls. Writes default to inside the workspace folders only, and **every call still asks you first** \u2014 you can allow specific programs to run without asking via a policy.",
+      "calls": 4,
+      "docs_calls": 4,
+      "error": false,
+      "first_prompt_tokens": 11565,
+      "hit_cap": false,
+      "links": [
+        {
+          "address": "settings/extension/advanced/shell",
+          "label": "Programs (ml.sh)",
+          "route": {
+            "section": "shell",
+            "tab": "advanced"
+          }
+        }
+      ],
+      "model": "qwen3.8-flash-next:vision",
+      "passed": true,
+      "prompt_tokens": 60909,
+      "repeat": 3,
+      "sentence": "on",
+      "steps": 5,
+      "task": "shell"
+    }
+  ],
+  "source": {
+    "after": "#1867 (prompt cuts)",
+    "build": "3cc008b5",
+    "sweep": "links-prompt"
+  }
+}
