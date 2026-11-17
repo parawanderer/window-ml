@@ -688,3 +688,70 @@ test("an ephemeral chat pushed out of memory releases its rows, since nothing ca
     assert.ok(!isBackgroundChat(eph));
     assert.deepEqual(w.released, [eph]);
 });
+
+// The held rows nothing can end: an ephemeral chat's, after a worker eviction took the map that would have released them.
+// The value sweep's first pass releases them (`releaseOrphanedHeld`), asking what is live only when it releases.
+
+const { createRequire } = await import("node:module");
+const { IDBFactory } = createRequire(import.meta.url)("fake-indexeddb");
+const { ValueStore } = await import("../src/pointers/value-store.ts");
+globalThis.chrome ??= { storage: { sync: { get: async (d) => d } }, alarms: { create() {}, onAlarm: { addListener() {} } } };
+const { releaseOrphanedHeld } = await import("../src/sw/sw-values.ts");
+
+/** Wait until the async `fn()` is true: `until` reads a promise as true at once. */
+async function untilAsync(fn, what) {
+    for (let i = 0; i < 200; i++) {
+        if (await fn()) return;
+        await new Promise((r) => setTimeout(r, 5));
+    }
+    assert.fail(`timed out waiting for ${what}`);
+}
+
+/** A real value store on a fresh in-memory IndexedDB, and a chat world that holds its PDFs in it. */
+function heldWorld() {
+    const values = new ValueStore({ idb: new IDBFactory(), budgetBytes: () => 1e9 });
+    const w = world({ pdf: reader(textDoc(10)), hold: async (blob, format, source, session) => (await values.put(blob, { format, source, session, held: true })).key });
+    const heldBy = async (session) => (await values.rows()).filter((r) => r.held && r.sessions.includes(session)).length;
+    return { w, values, heldBy };
+}
+
+test("an ephemeral chat's rows, left behind by a worker eviction, are released by the sweep's first pass", T, async () => {
+    const { w, values, heldBy } = heldWorld();
+    const hash = await startBackgroundChat({ text: "", files: [PDF], ephemeral: true });
+    await until(() => w.of("chat-result").length === 1, "the turn");
+    await untilAsync(async () => (await heldBy(hash)) === 2, "both rows held");
+    assert.equal(await heldBy(hash), 2);
+    // A worker eviction: the map is gone and nothing released (the world's `release` only records).
+    for (const h of backgroundChats()) forgetBackgroundChat(h);
+    const released = await releaseOrphanedHeld((s) => isBackgroundChat(s), values);
+    assert.deepEqual(released, [hash]);
+    assert.equal(await heldBy(hash), 0, "no held row is left for the chat");
+});
+
+test("the pass keeps what a saved chat, an open tab and a chat in memory hold", T, async () => {
+    const { w, values, heldBy } = heldWorld();
+    const saved = await startBackgroundChat({ text: "", files: [PDF] });
+    await until(() => w.of("chat-result").length === 1 && recordOf(w, saved), "the saved chat's turn");
+    await untilAsync(async () => (await heldBy(saved)) === 2, "its rows");
+    await values.put(new Blob(["%PDF-1.4\n"]), { format: "bytes", source: "tab.pdf", session: "page:5", held: true });
+    for (const h of backgroundChats()) forgetBackgroundChat(h);
+    const live = await startBackgroundChat({ text: "", files: [PDF], ephemeral: true });
+    await untilAsync(async () => (await heldBy(live)) === 2, "the live chat's rows");
+    const savedSessions = new Set([saved]), tabs = new Set(["page:5"]);
+    assert.deepEqual(await releaseOrphanedHeld((s) => isBackgroundChat(s) || savedSessions.has(s) || tabs.has(s), values), []);
+    assert.equal(await heldBy(saved), 2, "the saved chat's");
+    assert.equal(await heldBy("page:5"), 1, "the open tab's");
+    assert.equal(await heldBy(live), 2, "the chat in memory's");
+});
+
+test("a session that becomes live while the pass reads the rows keeps them: live is asked at each release", T, async () => {
+    const values = new ValueStore({ idb: new IDBFactory(), budgetBytes: () => 1e9 });
+    await values.put(new Blob(["a"]), { format: "bytes", session: "late1", held: true });
+    await values.put(new Blob(["b"]), { format: "bytes", session: "dead1", held: true });
+    const liveNow = new Set();
+    // The rows are read first; the late session starts (as a chat would) before any release is decided.
+    const store = { rows: async () => { const r = await values.rows(); liveNow.add("late1"); return r; }, releaseSession: (s) => values.releaseSession(s) };
+    assert.deepEqual(await releaseOrphanedHeld((s) => liveNow.has(s), store), ["dead1"]);
+    assert.equal((await values.rows()).filter((r) => r.sessions.includes("late1")).length, 1);
+    assert.deepEqual(await releaseOrphanedHeld(() => false, null), [], "no store: nothing to do");
+});

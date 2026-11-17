@@ -22,7 +22,7 @@ import { AGENT_START_PAGE, DEFAULT_CONFIG, modelFilterAllows } from "../contract
 import type { NeutralMessage } from "../contract/contract-chat";
 import { cleanTitle, titleMessages } from "../session/session-title";
 import { defineState } from "../state-registry";
-import { bgRuns, keptOnRebuild, makeWorkerRun, trackRun, untrackRun } from "./sw-runs";
+import { bgRuns, hydrationDone, keptOnRebuild, makeWorkerRun, pageValueSession, runControllers, runRebuilds, startingControllers, trackRun, untrackRun, workerRunsStarting } from "./sw-runs";
 import { moveRun } from "./move-run";
 import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
 import { isExtensionSender } from "./sw-site-access";
@@ -880,6 +880,22 @@ export async function handleSessionTitle(payload: unknown, sender: chrome.runtim
     if (typeof p.hash !== "string" || !p.hash || !Array.isArray(p.messages) || !p.messages.length) return { error: "SESSION_TITLE needs a hash and messages" };
     if (!utilityModelSet) return { error: "no utility model is set" };
     return { data: await titleSession(p.hash, p.messages as NeutralMessage[]) };
+}
+
+/**
+ * What can still end a held value-store row's session, for the value sweep's first pass (`releaseOrphanedHeld`): a chat
+ * this worker hosts, a session the store saved, a run the worker holds or restored from storage, and an open tab's page.
+ * Asked after the store and the runs are loaded, so a restart does not read an empty map as every session ended.
+ * @throws when this worker has no session store, since a saved session cannot then be told from an ended one
+ */
+export async function liveHeldSessions(): Promise<(session: string) => boolean> {
+    const store = sessionStore;
+    if (!store) throw new Error("no session store: a saved session cannot be told from an ended one");
+    await hydrationDone;
+    await store.open();
+    const tabs = new Set((await chrome.tabs.query({})).flatMap((t) => (typeof t.id === "number" ? [pageValueSession(t.id)] : [])));
+    return (s) => isBackgroundChat(s) || store.has(s) || bgRuns.has(s) || runControllers.has(s) || runRebuilds.has(s)
+        || startingControllers.has(s) || workerRunsStarting.has(s) || tabs.has(s);
 }
 
 /**

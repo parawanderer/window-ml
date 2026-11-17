@@ -464,6 +464,11 @@ whole or refused, so no page of it is held back.
 - Deleting the chat releases its rows. So does its session leaving the live store on its own (moved to the archive,
   or dropped for retention or the budget), and an ephemeral chat leaving the worker's memory, since nothing can read
   its files again.
+- A worker eviction ends an ephemeral chat with none of those, and a held row is never evicted for idleness or the
+  budget while it names a session. So the value sweep's first pass at every worker start (`releaseOrphanedHeld`)
+  releases each held row's session that nothing can end any more: not a chat in memory, a session the store saved, a
+  run the worker holds or restored, or an open tab's page (`liveHeldSessions`). It waits for the store and the runs to
+  load, asks at each release so a chat started meanwhile keeps its rows, and releases nothing when there is no store.
 - Backup and the archive carry the record, so they carry the list, never the rows: a chat brought back from either,
   on this browser or another, lists its PDFs as no longer held. The bytes are the person's own file, which they can
   attach again.
