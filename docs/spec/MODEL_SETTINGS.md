@@ -100,9 +100,10 @@ exec's `ml.config()` is open question 1, a later slice.
 ## Four classes of setting
 
 Every key of `DEFAULT_CONFIG` is in exactly one class (the gate class joined the first three under ruling 2), declared
-in code beside it: the class; for an ordinary key its domain; for a guarded key its `widens(from, to)`; and for a
-guarded, gate or secret key its reason, one sentence saying what changing it does. That declaration supersedes
-`RISKY_CONFIG` (`src/backup/backup-settings.ts`) for both of its readers:
+in code in `src/setting-class.ts` (`SETTING_CLASSES`, typed over every key of the config): the class; for an ordinary
+key its domain; for a guarded key its `widens(from, to)`; and for a guarded, gate or secret key its reason, one sentence
+saying what changing it does. That declaration supersedes `RISKY_CONFIG` (`src/backup/backup-settings.ts`) for both of
+its readers:
 
 - a guarded change's card shows the reason (below, "The surface");
 - the restore preview's `risky` group (`groupOf`, and the sentence it prints) becomes "a `sync` key that is guarded,
@@ -116,6 +117,13 @@ guarded, gate or secret key its reason, one sentence saying what changing it doe
 all, is also one a restore lists apart. The builder deletes `RISKY_CONFIG`, so what a setting does has one source. The
 restore preview's test is updated to the 30 keys by enumerating the declaration, not by copying the list.
 
+**What a person sees on restore changes with it** (built 2026-11-17): restoring a backup now lists 30 settings apart
+with what each does, where it listed 17. The 13 new ones are the guarded keys `RISKY_CONFIG` had no sentence for
+(`serverToolsOff`, `commanderServerTools`, `agentSeesFocus`, `selfIntrospection`, `debugMode`, `siteRequests`,
+`listPageSessions`, `persistUiRuns`, `sessionArchive`, `sessionRetentionDays`, `sessionStoreBudgetMB`,
+`valueStoreBudgetMB`, `exportToolDefs`); the 17 keep their sentences word for word. The upgrade test reads a backup an
+older version wrote that changes every setting (`tests/fixtures/backup/settings-every-key-v1.json`) and asserts the 30.
+
 The domain is a closed union in the declaration's type, so a new kind of domain is a change to the type, not a new
 value:
 
@@ -125,13 +133,15 @@ type Domain =
   | { kind: "enum"; words: readonly string[] }          // CONFIG_ENUMS' words
   | { kind: "number"; min: number; max?: number; integer?: true }   // no max: unbounded above
   | { kind: "model" }                                    // on the server's list and modelFilterAllows, as setModel
-  | { kind: "hours" };                                   // electricityOffPeakHours' hour range, its parser by name
+  | { kind: "hours" }                                    // electricityOffPeakHours' hour range, its parser by name
+  | { kind: "currency" };                                // an ISO 4217 code the runtime knows (Intl.supportedValuesOf)
 ```
 
-None of the five admits an arbitrary string, so a future `*Url`, `*Template`, `*Prompt` or `*Header` key cannot be
-declared ordinary without a new member of the union, which a reviewer sees; it is classified guarded or secret instead.
-A guarded, gate or secret key declares no domain here: its value is validated as today (`configTypeOk`,
-`CONFIG_ENUMS`).
+`currency` was added when the declaration was built: `electricityCurrency` is free text in the panel, and threat item 1
+already counted "a currency code" as a closed domain. None of the six admits an arbitrary string, so a future `*Url`,
+`*Template`, `*Prompt` or `*Header` key cannot be declared ordinary without a new member of the union, which a reviewer
+sees; it is classified guarded or secret instead. A guarded, gate or secret key declares no domain here: its value is
+validated as today (`configTypeOk`, `CONFIG_ENUMS`).
 
 **What the model may change is derived, not declared a second time.** `modelWritable(key, places)` is true when the
 key is classified, is neither secret nor gate, and has a place in `places`, the table beside `DEFAULT_CONFIG` naming
@@ -151,7 +161,7 @@ A `number` domain with no `max` is unbounded above: `pythonIdleMinutes`, `sessio
 - a guarded, gate or secret key with no reason, so no card and no restore shows a change without saying what it does;
 - a gate key with no place, since its refusal links to its row;
 - an ordinary key with no domain, or with one outside the union (a type error, and the test asserts each declared
-  `kind` is one of the five, for a declaration built at run time);
+  `kind` is one of the six, for a declaration built at run time);
 - `modelWritable` true for a key with no place, or for a secret or gate key. `ocrNumCtx` is the fixture: it is
   classified ordinary, has no control in DevTools Settings today (open question 6) and no place, so with the real
   table it is not writable, and with a table given a row for it it is. The test is therefore green today and fails if
@@ -187,8 +197,9 @@ missing declaration fails closed.
 | `siteRequests`, `listPageSessions` | on | what pages may ask for, and what wakes on a page |
 | `persistUiRuns`, `sessionArchive`, `sessionRetentionDays`, `sessionStoreBudgetMB`, `valueStoreBudgetMB`, `exportToolDefs` | off; a shorter retention; a smaller budget | the person's record of what the model did; a model must not be able to shorten its own audit trail without a card |
 
-A model-name key (`model`, `ocrModel`, `utilityModel`, `embeddingModel`, `groundingModel`, `defaultModelVision`) is
-ordinary and its value is validated as `setModel`'s is: it must be on the server's list and pass `modelFilterAllows`.
+A model-name key (`model`, `ocrModel`, `utilityModel`, `embeddingModel`, `groundingModel`) is ordinary (and
+`defaultModelVision`, which reads like one, is the enum `""`, `yes`, `no`) and its value is validated as `setModel`'s
+is: it must be on the server's list and pass `modelFilterAllows`.
 
 **Not settings, never writable**: global and run policies (`propose_policy` is the model's route there); the site lists
 and the self-approval list; program manifests and Python libraries (each has its own proposal path or none); the
@@ -197,9 +208,9 @@ backup passphrase and keys; the archive folder's grant; pairing and hub keys. No
 
 ## The read-write set
 
-- **Derived, not stored**: `modelWritable` over the class declaration and `SETTING_PLACES`, both in
-  `src/contract/contract-config.ts`. Changing a key's class is a code change, reviewed like any other. Nothing of it is
-  stored, synced or backed up, so a restore and an upgrade have nothing of it to carry. The values `ml.settings()`
+- **Derived, not stored**: `modelWritable` over the class declaration (`src/setting-class.ts`) and `SETTING_PLACES`
+  (`src/contract/contract-config.ts`). Changing a key's class is a code change, reviewed like any other. Nothing of it
+  is stored, synced or backed up, so a restore and an upgrade have nothing of it to carry. The values `ml.settings()`
   reads are the config's own, in `chrome.storage.sync`.
 - **What is in it** (ruling 2, Shane, 2026-11-14): every classified key with a place, less the five secrets and the
   three gate keys, which is 49 of the 58 keys of `DEFAULT_CONFIG` today (`ocrNumCtx` and `pageApprovalDomains` have
@@ -262,7 +273,7 @@ refusal when this is built: never a main-world fallback for `ml.settings()`.
 
 1. Refused, with no card, when the key is a secret, a gate key (the refusal links to its row) or has no place, or when
    the value fails the key's own validation:
-   its type (`configTypeOk`, module-private in `src/backup/backup-settings.ts` today), its words (`CONFIG_ENUMS`), its
+   its type (`configTypeOk`, `src/setting-class.ts`), its words (`CONFIG_ENUMS`), its
    range, a model name off the server's list or the filter, a string over a cap. The model is told why in one
    sentence.
 2. Judged as the `setting` consumer: `judgeCall(runId, "setting", facts)`. A `deny` refuses with the policy named
