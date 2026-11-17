@@ -347,12 +347,71 @@ test("repoWide + pathspecs: git rm / mv also claim the directory and the reposit
     assert.equal(describeCall(["git", "-C", "sub", "rm", "a"], git, V).described, false, "-C with operands: git resolves them against sub, the host against the cwd");
 });
 
+// --- a flag after an operand, per shipped manifest (the optionsFirst audit, 2026-11-17) ---
+
+/** Every shipped manifest, with one call that puts a flag after an operand and what that call describes as. Without
+ *  `optionsFirst` the manifest reads such an argument as a flag, which is right only where every supported platform's
+ *  parser does too: `measured` says which parser, on what. A parser that reads it as a file name reads a path the host
+ *  never resolved (macOS 26.7: `cat f -n`, with `-n` a symlink to `.env`, printed the secret, and main described it as
+ *  reading `f` alone). */
+const AFTER_OPERAND = {
+    cat: { argv: ["cat", "f", "-n"], described: false },
+    head: { argv: ["head", "f", "-n", "5"], described: false },
+    tail: { argv: ["tail", "f", "-n", "1"], described: false },
+    wc: { argv: ["wc", "f", "-l"], described: false },
+    ls: { argv: ["ls", "f", "-l"], described: false },
+    cp: { argv: ["cp", "a", "b", "-R"], described: false },
+    mv: { argv: ["mv", "a", "b", "-f"], described: false },
+    rm: { argv: ["rm", "a", "-r"], described: false },
+    rmdir: { argv: ["rmdir", "a", "-v"], described: false },
+    unlink: { argv: ["unlink", "a", "-v"], described: false },
+    find: { argv: ["find", ".", "-L"], described: false, measured: "find's own grammar: after the first operand -L is an expression, which the manifest does not list (macOS find: \"-L: unknown primary or operator\")" },
+    rg: { argv: ["rg", "a", "f", "-n"], described: true, measured: "ripgrep 15.0.0 on macOS numbered the lines: rg parses its own argv, the same code on Linux" },
+    jq: { argv: ["jq", ".", "f", "-c"], described: true, measured: "jq-1.7.1-apple printed compact output: jq's main.c reads options anywhere, the same code on Linux" },
+    git: { argv: ["git", "status", "README.md", "-s"], described: true, measured: "git 2.54.0 (Apple) and 2.56.0: parse-options permutes (status -s, blame -s, ls-files -s, rm -n, mv -n, branch <name> -v) or refuses (diff, log: \"must come before non-option arguments\"), never a path; git's own parser, the same on Linux" },
+    gh: { argv: ["gh", "pr", "view", "12", "--comments"], described: true, measured: "gh 2.103.0: pflag intersperses flags (gh config get git_protocol --host github.com read --host); gh's own parser, the same on Linux" },
+};
+
+test("every shipped manifest says what a flag after an operand is (enumerate, do not sample)", () => {
+    assert.deepEqual(Object.keys(AFTER_OPERAND).sort(), Object.keys(manifests).sort());
+    for (const [name, row] of Object.entries(AFTER_OPERAND)) {
+        const d = describeCall(row.argv, manifests[name], { version: fixtures[name].version });
+        assert.equal(d.described, row.described, `${row.argv.join(" ")}: ${d.why.join("; ")}`);
+    }
+});
+
+test("a command without optionsFirst names the measured parser that permutes on every supported platform", () => {
+    for (const [name, m] of Object.entries(manifests)) {
+        const loose = commands(m.command).filter(([, c]) => !c.optionsFirst && c.syntax !== "find" && !c.subcommands);
+        if (loose.length) assert.equal(typeof AFTER_OPERAND[name].measured, "string", `${name}: ${loose.map(([at]) => [name, ...at].join(" ")).join(", ")} lack optionsFirst; set it, or measure the parser`);
+    }
+});
+
+test("upgrade: main's cat, head, tail, wc and ls described a flag after an operand; the shipped ones do not, and an old stored copy is never read", async () => {
+    const OLD = new URL("./fixtures/manifests-before-options-first/", import.meta.url);
+    const { validStored } = await import("../src/shell/stored-manifests.ts");
+    const { SHIPPED_MANIFESTS, manifestsFor, manifestFor } = await import("../src/shell/sh-call.ts");
+    for (const name of ["cat", "head", "tail", "wc", "ls"]) {
+        const old = JSON.parse(fs.readFileSync(new URL(`${name}.json`, OLD), "utf8"));
+        const { argv } = AFTER_OPERAND[name];
+        const was = describeCall(argv, old);
+        assert.equal(was.described, true, `${name}: the fixture is the defect, a described call`);
+        assert.deepEqual(was.pathArgs.map((p) => p.arg), [1], `${name}: main resolved only the first operand`);
+        assert.equal(describeCall(argv, manifests[name]).described, false, name);
+        assert.deepEqual({ ...manifests[name], command: { ...manifests[name].command, optionsFirst: undefined } }, { ...old, command: { ...old.command, optionsFirst: undefined } }, `${name}: optionsFirst is the only change`);
+        // A copy of the old file stored as the person's own manifest: dropped at load (B2), and passed over at call time.
+        const entry = { id: `man-${name}`, scope: "global", manifest: old, origin: "person", created: 1, pin: { path: `/bin/${name}`, fingerprint: "1:2:3:4", inRoot: false } };
+        assert.equal(validStored(entry, "global", SHIPPED_MANIFESTS), false, `${name}: a stored copy of a shipped program is dropped`);
+        assert.equal(manifestFor(argv, undefined, manifestsFor([entry], ["/w"]).list), SHIPPED_MANIFESTS[name], `${name}: the call is described by the shipped file`);
+    }
+});
+
 // --- the host holds the same bytes (window-ml #882, window-ml-host #19) ---
 
 /** The pin both repos hold: sha256 of the lines "<sha256 hex of the raw bytes>  <name>\n", over every .json of the fixtures
  *  ("calls/<p>.json") and the manifests ("manifests/<p>.json"), names sorted bytewise. The host's copy under
  *  `vectors/program-manifests/` records it in `PIN`. */
-const VECTOR_PIN = "60807baf3ec79d7b8bfd2aa3963440f12896c10fc7470df46208eb25eed084d3";
+const VECTOR_PIN = "aa5d21d4f294426d2047ec2676810f5278bb2cdff8699c2ab341a314cbf7dabf";
 
 test("the manifests and call fixtures hash to the pin the host holds", () => {
     const sha = (b) => crypto.createHash("sha256").update(b).digest("hex");

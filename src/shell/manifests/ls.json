@@ -16,6 +16,7 @@
     "paths": "operands",
     "noPaths": "cwd",
     "terminator": "--",
+    "optionsFirst": true,
     "clusters": true,
     "flags": {
       "-1": {},
