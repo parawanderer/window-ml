@@ -532,3 +532,30 @@ test("agent-config is the worker's record of what the model was sent: refused fr
     assert.deepEqual(ix.ingest(cfg("aaaa0001", "the page's words"), page(TAB_A)), { accepted: false, reason: "invalid" });
     assert.deepEqual(configs("aaaa0001"), ["ours"], "a later page copy does not overwrite the worker's");
 });
+
+// --- a session's background tasks on its row (rule 4b slice E, `SessionSummary.background`) ---
+
+test("setBackground changes the row once, returns null on the same value, and a {0,0} clears it", () => {
+    const ix = index();
+    ix.ingest(start("aaaa0021"), bg());
+    assert.equal(ix.get("aaaa0021").background, undefined, "a session with no tasks carries no field");
+    assert.deepEqual(ix.setBackground("aaaa0021", { running: 1, waiting: 0 })?.background, { running: 1, waiting: 0 });
+    assert.equal(ix.setBackground("aaaa0021", { running: 1, waiting: 0 }), null, "the same value changed nothing");
+    assert.deepEqual(ix.setBackground("aaaa0021", { running: 1, waiting: 2, noTab: true })?.background, { running: 1, waiting: 2, noTab: true });
+    assert.ok(ix.setBackground("aaaa0021", { running: 0, waiting: 0 }), "{0,0} is a change from a marked row");
+    assert.equal("background" in ix.get("aaaa0021"), false, "never {0,0}: the field is absent");
+    assert.equal(ix.setBackground("aaaa0021", null), null, "clearing a clear row changes nothing");
+    assert.equal(ix.setBackground("zzzz0000", { running: 1, waiting: 0 }), null, "a session not held has no row");
+});
+
+test("UPGRADE: a row saved by a worker with no `background` restores with none, and one saved WITH it restores without it", () => {
+    const old = { id: { runtime: "local", hash: "aaaa0022" }, kind: "agent", status: "done", createdTs: 500, lastTs: 900, pendingApprovals: 0, saved: true, task: "t" };
+    const ix = index();
+    const [a] = ix.restore([{ summary: old, count: 2 }]);
+    assert.equal("background" in a, false);
+    const withBg = { ...old, id: { runtime: "local", hash: "aaaa0023" }, background: { running: 2, waiting: 1, noTab: true } };
+    const [b] = ix.restore([{ summary: withBg, count: 2 }]);
+    assert.equal("background" in b, false, "a saved summary is not the task table");
+    assert.equal("background" in ix.get("aaaa0023"), false);
+    assert.deepEqual(ix.setBackground("aaaa0023", { running: 1, waiting: 0 })?.background, { running: 1, waiting: 0 }, "and it takes a fresh one");
+});

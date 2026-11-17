@@ -157,6 +157,18 @@ cancelled task's late result is dropped by `finish`'s status guards. No page-bou
 (`tests/sh-lease.test.mjs`). `rekeyRunInbox` (`sw-runs.ts`) moves a live run's inbox to another tab (tasks are keyed by run id and
 follow); `senderOwnsRun` is the owner check `SET_APPROVAL` uses. The run host's `settle` still closes over the starting tab id.
 
+## A session's row shows its tasks (rule 4b, slice E, the state half)
+
+`SessionSummary.background` (`{ running, waiting, noTab? }`, absent when both are 0) is how a session list marks a run with
+background tasks. `taskCounts(runId)` (`sw-tasks.ts`) counts the table: `running` rows, and ended rows with `delivered` false
+(the result waits for a turn). `persist` and `endTasks` call `announceCounts`, which fires the `onTaskCounts` listeners; nothing
+stores the counts. `sw-task-rows.ts` (bound by `sw-sessions.ts` once the server exists) turns a change into
+`sessionServer.background(hash, ...)`, adding `noTab` when the run's tab (`bgRuns`, else the row's `page.tabId`) is not open
+(`chrome.tabs.get` rejects). It refreshes again on `tabs.onRemoved` and after an adopt or move. At worker start, after the
+index is restored, `syncTaskRows` hydrates every `ml_tasks:*` key and sets each row, and clears a marker with no table behind it,
+so an evicted worker's rows are rebuilt from storage; `restore()` drops a saved `background`. The views that draw the mark are the
+chat-page lane's. Tests: `tests/task-row.test.mjs`, `tests/session-index.test.mjs`.
+
 ## Traps
 
 - **A short `expectMs` shortens the lease.** The deadline is `expectMs ?? SH_LEASE_MS`, and models underestimate: on

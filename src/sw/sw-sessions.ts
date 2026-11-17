@@ -21,6 +21,7 @@ import { AGENT_START_PAGE, DEFAULT_CONFIG, modelFilterAllows } from "../contract
 import type { NeutralMessage } from "../contract/contract-chat";
 import { cleanTitle, titleMessages } from "../session/session-title";
 import { defineState } from "../state-registry";
+import { bindTaskRows, refreshTaskRow, syncTaskRows } from "./sw-task-rows";
 import { bgRuns, keptOnRebuild, makeWorkerRun, trackRun, untrackRun } from "./sw-runs";
 import { moveRun } from "./move-run";
 import { NO_RECEIVER, restoreContentScripts } from "./sw-page-restore";
@@ -434,6 +435,7 @@ export function configureSessionCommands(run: RunDeps): void {
                 if (reply.error) { untrackRun(tabId, hash); return "unanswered" in reply && reply.unanswered ? "no-answer" : "none"; }
                 const moved = await moveRun(hash, tabId);
                 if ("refused" in moved) { untrackRun(tabId, hash); return "none"; }
+                void refreshTaskRow(hash);
                 // The budget a resume names rides on the payload, as for a saved session below.
                 if (history.payload.maxSteps !== held.p.maxSteps) held.p = { ...held.p, maxSteps: history.payload.maxSteps };
                 return "adopted";
@@ -452,6 +454,7 @@ export function configureSessionCommands(run: RunDeps): void {
             // A page that did not take it must not leave a run hydrated against a tab that is not holding it: the
             // next thing to read `bgRuns` would believe that tab owns this session.
             if (outcome !== "adopted") { bgRuns.delete(hash); untrackRun(tabId, hash); }
+            else void refreshTaskRow(hash);
             return outcome;
         },
         runPolicyLabels: (hash) => runPolicies(hash).map((p) => p.label),
@@ -617,6 +620,8 @@ export const sessionServer = new SessionServer(new SessionIndex({ runtime: local
     } : {}),
 });
 
+bindTaskRows(sessionServer);
+
 // What a previous worker saved, so an evicted service worker comes back with its list rather than with nothing. The
 // events stay on disk until something subscribes to that session.
 // Retention runs BEFORE the list is restored, so a session past its time is forgotten rather than listed for a moment
@@ -652,6 +657,7 @@ if (sessionStore) {
         .then(() => store.open())
         .then((rows) => {
             sessionServer.restored(sessionServer.index.restore(rows.map((r) => ({ summary: r.summary, count: r.count }))));
+            void syncTaskRows().catch(() => undefined);
             void recordStorageSnapshot().catch(() => { /* storage unavailable */ });
             // Whatever a previous worker saved and never compacted, sessions from before compaction existed included.
             imageCompaction?.kick();

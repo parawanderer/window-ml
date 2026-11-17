@@ -115,8 +115,8 @@ grant on the client costs a greyed-out button or a `forbidden` result, never acc
 ## The session index
 
 A `SessionSummary` is one row of a list: id, `kind` (`chat`, `agent`, `embed`), `status`, `title`, `task`, `model`,
-created and last timestamps, `pendingApprovals`, the `page` it started on, whether it is `saved`, `startedBy`, and
-`lineage`.
+created and last timestamps, `pendingApprovals`, the `page` it started on, whether it is `saved`, `startedBy`, `lineage`, and `background` (a run's detached tasks still running or with a result no turn has read, and
+`noTab` when it has no open tab; absent when there are none, additive: an older client ignores it).
 
 `status` is one of `running`, `waiting` (on an approval), `done`, `error`, `cancelled`, `capped` (continuable), and
 `interrupted` (the runtime restarted under it).

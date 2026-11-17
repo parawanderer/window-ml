@@ -212,6 +212,33 @@ function rowOf(t: Task): StoredTask {
     };
 }
 
+/** What a surface shows of a run's background tasks: the ones still running, and the ended ones no turn has read yet. */
+export interface TaskCounts { running: number; waiting: number }
+
+const countListeners: ((runId: string, c: TaskCounts) => void)[] = [];   // state: plumbing — who hears a run's counts change; the counts themselves are the table's
+
+/**
+ * The run's background tasks as the table holds them now: `running` are still running, `waiting` have ended and no turn
+ * has read the result (`delivered` is false). Computed from the same rows {@link persist} writes, never kept anywhere.
+ * @param runId the run
+ */
+export function taskCounts(runId: string): TaskCounts {
+    let running = 0, waiting = 0;
+    for (const t of tasks.get(runId)?.values() ?? []) { if (t.status === "running") running++; else if (!t.delivered) waiting++; }
+    return { running, waiting };
+}
+
+/**
+ * Hear a run's task counts change: called after every write of the table and when it is dropped (counts `0`/`0`).
+ * @param f the listener; one that throws does not stop the others
+ */
+export function onTaskCounts(f: (runId: string, c: TaskCounts) => void): void { countListeners.push(f); }
+
+function announceCounts(runId: string): void {
+    const c = taskCounts(runId);
+    for (const f of countListeners) { try { f(runId, c); } catch { /* one listener's failure is not the rest's */ } }
+}
+
 /**
  * Write the run's table through to session storage, best effort: memory still holds it when the write fails (the quota,
  * an image too large), and the failure is a run-log record. A run with no tasks has no key. The rows are read now and the
@@ -222,6 +249,7 @@ function persist(runId: string): void {
     const mine = tasks.get(runId);
     if (!mine) return;
     const rows = [...mine.values()].map(rowOf);
+    announceCounts(runId);
     const failed = (e: unknown) => recordRunLog(runId, { level: "warn", subsystem: "task", kind: "persist-failed", reason: "write", detail: { rows: rows.length, error: String((e as Error)?.message || e).slice(0, 120) } });
     try {
         if (rows.length) void Promise.resolve(chrome.storage.session.set({ [KEY(runId)]: rows })).catch(failed);
@@ -434,6 +462,7 @@ export async function endTasks(runId: string, reason = "session-release"): Promi
     if (!tasks.has(runId)) await hydrateTasks(runId);
     const mine = tasks.get(runId);
     tasks.delete(runId);
+    announceCounts(runId);
     try { void Promise.resolve(chrome.storage.session.remove(KEY(runId))).catch(() => { /* nothing stored */ }); } catch { /* no storage */ }
     if (!mine) return;
     await Promise.all([...mine.values()].filter((t) => t.status === "running").map(async (t) => {

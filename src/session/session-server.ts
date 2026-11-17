@@ -272,6 +272,13 @@ export class SessionServer {
         return row;
     }
 
+    /** Set a session's background-task marker and tell every client. Returns the new row, or null when nothing changed. */
+    background(hash: string, bg: { running: number; waiting: number; noTab?: true } | null): SessionSummary | null {
+        const row = this.index.setBackground(hash, bg);
+        if (row) this.broadcastIndex({ type: "upsert", session: row });
+        return row;
+    }
+
     /** Every session a connected page is subscribed to: what someone is looking at right now, which the saved-session
      *  store never evicts from under them. */
     subscribed(): string[] {

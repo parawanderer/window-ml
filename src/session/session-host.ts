@@ -308,6 +308,14 @@ export interface SessionSummary {
     startedBy?: Principal;
     /** set when another session started this one */
     lineage?: Lineage;
+    /**
+     * The session's background tasks, for a list to mark: `running` are detached calls still running, `waiting` are ended
+     * ones whose result no turn has read yet. `noTab` is set when the run has no open tab to start a turn on, so a result
+     * waits until the person brings the session to one. Absent when both counts are 0 (never `{ 0, 0 }`) and for a runtime
+     * that does not report it; a client that does not know the field ignores it. Never saved: it is the task table's, read
+     * again when a runtime starts.
+     */
+    background?: { running: number; waiting: number; noTab?: true };
 }
 
 /** A change to the index. A subscription opens with one `snapshot` per runtime it covers, then streams changes.

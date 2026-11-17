@@ -342,7 +342,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                     remove: async (keys) => { const ks = Array.isArray(keys) ? keys : [keys]; const changes = Object.fromEntries(ks.filter((k) => k in localStore).map((k) => [k, { oldValue: localStore[k] }])); for (const k of ks) delete localStore[k]; fireChanged(changes, "local"); },
                 },
                 session: {
-                    get: async (keys) => Object.fromEntries((Array.isArray(keys) ? keys : [keys]).filter((k) => k in sessionStore).map((k) => [k, structuredClone(sessionStore[k])])),
+                    get: async (keys) => Object.fromEntries((keys == null ? Object.keys(sessionStore) : Array.isArray(keys) ? keys : [keys]).filter((k) => k in sessionStore).map((k) => [k, structuredClone(sessionStore[k])])),
                     set: async (obj) => { const changes = changesOf(sessionStore, obj); Object.assign(sessionStore, structuredClone(obj)); fireChanged(changes, "session"); },
                 },
             },
