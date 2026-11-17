@@ -286,8 +286,8 @@ inbox at the next turn boundary, as a steer does, labelled with the id.
      PROMPT_BUDGET.md). The `Detached` texts already said the task runs on after the answer and that a result after it
      is read at the start of the next turn, so slice D left them as they were; "starts a turn" waits for slice C. The
      list says a `@tool:` value is gone when the worker restarts (`docs/dev/state.md`, "Lost on a worker eviction"),
-     which the tool-output clause's "valid for the whole session" does not; that clause is bench-measured text and was
-     left alone.
+     so the tool-output clause's "valid for the whole session", which contradicted it, was removed: the list is the one
+     statement of how long a value lasts.
    - **Bounds** (e3's rows, rule 10, on the building branch): a task never delivers to another run or another
      session; no task completion starts a turn for a run other than its own; a completion on notify-only never starts
      a turn; a started turn runs on no page we own; a parked result is delivered only to its own run, on its own session, at that run's next turn; a run

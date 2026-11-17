@@ -272,7 +272,9 @@ settings, read from the public config the run is assembled with.
 - **Checked against the code**: Python variables end at a kernel death and at the between-turns idle reap
   (`py-reap.ts`); a live turn's idle worker is shut after 30 min (`REAP_LIVE_MS`) unless the cell passed `keep`, which
   `python_exec`'s own description says, so the list does not repeat it. `@tool:` values live in worker memory
-  (`tokensByRun`) and go with a worker eviction; an attached file's pointer does not.
+  (`tokensByRun`) and go with a worker eviction; an attached file's pointer does not. The tool-output clause said a
+  `@tool:` was "valid for the whole session", which contradicted the list; those five words are removed (-31
+  characters), so the list is the one statement of a value's lifetime.
 
 
 ## `task` reaches every run with `python_exec` (2026-11-12)

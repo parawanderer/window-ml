@@ -119,7 +119,7 @@ import { PIPE_SYNTAX } from "../pointers/text-pipe";
  *  step 3, docs/spec/PROMPT_BUDGET.md): 12 models, pass rate held on all. The sentence against writing rows out as a
  *  markdown table is the measured part: without it DeepSeek V4 Pro retyped tables (re-emission 0.17 → 0.46). */
 export const tooltokensClause = (answer: boolean): string =>
-    "\n\nTOOL OUTPUT TOKENS. An `@tool:<id>` is a handle to one tool result, valid for the whole session. Set " +
+    "\n\nTOOL OUTPUT TOKENS. An `@tool:<id>` is a handle to one tool result. Set " +
     "`token: true`, or a short label (`token: \"the pricing table\"`), on exec / python_exec / look / locate / fetch_url " +
     "and the result ends with its `@tool:<id>`; a tool NAME (`@tool:exec`) means that tool's latest call. SHOW an output " +
     "by embedding it like an image: `![caption](@tool:<id>:out)` expands to the real table, image or value in place, " +
