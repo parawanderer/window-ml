@@ -204,6 +204,13 @@ checklist, landing in the builder's PR as its own file (rule 10).
    tokenizer, about 150 to 180 a run on these tasks. Three links in the sentence's arm, none in the other, mixed the two
    forms (`setting/advanced/shell`) and render as their label: the sentence's `setting/<key>` reads to some models as a
    path. Without the sentence, a run that linked had read `agent_api_docs` first (41 of 41), and 22 of 80 never read it.
+   **Measured twice more after #1867 shortened the self-description the sentence follows; kept on (Shane, 2026-11-17).**
+   The second sweep (same spec) found 43/79 → 49/79 (p = 0.42), with DeepSeek Flash reversing. Stratified by model
+   (Mantel-Haenszel, analysed after the data was seen), the two sweeps' odds ratios, 2.9 and 1.6, do not differ (ratio
+   1.8, 95% CI 0.6 to 5.6), and without GPT-6 Luna neither shows an effect. A third sweep with the test fixed and
+   committed before it ran (Gemma 4 12B in place of E4B, at Shane's word) gives an odds ratio of 3.41 (95% CI 1.39 to
+   8.32, p = 0.010; 43/80 → 54/76), the models agreeing (Breslow-Day p = 0.37); without GPT-6 Luna 2.56 (0.95 to 6.94),
+   and 2.44 (1.08 to 5.54) with its four errored runs counted as misses. GPT-6 Luna gains in all three sweeps.
 2. Whether the chat page's web and phone builds should offer "open on that browser" for a setting of a runtime they
    cannot draw, through the hub; out of scope here.
 3. Whether a step of a session (`s/<runtime:hash>/step/<n>`) is an address; the `@tool:` pointer already links a step
