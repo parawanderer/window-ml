@@ -902,6 +902,180 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
   (scrub PR 1) is in repair after a review asking two changes. #1936, #1929, #1934 and #1950 each owe a new head.
   The bench lane's ranking of missing manifests: coverage of observed calls goes from 52.1% to 91.4, 95.4 and
   98.1% at 5, 10 and 20 more manifests (its account).
+- **The resume (2026-11-18).** Shane lifted the halt for a subset: files-host, the manifest backfill, settings specs
+  and small-fixes, with the red team and both janitors on call; bench works on its own. Still halted until Shane
+  says: async, packages, Chat Page, move-run, session-store, flaky-ci (the coordinator recommends packages next).
+  A resumed lane gets bench's queue rules with its resume.
+- **Merged since #1955 (each verified).** #1956 e9f6d45f (the spec for rulings 30, 32 and 33), #1957 6f6f1b42 (the
+  hide-list spec, ruling 34), #1936 c04d6b32 (`ml.sh` in the read-only survey), #1958 6a4242a7 (bench: a test file's
+  leftover Pyodide timers cleared; 39.7 s against 48.7 s by the janitor's measurement), #1960 9039f793 (the matcher's
+  measured cost in the spec), #1961 20d2b2e7 (hidden-file values, an open design), #1962 fe172301 (offering `hide`
+  entries when a root is added) and #1964 148b74f1 (the `/files` spec, rulings 22, 23, 35, 36).
+- **Coordinator's calls on `change_setting` part (c).** No source check on the rule's key: the decision is made on
+  the MEASURE. An allow that covers every ordinary key is not refused; its card leads with "every setting the agent
+  may change". The measure varies `from` as well as `to`: a boolean or enum key over every (from, to) pair, others
+  from the current value and random ones, reported as sampled; four random samples per sampled number key, and a
+  number key with a declared minimum, maximum, integer step and a range of at most 2048 is enumerated. A deny or
+  ask rule on settings gets a card too. A key that could not be measured is named on the card, and an allow that
+  covers only unmeasured keys is refused. Delivery: the spec as its own docs PR after #1952 merges, then the code
+  with red-team rows.
+- **Coordinator's calls in the spec for rulings 30, 32 and 33 (#1956).** A page-password value stays in
+  `chrome.storage.session` and never reaches the local store (the coordinator withdrew its own suggestion of
+  hash-only entries on disk, which the weak-password limit forbids). At most 256 such values, failing closed. The
+  stored length `L` is stated as a leak. Lengths are UTF-16 code units, the chunk carry is the longest `L` minus
+  one, and no form shorter than `k` is stored. Widths `k = 8`, `w = 24` stay provisional.
+- **The matcher measured (ruling 32; notebook #1959, cleared, merging after the scrub).** The lane's figures at 64
+  entries on 1 MiB: about 5 distinct forms a secret, not 11, so `E` is about 313 and `T` about 278 distinct
+  filters. False candidates over 30 fresh-key trials: random text 20.0 ± 6.1 and base64 18.6 ± 4.9 against a model
+  `N·E/p` of 19.6; JSON 13.6 ± 16.2 and log text 17.4 ± 9.0, overdispersed. Counted by DISTINCT window the hits sit
+  on `D·T/p` with Poisson spread on all four texts (sd / sqrt(mean) of 1.16, 0.85, 1.04, 1.00), so the hash is
+  uniform and repeated windows make the clumps; the expectation stays `N·E/p` by linearity. The filter pass costs
+  about 53 ms a MiB against 30 for the plaintext scrub; PBKDF2-SHA256 costs 0.10, 0.35 and 1.34 ms at 1,000, 5,000
+  and 20,000 iterations. On the worker's side one filter hit separates by a difference of means (z = 2) after
+  about 5 to 47 crossings of each at 20,000 iterations and about 1,000 to 10,500 at 1,000, on a loaded machine.
+  Coordinator's calls from it, in the spec through #1960: the confirm is memoised within one crossing, keyed on
+  the form and the candidate's full `L` units, never on the `k`-unit window (that key leaves a real occurrence
+  unredacted); a crossing's time budget comes from the tail; and the timing-oracle remedy (a fixed confirm
+  schedule, or a floor on a page's crossing) is REQUIRED, the page-side run only sizing it. The iteration count is
+  not fixed until that run exists. A notebook PR's result is the coordinator's read; its measuring script goes to
+  no janitor.
+- **Coordinator's calls in the hide-list spec (#1957), under ruling 34.** The list binds every reader of a root. A
+  session `show` overrides a global `hide`; its card names the entry and offers no "always". A hidden path named as
+  a path argument asks, no allow policy frees it and the card offers no "always". Globs look forward only. A name
+  is listed and a read fails (EPERM on macOS, EACCES on Linux). ONE call narrows ruling 34 and is Shane's to
+  overrule: a `show` is refused on credential directories and on what the sandbox masks under the home directory.
+- **Offering `hide` entries when a root is added (#1962).** A file is offered when git ignores it AND its name is
+  on the host's credential-name lists; no contents are read. A credential directory is one row. The scan stops at
+  100,000 ignored paths or 10 seconds, keeps matches shallowest first, and shows at most 256 rows, saying when it
+  cut. Rows are unchecked; the offer is made once. A root set at the machine for remote use gets no offer until a
+  surface exists.
+- **Hidden-file values in the scrub (#1961): open design, not ruled.** The idea is that the host parses a hidden
+  file and registers its string values. Against it: it turns an unreadable file into one a script can confirm
+  guesses about through the redaction. The coordinator recommends against registering them; if ever, the host
+  sends hash-only entries, decided with handles.
+- **The `/files` spec (#1964).** Coordinator's calls in it: a backup with files is a SET of version-1 backup files,
+  each under the format's 1 GiB limit and authenticated on its own, the first naming the rest with their hashes,
+  a restore committing only when all of them authenticate; a hidden file's bytes are never in a backup and a
+  session `show` does not change that; the scrub inside a Python mount's read replaces a match with the same
+  number of filler bytes; a table dump is RFC 4180 CSV with a sidecar holding the column types (the one table type
+  does carry them) and a missing-value sentinel chosen per dump; the dump is `ml.fs.cp`; a whole-file read is
+  bounded at 8 MiB; if WORKERFS cannot run under the lockdown, a custom read-only mount replaces it, never a
+  loosened lockdown. OPEN for Shane, each recommended yes: the archive's month files carry session files, with a
+  setting to leave out files over a size; a restore over the quota restores everything and refuses new writes.
+- **The manifest backfill.** PR 1 is #1963 (flavours: `other` when the resolved file's name differs, `bsd` for a
+  resolved macOS system path, `gnu` by an anchored probe under the sandbox, undetected otherwise; a flavour's
+  hardening by discarding the first spawn and spawning again from the same program file). The lane's four choices
+  are accepted: flavours only with version range `*` and never on an entrypoint; the name check before the
+  system-directory check; `argOrder: "stop"` reading later arguments as path operands, with options-first forced
+  when undetected; stored manifests may carry flavours. Its host twin is host#49. Ruling 31's gate goes in its own
+  PR 1b, spec section first; no `ps`, `lsof` or `top` manifest merges before it. Its key is `shellRevealsAllow`, a
+  list of program names, empty by default, class gate (settings specs chose the `shell` prefix because a test pins
+  every such key as never ordinary).
+- **The hidden-files note for the model.** A code change, not a note: the host's list of files held unreadable for
+  a call reaches the card and the `ml.sh` answer. At most 16 paths reach the model, then a count; the paths cross
+  the scrub; it gets red-team rows; it opens after the scrub merges.
+- **Open PRs at this point.** #1951 (optionsFirst) at 60ddc743 and #1948 (scrub PR 1) at 95b7749c wait for
+  janitor-2; the red team's rows on #1948 found error strings nested under an error key unscrubbed, latent, and
+  the lane repaired it in the PR. host#48 (a sandbox test whose roots pass never measured the envelope, by the
+  lane's account) waits for janitor-2 as well. #1952 (change_setting part b) at ad8bc287 was reviewed at its
+  previous head with no change asked and waits for a comment naming the merged one. #1963 at 775a0365 holds an
+  accepted spec and waits for the red team's rows, then janitor-3; host#49 is with janitor-3. #1959 is cleared and
+  merges after #1948. Seen once and green on rerun: the e2e row at chat-two-execs.spec.mjs line 18, for flaky-ci.
+
+- **Shane's ruling 39 (2026-11-18, said in the coordinator's session): what the person sends is scrubbed too.**
+  People send a token to the model by accident: a paste, a selection, an attached file. The secrets idea applies to
+  the person's own input as well, unless the person explicitly flags that input as not to be redacted. Owner:
+  files-host, as an amendment section in the secret-handles spec first, then code with red-team rows and a janitor.
+  The coordinator's calls under it, each Shane's to override:
+  - **Two detectors.** By value: the scrub's matcher, so a stored secret (a hash-only one included, ruling 32) is
+    caught wherever it is typed. By shape: known token formats (vendor prefixes, PEM blocks, JWTs), since the
+    token sent by accident is usually one the store has never seen. A detector on entropy alone is not adopted
+    until a notebook gives its false-positive rate on real prompts (commit hashes, UUIDs, base64 data).
+  - **Where.** At the point input becomes a turn, before the session store and before the model, so the archive,
+    a backup and a hub hold the placeholder and never the value. It covers typed and pasted text, the text of an
+    attachment, a page selection and the prompt string of a page-started call.
+  - **What the person sees.** A chip in the composer on the detected span before sending, with "send as is" for
+    that one value. A send is never blocked. The transcript shows the placeholder the model saw and that the
+    scrub fired.
+  - **The flag.** Three levels: "send as is" per value in the composer, an option per call for a script, and one
+    setting in the DevTools Settings panel, on by default. A page can pass the option for its own string and can
+    never change the setting.
+  - **Order.** The spec section may open now; the by-value code follows the scrub (#1948), the shape detector is
+    its own PR. Open for the spec: whether a detected value is offered to the store as a secret (ruling 33's
+    inbox item) or dropped, and what happens when no store is set up.
+
+- **Shane's rulings 40 to 42 (2026-11-18, said in the coordinator's session), on ruling 39's open points.**
+  - **(40) The entropy-only detector waits for an investigation.** files-host owns the notebook, after the shape
+    detector.
+  - **(41) A detected value is offered to the store**, in a way the person can ignore easily. The spec's chip
+    ("Remember as a secret", beside "send as is") is that offer; ignoring it adds no dialog and no click.
+  - **(42) With no store set up, detection still runs**, and the chat UI shows an inbox message to set up a store
+    or dismiss the proposal. Setup is recommended in the item's text, in Shane's words because "most users do have
+    LLMs that are especially attached to the ml.sh ingest secrets". Ruling 33's item carries it; the coordinator's
+    call: a detection with no store does not raise a dismissed item again.
+  - **Still open with Shane:** a store that cannot be READ holds the turn (the coordinator's recommendation: hold).
+- **Ruling 39's spec and the calls accepted in it.** #1967 b9510f4f put the section in the secret-handles spec.
+  The coordinator's calls accepted from the lane there: a page's `scrubInput: false` turns off the shape detector
+  only, since a page is not the person; the shape list is separate from the host's `looks_secret`, which
+  classifies paths, and is shared with the scrub's tool-output patterns; "send as is" binds to a digest of the
+  span's content and is accepted only from an extension page; an attachment is scrubbed in its extracted text and
+  never in its bytes under `/files`; a session stored earlier is scrubbed when resumed and not rewritten; a remote
+  host has no per-value override in the first build.
+- **#1951 (optionsFirst) merged at 0fd67ebd** after janitor-2's comment at its head asked no change. Its two
+  residuals: the host's vector pin, now host#50 at 0ebe726f with janitor-3 (it conflicts with host#49 in one test
+  file, so the second to merge takes host main last); and a stale remark in the red team's test file, for e3.
+
+- **Shane's rulings 43 and 44 (2026-11-18, said in the coordinator's session).**
+  - **(43) LLM provider tokens are in the shape list.** Shane's reason: they are high-value targets for resale and
+    have standard patterns. The spec holds twelve vendors, each shape taken from a published detector (gitleaks or
+    trufflehog) with its source. The coordinator's calls under it: a loose fallback, since a redactor wants recall
+    where a leak detector wants precision (a distinctive prefix and at least 20 token characters match as that
+    vendor; a bare `sk-` and at least 20 alphanumerics holding a digit match as a generic key, missing about 3 in
+    100,000 keys of 32); and the extension's own saved key and its replaced keys are matched by value in the
+    person's input with no registration, which #1948 does not do. Vendors with no prefix (Mistral, Together, and
+    Cohere and Azure OpenAI outside a credential word) wait for ruling 40's investigation.
+  - **(44) A store that cannot be read holds the turn.** The coordinator's call, accepted. It is the one hold; a
+    detection never blocks a send. A caller with no composer is rejected with an error naming the option.
+  - #1969 1c69cd8b wrote rulings 40 to 44 into the secret-handles spec. Nothing under ruling 39 is open.
+- **The `host` gate was red on main (found by janitor-2 and janitor-3 independently, 2026-11-18).** A row of the
+  real-host spec for `ml.sh` still expected the route from before #1936, and #1936 never ran the gate: the CI filter
+  that starts it listed none of the survey's files. Docs-only merges kept main looking green. It stopped #1948,
+  #1952 and #1963 at their reviewers. The repair is its own PR off main, #1970 at 9fec221d (small-fixes, the author
+  of #1936): the row corrected, a row added for the isolated route, the filter widened; by the lane's account the
+  row's later assertions pass against a real host, so it was a stale row. It is with janitor-2. After it merges,
+  each of the three merges main last and returns to its reviewer. The rule kept: a main repair is never folded
+  into a PR it blocks.
+- **Shane's rulings 45 to 48 (2026-11-18, said in the coordinator's session; each was the coordinator's
+  recommendation, accepted).**
+  - **(45) Packages resumes.** Its order: #1934 to merge, then ruling 26's fatal-error listener, ruling 36's
+    measurement of the fork's `open()` on a mount, and ruling 37's measurement of closing Python's network. The
+    network gate still has no owner. Still halted: async, Chat Page, move-run, session-store, flaky-ci.
+  - **(46) The `show` refusal on credential directories stays.**
+  - **(47) The archive's month files carry the session's files**, with a setting that excludes files over a size.
+    Files-host proposes the key, the default and the unit in its docs PR.
+  - **(48) A restore that lands over the quota restores everything** and refuses new writes until the session is
+    back under it.
+  - Files-host folds 46 to 48 into its specs in one docs PR after #1948's work.
+- **The unit suite was red on main too (found by the coordinator on #1970's checks, 2026-11-18).** One red-team row
+  in tests/redteam-options-first.test.mjs has failed since #1951 merged at 0fd67ebd: it expected the refusal text
+  from before #1936 and got nothing back. Docs-only merges skip the suite, so main looked green; #1970's `host`
+  check passed and its `test (node 26)` and `hub` checks failed on this row alone. By the account of #1936's
+  owner and of e3, measured separately, nothing is wrong in the product: a survey script's undescribed call raises
+  a card, the row had no answerer, no program started, and a declined call returns `Denied` to the script. The
+  repair is its own PR, #1973 at 8fdd9ede (e3, that one file, the stale header remark corrected with it), with
+  janitor-3. Order after it: #1973, then #1970 merges main last and janitor-2 names its head (it has read the
+  diff at 9fec221d and asks no change), then #1948, #1952 and #1963.
+- **Host reviews (2026-11-18).** host#50 (the vector pin) merged at 19f46adf after janitor-3's comment. On host#48
+  janitor-2 asked that the hardlink row assert the envelope `done` reports, since the refusal is the same with no
+  envelope; the new head 74de3d7f is with it. On host#49 janitor-3 asked for the unknown-key row to cover the new
+  nested types under flavours; the new head b55853be is with it. e3 measured one row red on #1963 at 775a0365
+  (a stored manifest names its own probe arguments, so a program echoing one at a line start reads as GNU); it
+  goes to the manifest lane when e3 pushes it.
+- **The access tab is two PRs (coordinator's call).** Main has no Session summary page and no hide or show
+  consumer in the policy store. PR A is worker-only: the layered read with rows generic over consumer, the remove
+  with its narrowing and widening classes, the enumeration against the judge, docs; the hide and show rows are a
+  slot files-host fills by registering a classifier. PR B is the page and the tab, after the page's data shape is
+  settled, which waits for Chat Page's resume.
 
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
