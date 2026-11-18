@@ -772,6 +772,35 @@ worker's class for the control: `none` for a default. Paths and patterns only, n
 value. A change is signalled by a `SessionFeed` event, so a host that is not the extension updates; the extension's
 own host may also listen on `storage.onChanged`.
 
+**Offering `hide` entries when a root is added.** When the person adds a workspace root, the host lists the files
+under it that might be credentials the defaults do not hold, and a card offers each as a `hide` entry. Nothing is
+hidden until the person picks it, and never all at once by default. The coordinator's calls, each surfaced to Shane:
+
+- **Which files: an enumerated rule, never a judgement over contents.** A file is offered when BOTH hold:
+  1. git ignores it, as `git ls-files --others --ignored --exclude-standard` answers in the root, run by the host under
+     its git belt and writing nothing. A root that is not a git work tree gets no offer. A tracked file is not
+     offered: hiding the working copy does not take a committed secret out of the repository's history, and offering
+     it would suggest it does.
+  2. its NAME is on the host's `looks_secret` lists, exactly as the call's facts flag a path `secret`: the names
+     `.env`, `.envrc`, `.netrc`, `_netrc`, `.npmrc`, `.pypirc`, `.pgpass`, `.git-credentials`, `.htpasswd`,
+     `credentials`, `credentials.json`, `credentials.db`, `known_hosts`, `authorized_keys` and `hosts.yml`; a name
+     starting `.env.` but the three templates; a name starting `id_`; and the suffixes `.pem`, `.key`, `.p12`, `.pfx`,
+     `.jks`, `.keystore`, `.kdbx`, `.gpg`, `.asc`, `.ovpn` and `.tfvars`. Matched case-insensitively on the last
+     component.
+
+  No file's contents are read for the offer: no parser, no entropy test, no key-name guess. A file a default already
+  holds (a dotenv name, a credential file at a root's top) is listed as already held, not offered.
+- **Bounds.** At most 256 files are offered. A longer list is cut, and the card says how many more there were, so an
+  offer never looks complete when it is not.
+- **The card** shows the root, then one row per file: its path relative to the root, the list entry that matched (the
+  name, the `.env.` prefix, the `id_` prefix or the suffix), and a checkbox, unchecked. Applying writes one global
+  `hide` entry per checked row, `origin: "card"`. The card says that a hidden file's name stays listed and its content
+  is held from every reader, and that the entries can be removed on the policy page. Dismissing it writes nothing; the
+  offer comes again only if the root is added again.
+- **Whose card.** It follows the person's own gesture of adding a root in DevTools Settings, outside any run, so no
+  model sees it and none can trigger it. A root set at the machine for remote use (`hub-roots`) is offered at the
+  machine only.
+
 **Rows the build lands with.**
 - `show .env.example` in the linked-template shape is refused with its reason, and the list is unchanged.
 - `show .env` releases `.env` (readable and writable, not listed) while every other dotenv name stays held.
@@ -779,6 +808,9 @@ own host may also listen on `storage.onChanged`.
 - A `hide` holds a non-default file on both platforms and lists it.
 - Session over global, and a tie that hides.
 - A proposal the person declines leaves the list byte-unchanged.
+- Adding a root offers exactly the ignored files whose names are on the list. A tracked `.pem`, an ignored `notes.txt`
+  and a file already held by a default are not offered. Nothing is hidden before the person checks a row, and a
+  root that is not a git work tree gets no card.
 - A session `show` overrides a global `hide`: its card names the global entry verbatim and offers no "always".
 - A hidden file is unreadable through `ml.fs`, its ranged reader, `@files` and the file browser's content view, as
   through a `spawn`.
