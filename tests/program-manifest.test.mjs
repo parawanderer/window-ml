@@ -493,12 +493,12 @@ test("under stop, an argument after an operand that spells a declared flag doing
     // (red-team, #1963). Both describers apply this: window-ml-host's manifest.rs agrees on `tool f.txt --write-all`.
     const stop = {
         program: "tool", version: { range: "*", args: [], pattern: "" }, flavours: { bsd: { system: "macos" } },
-        command: { effects: ["read"], paths: "operands", clusters: true, flags: { "-n": {}, "--write-all": { effects: ["write"] }, "-w": { effects: ["write"] },
+        command: { effects: ["read"], paths: "operands", clusters: true, terminator: "--", flags: { "-n": {}, "--write-all": { effects: ["write"] }, "-w": { effects: ["write"] },
             "--out": { value: true, valueIsPath: "write" }, "-R": { recursive: true }, "--exec": { runner: true, effects: ["runs-code"] }, "--grep": { value: true, effects: ["read"] } },
             flavour: { bsd: { argOrder: "stop", flags: { "--rm": { effects: ["write-names"] } } } } },
     };
     assert.deepEqual(validateManifest(stop), []);
-    for (const tail of [["--write-all"], ["--write-all=x"], ["-w"], ["-nw"], ["--out", "o"], ["--out=o"], ["-R"], ["--exec"], ["--rm"], ["--", "--write-all"], ["g", "-w"]]) {
+    for (const tail of [["--write-all"], ["--write-all=x"], ["-w"], ["-nw"], ["--out", "o"], ["--out=o"], ["-R"], ["--exec"], ["--rm"], ["--", "--write-all"], ["g", "-w"], ["-xw"]]) {
         const argv = ["tool", "f.txt", ...tail];
         const d = describeCall(argv, stop, { flavour: "bsd" });
         assert.equal(d.described, false, `${argv.join(" ")} was described under stop: ${JSON.stringify(d.pathArgs)}`);
@@ -511,8 +511,12 @@ test("under stop, an argument after an operand that spells a declared flag doing
         assert.equal(d.described, true, `${argv.join(" ")}: ${JSON.stringify(d.why)}`);
         assert.deepEqual(d.pathArgs.map((p) => argv[p.arg]), ["f.txt", tail[0]]);
     }
-    // Before the first operand the flag is a flag, as ever.
+    // Before the first operand the flag is a flag, as ever; after a `--` the command honours, given BEFORE any operand,
+    // every implementation reads an operand, so it stays one. After an operand, `--` is itself a file name under stop.
     assert.equal(describeCall(["tool", "-w", "f.txt"], stop, { flavour: "bsd" }).described, true);
+    const t = describeCall(["tool", "--", "f.txt", "--write-all"], stop, { flavour: "bsd" });
+    assert.equal(t.described, true, JSON.stringify(t.why));
+    assert.deepEqual(t.pathArgs.map((p) => p.arg), [2, 3]);
 });
 
 test("a flavour's hardening is added after the core's, only for that flavour", () => {

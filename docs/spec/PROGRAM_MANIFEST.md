@@ -120,7 +120,11 @@ and effects in every flavour that accepts them, with the union of the effects wh
   than `read`, a written path value, a directory value, a runner, an echo, a walk, a `pathsFrom`) makes the call ask
   (`stopShadow`): read as a file name it would drop the write the manifest declares for it, so a misread argument order
   would run a writer free. This holds for every manifest, and both describers apply it: window-ml and window-ml-host's
-  `manifest.rs` agree that `tool f.txt --write-all` is not described. A read-only flag there stays a file name. The
+  `manifest.rs` agree that `tool f.txt --write-all` is not described. A cluster asks when any of its letters is such a
+  flag, declared or not the rest (`-xw` with `-w` writing). After an operand, `--` is itself a file name under `stop`,
+  so `tool f.txt -- --write-all` asks too; a `--` the command honours, given BEFORE any operand, ends the options for
+  every implementation, so what follows it stays an operand (`tool -- f.txt --write-all` reads two files). A read-only
+  flag after an operand stays a file name. The
   approval card of a flavoured draft states each overlay's `argOrder` in words, per flavour and subcommand, whatever is
   detected (`argOrderText`).
 - `harden`: that flavour's hardening, after the core's (GNU `--sandbox`; `-safe` passed to gawk would parse as other
