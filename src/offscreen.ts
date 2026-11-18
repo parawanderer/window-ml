@@ -197,7 +197,7 @@ function killWorker(principal: string, reason: string): void {
     // ROOT C: a kill wipes every run dict this worker held: its own run's for `run:<id>`, every full-mode run's for the
     // shared `full` one. Each such run's next cell opens with the loss line (PYTHON_DIALECT.md, "Lifetime and loss").
     const killedRuns = [...runPrincipals].filter(([, ps]) => ps.has(principal)).map(([runId]) => runId);
-    const named = reason === "timeout" || reason === "start-timeout" || reason === "library-removed" || reason === "stopped";
+    const named = reason === "timeout" || reason === "start-timeout" || reason === "library-removed" || reason === "stopped" || reason === "install-deadline";
     const lossReason = named ? reason : "crashed";
     if (entry) {
         try { entry.w.terminate(); } catch { /* already gone */ }
@@ -541,6 +541,9 @@ function runInWorker(code: string, image: string | null, hardened: boolean, tabl
     // `hardened` is the mode (true = readonly, the locked-down sandbox); `principal` is WHOSE sandbox.
     // A readonly run gets one worker per principal so a patch one principal left cannot reach the next;
     // `full` is its own worker and is never locked.
+    // An ended install candidate spawns nothing and runs nothing more, whichever await reached here after its end.
+    const ended = candidateEnds.get(principal);
+    if (ended) return Promise.resolve({ ok: false, stdout: "", error: `Python worker stopped (${ended}).` });
     const w = ensureWorker(principal, hardened);
     const id = nextId++;
     return new Promise((resolve) => {

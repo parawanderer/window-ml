@@ -687,7 +687,7 @@ readonly cells can import it, and nothing else can.
   attributes its stdlib modules expose) are `pkg-core.gen.ts`, generated at build from the notebook's `core.json` by
   `scripts/gen-pkg-core.mjs` (run by the build and by `npm run typecheck`), which fails when the tables are absent,
   empty or measured on another core than the pin; re-measure with `node notebooks/python-packages/probe.mjs core`. What comes back is read keeping only names
-  (`pkg-scan-note.ts` `readScan`, each cut to 120 characters, since a function's name is the package's to choose), so
+  (`pkg-scan-note.ts` `readScan`, each cut to 120 characters and an ellipsis, since a function's name is the package's to choose), so
   nothing the package wrote reaches the model: on a pass the findings are a note
   after the result, on a failed import they follow the error when they are reached from the failing module, and the
   run log keeps them as `detail.scan`. A source too deep for the parser or for the walk (a call chain of about 1,000
@@ -695,7 +695,9 @@ readonly cells can import it, and nothing else can.
   and kills the interpreter, and the cell never answers (the fatal error escapes it), so the candidate's deadline ends
   the install as `died`. A scan that fails leaves the import test to decide, in a fresh worker, and the run log says
   `detail.scanLost`. The deadline and Stop end the whole candidate: the end is checked after every await before a cell
-  (each mirror read, the scan), so no later cell starts in a fresh worker, where it would have no timer of its own.
+  (each mirror read, the scan), and `runInWorker` posts nothing for an ended candidate, so no later cell starts in a
+  fresh worker, where it would have no timer of its own. Stop pressed while the candidate runs fails the install even
+  when the import passes after it (`installApproved` reads the signal before the result).
 - **The run's own worker gets the wheels at its next cell.** Every readonly cell of the run carries the record; the
   offscreen document reads the wheels that worker lacks from the mirror (re-hashed) and the worker unpacks them after
   its lockdown, before the cell (`installWheels`). The namespace is kept. A respawned or reaped worker gets them the

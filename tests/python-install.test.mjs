@@ -336,6 +336,18 @@ test("a candidate whose interpreter died is a failed install, and nothing is rec
     assert.deepEqual(r.pkgInstalls.map((l) => l.reason), ["died"]);
 });
 
+test("Stop pressed while the candidate runs, and an import that passes after it, records nothing and is logged as stopped", { ...T, skip: SKIP }, async () => {
+    const r = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]), onPyInstallTest: async (msg, bg) => {
+        bg.send({ type: "CANCEL_RUN", payload: { runId: msg.run } });
+        for (let i = 0; i < 10; i++) await new Promise((res) => setTimeout(res, 0));
+        return { ok: true };
+    } });
+    assert.deepEqual(r.candidates.map((m) => m.type), ["PY_INSTALL_TEST", "PY_INSTALL_STOP"], "the control: the candidate was asked, and Stop reached it");
+    assert.deepEqual(r.installs, [], "a pass after Stop is not recorded");
+    assert.deepEqual(r.pkgInstalls.map((l) => [l.reason, l.level]), [["stopped", "warn"]]);
+    assert.ok(!r.results.some((t) => t.startsWith("Installed")), JSON.stringify(r.results));
+});
+
 test("a candidate whose import raises rolls back with the error", { ...T, skip: SKIP }, async () => {
     const r = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]), onPyInstallTest: () => ({ ok: false, module: "tabulate", error: "SystemExit: 2" }) });
     assert.equal(r.results[0], `Not installed: importing tabulate failed: SystemExit: 2. ${KEPT}`);

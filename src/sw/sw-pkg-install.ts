@@ -197,9 +197,10 @@ export async function installApproved(check: PkgCheck, runId: string, stop?: Abo
     const res = await test(runId, refs, modules, stop, scope).catch((e): InstallTestResult => ({ ok: false, error: String(e), died: true }));
     const scan = res.scan ?? null;
     const scanned = scanDetail(scan);
+    // Stop ends the install whatever the candidate answered: an import that passes after it is not recorded.
+    if (stop?.aborted) { log("stopped", { modules: modules.join(" "), ...scanned }); return `Not installed: the run was stopped while the import was tested. ${NOTHING_INSTALLED}`; }
     if (!res.ok) {
         log(res.collision ? "name-collision" : res.missing ? "missing" : res.died ? "died" : "import", { module: res.module, missing: res.missing, ...scanned });
-        if (stop?.aborted) return `Not installed: the run was stopped while the import was tested. ${NOTHING_INSTALLED}`;
         if (res.missing && res.module && !modules.includes(res.missing.split(".")[0])) return `Not installed: importing ${res.module} needs ${res.missing}, which none of the approved files provide. Ask python_install for the package that provides it; the files approved here stay in the mirror and show as mirror on the next card.`;
         if (res.died) return `Not installed: the Python interpreter did not survive the test${res.module ? ` of importing ${res.module}` : ""} (${res.error}). ${NOTHING_INSTALLED}`;
         const note = res.module ? scanNote(scan, res.module) : "";
