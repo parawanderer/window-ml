@@ -323,6 +323,7 @@ system and user message:
   answers that misread a wake are the waits after a missed estimate. What stays open is what "this turn" and "this run"
   span, asked by three models. The words are shared with `ml.sh`'s detached text and the `task` tool, so that is the
   next prompt review's, not this text's.
+
 ## `change_setting` reaches every run the worker builds (2026-11-17)
 
 `change_setting` (MODEL_SETTINGS.md) is offered by `startUserRun` to every run the worker builds, beside

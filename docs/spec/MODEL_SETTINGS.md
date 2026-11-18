@@ -167,6 +167,16 @@ A `number` domain with no `max` is unbounded above: `pythonIdleMinutes`, `sessio
   table it is not writable, and with a table given a row for it it is. The test is therefore green today and fails if
   `modelWritable` stops reading the table.
 
+**A key nobody classed fails closed.** A key added to `DEFAULT_CONFIG` with no class is a type error
+(`SETTING_CLASSES` is typed over every key of `MlConfig`) and fails the class test's first row. Were it to reach a
+build anyway, `settingDecl` answers `null` for it, so `change_setting` refuses it as no setting, `ml.settings()` leaves
+it out even with a row in DevTools Settings, and `ml.config()` does not carry it either, being an allowlist
+(`publicConfig`, `contract-config.ts`): unwritable and unreadable by the model. Pinned by
+`tests/change-setting.test.mjs`, "a key nobody classed is neither listed nor writable". The gate keys other lanes are
+adding (the hide list, and ruling 31's per-program opt-in for process-listing programs) are therefore excluded until
+someone classes them, and classing one `gate` reds the gate row's literal in `tests/setting-class.test.mjs`, so the
+ruled list is updated in the same change.
+
 **The panel's display preferences are out of this spec**: `fontScale`, the code theme and its custom
 VS Code import, the output cell height, the stats toggles. They are not keys of `DEFAULT_CONFIG` (they live in
 `chrome.storage.local` and the panel's `localStorage`, read through `src/sidebar/store.ts`), the custom theme's value
@@ -177,12 +187,14 @@ class beside their own keys in `store.ts` and the same domain union; that is ope
 | --- | --- | --- | --- |
 | **secret** | never; not readable | impossible | `chatUrl`, `apiKey`, `modelFilter`, `priceSnapshotUrl` (exactly `SECRET_KEYS`), and the legacy `pageApprovalDomains` (it is a site list) |
 | **gate** | never; readable through `ml.config()` | impossible; refused with a link to the row (`window-ml:setting/<key>`, LINKS.md), so the model can say where the person changes it | `autoApproveReadonly`, `autoApprovePython`, `autoApproveSelfSource`: the approval gate itself, where one approved change would remove every later approval of its kind |
-| **guarded** | yes | always asks in the guarded direction; a policy may deny, never allow | what widens what the model reaches; what sends the person's data somewhere it did not go before; what shrinks the person's record of what happened. Exactly the next table |
+| **guarded** | yes | always asks, in either direction; a policy may deny, never allow | what widens what the model reaches; what sends the person's data somewhere it did not go before; what shrinks the person's record of what happened. Exactly the next table |
 | **ordinary** | yes | asks unless a policy allows it | everything else: models and their context sizes, appearance, the HUD, titling, electricity prices, `protoStream`, the Python idle and detached-task limits. `autoTitles` and `groundingEnabled` send more to the model server when turned on, and are ordinary on purpose: they reach only the server the person configured, with data already going there |
 
-**The guarded direction is per key.** Turning `cdp` off narrows and is an ordinary change; turning it on is guarded.
-Each guarded key declares a `widens(from, to)` in code; a key that declares none is guarded in both directions, so a
-missing declaration fails closed.
+**A guarded key's change always shows its card, in either direction; `widens` is a fact a policy may read, to deny a
+widening change, and never frees one** (ruled by the coordinator, 2026-11-17, to match the build). Turning `cdp` off
+asks just as turning it on does, whatever a policy says. Each guarded key declares a `widens(from, to)` in code, and a
+key that declares none widens both ways, so a missing declaration fails closed. Why both directions: it fails closed,
+and the direction of a change is not always decidable for a list or a path key.
 
 | Guarded key | Guarded direction | Why |
 | --- | --- | --- |
@@ -286,9 +298,18 @@ refusal when this is built: never a main-world fallback for `ml.settings()`.
 **The facts a `setting` policy sees**: `{ kind: "setting", key, from, to, class, widens, effects }`, where `widens` is
 the key's declared direction applied to this change and `effects` is `unknown`, as for `act`. An unknown effect is
 inside no bound, so the built-in default (`free()`) frees nothing here: every change the person did not write a policy
-for asks. A person who wants the theme to follow the model's say writes `(c) => c.key === "theme"`, or has the model
-propose it (`propose_policy` gains `setting` rows; its breadth is measured over every read-write key with sample values
-from each key's domain, which for an enum key is the whole domain).
+for asks. A person who wants the theme to follow the model's say writes `(c) => c.key === "theme"` on the policy page,
+whose add form takes the consumer.
+
+**Who writes a `setting` policy, and what it frees** (as `docs/dev/policies.md`, "The `setting` consumer"). An `allow`
+frees an ORDINARY change only, with no card; a guarded change shows its card whatever a policy says, in both
+directions, and a `deny` refuses either. The person writes one today, on the policy page or in a policy file.
+`propose_policy` does NOT accept consumer `setting` as built: `checkProposal` (`src/sw/policy-proposal.ts`) refuses
+any consumer but `fetch` and `act`, pinned by `tests/propose-policy.test.mjs`, "a proposal for consumer setting is
+refused". The model asking for a standing allow over settings is open question 10. No `setting` allow frees a guarded
+key, a shell key or `agentStartPage`: `judgeSettingChange` frees class `ordinary` alone, and every shell key and
+`agentStartPage` is held to a class other than ordinary by `tests/setting-class.test.mjs`, "no shell key and not
+agentStartPage is ever ordinary".
 
 **The card**, rendered by the worker from the facts, never from the model's text, except `why`, shown as the model's
 words:
@@ -386,7 +407,7 @@ call this surface (above); what it can do is ask the model, in text, to call it.
 
 - a read of any secret by any route, or of `ml.settings()` from a page's script or a page-started run;
 - a write of a secret, of a gate key, of a key with no place, or of a value outside the key's domain;
-- a guarded change in its guarded direction without a card, by an `allow` policy of any origin, a proposed policy, a
+- a guarded change in either direction without a card, by an `allow` policy of any origin, a proposed policy, a
   remembered answer or a policy file;
 - a change to a gate key, a policy, a site list or the self-approval list through `change_setting`, and a gate key's
   refusal that does not link to its row;
@@ -440,6 +461,11 @@ call this surface (above); what it can do is ask the model, in text, to call it.
    to the survey needs: an `ML_READONLY_METHODS` entry; the member on the wire only for a client of a run the worker
    built; the secret and gate classes unreadable there as they are on the isolated exec; the dialect's adversarial
    tests (`docs/dev/readonly-exec.md`, "The rule for extending the dialect"); and a red-team pass.
+10. **`propose_policy` rows of consumer `setting`** (part (c), its breadth measure spec'd to the coordinator before any
+    code). RULED by the coordinator (2026-11-17): it may, since the card is the person's; the card must name the keys
+    or the key pattern the allow covers, measured over every read-write key with sample values from each key's domain
+    (for an enum key, the whole domain); and no `setting` allow ever frees a guarded key, a shell key or
+    `agentStartPage`. Refused as built (above, "Who writes a `setting` policy").
 
 ## Owners
 

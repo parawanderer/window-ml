@@ -276,6 +276,17 @@ test("settingEntries over a custom places table holds only the keys in it", () =
     assert.deepEqual(Object.keys(e), ["theme"]);
 });
 
+test("a key nobody classed is neither listed nor writable, even with a row in Settings", async () => {
+    // What a lane adding a key to DEFAULT_CONFIG gets before it classifies it: nothing (MODEL_SETTINGS.md, "a key nobody
+    // classed"). The class table's type and the class test also refuse it; this is the run-time half.
+    const { modelWritable } = await import("../src/setting-class.ts");
+    const places = { futureList: { tab: "advanced" }, theme: { tab: "appearance" } };
+    const e = S.settingEntries(cfg({ futureList: ["ps"], theme: "dark" }), places);
+    assert.deepEqual(Object.keys(e), ["theme"]);
+    assert.equal(modelWritable("futureList", places), false);
+    assert.match(await refused({ key: "futureList", value: ["ps", "lsof"] }, { futureList: ["ps"] }), /no setting "futureList"/);
+});
+
 // --- exec routing: ml.settings never enters the page's world ---
 
 test("execNames sees ml.settings", () => {
