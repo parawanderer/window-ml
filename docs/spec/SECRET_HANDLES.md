@@ -149,7 +149,7 @@ built; this is the shape the scrub grows into, recorded so the next builder does
     to hold, not the scrub's.
   - *False positives.* A config file's leaves are mostly not secret (`localhost:5432`, `production`, a URL), and every
     leaf of 8 or more characters would be redacted wherever it appears, in output that never touched the file. A
-        choice by key name (`*_KEY`, `*_TOKEN`) is a heuristic and is left out; the person registering values is the
+    choice by key name (`*_KEY`, `*_TOKEN`) is a heuristic and is left out; the person registering values is the
     precise path.
   - *A redaction oracle the person did not choose.* With a hidden file's leaves in the registry, a script that guesses
     a leaf and prints the guess learns it was right by seeing it redacted. Config leaves are low-entropy (a port, a
@@ -158,7 +158,7 @@ built; this is the shape the scrub grows into, recorded so the next builder does
   - *The 64 cap.* The registry holds at most 64 entries; a dotenv file can hold more than that alone. Values from
     hidden files would need their own bound and the fail-closed rule page values have: at the bound nothing held is
     dropped, and output from the call stops crossing.
-    - *The host-to-worker crossing.* The values would leave the host process for the worker in plaintext over the
+  - *The host-to-worker crossing.* The values would leave the host process for the worker in plaintext over the
     native port, a crossing that no secret makes today. Kept, they belong where page values are kept
     (`chrome.storage.session`, never the local store). Over the hub, the crossing refused is the host's to a REMOTE
     runtime: a host reached through the hub never sends a hidden file's leaves, in any form, to the runtime across
