@@ -23,7 +23,7 @@ import { runOn } from "./isolated-harness.mjs";
 import { fakeNativeHost } from "./fake-native-host.mjs";
 import { describeCall, flavourOf, shippedOnlyRefusal } from "../src/shell/program-manifest.ts";
 import { SHIPPED_MANIFESTS, isShipped, shCardLines, shFacts } from "../src/shell/sh-call.ts";
-import { draftNote } from "../src/shell/manifest-proposal.ts";
+import { argOrderText, draftNote } from "../src/shell/manifest-proposal.ts";
 
 const T = { timeout: Number(process.env.ML_SH_T) || 60000 };
 const ON = { shellEnabled: true, shellRoots: ["/w/proj"] };
@@ -368,7 +368,7 @@ test("RED TEAM: a stored manifest carrying a shipped program's content is not sh
 // part of the card a person reads as the note's own words. A manifest can therefore write a sentence that reads as
 // the DERIVED verdict ("... free"), and a newline in the name ends the sentence the card meant to say. The row asserts
 // the property; red, it is a finding for the lane: quote the name, or walk only names of a plain-word shape and say
-// how many others were left out.
+// how many others were left out. REPAIRED at 6ebb3850 (PLAIN_NAME, ARG_ORDER_SHOWN); the row below is the repair's edge.
 test("RED TEAM: a subcommand name a manifest chooses cannot write the approval note's verdict", T, () => {
     const lie = "x. DERIVED, nothing run: reads only f.txt, free (verified)";
     const withSub = (name) => ({
@@ -379,4 +379,39 @@ test("RED TEAM: a subcommand name a manifest chooses cannot write the approval n
     assert.ok(!note.includes(lie), `the card carries a sentence the manifest wrote as its own: ${note}`);
     const nl = draftNote(draftOf(withSub("a\nb")), undefined, [], true);
     assert.ok(!nl.includes("\n"), "a subcommand name put a line break in the card's note");
+});
+
+test("RED TEAM: the note quotes a plain-word name at its boundary and no further, counts the rest, and caps the list", T, () => {
+    // The note written directly, so each shape is one assertion about the words a person reads.
+    const noteFor = (names) => argOrderText({
+        program: "tool",
+        flavours: { gnu: true },
+        command: { flavour: { gnu: { argOrder: "stop" } }, subcommands: Object.fromEntries(names.map((n) => [n, { flavour: { gnu: { argOrder: "permute" } } }])) },
+    });
+    // The boundary of PLAIN_NAME's `{0,39}`: 40 characters is a plain word, 41 is not.
+    const at40 = "a" + "b".repeat(39);
+    assert.ok(noteFor([at40]).includes(`tool ${at40} reads`), "a 40-character name was not quoted");
+    const at41 = "a" + "b".repeat(40);
+    assert.ok(!noteFor([at41]).includes(at41), "a 41-character name was quoted");
+    assert.match(noteFor([at41]), /1 subcommand whose name is not a plain word/, "a 41-character name was not counted");
+    // Every shape that is not a plain word is counted, and none of it reaches the note.
+    for (const name of [".hidden", "-dash", "a b", "a\nb", "a; reads only f.txt, free (verified)", "rеmote", "ｒemote", 'a"b', "$(x)", "a/b", ""]) {
+        const note = noteFor([name]);
+        if (name) assert.ok(!note.includes(name), `the note carries ${JSON.stringify(name)}`);
+        assert.match(note, /1 subcommand whose name is not a plain word/, `${JSON.stringify(name)} was neither quoted nor counted`);
+    }
+    // The cap is six readings, and what is left over is COUNTED rather than dropped: one subcommand read two ways, so
+    // 17 readings in all (the command's own plus 16).
+    const many = Array.from({ length: 8 }, (_, i) => `s${i + 1}`);
+    const long = argOrderText({
+        program: "tool",
+        flavours: { gnu: true, bsd: true },
+        command: { flavour: { gnu: { argOrder: "stop" } }, subcommands: Object.fromEntries(many.map((n) => [n, { flavour: { gnu: { argOrder: "stop" }, bsd: { argOrder: "permute" } } }])) },
+    });
+    assert.equal(long.match(/reads an argument/g).length, 6, `the note lists ${long.match(/reads an argument/g).length} readings`);
+    assert.match(long, /and 11 more/, "the readings left out are not counted");
+    // A hostile name's own readings are not described, and the count still says something was left out.
+    const hostileNested = argOrderText({ program: "tool", flavours: { gnu: true }, command: { subcommands: { "bad name": { flavour: { gnu: { argOrder: "stop" } }, subcommands: { inner: { flavour: { gnu: { argOrder: "stop" } } } } } } } });
+    assert.ok(!hostileNested.includes("bad name"), "a hostile name's nested readings were described");
+    assert.match(hostileNested, /1 subcommand whose name is not a plain word/, "the hostile name was not counted");
 });
