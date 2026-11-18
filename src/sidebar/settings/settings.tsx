@@ -35,7 +35,8 @@ import { ShellSectionBody } from "./shell-section";
 import { ManifestsSectionBody } from "./manifests-section";
 import { LibrariesSectionBody } from "./libraries-section";
 import { RequestRows, answerRequest, useWaitingRequests } from "./requests-section";
-import { Lbl } from "./settings-label";
+import { SettingLbl } from "./settings-label";
+import { SETTING_TEXT } from "../../setting-text";
 import type { PanelRoute } from "../../link-address";
 
 /** The chart-window lengths the picker offers by name. The scrub strip can set others by drag, which is
@@ -215,14 +216,14 @@ function ServerToolsSection() {
                                             onChange={(e: any) => setField("commanderServerTools",
                                                 toggled(c.commanderServerTools || [], b.id, e.target.checked))} />
                                         <span>Commander</span>
-                                        <span class="tt-pop wrap left" role="tooltip">Give this bundle to every run started from the HUD/Commander bar. A run driven from there has no code to ask for it.</span>
+                                        <span class="tt-pop wrap left" role="tooltip">{SETTING_TEXT.commanderServerTools!.tip}</span>
                                     </label>
                                 </div>
                                 {(b.functions || []).filter((f) => fnMatches(b, f)).map((f) => {
                                     const name = srvToolName(b.id, f.name);
                                     const on = !(c.serverToolsOff || []).includes(name);
                                     return (
-                                        <label class="set-check srv-fn" key={name}>
+                                        <label class="set-check srv-fn" key={name} {...cursorTipOn(SETTING_TEXT.serverToolsOff!.tip!)}>
                                             <input type="checkbox" checked={on}
                                                 onChange={(e: any) => setField("serverToolsOff",
                                                     toggled(c.serverToolsOff || [], name, !e.target.checked))} />
@@ -264,42 +265,6 @@ function probePython(): void {
     });
 }
 
-// Clarification text — same wording as the popup's hints (keep in sync).
-const TIP = {
-    apiFormat: "Request and response shape — match it to the URL above.",
-    model: "The model list loads automatically — start typing to pick one.",
-    modelFilter: "Optional regex WHITELIST. When set, only models whose id matches are callable via window.ml, and pages (ml.models()) never even see the others — a guard against a page invoking, e.g., an expensive cloud model. Applies to every resolved model (main/OCR/grounding/utility). Blank = no restriction. Example: ^(qwen|gemma) to allow only local families.",
-    ocrModel: "Vision model ml.read() uses for OCR and for other vision subtasks — kept separate from the chat model.",
-    defaultModelVision: "Whether the default model sees images natively. Auto-detect probes Ollama; set Yes/No only for a cloud model the probe can't read (e.g. GPT-4o) — declaring Yes lets the agent use its own model to see (HUD native vision) instead of delegating to the OCR model. For an Ollama model we detect the real answer, so this override is ignored (and flagged).",
-    utilityModel: "A small, cheap model for side tasks like session-title summaries. Leave blank to reuse the main model. Suggestions: qwen3.5:0.8b for an average machine, a gemma4:e2b-class model for a beefier one.",
-    utilityNumCtx: "Context window (num_ctx) for the utility model. Summarising needs little context — keep it small on modest hardware; larger just uses more KV-cache memory. Only used when a utility model is set.",
-    utilityForceCpu: "Run the utility model on CPU (num_gpu: 0) so it never competes with your main model for VRAM. Only used when a utility model is set.",
-    autoTitles: "Let the utility model write short summaries for you: debug session titles, and the plain-English gloss above a code approval / the description of a custom tool call in the off-mode card. Off = titles fall back to the first prompt and the card shows no summary. Only runs when a utility model is set.",
-    embeddingModel: "Model used for ml.embed — comparing text by MEANING rather than spelling. Only models reporting the `embedding` capability are offered; an embedding model cannot generate text, so it never appears in the chat/utility/vision pickers either.",
-    embeddingKeepAlive: "Keep the embedding model loaded with no expiry. ON by default because of the ACCESS PATTERN, not the size: a cold embed measured 2726ms against 95ms warm, and a model used rarely and unpredictably would sit past Ollama's 5-minute expiry almost every time, so it would be cold nearly always. Evicting it from the VRAM panel still works — the next call simply loads it again and re-pins it.",
-    embeddingForceCpu: "Run the embedding model on CPU instead of the GPU. ON by default: measured 33ms slower warm (128 vs 95), FASTER cold (1628 vs 2726, since nothing is copied to VRAM), and it uses no VRAM at all — which the chat model wants. Turn it off only if you pick an embedding model large enough that CPU inference stops being cheap.",
-    electricityPerKwh: "What a kWh costs you, for the electricity your LOCAL models use. Empty is unset. Each model call records the price set when it ran, so a change does not reprice old runs.",
-    electricityOffPeakPerKwh: "For a two-rate tariff: the off-peak price per kWh, all-in. Empty is a single rate: the price above always applies. Each call records which rate it ran under.",
-    electricityOffPeakHours: "The off-peak hours on this device's clock, from-to in whole hours; \"23-7\" runs past midnight. Public holidays are not counted.",
-    electricityOffPeakWeekends: "Saturday and Sunday count as off-peak all day, as most two-rate tariffs have it.",
-    electricityCurrency: "The currency of the electricity price, as a code (EUR, USD).",
-    agentStepMaxTokens: "The most tokens one agent step may generate, thinking included. Empty sends no cap. A model that loops in its thinking otherwise runs until its context window is full, which on a local model can take the better part of an hour. A step that hits the cap ends with what it has.",
-    priceSnapshotUrl: "Your model box's price service, for spend. Empty (the default) fetches nothing. Set, each model call records the price snapshot it ran under (by hash), and the worker keeps each snapshot once for up to 30 days after its last use.",
-    valueStoreBudgetMB: "Disk for fetched tables too large to show whole. The table a pointer names is kept on disk, so a later step can read every row rather than the preview. Past this size, the one read longest ago is dropped first, and a step that then reads it is told to fetch it again. A value no one has read in a day is dropped regardless, and the browser's own storage quota caps this further (at most half of it). 0 stores nothing.",
-    labelMatch: "How a pointer LABEL is matched when it isn't recalled exactly. A near match is only ever used when it clearly beats the runner-up, and is always reported — but WHICH metric ranks the candidates is genuinely undecided, so it is exposed here. hybrid (default): the better of trigram and word-overlap; handles both rewording and typos. tokenset: word overlap only — perfect on reordering, blind to typos. trigram: character-level, survives both without excelling. edit: Levenshtein — best on typos, but it ranks a DIFFERENT label above the correct one reworded, so it is here to be measured against, not recommended.",
-    autoApproveReadonly: "Experimental. Run read-only exec surveys (querySelectorAll → filter → map, no mutation) without an approval prompt, via a mediated interpreter that can't reach window, makes no requests of its own and never eval()s a string. Anything that mutates or isn't recognised still asks. Also lets these surveys run on Trusted-Types pages where eval is blocked. The agent can likewise read its own setup without asking — ml.getModel/config/models/capabilities/ps/serverTools, the same non-secret values any page can read — and call ml.embed, which sends text from the page to your configured embedding model with no prompt: at most 500,000 characters in 32 calls per survey. Every other ml method still prompts.",
-    autoApprovePython: "Experimental, off by default while the Python sandbox is being hardened. Run a run's python_exec cells that the read-only Python dialect covers without an approval prompt. Python a page starts by itself always asks, and so does every cell outside the dialect (until dialect membership ships, that is every cell). Code with hidden/bidi characters also still asks.",
-    protoStream: "Default AUTO. Ask for the streamed chat reply as varint-delimited PROTOBUF (Accept: application/protobuf) rather than OpenAI SSE, which re-sends the id/model/created/choices envelope for every token — measured here at 25x fewer bytes (7343 → 292). Self-negotiating, which is why asking by default is safe: the RESPONSE's content type picks the path, so a backend that doesn't serve it answers with the usual SSE and nothing breaks. ON sends the same request but REPORTS a reply that came back as SSE (once per URL, in the worker's console) — for when you believe your backend serves it; it never fails the call over it. OFF never sends the header. Tool calls and reasoning decode fine. Skipped for a call carrying toolIds, because OpenWebUI's source citations are emitted on a different route than protobuf is served over and would vanish silently. Saves BYTES, not time.",
-    agentSeesFocus: "Default ON. When you are not on the agent's tab, chat_metadata says where you are: the chat page (reading this run or not), another tab, or away from the browser. A run started from the extension's UI also gets that tab's site and title; a page-started run only \"another tab\". Never a full URL, never a private window. Off: nothing about where you are.",
-    selfIntrospection: "Default ON. The agent may read its own run with `ml.current` in a read-only exec the extension hosts (never on the page), and its system prompt tells it so. Off: `ml.current` is absent and the prompt says nothing about it.",
-    autoApproveSelfSource: "Default ON. Auto-approve an UNCREDENTIALED fetch_url/ml.fetch of the agent's OWN repo source — committed files (raw.githubusercontent.com) or structural/code API endpoints (api.github.com/repos/<owner>/<repo>/…), locked to this build's repoUrl — so it can read the code it's running to explain/debug itself. NEVER auto-approves user-generated PROSE endpoints (issues/pulls/comments/discussions/reviews/releases — a prompt-injection surface), a credentialed fetch, or a rendered load; those still ask. Public, read-only, uncredentialed → near-zero risk.",
-    execDefaultWorld: "Where the agent's approved `exec` runs when it does not say. **Page**: the page's own JavaScript world, where it sees the page's globals and the page's scripts can see it. **Isolated**: a world of its own on the page (user scripts, else the debugger), sharing the DOM but hidden from the page's scripts; the page's world when neither is available. **Build default**: what this build ships (page). The agent can still ask for a world per call, and an exec that reads `ml.current` or a pointer, or runs on a site you have not approved, is isolated whatever this says.",
-    cdp: "Use chrome.debugger (CDP) for two things a normal page context can't do: (1) CLICK surfaces a synthetic click can't reach — cross-origin iframes and declarative/native closed shadow roots; (2) run imperative `exec` on strict-CSP / Trusted-Types pages (GitHub, Google apps) where main-world eval is blocked. The debugger is exempt from the page's CSP/TT, so it's the only mechanism that works. The `debugger` permission is declared at install; this toggle gates USAGE (the API stays unused until it's on AND the model hits a reserved surface). Still gated by the per-action approval. Attaching flashes Chrome's \"is debugging this browser\" banner — only for these reserved actions, so the flash marks the risk. On by default; while off, a reserved click / a blocked exec just reports an actionable error and the agent falls back to read-only / ml.fetch.",
-    pierceClosedShadow: "Let the DOM tools reach inside CLOSED shadow roots too (normally selector-invisible). A tiny script captures each closed root as the page builds it — the tools then treat it like an open root (same `host >>> inner` syntax). Closed shadow DOM is encapsulation, not a security boundary, so this doesn't cross any origin. On by default: the capture script wraps attachShadow on every page regardless of this setting (capture only — page behaviour is unchanged), so this just gates whether the tools use it. Turn it off to keep the tools' selector reach limited to open roots. Declarative/native closed roots still can't be captured; the agent falls back to visual locate/@pt for those.",
-    groundingEnabled: "Experimental. When on, ml.agent's `locate` tool asks a grounding VLM for bounding-box coordinates. This loads an extra model into VRAM — leave off if memory is tight. Off = locate still works via the Set-of-Marks screenshot tool, which needs no extra model.",
-    groundingModel: "A vision model that outputs coordinates (recommended qwen2.5vl:7b, or :3b for lower latency). Blank auto-detects a qwen2.5vl on your server. Real-world grounding accuracy is unproven.",
-    groundingRange: "The coordinate scale the model outputs (the divisor for its x,y). The screenshot is sent as a square, so one number covers every convention: 1000 (0-1000 normalized OR qwen2.5vl absolute pixels), 100 (Molmo percent), 1024 (PaliGemma tokens), 1 (0.0-1.0 fractions). Leave at 1000 unless your model uses a different range.",
-};
 
 // The model a role actually resolves to. Grounding, when enabled with a blank
 // field, falls back to the auto-detected qwen (detectGroundingModel, shared with
@@ -901,7 +866,7 @@ function SiteApprovals() {
             <label data-setting="siteRequests" class="set-check">
                 <input type="checkbox" checked={config.value.siteRequests === true}
                     onChange={(e: any) => setField("siteRequests", e.target.checked)} />
-                <Lbl>Let sites ask for access</Lbl>
+                <SettingLbl k="siteRequests" />
             </label>
             <div class="set-hint">{SITE_REQUESTS_HINT_NODE}</div>
             <div class="perm-add">
@@ -1047,7 +1012,7 @@ function CdpToggle() {
         <>
             <label data-setting="cdp" class="set-check">
                 <input type="checkbox" checked={on} onChange={(e: any) => setField("cdp", e.target.checked)} />
-                <Lbl tip={TIP.cdp}>Enable debugger-based actions (CDP)</Lbl>
+                <SettingLbl k="cdp" />
             </label>
             {on && granted === false
                 ? <div class="set-hint"><span class="perm-warn">The debugger permission isn't active</span> — reload the extension (chrome://extensions) and accept its permissions, then CDP actions work.</div>
@@ -1531,16 +1496,16 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
             <div class="set-body" ref={(el) => { bodyRef.current = el; panelBody = el; }}>
             {show("connection") ? <>{head("connection")}
                 <div class="set-note">Point this at <b>OpenWebUI</b> for the full feature set — server-side (Python) tools, RAG, and web search all route through it. A direct <b>Ollama</b> URL works but only gives the plain text-chat subset.</div>
-                <label data-setting="chatUrl" class="set-field"><span>Chat completions URL</span>
+                <label data-setting="chatUrl" class="set-field"><SettingLbl k="chatUrl" />
                     <input {...text("chatUrl")} class={c.chatUrl.trim() ? "" : "err"} />
                     <div class="set-hint">OpenWebUI: /api/chat/completions · Ollama passthrough: /ollama/api/chat</div>
                     {c.chatUrl.trim() ? null : <div class="set-err">Required — the extension won't work without this.</div>}
                 </label>
-                <label data-setting="apiKey" class="set-field"><span>API key</span>
+                <label data-setting="apiKey" class="set-field"><SettingLbl k="apiKey" />
                     <SecretInput {...text("apiKey")} placeholder="OpenWebUI → Settings → Account" />
                     <div class="set-hint">Generate one in OpenWebUI → Settings → Account → API keys.</div>
                 </label>
-                <label data-setting="apiFormat" class="set-field"><Lbl tip={TIP.apiFormat}>API format</Lbl>
+                <label data-setting="apiFormat" class="set-field"><SettingLbl k="apiFormat" />
                     <select value={c.apiFormat} onChange={(e: any) => setField("apiFormat", e.target.value as ApiFormat)}>
                         <option value="openai">OpenAI (…/chat/completions)</option>
                         <option value="ollama">Ollama native (…/api/chat)</option>
@@ -1551,7 +1516,7 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                 <div class="set-note">These are the defaults <code>ml.chat</code> / <code>ml.createChat</code> use when you don't pass a <code>model</code>. With no default <b>Model</b> set, you must specify one on every call.</div>
 
                 <Section id="defaults" title="Defaults">
-                <label data-setting="model" class="set-field"><Lbl tip={TIP.model}>Default model</Lbl>
+                <label data-setting="model" class="set-field"><SettingLbl k="model" />
                     <ModelPicker fieldKey="model" options={listed} placeholder="e.g. qwen3:14b" cls={excl(c.model) ? "err" : ""} />
                     {models.value.length === 0
                         ? <div class="set-warn">No models loaded from the server — check the Server URL / API key on the Connection tab (the list + autocomplete populate once it's reachable).</div>
@@ -1559,10 +1524,10 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                             ? <div class="set-warn">"{c.model.trim()}" isn't in the server's model list — fine for a cloud model that isn't listed, but check the spelling for a local one.</div>
                             : null}
                 </label>
-                <label data-setting="ocrModel" class="set-field"><Lbl tip={TIP.ocrModel}>Vision model (optional)</Lbl>
+                <label data-setting="ocrModel" class="set-field"><SettingLbl k="ocrModel" />
                     <ModelPicker fieldKey="ocrModel" options={listed} placeholder="e.g. qwen2.5vl" cls={(excl(c.ocrModel) || ocrSees === false) ? "err" : ""} />
                     {ocrSees === false ? <div class="set-err">"{c.ocrModel.trim()}" doesn't report vision capability — this is a vision role; pick a vision model (e.g. qwen2.5vl, gemma3, llava).</div> : null}</label>
-                <label data-setting="defaultModelVision" class="set-field"><Lbl tip={TIP.defaultModelVision}>Default model is vision capable?</Lbl>
+                <label data-setting="defaultModelVision" class="set-field"><SettingLbl k="defaultModelVision" />
                     <select value={defVisionAutoDetected ? "" : c.defaultModelVision} disabled={defVisionAutoDetected}
                         onChange={(e: any) => setField("defaultModelVision", e.target.value as VisionSupport)}>
                         <option value="">Auto-detect</option>
@@ -1572,14 +1537,14 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                     <div class="set-hint">For a cloud model the extension can't probe (e.g. GPT-4o) — declaring <b>Yes</b> lets the agent see with its own model in the HUD instead of delegating to the OCR model. Ollama models are auto-detected.</div>
                     {defVisionAutoDetected ? <div class="set-moot">Ollama model — vision is auto-detected ({defModelSees ? "yes" : "no"}); this override is locked to Auto.</div> : null}
                 </label>
-                <label data-setting="agentStepMaxTokens" class="set-field"><Lbl tip={TIP.agentStepMaxTokens}>Max tokens per agent step</Lbl>
+                <label data-setting="agentStepMaxTokens" class="set-field"><SettingLbl k="agentStepMaxTokens" />
                     <input type="number" min="0" step="1024" value={c.agentStepMaxTokens || ""} placeholder="no cap"
                         onChange={(e: any) => { const n = parseInt(e.target.value, 10); setField("agentStepMaxTokens", Number.isFinite(n) && n > 0 ? n : 0); }} />
                 </label>
                 </Section>
 
                 <Section id="modelFilter" title="Model access filter">
-                <label data-setting="modelFilter" class="set-field"><Lbl tip={TIP.modelFilter}>Allowed models (regex whitelist)</Lbl>
+                <label data-setting="modelFilter" class="set-field"><SettingLbl k="modelFilter" />
                     <input {...text("modelFilter", { placeholder: "blank = all models · e.g. ^(qwen|gemma)" })} class={filterValid ? "" : "err"} />
                     <div class="set-hint">Only matching model ids are callable via <code>window.ml</code> and shown to pages. Blank = no restriction. The rows below flag any configured model this excludes.</div>
                     {filterValid ? null : <div class="set-err">Invalid regex — the filter is inactive (all models allowed).</div>}
@@ -1588,20 +1553,20 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
 
                 <Section id="utility" title="Utility model">
                 <div class="set-note">A small, cheap model for side tasks and HUD summaries. If set, use it via the shorthand: <code>ml.chat("...", &#123; extend: "utility" &#125;)</code>.</div>
-                <label data-setting="utilityModel" class="set-field"><Lbl tip={TIP.utilityModel}>Utility model (optional)</Lbl>
+                <label data-setting="utilityModel" class="set-field"><SettingLbl k="utilityModel" />
                     <ModelPicker fieldKey="utilityModel" options={listed} placeholder="blank = use main model" cls={excl(c.utilityModel) ? "err" : ""} /></label>
-                <label data-setting="utilityNumCtx" class="set-field"><Lbl tip={TIP.utilityNumCtx}>Utility model context size</Lbl>
+                <label data-setting="utilityNumCtx" class="set-field"><SettingLbl k="utilityNumCtx" />
                     <input type="number" min="512" step="512" value={c.utilityNumCtx} disabled={!utilOn}
                         onChange={(e: any) => setField("utilityNumCtx", parseInt(e.target.value, 10) || DEFAULT_CONFIG.utilityNumCtx)} /></label>
                 <label data-setting="utilityForceCpu" class={`set-check${utilOn ? "" : " off"}`}>
                     <input type="checkbox" checked={c.utilityForceCpu} disabled={!utilOn}
                         onChange={(e: any) => setField("utilityForceCpu", e.target.checked)} />
-                    <Lbl tip={TIP.utilityForceCpu}>Force utility onto CPU</Lbl>
+                    <SettingLbl k="utilityForceCpu" />
                 </label>
                 <label data-setting="autoTitles" class={`set-check${utilOn ? "" : " off"}`}>
                     <input type="checkbox" checked={c.autoTitles} disabled={!utilOn}
                         onChange={(e: any) => setField("autoTitles", e.target.checked)} />
-                    <Lbl tip={TIP.autoTitles}>Auto-summarise with the utility model</Lbl>
+                    <SettingLbl k="autoTitles" />
                 </label>
                 </Section>
 
@@ -1610,7 +1575,7 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                 <Section id="embeddings" title="Embeddings">
                 <div class="set-note">Model for <code>ml.embed</code> — comparing text by meaning rather than spelling. Only models that report the <b>embedding</b> capability are listed; these are small and fast, so they default to living on the CPU and staying loaded.</div>
                 <div data-setting="embeddingModel" class="set-field">
-                    <Lbl tip={TIP.embeddingModel}>Embedding model</Lbl>
+                    <SettingLbl k="embeddingModel" />
                     {/* The same picker every other model field uses. This was a bare input with a datalist,
                         so it had no dropdown to open — you had to already know the name of a model whose whole
                         point is that you cannot tell it apart from a chat model by looking. */}
@@ -1632,12 +1597,12 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                 <label data-setting="embeddingKeepAlive" class="set-check">
                     <input type="checkbox" checked={c.embeddingKeepAlive}
                         onChange={(e: any) => setField("embeddingKeepAlive", e.target.checked)} />
-                    <Lbl tip={TIP.embeddingKeepAlive}>Keep loaded (no expiry)</Lbl>
+                    <SettingLbl k="embeddingKeepAlive" />
                 </label>
                 <label data-setting="embeddingForceCpu" class="set-check">
                     <input type="checkbox" checked={c.embeddingForceCpu}
                         onChange={(e: any) => setField("embeddingForceCpu", e.target.checked)} />
-                    <Lbl tip={TIP.embeddingForceCpu}>Run on CPU (uses no VRAM)</Lbl>
+                    <SettingLbl k="embeddingForceCpu" />
                 </label>
                 </Section>
 
@@ -1646,13 +1611,13 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                 <label data-setting="groundingEnabled" class="set-check">
                     <input type="checkbox" checked={c.groundingEnabled}
                         onChange={(e: any) => setField("groundingEnabled", e.target.checked)} />
-                    <Lbl tip={TIP.groundingEnabled}>Enable visual grounding model</Lbl>
+                    <SettingLbl k="groundingEnabled" />
                 </label>
-                <label data-setting="groundingModel" class="set-field"><Lbl tip={TIP.groundingModel}>Grounding model</Lbl>
+                <label data-setting="groundingModel" class="set-field"><SettingLbl k="groundingModel" />
                     <ModelPicker fieldKey="groundingModel" options={listed} disabled={!c.groundingEnabled} cls={(excl(c.groundingModel) || groundingSees === false) ? "err" : ""}
                         placeholder={detectGroundingModel(models.value) ? `${detectGroundingModel(models.value)} (auto-detected)` : "e.g. qwen2.5vl:7b — none detected"} />
                     {groundingSees === false ? <div class="set-err">"{c.groundingModel.trim()}" doesn't report vision capability — grounding needs a coordinate-capable vision model (e.g. qwen2.5vl:7b).</div> : null}</label>
-                <label data-setting="groundingRange" class="set-field"><Lbl tip={TIP.groundingRange}>Coordinate range</Lbl>
+                <label data-setting="groundingRange" class="set-field"><SettingLbl k="groundingRange" />
                     <input type="number" min="1" step="1" value={c.groundingRange} disabled={!c.groundingEnabled}
                         onChange={(e: any) => setField("groundingRange", parseInt(e.target.value, 10) || DEFAULT_GROUNDING_RANGE)} /></label>
                 </Section>
@@ -1672,7 +1637,7 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                     </div>
                     <div class="set-hint">The DevTools panel and the sidebar over a page. The chat page has its own sizes.</div>
                 </div>
-                <label data-setting="theme" class="set-field"><span>Theme</span>
+                <label data-setting="theme" class="set-field"><SettingLbl k="theme" />
                     <select value={c.theme} onChange={(e: any) => setField("theme", e.target.value as Theme)}>
                         <option value="auto">Auto (system)</option>
                         <option value="dark">Dark</option>
@@ -1683,7 +1648,7 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                 </Section>
 
                 <Section id="devtools" title="DevTools">
-                <label data-setting="debugMode" class="set-field"><span>Debug panel</span>
+                <label data-setting="debugMode" class="set-field"><SettingLbl k="debugMode" />
                     <select value={c.debugMode} onChange={(e: any) => setField("debugMode", e.target.value as DebugMode)}>
                         <option value="off">Off</option>
                         <option value="overlay">In-page sidebar</option>
@@ -1694,27 +1659,27 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                 <label data-setting="listPageSessions" class="set-check">
                     <input type="checkbox" checked={c.listPageSessions}
                         onChange={(e: any) => setField("listPageSessions", e.target.checked)} />
-                    <span>List console and page-script sessions in the chat page when the debug panel is off</span>
+                    <SettingLbl k="listPageSessions" />
                 </label>
                 <div class="set-hint">Agents the extension runs are always listed. With the panel off, a page's own <code>ml.chat</code> and <code>ml.agent</code> calls are not, because reporting them costs every page a little work.</div>
                 <label data-setting="persistUiRuns" class="set-check">
                     <input type="checkbox" checked={c.persistUiRuns}
                         onChange={(e: any) => setField("persistUiRuns", e.target.checked)} />
-                    <span>Keep runs started from this browser's own UI</span>
+                    <SettingLbl k="persistUiRuns" />
                 </label>
                 <div class="set-hint">A run you start from the Commander HUD is kept, so it is still here after the browser has been idle and can be read tomorrow. Runs and chats started from <code>code</code> are unaffected: they last as long as the page unless they ask to be saved.</div>
-                <label data-setting="sessionRetentionDays" class="set-field"><span>Keep unpinned sessions for (days)</span>
+                <label data-setting="sessionRetentionDays" class="set-field"><SettingLbl k="sessionRetentionDays" />
                     <input type="number" min="0" step="1" value={c.sessionRetentionDays}
                         onChange={(e: any) => { const n = parseInt(e.target.value, 10); setField("sessionRetentionDays", Number.isFinite(n) && n >= 0 ? n : DEFAULT_CONFIG.sessionRetentionDays); }} />
                 </label>
                 <div class="set-hint">A saved session that has done nothing for this many days is deleted, unless it is pinned or open somewhere. Counted from its last activity, not from when it started. 0 keeps every session until the store runs out of room, when the oldest unpinned ones go first. Each deletion is written to the housekeeping log.</div>
-                <label data-setting="sessionStoreBudgetMB" class="set-field"><span>Saved session storage (MB)</span>
+                <label data-setting="sessionStoreBudgetMB" class="set-field"><SettingLbl k="sessionStoreBudgetMB" />
                     <input type="number" min="0" step="64" value={c.sessionStoreBudgetMB}
                         onChange={(e: any) => { const n = parseInt(e.target.value, 10); setField("sessionStoreBudgetMB", Number.isFinite(n) && n >= 0 ? n : DEFAULT_CONFIG.sessionStoreBudgetMB); }} />
                 </label>
                 <div class="set-hint">Disk for saved sessions. Past it, the oldest unpinned session is deleted first (and logged). 0 sets no size limit, so only the retention above and your pins decide what is kept. Pinned sessions count toward this and are never what makes room, so many large pins can hold it over. The browser does not clear this storage when the disk runs low.</div>
                 <TabGroupsPermission />
-                <label data-setting="agentStartPage" class="set-field"><span>Blank-tab start page</span>
+                <label data-setting="agentStartPage" class="set-field"><SettingLbl k="agentStartPage" />
                     <input type="url" placeholder="https://example.com" value={c.agentStartPage}
                         onChange={(e: any) => setField("agentStartPage", e.target.value.trim())} />
                 </label>
@@ -1722,28 +1687,28 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                 </Section>
 
                 <Section id="spend" title="Spend">
-                <label data-setting="priceSnapshotUrl" class="set-field"><Lbl tip={TIP.priceSnapshotUrl}>Price service</Lbl>
+                <label data-setting="priceSnapshotUrl" class="set-field"><SettingLbl k="priceSnapshotUrl" />
                     <input type="url" placeholder="http://box:3002" value={c.priceSnapshotUrl}
                         onChange={(e: any) => setField("priceSnapshotUrl", e.target.value.trim())} />
                 </label>
-                <label data-setting="electricityPerKwh" class="set-field"><Lbl tip={TIP.electricityPerKwh}>Electricity price (per kWh)</Lbl>
+                <label data-setting="electricityPerKwh" class="set-field"><SettingLbl k="electricityPerKwh" />
                     <input type="number" min="0" step="0.01" value={c.electricityPerKwh || ""} placeholder="0.30"
                         onChange={(e: any) => { const n = parseFloat(e.target.value); setField("electricityPerKwh", Number.isFinite(n) && n > 0 ? n : 0); }} />
                 </label>
-                <label data-setting="electricityOffPeakPerKwh" class="set-field"><Lbl tip={TIP.electricityOffPeakPerKwh}>Off-peak price (per kWh)</Lbl>
+                <label data-setting="electricityOffPeakPerKwh" class="set-field"><SettingLbl k="electricityOffPeakPerKwh" />
                     <input type="number" min="0" step="0.01" value={c.electricityOffPeakPerKwh || ""} placeholder="none"
                         onChange={(e: any) => { const n = parseFloat(e.target.value); setField("electricityOffPeakPerKwh", Number.isFinite(n) && n > 0 ? n : 0); }} />
                 </label>
-                <label data-setting="electricityOffPeakHours" class="set-field"><Lbl tip={TIP.electricityOffPeakHours}>Off-peak hours</Lbl>
+                <label data-setting="electricityOffPeakHours" class="set-field"><SettingLbl k="electricityOffPeakHours" />
                     <input type="text" maxLength={7} value={c.electricityOffPeakHours} placeholder="23-7"
                         onChange={(e: any) => setField("electricityOffPeakHours", e.target.value.trim())} />
                 </label>
                 <label data-setting="electricityOffPeakWeekends" class="set-check">
                     <input type="checkbox" checked={c.electricityOffPeakWeekends}
                         onChange={(e: any) => setField("electricityOffPeakWeekends", e.target.checked)} />
-                    <Lbl tip={TIP.electricityOffPeakWeekends}>Weekends are off-peak all day</Lbl>
+                    <SettingLbl k="electricityOffPeakWeekends" />
                 </label>
-                <label data-setting="electricityCurrency" class="set-field"><Lbl tip={TIP.electricityCurrency}>Currency</Lbl>
+                <label data-setting="electricityCurrency" class="set-field"><SettingLbl k="electricityCurrency" />
                     <input type="text" maxLength={8} value={c.electricityCurrency} placeholder="EUR"
                         onChange={(e: any) => setField("electricityCurrency", e.target.value.trim().toUpperCase())} />
                 </label>
@@ -1754,7 +1719,7 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                 <label data-setting="sessionArchive" class="set-check">
                     <input type="checkbox" checked={c.sessionArchive}
                         onChange={(e: any) => setField("sessionArchive", e.target.checked)} />
-                    <span>Archive sessions instead of deleting them</span>
+                    <SettingLbl k="sessionArchive" />
                 </label>
                 <div class="set-hint">A session the retention or the storage limit would delete moves to a long-term archive (SQLite, in this browser's private storage) instead, with its images stored once and every word searchable. If moving one fails, it is kept, never deleted.</div>
                 {/* The folder belongs to the switch above it, so it sits under it and appears with it: it used to be its
@@ -1778,7 +1743,7 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
 
                 <Section id="agenthud" title="Agent HUD">
                 <div class="set-note">The in-page overlay — the corner card / working pill for off-mode agent runs.</div>
-                <label data-setting="cardCorner" class="set-field"><span>Card corner</span>
+                <label data-setting="cardCorner" class="set-field"><SettingLbl k="cardCorner" />
                     <select value={c.cardCorner} onChange={(e: any) => setField("cardCorner", e.target.value as CardCorner)}>
                         <option value="bottom-right">Bottom right</option>
                         <option value="bottom-left">Bottom left</option>
@@ -1787,7 +1752,7 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                     </select>
                     <div class="set-hint">Which corner the off-mode agent card / working pill anchors to. You can also <b>right-click</b> the card to move it.</div>
                 </label>
-                <label data-setting="agentHud" class="set-field"><span>Agent HUD progress indicator visibility</span>
+                <label data-setting="agentHud" class="set-field"><SettingLbl k="agentHud" />
                     <select value={c.agentHud} onChange={(e: any) => setField("agentHud", e.target.value as AgentHud)}>
                         <option value="progress">Progress (pill while running)</option>
                         <option value="quiet">Quiet (only when it needs you)</option>
@@ -1797,7 +1762,7 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                 <label data-setting="agentHudInDevtools" class="set-check">
                     <input type="checkbox" checked={c.agentHudInDevtools}
                         onChange={(e: any) => setField("agentHudInDevtools", e.target.checked)} />
-                    <span>Also show the HUD alongside the DevTools panel</span>
+                    <SettingLbl k="agentHudInDevtools" />
                 </label>
                 </Section>
 
@@ -1849,7 +1814,7 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                 <label data-setting="exportToolDefs" class="set-check">
                     <input type="checkbox" checked={c.exportToolDefs}
                         onChange={(e: any) => setField("exportToolDefs", e.target.checked)} />
-                    <span>Include tool definitions in run exports</span>
+                    <SettingLbl k="exportToolDefs" />
                 </label>
                 <div class="set-note">Dumps the FULL tool definitions (pretty JSON — names, descriptions, parameter schemas; not the implementation) below the system prompt in a run's Markdown/PDF export, annotated with their character + approximate token cost. Off by default — it's several thousand tokens of schema.</div>
                 </Section>
@@ -1865,14 +1830,14 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                 <label data-setting="autoApproveReadonly" class="set-check">
                     <input type="checkbox" checked={c.autoApproveReadonly}
                         onChange={(e: any) => setField("autoApproveReadonly", e.target.checked)} />
-                    <Lbl tip={TIP.autoApproveReadonly}>Auto-approve read-only exec calls</Lbl>
+                    <SettingLbl k="autoApproveReadonly" />
                 </label>
                 </Section>
 
                 <Section id="pointers" title="Output pointers">
                 <div class="set-note">A tool output can be kept under a name you give it (<code>token: "the sales table"</code>) and read back later with <code>dereference</code>. When a name isn't recalled exactly, this picks how the near matches are ranked. A near match is only used when it clearly beats the runner-up, and it is always reported.</div>
                 <div data-setting="labelMatch" class="set-field">
-                    <Lbl tip={TIP.labelMatch}>Label matching</Lbl>
+                    <SettingLbl k="labelMatch" />
                     <select value={labelMetric(c.labelMatch)} onChange={(e: any) => setField("labelMatch", e.target.value as LexicalMetric)}>
                         <option value="hybrid">hybrid — trigram + word overlap (default)</option>
                         <option value="tokenset">tokenset — word overlap only</option>
@@ -1880,7 +1845,7 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                         <option value="edit">edit — Levenshtein (for comparison)</option>
                     </select>
                 </div>
-                <label data-setting="valueStoreBudgetMB" class="set-field"><Lbl tip={TIP.valueStoreBudgetMB}>Stored table budget (MB)</Lbl>
+                <label data-setting="valueStoreBudgetMB" class="set-field"><SettingLbl k="valueStoreBudgetMB" />
                     <input type="number" min="0" step="256" value={c.valueStoreBudgetMB}
                         onChange={(e: any) => { const n = parseInt(e.target.value, 10); setField("valueStoreBudgetMB", Number.isFinite(n) && n >= 0 ? n : DEFAULT_CONFIG.valueStoreBudgetMB); }} /></label>
                 </Section>
@@ -1905,14 +1870,14 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                 <label data-setting="autoApprovePython" class="set-check">
                     <input type="checkbox" checked={c.autoApprovePython}
                         onChange={(e: any) => setField("autoApprovePython", e.target.checked)} />
-                    <Lbl tip={TIP.autoApprovePython}>Auto-approve readonly python_exec calls</Lbl>
+                    <SettingLbl k="autoApprovePython" />
                 </label>
-                <label data-setting="pythonIdleMinutes" class="set-field"><span>Python namespace idle limit (minutes)</span>
+                <label data-setting="pythonIdleMinutes" class="set-field"><SettingLbl k="pythonIdleMinutes" />
                     <input type="number" min="0" step="1" value={c.pythonIdleMinutes}
                         onChange={(e: any) => { const n = parseInt(e.target.value, 10); setField("pythonIdleMinutes", Number.isFinite(n) && n >= 0 ? n : DEFAULT_CONFIG.pythonIdleMinutes); }} />
                 </label>
                 <div class="set-hint">A run's Python names (variables, imports) last as long as the run, across its turns. Between turns the sandbox holding them is shut after this many idle minutes, and the run is told on its next cell and in its transcript. 0 never shuts it for idleness; it still ends with the session. A python_exec keep: true holds it only through its own turn.</div>
-                <label data-setting="detachedTaskMaxMin" class="set-field"><span>Detached task limit (minutes)</span>
+                <label data-setting="detachedTaskMaxMin" class="set-field"><SettingLbl k="detachedTaskMaxMin" />
                     <input type="number" min="1" max="60" step="1" value={c.detachedTaskMaxMin}
                         onChange={(e: any) => { const n = parseInt(e.target.value, 10); setField("detachedTaskMaxMin", Number.isFinite(n) && n >= 1 && n <= 60 ? n : DEFAULT_CONFIG.detachedTaskMaxMin); }} />
                 </label>
@@ -1924,7 +1889,7 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                 <label data-setting="autoApproveSelfSource" class="set-check">
                     <input type="checkbox" checked={c.autoApproveSelfSource}
                         onChange={(e: any) => setField("autoApproveSelfSource", e.target.checked)} />
-                    <Lbl tip={TIP.autoApproveSelfSource}>Auto-approve reading the agent's own repo source</Lbl>
+                    <SettingLbl k="autoApproveSelfSource" />
                 </label>
                 </Section>
 
@@ -1933,7 +1898,7 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                 <label data-setting="agentSeesFocus" class="set-check">
                     <input type="checkbox" checked={c.agentSeesFocus}
                         onChange={(e: any) => setField("agentSeesFocus", e.target.checked)} />
-                    <Lbl tip={TIP.agentSeesFocus}>Tell the agent where you are</Lbl>
+                    <SettingLbl k="agentSeesFocus" />
                 </label>
                 </Section>
 
@@ -1954,7 +1919,7 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                 <label data-setting="selfIntrospection" class="set-check">
                     <input type="checkbox" checked={c.selfIntrospection}
                         onChange={(e: any) => setField("selfIntrospection", e.target.checked)} />
-                    <Lbl tip={TIP.selfIntrospection}>Let the agent read its own run (ml.current)</Lbl>
+                    <SettingLbl k="selfIntrospection" />
                 </label>
                 </Section>
 
@@ -1964,7 +1929,7 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                     only in what a miss MEANS. The answer's content type decides the format, so a backend
                     that never serves it is silent by construction — right when you are merely hoping, wrong
                     when you believe your box serves it and want to hear that it did not. */}
-                <label data-setting="protoStream" class="set-field"><Lbl tip={TIP.protoStream}>Wire format</Lbl>
+                <label data-setting="protoStream" class="set-field"><SettingLbl k="protoStream" />
                     <select value={protoMode(c.protoStream)}
                         onChange={(e: any) => setField("protoStream", e.target.value as ProtoMode)}>
                         <option value="auto">Auto — ask, take what comes back</option>
@@ -1995,7 +1960,7 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                 <label data-setting="pierceClosedShadow" class="set-check">
                     <input type="checkbox" checked={c.pierceClosedShadow}
                         onChange={(e: any) => setField("pierceClosedShadow", e.target.checked)} />
-                    <Lbl tip={TIP.pierceClosedShadow}>Pierce closed shadow roots</Lbl>
+                    <SettingLbl k="pierceClosedShadow" />
                 </label>
                 </Section>
 
@@ -2004,7 +1969,7 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                 <CdpToggle />
                 <UserScriptsStatus />
                 <div data-setting="execDefaultWorld" class="set-field">
-                    <Lbl tip={TIP.execDefaultWorld}>Where exec runs by default</Lbl>
+                    <SettingLbl k="execDefaultWorld" />
                     <select value={c.execDefaultWorld || ""} onChange={(e: any) => setField("execDefaultWorld", e.target.value as MlConfig["execDefaultWorld"])}>
                         <option value="">build default ({BUILD_DEFAULT_WORLD})</option>
                         <option value="page">page — the page's own world</option>

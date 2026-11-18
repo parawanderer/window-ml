@@ -1,0 +1,77 @@
+{
+  "format": "wml-settings",
+  "v": 1,
+  "created": "2026-11-10T09:00:00.000Z",
+  "apiKeyIncluded": true,
+  "sync": {
+    "chatUrl": "https://other-server.example",
+    "apiKey": "restored-apiKey",
+    "model": "restored-model",
+    "apiFormat": "ollama",
+    "ocrModel": "restored-ocrModel",
+    "ocrNumCtx": 8199,
+    "defaultModelVision": "yes",
+    "modelFilter": "restored-modelFilter",
+    "debugMode": "overlay",
+    "labelMatch": "edit",
+    "embeddingModel": "restored-embeddingModel",
+    "embeddingKeepAlive": false,
+    "embeddingForceCpu": false,
+    "theme": "dark",
+    "cardCorner": "bottom-left",
+    "agentHud": "quiet",
+    "agentHudInDevtools": true,
+    "listPageSessions": true,
+    "siteRequests": true,
+    "persistUiRuns": false,
+    "sessionRetentionDays": 7,
+    "sessionStoreBudgetMB": 263,
+    "pythonIdleMinutes": 17,
+    "detachedTaskMaxMin": 67,
+    "sessionArchive": true,
+    "agentStartPage": "https://restored.example/",
+    "priceSnapshotUrl": "restored-priceSnapshotUrl",
+    "agentStepMaxTokens": 7,
+    "electricityPerKwh": 7,
+    "electricityCurrency": "USD",
+    "electricityOffPeakPerKwh": 7,
+    "electricityOffPeakHours": "22-6",
+    "electricityOffPeakWeekends": false,
+    "utilityModel": "restored-utilityModel",
+    "utilityNumCtx": 4103,
+    "utilityForceCpu": true,
+    "autoTitles": false,
+    "exportToolDefs": true,
+    "autoApproveReadonly": false,
+    "serverToolsOff": [
+      "/restored/serverToolsOff"
+    ],
+    "commanderServerTools": [
+      "/restored/commanderServerTools"
+    ],
+    "autoApprovePython": true,
+    "autoApproveSelfSource": false,
+    "agentSeesFocus": false,
+    "selfIntrospection": false,
+    "valueStoreBudgetMB": 1031,
+    "shellEnabled": true,
+    "shellRoots": [
+      "/restored/shellRoots"
+    ],
+    "shellSandbox": false,
+    "shellPath": [
+      "/restored/shellPath"
+    ],
+    "protoStream": "off",
+    "pierceClosedShadow": false,
+    "cdp": false,
+    "execDefaultWorld": "page",
+    "pageApprovalDomains": [
+      "/restored/pageApprovalDomains"
+    ],
+    "groundingEnabled": true,
+    "groundingModel": "restored-groundingModel",
+    "groundingRange": 1007
+  },
+  "local": {}
+}

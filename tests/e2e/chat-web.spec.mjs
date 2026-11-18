@@ -1139,6 +1139,8 @@ test("the ⋮ and the approval bar share the corner without landing on each othe
     // The bar's whole condition is the gate being out of reach, and the view opens parked on it — so scroll back to
     // the top of the run, which is what a person reading what it did before the gate would do.
     await page.locator(".astep-approve").waitFor();
+    // The card opens from nothing over its entrance and the view follows it down while it does: scroll back once it has settled.
+    await page.waitForFunction(() => document.querySelector(".astep-approve").getAnimations().every((a) => a.playState !== "running"));
     await page.evaluate(() => { document.querySelector(".chat-transcript").scrollTop = 0; });
     await page.locator(".chat-waiting").waitFor();
     const seen = await page.evaluate(() => {
@@ -3270,7 +3272,8 @@ test("a call being written keeps its progress line in the reading view, and a pu
     await page.goto(server.url + `#s=${encodeURIComponent(WATCHED)}`);
     await page.locator(".chat-transcript").waitFor();
     expect(await page.evaluate(() => document.documentElement.hasAttribute("data-focus")), "the reading view quiets previews").toBe(true);
-    const args = JSON.stringify({ code: "import math\nfor i in range(3):\n    print(math.sqrt(i))" });
+    // Unfinished: a call whose arguments are complete is written, and a written call has nothing more due, so no quiet clock.
+    const args = JSON.stringify({ code: "import math\nfor i in range(3):\n    print(math.sqrt(i))" }).slice(0, -12);
     await page.evaluate(([k, a]) => globalThis.__chatFake.emit(k, {
         kind: "agent-stream", id: k.split(":").pop(), ts: Date.now(), save: false,
         session: { hash: k.split(":").pop(), turn: 9 }, step: 9, localStep: 9,
@@ -3517,9 +3520,12 @@ test("an embedded output's rail folds it to one row naming it, without jumping t
     await expect(folded).toBeInViewport();
     await expect(page.locator(".astep.tool.open")).toHaveCount(0);
 
+    // The row leaves over the calm view's collapse beat before the body comes back, and the body's open lasts a fraction of a
+    // second: a poll can fall either side of it, so a frame watcher records that it was ever there.
+    await page.evaluate(() => { window.__opened = false; const f = () => { if (document.querySelector(".tok-body.opening")) window.__opened = true; else if (!window.__opened) requestAnimationFrame(f); }; f(); });
     await folded.click();
     await expect(answer.locator(".r-df-table")).toHaveCount(1);
-    await expect(answer.locator(".tok-body.opening")).toHaveCount(1);
+    await page.waitForFunction(() => window.__opened === true);
     // …and by keyboard, which the rail is not: the folded row is a button of its own.
     await answer.locator(".tok-block .fold-rail").first().click();
     await answer.locator(".tok-folded").focus();

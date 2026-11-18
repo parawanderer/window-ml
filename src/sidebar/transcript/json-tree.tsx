@@ -170,7 +170,9 @@ export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, 
                 ? <span class="jt-val jt-number jt-time" {...cursorTipOn(`${new Date(v).toISOString()} (${v})`)}>{timeLabel(v)}{sep}</span>
                 : typeof v === "string"
                     ? <StrLeaf s={v} cls={`jt-val jt-${t} ${HLJS_OF[t] ?? ""}`} sep={sep} allOpen={allOpen} />
-                    : <span class={`jt-val jt-${t} ${HLJS_OF[t] ?? ""}`}>{String(v)}{sep}</span>}
+                    // highlight.js draws `true`, `false` and `null` as a literal WRAPPING a keyword, and a theme colours the inner one
+                    // (purple, where the literal's own colour is blue): the same two spans here, or the tree and the text disagree.
+                    : <span class={`jt-val jt-${t} ${HLJS_OF[t] ?? ""}`}>{t === "boolean" || t === "null" ? <span class="hljs-keyword">{String(v)}</span> : String(v)}{sep}</span>}
             {trail}
         </div>;
     }

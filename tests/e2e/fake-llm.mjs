@@ -23,6 +23,7 @@ import { createServer } from "node:http";
  * @property {string} [content] a plain assistant reply, which ends the run
  * @property {string} [tool] call this tool instead of replying
  * @property {Record<string, unknown>} [args] the tool's arguments
+ * @property {{ tool: string, args?: Record<string, unknown> }[]} [tools] SEVERAL tool calls in one turn, written side by side (in place of `tool`/`args`)
  * @property {string} [reasoning] thinking text, streamed word by word when the request asks to stream
  * @property {StreamBeat[]} [emit] STREAMING ONLY: the exact order the turn comes out in, so a test can script
  *   an INTERLEAVED turn — think, start the call, think again, answer. Without it a streamed step emits the
@@ -60,6 +61,13 @@ const readBody = (req) => new Promise((resolve) => {
 let callSeq = 0;
 /** @param {FakeStep} step */
 const toChoice = (step) => {
+    if (step && Array.isArray(step.tools) && step.tools.length) {
+        return {
+            index: 0, finish_reason: "tool_calls",
+            message: { role: "assistant", content: "", tool_calls: step.tools.map((t) => (
+                { id: `call_${++callSeq}`, type: "function", function: { name: t.tool, arguments: JSON.stringify(t.args || {}) } })) },
+        };
+    }
     if (step && typeof step.tool === "string") {
         return {
             index: 0, finish_reason: "tool_calls",
