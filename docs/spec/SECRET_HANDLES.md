@@ -283,12 +283,12 @@ unredacted; the build has a row for exactly that text. And a crossing's time bud
 not its mean. The widths stay provisional until they are fixed from that notebook (the coordinator's call).
 
 **A timing oracle.** The slow confirm runs only on a filter hit, so a crossing's time tells a text holding a stored
-8-character prefix from one that does not: a prefix oracle beside the redaction oracle in "The scrub as built". On the
-worker's side it is: the notebook (#1959) separates one hit by a difference of two means (`z = 2`) after about 5 to 47
-crossings of each at 20,000 iterations and about 1,000 to 10,500 at 1,000, on a loaded machine. So the remedy is
-REQUIRED, not conditional (the coordinator's call, surfaced to Shane): the confirm cost is paid on a fixed schedule, or
-a page's crossing is answered no sooner than a floor. The end-to-end run from a page through `forPage` sizes the remedy;
-it does not decide whether there is one.
+8-character prefix from one that does not: a prefix oracle beside the redaction oracle in "The scrub as built". It is
+observable on the worker's side: the notebook (#1959) separates one hit by a difference of two means (`z = 2`) after
+about 5 to 47 crossings of each at 20,000 iterations and about 1,000 to 10,500 at 1,000, on a loaded machine. So the
+remedy is REQUIRED, not conditional (the coordinator's call, surfaced to Shane): the confirm cost is paid on a fixed
+schedule, or a page's crossing is answered no sooner than a floor. The end-to-end run from a page through `forPage`
+sizes the remedy; it does not decide whether there is one.
 
 **Short values.** The 8-character floor stays for `mask` entries. A string of `n` characters over an alphabet of size
 `a` occurs about `N / a^n` times in `N` characters of text that looks random to it: a 4-digit PIN about 100 times in a
