@@ -8,7 +8,7 @@
 // `origin: "proposed"`, so it describes sandboxed calls only (B5) until its evidence run passes.
 
 import type { HostFacts, HostPathArg, HostPathFact } from "./host-protocol";
-import { REVEALING_PROGRAMS, shippedOnlyRefusal, validateManifest, type ProgramManifest } from "./program-manifest";
+import { revealingName, shippedOnlyRefusal, validateManifest, type ProgramManifest } from "./program-manifest";
 import { effectsText, manifestFor, quoteArg, revealsText, type ShFacts } from "./sh-call";
 import { manifestKey, type ManifestOrigin, type ManifestRequest } from "./stored-manifests";
 
@@ -143,8 +143,9 @@ export function draftRequest(d: ManifestDraft, facts: HostFacts, root: string, r
             scope = "workspace";
         }
     }
-    // Ruling 31: the marker only narrows, so a draft for a program known to show other processes gets it whatever it said.
-    if (typeof manifest.program === "string" && REVEALING_PROGRAMS.includes(manifest.program)) manifest.reveals = "processes";
+    // Ruling 31: the marker only narrows, so a draft for a program known to show other processes (by name or by the file
+    // the host resolved) gets it whatever it said.
+    if (revealingName(manifest, e ? undefined : facts.program.path)) manifest.reveals = "processes";
     const problems = validateManifest(manifest);
     if (problems.length) return { error: `Error: not a valid program manifest: ${problems.slice(0, 5).join("; ")}` };
     const shippedOnly = shippedOnlyRefusal(manifest);
@@ -195,7 +196,7 @@ export function draftNote(r: ManifestRequest, forced: string | undefined, readin
             ? "Approved, it describes calls under the OS sandbox only, where its claims are enforced; with no free call to re-run, it stays that way."
             : `Approved, it describes calls under the OS sandbox only, where its claims are enforced. Then the ${free.length} free call${free.length === 1 ? " is" : "s are"} re-run under the sandbox with writes refused; if every one exits as the manifest says with nothing changed, and its recorded run created, modified or removed no file one of its arguments names, it describes calls without the sandbox too. A write inside a folder it names, or to a file no argument names, is not seen.`;
     const reveals = r.manifest.reveals
-        ? ` It declares reveals: "processes"${REVEALING_PROGRAMS.includes(r.manifest.program) ? ", added whatever the draft said" : ""}: ${revealsText(r.manifest.program)}, so a call that would be free still asks until ${r.manifest.program} is in Programs that may show other processes.`
+        ? ` It declares reveals: "processes"${revealingName(r.manifest, r.pin?.path) ? ", added whatever the draft said" : ""}: ${revealsText(r.manifest.program)}, so a call that would be free still asks until ${r.manifest.program} is in Programs that may show other processes.`
         : "";
     return `${head}${reveals} ${derived} ${after}`;
 }

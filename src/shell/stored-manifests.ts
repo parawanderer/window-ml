@@ -91,7 +91,7 @@ export function storeRefusal(r: ManifestRequest, stored: readonly StoredManifest
     if (shipped[m.program]) return `${m.program} is described by the shipped manifest src/shell/manifests/${m.program}.json, which a stored one does not replace`;
     const shippedOnly = shippedOnlyRefusal(m);
     if (shippedOnly) return shippedOnly;
-    const reveals = revealsRefusal(m);
+    const reveals = revealsRefusal(m, r.pin?.path);
     if (reveals) return reveals;
     if (m.entrypoint) {
         if (r.pin !== undefined) return "a script's manifest is pinned by its entrypoint's sha256, not by a program pin";

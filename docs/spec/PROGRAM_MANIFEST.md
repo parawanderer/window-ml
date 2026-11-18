@@ -73,7 +73,9 @@ program STARTED), so a manifest says it with a top-level marker:
   config saved before the key existed reads `[]`.
 - **A stored or proposed manifest cannot drop it.** A shipped program cannot be shadowed at all (B2 below, at store,
   load and call time), so once `ps`, `lsof` and `top` ship marked, no stored manifest describes them. Until then, and
-  for a copy inside a workspace root, `REVEALING_PROGRAMS` (`ps`, `lsof`, `top`) holds: a draft for one of them gets
+  for a copy inside a workspace root, `REVEALING_PROGRAMS` (`ps`, `lsof`, `top`) holds, matched against the
+  manifest's `program` and against the basename of the file it is pinned to (the host's realpath, so `pss`, a symlink
+  to `/bin/ps`, is caught; `revealingName`): a draft for one of them gets
   the marker whatever it said (`draftRequest`), and its card says so ("added whatever the draft said"); the store
   refuses one without it (`revealsRefusal`), so an entry stored before this rule is dropped on load, and one that
   arrives another way is skipped at call time and its calls are undescribed and ask. A program not in the list that
@@ -287,6 +289,11 @@ rejects unknown fields, so a manifest with one is for this extension only.
   `-`; GNU reads stdin. Claiming the path is the stricter reading: on GNU a call such as `head -` asks or names a path
   that does not exist, where reading stdin needs neither. It stays so until a manifest can tell the implementations
   apart, when the GNU reading moves into that implementation's own description.
+
+- **A copy of a revealing program under another name is not recognised** (2026-11-18). `REVEALING_PROGRAMS` matches the
+  manifest's `program` and the realpath's basename, so a symlink is caught, but a copy or a hard link (`cp /bin/ps
+  pss`) resolves to its own name, and a stored manifest for it without `reveals` is not refused. The draft card shows
+  the path it is pinned to; a fingerprint list of the system's own `ps`, `lsof` and `top` would close it.
 
 ## Related
 

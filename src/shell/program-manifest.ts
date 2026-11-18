@@ -553,12 +553,18 @@ const MANIFEST_KEYS = new Set(["$schema", "program", "version", "okCodes", "echo
  *  `reveals: "processes"` whatever its author wrote, so a draft cannot drop the gate before the shipped manifest lands. */
 export const REVEALING_PROGRAMS: readonly string[] = Object.freeze(["ps", "lsof", "top"]);
 
-/** Why a manifest that is not shipped may not describe `m.program` as it does, or undefined: one for a program in
- *  {@link REVEALING_PROGRAMS} without the marker. */
-export function revealsRefusal(m: { program?: unknown; reveals?: unknown }): string | undefined {
-    return typeof m.program === "string" && REVEALING_PROGRAMS.includes(m.program) && m.reveals !== "processes"
-        ? `${m.program} shows other processes, so its manifest carries reveals: "processes"`
-        : undefined;
+/** The name in {@link REVEALING_PROGRAMS} a manifest describes, by its `program` or by the basename of the file it is
+ *  pinned to (the host's realpath, so a symlink named otherwise is caught), or undefined. */
+export function revealingName(m: { program?: unknown }, resolved?: string): string | undefined {
+    const file = resolved?.split("/").pop();
+    return [m.program, file].find((n): n is string => typeof n === "string" && REVEALING_PROGRAMS.includes(n));
+}
+
+/** Why a manifest that is not shipped may not describe a program as it does, or undefined: one whose `program`, or
+ *  the file it is pinned to, is in {@link REVEALING_PROGRAMS}, without the marker. */
+export function revealsRefusal(m: { program?: unknown; reveals?: unknown }, resolved?: string): string | undefined {
+    const name = revealingName(m, resolved);
+    return name && m.reveals !== "processes" ? `${name} shows other processes, so its manifest carries reveals: "processes"` : undefined;
 }
 
 /** Why a manifest that is not shipped may not carry `m`'s credential fields, or undefined: the host honours a

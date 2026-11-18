@@ -74,6 +74,19 @@ test("a draft for a revealing program gets the marker whatever it said, and the 
     assert.doesNotMatch(draftNote(none.request, undefined, [], true), /reveals/);
 });
 
+test("a revealing program is matched by the manifest's name or by the file it is pinned to, so a symlink named otherwise is caught", () => {
+    const bare = { ...PS, program: "pss" }; delete bare.reveals;
+    const linked = { path: "/bin/ps", fingerprint: "1:2:3:2", inRoot: false };   // `pss` on PATH, a symlink to /bin/ps: the host reports the realpath
+    assert.match(storeRefusal({ scope: "global", manifest: bare, origin: "person", pin: linked }, [], SHIPPED_MANIFESTS), /^ps shows other processes/);
+    assert.equal(manifestsFor([{ ...entry(bare), pin: linked }], ["/w"]).list.some((m) => m.program === "pss"), false);
+    const r = draftRequest({ manifest: bare, scope: "global" }, { ...facts("pss"), program: linked }, "/w", ["/w"]);
+    assert.equal(r.request.manifest.reveals, "processes");
+    assert.match(draftNote(r.request, undefined, [], true), /added whatever the draft said: pss shows other processes/);
+    // The known limit: a COPY (or hard link) under another name resolves to its own name, so nothing here can tell it is ps.
+    const copy = { path: "/opt/bin/pss", fingerprint: "1:2:3:9", inRoot: false };
+    assert.equal(storeRefusal({ scope: "global", manifest: bare, origin: "person", pin: copy }, [], SHIPPED_MANIFESTS), undefined);
+});
+
 test("a stored manifest never reaches the process host: the spawn names no manifest, so a marked one cannot fail its reader", () => {
     const plan = planSpawn({ argv: ["ps", "-e", "-f"], cwd: "/w", env: {} }, { cwd: "/w", roots: ["/w"], stored: [entry(PS)] });
     assert.equal(plan.description.program, "ps", "described by the stored entry");
