@@ -1025,6 +1025,58 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
   residuals: the host's vector pin, now host#50 at 0ebe726f with janitor-3 (it conflicts with host#49 in one test
   file, so the second to merge takes host main last); and a stale remark in the red team's test file, for e3.
 
+- **Shane's rulings 43 and 44 (2026-11-18, said in the coordinator's session).**
+  - **(43) LLM provider tokens are in the shape list.** Shane's reason: they are high-value targets for resale and
+    have standard patterns. The spec holds twelve vendors, each shape taken from a published detector (gitleaks or
+    trufflehog) with its source. The coordinator's calls under it: a loose fallback, since a redactor wants recall
+    where a leak detector wants precision (a distinctive prefix and at least 20 token characters match as that
+    vendor; a bare `sk-` and at least 20 alphanumerics holding a digit match as a generic key, missing about 3 in
+    100,000 keys of 32); and the extension's own saved key and its replaced keys are matched by value in the
+    person's input with no registration, which #1948 does not do. Vendors with no prefix (Mistral, Together, and
+    Cohere and Azure OpenAI outside a credential word) wait for ruling 40's investigation.
+  - **(44) A store that cannot be read holds the turn.** The coordinator's call, accepted. It is the one hold; a
+    detection never blocks a send. A caller with no composer is rejected with an error naming the option.
+  - #1969 1c69cd8b wrote rulings 40 to 44 into the secret-handles spec. Nothing under ruling 39 is open.
+- **The `host` gate was red on main (found by janitor-2 and janitor-3 independently, 2026-11-18).** A row of the
+  real-host spec for `ml.sh` still expected the route from before #1936, and #1936 never ran the gate: the CI filter
+  that starts it listed none of the survey's files. Docs-only merges kept main looking green. It stopped #1948,
+  #1952 and #1963 at their reviewers. The repair is its own PR off main, #1970 at 9fec221d (small-fixes, the author
+  of #1936): the row corrected, a row added for the isolated route, the filter widened; by the lane's account the
+  row's later assertions pass against a real host, so it was a stale row. It is with janitor-2. After it merges,
+  each of the three merges main last and returns to its reviewer. The rule kept: a main repair is never folded
+  into a PR it blocks.
+- **Shane's rulings 45 to 48 (2026-11-18, said in the coordinator's session; each was the coordinator's
+  recommendation, accepted).**
+  - **(45) Packages resumes.** Its order: #1934 to merge, then ruling 26's fatal-error listener, ruling 36's
+    measurement of the fork's `open()` on a mount, and ruling 37's measurement of closing Python's network. The
+    network gate still has no owner. Still halted: async, Chat Page, move-run, session-store, flaky-ci.
+  - **(46) The `show` refusal on credential directories stays.**
+  - **(47) The archive's month files carry the session's files**, with a setting that excludes files over a size.
+    Files-host proposes the key, the default and the unit in its docs PR.
+  - **(48) A restore that lands over the quota restores everything** and refuses new writes until the session is
+    back under it.
+  - Files-host folds 46 to 48 into its specs in one docs PR after #1948's work.
+- **The unit suite was red on main too (found by the coordinator on #1970's checks, 2026-11-18).** One red-team row
+  in tests/redteam-options-first.test.mjs has failed since #1951 merged at 0fd67ebd: it expected the refusal text
+  from before #1936 and got nothing back. Docs-only merges skip the suite, so main looked green; #1970's `host`
+  check passed and its `test (node 26)` and `hub` checks failed on this row alone. By the account of #1936's
+  owner and of e3, measured separately, nothing is wrong in the product: a survey script's undescribed call raises
+  a card, the row had no answerer, no program started, and a declined call returns `Denied` to the script. The
+  repair is its own PR, #1973 at 8fdd9ede (e3, that one file, the stale header remark corrected with it), with
+  janitor-3. Order after it: #1973, then #1970 merges main last and janitor-2 names its head (it has read the
+  diff at 9fec221d and asks no change), then #1948, #1952 and #1963.
+- **Host reviews (2026-11-18).** host#50 (the vector pin) merged at 19f46adf after janitor-3's comment. On host#48
+  janitor-2 asked that the hardlink row assert the envelope `done` reports, since the refusal is the same with no
+  envelope; the new head 74de3d7f is with it. On host#49 janitor-3 asked for the unknown-key row to cover the new
+  nested types under flavours; the new head b55853be is with it. e3 measured one row red on #1963 at 775a0365
+  (a stored manifest names its own probe arguments, so a program echoing one at a line start reads as GNU); it
+  goes to the manifest lane when e3 pushes it.
+- **The access tab is two PRs (coordinator's call).** Main has no Session summary page and no hide or show
+  consumer in the policy store. PR A is worker-only: the layered read with rows generic over consumer, the remove
+  with its narrowing and widening classes, the enumeration against the judge, docs; the hide and show rows are a
+  slot files-host fills by registering a classifier. PR B is the page and the tab, after the page's data shape is
+  settled, which waits for Chat Page's resume.
+
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
   `?`, window-ml's `riskyRegex` change ported. cpython#11 (1e35340b): the read-only Python dialect's regex check also walks
