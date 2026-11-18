@@ -38,7 +38,7 @@ import { pythonBundlePresent, deletePythonRun } from "./sw-python";
 import { endTasks } from "./sw-tasks";
 import { recordHousekeeping, senderOrigin } from "./sw-housekeeping";
 import { archiveCall, lastFolderReport, onFolderChange, scheduleFolderSync, syncFolder } from "./sw-archive";
-import { archiveCompactionJob, archiveImageCompactor, compactionJob, imageCompactor } from "./sw-image-compact";
+import { archiveCompactionJob, archiveImageCompactor, compactionJob, compactionPaused, imageCompactor } from "./sw-image-compact";
 import { defineJob } from "../job-registry";
 import { attentionCodes, recomputeAttention, refreshBackendAttention, watchAttention } from "./sw-attention";
 import { appendSnapshot, measureEvents, summarizeStore, type StorageReport, type StorageSnapshot, type StoreBytes } from "../session/session-storage-stats";
@@ -599,10 +599,10 @@ export const sessionStore = (() => {
 })();
 
 /** The background pass that re-encodes saved screenshots as lossless WebP once the store goes quiet. */
-const imageCompaction = sessionStore ? imageCompactor(sessionStore, { record: recordHousekeeping }) : null;
+const imageCompaction = sessionStore ? imageCompactor(sessionStore, { record: recordHousekeeping, paused: compactionPaused() }) : null;
 if (imageCompaction) defineJob(compactionJob(imageCompaction));
 /** The same re-encode over the archive's screenshots, which were archived as PNG (sw-image-compact.ts). */
-const archiveCompaction = archiveImageCompactor({ call: (op, args) => archiveCall(op, args as never), record: recordHousekeeping, onReplaced: scheduleFolderSync });
+const archiveCompaction = archiveImageCompactor({ call: (op, args) => archiveCall(op, args as never), record: recordHousekeeping, onReplaced: scheduleFolderSync, paused: compactionPaused() });
 defineJob(archiveCompactionJob(archiveCompaction));
 if (sessionStore) defineJob({
     id: "sessions.evict",

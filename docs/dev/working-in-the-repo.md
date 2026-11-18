@@ -320,6 +320,22 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
   and `--check-genres` also refuses a `redteam-*python*` row that neither `python` nor `python-host` names.
   **`--files a.test.mjs b.test.mjs`** runs exactly those, which is what `scripts/test-cover.mjs` prints.
   Still run the full `npm test` before you commit; CI runs everything regardless.
+- **Test timings: the runner warns, it never fails.** `scripts/test.mjs` runs a second reporter beside the spec one
+  (`scripts/test-times-reporter.mjs`; the console output is unchanged) and, once the run is over, prints ONE block at
+  the very end that begins `test timings — warnings for whoever ran this`. If you ran the tests, it is addressed to you:
+  act on it. Three checks (`scripts/test-times.mjs`, thresholds in `LIMITS`): (a) a FILE'S PROCESS OUTLIVED ITS TESTS
+  (wall time more than 20 s past the sum of its top-level tests AND more than that sum): something a test started keeps the
+  event loop open, the measured case being an unanswered approval ask whose 5-minute timer held a file at 302 s for 5 s of
+  tests and the machine-wide queue's slot with it; (b) a test over 3x its own p90 and 2 s slower, with at least 5 earlier
+  records; (c) a new or rare test (under 3 records) over 5x the median of its file AND of its genre and at least 2 s. The
+  exit code is never touched. File wall time is the reporter's top-level `test:complete` event for the file (the child
+  process's whole life, start-up included); the sum is its nesting-0 tests. History is `~/.cache/window-ml/test-times/history.jsonl`
+  (`TEST_TIMES_DIR` overrides), shared by every clone and keyed by repo-relative file + test name, tests of 100 ms and up, the
+  newest 30 per test, compacted past 3 MB, never written in CI unless `TEST_TIMES_HISTORY=1`, never a reason to fail when
+  the folder is unwritable. With under 5 local records (a fresh machine) check (b) uses the committed
+  `tests/test-times-baseline.json` (p90 of every test of 500 ms and up, committed so a clone has a yardstick on day one);
+  refresh it with `node scripts/test.mjs --timings-baseline` after a few full runs. It refuses (exit 1) a rebuild that is
+  empty or under half the committed one, from a machine whose history is too thin; `--force` writes it anyway.
 - **Tests: `npm test`** (Node ≥ 20, `node:test`). `tests/helpers.js` loads the
   real extension files into `node:vm` sandboxes with mocked `chrome`/`fetch`/
   `window`, so tests exercise the shipped code with no build step. Add a
