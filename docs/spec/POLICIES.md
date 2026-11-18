@@ -778,28 +778,40 @@ hidden until the person picks it, and never all at once by default. The coordina
 
 - **Which files: an enumerated rule, never a judgement over contents.** A file is offered when BOTH hold:
   1. git ignores it, as `git ls-files --others --ignored --exclude-standard` answers in the root, run by the host under
-     its git belt and writing nothing. A root that is not a git work tree gets no offer. A tracked file is not
-     offered: hiding the working copy does not take a committed secret out of the repository's history, and offering
-     it would suggest it does.
-  2. its NAME is on the host's `looks_secret` lists, exactly as the call's facts flag a path `secret`: the names
-     `.env`, `.envrc`, `.netrc`, `_netrc`, `.npmrc`, `.pypirc`, `.pgpass`, `.git-credentials`, `.htpasswd`,
-     `credentials`, `credentials.json`, `credentials.db`, `known_hosts`, `authorized_keys` and `hosts.yml`; a name
-     starting `.env.` but the three templates; a name starting `id_`; and the suffixes `.pem`, `.key`, `.p12`, `.pfx`,
-     `.jks`, `.keystore`, `.kdbx`, `.gpg`, `.asc`, `.ovpn` and `.tfvars`. Matched case-insensitively on the last
-     component.
+     its git belt (window-ml-host `src/gitfacts.rs`): the person's global and system config off
+     (`GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`), `core.fsmonitor=false`, no optional locks, no prompt and
+     no pager, so a root not yet trusted runs none of its own code; `ls-files` runs no hook or filter and writes
+     nothing. A root that is not a git work tree gets no offer. A tracked file is not offered: hiding the working copy
+     does not take a committed secret out of the repository's history, and offering it would suggest it does.
+  2. its NAME is on the host's file-name lists (`looks_secret`, window-ml-host `src/facts.rs`): the names `.env`,
+     `.envrc`, `.netrc`, `_netrc`, `.npmrc`, `.pypirc`, `.pgpass`, `.git-credentials`, `.htpasswd`, `credentials`,
+     `credentials.json`, `credentials.db`, `known_hosts`, `authorized_keys` and `hosts.yml`; a name starting `.env.` but
+     the three templates (`.env.example`, `.env.sample`, `.env.template`); a name starting `id_`; and the suffixes
+     `.pem`, `.key`, `.p12`, `.pfx`, `.jks`, `.keystore`, `.kdbx`, `.gpg`, `.asc`, `.ovpn` and `.tfvars`. Matched
+     case-insensitively on the last component. This differs from `looks_secret` in one way: `looks_secret` also flags
+     any path with a component in `.ssh`, `.gnupg`, `.aws`, `.azure`, `.kube`, `.docker`, `.password-store`, `Keychains`
+     or `.config/gcloud` and `.config/gh`, and here an ignored directory of those names is offered as ONE row (hiding
+     the directory), never one row per file inside it. Both exempt the three templates (`looks_secret` checks
+     `DOTENV_TEMPLATES`, window-ml-host main `090fe14f`).
 
   No file's contents are read for the offer: no parser, no entropy test, no key-name guess. A file a default already
   holds (a dotenv name, a credential file at a root's top) is listed as already held, not offered.
-- **Bounds.** At most 256 files are offered. A longer list is cut, and the card says how many more there were, so an
-  offer never looks complete when it is not.
+- **Bounds.** The scan is streamed, never the whole list in memory: the host reads `ls-files`' output as it comes,
+  stops after 100,000 ignored paths or 10 seconds, whichever is first, and keeps the matches shallowest first, so a
+  `node_modules` fixture full of `.pem` and `.key` files cannot crowd out a `.env` at the root. At most 256 rows are
+  offered. When the scan stopped early or the rows were cut, the card says so and how many more matched, so an offer
+  never looks complete when it is not.
 - **The card** shows the root, then one row per file: its path relative to the root, the list entry that matched (the
   name, the `.env.` prefix, the `id_` prefix or the suffix), and a checkbox, unchecked. Applying writes one global
   `hide` entry per checked row, `origin: "card"`. The card says that a hidden file's name stays listed and its content
   is held from every reader, and that the entries can be removed on the policy page. Dismissing it writes nothing; the
   offer comes again only if the root is added again.
 - **Whose card.** It follows the person's own gesture of adding a root in DevTools Settings, outside any run, so no
-  model sees it and none can trigger it. A root set at the machine for remote use (`hub-roots`) is offered at the
-  machine only.
+  model sees it and none can trigger it. A root set at the machine for remote use (`hub-roots`) gets no offer until a
+  surface exists where the person adds one at the machine; there is none in the extension today.
+- **Limits.** A nested repository and a submodule are not descended into: `ls-files` answers for the root's own work
+  tree only, so their ignored files are not offered. A file that becomes ignored or is created after the root is added
+  is not offered later; the offer is made once, when the root is added.
 
 **Rows the build lands with.**
 - `show .env.example` in the linked-template shape is refused with its reason, and the list is unchanged.
