@@ -96,6 +96,13 @@ test("warningsFor: a test in the committed baseline is known, not new, however t
     assert.equal(warningsFor(r).length, 1);                                                          // unknown: new
     assert.deepEqual(warningsFor(r, { baseline: { "tests/a.test.mjs": { "slow by design": 5900 } } }), []);
 });
+test("warningsFor: the file's first top-level test carries its before() hooks, so (c) does not compare it with its peers", () => {
+    // tests/pkg-scan-py.test.mjs boots Pyodide in a module-scope async before(): node:test charged ~5 s of it to the first row.
+    const r = run([{ file: "tests/a.test.mjs", tests: [{ ...t(6000, "first"), first: true }, t(5, "a"), t(5, "b")] }]);
+    assert.deepEqual(warningsFor(r), []);
+    r.get("tests/a.test.mjs").tests[0].first = false;
+    assert.equal(warningsFor(r).length, 1);
+});
 
 // --- parsing the reporter's lines ---
 
@@ -121,6 +128,25 @@ test("reporter: a real node:test child yields a file wall time that includes a l
     assert.equal(f.file, "leak.test.mjs");
     assert.deepEqual(f.tests.map((x) => x.name), ["quick"]);
     assert.ok(f.wall - f.sumTop > 500, `wall ${f.wall} sum ${f.sumTop}`);
+    rmSync(d, { recursive: true, force: true });
+});
+test("reporter: a real node:test child charges a top-level before() to the first top-level test, which is marked first", () => {
+    const d = realpathSync(tmp());
+    const rows = (name, body) => {
+        writeFileSync(path.join(d, name), `import { test, before, describe } from "node:test";
+before(async () => { await new Promise((r) => setTimeout(r, 400)); });
+${body}`);
+        const out = path.join(d, `${name}.jsonl`);
+        spawnSync(process.execPath, ["--test", `--test-reporter=${path.join(ROOT, "scripts", "test-times-reporter.mjs")}`, `--test-reporter-destination=${out}`,
+            path.join(d, name)], { cwd: d, env: Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== "NODE_TEST_CONTEXT")) });
+        return [...parseRun(readFileSync(out, "utf8"), d).values()][0].tests.map((x) => [x.name, x.first, x.ms > 300]);
+    };
+    // A describe's before() is the suite's, not its first test's.
+    assert.deepEqual(rows("a.test.mjs", `test("one", () => {}); test("two", () => {});
+describe("S", () => { before(async () => { await new Promise((r) => setTimeout(r, 300)); }); test("inner", () => {}); });`),
+    [["one", true, true], ["two", false, false], ["inner", false, false]]);
+    // A skipped first test takes the hook and is not recorded, so the next one is neither charged nor marked.
+    assert.deepEqual(rows("b.test.mjs", `test.skip("skipped", () => {}); test("one", () => {});`), [["one", false, false]]);
     rmSync(d, { recursive: true, force: true });
 });
 
