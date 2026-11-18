@@ -7,8 +7,9 @@ import type { NeutralMessage } from "../contract/contract-chat";
 import { heldTail, redactedLine, scrubRegistry, type RegistrySub } from "../secret-registry";
 import { registryIsReady, registryReady, registrySubsNow } from "./sw-secret-registry";
 
-/** The settings `secretsOf` reads. */
-const SECRET_KEYS = ["chatUrl", "apiKey", "modelFilter", "priceSnapshotUrl"] as const;
+/** The settings `secretsOf` reads. With the legacy site list, exactly the `secret` class of
+ *  setting-class.ts (tests/setting-class.test.mjs holds the two together). */
+export const SECRET_KEYS = ["chatUrl", "apiKey", "modelFilter", "priceSnapshotUrl"] as const;
 /** How many replaced settings are remembered. */
 const RETIRED_MAX = 8;
 

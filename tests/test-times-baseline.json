@@ -1,0 +1,522 @@
+{
+  "about": "p90 in ms of each test at or above 500 ms, from one machine's test history; refresh: node scripts/test.mjs --timings-baseline",
+  "tests": {
+    "tests/agent.test.js": {
+      "agent_api_docs ships the generated window.ml reference in the default registry": 6000,
+      "agent_api_docs takes a `pipe`, so the reference reduces to LINES rather than sections": 6000,
+      "agent_api_docs: a bad pipe stage is an actionable message, never a lost step": 3000,
+      "agent_api_docs: a piped call neither marks sections seen nor greps their stubs": 9000
+    },
+    "tests/background.test.js": {
+      "CAPTURE_TAB waits out a transient rate-limit quota and retries (a screenshot burst)": 1100,
+      "FETCH_LLM: a rate limit relayed as a 400 (OpenWebUI passing OpenRouter's limit through) is backed off like a 429": 500,
+      "FETCH_LLM: repeated 429s give up after the retry cap with a clear error (never hangs)": 1000,
+      "FETCH_URL: the value store's budget is the setting, and each eviction or refusal is in the housekeeping log": 2300
+    },
+    "tests/backup-format.test.mjs": {
+      "the decryptor opens a sealed file that decompresses to exactly the budget": 1200,
+      "the decryptor refuses a sealed decompression bomb one byte past the budget, and writes nothing": 1000,
+      "the decryptor refuses every hostile input the module refuses, and writes nothing": 1600,
+      "the default output cap is LIMITS.outputBytes: a bomb one byte past 1 GiB is refused, without being held whole": 3200,
+      "tools/wmlbak-decrypt.mjs writes the same bytes as the module, by passphrase and by recovery key": 600
+    },
+    "tests/backup-inventory.test.mjs": {
+      "every ml_ storage key in src/ is classified": 8000
+    },
+    "tests/bench-box.test.mjs": {
+      "the client reads every frame through lines split across reads, anchors the server's clock on the hello, and reconnects": 1000
+    },
+    "tests/bench-cli-help.test.mjs": {
+      "--help prints the script's header and exits 0, for both": 700,
+      "an unknown flag, or --when-full given something else, is an error naming what it takes (a typo never runs the default)": 900
+    },
+    "tests/bench-memory-budget.test.mjs": {
+      "a cell let start counts its browser as on its way, for the next cell and in the ledger, until PENDING_MS": 800,
+      "a finished sweep's page server is in the ledger from its spawn; one that never comes up is stopped and dropped, not left unseen": 600,
+      "a hand-set budget drops the free-memory reserve: the limit alone bounds it": 700,
+      "a sweep's budget keeps every reading for the chart, thinned past 600, the first and the latest kept": 2000,
+      "a sweep's budget says no at the limit only when active, and says up front how many runs it can hold": 2200
+    },
+    "tests/bench-memory-limit.test.mjs": {
+      "a running budget takes a changed machine-wide limit up on its next measurement, says so, and keeps no reserve under it": 800,
+      "a sweep started with --memory-limit keeps it whatever the machine-wide limit becomes": 700
+    },
+    "tests/bench-page.test.mjs": {
+      "one running run's badges count together: the Running card, the Answers header and the Runs table": 2300
+    },
+    "tests/bench-serve.test.mjs": {
+      "a page that stops reading is skipped until it drains, then sent the newest state: never every frame held in memory": 4100
+    },
+    "tests/bench-status.test.mjs": {
+      "the writer writes at most every so often, the latest state lands, it builds the state only to write it, and flush writes now": 1000
+    },
+    "tests/build-pin.test.mjs": {
+      "a pyodide-core/ whose .pin disagrees with tools/pyodide-dist.json fails the build, names the mismatch, and leaves dist/ byte-identical": 1300
+    },
+    "tests/builtin-registry.test.mjs": {
+      "check-tools passes on the repo as it is": 700
+    },
+    "tests/builtin-texts.test.mjs": {
+      "a page-built run's exported config.tools carry the descriptions and schema sent to the model, on every surface": 500
+    },
+    "tests/chart-gestures.test.mjs": {
+      "live on a sweep still running follows the clock: the window ends now, and grows as it goes": 1400
+    },
+    "tests/clean-browser-orphans.test.mjs": {
+      "runner killed by SIGHUP: the browser and its dir are gone": 1200,
+      "runner killed by SIGINT: the browser and its dir are gone": 1200,
+      "runner killed by SIGKILL: the browser and its dir are gone": 1400,
+      "runner killed by SIGTERM: the browser and its dir are gone": 1500
+    },
+    "tests/click-hide.test.mjs": {
+      "a shell that never acks (the page holds its main thread) gets no click: it is refused within the bound, and the hide is taken back": 500,
+      "a worker hide whose show never comes lifts on its own": 2200
+    },
+    "tests/dom-query.test.mjs": {
+      "anonymousTag is a valid custom-element name with no ml- in it, fresh each call": 900
+    },
+    "tests/event-cache.test.mjs": {
+      "a cache that never answers does not hold a session on 'Loading…': it opens the ordinary way": 1800,
+      "a history that changed while the app was closed replaces the copy: the runtime's reset wins": 1000,
+      "a later launch replays the copy at once, then resumes from it: the runtime sends only what is new": 1000,
+      "forgetting the cache clears every kept session: a device that changes accounts replays none of the last one": 900
+    },
+    "tests/gallery.test.mjs": {
+      "shot --variant screenshots the named variant's tile, not the first": 4500,
+      "the tagged layers carry their flows, the crosshair its reason, and every flow file exists": 1600
+    },
+    "tests/hub-connection.test.mjs": {
+      "images over the limit are re-encoded smaller until the command fits, and the person is told": 500
+    },
+    "tests/hub-file-put.test.mjs": {
+      "ADVERSARIAL: a device holding only `view` can neither send a chunk nor ask what the runtime holds, whichever scope it declares": 3100,
+      "a PDF past the hub's limit goes ahead in chunks; the command names it by hash and the handler gets the bytes back": 600,
+      "a PDF past what this hub takes is refused before a chunk is sent": 500,
+      "a file the runtime already holds is not sent again; one it holds part of is sent only the rest": 500,
+      "at most four chunks are unanswered: with the runtime holding its answers, the fifth is not sent": 900,
+      "progress: a file the runtime holds whole reports nothing; one it holds part of starts at that share": 600,
+      "progress: a send reports the share accepted after file.have and after each chunk, rising to 1": 500
+    },
+    "tests/hub-host.test.mjs": {
+      "a reconnecting host backs off after a failed open, and reconnect() tries at once": 1600,
+      "a reconnecting host moves every subscription onto the new connection: nothing repeated, nothing lost": 1100
+    },
+    "tests/hub-pair-flow.test.mjs": {
+      "an account, a runtime paired to it, and a phone the runtime pairs as a delegate": 600
+    },
+    "tests/hub-runtime.test.mjs": {
+      "the allowlist: devices seen are listed, a revoked one is refused at once, and the runtime reconnects to rotate": 1100
+    },
+    "tests/isolated-pointer.test.mjs": {
+      "UPGRADE: an isolated exec that read a pointer before part 4b reads it the same: its text, facts, JSON and a pipe named as a literal": 1300,
+      "a pipe at the edges (empty, padded, blank or non-string stages, an unterminated quote, many or long stages) gives the same text or error through .pipe() in an isolated world as through the read-only path and the main world": 2600,
+      "a stored table evicted between calls fails with the store's reason on every path, never with the preview": 3900,
+      "each path runs where it claims: the worker's survey, a user-script world, a CDP world, the page's main world": 10400
+    },
+    "tests/lapsed-ask-redteam.test.mjs": {
+      "RED TEAM: a page that starts its own run under a session hash that has gone policies is not told that session's reason (a run id the page names is not the sender)": 600
+    },
+    "tests/live-hold.test.mjs": {
+      "a held live stream folds away when no step opens to take it, and stays gone": 900,
+      "a held live stream goes at once when a step is opening to take its characters, and the step draws only after it has gone": 500,
+      "a stream that starts right after a collapse waits a beat; one already on screen is not taken off it; nothing waits outside the calm view": 1100,
+      "the calls that have no step yet stay where they are drawn, while the first one's step takes over": 700
+    },
+    "tests/ml-facade.test.mjs": {
+      "a member call sends one request: seq, call and args, and nothing it did not get from the cell": 800
+    },
+    "tests/ml-sh-redteam.test.mjs": {
+      "a script that does not name ml.sh, isolated for another reason, cannot reach the sh op by posting on its world's channel itself": 600,
+      "a script that names ml.sh never runs in the page's world: world \"page\", no isolation, world \"isolated\" without it, or an unapproved page are refused, and the host is never reached": 500,
+      "a script that reaches ml.sh by a name the router does not read gets no ml.sh, in whatever world it runs, and the host is never reached": 700,
+      "cancelling the run while an ml.sh call runs cancels the process on the host": 4600,
+      "cancelling the run while an ml.sh call waits on the person starts nothing, and the host discards the call": 4600,
+      "no message type from any tab sender, with ml.sh on and a call waiting on the person, reaches the process host or answers the call's ask": 4500,
+      "with ml.sh on and its port closed (idle, or the host exited), no message from a tab sender starts the host again; the Settings page's refresh does": 2200
+    },
+    "tests/move-symbols.test.mjs": {
+      "CLI: a blocked move writes nothing and exits 1; a clean one writes and exits 0": 900
+    },
+    "tests/nav-arrival-host.test.mjs": {
+      "Go back on the deny card takes the tab back, and End run stops the run": 800
+    },
+    "tests/nav-handover.test.mjs": {
+      "HALTING: a page's START_RUN and RESUME_RUN while the run restore never finishes are refused within the bound, and run nothing": 10000,
+      "the hand-over is the browser's commit, not the page's word: a destination that never re-adopts the run still has it handed over": 9100
+    },
+    "tests/nav-navigate-redteam.test.mjs": {
+      "namedNav is single-use: a redirect on from the named page is judged and asked about, the pass having been for that one arrival": 700
+    },
+    "tests/pkg-install-py.test.mjs": {
+      "a package unpacked after the lockdown imports in a hardened cell: the test passes": 4600
+    },
+    "tests/pkg-verdict.test.mjs": {
+      "parity: the verdict pypi.py gave each of the 2,224 projects, and the same blocker": 700,
+      "probe: the verdict against what installing and importing did, over the top 2,000": 600
+    },
+    "tests/policy-lift.test.mjs": {
+      "an ALLOW lifted over a nullable fact agrees on the null cell too: the tree, like the realm, does not fire there": 6600,
+      "every lifted corpus policy agrees with its source, in the real policy realm, on every cell": 13300
+    },
+    "tests/popup-whitelist.test.js": {
+      "popup: This site shows the agent level on its own line, hidden while the site itself is not allowed": 500,
+      "popup: each agent level offers its buttons, and each sends the agents edit for this origin with the level it names": 1100,
+      "popup: self-approval is never one click: Review… opens the confirmation, whose Allow is disabled for a second": 1300
+    },
+    "tests/propose-policy-redteam.test.mjs": {
+      "HALTING: a `when` that is cheap on the probe and exhausts its budget on every recorded call is measured in bounded time": 600
+    },
+    "tests/pyodide-no-cdn.test.mjs": {
+      "no-cdn: Pyodide's default options try the CDN, and the preload refuses it in under 1 s, naming the wheel and the fix": 600,
+      "no-cdn: the sandbox's options make no fetch at all for a missing wheel, and it fails in under 1 s": 800
+    },
+    "tests/python-bench-stop-offscreen.test.mjs": {
+      "PY_INTERRUPT on a started bench run writes 2 into its flag, and a worker that answers in time is not killed": 1200,
+      "a second PY_INTERRUPT while stopping answers interrupted and does not re-arm the kill": 1100,
+      "a started bench run that never answers is killed after BENCH_STOP_KILL_MS with stopped: restarted, and the kill is logged as stopped": 1000,
+      "a started cell of another principal (even one that keeps its namespace), and a non-persist cell on own, are not interrupted": 1200
+    },
+    "tests/python-bench-stop.test.mjs": {
+      "a stop written while a C call runs ends that script, never the next one": 1900,
+      "a stop written while a Python loop runs ends it with KeyboardInterrupt, and the bench's variables are kept": 5000,
+      "the file guard SIGKILLs its own process when the file does not disarm it in time, and lets a disarmed one go": 700
+    },
+    "tests/python-bridge-gate.test.mjs": {
+      "an approved cell cannot reach a bridge by import js": 4800,
+      "numpy and pandas cells run, and a package's pyodide-aware import at its own import time is answered": 600
+    },
+    "tests/python-install.test.mjs": {
+      "a lock package the extension does not ship is refused as not-shipped, naming where it is": 4600
+    },
+    "tests/python-lease-offscreen.test.mjs": {
+      "PY_CANCEL interrupts the cell; a cell that answers in time is not killed and the cancel says interrupted": 1100,
+      "PY_CANCEL kills the sandbox when the interrupt does not land in time, and says killed": 1000,
+      "a cap is honoured only on the worker's own leased cell: a content script's PY_RUN naming one still has the 15 s cap, and a cell with no cell id too": 1700,
+      "a cell past the cap is killed with a message that states the cap applied, not the ceiling": 1500,
+      "a leased cell's start is told to the service worker by its id, and with no cap named its limit is the 60 min detached ceiling, not 15 s": 15200
+    },
+    "tests/python-lockdown.test.mjs": {
+      "step2: after boot the realm is frozen and the lockdown latch is set": 3300,
+      "step2: assigning Object.prototype.constructor is refused, from JS and from a cell, while an ordinary object's still works": 1200
+    },
+    "tests/python-matplotlib.test.mjs": {
+      "a cell that plots and returns nothing comes back as one PNG of its figure, hinted 'figure'": 5700,
+      "a cell whose figure epilogue raises a BaseException still has everything it scheduled cancelled": 800,
+      "nothing REACHABLE from a module matplotlib brought in is the JS bridge, after a cell tried every backend": 800,
+      "the 4-megapixel cap holds for a figure whose artists reach far outside it": 500
+    },
+    "tests/python-run-namespace-py.test.mjs": {
+      "a name from cell 1 of a run is readable in cell 2 of the SAME run, and not from another run": 2500
+    },
+    "tests/python-spend-queue.test.mjs": {
+      "a flood of queued callbacks is cut at the deadline: the spend returns within its bound and the cell is refused, naming both": 3500,
+      "a flood with no task left is cut silently when the cancel returns: the value is returned": 1300,
+      "an entry queued before the deadline is cut once it has passed and never runs; one queued after it runs": 1900,
+      "the dropped task's coroutine is closed in the spend, before anything collects it, with none of its handlers run": 7500,
+      "the dropped task's handler never runs: not in the spend, not when a later cell collects it": 2400,
+      "the largest flood under the kill, with a heavier callback per entry: cut and named, or a MemoryError, never a hang": 11600,
+      "the next cell reaches none of what the cut dropped: no callable, no context, nothing they held": 7800
+    },
+    "tests/python-worker-bridges.test.mjs": {
+      "a cell posted with bridges: true reaches js, and the next cell without it is refused again": 4800
+    },
+    "tests/python.test.mjs": {
+      "ADVERSARIAL pyarrow: its preparation leaves no route to `js` for a hardened script": 600,
+      "ADVERSARIAL stored table: the buffer is gone after loading, and what Python holds is plain data with no route to `js`": 600,
+      "a frame inside its preview stores nothing, and one Arrow cannot hold still reports its size": 600,
+      "bench: `df` survives a run — the injected-data prelude that resets it is not run here": 500,
+      "bench: `return`, a trailing expression and a loop variable all behave as they do elsewhere": 500,
+      "bench: a traceback names the line the user wrote, as a per-run script's does": 500,
+      "bench: one namespace cannot see another's, and the model's namespace sees neither": 800,
+      "bench: what one run defines, the next can use — values, functions, imports": 500,
+      "completion: a module attribute completes by following the import, without running it": 1000,
+      "completion: a pandas frame completes from pandas' own stubs — even read_csv of a file that is not there": 1300,
+      "completion: the prelude's names complete with NOTHING kept — no import, no namespace": 800,
+      "completion: the sandbox is hardened only for the call, and restored after": 1200,
+      "pyarrow: a hardened script round-trips a DataFrame through Parquet and Arrow IPC, after pandas ran before it": 600,
+      "run dict loaders: a cell that passed an image is redirected; a run with none is not handed another run's": 800,
+      "run dict loaders: a re-import of Image neither loses the redirect nor leaks another run's image": 500,
+      "run dict loaders: tables are served per run, and a later run's prelude installs nothing over the first": 1600,
+      "run dict loaders: the bench is never served a run's image or tables": 800,
+      "run dict: PRELUDE_DATA_KEPT reads the COERCED INJECTED_TABLES_JSON, not a raw JsProxy": 800,
+      "run dict: a cell that passes an image gets img/img_np/H/W, and a later cell without one keeps them": 500,
+      "run dict: a cell that poisons INJECTED_* to a JsProxy is re-coerced by the NEXT cell": 800,
+      "run dict: a cell's tables are bound by name and in `tables`, and stay for a cell that passes none": 800,
+      "run dict: a second cell with a null injection gets None, never a JsProxy": 1000,
+      "run dict: bench (persist true) injects no INJECTED_* names and compiles no coercion": 500,
+      "run dict: no other host-injected name reaches the dict uncoerced": 1100,
+      "run dict: the coercion covers every injected name injectInputs sets, and nothing else leaks as a JsProxy": 800,
+      "stdout past the output ceiling: kept up to it, the rest counted, nothing teed past it": 500,
+      "stored table: delimited text is re-read with the PREVIEW's delimiter, columns and header decision": 700,
+      "sympy: loadable + sympy.latex(expr) yields a LaTeX string (the `| latex` companion)": 1600,
+      "traceback: the line number is the line the USER wrote": 3500
+    },
+    "tests/readonly-exec.test.mjs": {
+      "ADVERSARIAL (cost): a try/catch cannot swallow the budget, at the REAL budget": 700,
+      "the budget leaves room for a realistic survey of a large page": 700,
+      "the guard's remaining branches: an expanding coercion is still refused, an enormous length is refused unread, a lying length is refused": 1400
+    },
+    "tests/readonly-jsonpath.test.mjs": {
+      "HALTING: `$..[?@..x]` is quadratic in depth, and every node it visits spends the step budget": 600
+    },
+    "tests/readonly-pipe.test.mjs": {
+      "ADVERSARIAL: try/catch cannot swallow a pipe's refusal — of a pattern, of a size, or of the budget": 800
+    },
+    "tests/readonly-soundness.test.mjs": {
+      "HALTING: a Map or a Set does not hide an array that shares its parts": 1800,
+      "HALTING: a long string built by + is charged where it is hashed, compared, coerced or sliced": 1600,
+      "HALTING: an `ml` member's arguments are walked, except the two that read them as data": 800,
+      "HALTING: an arrow the host calls cannot hand it an array that shares its parts to expand": 1300,
+      "HALTING: no host call or coercion can expand an array that shares its parts": 4600,
+      "HALTING: printing or returning an array that shares its parts reaches the person, not a 2^40 serialisation": 700,
+      "a replacer arrow that returns its match is counted at the receiver's size, not twice it": 800,
+      "the charge leaves ordinary surveys alone: a needle list over a long text, a reduce that concatenates, keys per item": 1500
+    },
+    "tests/redteam-agent-level-2.test.mjs": {
+      "a later page turn cannot raise the per-turn step budget the card showed without asking (START_RUN maxSteps, RESUME_RUN maxSteps)": 3100,
+      "a later turn cannot change what the model reads in a tool's description without asking": 2000
+    },
+    "tests/redteam-agent-level.test.mjs": {
+      "UPGRADE: a site allowed before the agent level existed is asked on its first START_RUN, never run and never refused": 500
+    },
+    "tests/redteam-answer.test.mjs": {
+      "what the page replays into a run's set stays within chrome.storage.session's quota, however many calls report it": 1000
+    },
+    "tests/redteam-bench-stop.test.mjs": {
+      "RED TEAM: an ignored Stop arms no kill, so the bench's worker is still alive past the bound": 2500
+    },
+    "tests/redteam-exec-page-leg.test.mjs": {
+      "CONTROL: a plain survey reaches the page's leg, which evaluates it, and no gate is asked": 700,
+      "RED TEAM: a survey naming current is never handed to the page to evaluate": 600,
+      "RED TEAM: a survey naming pointer is never handed to the page to evaluate": 600,
+      "RED TEAM: a survey naming sh is never handed to the page to evaluate": 600,
+      "RED TEAM: a survey on an unapproved page keeps its page leg: the run is the person's, and the site is what is unapproved": 600
+    },
+    "tests/redteam-geometry.test.mjs": {
+      "a stitch refused mid-way (a slow tile) leaves the page as it found it: the pinned header visible again and the scroll restored": 800,
+      "an answer just inside the per-question bound is read; one just past it refuses the call": 500
+    },
+    "tests/redteam-host-install.test.mjs": {
+      "RED TEAM: no page-startable type, under any shell- or attention-shaped name, is handed a host fact or starts the host": 12200,
+      "RED TEAM: the host-not-connected item is read only over an extension page's port, and no page message posts or dismisses it": 2700,
+      "RED TEAM: the install line is the pinned release plus chrome.runtime.id, no message carries it, and an id that is not 32 letters a-p is refused": 13800,
+      "RED TEAM: with ml.sh off nothing starts the host at load, on the capabilities, or when the install line is built; the click does": 2700
+    },
+    "tests/redteam-isolated-channel.test.mjs": {
+      "a CDP binding call carrying a read is served only from the isolated world's context on the run's tab under the call's nonce, and the answer is evaluated in that context alone": 600,
+      "a call's channel closes with it: its nonce gets nothing after the exec ends, nor while a later exec of the same run is in flight": 600,
+      "a user-script message under the live nonce is answered only for the call's own tab, top frame, document and world: every other sender shape gets nothing": 600,
+      "nothing that crosses the channel reaches the page: no message the run's tab is sent carries a column the world read or a re-pipe's text": 1000,
+      "the channel is not a page message: ISO_EXEC_ASK is outside HANDLE_MAP, and sent through runtime.onMessage from the run's tab with the live nonce it gets no answer": 1600,
+      "the world gets only what its approved source named: another stored table, a read index it was not sent, and a read that failed are refused": 1900
+    },
+    "tests/redteam-lifetimes-config.test.mjs": {
+      "RED TEAM: no message a page posts sets either lifetime, and the model knob writes the model alone": 4800
+    },
+    "tests/redteam-move-run.test.mjs": {
+      "a live turn's tab is no page's to re-point: a page's whole surface leaves the gate's owner check on its own tab": 2500,
+      "a replaced tab's live turn follows only the id onReplaced names: the old id can no longer answer for it, the new one can, and its sends go there": 500,
+      "every type a page can start, sent from a page approved to use window.ml with a run id and a destination tab, moves the run nowhere": 2100,
+      "the move type refuses a tab sender and admits only the person's extension surfaces, on a settled run (MOVE_RUN.md, \"Security\")": 2000
+    },
+    "tests/redteam-page-run-builtby.test.mjs": {
+      "a page START_RUN naming another origin as pageOrigin gets no free navigate or fetch_url there: each is gated": 600,
+      "a page START_RUN with origin { surface: \"hud\" } carries no origin: its prompt is not stamped as typed on an extension surface": 1200,
+      "a page run with approvalRouting \"external\": its gate still blocks, nothing the page posts resolves it, and only the worker's channel does": 700,
+      "a run on its own page has its own origin consented: a same-site navigate and fetch_url raise no gate, another site's do": 2400,
+      "approvalRouting from a page: \"both\" and an unknown value still show and block the gate; \"ui\" keeps it off the external channel": 2500,
+      "the retired autoApproveSameOriginAuth: a same-origin as-you fetch_url is free whatever the page or a saved config says; a cross-origin one is gated": 900
+    },
+    "tests/redteam-page-run-moved.test.mjs": {
+      "RED TEAM: a hash another tab or another site started cannot be started again, so no page can repoint its builder": 2000
+    },
+    "tests/redteam-presence-ask.test.mjs": {
+      "a hidden page, with the stub's script in it all the same, gets no answer to its request, no window message and no side effect": 6500,
+      "after a grant the full API replaces the stub in the open page with no reload; a reference the page kept to the stub is inert": 1600,
+      "once the origin is denied, the stub's registration goes and an open page's request gets no answer at all": 1600,
+      "once the origin is setting off, the stub's registration goes and an open page's request gets no answer at all": 1600,
+      "once the origin is unmarked, the stub's registration goes and an open page's request gets no answer at all": 1600
+    },
+    "tests/redteam-presence-race.test.mjs": {
+      "a closed gate that may ask (the stub page) reports nothing": 2000,
+      "a gate still pending (the worker has not answered) reports nothing": 2000,
+      "a page cannot make the content script send it: forged posts on window, and on the port, are not relayed": 3400,
+      "a page script that says hello before the timer fires cancels the report": 2300,
+      "a worker that answers late (first ask unanswered, retry opens) still yields exactly one report": 3200
+    },
+    "tests/redteam-presence.test.mjs": {
+      "on a hidden page whose page holds a port, nothing the worker sends reaches it while the gate is closed": 2000,
+      "the content script says PAGE_SCRIPT_MISSING once on an open page with no page script, and never on a page that has one or is hidden": 2000
+    },
+    "tests/redteam-py-namespace.test.mjs": {
+      "a turn's end hands the sandbox exactly the person's pythonIdleMinutes, and the between-turns decision returns it unchanged, however large": 500
+    },
+    "tests/redteam-python-lockdown.test.mjs": {
+      "after boot the PyProxy kinds still convert: tuple, set, generator, ndarray, iterator, memoryview": 2400,
+      "an approved cell reaches no js through a package that imported it at boot (unix_timezones.js, pyarrow's timezone shim)": 800
+    },
+    "tests/redteam-python-sandbox.test.mjs": {
+      "P1: a hardened cell cannot reach a JS function constructor through an object pyodide.ffi hands back": 3400,
+      "P2-bound control: the same task with an empty finally is stopped at the budget": 1000,
+      "P2-bound mutation and the C-function path, in child processes": 15000,
+      "P2-bound on the stock core: the sys.monitoring events the bound needs exist, so a spinner is stopped by the bound": 1000,
+      "P2-bound property (pin 18): the raising-settrace case is stopped at the finally's first line, and bound off it hangs (child processes)": 11700,
+      "P2-bound: a cell's own trace hook is replaced for the spend and left as None after it": 1100,
+      "P2-bound: a finally that runs after the bound stopped its task is stopped too, at its first line": 1000,
+      "P2-bound: a handler that turns the tool off from C and then spins is left to the worker's kill (child process)": 11300,
+      "P2-bound: a monitoring tool the cell left is cleared at the spend's start, and the result refused naming it (child process)": 2500,
+      "P2-bound: a suspended coroutine the stopped task drops is finalized during the spend with none of its handlers run": 1100,
+      "P2-bound: a task that awaits in its finally and spins in a nested finally is stopped": 1000,
+      "P2-bound: a task that spins after catching the cancel is stopped, and the cell's result refused": 1000,
+      "P2-bound: a task that spins in a handler that catches everything, over and over is stopped, and the cell's result refused": 1000,
+      "P2-bound: the spend's mark goes to the host once the spend starts, and never for a cell that left no task": 1000,
+      "P2-forge: a cell that rebinds call_soon on an instance attribute on the loop and leaves a task returns its value, the next cell finds call_soon restored, and the forged chain stops growing": 500,
+      "P2-forge: a cell that rebinds call_soon on the class's __getattribute__ and leaves a task returns its value, the next cell finds call_soon restored, and the forged chain stops growing": 500,
+      "P2-orphan-loop: a cell that schedules on a loop it made with new_event_loop does not crash the next pump": 2600,
+      "P5-cross: a patched function is not visible after the principal changes": 2900,
+      "acceptance: loadPackage of one wheel works after lockdown + strip": 2000
+    },
+    "tests/redteam-render-values.test.mjs": {
+      "a page-built run: a page's render is held to pageRead's caps in the pointer, and its text clipped for the model only in a run the worker holds: a 300,000-row table, a 20 MB capture, a long text": 1300,
+      "a worker-built run: a page's render is held to pageRead's caps in the pointer, and its text clipped for the model only in a run the worker holds: a 300,000-row table, a 20 MB capture, a long text": 1300,
+      "a worker-built run: python_exec over a pointer to a page's cut table is refused as a preview, never run over the rows held": 500,
+      "the sidebar draws a page's render descriptors as text: no markup, handler or script URL from any field becomes live": 1200
+    },
+    "tests/redteam-run-payload.test.mjs": {
+      "a malformed START_RUN from an approved page is refused with an error, reaches neither the backend nor the tab, and leaves the worker holding nothing": 1000,
+      "an approved page on another tab cannot resolve a page-built run's open approval gate by cancelling it; the run's own tab can": 600
+    },
+    "tests/redteam-tool-throw.test.mjs": {
+      "isolated: an exec whose world returns a value the worker cannot print is an error result, not the run's end": 1200
+    },
+    "tests/redteam-worker-shot.test.mjs": {
+      "a shell that is mounted but does not say where the extension's UI is in time (the page holds its main thread) gets no shot taken past it": 2000,
+      "every step of a worker shot is bounded: a page stalling every one of them gets a refusal in bounded time, never a hang": 8800
+    },
+    "tests/redteam.test.js": {
+      "GAIN blocked — a page cannot write ml_site_agents or ml_site_selfapprove through any page-started type, SITE_ACCESS included": 1700,
+      "PART 5 — a destination that blocks its own re-adopt still has the run handed over, and its page still gets nothing": 6800,
+      "a page that knows the run id cannot reach CANCEL_TOOL_IN_PAGE through the worker: its own CANCEL_TOOL_IN_PAGE or PAGE_TOOL_CANCEL tells no tab and does not end the run": 1200,
+      "requestAccess — a page a running agent opened is refused and recorded on the run, never shown; another tab asks": 15000,
+      "requestAccess — a sender that can never ask is refused and creates nothing; nothing reaches the backend, a tab or the screen": 800
+    },
+    "tests/request-access-bg.test.mjs": {
+      "RED TEAM: while a run drives the tab, its own trusted clicks are no gesture: a request then is refused, and one after the run is not": 500
+    },
+    "tests/review-look.test.mjs": {
+      "a full-page look in the worker composes each tile at its capture's real height: a capture shorter than the viewport leaves no undrawn band": 2400,
+      "a full-page look whose capture is the whole viewport stitches as before: viewport steps, the page's full height": 1800,
+      "a short capture on an eight-screen page takes the tiles it needs: the worker's tile bound grows with the step, the page is covered as far as a capture shows": 6000,
+      "a stitch the worker refuses after the page began it (a viewport that disagrees, a begin answered too late) still ends it, so the page's scroll comes back": 1300,
+      "a stitch whose captures show under half the viewport, or whose page scrolls past the rows a tile showed, is refused with a fixed sentence and still ended": 2400,
+      "the page host's stitch steps by each capture's real height too (stitchVia and composeStitch are shared)": 2400
+    },
+    "tests/run-start.test.mjs": {
+      "RED TEAM: a navigate the gate calls relative but the browser resolves to another origin asks first": 500,
+      "a navigate's spelling the gate calls relative still moves the tab to the other origin": 500,
+      "a worker python_exec's live stdout reaches only the run, even when a page call uses the same request id": 500,
+      "the page route is one decision: the tab channel and the panel channel agree for every case": 900
+    },
+    "tests/self-approval-origin.test.js": {
+      "every reader of the self-approval whitelist trusts the https origin only, for every sender shape": 600
+    },
+    "tests/session-publisher.test.mjs": {
+      "a device present when a session starts is handed its key, and reads the stream": 1600,
+      "a device that arrives mid-session reads what was published BEFORE it arrived": 1600,
+      "a device without `view` is handed no key, so it cannot watch even by naming the channel": 1600,
+      "the index's key reaches a device the same way a session's does, and the list reads back whole": 1600
+    },
+    "tests/setting-places.test.js": {
+      "PANEL_LAYOUT names exactly the sections each tab draws, with their titles": 600,
+      "every DEFAULT_CONFIG key with a row has its place in SETTING_PLACES, and every place's row carries the key": 700,
+      "every control in the panel is a setting's row or is listed as not a setting": 600,
+      "every rendered row whose key has a SETTING_TEXT entry shows that name, and its tooltip when it has one": 600
+    },
+    "tests/sh-lease.test.mjs": {
+      "a result that arrives between turns is parked, not queued, and logged; the next turn queues it once, with its true elapsed time, and it is delivered once": 1400
+    },
+    "tests/shell-session-relay.test.mjs": {
+      "a page that never answers still resolves the background's call, as no-answer": 3200
+    },
+    "tests/sidebar-answer.test.js": {
+      "answer render (sidebar): `| img` is HARDENED against abuse (external/js/html/svg/attr-breakout)": 500
+    },
+    "tests/sidebar-approval.test.js": {
+      "focus mode: a decided code step stays open while it runs and collapses once it settles; outside focus mode it stays open": 4400
+    },
+    "tests/sidebar-event-lane.test.js": {
+      "a card that vanishes mid-session: re-shape, keep the trace, say what happened": 2300,
+      "event lane: an eviction rules through the plot and names itself": 500,
+      "event lane: spans render, a tool step is one phased block, and clicking opens its step": 500,
+      "every displayed figure updates: no stale number survives a change": 1100,
+      "scrub strip: is there from the first samples, and narrows as the session outgrows the window": 4300,
+      "tooltips: a chart tip reads the DATAPOINT under the cursor; the row tip reads the present": 500
+    },
+    "tests/sidebar-live-call.test.js": {
+      "arrivals closer together than a tick do not postpone it: the reveal advances while they keep coming": 800
+    },
+    "tests/sidebar-resource.test.js": {
+      "ceiling note: names the right tool per vendor, and none for a runner we don't know": 700,
+      "history: an evicted model keeps its colour, and says it is gone": 4900,
+      "hover breakdown: a model above a loading runner tiles its floor edge for edge": 4200
+    },
+    "tests/sidebar-settings.test.js": {
+      "Settings: Allow this session, Always allow (with the agents box) and Deny each send that decision for the request's origin, and the section goes": 500,
+      "Settings: self-approval is never one click: Review… opens a confirmation whose Allow is disabled at first, and opening decides nothing": 1400,
+      "settings: the 'vision capable?' override is DISABLED (locked to Auto) for an Ollama default model": 500,
+      "settings: the 'vision capable?' override stays ENABLED for a cloud (unprobeable) default model": 500,
+      "settings: the default-model vision probe is DEBOUNCED — no per-keystroke MODEL_CAPS (keeps the datalist alive)": 600,
+      "settings: the vision (OCR) field reds INLINE when a KNOWN local model lacks vision — and NOT for unknown caps": 1200
+    },
+    "tests/sidebar-start-card.test.js": {
+      "start card: it expires at its own deadline with no word from the worker, and when the worker says it no longer holds it": 600,
+      "start card: no keyboard answer: Enter and Escape in the card decide nothing": 1200,
+      "start card: the buttons are disarmed and blank for their first second, then answer through the shell": 1300
+    },
+    "tests/start-page.test.mjs": {
+      "UPGRADE: with files supported and none attached, the command carries no files key": 500,
+      "a file over the cap is refused on a chat with its size and the limit, and goes to an agent run, which holds it": 900,
+      "a file that is not text is refused by name next to its chip and is not sent; a PDF gets its own sentence": 600,
+      "a pasted text file shows as a pill with its summary, and goes out on agent.start in files with the task": 600,
+      "a refused start keeps the text and the images, to try again": 600,
+      "a runtime that does not list attachFiles is never sent the field: the file is refused beside its chip, the picker offers images only": 600,
+      "a runtime that reads PDFs takes one as its bytes on a chat, offers .pdf in the picker, and refuses it on a run": 1000,
+      "a successful start empties the images and the draft": 600,
+      "an attached image goes out on agent.start with the task": 600,
+      "an attached image goes out on chat.start with the message": 600,
+      "an image with no text is enough to start, and a box with neither is not": 500,
+      "on chat.start the same, and a file alone is enough to start": 500,
+      "past eight images the strip says so and marks the ones over, the start waits, and removing one lets it go": 500,
+      "the x on a file pill removes that file": 500,
+      "two files that fit alone but not together: the second is refused, and removing the first frees it": 500,
+      "what the runtime makes of a started chat: the model gets the blocks, the transcript keeps the chip": 600,
+      "with no image the command carries no images key at all": 500
+    },
+    "tests/storage-ring.test.mjs": {
+      "a record nobody flushes is written a moment later": 1100
+    },
+    "tests/sw-redirects.test.mjs": {
+      "an event that never arrives is refused after HOP_EVENT_WAIT_MS, and a later fetch of the URL waits for the hold": 4100,
+      "events from a tab, a foreign initiator or a non-3xx are ignored, so the hop is unreadable": 6000
+    },
+    "tests/test-slot.test.mjs": {
+      "a detached job past its cap: its process group is stopped, the next job starts, the log says why, and wait exits 124": 600,
+      "a job that ignores SIGTERM: what is left of its process group gets SIGKILL after the grace": 2300,
+      "an attached run past its cap: its stderr says it was stopped at the cap, the record ends timedout, and it exits 143": 1400,
+      "batch: the CLI takes --kind batch --workers N and refuses a bad count with exit 2": 600,
+      "submit returns before the job runs; jobs run one at a time in order and record their exit codes": 500
+    },
+    "tests/test-times.test.mjs": {
+      "reporter: a real node:test child yields a file wall time that includes a leaked timer": 700
+    },
+    "tests/worker-page-read.test.mjs": {
+      "HALTING: a page that never answers a pageRead ends the call at the bound with the fixed sentence, and nothing runs on it": 15000,
+      "every image × table-source combination of a worker-run python_exec runs in the worker: the page is asked only for each page table, never sent the call": 500
+    },
+    "tests/worker-vision-host.test.mjs": {
+      "a full-page look in the worker: the page scrolls, the worker captures each tile and composes them, and the page is restored": 1800,
+      "a page whose tiles never report the last one gets eight screens at most, composed into a canvas no taller than eight screens": 4800,
+      "a question the page does not answer in time is refused after the per-question bound, with the fixed sentence; its late answer is not read": 600
+    }
+  }
+}

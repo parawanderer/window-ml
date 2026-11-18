@@ -119,7 +119,7 @@ import { PIPE_SYNTAX } from "../pointers/text-pipe";
  *  step 3, docs/spec/PROMPT_BUDGET.md): 12 models, pass rate held on all. The sentence against writing rows out as a
  *  markdown table is the measured part: without it DeepSeek V4 Pro retyped tables (re-emission 0.17 → 0.46). */
 export const tooltokensClause = (answer: boolean): string =>
-    "\n\nTOOL OUTPUT TOKENS. An `@tool:<id>` is a handle to one tool result, valid for the whole session. Set " +
+    "\n\nTOOL OUTPUT TOKENS. An `@tool:<id>` is a handle to one tool result. Set " +
     "`token: true`, or a short label (`token: \"the pricing table\"`), on exec / python_exec / look / locate / fetch_url " +
     "and the result ends with its `@tool:<id>`; a tool NAME (`@tool:exec`) means that tool's latest call. SHOW an output " +
     "by embedding it like an image: `![caption](@tool:<id>:out)` expands to the real table, image or value in place, " +
@@ -216,6 +216,26 @@ export const PYTHON_CLAUSE = "\n\nYou have `python_exec`. You predict tokens and
     "unit conversions and any other exact number come from a script you run, never from your head. Only the RETURNED " +
     "value is the output (`print()` is a debug log, so a script that only prints gives `null`); return a DataFrame for " +
     "a table meant for the user.";
+
+/**
+ * HOW LONG EACH THING THE MODEL KEEPS LASTS, in one list (docs/spec/ASYNC_CALLS.md, rule 4b). The two figures are the
+ * person's settings, read by `lifetimeFigures` (run-assembly.ts) from the constants that enforce them, never typed here.
+ * @param idleMin minutes a run's Python names survive between turns (`pythonIdleMinutes`); 0 never resets them for idleness
+ * @param capMin minutes a detached `ml.sh` call or cell may run (`detachedTaskMaxMin`, under the sandbox's ceiling)
+ * @param tokens the run has tool tokens: only then does the list name `@tool:` values (with them off the prompt says
+ *     nothing of the feature)
+ * @param shell `ml.sh` is named in the prompt (`shellClause`'s condition): only then is a detached call named beside a cell
+ */
+export const lifetimesClause = (idleMin: number, capMin: number, tokens = true, shell = true): string =>
+    "\n\nHOW LONG THINGS LAST. Python variables: this run; gone if the sandbox dies" +
+    (idleMin > 0 ? `, or after ${idleMin} min idle between turns` : "") + ". `/files/`: this session. " +
+    (tokens ? "`@tool:` values: this session; gone if the extension's worker restarts. " : "") +
+    `A detached ${shell ? "\`ml.sh\` call or cell" : "cell"}: runs on after your answer, to its end or ${capMin} min. ` +
+    "A fetch: this turn. A page-bound task: this page.";
+
+/** A pattern matching {@link lifetimesClause} with any figures, for `siteInstructions` to recognise it as the extension's. */
+export const LIFETIMES_RE: RegExp = new RegExp([7, 0].flatMap((i) => [true, false].flatMap((t) => [true, false].map((sh) => lifetimesClause(i, 8, t, sh))))
+    .map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/[78]/g, "\\d+(?:\\.\\d+)?")).join("|"), "g");
 
 // Appended when ml.agent({ unattended: true }) — a headless/scripting run with no human to approve.
 export const UNATTENDED_CLAUSE =

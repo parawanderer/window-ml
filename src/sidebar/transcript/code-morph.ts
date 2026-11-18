@@ -4,15 +4,15 @@
 // only ever changes whitespace, so the non-whitespace characters are the same sequence in both: character i of the live
 // block is character i of the new one, and no diff is needed. The live block hands over where each character sat as it
 // unmounts; the new block, on mount, draws one flying copy of each from there to its place (a FLIP) while the real text
-// is hidden for the length of it, over the same beat as the approval card's fade (`--calm-flow-ms`). The calm chat only. Anything that does not line up exactly (the live text is not a prefix of the new one,
+// is hidden for the length of it, over the same beat as the approval card's fade (`--calm-reflow-ms`). The calm chat only. Anything that does not line up exactly (the live text is not a prefix of the new one,
 // too many characters, reduced motion, nothing moved) draws nothing: the block simply appears, as before.
 
 import { HANDOFF_MS } from "./just-arrived";
 
 /** Most characters morphed; a longer script appears without it (one animated element per character). */
 export const MORPH_MAX_CHARS = 1500;
-/** How long a character takes to reach its place when the view does not say (`--calm-flow-ms`, chat.css). */
-export const MORPH_MS = 260;
+/** How long a character takes to reach its place when the view does not say (`--calm-reflow-ms`, chat.css). */
+export const MORPH_MS = 420;
 
 /** How many times a live tool-call block must have grown to count as watched being written (see {@link wasStreamed}). */
 export const STREAMED_MIN_ARRIVALS = 3;
@@ -91,7 +91,7 @@ export function morphInto(pre: HTMLElement, now = Date.now()): void {
     if (!old || now - old.at > HANDOFF_MS) return;
     const calm = pre.closest(".chat.calm");   // the calm chat's motion only; the panel's views keep the plain swap
     if (!calm) return;
-    const ms = Number.parseFloat(getComputedStyle(calm).getPropertyValue("--calm-flow-ms")) || MORPH_MS;
+    const ms = Number.parseFloat(getComputedStyle(calm).getPropertyValue("--calm-reflow-ms")) || MORPH_MS;
     try { if (globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return; } catch { /* no matchMedia: draw it */ }
     const neu = glyphsOf(pre);
     const plan = neu && planMorph(old.glyphs, neu);
@@ -119,7 +119,10 @@ export function morphInto(pre: HTMLElement, now = Date.now()): void {
     const to = pre.getBoundingClientRect().height;
     if (old.height > 0 && Math.abs(old.height - to) > 1) {
         pre.style.overflow = "hidden";
-        pre.animate([{ height: `${old.height}px` }, { height: `${to}px` }], { duration: ms, easing: "cubic-bezier(.4, 0, .2, 1)" })
+        // To `auto` where the page can interpolate it: the approval card opens beside the block over the same beat, and a block
+        // that shares its room with it ends shorter than it measured at the start. A fixed `to` snapped back at the end.
+        const end = globalThis.CSS?.supports?.("interpolate-size", "allow-keywords") ? "auto" : `${to}px`;
+        pre.animate([{ height: `${old.height}px` }, { height: end }], { duration: ms, easing: "cubic-bezier(.4, 0, .2, 1)" })
             .finished.then(() => { pre.style.overflow = ""; }, () => { pre.style.overflow = ""; });
     }
     pre.classList.add("morphing");

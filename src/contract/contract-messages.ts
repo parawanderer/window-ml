@@ -438,6 +438,24 @@ export interface StoredSession {
     toolIds: string[] | null;
     maxTokens: number | null;
     save: boolean;
+    /** A worker-hosted chat's PDFs, held so their pages can be read again after the message. Absent in a record
+     *  written before 2026-11-17 and in every other chat's: none held. */
+    files?: ChatHeldFile[];
+}
+
+/** A PDF a worker-hosted chat was sent, held for the chat's session (FILE_ATTACHMENTS.md, "Reading the pages held
+ *  back"). Keys and counts only, so a chat's record does not grow with its attachments: the bytes are value-store rows. */
+export interface ChatHeldFile {
+    /** the name the message framed it under */
+    name: string;
+    /** the document's page count */
+    pages: number;
+    /** how many of its pages, from the first, the message sent */
+    sent: number;
+    /** the value-store row of the read document (`paged`); absent when the store did not keep it */
+    doc?: string;
+    /** the value-store row of the PDF's bytes (`bytes`); absent when the store did not keep it */
+    data?: string;
 }
 
 /** FETCH_LLM payload (the main one). `save` is sidebar-only and stays page-side. */

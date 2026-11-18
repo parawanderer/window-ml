@@ -218,8 +218,8 @@ subsystem gets a doc and a row in the table above.
 harness or script gets `.claude/skills/<name>/SKILL.md`, its detail in e2e-harness.md or working-in-the-repo.md.
 
 **RULE — review the prompt now and then, without being asked:** after a stretch of agent-loop or tool work, and at
-least monthly (`docs/dev/prompt-review.md`). Last review: **2026-11-14** (the ml.sh JSDoc misreads: `truncated`, `"today"`, `read`'s lifetime, `~` inside a root, an argv
-to a manifest program runs free). A review commit carries `Prompt-Review: <date>`; update the date here with it.
+least monthly (`docs/dev/prompt-review.md`). Last review: **2026-11-17** (the lifetimes list: how long each thing the model keeps lasts, figures read from the
+settings that enforce them). A review commit carries `Prompt-Review: <date>`; update the date here with it.
 
 **RULE — a complex analysis worth keeping, or a measurement a decision rests on, goes in a notebook, not in a
 reply:** `notebooks/<topic>/`, run with `node scripts/nb.mjs`. `docs/dev/notebooks.md`; the `notebooks` skill.
@@ -231,6 +231,7 @@ reply:** `notebooks/<topic>/`, run with `node scripts/nb.mjs`. `docs/dev/noteboo
 - **A FAILED build leaves `dist/` alone** (it builds into `dist.stage/`): never discard its stderr. A STALE bundle is
   CHECKED (`scripts/check-dist-fresh.mjs`); `npm run build:all` builds every bundle.
 - **Iterating? Run a GENRE: `npm run test:core`** (the `test-genres` skill); run the full `npm test` before you commit.
+- **A block at the end of a test run, `test timings — warnings for whoever ran this`, is addressed to YOU**: a file outlived its tests (a leaked timer holds the queue slot) or a test ran far past its history. Advice only, never the exit code. → working-in-the-repo.md
 - **Every `npm test`, genre, `npm run coverage` and `npm run test:e2e` run queues machine-wide through `scripts/test-slot.mjs`** (at most three at once under a memory budget, workers from free memory; `submit`/`wait` to not block; non-test work: `--kind batch`; the `test-slot` skill). A direct `node --test`, and any run in a clone that has not pulled it, does not: check `pgrep -f 'node --import tsx --test'` before starting one of those.
 - **Tests: `npm test`** (`node:test`, real files in `node:vm` with mocked `chrome`). A new primitive gets a test in
   `tests/background.test.js` and `tests/relay.test.js`.
