@@ -31,7 +31,7 @@ import { ASKED_TAIL_CHARS, PEEK_DEFAULT_BYTES, peekBytesFor, peekDetail } from "
 import { forModel } from "./sw-scrub";
 import { holdOutput, shellHost, ShellUnavailable, withShell, type ShellHost } from "./sw-shell";
 import { manifestsReady, storedManifests } from "./sw-manifests";
-import type { ProgramManifest } from "../shell/program-manifest";
+import { revealingName, type ProgramManifest } from "../shell/program-manifest";
 import { operandArgs, operandChanges, type RanCall } from "../shell/manifest-proposal";
 
 /** The step a call is made from, as the worker knows it: never anything the script said. */
@@ -327,7 +327,7 @@ async function runCall(ctx: ShCallContext, req: ShRunRequest, started: (h: Shell
             for (let attempt = 0; ; attempt++) {
                 const id = facts.id;
                 const discard = () => h.client.discard(id).catch(() => { /* expired or gone: nothing to start either way */ });
-                try { f = shFacts(facts, await versionOf(ctx, h, facts, manifestsFor(stored, roots).list), { roots, stored, revealsAllow }); }
+                try { f = shFacts(facts, await versionOf(ctx, h, facts, manifestsFor(stored, roots).list, revealsAllow), { roots, stored, revealsAllow }); }
                 catch (e) { await discard(); throw e; }
                 const v = await decide(ctx, f);
                 if ("refused" in v) { await discard(); return refuse("Denied", v.refused); }
@@ -459,9 +459,11 @@ function envelopeDetail(r: ShResult): Record<string, string | number | boolean> 
  * @param h the host
  * @param facts the call's facts
  * @param manifests the manifests the call is described by (default: the shipped ones)
+ * @param revealsAllow `shellRevealsAllow`: the probe of a program that shows other processes is judged with the marker
+ *  (ruling 31), so it starts only once the program is listed
  * @returns the version, null when it was not read, or null too for a manifest that reads none
  */
-export async function versionOf(ctx: Pick<ShCallContext, "runId" | "seq" | "signal">, h: ShellHost, facts: HostFacts, manifests?: readonly ProgramManifest[]): Promise<string | null> {
+export async function versionOf(ctx: Pick<ShCallContext, "runId" | "seq" | "signal">, h: ShellHost, facts: HostFacts, manifests?: readonly ProgramManifest[], revealsAllow: readonly string[] = []): Promise<string | null> {
     const m = manifestFor(facts.argv, undefined, manifests);
     if (!m?.version || m.version.range === "*" || !m.version.args.length) return null;
     const fp = facts.program.fingerprint;
@@ -480,7 +482,9 @@ export async function versionOf(ctx: Pick<ShCallContext, "runId" | "seq" | "sign
     if (probe.program.fingerprint !== fp || probe.placement !== "host-sandbox") { await drop(); log("changed"); return null; }
     // Judged with no effects, and that same judged object derives its envelope below (ruled 2026-10-19: the approved
     // claims are the judge's facts, so `git --version` gets write none like any other probe).
-    const judged: ShFacts = { ...shFacts(probe), effects: [] };
+    // A revealing program's probe carries the marker, by its manifest or by its name (`revealingName`), as its call does.
+    const reveals = m.reveals || revealingName(m, facts.program.path) ? { what: "processes" as const, program: m.program, allowed: revealsAllow.includes(m.program) } : null;
+    const judged: ShFacts = { ...shFacts(probe), effects: [], reveals };
     const j = judgeCall(ctx.runId, "sh", asPolicyFacts(judged), "host-sandbox");
     // Only an allow starts it: a store not loaded yet, an `ask` policy or no answer would need a card, which a probe never raises.
     if (j.decision !== "allow") { await drop(); log(j.decision === "deny" ? "denied" : "would-ask"); return null; }

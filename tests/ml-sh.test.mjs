@@ -102,6 +102,21 @@ test("a revealing program asks, saying why, until the person lists it; a config 
     }
 });
 
+test("a revealing program's version probe is judged with the marker: it starts only once the program is listed", T, async () => {
+    const ranged = storedPs();
+    ranged.ml_manifests_global[0].manifest.version = { range: ">=3", args: ["--version"], pattern: "^ps (\\d+)" };
+    for (const [allow, starts, cards] of [[[], 1, 1], [["ps"], 2, 0]]) {
+        const host = fakeNativeHost({ done: (_id, spawn) => spawn?.argv?.[1] === "--version" ? { out: "ps 4\n", err: "", code: 0 } : { out: "PID\n", err: "", code: 0 } });
+        const ask = answering(true);
+        const { results } = await runOn("userScripts", [runs(["ps", "-e"])], { ...NO_FETCH, onNative: host.onNative, configExtra: { ...ON, shellRevealsAllow: allow }, localExtra: ranged, onStep: ask.onStep });
+        const label = JSON.stringify(allow);
+        assert.equal(valueOf(results[0]).ok, true, label);
+        assert.equal(host.calls.filter((c) => c.call === "spawn" && c.args.argv[1] === "--version").length, 1, `${label}: the probe is resolved`);
+        assert.equal(host.calls.filter((c) => c.call === "start").length, starts, `${label}: unlisted, only the call itself starts, after its card`);
+        assert.equal(ask.asked.length, cards, label);
+    }
+});
+
 // --- a call the person is asked about ---
 
 test("an undescribed program asks inside the running step, showing the host's facts; allowed, it runs and says it waited", T, async () => {

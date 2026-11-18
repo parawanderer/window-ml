@@ -112,6 +112,27 @@ test("the card says what a revealing program shows, flagged while it is not list
     assert.equal(line(["ps"]).warn, undefined);
 });
 
+// --- the card's third answer: drawn only where the surface can write the list ---
+
+test("Always allow is offered only where the surface's services can write the list: the chat page's cannot, so it shows two answers", async () => {
+    const { alwaysOf } = await import("../src/sidebar/transcript/ask-card.tsx");
+    const { installServices, services } = await import("../src/sidebar/services.ts");
+    const before = services();
+    const a = { id: "a1", kind: "sh", state: "pending", raisedAt: 1, facts: {}, why: { line: "l", detail: "d", cause: "reveals", program: "ps" } };
+    try {
+        const { revealsAllow: _, ...without } = { ...before, revealsAllow: async () => {} };
+        installServices(without);
+        assert.equal(alwaysOf(a, () => assert.fail("never pressed")), undefined, "no revealsAllow: no third answer");
+        installServices({ ...before, revealsAllow: async () => {} });
+        const pressed = [];
+        const always = alwaysOf(a, (p) => pressed.push(p));
+        assert.equal(always?.program, "ps");
+        always.allow();
+        assert.deepEqual(pressed, ["ps"]);
+        assert.equal(alwaysOf({ ...a, why: { ...a.why, cause: "credential" } }, () => {}), undefined, "another cause: two answers");
+    } finally { installServices(before); }
+});
+
 // --- the gate key ---
 
 test("shellRevealsAllow is a gate key: default empty, never writable by the model, and not in ml.config()", () => {

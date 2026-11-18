@@ -173,7 +173,7 @@ export async function evidenceRun(step: ProposalStep, entry: StoredManifest): Pr
                 const plan = planSpawn({ argv: call.argv, cwd: call.cwd.path, env: {} }, { cwd: call.cwd.path, roots, stored: [entry] });
                 const facts = await h.client.spawn({ ...plan.spawn, timeoutMs: PROBE_TIMEOUT_MS, owner: { run: step.runId, seq: step.seq } });
                 const drop = () => h.client.discard(facts.id).catch(() => { /* gone */ });
-                const f = shFacts(facts, await versionOf(step, h, facts, list), { roots, stored: [entry], revealsAllow });
+                const f = shFacts(facts, await versionOf(step, h, facts, list, revealsAllow), { roots, stored: [entry], revealsAllow });
                 // Only what the entry makes free is re-run: the evidence run does nothing the approved entry would not allow.
                 if (!f.described || f.placement !== "host-sandbox" || judgeCall(step.runId, "sh", f as never, f.placement).decision !== "allow") { await drop(); continue; }
                 const asked = envelopeFor(f);

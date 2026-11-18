@@ -91,12 +91,15 @@ program STARTED), so a manifest says it with a top-level marker:
   the worker, with a config that lacks the key (`tests/ml-sh.test.mjs`); the card's third answer lists the program, then
   approves (`tests/sidebar-asks.test.js`); `change_setting` refuses the key and `ml.config()` does not return it, a
   stored manifest for a listed program without the marker is refused, dropped on load and skipped at call time, a draft
-  for one gets the marker and its card says so, and a stored manifest's spawn names no manifest
-  (`tests/sh-reveals.test.mjs`); `ml.settings()` shows it with `mode: "read"` once that surface lands. The marker rows
+  for one gets the marker and its card says so, a stored manifest's spawn names no manifest, and the third answer is
+  drawn only where the surface's services can write the list (`tests/sh-reveals.test.mjs`); `ml.settings()` shows it with `mode: "read"` once that surface lands. The marker rows
   use a stored manifest, not a vector under `tests/fixtures/program-calls/`: those are copied to the host, whose reader
   does not take the marker yet.
-- **A version probe** of a revealing program is judged with the marker too, so on a manifest with a version range it is
-  raised only once the program is listed; until then its calls are undescribed and ask.
+- **A version probe** of a revealing program, whether shipped, stored or proposed, is judged with the marker too
+  (`versionOf`): by its manifest's `reveals` or by `revealingName`, and listed only by `shellRevealsAllow`. On a
+  manifest with a version range the probe is resolved but not started until the program is listed; until then the
+  version is unread, so its calls are undescribed and ask (`tests/ml-sh.test.mjs`, "a revealing program's version
+  probe is judged with the marker").
 - **The process host** does not take the marker today: its reader (`manifest.rs`) refuses unknown fields. It parses a
   manifest only for a credential, and then only its own pinned copy of a shipped file, named by the sha256 the spawn
   sends; a spawn never carries a manifest's bytes. So a stored manifest declaring `reveals` never reaches the host
