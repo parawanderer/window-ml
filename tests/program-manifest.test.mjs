@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { execFileSync } from "node:child_process";
 
 const { describeCall, hardenArgv, validateManifest, inRange, CREDENTIAL_PROVIDERS, scriptLacksRunsCode, SCRIPT_RUNS_CODE_WARNING } = await import("../src/shell/program-manifest.ts");
 const { effectKey, free, boundFor, fromProgramEffect } = await import("../src/effects.ts");
@@ -431,15 +432,30 @@ test("flavourOf: in-root never, another file name is other, the macOS system pro
         [at("/usr/bin/tool"), undefined, undefined, null, true],
     ];
     for (const [program, platform, probed, flavour, probe] of rows) {
-        const r = flavourOf(FLAVOURED, program, platform, probed);
+        const r = flavourOf(FLAVOURED, program, platform, probed, true);
         assert.deepEqual([r.flavour, r.probe], [flavour, probe], `${program.path} on ${platform}, probed ${probed}`);
         assert.equal(typeof r.how, "string");
+        // The same facts for a stored manifest: what its author does not choose decides alike, and the probe never.
+        const stored = flavourOf(FLAVOURED, program, platform, probed, false);
+        assert.deepEqual([stored.flavour, stored.probe], [flavour === "gnu" ? null : flavour, false], `stored: ${program.path} on ${platform}, probed ${probed}`);
     }
     // The system rule needs the bsd flavour declared, and a manifest without flavours is never flavoured.
     const gnuOnly = { ...FLAVOURED, flavours: { gnu: FLAVOURED.flavours.gnu } };
-    assert.deepEqual(flavourOf(gnuOnly, at("/usr/bin/tool"), "macos").probe, true);
-    assert.equal(flavourOf(gnuOnly, at("/usr/bin/tool"), "macos").flavour, null);
-    assert.deepEqual(flavourOf(manifests.cat, at("/bin/cat"), "macos"), { flavour: null, how: "the manifest declares no flavours", probe: false });
+    assert.deepEqual(flavourOf(gnuOnly, at("/usr/bin/tool"), "macos", undefined, true).probe, true);
+    assert.equal(flavourOf(gnuOnly, at("/usr/bin/tool"), "macos", undefined, true).flavour, null);
+    assert.deepEqual(flavourOf(manifests.cat, at("/bin/cat"), "macos", undefined, true), { flavour: null, how: "the manifest declares no flavours", probe: false });
+});
+
+test("a stored manifest's gnu flavour is never detected: its probe's output is the author's, and no filter on it holds", () => {
+    // The author chose the probe's arguments and the program, so the output says what the author wants. A filter
+    // dropping lines that contain an argument is not enough: printf prints the matching line from octal escapes.
+    const printf = { ...FLAVOURED, flavours: { gnu: { probe: { args: ["\\164ool (GNU tool) 4.9\\n"], pattern: "^tool \\(GNU tool\\) (\\d+\\.\\d+)", range: ">=4.3 <5" } } } };
+    const printed = execFileSync("printf", printf.flavours.gnu.probe.args, { encoding: "utf8" });
+    assert.match(printed, new RegExp(printf.flavours.gnu.probe.pattern, "m"), "printf did not print the GNU line");
+    assert.ok(!printf.flavours.gnu.probe.args.some((a) => printed.includes(a)), "the printed line contains an argument, so it does not show the bypass");
+    const r = flavourOf(printf, { path: "/usr/bin/tool", inRoot: false }, "linux", "4.9", false);
+    assert.deepEqual([r.flavour, r.probe], [null, false]);
+    assert.match(r.how, /never run/);
 });
 
 test("a detected flavour reads the core and its own overlay; undetected reads the core with optionsFirst; other describes nothing", () => {
@@ -470,6 +486,33 @@ test("a detected flavour reads the core and its own overlay; undetected reads th
         if (pathArgs) assert.deepEqual(d.pathArgs.map((p) => p.arg), pathArgs, `${argv.join(" ")} as ${flavour}`);
         if (flavour === "other") assert.match(d.why.join("; "), /an implementation its manifest does not describe/);
     }
+});
+
+test("under stop, an argument after an operand that spells a declared flag doing more than a read asks, in every spelling", () => {
+    // The manifest says the program reads it as a file name; if the argument order is misread, the write is dropped
+    // (red-team, #1963). Both describers apply this: window-ml-host's manifest.rs agrees on `tool f.txt --write-all`.
+    const stop = {
+        program: "tool", version: { range: "*", args: [], pattern: "" }, flavours: { bsd: { system: "macos" } },
+        command: { effects: ["read"], paths: "operands", clusters: true, flags: { "-n": {}, "--write-all": { effects: ["write"] }, "-w": { effects: ["write"] },
+            "--out": { value: true, valueIsPath: "write" }, "-R": { recursive: true }, "--exec": { runner: true, effects: ["runs-code"] }, "--grep": { value: true, effects: ["read"] } },
+            flavour: { bsd: { argOrder: "stop", flags: { "--rm": { effects: ["write-names"] } } } } },
+    };
+    assert.deepEqual(validateManifest(stop), []);
+    for (const tail of [["--write-all"], ["--write-all=x"], ["-w"], ["-nw"], ["--out", "o"], ["--out=o"], ["-R"], ["--exec"], ["--rm"], ["--", "--write-all"], ["g", "-w"]]) {
+        const argv = ["tool", "f.txt", ...tail];
+        const d = describeCall(argv, stop, { flavour: "bsd" });
+        assert.equal(d.described, false, `${argv.join(" ")} was described under stop: ${JSON.stringify(d.pathArgs)}`);
+        assert.ok(d.why.some((w) => /does more than read/.test(w)), `${argv.join(" ")}: ${JSON.stringify(d.why)}`);
+    }
+    // A read-only flag, or an argument no flag spells, stays a file name under stop.
+    for (const tail of [["-n"], ["--grep"], ["--nope"], ["-x"]]) {
+        const argv = ["tool", "f.txt", ...tail];
+        const d = describeCall(argv, stop, { flavour: "bsd" });
+        assert.equal(d.described, true, `${argv.join(" ")}: ${JSON.stringify(d.why)}`);
+        assert.deepEqual(d.pathArgs.map((p) => argv[p.arg]), ["f.txt", tail[0]]);
+    }
+    // Before the first operand the flag is a flag, as ever.
+    assert.equal(describeCall(["tool", "-w", "f.txt"], stop, { flavour: "bsd" }).described, true);
 });
 
 test("a flavour's hardening is added after the core's, only for that flavour", () => {

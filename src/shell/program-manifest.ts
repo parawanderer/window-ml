@@ -119,8 +119,8 @@ export type FlavourOverlay = {
     harden?: readonly string[];
 };
 
-/** How each declared flavour is recognised: `gnu` by a version probe (run only under the OS sandbox), `bsd` by being
- *  the system's own program (no run). */
+/** How each declared flavour is recognised: `gnu` by a version probe (run only under the OS sandbox, and only for a
+ *  shipped manifest: a stored one's author chose what it prints), `bsd` by being the system's own program (no run). */
 export type ManifestFlavours = {
     /** GNU: the probe's `args` (`--version`), a regex anchored with `^` whose group 1 is the version in its stdout, and the range of
      *  versions the overlays were written against; a version outside it is undetected. */
@@ -281,14 +281,18 @@ export type DescribeOptions = {
  * Which implementation of a flavoured manifest's program runs, from what the host resolved, in this order: a program
  * inside a workspace root is never flavoured (undetected); a file whose name is not the program's (busybox, mawk behind
  * an alternatives link, a multicall binary) is `other`; the system's own program (macOS, a SYSTEM_PROGRAM_DIRS file) is
- * `bsd`; a GNU probe that reported a version inside its range is `gnu`; anything else is undetected.
+ * `bsd`; for a SHIPPED manifest, a GNU probe that reported a version inside its range is `gnu`; anything else is
+ * undetected. A stored or proposed manifest's probe is never run: its author chose the probe's arguments and the
+ * program, so the output is the author's claim, not a measurement (`printf '\164ool (GNU tool) 4.9'` prints a line no
+ * argument contains).
  * @param m the manifest
  * @param program the host's resolved program (`path` is a realpath)
  * @param platform `hello.platform`, or undefined when not known
  * @param probed what the gnu probe's pattern read (group 1): undefined when it was not run, null when it read nothing
+ * @param shipped whether `m` is one of the shipped manifests (`isShipped`); only those are probed
  * @returns the flavour, why, and whether the gnu probe would decide it (`probe`: run it, then ask again)
  */
-export function flavourOf(m: Pick<ProgramManifest, "program" | "flavours">, program: { path: string; inRoot: boolean }, platform: string | undefined, probed?: string | null): { flavour: Flavour; how: string; probe: boolean } {
+export function flavourOf(m: Pick<ProgramManifest, "program" | "flavours">, program: { path: string; inRoot: boolean }, platform: string | undefined, probed: string | null | undefined, shipped: boolean): { flavour: Flavour; how: string; probe: boolean } {
     const fl = m.flavours;
     if (!fl) return { flavour: null, how: "the manifest declares no flavours", probe: false };
     if (program.inRoot) return { flavour: null, how: "inside a workspace root, never flavoured", probe: false };
@@ -298,6 +302,7 @@ export function flavourOf(m: Pick<ProgramManifest, "program" | "flavours">, prog
     const dir = slash > 0 ? program.path.slice(0, slash) : "/";
     if (fl.bsd && platform === fl.bsd.system && (SYSTEM_PROGRAM_DIRS[platform] ?? []).includes(dir)) return { flavour: "bsd", how: "BSD (the macOS system program)", probe: false };
     if (!fl.gnu) return { flavour: null, how: "not detected", probe: false };
+    if (!shipped) return { flavour: null, how: "not detected (a stored manifest's gnu probe is never run: its author chose what it prints)", probe: false };
     if (probed === undefined) return { flavour: null, how: "not detected (its version was not read)", probe: true };
     if (probed !== null && inRange(probed, fl.gnu.probe.range)) return { flavour: "gnu", how: "GNU, by its version output", probe: false };
     return { flavour: null, how: probed === null ? "not detected (its version output is not GNU's)" : `not detected (version ${probed} is outside ${fl.gnu.probe.range})`, probe: false };
@@ -421,6 +426,22 @@ const WRITE_TERMS: ReadonlySet<ProgramEffect> = new Set<ProgramEffect>(["write",
 
 type Terms = { term: ProgramEffect; targets: "command" | Resource[] }[];
 
+/** Whether a flag only reads: its effects are `read` or none, its value is no written path or directory, and it starts,
+ *  echoes and walks nothing. Anything else is a claim a misread argument order must not drop (`stopShadow`). */
+const readOnlyFlag = (f: FlagSpec): boolean =>
+    (f.effects ?? []).every((t) => t === "read") && f.valueIsPath !== "write" && !f.valueIsDir && !f.runner && !f.echoes
+    && !f.recursive && f.pathsFrom === undefined;
+
+/** Under `argOrder: "stop"`, the declared flag a post-operand argument spells whose meaning is more than a read, or
+ *  undefined: `--name`, `--name=v`, the whole `-name`, or any letter of a `-abc` cluster. Read as a file name, such an
+ *  argument would drop the write (or run, or walk) the manifest declares for it, so the call asks instead; the host's
+ *  describer applies the same rule, so the two agree on `tool f.txt --write-all`. */
+function stopShadow(a: string, flags: Readonly<Record<string, FlagSpec>>): string | undefined {
+    if (a === "-" || !a.startsWith("-")) return undefined;
+    const names = a.startsWith("--") ? [a.split("=")[0]] : [a, ...[...a.slice(1)].map((c) => `-${c}`)];
+    return names.find((n) => Object.hasOwn(flags, n) && !readOnlyFlag(flags[n]));
+}
+
 /** Options-then-operands. Returns the operand indices, the path start a flag set, and the index of a subcommand name
  *  when the command has subcommands and one was reached before any operand. */
 function parseOptions(argv: readonly string[], start: number, cmd: CommandSpec & { stop?: boolean }, d: CallDescription, terms: Terms,
@@ -458,6 +479,8 @@ function parseOptions(argv: readonly string[], start: number, cmd: CommandSpec &
         const a = argv[i];
         // A flavour that stops at the first operand (BSD getopt) reads everything after it as an operand, `--` included.
         if (afterTerminator || (cmd.stop && operands.length > 0)) {
+            const shadow = afterTerminator ? undefined : stopShadow(a, cmd.flags);
+            if (shadow) unknown(`${a} follows an operand: this flavour reads it as a file name, but ${shadow} is a flag that does more than read`);
             if (cmd.pathspecs && notLiteralPathspec(a)) unknown(`pathspec ${JSON.stringify(a)} is magic or a glob, not a path`);
             operands.push(i);
             continue;

@@ -56,7 +56,9 @@ and the step's seq the worker already knows (`delegateTool`'s `call`), never any
    is never raised; refused for a program inside the roots (and, since 2026-10-22, `shFacts` describes no in-root program by a shipped manifest, so `./cat` asks: PROGRAM_MANIFEST.md); 2 s, 4 KiB; cached by the program file's fingerprint
    (`shell.versions`). Its `start` carries the envelope `envelopeFor` derives from that same judged object, so on a
    K3 host every probe is sent `write: "none"`, `git --version` (an option git's manifest does not list) included
-   (ruled 2026-10-19 on the red team's K3 audit, #827).
+   (ruled 2026-10-19 on the red team's K3 audit, #827). A flavoured manifest's gnu probe (`flavours.gnu.probe`) is
+   this same call, run only for a SHIPPED manifest: a stored one's author chose what it prints (PROGRAM_MANIFEST.md,
+   "Flavours").
 3. `judgeCall(runId, "sh", facts, placement)`: a deny refuses (the host discards), an allow (a policy, or the
    built-in default: `effects ⊆ bound ∪ ReadsInRoots`) runs, anything else is a NESTED ASK on the running step
    (`sw-asks.ts`), whose card shows the facts (`shCardLines`), never the script. A store not yet loaded asks.

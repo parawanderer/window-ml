@@ -36,6 +36,10 @@ export const SHIPPED_MANIFESTS: Readonly<Record<string, ProgramManifest>> = Obje
     ([cat, cp, find, gh, git, head, jq, ls, mv, rg, rm, rmdir, tail, unlink, wc] as unknown as ProgramManifest[]).map((m) => [m.program, m]),
 ));
 
+/** Whether `m` is a shipped manifest's own object (not a stored copy of one): only those carry a credential, and only
+ *  those have their gnu probe run (`flavourOf`), because their bytes are reviewed and pinned. */
+export const isShipped = (m: ProgramManifest): boolean => SHIPPED_MANIFESTS[m.program] === m;
+
 /** The manifests a call is described by: the shipped ones, unless the caller names its own. */
 const SHIPPED_LIST: readonly ProgramManifest[] = Object.freeze(Object.values(SHIPPED_MANIFESTS));
 
@@ -299,7 +303,7 @@ export function planSpawn(req: ShRunRequest, session: ShSession): ShPlan {
     if (m.program === "git" && d.dirArg !== null) spawn.repoArg = d.dirArg;
     // Only the shipped manifest's own object: the host pins the shipped bytes alone, and a stored entry kept from before
     // `shippedOnlyRefusal` existed would only end in CredentialRefused after the ask.
-    const shipped = m.credential && SHIPPED_MANIFESTS[m.program] === m;
+    const shipped = m.credential && isShipped(m);
     return { spawn, description: d, ...(shipped ? { credential: { provider: m.credential!.provider, manifest: m } } : {}), ...filesPlaced(argv, m, files) };
 }
 
@@ -461,7 +465,7 @@ const secretBeneath = (containsSecret: boolean | null | undefined): boolean => c
 export function shFacts(facts: HostFacts, version: string | null = null, place?: ShFactsPlace): ShFacts {
     const { m, st } = factsManifest(facts, place);
     const entry = m ? st?.entryOf(m) : undefined;
-    const fl = m?.flavours ? flavourOf(m, facts.program, place?.platform, version ?? undefined) : null;
+    const fl = m?.flavours ? flavourOf(m, facts.program, place?.platform, version ?? undefined, isShipped(m)) : null;
     const why: string[] = [];
     let effects: EffectsData = "unknown";
     let described = false;
@@ -537,7 +541,7 @@ function factsManifest(facts: HostFacts, place?: ShFactsPlace): { m: ProgramMani
  */
 export function factsFlavour(facts: HostFacts, version: string | null, place?: ShFactsPlace): Flavour {
     const { m } = factsManifest(facts, place);
-    return m?.flavours ? flavourOf(m, facts.program, place?.platform, version ?? undefined).flavour : null;
+    return m?.flavours ? flavourOf(m, facts.program, place?.platform, version ?? undefined, isShipped(m)).flavour : null;
 }
 
 /** The call's credential: the host's word when it will inject one, else the manifest's, not held. */

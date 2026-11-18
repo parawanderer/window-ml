@@ -355,7 +355,8 @@ test("flavours: the facts carry the flavour and why, and the card's Program line
     const rows = [
         // [path, platform, version, flavour, card words]
         ["/usr/bin/tool", "macos", null, "bsd", /^\/usr\/bin\/tool, BSD \(the macOS system program\)$/],
-        ["/usr/bin/tool", "linux", "4.9", "gnu", /^\/usr\/bin\/tool \(version 4\.9\), GNU, by its version output$/],
+        // A manifest the caller names is not shipped, so its gnu probe never decides (`flavourOf`'s unit rows hold the shipped case).
+        ["/usr/bin/tool", "linux", "4.9", null, /never run: its author chose what it prints/],
         ["/usr/bin/tool", "linux", null, null, /not detected/],
         ["/usr/bin/busybox", "linux", null, "other", /its file is busybox, not tool/],
     ];

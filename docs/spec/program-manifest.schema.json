@@ -132,7 +132,7 @@
     },
     "ManifestFlavours": {
       "type": "object",
-      "description": "How each declared flavour is recognised: `gnu` by a version probe (run only under the OS sandbox), `bsd` by being the system's own program (no run).",
+      "description": "How each declared flavour is recognised: `gnu` by a version probe (run only under the OS sandbox, and only for a shipped manifest: a stored one's author chose what it prints), `bsd` by being the system's own program (no run).",
       "properties": {
         "gnu": {
           "description": "GNU: the probe's `args` (`--version`), a regex anchored with `^` whose group 1 is the version in its stdout, and the range of versions the overlays were written against; a version outside it is undetected.",

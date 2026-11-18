@@ -8,7 +8,7 @@
 // `origin: "proposed"`, so it describes sandboxed calls only (B5) until its evidence run passes.
 
 import type { HostFacts, HostPathArg, HostPathFact } from "./host-protocol";
-import { shippedOnlyRefusal, validateManifest, type ProgramManifest } from "./program-manifest";
+import { shippedOnlyRefusal, validateManifest, type CommandSpec, type ProgramManifest } from "./program-manifest";
 import { effectsText, manifestFor, quoteArg, type ShFacts } from "./sh-call";
 import { manifestKey, type ManifestOrigin, type ManifestRequest } from "./stored-manifests";
 
@@ -170,6 +170,25 @@ export function callsOfDraft<C extends HostFacts>(r: ManifestRequest, calls: rea
  *  it would then go without a card. `skipped` says why it was not resolved. */
 export type DraftReading = { argv: string[]; facts: ShFacts; free: boolean } | { argv: string[]; skipped: string };
 
+/** How each overlay of a flavoured draft reads an argument after an operand, in words, whatever is detected: under
+ *  `stop` such an argument is a file name, which the person should know before approving (`stopShadow` makes a
+ *  declared writing flag there ask, but a flag the draft does not declare is simply a file). Human-facing. */
+export function argOrderText(m: Pick<ProgramManifest, "program" | "flavours" | "command">): string {
+    if (!m.flavours) return "";
+    const said: string[] = [];
+    const walk = (c: CommandSpec, path: string) => {
+        for (const name of ["gnu", "bsd"] as const) {
+            const order = c.flavour?.[name]?.argOrder;
+            if (order) said.push(`${name.toUpperCase()} ${path} reads an argument starting with - after an operand ${order === "stop" ? "as a file name, -- included (stop)" : "as a flag (permute)"}`);
+        }
+        for (const [sub, sc] of Object.entries(c.subcommands ?? {})) walk(sc, `${path} ${sub}`);
+    };
+    walk(m.command, m.program);
+    const gnu = m.flavours.gnu ? " Its GNU reading is never used: a stored manifest's probe is not run." : "";
+    const bsd = m.flavours.bsd ? " Its BSD reading applies only to the macOS system program." : "";
+    return ` Flavours: ${said.length ? `${said.join("; ")}.` : "no overlay changes the argument order."}${gnu}${bsd}`;
+}
+
 /**
  * The card's note: what the person is asked to store, and the DERIVED block, said to be derived. Human-facing.
  * @param r the entry
@@ -181,7 +200,7 @@ export function draftNote(r: ManifestRequest, forced: string | undefined, readin
     const key = manifestKey(r.manifest);
     const where = r.scope === "global" ? "for every workspace" : `for the workspace ${r.root}`;
     const pinned = r.manifest.entrypoint ? `the script's sha256 ${r.manifest.entrypoint.sha256.slice(0, 12)}` : `${r.pin!.path} as it is now (fingerprint ${r.pin!.fingerprint})`;
-    const head = `Proposed by the model: a manifest for ${key}, stored ${where}${forced ? ` (${forced})` : ""}, pinned to ${pinned}; a change to it makes its calls ask again.`;
+    const head = `Proposed by the model: a manifest for ${key}, stored ${where}${forced ? ` (${forced})` : ""}, pinned to ${pinned}; a change to it makes its calls ask again.${argOrderText(r.manifest)}`;
     const free = readings.filter((x): x is Extract<DraftReading, { facts: ShFacts }> => "facts" in x && x.free);
     const lines = readings.slice(0, 5).map((x) => `${x.argv.map(quoteArg).join(" ")}: ${"skipped" in x ? `not read (${x.skipped})` : `${effectsText(x.facts.effects)}, ${x.free ? "free" : "asks"}`}`);
     const derived = !readings.length

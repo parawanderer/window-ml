@@ -92,13 +92,18 @@ every flavour, `tests/program-manifest.test.mjs`).
    implementation nobody described, so nothing of the manifest applies, not even the core, and the card warns.
 3. On `hello.platform` `macos`, a program whose resolved file is in `/bin`, `/usr/bin`, `/sbin` or `/usr/sbin` (the
    sealed system volume) is `bsd` when the manifest declares it. Nothing runs, so this is the one detection that also holds on the plain host.
-4. A `gnu` flavour is detected by its probe: an ordinary call of `flavours.gnu.probe.args`, judged and run exactly as
+4. For a SHIPPED manifest only, a `gnu` flavour is detected by its probe: an ordinary call of `flavours.gnu.probe.args`, judged and run exactly as
    the version probe above is (under the OS sandbox only, never for an in-root program, cached by fingerprint), whose
    stdout on exit 0 matches `pattern` with group 1 inside `range`. The pattern must start with `^` (the validator
    refuses one that does not), and it is matched per line (`m`), so busybox's "This is not GNU sed" fails `^sed \(GNU
    sed\)`. What it is matched against is the version probe's bound: the first 4 KiB of stdout (`PROBE_BYTES`), read only
-   on exit 0 within 2 s and only when it is not binary, for a stored (model-written) manifest's pattern as for a shipped
-   one. On the plain host the probe is never raised, so a GNU-only flag is never free there.
+   on exit 0 within 2 s and only when it is not binary. On the plain host the probe is never raised, so a GNU-only flag
+   is never free there. A stored or proposed manifest's probe is never run (ruled 2026-11-18, red-team #1963): its
+   author chose both the probe's arguments and the program, so what it prints is the author's claim, not a measurement
+   of the program. Filtering the output instead (dropping a line that equals or contains a probe argument) does not
+   hold: `printf '\164ool (GNU tool) 4.9\n'` prints `tool (GNU tool) 4.9` from octal escapes, a line no argument
+   contains (`tests/program-manifest.test.mjs`). Such a manifest's flavour comes only from the facts above, which its
+   author does not choose; `flavours` stays allowed in it.
 5. Anything else is undetected.
 
 **The shape.** At the top level, `flavours: { gnu: { probe: { args, pattern, range } }, bsd: { system: "macos" } }`
@@ -110,6 +115,14 @@ and effects in every flavour that accepts them, with the union of the effects wh
   is a validator error, so no rule decides which entry wins.
 - `argOrder`: `"permute"` reads an argument starting with `-` after an operand as a flag; `"stop"` reads it, and
   everything after the first operand, `--` included, as an operand (BSD getopt). Absent, the core's `optionsFirst`.
+  Under `stop`, an argument after the first operand that spells a declared flag (core or overlay; `--name`,
+  `--name=v`, a whole `-name`, or any letter of a `-abc` cluster) whose meaning is more than a read (an effect other
+  than `read`, a written path value, a directory value, a runner, an echo, a walk, a `pathsFrom`) makes the call ask
+  (`stopShadow`): read as a file name it would drop the write the manifest declares for it, so a misread argument order
+  would run a writer free. This holds for every manifest, and both describers apply it: window-ml and window-ml-host's
+  `manifest.rs` agree that `tool f.txt --write-all` is not described. A read-only flag there stays a file name. The
+  approval card of a flavoured draft states each overlay's `argOrder` in words, per flavour and subcommand, whatever is
+  detected (`argOrderText`).
 - `harden`: that flavour's hardening, after the core's (GNU `--sandbox`; `-safe` passed to gawk would parse as other
   options, so hardening cannot be shared). Each argument is a flag of the core or of that overlay.
 

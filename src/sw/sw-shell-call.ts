@@ -14,7 +14,7 @@ import type { EffectsData } from "../effects";
 import type { ShCallSpan, ShUnasked } from "../contract";
 import type { TokenStore } from "../pointers/token-pipe";
 import { bytesOf, HostError, hostTakesEnvelope, READ_CHUNK, type HostClient, type HostPutFacts, type HostEnvelope, type HostFacts, type HostStream } from "../shell/host-protocol";
-import { credentialFor, envelopeFor, factsFlavour, flavourReplan, envelopeMismatch, envelopeText, manifestFor, manifestsFor, parseShRun, planSpawn, protectedChangesText, shFacts, shOut, shOutcome, shResult, wireCodeOf, ShRefused, SH_HEAD_BYTES, SH_HOST_TIMEOUT_MS, SH_LEASE_MS, type ShFacts, type ShOut, type ShResult, type ShRunRequest } from "../shell/sh-call";
+import { credentialFor, envelopeFor, isShipped, factsFlavour, flavourReplan, envelopeMismatch, envelopeText, manifestFor, manifestsFor, parseShRun, planSpawn, protectedChangesText, shFacts, shOut, shOutcome, shResult, wireCodeOf, ShRefused, SH_HEAD_BYTES, SH_HOST_TIMEOUT_MS, SH_LEASE_MS, type ShFacts, type ShOut, type ShResult, type ShRunRequest } from "../shell/sh-call";
 import { OUTPUT_CAP } from "../contract/contract-pointers";
 import { detachedCapMs, detachTask, type TailAnswer, type TaskOutcome } from "./sw-tasks";
 import { toolToken } from "../util";
@@ -481,7 +481,7 @@ export async function versionOf(ctx: Pick<ShCallContext, "runId" | "seq" | "sign
     const m = manifestFor(facts.argv, undefined, manifests);
     // A flavoured manifest reads its gnu probe, and only when nothing cheaper told the flavour (an in-root program, a
     // file of another name, the macOS system program: flavourOf); any other manifest reads its version range's.
-    const spec = m?.flavours ? (flavourOf(m, facts.program, h.hello.platform).probe ? m.flavours.gnu!.probe : null)
+    const spec = m?.flavours ? (flavourOf(m, facts.program, h.hello.platform, undefined, isShipped(m)).probe ? m.flavours.gnu!.probe : null)
         : m?.version && m.version.range !== "*" && m.version.args.length ? m.version : null;
     if (!m || !spec) return null;
     const fp = facts.program.fingerprint;
