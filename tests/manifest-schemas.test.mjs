@@ -122,6 +122,11 @@ const FLAV = () => ({
     flavours: { gnu: { probe: { args: ["--version"], pattern: "^x \\(GNU x\\) (\\d+\\.\\d+)", range: ">=4.3 <5" } }, bsd: { system: "macos" } },
     command: { effects: ["read"], paths: "operands", flags: { "-v": {} }, flavour: { gnu: { flags: { "--sandbox": {} }, argOrder: "permute", harden: ["--sandbox"] }, bsd: { flags: { "-l": {} }, argOrder: "stop" } } },
 });
+/** A script command (PROGRAM_MANIFEST.md, "sed and awk"): the program is the first operand or a script flag's value. */
+const SED = () => ({
+    program: "sed", version: { range: "*", args: [], pattern: "" },
+    command: { effects: ["read"], paths: { operandsFrom: 1 }, script: "sed", flags: { "-n": {}, "-e": { value: true, script: true, pathsFrom: 0 }, "-i": { attachedValue: true, values: [""], effects: ["write", "write-names"] } } },
+});
 const flag = (m, f) => { m.command.flags["-v"] = f; };
 const cmd = (m, c) => { Object.assign(m.command, c); };
 const prim = (m, p) => { m.command.primaries["-name"] = p; };
@@ -262,10 +267,23 @@ const INVALID = [
     ["an argOrder other than permute or stop", FLAV, (m) => { m.command.flavour.gnu.argOrder = "gnu"; }],
     ["an overlay flag name without a dash", FLAV, (m) => { m.command.flavour.bsd.flags.l = {}; }],
     ["an overlay flag with an unknown key", FLAV, (m) => { m.command.flavour.bsd.flags["-l"] = { runer: true }; }],
+    // sed and awk: a script command, a script flag, narrowed and attached values
+    ["a script language other than sed or awk", SED, (m) => cmd(m, { script: "perl" })],
+    ["a script command whose paths start elsewhere", SED, (m) => cmd(m, { paths: "operands" })],
+    ["a script command with subcommands", SED, (m) => cmd(m, { subcommands: { x: { effects: ["read"], paths: "none", flags: {} } } })],
+    ["a script flag that takes no value", SED, (m) => { m.command.flags["-e"] = { script: true, pathsFrom: 0 }; }],
+    ["a script flag that leaves the first operand a program", SED, (m) => { delete m.command.flags["-e"].pathsFrom; }],
+    ["a script flag whose value is a path", SED, (m) => { m.command.flags["-e"].valueIsPath = "read"; }],
+    ["a script flag that is not a boolean", SED, (m) => { m.command.flags["-e"].script = "sed"; }],
+    ["an attached value on a flag that takes a separate one", SED, (m) => { m.command.flags["-i"].value = true; }],
+    ["an attached value that is a path", SED, (m) => { m.command.flags["-i"].valueIsPath = "write"; }],
+    ["an attachedValue that is not a boolean", SED, (m) => { m.command.flags["-i"].attachedValue = "yes"; }],
+    ["values on a flag that takes no value", SED, (m) => { m.command.flags["-n"].values = [""]; }],
+    ["values that are not strings", SED, (m) => { m.command.flags["-i"].values = [1]; }],
 ];
 
 test("the schema and validateManifest both accept every base, and both reject each enumerated invalid manifest", () => {
-    for (const base of [BIN, FIND, SCRIPT, FLAV]) {
+    for (const base of [BIN, FIND, SCRIPT, FLAV, SED]) {
         assert.deepEqual(validateManifest(base()), [], `${base.name} under validateManifest`);
         assert.deepEqual(bySchema(base()), [], `${base.name} under the schema`);
     }
@@ -299,6 +317,8 @@ const SCHEMA_GAPS = [
     ["an overlay only for a flavour the manifest declares (a cross-reference to the top-level `flavours`, at every command depth)", FLAV, (m) => { delete m.flavours.bsd; }],
     ["an overlay only ADDS: a flag in both the core and an overlay (a cross-reference between the keys of two sibling objects)", FLAV, (m) => { m.command.flavour.gnu.flags["-v"] = {}; }],
     ["every overlay `harden` argument is a flag of the core or that overlay (the harden cross-reference, across two objects)", FLAV, (m) => { m.command.flavour.gnu.harden = ["--not-listed"]; }],
+    ["attachedValue only on a one-letter short flag (a rule on the flag's KEY in its parent's table)", SED, (m) => { m.command.flags["--in"] = { attachedValue: true }; }],
+    ["a script flag only on a command with `script` (a cross-reference to the parent command)", BIN, (m) => flag(m, { value: true, script: true, pathsFrom: 0 })],
 ];
 
 test("the rules the schema cannot express are named, and are real", () => {

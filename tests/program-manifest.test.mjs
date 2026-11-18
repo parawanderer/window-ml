@@ -28,7 +28,7 @@ const changesEffect = (f) => (f.effects?.length ?? 0) > 0 || f.valueIsPath || f.
 // --- the shipped manifests ---
 
 test("the first set from PROGRAM_MANIFEST.md ships, one file per program", () => {
-    assert.deepEqual(Object.keys(manifests).sort(), ["cat", "cp", "find", "gh", "git", "head", "jq", "ls", "mv", "rg", "rm", "rmdir", "tail", "unlink", "wc"]);
+    assert.deepEqual(Object.keys(manifests).sort(), ["awk", "cat", "cp", "find", "gh", "git", "head", "jq", "ls", "mv", "rg", "rm", "rmdir", "sed", "tail", "unlink", "wc"]);
     for (const [file, m] of Object.entries(manifests)) assert.equal(m.program, file, `${file}.json names ${m.program}`);
 });
 
@@ -366,6 +366,8 @@ const AFTER_OPERAND = {
     rm: { argv: ["rm", "a", "-r"], described: false },
     rmdir: { argv: ["rmdir", "a", "-v"], described: false },
     unlink: { argv: ["unlink", "a", "-v"], described: false },
+    sed: { argv: ["sed", "p", "f", "-n"], described: false },
+    awk: { argv: ["awk", "{print}", "f", "-F:"], described: false },
     find: { argv: ["find", ".", "-L"], described: false, measured: "find's own grammar: after the first operand -L is an expression, which the manifest does not list (macOS find: \"-L: unknown primary or operator\")" },
     rg: { argv: ["rg", "a", "f", "-n"], described: true, measured: "ripgrep 15.0.0 on macOS numbered the lines: rg parses its own argv, the same code on Linux" },
     jq: { argv: ["jq", ".", "f", "-c"], described: true, measured: "jq-1.7.1-apple printed compact output: jq's main.c reads options anywhere, the same code on Linux" },

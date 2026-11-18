@@ -52,6 +52,45 @@ A nested `rm` inside a root stays free under `host-sandbox` (ruled 2026-10-22): 
 - **Under the host's ordinary sandbox `gh` cannot run at all**: the profile denies the network and reads under `.config/gh` and the Keychains (gh fails reading its config); `GH_TOKEN` is not on the host's environment whitelist, and `XDG_CONFIG_HOME` is denied.
 - **The credentialed profile (2026-11-08).** The manifest names `credential: { provider: "github" }` and `network: { ports: [443], hosts: [...] }`. A host whose `hello.credentials` lists `github` is sent `spawn.credential: { provider, manifest: <sha256 of this file> }` by a sandboxed session (`credentialFor`); it injects the person's token as `GH_TOKEN`, with a throwaway `GH_CONFIG_DIR`, under a profile that runs program-only (gh, git, git's https helpers) and reaches one address, a CONNECT proxy the host runs for that call, which admits only the manifest's `hosts` on its `ports` (window-ml-host 0.8.0; `HTTPS_PROXY` routes gh and git to it). The card's Sandbox line names those hosts (`ShFacts.credential.hosts`, the host's grant); a host built before the proxy names none, and the card then says any host on port 443. Such a call ALWAYS asks: `judgeCall` lets no allow policy and no free tier answer a call whose facts say `credential.held` (`ShFacts.credential`), and the card says "Sends: your GitHub token". An older host, Linux, or a gh.json newer than the host's pinned copy (`CredentialRefused`) gets none, and the card says nothing is sent. Every edit of this file therefore needs a host release that copies it before credentialed gh works again. A token gh prints (`auth token`, an approved `unknown` call) is scrubbed by its shape before the model reads it (`secret-scrub.ts`).
 
+### `sed` and `awk`: a program inside an argument (2026-11-18)
+
+`src/shell/manifests/sed.json` and `awk.json`. A sed script and an awk program are a second language in one argument,
+and what writes a file or starts a program lives there (`w`, `r`, `e`, `s///w`, `s///e`; `system()`, `print > f`,
+`cmd | getline`), never in the argv. So a command may name `script: "sed" | "awk"`: its first operand is the program
+(`paths: {operandsFrom: 1}`), unless a flag marked `script` gave it (`sed -e`, with `pathsFrom: 0`, so every operand is
+then a file; several `-e` are joined by newlines), and the text is checked by a narrow grammar
+(`src/shell/script-grammar.ts`). Text outside the grammar makes the call `unknown`, so it asks; nothing is interpreted.
+
+- **sed** (`sedScriptRefusal`). Only the commands `s y p P d D n N q = h H g G x { } !`, separated by `;` or newlines;
+  an address is a line number (not 0), `$` or `/re/`, or a range of two; `s` flags are `g`, `p`, `i`, `I` and a number;
+  `q` with an exit code under a detected GNU only. Everything else is refused, whichever sed would accept it: `w`, `W`,
+  `r`, `R`, `e`, `F` and the `s` flags `w`, `e`, `m`, `M`; labels and branches; `a`, `i`, `c`; comments (`#n`
+  included); GNU's address forms (`0,/re/`, `first~step`, `addr,+N`) and `\cREc`. A newline inside an `s` or `y` part
+  is refused, since macOS sed reads the script line by line and GNU does not.
+- **Where a regular expression ends.** Both seds skip a bracket expression whole when they look for the delimiter
+  (`s/[/]/x/` is one regex to both), but by different rules: GNU's `snarf_char_class` (sed/compile.c) lets a `[` after
+  a class's closing `:` keep it closing, and macOS's `compile_ccl` (Apple text_cmds) needs `:]` exactly, so
+  `s/[[:a:[]/]/Q/w F` is a `w F` to GNU and unbalanced to macOS. `script-grammar.ts` ports both scanners and describes a
+  regular expression only when the two end it at the same character. Measured (2026-11-18, gsed 4.10 and macOS 26.7):
+  over 1,735 random bracket-heavy regexes, `s/<r>/Q/w F` created the file `F` exactly when each port said the
+  replacement and flags fall where they do; no disagreement for either. GNU opens and truncates a `w` file while it
+  parses, even when the script then fails to compile, so a script a sed rejects is not one that did nothing.
+- **awk** (`awkProgramRefusal`). Checked WITHOUT a lexer, by substrings, so no string, regular expression or comment
+  hides anything: the program holds none of `system`, `getline`, `ENVIRON`, `ARGV`, `ARGC`, `PROCINFO` and `@` (gawk's
+  `@include`, `@load` and indirect calls), no `|` outside `||`, and no `>` after its first `print` (every output
+  redirection needs a `print` or `printf` before its `>`). A program that compares with `>` after a print, or prints
+  the word `system`, is refused too: that only asks. Only `-F`, `-v` and `--` are listed; an operand of the form
+  `name=value` (`AWK_ASSIGNMENT`) is an assignment awk never opens, so it is no path.
+- **Flavours.** sed declares both: `-i` is GNU's attached suffix (`attachedValue`, `values: [""]`: `-i` and `-ni`
+  described, `-i.bak` and `-in` not) and BSD's separate one (`value`, `values: [""]`: `-i ''` described, `-i -e …`,
+  where `-e` is the suffix, not); `-l` takes a value in GNU only; GNU permutes and is hardened with `--sandbox` (4.3+:
+  the program itself refuses `e`, `r` and `w`), BSD stops at the first operand. An undetected sed reads the core alone,
+  so `-i` is `unknown` there. awk declares `bsd` alone, hardened with `-safe` (measured: macOS awk refuses `system` and
+  `print >` at parse time and empties `ENVIRON`): gawk and mawk are installed under their own names (`/usr/bin/awk`
+  links to `gawk` or `mawk`), so they are `other` and a Linux awk asks.
+- **A lone `-`** is a file to macOS sed and stdin to GNU (measured), so sed claims it as a path (`dashIsPath`); every
+  awk reads stdin.
+
 ## Pinning
 
 A library manifest is pinned to a content hash of one build. A program cannot be, in general: `git` is whatever the

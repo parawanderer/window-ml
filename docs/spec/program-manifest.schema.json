@@ -347,6 +347,14 @@
             "type": "string"
           }
         },
+        "script": {
+          "description": "The command's first operand is a program in this language unless a `script` flag gave one (`sed 's/a/b/' f`, `awk '{print $1}' f`): the text is checked by its narrow grammar (script-grammar.ts), and one outside it makes the call `unknown`. For `awk`, an operand that is an assignment (`n=1`) is not a path.",
+          "type": "string",
+          "enum": [
+            "sed",
+            "awk"
+          ]
+        },
         "flavour": {
           "description": "What one detected flavour adds to this command (PROGRAM_MANIFEST.md, \"Flavours\"): only in a manifest that declares `flavours`, keyed by a flavour it declares.",
           "type": "object",
@@ -383,6 +391,42 @@
             "not": {
               "required": [
                 "primaries"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "script"
+            ]
+          },
+          "then": {
+            "properties": {
+              "paths": {
+                "type": "object",
+                "properties": {
+                  "operandsFrom": {
+                    "const": 1
+                  }
+                },
+                "required": [
+                  "operandsFrom"
+                ]
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "subcommands"
+                  ]
+                },
+                {
+                  "required": [
+                    "syntax"
+                  ]
+                }
               ]
             }
           }
@@ -445,6 +489,21 @@
         "recursive": {
           "description": "With this flag the command walks its directory arguments (`ls -R`).",
           "type": "boolean"
+        },
+        "values": {
+          "description": "The only values the flag is described with (BSD `sed -i ''`: `[\"\"]`); any other value makes the call `unknown`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "attachedValue": {
+          "description": "A short flag whose value is the rest of its argument, empty when bare, and never the next argument (GNU `sed -i`, `-i.bak`).",
+          "type": "boolean"
+        },
+        "script": {
+          "description": "The value is a script in the command's `script` language (`sed -e`), checked by its grammar (script-grammar.ts).",
+          "type": "boolean"
         }
       },
       "additionalProperties": false,
@@ -493,6 +552,131 @@
               "value": {
                 "const": true
               }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "attachedValue"
+            ],
+            "properties": {
+              "attachedValue": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "value"
+                  ],
+                  "properties": {
+                    "value": {
+                      "const": true
+                    }
+                  }
+                },
+                {
+                  "required": [
+                    "optionalValue"
+                  ],
+                  "properties": {
+                    "optionalValue": {
+                      "const": true
+                    }
+                  }
+                },
+                {
+                  "required": [
+                    "valueIsPath"
+                  ]
+                },
+                {
+                  "required": [
+                    "valueIsDir"
+                  ],
+                  "properties": {
+                    "valueIsDir": {
+                      "const": true
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "values"
+            ]
+          },
+          "then": {
+            "anyOf": [
+              {
+                "required": [
+                  "value"
+                ],
+                "properties": {
+                  "value": {
+                    "const": true
+                  }
+                }
+              },
+              {
+                "required": [
+                  "optionalValue"
+                ],
+                "properties": {
+                  "optionalValue": {
+                    "const": true
+                  }
+                }
+              },
+              {
+                "required": [
+                  "attachedValue"
+                ],
+                "properties": {
+                  "attachedValue": {
+                    "const": true
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "script"
+            ],
+            "properties": {
+              "script": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "value",
+              "pathsFrom"
+            ],
+            "properties": {
+              "value": {
+                "const": true
+              },
+              "pathsFrom": {
+                "const": 0
+              }
+            },
+            "not": {
+              "required": [
+                "valueIsPath"
+              ]
             }
           }
         },
