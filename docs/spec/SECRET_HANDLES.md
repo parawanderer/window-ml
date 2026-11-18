@@ -232,6 +232,38 @@ on real captured output in its PR.
 - Where does the model's authority stop: can a handle be passed to a server-side tool (OpenWebUI) at all, given
   that the server would then hold it?
 - Does this belong in the harness only, or also on the server, for model-provider keys a client should never hold?
+- **Scrubbing a hidden file's values (open design, not ruled).** The sandbox keeps a hidden file (a dotenv file, a
+  credential file, a path a `hide` policy holds) unreadable, but a program the person runs can still load it and print
+  a value, and the registry scrub ([#1948](https://github.com/parawanderer/window-ml/pull/1948)) catches only values
+  the person registered. The idea: the host parses a hidden file when the call is spawned and sends its STRING LEAVES
+  to the worker, which adds them to the session's registry, so an echoed value is scrubbed like a registered one. What
+  it would take, and what stands against it:
+  - *Formats.* Dotenv, JSON, YAML and TOML, parsed by the host's own fixed parsers. A parser the person supplies is
+    refused: parsing a hidden file is running code over its bytes, and the sandbox exists so that nothing does.
+  - *Which leaves.* String leaves of 8 to 512 characters, the registry's bounds. A shorter value stays the channel's
+    to hold, not the scrub's.
+  - *False positives.* A config file's leaves are mostly not secret (`localhost:5432`, `production`, a URL), and every
+    leaf of 8 or more characters would be redacted wherever it appears, in output that never touched the file. A
+    choice by key name (`*_KEY`, `*_TOKEN`) is a heuristic and is left out; the person registering values is the
+    precise path.
+  - *A redaction oracle the person did not choose.* With a hidden file's leaves in the registry, a script that guesses
+    a leaf and prints the guess learns it was right by seeing it redacted. Config leaves are low-entropy (a port, a
+    hostname, an environment name), so guessing is cheap, and unlike a registered value the person never chose to
+    expose this check.
+  - *The 64 cap.* The registry holds at most 64 entries; a dotenv file can hold more than that alone. Values from
+    hidden files would need their own bound and the fail-closed rule page values have: at the bound nothing held is
+    dropped, and output from the call stops crossing.
+  - *The host-to-worker crossing.* The values would leave the host process for the worker in plaintext over the
+    native port, a crossing that no secret makes today. Kept, they belong where page values are kept
+    (`chrome.storage.session`, never the local store). Over the hub, the crossing refused is the host's to a REMOTE
+    runtime: a host reached through the hub never sends a hidden file's leaves, in any form, to the runtime across
+    devices; only the host's own machine's worker could receive them.
+  - *A hash-only route.* The host could send ruling 32's `mask` entries instead (`L`, `F` and `C` per form), never the
+    value. The cost: the host must hold the filter key and run a second `valueForms`, pinned to the worker's by shared
+    vectors so both derive the same forms; and the weak-value limit applies in full, since a config leaf is exactly
+    the low-entropy value a stolen hash gives to offline guessing.
+  - *Relation to handles.* Reading a listed dotenv file's values is already deferred to the handles slice, where a
+    value is used without being read; this would be the scrub half of the same reading, and is decided with it.
 
 ## Prior art
 
@@ -244,10 +276,12 @@ on real captured output in its PR.
 
 ## Amendments after the scrub (2026-11-18)
 
-Three rulings of Shane's that build on the registry scrub ([#1948](https://github.com/parawanderer/window-ml/pull/1948),
+Four rulings of Shane's that build on the registry scrub ([#1948](https://github.com/parawanderer/window-ml/pull/1948),
 "The scrub as built"). The coordinator's calls under each are marked as such and were surfaced to Shane. Nothing here
 is built yet. Ruling 30's value scrub lands after scrub PR 2, its channel mask with handles; ruling 32 lands before
-handles; ruling 33 lands once ruling 32's store and its Settings page exist.
+handles; ruling 33 lands once ruling 32's store and its Settings page exist; ruling 39's by-value half lands after
+#1948, its shape half in its own PR. Rulings 40 to 42 and 44 settle four of ruling 39's open points, and ruling 43
+adds LLM provider tokens to its shape list; all five are written into its section.
 
 ### Page password fields are masked from the model (ruling 30)
 
@@ -368,15 +402,22 @@ stolen store also gives each secret's exact length, since `L` of the as-written 
 protects a high-entropy secret (an API token, a generated password) completely, removes the value from disk and from
 anything that reads storage, and does not protect a weak password from offline guessing by whoever holds the profile.
 The spec states that, not more. The widths are provisional until measured: `k = 8`, `w = 24` and a slow hash
-(PBKDF2-SHA256 through WebCrypto) at about a millisecond. At 64 entries of 11 forms each (`E` about 700) on a 1 MiB
-result, that is about 44 slow confirms a crossing. The per-crossing time, the false candidates and the slow hash's cost
-at 64 entries on a 1 MiB result are measured in a notebook (`notebooks/<topic>/`) before the widths are fixed (the
-coordinator's call).
+(PBKDF2-SHA256 through WebCrypto) at about a millisecond. Measured (`mask-matcher.ipynb`, #1959): a secret gives about 5
+distinct forms, not 11, so at 64 entries `E` is about 313 and a crossing raises about 20 false candidates a MiB in
+expectation; on repetitive text (JSON, logs) they arrive in clumps, a collision with a frequent window counted once per
+occurrence. Two requirements follow. The confirm is memoised within one crossing, keyed on the form and the candidate's
+full `L` units, never on the `k`-unit window alone, so a clump costs one confirm. Keyed on the window, a text holding a
+secret's first 8 units followed by other text would cache "no" and leave a real occurrence later in the same crossing
+unredacted; the build has a row for exactly that text. And a crossing's time budget is set from the tail of its cost,
+not its mean. The widths stay provisional until they are fixed from that notebook (the coordinator's call).
 
 **A timing oracle.** The slow confirm runs only on a filter hit, so a crossing's time tells a text holding a stored
-8-character prefix from one that does not: a prefix oracle beside the redaction oracle in "The scrub as built". The
-notebook measures whether the difference is observable from a page through `forPage`; if it is, the confirm cost is
-paid on a fixed schedule, or a page's crossing is answered no sooner than a floor.
+8-character prefix from one that does not: a prefix oracle beside the redaction oracle in "The scrub as built". It is
+observable on the worker's side: the notebook (#1959) separates one hit by a difference of two means (`z = 2`) after
+about 5 to 47 crossings of each at 20,000 iterations and about 1,000 to 10,500 at 1,000, on a loaded machine. So the
+remedy is REQUIRED, not conditional (the coordinator's call, surfaced to Shane): the confirm cost is paid on a fixed
+schedule, or a page's crossing is answered no sooner than a floor. The end-to-end run from a page through `forPage`
+sizes the remedy; it does not decide whether there is one.
 
 **Short values.** The 8-character floor stays for `mask` entries. A string of `n` characters over an alphabet of size
 `a` occurs about `N / a^n` times in `N` characters of text that looks random to it: a 4-digit PIN about 100 times in a
@@ -400,6 +441,9 @@ calls, each surfaced to Shane:
   `src/chat/view-mode.tsx`). The code carries no name and no value, only that the registry is empty.
 - **When.** It appears once the store is available and the registry is empty. A dismissal is durable and per profile.
   Someone who already has entries never sees it, and Settings stays the permanent way in.
+- **What it says (ruling 42).** The item recommends setting the store up, and says why: most people's models have
+  `ml.sh`, and what it reads (files, command output, the environment) is where secrets reach a model. Its two actions
+  are set up and dismiss.
 - **Whose gesture.** Filling is the person's alone. No model tool, page message, `change_setting` or `ml.settings`
   can create, fill or dismiss the item, and the model never sees the form's fields or values: ruling 30's channel mask
   applies to our own form as to any page's.
@@ -414,3 +458,196 @@ calls, each surfaced to Shane:
   would carry a value inside a sealed command to the runtime. The hub passes sealed payloads opaquely, so it would
   likely need no change, but a value crossing devices is a new kind of payload and gets its own ruling then.
 - **Who builds it.** The chat page lane, after this spec merges and the store's Settings page exists.
+
+### What the person sends is scrubbed too (ruling 39)
+
+**The ruling.** The scrub applies to what the person sends, unless they flag that input as not to be redacted. The
+reason is the accident: a token pasted with the text around it, a selection that held one, an attached file with a
+key in it. This lifts the known limit "the person's own turn and the page context the run is started with" of "The
+scrub as built" once it is built. The calls below are the coordinator's (plan PR
+[#1966](https://github.com/parawanderer/window-ml/pull/1966)), each surfaced to Shane and theirs to override; the ones
+marked "recommended" are this spec's, still open.
+
+**Two detectors.**
+
+- **By value**: the registry matcher of #1948, and under ruling 32 the `mask` entries, which match without a stored
+  value. A match is `[REDACTED:<NAME>]`, as in a tool result.
+- **By shape**: known token formats, each a prefix or a frame plus a length and an alphabet, so the prefix alone in
+  prose never fires. The first list: vendor prefixes (`sk-` and `sk-ant-`, `ghp_`, `gho_`, `ghs_`, `ghu_`,
+  `github_pat_`, `glpat-`, `xox[abprs]-`, `AKIA` and `ASIA` with 16 more, `AIza` with 35 more, `sk_live_` and
+  `rk_live_`), a PEM private key block from its `-----BEGIN` line to its `-----END` line, and a JWT (three base64url
+  parts, the first two decoding to JSON objects). A match is `[REDACTED:<kind>]`, the kind a lowercase slug
+  (`github-token`, `pem-private-key`, `jwt`), so it can never be read as a registry name, which is upper case by its
+  bound.
+- **LLM provider tokens (ruling 43)** are a named group in the shape list: they have standard formats and are
+  high-value targets for resale. The group replaces the first list's `sk-`, `sk-ant-` and `AIza` entries. Each shape
+  below is taken from a published detector: gitleaks' `config/gitleaks.toml` (master at `5f6ec56c`, 2026-10-23) or
+  trufflehog's `pkg/detectors/<vendor>/<vendor>.go` (main at `ffdee00a`, 2026-11-16). GitHub secret scanning's
+  [supported-patterns list](https://docs.github.com/en/code-security/secret-scanning/introduction/supported-secret-scanning-patterns)
+  names these vendors' token types but not their shapes. Where the two detectors differ, the wider shape is kept.
+
+  | Vendor | Kind | Shape | Source |
+  | --- | --- | --- | --- |
+  | OpenAI | `openai-key` | `sk-proj-`, `sk-svcacct-` or `sk-admin-`, then 58 or 74 of `[A-Za-z0-9_-]`, `T3BlbkFJ`, 58 or 74 more; the legacy form `sk-`, 20 of `[A-Za-z0-9]`, `T3BlbkFJ`, 20 more | gitleaks `openai-api-key`; trufflehog `openai`, `openaiadmin` |
+  | Anthropic | `anthropic-key` | `sk-ant-api03-` or `sk-ant-admin01-`, 93 of `[A-Za-z0-9_-]`, then `AA` | gitleaks `anthropic-api-key`, `anthropic-admin-api-key`; trufflehog `anthropic` |
+  | OpenRouter | `openrouter-key` | `sk-or-v1-`, 64 of `[0-9a-f]` | trufflehog `openrouter` |
+  | Hugging Face | `huggingface-token` | `hf_` or `api_org_`, 34 of `[A-Za-z0-9]` (gitleaks allows letters only) | gitleaks `huggingface-access-token`, `huggingface-organization-api-token`; trufflehog `huggingface` |
+  | Groq | `groq-key` | `gsk_`, 52 of `[A-Za-z0-9]` | trufflehog `groq` |
+  | xAI | `xai-key` | `xai-`, 80 of `[A-Za-z0-9_]` | trufflehog `xai` |
+  | Replicate | `replicate-token` | `r8_`, 37 of `[A-Za-z0-9_-]` | trufflehog `replicate` |
+  | Perplexity | `perplexity-key` | `pplx-`, 48 of `[A-Za-z0-9]` | gitleaks `perplexity-api-key` |
+  | NVIDIA | `nvidia-key` | `nvapi-`, 64 of `[A-Za-z0-9_-]` | trufflehog `nvapi` |
+  | Fireworks | `fireworks-key` | `fw_`, 20 to 40 of `[A-Za-z0-9]` | trufflehog `fireworks` |
+  | LangSmith | `langsmith-key` | `lsv2_pt_` or `lsv2_sk_`, 32 of `[0-9a-f]`, `_`, 10 of `[0-9a-f]` | trufflehog `langsmith` |
+  | Google | `google-api-key` | `AIza`, 35 of `[A-Za-z0-9_-]` | gitleaks `gcp-api-key` |
+
+  Each shape ends at a word boundary, as both detectors' do. Not verified, so not in the table: `sk-ant-oat01-`
+  (Anthropic's OAuth token), which neither detector nor GitHub's list gives a shape for; the loose fallback catches it.
+  Rows, one per vendor: a fixture of the shape matches as its kind, and the bare prefix in prose ("set `hf_` before the
+  name", "the `gsk_` prefix") does not. A fixture is built from its parts when the test runs, never committed whole, so
+  push protection and the repository's own scanners do not read it as a leaked key.
+
+  **The loose fallback.** The table's lengths are a leak detector's, which wants precision; a redactor wants recall,
+  since a miss sends the key. So under the table, for a prefix that does not occur in prose (`sk-proj-`,
+  `sk-svcacct-`, `sk-admin-`, `sk-ant-`, `sk-or-v1-`, `gsk_`, `xai-`, `nvapi-`, `pplx-`, `r8_`, `lsv2_`), the prefix and
+  at least 20 characters of that vendor's alphabet (the table's, `[A-Za-z0-9_-]` for `sk-ant-`) match as that vendor's
+  kind. A bare `sk-` and at least 20 of `[A-Za-z0-9]` with at least one digit among them matches as `api-key`: this is
+  the `sk-` and 32 that DeepSeek and OpenWebUI issue. N is 20, the legacy OpenAI key's half-length: shorter than any
+  key in the table, longer than a word. The digit keeps out a 20-letter word after a hyphen; a 32-character
+  lowercase key with no digit at all is about 3 in 100,000 and is missed. Where two shapes match one span, the
+  vendor's wins over `api-key`, and the longer match wins between vendors. The exact shapes stay as the rows'
+  fixtures. Rows: a key one character longer than its table shape still matches as its kind; `sk-ant-oat01-` and 20
+  characters matches as `anthropic-key`; `sk-` and 32 lowercase alphanumerics with a digit matches as `api-key`; `sk-`
+  in prose ("the `sk-` prefix") and a hyphenated word starting `sk-` ("sk-learn", "sk-internationalization") do not.
+- **Vendors with no prefix cannot be caught by shape.** Mistral and Together have no shape in either detector. Cohere's
+  (40 of `[A-Za-z0-9]`, gitleaks `cohere-api-token`), Azure OpenAI's (32 of `[0-9a-f]`, trufflehog `azure_openai`) and
+  DeepSeek's (`sk-` and 32 of `[a-z0-9]`, trufflehog `deepseek`, caught here by the loose fallback as `api-key`) are
+  matched there only beside a vendor word or a key name. Those are the credential-word patterns ruling 40's
+  investigation decides on. Such a key saved as the extension's own (below) or registered is caught by value.
+- **No entropy-only detector** until a notebook gives its false-positive rate on real prompts, which hold commit
+  hashes, UUIDs, base64 and minified code (ruling 40: left until that investigation, which follows the shape
+  detector). A pattern that needs a credential word beside the value (`password=`) waits for the same notebook.
+
+**Where.** At the point where input becomes a turn: in the worker, before the session store writes it and before the
+model reads it, so what is stored is what the model saw. That point is, today:
+
+- an agent run's first turn (`buildMessages` in `agent-host.ts`, the task and the page context `firstUserTurn` adds),
+  and a later turn (`pushUser`, a `say()` or a steer drained from the inbox);
+- the chat page's direct chat (`sw-chat.ts`), the typed words and the `<file>` blocks `frameFiles` adds;
+- an attachment's text when `sw-attach.ts` writes it to the value store, so the file is scrubbed at rest and every
+  read of its `@file:` pointer is too;
+- the prompt string of a page-started call (`ml.agent`, `ml.step`, a page's model request). A page-started model
+  request is already scrubbed by value in #1948 (`forBackendFromPage`); ruling 39 adds the shape detector there and
+  the same scrub for a page-started run's task.
+
+A turn the person started shows names; a page-started string gets the bare `[REDACTED]` of #1948, in every role,
+since the page reads the reply. An image is not scrubbed (the known limit of "The scrub as built"). A page-started
+string now crosses the shape detector and, under ruling 32, the `mask` confirm, so the timing-oracle remedy of "A
+secret the model never uses is stored hash-only" is required on this crossing as on the others.
+
+**An attachment at rest, and `/files`.** What is scrubbed at rest is the extracted text `sw-attach.ts` writes to the
+value store. The file's bytes under `/files` (the `/files` section of `FILE_ATTACHMENTS.md`) are not altered: that
+copy is the person's file as attached, and a read of it through the mount is a different crossing, with that
+section's same-length filler.
+
+**Sessions stored before this.** A session stored before this lands holds the person's turns unscrubbed. Such a turn
+is scrubbed when it crosses to the model on a resume (`forModelHistory`), with every exemption absent, and is not
+rewritten at rest; re-scrubbing stored sessions is the later slice "The scrub as built" names.
+
+**What the model reads.** The placeholder in place, and one line after the turn in the wording tool results use
+(`redactedNote`), with names or kinds and a count, so the model does not think the person typed a placeholder.
+
+**What the person sees.** In the composer, a chip on each detected span, naming the entry or the kind, with "send as is"
+for that one value. A detection never blocks a send; a store that cannot be read holds it (ruling 44, below). The
+composer asks the worker over an extension-only message (the shape of `SECRET_REGISTRY`), debounced, and gets spans and
+names back, never a value: the text is the composer's own. An attachment with detections shows a count on its chip, with
+"send as is" for the whole file and, in the chip's detail, for each value; a value the person takes is kept in the
+stored text and recorded as the other exemptions are (below). After a send, the transcript shows the placeholder the
+model saw and that the scrub fired, beside the raw view the "what the model saw" rule asks for. Recommended: in the
+first build the chip is in the composers the extension hosts (the sidebar and the chat page in the extension); a remote
+host of the renderer (the web build, the phone) gets the scrub at the runtime and the transcript's marker, and the chip
+there waits until the scan answer can ride the hub.
+
+**The flag, three levels.**
+
+- **Per value**: "send as is" on a chip. The send carries, for that turn, a digest of each exempt span's content,
+  never an offset, since the draft can change between the scan and the send. The worker runs detection again at the
+  send and exempts a detected span only if its content matches a digest the turn carries. The exemption is accepted
+  only from an extension-page sender; a page-started call cannot carry one. The value reaches the model and the
+  store, and the stored turn keeps the digests, so a later crossing of that turn (a resumed history,
+  `forModelHistory`) leaves those spans and no other. Every other crossing still scrubs the value: a tool result that
+  echoes it is redacted as before.
+- **Per call**: an option, `scrubInput: false`, on the calls that start or extend a run (`ml.agent`, `ml.step`,
+  `createAgent`, `say`).
+- **One setting**, `scrubPersonInput`, on by default, in the DevTools Settings panel. It is the person's: never
+  written by `change_setting`, `ml.settings` or a page. The upgrade row: a stored config from before the key reads
+  as on.
+
+**The extension's own key, with no registration.** The by-value detector also matches the key the extension itself
+holds, the saved `apiKey` (OpenWebUI's bearer key, `chrome.storage.sync`) and the replaced keys the worker remembers
+(`retired` in `sw-scrub.ts`, up to 8), as the config holds it: a value, in the forms `secretsOf` gives, and only from
+12 characters (`MIN_KEY`). A match is `[REDACTED:window-ml-api-key]`, a lowercase slug so it never meets a registry
+name. #1948 does not do this: its `secretsOf` scrub (`apiKey`, the chat and price URLs, the model filter) runs at the
+crossings into a model or script, and the person's input is not one of them. The extension holds no other model key:
+a cloud provider's key is a connection in OpenWebUI (`docs/CLOUD-MODELS.md`), out of the extension's reach, and the
+shape list is what catches it in a person's turn. The URLs and the model filter are not matched in the person's
+input: they are not credentials, and the person names them in ordinary questions. Row: with an empty registry, a turn
+holding the saved key, and one holding a key replaced since the worker started, each reach the model as
+`[REDACTED:window-ml-api-key]`; an 11-character key is not matched.
+
+The most specific level wins. A page may pass the option for its own string and never changes the setting.
+Recommended: a page's `scrubInput: false` turns off the SHAPE detector only. A registered value is the person's own
+declaration, and a page is not the person, so a page-started string is always scrubbed by value, as #1948 already
+does; Shane's line that a default-held value must never reach the model without the person's override is the reason.
+
+**The open points: ruled since, or recommended.**
+
+- **A detected value is offered to the store (ruling 41)**, in a way the person can ignore at no cost. The offer is on
+  the chip, while the draft still holds the value: "Remember as a secret" opens the store's add row with the kind as
+  the name and `mask` as the type, and nothing is added without the person's save. With no store set up, the chip
+  offers the same "Remember as a secret", and it opens the store's setup (ruling 33's form) first, then the add row
+  with the value. Ignoring it costs nothing: no dialog, no extra click to send, and the offer goes when the draft is
+  sent. Row, with a store and with none: a draft with a detected value sends on the first click with nothing added to
+  the store and no store set up, and after the send no offer remains in the composer or the transcript; with none,
+  taking the offer opens setup before the add row. Never as an inbox item: an item would have to hold the value until
+  acted on, which is storing it unregistered. Never from a remote host (ruling 33 defers remote entry) and never from
+  a page-started string.
+- **No store set up (ruling 42).** By value has nothing to match and the shape detector runs anyway, since it needs
+  no store. The person gets ruling 33's inbox item, which recommends setting the store up or dismissing it. A
+  detection while no store is set up does not raise the item again once it is dismissed: the dismissal is durable,
+  and Settings stays the way in. Row: a shape detection with an empty registry and a dismissed item adds no inbox
+  item.
+- **A store that cannot be READ (ruling 44)** is not an empty one: the turn is held in the composer with the reason
+  and a retry, and "send as is" for the whole turn is the person's override. A detection never blocks a send; this
+  is the one hold, and it fails closed as #1948 fails every other crossing. A caller with no composer (`ml.agent` from
+  the console, a script's `say`, a steer from the inbox) is rejected with an error that says the secret store could
+  not be read and names `scrubInput: false`, which only an extension-page caller can use to send anyway: from a page
+  the option is shape-only, so a page-started call is rejected until the store can be read. A remote host (the web
+  build, the phone) gets the same rejection from the runtime and shows it with a retry. In the first build a remote
+  person has no per-value override; the only override is the runtime's `scrubPersonInput` setting, changed on the
+  computer.
+- **Shared with the host's `looks_secret`, or separate?** Recommended: separate. `looks_secret`
+  (`src/facts.rs` in window-ml-host) classifies a PATH by its components (`.env`, `id_*`, `*.pem`, `.ssh/`); the
+  shape list classifies TEXT. One list would hold two kinds of rule. The shape list is shared within the extension
+  instead: one module that this detector and scrub PR 2's patterns over tool output both read, so a person's turn
+  and a tool result are judged by the same shapes. An attachment whose file name `looks_secret` would match is a
+  candidate for a stronger default later, from a copy of the host's list with a parity row, not from this list.
+
+**Rows the build lands with.**
+
+- A registered value typed, pasted, in an attachment's text, in a page selection and in a later `say()` comes out
+  redacted in what the model read and in the stored session, and the value is in neither.
+- Each shape matches its fixture and does not match its prefix in prose, a commit hash, a UUID or plain base64.
+- "Send as is" sends that span only; a second value in the same turn is still redacted, and a resumed history keeps
+  the exempt span and scrubs the rest.
+- "Send as is" exempts the span whose content matches the turn's digest; a draft edited after the scan so that the
+  digest no longer matches gets the span redacted. A page-started call that passes an exemption gets the value
+  redacted (e3's row).
+- `scrubInput: false` from the person's call sends the turn as is; from a page it leaves the registered value
+  redacted (e3's row).
+- An attachment holding a registered value is redacted in the value store's text and left as attached under
+  `/files`; "send as is" on its chip keeps the value in the stored text.
+- The upgrade: a fixture session written by the old code, with a registered value in a person's turn, is resumed,
+  and the model's history holds the placeholder while the stored session is unchanged.
+- No page, content script or model tool can send the scan message, change `scrubPersonInput` or learn a name (e3's
+  rows), and a janitor reads the build.

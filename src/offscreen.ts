@@ -34,6 +34,8 @@ import { reapDelay, longTimeout, DEFAULT_REAP_BETWEEN_MS } from "./python/py-rea
 import { createPdfHost } from "./pdf/pdf-host";
 import { b64ToBytes, bytesToB64, type PdfMessage, type PdfReadReply, type PdfRenderReply } from "./pdf/pdf-wire";
 import { importTestCode } from "./python/pkg-install-test";
+import { scanCode } from "./python/pkg-scan";
+import { readScan, type ScanResult } from "./python/pkg-scan-note";
 import { holdResult, takeResult } from "./python/py-held-results";
 import { shownText } from "./python/pkg-card";
 
@@ -195,7 +197,7 @@ function killWorker(principal: string, reason: string): void {
     // ROOT C: a kill wipes every run dict this worker held: its own run's for `run:<id>`, every full-mode run's for the
     // shared `full` one. Each such run's next cell opens with the loss line (PYTHON_DIALECT.md, "Lifetime and loss").
     const killedRuns = [...runPrincipals].filter(([, ps]) => ps.has(principal)).map(([runId]) => runId);
-    const named = reason === "timeout" || reason === "start-timeout" || reason === "library-removed" || reason === "stopped";
+    const named = reason === "timeout" || reason === "start-timeout" || reason === "library-removed" || reason === "stopped" || reason === "install-deadline";
     const lossReason = named ? reason : "crashed";
     if (entry) {
         try { entry.w.terminate(); } catch { /* already gone */ }
@@ -449,8 +451,22 @@ function noteWheels(w: Worker, sent: WheelRef[], ok: boolean): void {
 /** From the candidate's spawn to its answer; past it the candidate is killed and the install fails (ruled 2026-11-13). */
 const PY_INSTALL_DEADLINE_MS = 60_000;
 const candidates = new Map<string, string>();   // state: plumbing — run id → its candidate's principal, while one runs
+const candidateEnds = new Map<string, string>();   // state: plumbing — a candidate's principal → why it was ended (the deadline, Stop), while it runs
+// A Stop that reached this document before its install's PY_INSTALL_TEST (the two are separate messages, and the Stop can
+// overtake the test while the service worker waits for this document): remembered by run, so the test that follows is
+// refused instead of starting a candidate. Kept seconds, since the gap is one message in flight and a Stop that arrives
+// after its test answered must not refuse a later install of the run; dropped with the run (PY_DELETE_RUN), capped.
+const earlyStops = new Map<string, number>();   // state: plumbing — run id → when a Stop found no candidate of it
+const EARLY_STOP_MS = 5_000;
+const EARLY_STOPS_MAX = 64;
+
+/** End a candidate: its worker is killed, and the test does not go on in a fresh one. */
+function endCandidate(principal: string, reason: string): void {
+    candidateEnds.set(principal, reason);
+    killWorker(principal, reason);
+}
 /** What a candidate found. */
-type InstallTest = { ok: true } | { ok: false; error: string; module?: string; missing?: string; died?: boolean; collision?: boolean };
+type InstallTest = ({ ok: true } | { ok: false; error: string; module?: string; missing?: string; died?: boolean; collision?: boolean }) & { scan?: ScanResult | null };
 
 /** Terminate a candidate with no housekeeping record: it is not a run's sandbox, and nothing of it is lost. */
 function dropCandidate(principal: string): void {
@@ -463,34 +479,61 @@ function dropCandidate(principal: string): void {
 }
 
 /**
- * Test an install in a candidate: the run's earlier installs and the new wheels unpacked after its lockdown, then
- * `modules` imported in a hardened cell.
+ * Test an install in a candidate: the run's earlier installs and the new wheels unpacked after its lockdown, the
+ * platform scan read over their sources in one hardened cell (pkg-scan.ts), then `modules` imported in the next.
  * @param run the run
  * @param refs every wheel the candidate holds: the run's record, then the new ones
  * @param modules the new distributions' top-level modules
- * @returns passed, or why not; `died` when the interpreter did not survive it (a trap, memory, the deadline, Stop)
+ * @param scope every top-level name those wheels provide, which is all the scan reads
+ * @returns passed, or why not, with the scan (null when it did not answer); `died` when the interpreter did not
+ *     survive the import (a trap, memory, the deadline, Stop)
  */
-async function installTest(run: string, refs: WheelRef[], modules: string[]): Promise<InstallTest> {
+async function installTest(run: string, refs: WheelRef[], modules: string[], scope: string[] = modules): Promise<InstallTest> {
     if (candidates.has(run)) return { ok: false, error: "another install of this run is being tested" };
     const principal = `install:${run}:${nextId++}`;
     candidates.set(run, principal);
-    const deadline = setTimeout(() => killWorker(principal, "install-deadline"), PY_INSTALL_DEADLINE_MS);
+    const deadline = setTimeout(() => endCandidate(principal, "install-deadline"), PY_INSTALL_DEADLINE_MS);
     try {
-        const w = ensureWorker(principal, true);
-        const got = await wheelsForCell(w, refs);
+        const cell = (code: string, wheels: WheelBytes[]) => runInWorker(code, null, true, null, false, undefined, false, true, undefined, undefined, [], principal, undefined, false, undefined, false, undefined, undefined, wheels) as Promise<PyResult & { installFailed?: boolean }>;
+        // The deadline and Stop end the whole candidate. Each lands between two awaits, and the next cell would spawn a fresh
+        // worker and run there with no timer of its own (unbounded past the deadline), so every await before a cell is
+        // followed by this check.
+        const ended = (scan?: ScanResult | null): InstallTest | null => {
+            const why = candidateEnds.get(principal);
+            return why ? { ok: false, error: `Python worker stopped (${why}).`, died: true, ...(scan !== undefined ? { scan } : {}) } : null;
+        };
+        const got = await wheelsForCell(ensureWorker(principal, true), refs);
+        const endedInRead = ended();
+        if (endedInRead) return endedInRead;
         if ("error" in got) return { ok: false, error: got.error };
-        const r = await runInWorker(importTestCode(modules), null, true, null, false, undefined, false, true, undefined, undefined, [], principal, undefined, false, undefined, false, undefined, undefined, got) as PyResult & { installFailed?: boolean };
+        // The scan reads before any of the packages' code runs, and is a note whatever it answers (item 7): a scan that
+        // fails leaves the import test to decide, in a fresh worker. A source that kills Pyodide gets no answer at all (the
+        // fatal error escapes the cell, tests/pkg-install-fatal-worker.test.mjs): the deadline ends that candidate.
+        const s = await cell(scanCode(modules, scope), got);
+        if (!s.ok && s.installFailed) return { ok: false, error: String(s.error ?? "the candidate did not answer"), scan: null };
+        const scan = s.ok ? readScan(s.value) : null;
+        // A scan that failed may have left its interpreter unusable (a fatal error answered, the worker living on to answer
+        // "already fatally failed"): the import gets a fresh worker, never that one.
+        if (!s.ok) dropCandidate(principal);
+        const endedInScan = ended(scan);
+        if (endedInScan) return endedInScan;
+        const again = await wheelsForCell(ensureWorker(principal, true), refs);
+        const endedInReread = ended(scan);
+        if (endedInReread) return endedInReread;
+        if ("error" in again) return { ok: false, error: again.error, scan };
+        const r = await cell(importTestCode(modules), again);
         if (r.ok) {
             const v = typeof r.value === "string" ? JSON.parse(r.value) : r.value;
             const found = (typeof v === "string" ? JSON.parse(v) : v) as { module?: string; missing?: string | null; error?: string; collision?: boolean } | null;
-            return found ? { ok: false, error: String(found.error ?? "the import failed"), ...(found.module ? { module: found.module } : {}), ...(found.missing ? { missing: found.missing } : {}), ...(found.collision ? { collision: true } : {}) } : { ok: true };
+            return found ? { ok: false, error: String(found.error ?? "the import failed"), ...(found.module ? { module: found.module } : {}), ...(found.missing ? { missing: found.missing } : {}), ...(found.collision ? { collision: true } : {}), scan } : { ok: true, scan };
         }
-        return { ok: false, error: String(r.error ?? "the candidate did not answer"), ...(r.installFailed ? {} : { died: true }) };
+        return { ok: false, error: String(r.error ?? "the candidate did not answer"), ...(r.installFailed ? {} : { died: true }), scan };
     } catch (e) {
         return { ok: false, error: String((e as Error)?.message ?? e), died: true };
     } finally {
         clearTimeout(deadline);
         candidates.delete(run);
+        candidateEnds.delete(principal);
         dropCandidate(principal);
     }
 }
@@ -505,6 +548,9 @@ function runInWorker(code: string, image: string | null, hardened: boolean, tabl
     // `hardened` is the mode (true = readonly, the locked-down sandbox); `principal` is WHOSE sandbox.
     // A readonly run gets one worker per principal so a patch one principal left cannot reach the next;
     // `full` is its own worker and is never locked.
+    // An ended install candidate spawns nothing and runs nothing more, whichever await reached here after its end.
+    const ended = candidateEnds.get(principal);
+    if (ended) return Promise.resolve({ ok: false, stdout: "", error: `Python worker stopped (${ended}).` });
     const w = ensureWorker(principal, hardened);
     const id = nextId++;
     return new Promise((resolve) => {
@@ -627,15 +673,24 @@ chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
     // Start the runtime ahead of a run that is likely to need it (see the background's PYTHON_PREWARM). No
     // watchdog: nothing waits on it, and a run that later waits on a start that hangs arms its own. Prewarm
     // carries the same principal + mode as the run it is warming for, so it warms THAT principal's worker.
-    // An install's candidate (python_install, slice 4) and its Stop: only the service worker sends either.
-    if (msg?.type === "PY_INSTALL_TEST" && !sender.tab && typeof msg.run === "string" && msg.run) {
+    // An install's candidate (python_install, slice 4) and its Stop: only the service worker sends either. The run id is
+    // not a capability: every sender that passes is the extension's own code, and a Stop kills only a candidate.
+    if (msg?.type === "PY_INSTALL_TEST" && sender.id === chrome.runtime.id && !sender.tab && typeof msg.run === "string" && msg.run) {
+        const stoppedAt = earlyStops.get(msg.run);
+        earlyStops.delete(msg.run);
+        if (stoppedAt !== undefined && Date.now() - stoppedAt < EARLY_STOP_MS) { sendResponse({ ok: false, error: "Python worker stopped (stopped).", died: true }); return; }
         const modules = Array.isArray(msg.modules) ? msg.modules.filter((m: unknown): m is string => typeof m === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(m)) : [];
-        installTest(msg.run, wheelRefs(msg.wheels), modules).then(sendResponse, (e) => sendResponse({ ok: false, error: String(e), died: true }));
+        const scope = Array.isArray(msg.scope) ? msg.scope.filter((m: unknown): m is string => typeof m === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(m)) : modules;
+        installTest(msg.run, wheelRefs(msg.wheels), modules, scope).then(sendResponse, (e) => sendResponse({ ok: false, error: String(e), died: true }));
         return true;
     }
-    if (msg?.type === "PY_INSTALL_STOP" && !sender.tab && typeof msg.run === "string") {
+    if (msg?.type === "PY_INSTALL_STOP" && sender.id === chrome.runtime.id && !sender.tab && typeof msg.run === "string") {
         const principal = candidates.get(msg.run);
-        if (principal) killWorker(principal, "stopped");
+        if (principal) endCandidate(principal, "stopped");
+        else {
+            earlyStops.delete(msg.run); earlyStops.set(msg.run, Date.now());   // re-added last: the oldest is evicted first
+            if (earlyStops.size > EARLY_STOPS_MAX) earlyStops.delete(earlyStops.keys().next().value as string);
+        }
         sendResponse({ ok: true, stopped: !!principal });
         return;
     }
@@ -819,6 +874,7 @@ chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
     runPrincipals.delete(run);
     runNsVars.delete(run);
     nsLoss.delete(run);
+    earlyStops.delete(run);
     // A worker's answer can carry callables the run's last cell handed to JavaScript that fired after its result
     // (cell-gate.ts): only the run's own locked-down worker has the gate, so at most one answer does.
     const asks: Promise<PyResult["dropped"] | undefined>[] = [];

@@ -305,6 +305,12 @@ Settings checkbox (a user gesture), is open: it has to work from both the overla
   or a `write-names` claim (create, remove, rename) that reaches the top level, asks (`claimsTopLevelName`, the
   `roots-less-top-names` bound). It needs the `topLevel`/`isRoot` facts, which `shFacts` computes only when it is
   given the roots; a `names` write with no such fact counts as top-level.
+- **A manifest without `optionsFirst` reads a flag after an operand as a flag**, which is right only where the
+  program's parser permutes on every supported platform. macOS `cat`, `head`, `tail`, `wc`, `ls` and `sed` read it as
+  a FILE NAME, a path the host never resolved: `cat f -n`, with `-n` a symlink to `.env`, printed the secret while main
+  described it as reading `f` alone (fixed 2026-11-17). A command sets `optionsFirst` or names its measured parser in
+  `AFTER_OPERAND` (`tests/program-manifest.test.mjs`), which fails for a manifest that does neither
+  (PROGRAM_MANIFEST.md, `optionsFirst`).
 
 - **`chrome.runtime.lastError` is the only place a native port says why it closed**, and only inside the disconnect
   listener (`nativePort`). Read later, it is gone.

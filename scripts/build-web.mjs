@@ -11,6 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeBuildInfo } from "./gen-build-info.mjs";
 import { writePkgShipped } from "./gen-pkg-shipped.mjs";
+import { writePkgCore } from "./gen-pkg-core.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -49,6 +50,7 @@ export async function buildWeb({ outdir = "dist-web", appdir = outdir === "dist-
     // The same holds for pkg-shipped.gen.ts, which the session views reach through pkg-card.ts.
     writeBuildInfo();
     writePkgShipped();
+    writePkgCore();
     const out = path.resolve(ROOT, outdir);
     const stage = `${out}.stage`;
     rmSync(stage, { recursive: true, force: true });
