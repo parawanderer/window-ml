@@ -170,9 +170,9 @@ on real captured output in its PR.
   - what the run keeps beside a tool result (`forStored`, the loop's `scrubStored`): the tool's Out render, which the
     sidebar and both exports draw, and so a pointer's fuller capture, which a later `@tool:` read hands a script or the
     model. Every string in it is scrubbed as the result is, without the count line; image data is not scanned;
-  - an error answered to a page (`forPage`): every string under an error key, the config's secrets and then each
-    registered value as a bare `[REDACTED]`, so a page never learns a name. It waits for the registry and fails closed
-    to "The request failed."
+  - an error answered to a page (`forPage`): every string under an error key, at any depth beneath it, the config's
+    secrets and then each registered value as a bare `[REDACTED]`, so a page never learns a name. It waits for the
+    registry and fails closed to "The request failed."
 - **The host does not scrub.** A process's held output stays its raw bytes, so a registered value can pass between
   the stages of a pipe on the host (an OS pipe, which never crosses into the worker); it is scrubbed before any script
   or model reads it. `done`'s `sha256` and `size` are over the raw bytes. A scrubbed read says so: a text range comes
@@ -215,10 +215,12 @@ on real captured output in its PR.
   rest in the value store behind a pointer (a `fetch_url` page's whole text, a stored table) until PR 2 scrubs it where
   it is written: every model-bound read of it (a `@tool:` read, a pipe's head, range or grep, the output of a script
   that called `ml.dereference`) crosses the scrub, so what remains is the value at rest and an approved script that
-  reads it and transforms it before printing; `GET_CONFIG`'s answer to a page is not run through the registry, by
-  design, since what keeps a secret out of it is `publicConfig`'s fixed key list (`redteam-lifetimes-config.test.mjs`,
-  #1942, enumerates it, no secret key among them), and a public value equal to a registered one reaches the model only
-  through a crossing that scrubs it (a page-started request, or a tool result that read the page).
+  reads it and transforms it before printing; a registered value inside an answer's `data` to a page (anything not under
+  an error key) is not scrubbed, since the data is the handler's answer and only the error text is the worker's own;
+  `GET_CONFIG`'s answer to a page is not run through the registry, by design, since what keeps a secret out of it is
+  `publicConfig`'s fixed key list (`redteam-lifetimes-config.test.mjs`, #1942, enumerates it, no secret key among them),
+  and a public value equal to a registered one reaches the model only through a crossing that scrubs it (a page-started
+  request, or a tool result that read the page).
 - **Deferred to the handles slice**: reading values from a listed `.env` (a new host message), the keychain, a handle's
   value, and the `echoes` refusal.
 

@@ -146,16 +146,19 @@ export function scrubErrors<T>(value: T, secrets: readonly SecretSub[], depth = 
  * @param depth how deep to look
  * @returns the response, copied where something changed
  */
-export function mapErrorStrings<T>(value: T, f: (s: string) => string, depth = 6): T {
+export function mapErrorStrings<T>(value: T, f: (s: string) => string, depth = 6, inside = false): T {
+    // `inside`: the walk is under an error key, so every string below it is error text (`{ error: { message } }`,
+    // `{ error: [ ... ] }`), not only one whose own key ends in "error".
+    if (typeof value === "string") return (inside ? f(value) : value) as T;
     if (depth < 0 || value == null || typeof value !== "object") return value;
     if (Array.isArray(value)) {
         let changed = false;
-        const out = value.map((v) => { const s = mapErrorStrings(v, f, depth - 1); if (s !== v) changed = true; return s; });
+        const out = value.map((v) => { const s = mapErrorStrings(v, f, depth - 1, inside); if (s !== v) changed = true; return s; });
         return (changed ? out : value) as T;
     }
     let out: Record<string, unknown> | null = null;
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-        const s = ERROR_KEY.test(k) && typeof v === "string" ? f(v) : mapErrorStrings(v, f, depth - 1);
+        const s = mapErrorStrings(v, f, depth - 1, inside || ERROR_KEY.test(k));
         if (s !== v) (out ??= { ...(value as Record<string, unknown>) })[k] = s;
     }
     return (out ?? value) as T;
