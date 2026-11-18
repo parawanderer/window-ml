@@ -149,6 +149,39 @@ test("a policy whose script breaks is still read by strictness and shown as brok
     } finally { P.removePolicy(bad.id); P.removePolicy(ok.id); }
 });
 
+// --- an order that cannot be trusted fails closed: the read answers, by strictness, and every removal widens ---
+
+for (const [name, order] of [["throws", () => { throw new Error("boom"); }], ["says every row beats every other", () => true], ["says no row beats any other", () => false]]) {
+    test(`a registered order that ${name} is read by strictness and every removal in the view widens, even with a classifier that says narrows`, () => {
+        const consumer = `order-${name.replace(/\W+/g, "-")}`;
+        V.registerPrecedence(consumer, order);
+        V.registerRemovalClass(consumer, () => "narrows");
+        const mk = (id, effect, c = consumer) => ({ id, consumer: c, label: id, source: "(c) => true", effect });
+        // A second, ordinary consumer in the same view: its removals widen too, because the view holds one order that was not trusted.
+        const rows = V.effectiveRows([mk("g-allow", "allow", "fetch")], [mk("deny", "deny"), mk("allow", "allow")], { label: "d", source: "" });
+        const by = (id) => rows.find((r) => r.entry.id === id);
+        assert.equal(by("deny").wins, true, "read by strictness: the deny is not beaten");
+        assert.equal(by("allow").wins, false);
+        assert.deepEqual(by("deny").overrides, ["allow"]);
+        assert.equal(by("deny").removal.class, "widens", "the deny goes only with a confirm");
+        assert.equal(by("allow").removal.class, "widens", "and so does every other removal in the view");
+        assert.equal(by("g-allow").removal.class, "widens");
+        assert.ok(by("deny").removal.exposes.some((e) => e.id === "allow"), "and the confirm names what becomes reachable, by strictness");
+    });
+}
+
+test("a trusted order leaves other removals alone: the fallback is for the view that held an untrusted one", () => {
+    const mk = (id, effect) => ({ id, consumer: "fetch", label: id, source: "(c) => true", effect });
+    const rows = V.effectiveRows([], [mk("a", "allow")], { label: "d", source: "" });
+    assert.equal(rows.find((r) => r.entry.id === "a").removal.class, "narrows");
+});
+
+test("a classifier that throws is read as widens", () => {
+    V.registerRemovalClass("thrower", () => { throw new Error("boom"); });
+    const rows = V.effectiveRows([], [{ id: "a", consumer: "thrower", label: "a", source: "(c) => true", effect: "allow" }], { label: "d", source: "" });
+    assert.equal(rows.find((r) => r.entry.id === "a").removal.class, "widens");
+});
+
 // --- generic over the consumer, and what a row may carry ---
 
 test("a consumer may register the order its own judge applies, and the rows follow it, enumerated against that judge", () => {

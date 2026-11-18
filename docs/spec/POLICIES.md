@@ -316,6 +316,10 @@ separate piece of work; this section is the worker's contract.
 - **A policy whose script breaks is still a row.** `judgeCall` skips it for the call it broke on (`broken` is per call), but the
   next call may not break it, so the row is read by strictness like any other and carries `entry.broken`: `wins` means "on a
   call both match and whose script runs", and a row with `entry.broken` is one that may not be applied.
+- **A registered order that cannot be trusted is not used.** A judge decides a call both rows match, so for two rows of different
+  effects exactly one beats the other, and no row beats itself. An order that throws, or breaks that for a pair (both ways, neither
+  way, or a row over itself), is replaced by strictness for that pair, and every removal in the view is classed `widens` (confirm
+  required); the read always answers. A classifier that throws is read as `widens`.
 - **A consumer's class can only add caution.** A classifier that says a removal narrows is overruled when the entry is not an
   allow and the removal would leave another row (the built-in default included) to decide: the class is `widens`.
 - **A policy is a script, so "on a call both match" is not decided here.** The read says what wins WHERE both match, never that
