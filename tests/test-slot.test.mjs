@@ -15,7 +15,7 @@ const SLOT = path.join(ROOT, "scripts", "test-slot.mjs");
 // The bench's ledger, which a granted job joins: this file's own, set before the import reads it.
 process.env.BENCH_LEDGER_FILE = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "test-slot-ledger-")), "ledger.json");
 const { ledger, register, unregister } = await import("../tests/e2e/bench/memory-budget.mjs");
-const { jobsFor, capFor, skipReason, submit, finish, look, cancel, waitFor, acquire, waitingLine, jobEnv, procLive, startTime, priceFor, classOf, priceIn, priceAt, priceOfSizing, fitIn, shapeOf, BASE_DEFAULT, SLOPE_DEFAULT, SLOPE_MIN, SLOPE_MAX, grantLine, admit, minWorkersFor, maxWorkersFor, promisedBy, MAX_RUNS, BATCH_OVERRUN_MS, BATCH_MAX_WORKERS, batchRefusal, usualMsFor, timeCapFor, enforceCap, parseMaxTime, TIME_CAP_MIN_MS, TIME_CAP_FACTOR, KILL_GRACE_MS, MAX_TIME_MAX_MIN } = await import(SLOT);
+const { jobsFor, capFor, skipReason, submit, finish, look, cancel, waitFor, acquire, waitingLine, jobEnv, procLive, startTime, priceFor, classOf, priceIn, priceAt, priceOfSizing, fitIn, shapeOf, SHAPE_MAX, BASE_DEFAULT, SLOPE_DEFAULT, SLOPE_MIN, SLOPE_MAX, grantLine, admit, minWorkersFor, maxWorkersFor, promisedBy, MAX_RUNS, BATCH_OVERRUN_MS, BATCH_MAX_WORKERS, batchRefusal, usualMsFor, timeCapFor, enforceCap, parseMaxTime, TIME_CAP_MIN_MS, TIME_CAP_FACTOR, KILL_GRACE_MS, MAX_TIME_MAX_MIN } = await import(SLOT);
 
 process.env.TEST_SLOT_POLL_MS = "50";
 process.env.TEST_SLOT_MAX_RUNS = "1";
@@ -219,6 +219,46 @@ test("shapeOf: the clone's path made relative, so the same command in two clones
     assert.equal(shapeOf(["node", "--import", "tsx", "--test", "/c/tests/a b.test.mjs"], "/c"), 'node --import tsx --test "tests/a b.test.mjs"');
     assert.equal(shapeOf(["x", "/c"], "/c"), "x .", "the clone itself is a dot");
     assert.equal(shapeOf(["x", "/cc/y"], "/c"), "x /cc/y", "a sibling directory with the clone as a prefix is left alone");
+});
+
+test("shapeOf: a long command keeps whole arguments and names what it dropped, so two that differ at the end are two shapes", () => {
+    // Review of #1953: a character cut made the 267- and 283-character commands below one shape, and cut through an argument.
+    const head = ["node", "--import", "tsx", "--test", "--test-reporter=spec", "--test-reporter-destination=/dev/null", "--test-reporter=scripts/test-times-reporter.mjs", "--test-reporter-destination=/s/cdp.jsonl"];
+    const a = shapeOf([...head, "tests/cdp-stream.test.mjs", "tests/exec-page-label.test.mjs", "tests/a.test.mjs"], "/c");
+    const b = shapeOf([...head, "tests/cdp-stream.test.mjs", "tests/exec-page-label.test.mjs", "tests/a-much-longer-name.test.mjs", "tests/b.test.mjs"], "/c");
+    for (const s of [a, b]) {
+        assert.ok(s.length <= SHAPE_MAX, `${s.length} characters`);
+        assert.match(s, / …\+\d+ #[0-9a-f]{8}$/);
+        const kept = s.replace(/ …\+\d+ #[0-9a-f]{8}$/, "").split(" ");
+        assert.deepEqual(kept, [...head, "tests/cdp-stream.test.mjs", "tests/exec-page-label.test.mjs"].slice(0, kept.length), "only whole arguments, in order");
+    }
+    assert.notEqual(a, b);
+    assert.equal(shapeOf([...head, "tests/x.test.mjs"], "/c", Infinity), [...head, "tests/x.test.mjs"].join(" "), "uncapped, it is the whole command");
+    assert.equal(shapeOf(["node", "scripts/test.mjs"], "/c"), "node scripts/test.mjs", "a short command is unchanged");
+});
+
+test("a job's class is read from its WHOLE command, so a long file run whose paths fell past the cap is still `files`", () => {
+    const dir = tmpDir();
+    fs.writeFileSync(path.join(dir, "footprints.jsonl"), [...onLine("unit", 0.2 * GB, "node scripts/test.mjs", 4 * GB)].map((l) => JSON.stringify(l)).join("\n") + "\n");
+    const flags = [...Array(3)].flatMap((_, i) => [`--test-reporter=scripts/reporter-number-${i}.mjs`, `--test-reporter-destination=/private/tmp/some/long/scratch/dir/out-${i}.jsonl`]);
+    const cmd = ["node", "--import", "tsx", "--test", ...flags, "tests/a.test.mjs", "tests/b.test.mjs"];
+    assert.equal(classOf(shapeOf(cmd, "/c")), null, "the capped shape has lost the test paths");
+    const real = { memory: () => ({ available: 20 * GB, coming: 0, total: 24 * GB, cores: 10 }), maxRuns: 3, resident: () => 0, startTime: () => startTime(process.pid) };
+    const t = submit({ cmd, mode: "attached", dir, deps: real, tree: { clone: "/c", head: "h", dirty: null } }).ticket;
+    const job = look(t, { dir, deps: real }).job;
+    assert.equal(job.class, "files");
+    assert.equal(job.sizing.from, "default", "priced as a file run with no history, not from the suites");
+});
+
+test("the worker cap follows the reading's cores, not the machine the queue runs on", () => {
+    // Review of #1953: the grant took its cap from os.cpus(), so a 15-core reading got 2 workers on a 4-vCPU runner.
+    for (const cores of [1, 2, 3, 4, 8, 10, 15, 32]) {
+        const dir = tmpDir();
+        const deps = { memory: () => ({ available: 40 * GB, coming: 0, total: 48 * GB, cores }), maxRuns: 3, resident: () => 0, startTime: () => startTime(process.pid) };
+        const t = submit({ cmd: ["scripts/test.mjs"], mode: "attached", dir, deps, tree: { clone: "/c", head: "h", dirty: null } }).ticket;
+        assert.equal(look(t, { dir, deps }).job.jobs, Math.min(8, Math.max(1, cores - 2)), `${cores} cores`);
+        assert.equal(capFor("e2e", cores), Math.max(1, Math.floor(cores / 2)));
+    }
 });
 
 test("a footprint records the shape of its command, and the next grant is priced from that shape", () => {

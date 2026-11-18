@@ -162,11 +162,19 @@ export function jobsFor({ available, total, base = BASE_DEFAULT, slope = SLOPE_D
  *  declared `want` (1 here, the default). */
 export const capFor = (kind, cores = os.cpus().length) => (kind === "batch" ? 1 : kind === "e2e" ? Math.max(1, Math.floor(cores / 2)) : Math.min(8, Math.max(1, cores - 2)));
 
+/** The longest shape kept, in characters. */
+export const SHAPE_MAX = 200;
 /** The shape of a job's command, the key its footprints are kept under: the arguments joined, the clone's path made
- *  relative (`scripts/test.mjs core` in any clone) and this node written `node`. */
-export function shapeOf(cmd, clone) {
+ *  relative (`scripts/test.mjs core` in any clone) and this node written `node`. Past `max` it keeps WHOLE arguments
+ *  and ends `…+<n> #<hash>` for what it dropped, so two long commands that differ only at the end stay two shapes. */
+export function shapeOf(cmd, clone, max = SHAPE_MAX) {
     const rel = (a) => { let t = String(a); if (clone && t === clone) t = "."; else if (clone && t.startsWith(`${clone}/`)) t = t.slice(clone.length + 1); return t === process.execPath ? "node" : t; };
-    return cmd.map(rel).map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(" ").slice(0, 200);
+    const args = cmd.map(rel).map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)), whole = args.join(" ");
+    if (whole.length <= max) return whole;
+    const kept = [];
+    for (let len = 0; kept.length < args.length && len + args[kept.length].length + 1 <= max - 16; len += args[kept.length].length + 1) kept.push(args[kept.length]);
+    const dropped = args.slice(kept.length);
+    return `${kept.join(" ")} …+${dropped.length} #${createHash("sha256").update(dropped.join(" ")).digest("hex").slice(0, 8)}`;
 }
 
 /** The class of a command shape: `suite` or `suite:<genre>` for the runner (`scripts/test.mjs [genre]`, `npm test`, `npm run test:<genre>`),
@@ -200,10 +208,11 @@ function fitSlope(points) {
  * each peak, `max(0, peakRss − slope × jobs)`. The peak barely moves with the workers, so a run granted few of them does
  * not raise the price of the next.
  */
-export function priceFor(footprints, { kind, shape = null } = {}) {
+export function priceFor(footprints, { kind, shape = null, cls: given } = {}) {
     const usable = (f) => f && Number.isFinite(f.peakRss) && f.peakRss > 0 && Number.isFinite(f.jobs) && f.jobs > 0;
     const of = (k, keep = () => true) => footprints.filter((f) => f?.kind === k && usable(f) && keep(f)).slice(-FOOTPRINTS_USED);
-    const cls = classOf(shape);
+    // The class read from the whole command at submit, when known: a long shape may have lost the paths classOf reads.
+    const cls = given !== undefined ? given : classOf(shape);
     let sample = [], from = "default";
     const mine = shape ? of(kind, (f) => f.shape === shape) : [];
     const sameClass = cls ? of(kind, (f) => (f.class ?? classOf(f.shape)) === cls) : [];
@@ -218,7 +227,7 @@ export function priceFor(footprints, { kind, shape = null } = {}) {
 }
 
 /** The price of a run of a kind and shape from this queue's footprints file (see `priceFor`). */
-export const priceIn = (kind, shape, dir = slotDir()) => priceFor(readFootprints(dir), { kind, shape });
+export const priceIn = (kind, shape, dir = slotDir(), cls = undefined) => priceFor(readFootprints(dir), { kind, shape, cls });
 
 /** Every parsable line of the footprints file, oldest first. */
 function readFootprints(dir) {
@@ -256,11 +265,11 @@ function residentOf() {
  *  kind): free memory, what the bench admitted and has not started, the machine's total and cores. One reading per pass; each start in the pass is counted against it. */
 const readMemory = () => ({ available: availableMemory(), coming: benchComing(), total: os.totalmem(), cores: os.cpus().length });
 /** A job's price (`{ base, slope, measured, from }`) and worker cap, measured from the footprints. */
-const readKind = (job, dir) => ({ ...priceIn(job.kind, job.shape, dir), cap: capFor(job.kind) });
+const readKind = (job, m, dir) => ({ ...priceIn(job.kind, job.shape, dir, job.class), cap: capFor(job.kind, m.cores ?? os.cpus().length) });
 /** A test's injected figure as a price: `price`, or `perWorker` (a base of 0 and that a worker). */
 const injected = (k) => ({ ...(k.price ?? { base: 0, slope: k.perWorker }), cap: k.cap });
 /** A job's price and cap under a reading: injected by `deps.kind` or the reading itself in tests, else measured. */
-const sizingFor = (job, m, dir, deps) => { const k = deps.kind ? deps.kind(job.kind) : m.price || m.perWorker ? m : null; return k ? injected(k) : readKind(job, dir); };
+const sizingFor = (job, m, dir, deps) => { const k = deps.kind ? deps.kind(job.kind) : m.price || m.perWorker ? m : null; return k ? injected(k) : readKind(job, m, dir); };
 
 /**
  * Whether a job of `kind` may start now, and with how many workers. `room` is free memory less the reserve, less what
@@ -428,11 +437,11 @@ function spawnJob(job, dir) {
  * nothing running, more memory than the room above the reserve. Both are figures the submitter acts on by asking for
  * fewer; with something running the job queues and waits for both caps like any other.
  */
-export function batchRefusal(state, want, dir, deps = {}, shape = null) {
+export function batchRefusal(state, want, dir, deps = {}, shape = null, cls = undefined) {
     const m = (deps.memory ?? readMemory)(), maxWorkers = maxWorkersFor(m.cores ?? os.cpus().length);
     if (want > maxWorkers) return `${want} workers is more than this machine's worker cap of ${maxWorkers} (its cores less two)`;
     if (state.jobs.some((j) => j.state === "running")) return null;
-    const price = sizingFor({ kind: "batch", shape }, m, dir, deps), room = m.available - (m.coming ?? 0) - RESERVE_FRAC * m.total;
+    const price = sizingFor({ kind: "batch", shape, class: cls }, m, dir, deps), room = m.available - (m.coming ?? 0) - RESERVE_FRAC * m.total;
     if (priceAt(price, want) <= room) return null;
     const most = fitIn(price, Math.max(0, room));
     return `${want === 1 ? "1 worker takes" : `${want} workers take`} ${fmtBytes(priceAt(price, want))} and, with nothing else running, the memory room is ${fmtBytes(Math.max(0, room))} above the reserve; ${most ? `ask for at most ${most}` : "not even one fits now: try later"}`;
@@ -449,14 +458,15 @@ export function submit({ cmd, cwd = process.cwd(), kind = "unit", workers = 1, m
     // A test job's key is what it was before batch existed, so an old copy's queued job is still shared.
     const key = createHash("sha256").update(JSON.stringify([tree.clone, cmd, tree.head, tree.dirty, ...(kind === "batch" ? ["batch", workers] : [])])).digest("hex").slice(0, 16);
     const ticket = `${new Date().toISOString().replace(/[-:]/g, "").slice(0, 15)}-${randomBytes(3).toString("hex")}`;
-    const shape = shapeOf(cmd, tree.clone);
+    // The class is read from the WHOLE command: the shape is capped, and its tail may hold the test paths.
+    const shape = shapeOf(cmd, tree.clone), cls = classOf(shapeOf(cmd, tree.clone, Infinity));
     const by = { pid: process.pid, started: (deps.startTime ?? startTime)(process.pid) };
     const { out, reaped } = withQueue(dir, (state) => {
         const same = mode === "detached" && state.jobs.find((j) => j.state === "queued" && j.mode === "detached" && j.key === key);
         if (same) { if (maxTimeMs) same.maxTimeMs = Math.max(same.maxTimeMs ?? 0, maxTimeMs); return { job: same, shared: true }; }
-        const refused = kind === "batch" ? batchRefusal(state, workers, dir, deps, shape) : null;
+        const refused = kind === "batch" ? batchRefusal(state, workers, dir, deps, shape, cls) : null;
         if (refused) return { refused };
-        const job = { ticket, mode, kind, cmd, shape, cwd, key, clone: tree.clone, head: tree.head, dirty: tree.dirty, by, state: "queued", submittedAt: new Date().toISOString(),
+        const job = { ticket, mode, kind, cmd, shape, ...(cls ? { class: cls } : {}), cwd, key, clone: tree.clone, head: tree.head, dirty: tree.dirty, by, state: "queued", submittedAt: new Date().toISOString(),
             ...(kind === "batch" ? { want: workers } : {}), ...(maxTimeMs ? { maxTimeMs } : {}),
             ...(mode === "detached" ? { env: jobEnv(env), log: path.join(dir, `${ticket}.log`) } : {}) };
         state.jobs.push(job);
@@ -479,7 +489,7 @@ export function finish(ticket, exit, { dir = slotDir(), deps = {}, peak = null }
     }, deps);
     if (rec) (deps.leaveBench ?? leaveBench)(rec);
     if (rec?.state === "done" && rec.peakRss && rec.durationMs >= MEASURE_MIN_MS && rec.jobs) {
-        try { fs.appendFileSync(path.join(dir, "footprints.jsonl"), `${JSON.stringify({ at: rec.endedAt, kind: rec.kind, jobs: rec.jobs, peakRss: rec.peakRss, perWorker: Math.round(rec.peakRss / rec.jobs), ...(rec.shape ? { shape: rec.shape } : {}), ...(classOf(rec.shape) ? { class: classOf(rec.shape) } : {}), runs: rec.peakRuns ?? 1, durationMs: rec.durationMs, ...(rec.kind === "batch" && rec.durationMs > BATCH_OVERRUN_MS ? { overran: true } : {}), ticket })}\n`); } catch { /* unmeasured */ }
+        try { fs.appendFileSync(path.join(dir, "footprints.jsonl"), `${JSON.stringify({ at: rec.endedAt, kind: rec.kind, jobs: rec.jobs, peakRss: rec.peakRss, perWorker: Math.round(rec.peakRss / rec.jobs), ...(rec.shape ? { shape: rec.shape } : {}), ...((rec.class ?? classOf(rec.shape)) ? { class: rec.class ?? classOf(rec.shape) } : {}), runs: rec.peakRuns ?? 1, durationMs: rec.durationMs, ...(rec.kind === "batch" && rec.durationMs > BATCH_OVERRUN_MS ? { overran: true } : {}), ticket })}\n`); } catch { /* unmeasured */ }
     }
     return rec;
 }

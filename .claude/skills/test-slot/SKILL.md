@@ -83,7 +83,8 @@ per run.
 
 State lives in `~/.cache/window-ml/test-queue/` (`TEST_SLOT_DIR` overrides): `queue.json`, `<ticket>.log` per job,
 `footprints.jsonl` (each line has `runs`, the most runs that shared the machine with it, and `shape`, the command with the clone's path made
-relative, so `scripts/test.mjs core` is one shape in every clone; `perWorker` is still written, for comparison).
+relative, so `scripts/test.mjs core` is one shape in every clone, and past 200 characters whole arguments ending `…+<n> #<hash>`;
+`class`, read from the whole command at submit; `perWorker` is still written, for comparison).
 
 The price is measured (rule of 2026-11-18): a run costs `base + slope × workers`, from `priceFor`. The sample is the
 last 40 footprints of the same shape when there are 3 or more, else of the same CLASS (`classOf`: `suite` or
