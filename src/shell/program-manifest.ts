@@ -549,6 +549,18 @@ const COMMAND_KEYS = new Set(["effects", "paths", "noPaths", "terminator", "nume
 const VERSION_KEYS = new Set(["range", "args", "pattern"]);
 const MANIFEST_KEYS = new Set(["$schema", "program", "version", "okCodes", "echoes", "env", "entrypoint", "credential", "network", "reveals", "command"]);
 
+/** The programs known to show other processes (ruling 31): a stored or proposed manifest for one carries
+ *  `reveals: "processes"` whatever its author wrote, so a draft cannot drop the gate before the shipped manifest lands. */
+export const REVEALING_PROGRAMS: readonly string[] = Object.freeze(["ps", "lsof", "top"]);
+
+/** Why a manifest that is not shipped may not describe `m.program` as it does, or undefined: one for a program in
+ *  {@link REVEALING_PROGRAMS} without the marker. */
+export function revealsRefusal(m: { program?: unknown; reveals?: unknown }): string | undefined {
+    return typeof m.program === "string" && REVEALING_PROGRAMS.includes(m.program) && m.reveals !== "processes"
+        ? `${m.program} shows other processes, so its manifest carries reveals: "processes"`
+        : undefined;
+}
+
 /** Why a manifest that is not shipped may not carry `m`'s credential fields, or undefined: the host honours a
  *  credential only for manifest bytes it pinned, which are the shipped ones, so a stored `credential` or `network`
  *  could only end in `CredentialRefused` after the person was asked. */

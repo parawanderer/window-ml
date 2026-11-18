@@ -7,7 +7,7 @@
 // script supplies the argv, the cwd and the environment additions, and nothing else.
 
 import type { CallDescription, ProgramManifest } from "./program-manifest";
-import { CREDENTIAL_PROVIDERS, describeCall, hardenArgv } from "./program-manifest";
+import { CREDENTIAL_PROVIDERS, describeCall, hardenArgv, revealsRefusal } from "./program-manifest";
 import { claimsTopLevelName, type EffectsData, type Resource } from "../effects";
 import type { HostDone, HostDoneEnvelope, HostEnvelope, HostFacts, HostPathArg, HostPlacement, HostProtectedChange, HostSpawn, HostStream, HostTilde, HostFilesMapped } from "./host-protocol";
 import { binaryKind } from "../sw/body-read";
@@ -50,7 +50,8 @@ export interface ManifestPlace { cwd: string; roots: readonly string[]; rootOf?:
  *  global. */
 export function manifestsFor(stored: readonly StoredManifest[] | undefined, roots: readonly string[]): { list: readonly ProgramManifest[]; rootOf: (m: ProgramManifest) => string | undefined; entryOf: (m: ProgramManifest) => StoredManifest | undefined } {
     // B2 at call time too: the store and its load refuse an entry for a shipped program, and this keeps one from shadowing it if any arrives another way.
-    const here = applicable(stored ?? [], roots).filter((s) => !SHIPPED_MANIFESTS[s.manifest.program]);
+    // Ruling 31 likewise: a stored manifest for a program that shows other processes never drops the marker.
+    const here = applicable(stored ?? [], roots).filter((s) => !SHIPPED_MANIFESTS[s.manifest.program] && !revealsRefusal(s.manifest));
     const byManifest = new Map(here.map((s) => [s.manifest, s]));
     return {
         list: here.length ? [...here.map((s) => s.manifest), ...SHIPPED_LIST] : SHIPPED_LIST,

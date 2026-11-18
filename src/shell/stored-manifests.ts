@@ -8,7 +8,7 @@
 // until its evidence run marks it. The storage itself is `src/sw/sw-manifests.ts`.
 
 import type { HostFacts } from "./host-protocol";
-import { shippedOnlyRefusal, validateManifest, type ProgramManifest } from "./program-manifest";
+import { revealsRefusal, shippedOnlyRefusal, validateManifest, type ProgramManifest } from "./program-manifest";
 
 /** Whose word a stored manifest is: the person's (written or installed in DevTools Settings), or the model's draft the
  *  person approved on a card (`propose_manifest`). */
@@ -91,6 +91,8 @@ export function storeRefusal(r: ManifestRequest, stored: readonly StoredManifest
     if (shipped[m.program]) return `${m.program} is described by the shipped manifest src/shell/manifests/${m.program}.json, which a stored one does not replace`;
     const shippedOnly = shippedOnlyRefusal(m);
     if (shippedOnly) return shippedOnly;
+    const reveals = revealsRefusal(m);
+    if (reveals) return reveals;
     if (m.entrypoint) {
         if (r.pin !== undefined) return "a script's manifest is pinned by its entrypoint's sha256, not by a program pin";
         if (r.scope !== "workspace") return `${m.entrypoint.path} arrived with a repository, so its manifest belongs to that workspace, not global`;
