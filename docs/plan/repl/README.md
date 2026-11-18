@@ -1084,9 +1084,9 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
   come from Shane. A direct exchange that changes a fact this plan records gets one line to the coordinator after.
   The parked design for this is docs/spec/AGENT_MAIL.md.
 - **Merged since #1974 (each verified).** #1973 de3b77e0 (e3's repair of the red unit row; by e3's and the owner's
-  measurement no program had started and a declined call returns `Denied`), host#48 004b958c, host#50 19f46adf.
-  host#49 is cleared at d953b8d7 and merges by hand. #1970 has main merged at 426f2989, its diff unchanged, and
-  waits on its checks for janitor-2's comment.
+  measurement no program had started and a declined call returns `Denied`), host#48 004b958c, host#50 19f46adf
+  and host#49 a8cd5092 (the flavours reader, with the `stop` rule below). #1970 has main merged at 426f2989, its
+  diff unchanged, and waits on its checks for janitor-2's comment.
 - **Manifest flavours, the red team's finding on #1963 and the coordinator's calls.** e3 measured that a stored
   manifest satisfies its own anchored probe pattern (the probe's arguments are its own), and that an overlay's
   `argOrder: "stop"` described a declared write flag after an operand as a path read, so the call ran free; the
