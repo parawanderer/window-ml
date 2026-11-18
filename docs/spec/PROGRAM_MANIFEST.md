@@ -90,12 +90,15 @@ every flavour, `tests/program-manifest.test.mjs`).
 2. A program whose resolved file has another name than the manifest's `program` (busybox, mawk behind an alternatives
    link, `gsed` behind Homebrew's `gnubin`, a multicall binary) is `other`: there is positive evidence of an
    implementation nobody described, so nothing of the manifest applies, not even the core, and the card warns.
-3. On `hello.platform` `macos`, a file in `/bin`, `/usr/bin`, `/sbin` or `/usr/sbin` (the sealed system volume) is `bsd`
-   when the manifest declares it. Nothing runs, so this is the one detection that also holds on the plain host.
+3. On `hello.platform` `macos`, a program whose resolved file is in `/bin`, `/usr/bin`, `/sbin` or `/usr/sbin` (the
+   sealed system volume) is `bsd` when the manifest declares it. Nothing runs, so this is the one detection that also holds on the plain host.
 4. A `gnu` flavour is detected by its probe: an ordinary call of `flavours.gnu.probe.args`, judged and run exactly as
    the version probe above is (under the OS sandbox only, never for an in-root program, cached by fingerprint), whose
-   stdout on exit 0 matches `pattern` with group 1 inside `range`. busybox's "This is not GNU sed" fails an anchored
-   pattern. On the plain host the probe is never raised, so a GNU-only flag is never free there.
+   stdout on exit 0 matches `pattern` with group 1 inside `range`. The pattern must start with `^` (the validator
+   refuses one that does not), and it is matched per line (`m`), so busybox's "This is not GNU sed" fails `^sed \(GNU
+   sed\)`. What it is matched against is the version probe's bound: the first 4 KiB of stdout (`PROBE_BYTES`), read only
+   on exit 0 within 2 s and only when it is not binary, for a stored (model-written) manifest's pattern as for a shipped
+   one. On the plain host the probe is never raised, so a GNU-only flag is never free there.
 5. Anything else is undetected.
 
 **The shape.** At the top level, `flavours: { gnu: { probe: { args, pattern, range } }, bsd: { system: "macos" } }`

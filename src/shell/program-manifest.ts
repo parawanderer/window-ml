@@ -122,7 +122,7 @@ export type FlavourOverlay = {
 /** How each declared flavour is recognised: `gnu` by a version probe (run only under the OS sandbox), `bsd` by being
  *  the system's own program (no run). */
 export type ManifestFlavours = {
-    /** GNU: the probe's `args` (`--version`), a regex whose group 1 is the version in its stdout, and the range of
+    /** GNU: the probe's `args` (`--version`), a regex anchored with `^` whose group 1 is the version in its stdout, and the range of
      *  versions the overlays were written against; a version outside it is undetected. */
     gnu?: { probe: { args: readonly string[]; pattern: string; range: string } };
     /** BSD: the system whose own program it is (`macos`: a file in SYSTEM_PROGRAM_DIRS). */
@@ -785,7 +785,11 @@ export function validateManifest(m: unknown): string[] {
                     || !Array.isArray(pr.args) || !pr.args.length || !pr.args.every((a) => typeof a === "string") || typeof pr.pattern !== "string" || !pr.pattern
                     || typeof pr.range !== "string" || !pr.range.trim().split(/\s+/).every((c) => /^(>=|<=|>|<|=)?\d+(\.\d+)*$/.test(c)))
                     errs.push("$.flavours.gnu: {probe: {args, pattern, range}}, a range of comparators like >=4.3 <5");
-                else try { new RegExp(pr.pattern as string); } catch { errs.push("$.flavours.gnu.probe.pattern: a regex"); }
+                else {
+                    try { new RegExp(pr.pattern as string); } catch { errs.push("$.flavours.gnu.probe.pattern: a regex"); }
+                    // Anchored, so "This is not GNU sed" (busybox) cannot match a pattern for "sed (GNU sed)".
+                    if (!(pr.pattern as string).startsWith("^")) errs.push("$.flavours.gnu.probe.pattern: anchored at the start of a line (^)");
+                }
             }
             if (fl.bsd !== undefined && !(isObj(fl.bsd) && Object.keys(fl.bsd).length === 1 && fl.bsd.system === "macos")) errs.push("$.flavours.bsd: {system: \"macos\"}");
         }

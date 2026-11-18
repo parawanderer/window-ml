@@ -135,7 +135,7 @@
       "description": "How each declared flavour is recognised: `gnu` by a version probe (run only under the OS sandbox), `bsd` by being the system's own program (no run).",
       "properties": {
         "gnu": {
-          "description": "GNU: the probe's `args` (`--version`), a regex whose group 1 is the version in its stdout, and the range of versions the overlays were written against; a version outside it is undetected.",
+          "description": "GNU: the probe's `args` (`--version`), a regex anchored with `^` whose group 1 is the version in its stdout, and the range of versions the overlays were written against; a version outside it is undetected.",
           "type": "object",
           "properties": {
             "probe": {
@@ -151,7 +151,8 @@
                 "pattern": {
                   "type": "string",
                   "minLength": 1,
-                  "format": "regex"
+                  "format": "regex",
+                  "pattern": "^\\^"
                 },
                 "range": {
                   "type": "string",

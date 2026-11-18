@@ -142,7 +142,7 @@ export function refineProgramManifest(gen) {
     // implementation (`range: "*"`).
     patch(doc, "$defs.ManifestFlavours", { anyOf: [{ required: ["gnu"] }, { required: ["bsd"] }] });
     patch(doc, "$defs.ManifestFlavours.properties.gnu.properties.probe.properties.args", { minItems: 1 });
-    patch(doc, "$defs.ManifestFlavours.properties.gnu.properties.probe.properties.pattern", { minLength: 1, format: "regex" });
+    patch(doc, "$defs.ManifestFlavours.properties.gnu.properties.probe.properties.pattern", { minLength: 1, format: "regex", pattern: "^\\^" });
     patch(doc, "$defs.ManifestFlavours.properties.gnu.properties.probe.properties.range", { pattern: `^\\s*${COMPARATOR}(?:\\s+${COMPARATOR})*\\s*$` });
     patch(doc, "$defs.FlavourOverlay.properties.flags", { propertyNames: { pattern: "^-{1,2}[A-Za-z0-9][A-Za-z0-9-]*$" } });
 
