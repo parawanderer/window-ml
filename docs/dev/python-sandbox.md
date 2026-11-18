@@ -697,7 +697,10 @@ readonly cells can import it, and nothing else can.
   `detail.scanLost`. The deadline and Stop end the whole candidate: the end is checked after every await before a cell
   (each mirror read, the scan), and `runInWorker` posts nothing for an ended candidate, so no later cell starts in a
   fresh worker, where it would have no timer of its own. Stop pressed while the candidate runs fails the install even
-  when the import passes after it (`installApproved` reads the signal before the result).
+  when the import passes after it (`installApproved` reads the signal before the result). A Stop before the test is
+  sent starts nothing (`offscreenTester` checks the signal before and after `ensureOffscreen`); one that overtakes the
+  test's message finds no candidate, and the document keeps it by run for 5 s (`earlyStops`, dropped with the run,
+  capped at 64), refusing the test that follows.
 - **The run's own worker gets the wheels at its next cell.** Every readonly cell of the run carries the record; the
   offscreen document reads the wheels that worker lacks from the mirror (re-hashed) and the worker unpacks them after
   its lockdown, before the cell (`installWheels`). The namespace is kept. A respawned or reaped worker gets them the

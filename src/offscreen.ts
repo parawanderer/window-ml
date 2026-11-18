@@ -452,6 +452,13 @@ function noteWheels(w: Worker, sent: WheelRef[], ok: boolean): void {
 const PY_INSTALL_DEADLINE_MS = 60_000;
 const candidates = new Map<string, string>();   // state: plumbing — run id → its candidate's principal, while one runs
 const candidateEnds = new Map<string, string>();   // state: plumbing — a candidate's principal → why it was ended (the deadline, Stop), while it runs
+// A Stop that reached this document before its install's PY_INSTALL_TEST (the two are separate messages, and the Stop can
+// overtake the test while the service worker waits for this document): remembered by run, so the test that follows is
+// refused instead of starting a candidate. Kept seconds, since the gap is one message in flight and a Stop that arrives
+// after its test answered must not refuse a later install of the run; dropped with the run (PY_DELETE_RUN), capped.
+const earlyStops = new Map<string, number>();   // state: plumbing — run id → when a Stop found no candidate of it
+const EARLY_STOP_MS = 5_000;
+const EARLY_STOPS_MAX = 64;
 
 /** End a candidate: its worker is killed, and the test does not go on in a fresh one. */
 function endCandidate(principal: string, reason: string): void {
@@ -669,6 +676,9 @@ chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
     // An install's candidate (python_install, slice 4) and its Stop: only the service worker sends either. The run id is
     // not a capability: every sender that passes is the extension's own code, and a Stop kills only a candidate.
     if (msg?.type === "PY_INSTALL_TEST" && sender.id === chrome.runtime.id && !sender.tab && typeof msg.run === "string" && msg.run) {
+        const stoppedAt = earlyStops.get(msg.run);
+        earlyStops.delete(msg.run);
+        if (stoppedAt !== undefined && Date.now() - stoppedAt < EARLY_STOP_MS) { sendResponse({ ok: false, error: "Python worker stopped (stopped).", died: true }); return; }
         const modules = Array.isArray(msg.modules) ? msg.modules.filter((m: unknown): m is string => typeof m === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(m)) : [];
         const scope = Array.isArray(msg.scope) ? msg.scope.filter((m: unknown): m is string => typeof m === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(m)) : modules;
         installTest(msg.run, wheelRefs(msg.wheels), modules, scope).then(sendResponse, (e) => sendResponse({ ok: false, error: String(e), died: true }));
@@ -677,6 +687,10 @@ chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
     if (msg?.type === "PY_INSTALL_STOP" && sender.id === chrome.runtime.id && !sender.tab && typeof msg.run === "string") {
         const principal = candidates.get(msg.run);
         if (principal) endCandidate(principal, "stopped");
+        else {
+            earlyStops.delete(msg.run); earlyStops.set(msg.run, Date.now());   // re-added last: the oldest is evicted first
+            if (earlyStops.size > EARLY_STOPS_MAX) earlyStops.delete(earlyStops.keys().next().value as string);
+        }
         sendResponse({ ok: true, stopped: !!principal });
         return;
     }
@@ -860,6 +874,7 @@ chrome.runtime.onMessage.addListener((msg: any, sender, sendResponse) => {
     runPrincipals.delete(run);
     runNsVars.delete(run);
     nsLoss.delete(run);
+    earlyStops.delete(run);
     // A worker's answer can carry callables the run's last cell handed to JavaScript that fired after its result
     // (cell-gate.ts): only the run's own locked-down worker has the gate, so at most one answer does.
     const asks: Promise<PyResult["dropped"] | undefined>[] = [];

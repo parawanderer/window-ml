@@ -127,7 +127,11 @@ export type InstallTester = (run: string, wheels: { filename: string; sha256: st
 
 /** The tester the extension uses: the offscreen document's candidate, stopped by the run's Stop. */
 const offscreenTester: InstallTester = async (run, wheels, modules, stop, scope = modules) => {
+    // A Stop before the test is sent starts no candidate; one that overtakes the message is remembered by the document.
+    const stopped: InstallTestResult = { ok: false, error: "Python worker stopped (stopped).", died: true };
+    if (stop?.aborted) return stopped;
     await ensureOffscreen();
+    if (stop?.aborted) return stopped;
     const onStop = () => { chrome.runtime.sendMessage({ type: "PY_INSTALL_STOP", run }).catch(() => { /* nothing running */ }); };
     stop?.addEventListener("abort", onStop, { once: true });
     try { return await chrome.runtime.sendMessage({ type: "PY_INSTALL_TEST", run, wheels, modules, scope }) as InstallTestResult; }

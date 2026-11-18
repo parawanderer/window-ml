@@ -77,7 +77,8 @@ for (const [name, sender] of [["a tab's sender", TAB], ["another extension", OTH
 }
 
 test("positive control: the service worker's sender stops (nothing running) and starts a candidate", async () => {
-    assert.deepEqual(await send({ type: "PY_INSTALL_STOP", run: "r1" }, SW), { ok: true, stopped: false });
+    // Another run's Stop: one for r1 itself, with no candidate yet, would refuse r1's test that follows (the early Stop rows).
+    assert.deepEqual(await send({ type: "PY_INSTALL_STOP", run: "r0" }, SW), { ok: true, stopped: false });
     const before = workers.length;
     send(TEST_MSG, SW);   // not awaited: the fake worker never answers
     await tick();
@@ -264,3 +265,36 @@ for (const [name, end, reason] of [["the deadline", (fire) => fire(), "install-d
         assert.deepEqual([r.ok, r.died, r.error], [false, true, `Python worker stopped (${reason}).`]);
     });
 }
+
+// --- a Stop that found no candidate: remembered for the test that follows, and only briefly ---
+
+test("a Stop that found no candidate refuses a test of that run within seconds, and only the next one", async () => {
+    assert.deepEqual(await send({ type: "PY_INSTALL_STOP", run: "early-a" }), { ok: true, stopped: false });
+    const before = workers.length;
+    assert.deepEqual(await send({ type: "PY_INSTALL_TEST", run: "early-a", wheels: [], modules: ["pkg"] }), { ok: false, error: "Python worker stopped (stopped).", died: true });
+    assert.equal(workers.length, before, "no candidate was spawned");
+    const next = await candidate("early-a");
+    assert.ok(next.w, "the run's next install starts: the Stop was spent on the test it overtook");
+    await answerCell(next.w, { ok: true, value: SCAN_OK });
+    await answerCell(importWorker(next.w), { ok: true, value: "null" });
+    assert.equal((await next.answer).ok, true);
+});
+
+test("a Stop older than its window, or whose run was deleted, refuses nothing", async () => {
+    const realNow = Date.now;
+    await send({ type: "PY_INSTALL_STOP", run: "early-old" });
+    try {
+        Date.now = () => realNow() + 60_000;   // a Stop that arrived after its test answered, a minute before this install
+        const late = await candidate("early-old");
+        await answerCell(late.w, { ok: true, value: SCAN_OK });
+        await answerCell(importWorker(late.w), { ok: true, value: "null" });
+        assert.equal((await late.answer).ok, true, "the run's install of a later turn is not refused");
+    } finally { Date.now = realNow; }
+    await send({ type: "PY_INSTALL_STOP", run: "early-del" });
+    const del = send({ type: "PY_DELETE_RUN", run: "early-del", principal: "run:early-del" });
+    for (let i = 0; i < 5; i++) await tick();
+    for (const w of workers) for (const p of w.posts) if (p.deleteRun === "early-del" && !p.answered) { p.answered = true; w.reply({ id: p.id, ok: true, stdout: "" }); }
+    await del;
+    const after = await candidate("early-del");
+    assert.ok(after.w, "a deleted run's Stop is dropped with it");
+});
