@@ -1076,6 +1076,56 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
   with its narrowing and widening classes, the enumeration against the judge, docs; the hide and show rows are a
   slot files-host fills by registering a classifier. PR B is the page and the tab, after the page's data shape is
   settled, which waits for Chat Page's resume.
+- **Shane's ruling 49 (2026-11-18, said in the coordinator's session): sessions may message each other directly**
+  when the message does not benefit from the coordinator's review. The coordinator's scoping: direct for a
+  heads-up, a question about another lane's code or data shape, timing, which rows a change inverts, and queue
+  matters. Still through the coordinator: anything needing a ruling; reviewer assignment and every head for review
+  (verified by gh before a lane arms); a finding that changes a PR's scope or owner; a resume; anything said to
+  come from Shane. A direct exchange that changes a fact this plan records gets one line to the coordinator after.
+  The parked design for this is docs/spec/AGENT_MAIL.md.
+- **Merged since #1974 (each verified).** #1973 de3b77e0 (e3's repair of the red unit row; by e3's and the owner's
+  measurement no program had started and a declined call returns `Denied`), host#48 004b958c, host#50 19f46adf.
+  host#49 is cleared at d953b8d7 and merges by hand. #1970 has main merged at 426f2989, its diff unchanged, and
+  waits on its checks for janitor-2's comment.
+- **Manifest flavours, the red team's finding on #1963 and the coordinator's calls.** e3 measured that a stored
+  manifest satisfies its own anchored probe pattern (the probe's arguments are its own), and that an overlay's
+  `argOrder: "stop"` described a declared write flag after an operand as a path read, so the call ran free; the
+  approval card showed neither. The repair, on both describers: (a) under `stop`, a token after the first operand
+  that is a declared flag with a non-read effect is never a path, and the call asks (a cluster counts if any
+  letter does; a `--` before any operand still ends options); (b) the draft card states each overlay's
+  `argOrder`; (c) the flavour probe runs only for a shipped manifest, the lane's rule, accepted in place of an
+  output filter that a `printf` escape defeats. A stored manifest's `version.args` has the same weakness for its
+  version range; it predates #1963 and is a named follow-up of the lane's, with a Known limits line. The repair
+  inverts four of e3's rows, which e3 rewrites. No shipped manifest declares flavours until sed and awk, so the
+  probe's re-spawn path has no end-to-end row until then.
+- **The platform scan, #1934 (packages).** Janitor-2 found that a Stop or the deadline landing while a candidate
+  reads its wheels still started the import in a fresh worker with no time limit, and that a late passing import
+  was recorded after Stop. e3 then found that a Stop landing before the candidate registers started one anyway.
+  The coordinator's call on the last: both sides (the worker sends no test on an aborted signal; the document
+  remembers a stop for a run with no candidate, by run). The naming head 967535d1 is with janitor-2.
+- **Ruling 26, #1976 (packages).** Measured in Chromium by the lane: a listener on the worker sees the stack
+  overflow that leaves a cell and every later cell unanswered, so no Pyodide patch. Only Pyodide's own "already
+  fatally failed" verdict, read by one trivial run after a failed cell (median 78 microseconds by the lane's
+  account), kills the kernel; an ordinary unhandled rejection kills nothing. An older defect repaired with it: a
+  cell refused as outside the dialect swallowed the namespace-reset line. Whichever of #1934 and #1976 merges
+  second reconciles the one test they share. With e3 and janitor-2.
+- **The access tab's worker part, #1975 (small-fixes).** The coordinator's calls on the later page PR: the host seam
+  is `sessionPolicies(key)`, `removePolicy(key, id, confirm?)` and one `policies-changed` event, pending Chat
+  Page's yes; extension host only in the first build; no second read for the confirm; a policy's source behind a
+  disclosure; a broken policy shown. Asked in review and built: a consumer whose judge is not strictest-wins
+  registers its order (ruling 34's hide and show); a removal's reach is stated for a global row, and a global
+  allow's removal stays one gesture; a classifier can only add caution; a policy whose script breaks keeps its
+  place by strictness and is shown as one that may not be applied. Open with Shane: what the Session summary page
+  holds besides this tab and who builds its shell (the coordinator recommends small-fixes, starting with this tab
+  alone).
+- **The ruling 31 gate, #1977 (the manifest lane).** A manifest marker for a program that reveals other processes,
+  a gate key listing the programs the person lets run free, and a third answer on the card that lists one
+  program. Accepted: a page never reads or sets the list, and an allow policy does not stand in for it. Asked in
+  the spec review: a stored or proposed manifest must not be able to drop the marker, and the host's handling of
+  the marker stated. With janitor-3 and e3.
+- **The UI batch, #1971 (small-fixes), went to a janitor**, not ruling 13: it changes placement logic, narrows one
+  end-to-end assertion and adds an eye toggle on secret fields. Janitor-2 found the toggle stayed on when the
+  saved key changed from outside; repaired, the head 8b07ea57 is with janitor-2.
 
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
