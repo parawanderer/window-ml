@@ -261,17 +261,29 @@ function valueOf(result) {
     assert.ok(m, `no value in: ${result}`);
     return JSON.parse(m[1]);
 }
-/** Answer every nested ask this way (`true`/`false`), or never (`null`), recording each one asked. */
+/** Answer every nested ask this way (`true`/`false`), or never (`null`), recording each one asked and the run it belongs
+ *  to. A row that answers `null` must call `settle()` before it returns: a pending ask holds the worker's five-minute
+ *  timer (sw-asks.ts), which keeps the file's process alive long after its tests have finished. */
 function answering(decision) {
-    const asked = [];
+    const asked = [], pending = [];
+    let bg, stopping = false;
     return {
         asked,
-        onStep: async (bg, ev) => {
+        onStep: async (b, ev) => {
+            bg = b;
+            const answer = stopping ? false : decision;
             for (const a of ev.asks ?? []) {
                 if (a.state !== "pending" || asked.some((x) => x.id === a.id)) continue;
                 asked.push(a);
-                if (decision !== null) void bg.send({ type: "SET_APPROVAL", payload: { runId: ev.id, seq: ev.seq, ask: a.id, decision } });
+                pending.push({ a, runId: ev.id, seq: ev.seq });
+                if (answer !== null) void b.send({ type: "SET_APPROVAL", payload: { runId: ev.id, seq: ev.seq, ask: a.id, decision: answer } });
             }
+        },
+        /** Deny whatever is still pending, and everything asked after this, so the run ends and no timer outlives the row. */
+        async settle() {
+            stopping = true;
+            for (const { a, runId, seq } of pending) void bg.send({ type: "SET_APPROVAL", payload: { runId, seq, ask: a.id, decision: false } });
+            for (let i = 0; i < 40; i++) await new Promise((r) => setTimeout(r, 5));
         },
     };
 }
@@ -287,6 +299,9 @@ test("RED TEAM: a flag after an operand reached through ml.sh asks, and nothing 
     const spawn = host.calls.find((c) => c.call === "spawn");
     assert.ok(spawn, "the host was asked for the facts, so the card has them");
     assert.deepEqual(spawn.args.argv, ["cat", "f", "-n"], "the facts are for the call as written");
+    // The ask this row measured is still pending: its timer would outlive the test by minutes.
+    await ask.settle();
+    assert.ok(!host.names().includes("start"), "a denied call started after the row had measured it");
 });
 
 test("RED TEAM: declined, the post-operand call never starts and the script is told why", T, async () => {
