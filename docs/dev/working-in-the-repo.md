@@ -451,8 +451,9 @@ and a 40 s suite took ten minutes. A rule each lane had to remember did not hold
 `scripts/test-slot.mjs` is one machine-wide queue that every `scripts/test.mjs` spawn, Playwright's main process and
 `npm run coverage` goes through. Since 2026-11-09 it admits up to three runs at once and 13 workers between them (cores
 − 2): a queued run starts when free memory, less the 25% reserve and what the running runs planned and do not hold yet,
-leaves room for its minimum (2 workers for a unit run, 1 for e2e) at its kind's p90 per-worker figure, measured from
-past runs, and gets the workers that room gives. One run at a time had twelve sessions' 6.5-minute suites queued behind
+leaves room for its minimum (2 workers for a unit run, 1 for e2e) at the run's price, `base + slope × workers` fitted from
+past runs of the same command (else the kind's; rule of 2026-11-18, `priceFor`), and gets the workers that room buys.
+A price per worker (peak / workers) ratcheted, because a unit run's peak barely depends on its workers. One run at a time had twelve sessions' 6.5-minute suites queued behind
 each other while the machine ran three workers. The queue is FIFO among the admissible (a small e2e probe passes a
 waiting suite only while the suite cannot start), and with nothing running the head always starts. Each footprint
 records how many runs shared the machine (`runs`), for a later tuning. Work that is not a test run but wants the memory

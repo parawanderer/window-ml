@@ -9,8 +9,8 @@ description: The machine-wide queue every local test run goes through (up to thr
 through it: each `scripts/test.mjs` spawn (so `npm test` and the genres), Playwright's main process, and
 `npm run coverage`. Up to 3 runs go at once (`TEST_SLOT_MAX_RUNS` overrides), 13 workers between them (cores − 2). A
 queued run starts when free memory, less the 25% reserve, less what the running runs planned and do not hold yet, leaves
-room for its minimum (2 workers for unit, 1 for e2e) at its kind's per-worker figure; it gets the workers that room
-gives, up to its kind's cap. FIFO among the admissible: a job is passed only by one that fits while it does not (a small
+room for its minimum (2 workers for unit, 1 for e2e) at the run's price, `base + slope × workers` (see State and
+sizing); it gets the most workers that room buys, up to its kind's cap. FIFO among the admissible: a job is passed only by one that fits while it does not (a small
 e2e probe past a waiting suite). With nothing running the head always starts, on one worker if that is all there is.
 Why the limits: on 2026-11-08 nine runners from different sessions ran at once (34 workers, 27 GB of swap); one at a
 time then queued twelve sessions' suites behind a single 3-worker run.
@@ -32,7 +32,9 @@ notice arrive while you do other work.
 A waiting runner prints `test-slot: waiting for pid N (<clone>, <command>, W workers, held 3m) and pid … (<why>); K ahead
 of you` at the start and every 30 s, where `<why>` is the cap, the workers or the memory that holds the queue's first
 waiting job. When its turn comes it prints the grant line:
-`test-slot: W workers (X available, Y reserved, ~Z per worker; run 2 at once, 9 workers between them)`.
+`test-slot: 5 workers (~2.6 GB for the run: 1.6 GB + 205 MB a worker, from 12 runs of this command; 18.2 GB available, 6.0 GB
+reserved; run 2 at once, 9 workers between them)`. `from` says what priced it: runs of this command, runs of this kind,
+or "unmeasured: the defaults". A waiting job's reason reads `memory: 1.5 GB above the reserve, 2 workers take ~2.2 GB`.
 
 ## Non-test jobs: `--kind batch`
 
@@ -51,8 +53,8 @@ slot ahead of tests). The rule of 2026-11-09:
 - It counts toward the 3-run and 13-worker caps like any run.
 - Chunk it to about five minutes or less (guidance, not enforced). A run past 15 minutes is marked `overran: true` in
   its footprint (every footprint has `durationMs`) so the chunk can be tuned. The wall-clock cap below still applies.
-- Its per-worker figure is the p90 of the batch footprints only; with none yet it takes the unit figure (the default
-  1 GB when unit is unmeasured too). Batch lines never size a test run.
+- Its price is fitted from the batch footprints only; with none yet it takes the unit price (the defaults when unit is
+  unmeasured too). Batch lines never size a test run.
 
 ## The wall-clock cap
 
@@ -80,12 +82,21 @@ per run.
 ## State and sizing
 
 State lives in `~/.cache/window-ml/test-queue/` (`TEST_SLOT_DIR` overrides): `queue.json`, `<ticket>.log` per job,
-`footprints.jsonl` (each line has `runs`, the most runs that shared the machine with it). The per-worker figure is measured: the p90 of the last 20 measured runs of that kind (runs of 10 s or
-more only), 1 GB before any. Free memory is taken less what a bench sweep admitted in the last 30 s and has not started
+`footprints.jsonl` (each line has `runs`, the most runs that shared the machine with it, and `shape`, the command with the clone's path made
+relative, so `scripts/test.mjs core` is one shape in every clone; `perWorker` is still written, for comparison).
+
+The price is measured (rule of 2026-11-18): a run costs `base + slope × workers`, from `priceFor`. The sample is the
+last 40 footprints of the same shape when there are 3 or more, else the kind's last 40 (a line from before shapes counts
+here only), else the defaults (1 GB + 0.4 GB a worker); runs of 10 s or more only. The slope is the least-squares slope
+of peak on workers, clamped to [0.1, 1.5] GB, and 0.4 GB with fewer than 8 points or one worker count; the base is the
+p90 of `peak − slope × workers`. Why not peak / workers: a unit run's peak barely depends on its workers (about 1.5-1.8 GB
+at 2 or at 8), so the per-worker figure of a run granted few workers was high, priced the next one higher and granted it
+fewer: the daily median went 0.20 → 1.46 GB in nine days and grants fell from 8 workers to 2. A job's `sizing` stores
+`base`, `slope` and `from`; a record from before has only `perWorker`, read as a base of 0. Free memory is taken less what a bench sweep admitted in the last 30 s and has not started
 yet (its ledger, the `bench` skill), which the grant line names ("… of it promised to bench browsers and other test runs starting up"; a running run's own unresident plan is counted from the queue, not the ledger).
 
 **With the bench.** A granted run joins the bench's ledger (`~/.cache/window-ml-bench/ledger.json`) as kind `tests`, its
-planned memory (workers × per-worker) beside it, and leaves when it ends; `hold.mjs --ledger` lists it. A sweep counts the
+planned memory (its price at its workers) beside it, and leaves when it ends; `hold.mjs --ledger` lists it. A sweep counts the
 part of that plan its workers do not hold yet against free memory, never against the bench's own limit. Bench sweeps do
 not queue here: they size themselves cell by cell, so a sweep backs off while a suite runs, and a suite sized while a
 sweep runs gets fewer workers. One run inside a job anyway (`--kind batch`) spends that job's grant: what it writes to

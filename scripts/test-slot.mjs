@@ -16,10 +16,19 @@
 //
 // Admission (the rule of 2026-11-09): at most MAX_RUNS runs at once and MAX_WORKERS workers between them (cores − 2).
 // A queued job starts when free memory, less the reserve, less what every running run planned and does not hold yet
-// (and what a bench sweep admitted), leaves room for its kind's minimum workers at its p90 per-worker figure; it gets
-// as many as that room gives. The queue is FIFO among the admissible: a job is passed only by one that fits while it
+// (and what a bench sweep admitted), leaves room for its kind's minimum workers at the run's PRICE; it gets as many
+// as that room gives. The queue is FIFO among the admissible: a job is passed only by one that fits while it
 // does not. With nothing running the head always starts, on one worker if that is all there is, so a busy machine
 // slows the queue and never stops it.
+//
+// The price (the rule of 2026-11-18): a run costs `base + slope × workers`, not `workers × perWorker`. A unit run's peak
+// barely depends on its worker count (536 footprints: the median peak was 1.5-1.8 GB with 2 workers or 8), so dividing
+// the peak by the workers made a run granted few workers record a high per-worker figure, the next run was priced higher
+// and granted fewer, and the daily median went 0.20 → 1.46 GB in nine days and the grants from 8 workers to 2. Now every
+// footprint also carries the `shape` of its command (the clone's path made relative), and `priceFor` fits the price
+// from the footprints of the same shape (at least 3), else the kind's last 40, else the defaults: the slope is the
+// least-squares slope of peak on workers (clamped, a default with too few points or one worker count), the base the p90
+// of what the slope leaves over. `perWorker` is still written, for comparison with the history.
 //
 // Batch jobs (the rule of 2026-11-09): `--kind batch` is for any job that is NOT a test run but wants the memory lock
 // (probes, scans, notebook data runs). It declares the workers it really uses, `--workers N` (1 to BATCH_MAX_WORKERS,
@@ -28,7 +37,7 @@
 // exceeds the machine's worker cap, or when nothing runs and N workers' memory exceeds the room: waiting would never
 // end on a small box, and granting fewer breaks all-or-nothing. It counts toward
 // the run and worker caps like any run, at most ONE runs at a time, and every queued test job is judged before any
-// batch job, whatever the submit order. Its footprints are its own (`perWorkerFor("batch")`, the unit figure until it
+// batch job, whatever the submit order. Its footprints are its own (`priceFor` with kind batch, the unit price until it
 // has any), so it never sizes a test run. Submitters chunk it to about five minutes or less (guidance, not enforced); a
 // run past BATCH_OVERRUN_MS is marked `overran` in its footprint so the chunk can be tuned.
 //
@@ -63,8 +72,18 @@ import { alive, availableMemory, fmtBytes, ledger, notYetResident, p90, processT
 
 const SELF = fileURLToPath(import.meta.url);
 const GB = 1024 ** 3;
-/** What one worker is assumed to take before any run was measured: a node:test file process or a Chromium. */
-export const PER_WORKER_DEFAULT = GB;
+/** A run's fixed memory before any run was measured: the runner, the loader and what every worker shares. */
+export const BASE_DEFAULT = GB;
+/** What one more worker is assumed to add before it was measured (and when the sample cannot fit a slope): a node:test file process or a Chromium. */
+export const SLOPE_DEFAULT = 0.4 * GB;
+/** The slope is never fitted below this: a flat sample says "workers are cheap", not "free". */
+export const SLOPE_MIN = 0.1 * GB;
+/** The slope is never fitted above this: one noisy sample must not price a worker like a whole run. */
+export const SLOPE_MAX = 1.5 * GB;
+/** A slope is fitted only from at least this many footprints, spanning at least two distinct worker counts. */
+export const SLOPE_MIN_POINTS = 8;
+/** The footprints of one shape are used for the price from this many on; fewer fall back to the kind's. */
+export const SHAPE_MIN = 3;
 /** The most runs at once (the 2026-11-08 incident was nine; a few is fine). `TEST_SLOT_MAX_RUNS` overrides it. */
 export const MAX_RUNS = 3;
 /** The most workers all running runs may have between them: the cores less two. */
@@ -88,8 +107,8 @@ export const KILL_GRACE_MS = 30_000;
 export const MAX_TIME_MAX_MIN = 24 * 60;
 /** How many finished jobs the queue keeps (their logs go with them). */
 const KEEP_DONE = 20;
-/** Footprints of the last this-many runs of a kind decide its per-worker figure. */
-const FOOTPRINTS_USED = 20;
+/** Footprints of the last this-many runs of a kind (or of a shape) decide the price. */
+const FOOTPRINTS_USED = 40;
 /** A run shorter than this is not measured: it never filled its workers. */
 const MEASURE_MIN_MS = 10_000;
 /** The environment a detached job is given: these names, and those matching `ENV_PREFIXES`, never a secret's. */
@@ -118,30 +137,80 @@ export function startTime(pid) {
 /** Whether the process a record names is the one still running: alive, and started when it was recorded. */
 export const procLive = (pid, started, probe = { alive, startTime }) => !!pid && probe.alive(pid) && (!started || probe.startTime(pid) === started);
 
-/** How many workers a run gets: what free memory leaves above the reserve, per worker, between 1 and `cap`. */
-export function jobsFor({ available, total, perWorker = PER_WORKER_DEFAULT, cap }) {
+/** The price of a run of `w` workers: its base plus the slope for each. */
+export const priceAt = ({ base, slope }, w) => base + slope * w;
+
+/** The price a job was granted with, read off its `sizing`: `{ base, slope }`. A record from before the base-and-slope
+ *  price has only `perWorker` (a base of 0 and that figure a worker); one with neither gets the defaults. */
+export function priceOfSizing(sizing) {
+    if (Number.isFinite(sizing?.slope)) return { base: Number.isFinite(sizing.base) ? sizing.base : 0, slope: sizing.slope };
+    if (Number.isFinite(sizing?.perWorker)) return { base: 0, slope: sizing.perWorker };
+    return { base: BASE_DEFAULT, slope: SLOPE_DEFAULT };
+}
+
+/** The most workers a price leaves room for: the largest w with `base + slope × w ≤ room`, 0 when not even the base fits. */
+export const fitIn = (price, room) => (room < price.base ? 0 : Math.floor((room - price.base) / Math.max(price.slope, 1)));
+
+/** How many workers a run gets: what free memory leaves above the reserve at the price, between 1 and `cap`. */
+export function jobsFor({ available, total, base = BASE_DEFAULT, slope = SLOPE_DEFAULT, cap }) {
     const room = available - RESERVE_FRAC * total;
-    return Math.max(1, Math.min(cap, Math.floor(room / perWorker)));
+    return Math.max(1, Math.min(cap, fitIn({ base, slope }, room)));
 }
 
 /** The most workers a kind may have here: test.mjs's cores − 2 (at most 8), Playwright's half the cores, a batch job's
  *  declared `want` (1 here, the default). */
 export const capFor = (kind, cores = os.cpus().length) => (kind === "batch" ? 1 : kind === "e2e" ? Math.max(1, Math.floor(cores / 2)) : Math.min(8, Math.max(1, cores - 2)));
 
-/** The per-worker figure for a kind: the p90 of its measured runs, or the default with none; a batch job with none of
- *  its own takes the unit figure (batch lines never feed a test kind's). */
-export function perWorkerFor(kind, dir = slotDir()) {
-    const mine = footprintsOf(kind, dir);
-    const v = p90(mine.map((f) => f.perWorker));
-    return { bytes: v ?? (kind === "batch" ? perWorkerFor("unit", dir).bytes : PER_WORKER_DEFAULT), measured: mine.length };
+/** The shape of a job's command, the key its footprints are kept under: the arguments joined, the clone's path made
+ *  relative (`scripts/test.mjs core` in any clone) and this node written `node`. */
+export function shapeOf(cmd, clone) {
+    const rel = (a) => { let t = String(a); if (clone && t === clone) t = "."; else if (clone && t.startsWith(`${clone}/`)) t = t.slice(clone.length + 1); return t === process.execPath ? "node" : t; };
+    return cmd.map(rel).map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(" ").slice(0, 200);
+}
+
+/** The least-squares slope of peak on workers over `points` (`{ jobs, peakRss }`), or null with too few points or one worker count. */
+function fitSlope(points) {
+    if (points.length < SLOPE_MIN_POINTS || new Set(points.map((p) => p.jobs)).size < 2) return null;
+    const n = points.length, mx = points.reduce((a, p) => a + p.jobs, 0) / n, my = points.reduce((a, p) => a + p.peakRss, 0) / n;
+    const sxx = points.reduce((a, p) => a + (p.jobs - mx) ** 2, 0);
+    return sxx ? points.reduce((a, p) => a + (p.jobs - mx) * (p.peakRss - my), 0) / sxx : null;
+}
+
+/**
+ * The price of a run of `kind` and `shape` from the footprint lines `footprints` (every kind, oldest first):
+ * `{ base, slope, measured, from }`. The sample is the shape's last FOOTPRINTS_USED footprints when there are at least
+ * SHAPE_MIN (`from: "shape"`), else the kind's last FOOTPRINTS_USED (`"kind"`; a footprint from before shapes counts only
+ * here), else the defaults (`"default"`); a batch kind with none of its own takes the unit sample, `measured: 0`. The
+ * slope is the least-squares slope of peak on workers when the sample has at least SLOPE_MIN_POINTS points spanning two
+ * worker counts, clamped to [SLOPE_MIN, SLOPE_MAX], else SLOPE_DEFAULT; the base is the p90 of what the slope leaves of
+ * each peak, `max(0, peakRss − slope × jobs)`. The peak barely moves with the workers, so a run granted few of them does
+ * not raise the price of the next.
+ */
+export function priceFor(footprints, { kind, shape = null } = {}) {
+    const usable = (f) => f && Number.isFinite(f.peakRss) && f.peakRss > 0 && Number.isFinite(f.jobs) && f.jobs > 0;
+    const ofKind = (k) => footprints.filter((f) => f?.kind === k && usable(f)).slice(-FOOTPRINTS_USED);
+    let sample = [], from = "default";
+    const mine = shape ? ofKind(kind).filter((f) => f.shape === shape) : [];
+    if (mine.length >= SHAPE_MIN) { sample = mine; from = "shape"; }
+    else if (ofKind(kind).length) { sample = ofKind(kind); from = "kind"; }
+    else if (kind === "batch") return { ...priceFor(footprints, { kind: "unit" }), measured: 0 };
+    if (!sample.length) return { base: BASE_DEFAULT, slope: SLOPE_DEFAULT, measured: 0, from };
+    const fitted = fitSlope(sample), slope = fitted == null ? SLOPE_DEFAULT : Math.min(SLOPE_MAX, Math.max(SLOPE_MIN, fitted));
+    return { base: p90(sample.map((f) => Math.max(0, f.peakRss - slope * f.jobs))), slope, measured: sample.length, from };
+}
+
+/** The price of a run of a kind and shape from this queue's footprints file (see `priceFor`). */
+export const priceIn = (kind, shape, dir = slotDir()) => priceFor(readFootprints(dir), { kind, shape });
+
+/** Every parsable line of the footprints file, oldest first. */
+function readFootprints(dir) {
+    let lines = [];
+    try { lines = fs.readFileSync(path.join(dir, "footprints.jsonl"), "utf8").split("\n").filter(Boolean); } catch { /* none yet */ }
+    return lines.map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
 }
 
 /** The last FOOTPRINTS_USED footprints of a kind. */
-function footprintsOf(kind, dir) {
-    let lines = [];
-    try { lines = fs.readFileSync(path.join(dir, "footprints.jsonl"), "utf8").split("\n").filter(Boolean); } catch { /* none yet */ }
-    return lines.map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter((f) => f?.kind === kind).slice(-FOOTPRINTS_USED);
-}
+const footprintsOf = (kind, dir) => readFootprints(dir).filter((f) => f.kind === kind).slice(-FOOTPRINTS_USED);
 
 /** How long a run of a kind usually takes: the p90 of its measured runs' durations, or null with none. */
 export const usualMsFor = (kind, dir = slotDir()) => p90(footprintsOf(kind, dir).map((f) => f.durationMs));
@@ -155,9 +224,9 @@ function benchComing() {
     try { return notYetResident(ledger().filter((e) => e.kind !== "tests")); } catch { return 0; }
 }
 
-/** What running jobs planned and do not hold yet: each one's workers × per-worker, less its process tree's memory now. */
+/** What running jobs planned and do not hold yet: each one's price at its workers (the price it was granted with), less its process tree's memory now. */
 export function promisedBy(running, resident = residentOf()) {
-    return running.reduce((a, j) => a + Math.max(0, (j.jobs ?? 0) * (j.sizing?.perWorker ?? PER_WORKER_DEFAULT) - resident(j)), 0);
+    return running.reduce((a, j) => a + Math.max(0, (j.jobs ? priceAt(priceOfSizing(j.sizing), j.jobs) : 0) - resident(j)), 0);
 }
 /** A job's process tree's resident memory, from one process table. */
 function residentOf() {
@@ -165,36 +234,38 @@ function residentOf() {
     return (j) => { try { table ??= processTable(); return j.pid ? treeRss(table, j.pid) : 0; } catch { return 0; } };
 }
 
-/** The memory reading admission is made from (injected in tests, which may also fix `perWorker` and `cap` for every
+/** The memory reading admission is made from (injected in tests, which may also fix `price` or `perWorker` and `cap` for every
  *  kind): free memory, what the bench admitted and has not started, the machine's total and cores. One reading per pass; each start in the pass is counted against it. */
 const readMemory = () => ({ available: availableMemory(), coming: benchComing(), total: os.totalmem(), cores: os.cpus().length });
-/** A kind's per-worker figure and worker cap (injected in tests). */
-const readKind = (kind, dir) => ({ perWorker: perWorkerFor(kind, dir).bytes, cap: capFor(kind) });
-/** A kind's per-worker figure and cap under a reading: injected by `deps.kind` or the reading itself in tests, else measured. */
-const sizingFor = (kind, m, dir, deps) => (deps.kind ? deps.kind(kind) : m.perWorker ? { perWorker: m.perWorker, cap: m.cap } : readKind(kind, dir));
+/** A job's price (`{ base, slope, measured, from }`) and worker cap, measured from the footprints. */
+const readKind = (job, dir) => ({ ...priceIn(job.kind, job.shape, dir), cap: capFor(job.kind) });
+/** A test's injected figure as a price: `price`, or `perWorker` (a base of 0 and that a worker). */
+const injected = (k) => ({ ...(k.price ?? { base: 0, slope: k.perWorker }), cap: k.cap });
+/** A job's price and cap under a reading: injected by `deps.kind` or the reading itself in tests, else measured. */
+const sizingFor = (job, m, dir, deps) => { const k = deps.kind ? deps.kind(job.kind) : m.price || m.perWorker ? m : null; return k ? injected(k) : readKind(job, dir); };
 
 /**
  * Whether a job of `kind` may start now, and with how many workers. `room` is free memory less the reserve, less what
  * the bench admitted and what running runs planned and do not hold yet; `workers` is what the running runs have.
  * With nothing running a job without `want` always starts (at least one worker); else it needs its minimum in memory
  * and in the worker cap. A job that declares `want` workers (batch) needs exactly that many in both, even alone, gets
- * exactly that many, and waits while `batches` batch jobs run (at most one). Returns `{ jobs }` or `{ jobs: 0, why }`.
+ * exactly that many, and waits while `batches` batch jobs run (at most one). `price` is `{ base, slope }`: the most workers is the largest w with base + slope × w within `room`. Returns `{ jobs }` or `{ jobs: 0, why }`.
  */
-export function admit({ kind, running, workers, room, perWorker, cap, maxRuns = MAX_RUNS, maxWorkers, want = 0, batches = 0 }) {
-    const left = Math.max(0, maxWorkers - workers), fit = Math.floor(room / perWorker);
+export function admit({ kind, running, workers, room, price, cap, maxRuns = MAX_RUNS, maxWorkers, want = 0, batches = 0 }) {
+    const left = Math.max(0, maxWorkers - workers), fit = fitIn(price, room);
     if (!running && !want) return { jobs: Math.max(1, Math.min(cap, left, fit)) };
     if (kind === "batch" && batches) return { jobs: 0, why: "a batch job runs already (at most one)" };
     if (running >= maxRuns) return { jobs: 0, why: `${running} run${running === 1 ? "" : "s"} at once already (at most ${maxRuns})` };
     const min = want || minWorkersFor(kind);
     if (left < min) return { jobs: 0, why: `the running runs have ${workers} of ${maxWorkers} workers` };
-    if (fit < min) return { jobs: 0, why: `memory: ${fmtBytes(Math.max(0, room))} above the reserve, ${min} workers take ${fmtBytes(min * perWorker)}` };
+    if (fit < min) return { jobs: 0, why: `memory: ${fmtBytes(Math.max(0, room))} above the reserve, ${min} workers take ~${fmtBytes(priceAt(price, min))}` };
     return { jobs: want || Math.min(cap, left, fit) };
 }
 
 /** Put a granted job in the bench's ledger as kind `tests`, with the memory its workers will take, so a sweep counts
  *  it before its workers are up (memory-budget.mjs's notYetResident). Dropped once its process is gone. Never throws. */
 function joinBench(job) {
-    try { register({ kind: "tests", pid: job.pid, ticket: job.ticket, repo: job.clone, cmd: cmdText(job.cmd), planned: job.jobs * job.sizing.perWorker }); } catch { /* the bench sees it through free memory */ }
+    try { register({ kind: "tests", pid: job.pid, ticket: job.ticket, repo: job.clone, cmd: cmdText(job.cmd), planned: priceAt(priceOfSizing(job.sizing), job.jobs) }); } catch { /* the bench sees it through free memory */ }
 }
 const leaveBench = (job) => { try { if (job.pid) unregister(job.pid); } catch { /* dropped when the pid dies */ } };
 
@@ -301,22 +372,22 @@ export function startNext(state, dir, deps = {}) {
     const running = state.jobs.filter((j) => j.state === "running");
     const m = (deps.memory ?? readMemory)();
     const maxRuns = deps.maxRuns ?? (Number(process.env.TEST_SLOT_MAX_RUNS) || MAX_RUNS), maxWorkers = maxWorkersFor(m.cores ?? os.cpus().length);
-    const base = m.available - (m.coming ?? 0) - RESERVE_FRAC * m.total;
+    const above = m.available - (m.coming ?? 0) - RESERVE_FRAC * m.total;
     let promised = promisedBy(running, deps.resident ?? residentOf()), workers = running.reduce((a, j) => a + (j.jobs ?? 0), 0);
     const started = [];
     let batches = running.filter((j) => j.kind === "batch").length;
     for (const job of [...queued.filter((j) => j.kind !== "batch"), ...queued.filter((j) => j.kind === "batch")]) {
-        const k = sizingFor(job.kind, m, dir, deps);
-        const room = base - promised;
-        const a = admit({ kind: job.kind, running: running.length, workers, room, perWorker: k.perWorker, cap: k.cap, maxRuns, maxWorkers, want: job.kind === "batch" ? job.want ?? 1 : 0, batches });
+        const k = sizingFor(job, m, dir, deps);
+        const room = above - promised;
+        const a = admit({ kind: job.kind, running: running.length, workers, room, price: k, cap: k.cap, maxRuns, maxWorkers, want: job.kind === "batch" ? job.want ?? 1 : 0, batches });
         if (!a.jobs) { state.waiting ??= { ticket: job.ticket, why: a.why }; if (running.length >= maxRuns) break; continue; }
         Object.assign(job, { state: "running", grantedAt: new Date().toISOString(), jobs: a.jobs, capMs: job.maxTimeMs ?? (deps.timeCap ?? timeCapFor)(job.kind, dir),
-            sizing: { available: m.available, coming: (m.coming ?? 0) + promised, total: m.total, perWorker: k.perWorker, runs: running.length + 1, workers: workers + a.jobs } });
+            sizing: { available: m.available, coming: (m.coming ?? 0) + promised, total: m.total, base: k.base, slope: k.slope, from: k.from ?? null, measured: k.measured ?? 0, runs: running.length + 1, workers: workers + a.jobs } });
         if (job.mode === "attached") Object.assign(job, { pid: job.by.pid, started: job.by.started });
         else Object.assign(job, (deps.spawnJob ?? spawnJob)(job, dir));
         (deps.joinBench ?? joinBench)(job);
         running.push(job);
-        promised += a.jobs * k.perWorker;
+        promised += priceAt(k, a.jobs);
         workers += a.jobs;
         if (job.kind === "batch") batches++;
         started.push(job);
@@ -339,14 +410,14 @@ function spawnJob(job, dir) {
  * nothing running, more memory than the room above the reserve. Both are figures the submitter acts on by asking for
  * fewer; with something running the job queues and waits for both caps like any other.
  */
-export function batchRefusal(state, want, dir, deps = {}) {
+export function batchRefusal(state, want, dir, deps = {}, shape = null) {
     const m = (deps.memory ?? readMemory)(), maxWorkers = maxWorkersFor(m.cores ?? os.cpus().length);
     if (want > maxWorkers) return `${want} workers is more than this machine's worker cap of ${maxWorkers} (its cores less two)`;
     if (state.jobs.some((j) => j.state === "running")) return null;
-    const { perWorker } = sizingFor("batch", m, dir, deps), room = m.available - (m.coming ?? 0) - RESERVE_FRAC * m.total;
-    if (want * perWorker <= room) return null;
-    const most = Math.floor(Math.max(0, room) / perWorker);
-    return `${want === 1 ? "1 worker takes" : `${want} workers take`} ${fmtBytes(want * perWorker)} and, with nothing else running, the memory room is ${fmtBytes(Math.max(0, room))} above the reserve; ${most ? `ask for at most ${most}` : "not even one fits now: try later"}`;
+    const price = sizingFor({ kind: "batch", shape }, m, dir, deps), room = m.available - (m.coming ?? 0) - RESERVE_FRAC * m.total;
+    if (priceAt(price, want) <= room) return null;
+    const most = fitIn(price, Math.max(0, room));
+    return `${want === 1 ? "1 worker takes" : `${want} workers take`} ${fmtBytes(priceAt(price, want))} and, with nothing else running, the memory room is ${fmtBytes(Math.max(0, room))} above the reserve; ${most ? `ask for at most ${most}` : "not even one fits now: try later"}`;
 }
 
 /**
@@ -360,13 +431,14 @@ export function submit({ cmd, cwd = process.cwd(), kind = "unit", workers = 1, m
     // A test job's key is what it was before batch existed, so an old copy's queued job is still shared.
     const key = createHash("sha256").update(JSON.stringify([tree.clone, cmd, tree.head, tree.dirty, ...(kind === "batch" ? ["batch", workers] : [])])).digest("hex").slice(0, 16);
     const ticket = `${new Date().toISOString().replace(/[-:]/g, "").slice(0, 15)}-${randomBytes(3).toString("hex")}`;
+    const shape = shapeOf(cmd, tree.clone);
     const by = { pid: process.pid, started: (deps.startTime ?? startTime)(process.pid) };
     const { out, reaped } = withQueue(dir, (state) => {
         const same = mode === "detached" && state.jobs.find((j) => j.state === "queued" && j.mode === "detached" && j.key === key);
         if (same) { if (maxTimeMs) same.maxTimeMs = Math.max(same.maxTimeMs ?? 0, maxTimeMs); return { job: same, shared: true }; }
-        const refused = kind === "batch" ? batchRefusal(state, workers, dir, deps) : null;
+        const refused = kind === "batch" ? batchRefusal(state, workers, dir, deps, shape) : null;
         if (refused) return { refused };
-        const job = { ticket, mode, kind, cmd, cwd, key, clone: tree.clone, head: tree.head, dirty: tree.dirty, by, state: "queued", submittedAt: new Date().toISOString(),
+        const job = { ticket, mode, kind, cmd, shape, cwd, key, clone: tree.clone, head: tree.head, dirty: tree.dirty, by, state: "queued", submittedAt: new Date().toISOString(),
             ...(kind === "batch" ? { want: workers } : {}), ...(maxTimeMs ? { maxTimeMs } : {}),
             ...(mode === "detached" ? { env: jobEnv(env), log: path.join(dir, `${ticket}.log`) } : {}) };
         state.jobs.push(job);
@@ -389,7 +461,7 @@ export function finish(ticket, exit, { dir = slotDir(), deps = {}, peak = null }
     }, deps);
     if (rec) (deps.leaveBench ?? leaveBench)(rec);
     if (rec?.state === "done" && rec.peakRss && rec.durationMs >= MEASURE_MIN_MS && rec.jobs) {
-        try { fs.appendFileSync(path.join(dir, "footprints.jsonl"), `${JSON.stringify({ at: rec.endedAt, kind: rec.kind, jobs: rec.jobs, peakRss: rec.peakRss, perWorker: Math.round(rec.peakRss / rec.jobs), runs: rec.peakRuns ?? 1, durationMs: rec.durationMs, ...(rec.kind === "batch" && rec.durationMs > BATCH_OVERRUN_MS ? { overran: true } : {}), ticket })}\n`); } catch { /* unmeasured */ }
+        try { fs.appendFileSync(path.join(dir, "footprints.jsonl"), `${JSON.stringify({ at: rec.endedAt, kind: rec.kind, jobs: rec.jobs, peakRss: rec.peakRss, perWorker: Math.round(rec.peakRss / rec.jobs), ...(rec.shape ? { shape: rec.shape } : {}), runs: rec.peakRuns ?? 1, durationMs: rec.durationMs, ...(rec.kind === "batch" && rec.durationMs > BATCH_OVERRUN_MS ? { overran: true } : {}), ticket })}\n`); } catch { /* unmeasured */ }
     }
     return rec;
 }
@@ -415,8 +487,14 @@ export function waitingLine({ running = [], ahead, why = null }, now = Date.now(
     return `test-slot: waiting for ${who}${why ? ` (${why})` : ""}; ${ahead} ahead of you`;
 }
 
-/** The line a granted run prints: its workers and the reading they came from. */
-export const grantLine = (job) => `test-slot: ${job.jobs} worker${job.jobs === 1 ? "" : "s"} (${fmtBytes(job.sizing.available)} available${job.sizing.coming ? `, ${fmtBytes(job.sizing.coming)} of it promised to bench browsers and other test runs starting up` : ""}, ${fmtBytes(RESERVE_FRAC * job.sizing.total)} reserved, ~${fmtBytes(job.sizing.perWorker)} per worker${job.sizing.runs > 1 ? `; run ${job.sizing.runs} at once, ${job.sizing.workers} workers between them` : ""})`;
+/** What a grant's price was measured from, in words. */
+const fromText = (z) => (z.from === "shape" ? `, from ${z.measured} run${z.measured === 1 ? "" : "s"} of this command` : z.from === "kind" ? `, from ${z.measured} run${z.measured === 1 ? "" : "s"} of this kind` : z.from === "default" ? ", unmeasured: the defaults" : "");
+
+/** The line a granted run prints: its workers, the memory the run is priced at and the reading they came from. */
+export function grantLine(job) {
+    const z = job.sizing, p = priceOfSizing(z);
+    return `test-slot: ${job.jobs} worker${job.jobs === 1 ? "" : "s"} (~${fmtBytes(priceAt(p, job.jobs))} for the run: ${p.base ? `${fmtBytes(p.base)} + ` : ""}${fmtBytes(p.slope)} a worker${fromText(z)}; ${fmtBytes(z.available)} available${z.coming ? `, ${fmtBytes(z.coming)} of it promised to bench browsers and other test runs starting up` : ""}, ${fmtBytes(RESERVE_FRAC * z.total)} reserved${z.runs > 1 ? `; run ${z.runs} at once, ${z.workers} workers between them` : ""})`;
+}
 
 /** `--max-time`'s minutes as milliseconds: a whole number from 1 to MAX_TIME_MAX_MIN, else NaN. */
 export const parseMaxTime = (minutes) => (/^\d+$/.test(String(minutes)) && minutes >= 1 && minutes <= MAX_TIME_MAX_MIN ? Number(minutes) * 60_000 : NaN);
