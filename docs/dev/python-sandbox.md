@@ -504,10 +504,29 @@ ROOT C ([`docs/spec/PYTHON_DIALECT.md`](../spec/PYTHON_DIALECT.md), "The namespa
   `runPrincipals`, `runNsVars` and `nsLoss` entries. Called from `forgetRun` (`background.ts`, a deleted session), the
   session store's eviction as deleted or archived (`sw-sessions.ts`), and `releaseSessionTokens` (`sw-runs.ts`; a hook,
   `onSessionRelease`, since sw-python imports sw-runs). Also lost: the idle reap, a kill, the offscreen document closing.
-- **Loss is told.** `killWorker` (timeout, start timeout, crash) records `nsLoss` for every run `runPrincipals` lists on
-  the killed worker, whether or not one of its cells ever returned a scope manifest; the run's next cell opens its
-  stdout with `namespace reset at <ISO time>: <timeout|start-timeout|crashed>` and the result carries `nsReset`. The
-  offscreen document closing loses the dict without a record: the note comes only from a kill the document saw.
+- **Loss is told.** `killWorker` (timeout, start timeout, crash, the kernel's death) records `nsLoss` for every run
+  `runPrincipals` lists on the killed worker, whether or not one of its cells ever returned a scope manifest; the run's
+  next cell opens its stdout with `namespace reset at <ISO time>: <timeout|start-timeout|crashed|the interpreter
+  crashed>` and the result carries `nsReset`. A cell refused as outside the dialect does not take the line: its result is
+  discarded and the cell is asked again outside, which gets it. The offscreen document closing loses the dict without a
+  record: the note comes only from a kill the document saw.
+- **The kernel's death (ruling 26).** A fatal Pyodide error ends the interpreter, not the cell, in two shapes. A trap in a
+  wasm call (pillow's `PIL._imagingtk`, "function signature mismatch") answers the cell, after which every call throws
+  "Pyodide already fatally failed". A JS stack overflow in the parser never settles the cell's promise: the `RangeError`
+  escapes as an unhandled rejection on the worker's `self`, never as `error` and never as the host's `worker.onerror`
+  (measured in Chromium 2026-11-18, `tests/e2e/python-kernel-death.spec.mjs`). The worker (`python-worker.ts`) listens
+  for both events at module load, before the lockdown strips `addEventListener`, and after any failed cell. It kills the
+  kernel only on Pyodide's own verdict: it calls the interpreter once, and only "already fatally failed" counts, so an
+  ordinary rejection a cell's code left unhandled, after which the interpreter still answers, kills nothing (a
+  denial of service on the namespace otherwise). The dead worker answers the running cell and every later message with
+  `fatal: true`; the offscreen document gives the cell `kernelDied` (the cause, and that the run's variables, functions
+  and imports are gone) and kills the worker with reason `kernel-death`, so the next cell starts a fresh interpreter
+  and opens with the loss line. Pyodide is not patched. The namespace-released record (the async lane's one writer,
+  reason "kernel-death") is to be called beside that kill in `offscreen.ts` once the writer is on main.
+- **Differs from CPython: how deep a source may nest.** CPython raises `RecursionError` for a too-deep expression;
+  Pyodide's parser overflows the JS stack first, which is fatal. Measured with `compile("obj" + ".a" * N + "()")`: a
+  Chromium worker compiles N = 3,000 and dies at 10,000 (2026-11-18); Node under the test harness also compiles 3,000
+  and dies at 30,000, while an import through `importlib` in Node dies near 2,000-3,000 (deeper stack per level).
 - **The state registry:** `python.run-namespace` (`defineState`, offscreen, audience `model`); its `read` is the last
   cell's scope manifest (`bench.vars`: names and type names).
 - **Deleting reaches every worker holding the run's dict**, the shared `full` one included (`runPrincipals` in

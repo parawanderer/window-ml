@@ -89,7 +89,7 @@ async function withStoredTables(tables: unknown): Promise<{ tables: unknown; tra
 // `bootMs`/`runMs` come from the WORKER, which is the executor — anything measured downstream of it is
 // measuring the message bus as well. See python-worker.ts.
 type PyEnv = { python: string; pyodide: string; packages: { name: string; version?: string }[] };
-type PyResult = { stopped?: "restarted"; prewarm?: "started" | "already" | "warm" | "starting"; ok: boolean; env?: PyEnv; completions?: { name: string; type: string; complete: string }[]; bench?: { id: string; vars: { name: string; type: string }[] }; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img" | "figure"; bootMs?: number; runMs?: number; nsReset?: string; dropped?: { count: number; afterCell: number } };
+type PyResult = { stopped?: "restarted"; prewarm?: "started" | "already" | "warm" | "starting"; ok: boolean; env?: PyEnv; completions?: { name: string; type: string; complete: string }[]; bench?: { id: string; vars: { name: string; type: string }[] }; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img" | "figure"; bootMs?: number; runMs?: number; nsReset?: string; dropped?: { count: number; afterCell: number }; fatal?: boolean };
 
 // One worker per PRINCIPAL (PYODIDE_LOCKDOWN.md step 1): a worker-hosted run, a page, `full`. A principal
 // change is a new worker, never a reused one — a patch one principal left in module state must not reach
@@ -155,6 +155,11 @@ const wireByClient = new Map<string, { post: (m: unknown) => void; runMsgId: num
 /** The kill's error when it lands during the cancel's spend (the worker's `spending` mark). */
 export const SPEND_KILLED = `A task this cell left kept running after it was cancelled and would not stop (most likely inside a C function), so the Python sandbox was terminated after ${PY_TIMEOUT_MS / 1000}s and the cell's result is refused.`;
 
+/** The error a cell gets when it killed the interpreter (ruling 26): the cause, and that the run's Python state is gone. */
+export function kernelDied(cause: string): string {
+    return `The Python interpreter crashed (${cause.trim() || "a fatal Pyodide error"}) and was restarted for the next cell; the same code crashes it again. Everything defined before in this run's Python (its variables, functions and imports) is gone: the next cell starts empty and must define or import again what it needs.`;
+}
+
 /** Whether a worker's own error says it ran out of memory: wasm memory that could not grow, or a JS allocation that failed. */
 export const MEMORY_DEATH = /out of memory|\bOOM\b|allocation failed|Maximum memory size|Memory\.grow/i;
 
@@ -195,7 +200,7 @@ function killWorker(principal: string, reason: string): void {
     // ROOT C: a kill wipes every run dict this worker held: its own run's for `run:<id>`, every full-mode run's for the
     // shared `full` one. Each such run's next cell opens with the loss line (PYTHON_DIALECT.md, "Lifetime and loss").
     const killedRuns = [...runPrincipals].filter(([, ps]) => ps.has(principal)).map(([runId]) => runId);
-    const named = reason === "timeout" || reason === "start-timeout" || reason === "library-removed" || reason === "stopped";
+    const named = reason === "timeout" || reason === "start-timeout" || reason === "library-removed" || reason === "stopped" || reason === "kernel-death";
     const lossReason = named ? reason : "crashed";
     if (entry) {
         try { entry.w.terminate(); } catch { /* already gone */ }
@@ -373,6 +378,10 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
         }
         const { id, ...result } = e.data as { id: number } & PyResult;
         const entry = pending.get(id);
+        // THE KERNEL'S DEATH (ruling 26): the worker says its interpreter fatally failed. The cell is answered with that,
+        // and the worker is ended, so the run's next cell starts a fresh one and opens with the loss line.
+        const died = result.fatal === true;
+        if (died) { result.error = kernelDied(String(result.error ?? "")); delete result.fatal; }
         // The first run after a pre-warm: did it find the runtime warm, and how long did it still wait?
         if (result.prewarm === "warm" || result.prewarm === "starting") reportHousekeeping({ subsystem: "pyodide", kind: "prewarm-used", ms: result.bootMs ?? 0, detail: { warm: result.prewarm === "warm" } });
         // ROOT C: keep the run's scope manifest (`bench.vars`, PERSISTENT_RUNTIME_SPEC.md) and open the result
@@ -383,14 +392,18 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
                 runNsVars.set(runId, { id: result.bench.id, vars: result.bench.vars });
                 if (entry.principal) (runPrincipals.get(runId) ?? runPrincipals.set(runId, new Set()).get(runId)!).add(entry.principal);
             }
-            const loss = nsLoss.get(runId);
+            // A cell refused as outside the dialect is discarded and asked again outside it: the line waits for that one.
+            const loss = (result as { notInDialect?: string }).notInDialect ? undefined : nsLoss.get(runId);
             if (loss) {
                 nsLoss.delete(runId);
-                const line = `namespace reset at ${new Date(loss.at).toISOString()}: ${loss.reason === "idle" ? "idle (python_exec keep: true holds it through long waits)" : loss.reason === "idle-between-turns" ? "idle between turns" : loss.reason}`;
+                const line = `namespace reset at ${new Date(loss.at).toISOString()}: ${loss.reason === "idle" ? "idle (python_exec keep: true holds it through long waits)" : loss.reason === "idle-between-turns" ? "idle between turns" : loss.reason === "kernel-death" ? "the interpreter crashed" : loss.reason}`;
                 Object.assign(result, { stdout: result.stdout ? `${line}\n${result.stdout}` : line, nsReset: line });
             }
         }
         if (entry) { pending.delete(id); clearTimeout(entry.timer); entry.resolve(result); armReap(entry.principal); }
+        // The namespace-released record for a kernel death belongs here, through the async lane's one writer with the
+        // reason "kernel-death", once that writer is on main (ruling 26); `killWorker` records the loss line meanwhile.
+        if (died && workers.get(principal)?.w === w) killWorker(principal, "kernel-death");
     };
     // A worker-level failure (load error, uncaught throw) would otherwise strand every pending run.
     w.onerror = (ev: ErrorEvent) => { if (workers.get(principal)?.w === w) killWorker(principal, ev.message || "crashed"); };

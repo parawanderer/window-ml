@@ -183,7 +183,7 @@ test("a leased cell's end is posted as PY_DONE with its run, outcome and size; a
 // document is the unit under test, and the real-CPython suites skip without pyodide-core). The fake keeps the real
 // failure's shape: the trap once, then "already fatally failed" for every later run on the SAME worker; a respawned
 // worker is a new FakeWorker with an empty namespace, so only a respawn can answer the second cell with a NameError.
-// Today nothing respawns it (offscreen.ts kills a worker on `onerror` only), so these fail; `todo` until the fix lands.
+// The worker flags the answer `fatal` (python-worker.ts, the kernel's death), and the document ends that worker.
 
 const TRAP_TRACEBACK = "PythonError: Traceback (most recent call last):\n  File \"<exec>\", line 1, in <module>\n    import PIL._imagingtk\nRuntimeError: function signature mismatch";
 const FATAL_LATER = "Pyodide already fatally failed and can no longer be used.";
@@ -192,7 +192,8 @@ const FATAL_LATER = "Pyodide already fatally failed and can no longer be used.";
 function answerFatal(w, post) {
     if (w.fatal) { w.reply({ id: post.id, ok: false, stdout: "", error: FATAL_LATER }); return; }
     w.fatal = true;
-    w.reply({ id: post.id, ok: false, stdout: "", error: TRAP_TRACEBACK });
+    // The worker's flag: after a failed cell it asks the interpreter once, and a dead one answers "already fatally failed".
+    w.reply({ id: post.id, ok: false, stdout: "", error: TRAP_TRACEBACK, fatal: true });
 }
 
 /** A fresh interpreter's answer to `print(x)` for a name defined in a lost namespace. */
@@ -211,7 +212,7 @@ async function nextCell(run, { cell, started = true, code = "print(x)" } = {}) {
     return { answer, w };
 }
 
-test("a fatal Pyodide error names the module and the lost namespace, and the next cell runs in a respawned interpreter", { todo: "the kernel does not restart after a fatal Pyodide error (async/kernel-death)" }, async () => {
+test("a fatal Pyodide error names the module and the lost namespace, and the next cell runs in a respawned interpreter", async () => {
     const run = `kd${++n}`;
     const first = await leased({ run, cell: `wpy-${n}` });
     answerFatal(first.w, first.post);
@@ -229,7 +230,7 @@ test("a fatal Pyodide error names the module and the lost namespace, and the nex
     assert.ok(sentToWorker.slice(before).some((m) => m.type === "HOUSEKEEPING_REPORT" && m.payload.subsystem === "pyodide" && m.payload.kind === "respawn" && m.payload.key === `run:${run}`), "the respawn is in the housekeeping log");
 });
 
-test("a detached cell that hits a fatal error is reported done with the module and lost namespace, and the next cell in the run is not blocked", { todo: "the kernel does not restart after a fatal Pyodide error (async/kernel-death)" }, async () => {
+test("a detached cell that hits a fatal error is reported done with the module and lost namespace, and the next cell in the run is not blocked", async () => {
     const run = `kd${++n}`;
     const first = await leased({ run, cell: `wpy-${n}` });   // started: the service worker has detached it by now
     assert.ok(sentToWorker.some((m) => m.type === "PY_STARTED" && m.cell === first.cell));
