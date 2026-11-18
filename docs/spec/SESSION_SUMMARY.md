@@ -1,7 +1,7 @@
 # Spec (WIP): the session summary page
 
-**Status: specified, not built (2026-11-18).** Contents ruled by Shane (2026-11-18): the list below, open to additions
-and cuts as they come up. Owners and order ruled by the coordinator (2026-11-18, "Owners and order" below). The access
+**Status: specified, not built (2026-11-18).** Contents ruled by Shane (2026-11-18, ruling 50): the list below, open to
+additions and cuts as they come up. Owners and order ruled by the coordinator (2026-11-18, "Owners and order" below). The access
 tab's data is built on the worker side (`docs/spec/POLICIES.md`, "The effective view"); nothing else here is.
 
 ## What it is for
@@ -17,8 +17,8 @@ The page READS. It edits nothing except what a tab's own spec allows (the access
 
 - From the session's "..." menu, always: the chat page's `RowMenu` on a row and `SessionMenu` in the header
   (`src/chat/row-menu.tsx`, `src/chat/chat-app.tsx`) gain a "Summary" item in `SessionActions`, beside Pin, Rename and
-  Export. The sidebar has no per-session menu today (its `IconMore` is "More panels"); where the sidebar opens the page
-  is open question 1.
+  Export. The sidebar has no per-session menu today (its `IconMore` is "More panels"), so the sidebar's detail view
+  gains one in its header, holding the same `SessionActions` (ruled 2026-11-18; built in the shell PR).
 - The home tab is the summary. The other tabs are resources, files and access, in that order.
 - On a phone it is the same page as a dismissable overlay over the session, not a route: dismissing it returns to the
   transcript where it was.
@@ -32,9 +32,12 @@ A field with no source, or whose source answers "unknown" (`null`), draws NOTHIN
 zero, "idle", "none" or a dash. Zero is drawn only when a source says zero. A tab whose every field is missing says
 what it would hold and why it is empty ("No file store on this runtime"), in one line.
 
-A field that only the extension's own runtime can answer (the "local" column below) is drawn under the extension host
-and left out elsewhere, by the same rule as the access tab's seam (`SessionHost.sessionPolicies` answers `null` off the
-extension host).
+A field that only the extension's own runtime can answer ("local" below) reaches the page through one seam member,
+`SessionHost.sessionDetails(key) -> {...} | null` (ruled 2026-11-18): `null` off the extension host, the shape of
+`sessionPolicies`. It is never read from the state dump (`DUMP_RUN_STATE`), a debugging view whose shape the page must
+not depend on. The object carries names and states only (a root's path, a package's name, an origin's level; never a
+value, a file's content or a secret), and a field the worker cannot answer is ABSENT from it, never `null` or empty.
+`sessionDetails` is page-reachable data, so it gets a red-team pass when built.
 
 ## The fields
 
@@ -97,11 +100,11 @@ PR B: the policies row as a self-contained component on the ruled seam (`Session
 | --- | --- | --- | --- |
 | Policies in effect | have (worker, #1975) | `sessionPolicies` (#1975); `policies.global`, `policies.run` (local) | The host seam is PR B. |
 | `ml.sh` host attached, and its roots | partial | `shell.host` (local, browser-wide); `capabilities.shellHost`, `shellSandboxed` (host, booleans) | The contract leaves roots out of the host on purpose; roots are drawn local only. |
-| Programs in `shellRevealsAllow` | need | Not in `src/`; planned (shell lane). | |
+| Programs in `shellRevealsAllow` | need | Not in `src/` | The manifest lane's, #1977. |
 | Hide and show entries | need | — | Ruling 34 (files-host). |
-| Secret handles, by name only | need | No secret store; `SECRET_HANDLES.md` is an idea | (no lane yet) |
+| Secret handles, by name only | need | No secret store; `SECRET_HANDLES.md` is an idea | Files-host's (ruling 18), after H16. |
 | Whether the page's origin is approved | partial | `site.levels`, `run.env` (local); `blankStart.granted` (host, blank page only) | Local only. |
-| Python network open or closed | need | Chosen per cell (`runPython` in `sw-python.ts`); no per-session flag | (python lane) |
+| Python network open or closed | need | Chosen per cell (`runPython` in `sw-python.ts`); no per-session flag | Ruling 37: closed by default; the gate's owner is not assigned. |
 | Installed Python packages | have (local) | `python.run-installs` (`sw-pkg-installs.ts`, lost on browser restart) | Local only. |
 
 ## Owners and order
@@ -117,10 +120,9 @@ Ruled by the coordinator (2026-11-18):
 5. The files tab (files-host).
 6. Fields marked "need", when the session-store lane resumes on Shane's word; until then they draw nothing.
 
-## Open questions
+## Ruled questions
 
-1. Where the sidebar opens the page: the sidebar has no per-session "..." menu. Proposed: add one to the session
-   header in the detail view, holding the same `SessionActions`.
-2. Whether "local" fields reach the page through one more seam member (proposed: `SessionHost.sessionDetails(key) ->
-   {...} | null`, `null` off the extension host, the shape of `sessionPolicies`) or through the existing state dump.
-   The dump is a debugging view of every realm; a page reading it would tie the page to its shape.
+1. Where the sidebar opens the page: a per-session "..." menu in the sidebar detail view's header, with the same
+   `SessionActions`, built in the shell PR (2026-11-18).
+2. How "local" fields reach the page: `SessionHost.sessionDetails(key)`, `null` off the extension host, never the state
+   dump; names and states only, an unanswerable field absent; a red-team pass when built (2026-11-18).
