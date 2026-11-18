@@ -18,7 +18,12 @@ npm test               # everything. Before you commit.
 node scripts/test.mjs --list      # what each genre holds
 node scripts/test.mjs --timings   # per-file durations, slowest first. SERIAL: the total is a sum, not a wall clock
 node scripts/test.mjs panel ext   # more than one
+node scripts/test.mjs --timings-baseline   # refresh tests/test-times-baseline.json from this machine's history
 ```
+
+**Read the end of the output.** A block starting `test timings — warnings for whoever ran this` means a test file outlived its
+tests (a leaked timer or server: the run held the queue's slot), or a test ran far past its own history or its peers. It never
+changes the exit code; find what the test left running and stop it. See "Test timings" in `docs/dev/working-in-the-repo.md`.
 
 ## Which genre
 
