@@ -52,6 +52,38 @@ A nested `rm` inside a root stays free under `host-sandbox` (ruled 2026-10-22): 
 - **Under the host's ordinary sandbox `gh` cannot run at all**: the profile denies the network and reads under `.config/gh` and the Keychains (gh fails reading its config); `GH_TOKEN` is not on the host's environment whitelist, and `XDG_CONFIG_HOME` is denied.
 - **The credentialed profile (2026-11-08).** The manifest names `credential: { provider: "github" }` and `network: { ports: [443], hosts: [...] }`. A host whose `hello.credentials` lists `github` is sent `spawn.credential: { provider, manifest: <sha256 of this file> }` by a sandboxed session (`credentialFor`); it injects the person's token as `GH_TOKEN`, with a throwaway `GH_CONFIG_DIR`, under a profile that runs program-only (gh, git, git's https helpers) and reaches one address, a CONNECT proxy the host runs for that call, which admits only the manifest's `hosts` on its `ports` (window-ml-host 0.8.0; `HTTPS_PROXY` routes gh and git to it). The card's Sandbox line names those hosts (`ShFacts.credential.hosts`, the host's grant); a host built before the proxy names none, and the card then says any host on port 443. Such a call ALWAYS asks: `judgeCall` lets no allow policy and no free tier answer a call whose facts say `credential.held` (`ShFacts.credential`), and the card says "Sends: your GitHub token". An older host, Linux, or a gh.json newer than the host's pinned copy (`CredentialRefused`) gets none, and the card says nothing is sent. Every edit of this file therefore needs a host release that copies it before credentialed gh works again. A token gh prints (`auth token`, an approved `unknown` call) is scrubbed by its shape before the model reads it (`secret-scrub.ts`).
 
+### Programs that reveal other processes (`reveals`; ruling 31, 2026-11-18)
+
+`ps`, `lsof` and `top` read nothing in a workspace, yet they show every process's command line, user, open files and
+sockets: another program's arguments (a token passed on a command line), which files the person has open, what they are
+connected to. The effects algebra has no resource for "other processes" ([`EFFECTS.md`](EFFECTS.md): `process` is a
+program STARTED), so a manifest says it with a top-level marker:
+
+- **`reveals: "processes"`**, the one value in v1. A call to such a program that would otherwise be free is free only
+  when the manifest's `program` is in **`shellRevealsAllow`** (a `string[]`, default `[]`, a gate key:
+  [`MODEL_SETTINGS.md`](MODEL_SETTINGS.md)). Otherwise it asks, and the card says why ("ps shows other processes: their
+  arguments, users and open files"). One program in the list frees no other: `ps` in it leaves `lsof` asking.
+- **It frees nothing else.** A call that would ask without the marker still asks; a flag the manifest does not list
+  stays `unknown` (`ps -E` and procps `e`, which print each process's environment, are left out on purpose); the
+  output is scrubbed as every call's is. An allow policy does not stand in for the list: `judgeCall` lets neither the
+  free tier nor an allow policy answer a revealing call whose program is not in it, as for a credentialed call (`gh`
+  above), because a policy can be the model's proposal and a gate key cannot.
+- **It only narrows**, so a stored or proposed manifest may declare it too. A manifest without it reads exactly as
+  before (the upgrade: every vector under `tests/fixtures/program-calls/` describes and judges identically, and one
+  new vector carries the marker), and a config saved before the key existed reads `[]`.
+- **Who writes the list**: only the person. DevTools Settings edits it, and the card of a call that asks only because
+  of the marker has a third answer, "Always allow `<program>`", which adds the program to the list and runs the call;
+  the sidebar writes the setting as the person's own action, never through `change_setting`. That answer is the one
+  exception to the card's two answers ([`SHELL.md`](SHELL.md), "Approval"): it widens a gate key, which no policy may
+  do, so the widening cannot be a policy. The chat page and the phone show the two answers only.
+- **Rows**: off, the call asks with the reason; on, it is free; one program listed frees no other; an allow policy
+  naming the program does not free it; `change_setting` refuses the key, `ml.settings()` shows it with `mode: "read"`,
+  `ml.config()` does not return it, and no page-started message writes it; a config fixture without the key and a
+  vector with the marker.
+- **The process host** parses the marker and ignores it: the judging is the extension's. Its reader refuses unknown
+  fields, so a vector carrying `reveals` is copied to the host only after the host's reader takes it, and no shipped
+  manifest declares it until then.
+
 ## Pinning
 
 A library manifest is pinned to a content hash of one build. A program cannot be, in general: `git` is whatever the

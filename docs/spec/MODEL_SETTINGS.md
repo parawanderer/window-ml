@@ -176,7 +176,7 @@ class beside their own keys in `store.ts` and the same domain union; that is ope
 | Class | Read-write | A change | Keys (the initial classification; the code's table is the truth) |
 | --- | --- | --- | --- |
 | **secret** | never; not readable | impossible | `chatUrl`, `apiKey`, `modelFilter`, `priceSnapshotUrl` (exactly `SECRET_KEYS`), and the legacy `pageApprovalDomains` (it is a site list) |
-| **gate** | never; readable through `ml.config()` | impossible; refused with a link to the row (`window-ml:setting/<key>`, LINKS.md), so the model can say where the person changes it | `autoApproveReadonly`, `autoApprovePython`, `autoApproveSelfSource`: the approval gate itself, where one approved change would remove every later approval of its kind |
+| **gate** | never; readable through `ml.config()`, or only through `ml.settings()` for `shellRevealsAllow` | impossible; refused with a link to the row (`window-ml:setting/<key>`, LINKS.md), so the model can say where the person changes it | `autoApproveReadonly`, `autoApprovePython`, `autoApproveSelfSource`, `shellRevealsAllow` (the programs that reveal other processes the person lets run free, [`PROGRAM_MANIFEST.md`](PROGRAM_MANIFEST.md)): the approval gate itself, where one approved change would remove every later approval of its kind |
 | **guarded** | yes | always asks in the guarded direction; a policy may deny, never allow | what widens what the model reaches; what sends the person's data somewhere it did not go before; what shrinks the person's record of what happened. Exactly the next table |
 | **ordinary** | yes | asks unless a policy allows it | everything else: models and their context sizes, appearance, the HUD, titling, electricity prices, `protoStream`, the Python idle and detached-task limits. `autoTitles` and `groundingEnabled` send more to the model server when turned on, and are ordinary on purpose: they reach only the server the person configured, with data already going there |
 
@@ -215,7 +215,7 @@ that is not a classified one is refused.
   is stored, synced or backed up, so a restore and an upgrade have nothing of it to carry. The values `ml.settings()`
   reads are the config's own, in `chrome.storage.sync`.
 - **What is in it** (ruling 2, Shane, 2026-11-14): every classified key with a place, less the five secrets and the
-  three gate keys, which is 49 of the 58 keys of `DEFAULT_CONFIG` today (`ocrNumCtx` and `pageApprovalDomains` have
+  four gate keys, which is 49 of the 59 keys of `DEFAULT_CONFIG` today (`ocrNumCtx` and `pageApprovalDomains` have
   no place). The class decides what a change costs: an ordinary key's change asks unless a policy allows it, a guarded
   key's always asks.
 - **No Settings section edits it** in this spec, so it has no link address of its own. A person narrowing it is open
@@ -249,7 +249,8 @@ classified key with a place in `SETTING_PLACES` (a row in the panel), the secret
 out of the read-write set (rule 6) also keeps it out of the entries, so every entry's doc can name where the setting
 lives. A key with no place (today `ocrNumCtx`) is read through `ml.config()` until it gets a control (open question 6).
 An entry carries a value wherever the model may read it by any route, which is the 21 keys `ml.config()` already returns
-plus every read-write key; only a secret's entry is hidden:
+plus every read-write key and `shellRevealsAllow` (a gate key `ml.config()` does not return: a page has no use for the
+list, and the model reads it to say why a call asked); only a secret's entry is hidden:
 
 ```ts
 model:        { value: "qwen3:14b", mode: "read", class: "ordinary" }   // also returned by ml.config()
@@ -328,10 +329,10 @@ call this surface (above); what it can do is ask the model, in text, to call it.
    text: every value is checked against a closed domain (an enum, a number range, a model on the server's list, a
    currency code, a parsed hour range), and a key whose value cannot be so checked is not classified ordinary.
 2. **A setting that widens the model's own permissions.** The gate keys (`autoApproveReadonly`, `autoApprovePython`,
-   `autoApproveSelfSource`): one approved change and every later call of its kind runs unasked, so they are never
-   writable. The shell keys and `cdp` widen what an approved call reaches: guarded, always a card in the
-   widening direction, no policy can free it, so the model cannot `propose_policy` its way past it (a proposed `allow`
-   naming a guarded key is refused at the precheck, with that reason). The site lists and the self-approval list are
+   `autoApproveSelfSource`, `shellRevealsAllow`): one approved change and every later call of its kind runs unasked,
+   so they are never writable. The shell keys and `cdp` widen what an approved call reaches: guarded, always a card in
+   the widening direction, no policy can free it, so the model cannot `propose_policy` its way past it (a proposed
+   `allow` naming a guarded key is refused at the precheck, with that reason). The site lists and the self-approval list are
    not settings at all, so a run cannot grant a page `window.ml`.
    Shrinking the record (`persistUiRuns`, retention, budgets) is guarded for the same reason in the other direction: it
    hides what was done.
