@@ -273,10 +273,12 @@ stolen store also gives each secret's exact length, since `L` of the as-written 
 protects a high-entropy secret (an API token, a generated password) completely, removes the value from disk and from
 anything that reads storage, and does not protect a weak password from offline guessing by whoever holds the profile.
 The spec states that, not more. The widths are provisional until measured: `k = 8`, `w = 24` and a slow hash
-(PBKDF2-SHA256 through WebCrypto) at about a millisecond. At 64 entries of 11 forms each (`E` about 700) on a 1 MiB
-result, that is about 44 slow confirms a crossing. The per-crossing time, the false candidates and the slow hash's cost
-at 64 entries on a 1 MiB result are measured in a notebook (`notebooks/<topic>/`) before the widths are fixed (the
-coordinator's call).
+(PBKDF2-SHA256 through WebCrypto) at about a millisecond. Measured (`mask-matcher.ipynb`, #1959): a secret gives about 5
+distinct forms, not 11, so at 64 entries `E` is about 313 and a crossing raises about 20 false candidates a MiB in
+expectation; on repetitive text (JSON, logs) they arrive in clumps, a collision with a frequent window counted once per
+occurrence. Two requirements follow. The confirm is memoised per distinct window within a crossing, so a clump costs one
+confirm. And a crossing's time budget is set from the tail of its cost, not its mean. The widths stay provisional until
+they are fixed from that notebook (the coordinator's call).
 
 **A timing oracle.** The slow confirm runs only on a filter hit, so a crossing's time tells a text holding a stored
 8-character prefix from one that does not: a prefix oracle beside the redaction oracle in "The scrub as built". The
