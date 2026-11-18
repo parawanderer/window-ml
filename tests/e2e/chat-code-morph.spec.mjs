@@ -16,8 +16,8 @@ const PACKED = `let o=[];${Array.from({ length: 14 }, (_, i) => `o.push({k:${i},
  * Run one agent that writes PACKED, held at its approval card, with the chat page watching, and say whether characters flew.
  * `call` is how the fake model delivers the call; `stream` is the run's own option.
  */
-async function flew({ call, stream }) {
-    const fake = await startFakeLlm({ model: "fake-model", streamDelayMs: 200 });
+async function flew({ call, stream, delay = 200 }) {
+    const fake = await startFakeLlm({ model: "fake-model", streamDelayMs: delay });
     const site = await startPageServer({});
     const ext = await launchExtension();
     try {
@@ -39,6 +39,7 @@ async function flew({ call, stream }) {
         await site1.goto(site.url + "/");
         await waitForMl(site1);
         void site1.evaluate((s) => window.ml.agent("rename the page", { env: false, approvalRouting: "both", stream: s }), stream).catch(() => {});
+        await chat.bringToFront();   // the site's tab opened after it; the chat is the one being sampled (see chat-transitions.spec.mjs)
         await chat.locator(".chat-row", { hasText: "rename the page" }).click();
         await expect(chat.locator(".astep-approve")).toBeVisible({ timeout: 30_000 });
         await chat.waitForTimeout(600);   // past the beat: a layer that is going to draw has drawn
@@ -52,6 +53,13 @@ test.describe.configure({ mode: "default" });
 test("a call the model wrote in fragments, watched live, flies into its reformatted layout", async () => {
     test.setTimeout(120_000);
     expect(await flew({ call: "fragments", stream: true }), "the characters flew").toBe(true);
+});
+
+test("a call written QUICKLY (inside the minimum a live call stays up) is held, then still flies", async () => {
+    test.setTimeout(120_000);
+    // 14 fragments 40 ms apart: written in about half a second, well inside the 1.2 s the reading view keeps a live call. The step waits for
+    // the live block to go, and the flight starts from it; a step that mounted first left the flight nothing to start from.
+    expect(await flew({ call: "fragments", stream: true, delay: 40 }), "the characters flew after the hold").toBe(true);
 });
 
 test("a call a provider sends as ONE block never flies, though the run streams", async () => {
