@@ -79,10 +79,12 @@ test("removing an allow narrows, one gesture; removing a deny or an ask widens a
     try {
         const rows = P.sessionPolicies(hash).rows;
         const rm = (p) => rows.find((r) => r.entry.id === p.id).removal;
-        assert.deepEqual(rm(allow), { class: "narrows", exposes: [] });
+        assert.deepEqual(rm(allow), { class: "narrows", exposes: [], reach: "session" });
         assert.equal(rm(deny).class, "widens");
         assert.deepEqual(rm(deny).exposes.map((e) => e.id), [ask.id], "with the ask still there, the deny hides the ask and nothing below it");
         assert.equal(rm(ask).class, "widens");
+        assert.equal(rm(ask).reach, "all", "a global row's removal is every session's");
+        assert.equal(rm(deny).reach, "session");
         assert.deepEqual(rm(ask).exposes, [], "the deny still stands over everything the ask decided");
     } finally { for (const p of [allow, ask, deny]) P.removePolicy(p.id); }
     const solo = put("session", "h-rm-solo", "deny", "alone");
@@ -114,6 +116,32 @@ test("a policy of another session is not in this session's view, so it cannot be
 });
 
 // --- generic over the consumer, and what a row may carry ---
+
+test("a consumer may register the order its own judge applies, and the rows follow it, enumerated against that judge", () => {
+    // A toy judge for a consumer "files": the more specific entry decides (a longer source), a tie hides (effect deny).
+    const specific = (e) => e.source.length;
+    const judge = (entries) => entries.reduce((best, e) => (specific(e) > specific(best) || (specific(e) === specific(best) && e.effect === "deny" && best.effect !== "deny") ? e : best));
+    V.registerPrecedence("files-order", (a, b) => specific(a) > specific(b) || (specific(a) === specific(b) && a.effect === "deny" && b.effect !== "deny"));
+    const mk = (id, effect, source) => ({ id, consumer: "files-order", label: id, source, effect });
+    let n = 0;
+    for (const ea of ["allow", "deny"]) for (const eb of ["allow", "deny"]) for (const [sa, sb] of [["/a", "/a/b"], ["/a/b", "/a"], ["/a", "/b"]]) {
+        const a = mk("A", ea, sa), b = mk("B", eb, sb);
+        if (ea === eb && sa === sb) continue;
+        const rows = V.effectiveRows([a], [b], { label: "d", source: "" }).filter((r) => r.layer !== "default");
+        const decided = judge([a, b]);
+        const winners = rows.filter((r) => r.wins).map((r) => r.entry.id);
+        assert.ok(winners.includes(decided.id), `${ea} ${sa} with ${eb} ${sb}: the judge's pick (${decided.id}) wins`);
+        const ra = rows.find((r) => r.entry.id === "A"), rb = rows.find((r) => r.entry.id === "B");
+        assert.equal(ra.overrides.includes("B"), rb.overriddenBy.includes("A"));
+        n++;
+    }
+    assert.ok(n >= 8);
+    // A session `show` more specific than a global `hide` beats it, as the files host's judge orders them: a layer pair strictness alone would get wrong.
+    const rows = V.effectiveRows([mk("hide", "deny", "/a")], [mk("show", "allow", "/a/b")], { label: "d", source: "" });
+    assert.equal(rows.find((r) => r.entry.id === "show").wins, true);
+    assert.equal(rows.find((r) => r.entry.id === "hide").wins, false);
+    assert.deepEqual(rows.find((r) => r.entry.id === "hide").removal.exposes, [], "the more specific show already decides those calls, so removing the hide changes none of them");
+});
 
 test("a consumer the read has never heard of is placed and classed by the same rules, and may register its own classes", () => {
     const mk = (id, effect) => ({ id, consumer: "files", label: id, source: "(c) => true", effect });

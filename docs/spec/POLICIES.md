@@ -299,20 +299,27 @@ A session's policies are read as ROWS, one per policy, placed against the others
 (`sw-policies.ts`, rows built in `sw-policy-view.ts`) beside `judgeCall` and from the same lists. The page that shows them is a
 separate piece of work; this section is the worker's contract.
 
-- **A row is `{consumer, layer, entry, wins, overrides, overriddenBy, removal}`.** `layer` is `default` (the built-in rule,
+- **A row is `{consumer, layer, entry, wins, overrides, overriddenBy, removal}`, `removal` being `{class, exposes, reach}`.** `layer` is `default` (the built-in rule,
   one row per consumer that has a policy), `global`, or `session`. `entry` is the policy's `id`, `label`, `source`, `effect`,
   `origin`, `created` and why it broke. NOTHING ELSE: the row type has no field for a value, a call's arguments or a result,
   so a consumer whose policies talk about files shows PATHS and nothing a file held.
-- **The layers never change a verdict.** `judgeCall` takes the strictest effect across every scope (`deny`, then `ask`, then
-  `allow`), so a session `allow` does not override a global `deny`. `overrides` follows strictness alone: a row beats the
-  rows of the same consumer with a weaker effect, on a call both match; equal effects override nothing. `wins` is true when no
-  row of the consumer is stricter. The layer only decides which of two rows of the same effect `judgeCall` names. The default
-  never overrides (it is the weakest) and is beaten by any `ask` or `deny`.
+- **The layers never change a verdict.** For the consumers that exist (`fetch`, `sh`, `act`), `judgeCall` takes the strictest
+  effect across every scope (`deny`, then `ask`, then `allow`), so a session `allow` does not override a global `deny`.
+  `overrides` follows that order: a row beats the rows of the same consumer with a weaker effect, on a call both match; equal
+  effects override nothing. `wins` is true when no row of the consumer beats it. The layer only decides which of two rows of the
+  same effect `judgeCall` names. The default never overrides (it is the weakest) and is beaten by any `ask` or `deny`.
+- **A consumer with another order registers it.** The hide and show consumer of ruling 34 orders by most specific, a tie hides,
+  and a session `show` beats a default `hide`; it calls `registerPrecedence(consumer, (a, b) => …)` beside its judge, and `wins`,
+  `overrides`, `overriddenBy` and a removal's `exposes` follow it. The enumeration test for such a consumer runs against its OWN
+  judge (the test for the hook does so with a toy one); until a consumer registers, its rows are ordered by strictness, which is
+  right only if its judge is.
 - **A policy is a script, so "on a call both match" is not decided here.** The read says what wins WHERE both match, never that
   they overlap. The enumeration test holds it against `judgeCall` over every pair of layers and effects.
 - **Two removal classes, decided by the worker and sent in the row.** Removing an `allow` NARROWS (fewer calls run unasked):
   one gesture. Removing a `deny` or an `ask` WIDENS: the page shows the entry and `removal.exposes`, the rows that would
-  decide the calls this one decided (the default among them), and only then sends `confirm`. The worker enforces it: a widening
+  decide the calls this one decided (the default among them), and only then sends `confirm`. `removal.reach` says whose
+  policies it changes: `session` is this session's alone, `all` is a GLOBAL row's, which every session loses, and the page shows the layer
+  with it. A global `allow`'s removal is still one gesture; the layer is shown, not confirmed. The worker enforces it: a widening
   `removeChecked` without `confirm` is refused with the row, so a caller that did not show the effect cannot skip it. A consumer
   that needs another rule (the files host's `hide` and `show`) registers a classifier (`registerRemovalClass`); the read and the
   removal name no consumer.

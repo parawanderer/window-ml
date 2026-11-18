@@ -308,8 +308,8 @@ grammar in `src/link-address.ts`, which the worker shares.
 ## The access tab's read (the worker side is built; the page is not)
 
 The Session summary page's access tab will list one session's policies as the rows `POLICIES` `{ op: "session", hash }` answers
-(docs/spec/POLICIES.md, "The effective view"). A session view reaches it through `services()`, never `chrome.*`: `sessionPolicies(hash)`
-(a read and a change subscription) and `removePolicy(id)`, where `null` means unknown and a host with no gate path hides the remove.
+(docs/spec/POLICIES.md, "The effective view"). A session view reaches it through `services()`, never `chrome.*`: `sessionPolicies(key)`
+(a read and a change subscription) and `removePolicy(key, id, confirm?)`, where `null` means unknown and a host with no gate path hides the remove.
 The renderer draws what the row says and decides nothing: a widening `removal` shows its `entry` and `exposes` and sends `confirm`
 only after that; the worker refuses a widening removal without it. Nothing in the seam exists in `services()` yet.
 

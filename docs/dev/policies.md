@@ -255,7 +255,7 @@ reached the tab's ledger for a worker-hosted run. The remember button never help
   from strictness (the same order `judgeCall` applies), never from the layer; `tests/policy-effective-view.test.mjs` enumerates
   every pair of layers and effects against `judgeCall`, with the default asserted on its own. A new consumer adds NO case to the
   read: it registers a removal class if the effect default (an allow narrows, a deny or an ask widens) is wrong for it
-  (`registerRemovalClass`). The spec: POLICIES.md, "The effective view".
+  (`registerRemovalClass`) and its order if its judge is not "strictest wins" (`registerPrecedence`). The spec: POLICIES.md, "The effective view".
 - **A card already showing is judged again** on every change (`onPoliciesChanged` → `rejudgePending`, `sw-consent.ts`).
   Only a pending entry whose descriptor carries `consumer` and `facts` is judged: the facts the WORKER resolved when the
   card opened (the `fetch_url` card of a run whose fetch the worker runs, and lane 4's nested `sh` asks). Only consumer
