@@ -982,6 +982,28 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
   accepted spec and waits for the red team's rows, then janitor-3; host#49 is with janitor-3. #1959 is cleared and
   merges after #1948. Seen once and green on rerun: the e2e row at chat-two-execs.spec.mjs line 18, for flaky-ci.
 
+- **Shane's ruling 39 (2026-11-18, said in the coordinator's session): what the person sends is scrubbed too.**
+  People send a token to the model by accident: a paste, a selection, an attached file. The secrets idea applies to
+  the person's own input as well, unless the person explicitly flags that input as not to be redacted. Owner:
+  files-host, as an amendment section in the secret-handles spec first, then code with red-team rows and a janitor.
+  The coordinator's calls under it, each Shane's to override:
+  - **Two detectors.** By value: the scrub's matcher, so a stored secret (a hash-only one included, ruling 32) is
+    caught wherever it is typed. By shape: known token formats (vendor prefixes, PEM blocks, JWTs), since the
+    token sent by accident is usually one the store has never seen. A detector on entropy alone is not adopted
+    until a notebook gives its false-positive rate on real prompts (commit hashes, UUIDs, base64 data).
+  - **Where.** At the point input becomes a turn, before the session store and before the model, so the archive,
+    a backup and a hub hold the placeholder and never the value. It covers typed and pasted text, the text of an
+    attachment, a page selection and the prompt string of a page-started call.
+  - **What the person sees.** A chip in the composer on the detected span before sending, with "send as is" for
+    that one value. A send is never blocked. The transcript shows the placeholder the model saw and that the
+    scrub fired.
+  - **The flag.** Three levels: "send as is" per value in the composer, an option per call for a script, and one
+    setting in the DevTools Settings panel, on by default. A page can pass the option for its own string and can
+    never change the setting.
+  - **Order.** The spec section may open now; the by-value code follows the scrub (#1948), the shape detector is
+    its own PR. Open for the spec: whether a detected value is offered to the store as a secret (ruling 33's
+    inbox item) or dropped, and what happens when no store is set up.
+
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
   `?`, window-ml's `riskyRegex` change ported. cpython#11 (1e35340b): the read-only Python dialect's regex check also walks
