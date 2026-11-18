@@ -47,10 +47,12 @@ function StrLeaf({ s, cls, sep, allOpen }: { s: string; cls: string; sep: Compon
     const long = !allOpen && s.length > JT_STR_CUT;
     const text = long && !full ? <>{cutString(s)}…</> : JSON.stringify(s);
     const val = <>{text}{sep}</>;
+    // One closing newline would draw a blank last line in the card.
+    const cardText = s.replace(/\r?\n$/, "");
     const more = long ? <button class="jt-more" aria-expanded={full} onClick={(e) => { e.stopPropagation(); setFull(!full); }}>{full ? "show less" : `show all ${s.length.toLocaleString()} chars`}</button> : null;
     return <>
         {hasEscapes(s) || (long && !full)
-            ? <HoverCard class={cls} card={<pre class="hc-text">{s}</pre>}>{val}</HoverCard>
+            ? <HoverCard class={cls} card={<pre class="hc-text">{cardText}</pre>}>{val}</HoverCard>
             : <span class={cls}>{val}</span>}
         {more}
     </>;

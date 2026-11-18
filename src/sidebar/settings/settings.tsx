@@ -5,6 +5,7 @@
 // signal updates on input for a responsive UI + the utility-field enable gating.
 import { SITE_ACCESS_KEYS, levelsFor, originFromInput, uncoveredApprovals, type AgentLevel, type SiteEdit, type SiteLists } from "../../site-access";
 import { cursorTipOn } from "../ui-kit";
+import { SecretInput } from "../secret-input";
 import { StorageBody } from "./storage-section";
 import { LocalArchiveFolder } from "./archive-section";
 import { LocalBackup } from "./backup-section";
@@ -1536,7 +1537,7 @@ export function Settings({ layout = "tabs" }: { layout?: SettingsLayout } = {}) 
                     {c.chatUrl.trim() ? null : <div class="set-err">Required — the extension won't work without this.</div>}
                 </label>
                 <label data-setting="apiKey" class="set-field"><span>API key</span>
-                    <input {...text("apiKey")} type="password" placeholder="OpenWebUI → Settings → Account" />
+                    <SecretInput {...text("apiKey")} placeholder="OpenWebUI → Settings → Account" />
                     <div class="set-hint">Generate one in OpenWebUI → Settings → Account → API keys.</div>
                 </label>
                 <label data-setting="apiFormat" class="set-field"><Lbl tip={TIP.apiFormat}>API format</Lbl>

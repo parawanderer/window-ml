@@ -2135,10 +2135,10 @@ test("phone (touch): the tab picker opens without raising the keyboard, and stay
 });
 
 // THE MODEL'S OWN ACCOUNT OF A CALL — the reserved `title` argument — and WHERE it is allowed to be drawn. It is
-// in the tool name's tip everywhere, and inline in exactly one place: inside an OPEN group in the reading view,
-// because expanding a folded run is the gesture that means "I am investigating what happened". Everywhere else it
-// would be one more thing per row, and in the busy view the row already carries the value the call returned.
-test("a call's own title: in the tip always, inline only inside an open group in the reading view", async () => {
+// in the tool name's tip everywhere, and inline in the reading view in two places: inside an OPEN group, because
+// expanding a folded run is the gesture that means "I am investigating what happened", and on a row no group holds,
+// where nothing else says what the call was for. In the busy view the row already carries the value the call returned.
+test("a call's own title: in the tip always, inline in the reading view on a lone row and inside an open group", async () => {
     const { page, errors } = await open(DESKTOP, "", ORDINARY_FOLD);
     await page.evaluate(() => {
         const key = "laptop:5e6f7a80", hash = "5e6f7a80", now = Date.now();
@@ -2149,13 +2149,20 @@ test("a call's own title: in the tip always, inline only inside an open group in
                 arguments: { js: `${i}`, title: `Read fare ${i}` }, result: `${i}`,
             });
         }
+        // …and one call of another tool, which no group holds.
+        globalThis.__chatFake.emit(key, {
+            kind: "agent-step", id: `${hash}-lone`, ts: now + 9, save: true, session: { hash, turn: 0 },
+            step: 70, seq: 700, tool: "fetch_url", toolMs: 90,
+            arguments: { url: "https://example.com/fares", title: "Open the fares page" }, result: "ok",
+        });
     });
     await page.goto(`${server.url}#s=laptop%3A5e6f7a80`);
     const streak = page.locator(".astreak").filter({ hasText: "exec" }).first();
     await expect(streak).toBeVisible();
 
-    // FOLDED: nothing inline — the rows are not even drawn.
-    await expect(page.locator(".astep-said")).toHaveCount(0);
+    // FOLDED: nothing inline for the group's rows (they are not even drawn); the row no group holds says its own.
+    await expect(streak.locator(".astep-said")).toHaveCount(0);
+    await expect(page.locator('[data-astep-seq="700"] .astep-said')).toHaveText("“Open the fares page”", { useInnerText: true });
 
     await streak.locator(".astreak-head").click();
     const said = page.locator('[data-astep-seq="601"] .astep-said');
@@ -2171,6 +2178,7 @@ test("a call's own title: in the tip always, inline only inside an open group in
     await calmRow(page).click();
     await expect(page.locator('[data-astep-seq="601"]')).toBeVisible();   // the row is back, unfolded
     await expect(page.locator('[data-astep-seq="601"] .astep-said')).toBeHidden();
+    await expect(page.locator('[data-astep-seq="700"] .astep-said')).toBeHidden();
     expect(errors).toEqual([]);
     await page.close();
 });
