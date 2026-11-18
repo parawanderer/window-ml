@@ -79,11 +79,22 @@ test.describe("ml.sh on a real host", () => {
     test("a free read inside the workspace runs on the host, and what it printed reaches the model", async () => {
         const { tool, denied, routing } = await shRun(`const r = await ml.sh.run(["ls"]); return JSON.stringify({ code: r.code, ok: r.ok, ran: r.ran, out: r.stdout.text });`);
         expect(denied, "a free call asked").toEqual([]);
-        // The script names ml.sh, so its read-only survey never goes to the page's world, and the exec runs isolated.
-        expect(routing).toEqual(["readonly-worker script-isolated", "exec-isolated sh"]);
+        // The script names ml.sh, so its read-only survey runs in the worker, never the page's world; it stays inside the dialect, so the
+        // survey answers it and there is no exec leg. (A script that leaves the dialect runs isolated: the next test.)
+        expect(routing).toEqual(["readonly-worker no-page-reads"]);
         expect(tool).toContain("hello.txt");
         expect(tool).toMatch(/\\?"code\\?":0/);
         expect(tool).toMatch(/host-sandbox/);
+    });
+
+    test("a script that leaves the dialect is not answered by the survey: it runs in the isolated world, and the read still reaches the host", async () => {
+        // The one row that observes the exec leg: assigning to a global is not in the read-only dialect, so the survey declines it.
+        const { tool, denied, routing } = await shRun(`globalThis.__f = 1; const r = await ml.sh.run(["ls"]); return JSON.stringify({ code: r.code, out: r.stdout.text });`);
+        expect(denied, "a free call asked").toEqual([]);
+        expect(routing).toEqual(["readonly-worker out-of-dialect", "exec-isolated sh"]);
+        expect(tool).toContain("hello.txt");
+        expect(tool).toMatch(/\\?"code\\?":0/);
+        expect(tool).toMatch(/Ran in an isolated world/);
     });
 
     test("a read OUTSIDE the workspace asks, the harness denies it, and nothing outside reaches the model", async () => {
