@@ -1004,6 +1004,27 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
     its own PR. Open for the spec: whether a detected value is offered to the store as a secret (ruling 33's
     inbox item) or dropped, and what happens when no store is set up.
 
+- **Shane's rulings 40 to 42 (2026-11-18, said in the coordinator's session), on ruling 39's open points.**
+  - **(40) The entropy-only detector waits for an investigation.** files-host owns the notebook, after the shape
+    detector.
+  - **(41) A detected value is offered to the store**, in a way the person can ignore easily. The spec's chip
+    ("Remember as a secret", beside "send as is") is that offer; ignoring it adds no dialog and no click.
+  - **(42) With no store set up, detection still runs**, and the chat UI shows an inbox message to set up a store
+    or dismiss the proposal. Setup is recommended in the item's text, in Shane's words because "most users do have
+    LLMs that are especially attached to the ml.sh ingest secrets". Ruling 33's item carries it; the coordinator's
+    call: a detection with no store does not raise a dismissed item again.
+  - **Still open with Shane:** a store that cannot be READ holds the turn (the coordinator's recommendation: hold).
+- **Ruling 39's spec and the calls accepted in it.** #1967 b9510f4f put the section in the secret-handles spec.
+  The coordinator's calls accepted from the lane there: a page's `scrubInput: false` turns off the shape detector
+  only, since a page is not the person; the shape list is separate from the host's `looks_secret`, which
+  classifies paths, and is shared with the scrub's tool-output patterns; "send as is" binds to a digest of the
+  span's content and is accepted only from an extension page; an attachment is scrubbed in its extracted text and
+  never in its bytes under `/files`; a session stored earlier is scrubbed when resumed and not rewritten; a remote
+  host has no per-value override in the first build.
+- **#1951 (optionsFirst) merged at 0fd67ebd** after janitor-2's comment at its head asked no change. Its two
+  residuals: the host's vector pin, now host#50 at 0ebe726f with janitor-3 (it conflicts with host#49 in one test
+  file, so the second to merge takes host main last); and a stale remark in the red team's test file, for e3.
+
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
   `?`, window-ml's `riskyRegex` change ported. cpython#11 (1e35340b): the read-only Python dialect's regex check also walks
