@@ -111,14 +111,17 @@ function entryOf(p: PolicyInput): PolicyEntry {
     return { id: p.id, label: p.label, source: p.source, effect: p.effect, ...(p.origin ? { origin: p.origin } : {}), ...(p.created !== undefined ? { created: p.created } : {}), ...(p.broken ? { broken: p.broken } : {}) };
 }
 
-/** What removing `r` does, given the other rows of its consumer. */
+/** What removing `r` does, given the other rows of its consumer. A classifier can only make a removal WIDEN: one that answers "narrows"
+ *  for an entry that is not an allow and whose removal leaves any other row (the built-in default included) to decide is overruled,
+ *  so a consumer's wrong class fails closed. */
 function removal(r: { consumer: string; layer: PolicyLayer; entry: PolicyEntry }, mates: { layer: PolicyLayer; entry: PolicyEntry }[], beats: Precedence): PolicyRemoval {
-    const cls = (classifiers.get(r.consumer) ?? byEffect)(r.entry);
+    const said = (classifiers.get(r.consumer) ?? byEffect)(r.entry);
     const reach = r.layer === "global" ? "all" : "session";
-    if (cls === "narrows") return { class: "narrows", exposes: [], reach };
     // The rows left to decide what this one decided: the ones it beats that nothing else remaining beats.
     const exposes = mates
         .filter((o) => beats(r.entry, o.entry) && !mates.some((x) => x !== o && beats(x.entry, o.entry)))
         .map((o) => ({ id: o.entry.id, label: o.entry.label, effect: o.entry.effect }));
+    const opens = r.entry.effect !== "allow" && exposes.length > 0;
+    if (said === "narrows" && !opens) return { class: "narrows", exposes: [], reach };
     return { class: "widens", exposes, reach };
 }

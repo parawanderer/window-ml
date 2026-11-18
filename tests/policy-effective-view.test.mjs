@@ -115,6 +115,40 @@ test("a policy of another session is not in this session's view, so it cannot be
     P.removePolicy(mine.id); P.removePolicy(theirs.id);
 });
 
+// --- a wrong class fails closed; a broken policy is read by strictness and shown as broken ---
+
+test("a classifier that says narrows for a deny or an ask whose removal exposes another row is overruled: the class is widens", () => {
+    V.registerRemovalClass("liar", () => "narrows");
+    const mk = (id, effect) => ({ id, consumer: "liar", label: id, source: "(c) => true", effect });
+    const rows = V.effectiveRows([], [mk("d", "deny"), mk("k", "ask"), mk("a", "allow")], { label: "d", source: "" });
+    const rm = (id) => rows.find((r) => r.entry.id === id).removal;
+    assert.equal(rm("a").class, "narrows", "an allow exposes nothing: the classifier's word stands");
+    assert.equal(rm("k").class, "narrows", "with the deny standing over everything the ask decided, removing the ask changes no call");
+    assert.equal(rm("d").class, "widens", "a deny that leaves the ask to decide widens too");
+    const solo = V.effectiveRows([], [mk("d", "deny")], { label: "d", source: "" });
+    assert.equal(solo[1].removal.class, "widens", "the only deny leaves the default to decide");
+    const ask = V.effectiveRows([], [mk("k", "ask"), mk("a", "allow")], { label: "d", source: "" });
+    assert.equal(ask.find((r) => r.entry.id === "k").removal.class, "widens", "an ask that is the strictest leaves the allow and the default to decide");
+    assert.ok(ask.find((r) => r.entry.id === "k").removal.exposes.some((e) => e.id === "builtin"));
+});
+
+test("a policy whose script breaks is still read by strictness and shown as broken: wins means on a call both match and whose script runs", () => {
+    const hash = "h-broken-pair";
+    const bad = P.addRunPolicy(hash, { consumer: "fetch", effect: "deny", source: "(c) => c.uurl === 1", label: "typo deny", origin: "person" });
+    const ok = P.addRunPolicy(hash, { consumer: "fetch", effect: "allow", source: ALWAYS, label: "ok allow", origin: "person" });
+    try {
+        const j = P.judgeCall(hash, "fetch", call);
+        assert.equal(j.decision, "allow", "judgeCall skips the broken deny, so the allow decides this call");
+        assert.equal(j.broken.length, 1);
+        const rows = P.sessionPolicies(hash).rows;
+        const deny = rows.find((r) => r.entry.id === bad.id), allow = rows.find((r) => r.entry.id === ok.id);
+        assert.equal(deny.wins, true, "the row is read by strictness: the next call may not break it");
+        assert.deepEqual(deny.overrides, [ok.id]);
+        assert.equal(allow.wins, false);
+        assert.match(deny.entry.broken, /uurl/, "and the row says its script may not be applied");
+    } finally { P.removePolicy(bad.id); P.removePolicy(ok.id); }
+});
+
 // --- generic over the consumer, and what a row may carry ---
 
 test("a consumer may register the order its own judge applies, and the rows follow it, enumerated against that judge", () => {
@@ -151,7 +185,7 @@ test("a consumer the read has never heard of is placed and classed by the same r
     V.registerRemovalClass("files", (p) => (p.id.startsWith("show") ? "widens" : "narrows"));
     const again = V.effectiveRows([mk("show-1", "allow")], [mk("hide-1", "deny")], { label: "d", source: "s" });
     assert.equal(again[1].removal.class, "widens", "the consumer's own classifier replaced the default for it");
-    assert.equal(again[2].removal.class, "narrows");
+    assert.equal(again[2].removal.class, "widens", "the classifier said narrows for the hide, but it beats the show and the default, so the worker overruled it");
 });
 
 test("a row carries a policy's words and verdict and nothing else: no value, no call, no result", () => {
