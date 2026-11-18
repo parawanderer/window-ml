@@ -8,6 +8,7 @@ import { runBackgroundAgent } from "../agent/agent-host";
 import { pythonCellInDialect, pythonOutsideWhy } from "../agent/python-dialect";
 import { namesJsBridge } from "../python/bridge-names";
 import { evalReadonlyInWorker } from "./sw-readonly";
+import { surveySh, guardSurvey } from "./sw-survey-sh";
 import { endPythonTurn, markPythonBridged, pythonRunBridged } from "./sw-python";
 import { workerReadonlyMl, derefWhole } from "./worker-readonly-ml";
 import { pipeStages } from "../pointers/token-pipe";
@@ -1641,7 +1642,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                 readText: (key) => readStoredText(key, runId),
                 // Pages of an attached PDF this run holds, drawn for `look` at a document. Only a value this run holds.
                 renderPages: async (key, pages) => drawStoredPages(await readStoredBytes(key, runId), pages),
-                tryReadonly: p.autoApproveReadonly || p.autoApprovePython ? async (name, args, live) => {
+                tryReadonly: p.autoApproveReadonly || p.autoApprovePython ? async (name, args, live, call) => {
                     // A run held on its page (nav-arrival.ts) surveys nothing there, and runs no cell: the call goes on to its hold.
                     await arrivalSettled(tabId);
                     if (arrivalHold(runId)) return null;
@@ -1684,12 +1685,22 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
                         recordRunLog(runId, { level: "warn", subsystem: "routing", kind: "current-failed", reason: e instanceof Error ? e.message || e.name : String(e), detail: { tool: name } });
                         return null;
                     }
-                    const w = await evalReadonlyInWorker(args, {
+                    // ml.sh, for a script that names it: bound to THIS run and the step it runs in, never to anything the script says (the
+                    // isolated route's binding, above). A script that has STARTED a program is never run again on any leg: see `stoppedAfterCalls`.
+                    // Only for a run the worker built (as the isolated route is): a page-built run keeps its page leg, where there is no ml.sh.
+                    const sh = typeof args.js === "string" && call && byWorker() && execNames(args.js).sh
+                        ? surveySh({ runId, seq: seqBase + call.seq, local: call, signal: abortCtl.signal, tokens: sessionTokens(runId), origin: () => turnByRun.get(runId)?.()?.origin })
+                        : undefined;
+                    const w = await guardSurvey(sh, () => evalReadonlyInWorker(args, {
                         ...(snap ? { current: () => current ?? snap({ model: modelNow(), log }) } : {}),
-                        ml: workerReadonlyMl(tabPageUrl.get(tabId) ?? "", derefByRun.get(runId), runId),
+                        ml: { ...workerReadonlyMl(tabPageUrl.get(tabId) ?? "", derefByRun.get(runId), runId), ...(sh ? { sh: sh.host } : {}) },
                         live,
                         signal: abortCtl.signal,
-                    });
+                    }));
+                    if (w.kind === "stopped") {
+                        recordRunLog(runId, { subsystem: "routing", kind: "readonly-sh-stopped", reason: w.why, detail: { tool: name, calls: sh?.started.length ?? 0 } });
+                        return { ...w.result, renderIn: execCodeIn(args.js as string), renderOut: { type: "exec-out", error: w.result.result.replace(/^Error: /, "") } };
+                    }
                     if (w.kind !== "needs-page") {
                         recordRunLog(runId, { subsystem: "routing", kind: "readonly-worker", reason: w.kind === "answered" ? "no-page-reads" : "out-of-dialect", detail: { tool: name } });
                         return w.kind === "answered" ? { result: w.result, renderIn: w.renderIn, renderOut: w.renderOut } : null;

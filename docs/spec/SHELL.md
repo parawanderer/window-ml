@@ -428,6 +428,14 @@ allowed it (the policy by its label, or the built-in default) and what it report
 
 So the manifest blocks only the free tier. A first build where every call asks is useful, and correct, without it.
 
+**A survey that has started a program is never run again (ruled 2026-11-17).** The worker's survey runs a script of reads and
+`ml.sh.run`/`ml.sh.read` calls without asking about the script, and each call is judged when it is made. If the survey then
+reaches something it cannot answer in the worker (the page, a member outside the dialect, an error), the exit that would normally
+hand the script to the page or the person's approval, and so RUN IT AGAIN, is instead the step's final result: an error naming the
+calls it started (program and outcome) and saying it was stopped there and not run again. A call counts as started when it is made,
+before the judge or the ask. A page read before any call falls through as before. Detail: `docs/dev/readonly-exec.md`,
+"ml.sh in the worker's survey".
+
 ## Policies: what a shell call gives one
 
 "Run this without asking me" is a POLICY: a function over the call in the read-only dialect, answering `allow`, `deny`
