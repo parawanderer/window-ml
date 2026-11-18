@@ -185,7 +185,8 @@ Four rulings of Shane's that build on the registry scrub ([#1948](https://github
 "The scrub as built"). The coordinator's calls under each are marked as such and were surfaced to Shane. Nothing here
 is built yet. Ruling 30's value scrub lands after scrub PR 2, its channel mask with handles; ruling 32 lands before
 handles; ruling 33 lands once ruling 32's store and its Settings page exist; ruling 39's by-value half lands after
-#1948, its shape half in its own PR.
+#1948, its shape half in its own PR. Rulings 40 to 42 settle three of ruling 39's open points and are written into
+its section.
 
 ### Page password fields are masked from the model (ruling 30)
 
@@ -345,6 +346,9 @@ calls, each surfaced to Shane:
   `src/chat/view-mode.tsx`). The code carries no name and no value, only that the registry is empty.
 - **When.** It appears once the store is available and the registry is empty. A dismissal is durable and per profile.
   Someone who already has entries never sees it, and Settings stays the permanent way in.
+- **What it says (ruling 42).** The item recommends setting the store up, and says why: most people's models have
+  `ml.sh`, and what it reads (files, command output, the environment) is where secrets reach a model. Its two actions
+  are set up and dismiss.
 - **Whose gesture.** Filling is the person's alone. No model tool, page message, `change_setting` or `ml.settings`
   can create, fill or dismiss the item, and the model never sees the form's fields or values: ruling 30's channel mask
   applies to our own form as to any page's.
@@ -381,8 +385,8 @@ marked "recommended" are this spec's, still open.
   (`github-token`, `pem-private-key`, `jwt`), so it can never be read as a registry name, which is upper case by its
   bound.
 - **No entropy-only detector** until a notebook gives its false-positive rate on real prompts, which hold commit
-  hashes, UUIDs, base64 and minified code. A pattern that needs a credential word beside the value (`password=`) waits
-  for the same notebook.
+  hashes, UUIDs, base64 and minified code (ruling 40: left until that investigation, which follows the shape
+  detector). A pattern that needs a credential word beside the value (`password=`) waits for the same notebook.
 
 **Where.** At the point where input becomes a turn: in the worker, before the session store writes it and before the
 model reads it, so what is stored is what the model saw. That point is, today:
@@ -445,22 +449,28 @@ does; Shane's line that a default-held value must never reach the model without 
 
 **Open, with this spec's recommendation.**
 
-- **A detected value: offered to the store, or dropped?** Recommended: dropped, and offered only at the chip, while
-  the draft still holds it: "Remember as a secret" opens the store's add row with the kind as the name and `mask` as
-  the type, and nothing is added without the person's save. Never as an inbox item: an item would have to hold the
-  value until acted on, which is storing it unregistered. Never from a remote host (ruling 33 defers remote entry)
-  and never from a page-started string.
-- **No store set up.** Recommended: by value has nothing to match and the shape detector runs anyway, since it needs
-  no store; ruling 33's inbox item already shows while the registry is empty. A store that cannot be READ is not an
-  empty one: the turn is held in the composer with the reason and a retry, and "send as is" for the whole turn is
-  the person's override. That holds a send rather than blocking it; it is marked here for Shane, since the ruling
-  says a send is never blocked and #1948 fails every other crossing closed (the coordinator's recommendation: hold,
-  fail closed). A caller with no composer (`ml.agent` from the console, a script's `say`, a steer from the inbox) is
-  rejected with an error that says the secret store could not be read and names `scrubInput: false`, which only an
-  extension-page caller can use to send anyway: from a page the option is shape-only, so a page-started call is
-  rejected until the store can be read. A remote host (the web build, the phone) gets the same rejection from the
-  runtime and shows it with a retry. In the first build a remote person has no per-value override; the only override
-  is the runtime's `scrubPersonInput` setting, changed on the computer.
+- **A detected value is offered to the store (ruling 41)**, in a way the person can ignore at no cost. The offer is
+  on the chip, while the draft still holds the value: "Remember as a secret" opens the store's add row with the kind
+  as the name and `mask` as the type, and nothing is added without the person's save. Ignoring it costs nothing: no
+  dialog, no extra click to send, and the offer goes when the draft is sent. Row: a draft with a detected value sends
+  on the first click with nothing added to the store, and after the send no offer remains in the composer or the
+  transcript. Never as an inbox item: an item would have to hold the value until acted on, which is storing it
+  unregistered. Never from a remote host (ruling 33 defers remote entry) and never from a page-started string.
+- **No store set up (ruling 42).** By value has nothing to match and the shape detector runs anyway, since it needs
+  no store. The person gets ruling 33's inbox item, which recommends setting the store up or dismissing it. A
+  detection while no store is set up does not raise the item again once it is dismissed: the dismissal is durable,
+  and Settings stays the way in. Row: a shape detection with an empty registry and a dismissed item adds no inbox
+  item.
+- **A store that cannot be READ** is not an empty one. Recommended: the turn is held in the composer with the reason
+  and a retry, and "send as is" for the whole turn is the person's override. That holds a send rather than blocking
+  it; it is marked here for Shane, since the ruling says a send is never blocked and #1948 fails every other
+  crossing closed (the coordinator's recommendation: hold, fail closed). A caller with no composer (`ml.agent` from
+  the console, a script's `say`, a steer from the inbox) is rejected with an error that says the secret store could
+  not be read and names `scrubInput: false`, which only an extension-page caller can use to send anyway: from a page
+  the option is shape-only, so a page-started call is rejected until the store can be read. A remote host (the web
+  build, the phone) gets the same rejection from the runtime and shows it with a retry. In the first build a remote
+  person has no per-value override; the only override is the runtime's `scrubPersonInput` setting, changed on the
+  computer.
 - **Shared with the host's `looks_secret`, or separate?** Recommended: separate. `looks_secret`
   (`src/facts.rs` in window-ml-host) classifies a PATH by its components (`.env`, `id_*`, `*.pem`, `.ssh/`); the
   shape list classifies TEXT. One list would hold two kinds of rule. The shape list is shared within the extension
