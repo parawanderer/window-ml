@@ -118,6 +118,10 @@ interface ManifestBase {
     credential?: ManifestCredential;
     /** What the credentialed profile may connect to. Only beside `credential`. */
     network?: ManifestNetwork;
+    /** The program shows other processes: their command lines, users, open files and sockets (`ps`, `lsof`, `top`). A
+     *  call that would otherwise be free asks unless the person listed the program in `shellRevealsAllow`
+     *  (PROGRAM_MANIFEST.md, "Programs that reveal other processes"). It only narrows, so any manifest may carry it. */
+    reveals?: "processes";
     /** The program's top-level command: its effects, path operands, flags and subcommands. */
     command: CommandSpec;
 }
@@ -543,7 +547,7 @@ function notLiteralPathspec(a: string): boolean {
 
 const COMMAND_KEYS = new Set(["effects", "paths", "noPaths", "terminator", "numericFlag", "clusters", "maxOperands", "flags", "subcommands", "syntax", "primaries", "okCodes", "echoes", "recursive", "harden", "optionsFirst", "dashIsPath", "repoWide", "pathspecs", "writtenOperands"]);
 const VERSION_KEYS = new Set(["range", "args", "pattern"]);
-const MANIFEST_KEYS = new Set(["$schema", "program", "version", "okCodes", "echoes", "env", "entrypoint", "credential", "network", "command"]);
+const MANIFEST_KEYS = new Set(["$schema", "program", "version", "okCodes", "echoes", "env", "entrypoint", "credential", "network", "reveals", "command"]);
 
 /** Why a manifest that is not shipped may not carry `m`'s credential fields, or undefined: the host honours a
  *  credential only for manifest bytes it pinned, which are the shipped ones, so a stored `credential` or `network`
@@ -646,6 +650,7 @@ export function validateManifest(m: unknown): string[] {
     if (m.okCodes !== undefined) codes(m.okCodes, "$.okCodes");
     if (m.echoes !== undefined && typeof m.echoes !== "boolean") errs.push("$.echoes: boolean");
     if (m.env !== undefined && !(Array.isArray(m.env) && m.env.every((e) => typeof e === "string"))) errs.push("$.env: names");
+    if (m.reveals !== undefined && m.reveals !== "processes") errs.push('$.reveals: "processes"');
     const cred = m.credential;
     const provider = isObj(cred) && typeof cred.provider === "string" && Object.hasOwn(CREDENTIAL_PROVIDERS, cred.provider) ? CREDENTIAL_PROVIDERS[cred.provider] : undefined;
     if (cred !== undefined) {

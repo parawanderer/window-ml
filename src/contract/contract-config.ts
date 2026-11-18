@@ -233,6 +233,10 @@ export interface MlConfig {
     shellSandbox: boolean;
     /** The directories programs are looked up in, in order. Empty: the host's own default. */
     shellPath: string[];
+    /** The programs that reveal other processes (a manifest's `reveals`: `ps`, `lsof`, `top`) whose otherwise free calls
+     *  run without asking, by the manifest's `program`. Empty: every such call asks. A gate key: only the person writes
+     *  it (docs/spec/PROGRAM_MANIFEST.md, "Programs that reveal other processes"); not in `ml.config()`. */
+    shellRevealsAllow: string[];
     /** The most disk, in MB, the value store may hold: the whole bodies of fetched tables too large for their preview,
      *  kept so a later step can read every row by pointer. Least recently read goes first past it; the browser's own
      *  quota caps it further. */
@@ -350,6 +354,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     shellRoots: [],
     shellSandbox: true,                 // default on, and fails closed: no sandbox on this machine means every call says so
     shellPath: [],
+    shellRevealsAllow: [],              // default empty: a call to ps, lsof or top asks until the person lists the program
     protoStream: "auto",                // ask every time: one header, and a backend that won't serve it answers as it always did
     pierceClosedShadow: true,
     cdp: true,
@@ -424,6 +429,7 @@ export const SETTING_PLACES: Readonly<Partial<Record<keyof MlConfig, SettingPlac
     shellRoots: { tab: "advanced", section: "shell" },
     shellSandbox: { tab: "advanced", section: "shell" },
     shellPath: { tab: "advanced", section: "shell" },
+    shellRevealsAllow: { tab: "advanced", section: "shell" },
     selfIntrospection: { tab: "advanced", section: "introspection" },
     protoStream: { tab: "advanced", section: "protostream" },
     pierceClosedShadow: { tab: "advanced", section: "shadow" },

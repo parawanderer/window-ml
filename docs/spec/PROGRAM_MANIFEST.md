@@ -77,9 +77,14 @@ program STARTED), so a manifest says it with a top-level marker:
   exception to the card's two answers ([`SHELL.md`](SHELL.md), "Approval"): it widens a gate key, which no policy may
   do, so the widening cannot be a policy. The chat page and the phone show the two answers only.
 - **Rows**: off, the call asks with the reason; on, it is free; one program listed frees no other; an allow policy
-  naming the program does not free it; `change_setting` refuses the key, `ml.settings()` shows it with `mode: "read"`,
-  `ml.config()` does not return it, and no page-started message writes it; a config fixture without the key and a
-  vector with the marker.
+  naming the program does not free it (`tests/sw-policies.test.mjs`, `tests/sh-reveals.test.mjs`); end to end through
+  the worker, with a config that lacks the key (`tests/ml-sh.test.mjs`); the card's third answer lists the program, then
+  approves (`tests/sidebar-asks.test.js`); `change_setting` refuses the key and `ml.config()` does not return it
+  (`tests/sh-reveals.test.mjs`); `ml.settings()` shows it with `mode: "read"` once that surface lands. The marker rows
+  use a stored manifest, not a vector under `tests/fixtures/program-calls/`: those are copied to the host, whose reader
+  does not take the marker yet.
+- **A version probe** of a revealing program is judged with the marker too, so on a manifest with a version range it is
+  raised only once the program is listed; until then its calls are undescribed and ask.
 - **The process host** parses the marker and ignores it: the judging is the extension's. Its reader refuses unknown
   fields, so a vector carrying `reveals` is copied to the host only after the host's reader takes it, and no shipped
   manifest declares it until then.

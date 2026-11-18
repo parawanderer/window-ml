@@ -126,6 +126,9 @@ const GH = () => ({ ...BIN(), program: "gh", credential: { provider: "github" },
 const INVALID = [
     // which operands a writer writes (FILE_ATTACHMENTS.md H9)
     ["writtenOperands other than \"last\"", BIN, (m) => cmd(m, { writtenOperands: "first" })],
+    // a program that reveals other processes (ruling 31): one value
+    ["reveals other than \"processes\"", BIN, (m) => { m.reveals = "files"; }],
+    ["reveals as a flag", BIN, (m) => { m.reveals = true; }],
     // a credential and its network
     ["an unknown credential provider", GH, (m) => { m.credential.provider = "aws"; }],
     ["a credential with an env name", GH, (m) => { m.credential.env = "GH_TOKEN"; }],

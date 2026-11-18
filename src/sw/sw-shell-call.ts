@@ -14,13 +14,14 @@ import type { EffectsData } from "../effects";
 import type { ShCallSpan, ShUnasked } from "../contract";
 import type { TokenStore } from "../pointers/token-pipe";
 import { bytesOf, HostError, hostTakesEnvelope, READ_CHUNK, type HostClient, type HostPutFacts, type HostEnvelope, type HostFacts, type HostStream } from "../shell/host-protocol";
-import { credentialFor, envelopeFor, envelopeMismatch, envelopeText, manifestFor, manifestsFor, parseShRun, planSpawn, protectedChangesText, shFacts, shOut, shOutcome, shResult, wireCodeOf, ShRefused, SH_HEAD_BYTES, SH_HOST_TIMEOUT_MS, SH_LEASE_MS, type ShFacts, type ShOut, type ShResult, type ShRunRequest } from "../shell/sh-call";
+import { credentialFor, envelopeFor, envelopeMismatch, envelopeText, manifestFor, manifestsFor, parseShRun, planSpawn, protectedChangesText, shFacts, shOut, shOutcome, shResult, wireCodeOf, REVEALS_CAUSE, ShRefused, SH_HEAD_BYTES, SH_HOST_TIMEOUT_MS, SH_LEASE_MS, type ShFacts, type ShOut, type ShResult, type ShRunRequest } from "../shell/sh-call";
 import { OUTPUT_CAP } from "../contract/contract-pointers";
 import { detachedCapMs, detachTask, type TailAnswer, type TaskOutcome } from "./sw-tasks";
 import { toolToken } from "../util";
 import { defineState } from "../state-registry";
 import { binaryKind } from "./body-read";
-import { judgeCall, askWhyOf, askedByPolicy } from "./sw-policies";
+import { judgeCall, askWhyOf, askedByPolicy, revealsAskWhy } from "./sw-policies";
+import { getConfig } from "./sw-llm";
 import { base64Of, parseShPut, putFacts, putRefusalText, putTooLargeText, type PutFacts } from "../shell/sh-put";
 import { readStoredBytes, storeText } from "./sw-values";
 import { noteAskOutcome, raiseAsk } from "./sw-asks";
@@ -309,6 +310,8 @@ async function runCall(ctx: ShCallContext, req: ShRunRequest, started: (h: Shell
             // The stored manifests, once storage has been read (a failed read leaves none, so a call one would describe asks).
             await manifestsReady;
             const stored = storedManifests();
+            // Read at each call, so a program the person lists (or unlists) counts from the next call on.
+            const revealsAllow = (await getConfig()).shellRevealsAllow ?? [];
             // No session mounts an uploads folder yet (FILE_ATTACHMENTS.md H16), so no call passes `files` and `/files`
             // stays the browser sandbox's; once one does, `hostMapsFiles(h.hello)` gates it.
             const plan = planSpawn(req, { cwd, roots, stored, tilde: h.hello.tilde === true });
@@ -324,7 +327,7 @@ async function runCall(ctx: ShCallContext, req: ShRunRequest, started: (h: Shell
             for (let attempt = 0; ; attempt++) {
                 const id = facts.id;
                 const discard = () => h.client.discard(id).catch(() => { /* expired or gone: nothing to start either way */ });
-                try { f = shFacts(facts, await versionOf(ctx, h, facts, manifestsFor(stored, roots).list), { roots, stored }); }
+                try { f = shFacts(facts, await versionOf(ctx, h, facts, manifestsFor(stored, roots).list), { roots, stored, revealsAllow }); }
                 catch (e) { await discard(); throw e; }
                 const v = await decide(ctx, f);
                 if ("refused" in v) { await discard(); return refuse("Denied", v.refused); }
@@ -423,8 +426,9 @@ async function decide(ctx: ShCallContext, f: ShFacts): Promise<{ by: string; pol
     }
     // No policy answers, an `ask` policy matched (it beats an allow and the built-in default), or the store is not loaded
     // yet: the person does, on a card inside the running step. The card offers no "remember" (an ask's card never does).
-    const why = askWhyOf(j);
-    if (why) recordRunLog(ctx.runId, { subsystem: "policy", kind: askedByPolicy(why) ? "ask" : "lapsed", reason: why.cause, detail: { tool: "sh", policy: why.policy ?? "" } });
+    // A call that asks only because its program reveals other processes says so, and its card offers "Always allow".
+    const why = askWhyOf(j) ?? revealsAskWhy(j, ctx.runId, "sh", asPolicyFacts(f), f.placement);
+    if (why) recordRunLog(ctx.runId, { subsystem: "policy", kind: askedByPolicy(why) ? "ask" : why.cause === REVEALS_CAUSE ? "reveals" : "lapsed", reason: why.cause, detail: { tool: "sh", policy: why.policy ?? "" } });
     const o = await raiseAsk(ctx.runId, ctx.seq, { kind: "sh", consumer: "sh", facts: asPolicyFacts(f), placement: f.placement, ...(why ? { why } : {}) });
     if (!o.allowed) return { refused: `ml.sh: ${o.state === "denied" ? "the person declined" : o.note || o.state}${o.state === "denied" && o.note ? ` (${o.note})` : ""}${why ? `. ${why.detail}` : ""}` };
     return { by: "person", waitedMs: o.waitedMs, ...(o.askId ? { askId: o.askId } : {}) };

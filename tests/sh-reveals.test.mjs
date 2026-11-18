@@ -1,0 +1,67 @@
+// sh-reveals.test.mjs — programs that reveal other processes (PROGRAM_MANIFEST.md, "Programs that reveal other
+// processes", ruling 31): the manifest's `reveals` marker, the facts a call carries from it and `shellRevealsAllow`,
+// the card's line, and the gate key's class. The judging is tests/sw-policies.test.mjs; the card's third answer is
+// tests/sidebar-asks.test.js.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { shFacts, shCardLines, SHIPPED_MANIFESTS } from "../src/shell/sh-call.ts";
+import { validateManifest } from "../src/shell/program-manifest.ts";
+import { storeRefusal } from "../src/shell/stored-manifests.ts";
+import { DEFAULT_CONFIG, publicConfig } from "../src/contract/contract-config.ts";
+import { modelWritable, settingDecl } from "../src/setting-class.ts";
+
+const ANY = { range: "*", args: [], pattern: "" };
+/** A person's `ps`, marked: it reads nothing in a workspace and shows every process. */
+const PS = { program: "ps", version: ANY, reveals: "processes", command: { effects: [], paths: "none", flags: { "-e": {}, "-f": {} } } };
+const LSOF = { ...PS, program: "lsof" };
+const pin = (program) => ({ path: `/bin/${program}`, fingerprint: `1:2:3:${program.length}`, inRoot: false });
+const entry = (m) => ({ id: `man-${m.program}`, scope: "global", manifest: m, origin: "person", created: 1, pin: pin(m.program) });
+/** The host's facts for `<program> -e -f` in /w. */
+const facts = (program = "ps") => ({
+    id: "c1", argv: [program, "-e", "-f"], program: { ...pin(program) }, cwd: { path: "/w", inRoot: true }, env: { set: [], secrets: [], free: true },
+    repo: null, repoConfigRunsCode: false, paths: [], effects: "unknown", mode: "host", sandboxed: true, placement: "host-sandbox",
+});
+const place = (revealsAllow) => ({ roots: ["/w"], stored: [entry(PS), entry(LSOF)], ...(revealsAllow ? { revealsAllow } : {}) });
+
+// --- the marker ---
+
+test("reveals is one value, and it only narrows: a stored manifest may carry it", () => {
+    assert.deepEqual(validateManifest(PS), []);
+    assert.deepEqual(validateManifest({ ...PS, reveals: "files" }), ['$.reveals: "processes"']);
+    assert.equal(storeRefusal({ scope: "global", manifest: PS, origin: "proposed", pin: pin("ps") }, [], SHIPPED_MANIFESTS), undefined);
+});
+
+test("upgrade: no shipped manifest carries the marker, so every shipped call's facts say reveals null", () => {
+    for (const [name, m] of Object.entries(SHIPPED_MANIFESTS)) assert.equal(m.reveals, undefined, name);
+    const cat = shFacts({ ...facts("cat"), argv: ["cat", "a.txt"], program: { path: "/bin/cat", inRoot: false },
+        paths: [{ arg: 1, given: "a.txt", path: "/w/a.txt", inRoot: true, secret: false, exists: true }] }, null, { roots: ["/w"] });
+    assert.equal(cat.reveals, null);
+    assert.equal(shCardLines(cat).some((l) => l.label === "Shows"), false);
+});
+
+// --- the facts: the list decides `allowed`, by the manifest's program ---
+
+test("a revealing call is listed only when its program is in shellRevealsAllow; one program listed frees no other", () => {
+    const off = shFacts(facts(), null, place());
+    assert.equal(off.described, true, off.why.join("; "));
+    assert.deepEqual(off.reveals, { what: "processes", program: "ps", allowed: false }, "no list given is nothing listed");
+    assert.deepEqual(shFacts(facts(), null, place([])).reveals?.allowed, false);
+    assert.deepEqual(shFacts(facts(), null, place(["ps"])).reveals, { what: "processes", program: "ps", allowed: true });
+    assert.equal(shFacts(facts("lsof"), null, place(["ps"])).reveals?.allowed, false, "ps in the list leaves lsof asking");
+    assert.equal(shFacts(facts(), null, place(["PS", "ps "])).reveals?.allowed, false, "matched exactly, never loosely");
+});
+
+test("the card says what a revealing program shows, flagged while it is not listed", () => {
+    const line = (allow) => shCardLines(shFacts(facts(), null, place(allow))).find((l) => l.label === "Shows");
+    assert.deepEqual(line([]), { label: "Shows", value: "ps shows other processes: their arguments, users and open files", warn: true });
+    assert.equal(line(["ps"]).warn, undefined);
+});
+
+// --- the gate key ---
+
+test("shellRevealsAllow is a gate key: default empty, never writable by the model, and not in ml.config()", () => {
+    assert.deepEqual(DEFAULT_CONFIG.shellRevealsAllow, []);
+    assert.equal(settingDecl("shellRevealsAllow")?.class, "gate");
+    assert.equal(modelWritable("shellRevealsAllow"), false, "change_setting refuses it");
+    assert.equal("shellRevealsAllow" in publicConfig({ ...DEFAULT_CONFIG, shellRevealsAllow: ["ps"] }, false), false);
+});
