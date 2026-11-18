@@ -1045,6 +1045,37 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
   row's later assertions pass against a real host, so it was a stale row. It is with janitor-2. After it merges,
   each of the three merges main last and returns to its reviewer. The rule kept: a main repair is never folded
   into a PR it blocks.
+- **Shane's rulings 45 to 48 (2026-11-18, said in the coordinator's session; each was the coordinator's
+  recommendation, accepted).**
+  - **(45) Packages resumes.** Its order: #1934 to merge, then ruling 26's fatal-error listener, ruling 36's
+    measurement of the fork's `open()` on a mount, and ruling 37's measurement of closing Python's network. The
+    network gate still has no owner. Still halted: async, Chat Page, move-run, session-store, flaky-ci.
+  - **(46) The `show` refusal on credential directories stays.**
+  - **(47) The archive's month files carry the session's files**, with a setting that excludes files over a size.
+    Files-host proposes the key, the default and the unit in its docs PR.
+  - **(48) A restore that lands over the quota restores everything** and refuses new writes until the session is
+    back under it.
+  - Files-host folds 46 to 48 into its specs in one docs PR after #1948's work.
+- **The unit suite was red on main too (found by the coordinator on #1970's checks, 2026-11-18).** One red-team row
+  in tests/redteam-options-first.test.mjs has failed since #1951 merged at 0fd67ebd: it expected the refusal text
+  from before #1936 and got nothing back. Docs-only merges skip the suite, so main looked green; #1970's `host`
+  check passed and its `test (node 26)` and `hub` checks failed on this row alone. By the account of #1936's
+  owner and of e3, measured separately, nothing is wrong in the product: a survey script's undescribed call raises
+  a card, the row had no answerer, no program started, and a declined call returns `Denied` to the script. The
+  repair is its own PR, #1973 at 8fdd9ede (e3, that one file, the stale header remark corrected with it), with
+  janitor-3. Order after it: #1973, then #1970 merges main last and janitor-2 names its head (it has read the
+  diff at 9fec221d and asks no change), then #1948, #1952 and #1963.
+- **Host reviews (2026-11-18).** host#50 (the vector pin) merged at 19f46adf after janitor-3's comment. On host#48
+  janitor-2 asked that the hardlink row assert the envelope `done` reports, since the refusal is the same with no
+  envelope; the new head 74de3d7f is with it. On host#49 janitor-3 asked for the unknown-key row to cover the new
+  nested types under flavours; the new head b55853be is with it. e3 measured one row red on #1963 at 775a0365
+  (a stored manifest names its own probe arguments, so a program echoing one at a line start reads as GNU); it
+  goes to the manifest lane when e3 pushes it.
+- **The access tab is two PRs (coordinator's call).** Main has no Session summary page and no hide or show
+  consumer in the policy store. PR A is worker-only: the layered read with rows generic over consumer, the remove
+  with its narrowing and widening classes, the enumeration against the judge, docs; the hide and show rows are a
+  slot files-host fills by registering a classifier. PR B is the page and the tab, after the page's data shape is
+  settled, which waits for Chat Page's resume.
 
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
