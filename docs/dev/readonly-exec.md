@@ -44,6 +44,15 @@ Good for:
 - Curating the run's answer (`ml.answer.add(…)`).
 - Finding where a long text talks about something: embed its pages with `ml.embed([...])` and `rank` them against a
   query, within the caps below.
+- Running programs and reading what they printed: `ml.sh.run(argv)` and `ml.sh.read(...)`, in the WORKER's survey only (docs/spec/SHELL.md,
+  "Approval"; ruled 2026-11-14). The members are rebuilt from those two names (`SH_READONLY_METHODS`, `mlFacade`), dispatched by
+  identity (`onSh`, evaluator.ts), and handed a plain COPY of their arguments; `put` is not on them, so a script naming it is put to the
+  person whole. The script being free says nothing about its calls: each one is judged when it is made (`judgeCall("sh", …)`, a policy
+  or the built-in default lets it run, no opinion raises a nested ask the script waits on, a deny throws a catchable error with
+  `code: "Denied"`), and a program's time is the host's, not the step budget's. Which script takes which route: one that stays inside the worker's dialect is
+  ANSWERED in the worker (`readonly-worker` / `no-page-reads`, no approval of the script, each call still judged); one that reaches past the
+  dialect BEFORE any call goes to the approval gate and then runs isolated (`script-isolated`), never to the page's world; one that does
+  so AFTER a call has started is stopped with a final result and not run again ("ml.sh in the worker's survey", below). Tests: `tests/readonly-sh.test.mjs`, `tests/ml-sh-survey.test.mjs`.
 - Walking a nested structure recursively, to a bounded depth.
 
 Not for, and falls back to approval: anything with an effect (a click, typing, a fetch of a new URL, changing the
@@ -544,7 +553,8 @@ Tests: the `stored table` block in `tests/readonly-exec.test.mjs`.
   a survey needing both the page and the run's pointers goes to the approval gate. Each decision is an execution-log
   record, subsystem `routing`: `readonly-worker` (`no-page-reads`, `out-of-dialect`, `world-isolated` for a
   survey whose exec would run isolated, by its `world` or the default world, or `script-isolated` for one whose
-  SCRIPT names `ml.sh`, `ml.current` or a pointer (`surveyMayEnterPage`); neither ever goes to the page's leg) or
+  SCRIPT names `ml.current` or a pointer, or names `ml.sh` and reaches past the worker's dialect before any call (`surveyMayEnterPage`);
+  neither ever goes to the page's leg) or
   `readonly-page` (`reads-page` or `refused-in-page`). The step's In is drawn in the worker too (`execCodeIn`), so a survey the
   worker answers never sends its script to the page.
 - **After approval**: the real `exec` tool (`tools.ts`) expands pointers, resolves them, and runs the code with
@@ -657,6 +667,33 @@ dialect, as on the page. A page-hosted run still evaluates on the page, where it
 Tests: `tests/readonly-current.test.mjs` (the realm, the worker's `ml`, its adversarial and halting cases),
 `tests/delegation.test.mjs` (the page leg refuses pointer reads) and `tests/run-start.test.mjs` (the routing, against
 the bundle).
+
+### ml.sh in the worker's survey: a script that has started a program is never run again
+
+The worker's survey is the FIRST try at an exec, and what it cannot answer falls through to the next leg: a `needs-page` goes to the
+page's world or the person, a refusal goes to the person's approval, and an approved script then runs in an isolated world FROM THE
+TOP. For a script of reads that is free. For one that has called `ml.sh.run` it is not: the program would run twice (an `ls` is
+harmless, `npm test` or `git commit` is not). So:
+
+- **The rule** (`guardSurvey`, `sw-survey-sh.ts`, called from `tryReadonly` in `sw-run-host.ts`): once the survey has STARTED any
+  `ml.sh` call (`run` or `read`, whatever its outcome: ok, error, denied, aborted), the script never runs again on any leg. Every exit
+  that would fall through (`needs-page`, a refusal, a thrown `NotInDialect`, any other throw) is the step's FINAL result instead: an
+  error to the model naming each call by program and outcome (no output: it has not been through the bounds a result goes through),
+  saying the script was stopped there and NOT run again, and that the page work belongs in its own exec. A run-log record
+  (`routing` / `readonly-sh-stopped`) says which exit it was.
+- **Started means counted before the judge**, not after the answer: a call waiting on a nested ask already blocks the re-run.
+- **No static pre-scan.** A script that names `ml.sh` and, say, `ml.queryAll` is not refused up front: it loses valid scripts that
+  never reach the page branch. The cost is the stop above, which only happens to a script that actually did both, in that order.
+- **The order that keeps today's behaviour**: a page read BEFORE any call is `needs-page` with nothing run, and falls through as before
+  (`tests/redteam-readonly-sh.test.mjs`). A script naming no `ml.sh` is untouched.
+- **Each call is bound to the step it is made in**, never to anything the script says: the same `ShCallContext` the isolated route
+  builds (run, offset seq, the loop's step, the run's abort signal, its pointers). Stop aborts a call that is waiting or running.
+- **The arguments are a plain copy** (`plainCopy`): strings, finite numbers, booleans, `null`, arrays and plain objects of those. A
+  dialect String object (what `ml.dereference` returns) is its string; a hole or an accessor is refused (the copy walks the indexes,
+  because `map` skips a hole); an `undefined` in an argument slot is an omitted argument; `undefined` nested inside data is refused.
+
+Tests: `tests/sw-survey-sh.test.mjs` (every exit, a denied call then a page read, counted before the answer, Stop mid-call, the
+before-any-call order), `tests/ml-sh-survey.test.mjs` (the rule end to end through the real run path), `tests/readonly-sh.test.mjs` and `tests/redteam-readonly-sh.test.mjs` (the facade and the evaluator rule).
 
 ## The policy realm
 
