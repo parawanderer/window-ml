@@ -175,7 +175,8 @@ export function warningsFor(run, { history = new Map(), baseline = {} } = {}) {
             const rec = { file: f.file, name: t.name, ms: t.ms, ok: t.ok };
             const b = checkSlowerThanHistory(rec, prior, baseline[f.file]?.[t.name]);
             if (b) out.b.push(b);
-            else {
+            // A test in the committed baseline is not new, however thin the local history: its slowness is known.
+            else if (baseline[f.file]?.[t.name] == null) {
                 const c = checkDisproportionate(rec, prior.length, fileMedian, genreMedian, f.genre);
                 if (c) out.c.push(c);
             }

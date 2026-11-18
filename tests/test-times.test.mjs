@@ -90,6 +90,12 @@ test("warningsFor: a test with a history is judged by (b), not also by (c)", () 
     assert.equal(w.length, 1);
     assert.match(w[0], /usual p90/);
 });
+test("warningsFor: a test in the committed baseline is known, not new, however thin the local history", () => {
+    // The first full run after seeding: every slow test had one record, and (c) flagged 80 of them as new.
+    const r = run([{ file: "tests/a.test.mjs", tests: [t(6000, "slow by design"), t(5, "a"), t(5, "b")] }]);
+    assert.equal(warningsFor(r).length, 1);                                                          // unknown: new
+    assert.deepEqual(warningsFor(r, { baseline: { "tests/a.test.mjs": { "slow by design": 5900 } } }), []);
+});
 
 // --- parsing the reporter's lines ---
 
