@@ -149,15 +149,24 @@ built; this is the shape the scrub grows into, recorded so the next builder does
     to hold, not the scrub's.
   - *False positives.* A config file's leaves are mostly not secret (`localhost:5432`, `production`, a URL), and every
     leaf of 8 or more characters would be redacted wherever it appears, in output that never touched the file. A
-    choice by key name (`*_KEY`, `*_TOKEN`) is a heuristic and is left out; the person registering values is the
+        choice by key name (`*_KEY`, `*_TOKEN`) is a heuristic and is left out; the person registering values is the
     precise path.
+  - *A redaction oracle the person did not choose.* With a hidden file's leaves in the registry, a script that guesses
+    a leaf and prints the guess learns it was right by seeing it redacted. Config leaves are low-entropy (a port, a
+    hostname, an environment name), so guessing is cheap, and unlike a registered value the person never chose to
+    expose this check.
   - *The 64 cap.* The registry holds at most 64 entries; a dotenv file can hold more than that alone. Values from
     hidden files would need their own bound and the fail-closed rule page values have: at the bound nothing held is
     dropped, and output from the call stops crossing.
-  - *The host-to-worker crossing.* The values would leave the host process for the worker in plaintext over the
-    native port, a crossing that no secret makes today, and over the hub they would cross devices. Kept, they belong
-    where page values are kept (`chrome.storage.session`, never the local store), and a remote host would never be
-    sent them.
+    - *The host-to-worker crossing.* The values would leave the host process for the worker in plaintext over the
+    native port, a crossing that no secret makes today. Kept, they belong where page values are kept
+    (`chrome.storage.session`, never the local store). Over the hub, the crossing refused is the host's to a REMOTE
+    runtime: a host reached through the hub never sends a hidden file's leaves, in any form, to the runtime across
+    devices; only the host's own machine's worker could receive them.
+  - *A hash-only route.* The host could send ruling 32's `mask` entries instead (`L`, `F` and `C` per form), never the
+    value. The cost: the host must hold the filter key and run a second `valueForms`, pinned to the worker's by shared
+    vectors so both derive the same forms; and the weak-value limit applies in full, since a config leaf is exactly
+    the low-entropy value a stolen hash gives to offline guessing.
   - *Relation to handles.* Reading a listed dotenv file's values is already deferred to the handles slice, where a
     value is used without being read; this would be the scrub half of the same reading, and is decided with it.
 
