@@ -126,7 +126,10 @@ and effects in every flavour that accepts them, with the union of the effects wh
   every implementation, so what follows it stays an operand (`tool -- f.txt --write-all` reads two files). A read-only
   flag after an operand stays a file name. The
   approval card of a flavoured draft states each overlay's `argOrder` in words, per flavour and subcommand, whatever is
-  detected (`argOrderText`).
+  detected (`argOrderText`). A subcommand's name is the manifest's own text, so the card quotes it only when it is a
+  plain word (`^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$`); any other name, and what lies beneath it, is counted ("2
+  subcommands whose name is not a plain word, not described here"), so a name cannot write a sentence the person reads
+  as the card's, or break its line (red-team #1963). At most six readings are listed, then "and N more".
 - `harden`: that flavour's hardening, after the core's (GNU `--sandbox`; `-safe` passed to gawk would parse as other
   options, so hardening cannot be shared). Each argument is a flag of the core or of that overlay.
 
