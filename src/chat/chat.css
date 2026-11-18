@@ -408,6 +408,9 @@ html, body, #root { height: 100%; }
 .chat.calm .aturn { border: none; padding: 0; margin-bottom: 16px; }
 .chat.calm .aturn-prose { margin: 2px 0 8px; }
 .chat.calm .astep.tool { margin: 6px 0; }
+/* Consecutive CLOSED tool rows are one list, not separate blocks: the 6px each side that sets an open step apart from its prose is too wide a gap between lines. */
+.chat.calm .astep.tool:not(.open):has(+ .astep.tool:not(.open)) { margin-bottom: 0; }
+.chat.calm .astep.tool:not(.open) + .astep.tool:not(.open) { margin-top: 2px; }
 /* The request's own configuration, above the first sentence of every chat. It is a disclosure that is already
    closed; calm only stops it looking like a card. */
 .chat.calm .block { background: transparent; border: none; margin-bottom: 4px; opacity: .6; }
@@ -754,6 +757,10 @@ button.chat-page-go:hover { color: var(--fg); }
     --user-bg: #2a2b31;
     --border: #2a2b31;
 }
+/* The canvas BEHIND the page, in calm dark: what macOS shows when you pull past the top or bottom (the rubber band), and any
+   overscroll. `html` and `body` read the ROOT tokens, which are the panel's lighter dark, so the band did not match the page. Same
+   value as `--bg` above, and the same scope. */
+html[data-calm]:not([data-theme="light"]), html[data-calm]:not([data-theme="light"]) body { background: #121316; }
 
 /* ===================== A TOOL STEP IS AN ASIDE, NOT THE SUBJECT =====================
    In the DevTools panel a run's machinery IS what you came for, and every row of it earns its place. Here the run
@@ -2166,6 +2173,12 @@ html[data-calm] .tt-layer { --notice: var(--accent); --notice-fg: var(--accent-f
 /* …and inside an OPEN one, each row may say what the model said it was for. See `.astep-said`: this is the one
    place it is drawn, because expanding a group is the gesture that means "I am investigating what happened". */
 .chat.calm .astreak.expanded .astep-said { display: inline-block; max-width: 46ch; vertical-align: bottom; }
+/* A tool row NOT in a group says it too: nothing folded it, so it is the one line that names what the call was for. It fades in
+   with the row rather than standing there at once. A row inside a closed group stays plain (the group's head is the line). */
+.chat.calm .astep-said { display: inline-block; max-width: 46ch; vertical-align: bottom; animation: chat-said-in .22s ease-out both; }
+.chat.calm .astreak:not(.expanded) .astep-said { display: none; }
+@keyframes chat-said-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .chat.calm .astep-said { animation: none; } }
 
 /* THE ROW SITS WHERE THE TURNS DO. Its text begins on the transcript's own left edge — the line `thinking` and a
    turn's prose start from — so a folded run reads as one more thing in the column rather than as a control

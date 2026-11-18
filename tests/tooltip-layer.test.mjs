@@ -395,3 +395,23 @@ test("no call site restates a prop that cursorTipOn already spreads", async () =
     }
     assert.deepEqual(bad, [], "a spread cursorTipOn handler is silently replaced here; CALL it from the element's own handler instead of restating the prop");
 });
+
+// --- a tip that fits on the right opens there, whatever side of the middle its trigger is on ---
+
+/** A world with one trigger at 60% across a 1024-wide window (which the middle-of-the-window guess flipped) and a tip `tipW` wide; returns the hovered layer. */
+function pastMiddle(tipW) {
+    const w = world(`<span class="tt">a<span class="tt-pop">a link's destination</span></span>`);
+    const [el] = w.document.querySelectorAll(".tt");
+    el.getBoundingClientRect = () => ({ left: 600, top: 200, width: 40, height: 16, right: 640, bottom: 216 });
+    const layer = w.layer();
+    layer.getBoundingClientRect = () => ({ left: 0, top: 0, width: tipW, height: 30, right: tipW, bottom: 30 });
+    hover(w.document, el);
+    const style = { left: layer.style.left, right: layer.style.right };
+    w.stop();
+    return style;
+}
+
+test("a trigger past the middle whose tip FITS on the right opens rightward; one whose tip does not fit still flips", () => {
+    assert.notEqual(pastMiddle(300).left, "auto", "300px fits in the 384px to its right");
+    assert.equal(pastMiddle(500).left, "auto", "500px does not fit in 384px to the right, and there is more room on the left");
+});
