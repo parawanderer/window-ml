@@ -794,6 +794,114 @@ version and reason when it pushes; the coordinator surfaced that reading to Shan
   Pyodide fork (a fatal error rejects the run's promise; the parser's recursion guard trips before the JS stack)
   goes to the Pyodide lane, which async wears and which owns the pin, only if the listener is measured not to
   catch it. RELAYED: Shane told the packages lane to raise editing Pyodide with the coordinator.
+- **Shane's rulings 26 to 38 (2026-11-17 and 2026-11-18, each said in the coordinator's session).**
+  - **26.** A fatal error inside a Python cell is repaired on our side first; Pyodide is edited only if it cannot
+    be. The model restarting the kernel is acceptable. Packages builds the listener after #1934, measuring first,
+    and calls async's namespace-released writer with the reason "kernel-death".
+  - **27.** The credential-file widening on host#46 (.netrc, .git-credentials, .pgpass at a root's top) is approved.
+  - **28.** The person's tab pick when resuming with no page is the chip beside the composer, alone, for now; no
+    `/page` command in this build. Move-run updates the open bullet in TABLESS_RUN.md in its next PR there.
+  - **29.** The session `[window-ml program-manifest-backfill]` owns the manifest backfill and proposes the BSD/GNU
+    handling; the coordinator rules on it.
+  - **30.** Page password fields are masked from the model. A value in a password-class field that the run's own
+    type calls did not write is held: every value seen joins the session's registry in worker memory (never
+    stored) and is scrubbed by value; the dialect and the DOM survey answer "filled"; the field is blanked in
+    screenshots. Password-class is type=password (sticky after a switch to text), the autocomplete tokens
+    current-password, new-password, one-time-code, cc-number and cc-csc, and `-webkit-text-security`. A click that
+    reveals a value exempts nothing. Known limits are stated (values under 8 chars get the channel mask only; a
+    page mirroring the value into ordinary DOM). The secrets game gains Test C: four fields, the toggler case
+    included; a loss is the whole string by any route. Coordinator's call: while a tab holds a masked field,
+    unmediated main-world exec on that tab asks, and the card names the field.
+  - **31.** ps, lsof and top get manifests but are disabled until the person approves each program: the issue is
+    key leakage. Coordinator's calls: a manifest-level class marker; a per-program opt-in list, default empty,
+    that is a gate key; forms that show environments stay unknown; the registry scrub still runs on output.
+  - **32.** A secret the model must never see and never needs to use is stored hash-only. Two classes: `use`
+    (value kept, for handles) and `mask` (the default; recognised only). Mask storage is a length, a short keyed
+    filter hash and a slow confirm hash, matched with a rolling keyed hash over a sliding window. The widths, the
+    slow hash's cost and the per-crossing time are measured in a notebook before they are fixed.
+  - **33.** Once the secrets store exists, setting it up is an inbox item in the Chat UI: dismiss it or fill it,
+    with an explanation of what it is for and of the two types. Coordinator's calls: shown once while the registry
+    is empty; filling is the person's gesture only; default type `mask`; in the first build values are entered only
+    in the extension-hosted renderer; it joins the existing attention inbox.
+  - **34.** The hiding rules are defaults, and a policy overrides them. The model proposing an entry that the person
+    approves on a card is the main path; a person may also write one. Policies are per session over global.
+    An odd layout gets a Known limits line and the override, not a new default rule; a hidden path that is
+    readable, or a default-held value reaching the model with no override, stays a defect. Coordinator's calls: one
+    list of `hide` and `show` entries, most specific wins, a tie hides; a gate key; the card offers "this session"
+    (default) and "always"; a `show` that cannot be applied whole is refused with a reason. The view of the
+    effective list is the access tab of small-fixes' Session summary page (below).
+  - **35.** After `/files` is built, backup and restore (docs/spec/BACKUP_FORMAT.md) carry the session's file
+    system: a backup holds the files and a restore brings them back. Streamed, never all files in memory, with a
+    stated rule for hidden files. A follow-on item with its spec section first.
+  - **36.** The `/files` layout is three parts: an `attached` folder of uploads, read-only to the agent, which may
+    copy out; an `agent` folder that is the agent's own space; and a root where nothing new may be created. The
+    model may dump a `@tool:` value in full into its folder: a copy through `ml.fs`, streamed from the stored
+    whole and not from the truncated view, written by kind (text as is, JSON, a binary's bytes, a table as CSV
+    with a header), budgeted, carried in the backup, and a table reloads as the one table type. Parquet is the
+    model's own work in Python. Python sees `/files` through Emscripten mounts: the attached folder on WORKERFS
+    (lazy slices of a Blob, read-only) and the agent folder on a custom mount over OPFS sync access handles;
+    never a mount that loads whole files. The scrub runs inside the mount's read, chunked with an overlap.
+    Measured first, by packages, in a notebook: whether the restricted fork gates `open()` on a mount, whether
+    worker memory stays flat reading ranges of a 1 GiB file, and whether a Parquet writer wheel exists.
+  - **37.** An acceptance test after the packages lane: the model is given a cloud database (BigQuery or similar).
+    It joins secrets, packages that are not preinstalled, large data that is never all in the kernel, and an
+    external network call. Coordinator's calls, agreed by Shane: the credential never enters the kernel and is
+    attached by the worker at the network crossing, bound to its host; Python's network is closed by default and
+    opened per host on a card; the worker makes the call; an outgoing body carrying a registered secret to a
+    host it is not bound to is refused; the card states that an allowed host can be sent any unregistered data.
+    The gate has three layers: a browser-level connection ban on the Python worker is the wall, the CPython fork
+    is the policy, and patching the worker's JS globals is no guarantee. Packages measures first: a per-worker ban
+    inside the extension, a blocking bridge for synchronous libraries, what a compiled wheel can call below
+    Python, and whether a cell can fetch directly from the worker today. The repeatable guard runs against a
+    local database with a fake credential; the real-model run needs Shane's yes in the bench session. Order: the
+    secrets game (Tests A to C) needs handles only; this test needs handles, packages, the `/files` mounts and
+    the network gate.
+  - **38.** For the Python network gate, editing Pyodide or the CPython fork is allowed wherever the gate needs it
+    to work at all, the blocking bridge included. Ruling 26 is unchanged for a fatal error in a cell.
+  - **The stash in the main clone** stays unclaimed and untouched: never popped, dropped or applied.
+- **Coordinator's calls since #1945 (each surfaced to Shane, who may override).**
+  - **The scrub (#1948).** renderOut's text fields and the token store's whole are scrubbed where the loop scrubs
+    the result; an error string to a page is scrubbed after the registry is ready, fails closed, and carries a
+    nameless marker, with the confirm-a-guess oracle in Known limits; the multi-byte margin offset is repaired
+    with a row; byte scrubbing and the write-time scrub of stored wholes go to scrub PR 2.
+  - **The host.** The hard-link question is closed with no defect (host#47: EXDEV on Linux, "Operation not
+    permitted" on macOS); the same-mount Linux case is accepted as not buildable. A symlink from a dotenv name to
+    a template at a root's top keeps the template held, read and write.
+  - **change_setting (#1952).** The model may propose a standing allow for the `setting` consumer, never one that
+    frees a guarded key, a shell key or the start page; this build refuses it and part (c) decides. A guarded
+    key's change always shows its card, in either direction; `widens` is a fact a policy may read, to deny a
+    widening change, and never frees one. An unclassed config key fails closed. Its prompt cost is 625 chars per
+    worker-built run; the token delta is unmeasured and goes to the next prompt review.
+  - **The access tab.** The access tab of the Session summary page is a per-session read of the existing policy
+    store, layered default, global, session, with the winner computed by the worker beside the judge; no editor;
+    a remove that narrows is one gesture and one that widens confirms, showing what becomes reachable; the read
+    carries paths only; the override computation is enumerated against the judge; docs land in the PR; red-team
+    rows follow the push.
+  - **The manifest backfill.** The BSD/GNU proposal is accepted: a `flavourOf` decision, a core flag set, add-only
+    overlays per flavour, an unrecognised flavour withholds the core, and a lockstep host PR. An in-root binary
+    is never probed; every sed and awk rule gets adversarial rows. Order: #1951, then PR 1 (schema), the host
+    port, sed and awk, the batches. On #1951 the red team found that a lone `-` is a real file for BSD head, tail,
+    wc and ls (its account, one machine); the repair, `dashIsPath` on those four, goes in #1951, and the GNU
+    reading (stdin) is judged as a path, the stricter reading, until flavours exist.
+  - **Smaller calls.** The two async keys `taskNotifyOnly` and `taskTurnChainMax` are classed guarded. The
+    namespace-released record lives in the session store: async owns the one writer, move-run the readers. No
+    red-team row is written against an unpushed head. A worktree's HEAD does not move while a job submitted from
+    it is queued or running.
+- **Merged since #1945 (each verified).** #1944 d4ae4d44, #1947 ee16c017, #1938 bcb407fa, #1942 642b4691,
+  #1946 f225d47c (its residual, a stale tab id after a restart, is a named follow-up for move-run), #1935
+  dcb90ee0 (change_setting part a), #1949 ee47e4da, #1937 2cf7e1bb (read_pages part a), host#46 1245ec01,
+  host#47 090fe14f, #1954 4a2ced14, #1953 bbd9b060 and #1922 418ad536 (calm-stream polish, draw-only).
+- **The test queue (2026-11-18).** The queue stalled the lanes: its price per worker ratcheted from 0.20 to 1.46 GB
+  in nine days and grants fell from 8 workers to 2 (the bench lane's account). Shane halted every lane overnight
+  and worked with bench. #1953 prices a run as a base plus a slope per worker, by command and class; #1954 adds
+  timing warnings and repairs timers that held about 99 test files open 20 to 300 s; the suite alone went from
+  415 s to 265 s by the lane's account, not yet observed under several sessions. Both were reviewed by a janitor
+  before merging. A lane merges main before its next full run; queue problems go straight to bench.
+- **Open PRs at this point.** #1951 (the optionsFirst repair) waits for the lone-dash repair, then a janitor.
+  #1952 (change_setting part b) holds the red team's rows at bbe1fea1 and waits for the lane's spec commit. #1948
+  (scrub PR 1) is in repair after a review asking two changes. #1936, #1929, #1934 and #1950 each owe a new head.
+  The bench lane's ranking of missing manifests: coverage of observed calls goes from 52.1% to 91.4, 95.4 and
+  98.1% at 5, 10 and 20 more manifests (its account).
 
 - **The canvas session's fork merges (`[window-ml canvas]`, on Shane's word, 2026-10-24).** parawanderer/cpython#10
   (59d015a5): `risky_regex` tells an exact count like `{3}` from a choice inside a repeated group, and refuses `{0,1}` like
