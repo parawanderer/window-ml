@@ -406,16 +406,29 @@ marked "recommended" are this spec's, still open.
   | LangSmith | `langsmith-key` | `lsv2_pt_` or `lsv2_sk_`, 32 of `[0-9a-f]`, `_`, 10 of `[0-9a-f]` | trufflehog `langsmith` |
   | Google | `google-api-key` | `AIza`, 35 of `[A-Za-z0-9_-]` | gitleaks `gcp-api-key` |
 
-  Each shape ends at a word boundary, as both detectors' do. Not verified, so not in the list: `sk-ant-oat01-`
-  (Anthropic's OAuth token), which neither detector nor GitHub's list gives a shape for. Rows, one per vendor: a
-  fixture of the shape matches as its kind, and the bare prefix in prose ("set `hf_` before the name", "the `gsk_`
-  prefix") does not. A fixture is built from its parts when the test runs, never committed whole, so push protection
-  and the repository's own scanners do not read it as a leaked key.
-- **Vendors with no prefix cannot be caught by shape.** Mistral and Together have no shape in either detector.
-  Cohere's (40 of `[A-Za-z0-9]`, gitleaks `cohere-api-token`), Azure OpenAI's (32 of `[0-9a-f]`, trufflehog
-  `azure_openai`) and DeepSeek's (`sk-` and 32 of `[a-z0-9]`, trufflehog `deepseek`) are matched there only beside a
-  vendor word or a key name. Those are the credential-word patterns ruling 40's investigation decides on. Such a key
-  saved as the extension's own (below) or registered is caught by value.
+  Each shape ends at a word boundary, as both detectors' do. Not verified, so not in the table: `sk-ant-oat01-`
+  (Anthropic's OAuth token), which neither detector nor GitHub's list gives a shape for; the loose fallback catches it.
+  Rows, one per vendor: a fixture of the shape matches as its kind, and the bare prefix in prose ("set `hf_` before the
+  name", "the `gsk_` prefix") does not. A fixture is built from its parts when the test runs, never committed whole, so
+  push protection and the repository's own scanners do not read it as a leaked key.
+
+  **The loose fallback.** The table's lengths are a leak detector's, which wants precision; a redactor wants recall,
+  since a miss sends the key. So under the table, for a prefix that does not occur in prose (`sk-proj-`,
+  `sk-svcacct-`, `sk-admin-`, `sk-ant-`, `sk-or-v1-`, `gsk_`, `xai-`, `nvapi-`, `pplx-`, `r8_`, `lsv2_`), the prefix and
+  at least 20 characters of that vendor's alphabet (the table's, `[A-Za-z0-9_-]` for `sk-ant-`) match as that vendor's
+  kind. A bare `sk-` and at least 20 of `[A-Za-z0-9]` with at least one digit among them matches as `api-key`: this is
+  the `sk-` and 32 that DeepSeek and OpenWebUI issue. N is 20, the legacy OpenAI key's half-length: shorter than any
+  key in the table, longer than a word. The digit keeps out a 20-letter word after a hyphen; a 32-character
+  lowercase key with no digit at all is about 3 in 100,000 and is missed. Where two shapes match one span, the
+  vendor's wins over `api-key`, and the longer match wins between vendors. The exact shapes stay as the rows'
+  fixtures. Rows: a key one character longer than its table shape still matches as its kind; `sk-ant-oat01-` and 20
+  characters matches as `anthropic-key`; `sk-` and 32 lowercase alphanumerics with a digit matches as `api-key`; `sk-`
+  in prose ("the `sk-` prefix") and a hyphenated word starting `sk-` ("sk-learn", "sk-internationalization") do not.
+- **Vendors with no prefix cannot be caught by shape.** Mistral and Together have no shape in either detector. Cohere's
+  (40 of `[A-Za-z0-9]`, gitleaks `cohere-api-token`), Azure OpenAI's (32 of `[0-9a-f]`, trufflehog `azure_openai`) and
+  DeepSeek's (`sk-` and 32 of `[a-z0-9]`, trufflehog `deepseek`, caught here by the loose fallback as `api-key`) are
+  matched there only beside a vendor word or a key name. Those are the credential-word patterns ruling 40's
+  investigation decides on. Such a key saved as the extension's own (below) or registered is caught by value.
 - **No entropy-only detector** until a notebook gives its false-positive rate on real prompts, which hold commit
   hashes, UUIDs, base64 and minified code (ruling 40: left until that investigation, which follows the shape
   detector). A pattern that needs a credential word beside the value (`password=`) waits for the same notebook.
