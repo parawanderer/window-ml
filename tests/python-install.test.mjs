@@ -70,7 +70,7 @@ const call = (args, name = "python_install") => ({ name, args });
  * A worker-built run on tab 7 whose model makes `calls` in turn. `answer(card, send)` is the person: it gets the
  * emitted step (its renderIn) and a `send(decision, files)` that posts SET_APPROVAL; it defaults to denying.
  */
-async function installRun(calls, { answer = (_ev, send) => send(false), offered = true, index = new Map(), files = new Map(), onPyInstallTest } = {}) {
+async function installRun(calls, { answer = (_ev, send) => send(false), offered = true, index = new Map(), files = new Map(), onPyInstallTest, settled } = {}) {
     offer = offered;
     pypi = index;
     wheels = files;
@@ -108,7 +108,8 @@ async function installRun(calls, { answer = (_ev, send) => send(false), offered 
     serveLock(bg);
     bg.commit?.(7, { documentId: "doc-1", url: SITE_URL });
     const { hash } = await bg.context.__mlStartUserRunForTest(7, { task: "probe", surface: "hud", maxSteps: 20 });
-    for (let i = 0; i < 4000 && n <= calls.length; i++) await new Promise((r) => setTimeout(r, 0));
+    // `settled`: a run that will not call the model again (Stop) is done when the row says so, not at the loop's cap.
+    for (let i = 0; i < 4000 && n <= calls.length && !settled?.(); i++) await new Promise((r) => setTimeout(r, 0));
     for (let i = 0; i < 60; i++) await new Promise((r) => setTimeout(r, 0));
     const last = bg.calls.filter((c) => c.url.includes("/chat/completions")).at(-1);
     const results = last.body.messages.filter((m) => m.role === "tool").map((m) => String(m.content));
@@ -337,9 +338,11 @@ test("a candidate whose interpreter died is a failed install, and nothing is rec
 });
 
 test("Stop pressed while the candidate runs, and an import that passes after it, records nothing and is logged as stopped", { ...T, skip: SKIP }, async () => {
-    const r = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]), onPyInstallTest: async (msg, bg) => {
+    let answered = false;
+    const r = await installRun([call({ name: "tabulate" })], { answer: approveWith(), index: TABULATE, files: new Map([[WHEEL_URL, WHEEL]]), settled: () => answered, onPyInstallTest: async (msg, bg) => {
         bg.send({ type: "CANCEL_RUN", payload: { runId: msg.run } });
         for (let i = 0; i < 10; i++) await new Promise((res) => setTimeout(res, 0));
+        answered = true;
         return { ok: true };
     } });
     assert.deepEqual(r.candidates.map((m) => m.type), ["PY_INSTALL_TEST", "PY_INSTALL_STOP"], "the control: the candidate was asked, and Stop reached it");
