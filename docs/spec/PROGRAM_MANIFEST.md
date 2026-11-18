@@ -70,11 +70,17 @@ then a file; several `-e` are joined by newlines), and the text is checked by a 
 - **Where a regular expression ends.** Both seds skip a bracket expression whole when they look for the delimiter
   (`s/[/]/x/` is one regex to both), but by different rules: GNU's `snarf_char_class` (sed/compile.c) lets a `[` after
   a class's closing `:` keep it closing, and macOS's `compile_ccl` (Apple text_cmds) needs `:]` exactly, so
-  `s/[[:a:[]/]/Q/w F` is a `w F` to GNU and unbalanced to macOS. `script-grammar.ts` ports both scanners and describes a
-  regular expression only when the two end it at the same character. Measured (2026-11-18, gsed 4.10 and macOS 26.7):
-  over 1,735 random bracket-heavy regexes, `s/<r>/Q/w F` created the file `F` exactly when each port said the
-  replacement and flags fall where they do; no disagreement for either. GNU opens and truncates a `w` file while it
-  parses, even when the script then fails to compile, so a script a sed rejects is not one that did nothing.
+  `s/[[:a:[]/]/Q/w F` is a `w F` to GNU and unbalanced to macOS. `script-grammar.ts` ports both scanners, and **a
+  regular expression is described only when both scanners end it at the same character**. The lane's measurement
+  (2026-11-18, gsed 4.10 and macOS 26.7): over 1,735 unique bracket-heavy regexes, `s/<r>/Q/w F` run in an empty
+  directory created the file `F` exactly when each port said the replacement and flags fall where they do, with no
+  disagreement for either. `tests/sed-scanners.test.mjs` runs a seeded sample of it against whichever seds the machine
+  has (a mutation of the GNU port's bracket rule fails it); `WML_SED_SCANNERS_N=8000 node --import tsx --test
+  tests/sed-scanners.test.mjs` re-runs the whole measurement.
+- **Why a `w` is never free, not even refused by the sed.** GNU sed opens and truncates a `w` file while it parses the
+  script, before the script is compiled (measured: `s/[[:a:[]/]/Q/w F` created `F`, then failed on the regex), so a
+  script the sed rejects can still have emptied a file. A `w`, `W` or `s///w` is refused by the grammar, never left to
+  the sed's own error.
 - **awk** (`awkProgramRefusal`). Checked WITHOUT a lexer, by substrings, so no string, regular expression or comment
   hides anything: the program holds none of `system`, `getline`, `ENVIRON`, `ARGV`, `ARGC`, `PROCINFO` and `@` (gawk's
   `@include`, `@load` and indirect calls), no `|` outside `||`, and no `>` after its first `print` (every output
@@ -86,8 +92,9 @@ then a file; several `-e` are joined by newlines), and the text is checked by a 
   where `-e` is the suffix, not); `-l` takes a value in GNU only; GNU permutes and is hardened with `--sandbox` (4.3+:
   the program itself refuses `e`, `r` and `w`), BSD stops at the first operand. An undetected sed reads the core alone,
   so `-i` is `unknown` there. awk declares `bsd` alone, hardened with `-safe` (measured: macOS awk refuses `system` and
-  `print >` at parse time and empties `ENVIRON`): gawk and mawk are installed under their own names (`/usr/bin/awk`
-  links to `gawk` or `mawk`), so they are `other` and a Linux awk asks.
+  `print >` at parse time and empties `ENVIRON`). No flavour is declared whose hardening flag was not measured against
+  that binary, and there is no flavourless core: the substring check alone does not make an awk program free (ruled
+  2026-11-18).
 - **A lone `-`** is a file to macOS sed and stdin to GNU (measured), so sed claims it as a path (`dashIsPath`); every
   awk reads stdin.
 
@@ -365,6 +372,10 @@ rejects unknown fields, so a manifest with one is for this extension only.
   `gnu` probe is shipped-only. The sentence under "When the version is learned" that only a shipped manifest's probe
   entry is used holds for flavours, not yet for `version`. The follow-up gives `version` the same rule: a stored
   manifest's version comes from its pin (B4) and its probe is never run.
+
+- **A Linux awk always asks** (2026-11-18). gawk, mawk and busybox are installed under their own names (`/usr/bin/awk`
+  links to `gawk` or `mawk`), so `awk.json`, which declares only `bsd`, reads them as `other`. Follow-up: gawk and mawk
+  flavours, each with its hardening measured against that binary.
 
 ## Related
 
