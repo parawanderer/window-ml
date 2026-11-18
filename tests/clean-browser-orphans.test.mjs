@@ -38,11 +38,13 @@ const t = await b.open("about:blank");
 console.log("READY " + process.env.WML_PROBE);
 setInterval(() => {}, 1000);`;
     const child = spawn(process.execPath, ["--input-type=module", "-e", code], { stdio: ["ignore", "pipe", "inherit"], cwd: path.resolve(path.dirname(FIXTURE), "../../../..") });
+    // The give-up timer is cleared once settled: left armed, the last test's held the file's process 29 s past its tests.
+    let giveUp;
     await new Promise((resolve, reject) => {
         child.stdout.on("data", (c) => { if (String(c).includes("READY")) resolve(undefined); });
         child.on("exit", (c) => reject(new Error(`runner exited early (${c})`)));
-        setTimeout(() => reject(new Error("runner never became ready")), 30000);
-    });
+        giveUp = setTimeout(() => reject(new Error("runner never became ready")), 30000);
+    }).finally(() => clearTimeout(giveUp));
     // The dir is the newest wml-detect-* one with a live browser.
     const dirs = fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith("wml-detect-")).map((n) => path.join(os.tmpdir(), n))
         .filter((d) => { try { return fs.statSync(d).isDirectory() && browserRunning(d); } catch { return false; } });
