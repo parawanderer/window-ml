@@ -9,7 +9,7 @@
 
 import { webcrypto as crypto } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { cpus } from "node:os";
+import { cpus, loadavg } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { registrySubs, scrubRegistry, valueForms } from "../../src/secret-registry.ts";
@@ -112,7 +112,7 @@ function passBits(text, table, bits) {
 const ms = (f) => { const t = process.hrtime.bigint(); const r = f(); return [Number(process.hrtime.bigint() - t) / 1e6, r]; };
 const q = (xs, p) => { const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
 
-const out = { node: process.version, cpu: cpus()[0]?.model, N, K, P, repeats: REPEATS, configs: [], confirm: [], baseline: [] };
+const out = { node: process.version, cpu: cpus()[0]?.model, loadBefore: loadavg(), N, K, P, repeats: REPEATS, configs: [], confirm: [], baseline: [] };
 const text0 = corpus();
 for (const entries of [1, 8, 64]) {
     const values = secrets(entries);
@@ -140,7 +140,8 @@ for (const entries of [1, 8, 64]) {
 }
 // --- the false-candidate count over fresh keys: 30 trials per kind of text, each with new secrets, a new base and a new
 // text. A candidate is a (position, form) pair whose filter matches and whose form is not there; `hitPositions` counts
-// positions; `T` is the number of distinct filters in the table, `D` the number of distinct K-unit windows in the text.
+// positions, `distinctHitWindows` the distinct K-unit windows among them (model D·T/p); `T` is the number of distinct
+// filters in the table, `D` the number of distinct K-unit windows in the text.
 const TRIALS = 30;
 /** A text of one kind, from the generator `g`. */
 function textOf(kind, g) {
@@ -168,17 +169,17 @@ for (const kind of ["random", "base64", "json", "log"]) {
         const table = new Map(); let E = 0;
         for (const v of vals) for (const f of valueForms(v)) { if (f.length < K) continue; E++; const F = fil(f); (table.get(F) ?? table.set(F, []).get(F)).push(f); }
         const text = textOf(kind, g);
-        let h = fil(text), pairs = 0, positions = 0;
-        const windows = new Set();
+                let h = fil(text), pairs = 0, positions = 0;
+        const windows = new Set(), hitWindows = new Set();
         for (let i = 0; ; i++) {
             const hit = table.get(h);
-            if (hit) { let any = false; for (const f of hit) if (i + f.length <= text.length && !text.startsWith(f, i)) { pairs++; any = true; } if (any) positions++; }
-            if (t < 3) windows.add(text.substr(i, K));
+            if (hit) { let any = false; for (const f of hit) if (i + f.length <= text.length && !text.startsWith(f, i)) { pairs++; any = true; } if (any) { positions++; hitWindows.add(text.substr(i, K)); } }
+            windows.add(text.substr(i, K));
             if (i + K >= text.length) break;
             h = h - (text.charCodeAt(i) * bk) % P; if (h < 0) h += P;
             h = (h * base + text.charCodeAt(i + K)) % P;
         }
-        out.trials.push({ kind, trial: t, E, T: table.size, positions: N - K + 1, falsePairs: pairs, hitPositions: positions, distinctWindows: t < 3 ? windows.size : null });
+        out.trials.push({ kind, trial: t, E, T: table.size, positions: N - K + 1, falsePairs: pairs, hitPositions: positions, distinctWindows: windows.size, distinctHitWindows: hitWindows.size });
     }
 }
 
@@ -188,6 +189,7 @@ for (const iterations of ITERS) {
     for (let r = 0; r < 30; r++) { const t = process.hrtime.bigint(); await confirmHash("x".repeat(24), salt, iterations); ts.push(Number(process.hrtime.bigint() - t) / 1e6); }
     out.confirm.push({ iterations, medianMs: q(ts, 0.5), p90Ms: q(ts, 0.9) });
 }
+out.loadAfter = loadavg();
 mkdirSync(join(HERE, "data", "mask-matcher"), { recursive: true });
 writeFileSync(join(HERE, "data", "mask-matcher", "matcher.json"), JSON.stringify(out, null, 2) + "\n");
 console.log(JSON.stringify(out, null, 2));

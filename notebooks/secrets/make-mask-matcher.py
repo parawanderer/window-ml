@@ -46,6 +46,7 @@ D = json.loads((DATA / "matcher.json").read_text())
 pd.set_option("display.width", 200)
 print(pd.DataFrame([{"file": "data/mask-matcher/matcher.json", "sha256": wmlnb.sha256_file(DATA / "matcher.json")[:16]}]).to_string(index=False))
 print(f"{D['cpu']}, node {D['node']}; N = {D['N']} units, k = {D['K']}, p = {D['P']}, {D['repeats']} repeats of each pass")
+print(f"load average (1, 5, 15 min) before {[round(x, 1) for x in D['loadBefore']]}, after {[round(x, 1) for x in D['loadAfter']]}: a shared machine")
 """)
 
 md("""
@@ -70,32 +71,48 @@ One run's count is one draw. Here each kind of text gets 30 trials, each with ne
 hash and a new text. A candidate is a (position, form) pair whose filter matches where the form is not; its model is
 `N·E/p`. A hit position is a position with at least one; its model is `N·T/p`, `T` being the number of distinct filters
 in the table, which is below `E` because forms of one secret often share their first `k` units (the value and its
-JSON or shell form, the two base64 alphabets). `distinct windows` counts the different `k`-unit windows in the text,
-for the first three trials.
+JSON or shell form, the two base64 alphabets). `D` counts the different `k`-unit windows in the text, and a distinct hit window is one of
+them that hit; its model is `D·T/p`. If clumping is what spreads the pairs, the distinct hit windows are Poisson
+(`sd / sqrt(mean)` near 1) on every kind of text while the pairs are not.
 """)
 
 code("""
 tr = pd.DataFrame(D["trials"])
 N_pos = tr["positions"].iloc[0]
 g = tr.groupby("kind", sort=False)
+n = g.size()
 s = pd.DataFrame({
     "E": g["E"].mean(), "T": g["T"].mean(),
-    "pairs mean": g["falsePairs"].mean(), "pairs sd": g["falsePairs"].std(ddof=0),
+    "pairs mean": g["falsePairs"].mean(), "pairs sd": g["falsePairs"].std(ddof=1),
     "model N·E/p": g["E"].mean() * N_pos / D["P"],
-    "positions mean": g["hitPositions"].mean(), "model N·T/p": g["T"].mean() * N_pos / D["P"],
     "pairs max": g["falsePairs"].max(),
-    "distinct windows": g["distinctWindows"].mean(),
 })
-s["sd / sqrt(mean)"] = s["pairs sd"] / s["pairs mean"].pow(0.5)
+s["pairs se"] = s["pairs sd"] / n.pow(0.5)
+s["(mean - model) / se"] = (s["pairs mean"] - s["model N·E/p"]) / s["pairs se"]
+s["pairs sd / sqrt(mean)"] = s["pairs sd"] / s["pairs mean"].pow(0.5)
 print(s.round(2).to_string())
+print()
+tr["model D·T/p"] = tr["distinctWindows"] * tr["T"] / D["P"]
+w = pd.DataFrame({
+    "D mean": g["distinctWindows"].mean(), "D / N": g["distinctWindows"].mean() / N_pos,
+    "hit windows mean": g["distinctHitWindows"].mean(), "hit windows sd": g["distinctHitWindows"].std(ddof=1),
+    "model D·T/p": tr.groupby("kind", sort=False)["model D·T/p"].mean(),
+})
+w["hit windows se"] = w["hit windows sd"] / n.pow(0.5)
+w["(mean - model) / se"] = (w["hit windows mean"] - w["model D·T/p"]) / w["hit windows se"]
+w["hit windows sd / sqrt(mean)"] = w["hit windows sd"] / w["hit windows mean"].pow(0.5)
+print(w.round(3).to_string())
 """)
 
 md("""
-Random characters and base64 sit on the model, with a spread near Poisson's (`sd / sqrt(mean)` near 1). JSON and the
-log do not: their texts have far fewer distinct windows than positions (a quarter of them for JSON), so a filter that
-collides with a FREQUENT window hits once per occurrence. The count is then overdispersed: most trials low, a few large
-(see `pairs max`), and the mean of 30 heavy-tailed draws can sit below the model without the hash being non-uniform.
-The single run in section 1, on the log text, was one such draw. Two consequences for the build:
+The expectation does not move with the text: over the random key, `E[pairs] = N·E/p` by linearity, whatever the text
+repeats. What repetition changes is the VARIANCE. JSON and the log have far fewer distinct windows than positions (`D /
+N`), so a filter that collides with a frequent window hits once per occurrence, and the pair count is a sum of
+clumps: right-skewed, mostly low, now and then large (`pairs max`). A sample mean of 30 such draws sits below the
+expectation more often than above it, so a count a couple of standard errors low (`(mean - model) / se`) is what
+skew gives, not a non-uniform hash. The second table tests that reading: counted by distinct window, the hits sit on
+`D·T/p` with Poisson spread on all four texts. The single run in section 1, on the log text, was one such draw. Two
+consequences for the build:
 
 - **Memoise the confirm per distinct window within a crossing.** The same `L` units give the same confirm answer, so a
   clump of one repeated window costs one confirm, not one per occurrence. That bounds a crossing's confirms by the
@@ -142,21 +159,27 @@ print(pd.DataFrame(rows).round(2).to_string(index=False))
 md("""
 ## 4. One filter hit against the pass's spread
 
-A text that holds a stored 8-unit prefix pays one more confirm than a text that does not. One crossing's noise does not
-hide that: an observer who repeats a crossing `n` times shrinks the noise of the mean by `sqrt(n)`, so a fixed shift is
-seen once `n` reaches about `(2·sd / hit)²`. `sd` is estimated from the bitset pass's 15 repeats as `(p90 - p10) / 2.56`
-(a normal approximation), so it reflects how busy this machine was during the run. This measures only the worker's side: whether the
+A text that holds a stored 8-unit prefix pays one more confirm than a text that does not. Telling the two apart is a
+difference of two means: with `n` crossings of each, the difference's standard error is `sd·sqrt(2/n)`, so a shift of
+one hit is seen at `z` standard errors once `n` reaches `2·(z·sd / hit)²`; here `z = 2` (about 95% on one side). `sd`
+is estimated from the bitset pass's 15 repeats as `(p90 - p10) / 2.56` (a normal approximation), so it reflects how
+busy the machine was during each configuration's repeats; every configuration's spread is printed, the quiet ones
+with the noisy one. This measures only the worker's side: whether the
 difference survives to a PAGE through `forPage` (a runtime message, the page's own timer resolution, other work in the
 worker) is not measured here and needs an end-to-end run in the extension.
 """)
 
 code("""
-spread = c64["bitsP90Ms"] - c64["bitsP10Ms"]
-o = conf[["iterations", "medianMs"]].rename(columns={"medianMs": "one hit, ms"})
-o["pass spread p90-p10, ms"] = spread
-o["hit / spread"] = o["one hit, ms"] / spread
-o["crossings to see it at 2 sd"] = ((2 * spread / 2.56) / o["one hit, ms"]).pow(2).round(0)
-print(o.round(3).to_string(index=False))
+Z = 2.0
+rows = []
+for _, c in cfg.iterrows():
+    spread = c["bitsP90Ms"] - c["bitsP10Ms"]
+    sd = spread / 2.56
+    for _, k in conf.iterrows():
+        rows.append({"entries": c["entries"], "pass spread p90-p10, ms": spread, "sd, ms": sd, "iterations": k["iterations"],
+                     "one hit, ms": k["medianMs"], "hit / spread": k["medianMs"] / spread,
+                     "crossings of each, z=2": max(1, round(2 * (Z * sd / k["medianMs"]) ** 2))})
+print(pd.DataFrame(rows).round(3).to_string(index=False))
 """)
 
 md("""
@@ -167,10 +190,11 @@ md("""
   random text and base64, and on repetitive text (JSON, logs) the count is overdispersed, which the per-window memo
   bounds (section 1b).
 - **The filter pass is the cost, not the confirm.** The bitset pass costs a small multiple of the plaintext scrub over
-  the same MiB (section 2); the confirms add little at 20,000 iterations (section 3). A crossing at 64 entries stays under a tenth of a second a MiB on this machine.
-- **The timing oracle is real on the worker's side, whatever one crossing's noise.** In a single crossing one confirm
-  can sit inside the pass's spread (section 4, on this run), but a mean over repeated crossings separates it after the
-  number of repeats in the last column: about twenty at 20,000 iterations, a few thousand at 1,000, on this run. A slower confirm is the louder one. Whether a page can
+  the same MiB (section 2); the confirms add little at 20,000 iterations (section 3). A crossing at 64 entries costs about 65 to 100 ms a MiB on this run, the top at 20,000 iterations, on a loaded machine.
+- **The timing oracle is real on the worker's side.** On this run's shared, loaded machine one confirm sits inside a
+  single crossing's spread, and a difference of means over repeated crossings separates it after the number in
+  section 4's last column: from a handful to a few dozen crossings at 20,000 iterations, one to ten thousand at 1,000. That number scales with
+  `sd²`, so a quieter machine needs fewer; a slower confirm is the louder one. Whether a page can
   repeat crossings and time them through `forPage` precisely enough is the open measurement; until it is made, the
   spec's remedy (a fixed confirm schedule, or a floor on a page's crossing) should be assumed needed.
 - **Not measured here:** the confirm's resistance to guessing (that is the iteration count's job, and the spec's cost
