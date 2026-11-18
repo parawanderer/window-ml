@@ -6,10 +6,11 @@
 // LOOK like flags, the ten manifests left without `optionsFirst`, a stored copy of the old shape, and one call made
 // through ml.sh in an isolated world and in the read-only dialect.
 //
-// Section A also MEASURES the sibling gap the repair did not close: a lone `-` is a FILE NAME for macOS `head`, `tail`,
-// `wc` and `ls` (GNU head/tail/wc read stdin, ls names the file on both), and no manifest sets `dashIsPath` for them, so
-// `head f -` and `wc -` are described as reading `f` or nothing while the file named `-` is opened. That row is written
-// as the property and reds at c870f47b: it is a finding for the lane, not a passing check.
+// Section A also covers the sibling gap: a lone `-` is a FILE NAME for macOS `head`, `tail`, `wc` and `ls` (GNU
+// head/tail/wc read stdin, ls names the file on both), and at c870f47b no manifest set `dashIsPath` for them, so
+// `head f -` and `wc -` were described as reading `f` or nothing while the file named `-` was opened. The lane closed
+// it in the same PR (`84f6dd1a` added `dashIsPath: true` to the four), so the row PASSES at the merge head 0fd67ebd as
+// written; it stays as the property, and would red again if a manifest lost the key.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -17,6 +18,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { runOn } from "./isolated-harness.mjs";
 import { fakeNativeHost } from "./fake-native-host.mjs";
+import { surveyMayEnterPage } from "../src/sw/exec-routing.ts";
 
 const { describeCall } = await import("../src/shell/program-manifest.ts");
 const { planSpawn, shFacts, manifestFor, manifestsFor, SHIPPED_MANIFESTS } = await import("../src/shell/sh-call.ts");
@@ -146,8 +148,9 @@ test("the shapes the repair must NOT change: a flag before any operand, operands
 // path, and for head/tail/wc they disagree and only `unknown` is safe. `head f -` is the same defect as `cat f -n`: a
 // path the host never resolved, opened by the program that the card says reads `f` (or nothing).
 test("RED TEAM: a lone `-` is a FILE for head, tail, wc and ls on macOS, so it must be resolved or the call must ask", T, () => {
-    // MUTATION for the fix: `dashIsPath: true` on head/tail/wc/ls (or a refusal of a lone `-` for them) greens this row,
-    // because the host then resolves the file the program opens. cat keeps stdin: it is the row's control above.
+    // MUTATION: drop `dashIsPath` from head/tail/wc/ls and this row reds again, because the host then resolves no path for
+    // a lone `-`. It passes at 0fd67ebd, where the lane's `84f6dd1a` added the key to the four. cat keeps stdin: it is the
+    // row's control above.
     const stdin = new Set(["cat"]);
     for (const name of FIVE) {
         for (const argv of [[name, "f", "-"], [name, "-"], [name, "--", "-"]]) {
@@ -288,20 +291,28 @@ function answering(decision) {
     };
 }
 
-// MUTATION: `optionsFirst` dropped from cat.json reds the first row (no ask) and greens nothing; the lone-dash gap above
-// is why the pair below is worth having — the ask is the call's, and the same harness runs a described call free.
-test("RED TEAM: a flag after an operand reached through ml.sh asks, and nothing starts until the person answers", T, async () => {
-    const host = fakeNativeHost();
-    const ask = answering(null);
-    const { results } = await runOn("userScripts", [runs(["cat", "f", "-n"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep });
-    assert.ok(ask.asked.length >= 1, `no nested ask for a flag after an operand: ${JSON.stringify(results?.[0] ?? null).slice(0, 300)}`);
-    assert.ok(!host.names().includes("start"), "the call started before the person answered");
+// MUTATION: `optionsFirst` dropped from cat.json reds the rows below (the flag is described and the call runs free). The
+// pair is worth having because a person's answer — given or declined — is the only thing between the facts and the start,
+// and the same harness runs a described call with neither.
+test("RED TEAM: a flag after an operand reached through ml.sh asks, and nothing starts before the person answers", T, async () => {
+    const host = fakeNativeHost({ done: () => ({ out: "out\n", err: "", code: 0 }) });
+    const asked = [];
+    let startsAtAsk = -1;
+    const onStep = async (bg, ev) => {
+        for (const a of ev.asks ?? []) {
+            if (a.state !== "pending" || asked.some((x) => x.id === a.id)) continue;
+            asked.push(a);
+            startsAtAsk = host.names().filter((n) => n === "start").length;
+            void bg.send({ type: "SET_APPROVAL", payload: { runId: ev.id, seq: ev.seq, ask: a.id, decision: true } });
+        }
+    };
+    const { results } = await runOn("userScripts", [runs(["cat", "f", "-n"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep });
+    assert.ok(asked.length >= 1, `no nested ask for a flag after an operand: ${JSON.stringify(results?.[0] ?? null).slice(0, 300)}`);
+    assert.equal(startsAtAsk, 0, "the call started before the person answered");
     const spawn = host.calls.find((c) => c.call === "spawn");
     assert.ok(spawn, "the host was asked for the facts, so the card has them");
     assert.deepEqual(spawn.args.argv, ["cat", "f", "-n"], "the facts are for the call as written");
-    // The ask this row measured is still pending: its timer would outlive the test by minutes.
-    await ask.settle();
-    assert.ok(!host.names().includes("start"), "a denied call started after the row had measured it");
+    assert.ok(host.names().includes("start"), "the approved call never started");
 });
 
 test("RED TEAM: declined, the post-operand call never starts and the script is told why", T, async () => {
@@ -322,11 +333,17 @@ test("the control: the same harness runs a described call with no card and a sta
     assert.ok(host.names().includes("start"), "the described call never started");
 });
 
-test("RED TEAM: a read-only dialect script that names ml.sh never runs it in the page's own world", T, async () => {
-    // The survey is auto-approved and never prompts; a script naming ml.sh must therefore leave it, and with no isolated
-    // world available the call is refused rather than run beside the page.
+test("RED TEAM: a read-only dialect script that names ml.sh sends the call to the worker's host, and a post-operand flag in it never starts unasked", T, async () => {
+    // The survey runs the script in the WORKER (sw-survey-sh.ts), so a script naming ml.sh must never be handed to the
+    // page's world — and the call it makes is judged by the real sh gate, so a flag after an operand still owes a card.
     const host = fakeNativeHost();
-    const { results } = await runOn("readonly", [runs(["cat", "f", "-n"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON });
-    assert.match(String(results[0] ?? ""), /isolated world/, `the survey ran it anyway: ${String(results[0] ?? "").slice(0, 300)}`);
-    assert.ok(!host.names().includes("spawn") && !host.names().includes("start"), `the host was asked to run a survey script's call: ${JSON.stringify(host.names())}`);
+    const ask = answering(false);
+    const { results } = await runOn("readonly", [runs(["cat", "f", "-n"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep });
+    assert.equal(surveyMayEnterPage(`return (await ml.sh.run(["cat", "f", "-n"]))`), false, "the survey would have been handed to the page's world");
+    assert.ok(host.names().includes("spawn"), `the survey's call never reached the worker's host: ${JSON.stringify(host.names())}`);
+    assert.equal(ask.asked.length, 1, `exactly one card for the survey's call: ${JSON.stringify(results?.[0] ?? null).slice(0, 300)}`);
+    assert.equal(JSON.stringify(ask.asked[0].facts.argv), JSON.stringify(["cat", "f", "-n"]), "the card is not for the call as written");
+    assert.ok(!host.names().includes("start"), "a declined call started");
+    // The script is told, rather than the survey swallowing the reason: its own catch sees the gate's refusal.
+    assert.match(String(results[0] ?? ""), /"code":"Denied"/, `the script was told nothing: ${JSON.stringify(results?.[0] ?? null).slice(0, 300)}`);
 });
