@@ -41,7 +41,7 @@ test("a waiting ask is a card under its step that shows the call's facts, never 
     await w.dispatch(running("ask1", [ask()]));
     await open(w);
     const card = w.shadow.querySelector(".astep-approve.ask");
-    assert.ok(card, "the ask's card rendered, with the step collapsed");
+    assert.ok(card, "the ask's card rendered");
     const text = card.textContent;
     assert.match(text, /wants to start a program/);
     assert.match(text, /git --no-pager status/);
@@ -51,7 +51,11 @@ test("a waiting ask is a card under its step that shows the call's facts, never 
     assert.ok(warned.includes("Sandbox"), "an unsandboxed call is flagged");
     assert.ok(warned.includes("Does"), "unknown effects are flagged");
     assert.equal(card.querySelector(".appr-btn.remember"), null, "an ask has no Keep: widening is a policy, never a button");
-    assert.match(w.shadow.querySelector(".astep-preview")?.textContent || "", /needs approval/, "the collapsed step says it is waiting");
+    // The code the command came from stays open above the card, in the panel as in the reading view: the card names one call,
+    // and the script is the context for which. (It used to stay shut, the step saying "needs approval" in its row.)
+    const step = w.shadow.querySelector(".astep.tool");
+    assert.ok(step.classList.contains("open"), "the step is open while one of its commands waits");
+    assert.match(step.querySelector(".astep-body")?.textContent || "", /SCRIPT-TEXT/, "and its code is there to read");
 });
 
 test("Approve on an ask posts its id beside the step's seq, and the card goes at once", async () => {
