@@ -366,7 +366,7 @@ calls, each surfaced to Shane:
 reason is the accident: a token pasted with the text around it, a selection that held one, an attached file with a
 key in it. This lifts the known limit "the person's own turn and the page context the run is started with" of "The
 scrub as built" once it is built. The calls below are the coordinator's (plan PR
-[#1966](https://github.com/parawanderer/window-ml/pull/1966)), each surfaced to Shane and his to override; the ones
+[#1966](https://github.com/parawanderer/window-ml/pull/1966)), each surfaced to Shane and theirs to override; the ones
 marked "recommended" are this spec's, still open.
 
 **Two detectors.**
@@ -397,25 +397,41 @@ model reads it, so what is stored is what the model saw. That point is, today:
   the same scrub for a page-started run's task.
 
 A turn the person started shows names; a page-started string gets the bare `[REDACTED]` of #1948, in every role,
-since the page reads the reply. An image is not scrubbed (the known limit of "The scrub as built").
+since the page reads the reply. An image is not scrubbed (the known limit of "The scrub as built"). A page-started
+string now crosses the shape detector and, under ruling 32, the `mask` confirm, so the timing-oracle remedy of "A
+secret the model never uses is stored hash-only" is required on this crossing as on the others.
+
+**An attachment at rest, and `/files`.** What is scrubbed at rest is the extracted text `sw-attach.ts` writes to the
+value store. The file's bytes under `/files` (the `/files` section of `FILE_ATTACHMENTS.md`) are not altered: that
+copy is the person's file as attached, and a read of it through the mount is a different crossing, with that
+section's same-length filler.
+
+**Sessions stored before this.** A session stored before this lands holds the person's turns unscrubbed. Such a turn
+is scrubbed when it crosses to the model on a resume (`forModelHistory`), with every exemption absent, and is not
+rewritten at rest; re-scrubbing stored sessions is the later slice "The scrub as built" names.
 
 **What the model reads.** The placeholder in place, and one line after the turn in the wording tool results use
 (`redactedNote`), with names or kinds and a count, so the model does not think the person typed a placeholder.
 
-**What the person sees.** In the composer, a chip on each detected span, naming the entry or the kind, with "send as
-is" for that one value. A detection never blocks a send. The composer asks the worker over an extension-only message
-(the shape of `SECRET_REGISTRY`), debounced, and gets spans and names back, never a value: the text is the composer's
-own. After a send, the transcript shows the placeholder the model saw and that the scrub fired, beside the raw view
-the "what the model saw" rule asks for. Recommended: in the first build the chip is in the composers the extension
-hosts (the sidebar and the chat page in the extension); a remote host of the renderer (the web build, the phone)
-gets the scrub at the runtime and the transcript's marker, and the chip there waits until the scan answer can ride
-the hub.
+**What the person sees.** In the composer, a chip on each detected span, naming the entry or the kind, with "send as is"
+for that one value. A detection never blocks a send. The composer asks the worker over an extension-only message (the
+shape of `SECRET_REGISTRY`), debounced, and gets spans and names back, never a value: the text is the composer's own. An
+attachment with detections shows a count on its chip, with "send as is" for the whole file and, in the chip's detail,
+for each value; a value the person takes is kept in the stored text and recorded as the other exemptions are (below).
+After a send, the transcript shows the placeholder the model saw and that the scrub fired, beside the raw view the "what
+the model saw" rule asks for. Recommended: in the first build the chip is in the composers the extension hosts (the
+sidebar and the chat page in the extension); a remote host of the renderer (the web build, the phone) gets the scrub at
+the runtime and the transcript's marker, and the chip there waits until the scan answer can ride the hub.
 
 **The flag, three levels.**
 
-- **Per value**: "send as is" on a chip. The value reaches the model and the store, and the stored turn records the
-  span as sent as is, so a later crossing of that turn (a resumed history, `forModelHistory`) leaves that span and
-  no other. Every other crossing still scrubs the value: a tool result that echoes it is redacted as before.
+- **Per value**: "send as is" on a chip. The send carries, for that turn, a digest of each exempt span's content,
+  never an offset, since the draft can change between the scan and the send. The worker runs detection again at the
+  send and exempts a detected span only if its content matches a digest the turn carries. The exemption is accepted
+  only from an extension-page sender; a page-started call cannot carry one. The value reaches the model and the
+  store, and the stored turn keeps the digests, so a later crossing of that turn (a resumed history,
+  `forModelHistory`) leaves those spans and no other. Every other crossing still scrubs the value: a tool result that
+  echoes it is redacted as before.
 - **Per call**: an option, `scrubInput: false`, on the calls that start or extend a run (`ml.agent`, `ml.step`,
   `createAgent`, `say`).
 - **One setting**, `scrubPersonInput`, on by default, in the DevTools Settings panel. It is the person's: never
@@ -438,7 +454,13 @@ does; Shane's line that a default-held value must never reach the model without 
   no store; ruling 33's inbox item already shows while the registry is empty. A store that cannot be READ is not an
   empty one: the turn is held in the composer with the reason and a retry, and "send as is" for the whole turn is
   the person's override. That holds a send rather than blocking it; it is marked here for Shane, since the ruling
-  says a send is never blocked and #1948 fails every other crossing closed.
+  says a send is never blocked and #1948 fails every other crossing closed (the coordinator's recommendation: hold,
+  fail closed). A caller with no composer (`ml.agent` from the console, a script's `say`, a steer from the inbox) is
+  rejected with an error that says the secret store could not be read and names `scrubInput: false`, which only an
+  extension-page caller can use to send anyway: from a page the option is shape-only, so a page-started call is
+  rejected until the store can be read. A remote host (the web build, the phone) gets the same rejection from the
+  runtime and shows it with a retry. In the first build a remote person has no per-value override; the only override
+  is the runtime's `scrubPersonInput` setting, changed on the computer.
 - **Shared with the host's `looks_secret`, or separate?** Recommended: separate. `looks_secret`
   (`src/facts.rs` in window-ml-host) classifies a PATH by its components (`.env`, `id_*`, `*.pem`, `.ssh/`); the
   shape list classifies TEXT. One list would hold two kinds of rule. The shape list is shared within the extension
@@ -453,7 +475,14 @@ does; Shane's line that a default-held value must never reach the model without 
 - Each shape matches its fixture and does not match its prefix in prose, a commit hash, a UUID or plain base64.
 - "Send as is" sends that span only; a second value in the same turn is still redacted, and a resumed history keeps
   the exempt span and scrubs the rest.
+- "Send as is" exempts the span whose content matches the turn's digest; a draft edited after the scan so that the
+  digest no longer matches gets the span redacted. A page-started call that passes an exemption gets the value
+  redacted (e3's row).
 - `scrubInput: false` from the person's call sends the turn as is; from a page it leaves the registered value
   redacted (e3's row).
+- An attachment holding a registered value is redacted in the value store's text and left as attached under
+  `/files`; "send as is" on its chip keeps the value in the stored text.
+- The upgrade: a fixture session written by the old code, with a registered value in a person's turn, is resumed,
+  and the model's history holds the placeholder while the stored session is unchanged.
 - No page, content script or model tool can send the scan message, change `scrubPersonInput` or learn a name (e3's
   rows), and a janitor reads the build.
