@@ -26,7 +26,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { stalenessReport } from "./check-dist-fresh.mjs";
 import { acquire } from "./test-slot.mjs";
 import { watchRunner } from "./watch-runner.mjs";
-import { buildBaseline, finishRun, readHistory } from "./test-times.mjs";
+import { baselineCount, baselineRefusal, buildBaseline, finishRun, readBaseline, readHistory } from "./test-times.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -288,6 +288,8 @@ function orderSlowestFirst(files) {
 if (args.includes("--timings-baseline")) {
     const { tests, count } = buildBaseline(readHistory());
     const out = path.join(ROOT, "tests", "test-times-baseline.json");
+    const refused = baselineRefusal(count, baselineCount(readBaseline(out)), args.includes("--force"));
+    if (refused) { console.error(`test-times: not written: ${refused}`); process.exit(1); }
     writeFileSync(out, JSON.stringify({ about: "p90 in ms of each test at or above 500 ms, from one machine's test history; refresh: node scripts/test.mjs --timings-baseline", tests }, null, 2) + "\n");
     console.log(`test-times: ${count} test(s) written to ${path.relative(ROOT, out)}`);
     process.exit(0);

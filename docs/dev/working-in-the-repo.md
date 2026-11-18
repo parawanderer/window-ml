@@ -334,7 +334,8 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
   newest 30 per test, compacted past 3 MB, never written in CI unless `TEST_TIMES_HISTORY=1`, never a reason to fail when
   the folder is unwritable. With under 5 local records (a fresh machine) check (b) uses the committed
   `tests/test-times-baseline.json` (p90 of every test of 500 ms and up, committed so a clone has a yardstick on day one);
-  refresh it with `node scripts/test.mjs --timings-baseline` after a few full runs.
+  refresh it with `node scripts/test.mjs --timings-baseline` after a few full runs. It refuses (exit 1) a rebuild that is
+  empty or under half the committed one, from a machine whose history is too thin; `--force` writes it anyway.
 - **Tests: `npm test`** (Node ≥ 20, `node:test`). `tests/helpers.js` loads the
   real extension files into `node:vm` sandboxes with mocked `chrome`/`fetch`/
   `window`, so tests exercise the shipped code with no build step. Add a

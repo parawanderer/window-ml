@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import {
-    LIMITS, appendHistory, buildBaseline, checkDisproportionate, checkOutlives, checkSlowerThanHistory, compactHistory,
+    LIMITS, appendHistory, baselineCount, baselineRefusal, buildBaseline, checkDisproportionate, checkOutlives, checkSlowerThanHistory, compactHistory,
     finishRun, formatBlock, historyDir, historyRecords, indexHistory, parseRun, percentile, readHistory, warningsFor,
 } from "../scripts/test-times.mjs";
 
@@ -172,6 +172,24 @@ test("baseline: p90 rounded to 100 ms, only tests of 500 ms and up", () => {
     const { tests, count } = buildBaseline(recs);
     assert.equal(count, 1);
     assert.deepEqual(tests, { f: { slow: Math.round(percentile([100, 200, 300, 400, 1000], 0.9) / 100) * 100 } });
+});
+test("baseline: a rebuild that is empty or under half the committed one is refused, unless forced", () => {
+    // A machine with no history once replaced the committed baseline with {"tests": {}} and exited 0.
+    assert.match(baselineRefusal(0, 519), /no test at or above 500 ms.*519 tests\) is kept/);
+    assert.match(baselineRefusal(259, 519), /259 tests, under half the committed one's 519/);
+    assert.equal(baselineRefusal(260, 519), null);
+    assert.equal(baselineRefusal(0, 519, true), null);
+    assert.equal(baselineRefusal(5, 0), null);                                         // nothing committed yet
+    assert.equal(baselineCount({ a: { x: 1, y: 2 }, b: { z: 3 } }), 3);
+});
+test("baseline: --timings-baseline exits 1 and leaves the committed file alone when the history is empty", () => {
+    const d = tmp();
+    const file = path.join(ROOT, "tests", "test-times-baseline.json"), before = readFileSync(file, "utf8");
+    const r = spawnSync(process.execPath, [path.join(ROOT, "scripts", "test.mjs"), "--timings-baseline"], { encoding: "utf8", env: { ...process.env, TEST_TIMES_DIR: d } });
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stderr, /committed baseline \(\d+ tests\) is kept/);
+    assert.equal(readFileSync(file, "utf8"), before);
+    rmSync(d, { recursive: true, force: true });
 });
 
 // --- the block ---

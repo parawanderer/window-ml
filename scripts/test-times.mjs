@@ -264,6 +264,22 @@ export function readBaseline(file) {
     try { return JSON.parse(readFileSync(file, "utf8")).tests ?? {}; } catch { return {}; }
 }
 
+/** How many tests a baseline lists. */
+export const baselineCount = (tests) => Object.values(tests).reduce((n, byName) => n + Object.keys(byName).length, 0);
+
+/**
+ * Why a rebuilt baseline must not replace the committed one, or null when it may: it is empty (a machine with no
+ * history), or under half the committed one's tests (a thin history, not a suite that shrank). `force` writes anyway.
+ * @param {number} built tests in the rebuilt baseline
+ * @param {number} committed tests in the committed baseline
+ */
+export function baselineRefusal(built, committed, force = false) {
+    if (force) return null;
+    if (built === 0) return `the history here has no test at or above ${LIMITS.baselineMinMs} ms; the committed baseline (${committed} tests) is kept`;
+    if (built < committed / 2) return `the rebuilt baseline lists ${built} tests, under half the committed one's ${committed}: this machine's history is too thin to replace it (--force writes it anyway)`;
+    return null;
+}
+
 /**
  * Build the committed baseline from the history: per test at or above `baselineMinMs`, the p90 rounded to 100 ms.
  * @returns {{tests: Record<string, Record<string, number>>, count: number}}

@@ -18,7 +18,7 @@ npm test               # everything. Before you commit.
 node scripts/test.mjs --list      # what each genre holds
 node scripts/test.mjs --timings   # per-file durations, slowest first. SERIAL: the total is a sum, not a wall clock
 node scripts/test.mjs panel ext   # more than one
-node scripts/test.mjs --timings-baseline   # refresh tests/test-times-baseline.json from this machine's history
+node scripts/test.mjs --timings-baseline   # refresh tests/test-times-baseline.json from this machine's history (refuses a thin one; --force)
 ```
 
 **Read the end of the output.** A block starting `test timings — warnings for whoever ran this` means a test file outlived its
