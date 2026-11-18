@@ -20,6 +20,18 @@ class FakeWorker {
     get flag() { return this.posts.find((p) => p.interruptBuffer)?.interruptBuffer; }
 }
 globalThis.Worker = FakeWorker;
+// The package mirror a candidate reads its wheels from, and a hold on the digest that read re-checks: a row ends the
+// candidate while that read is pending, the only place a Stop or the deadline can land between two cells.
+import { IDBFactory } from "fake-indexeddb";
+globalThis.indexedDB = new IDBFactory();
+const realDigest = crypto.subtle.digest.bind(crypto.subtle);
+let digestHold = null;   // a promise the mirror's digest waits on, while a row holds it
+let digestWaiting = 0;
+crypto.subtle.digest = (alg, data) => {
+    if (!digestHold) return realDigest(alg, data);
+    digestWaiting++;
+    return digestHold.then(() => realDigest(alg, data));
+};
 // The idle reap arms a clock of minutes on every idle worker; a live timer would hold this process open.
 // The candidate's 60 s deadline is kept here, so a row fires it instead of waiting for it.
 const realSetTimeout = globalThis.setTimeout;
@@ -183,5 +195,72 @@ for (const [name, end, reason] of [["the deadline", (c) => c.deadline(), "instal
         assert.deepEqual([r.ok, r.died, r.error], [false, true, `Python worker stopped (${reason}).`]);
         assert.equal(workers.length, before, "no worker was spawned for the import");
         assert.equal(c.w.terminated, true);
+    });
+}
+
+// --- an end that lands while the candidate reads its wheels from the mirror (between two cells) ---
+
+const WHEEL = new TextEncoder().encode("a wheel's bytes");
+const WHEEL_SHA = [...new Uint8Array(await realDigest("SHA-256", WHEEL))].map((b) => b.toString(16).padStart(2, "0")).join("");
+const WHEEL_REF = { filename: "pkg-1.0-py3-none-any.whl", sha256: WHEEL_SHA };
+await new Promise((res, rej) => {
+    const req = indexedDB.open("ml-pkg-mirror", 1);
+    req.onupgradeneeded = () => { req.result.createObjectStore("wheels", { keyPath: "sha256" }); };
+    req.onsuccess = () => {
+        const tx = req.result.transaction("wheels", "readwrite");
+        tx.objectStore("wheels").put({ sha256: WHEEL_SHA, name: "pkg", version: "1.0", filename: WHEEL_REF.filename, size: WHEEL.length, bytes: new Blob([WHEEL]), stored: 0 });
+        tx.oncomplete = () => { req.result.close(); res(); };
+        tx.onerror = () => rej(tx.error);
+    };
+    req.onerror = () => rej(req.error);
+});
+/** Hold the mirror's digest; resolves once a read is waiting on it, with the function that lets it go. */
+async function holdMirrorRead() {
+    let release;
+    digestHold = new Promise((r) => { release = r; });
+    const before = digestWaiting;
+    for (let i = 0; i < 200 && digestWaiting === before; i++) await tick();
+    assert.ok(digestWaiting > before, "the control: the candidate is reading a wheel from the mirror");
+    return () => { digestHold = null; release(); };
+}
+/** Every cell posted to any worker, counted, so a row can tell that none was posted after the end. */
+const allCells = () => workers.reduce((n, w) => n + cellPosts(w).length, 0);
+
+for (const [name, end, reason] of [["the deadline", (fire) => fire(), "install-deadline"], ["Stop", (_fire, run) => send({ type: "PY_INSTALL_STOP", run }), "stopped"]]) {
+    test(`${name} while the candidate reads its wheels before the scan: no scan cell is posted and no worker is spawned after it`, async () => {
+        const run = `end-read-scan-${reason}`;
+        const deadlinesBefore = deadlines.length;
+        const holding = holdMirrorRead();
+        const answer = send({ type: "PY_INSTALL_TEST", run, wheels: [WHEEL_REF], modules: ["pkg"] });
+        const release = await holding;
+        await end(deadlines[deadlinesBefore], run);
+        const spawned = workers.length, cells = allCells();
+        release();
+        const r = await Promise.race([answer, new Promise((res) => setTimeout(() => res("hung"), 300))]);
+        assert.equal(workers.length, spawned, "no worker was spawned after the end");
+        assert.equal(allCells(), cells, "no cell was posted after the end");
+        assert.notEqual(r, "hung", "the install answered");
+        assert.deepEqual([r.ok, r.died, r.error], [false, true, `Python worker stopped (${reason}).`]);
+    });
+
+    test(`${name} while a failed scan's fresh worker reads the wheels again: no import cell is posted and no worker is spawned after it`, async () => {
+        const run = `end-read-import-${reason}`;
+        const before = workers.length;
+        const deadlinesBefore = deadlines.length;
+        const answer = send({ type: "PY_INSTALL_TEST", run, wheels: [WHEEL_REF], modules: ["pkg"] });
+        for (let i = 0; i < 200 && !(workers.length > before && cellPosts(workers.at(-1)).length); i++) await tick();
+        const w = workers.at(-1);
+        assert.equal(cellPosts(w).length, 1, "the control: the candidate's worker holds the scan cell");
+        const holding = holdMirrorRead();
+        w.reply({ id: cellPosts(w).at(-1).id, stdout: "", ok: false, error: "the scan failed" });
+        const release = await holding;
+        await end(deadlines[deadlinesBefore], run);
+        const spawned = workers.length, cells = allCells();
+        release();
+        const r = await Promise.race([answer, new Promise((res) => setTimeout(() => res("hung"), 300))]);
+        assert.equal(workers.length, spawned, "no worker was spawned after the end");
+        assert.equal(allCells(), cells, "no import cell was posted after the end");
+        assert.notEqual(r, "hung", "the install answered");
+        assert.deepEqual([r.ok, r.died, r.error], [false, true, `Python worker stopped (${reason}).`]);
     });
 }

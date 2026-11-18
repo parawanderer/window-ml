@@ -488,7 +488,16 @@ async function installTest(run: string, refs: WheelRef[], modules: string[], sco
     const deadline = setTimeout(() => endCandidate(principal, "install-deadline"), PY_INSTALL_DEADLINE_MS);
     try {
         const cell = (code: string, wheels: WheelBytes[]) => runInWorker(code, null, true, null, false, undefined, false, true, undefined, undefined, [], principal, undefined, false, undefined, false, undefined, undefined, wheels) as Promise<PyResult & { installFailed?: boolean }>;
+        // The deadline and Stop end the whole candidate. Each lands between two awaits, and the next cell would spawn a fresh
+        // worker and run there with no timer of its own (unbounded past the deadline), so every await before a cell is
+        // followed by this check.
+        const ended = (scan?: ScanResult | null): InstallTest | null => {
+            const why = candidateEnds.get(principal);
+            return why ? { ok: false, error: `Python worker stopped (${why}).`, died: true, ...(scan !== undefined ? { scan } : {}) } : null;
+        };
         const got = await wheelsForCell(ensureWorker(principal, true), refs);
+        const endedInRead = ended();
+        if (endedInRead) return endedInRead;
         if ("error" in got) return { ok: false, error: got.error };
         // The scan reads before any of the packages' code runs, and is a note whatever it answers (item 7): a scan that
         // fails leaves the import test to decide, in a fresh worker. A source that kills Pyodide gets no answer at all (the
@@ -499,11 +508,11 @@ async function installTest(run: string, refs: WheelRef[], modules: string[], sco
         // A scan that failed may have left its interpreter unusable (a fatal error answered, the worker living on to answer
         // "already fatally failed"): the import gets a fresh worker, never that one.
         if (!s.ok) dropCandidate(principal);
-        // The deadline and Stop end the whole candidate: reached in the scan, the import never starts in a fresh worker
-        // (its cell has no timer of its own, so it would run past the deadline unbounded).
-        const ended = candidateEnds.get(principal);
-        if (ended) return { ok: false, error: `Python worker stopped (${ended}).`, died: true, scan };
+        const endedInScan = ended(scan);
+        if (endedInScan) return endedInScan;
         const again = await wheelsForCell(ensureWorker(principal, true), refs);
+        const endedInReread = ended(scan);
+        if (endedInReread) return endedInReread;
         if ("error" in again) return { ok: false, error: again.error, scan };
         const r = await cell(importTestCode(modules), again);
         if (r.ok) {

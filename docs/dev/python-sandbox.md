@@ -694,7 +694,8 @@ readonly cells can import it, and nothing else can.
   attributes passes the recursion limit) is unparsed and skipped; from about 2,000 the parser overflows the JS stack
   and kills the interpreter, and the cell never answers (the fatal error escapes it), so the candidate's deadline ends
   the install as `died`. A scan that fails leaves the import test to decide, in a fresh worker, and the run log says
-  `detail.scanLost`. The deadline and Stop end the whole candidate, so neither lets the import start after the scan.
+  `detail.scanLost`. The deadline and Stop end the whole candidate: the end is checked after every await before a cell
+  (each mirror read, the scan), so no later cell starts in a fresh worker, where it would have no timer of its own.
 - **The run's own worker gets the wheels at its next cell.** Every readonly cell of the run carries the record; the
   offscreen document reads the wheels that worker lacks from the mirror (re-hashed) and the worker unpacks them after
   its lockdown, before the cell (`installWheels`). The namespace is kept. A respawned or reaped worker gets them the
