@@ -334,23 +334,29 @@ test("RED TEAM: an existing file asks the person, and no allow policy commits ov
 
 test("RED TEAM: a hand-posted `put` is refused by its OWN arity of exactly two, and `run` keeps its two-argument bound", T, async () => {
     const host = putHost();
-    // The script names ml.sh, so the call HAS a channel, and the hand-posted calls beside it prove it was live.
+    // The script names ml.sh, so the call HAS a channel, and the hand-posted calls beside it prove it was live. The
+    // posts come FIRST: the worker's read-only survey refuses at `chrome` before any program starts, so the script still
+    // falls through to the isolated world it asked for. A script that had STARTED a program would be stopped there
+    // instead and never re-run (`sw-survey-sh.ts` `stoppedAfterCalls`), and these posts would never run at all.
     const script = ({ ptr }) => `(async () => {
-        const own = await ml.sh.run(["ls"]);
         const post = (call, args) => chrome.runtime.sendMessage({ type: "ISO_EXEC_ASK", nonce: globalThis.__mlIsoStarted, req: { op: "sh", call, args } });
         const two = await post("put", [${JSON.stringify(ptr)}, "inbox/report.pdf"]);
         const one = await post("put", [${JSON.stringify(ptr)}]);
         const three = await post("put", [${JSON.stringify(ptr)}, "inbox/report.pdf", "extra"]);
         const run3 = await post("run", [["ls"], {}, "extra"]);
+        const own = await ml.sh.run(["ls"]);
         return JSON.stringify({ own: own?.ok, two, one, three, run3 });
     })()`;
     const { results } = await runPut({ host, script });
     const a = answer(results[0]);
     assert.equal(a.own, true, `positive control: the run's own ml.sh call did not work: ${results[0]?.slice(0, 300)}`);
     assert.ok(!a.two?.error, `positive control: the two-argument put was refused, so the arity rows below prove nothing about arity: ${JSON.stringify(a.two)}`);
-    assert.ok(a.one?.error, `a one-argument put was answered instead of refused: ${JSON.stringify(a.one)}`);
-    assert.ok(a.three?.error, `a three-argument put was answered instead of refused: ${JSON.stringify(a.three)}`);
-    assert.ok(a.run3?.error, `run accepted a third argument: ${JSON.stringify(a.run3)}`);
+    // WHICH layer refused it: the channel's own arity sentence, not a gate further down that a one-argument call would
+    // also have failed (measured: with the put arity check loosened, a bare "was it refused" stayed green on the gate).
+    const { ISO_REFUSED } = await import("../src/sw/iso-channel.ts");
+    for (const [shape, got] of [["one", a.one], ["three", a.three], ["run3", a.run3]]) {
+        assert.equal(got?.error, ISO_REFUSED.malformed, `the ${shape}-argument shape was not refused by the channel's arity: ${JSON.stringify(got)}`);
+    }
     // Exactly one well-formed put reached the host: neither malformed shape was forwarded.
     assert.equal(puts(host).length, 1, `the host saw ${puts(host).length} put call(s), not the one well-formed one`);
 });
