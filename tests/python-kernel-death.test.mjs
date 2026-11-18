@@ -7,25 +7,25 @@ import { test, before } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import fs from "node:fs";
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const skip = fs.existsSync(path.join(ROOT, "dist", "pyodide", "pyodide.mjs")) ? false : "no dist/pyodide — run `npm run fetch-pyodide` to enable";
 
-let measured = null;
-/** The driver's one JSON line: each cell's answer, in order. */
-function measure() {
-    if (measured) return measured;
-    const r = spawnSync(process.execPath, ["--import", "tsx", path.join(ROOT, "tests/fixtures/kernel-death-driver.mjs")], { cwd: ROOT, encoding: "utf8", timeout: 170_000 });
-    // Pyodide prints the fatal error's traceback to stdout too, so the driver's line is found by its marker.
-    const line = r.stdout.split("\n").find((l) => l.startsWith("KERNEL-DEATH-DRIVER "));
-    assert.ok(line, `the driver printed no result (exit ${r.status}): ${r.stderr.slice(-600)}`);
-    measured = JSON.parse(line.slice("KERNEL-DEATH-DRIVER ".length));
-    return measured;
+let measured = null, cause = null;
+/** The driver's one JSON line for `scenario` (the default, or "cause"): each cell's answer, in order. */
+function drive(scenario) {
+    return new Promise((resolve) => execFile(process.execPath, ["--import", "tsx", path.join(ROOT, "tests/fixtures/kernel-death-driver.mjs")], { cwd: ROOT, encoding: "utf8", timeout: 170_000, maxBuffer: 64 << 20, env: { ...process.env, KD_SCENARIO: scenario } }, (err, stdout, stderr) => {
+        // Pyodide prints the fatal error's traceback to stdout too, so the driver's line is found by its marker.
+        const line = String(stdout).split("\n").find((l) => l.startsWith("KERNEL-DEATH-DRIVER "));
+        assert.ok(line, `the driver (${scenario}) printed no result (${err?.message ?? "exit 0"}): ${String(stderr).slice(-600)}`);
+        resolve(JSON.parse(line.slice("KERNEL-DEATH-DRIVER ".length)));
+    }));
 }
 
-// The one child process boots Pyodide for every row below: measured once, before them, so no row carries the boot.
-before(() => { if (!skip) measure(); }, { timeout: 180000 });
+// The child processes boot Pyodide for every row below, side by side, before them: no row carries a boot.
+before(async () => { if (!skip) [measured, cause] = await Promise.all([drive("default"), drive("cause")]); }, { timeout: 180000 });
+const measure = () => measured;
 
 // --- what kills the kernel, and what does not ---
 
@@ -49,4 +49,12 @@ test("every cell after the kernel's death is answered with it at once, never que
     assert.notEqual(m.later, "no answer", "the later cell answered");
     assert.deepEqual([m.later.ok, m.later.fatal], [false, true], JSON.stringify(m.later));
     assert.ok(m.laterMs < 1000, `answered in ${m.laterMs} ms`);
+});
+
+// --- whose text the cause is ---
+
+test("the cause is what Pyodide's fatal-error handler caught, never a rejection or an answer the cell chose", { skip, timeout: 180000 }, () => {
+    assert.equal(cause.control.ok, true, `the control: the full worker runs a cell (${JSON.stringify(cause.control)})`);
+    assert.deepEqual([cause.killed.ok, cause.killed.fatal, cause.killed.error], [false, true, "THE-HANDLER-CAUGHT-THIS"], JSON.stringify(cause.killed));
+    assert.deepEqual([cause.later.fatal, cause.later.error], [true, "THE-HANDLER-CAUGHT-THIS"], JSON.stringify(cause.later));
 });

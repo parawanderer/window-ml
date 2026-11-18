@@ -157,9 +157,16 @@ const wireByClient = new Map<string, { post: (m: unknown) => void; runMsgId: num
 /** The kill's error when it lands during the cancel's spend (the worker's `spending` mark). */
 export const SPEND_KILLED = `A task this cell left kept running after it was cancelled and would not stop (most likely inside a C function), so the Python sandbox was terminated after ${PY_TIMEOUT_MS / 1000}s and the cell's result is refused.`;
 
+/** A fatal error's text as one line of at most 300 characters: its last non-empty line, the exception a traceback ends
+ * with. Both deaths measured answer one line; the text a Pyodide without the `on_fatal` hook falls back to is the cell's
+ * own answer, whose length, and whose source lines in a traceback, the cell decides. */
+export function boundCause(text: string): string {
+    return (text.split("\n").filter((l) => l.trim()).at(-1) ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
+}
+
 /** The error a cell gets when it killed the interpreter (ruling 26): the cause, and that the run's Python state is gone. */
 export function kernelDied(cause: string): string {
-    return `The Python interpreter crashed (${cause.trim() || "a fatal Pyodide error"}) and was restarted for the next cell; the same code crashes it again. Everything defined before in this run's Python (its variables, functions and imports) is gone: the next cell starts empty and must define or import again what it needs.`;
+    return `The Python interpreter crashed (${boundCause(cause) || "a fatal Pyodide error"}) and was restarted for the next cell; the same code crashes it again. Everything defined before in this run's Python (its variables, functions and imports) is gone: the next cell starts empty and must define or import again what it needs.`;
 }
 
 /** Whether a worker's own error says it ran out of memory: wasm memory that could not grow, or a JS allocation that failed. */
@@ -381,9 +388,10 @@ function ensureWorker(principal: string, readonly: boolean): Worker {
         const { id, ...result } = e.data as { id: number } & PyResult;
         const entry = pending.get(id);
         // THE KERNEL'S DEATH (ruling 26): the worker says its interpreter fatally failed. The cell is answered with that,
-        // and the worker is ended, so the run's next cell starts a fresh one and opens with the loss line.
+        // and the worker is ended, so the run's next cell starts a fresh one and opens with the loss line. An install's
+        // candidate is not the run's interpreter: it keeps the cause alone (bounded), which installTest reports as a died candidate.
         const died = result.fatal === true;
-        if (died) { result.error = kernelDied(String(result.error ?? "")); delete result.fatal; }
+        if (died) { result.error = principal.startsWith("install:") ? boundCause(String(result.error ?? "")) : kernelDied(String(result.error ?? "")); delete result.fatal; }
         // The first run after a pre-warm: did it find the runtime warm, and how long did it still wait?
         if (result.prewarm === "warm" || result.prewarm === "starting") reportHousekeeping({ subsystem: "pyodide", kind: "prewarm-used", ms: result.bootMs ?? 0, detail: { warm: result.prewarm === "warm" } });
         // ROOT C: keep the run's scope manifest (`bench.vars`, PERSISTENT_RUNTIME_SPEC.md) and open the result
@@ -520,8 +528,8 @@ async function installTest(run: string, refs: WheelRef[], modules: string[], sco
         if (endedInRead) return endedInRead;
         if ("error" in got) return { ok: false, error: got.error };
         // The scan reads before any of the packages' code runs, and is a note whatever it answers (item 7): a scan that
-        // fails leaves the import test to decide, in a fresh worker. A source that kills Pyodide gets no answer at all (the
-        // fatal error escapes the cell, tests/pkg-install-fatal-worker.test.mjs): the deadline ends that candidate.
+        // fails leaves the import test to decide, in a fresh worker. A source that kills Pyodide is answered as the kernel's
+        // death (the worker's `fatal`, tests/pkg-install-fatal-worker.test.mjs), a failed scan like any other.
         const s = await cell(scanCode(modules, scope), got);
         if (!s.ok && s.installFailed) return { ok: false, error: String(s.error ?? "the candidate did not answer"), scan: null };
         const scan = s.ok ? readScan(s.value) : null;

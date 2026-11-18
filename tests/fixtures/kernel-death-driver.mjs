@@ -3,13 +3,16 @@
 // the stack in Pyodide's parser (30,000 attributes) must be answered as the kernel's death, and every later cell at once. Node reports an
 // unhandled rejection on `process`, a browser worker on `self`: this forwards the one to the listener the worker put on
 // the other. A child process, because the dead interpreter's leftover work outlives anything a test runner can contain
-// (tests/python-kernel-death.test.mjs). Run: node --import tsx tests/fixtures/kernel-death-driver.mjs
+// (tests/python-kernel-death.test.mjs). KD_SCENARIO=cause instead boots the full worker, whose cell can reach Pyodide's
+// internals, kills it with a cause of its choosing through Pyodide's own fatal-error handler, then answers and rejects
+// with text of its own: the cause reported must be the handler's. Run: node --import tsx tests/fixtures/kernel-death-driver.mjs
 
 import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
 import { pathToFileURL } from "node:url";
 
+const CAUSE = process.env.KD_SCENARIO === "cause";
 const DIST = path.resolve(import.meta.dirname, "../../dist");
 const on = { message: null, unhandledrejection: null, error: null };
 process.on("unhandledRejection", (reason) => { on.unhandledrejection?.({ reason }); });
@@ -22,7 +25,7 @@ fs.writeFileSync(path.join(shim, "pyodide", "pyodide.mjs"),
     `export const loadPyodide = (o) => real({ ...o, indexURL: ${JSON.stringify(path.join(DIST, "pyodide") + "/")}, packageBaseUrl: ${JSON.stringify(path.join(DIST, "pyodide") + "/")} });\n`);
 const posted = [];
 globalThis.self = Object.assign(Object.create(globalThis), {
-    name: "readonly",
+    name: CAUSE ? "full" : "readonly",
     location: { href: pathToFileURL(shim + "/").href },
     postMessage: (m) => { posted.push(m); },
     addEventListener: (type, fn) => { if (type in on) on[type] = fn; },
@@ -32,7 +35,7 @@ await import("../../src/python/python-worker.ts");
 let nextId = 1;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /** Post one cell as the offscreen document does; returns its id. */
-const post = (code) => { const id = nextId++; on.message({ data: { id, code, image: null, hardened: true, tables: null } }); return id; };
+const post = (code) => { const id = nextId++; on.message({ data: { id, code, image: null, hardened: !CAUSE, tables: null } }); return id; };
 /** The answer to cell `id`, or "no answer" after `ms`. */
 async function answer(id, ms = 120_000) {
     for (let i = 0; i < ms / 10; i++) {
@@ -44,6 +47,14 @@ async function answer(id, ms = 120_000) {
 }
 const cell = async (code, ms) => answer(post(code), ms);
 
+if (CAUSE) {
+    const control = await cell("print('ALIVE')");
+    const killed = await cell("import pyodide_js, js\npyodide_js._api.fatal_error(js.Error.new('THE-HANDLER-CAUGHT-THIS'))\njs.Promise.reject('A-REJECTION-THE-CELL-CHOSE')\nraise RuntimeError('AN-ANSWER-THE-CELL-CHOSE')", 15_000);
+    const later = await cell("print('LATER')", 5_000);
+    process.stdout.write(`\nKERNEL-DEATH-DRIVER ${JSON.stringify({ control, killed, later })}\n`);
+    fs.rmSync(shim, { recursive: true, force: true });
+    process.exit(0);
+}
 const out = { listeners: { unhandledrejection: !!on.unhandledrejection, error: !!on.error } };
 out.control = await cell("print('ALIVE')");
 // An ordinary rejection while the interpreter is alive: between cells, then during an async cell.

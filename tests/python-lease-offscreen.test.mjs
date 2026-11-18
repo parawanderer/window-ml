@@ -179,13 +179,14 @@ test("a leased cell's end is posted as PY_DONE with its run, outcome and size; a
 //
 // Measured with pillow 12.2.0: `import PIL._imagingtk` traps in a wasm indirect call (RuntimeError "function signature
 // mismatch"), after which every runPython of that Pyodide throws "Pyodide already fatally failed and can no longer be
-// used." and the worker stays alive. SIMULATED here, not the real Pyodide: this suite's worker is a fake (the offscreen
+// used." and the worker stays alive. The worker answers that cell with the bare message, one line ("function signature
+// mismatch", measured in Node-hosted Pyodide with real Pillow by e3, #1976), not a traceback. SIMULATED here, not the real Pyodide: this suite's worker is a fake (the offscreen
 // document is the unit under test, and the real-CPython suites skip without pyodide-core). The fake keeps the real
 // failure's shape: the trap once, then "already fatally failed" for every later run on the SAME worker; a respawned
 // worker is a new FakeWorker with an empty namespace, so only a respawn can answer the second cell with a NameError.
 // The worker flags the answer `fatal` (python-worker.ts, the kernel's death), and the document ends that worker.
 
-const TRAP_TRACEBACK = "PythonError: Traceback (most recent call last):\n  File \"<exec>\", line 1, in <module>\n    import PIL._imagingtk\nRuntimeError: function signature mismatch";
+const TRAP_CAUSE = "function signature mismatch";
 const FATAL_LATER = "Pyodide already fatally failed and can no longer be used.";
 
 /** Answers a posted run the way a Pyodide that has fatally failed would: the trap once, then the dead-interpreter text. */
@@ -193,7 +194,7 @@ function answerFatal(w, post) {
     if (w.fatal) { w.reply({ id: post.id, ok: false, stdout: "", error: FATAL_LATER }); return; }
     w.fatal = true;
     // The worker's flag: after a failed cell it asks the interpreter once, and a dead one answers "already fatally failed".
-    w.reply({ id: post.id, ok: false, stdout: "", error: TRAP_TRACEBACK, fatal: true });
+    w.reply({ id: post.id, ok: false, stdout: "", error: TRAP_CAUSE, fatal: true });
 }
 
 /** A fresh interpreter's answer to `print(x)` for a name defined in a lost namespace. */
@@ -212,13 +213,13 @@ async function nextCell(run, { cell, started = true, code = "print(x)" } = {}) {
     return { answer, w };
 }
 
-test("a fatal Pyodide error names the module and the lost namespace, and the next cell runs in a respawned interpreter", async () => {
+test("a fatal Pyodide error names its cause and the lost namespace, and the next cell runs in a respawned interpreter", async () => {
     const run = `kd${++n}`;
     const first = await leased({ run, cell: `wpy-${n}` });
     answerFatal(first.w, first.post);
     const a = await first.answer;
     assert.equal(a.ok, false);
-    assert.match(a.error, /PIL\._imagingtk/, "the result names the module that killed the interpreter");
+    assert.match(a.error, /function signature mismatch/, "the result names what killed the interpreter");
     assert.match(a.error, /namespace|variables/i, "and says the names defined before are gone");
     assert.equal(first.w.terminated, true, "the dead worker is terminated, not left alive and unusable");
     const before = sentToWorker.length;
@@ -230,7 +231,7 @@ test("a fatal Pyodide error names the module and the lost namespace, and the nex
     assert.ok(sentToWorker.slice(before).some((m) => m.type === "HOUSEKEEPING_REPORT" && m.payload.subsystem === "pyodide" && m.payload.kind === "respawn" && m.payload.key === `run:${run}`), "the respawn is in the housekeeping log");
 });
 
-test("a detached cell that hits a fatal error is reported done with the module and lost namespace, and the next cell in the run is not blocked", async () => {
+test("a detached cell that hits a fatal error is reported done with its cause and the lost namespace, and the next cell in the run is not blocked", async () => {
     const run = `kd${++n}`;
     const first = await leased({ run, cell: `wpy-${n}` });   // started: the service worker has detached it by now
     assert.ok(sentToWorker.some((m) => m.type === "PY_STARTED" && m.cell === first.cell));
@@ -240,7 +241,7 @@ test("a detached cell that hits a fatal error is reported done with the module a
     const done = sentToWorker.find((m) => m.type === "PY_DONE" && m.cell === first.cell);
     assert.ok(done, "the end is told by id, so the service worker releases the lease and the kernel lock");
     assert.equal(done.ok, false, "and tells it failed");
-    assert.match(a.error, /PIL\._imagingtk/, "the text the failed task carries names the module");
+    assert.match(a.error, /function signature mismatch/, "the text the failed task carries names the cause");
     assert.match(a.error, /namespace|variables/i, "and the lost namespace");
     assert.equal(first.w.terminated, true);
     const second = await nextCell(run, { cell: `wpy-${++n}` });

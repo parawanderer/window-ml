@@ -97,6 +97,7 @@ function makeWireSend(id: number): (requestJson: string) => Promise<string> {
 
 let pyodideReady: Promise<any> | null = null;
 let interpreter: any = null;   // state: plumbing — the started interpreter, for the kernel-death probe; dies with the worker
+let fatalCause: string | null = null;   // state: plumbing — what Pyodide's own fatal-error handler caught; dies with the worker
 // Whether the runtime has finished starting. A run that finds it false WAITED for the start, and that wait is
 // its `bootMs`: a first python_exec spends several seconds fetching the runtime and its wheels before a line of
 // the script runs, and a plain "ran in 4.2s" blames the script for time it never spent — the same confusion a
@@ -122,6 +123,10 @@ function getPyodide(by: "prewarm" | "run" = "run"): Promise<any> {
         const t0 = Date.now();
         const { loadPyodide } = await import(new URL("pyodide/pyodide.mjs", base).href);
         const py = await loadPyodide(pyodideLoadOptions(new URL("pyodide/", base).href));
+        // The kernel's death's cause, from Pyodide's fatal-error handler (`API.on_fatal`, called with what it caught), not
+        // a rejection's reason or a cell's answer, which a cell can choose; those stand in only for a Pyodide without the
+        // hook. Set before the lockdown, like every hook here.
+        if (py._api) py._api.on_fatal = (e: unknown) => { fatalCause ??= String((e as Error)?.message ?? e); };
         if (interruptFlag) py.setInterruptBuffer(interruptFlag);
         await py.loadPackage(PY_PACKAGE_LOADS);
         // Lazy tooling (jedi) loads BEFORE the lockdown too: `complete()` calls `py.loadPackage(PY_LAZY_LOADS)`
@@ -484,7 +489,7 @@ function interpreterDead(): boolean {
 /** An error or rejection no cell caught: the kernel's death when the interpreter says so, answered on the running cell. */
 function onUncaught(reason: unknown): void {
     if (fatal !== null || !interpreterDead()) return;
-    fatal = String((reason as Error)?.message ?? reason ?? "Pyodide fatal error").trim().split("\n")[0].slice(0, 300);
+    fatal = fatalCause ?? String((reason as Error)?.message ?? reason ?? "Pyodide fatal error").trim().split("\n")[0].slice(0, 300);
     if (runningId) post({ id: runningId, ok: false, stdout: "", error: fatal, fatal: true });
 }
 self.addEventListener("unhandledrejection", ((e: PromiseRejectionEvent) => onUncaught(e.reason)) as EventListener);
@@ -606,15 +611,15 @@ function onMessage(e: MessageEvent): void {
                 runningId = 0;
                 if (fatal !== null) return;   // already answered as the kernel's death
                 // A fatal error the cell's own answer carried (a wasm trap): the interpreter is gone though the cell answered.
-                if (!result.ok && interpreterDead()) { fatal = String(result.error ?? "Pyodide fatal error"); post({ id: msg.id, ...result, fatal: true }); return; }
+                if (!result.ok && interpreterDead()) { fatal = fatalCause ?? String(result.error ?? "Pyodide fatal error"); post({ id: msg.id, ...result, error: fatal, fatal: true }); return; }
                 post({ id: msg.id, ...result }, { transfer: result.ipc ? [result.ipc] : [] });
             },
             (err: unknown) => {
                 runningId = 0;
                 if (fatal !== null) return;
                 const dead = interpreterDead();
-                if (dead) fatal = String(err);
-                post({ id: msg.id, ok: false, stdout: "", error: String(err), ...(dead ? { fatal: true } : {}) });
+                if (dead) fatal = fatalCause ?? String(err);
+                post({ id: msg.id, ok: false, stdout: "", error: dead ? fatal! : String(err), ...(dead ? { fatal: true } : {}) });
             },
         );
 }

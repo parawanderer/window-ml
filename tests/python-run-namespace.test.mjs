@@ -198,6 +198,19 @@ test("a cell that killed the interpreter is answered as the kernel's death, and 
     assert.match(next.answer.stdout, /^namespace reset at .*: the interpreter crashed\ntwo$/);
 });
 
+test("a kernel death's cause is one bounded line, the exception a traceback ends with, whatever length the cell gave it", async () => {
+    // Not a real death's shape (both answer one line): the text a Pyodide without the `on_fatal` hook falls back to, the
+    // cell's own answer, whose length the cell chooses (~60 KB at Python's 1,000-frame limit).
+    const frames = Array.from({ length: 1000 }, (_, i) => `  File "/lib/python3.13/site-packages/pkg/m.py", line ${i}, in f\n    f()\n`).join("");
+    const cause = `PythonError: Traceback (most recent call last):\n  File "<exec>", line 1, in <module>\n    import PIL._imagingtk\n${frames}RuntimeError: function signature mismatch\n`;
+    const died = await runCell({ principal: "run:loss-kd2", wire: { client: "mlw-k5", run: "loss-kd2" } }, { ok: false, stdout: "", error: cause, fatal: true });
+    const shown = died.answer.error.match(/^The Python interpreter crashed \((.*)\) and was restarted/s)?.[1];
+    assert.ok(shown, died.answer.error.slice(0, 200));
+    assert.ok(shown.length <= 300, `bounded: ${shown.length} characters`);
+    assert.ok(!/\n|\s\s/.test(shown), "one line, with no run of spaces");
+    assert.equal(shown, "RuntimeError: function signature mismatch", "the exception it ends with, and none of the cell's source lines");
+});
+
 test("a run whose only cell failed WITHOUT a scope manifest is still told its dict died with the worker", async () => {
     // The worker creates the dict before the cell runs, so a cell that returned no manifest still left one.
     const first = await runCell({ principal: "run:loss-b", wire: { client: "mlw-m1", run: "loss-b" } }, { ok: false, error: "boom" });
