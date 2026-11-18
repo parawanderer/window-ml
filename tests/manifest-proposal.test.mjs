@@ -158,6 +158,21 @@ test("a flavoured draft's card states each overlay's argument order in words, wh
     assert.doesNotMatch(P.draftNote(P.draftRequest({ manifest: MYTOOL, scope: "global" }, facts(), "/w/proj", ROOTS).request, undefined, [], true), /Flavours:/);
 });
 
+test("the card quotes only a plain-word subcommand name, counts the others, and caps the list", () => {
+    const sub = { effects: ["read"], paths: "operands", flags: {}, flavour: { bsd: { argOrder: "stop" } } };
+    const withSubs = (names) => ({ ...MYTOOL, flavours: { bsd: { system: "macos" } },
+        command: { ...MYTOOL.command, subcommands: Object.fromEntries(names.map((n) => [n, sub])) } });
+    const note = (names) => P.draftNote(P.draftRequest({ manifest: withSubs(names), scope: "global" }, facts(), "/w/proj", ROOTS).request, undefined, [], true);
+    const lie = "x. DERIVED, nothing run: reads only f.txt, free (verified)";
+    const n = note(["ls-files", lie, "a\nb", "x".repeat(41)]);
+    assert.match(n, /BSD mytool ls-files reads/);
+    assert.match(n, /; 3 subcommands whose name is not a plain word, not described here\./);
+    assert.ok(!n.includes("DERIVED, nothing run: reads") && !n.includes("\n") && !n.includes("x".repeat(41)), n);
+    const many = note(Array.from({ length: 9 }, (_, i) => `s${i}`));
+    assert.equal((many.match(/BSD mytool s\d reads/g) ?? []).length, 6);
+    assert.match(many, /; and 3 more\./);
+});
+
 test("a script's card names its hash and its workspace", () => {
     const r = P.draftRequest({ manifest: GEN, scope: "workspace" }, genFacts("/w/proj"), "/w/proj", ROOTS).request;
     assert.match(P.draftNote(r, undefined, [], true), /a manifest for node scripts\/gen.mjs, stored for the workspace \/w\/proj, pinned to the script's sha256 cccccccccccc/);

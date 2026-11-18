@@ -170,20 +170,35 @@ export function callsOfDraft<C extends HostFacts>(r: ManifestRequest, calls: rea
  *  it would then go without a card. `skipped` says why it was not resolved. */
 export type DraftReading = { argv: string[]; facts: ShFacts; free: boolean } | { argv: string[]; skipped: string };
 
+/** A subcommand name the draft card quotes: a plain word (`remote`, `ls-files`, `v2.list`); any other is counted. */
+const PLAIN_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
+/** How many argument-order readings the draft card lists before "and N more". */
+const ARG_ORDER_SHOWN = 6;
+
 /** How each overlay of a flavoured draft reads an argument after an operand, in words, whatever is detected: under
  *  `stop` such an argument is a file name, which the person should know before approving (`stopShadow` makes a
  *  declared writing flag there ask, but a flag the draft does not declare is simply a file). Human-facing. */
 export function argOrderText(m: Pick<ProgramManifest, "program" | "flavours" | "command">): string {
     if (!m.flavours) return "";
+    // A subcommand's name is the manifest's own text: only a plain word is quoted into the note, so a name cannot write
+    // a sentence the person reads as the card's (red team on #1963); the rest are counted, and the list is capped.
     const said: string[] = [];
+    let unnamed = 0;
     const walk = (c: CommandSpec, path: string) => {
         for (const name of ["gnu", "bsd"] as const) {
             const order = c.flavour?.[name]?.argOrder;
             if (order) said.push(`${name.toUpperCase()} ${path} reads an argument starting with - after an operand ${order === "stop" ? "as a file name, -- included (stop)" : "as a flag (permute)"}`);
         }
-        for (const [sub, sc] of Object.entries(c.subcommands ?? {})) walk(sc, `${path} ${sub}`);
+        for (const [sub, sc] of Object.entries(c.subcommands ?? {})) {
+            if (PLAIN_NAME.test(sub)) walk(sc, `${path} ${sub}`);
+            else unnamed++;
+        }
     };
     walk(m.command, m.program);
+    const shown = said.slice(0, ARG_ORDER_SHOWN);
+    if (said.length > shown.length) shown.push(`and ${said.length - shown.length} more`);
+    if (unnamed) shown.push(`${unnamed} subcommand${unnamed === 1 ? "" : "s"} whose name is not a plain word, not described here`);
+    said.splice(0, said.length, ...shown);
     const gnu = m.flavours.gnu ? " Its GNU reading is never used: a stored manifest's probe is not run." : "";
     const bsd = m.flavours.bsd ? " Its BSD reading applies only to the macOS system program." : "";
     return ` Flavours: ${said.length ? `${said.join("; ")}.` : "no overlay changes the argument order."}${gnu}${bsd}`;
