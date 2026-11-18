@@ -17,6 +17,7 @@
     "noPaths": "nothing",
     "terminator": "--",
     "optionsFirst": true,
+    "dashIsPath": true,
     "numericFlag": true,
     "clusters": true,
     "flags": {

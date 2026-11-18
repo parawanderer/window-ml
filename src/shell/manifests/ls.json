@@ -17,6 +17,7 @@
     "noPaths": "cwd",
     "terminator": "--",
     "optionsFirst": true,
+    "dashIsPath": true,
     "clusters": true,
     "flags": {
       "-1": {},

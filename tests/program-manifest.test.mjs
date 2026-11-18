@@ -387,7 +387,7 @@ test("a command without optionsFirst names the measured parser that permutes on 
     }
 });
 
-test("upgrade: main's cat, head, tail, wc and ls described a flag after an operand; the shipped ones do not, and an old stored copy is never read", async () => {
+test("upgrade: main's cat, head, tail, wc and ls described a flag after an operand, and head, tail, wc and ls a lone - as stdin; the shipped ones do not, and an old stored copy is never read", async () => {
     const OLD = new URL("./fixtures/manifests-before-options-first/", import.meta.url);
     const { validStored } = await import("../src/shell/stored-manifests.ts");
     const { SHIPPED_MANIFESTS, manifestsFor, manifestFor } = await import("../src/shell/sh-call.ts");
@@ -398,7 +398,13 @@ test("upgrade: main's cat, head, tail, wc and ls described a flag after an opera
         assert.equal(was.described, true, `${name}: the fixture is the defect, a described call`);
         assert.deepEqual(was.pathArgs.map((p) => p.arg), [1], `${name}: main resolved only the first operand`);
         assert.equal(describeCall(argv, manifests[name]).described, false, name);
-        assert.deepEqual({ ...manifests[name], command: { ...manifests[name].command, optionsFirst: undefined } }, { ...old, command: { ...old.command, optionsFirst: undefined } }, `${name}: optionsFirst is the only change`);
+        const strip = (m) => ({ ...m, command: { ...m.command, optionsFirst: undefined, dashIsPath: undefined } });
+        assert.deepEqual(strip(manifests[name]), strip(old), `${name}: optionsFirst and dashIsPath are the only changes`);
+        // A lone `-` is a FILE for macOS head, tail, wc and ls (e3, #1951): main claimed no path for it; now it is one.
+        if (name !== "cat") {
+            assert.deepEqual(describeCall([name, "f", "-"], old).pathArgs.map((p) => p.arg), [1], `${name}: main left the file named - unresolved`);
+            assert.deepEqual(describeCall([name, "f", "-"], manifests[name]).pathArgs.map((p) => p.arg), [1, 2], `${name}: - is resolved as a path`);
+        }
         // A copy of the old file stored as the person's own manifest: dropped at load (B2), and passed over at call time.
         const entry = { id: `man-${name}`, scope: "global", manifest: old, origin: "person", created: 1, pin: { path: `/bin/${name}`, fingerprint: "1:2:3:4", inRoot: false } };
         assert.equal(validStored(entry, "global", SHIPPED_MANIFESTS), false, `${name}: a stored copy of a shipped program is dropped`);
@@ -411,7 +417,7 @@ test("upgrade: main's cat, head, tail, wc and ls described a flag after an opera
 /** The pin both repos hold: sha256 of the lines "<sha256 hex of the raw bytes>  <name>\n", over every .json of the fixtures
  *  ("calls/<p>.json") and the manifests ("manifests/<p>.json"), names sorted bytewise. The host's copy under
  *  `vectors/program-manifests/` records it in `PIN`. */
-const VECTOR_PIN = "aa5d21d4f294426d2047ec2676810f5278bb2cdff8699c2ab341a314cbf7dabf";
+const VECTOR_PIN = "a09ef075ba3ef647db8dff2924b71de18ca0d59f1c8028b7fd1f3c1c5627ec3d";
 
 test("the manifests and call fixtures hash to the pin the host holds", () => {
     const sha = (b) => crypto.createHash("sha256").update(b).digest("hex");

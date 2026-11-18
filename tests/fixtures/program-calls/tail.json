@@ -247,10 +247,17 @@
         "tail",
         "-"
       ],
-      "note": "- is stdin, not a path",
+      "note": "- is a FILE for BSD (macOS opens the name -), stdin for GNU: claimed as a path, the stricter reading (dashIsPath)",
       "described": true,
-      "effects": [],
-      "pathArgs": [],
+      "effects": [
+        "read:fs:-:?:?"
+      ],
+      "pathArgs": [
+        {
+          "arg": 1,
+          "role": "read"
+        }
+      ],
       "actsOnDir": false,
       "runner": false,
       "okCodes": [
