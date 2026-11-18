@@ -137,6 +137,23 @@ function streamResponse(lines, { status = 200 } = {}) {
     };
 }
 
+// The worker's timers. Its code starts timers no test waits for (a 15 s write debounce, a 5-minute ask, a 20 s
+// debugger idle-detach), and each held a test file's process open long after its last test; every one still
+// pending is cleared once the file's tests are done. The hook is registered HERE, as the file loads: an after()
+// called inside a running test (the first loadBackground) would belong to that test and run when it ends.
+const _workerTimers = new Set();
+require("node:test").after(() => { for (const t of _workerTimers) clearTimeout(t); _workerTimers.clear(); });
+function workerTimers() {
+    return {
+        setTimeout: (fn, ms, ...args) => {
+            const t = setTimeout((...a) => { _workerTimers.delete(t); fn(...a); }, ms, ...args);
+            _workerTimers.add(t);
+            return t;
+        },
+        clearTimeout: (t) => { _workerTimers.delete(t); clearTimeout(t); },
+    };
+}
+
 // Loads background.js. `onFetch` receives { url, opts, body } (body already
 // JSON-parsed for requests that have one) and returns a response stub.
 // `commandShortcut` is what chrome.commands reports as CURRENTLY bound for the HUD
@@ -259,7 +276,8 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         navigator: { userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", languages: ["en-US", "en"], language: "en-US" },
         AbortController,   // FETCH_LLM registers one per request (for ABORT_TASK cancellation)
         __ML_NET_RETRY_WAIT_MS: 0,   // network-retry backoff → instant in tests (no 24s of real waits per down-backend test)
-        setTimeout, clearTimeout, DOMException,   // rate-limit backoff (abortableWait) uses timers + abort
+        __ML_PAUSE_COMPACTION: true,   // no screenshot-compaction pass 15 s into a test that saved a session (sw-image-compact.ts)
+        ...workerTimers(), DOMException,   // rate-limit backoff (abortableWait) uses timers + abort
         Response,          // some paths construct/inspect Response
         Blob,              // the value store keeps a fetched body as a Blob
         atob, btoa,        // a worker realm has both (imageSize reads a capture's PNG header through atob)

@@ -9,13 +9,15 @@
 //   npm run test:chat                    # the chat page: this runner's `chat` genre, then its two Playwright specs
 //   node scripts/test.mjs --list         # what the genres hold
 //   node scripts/test.mjs --timings      # per-file durations, slowest first
+//   node scripts/test.mjs --timings-baseline  # rewrite tests/test-times-baseline.json from this machine's history
 //   node scripts/test.mjs --jobs 1       # one file at a time, for when a failure might be interference
 //
 // GENRES ARE EXPLICIT, and `core` is DERIVED — everything no other genre claims. That direction matters:
 // a new test file lands in `core` and runs by default rather than falling out of every bucket and being
 // silently skipped, which is the failure mode a hand-kept list of ALL the genres would have. The cost is
 // that a new SLOW file lands in `core` and makes it less fast, which `--timings` is for.
-import { readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 import { spawn, spawnSync } from "node:child_process";
@@ -24,6 +26,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { stalenessReport } from "./check-dist-fresh.mjs";
 import { acquire } from "./test-slot.mjs";
 import { watchRunner } from "./watch-runner.mjs";
+import { baselineCount, baselineRefusal, buildBaseline, finishRun, readBaseline, readHistory } from "./test-times.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -50,7 +53,7 @@ const GENRES = {
             "sidebar-asks.test.js", "sidebar-render-kinds.test.js", "sidebar-start-card.test.js",
             "output-cell.test.mjs", "pointer-gone.test.mjs", "code-tools.test.mjs", "legend.test.mjs",
             "context-container.test.mjs", "sidebar-prompt-display.test.js", "fold-badges.test.mjs", "tooltip-layer.test.mjs", "tip.test.mjs", "code-diff.test.mjs", "views.test.mjs",
-            "json-tree.test.mjs", "run-state-view.test.mjs", "run-log-view.test.mjs", "chart-gestures.test.mjs", "stacked-area.test.mjs", "sidebar-bench-stop.test.js"],
+            "json-tree.test.mjs", "json-tree-strings.test.mjs", "json-tree-theme.test.mjs", "live-hold.test.mjs", "step-settle.test.mjs", "raw-view.test.mjs", "run-state-view.test.mjs", "run-log-view.test.mjs", "chart-gestures.test.mjs", "stacked-area.test.mjs", "sidebar-bench-stop.test.js"],
     },
     // The repo's own checks (scripts/check-*.mjs): broken doc links, JSDoc that contradicts its code, the prompt
     // review's age, and notebooks committed without the evidence they were run.
@@ -83,7 +86,7 @@ const GENRES = {
         about: "the read-only exec dialect (src/readonly-exec.ts) and the free members a survey calls",
         files: ["readonly-exec.test.mjs", "readonly-pipe.test.mjs", "readonly-jsonpath.test.mjs", "readonly-current.test.mjs",
             "readonly-stream.test.mjs", "readonly-globals.test.mjs", "readonly-dates.test.mjs", "readonly-idioms.test.mjs", "readonly-soundness.test.mjs", "readonly-convert.test.mjs",
-            "readonly-tokenlist.test.mjs"],
+            "readonly-tokenlist.test.mjs", "readonly-sh.test.mjs", "sw-survey-sh.test.mjs"],
     },
     // The run's curated answer: the set and its tool's core, the pointers it designates and their dedup against the
     // prose, and the worker-held set's page-side view (`AnswerLog`) with the replay of what a page-side script reports.
@@ -186,6 +189,11 @@ const GENRES = {
         about: "the fetch surface: the page's cache and the ladder's presentation, and the release downloads fetch-hub and fetch-host retry and pin",
         files: ["fetch-cache.test.mjs", "fetch-ladder.test.mjs", "fetch-hub-asset.test.mjs", "fetch-host-pin.test.mjs"],
     },
+    // The runner's own tools: the queue, the test finders and the timing warnings. One subject, four files by name prefix.
+    runner: {
+        about: "the test runner's own tools: the machine-wide queue, test-index, test-cover, and the timing warnings",
+        files: ["test-slot.test.mjs", "test-index.test.mjs", "test-cover.test.mjs", "test-times.test.mjs"],
+    },
     live: { about: "opt-in, hits the backend in .env", files: ["live.test.js"] },
 };
 const claimed = new Set(Object.values(GENRES).flatMap((g) => g.files));
@@ -231,7 +239,7 @@ const ON_CI = !!(process.env.CI || process.env.GITHUB_ACTIONS);
 // ONE RUN ON THE MACHINE AT A TIME, LOCALLY: every run that spawns tests waits its turn in the machine-wide queue
 // (test-slot.mjs), and is given its workers from the memory free when its turn comes. CI, `TEST_SLOT=off` and a run
 // inside a queued job skip the wait; `--jobs` still decides the workers.
-const SLOT = args.includes("--check-genres") ? null : await acquire({ cmd: [process.execPath, ...process.argv.slice(1)], cwd: ROOT, kind: "unit" });
+const SLOT = args.includes("--check-genres") || args.includes("--timings-baseline") ? null : await acquire({ cmd: [process.execPath, ...process.argv.slice(1)], cwd: ROOT, kind: "unit" });
 const jobsArg = process.argv.find((a) => a.startsWith("--jobs"));
 const JOBS = Math.max(1, Number(jobsArg?.split("=")[1] ?? process.argv[process.argv.indexOf("--jobs") + 1])
     || SLOT?.jobs || Math.min(8, ON_CI ? CORES : Math.max(1, CORES - 2)));
@@ -273,6 +281,18 @@ function orderSlowestFirst(files) {
         const rb = slowRank.has(b) ? slowRank.get(b) : SLOWEST_FIRST.length;
         return ra !== rb ? ra - rb : a < b ? -1 : a > b ? 1 : 0;
     });
+}
+
+// `--timings-baseline` rewrites tests/test-times-baseline.json from this machine's history (scripts/test-times.mjs): the
+// p90 of every test at or above half a second, which a fresh clone or machine compares against until it has its own.
+if (args.includes("--timings-baseline")) {
+    const { tests, count } = buildBaseline(readHistory());
+    const out = path.join(ROOT, "tests", "test-times-baseline.json");
+    const refused = baselineRefusal(count, baselineCount(readBaseline(out)), args.includes("--force"));
+    if (refused) { console.error(`test-times: not written: ${refused}`); process.exit(1); }
+    writeFileSync(out, JSON.stringify({ about: "p90 in ms of each test at or above 500 ms, from one machine's test history; refresh: node scripts/test.mjs --timings-baseline", tests }, null, 2) + "\n");
+    console.log(`test-times: ${count} test(s) written to ${path.relative(ROOT, out)}`);
+    process.exit(0);
 }
 
 if (args.includes("--timings")) {
@@ -360,13 +380,29 @@ function runFiles(list) {
             process.exit(1);
         }
     }
+    // The timing reporter runs beside the spec one (the console output is the same as without it) and its lines are read
+    // once the child has exited, for the warning block (scripts/test-times.mjs). Advice only: it cannot change the exit code.
+    const tdir = (() => { try { return mkdtempSync(path.join(os.tmpdir(), "wml-times-")); } catch { return null; } })();
+    const rfile = tdir && path.join(tdir, "times.jsonl");
+    const reporterArgs = rfile ? ["--test-reporter=spec", "--test-reporter-destination=stdout",
+        `--test-reporter=${path.join(ROOT, "scripts", "test-times-reporter.mjs")}`, `--test-reporter-destination=${rfile}`] : [];
+    const genreOf = (f) => Object.entries(GENRES).find(([n, g]) => n !== "core" && g.files.includes(path.basename(f)))?.[0] ?? "core";
+    const timings = () => {
+        if (!rfile) return;
+        try {
+            let head = "";
+            try { head = spawnSync("git", ["rev-parse", "--short", "HEAD"], { cwd: ROOT, encoding: "utf8" }).stdout.trim(); } catch { /* no git */ }
+            finishRun({ reporterText: readFileSync(rfile, "utf8"), root: ROOT, genreOf, head });
+        } catch { /* advice only */ }
+        try { rmSync(tdir, { recursive: true, force: true }); } catch { /* left in tmp */ }
+    };
     // `watchRunner`, not a bare `on("exit")`: a runner that vanished without its exit firing used to hold this
     // process — and the machine-wide slot with it — forever (20261109T094442-4a6b50). A hang now fails loudly.
-    const child = spawn(process.execPath, [...NODE_ARGS, ...ordered.map((f) => `tests/${f}`)],
+    const child = spawn(process.execPath, [...NODE_ARGS, ...reporterArgs, ...ordered.map((f) => `tests/${f}`)],
         { cwd: ROOT, stdio: "inherit" });
     watchRunner(child).then(
-        (c) => process.exit(c),
-        (e) => { console.error(String(e?.message ?? e)); process.exit(1); },
+        (c) => { timings(); process.exit(c); },
+        (e) => { console.error(String(e?.message ?? e)); timings(); process.exit(1); },
     );
 }
 

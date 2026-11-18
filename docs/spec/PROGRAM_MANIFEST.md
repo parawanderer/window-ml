@@ -31,8 +31,8 @@ host. (The earlier sentence in `SHELL.md` charging a process to the step budget 
 
 A delete, a rename and a create of a directory entry are `write-names` on the operand: `rm`, `rmdir`, `unlink` on each operand, `mv` on EVERY operand (the sources, and the destination operand itself: the narrow reading, since a manifest cannot know that `mv a dir` creates `dir/a`). A recursive flag (`rm -r`, `-R`) walks the operand, so the host answers `containsSecret`; `mv` and `git mv` are `recursive` at the command level, since moving a directory renames everything beneath it with no flag (the same red-team pass: `mv src/keep src/keep2` renamed `src/keep/.env` free). Flags that exist on one platform only (`rm -I -P -W -x`, GNU long options, `mv -t -T -b -S -u`, `rmdir -p`) are not listed, so the call is `unknown`. Four command keys carry what `cat` and `ls` never needed:
 
-- `optionsFirst`: GNU permutes options and operands (`rm a -r` is recursive), BSD stops at the first operand (`rm a -r` removes two files; `rm a -- -b` removes a file named `--` as well). An argument starting with `-` after an operand, `--` included, makes the call `unknown`.
-- `dashIsPath`: a lone `-` is a file name (`rm -` removes the file `-`), so it stays a path operand instead of meaning stdin.
+- `optionsFirst`: GNU permutes options and operands (`rm a -r` is recursive), BSD stops at the first operand (`rm a -r` removes two files; `rm a -- -b` removes a file named `--` as well). An argument starting with `-` after an operand, `--` included, makes the call `unknown`. Which parser stops is the program's, not the platform's: macOS `cat`, `head`, `tail`, `wc`, `ls`, `sed` stop, while macOS `grep` and `sort` permute (measured 2026-11-17). **The rule:** a command without `optionsFirst` must name a parser MEASURED to permute on every supported platform (rg, jq, git and gh parse their own argv; `find` has its own grammar), or a flag after an operand is described as a flag while the program reads a file the host never resolved (`cat f -n`, with `-n` a symlink to `.env`, printed it free on main; cat, head, tail, wc and ls carry `optionsFirst` since). `AFTER_OPERAND` in `tests/program-manifest.test.mjs` holds one row per shipped manifest and fails for a new one that does neither.
+- `dashIsPath`: a lone `-` is a file name (`rm -` removes the file `-`), so it stays a path operand instead of meaning stdin. macOS `head`, `tail`, `wc` and `ls` open a file named `-` too (measured by the red-team pass on #1951, 2026-11-18), so they carry it; `cat` reads stdin for `-` on both platforms and does not.
 - `repoWide` (git): the command's effects also fall on the directory it acts in (`-C`, else the cwd) and on the repository's root (`resolve({ arg: "repo" })`, the host's `repo.root`; the cwd when none was found). `git rm` removes the parent directories it empties, so `git rm src/gen/only.ts` can remove the top-level `src`; a claim on the operand alone would be free under the sandbox. With `-C` and operands it is `unknown`: git resolves the operands against the `-C` directory (composing a repeated `-C`), the host against the cwd, so the host would walk the wrong path (review of #990, 2026-10-22).
 - `pathspecs` (git): an operand starting with `:` is pathspec magic (`:/x` is relative to the repository root), and one holding `*`, `?`, `[` or `\` is a glob git expands to every match (or an escape: `a\*` names `a*`); neither is one path the host can resolve: `unknown`. Found by the red-team pass on #990 (2026-10-22): `git rm *.ts` removed a secret among its matches under a claim that named only `*.ts`. `--icase-pathspecs` is `unknown` for the same reason: on a case-sensitive host `Secret.ts` matches `secret.ts`, a name the host never resolved (red-team recheck, 2026-10-22). A repository with `core.ignoreCase=true` does the same without the flag; that is not caught yet.
 
@@ -230,6 +230,13 @@ per rule, and names the rules JSON Schema cannot state (a `version.pattern` that
 of the same command). `"$schema"` is the only key beyond the types in `program-manifest.ts`, and it changes nothing about how a call is
 described. The manifests shipped here carry none (their bytes are pinned and copied to the host), and the host's reader
 rejects unknown fields, so a manifest with one is for this extension only.
+
+## Known limits
+
+- **A lone `-` for `head`, `tail` and `wc` is judged as a path on every platform** (2026-11-18). macOS opens a file named
+  `-`; GNU reads stdin. Claiming the path is the stricter reading: on GNU a call such as `head -` asks or names a path
+  that does not exist, where reading stdin needs neither. It stays so until a manifest can tell the implementations
+  apart, when the GNU reading moves into that implementation's own description.
 
 ## Related
 

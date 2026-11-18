@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { collectPngs, replaceImages, isOpaque, samePixels, WEBP_LOSSLESS } from "../src/session/image-compact.ts";
 import { SessionStore } from "../src/session/session-store.ts";
-import { imageCompactor, compactionJob } from "../src/sw/sw-image-compact.ts";
+import { imageCompactor, compactionJob, compactionPaused } from "../src/sw/sw-image-compact.ts";
 import { jobStatus } from "../src/job-registry.ts";
 
 const T = { timeout: 10000 };
@@ -244,6 +244,33 @@ test("the pass waits for the writes to stop, compacts every candidate, and logs 
     assert.equal(done.bytes, per[0].bytes + per[1].bytes);
     assert.equal(records[0].detail.sessions, 2);
     assert.deepEqual(store.compactable(), []);
+});
+
+test("a paused compactor starts no quiet timer on a kick, and a pass asked for still runs", T, async () => {
+    // The node:vm harness pauses the worker's compactors (__ML_PAUSE_COMPACTION): a test that saved a session must not
+    // get a pass 15 s later, nor a process held open waiting for one.
+    const store = new SessionStore(backend());
+    const records = [];
+    const c = imageCompactor(store, { encode: fakeEncode, record: (r) => records.push(r), quietMs: 10, paused: true });
+    store.put(summary("bbbb0009"), ev("bbbb0009", 0, { feedback: { image: png(1) } }));
+    await store.flush();
+    c.kick();
+    assert.equal(c.status().nextDue, undefined, "no timer is due");
+    await new Promise((r) => setTimeout(r, 40));
+    assert.equal(records.length, 0, "the kick ran nothing");
+    await c.pass();
+    assert.equal(records.at(-1)?.kind, "compact-pass-done");
+    assert.deepEqual(store.compactable(), []);
+});
+test("compactionPaused reads the harness's switch, and only `true` pauses", () => {
+    const g = globalThis;
+    try {
+        assert.equal(compactionPaused(), false);
+        g.__ML_PAUSE_COMPACTION = "yes";
+        assert.equal(compactionPaused(), false);
+        g.__ML_PAUSE_COMPACTION = true;
+        assert.equal(compactionPaused(), true);
+    } finally { delete g.__ML_PAUSE_COMPACTION; }
 });
 
 test("a pass whose encoder fails stops at once and logs it, leaving every session for the next", T, async () => {

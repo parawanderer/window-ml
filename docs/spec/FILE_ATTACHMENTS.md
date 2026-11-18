@@ -454,6 +454,33 @@ Giving worker chats the read-only dialect instead would be a far larger surface 
 an agent run instead ("start a run to read them") leaves the model stuck, which is the thing the note is there to
 prevent. `read_pages` is a new agent-facing call, so it gets the red-team pass.
 
+**Where a worker chat keeps its PDFs (ruled 2026-11-17; built, the tool not yet).** In the value store, held for the
+chat's session through `storeHeld`, as an agent run's attached files are: two rows per PDF, its bytes (`bytes`) and
+its read document (`paged`). One store, so the files panel lists from it. A PDF is held once its message is
+answered; a failed turn holds nothing, since its message is not kept either. A text file is not held: it is sent
+whole or refused, so no page of it is held back.
+
+- The chat's record (`ml_session_<hash>`, `StoredSession.files`) lists each PDF by name, page count, how many pages
+  from the first the message sent, and its two row keys. It holds keys and counts only, never bytes or page text, so a
+  record does not grow with its attachments. A record written before this has no list and resumes with none held.
+- A store that will not keep a PDF (`ValueTooLarge`, or no store) never fails the turn, which has already been
+  answered: the PDF is listed with no rows. `read_pages` on a PDF with no rows, or whose rows were released, answers
+  in a plain sentence that it is no longer held, never an error that ends the turn.
+- Deleting the chat releases its rows. So does its session leaving the live store on its own (moved to the archive,
+  or dropped for retention or the budget), and an ephemeral chat leaving the worker's memory, since nothing can read
+  its files again.
+- A worker eviction ends an ephemeral chat with none of those, and a held row is never evicted for idleness or the
+  budget while it names a session. So the value sweep's first pass at every worker start (`releaseOrphanedHeld`)
+  releases each held row's session that nothing can end any more: not a chat in memory, a session the store saved, a
+  run the worker holds or restored, or an open tab's page (`liveHeldSessions`). It waits for the store and the runs to
+  load, asks at each release so a chat started meanwhile keeps its rows, and releases nothing when there is no store.
+- Backup and the archive carry the record, so they carry the list, never the rows: a chat brought back from either,
+  on this browser or another, lists its PDFs as no longer held. The bytes are the person's own file, which they can
+  attach again.
+- The tool is offered only when the model's capabilities say it takes tools (`MODEL_CAPS` `tools: true`). Unknown and
+  no keep "This chat cannot show them.", because a backend refuses a whole request that lists tools to a model without
+  them. Named cost: a model that takes tools but does not say so never gets `read_pages`.
+
 Built (2026-10-29, `pdfTextBudget` and `fitPages`):
 
 - The budget is half the context the model is LOADED with (Ollama's `/api/ps`; a worker chat sends no `num_ctx`, so
@@ -1453,6 +1480,184 @@ Fetched values stay out.
   like an error's text (`sw-scrub.ts`).
 - Whether the restricted dialect gets a write of its own (a `keep()` call) is open and not proposed.
 
+## `/files`: the layout, `ml.fs`, Python's mounts and the backup (rulings 22, 23, 35, 36; proposed 2026-11-18)
+
+Shane's rulings 22, 23, 35 and 36 (2026-11-17 and 2026-11-18, in the coordinator's session), with the coordinator's
+calls under 22 to 25 (docs/plan/repl/README.md). Nothing below is built. This section SUPERSEDES three things in "A
+session's files as a directory" above: its layout (`/files/` itself writable), its mount (an eager MEMFS that loads the
+whole directory into the worker) and its quota multiplier (the three times measured for that MEMFS). The rest of that
+section stands: the handle folders under `attached/`, provenance as a field, frozen when cited, the kernel-death
+message, the host's disk never aliasing `/files`.
+
+**The principle (ruling 22).** No part of `/files` ever holds all of a session's files in memory, and several sessions
+at once stay usable. Every read is ranged or streamed, every listing is lazy, one directory at a time, and a write is
+streamed to its store. Each language gets the file API the model already knows (ruling 23): Python gets `open`, and
+JavaScript gets Node's `fs`, as `ml.fs`.
+
+### The layout (ruling 36)
+
+- **`/files/attached/`** holds what the person attached, at `attached/<handle>/<name>`, as above. It is read-only to
+  the agent, which may copy a file out.
+- **`/files/agent/`** is the agent's own space: it creates, writes, renames and deletes there freely, within the
+  session's quota.
+- **`/files/` itself is not writable.** Nothing new may be created at the root. A listing of the root shows
+  `attached/` and `agent/`, and later `history/` when the session-history store gives it one, and nothing else. A
+  write, a `mkdir` or a rename at the root fails with EROFS in Python and an `EROFS` error from `ml.fs`.
+- Provenance follows from the folder: a file under `attached/` is the person's, one under `agent/` was made by a run.
+
+### `ml.fs` (rulings 22 and 23)
+
+`ml.fs` is Node's `fs.promises` surface, the subset that keeps the principle, over the one ranged reader the
+coordinator's call names (one reader over the shelf, `Blob.slice`, with three front ends: the Python mount, `ml.fs`
+and later `/history/`). It is offered to worker-built runs only, in the isolated world, never page-started, and the
+`python_install` candidate worker gets neither it nor the mount. It replaces the `ml.files` this spec proposed.
+
+- **Reading.** `open(path)` gives a handle whose `read(buffer, offset, length, position)` reads a range;
+  `createReadStream(path, { start, end })` streams one. `readFile(path)` reads a whole file only up to the text bound
+  (a file up to 8 MiB, the coordinator's call); a larger one is refused with an error that names the setting key and
+  points at the ranged read. Every text read crosses the scrub (`forModel`'s registry), widened by the longest
+  registered form and cut back (the coordinator's ranged-scrub call: a window ceiling of 4,096 characters; above it,
+  a text range of a file up to 8 MiB is scrubbed whole and then cut, and a larger file's text range is refused).
+- **Listing.** `readdir(path)` and `opendir(path)` list one directory, lazily: `opendir` pages its entries, so a
+  directory of a hundred thousand files is never one array. An entry carries its name, kind and size, and `hidden: true`
+  when the path is hidden; a hidden entry's bytes are never read for a listing.
+- **Writing, only under `agent/`.** `writeFile`, `appendFile`, `mkdir`, `rm`, `unlink` and `rename` within `agent/`;
+  `open(path, "w")` gives a handle whose `write` streams. `copyFile` from `attached/` into `agent/` is the copy out, and
+  streams. Any write outside `agent/` fails with `EROFS`, whatever the path's spelling: the path is canonicalised
+  before it is judged, `..` and a symlink included.
+- **A hidden file.** "Hidden" is the effective list of [POLICIES.md](POLICIES.md), "Hiding files", which binds every
+  reader of `/files`, the mounts and `ml.fs` included: a path is hidden when a default holds it (a dotenv name, a
+  credential file, a linked template) or a `hide` entry does, whichever way the entry was made, the person's mark in
+  the file browser (ruling 24) or an approved card. A hidden file is listed by name with `hidden: true`, and every read
+  of its content fails with an error naming it as hidden. A `show` entry that wins for the path (a session `show` over
+  a global `hide`, by that section's layers) releases it for that session's reads, and only those.
+
+### Dumping a `@tool:` value into `agent/` (ruling 36)
+
+The model may write a pointer's value in full: `ml.fs.cp("@tool:a1b2c3f", "/files/agent/sales.csv")`. It is a copy
+through `ml.fs`, streamed from the STORED WHOLE behind the pointer (the value store), never from the truncated view
+the model was shown, and counted against the session's quota like any write. It is written by the pointer's kind:
+
+| Kind | Written as |
+| --- | --- |
+| text | the text as is, UTF-8 |
+| JSON | the JSON, as stored |
+| binary (an image, a file) | its bytes |
+| table | CSV with a header row, plus a sidecar `<name>.csv.schema.json` |
+
+**The table's sidecar.** The one table type, `TableLike` (`src/contract/contract-fetch.ts`), DOES carry column types:
+`dtypes`, the pandas dtype of each column (`int64`, `float64`, `bool`, `str` or `object`), alongside `columns`,
+`headerless` and the source's `delimiter`. A CSV alone would leave them to be guessed again on reload, and a guess can
+differ from what the model was shown (a column of zip codes read back as `int64`). So the dump writes the sidecar
+`{ "columns": [...], "dtypes": { ... }, "headerless": false, "rows": <the source's row count> }`, and a reload reads it:
+`ml.fs` and `dereference` of a `.csv` with a sidecar give the one table type with those dtypes, and Python's `read_csv`
+loader patch passes them as `dtype=`. A `.csv` without a sidecar is parsed as any CSV is: renaming or moving the `.csv`
+without its sidecar, or deleting the sidecar, loses the types. Parquet is the model's own work in Python (ruling 36).
+
+**The round trip, specified.** The CSV is RFC 4180: a comma between fields; a field quoted with `"` when it holds a
+comma, a quote, CR or LF, and a quote inside it doubled; `\n` between rows; UTF-8 without a byte-order mark; a header
+row always, holding the positional names when the table is `headerless` (the sidecar says so). A missing value cannot
+be an empty field, since pandas reads an empty field and a quoted empty string alike: it is written as a sentinel the
+dump chooses so that no cell of the table equals it (`\N`, else `\N1`, and so on), recorded in the sidecar as `"na"`.
+An empty string is an empty field. A reload passes `na_values=[<na>]` and `keep_default_na=False`. A column the table
+declares `int64` or `bool` that holds a missing value is recorded in the sidecar as pandas' nullable form (`Int64`,
+`boolean`) and reloaded as it; `ml.fs` and `dereference` give it back as the one table type's `int64` or `bool` with
+`null` cells. The row for the build is enumerated, not sampled: for each of `int64`, `float64`, `bool`, `str` and
+`object`, a column without and with a missing value, plus a `str` column holding both an empty string and a missing
+value; dump then reload equals the stored table, its values and its declared dtypes, on both reload paths.
+
+### Python's view: two mounts (ruling 36)
+
+Python sees `/files` through Emscripten mounts, never a mount that loads whole files:
+
+- **`attached/` on WORKERFS**: lazy slices of a `Blob`, read-only. The 2026-11-12 measurement found WORKERFS needs
+  `FileReaderSync`, which the lockdown does not allow, and fails a write with EIO, not EROFS; both are to be
+  measured by the packages notebook, and if WORKERFS cannot run under the lockdown, the fallback is a custom read-only
+  mount over the same ranged reader (Open questions, below).
+- **`agent/` on a custom mount over OPFS synchronous access handles**: each `read` and `write` goes to the file's
+  handle at its offset, so nothing is held but the buffer the call passes. A write is in the store when the call
+  returns, which removes the close-and-flush safety net the MEMFS design needed (item 3 above), to be confirmed by
+  the notebook.
+- **The scrub runs inside the mount's read**, chunked with an overlap of the longest registered form minus one byte,
+  so a registered value in a file never reaches the kernel. It preserves LENGTH: in the mount a match is replaced by
+  the same number of filler bytes (`*`, 0x2A), never by `[REDACTED:<NAME>]`, because Python seeks by offset and reads
+  `st_size`, and a replacement of another length would shift every later offset and corrupt a binary format (a zip,
+  a Parquet file, a pickle). The filler shows the value's length, which the hash-only store gives anyway
+  (SECRET_HANDLES.md, ruling 32). A write is not scrubbed: what the kernel writes it already held.
+
+**To be measured by the packages notebook, before this is fixed** (ruling 36, no figure here is this section's):
+whether the restricted fork gates `open()` on a mount; whether worker memory stays flat reading ranges of a 1 GiB
+file; whether WORKERFS runs under the lockdown; the cost of the scrub inside the read, both the plaintext registry's and
+ruling 32's hash-only matcher's; and whether a Parquet writer wheel exists.
+
+### Backup and restore carry the files (ruling 35)
+
+A backup (docs/spec/BACKUP_FORMAT.md, docs/dev/backup.md) is the archive's SQLite schema holding every session; it
+gains the session's files. Two tables, in the schema `migrate` builds:
+
+- `files (hash, path, kind, size, sha256, mtime, provenance, hidden)`: one row per file of a session (`hash`, the
+  session), its path under `/files`, and `hidden` set for a file the person marked secret.
+- `file_chunks (sha256, idx, data)`: a file's bytes in chunks of 1 MiB, keyed by the file's content hash, so a file
+  attached to two sessions is held once, as `images` is today.
+
+**Where the hash comes from.** The shelf keeps each file's `sha256` with its size and mtime, computed when the file is
+closed by one streamed pass (an attachment's when it is attached). A backup uses the kept hash when the file's size and
+mtime still match it, and otherwise makes one streamed pass first. A file in `agent/` that changes while the backup
+reads it (its size or mtime differs after the last chunk from before the first) is read again once; if it changes again
+it is left out and named in the backup's `meta` as skipped, and the restore screen lists it.
+
+**A set of volumes.** BACKUP_FORMAT.md caps a file's decompressed output at 1 GiB ("Limits a reader MUST keep"), a
+limit version 1 must keep forever, and a session's files pass it easily. So a backup with files is a SET of version-1
+files (the coordinator's call): the first holds the sessions, the settings and the `files` rows; the `file_chunks`
+spread over numbered volumes, each under the limit; every volume is authenticated on its own; and the first volume's
+`meta` names each volume with its SHA-256 and decompressed size. No new version byte, and each volume opens in any
+SQLite tool. A restore stages every volume and commits only when every one has authenticated and matched its hash; a
+missing or failing volume fails the whole restore and names it. Considered and not recommended: a raw-bytes body
+outside SQLite, which version 1's "the plaintext is the SQLite file" rules out.
+
+**Streamed, both ways.** Writing a backup reads each file through the ranged reader a chunk at a time into
+`file_chunks`, and the backup file is gzipped and encrypted chunk by chunk as it is now, so no step holds a whole file
+or all files. Restoring decrypts and gunzips a chunk at a time into a STAGING database, because a reader must not output
+partial plaintext (BACKUP_FORMAT.md, "Reading"). Only after the final chunk of every volume authenticates does the
+import copy each file from staging to the shelf, a chunk at a time. A failed restore leaves the shelf unchanged.
+
+**The staging space.** Staging lives in the origin-private file system beside the archive, one
+`restore-staging-<id>.sqlite` per volume, so a restore needs about twice the files' size while it runs. Before it
+decrypts anything past the first volume, it reads the declared sizes from that volume's `meta` and checks the free
+quota (`navigator.storage.estimate()`) for staging plus the shelf; when they do not fit, it fails before the shelf is
+touched and says how much it needed and how much was free. Staging files left by a crash are removed when the worker
+next starts.
+
+**A hidden file's bytes are never in a backup; its name is**, with `hidden` set and no chunks (the coordinator's
+recommendation, taken). What decides is the hiding that outlives the session: the bytes are left out when the person's
+mark, a default or any global `hide` holds the file, whatever a session's policy says, so a session `show` never puts a
+hidden file's bytes into a backup that outlives it. A restore lists it under its path, marked hidden and "not in this
+backup"; a read of it fails with that reason. The person keeps the secret by keeping the original.
+
+**The upgrade.** A backup written before this has no `files` or `file_chunks` table. A restore reads it as before, and
+its sessions come back with an empty `agent/` and their attachments as the backup held them (an attachment's bytes
+were already in the archive). The restore screen says the backup holds no session files. An older version restoring
+a backup made after this ignores the two tables and restores the sessions without their files; it cannot be changed
+to warn, so the backup's `meta` records `files: <count>` for a later version to state what an older one dropped. Rows:
+a fixture of a pre-files backup restores with no files and no error; a backup with files restores them byte-identical;
+a hidden file restores as a hidden name with no bytes.
+
+**Whether the hub changes.** No: `ml.fs` and the mounts are the runtime's, and backup and restore are local. The
+file browser's commands are the session-store amendment's (ruling 24).
+
+### Open questions, each with a recommendation
+
+Settled as the coordinator's calls and written in above: the dump is `ml.fs.cp`; if WORKERFS cannot run under the
+lockdown, `attached/` gets a custom read-only mount over the ranged reader, never a loosened lockdown; `readFile`'s
+bound is 8 MiB; and no sidecar for JSON or text. Two remain for Shane:
+
+1. **Archive month files.** Whether a session's files go into the archive folder's month files, not only the one-off
+   backup. Recommended yes, the same tables and the same volumes: a session moved to the archive must keep its files,
+   and there is one place each session lives. With a setting to leave out files over a size, since the folder may be
+   a cloud drive.
+2. **A restore over the quota.** Recommended: restore every file (they are the person's), mark the session over its
+   quota, and refuse new writes by name until the person deletes some, as the quota already does.
+
 ## Trust
 
 A file's text is untrusted input, the same as a web page's: an instruction written inside a PDF gets no authority a
@@ -1587,5 +1792,3 @@ the shelf's refusals and the `run.files` state row say lines for text and pages 
 - Whether the page-image fallback for a scanned page without a vision model uses the reader model or OCR.
 - Whether embeddings of an attached document are kept with it, keyed by the blob's SHA-256, so a second question does
   not embed every page again.
-- Where a worker chat keeps its attachments so `read_pages` can reach them after the message is sent: the value store,
-  as an agent run's `@file:` rows are, or the session store. The files panel lists from the same place.

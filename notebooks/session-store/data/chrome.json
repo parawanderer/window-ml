@@ -1,0 +1,309 @@
+{
+  "machine": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpus": "Apple M5 Pro",
+    "ramGiB": 24,
+    "node": "v26.12.1",
+    "load": [
+      3.1630859375,
+      3.2626953125,
+      3.39697265625
+    ],
+    "loadAfter": [
+      5.08154296875,
+      3.70166015625,
+      3.54931640625
+    ]
+  },
+  "quick": false,
+  "at": "2026-11-17T13:23:07.576Z",
+  "otherBrowsersAtStart": 0,
+  "browser": "151.0.7922.34",
+  "quota-default": {
+    "inWorker": {
+      "quota": 10737418808,
+      "usage": 568,
+      "persisted": false
+    },
+    "inPage": {
+      "quota": 10737418808,
+      "usage": 568
+    },
+    "disk": {
+      "totalBytes": 994610155520,
+      "freeBytes": 721618194432
+    }
+  },
+  "pageMemory": {
+    "jsHeapSizeLimit": 4395630592
+  },
+  "quota-unlimited": {
+    "inWorker": {
+      "quota": 721618199096,
+      "usage": 568,
+      "persisted": false
+    },
+    "inPage": {
+      "quota": 721618186808,
+      "usage": 568
+    },
+    "disk": {
+      "totalBytes": 994610155520,
+      "freeBytes": 721618186240
+    }
+  },
+  "messages": [
+    {
+      "mib": 1,
+      "via": "sendMessage",
+      "ok": true,
+      "ms": 3
+    },
+    {
+      "mib": 1,
+      "via": "port",
+      "ok": true,
+      "ms": 3
+    },
+    {
+      "mib": 32,
+      "via": "sendMessage",
+      "ok": true,
+      "ms": 73
+    },
+    {
+      "mib": 32,
+      "via": "port",
+      "ok": true,
+      "ms": 65
+    },
+    {
+      "mib": 63,
+      "via": "sendMessage",
+      "ok": true,
+      "ms": 138
+    },
+    {
+      "mib": 63,
+      "via": "port",
+      "ok": true,
+      "ms": 114
+    },
+    {
+      "mib": 64,
+      "via": "sendMessage",
+      "ok": true,
+      "ms": 129
+    },
+    {
+      "mib": 64,
+      "via": "port",
+      "ok": true,
+      "ms": 123
+    },
+    {
+      "mib": 65,
+      "via": "sendMessage",
+      "ok": false,
+      "error": "Error in invocation of runtime.sendMessage(optional string extensionId, any message, optional object options, optional function callback): Message exceeded maximum allowed size of 64MiB."
+    },
+    {
+      "mib": 65,
+      "via": "port",
+      "ok": false,
+      "error": "Message exceeded maximum allowed size of 64MiB."
+    },
+    {
+      "mib": 128,
+      "via": "sendMessage",
+      "ok": false,
+      "error": "Error in invocation of runtime.sendMessage(optional string extensionId, any message, optional object options, optional function callback): Message exceeded maximum allowed size of 64MiB."
+    },
+    {
+      "mib": 128,
+      "via": "port",
+      "ok": false,
+      "error": "Message exceeded maximum allowed size of 64MiB."
+    }
+  ],
+  "idb": [
+    {
+      "mib": 32,
+      "kind": "string",
+      "ok": true,
+      "putMs": 9,
+      "readBackOk": true,
+      "died": false,
+      "workerClosed": false
+    },
+    {
+      "mib": 32,
+      "kind": "object-of-strings",
+      "ok": true,
+      "putMs": 11,
+      "readBackOk": true,
+      "died": false,
+      "workerClosed": false
+    },
+    {
+      "mib": 64,
+      "kind": "string",
+      "ok": true,
+      "putMs": 17,
+      "readBackOk": true,
+      "died": false,
+      "workerClosed": false
+    },
+    {
+      "mib": 64,
+      "kind": "object-of-strings",
+      "ok": true,
+      "putMs": 26,
+      "readBackOk": true,
+      "died": false,
+      "workerClosed": false
+    },
+    {
+      "mib": 120,
+      "kind": "string",
+      "ok": true,
+      "putMs": 30,
+      "readBackOk": true,
+      "died": false,
+      "workerClosed": false
+    },
+    {
+      "mib": 120,
+      "kind": "object-of-strings",
+      "ok": true,
+      "putMs": 38,
+      "readBackOk": true,
+      "died": false,
+      "workerClosed": false
+    },
+    {
+      "mib": 127,
+      "kind": "string",
+      "ok": true,
+      "putMs": 31,
+      "readBackOk": true,
+      "died": false,
+      "workerClosed": false
+    },
+    {
+      "mib": 127,
+      "kind": "object-of-strings",
+      "ok": true,
+      "putMs": 43,
+      "readBackOk": true,
+      "died": false,
+      "workerClosed": false
+    },
+    {
+      "mib": 130,
+      "kind": "string",
+      "ok": true,
+      "putMs": 60,
+      "readBackOk": true,
+      "died": false,
+      "workerClosed": false
+    },
+    {
+      "mib": 130,
+      "kind": "object-of-strings",
+      "ok": true,
+      "putMs": 112,
+      "readBackOk": true,
+      "died": false,
+      "workerClosed": false
+    },
+    {
+      "mib": 256,
+      "kind": "string",
+      "ok": true,
+      "putMs": 143,
+      "readBackOk": true,
+      "died": false,
+      "workerClosed": false
+    },
+    {
+      "mib": 256,
+      "kind": "object-of-strings",
+      "ok": true,
+      "putMs": 142,
+      "readBackOk": true,
+      "died": false,
+      "workerClosed": false
+    },
+    {
+      "mib": 512,
+      "kind": "string",
+      "ok": false,
+      "rejected": true,
+      "error": "worker.evaluate: RangeError: Invalid string length",
+      "died": false,
+      "workerClosed": false
+    },
+    {
+      "mib": 512,
+      "kind": "object-of-strings",
+      "ok": true,
+      "putMs": 318,
+      "readBackOk": true,
+      "died": false,
+      "workerClosed": false
+    }
+  ],
+  "heap": [
+    {
+      "kind": "string",
+      "stepMiB": 64,
+      "capMiB": 6144,
+      "heapBefore": null,
+      "ended": "cap",
+      "mib": 6144,
+      "heldBytes": 6442450944,
+      "sampleSum": 7532,
+      "lastStepWrittenMiB": 6144,
+      "workerClosed": false,
+      "peakExtensionRssMiB": 3536,
+      "chromiumRssBeforeMiB": 2129,
+      "peakChromiumRssMiB": 4079,
+      "ms": 7140
+    },
+    {
+      "kind": "arraybuffer",
+      "stepMiB": 64,
+      "capMiB": 6144,
+      "heapBefore": null,
+      "ended": "cap",
+      "mib": 6144,
+      "heldBytes": 6442450944,
+      "sampleSum": 12428,
+      "lastStepWrittenMiB": 6144,
+      "workerClosed": false,
+      "peakExtensionRssMiB": 5218,
+      "chromiumRssBeforeMiB": 3543,
+      "peakChromiumRssMiB": 5970,
+      "ms": 1719
+    },
+    {
+      "kind": "objects",
+      "stepMiB": 64,
+      "capMiB": 6144,
+      "heapBefore": null,
+      "ended": "cap",
+      "mib": 6144,
+      "heldBytes": 96000000,
+      "sampleSum": 48000000,
+      "lastStepWrittenMiB": 6144,
+      "workerClosed": false,
+      "peakExtensionRssMiB": 3977,
+      "chromiumRssBeforeMiB": 3384,
+      "peakChromiumRssMiB": 4603,
+      "ms": 20801
+    }
+  ],
+  "otherBrowsersAtEnd": 0
+}

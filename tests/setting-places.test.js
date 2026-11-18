@@ -35,6 +35,9 @@ async function renderPanel() {
                 .map((s) => [s.getAttribute("data-section"), s.querySelector(".set-group").textContent.trim()])),
             rows: [...body.querySelectorAll("[data-setting]")].flatMap((el) => el.getAttribute("data-setting").split(" ")
                 .map((key) => ({ key, section: el.closest("[data-section]")?.getAttribute("data-section") }))),
+            // Each row's own text and tooltip pops (a Section's `data-setting` lists keys it has no row for, so it is skipped).
+            labelled: [...body.querySelectorAll("[data-setting]:not([data-section])")].map((el) => ({
+                key: el.getAttribute("data-setting"), text: el.textContent, pops: [...el.querySelectorAll(".tt-pop")].map((p) => p.textContent) })),
             unmarked: [...body.querySelectorAll("input, select, textarea")].filter((c) => !c.closest("[data-setting]"))
                 .map((c) => `${c.closest("[data-section]")?.getAttribute("data-section")}: ${(c.closest(".set-field, .set-check, label")?.textContent || c.placeholder || "").trim().slice(0, 40)}`),
         };
@@ -100,6 +103,63 @@ test("PANEL_LAYOUT names exactly the sections each tab draws, with their titles"
         const always = Object.fromEntries(Object.entries(listed).filter(([id]) => id !== "waitingrequests"));
         assert.deepEqual(Object.fromEntries(Object.entries(drawn).filter(([id]) => id !== "waitingrequests")), always, tab);
     }
+});
+
+// --- each row's name and tooltip come from SETTING_TEXT ---
+
+test("every rendered row whose key has a SETTING_TEXT entry shows that name, and its tooltip when it has one", async () => {
+    const { SETTING_TEXT } = await import("../src/setting-text.ts");
+    const { tabs } = await renderPanel();
+    const seen = new Set();
+    for (const t of Object.values(tabs))
+        for (const row of t.labelled) {
+            const entry = SETTING_TEXT[row.key];
+            if (!entry) continue;
+            seen.add(row.key);
+            assert.ok(row.text.includes(entry.name), `${row.key}: the row does not contain "${entry.name}"`);
+            if (entry.tip !== undefined) assert.ok(row.pops.includes(entry.tip), `${row.key}: no .tt-pop equals its tip`);
+            else assert.deepEqual(row.pops, [], `${row.key}: has a tooltip but SETTING_TEXT has no tip`);
+        }
+    // An entry with no row of its own is a key its section lists (the server-side tools' two lists).
+    const listed = new Set(Object.values(tabs).flatMap((t) => t.rows.map((r) => r.key)));
+    assert.deepEqual(Object.keys(SETTING_TEXT).filter((k) => !seen.has(k) && !listed.has(k)), [], "an entry the panel never draws");
+});
+
+test("every key the model may write has a SETTING_TEXT entry with a name", async () => {
+    const { SETTING_TEXT } = await import("../src/setting-text.ts");
+    const { modelWritable } = await import("../src/setting-class.ts");
+    const { DEFAULT_CONFIG } = await import("../src/contract/contract-config.ts");
+    const missing = Object.keys(DEFAULT_CONFIG).filter((k) => modelWritable(k) && !SETTING_TEXT[k]?.name);
+    assert.deepEqual(missing, []);
+});
+
+test("the functions list shows serverToolsOff's tooltip on each function's row", async () => {
+    const { SETTING_TEXT } = await import("../src/setting-text.ts");
+    const w = await loadSidebarWorld({ siteLists: SITE_LISTS });
+    const send = w.window.chrome.runtime.sendMessage;
+    w.window.chrome.runtime.sendMessage = (msg, cb) => msg?.type === "LIST_SERVER_TOOLS"
+        ? cb?.({ data: [{ id: "web", name: "Web", functions: [{ name: "search", description: "Search the web." }] }] })
+        : send(msg, cb);
+    await openSettings(w);
+    let section = null;
+    for (const id of TABS) {
+        [...w.shadow.querySelectorAll(".set-tab")].find((b) => b.textContent.trim().toLowerCase() === id).click();
+        await w.flush();
+        section = w.shadow.querySelector('[data-section="servertools"]');
+        if (section) break;
+    }
+    assert.ok(section, "no tab draws the server-side tools section");
+    section.querySelector(".disc-head").click();
+    await w.flush();
+    await new Promise((r) => setTimeout(r, 50));
+    await w.flush();
+    const row = section.querySelector(".srv-fn");
+    assert.ok(row, "the functions list draws a row for the function");
+    row.dispatchEvent(new w.window.PointerEvent("pointermove", { bubbles: true, clientX: 10, clientY: 10 }));
+    await w.flush();
+    const tip = w.shadow.querySelector(".cursor-tip");
+    assert.ok(tip, "hovering a function's row shows a tooltip");
+    assert.equal(tip.textContent.trim(), SETTING_TEXT.serverToolsOff.tip);
 });
 
 // --- a link in a reply opens the row ---

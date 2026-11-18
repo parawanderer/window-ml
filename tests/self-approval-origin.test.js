@@ -172,7 +172,8 @@ test("the whitelist is read only through the one rule: no other source file matc
     // Since slice 3 the sync setting is read ONCE, by the migration (sw-site-access.ts) into the local list of origins,
     // through site-access.ts's rule. The config type and default only declare it; no editor or watcher names it.
     // A restore of an old backup (backup/backup-settings.ts) runs the same migration over the backup's copy of the setting.
-    assert.deepEqual(readers, ["backup/backup-settings.ts", "contract/contract-config.ts", "site-access.ts", "sw/sw-site-access.ts"]);
+    // setting-class.ts only classifies the key (a secret), with the sentence a restore shows: no read.
+    assert.deepEqual(readers, ["backup/backup-settings.ts", "contract/contract-config.ts", "setting-class.ts", "site-access.ts", "sw/sw-site-access.ts"]);
     // Pinned to the LINE as well, so a new reader inside one of those files fails here too: the sync setting is read by
     // the migration and nowhere else. Comments are left out.
     const uses = [];
@@ -187,10 +188,10 @@ test("the whitelist is read only through the one rule: no other source file matc
     }
     assert.deepEqual(uses.sort(), [
         "backup/backup-settings.ts: const legacyHosts = sync.pageApprovalDomains;",
-        // not a read: the key's row in the restore's risky list, which says what restoring it does
-        "backup/backup-settings.ts: pageApprovalDomains: \"the old self-approval whitelist: its sites are migrated into the self-approval list, which grants use\",",
         "contract/contract-config.ts: pageApprovalDomains: [],",
         "contract/contract-config.ts: pageApprovalDomains: string[];",
+        // not a read: the key's class (a secret) and the sentence a restore shows, which says what restoring it does
+        "setting-class.ts: pageApprovalDomains: { class: \"secret\", reason: \"the old self-approval whitelist: its sites are migrated into the self-approval list, which grants use\" },",
         "sw/sw-site-access.ts: const [stored, sync] = await Promise.all([readStored(), chrome.storage.sync.get({ pageApprovalDomains: [] }).catch(none)]);",
         "sw/sw-site-access.ts: const syncHosts = (sync as Record<string, unknown>).pageApprovalDomains;",
     ].sort(), "a new read of the whitelist: route it through selfApproves (site-access.ts), then add its line here");

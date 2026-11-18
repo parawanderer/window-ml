@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { SessionIndex } from "../src/session/session-index.ts";
 
-const TAB_A = 11, TAB_B = 22;
+const TAB_A = 11, TAB_B = 22, TAB_C = 33;
 const bg = (tabId = TAB_A) => ({ tabId, trusted: true });
 const page = (tabId = TAB_A) => ({ tabId, trusted: false, page: { url: `https://site/${tabId}`, title: "Site" } });
 
@@ -367,6 +367,47 @@ test("a resume note is recorded once, however many sides report it", () => {
     // A second, genuinely different resume is its own note.
     assert.equal(ix.ingest(note("aaaa0001", { id: "aaaa0001-r2", url: "https://later.example/" }), bg()).accepted, true);
     assert.equal(kinds(ix.backfill("aaaa0001")).filter((k) => k === "session-resumed").length, 2);
+    assert.equal(ix.get("aaaa0001").page.url, "https://later.example/", "the row is on the later resume's page");
+});
+
+test("a resume puts the session on its new page: the row names that tab and its url, so the closed-tab bar goes", () => {
+    // Shane's report (2026-11-14): "Resume on a page" added a divider and left the bar. `pageGone` deletes the row's
+    // `page.tabId`, and the resume's note re-owned the session without touching the row, so `resumableHere` (which
+    // reads `page.tabId`) kept offering the resume.
+    const ix = index();
+    const note = (over = {}) => base("aaaa0001", "session-resumed", { url: "https://new.example/", fromUrl: "https://site/11", afterMs: 1, dropped: ["state"], ...over });
+    ix.ingest(start("aaaa0001"), { ...bg(TAB_A), page: { url: "https://site/11", title: "Site" } });
+    ix.ingest(result("aaaa0001"), bg(TAB_A));
+    ix.pageGone(TAB_A, { closed: true });
+    assert.equal(ix.get("aaaa0001").page.tabId, undefined, "precondition: the closed tab let go of it");
+
+    ix.ingest(note(), bg(TAB_B));
+    assert.deepEqual(ix.get("aaaa0001").page, { url: "https://new.example/", tabId: TAB_B }, "the new page, with no stale title");
+    assert.equal(ix.binding("aaaa0001").tabId, TAB_B);
+
+});
+
+test("a resume onto a third tab while the old one is still open moves the row and the owner there, one owner", () => {
+    const ix = index();
+    const note = (over = {}) => base("aaaa0001", "session-resumed", { url: "https://third.example/", fromUrl: "https://site/11", afterMs: 1, dropped: ["state"], ...over });
+    ix.ingest(start("aaaa0001"), { ...bg(TAB_A), page: { url: "https://site/11", title: "Site" } });
+    ix.ingest(result("aaaa0001"), bg(TAB_A));
+    assert.equal(ix.ingest(note(), bg(TAB_C)).accepted, true);
+    assert.deepEqual(ix.get("aaaa0001").page, { url: "https://third.example/", tabId: TAB_C });
+    assert.equal(ix.binding("aaaa0001").tabId, TAB_C);
+    // The tab it left, still open, is no longer the owner.
+    assert.deepEqual(ix.ingest(step("aaaa0001", 3), page(TAB_A)), { accepted: false, reason: "not-owner" });
+});
+
+test("a page's own copy of a resume note, admitted for the session its tab owns, moves nothing: only the worker's word moves the row", () => {
+    // A page-built session (hostedBy page, owned by TAB_A): its page's events are admitted, so the `trusted` guard is
+    // the only thing between the row and a url the page chose.
+    const ix = index();
+    ix.ingest(start("aaaa0001"), page(TAB_A));
+    const before = ix.get("aaaa0001").page;
+    const r = ix.ingest(base("aaaa0001", "session-resumed", { id: "aaaa0001-r9", url: "https://elsewhere.example/", afterMs: 1, dropped: ["state"] }), page(TAB_A));
+    assert.equal(r.accepted, true, "the note is admitted: it is the owning tab's");
+    assert.deepEqual(ix.get("aaaa0001").page, before, "and the row's page is unchanged");
 });
 
 test("a resume note that does not say what it dropped never enters the stream", () => {

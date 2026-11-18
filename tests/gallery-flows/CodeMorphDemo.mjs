@@ -10,7 +10,8 @@ export default async ({ page, tile, shot }) => {
     // Sample the code block's height and the layer's life on every frame from the click until well after the beat.
     const trace = await page.evaluate(() => new Promise((resolve) => {
         const root = document.querySelector(".gl-frame, body");
-        const flowMs = parseFloat(getComputedStyle(root.querySelector(".chat.calm") ?? root).getPropertyValue("--calm-flow-ms"));
+        const cs = getComputedStyle(root.querySelector(".chat.calm") ?? root);
+        const flowMs = parseFloat(cs.getPropertyValue("--calm-reflow-ms")), exitMs = parseFloat(cs.getPropertyValue("--calm-flow-ms"));
         const t0 = performance.now(), frames = [];
         const heightOf = () => root.querySelector("pre.code")?.getBoundingClientRect().height ?? null;
         const card = () => root.querySelector(".astep-approve.ask");
@@ -18,13 +19,13 @@ export default async ({ page, tile, shot }) => {
         const tick = () => {
             const t = performance.now() - t0;
             frames.push({ t, h: heightOf(), layer: !!root.querySelector(".code-morph"), card: card() ? +getComputedStyle(card()).opacity : null, hidden: root.querySelector("pre.code > code") ? getComputedStyle(root.querySelector("pre.code > code")).visibility : null });
-            if (t < flowMs + 400) requestAnimationFrame(tick); else resolve({ flowMs, frames });
+            if (t < flowMs + 400) requestAnimationFrame(tick); else resolve({ flowMs, exitMs, frames });
         };
         requestAnimationFrame(tick);
     }));
-    const { flowMs, frames } = trace;
+    const { flowMs, exitMs, frames } = trace;
     const fail = (m) => { throw new Error(`${m}\n${frames.map((f) => `${Math.round(f.t)}ms h=${f.h && Math.round(f.h)} layer=${f.layer} card=${f.card} code=${f.hidden}`).join("\n")}`); };
-    if (!(flowMs > 0)) fail("no --calm-flow-ms on the calm chat");
+    if (!(flowMs > 0)) fail("no --calm-reflow-ms on the calm chat");
 
     // The block never disappears, and its height only ever grows, in steps that are a share of the whole: no jump, no doubling back.
     const hs = frames.map((f) => f.h);
@@ -53,10 +54,10 @@ export default async ({ page, tile, shot }) => {
 
     // Answering sends the card away over the same beat, and it is gone from the page.
     await tile.locator(".code-morph-approve").click();
-    await page.waitForTimeout(flowMs / 2);
+    await page.waitForTimeout(exitMs / 2);
     const mid = await tile.locator(".astep-approve").first().evaluate((e) => +getComputedStyle(e).opacity);
     if (!(mid > 0 && mid < 1)) fail(`the card was not mid-fade half way through its exit (${mid})`);
-    await page.waitForTimeout(flowMs + 150);
+    await page.waitForTimeout(exitMs + 150);
     if (await tile.locator(".astep-approve").count()) fail("the card was still on the page after its exit");
     await shot("answered");
 

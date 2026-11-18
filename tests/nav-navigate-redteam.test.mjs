@@ -378,7 +378,8 @@ async function pageBuiltRun(calls, { policies = [], card = () => true, clickTo =
         crossOrigin: true, approvalRouting: "ui", pageOrigin: "https://site.example",
         rebuild: { toolNames: ["navigate", "fetch_url", "click"], model: "m", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 1000, pierceClosed: false, cdp: false, crossOrigin: true },
     } }, fromPage);
-    const raced = await Promise.race([done.then((r) => ({ ok: true, r })), sleep(15000).then(() => ({ ok: false }))]);
+    // The watchdog is unref'd: once `done` wins, it must not hold the file's process open for the rest of its 15 s.
+    const raced = await Promise.race([done.then((r) => ({ ok: true, r })), new Promise((r) => setTimeout(r, 15000).unref()).then(() => ({ ok: false }))]);
     if (!raced.ok) throw new Error("page-built run did not settle within 15s");
     return { gates, workerFetched, toPage, tab, messages: raced.r?.messages ?? [] };
 }

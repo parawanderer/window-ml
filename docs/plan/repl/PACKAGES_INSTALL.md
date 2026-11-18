@@ -171,7 +171,7 @@ text the index wrote, a filename that renders as something else, a hash the card
 AS BUILT (slice 2), with its departures, each ruled by the coordinator on 2026-11-12:
 
 - The tool is `python_install` (`src/tools/python-install-tool.ts`), declared in the tool registry, gated, run in the
-  worker and one of `PROPOSAL_TOOLS`. It is offered to no run until slice 4 (`OFFER_PYTHON_INSTALL` in
+  worker and one of `WORKER_ONLY_TOOLS`. It is offered to no run until slice 4 (`OFFER_PYTHON_INSTALL` in
   `sw-run-start.ts`), because before it an approved card installs nothing.
 - No network: the index view is the lock alone, so a package the core does not ship is refused as `not-on-index`.
   The lock rows carry the lock's own sha256 (`LockEntry.sha256`); a lock file has no size, and the card says "in the
