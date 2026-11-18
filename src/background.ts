@@ -45,7 +45,7 @@ import { costCalls } from "./sw/sw-prices";
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, tabGrants } from "./sw/sw-consent";
 import { syncPresence, isVisible, presence, injectRunTools, injectPageScripts, SITE_REQUESTS_KEY } from "./sw/sw-presence";
 import { isExtensionSender, senderFacts, editSiteAccess, pageRefusal, agentRefusal, readSiteLists, selfApprovalFacts, senderSelfApproves, siteLevels, siteSchemaReady, upgradeNotice, dismissUpgradeNotice } from "./sw/sw-site-access";
-import { policiesReady, forgetRunPolicies, addGlobalPolicy, editPolicy, removePolicy, policyView } from "./sw/sw-policies";
+import { policiesReady, forgetRunPolicies, addGlobalPolicy, editPolicy, removePolicy, policyView, sessionPolicies, removeFromSession } from "./sw/sw-policies";
 import { POLICY_LABEL_MAX, POLICY_SOURCE_MAX } from "./sw/policy-valid";
 import { addManifest, manifestView, removeManifest } from "./sw/sw-manifests";
 import { librariesReady, removeLibrary, storedLibraries } from "./sw/sw-libraries";
@@ -733,7 +733,7 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
     // (or a content script relaying for one) that could add or widen one would be approving itself.
     if (message.type === "POLICIES") {
         if (!isExtensionSender(sender)) { sendResponse({ error: "refused" }); return; }
-        const p = (message.payload || {}) as { op?: unknown; id?: unknown; effect?: unknown; source?: unknown; label?: unknown; consumer?: unknown };
+        const p = (message.payload || {}) as { op?: unknown; id?: unknown; hash?: unknown; confirm?: unknown; effect?: unknown; source?: unknown; label?: unknown; consumer?: unknown };
         const str = (v: unknown, max: number): string | undefined => (typeof v === "string" && v.trim() && v.length <= max ? v : undefined);
         const effect = p.effect === "allow" || p.effect === "deny" || p.effect === "ask" ? p.effect : undefined;
         // Awaits the store's first storage read: a page that listed policies in an earlier worker life names ids this one
@@ -751,6 +751,20 @@ function route(message: any, sender: chrome.runtime.MessageSender, sendResponse:
             } else if (p.op === "remove") {
                 const id = str(p.id, 100);
                 if (!id || !removePolicy(id)) { sendResponse({ error: "no such policy" }); return; }
+            } else if (p.op === "session") {
+                // One session's effective view (docs/spec/POLICIES.md, "The effective view"): a read, so no change to answer with.
+                const hash = str(p.hash, 100);
+                if (!hash) { sendResponse({ error: "a session hash is needed" }); return; }
+                sendResponse({ data: sessionPolicies(hash) });
+                return;
+            } else if (p.op === "removeChecked") {
+                // A removal from a session's view: a widening one needs `confirm: true`, and refuses with the entry and what it would expose.
+                const hash = str(p.hash, 100), id = str(p.id, 100);
+                if (!hash || !id) { sendResponse({ error: "a session hash and a policy id are needed" }); return; }
+                const r = removeFromSession(hash, id, p.confirm === true);
+                if (!r.removed) { sendResponse(r.why === "confirm" ? { error: "confirm", data: { row: r.row } } : { error: "no such policy" }); return; }
+                sendResponse({ data: sessionPolicies(hash) });
+                return;
             } else if (p.op !== undefined && p.op !== "list") { sendResponse({ error: "unknown op" }); return; }
             sendResponse({ data: policyView() });
         })();

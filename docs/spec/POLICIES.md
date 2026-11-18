@@ -293,6 +293,43 @@ to diff. Global (persistent) policies are edited there the same way as a run's. 
 at once ("these five no longer match anything this session does"), as one card the person confirms; removing narrows
 what runs without asking, so it cannot escalate, but it is still the person's list.
 
+## The effective view: one session's policies as rows
+
+A session's policies are read as ROWS, one per policy, placed against the others of the same consumer, by `sessionPolicies(hash)`
+(`sw-policies.ts`, rows built in `sw-policy-view.ts`) beside `judgeCall` and from the same lists. The page that shows them is a
+separate piece of work; this section is the worker's contract.
+
+- **A row is `{consumer, layer, entry, wins, overrides, overriddenBy, removal}`.** `layer` is `default` (the built-in rule,
+  one row per consumer that has a policy), `global`, or `session`. `entry` is the policy's `id`, `label`, `source`, `effect`,
+  `origin`, `created` and why it broke. NOTHING ELSE: the row type has no field for a value, a call's arguments or a result,
+  so a consumer whose policies talk about files shows PATHS and nothing a file held.
+- **The layers never change a verdict.** `judgeCall` takes the strictest effect across every scope (`deny`, then `ask`, then
+  `allow`), so a session `allow` does not override a global `deny`. `overrides` follows strictness alone: a row beats the
+  rows of the same consumer with a weaker effect, on a call both match; equal effects override nothing. `wins` is true when no
+  row of the consumer is stricter. The layer only decides which of two rows of the same effect `judgeCall` names. The default
+  never overrides (it is the weakest) and is beaten by any `ask` or `deny`.
+- **A policy is a script, so "on a call both match" is not decided here.** The read says what wins WHERE both match, never that
+  they overlap. The enumeration test holds it against `judgeCall` over every pair of layers and effects.
+- **Two removal classes, decided by the worker and sent in the row.** Removing an `allow` NARROWS (fewer calls run unasked):
+  one gesture. Removing a `deny` or an `ask` WIDENS: the page shows the entry and `removal.exposes`, the rows that would
+  decide the calls this one decided (the default among them), and only then sends `confirm`. The worker enforces it: a widening
+  `removeChecked` without `confirm` is refused with the row, so a caller that did not show the effect cannot skip it. A consumer
+  that needs another rule (the files host's `hide` and `show`) registers a classifier (`registerRemovalClass`); the read and the
+  removal name no consumer.
+- **The message.** `POLICIES` `{ op: "session", hash }` reads the rows and `{ op: "removeChecked", hash, id, confirm? }`
+  removes one; both are EXTENSION PAGES ONLY like every `POLICIES` op, and no page-relayed message carries either. A policy that
+  is not in this session's view (another session's) is refused.
+- **The host seam (the contract the tab will read through).** `SessionHost.sessionPolicies(key) -> rows | null` and
+  `removePolicy(key, id, confirm?)`, with ONE SessionFeed event `policies-changed {hash}` as the change signal. `null` means
+  unknown (the runtime is unreachable, or the host has no policy store), never "none". The host splits the page's
+  `runtime:hash` key on the LAST `:` and hands the worker the bare hash; the worker never sees a runtime. In v1 the extension
+  host alone answers (it maps the event from `onPoliciesChanged`, storage `onChanged` being only its own source) and every other
+  host answers `null`, so the tab hides the remove there. A remote route (a sealed hub command) is left open and is not built.
+- **What the renderer decides and what the worker does.** The row carries `removal.class` and `removal.exposes`, so the page shows
+  a widening removal's confirm from the row it already holds, with no second read. That confirm is display: the gate is the
+  worker's refusal of a widening `removeChecked` without `confirm`. A row's `source` is shown as its label with the source behind
+  a disclosure, and a broken policy (`entry.broken`) as one line on its row.
+
 ## A change takes effect at once
 
 On every call not yet started:

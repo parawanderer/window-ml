@@ -250,6 +250,12 @@ reached the tab's ledger for a worker-hosted run. The remember button never help
   policy (effect, label, source as code, an inline editor, remove), the reason a broken one decides nothing, the
   built-in default read-only, and each session's run policies under its hash. It re-reads on `chrome.storage.onChanged`
   for the store's keys, which it duplicates rather than import worker code (a test holds the two lists together).
+- **The effective view** (`sessionPolicies(hash)`, `removeFromSession`; rows in `sw-policy-view.ts`, pure) answers `POLICIES`
+  `{ op: "session", hash }` and `{ op: "removeChecked", hash, id, confirm? }`. A row's `wins`, `overrides` and `removal` are computed
+  from strictness (the same order `judgeCall` applies), never from the layer; `tests/policy-effective-view.test.mjs` enumerates
+  every pair of layers and effects against `judgeCall`, with the default asserted on its own. A new consumer adds NO case to the
+  read: it registers a removal class if the effect default (an allow narrows, a deny or an ask widens) is wrong for it
+  (`registerRemovalClass`). The spec: POLICIES.md, "The effective view".
 - **A card already showing is judged again** on every change (`onPoliciesChanged` → `rejudgePending`, `sw-consent.ts`).
   Only a pending entry whose descriptor carries `consumer` and `facts` is judged: the facts the WORKER resolved when the
   card opened (the `fetch_url` card of a run whose fetch the worker runs, and lane 4's nested `sh` asks). Only consumer
