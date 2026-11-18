@@ -181,10 +181,11 @@ built; this is the shape the scrub grows into, recorded so the next builder does
 
 ## Amendments after the scrub (2026-11-18)
 
-Three rulings of Shane's that build on the registry scrub ([#1948](https://github.com/parawanderer/window-ml/pull/1948),
+Four rulings of Shane's that build on the registry scrub ([#1948](https://github.com/parawanderer/window-ml/pull/1948),
 "The scrub as built"). The coordinator's calls under each are marked as such and were surfaced to Shane. Nothing here
 is built yet. Ruling 30's value scrub lands after scrub PR 2, its channel mask with handles; ruling 32 lands before
-handles; ruling 33 lands once ruling 32's store and its Settings page exist.
+handles; ruling 33 lands once ruling 32's store and its Settings page exist; ruling 39's by-value half lands after
+#1948, its shape half in its own PR.
 
 ### Page password fields are masked from the model (ruling 30)
 
@@ -358,3 +359,101 @@ calls, each surfaced to Shane:
   would carry a value inside a sealed command to the runtime. The hub passes sealed payloads opaquely, so it would
   likely need no change, but a value crossing devices is a new kind of payload and gets its own ruling then.
 - **Who builds it.** The chat page lane, after this spec merges and the store's Settings page exists.
+
+### What the person sends is scrubbed too (ruling 39)
+
+**The ruling.** The scrub applies to what the person sends, unless they flag that input as not to be redacted. The
+reason is the accident: a token pasted with the text around it, a selection that held one, an attached file with a
+key in it. This lifts the known limit "the person's own turn and the page context the run is started with" of "The
+scrub as built" once it is built. The calls below are the coordinator's (plan PR
+[#1966](https://github.com/parawanderer/window-ml/pull/1966)), each surfaced to Shane and his to override; the ones
+marked "recommended" are this spec's, still open.
+
+**Two detectors.**
+
+- **By value**: the registry matcher of #1948, and under ruling 32 the `mask` entries, which match without a stored
+  value. A match is `[REDACTED:<NAME>]`, as in a tool result.
+- **By shape**: known token formats, each a prefix or a frame plus a length and an alphabet, so the prefix alone in
+  prose never fires. The first list: vendor prefixes (`sk-` and `sk-ant-`, `ghp_`, `gho_`, `ghs_`, `ghu_`,
+  `github_pat_`, `glpat-`, `xox[abprs]-`, `AKIA` and `ASIA` with 16 more, `AIza` with 35 more, `sk_live_` and
+  `rk_live_`), a PEM private key block from its `-----BEGIN` line to its `-----END` line, and a JWT (three base64url
+  parts, the first two decoding to JSON objects). A match is `[REDACTED:<kind>]`, the kind a lowercase slug
+  (`github-token`, `pem-private-key`, `jwt`), so it can never be read as a registry name, which is upper case by its
+  bound.
+- **No entropy-only detector** until a notebook gives its false-positive rate on real prompts, which hold commit
+  hashes, UUIDs, base64 and minified code. A pattern that needs a credential word beside the value (`password=`) waits
+  for the same notebook.
+
+**Where.** At the point where input becomes a turn: in the worker, before the session store writes it and before the
+model reads it, so what is stored is what the model saw. That point is, today:
+
+- an agent run's first turn (`buildMessages` in `agent-host.ts`, the task and the page context `firstUserTurn` adds),
+  and a later turn (`pushUser`, a `say()` or a steer drained from the inbox);
+- the chat page's direct chat (`sw-chat.ts`), the typed words and the `<file>` blocks `frameFiles` adds;
+- an attachment's text when `sw-attach.ts` writes it to the value store, so the file is scrubbed at rest and every
+  read of its `@file:` pointer is too;
+- the prompt string of a page-started call (`ml.agent`, `ml.step`, a page's model request). A page-started model
+  request is already scrubbed by value in #1948 (`forBackendFromPage`); ruling 39 adds the shape detector there and
+  the same scrub for a page-started run's task.
+
+A turn the person started shows names; a page-started string gets the bare `[REDACTED]` of #1948, in every role,
+since the page reads the reply. An image is not scrubbed (the known limit of "The scrub as built").
+
+**What the model reads.** The placeholder in place, and one line after the turn in the wording tool results use
+(`redactedNote`), with names or kinds and a count, so the model does not think the person typed a placeholder.
+
+**What the person sees.** In the composer, a chip on each detected span, naming the entry or the kind, with "send as
+is" for that one value. A detection never blocks a send. The composer asks the worker over an extension-only message
+(the shape of `SECRET_REGISTRY`), debounced, and gets spans and names back, never a value: the text is the composer's
+own. After a send, the transcript shows the placeholder the model saw and that the scrub fired, beside the raw view
+the "what the model saw" rule asks for. Recommended: in the first build the chip is in the composers the extension
+hosts (the sidebar and the chat page in the extension); a remote host of the renderer (the web build, the phone)
+gets the scrub at the runtime and the transcript's marker, and the chip there waits until the scan answer can ride
+the hub.
+
+**The flag, three levels.**
+
+- **Per value**: "send as is" on a chip. The value reaches the model and the store, and the stored turn records the
+  span as sent as is, so a later crossing of that turn (a resumed history, `forModelHistory`) leaves that span and
+  no other. Every other crossing still scrubs the value: a tool result that echoes it is redacted as before.
+- **Per call**: an option, `scrubInput: false`, on the calls that start or extend a run (`ml.agent`, `ml.step`,
+  `createAgent`, `say`).
+- **One setting**, `scrubPersonInput`, on by default, in the DevTools Settings panel. It is the person's: never
+  written by `change_setting`, `ml.settings` or a page. The upgrade row: a stored config from before the key reads
+  as on.
+
+The most specific level wins. A page may pass the option for its own string and never changes the setting.
+Recommended: a page's `scrubInput: false` turns off the SHAPE detector only. A registered value is the person's own
+declaration, and a page is not the person, so a page-started string is always scrubbed by value, as #1948 already
+does; Shane's line that a default-held value must never reach the model without the person's override is the reason.
+
+**Open, with this spec's recommendation.**
+
+- **A detected value: offered to the store, or dropped?** Recommended: dropped, and offered only at the chip, while
+  the draft still holds it: "Remember as a secret" opens the store's add row with the kind as the name and `mask` as
+  the type, and nothing is added without the person's save. Never as an inbox item: an item would have to hold the
+  value until acted on, which is storing it unregistered. Never from a remote host (ruling 33 defers remote entry)
+  and never from a page-started string.
+- **No store set up.** Recommended: by value has nothing to match and the shape detector runs anyway, since it needs
+  no store; ruling 33's inbox item already shows while the registry is empty. A store that cannot be READ is not an
+  empty one: the turn is held in the composer with the reason and a retry, and "send as is" for the whole turn is
+  the person's override. That holds a send rather than blocking it; it is marked here for Shane, since the ruling
+  says a send is never blocked and #1948 fails every other crossing closed.
+- **Shared with the host's `looks_secret`, or separate?** Recommended: separate. `looks_secret`
+  (`src/facts.rs` in window-ml-host) classifies a PATH by its components (`.env`, `id_*`, `*.pem`, `.ssh/`); the
+  shape list classifies TEXT. One list would hold two kinds of rule. The shape list is shared within the extension
+  instead: one module that this detector and scrub PR 2's patterns over tool output both read, so a person's turn
+  and a tool result are judged by the same shapes. An attachment whose file name `looks_secret` would match is a
+  candidate for a stronger default later, from a copy of the host's list with a parity row, not from this list.
+
+**Rows the build lands with.**
+
+- A registered value typed, pasted, in an attachment's text, in a page selection and in a later `say()` comes out
+  redacted in what the model read and in the stored session, and the value is in neither.
+- Each shape matches its fixture and does not match its prefix in prose, a commit hash, a UUID or plain base64.
+- "Send as is" sends that span only; a second value in the same turn is still redacted, and a resumed history keeps
+  the exempt span and scrubs the rest.
+- `scrubInput: false` from the person's call sends the turn as is; from a page it leaves the registered value
+  redacted (e3's row).
+- No page, content script or model tool can send the scan message, change `scrubPersonInput` or learn a name (e3's
+  rows), and a janitor reads the build.
