@@ -273,15 +273,22 @@ stolen store also gives each secret's exact length, since `L` of the as-written 
 protects a high-entropy secret (an API token, a generated password) completely, removes the value from disk and from
 anything that reads storage, and does not protect a weak password from offline guessing by whoever holds the profile.
 The spec states that, not more. The widths are provisional until measured: `k = 8`, `w = 24` and a slow hash
-(PBKDF2-SHA256 through WebCrypto) at about a millisecond. At 64 entries of 11 forms each (`E` about 700) on a 1 MiB
-result, that is about 44 slow confirms a crossing. The per-crossing time, the false candidates and the slow hash's cost
-at 64 entries on a 1 MiB result are measured in a notebook (`notebooks/<topic>/`) before the widths are fixed (the
-coordinator's call).
+(PBKDF2-SHA256 through WebCrypto) at about a millisecond. Measured (`mask-matcher.ipynb`, #1959): a secret gives about 5
+distinct forms, not 11, so at 64 entries `E` is about 313 and a crossing raises about 20 false candidates a MiB in
+expectation; on repetitive text (JSON, logs) they arrive in clumps, a collision with a frequent window counted once per
+occurrence. Two requirements follow. The confirm is memoised within one crossing, keyed on the form and the candidate's
+full `L` units, never on the `k`-unit window alone, so a clump costs one confirm. Keyed on the window, a text holding a
+secret's first 8 units followed by other text would cache "no" and leave a real occurrence later in the same crossing
+unredacted; the build has a row for exactly that text. And a crossing's time budget is set from the tail of its cost,
+not its mean. The widths stay provisional until they are fixed from that notebook (the coordinator's call).
 
 **A timing oracle.** The slow confirm runs only on a filter hit, so a crossing's time tells a text holding a stored
-8-character prefix from one that does not: a prefix oracle beside the redaction oracle in "The scrub as built". The
-notebook measures whether the difference is observable from a page through `forPage`; if it is, the confirm cost is
-paid on a fixed schedule, or a page's crossing is answered no sooner than a floor.
+8-character prefix from one that does not: a prefix oracle beside the redaction oracle in "The scrub as built". It is
+observable on the worker's side: the notebook (#1959) separates one hit by a difference of two means (`z = 2`) after
+about 5 to 47 crossings of each at 20,000 iterations and about 1,000 to 10,500 at 1,000, on a loaded machine. So the
+remedy is REQUIRED, not conditional (the coordinator's call, surfaced to Shane): the confirm cost is paid on a fixed
+schedule, or a page's crossing is answered no sooner than a floor. The end-to-end run from a page through `forPage`
+sizes the remedy; it does not decide whether there is one.
 
 **Short values.** The 8-character floor stays for `mask` entries. A string of `n` characters over an alphabet of size
 `a` occurs about `N / a^n` times in `N` characters of text that looks random to it: a 4-digit PIN about 100 times in a
