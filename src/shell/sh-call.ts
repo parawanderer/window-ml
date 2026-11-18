@@ -6,8 +6,8 @@
 // host's resolution (`HostFacts`) and the program's manifest, never from what the script says about its call: the
 // script supplies the argv, the cwd and the environment additions, and nothing else.
 
-import type { CallDescription, ProgramManifest } from "./program-manifest";
-import { CREDENTIAL_PROVIDERS, describeCall, hardenArgv } from "./program-manifest";
+import type { CallDescription, Flavour, ProgramManifest } from "./program-manifest";
+import { CREDENTIAL_PROVIDERS, describeCall, flavourOf, hardenArgv } from "./program-manifest";
 import { claimsTopLevelName, type EffectsData, type Resource } from "../effects";
 import type { HostDone, HostDoneEnvelope, HostEnvelope, HostFacts, HostPathArg, HostPlacement, HostProtectedChange, HostSpawn, HostStream, HostTilde, HostFilesMapped } from "./host-protocol";
 import { binaryKind } from "../sw/body-read";
@@ -274,7 +274,7 @@ export async function credentialFor(plan: ShPlan, host: { hello: { credentials?:
  *   folder as the model's text writes it (`~/git/proj/window-ml-files`)
  * @returns the plan
  */
-export function planSpawn(req: ShRunRequest, session: { cwd: string; roots?: readonly string[]; manifests?: readonly ProgramManifest[]; stored?: readonly StoredManifest[]; tilde?: boolean; files?: { mount: string; session: string; shown: string } }): ShPlan {
+export function planSpawn(req: ShRunRequest, session: ShSession): ShPlan {
     const cwd = req.cwd === undefined ? session.cwd : req.cwd.startsWith("/") || (session.tilde && isTildeArg(req.cwd)) ? req.cwd : `${session.cwd.replace(/\/+$/, "")}/${req.cwd}`;
     const st = session.stored ? manifestsFor(session.stored, session.roots ?? []) : undefined;
     const m = manifestFor(req.argv, session.roots ? { cwd, roots: session.roots, ...(st ? { rootOf: st.rootOf } : {}) } : undefined, st?.list ?? session.manifests);
@@ -282,13 +282,14 @@ export function planSpawn(req: ShRunRequest, session: { cwd: string; roots?: rea
     const files = session.files;
     if (files) spawn.files = { mount: files.mount, session: files.session };
     if (!m) return { spawn, description: null, ...filesPlaced(req.argv, null, files) };
-    const first = describeCall(req.argv, m, { envSet: Object.keys(req.env) });
+    const flavour = session.flavour === undefined ? {} : { flavour: session.flavour };
+    const first = describeCall(req.argv, m, { envSet: Object.keys(req.env), ...flavour });
     // Hardening is a belt, not a judgement: it applies whether or not the call is described (git is undescribed until
     // the host reports its version, and still gets `--no-pager`). Its points come only from levels the parse
     // understood. The hardened argv describes as the original does, so its own description carries the indices the
     // host resolves.
     const argv = first.harden.length ? hardenArgv(req.argv, first) : req.argv;
-    const d = argv === req.argv ? first : describeCall(argv, m, { envSet: Object.keys(req.env) });
+    const d = argv === req.argv ? first : describeCall(argv, m, { envSet: Object.keys(req.env), ...flavour });
     spawn.argv = argv;
     const pathArgs: HostPathArg[] = d.pathArgs.map((p) => ({ arg: p.arg, ...(p.split ? { split: p.split } : {}), ...(p.walk ? { walk: true } : {}), ...(p.role === "write" ? { role: "write" as const } : {}) }));
     // The script itself, resolved and hashed, so its facts say which file runs and whether it is the pinned one.
@@ -301,6 +302,27 @@ export function planSpawn(req: ShRunRequest, session: { cwd: string; roots?: rea
     const shipped = m.credential && SHIPPED_MANIFESTS[m.program] === m;
     return { spawn, description: d, ...(shipped ? { credential: { provider: m.credential!.provider, manifest: m } } : {}), ...filesPlaced(argv, m, files) };
 }
+
+/**
+ * The plan again once the host's facts showed which flavour runs, when that flavour changes what is sent: its own
+ * hardening (GNU `--sandbox`), or an overlay flag whose value is a path the host must resolve. The first plan is made
+ * before any facts exist (undetected), so the call is discarded and spawned again with this plan; the caller requires
+ * the same program file (fingerprint) and describes the NEW facts, so what the card shows and what runs is this argv.
+ * @param req the request
+ * @param session as for `planSpawn`
+ * @param plan the plan the facts came from
+ * @param flavour what `flavourOf` read from those facts
+ * @returns the new plan, or null when the first one already sends what it would
+ */
+export function flavourReplan(req: ShRunRequest, session: ShSession, plan: ShPlan, flavour: Flavour): ShPlan | null {
+    if (flavour !== "gnu" && flavour !== "bsd") return null;
+    const again = planSpawn(req, { ...session, flavour });
+    return JSON.stringify(again.spawn) === JSON.stringify(plan.spawn) ? null : again;
+}
+
+/** What `planSpawn` plans a call against: the session's working directory and roots, the manifests, what the host
+ *  expands, and the flavour once facts showed it (absent: undetected, the first plan). */
+export type ShSession = { cwd: string; roots?: readonly string[]; manifests?: readonly ProgramManifest[]; stored?: readonly StoredManifest[]; tilde?: boolean; files?: { mount: string; session: string; shown: string }; flavour?: Flavour };
 
 /** Whether an argument names `/files` itself or a path under it. */
 const isFilesPath = (a: string): boolean => a === "/files" || a.startsWith("/files/");
@@ -374,6 +396,9 @@ export interface ShFacts {
     argv: string[];
     /** `version`: what the program reported (the worker's version probe), null when it was not read. */
     program: { path: string; inRoot: boolean; version: string | null };
+    /** Which implementation runs, for a manifest that declares `flavours` (`flavourOf`): its name, null when undetected,
+     *  and why in words for the card. Null for a manifest without flavours, or no manifest. */
+    flavour: { name: Flavour; how: string } | null;
     /** `topLevel`/`isRoot` as on a path, present only when the roots were given. */
     cwd: { path: string; inRoot: boolean; topLevel?: boolean; isRoot?: boolean; containsSecret?: boolean | null };
     env: { set: string[]; free: boolean };
@@ -433,10 +458,10 @@ const secretBeneath = (containsSecret: boolean | null | undefined): boolean => c
  *   describes nothing: its effects are `unknown`)
  * @returns the policy's `c`
  */
-export function shFacts(facts: HostFacts, version: string | null = null, place?: { roots: readonly string[]; manifests?: readonly ProgramManifest[]; stored?: readonly StoredManifest[] }): ShFacts {
-    const st = place?.stored ? manifestsFor(place.stored, place.roots) : undefined;
-    const m = manifestFor(facts.argv, place ? { cwd: facts.cwd.path, roots: place.roots, ...(st ? { rootOf: st.rootOf } : {}) } : undefined, st?.list ?? place?.manifests);
+export function shFacts(facts: HostFacts, version: string | null = null, place?: ShFactsPlace): ShFacts {
+    const { m, st } = factsManifest(facts, place);
     const entry = m ? st?.entryOf(m) : undefined;
+    const fl = m?.flavours ? flavourOf(m, facts.program, place?.platform, version ?? undefined) : null;
     const why: string[] = [];
     let effects: EffectsData = "unknown";
     let described = false;
@@ -460,7 +485,7 @@ export function shFacts(facts: HostFacts, version: string | null = null, place?:
             // An argument the host was not asked to resolve has no root or secret answer, which no bound covers.
             return f ? { kind: "fs", path: f.path, inRoot: f.inRoot && !unnamedLink(f, facts.cwd.path), secret: f.secret || secretBeneath(f.containsSecret), exists: f.exists, ...placeBoth(f, place?.roots, facts.cwd.path) } : { kind: "fs", path: p.given };
         };
-        const d = describeCall(facts.argv, m, { envSet: facts.env.set, resolve, ...(version !== null ? { version } : {}) });
+        const d = describeCall(facts.argv, m, { envSet: facts.env.set, resolve, ...(version !== null ? { version } : {}), ...(fl ? { flavour: fl.flavour } : {}) });
         effects = d.effects;
         described = d.described;
         runner = d.runner;
@@ -479,6 +504,7 @@ export function shFacts(facts: HostFacts, version: string | null = null, place?:
     return {
         argv: [...facts.argv],
         program: { path: facts.program.path, inRoot: facts.program.inRoot, version },
+        flavour: fl ? { name: fl.flavour, how: fl.how } : null,
         cwd: { path: facts.cwd.path, inRoot: facts.cwd.inRoot, ...placeAmongRoots(facts.cwd.path, place?.roots), ...(facts.cwd.containsSecret !== undefined ? { containsSecret: facts.cwd.containsSecret } : {}) },
         env: { set: [...facts.env.set], free: facts.env.free },
         secrets: [...facts.env.secrets],
@@ -491,6 +517,27 @@ export function shFacts(facts: HostFacts, version: string | null = null, place?:
         tilde: (facts.tilde ?? []).map((t) => ({ ...t })),
         files: (facts.files ?? []).map((m) => ({ ...m })),
     };
+}
+
+/** Where a call's facts are described: the roots, the manifests, and `hello.platform` (for `flavourOf`). */
+export type ShFactsPlace = { roots: readonly string[]; manifests?: readonly ProgramManifest[]; stored?: readonly StoredManifest[]; platform?: string };
+
+/** The manifest a call's facts are described by, chosen as `shFacts` chooses it, and the stored manifests it came from. */
+function factsManifest(facts: HostFacts, place?: ShFactsPlace): { m: ProgramManifest | undefined; st: ReturnType<typeof manifestsFor> | undefined } {
+    const st = place?.stored ? manifestsFor(place.stored, place.roots) : undefined;
+    return { m: manifestFor(facts.argv, place ? { cwd: facts.cwd.path, roots: place.roots, ...(st ? { rootOf: st.rootOf } : {}) } : undefined, st?.list ?? place?.manifests), st };
+}
+
+/**
+ * Which flavour a call's facts show, as `shFacts` will read it: what the worker re-plans the call under
+ * (`flavourReplan`) before it describes the facts. Null for a manifest without flavours, or none.
+ * @param facts what `spawn` answered
+ * @param version what the probe read, or null
+ * @param place as for `shFacts`
+ */
+export function factsFlavour(facts: HostFacts, version: string | null, place?: ShFactsPlace): Flavour {
+    const { m } = factsManifest(facts, place);
+    return m?.flavours ? flavourOf(m, facts.program, place?.platform, version ?? undefined).flavour : null;
 }
 
 /** The call's credential: the host's word when it will inject one, else the manifest's, not held. */
@@ -668,7 +715,7 @@ function portsText(ports: readonly number[]): string {
 export function shCardLines(f: ShFacts, applied?: HostDoneEnvelope | null, asked?: HostEnvelope): ShCardLine[] {
     const lines: ShCardLine[] = [
         { label: "Runs", value: f.argv.map(quoteArg).join(" "), command: true, ...(scriptOf(f.argv) !== null ? { script: scriptOf(f.argv)! } : {}) },
-        { label: "Program", value: f.program.path + (f.program.version ? ` (version ${f.program.version})` : "") },
+        { label: "Program", value: f.program.path + (f.program.version ? ` (version ${f.program.version})` : "") + (f.flavour ? `, ${f.flavour.how}` : ""), ...(f.flavour?.name === "other" ? { warn: true } : {}) },
         { label: "In", value: f.cwd.path + (f.cwd.inRoot ? "" : " (outside the workspace roots)"), ...(f.cwd.inRoot ? {} : { warn: true }) },
         ...tildeLines(f.tilde ?? []),
         ...filesLines(f.files ?? []),

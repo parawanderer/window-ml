@@ -96,7 +96,42 @@ export type CommandSpec = {
     /** Arguments the caller inserts right after this command's name, turning off what the repository's own config could
      *  make it run (`git` → `--no-pager`; `git diff` → `--no-ext-diff --no-textconv`). They never widen a call. */
     harden?: readonly string[];
+    /** What one detected flavour adds to this command (PROGRAM_MANIFEST.md, "Flavours"): only in a manifest that
+     *  declares `flavours`, keyed by a flavour it declares. */
+    flavour?: { gnu?: FlavourOverlay; bsd?: FlavourOverlay };
 };
+
+/** An implementation a manifest can tell apart: GNU (by its `--version`) or BSD (the macOS system program). */
+export type FlavourName = "gnu" | "bsd";
+
+/** Which implementation is running: a declared flavour, `"other"` (positive evidence of an implementation the manifest
+ *  does not describe: the program's file has another name), or null when nothing told (undetected). */
+export type Flavour = FlavourName | "other" | null;
+
+/** What one flavour adds to a command. Overlays only ADD: a flag in both the core and an overlay is a validator error. */
+export type FlavourOverlay = {
+    /** Flags only this flavour accepts with this meaning; with a detected flavour the table is the core's and these. */
+    flags?: Readonly<Record<string, FlagSpec>>;
+    /** How this flavour reads an argument starting with `-` after an operand: `"permute"` as a flag, `"stop"` as an
+     *  operand (a file name). Absent, the core's `optionsFirst` holds. */
+    argOrder?: "permute" | "stop";
+    /** Hardening arguments for this flavour only (GNU `--sandbox`), after the core's; flags of the core or this overlay. */
+    harden?: readonly string[];
+};
+
+/** How each declared flavour is recognised: `gnu` by a version probe (run only under the OS sandbox), `bsd` by being
+ *  the system's own program (no run). */
+export type ManifestFlavours = {
+    /** GNU: the probe's `args` (`--version`), a regex whose group 1 is the version in its stdout, and the range of
+     *  versions the overlays were written against; a version outside it is undetected. */
+    gnu?: { probe: { args: readonly string[]; pattern: string; range: string } };
+    /** BSD: the system whose own program it is (`macos`: a file in SYSTEM_PROGRAM_DIRS). */
+    bsd?: { system: "macos" };
+};
+
+/** The directories that hold only the operating system's own programs, by `hello.platform`: on macOS the sealed system
+ *  volume, where neither Homebrew nor a script can put a file. */
+export const SYSTEM_PROGRAM_DIRS: Readonly<Record<string, readonly string[]>> = { macos: ["/bin", "/usr/bin", "/sbin", "/usr/sbin"] };
 
 /** What every program manifest says: the program, how it exits, and its command tree. */
 interface ManifestBase {
@@ -118,6 +153,9 @@ interface ManifestBase {
     credential?: ManifestCredential;
     /** What the credentialed profile may connect to. Only beside `credential`. */
     network?: ManifestNetwork;
+    /** The implementations the manifest tells apart (PROGRAM_MANIFEST.md, "Flavours"); absent, one description for
+     *  every implementation, as before the field. Only with `version.range` `"*"`. */
+    flavours?: ManifestFlavours;
     /** The program's top-level command: its effects, path operands, flags and subcommands. */
     command: CommandSpec;
 }
@@ -234,8 +272,52 @@ export type DescribeOptions = {
     version?: string;
     /** The call's environment changes, by name. */
     envSet?: readonly string[];
+    /** Which implementation runs (`flavourOf`); read only for a manifest that declares `flavours`. Absent is undetected. */
+    flavour?: Flavour;
     resolve?: (p: { arg: number | "cwd" | "repo"; given: string }) => Resource;
 };
+
+/**
+ * Which implementation of a flavoured manifest's program runs, from what the host resolved, in this order: a program
+ * inside a workspace root is never flavoured (undetected); a file whose name is not the program's (busybox, mawk behind
+ * an alternatives link, a multicall binary) is `other`; the system's own program (macOS, a SYSTEM_PROGRAM_DIRS file) is
+ * `bsd`; a GNU probe that reported a version inside its range is `gnu`; anything else is undetected.
+ * @param m the manifest
+ * @param program the host's resolved program (`path` is a realpath)
+ * @param platform `hello.platform`, or undefined when not known
+ * @param probed what the gnu probe's pattern read (group 1): undefined when it was not run, null when it read nothing
+ * @returns the flavour, why, and whether the gnu probe would decide it (`probe`: run it, then ask again)
+ */
+export function flavourOf(m: Pick<ProgramManifest, "program" | "flavours">, program: { path: string; inRoot: boolean }, platform: string | undefined, probed?: string | null): { flavour: Flavour; how: string; probe: boolean } {
+    const fl = m.flavours;
+    if (!fl) return { flavour: null, how: "the manifest declares no flavours", probe: false };
+    if (program.inRoot) return { flavour: null, how: "inside a workspace root, never flavoured", probe: false };
+    const slash = program.path.lastIndexOf("/");
+    const base = program.path.slice(slash + 1);
+    if (base !== m.program) return { flavour: "other", how: `its file is ${base}, not ${m.program}: an implementation the manifest does not describe`, probe: false };
+    const dir = slash > 0 ? program.path.slice(0, slash) : "/";
+    if (fl.bsd && platform === fl.bsd.system && (SYSTEM_PROGRAM_DIRS[platform] ?? []).includes(dir)) return { flavour: "bsd", how: "BSD (the macOS system program)", probe: false };
+    if (!fl.gnu) return { flavour: null, how: "not detected", probe: false };
+    if (probed === undefined) return { flavour: null, how: "not detected (its version was not read)", probe: true };
+    if (probed !== null && inRange(probed, fl.gnu.probe.range)) return { flavour: "gnu", how: "GNU, by its version output", probe: false };
+    return { flavour: null, how: probed === null ? "not detected (its version output is not GNU's)" : `not detected (version ${probed} is outside ${fl.gnu.probe.range})`, probe: false };
+}
+
+/** A command as one flavour reads it: the core's flags and that flavour's, its argument order, and both hardenings. A
+ *  manifest without `flavours` is read as written; an undetected flavour reads the core with `optionsFirst`, and
+ *  `other` the core (the call is then unknown). `stop` is internal: arguments after an operand are operands. */
+function flavoured(cmd: CommandSpec, m: ProgramManifest, f: Flavour | undefined): CommandSpec & { stop?: boolean } {
+    if (!m.flavours) return cmd;
+    if (f !== "gnu" && f !== "bsd") return { ...cmd, optionsFirst: true };
+    const o = cmd.flavour?.[f];
+    if (!o) return cmd;
+    return {
+        ...cmd,
+        flags: { ...cmd.flags, ...o.flags },
+        ...(o.argOrder ? { optionsFirst: false, stop: o.argOrder === "stop" } : {}),
+        ...(o.harden?.length ? { harden: [...(cmd.harden ?? []), ...o.harden] } : {}),
+    };
+}
 
 const unresolved = (p: { arg: number | "cwd" | "repo"; given: string }): Resource => ({ kind: "fs", path: p.given });
 
@@ -257,9 +339,10 @@ export function describeCall(argv: readonly string[], m: ProgramManifest, opts: 
     // even `--`) changes what runs, so the call is not this manifest's.
     const ep = m.entrypoint;
     if (ep && (argv.length < 2 || argv[1].startsWith("-"))) unknown(`${m.program} is described only as ${m.program} ${ep.path}, with no interpreter flag before it`);
+    if (m.flavours && opts.flavour === "other") unknown(`this ${m.program} is an implementation its manifest does not describe`);
 
     const terms: { term: ProgramEffect; targets: "command" | Resource[] }[] = [];
-    let cmd = m.command;
+    let cmd = flavoured(m.command, m, opts.flavour);
     let i = ep ? 2 : 1;
     let operandPaths: number[] = [];
     if (cmd.harden?.length) d.harden.push({ at: i - 1, args: [...cmd.harden] });
@@ -270,8 +353,8 @@ export function describeCall(argv: readonly string[], m: ProgramManifest, opts: 
         const next = cmd.subcommands?.[argv[r.sub]];
         if (!next) { unknown(`${[m.program, ...d.subcommand].join(" ")} has no subcommand ${JSON.stringify(argv[r.sub])} in its manifest`); break; }
         d.subcommand.push(argv[r.sub]);
-        if (next.harden?.length) d.harden.push({ at: r.sub, args: [...next.harden] });
-        cmd = next;
+        cmd = flavoured(next, m, opts.flavour);
+        if (cmd.harden?.length) d.harden.push({ at: r.sub, args: [...cmd.harden] });
         i = r.sub + 1;
     }
     if (cmd.recursive) d.recursive = true;
@@ -340,7 +423,7 @@ type Terms = { term: ProgramEffect; targets: "command" | Resource[] }[];
 
 /** Options-then-operands. Returns the operand indices, the path start a flag set, and the index of a subcommand name
  *  when the command has subcommands and one was reached before any operand. */
-function parseOptions(argv: readonly string[], start: number, cmd: CommandSpec, d: CallDescription, terms: Terms,
+function parseOptions(argv: readonly string[], start: number, cmd: CommandSpec & { stop?: boolean }, d: CallDescription, terms: Terms,
     unknown: (w: string) => void): { operands: number[]; pathsFrom?: number; sub?: number } {
     const operands: number[] = [];
     let pathsFrom: number | undefined;
@@ -373,7 +456,8 @@ function parseOptions(argv: readonly string[], start: number, cmd: CommandSpec, 
     };
     for (let i = start; i < argv.length; i++) {
         const a = argv[i];
-        if (afterTerminator) {
+        // A flavour that stops at the first operand (BSD getopt) reads everything after it as an operand, `--` included.
+        if (afterTerminator || (cmd.stop && operands.length > 0)) {
             if (cmd.pathspecs && notLiteralPathspec(a)) unknown(`pathspec ${JSON.stringify(a)} is magic or a glob, not a path`);
             operands.push(i);
             continue;
@@ -541,9 +625,11 @@ function notLiteralPathspec(a: string): boolean {
     return a.startsWith(":") || /[*?[\\]/.test(a);
 }
 
-const COMMAND_KEYS = new Set(["effects", "paths", "noPaths", "terminator", "numericFlag", "clusters", "maxOperands", "flags", "subcommands", "syntax", "primaries", "okCodes", "echoes", "recursive", "harden", "optionsFirst", "dashIsPath", "repoWide", "pathspecs", "writtenOperands"]);
+const COMMAND_KEYS = new Set(["effects", "paths", "noPaths", "terminator", "numericFlag", "clusters", "maxOperands", "flags", "subcommands", "syntax", "primaries", "okCodes", "echoes", "recursive", "harden", "optionsFirst", "dashIsPath", "repoWide", "pathspecs", "writtenOperands", "flavour"]);
 const VERSION_KEYS = new Set(["range", "args", "pattern"]);
-const MANIFEST_KEYS = new Set(["$schema", "program", "version", "okCodes", "echoes", "env", "entrypoint", "credential", "network", "command"]);
+const MANIFEST_KEYS = new Set(["$schema", "program", "version", "okCodes", "echoes", "env", "entrypoint", "credential", "network", "flavours", "command"]);
+const OVERLAY_KEYS = new Set(["flags", "argOrder", "harden"]);
+const FLAVOUR_NAMES: ReadonlySet<string> = new Set<FlavourName>(["gnu", "bsd"]);
 
 /** Why a manifest that is not shipped may not carry `m`'s credential fields, or undefined: the host honours a
  *  credential only for manifest bytes it pinned, which are the shipped ones, so a stored `credential` or `network`
@@ -573,6 +659,40 @@ export function validateManifest(m: unknown): string[] {
     const codes = (x: unknown, at: string) => {
         if (!Array.isArray(x) || !x.every((c) => Number.isInteger(c) && c >= 0 && c < 256)) errs.push(`${at}: exit codes are integers 0-255`);
     };
+    const flagTable = (flags: Record<string, unknown>, at: string) => {
+        for (const [name, f] of Object.entries(flags)) {
+            const fa = `${at}.flags[${name}]`;
+            if (!/^-{1,2}[A-Za-z0-9][A-Za-z0-9-]*$/.test(name)) errs.push(`${fa}: a flag name starts with - or --`);
+            if (!isObj(f)) { errs.push(`${fa}: an object`); continue; }
+            keys(f, FLAG_KEYS, fa);
+            if (f.effects !== undefined) effects(f.effects, `${fa}.effects`);
+            if (f.value && f.optionalValue) errs.push(`${fa}: value and optionalValue exclude each other`);
+            if ((f.valueIsPath || f.valueIsDir) && !f.value) errs.push(`${fa}: a path or directory value needs value: true`);
+            if (f.valueIsPath !== undefined && f.valueIsPath !== "read" && f.valueIsPath !== "write") errs.push(`${fa}.valueIsPath: read or write`);
+            if (f.okCodes !== undefined) codes(f.okCodes, `${fa}.okCodes`);
+            if (f.runner && !(Array.isArray(f.effects) && f.effects.some((t) => t === "runs-code" || t === "unknown"))) errs.push(`${fa}: a runner's effects include runs-code or unknown`);
+        }
+    };
+    // A flavour's additions: only flavours the manifest declares, flags the core does not list, hardening it can parse.
+    const overlays = (c: Record<string, unknown>, at: string) => {
+        if (!isObj(c.flavour)) return errs.push(`${at}.flavour: an object`);
+        for (const [name, o] of Object.entries(c.flavour)) {
+            const oa = `${at}.flavour.${name}`;
+            if (!FLAVOUR_NAMES.has(name) || !isObj(m) || !isObj(m.flavours) || !(name in m.flavours)) { errs.push(`${oa}: a flavour the manifest declares in flavours`); continue; }
+            if (!isObj(o)) { errs.push(`${oa}: an object`); continue; }
+            keys(o, OVERLAY_KEYS, oa);
+            if (o.flags !== undefined) {
+                if (!isObj(o.flags)) errs.push(`${oa}.flags: an object`);
+                else {
+                    flagTable(o.flags, oa);
+                    for (const f of Object.keys(o.flags)) if (isObj(c.flags) && Object.hasOwn(c.flags, f)) errs.push(`${oa}.flags[${f}]: the core lists it too; an overlay only adds`);
+                }
+            }
+            if (o.argOrder !== undefined && o.argOrder !== "permute" && o.argOrder !== "stop") errs.push(`${oa}.argOrder: permute or stop`);
+            const known = (a: unknown) => typeof a === "string" && ((isObj(c.flags) && Object.hasOwn(c.flags, a)) || (isObj(o.flags) && Object.hasOwn(o.flags, a)));
+            if (o.harden !== undefined && !(Array.isArray(o.harden) && o.harden.every(known))) errs.push(`${oa}.harden: flags the core or this overlay lists, so hardening never makes a call unknown`);
+        }
+    };
     const command = (c: unknown, at: string) => {
         if (!isObj(c)) return errs.push(`${at}: a command is an object`);
         keys(c, COMMAND_KEYS, at);
@@ -589,18 +709,8 @@ export function validateManifest(m: unknown): string[] {
         if (c.maxOperands !== undefined && !(Number.isInteger(c.maxOperands) && (c.maxOperands as number) >= 0)) errs.push(`${at}.maxOperands`);
         if (c.okCodes !== undefined) codes(c.okCodes, `${at}.okCodes`);
         if (!isObj(c.flags)) errs.push(`${at}.flags: an object`);
-        else for (const [name, f] of Object.entries(c.flags)) {
-            const fa = `${at}.flags[${name}]`;
-            if (!/^-{1,2}[A-Za-z0-9][A-Za-z0-9-]*$/.test(name)) errs.push(`${fa}: a flag name starts with - or --`);
-            if (!isObj(f)) { errs.push(`${fa}: an object`); continue; }
-            keys(f, FLAG_KEYS, fa);
-            if (f.effects !== undefined) effects(f.effects, `${fa}.effects`);
-            if (f.value && f.optionalValue) errs.push(`${fa}: value and optionalValue exclude each other`);
-            if ((f.valueIsPath || f.valueIsDir) && !f.value) errs.push(`${fa}: a path or directory value needs value: true`);
-            if (f.valueIsPath !== undefined && f.valueIsPath !== "read" && f.valueIsPath !== "write") errs.push(`${fa}.valueIsPath: read or write`);
-            if (f.okCodes !== undefined) codes(f.okCodes, `${fa}.okCodes`);
-            if (f.runner && !(Array.isArray(f.effects) && f.effects.some((t) => t === "runs-code" || t === "unknown"))) errs.push(`${fa}: a runner's effects include runs-code or unknown`);
-        }
+        else flagTable(c.flags, at);
+        if (c.flavour !== undefined) overlays(c, at);
         if (c.subcommands !== undefined) {
             if (!isObj(c.subcommands)) errs.push(`${at}.subcommands: an object`);
             else for (const [n, s] of Object.entries(c.subcommands)) command(s, `${at}.subcommands.${n}`);
@@ -663,6 +773,24 @@ export function validateManifest(m: unknown): string[] {
             if (!Array.isArray(n.hosts) || !n.hosts.length || !n.hosts.every((h) => typeof h === "string")) errs.push("$.network.hosts: a non-empty list of host names");
             else if (provider && !n.hosts.every((h) => provider.hosts.includes(h as string))) errs.push(`$.network.hosts: a subset of ${provider.hosts.join(", ")}`);
         }
+    }
+    if (m.flavours !== undefined) {
+        const fl = m.flavours;
+        if (!isObj(fl) || !Object.keys(fl).length) errs.push("$.flavours: an object naming gnu, bsd or both");
+        else {
+            keys(fl, FLAVOUR_NAMES as Set<string>, "$.flavours");
+            if (fl.gnu !== undefined) {
+                const g = fl.gnu, pr = isObj(g) ? g.probe : undefined;
+                if (!isObj(g) || Object.keys(g).length !== 1 || !isObj(pr) || Object.keys(pr).some((k) => !VERSION_KEYS.has(k))
+                    || !Array.isArray(pr.args) || !pr.args.length || !pr.args.every((a) => typeof a === "string") || typeof pr.pattern !== "string" || !pr.pattern
+                    || typeof pr.range !== "string" || !pr.range.trim().split(/\s+/).every((c) => /^(>=|<=|>|<|=)?\d+(\.\d+)*$/.test(c)))
+                    errs.push("$.flavours.gnu: {probe: {args, pattern, range}}, a range of comparators like >=4.3 <5");
+                else try { new RegExp(pr.pattern as string); } catch { errs.push("$.flavours.gnu.probe.pattern: a regex"); }
+            }
+            if (fl.bsd !== undefined && !(isObj(fl.bsd) && Object.keys(fl.bsd).length === 1 && fl.bsd.system === "macos")) errs.push("$.flavours.bsd: {system: \"macos\"}");
+        }
+        if (!(isObj(v) && v.range === "*")) errs.push("$.flavours: only with version range \"*\" (the core is written for every implementation; the gnu probe reads the version)");
+        if (m.entrypoint !== undefined) errs.push("$.flavours: a script is pinned by its hash, not by its implementation");
     }
     command(m.command, "$.command");
     return errs;

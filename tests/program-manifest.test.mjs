@@ -394,3 +394,98 @@ test("scriptLacksRunsCode reads the default command only: a subcommand with runs
     const top = describeCall(["bash", "scripts/t.sh"], m);
     assert.ok(top.effects !== "unknown" && !top.effects.some((e) => e.op === "exec"), JSON.stringify(top.effects));
 });
+
+// --- flavours: which implementation runs, and what each adds (PROGRAM_MANIFEST.md "Flavours", ruled 2026-11-17) ---
+
+const { flavourOf, SYSTEM_PROGRAM_DIRS } = await import("../src/shell/program-manifest.ts");
+
+/** A flavoured program: GNU permutes and hardens with --sandbox; BSD stops at the first operand and has its own -l. */
+const FLAVOURED = {
+    program: "tool", version: { range: "*", args: [], pattern: "" },
+    flavours: { gnu: { probe: { args: ["--version"], pattern: "^tool \\(GNU tool\\) (\\d+\\.\\d+)", range: ">=4.3 <5" } }, bsd: { system: "macos" } },
+    command: {
+        effects: ["read"], paths: "operands", terminator: "--", clusters: true, flags: { "-n": {} },
+        flavour: { gnu: { flags: { "--quiet": {}, "--sandbox": {} }, argOrder: "permute", harden: ["--sandbox"] }, bsd: { flags: { "-l": {} }, argOrder: "stop" } },
+    },
+};
+
+test("the flavoured fixture validates", () => {
+    assert.deepEqual(validateManifest(FLAVOURED), []);
+});
+
+test("flavourOf: in-root never, another file name is other, the macOS system program is bsd, a GNU probe in range is gnu, else undetected", () => {
+    const at = (path, inRoot = false) => ({ path, inRoot });
+    const rows = [
+        // [program, platform, probed, flavour, probe wanted]
+        [at("/w/proj/bin/tool", true), "macos", undefined, null, false],
+        [at("/w/proj/bin/tool", true), "linux", "4.9", null, false],
+        [at("/usr/bin/busybox"), "linux", undefined, "other", false],
+        [at("/opt/homebrew/Cellar/gnu-tool/4.9/bin/gtool"), "macos", "4.9", "other", false],
+        ...SYSTEM_PROGRAM_DIRS.macos.map((d) => [at(`${d}/tool`), "macos", undefined, "bsd", false]),
+        [at("/usr/bin/tool"), "linux", undefined, null, true],
+        [at("/usr/local/bin/tool"), "macos", undefined, null, true],
+        [at("/usr/bin/tool"), "linux", "4.9", "gnu", false],
+        [at("/usr/bin/tool"), "linux", "4.2", null, false],
+        [at("/usr/bin/tool"), "linux", "5.0", null, false],
+        [at("/usr/bin/tool"), "linux", null, null, false],
+        [at("/usr/bin/tool"), undefined, undefined, null, true],
+    ];
+    for (const [program, platform, probed, flavour, probe] of rows) {
+        const r = flavourOf(FLAVOURED, program, platform, probed);
+        assert.deepEqual([r.flavour, r.probe], [flavour, probe], `${program.path} on ${platform}, probed ${probed}`);
+        assert.equal(typeof r.how, "string");
+    }
+    // The system rule needs the bsd flavour declared, and a manifest without flavours is never flavoured.
+    const gnuOnly = { ...FLAVOURED, flavours: { gnu: FLAVOURED.flavours.gnu } };
+    assert.deepEqual(flavourOf(gnuOnly, at("/usr/bin/tool"), "macos").probe, true);
+    assert.equal(flavourOf(gnuOnly, at("/usr/bin/tool"), "macos").flavour, null);
+    assert.deepEqual(flavourOf(manifests.cat, at("/bin/cat"), "macos"), { flavour: null, how: "the manifest declares no flavours", probe: false });
+});
+
+test("a detected flavour reads the core and its own overlay; undetected reads the core with optionsFirst; other describes nothing", () => {
+    const rows = [
+        // [argv, flavour, described, pathArgs]
+        [["tool", "-n", "f"], "gnu", true, [2]],
+        [["tool", "f", "--quiet"], "gnu", true, [1]],
+        [["tool", "f", "-n"], "gnu", true, [1]],
+        [["tool", "-l", "f"], "gnu", false, null],
+        [["tool", "-n", "f"], "bsd", true, [2]],
+        [["tool", "-l", "f"], "bsd", true, [2]],
+        [["tool", "--quiet", "f"], "bsd", false, null],
+        // BSD stops at the first operand: what follows is a file name, `--` and `-n` included.
+        [["tool", "f", "-n"], "bsd", true, [1, 2]],
+        [["tool", "f", "--", "-x"], "bsd", true, [1, 2, 3]],
+        [["tool", "-n", "f"], null, true, [2]],
+        [["tool", "f", "-n"], null, false, null],
+        [["tool", "--quiet", "f"], null, false, null],
+        [["tool", "-l", "f"], null, false, null],
+        [["tool", "-n", "f"], undefined, true, [2]],
+        [["tool", "f", "-n"], undefined, false, null],
+        [["tool", "-n", "f"], "other", false, null],
+        [["tool", "f"], "other", false, null],
+    ];
+    for (const [argv, flavour, described, pathArgs] of rows) {
+        const d = describeCall(argv, FLAVOURED, flavour === undefined ? {} : { flavour });
+        assert.equal(d.described, described, `${argv.join(" ")} as ${flavour}: ${d.why.join("; ")}`);
+        if (pathArgs) assert.deepEqual(d.pathArgs.map((p) => p.arg), pathArgs, `${argv.join(" ")} as ${flavour}`);
+        if (flavour === "other") assert.match(d.why.join("; "), /an implementation its manifest does not describe/);
+    }
+});
+
+test("a flavour's hardening is added after the core's, only for that flavour", () => {
+    const hardened = (flavour) => hardenArgv(["tool", "f"], describeCall(["tool", "f"], FLAVOURED, { flavour }));
+    assert.deepEqual(hardened("gnu"), ["tool", "--sandbox", "f"]);
+    for (const f of ["bsd", null, "other"]) assert.deepEqual(hardened(f), ["tool", "f"], String(f));
+    assert.equal(describeCall(["tool", "--sandbox", "f"], FLAVOURED, { flavour: "gnu" }).described, true, "the hardened argv describes as the original");
+});
+
+test("upgrade: a manifest without flavours describes every fixture call identically whatever the flavour says", () => {
+    // The 15 shipped manifests declare no flavours; each vector under each detection state is today's description.
+    for (const [name, fx] of Object.entries(fixtures)) {
+        assert.equal(manifests[name].flavours, undefined, `${name} ships unflavoured in this change`);
+        for (const c of fx.calls) {
+            const today = describeCall(c.argv, manifests[name], { version: fx.version });
+            for (const flavour of ["gnu", "bsd", "other", null]) assert.deepEqual(describeCall(c.argv, manifests[name], { version: fx.version, flavour }), today, `${c.argv.join(" ")} as ${flavour}`);
+        }
+    }
+});

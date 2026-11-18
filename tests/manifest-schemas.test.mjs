@@ -116,6 +116,12 @@ const FIND = () => ({
     command: { effects: ["read"], paths: "operands", syntax: "find", flags: { "-L": {} }, primaries: { "-name": { args: 1 }, "-exec": { until: [";", "+"], effects: ["runs-code"], runner: true }, "-newer": { args: 1, argIsPath: "read" } } },
 });
 const SCRIPT = () => ({ program: "node", entrypoint: { path: "scripts/t.mjs", sha256: "a".repeat(64) }, command: { effects: ["read"], paths: "operands", flags: {} } });
+/** A flavoured binary (PROGRAM_MANIFEST.md, "Flavours"): both flavours, an overlay each. */
+const FLAV = () => ({
+    program: "x", version: { range: "*", args: [], pattern: "" },
+    flavours: { gnu: { probe: { args: ["--version"], pattern: "^x \\(GNU x\\) (\\d+\\.\\d+)", range: ">=4.3 <5" } }, bsd: { system: "macos" } },
+    command: { effects: ["read"], paths: "operands", flags: { "-v": {} }, flavour: { gnu: { flags: { "--sandbox": {} }, argOrder: "permute", harden: ["--sandbox"] }, bsd: { flags: { "-l": {} }, argOrder: "stop" } } },
+});
 const flag = (m, f) => { m.command.flags["-v"] = f; };
 const cmd = (m, c) => { Object.assign(m.command, c); };
 const prim = (m, p) => { m.command.primaries["-name"] = p; };
@@ -238,10 +244,27 @@ const INVALID = [
     ["a bad flag in a subcommand", BIN, (m) => { m.command.subcommands.sub.flags.x = {}; }],
     ["a bad effect in a subcommand", BIN, (m) => { m.command.subcommands.sub.effects = ["delete"]; }],
     ["a subcommand without paths", BIN, (m) => { delete m.command.subcommands.sub.paths; }],
+    // flavours (PROGRAM_MANIFEST.md, "Flavours")
+    ["flavours naming neither gnu nor bsd", FLAV, (m) => { m.flavours = {}; }],
+    ["an unknown flavour", FLAV, (m) => { m.flavours.busybox = { system: "linux" }; }],
+    ["a gnu probe with no args", FLAV, (m) => { m.flavours.gnu.probe.args = []; }],
+    ["a gnu probe with an empty pattern", FLAV, (m) => { m.flavours.gnu.probe.pattern = ""; }],
+    ["a gnu probe range that is not comparators", FLAV, (m) => { m.flavours.gnu.probe.range = "4.x"; }],
+    ["a gnu probe with an unknown key", FLAV, (m) => { m.flavours.gnu.probe.env = ["LC_ALL"]; }],
+    ["a gnu flavour with no probe", FLAV, (m) => { m.flavours.gnu = {}; }],
+    ["a bsd flavour of another system", FLAV, (m) => { m.flavours.bsd.system = "freebsd"; }],
+    ["flavours on a manifest with a version range", FLAV, (m) => { m.version = { range: ">=1", args: ["--version"], pattern: "(\\d+)" }; }],
+    ["flavours on a script", SCRIPT, (m) => { m.flavours = { bsd: { system: "macos" } }; }],
+    ["a command's flavour not an object", FLAV, (m) => { m.command.flavour = []; }],
+    ["an overlay for a flavour that is no flavour", FLAV, (m) => { m.command.flavour.busybox = {}; }],
+    ["an overlay with an unknown key", FLAV, (m) => { m.command.flavour.gnu.env = ["X"]; }],
+    ["an argOrder other than permute or stop", FLAV, (m) => { m.command.flavour.gnu.argOrder = "gnu"; }],
+    ["an overlay flag name without a dash", FLAV, (m) => { m.command.flavour.bsd.flags.l = {}; }],
+    ["an overlay flag with an unknown key", FLAV, (m) => { m.command.flavour.bsd.flags["-l"] = { runer: true }; }],
 ];
 
 test("the schema and validateManifest both accept every base, and both reject each enumerated invalid manifest", () => {
-    for (const base of [BIN, FIND, SCRIPT]) {
+    for (const base of [BIN, FIND, SCRIPT, FLAV]) {
         assert.deepEqual(validateManifest(base()), [], `${base.name} under validateManifest`);
         assert.deepEqual(bySchema(base()), [], `${base.name} under the schema`);
     }
@@ -258,8 +281,8 @@ test("the schema lists exactly the validator's keys, at every level", () => {
     // Enumerate, do not sample: the validator's key sets are read from its source, and each must appear in INVALID.
     const src = fs.readFileSync(here("src/shell/program-manifest.ts"), "utf8");
     const sets = Object.fromEntries([...src.matchAll(/const (\w+_KEYS) = new Set\(\[([^\]]*)\]/g)].map((m) => [m[1], [...m[2].matchAll(/"([^"]+)"/g)].map((x) => x[1])]));
-    assert.deepEqual(Object.keys(sets).sort(), ["COMMAND_KEYS", "FLAG_KEYS", "MANIFEST_KEYS", "PRIMARY_KEYS", "VERSION_KEYS"]);
-    const props = { COMMAND_KEYS: PROGRAM_SCHEMA.$defs.CommandSpec.properties, FLAG_KEYS: PROGRAM_SCHEMA.$defs.FlagSpec.properties, PRIMARY_KEYS: PROGRAM_SCHEMA.$defs.PrimarySpec.properties, VERSION_KEYS: PROGRAM_SCHEMA.$defs.ManifestVersion.properties, MANIFEST_KEYS: PROGRAM_SCHEMA.properties };
+    assert.deepEqual(Object.keys(sets).sort(), ["COMMAND_KEYS", "FLAG_KEYS", "MANIFEST_KEYS", "OVERLAY_KEYS", "PRIMARY_KEYS", "VERSION_KEYS"]);
+    const props = { OVERLAY_KEYS: PROGRAM_SCHEMA.$defs.FlavourOverlay.properties, COMMAND_KEYS: PROGRAM_SCHEMA.$defs.CommandSpec.properties, FLAG_KEYS: PROGRAM_SCHEMA.$defs.FlagSpec.properties, PRIMARY_KEYS: PROGRAM_SCHEMA.$defs.PrimarySpec.properties, VERSION_KEYS: PROGRAM_SCHEMA.$defs.ManifestVersion.properties, MANIFEST_KEYS: PROGRAM_SCHEMA.properties };
     for (const [set, keys] of Object.entries(sets)) assert.deepEqual(Object.keys(props[set]).sort(), [...keys].sort(), `${set}: the schema lists exactly the validator's keys`);
 });
 
@@ -271,6 +294,10 @@ const SCHEMA_GAPS = [
     ["every `harden` argument is a flag THIS command lists (a cross-reference between a value and the keys of a sibling object)", BIN, (m) => cmd(m, { harden: ["--not-listed"] })],
     ["every `harden` argument is a flag this command lists, so it is not the empty list's element either (the same cross-reference, a subcommand)", BIN, (m) => { m.command.subcommands.sub.harden = ["-v"]; }],
     ["`writtenOperands` only on a command whose operands are paths (a cross-reference to the sibling `paths`)", BIN, (m) => cmd(m, { paths: "none", writtenOperands: "last" })],
+    ["the gnu probe's pattern is a regex the engine compiles (as $.version.pattern)", FLAV, (m) => { m.flavours.gnu.probe.pattern = "("; }],
+    ["an overlay only for a flavour the manifest declares (a cross-reference to the top-level `flavours`, at every command depth)", FLAV, (m) => { delete m.flavours.bsd; }],
+    ["an overlay only ADDS: a flag in both the core and an overlay (a cross-reference between the keys of two sibling objects)", FLAV, (m) => { m.command.flavour.gnu.flags["-v"] = {}; }],
+    ["every overlay `harden` argument is a flag of the core or that overlay (the harden cross-reference, across two objects)", FLAV, (m) => { m.command.flavour.gnu.harden = ["--not-listed"]; }],
 ];
 
 test("the rules the schema cannot express are named, and are real", () => {

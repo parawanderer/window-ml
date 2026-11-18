@@ -157,6 +157,55 @@ test("an in-root file named like a shipped program asks under the sandbox, where
     }
 });
 
+// --- a flavour's hardening: the facts show the flavour, the call is spawned again hardened (PROGRAM_MANIFEST.md, "Flavours") ---
+
+/** A GNU-flavoured tool the person registered, pinned to the file the fake host resolves `/usr/local/bin/tool` to. */
+const flavouredTool = { ml_manifests_global: [{ id: "man-ft", scope: "global", origin: "person", created: 1,
+    manifest: {
+        program: "tool", version: { range: "*", args: [], pattern: "" },
+        flavours: { gnu: { probe: { args: ["--version"], pattern: "^tool \\(GNU tool\\) (\\d+\\.\\d+)", range: ">=4.3 <5" } }, bsd: { system: "macos" } },
+        command: { effects: ["read"], paths: "operands", flags: {}, flavour: { gnu: { flags: { "--sandbox": {} }, harden: ["--sandbox"] } } },
+    },
+    pin: { path: "/usr/local/bin/tool", fingerprint: "1:2:3:4", inRoot: false } }] };
+const gnuDone = (id, args) => args?.argv.includes("--version") ? { out: "tool (GNU tool) 4.9\n", err: "", code: 0 } : { out: "ok\n", err: "", code: 0 };
+
+test("a flavour's hardening is what runs and what the card shows: the unhardened spawn is discarded and the call spawned again (condition b)", T, async () => {
+    const host = fakeNativeHost({ done: gnuDone });
+    const ask = answering(true);
+    const { results } = await runOn("userScripts", [runs(["/usr/local/bin/tool", "a.txt"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep,
+        localExtra: { ...flavouredTool, ml_policies_global: [pol("ask", '(c) => c.argv.includes("a.txt")', "ask before tool")] } });
+    const r = valueOf(results[0]);
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const spawns = host.calls.filter((c) => c.call === "spawn").map((c) => ({ id: c.id, argv: c.args.argv }));
+    assert.deepEqual(spawns.map((x) => x.argv), [["/usr/local/bin/tool", "a.txt"], ["/usr/local/bin/tool", "--version"], ["/usr/local/bin/tool", "--sandbox", "a.txt"]],
+        "the call, the gnu probe, then the call again with the gnu hardening");
+    const started = host.calls.filter((c) => c.call === "start").map((c) => spawns.find((x) => x.id === c.args.id)?.argv);
+    assert.deepEqual(started, [["/usr/local/bin/tool", "--version"], ["/usr/local/bin/tool", "--sandbox", "a.txt"]], "only the probe and the hardened call start");
+    assert.ok(host.calls.some((c) => c.call === "discard" && c.args.id === spawns[0].id), "the unhardened spawn is discarded");
+    assert.equal(ask.asked.length, 1);
+    assert.equal(JSON.stringify(ask.asked[0].facts.argv), JSON.stringify(["/usr/local/bin/tool", "--sandbox", "a.txt"]), "the card's facts are the hardened call's");
+    assert.equal(JSON.stringify(ask.asked[0].facts.flavour), JSON.stringify({ name: "gnu", how: "GNU, by its version output" }));
+    assert.match(shCardLines(ask.asked[0].facts)[0].value, /--sandbox/, "the card's Runs line shows the hardening");
+});
+
+test("a program file that changes between the spawn and its hardened spawn is not run", T, async () => {
+    let n = 0;
+    const host = fakeNativeHost({ done: gnuDone, facts: (args) => {
+        const fp = args.argv.includes("--sandbox") ? "9:9:9:9" : "1:2:3:4";
+        n++;
+        return { argv: args.argv, program: { path: args.argv[0], inRoot: false, fingerprint: fp }, cwd: { path: args.cwd, inRoot: true }, env: { set: [], secrets: [], free: true }, repo: null, repoConfigRunsCode: null,
+            paths: (args.pathArgs ?? []).map((p) => ({ arg: p.arg, given: args.argv[p.arg], path: `${args.cwd}/${args.argv[p.arg]}`, inRoot: true, secret: false, exists: true })), effects: "unknown", mode: "host", sandboxed: true, placement: "host-sandbox" };
+    } });
+    const ask = answering(true);
+    const { results } = await runOn("userScripts", [runs(["/usr/local/bin/tool", "a.txt"])], { ...NO_FETCH, onNative: host.onNative, configExtra: ON, onStep: ask.onStep, localExtra: flavouredTool });
+    const r = valueOf(results[0]);
+    assert.equal(r.code, "Denied");
+    assert.match(r.threw, /changed while its flavour was read: not run/);
+    assert.equal(n, 3);
+    assert.deepEqual(host.calls.filter((c) => c.call === "start").map((c) => c.args.id).length, 1, "only the probe started");
+    assert.equal(ask.asked.length, 0);
+});
+
 // --- a credentialed call: the host injects the person's GitHub token (SHELL.md, GH UNDER THE SANDBOX RULED 2026-11-08) ---
 
 test("a host that lists github gets the credential with the manifest's hash; the call asks, saying it sends the token", T, async () => {

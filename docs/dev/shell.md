@@ -305,6 +305,10 @@ Settings checkbox (a user gesture), is open: it has to work from both the overla
   or a `write-names` claim (create, remove, rename) that reaches the top level, asks (`claimsTopLevelName`, the
   `roots-less-top-names` bound). It needs the `topLevel`/`isRoot` facts, which `shFacts` computes only when it is
   given the roots; a `names` write with no such fact counts as top-level.
+- **A flavour's hardening is not in the first spawn.** `planSpawn` runs before any facts, so it knows no flavour; the
+  worker re-plans with `flavourReplan` once the facts show one, discards the first call and spawns again from the same
+  program file (PROGRAM_MANIFEST.md, "Flavours"). A new path that spawns a described call (the evidence run is one)
+  must do the same, or it judges a hardened description and starts the unhardened argv.
 
 - **`chrome.runtime.lastError` is the only place a native port says why it closed**, and only inside the disconnect
   listener (`nativePort`). Read later, it is gone.
