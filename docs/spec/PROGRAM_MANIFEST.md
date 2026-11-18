@@ -129,8 +129,11 @@ A flag can mean one thing to GNU and another to BSD, or exist in only one of the
 suffix, BSD `sed -i` a separate one; `ln -T` is GNU's alone), and the order of options and operands is the PROGRAM's
 choice, not the platform's (macOS `grep` and `sort` permute, macOS `sed` and `ls` stop at the first operand). A manifest
 that declares `flavours` describes each implementation it can tell apart; one without them is read exactly as before,
-whatever the facts say (the upgrade: every vector under `tests/fixtures/program-calls/` describes identically under
-every flavour, `tests/program-manifest.test.mjs`).
+whatever the facts say (the upgrade: every vector under `tests/fixtures/program-calls/` of a manifest without
+`flavours` describes identically under every flavour, `tests/program-manifest.test.mjs`). The calls of a flavoured
+manifest as one detected flavour reads them (sed's two `-i`, `-in` as a backup suffix, awk's `-safe` hardening) are
+shared vectors too, `tests/fixtures/program-calls-flavoured/`, each row naming its flavour; they are under the vector
+pin, so the host's reader is held to them.
 
 **Which flavour runs** (`flavourOf`, `src/shell/program-manifest.ts`; pure, read from the host's facts), in this order:
 
