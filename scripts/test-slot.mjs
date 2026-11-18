@@ -26,7 +26,8 @@
 // the peak by the workers made a run granted few workers record a high per-worker figure, the next run was priced higher
 // and granted fewer, and the daily median went 0.20 → 1.46 GB in nine days and the grants from 8 workers to 2. Now every
 // footprint also carries the `shape` of its command (the clone's path made relative), and `priceFor` fits the price
-// from the footprints of the same shape (at least 3), else the kind's last 40, else the defaults: the slope is the
+// from the footprints of the same shape (at least 3), else of the same class (suite, suite:<genre>, files), else the kind's last 40
+// (a run naming test files gets the defaults instead: the kind's history is dominated by suites), else the defaults: the slope is the
 // least-squares slope of peak on workers (clamped, a default with too few points or one worker count), the base the p90
 // of what the slope leaves over. `perWorker` is still written, for comparison with the history.
 //
@@ -82,7 +83,7 @@ export const SLOPE_MIN = 0.1 * GB;
 export const SLOPE_MAX = 1.5 * GB;
 /** A slope is fitted only from at least this many footprints, spanning at least two distinct worker counts. */
 export const SLOPE_MIN_POINTS = 8;
-/** The footprints of one shape are used for the price from this many on; fewer fall back to the kind's. */
+/** The footprints of one shape (or, failing that, one class) are used for the price from this many on. */
 export const SHAPE_MIN = 3;
 /** The most runs at once (the 2026-11-08 incident was nine; a few is fine). `TEST_SLOT_MAX_RUNS` overrides it. */
 export const MAX_RUNS = 3;
@@ -168,6 +169,17 @@ export function shapeOf(cmd, clone) {
     return cmd.map(rel).map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(" ").slice(0, 200);
 }
 
+/** The class of a command shape: `suite` or `suite:<genre>` for the runner (`scripts/test.mjs [genre]`, `npm test`, `npm run test:<genre>`),
+ *  `files` when it runs named test files (`--test` and `tests/…` paths), else null. Commands of a class cost alike though no two are the same shape. */
+export function classOf(shape) {
+    if (!shape) return null;
+    const t = String(shape).split(/\s+/), at = t.findIndex((a) => /(^|\/)scripts\/test\.mjs$/.test(a));
+    if (at >= 0) { const rest = t.slice(at + 1), g = rest.find((a, i) => !a.startsWith("-") && !/^--jobs$/.test(rest[i - 1] ?? "") && !/^\d+$/.test(a)); return g ? `suite:${g}` : "suite"; }
+    if (t[0] === "npm" && t[1] === "test") return "suite";
+    if (t[0] === "npm" && t[1] === "run" && /^test:./.test(t[2] ?? "")) return `suite:${t[2].slice(5)}`;
+    return t.includes("--test") && /(^|\s)"?tests\/[^"]*?\.(test|spec)\.[mc]?[jt]sx?(?=["\s]|$)/.test(String(shape)) ? "files" : null;
+}
+
 /** The least-squares slope of peak on workers over `points` (`{ jobs, peakRss }`), or null with too few points or one worker count. */
 function fitSlope(points) {
     if (points.length < SLOPE_MIN_POINTS || new Set(points.map((p) => p.jobs)).size < 2) return null;
@@ -179,7 +191,9 @@ function fitSlope(points) {
 /**
  * The price of a run of `kind` and `shape` from the footprint lines `footprints` (every kind, oldest first):
  * `{ base, slope, measured, from }`. The sample is the shape's last FOOTPRINTS_USED footprints when there are at least
- * SHAPE_MIN (`from: "shape"`), else the kind's last FOOTPRINTS_USED (`"kind"`; a footprint from before shapes counts only
+ * SHAPE_MIN (`from: "shape"`), else those of the same CLASS (`classOf`: `suite:core`, `suite`, `files`) when there are at least
+ * SHAPE_MIN (`"class"`), else, for a run that names test files, the defaults (the kind's history is dominated by suites), else the
+ * kind's last FOOTPRINTS_USED (`"kind"`; a footprint from before shapes counts only
  * here), else the defaults (`"default"`); a batch kind with none of its own takes the unit sample, `measured: 0`. The
  * slope is the least-squares slope of peak on workers when the sample has at least SLOPE_MIN_POINTS points spanning two
  * worker counts, clamped to [SLOPE_MIN, SLOPE_MAX], else SLOPE_DEFAULT; the base is the p90 of what the slope leaves of
@@ -188,11 +202,15 @@ function fitSlope(points) {
  */
 export function priceFor(footprints, { kind, shape = null } = {}) {
     const usable = (f) => f && Number.isFinite(f.peakRss) && f.peakRss > 0 && Number.isFinite(f.jobs) && f.jobs > 0;
-    const ofKind = (k) => footprints.filter((f) => f?.kind === k && usable(f)).slice(-FOOTPRINTS_USED);
+    const of = (k, keep = () => true) => footprints.filter((f) => f?.kind === k && usable(f) && keep(f)).slice(-FOOTPRINTS_USED);
+    const cls = classOf(shape);
     let sample = [], from = "default";
-    const mine = shape ? ofKind(kind).filter((f) => f.shape === shape) : [];
+    const mine = shape ? of(kind, (f) => f.shape === shape) : [];
+    const sameClass = cls ? of(kind, (f) => (f.class ?? classOf(f.shape)) === cls) : [];
     if (mine.length >= SHAPE_MIN) { sample = mine; from = "shape"; }
-    else if (ofKind(kind).length) { sample = ofKind(kind); from = "kind"; }
+    else if (sameClass.length >= SHAPE_MIN) { sample = sameClass; from = "class"; }
+    else if (cls === "files") from = "default";
+    else if (of(kind).length) { sample = of(kind); from = "kind"; }
     else if (kind === "batch") return { ...priceFor(footprints, { kind: "unit" }), measured: 0 };
     if (!sample.length) return { base: BASE_DEFAULT, slope: SLOPE_DEFAULT, measured: 0, from };
     const fitted = fitSlope(sample), slope = fitted == null ? SLOPE_DEFAULT : Math.min(SLOPE_MAX, Math.max(SLOPE_MIN, fitted));
@@ -461,7 +479,7 @@ export function finish(ticket, exit, { dir = slotDir(), deps = {}, peak = null }
     }, deps);
     if (rec) (deps.leaveBench ?? leaveBench)(rec);
     if (rec?.state === "done" && rec.peakRss && rec.durationMs >= MEASURE_MIN_MS && rec.jobs) {
-        try { fs.appendFileSync(path.join(dir, "footprints.jsonl"), `${JSON.stringify({ at: rec.endedAt, kind: rec.kind, jobs: rec.jobs, peakRss: rec.peakRss, perWorker: Math.round(rec.peakRss / rec.jobs), ...(rec.shape ? { shape: rec.shape } : {}), runs: rec.peakRuns ?? 1, durationMs: rec.durationMs, ...(rec.kind === "batch" && rec.durationMs > BATCH_OVERRUN_MS ? { overran: true } : {}), ticket })}\n`); } catch { /* unmeasured */ }
+        try { fs.appendFileSync(path.join(dir, "footprints.jsonl"), `${JSON.stringify({ at: rec.endedAt, kind: rec.kind, jobs: rec.jobs, peakRss: rec.peakRss, perWorker: Math.round(rec.peakRss / rec.jobs), ...(rec.shape ? { shape: rec.shape } : {}), ...(classOf(rec.shape) ? { class: classOf(rec.shape) } : {}), runs: rec.peakRuns ?? 1, durationMs: rec.durationMs, ...(rec.kind === "batch" && rec.durationMs > BATCH_OVERRUN_MS ? { overran: true } : {}), ticket })}\n`); } catch { /* unmeasured */ }
     }
     return rec;
 }
@@ -488,7 +506,7 @@ export function waitingLine({ running = [], ahead, why = null }, now = Date.now(
 }
 
 /** What a grant's price was measured from, in words. */
-const fromText = (z) => (z.from === "shape" ? `, from ${z.measured} run${z.measured === 1 ? "" : "s"} of this command` : z.from === "kind" ? `, from ${z.measured} run${z.measured === 1 ? "" : "s"} of this kind` : z.from === "default" ? ", unmeasured: the defaults" : "");
+const fromText = (z) => (z.from === "shape" ? `, from ${z.measured} run${z.measured === 1 ? "" : "s"} of this command` : z.from === "class" ? `, from ${z.measured} run${z.measured === 1 ? "" : "s"} of commands like this one` : z.from === "kind" ? `, from ${z.measured} run${z.measured === 1 ? "" : "s"} of this kind` : z.from === "default" ? ", unmeasured: the defaults" : "");
 
 /** The line a granted run prints: its workers, the memory the run is priced at and the reading they came from. */
 export function grantLine(job) {

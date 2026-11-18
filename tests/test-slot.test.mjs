@@ -15,7 +15,7 @@ const SLOT = path.join(ROOT, "scripts", "test-slot.mjs");
 // The bench's ledger, which a granted job joins: this file's own, set before the import reads it.
 process.env.BENCH_LEDGER_FILE = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "test-slot-ledger-")), "ledger.json");
 const { ledger, register, unregister } = await import("../tests/e2e/bench/memory-budget.mjs");
-const { jobsFor, capFor, skipReason, submit, finish, look, cancel, waitFor, acquire, waitingLine, jobEnv, procLive, startTime, priceFor, priceIn, priceAt, priceOfSizing, fitIn, shapeOf, BASE_DEFAULT, SLOPE_DEFAULT, SLOPE_MIN, SLOPE_MAX, grantLine, admit, minWorkersFor, maxWorkersFor, promisedBy, MAX_RUNS, BATCH_OVERRUN_MS, BATCH_MAX_WORKERS, batchRefusal, usualMsFor, timeCapFor, enforceCap, parseMaxTime, TIME_CAP_MIN_MS, TIME_CAP_FACTOR, KILL_GRACE_MS, MAX_TIME_MAX_MIN } = await import(SLOT);
+const { jobsFor, capFor, skipReason, submit, finish, look, cancel, waitFor, acquire, waitingLine, jobEnv, procLive, startTime, priceFor, classOf, priceIn, priceAt, priceOfSizing, fitIn, shapeOf, BASE_DEFAULT, SLOPE_DEFAULT, SLOPE_MIN, SLOPE_MAX, grantLine, admit, minWorkersFor, maxWorkersFor, promisedBy, MAX_RUNS, BATCH_OVERRUN_MS, BATCH_MAX_WORKERS, batchRefusal, usualMsFor, timeCapFor, enforceCap, parseMaxTime, TIME_CAP_MIN_MS, TIME_CAP_FACTOR, KILL_GRACE_MS, MAX_TIME_MAX_MIN } = await import(SLOT);
 
 process.env.TEST_SLOT_POLL_MS = "50";
 process.env.TEST_SLOT_MAX_RUNS = "1";
@@ -160,6 +160,57 @@ test("the ratchet: the price barely depends on the workers a run was granted, an
     assert.equal(job.sizing.from, "shape", "the ticket's command is the history's shape");
 });
 
+test("classOf: the runner is a suite (by genre), named test files are files, anything else is nothing", () => {
+    const table = [
+        // From the queue's own records and the test-slot skill.
+        ["node scripts/test.mjs", "suite"],
+        ["node scripts/test.mjs core", "suite:core"],
+        ["node scripts/test.mjs runner", "suite:runner"],
+        ["node scripts/test.mjs --jobs 4", "suite"],
+        ["node scripts/test.mjs --jobs 4 core", "suite:core"],
+        ["npm test", "suite"],
+        ["npm run test:core", "suite:core"],
+        ["npm run test:python", "suite:python"],
+        ["node --import tsx --test tests/test-slot.test.mjs", "files"],
+        ["node --import tsx --test tests/cdp-stream.test.mjs tests/exec-page-label.test.mjs", "files"],
+        ["node --import tsx --test --test-reporter=spec --test-reporter-destination=/dev/null --test-reporter=scripts/test-times-reporter.mjs --test-reporter-destination=/s/cdp.jsonl tests/cdp-stream.test.mjs tests/exec-page-label.test.mjs", "files"],
+        ['node --import tsx --test "tests/a b.test.mjs"', "files"],
+        ["node --import tsx --test tests/foo.test.ts", "files"],
+        ["node scripts/test-slot.mjs status", null],
+        ["node --import tsx --test", null],
+        ["npm run build", null],
+        ["npx playwright test", null],
+        ["node scripts/probe.mjs --url x", null],
+        [null, null],
+        ["", null],
+    ];
+    for (const [shape, want] of table) assert.equal(classOf(shape), want, String(shape));
+    assert.equal(classOf(shapeOf([process.execPath, "/w/clone/scripts/test.mjs", "core"], "/w/clone")), "suite:core", "from a real command in any clone");
+});
+
+test("priceFor: a run naming test files gets the defaults, not the kind's suite-heavy history, until files-class history exists", () => {
+    const suites = [...onLine("unit", 0.2 * GB, "node scripts/test.mjs", 4 * GB)];
+    const files = (n, peak) => [...Array(n)].map((_, i) => fp("unit", 2, peak + i * 0.01 * GB, `node --import tsx --test tests/f${i}.test.mjs`));
+    const ask = "node --import tsx --test tests/a.test.mjs tests/b.test.mjs";
+    assert.ok(priceFor(suites, { kind: "unit" }).base > 3.5 * GB, "the kind alone is priced as a suite");
+    const none = priceFor(suites, { kind: "unit", shape: ask });
+    assert.deepEqual(none, { base: BASE_DEFAULT, slope: SLOPE_DEFAULT, measured: 0, from: "default" }, "no class history: the defaults, 1 GB + 0.4 GB a worker");
+    assert.equal(priceFor([...suites, ...files(2, 0.5 * GB)], { kind: "unit", shape: ask }).from, "default", "two files-class lines are not enough");
+    // Three distinct file sets (no shape repeats) are enough, and the suites do not leak in.
+    const three = priceFor([...suites, ...files(3, 0.5 * GB)], { kind: "unit", shape: ask });
+    assert.deepEqual([three.from, three.measured], ["class", 3]);
+    assert.ok(three.base < GB, `priced from the three small runs, not the suites: ${three.base / GB} GB`);
+    // The same shape three times wins over the class.
+    const same = [...Array(3)].map(() => fp("unit", 2, 3 * GB, ask));
+    assert.equal(priceFor([...files(5, 0.5 * GB), ...same], { kind: "unit", shape: ask }).from, "shape");
+    // A footprint with a recorded class and no shape counts too; suites of another genre do not mix with this genre's.
+    const rec = [...Array(3)].map(() => ({ ...fp("unit", 2, 0.6 * GB), class: "files" }));
+    assert.equal(priceFor(rec, { kind: "unit", shape: ask }).from, "class");
+    const core = [...Array(4)].map(() => fp("unit", 2, 2 * GB, "node scripts/test.mjs core"));
+    assert.deepEqual([priceFor([...core, ...suites], { kind: "unit", shape: "node scripts/test.mjs core" }).from, priceFor(core, { kind: "unit", shape: "node scripts/test.mjs panel" }).from], ["shape", "kind"], "a suite genre with no history of its own falls back to the kind");
+    assert.equal(priceFor([...suites, ...core], { kind: "unit", shape: "node scripts/test.mjs core --jobs 3" }).from, "class", "a flag makes a new shape but the same class");
+});
+
 test("shapeOf: the clone's path made relative, so the same command in two clones is one shape", () => {
     const a = shapeOf([process.execPath, "/Users/sb/git/window-ml-x/scripts/test.mjs", "core"], "/Users/sb/git/window-ml-x");
     const b = shapeOf([process.execPath, "/Users/sb/git/window-ml-queue/scripts/test.mjs", "core"], "/Users/sb/git/window-ml-queue");
@@ -177,6 +228,7 @@ test("a footprint records the shape of its command, and the next grant is priced
     const t = run(["/work/clone-a/scripts/test.mjs", "core"], 3 * GB);
     const line = JSON.parse(fs.readFileSync(path.join(dir, "footprints.jsonl"), "utf8").trim());
     assert.equal(line.shape, "scripts/test.mjs core");
+    assert.equal(line.class, "suite:core", "the class is recorded too");
     assert.equal(line.ticket, t);
     assert.equal(line.perWorker, 1.5 * GB, "the old field is still written");
     run(["/work/clone-a/scripts/test.mjs", "core"], 3 * GB);
@@ -215,6 +267,7 @@ test("the grant line names the run's price, where it came from and the reading",
     const sizing = { available: 18.2 * GB, coming: 0, total: 24 * GB, base: 1.6 * GB, slope: 0.2 * GB, from: "shape", measured: 12, runs: 1, workers: 5 };
     assert.equal(grantLine({ jobs: 5, sizing }), "test-slot: 5 workers (~2.6 GB for the run: 1.6 GB + 205 MB a worker, from 12 runs of this command; 18.2 GB available, 6.0 GB reserved)");
     assert.match(grantLine({ jobs: 1, sizing: { ...sizing, from: "kind", measured: 1, coming: 2 * GB, runs: 2, workers: 7 } }), /^test-slot: 1 worker \(~1\.8 GB for the run: 1\.6 GB \+ 205 MB a worker, from 1 run of this kind; 18\.2 GB available, 2\.0 GB of it promised to bench browsers and other test runs starting up, 6\.0 GB reserved; run 2 at once, 7 workers between them\)$/);
+    assert.match(grantLine({ jobs: 2, sizing: { ...sizing, from: "class", measured: 3 } }), /, from 3 runs of commands like this one;/);
     assert.match(grantLine({ jobs: 2, sizing: { ...sizing, from: "default", measured: 0 } }), /, unmeasured: the defaults;/);
 });
 
@@ -542,7 +595,7 @@ test("batch: the CLI takes --kind batch --workers N and refuses a bad count with
 // --- the wall-clock cap: a job past it is stopped ---
 
 const MIN = 60_000;
-/** Footprint lines of \`kind\` with these durations. */
+/** Footprint lines of `kind` with these durations. */
 const footprints = (dir, kind, durations) => { fs.mkdirSync(dir, { recursive: true }); if (durations.length) fs.appendFileSync(path.join(dir, "footprints.jsonl"), durations.map((d) => JSON.stringify({ kind, jobs: 2, peakRss: 2 * GB, perWorker: GB, durationMs: d })).join("\n") + "\n"); };
 /** A recorder standing in for the signalling, so no test signals a process it did not start. */
 const kills = () => { const sent = []; return { sent, kill: (j, sig) => sent.push([j.ticket, sig]) }; };

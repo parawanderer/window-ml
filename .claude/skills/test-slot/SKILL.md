@@ -33,8 +33,8 @@ A waiting runner prints `test-slot: waiting for pid N (<clone>, <command>, W wor
 of you` at the start and every 30 s, where `<why>` is the cap, the workers or the memory that holds the queue's first
 waiting job. When its turn comes it prints the grant line:
 `test-slot: 5 workers (~2.6 GB for the run: 1.6 GB + 205 MB a worker, from 12 runs of this command; 18.2 GB available, 6.0 GB
-reserved; run 2 at once, 9 workers between them)`. `from` says what priced it: runs of this command, runs of this kind,
-or "unmeasured: the defaults". A waiting job's reason reads `memory: 1.5 GB above the reserve, 2 workers take ~2.2 GB`.
+reserved; run 2 at once, 9 workers between them)`. `from` says what priced it: runs of this command, runs of commands like this one
+(the class), runs of this kind, or "unmeasured: the defaults". A waiting job's reason reads `memory: 1.5 GB above the reserve, 2 workers take ~2.2 GB`.
 
 ## Non-test jobs: `--kind batch`
 
@@ -86,8 +86,10 @@ State lives in `~/.cache/window-ml/test-queue/` (`TEST_SLOT_DIR` overrides): `qu
 relative, so `scripts/test.mjs core` is one shape in every clone; `perWorker` is still written, for comparison).
 
 The price is measured (rule of 2026-11-18): a run costs `base + slope × workers`, from `priceFor`. The sample is the
-last 40 footprints of the same shape when there are 3 or more, else the kind's last 40 (a line from before shapes counts
-here only), else the defaults (1 GB + 0.4 GB a worker); runs of 10 s or more only. The slope is the least-squares slope
+last 40 footprints of the same shape when there are 3 or more, else of the same CLASS (`classOf`: `suite` or
+`suite:<genre>` for the runner and `npm test`, `files` for `--test tests/…` paths, recorded as `class`), else, for a `files`
+run, the defaults (1 GB + 0.4 GB a worker: the kind's history is dominated by suites, and ad-hoc file sets rarely repeat), else
+the kind's last 40 (a line from before shapes counts here only, or by the class its shape gives), else the defaults; runs of 10 s or more only. The slope is the least-squares slope
 of peak on workers, clamped to [0.1, 1.5] GB, and 0.4 GB with fewer than 8 points or one worker count; the base is the
 p90 of `peak − slope × workers`. Why not peak / workers: a unit run's peak barely depends on its workers (about 1.5-1.8 GB
 at 2 or at 8), so the per-worker figure of a run granted few workers was high, priced the next one higher and granted it
