@@ -73,7 +73,10 @@ export function releaseDebugger(tabId: number): void {
 export function touchDebugger(tabId: number): void {
     const prev = debuggerIdleTimers.get(tabId);
     if (prev) clearTimeout(prev);
-    debuggerIdleTimers.set(tabId, setTimeout(() => { debuggerIdleTimers.delete(tabId); releaseDebugger(tabId); }, DEBUGGER_IDLE_MS));
+    const timer = setTimeout(() => { debuggerIdleTimers.delete(tabId); releaseDebugger(tabId); }, DEBUGGER_IDLE_MS);
+    // Node only: a pending idle-detach would hold a test file's process open 20 s after its last test (browsers have no unref).
+    (timer as unknown as { unref?: () => void }).unref?.();
+    debuggerIdleTimers.set(tabId, timer);
 }
 // Chrome detached the debugger out from under us (DevTools opened on the tab, the target crashed/closed, or
 // the user clicked "cancel" on the infobar) → forget the tab so the next CDP use re-attaches cleanly.

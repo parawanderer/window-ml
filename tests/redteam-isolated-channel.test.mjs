@@ -181,7 +181,7 @@ test("HALTING: a script that loops on the channel is bounded: the server answers
     const w = new Worker(src, { eval: true, workerData: { tsx: import.meta.resolve("tsx/esm/api"), tsxCjs: import.meta.resolve("tsx/cjs/api"), channel: new URL("../src/sw/iso-channel.ts", import.meta.url).href, wrapper: new URL("../src/sw/sw-isolated-exec.ts", import.meta.url).href } });
     const out = await Promise.race([
         new Promise((res, rej) => { w.once("message", res); w.once("error", rej); }),
-        new Promise((res) => setTimeout(() => res({ timedOut: true }), 20000)),
+        new Promise((res) => setTimeout(() => res({ timedOut: true }), 20000).unref()),   // the worker keeps the loop alive until it answers
     ]);
     await w.terminate();
     assert.ok(!out.timedOut, "the loop did not end");
