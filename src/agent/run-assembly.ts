@@ -17,9 +17,12 @@ import type { FramedFile } from "../attached-files";
 import type { StartRunPayload, RebuildConfig } from "../contract/contract-messages";
 import { promptSurfaceClause, promptSurfaceOf } from "./prompt-surface";
 import { stepBudget } from "./step-budget";
-import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, tooltokensClause, shadowClause, SHADOW_TRIGGER_TOOLS, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, LINKS_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, shellClause, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, currentClause, HUD_PROSE_QUIET, HUD_PROSE_PROGRESS, framePrompt } from "./prompts";
+import { UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, AGENT_SYSTEM, CALL_TITLE_CLAUSE, VISION_CLAUSE, tooltokensClause, shadowClause, SHADOW_TRIGGER_TOOLS, IFRAME_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, LINKS_CLAUSE, PIPE_CLAUSE, PYTHON_CLAUSE, lifetimesClause, EXEC_COMPUTE_CLAUSE, shellClause, UNATTENDED_CLAUSE, NAV_OFF_CLAUSE, currentClause, HUD_PROSE_QUIET, HUD_PROSE_PROGRESS, framePrompt } from "./prompts";
 import { buildDereferenceTool, withComposeNote } from "../tools/tools";
 import { PAGE_CONTEXT_HEAD } from "./output-clip";
+import { DEFAULT_CONFIG } from "../contract/contract-config";
+import { capMinutes, clampDetachedMs } from "../python/py-lease";
+import { idleMinutes } from "../python/py-reap";
 import { withToolDetails } from "../tools/tool-details";
 import { ImagesRefused, namedNote, planImages, readerNote } from "../image-gate";
 
@@ -333,7 +336,7 @@ export async function assembleRun(ml: AssemblyMl, task: string, { tools = null, 
     const systemPrompt = composeSystemPrompt({
         system, systemAppend, names, vision: hasCap("vision"), toolTokens, answer: !!byName.answer, pierceClosed,
         pipe: toolset.some(t => !!(t.parameters?.properties as Record<string, unknown> | undefined)?.pipe),
-        current: !!(selfIntro && autoRO), unattended, navigate, shell,
+        current: !!(selfIntro && autoRO), unattended, navigate, shell, ...lifetimeFigures(agentCfg),
     });
 
     return {
@@ -358,6 +361,21 @@ export interface PromptFacts {
     unattended?: boolean; navigate?: boolean;
     /** `ml.sh` is turned on: tell the model terminal access may exist (when a script tool can call it) */
     shell?: boolean;
+    /** The lifetimes list's figures (`lifetimeFigures`); absent, the settings' defaults. */
+    idleMin?: number; capMin?: number;
+}
+
+/**
+ * The two figures of the lifetimes list, from the settings that enforce them: `pythonIdleMinutes` as the reap reads it
+ * (`idleMinutes`) and `detachedTaskMaxMin` as the sandbox applies it (`capMinutes`, clamped to its ceiling), so the
+ * model is told what will happen. A missing config reads as the defaults.
+ * @param cfg the public config, or null
+ */
+export function lifetimeFigures(cfg: Partial<Pick<MlPublicConfig, "pythonIdleMinutes" | "detachedTaskMaxMin">> | null | undefined): { idleMin: number; capMin: number } {
+    return {
+        idleMin: idleMinutes(cfg?.pythonIdleMinutes, DEFAULT_CONFIG.pythonIdleMinutes),
+        capMin: +(clampDetachedMs(capMinutes(cfg?.detachedTaskMaxMin ?? DEFAULT_CONFIG.detachedTaskMaxMin) * 60_000) / 60_000).toFixed(1),
+    };
 }
 
 /**
@@ -395,6 +413,8 @@ export function composeSystemPrompt(f: PromptFacts): string {
         // model must compute, never guess. Mutually exclusive so the prompt isn't doubled.
         if (has("python_exec")) systemPrompt += PYTHON_CLAUSE;
         else if (has("exec")) systemPrompt += EXEC_COMPUTE_CLAUSE;
+        // Every lifetime in one list (rule 4b), once, so the model never counts on a thing that is gone.
+        systemPrompt += lifetimesClause(f.idleMin ?? lifetimeFigures(null).idleMin, f.capMin ?? lifetimeFigures(null).capMin, !!f.toolTokens, !!f.shell && has("exec"));
         // Its own run, as data: only where a survey reaches `ml.current`, which needs the read-only path to auto-run.
         if (f.current && has("exec")) systemPrompt += currentClause(has("agent_api_docs"));
         // Terminal access, only where the person turned it on and an `exec` script can reach it. The check on `ml.current` is named

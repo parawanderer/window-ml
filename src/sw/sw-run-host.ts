@@ -64,7 +64,7 @@ import { grantRunFetch, grantRunOrigin, runOriginGranted, runOrigins, runFetchCo
 import { autoApprovePython } from "../agent/auto-approve";
 import { pyMediaFor, workerAnswerMedia } from "./worker-media";
 import { takeMovedNote } from "./move-run";
-import { PROPOSAL_TOOLS, withoutProposals, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, keptOnRebuild, turnTabCells, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart } from "./sw-runs";
+import { WORKER_ONLY_TOOLS, withoutWorkerOnly, hydrationDone, isWorkerRun, runRebuilds, navBarrier, bgRuns, runControllers, runInboxes, trackRun, persistRun, keptOnRebuild, turnTabCells, bufferReplay, resurrectedRuns, sessionTokens, readoptPageInfo, derefByRun, contextByRun, pageValueSession, turnByRun, execReads, tabPageUrl, untrackRun, deleteRun, runModelFor, startingControllers, beginStart, endStart } from "./sw-runs";
 import { ingestSessionEvent, saveRunHistory } from "./sw-sessions";
 import { drawStoredPages } from "./sw-attach";
 import { claimValue, runMayClaim, valueHolders, readStoredBytes, readStoredColumns, readStoredText, withHeldValuesOnly } from "./sw-values";
@@ -377,7 +377,7 @@ export function pageStartPayload(payload: unknown, sender: chrome.runtime.Messag
     rest.selfIntrospection = rest.selfIntrospection !== false && cfg.selfIntrospection !== false;
     // propose_policy and propose_manifest are the worker's to offer: a page naming one would turn its own run into a way to
     // ask for policies or manifests.
-    if (Array.isArray(rest.tools)) rest.tools = rest.tools.filter((t) => !(t && typeof t === "object" && PROPOSAL_TOOLS.has(t.name)));
+    if (Array.isArray(rest.tools)) rest.tools = rest.tools.filter((t) => !(t && typeof t === "object" && WORKER_ONLY_TOOLS.has(t.name)));
     if (Array.isArray(rest.tools)) rest.tools = rest.tools.map((t) => (t && typeof t === "object" && (GATED_TOOL_NAMES.has(t.name) || t.remote) ? { ...t, requiresApproval: true } : t));
     const url = sender.url ?? sender.tab?.url;
     const g = grantableOrigin({ origin: sender.origin, url, frameId: sender.frameId });
@@ -547,7 +547,7 @@ function hostTurn(message: any, tabId: number, sendResponse: (r: any) => void, t
      *  it as it is would give the run back to the page that built it, whose RESUME_RUN would then be honoured. Its tools
      *  lose `propose_policy` as `markWorkerRun`'s copy does, or this write would put it back. */
     const storedP = (): StartRunPayload => (p.builtBy !== "worker" && isWorkerRun(runId)
-        ? { ...p, builtBy: "worker", tools: withoutProposals(p.tools), ...(p.rebuild ? { rebuild: { ...p.rebuild, builtBy: "worker" } } : {}) } : p);
+        ? { ...p, builtBy: "worker", tools: withoutWorkerOnly(p.tools), ...(p.rebuild ? { rebuild: { ...p.rebuild, builtBy: "worker" } } : {}) } : p);
     const tabUrlNow = (): string => tabPageUrl.get(tabId) || p.pageUrl || "";
     /** `url` as the browser resolves it on the page the run's tab is on now: the one rule the navigate and fetch_url gates
      *  judge an origin by. A scheme-relative URL takes the page's scheme, and https only when there is no page. Throws on

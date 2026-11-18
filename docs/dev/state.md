@@ -94,6 +94,7 @@ page-hosted one. Several stores exist once per host.
 | The session index: summary (title, pinned, status, start model, start page, lineage), event ring, gates, owner tab | `SessionIndex` (`session-index.ts`), `SessionSummary` (`session-host.ts`) | summaries and events of SAVED sessions in `ml-saved-sessions` |
 | A finished run's history (messages, payload, sub spend) | session store `history` | `ml-saved-sessions` if saved; otherwise only `bgRuns` (memory) |
 | Chats: `createChat` histories | page `sessionRegistry`; worker-hosted `chats` (`sw-chat.ts`, cap 32) | `ml_session_<hash>` and store `history` when `save: true` |
+| A worker-hosted chat's PDFs (`chat.files`) | `BgChat.files` (`sw-chat.ts`): name, pages, pages sent, two row keys | the list in `ml_session_<hash>` (`StoredSession.files`); the bytes as held `ml-values` rows, released with the chat's session |
 | Page registries of runs and handles | `agentRegistry`, `handleRegistry` (`bus.ts`) | no; they never shrink, so finished runs stay resumable for the page's life |
 | Reader-triggered model calls (titles, summaries, annotations) | `asides` (`store.ts`), client-side | no |
 | The title | owned by the worker (`titleSession`, `sw-sessions.ts`): kept in the session index, asked of the utility model once; every surface asks it (`SESSION_TITLE`, or `side.call` with purpose `title`) | in `ml-saved-sessions` if saved. A rename on the chat page does not yet reach a sidebar that already shows the old one |

@@ -9,7 +9,7 @@
 // run, and in tests/isolated-harness.mjs `runOn` with tests/fake-native-host.mjs for a worker-built run. The pure
 // checks are tests/manifest-proposal.test.mjs. Code under test: src/tools/propose-manifest-tool.ts,
 // src/sw/sw-manifest-proposal.ts, src/shell/manifest-proposal.ts, the gate in src/sw/sw-run-host.ts (`offersManifests`,
-// `pageStartPayload`), and `PROPOSAL_TOOLS` (src/sw/sw-runs.ts).
+// `pageStartPayload`), and `WORKER_ONLY_TOOLS` (src/sw/sw-runs.ts).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";

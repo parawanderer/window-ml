@@ -75,6 +75,8 @@ page. So it reuses the cross-page machinery rather than inventing a second one.
   page and is asked again).
 - **The same session hash**, so it stays one conversation on every surface.
 - **The picker is shared** with a new chat: choose a tab or a blank one. (`useTargetPick`, one component both forms use.)
+- **Proposed to change** (2026-11-17): a session whose tab closed resumes from the composer with no page, and gets
+  one later; [`TABLESS_RUN.md`](TABLESS_RUN.md) §Resuming with no page.
 - **Later**: a long session may not fit the model's context on resume; that needs compaction.
 
 **What slice 4 did NOT give this, and it was the whole of the work.** Saved sessions store their debug EVENTS, which

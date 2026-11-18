@@ -50,7 +50,8 @@ globalThis.chrome = {
 };
 const { leaseCell, pyKernelBusy, pyDetachedText, pyTailText, pyCancelText } = await import("../src/sw/sw-python-task.ts");
 const { pythonStarted, pythonDone, runPython } = await import("../src/sw/sw-python.ts");
-const { taskAction, endTasks, closeTurnTasks, openTasks, taskDrained, cancelPageTasks, hydrateTasks, dropAllTaskMemory, detachedCapMs, capMinutes } = await import("../src/sw/sw-tasks.ts");
+const { taskAction, endTasks, closeTurnTasks, openTasks, taskDrained, cancelPageTasks, hydrateTasks, dropAllTaskMemory, detachedCapMs } = await import("../src/sw/sw-tasks.ts");
+const { capMinutes } = await import("../src/python/py-lease.ts");
 const { dropPyTaskMemory } = await import("../src/sw/sw-python-task.ts");
 const { resetStateRegistry } = await import("../src/state-registry.ts");
 const { runControllers, runInboxes } = await import("../src/sw/sw-runs.ts");

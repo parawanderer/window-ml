@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { pinGlide, glides, easeOut, GLIDE_MS } = await import("../src/chat/pin-glide.ts");
+const { pinGlide, glides, easeOut, GLIDE_MS, keepsFollow } = await import("../src/chat/pin-glide.ts");
 
 /** A scroller of `height` px whose content is `content` px, with a frame clock the test advances by hand. */
 function world({ content = 1000, height = 400, reduced = false } = {}) {
@@ -71,4 +71,27 @@ test("a glide gives way to anything else that scrolls the pane, rather than drag
     for (let i = 0; i < 12; i++) w.frame();
     assert.equal(w.el.scrollTop, 100);
     assert.equal(w.pending(), false);
+});
+
+// --- which gestures keep the follow ---
+
+/** A minimal element tree: `closest` answers from the classes along its parent chain, as the DOM's does. */
+const el = (cls, parent = null) => ({ parent, closest(sel) { const want = sel.split(",").map((x) => x.trim().replace(/^\./, "").split(".")); for (let n = this; n; n = n.parent) if (want.some((w) => w.every((c) => (n.cls || "").split(" ").includes(c)))) return n; return null; }, cls });
+
+test("a tap on the running step or on an approval card's button keeps the follow; a tap anywhere else does not", () => {
+    const pending = el("astep pending"), card = el("astep-approve", el("astep done"));
+    assert.equal(keepsFollow(el("tok", pending)), true, "inside a running step");
+    assert.equal(keepsFollow(el("appr-btn", card)), true, "an approval card's button, which is not inside a running step");
+    assert.equal(keepsFollow(el("tok", el("astep done"))), false, "a finished step: someone reading an earlier call");
+    assert.equal(keepsFollow(null), false);
+    assert.equal(keepsFollow(undefined), false);
+});
+
+test("the answer is read at the gesture: it names what the target WAS, which a node taken out of the page can no longer say", () => {
+    const card = el("astep-approve");
+    const button = el("appr-btn", card);
+    const atGesture = keepsFollow(button);
+    card.parent = null; button.parent = null;                    // answering took the card out of the page
+    assert.equal(atGesture, true);
+    assert.equal(keepsFollow(button), false, "asked afterwards, the detached button is inside nothing: this is what stopped the follow");
 });
