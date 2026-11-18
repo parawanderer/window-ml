@@ -185,8 +185,8 @@ Four rulings of Shane's that build on the registry scrub ([#1948](https://github
 "The scrub as built"). The coordinator's calls under each are marked as such and were surfaced to Shane. Nothing here
 is built yet. Ruling 30's value scrub lands after scrub PR 2, its channel mask with handles; ruling 32 lands before
 handles; ruling 33 lands once ruling 32's store and its Settings page exist; ruling 39's by-value half lands after
-#1948, its shape half in its own PR. Rulings 40 to 42 settle three of ruling 39's open points and are written into
-its section.
+#1948, its shape half in its own PR. Rulings 40 to 42 settle three of ruling 39's open points, and ruling 43 adds LLM
+provider tokens to its shape list; all four are written into its section.
 
 ### Page password fields are masked from the model (ruling 30)
 
@@ -384,6 +384,38 @@ marked "recommended" are this spec's, still open.
   parts, the first two decoding to JSON objects). A match is `[REDACTED:<kind>]`, the kind a lowercase slug
   (`github-token`, `pem-private-key`, `jwt`), so it can never be read as a registry name, which is upper case by its
   bound.
+- **LLM provider tokens (ruling 43)** are a named group in the shape list: they have standard formats and are
+  high-value targets for resale. The group replaces the first list's `sk-`, `sk-ant-` and `AIza` entries. Each shape
+  below is taken from a published detector: gitleaks' `config/gitleaks.toml` (master at `5f6ec56c`, 2026-10-23) or
+  trufflehog's `pkg/detectors/<vendor>/<vendor>.go` (main at `ffdee00a`, 2026-11-16). GitHub secret scanning's
+  [supported-patterns list](https://docs.github.com/en/code-security/secret-scanning/introduction/supported-secret-scanning-patterns)
+  names these vendors' token types but not their shapes. Where the two detectors differ, the wider shape is kept.
+
+  | Vendor | Kind | Shape | Source |
+  | --- | --- | --- | --- |
+  | OpenAI | `openai-key` | `sk-proj-`, `sk-svcacct-` or `sk-admin-`, then 58 or 74 of `[A-Za-z0-9_-]`, `T3BlbkFJ`, 58 or 74 more; the legacy form `sk-`, 20 of `[A-Za-z0-9]`, `T3BlbkFJ`, 20 more | gitleaks `openai-api-key`; trufflehog `openai`, `openaiadmin` |
+  | Anthropic | `anthropic-key` | `sk-ant-api03-` or `sk-ant-admin01-`, 93 of `[A-Za-z0-9_-]`, then `AA` | gitleaks `anthropic-api-key`, `anthropic-admin-api-key`; trufflehog `anthropic` |
+  | OpenRouter | `openrouter-key` | `sk-or-v1-`, 64 of `[0-9a-f]` | trufflehog `openrouter` |
+  | Hugging Face | `huggingface-token` | `hf_` or `api_org_`, 34 of `[A-Za-z0-9]` (gitleaks allows letters only) | gitleaks `huggingface-access-token`, `huggingface-organization-api-token`; trufflehog `huggingface` |
+  | Groq | `groq-key` | `gsk_`, 52 of `[A-Za-z0-9]` | trufflehog `groq` |
+  | xAI | `xai-key` | `xai-`, 80 of `[A-Za-z0-9_]` | trufflehog `xai` |
+  | Replicate | `replicate-token` | `r8_`, 37 of `[A-Za-z0-9_-]` | trufflehog `replicate` |
+  | Perplexity | `perplexity-key` | `pplx-`, 48 of `[A-Za-z0-9]` | gitleaks `perplexity-api-key` |
+  | NVIDIA | `nvidia-key` | `nvapi-`, 64 of `[A-Za-z0-9_-]` | trufflehog `nvapi` |
+  | Fireworks | `fireworks-key` | `fw_`, 20 to 40 of `[A-Za-z0-9]` | trufflehog `fireworks` |
+  | LangSmith | `langsmith-key` | `lsv2_pt_` or `lsv2_sk_`, 32 of `[0-9a-f]`, `_`, 10 of `[0-9a-f]` | trufflehog `langsmith` |
+  | Google | `google-api-key` | `AIza`, 35 of `[A-Za-z0-9_-]` | gitleaks `gcp-api-key` |
+
+  Each shape ends at a word boundary, as both detectors' do. Not verified, so not in the list: `sk-ant-oat01-`
+  (Anthropic's OAuth token), which neither detector nor GitHub's list gives a shape for. Rows, one per vendor: a
+  fixture of the shape matches as its kind, and the bare prefix in prose ("set `hf_` before the name", "the `gsk_`
+  prefix") does not. A fixture is built from its parts when the test runs, never committed whole, so push protection
+  and the repository's own scanners do not read it as a leaked key.
+- **Vendors with no prefix cannot be caught by shape.** Mistral and Together have no shape in either detector.
+  Cohere's (40 of `[A-Za-z0-9]`, gitleaks `cohere-api-token`), Azure OpenAI's (32 of `[0-9a-f]`, trufflehog
+  `azure_openai`) and DeepSeek's (`sk-` and 32 of `[a-z0-9]`, trufflehog `deepseek`) are matched there only beside a
+  vendor word or a key name. Those are the credential-word patterns ruling 40's investigation decides on. Such a key
+  saved as the extension's own (below) or registered is caught by value.
 - **No entropy-only detector** until a notebook gives its false-positive rate on real prompts, which hold commit
   hashes, UUIDs, base64 and minified code (ruling 40: left until that investigation, which follows the shape
   detector). A pattern that needs a credential word beside the value (`password=`) waits for the same notebook.
@@ -442,6 +474,18 @@ the runtime and the transcript's marker, and the chip there waits until the scan
   written by `change_setting`, `ml.settings` or a page. The upgrade row: a stored config from before the key reads
   as on.
 
+**The extension's own key, with no registration.** The by-value detector also matches the key the extension itself
+holds, the saved `apiKey` (OpenWebUI's bearer key, `chrome.storage.sync`) and the replaced keys the worker remembers
+(`retired` in `sw-scrub.ts`, up to 8), as the config holds it: a value, in the forms `secretsOf` gives, and only from
+12 characters (`MIN_KEY`). A match is `[REDACTED:window-ml-api-key]`, a lowercase slug so it never meets a registry
+name. #1948 does not do this: its `secretsOf` scrub (`apiKey`, the chat and price URLs, the model filter) runs at the
+crossings into a model or script, and the person's input is not one of them. The extension holds no other model key:
+a cloud provider's key is a connection in OpenWebUI (`docs/CLOUD-MODELS.md`), out of the extension's reach, and the
+shape list is what catches it in a person's turn. The URLs and the model filter are not matched in the person's
+input: they are not credentials, and the person names them in ordinary questions. Row: with an empty registry, a turn
+holding the saved key, and one holding a key replaced since the worker started, each reach the model as
+`[REDACTED:window-ml-api-key]`; an 11-character key is not matched.
+
 The most specific level wins. A page may pass the option for its own string and never changes the setting.
 Recommended: a page's `scrubInput: false` turns off the SHAPE detector only. A registered value is the person's own
 declaration, and a page is not the person, so a page-started string is always scrubbed by value, as #1948 already
@@ -449,13 +493,16 @@ does; Shane's line that a default-held value must never reach the model without 
 
 **Open, with this spec's recommendation.**
 
-- **A detected value is offered to the store (ruling 41)**, in a way the person can ignore at no cost. The offer is
-  on the chip, while the draft still holds the value: "Remember as a secret" opens the store's add row with the kind
-  as the name and `mask` as the type, and nothing is added without the person's save. Ignoring it costs nothing: no
-  dialog, no extra click to send, and the offer goes when the draft is sent. Row: a draft with a detected value sends
-  on the first click with nothing added to the store, and after the send no offer remains in the composer or the
-  transcript. Never as an inbox item: an item would have to hold the value until acted on, which is storing it
-  unregistered. Never from a remote host (ruling 33 defers remote entry) and never from a page-started string.
+- **A detected value is offered to the store (ruling 41)**, in a way the person can ignore at no cost. The offer is on
+  the chip, while the draft still holds the value: "Remember as a secret" opens the store's add row with the kind as
+  the name and `mask` as the type, and nothing is added without the person's save. With no store set up, the chip
+  offers the same "Remember as a secret", and it opens the store's setup (ruling 33's form) first, then the add row
+  with the value. Ignoring it costs nothing: no dialog, no extra click to send, and the offer goes when the draft is
+  sent. Row, with a store and with none: a draft with a detected value sends on the first click with nothing added to
+  the store and no store set up, and after the send no offer remains in the composer or the transcript; with none,
+  taking the offer opens setup before the add row. Never as an inbox item: an item would have to hold the value until
+  acted on, which is storing it unregistered. Never from a remote host (ruling 33 defers remote entry) and never from
+  a page-started string.
 - **No store set up (ruling 42).** By value has nothing to match and the shape detector runs anyway, since it needs
   no store. The person gets ruling 33's inbox item, which recommends setting the store up or dismissing it. A
   detection while no store is set up does not raise the item again once it is dismissed: the dismissal is durable,
