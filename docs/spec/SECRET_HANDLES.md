@@ -177,19 +177,20 @@ than it protects.
 **Two mechanisms, landing at different times.**
 
 1. *The value scrub* (after scrub PR 2). Every value seen in a held field joins the session's registry, kept in
-   `chrome.storage.session`: in memory, NEVER ON DISK, never written to `ml_secret_registry`, and surviving the
-   worker's eviction (an MV3 worker is stopped after about 30 seconds idle). It has to survive it, because #1948
-   scrubs stored text when it is READ (`forStored`): a set lost with the worker would leave a page value already in
-   the session's stored output unscrubbed in the sidebar, the exports and a `@tool:` read. Once ruling 32's store
-   exists, these values are kept there hash-only, as `mask` entries scoped to the session. The worker reads
-   the fields of each tab the run has touched with a tool at the start and end of every tool call on that tab, and
-   again when a result from that tab is about to cross to the model. It keeps every value it has seen for the
-   session, not only the current one, so a value read by an approved script and then changed is still scrubbed. No
-   keystroke listener. From there the scrub is the registry's: the same forms, the same crossings, `[REDACTED:<NAME>]`
-   with a generated name (`PAGE_PASSWORD_1`). The row: a value seen, the worker restarted, and the session's stored
-   output still scrubbed. The bound (proposal): at most 256 values a session. At the bound,
-   nothing held is dropped: results from a tab with a held field stop crossing, each answered with a line saying the
-   session holds more masked values than it can scrub, and the run log records it.
+   `chrome.storage.session`: in memory, NEVER ON DISK, never written to `ml_secret_registry`, and surviving the worker's
+   eviction (an MV3 worker is stopped after about 30 seconds idle). It has to survive it, because #1948 scrubs stored
+   text when it is READ (`forStored`): a set lost with the worker would leave a page value already in the session's
+   stored output unscrubbed in the sidebar, the exports and a `@tool:` read. The session's page values stay in
+   `chrome.storage.session` always and are never written to the local store, where a stolen profile would give a weak
+   page password to offline guessing; once ruling 32's matcher exists they MAY be held in `chrome.storage.session` in
+   its hash-only form. The worker reads the fields of each tab the run has touched with a tool at the start and end of
+   every tool call on that tab, and again when a result from that tab is about to cross to the model. It keeps every
+   value it has seen for the session, not only the current one, so a value read by an approved script and then changed
+   is still scrubbed. No keystroke listener. From there the scrub is the registry's: the same forms, the same crossings,
+   `[REDACTED:<NAME>]` with a generated name (`PAGE_PASSWORD_1`). The row: a value seen, the worker restarted, and the
+   session's stored output still scrubbed. The bound (proposal): at most 256 values a session. At the bound, nothing
+   held is dropped: results from a tab with a held field stop crossing, each answered with a line saying the session
+   holds more masked values than it can scrub, and the run log records it.
 2. *The channel mask* (with handles; ruling 25 needs it too). Every read path the dialect and the DOM survey have
    answers `"filled"` for a held field's value, and the field is blanked in screenshots and in what a vision model is
    shown. The read paths, as a list the red team's rows are written from; a path not on it is a defect in the list:
