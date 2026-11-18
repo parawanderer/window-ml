@@ -46,3 +46,25 @@ test("the eye is a button that does not submit, and a disabled field disables it
     assert.equal(host.querySelector("button.secret-eye").type, "button");
     assert.equal(host.querySelector("button.secret-eye").disabled, true);
 });
+
+// --- a value changed from outside hides the text again; typing does not ---
+
+test("a value replaced from outside while the eye is on hides the text again; typing does not", async () => {
+    const host = doc.getElementById("root");
+    render(null, host);
+    let value = "sk-abc";
+    const draw = () => render(h(SecretInput, { value, onInput(e) { value = e.currentTarget.value; draw(); } }), host);
+    draw(); await flush();
+    const input = () => host.querySelector("input");
+    host.querySelector("button.secret-eye").click(); await flush();
+    assert.equal(input().type, "text");
+    input().value = "sk-abcd";
+    input().dispatchEvent(new doc.defaultView.Event("input", { bubbles: true })); await flush();
+    assert.equal(input().value, "sk-abcd");
+    assert.equal(input().type, "text", "a keystroke does not hide it");
+    value = "sk-from-the-popup"; draw(); await flush();
+    assert.equal(input().value, "sk-from-the-popup");
+    assert.equal(input().type, "password", "a key written elsewhere is not drawn in the clear");
+    host.querySelector("button.secret-eye").click(); await flush();
+    assert.equal(input().type, "text", "and the eye still works afterwards");
+});
