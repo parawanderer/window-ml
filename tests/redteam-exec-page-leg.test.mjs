@@ -1,5 +1,5 @@
 // redteam-exec-page-leg.test.mjs — a read-only survey's PAGE leg (src/sw/sw-run-host.ts `tryReadonly`, `pageLegOk`): a
-// script policy keeps out of the page's main world — one naming `ml.current`, `ml.sh` or a pointer — is never handed to
+// script policy keeps out of the page's main world — one naming `ml.current`, `ml.settings`, `ml.sh` or a pointer — is never handed to
 // the page to evaluate, even when the worker's own survey comes back `needs-page` (docs/spec/SITE_ACCESS.md, part 4;
 // docs/spec/SHELL.md). The page leg is decided on the SCRIPT alone, so only a script that names none of them has one.
 // A page the person has not approved is decided by the SITE, not the script: a survey their own run makes there keeps
@@ -20,12 +20,14 @@ const SCRIPT_NAMED = {
     // A bogus id: the WORKER answers the fault, which is the point — the leg is decided before the read is resolved.
     pointer: "return @tool:probe.length",
     current: "return ml.current.messages.length",
+    settings: "return Object.keys(ml.settings()).length",
 };
 /** Each reason's duty for the page leg. A reason not named here reds the last row: place it, do not sample it. */
 const DUTY = {
     plain: "page",              // nothing forced: the page surveys it, which is the whole point of the leg
     sh: "never",
     current: "never",
+    settings: "never",          // the person's settings, read only in a world of the run's own (change-setting-2)
     pointer: "never",
     requested: "call",          // the call's `world`, decided by the call not the script (exec-world.test.mjs)
     default: "setting",         // the stored default world (exec-world.test.mjs)
@@ -33,7 +35,7 @@ const DUTY = {
 };
 const PLAIN = "return document.title.length";
 /** How the worker's own survey accounted for each: the reason its record gives, on the worker, never the page. */
-const RECORD = { sh: "script-isolated", pointer: "no-page-reads", current: "no-page-reads" };
+const RECORD = { sh: "script-isolated", pointer: "no-page-reads", current: "no-page-reads", settings: "script-isolated" };
 
 /** Run one survey: what the page was asked to evaluate, and what routing recorded. */
 async function survey(js, { approved = true } = {}) {
@@ -83,8 +85,8 @@ test("RED TEAM: every reason the routing module exports is placed, and each scri
     assert.ok(Array.isArray(reasons) && reasons.length, "exec-routing.ts does not export EXEC_REASONS as a runtime list");
     assert.deepEqual([...reasons].sort(), Object.keys(DUTY).sort(), `a reason has no duty here: ${JSON.stringify(reasons.filter((r) => !(r in DUTY)))}`);
     // What `routeExec` reads off a script is what the page leg is decided on: a name there is a `never` above.
-    const names = Object.keys(route.execNames('return (await ml.sh.run(["ls"])).code + ml.current.messages.length + @tool:x.length')).sort();
-    const byName = { current: "current", pointers: "pointer", sh: "sh" };
+    const names = Object.keys(route.execNames('return (await ml.sh.run(["ls"])).code + ml.current.messages.length + @tool:x.length + Object.keys(ml.settings()).length')).sort();
+    const byName = { current: "current", pointers: "pointer", sh: "sh", settings: "settings" };
     assert.deepEqual(names, Object.keys(byName).sort(), "execNames gained a name whose reason is not placed");
     for (const n of names) assert.equal(DUTY[byName[n]], "never", `execNames reads ${JSON.stringify(n)}, whose reason is not a never`);
     for (const [reason, duty] of Object.entries(DUTY)) if (duty === "never") assert.ok(reason in SCRIPT_NAMED, `${reason} is a never with no script above`);
