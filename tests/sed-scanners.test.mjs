@@ -3,9 +3,9 @@
 // The oracle needs no parse output: `s/<r>/Q/w F`, run in an empty directory, creates the file F at compile time
 // exactly when the sed's regex, replacement and flags fall where the port says (an earlier end leaves `Q/` among the
 // flags, a later one leaves the s unterminated). Each half runs only where its sed is installed: GNU as `gsed` or a
-// `sed` whose --version says GNU, BSD as macOS's /usr/bin/sed. The suite runs a seeded sample; the lane's measurement
-// (2026-11-18, gsed 4.10 and macOS 26.7: 1,735 unique regexes, no disagreement for either) is re-run with
-// `WML_SED_SCANNERS_N=8000 node --import tsx --test tests/sed-scanners.test.mjs`.
+// `sed` whose --version says GNU, BSD as macOS's /usr/bin/sed. The regexes are the shared vectors
+// (tests/fixtures/sed-scanners/regex-ends.json, 2,926 measured with gsed 4.10 and macOS 26.7); the suite runs the
+// first 600 and every row where GNU and BSD differ, and `WML_SED_SCANNERS_N=3000` runs them all.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -22,22 +22,11 @@ function sedOf(kind) {
     return process.platform === "darwin" && fs.existsSync("/usr/bin/sed") ? "/usr/bin/sed" : undefined;
 }
 
-/** The regexes the measurement draws: bracket-heavy strings, deduplicated, from a fixed seed. */
-function regexes(n) {
-    let seed = 3;
-    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
-    const R = ["[", "[", "[", "]", "]", "]", "\\", ":", ":", ".", "=", "^", "a", "/", "/"];
-    const seen = new Set();
-    for (let k = 0; k < n; k++) {
-        let r = "";
-        const len = 1 + Math.floor(rnd() * 9);
-        for (let j = 0; j < len; j++) r += R[Math.floor(rnd() * R.length)];
-        seen.add(r);
-    }
-    return [...seen];
-}
+/** The measured regexes, shared with window-ml-host (scripts/gen-sed-regex-ends.mjs writes them). */
+const ROWS = JSON.parse(fs.readFileSync(new URL("./fixtures/sed-scanners/regex-ends.json", import.meta.url), "utf8")).rows;
 
 const N = Number(process.env.WML_SED_SCANNERS_N ?? 600);
+const SAMPLE = ROWS.filter((row, k) => k < N || row[1] !== row[2]).map(([script]) => script.slice(2, -6));
 
 for (const [kind, port] of [["gnu", __gnuRegexEnd], ["bsd", __bsdDelimitedEnd]]) {
     const bin = sedOf(kind);
@@ -46,7 +35,7 @@ for (const [kind, port] of [["gnu", __gnuRegexEnd], ["bsd", __bsdDelimitedEnd]])
         try {
             const differ = [];
             let atMarker = 0;
-            for (const r of regexes(N)) {
+            for (const r of SAMPLE) {
                 const script = `s/${r}/Q/w F`;
                 const e = port(script, 2, "/");
                 const portSays = e > 0 && __plainDelimitedEnd(script, e, "/") === script.length - 3;
@@ -54,7 +43,7 @@ for (const [kind, port] of [["gnu", __gnuRegexEnd], ["bsd", __bsdDelimitedEnd]])
                 const made = fs.existsSync(path.join(dir, "F"));
                 fs.rmSync(path.join(dir, "F"), { force: true });
                 // A regcomp error is the regex's content (an invalid class), not where it ends.
-                const regcomp = /RE error|invalid|unmatched|trailing backslash/i.test(p.stderr) && !/unterminated|unbalanced brackets|bad flag|unknown option/.test(p.stderr);
+                const regcomp = /RE error|invalid|unmatched|trailing backslash|character class syntax is/i.test(p.stderr) && !/unterminated|unbalanced brackets|bad flag|unknown option/.test(p.stderr);
                 const sedSays = made && p.status === 0;
                 if (sedSays) atMarker++;
                 if (sedSays !== portSays && !(regcomp && portSays)) differ.push({ r, port: e, sed: p.stderr.trim().slice(0, 80) });

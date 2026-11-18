@@ -72,11 +72,15 @@ then a file; several `-e` are joined by newlines), and the text is checked by a 
   a class's closing `:` keep it closing, and macOS's `compile_ccl` (Apple text_cmds) needs `:]` exactly, so
   `s/[[:a:[]/]/Q/w F` is a `w F` to GNU and unbalanced to macOS. `script-grammar.ts` ports both scanners, and **a
   regular expression is described only when both scanners end it at the same character**. The lane's measurement
-  (2026-11-18, gsed 4.10 and macOS 26.7): over 1,735 unique bracket-heavy regexes, `s/<r>/Q/w F` run in an empty
-  directory created the file `F` exactly when each port said the replacement and flags fall where they do, with no
-  disagreement for either. `tests/sed-scanners.test.mjs` runs a seeded sample of it against whichever seds the machine
-  has (a mutation of the GNU port's bracket rule fails it); `WML_SED_SCANNERS_N=8000 node --import tsx --test
-  tests/sed-scanners.test.mjs` re-runs the whole measurement.
+  (2026-11-18, gsed 4.10 and macOS 26.7): over 2,926 unique bracket-heavy regexes (a seeded draw, and one aimed at
+  classes, collating symbols and equivalence classes, which holds the 14 where GNU and macOS end differently),
+  `s/<r>/Q/w F` run in an empty directory created the file `F` exactly when each port said the replacement and flags
+  fall where they do, with no disagreement for either. The regexes and both ends are shared vectors,
+  `tests/fixtures/sed-scanners/regex-ends.json` (written by `scripts/gen-sed-regex-ends.mjs`, which refuses to write
+  on any disagreement), under the vector pin, so window-ml-host's port is held to them too. `tests/script-grammar.test.mjs`
+  holds both ports to every row on any machine (a mutation of the GNU port's bracket rule fails it);
+  `tests/sed-scanners.test.mjs` re-runs the real seds the machine has over a sample and every differing row, and
+  `WML_SED_SCANNERS_N=3000` over all of them.
 - **Why a `w` is never free, not even refused by the sed.** GNU sed opens and truncates a `w` file while it parses the
   script, before the script is compiled (measured: `s/[[:a:[]/]/Q/w F` created `F`, then failed on the regex), so a
   script the sed rejects can still have emptied a file. A `w`, `W` or `s///w` is refused by the grammar, never left to

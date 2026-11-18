@@ -424,11 +424,11 @@ const VECTOR_PIN = "a09ef075ba3ef647db8dff2924b71de18ca0d59f1c8028b7fd1f3c1c5627
 
 test("the manifests and call fixtures hash to the pin the host holds", () => {
     const sha = (b) => crypto.createHash("sha256").update(b).digest("hex");
-    const named = [["calls", FIXTURES], ["manifests", MANIFESTS]].flatMap(([dir, url]) =>
+    const named = [["calls", FIXTURES], ["manifests", MANIFESTS], ["scanners", new URL("./fixtures/sed-scanners/", import.meta.url)]].flatMap(([dir, url]) =>
         fs.readdirSync(url).filter((f) => f.endsWith(".json")).map((f) => [`${dir}/${f}`, fs.readFileSync(new URL(f, url))]));
     named.sort(([a], [b]) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
     const pin = sha(named.map(([n, bytes]) => `${sha(bytes)}  ${n}\n`).join(""));
-    assert.equal(pin, VECTOR_PIN, "the manifests or call fixtures changed: re-copy them to window-ml-host's vectors/program-manifests/ and update VECTOR_PIN here and PIN there together");
+    assert.equal(pin, VECTOR_PIN, "the manifests, call fixtures or scanner vectors changed: re-copy them to window-ml-host's vectors/program-manifests/ and update VECTOR_PIN here and PIN there together");
 });
 
 // --- the editor's warning: a script whose manifest lacks runs-code (SHELL.md, the TRAP paragraph) ---

@@ -93,6 +93,13 @@ test("a delimiter that is itself [ ends the regex at the first [, for both", () 
     assert.equal(sedScriptRefusal("s[a[b[", false), undefined);
 });
 
+test("both scanners end every shared regex where the measured sed did (tests/fixtures/sed-scanners/regex-ends.json)", async () => {
+    const { rows } = JSON.parse((await import("node:fs")).readFileSync(new URL("./fixtures/sed-scanners/regex-ends.json", import.meta.url), "utf8"));
+    assert.ok(rows.length > 2000 && rows.some(([, g, b]) => g !== b), "the vectors hold rows where GNU and BSD differ");
+    const differ = rows.filter(([s, g, b]) => __gnuRegexEnd(s, 2, "/") !== g || __bsdDelimitedEnd(s, 2, "/") !== b);
+    assert.deepEqual(differ.slice(0, 10), []);
+});
+
 // --- awk ---
 
 test("an awk program that only reads its operands and prints to stdout is described", () => {
