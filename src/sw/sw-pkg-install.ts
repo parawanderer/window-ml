@@ -21,7 +21,9 @@ import { ensureWheel, indexGetFor, mirroredDigests } from "./sw-pkg-mirror";
 import { mirroredWheel } from "../python/pkg-mirror-db";
 import { checkWheel } from "../python/pkg-archive";
 import { recordInstalls, runInstalls, type InstalledWheel } from "./sw-pkg-installs";
+import { scanNote, type ScanResult } from "../python/pkg-scan-note";
 import { recordRunLog } from "./sw-run-log";
+import { MAX_DETAIL_STRING } from "../log/housekeeping";
 import { ensureOffscreen } from "./sw-offscreen";
 import whitelist from "../../notebooks/python-dialect/data/whitelist.json";
 
@@ -115,19 +117,44 @@ export async function fetchApproved(check: PkgCheck): Promise<string> {
 }
 
 /** What an install's candidate answered (offscreen.ts `installTest`). */
-export type InstallTestResult = { ok: true } | { ok: false; error: string; module?: string; missing?: string; died?: boolean; collision?: boolean };
+export type InstallTestResult = ({ ok: true } | { ok: false; error: string; module?: string; missing?: string; died?: boolean; collision?: boolean }) & {
+    /** The platform scan (pkg-scan.ts), read in the candidate before the import; null or absent when it did not answer. */
+    scan?: ScanResult | null;
+};
 
-/** Ask the offscreen document to test an install in a candidate worker; `stop` aborts it. */
-export type InstallTester = (run: string, wheels: { filename: string; sha256: string }[], modules: string[], stop: AbortSignal | undefined) => Promise<InstallTestResult>;
+/** Ask the offscreen document to test an install in a candidate worker; `scope` is every top-level name its wheels provide, `stop` aborts it. */
+export type InstallTester = (run: string, wheels: { filename: string; sha256: string }[], modules: string[], stop: AbortSignal | undefined, scope?: string[]) => Promise<InstallTestResult>;
 
 /** The tester the extension uses: the offscreen document's candidate, stopped by the run's Stop. */
-const offscreenTester: InstallTester = async (run, wheels, modules, stop) => {
+const offscreenTester: InstallTester = async (run, wheels, modules, stop, scope = modules) => {
+    // A Stop before the test is sent starts no candidate; one that overtakes the message is remembered by the document.
+    const stopped: InstallTestResult = { ok: false, error: "Python worker stopped (stopped).", died: true };
+    if (stop?.aborted) return stopped;
     await ensureOffscreen();
+    if (stop?.aborted) return stopped;
     const onStop = () => { chrome.runtime.sendMessage({ type: "PY_INSTALL_STOP", run }).catch(() => { /* nothing running */ }); };
     stop?.addEventListener("abort", onStop, { once: true });
-    try { return await chrome.runtime.sendMessage({ type: "PY_INSTALL_TEST", run, wheels, modules }) as InstallTestResult; }
+    try { return await chrome.runtime.sendMessage({ type: "PY_INSTALL_TEST", run, wheels, modules, scope }) as InstallTestResult; }
     finally { stop?.removeEventListener("abort", onStop); }
 };
+
+/**
+ * The scan as the run log keeps it, whose `detail` is flat: the findings as one line of names (readScan kept nothing
+ * the package wrote), fitted to the log's string cap by whole findings, with their count and how many modules it read;
+ * `scanLost` when it did not answer (its cell failed, or the candidate died before it did), so a lost scan is seen.
+ * @param scan the candidate's scan, or null
+ */
+export function scanDetail(scan: ScanResult | null): Record<string, string | number | boolean> {
+    if (!scan) return { scanLost: true };
+    let line = "";
+    for (const f of scan.findings) {
+        const one = `${f.kind} ${f.what ? `${f.what} ` : ""}in ${f.in}`;
+        const next = line ? `${line}; ${one}` : one;
+        if (next.length > MAX_DETAIL_STRING) break;
+        line = next;
+    }
+    return { scanFindings: scan.findings.length, scanReached: scan.reached, ...(line ? { scan: line } : {}), ...(scan.truncated ? { scanTruncated: true } : {}) };
+}
 
 /** The closing sentence of every failed install: what was kept and what was not. */
 const NOTHING_INSTALLED = "Nothing was installed; the downloaded files stay in the mirror.";
@@ -170,18 +197,27 @@ export async function installApproved(check: PkgCheck, runId: string, stop?: Abo
     // only stubs or only `.data/`), so it is refused here rather than reported as an import that works.
     if (!modules.length) { log("nothing-importable"); return `Not installed: ${fresh.map((r) => JSON.stringify(shownText(r.filename).text)).join(", ")} ${fresh.length === 1 ? "provides" : "provide"} nothing an import statement can load. ${NOTHING_INSTALLED}`; }
     const refs = [...earlier, ...rows].map(({ filename, sha256 }) => ({ filename, sha256 }));
-    const res = await test(runId, refs, modules, stop).catch((e): InstallTestResult => ({ ok: false, error: String(e), died: true }));
+    const scope = [...new Set([...earlier, ...rows].flatMap((w) => w.topLevel))];
+    const res = await test(runId, refs, modules, stop, scope).catch((e): InstallTestResult => ({ ok: false, error: String(e), died: true }));
+    const scan = res.scan ?? null;
+    const scanned = scanDetail(scan);
+    // Stop ends the install whatever the candidate answered: an import that passes after it is not recorded.
+    if (stop?.aborted) { log("stopped", { modules: modules.join(" "), ...scanned }); return `Not installed: the run was stopped while the import was tested. ${NOTHING_INSTALLED}`; }
     if (!res.ok) {
-        log(res.collision ? "name-collision" : res.missing ? "missing" : res.died ? "died" : "import", { module: res.module, missing: res.missing });
-        if (stop?.aborted) return `Not installed: the run was stopped while the import was tested. ${NOTHING_INSTALLED}`;
+        log(res.collision ? "name-collision" : res.missing ? "missing" : res.died ? "died" : "import", { module: res.module, missing: res.missing, ...scanned });
         if (res.missing && res.module && !modules.includes(res.missing.split(".")[0])) return `Not installed: importing ${res.module} needs ${res.missing}, which none of the approved files provide. Ask python_install for the package that provides it; the files approved here stay in the mirror and show as mirror on the next card.`;
         if (res.died) return `Not installed: the Python interpreter did not survive the test${res.module ? ` of importing ${res.module}` : ""} (${res.error}). ${NOTHING_INSTALLED}`;
-        return `Not installed: importing ${res.module ?? check.request.name} failed: ${res.error}. ${NOTHING_INSTALLED}`;
+        const note = res.module ? scanNote(scan, res.module) : "";
+        return `Not installed: importing ${res.module ?? check.request.name} failed: ${res.error}.${note ? ` ${note}` : ""} ${NOTHING_INSTALLED}`;
     }
-    await recordInstalls(runId, rows);
-    log("ok", { files: rows.length, modules });
+    if (!await recordInstalls(runId, rows, earlier)) {
+        log("concurrent", { modules: modules.join(" ") });
+        return `Not installed: another install of this run finished while this one was tested, so this one was not tested beside it. Ask python_install again; the files approved here stay in the mirror and show as mirror on the next card.`;
+    }
+    log("ok", { files: rows.length, modules: modules.join(" "), ...scanned });
     const names = rows.map((w) => `${w.name} ${w.version}`).join(", ");
-    return `Installed ${names} into this run. ${modules.map((m) => `import ${m}`).join(", ")} works in this run's python_exec cells.`;
+    const note = scanNote(scan);
+    return `Installed ${names} into this run. ${modules.map((m) => `import ${m}`).join(", ")} works in this run's python_exec cells.${note ? ` ${note} The import passed, so this is a note: those paths may fail when the code reaches them.` : ""}`;
 }
 
 /**

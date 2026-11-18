@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { writePkgShipped } from "../../../../scripts/gen-pkg-shipped.mjs";
+import { writePkgCore } from "../../../../scripts/gen-pkg-core.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "../../../..");
@@ -16,6 +17,7 @@ const cache = new Map();
 function bundle(entry) {
     if (!cache.has(entry)) {
         writePkgShipped();   // generated and gitignored; the dashboard reaches it through pkg-card.ts
+        writePkgCore();
         const out = buildSync({
             entryPoints: [path.join(HERE, entry)], bundle: true, write: false, format: "iife", platform: "browser",
             jsx: "automatic", jsxImportSource: "preact", minify: true, target: "es2020", logLevel: "silent",
