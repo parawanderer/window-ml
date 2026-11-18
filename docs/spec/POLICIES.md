@@ -690,10 +690,12 @@ every policy. Origin `person`, `card` or `proposed`. There is no second store: t
 and the run-scope lifetime rules (it survives a resume and is removed at archive) are the ones above.
 
 - **`hide <pattern>`** holds what it matches, for reading and writing, like a default hold.
-- **`show <pattern>`** releases a default hold on what it matches: a dotenv name, one of the three credential files at
-  a root's top, a held symlink target, or a linked template. A shown path is readable AND writable, and is never listed
-  in `hiddenSecrets`. The credential directories (`.ssh`, `.gnupg`, `.aws` and the rest) and the masks under `$HOME`
-  are not defaults a `show` releases in this version: a `show` that matches one is refused, naming it.
+- **`show <pattern>`** releases a hold on what it matches: a default (a dotenv name, one of the three credential files
+  at a root's top, a held symlink target, or a linked template), or a `hide` in a layer below it. By the layer rule
+  below, a session `show` overrides a person's global `hide`. A shown path is readable AND writable, and is never listed
+  in `hiddenSecrets`. The credential directories (`.ssh`, `.gnupg`, `.aws` and the rest) and the masks under `$HOME` are
+  not defaults a `show` releases in this version: a `show` that matches one is refused, naming it. This is the
+  coordinator's call narrowing ruling 34, open to Shane's override.
 - **A pattern** is an absolute path inside a root, or a glob within the roots using `*`, `?` and `[…]` inside one path
   segment; `**` is refused, since on Linux every match is a mask the host builds by walking the tree. At most 512
   characters, and at most 256 entries a scope.
@@ -718,10 +720,12 @@ removed, only overridden.
 
 **Who writes and who proposes.** The main path is the MODEL'S PROPOSAL: a card that shows the exact entry and, for a
 `show`, the paths it would release at that moment (the host's `glob`, bounded). It offers "this session" (the default)
-and "always" (global). Nothing changes until the person approves. A person may also write an entry directly, in DevTools
-Settings, from the file browser's right-click (ruling 24), or with "always" on any card; that is expected to be rare. A
-page, `change_setting` and `ml.settings` can neither write nor propose one: the list is a gate key
-([MODEL_SETTINGS.md](MODEL_SETTINGS.md)).
+and "always" (global). A session `show` that overrides a global `hide` names that entry, verbatim, before the paths, and
+offers no "always": a global `show` under a global `hide` is the person's own edit on the policy page. A glob releases
+what matches LATER too, and the card says so beside the paths it lists. Nothing changes until the person approves. A
+person may also write an entry directly, in DevTools Settings, from the file browser's right-click (ruling 24), or with
+"always" on a card that offers it; that is expected to be rare. A page, `change_setting` and `ml.settings` can neither
+write nor propose one: the list is a gate key ([MODEL_SETTINGS.md](MODEL_SETTINGS.md)).
 
 **One command to change it.** Adding or removing an entry is one session-contract command with one handler, whichever
 renderer sends it: the extension's, the file browser's, or a remote host's. It is sealed and carried over the hub like
@@ -738,9 +742,25 @@ the held set, so `hiddenSecrets` never lists a shown path, and adds each `hide`.
 write deny rules after the template allow, and a `show` an allow after the denies but never over a credential directory.
 On Linux a `hide` is resolved against the tree when the call is spawned and each match is masked; more than 256 matches
 fails the spawn with `SandboxFailed` naming the entry, rather than leaving the excess readable. Naming a hidden path in
-`pathArgs` asks and re-allows its read for that call, as for a dotenv file. A change applies from the next call; a call
-already running keeps the sandbox it started with. The host's protocol (window-ml-host, PROTOCOL.md) gains the `spawn`
-field when this is built.
+`pathArgs` asks, for a `hide` as for a dotenv file, and the card names the entry that hides it; approved, it re-allows
+that path's read for that call. No `allow` policy of any consumer frees that ask, and no "always" is offered on it: the
+durable way to read the file is to remove the `hide`. A change applies from the next call; a call already running keeps
+the sandbox it started with. The host's protocol (window-ml-host, PROTOCOL.md) gains the `spawn` field when this is
+built.
+
+**Every reader of a root is bound by it.** The list binds every way a file under a root is read, not only a `spawn`:
+`ml.fs` and its one ranged reader, an `@files` reference, the file browser's content view, and ruling 36's `/files`
+mounts once they exist. One list, every reader: a reader the host does not sandbox applies the worker's resolved list
+itself before it reads. A hidden file readable through `ml.fs` is the defect this rules out, and a row asserts it for
+each reader.
+
+**What a hidden file shows.** As for a default-held file: its NAME is listed, by `ls`, the file browser and `glob`, on
+both platforms; its content is not, and a read fails with EPERM on macOS and EACCES on Linux. A `hide` behaves as the
+defaults do on each platform, and the file browser marks the name as hidden (the per-entry `hidden` flag the hide-list
+item asks for).
+
+**Known limits.** On Linux a `hide` is resolved when the call is spawned, so a file the call creates that matches it is
+not masked for that call; macOS's rules match by pattern and cover it. The next call's spawn holds it on both.
 
 **The read, for the view.** The view of the effective list is the access tab of small-fixes' per-session Session
 summary page, a read-only layered list (default < global < session) with a scope chip, an "overrides <rule>" line and
@@ -759,6 +779,10 @@ own host may also listen on `storage.onChanged`.
 - A `hide` holds a non-default file on both platforms and lists it.
 - Session over global, and a tie that hides.
 - A proposal the person declines leaves the list byte-unchanged.
+- A session `show` overrides a global `hide`: its card names the global entry verbatim and offers no "always".
+- A hidden file is unreadable through `ml.fs`, its ranged reader, `@files` and the file browser's content view, as
+  through a `spawn`.
+- Naming a hidden path in `pathArgs` asks, names the `hide`, and no `allow` policy frees the ask.
 - The upgrade: there was no earlier hide list, so the fixture is today's policy store, with no `files` rows, read by
   the new code. Its policies decide as before, and the view shows the four defaults only.
 
