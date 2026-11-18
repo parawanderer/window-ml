@@ -185,8 +185,8 @@ Four rulings of Shane's that build on the registry scrub ([#1948](https://github
 "The scrub as built"). The coordinator's calls under each are marked as such and were surfaced to Shane. Nothing here
 is built yet. Ruling 30's value scrub lands after scrub PR 2, its channel mask with handles; ruling 32 lands before
 handles; ruling 33 lands once ruling 32's store and its Settings page exist; ruling 39's by-value half lands after
-#1948, its shape half in its own PR. Rulings 40 to 42 settle three of ruling 39's open points, and ruling 43 adds LLM
-provider tokens to its shape list; all four are written into its section.
+#1948, its shape half in its own PR. Rulings 40 to 42 and 44 settle four of ruling 39's open points, and ruling 43
+adds LLM provider tokens to its shape list; all five are written into its section.
 
 ### Page password fields are masked from the model (ruling 30)
 
@@ -450,14 +450,15 @@ rewritten at rest; re-scrubbing stored sessions is the later slice "The scrub as
 (`redactedNote`), with names or kinds and a count, so the model does not think the person typed a placeholder.
 
 **What the person sees.** In the composer, a chip on each detected span, naming the entry or the kind, with "send as is"
-for that one value. A detection never blocks a send. The composer asks the worker over an extension-only message (the
-shape of `SECRET_REGISTRY`), debounced, and gets spans and names back, never a value: the text is the composer's own. An
-attachment with detections shows a count on its chip, with "send as is" for the whole file and, in the chip's detail,
-for each value; a value the person takes is kept in the stored text and recorded as the other exemptions are (below).
-After a send, the transcript shows the placeholder the model saw and that the scrub fired, beside the raw view the "what
-the model saw" rule asks for. Recommended: in the first build the chip is in the composers the extension hosts (the
-sidebar and the chat page in the extension); a remote host of the renderer (the web build, the phone) gets the scrub at
-the runtime and the transcript's marker, and the chip there waits until the scan answer can ride the hub.
+for that one value. A detection never blocks a send; a store that cannot be read holds it (ruling 44, below). The
+composer asks the worker over an extension-only message (the shape of `SECRET_REGISTRY`), debounced, and gets spans and
+names back, never a value: the text is the composer's own. An attachment with detections shows a count on its chip, with
+"send as is" for the whole file and, in the chip's detail, for each value; a value the person takes is kept in the
+stored text and recorded as the other exemptions are (below). After a send, the transcript shows the placeholder the
+model saw and that the scrub fired, beside the raw view the "what the model saw" rule asks for. Recommended: in the
+first build the chip is in the composers the extension hosts (the sidebar and the chat page in the extension); a remote
+host of the renderer (the web build, the phone) gets the scrub at the runtime and the transcript's marker, and the chip
+there waits until the scan answer can ride the hub.
 
 **The flag, three levels.**
 
@@ -491,7 +492,7 @@ Recommended: a page's `scrubInput: false` turns off the SHAPE detector only. A r
 declaration, and a page is not the person, so a page-started string is always scrubbed by value, as #1948 already
 does; Shane's line that a default-held value must never reach the model without the person's override is the reason.
 
-**Open, with this spec's recommendation.**
+**The open points: ruled since, or recommended.**
 
 - **A detected value is offered to the store (ruling 41)**, in a way the person can ignore at no cost. The offer is on
   the chip, while the draft still holds the value: "Remember as a secret" opens the store's add row with the kind as
@@ -508,10 +509,9 @@ does; Shane's line that a default-held value must never reach the model without 
   detection while no store is set up does not raise the item again once it is dismissed: the dismissal is durable,
   and Settings stays the way in. Row: a shape detection with an empty registry and a dismissed item adds no inbox
   item.
-- **A store that cannot be READ** is not an empty one. Recommended: the turn is held in the composer with the reason
-  and a retry, and "send as is" for the whole turn is the person's override. That holds a send rather than blocking
-  it; it is marked here for Shane, since the ruling says a send is never blocked and #1948 fails every other
-  crossing closed (the coordinator's recommendation: hold, fail closed). A caller with no composer (`ml.agent` from
+- **A store that cannot be READ (ruling 44)** is not an empty one: the turn is held in the composer with the reason
+  and a retry, and "send as is" for the whole turn is the person's override. A detection never blocks a send; this
+  is the one hold, and it fails closed as #1948 fails every other crossing. A caller with no composer (`ml.agent` from
   the console, a script's `say`, a steer from the inbox) is rejected with an error that says the secret store could
   not be read and names `scrubInput: false`, which only an extension-page caller can use to send anyway: from a page
   the option is shape-only, so a page-started call is rejected until the store can be read. A remote host (the web
