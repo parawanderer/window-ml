@@ -99,10 +99,15 @@ export function serveFiles(shared: FilesShared, channel: FilesChannel) {
     const ctl = new Int32Array(shared.ctl), data = new Uint8Array(shared.data);
     const te = new TextEncoder();
     // A fixed buffer the reader copies into, never one per chunk (ranged.ipynb): copied to `data` only if still wanted.
-    const scratch = new Uint8Array(FILES_CHUNK);
+    // Replaced only when a request still in flight is abandoned, since its late copy may land in it.
+    let scratch = new Uint8Array(FILES_CHUNK);   // state: plumbing — the reader's copy target
     let newest = 0;   // state: plumbing — the newest request id the worker sent; dies with the channel
     const abandoned = new Set<number>();   // state: plumbing — abandoned ids not yet served
     let chain: Promise<void> = Promise.resolve();   // state: plumbing — one request at a time, in order
+    // The request being served and how to stop waiting for it. A STOP MUST NOT WAIT ON THE READER: when the worker
+    // abandons the request in flight, the queue moves past it at once, so a read that never returns holds nothing
+    // after the first Stop. Its late answer is dropped (`reply` checks the id) and what it opened is released.
+    let inflight: { id: number; skip: () => void } | null = null;   // state: plumbing
 
     function reply(id: number, status: number, payload: Uint8Array) {
         if (id !== newest || abandoned.has(id)) return;
@@ -116,8 +121,9 @@ export function serveFiles(shared: FilesShared, channel: FilesChannel) {
         try {
             if (op === "read") {
                 const [fd, position, length] = args as [number, number, number];
-                const n = await channel.read(fd, position, Math.min(length, FILES_CHUNK), scratch);
-                reply(id, 0, scratch.subarray(0, n));
+                const buf = scratch;
+                const n = await channel.read(fd, position, Math.min(length, FILES_CHUNK), buf);
+                reply(id, 0, buf.subarray(0, n));
                 return;
             }
             const fn = (channel as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)[op];
@@ -133,14 +139,22 @@ export function serveFiles(shared: FilesShared, channel: FilesChannel) {
     }
     function handle(msg: unknown): boolean {
         const m = msg as Partial<FilesRequest> & { filesAbandon?: number };
-        if (typeof m?.filesAbandon === "number") { if (m.filesAbandon === newest) abandoned.add(m.filesAbandon); return true; }
+        if (typeof m?.filesAbandon === "number") {
+            if (m.filesAbandon !== newest) return true;
+            abandoned.add(m.filesAbandon);
+            if (inflight?.id === m.filesAbandon) { scratch = new Uint8Array(FILES_CHUNK); inflight.skip(); }
+            return true;
+        }
         const req = m?.filesReq;
         if (!req || typeof req.id !== "number" || typeof req.op !== "string" || !Array.isArray(req.args)) return false;
         // A full worker runs any JavaScript, so it can post anything: only a listed op is called, and never `setSession`.
         if (!FILES_OPS.has(req.op)) return true;
         newest = Math.max(newest, req.id);
         const { id, op, args } = req;
-        chain = chain.then(() => serve(id, op, args, m.bytes));
+        chain = chain.then(() => new Promise<void>((done) => {
+            inflight = { id, skip: done };
+            serve(id, op, args, m.bytes).finally(() => { if (inflight?.id === id) inflight = null; done(); });
+        }));
         return true;
     }
     return { handle };

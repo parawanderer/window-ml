@@ -76,10 +76,10 @@ after(() => {
     if (shim) fs.rmSync(shim, { recursive: true, force: true });
 });
 
-/** Run one cell the way a worker-hosted run's outside cell is posted, and wait for its answer. */
-async function cell(code) {
+/** Run one cell the way a worker-hosted run's outside cell is posted (`run` keeps its namespace), and wait for its answer. */
+async function cell(code, run) {
     const id = nextId++;
-    handler({ data: { id, code, image: null, hardened: true, tables: null } });
+    handler({ data: { id, code, image: null, hardened: true, tables: null, ...(run ? { run } : {}) } });
     for (let i = 0; i < 12000; i++) {
         const done = posted.find((m) => m.id === id && !m.partial && !m.started && !m.booted && !m.spending);
         if (done) return done;
@@ -88,8 +88,8 @@ async function cell(code) {
     throw new Error("no answer for cell " + id);
 }
 /** A cell that must succeed; its printed output. */
-async function ok(code) {
-    const r = await cell(code);
+async function ok(code, run) {
+    const r = await cell(code, run);
     assert.equal(r.ok, true, `${r.error ?? ""}\n${r.stdout ?? ""}`);
     return String(r.stdout ?? "").trim();
 }
@@ -120,16 +120,35 @@ test("nothing outside agent/ is writable: the root, attached/ and agent itself a
     assert.equal(text(await ctl("committed", "s1", "attached/h1/notes.txt")), "hello from the person\n");
 });
 
-test("a hidden file is listed by name, and reading it is refused", T, async () => {
+test("a hidden file is listed by name, and reading it is refused in the reader's words, not as 'Permission denied'", T, async () => {
     await ctl("seed", "s1", "attached/h1/.env", "API_KEY=sk-not-for-you\n");
     await ctl("hide", "s1", "attached/h1/.env");
     const out = await ok([
         "import os",
         "print('.env' in os.listdir('/files/attached/h1'))",
         "try: open('/files/attached/h1/.env').read(); print('read')",
-        "except PermissionError: print('refused')",
+        "except PermissionError as e: print('refused:', e)",
     ].join("\n"));
-    assert.deepEqual(out.split("\n"), ["True", "refused"]);
+    const [listed, refused] = out.split("\n");
+    assert.equal(listed, "True");
+    assert.match(refused, /^refused: .*hidden/i);
+    assert.doesNotMatch(refused, /Permission denied/);
+    // Uncaught, the cell's error (what the model reads) says it too.
+    const r = await cell("open('/files/attached/h1/.env').read()");
+    assert.equal(r.ok, false);
+    assert.match(String(r.error ?? ""), /hidden/i);
+});
+
+test("a file hidden after it was opened stops reading, in the reader's words too", T, async () => {
+    await ctl("seed", "s1", "attached/h1/later.txt", "x".repeat(300_000));
+    // The person's mark lands between the open and the read: held in a cell of its own, the open survives to the next.
+    await ok("import io\nf = io.FileIO('/files/attached/h1/later.txt', 'rb')", "r1");
+    await ctl("hide", "s1", "attached/h1/later.txt");
+    // No `open` sees this refusal, so the cell's error (what the model reads) carries the reader's words.
+    const r = await cell("f.read(10)", "r1");
+    assert.equal(r.ok, false);
+    assert.match(String(r.error ?? ""), /PermissionError: \[Errno \d+\] .*hidden/i);
+    assert.doesNotMatch(String(r.error ?? ""), /Permission denied/);
 });
 
 // --- reads are ranged: a seek reads its chunk, never the file ---
@@ -262,9 +281,10 @@ const STOP_SRC = `
     }
 `;
 
-test("a Stop during a read the reader has not answered ends the cell", T, async () => {
-    // Held for 4 s: the stop lands at 1.5 s, and the read's late answer, at 4 s, must reach nothing.
-    await ctl("holdReads", 4000);
+test("a Stop during a read the reader never answers ends the cell, and nothing after it waits on that read", T, async () => {
+    // Held for 60 s, longer than the row: the stop lands at 1.5 s, and the close and the next cell must not queue behind it.
+    await ctl("holdNextRead", 60_000);
+    const t0 = Date.now();
     Atomics.store(flag, 0, 0);
     // Started before the cell, as the bench's writer is: the cell then blocks in the mount's wait, the read held.
     const writer = new Worker(STOP_SRC, { eval: true, execArgv: [], workerData: { sab: flag.buffer, afterMs: 1500, failAfterMs: 15000 } });
@@ -272,6 +292,7 @@ test("a Stop during a read the reader has not answered ends the cell", T, async 
     await writer.terminate();
     assert.equal(r.ok, false);
     assert.match(String(r.error ?? ""), /KeyboardInterrupt|interrupt/i);
-    // The worker is usable again, and the abandoned read's late answer reached nothing.
+    // The worker is usable again at once, while the abandoned read is still unanswered.
     assert.equal(await ok("print(open('/files/attached/h1/notes.txt').read(), end='')"), "hello from the person");
+    assert.ok(Date.now() - t0 < 15_000, `the next cell waited on the hung read: ${Date.now() - t0} ms`);
 });

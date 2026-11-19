@@ -753,7 +753,16 @@ disposes it when the worker dies, which aborts every write still open.
   file lands with part of what was written. A per-cell commit stays possible (the txn shape covers it) and is not built.
 - **Refusals.** The modes carry write bits on purpose: Emscripten checks them before calling the mount and would say
   EACCES where the answer is EROFS. Writes outside `agent/` are EROFS (the mount and the reader both check), a symlink
-  is EPERM, a hidden file's read is `PermissionError` (the reader's "hidden" message does not survive the errno).
+  is EPERM.
+- **A hidden file is refused in the reader's words**, since the model acts on the text and an errno carries none. The
+  mount keeps this cell's EACCES messages by path; `open`, `io.open` and `os.open`, wrapped at boot
+  (`FILES_OPEN_WORDS`), set the `PermissionError`'s `strerror` from them, and a failed cell's error is rewritten from
+  them too (`inWords`) for a refusal no `open` saw. The wrappers are switched in only for a cell outside the dialect,
+  the originals back for one inside. Not `sys.monitoring`: the cancel's spend owns it and refuses a cell that leaves a
+  tool registered (lockdown.ts).
+- **A Stop never waits on the reader.** Requests are served one at a time, but when the worker abandons the one in
+  flight, the queue moves past it at once with a fresh scratch buffer, so a read that never returns holds nothing after
+  the first Stop; its late answer is dropped and what it opened is released.
 - **Not on until the reader exists.** `setFilesReader` (files-host.ts) is called by the reader's owner; until then no
   worker gets a channel and Python sees no `/files`. Tests run the real worker against an in-memory reader on a second
   thread (`tests/files-mount-py.test.mjs`, `tests/fixtures/files-channel-fake.mjs`).

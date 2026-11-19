@@ -29,6 +29,47 @@ export interface FilesMountDeps {
     onLost?: (path: string, why: string) => void;
 }
 
+/**
+ * Python's half of a refusal's words: `open`, `io.open` and `os.open` wrapped so a `PermissionError` under `/files`
+ * gets the reader's message as its `strerror` (so `str(e)` and the traceback say why), read through `take(path)`.
+ * Defined at boot by our own code. `switch(on)` puts the wrappers in for a cell outside the dialect and the originals
+ * back for one inside, which cannot reach the mount, so the dialect's gate only ever judges the real `open`.
+ * (`sys.monitoring` is not free for this: the cancel's spend owns it and refuses a cell that leaves a tool registered.)
+ */
+export const FILES_OPEN_WORDS = `
+def _ml_files_install(take):
+    import builtins, io, os, functools
+    real_open, real_os_open = builtins.open, os.open
+    def words(e):
+        f = e.filename
+        if isinstance(f, bytes):
+            f = os.fsdecode(f)
+        if not isinstance(f, str):
+            return
+        k = os.path.normpath(os.path.join(os.getcwd(), f))
+        if k == "/files" or k.startswith("/files/"):
+            m = take(k)
+            if m:
+                e.strerror = str(m)
+    def wrap(real):
+        @functools.wraps(real)
+        def opener(*a, **kw):
+            try:
+                return real(*a, **kw)
+            except PermissionError as e:
+                words(e)
+                raise
+        return opener
+    wrapped_open, wrapped_os_open = wrap(real_open), wrap(real_os_open)
+    def switch(on):
+        builtins.open = io.open = wrapped_open if on else real_open
+        os.open = wrapped_os_open if on else real_os_open
+    return switch
+`;
+
+/** How many refusals the mount keeps for `refusal()`, newest first: enough for one exception's chain. */
+const REFUSALS_KEPT = 16;
+
 /** A file's stat as the reader gives it. */
 interface Stat { kind: "file" | "dir"; size: number; mtimeMs: number; hidden: boolean; readonly: boolean }
 
@@ -41,13 +82,23 @@ interface Stat { kind: "file" | "dir"; size: number; mtimeMs: number; hidden: bo
 export function makeFilesMount(deps: FilesMountDeps) {
     const { FS, ERRNO_CODES, call, data, Interrupted } = deps;
     const stats = { requests: 0, cacheHits: 0 };
+    // THE READER'S WORDS FOR A REFUSAL. An errno carries no text, so Python would say "Permission denied" where the
+    // reader said the file is hidden, and the model acts on the text. The mount keeps the reader's message by the
+    // Python path the call named, for the cell's RAISE hook (`refusal`), emptied every cell.
+    const refusals: Array<{ path: string | null; message: string }> = [];   // state: cache — this cell's refusals, newest first
 
     /** One request, its refusal raised as the errno Python sees. */
     function req(op: FilesOp, args: unknown[], bytes?: Uint8Array): any {
         stats.requests++;
         try { return call(op, args, bytes); }
         catch (e) {
-            if (e instanceof FilesReplyError) throw new FS.ErrnoError(ERRNO_CODES[e.code] ?? ERRNO_CODES.EIO);
+            if (e instanceof FilesReplyError) {
+                if (e.code === "EACCES") {
+                    refusals.unshift({ path: typeof args[0] === "string" ? (args[0] ? `${FILES_AT}/${args[0]}` : FILES_AT) : null, message: e.message });
+                    refusals.length = Math.min(refusals.length, REFUSALS_KEPT);
+                }
+                throw new FS.ErrnoError(ERRNO_CODES[e.code] ?? ERRNO_CODES.EIO);
+            }
             if (e instanceof Interrupted) throw new FS.ErrnoError(ERRNO_CODES.EINTR);
             throw e;
         }
@@ -297,9 +348,29 @@ export function makeFilesMount(deps: FilesMountDeps) {
      */
     function remount() {
         dropCache();
+        refusals.length = 0;
         try { FS.unmount(FILES_AT); } catch { /* not mounted yet */ }
         FS.mkdirTree(FILES_AT);
         FS.mount(type, {}, FILES_AT);
     }
-    return { type, remount, stats, flush };
+    /**
+     * The reader's message for this cell's refusal of `path` (an absolute Python path), or for the newest refusal when
+     * the error names no path (a read through a descriptor of a file hidden after it was opened).
+     */
+    function refusal(path: string | null | undefined): string | undefined {
+        const hit = path ? refusals.find((r) => r.path === path) : refusals[0];
+        return hit?.message;
+    }
+    /**
+     * A failed cell's error text with each `PermissionError` the mount caused in the reader's words: the fallback for
+     * a refusal no wrapped `open` saw (a read through a descriptor opened before the file was hidden).
+     */
+    function inWords(error: string): string {
+        if (!refusals.length) return error;
+        return error.replace(/(PermissionError: \[Errno \d+\] )Permission denied(?:: '([^']*)')?/g, (all, head: string, file?: string) => {
+            const message = refusal(file && file.startsWith(FILES_AT) ? file : null);
+            return message ? `${head}${message}${file ? `: '${file}'` : ""}` : all;
+        });
+    }
+    return { type, remount, stats, flush, refusal, inWords };
 }
