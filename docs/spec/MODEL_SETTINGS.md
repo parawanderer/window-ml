@@ -407,6 +407,15 @@ rule cannot be written to miss the values it knows the measure tries. A pair wit
 For each key the result is **every value** (every pair tried matched; for a sampled key, "every value tried"), **some
 values**, **none**, or **could not be measured**.
 
+**The residual of sampling.** For a key whose `from` or `to` is sampled, "none" means no value tried matched, not that
+none matches. A rule that matches one value the samples did not draw (`c.key === "detachedTaskMaxMin" && c.from === <a
+value in 1–60 not drawn>`, or a `to` outside the enumerated set of an unbounded number) reads "none" for that key, so
+the key is off the card's covers line while the approved allow frees that change when it comes. Drawing afresh per
+proposal makes the miss unpredictable for a rule that guesses, never impossible for one that names a single value. What
+bounds it: the residual is ordinary keys only (the judge frees no guarded key whatever the rule), an allow measuring
+"none" everywhere is refused, so such a rule must also cover a key the card names, and the closing line counts the
+sampled keys that showed no match, so the person sees how much of the table rests on samples alone.
+
 **Size.** With today's table and 162 currencies: about 5,100 evaluations per proposal, most of them `hours` (552 × 5 =
 2,760) and `currency` (162 × 5 = 810), each bounded by the realm's step budget. The PR measures the wall time of one
 measure with a rule of the budget's full length and records the number here.
@@ -424,7 +433,8 @@ measure with a rule of the budget's full length and records the number here.
 - For a `deny` or `ask`, guarded keys are listed with the rest: a deny of a guarded change is honoured.
 - If the run already called `change_setting`, the card says which of those keys the rule covers.
 - The closing line says what was sampled: "Measured over every setting the agent may change; values marked sampled were
-  tried, not proven."
+  tried, not proven. N sampled settings showed no match and could still be covered at a value not tried." The N keys
+  are named behind the disclosure.
 - Deny and ask rows get a card, as fetch deny rows do.
 
 **Refused at check time, no card** (the model reads why):
@@ -447,6 +457,9 @@ is inert and the measure does not enumerate them), and the `change_setting` tool
   enumerate the inputs); every integer key with a range of at most 2048 has every `to` tried;
 - a bounded number: `c.key === "detachedTaskMaxMin" && c.to === <one value>` reports "some values";
 - random samples: two measures of the same rule draw different random `from` and number samples;
+- the residual: `c.key === "theme" || (c.key === "detachedTaskMaxMin" && c.from === <a value not drawn>)` reports Theme
+  alone, and the closing line counts Detached task limit (minutes) among the sampled keys with no match and names it
+  behind the disclosure;
 - could not be measured: with no server list, a model key is named as such on the card; an allow covering only model
   keys is refused;
 - refusals: an allow covering only guarded keys;
@@ -458,7 +471,11 @@ is inert and the measure does not enumerate them), and the `change_setting` tool
 
 - a rule covering a guarded key by pattern (`c.key.startsWith("shell")`);
 - a rule keyed on `c.to` to dodge the samples;
-- a rule keyed on `c.from` to match nothing now and everything after one approved change (finding (a));
+- a rule keyed on `c.from` to match nothing now and everything after one approved change: `from` is varied over every
+  value the measure tries, so such a rule shows as covering the key on the card before it is approved (for a sampled
+  key, the residual above);
+- a rule matching one value of a sampled key outside the samples (`c.from === <a valid value not drawn>`), beside a
+  narrow visible key: the card names the visible key alone and must count the sampled key among those with no match;
 - `c.to === <one value>` on an enumerated bounded number key, which must show as "some values";
 - a rule using `c.class` or `c.widens` to look narrow;
 - a rule covering only model keys while the server's list cannot be read;
